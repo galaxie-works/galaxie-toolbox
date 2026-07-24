@@ -85,7 +85,23 @@ jobs:
             throw "Assinatura nao encontrada: $sig. Os segredos de assinatura foram configurados?"
           }
 
-          $url = "https://github.com/${{ env.REPO_DISTRIBUICAO }}/releases/download/$tag/$($exe.Name)"
+          # O productName tem espaco, entao o instalador nasce "GALAXIE
+          # Toolbox_...exe". O GitHub troca espaco por ponto ao subir o anexo,
+          # e o manifesto apontaria para um nome que nao existe - o app acharia
+          # a atualizacao e falharia no download. Renomear aqui elimina a
+          # divergencia na origem.
+          $nomeSeguro = $exe.Name -replace ' ', '-'
+          $exeFinal = Join-Path $exe.DirectoryName $nomeSeguro
+          if ($exeFinal -ne $exe.FullName) {
+            Move-Item $exe.FullName $exeFinal -Force
+            Move-Item $sig "$exeFinal.sig" -Force
+            $sig = "$exeFinal.sig"
+          }
+
+          $url = "https://github.com/${{ env.REPO_DISTRIBUICAO }}/releases/download/$tag/$nomeSeguro"
+          if ($nomeSeguro -match '[^A-Za-z0-9._-]') {
+            throw "Nome do instalador ainda tem caractere problematico: $nomeSeguro"
+          }
           $manifesto = [ordered]@{
             version   = $versao
             notes     = "GALAXIE Toolbox $tag"
@@ -99,9 +115,10 @@ jobs:
           }
           $manifesto | ConvertTo-Json -Depth 5 | Set-Content latest.json -Encoding utf8
 
-          "instalador=$($exe.FullName)" | Out-File $env:GITHUB_OUTPUT -Append
+          "instalador=$exeFinal" | Out-File $env:GITHUB_OUTPUT -Append
           "tag=$tag"                    | Out-File $env:GITHUB_OUTPUT -Append
-          Write-Host "Instalador: $($exe.Name)"
+          Write-Host "Instalador: $nomeSeguro"
+          Write-Host "URL: $url"
 
       # RELEASES_TOKEN e um PAT com Contents: read/write SOMENTE no repositorio
       # de distribuicao. O GITHUB_TOKEN desta execucao nao alcanca outro
