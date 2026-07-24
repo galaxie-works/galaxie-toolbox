@@ -20,18 +20,31 @@ const MOCK_USER: AppUser = {
   organizacao: "Voaz",
 };
 
+// Sem numeros de proposito: o backend real tambem nao os devolve na lista,
+// eles chegam depois pelo site_details. Assim o preview mostra os spinners.
 const MOCK_SITES: Site[] = [
-  { key: "PROJ", name: "Projetos", status: "connected", files: 53668, bytes: 351_000_000_000 },
-  { key: "MKT", name: "Marketing", status: "available", files: 12800, bytes: 166_000_000_000 },
-  { key: "GST", name: "Gestão", status: "connected", files: 1352, bytes: 79_000_000_000 },
-  { key: "COM", name: "Comercial", status: "available", files: 44029, bytes: 70_000_000_000 },
-  { key: "CPS", name: "Compras", status: "available", files: 73393, bytes: 62_000_000_000 },
-  { key: "FIN", name: "Financeiro", status: "available", files: 100696, bytes: 58_000_000_000 },
-  { key: "MOV", name: "Moving", status: "available", files: 3800, bytes: 19_000_000_000 },
-  { key: "ADM", name: "Administrativo", status: "connected", files: 1020, bytes: 17_000_000_000 },
+  { key: "PROJ", name: "Projetos", status: "connected" },
+  { key: "MKT", name: "Marketing", status: "available" },
+  { key: "GST", name: "Gestão", status: "connected" },
+  { key: "COM", name: "Comercial", status: "available" },
+  { key: "CPS", name: "Compras", status: "available" },
+  { key: "FIN", name: "Financeiro", status: "available" },
+  { key: "MOV", name: "Moving", status: "available" },
+  { key: "ADM", name: "Administrativo", status: "connected" },
   { key: "RH", name: "RH", status: "noaccess" },
   { key: "WEBSITE", name: "Website", status: "noaccess" },
 ];
+
+const MOCK_DETALHES: Record<string, { files: number; bytes: number }> = {
+  PROJ: { files: 53668, bytes: 351_000_000_000 },
+  MKT: { files: 12800, bytes: 166_000_000_000 },
+  GST: { files: 1352, bytes: 79_000_000_000 },
+  COM: { files: 44029, bytes: 70_000_000_000 },
+  CPS: { files: 73393, bytes: 62_000_000_000 },
+  FIN: { files: 100696, bytes: 58_000_000_000 },
+  MOV: { files: 3800, bytes: 19_000_000_000 },
+  ADM: { files: 1020, bytes: 17_000_000_000 },
+};
 
 export async function login(email: string): Promise<AppUser> {
   if (!inTauri()) {
@@ -87,11 +100,12 @@ export async function siteDetails(
   site: Site
 ): Promise<Pick<Site, "bytes" | "folders" | "files" | "libraryUrl">> {
   if (!inTauri()) {
-    await sleep(200 + Math.random() * 900);
+    await sleep(600 + Math.random() * 1800);
+    const d = MOCK_DETALHES[site.key];
     return {
-      bytes: site.bytes,
-      files: site.files,
-      folders: site.files ? Math.round(site.files / 12) : undefined,
+      bytes: d?.bytes,
+      files: d?.files,
+      folders: d ? Math.round(d.files / 12) : undefined,
       libraryUrl: `https://exemplo.sharepoint.com/sites/${site.key}/Documentos%20Compartilhados`,
     };
   }

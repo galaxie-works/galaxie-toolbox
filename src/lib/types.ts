@@ -14,6 +14,8 @@ export interface Site {
   // Preenchidos depois da lista, um site por vez (ver SiteDetalhes no Rust).
   // files/folders sao aproximados: vem do indice de busca do SharePoint.
   libraryUrl?: string; // endereco da biblioteca em si — e para ca que mandamos
+  /** Sem numero + "carregando" = spinner; sem numero + "pronto" = nao veio. */
+  detalhes?: "carregando" | "pronto";
   bytes?: number;
   folders?: number;
   files?: number;

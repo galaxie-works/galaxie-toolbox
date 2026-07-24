@@ -91,18 +91,26 @@ export default function App() {
    */
   async function carregarDetalhes(lista: Site[]) {
     const fila = lista.filter((s) => s.status !== "noaccess");
+    const naFila = new Set(fila.map((s) => s.key));
+    setSites((prev) =>
+      prev.map((s) => (naFila.has(s.key) ? { ...s, detalhes: "carregando" } : s))
+    );
+
     let i = 0;
     const worker = async () => {
       while (i < fila.length) {
         const alvo = fila[i++];
+        let det: Partial<Site> = {};
         try {
-          const det = await api.siteDetails(alvo);
-          setSites((prev) =>
-            prev.map((s) => (s.key === alvo.key ? { ...s, ...det } : s))
-          );
+          det = await api.siteDetails(alvo);
         } catch {
-          // sem numeros: os badges daquele site simplesmente nao aparecem
+          // sem numeros: aquele chip some, em vez de girar pra sempre
         }
+        setSites((prev) =>
+          prev.map((s) =>
+            s.key === alvo.key ? { ...s, ...det, detalhes: "pronto" } : s
+          )
+        );
       }
     };
     await Promise.all([worker(), worker(), worker()]);

@@ -17,7 +17,13 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { formatBytes } from "@/lib/utils";
+import * as AnimatedButton from "@/components/morphin/animated-border-button";
+import SuccessIcon from "@/components/ui/icons/success";
+import TrashIcon from "@/components/ui/icons/trash";
+import { AnimatePresence, motion } from "motion/react";
+import { TextMorph } from "torph/react";
+import { useEffect, useState } from "react";
+import { cn, formatBytes } from "@/lib/utils";
 import type { Site } from "@/lib/types";
 import {
   CloudDownload,
@@ -87,11 +93,33 @@ export function ConfirmarBiblioteca({
   modo: ModoConfirmacao;
   pular: boolean;
   onPularChange: (v: boolean) => void;
-  onConfirmar: () => void;
+  onConfirmar: () => Promise<void>;
   onCancelar: () => void;
 }) {
   const conectando = modo === "conectar";
   const desconhecido = "—";
+
+  // Estado do botao de remover: o dialogo fica aberto enquanto a remocao
+  // acontece e mostra o sucesso antes de sair sozinho.
+  const [estado, setEstado] = useState<"parado" | "processando" | "sucesso">(
+    "parado"
+  );
+
+  useEffect(() => {
+    if (estado !== "sucesso") return;
+    const id = setTimeout(() => {
+      setEstado("parado");
+      onCancelar();
+    }, 1200);
+    return () => clearTimeout(id);
+  }, [estado, onCancelar]);
+
+  async function remover() {
+    if (estado !== "parado") return;
+    setEstado("processando");
+    await onConfirmar();
+    setEstado("sucesso");
+  }
 
   const cartoes = [
     {
@@ -122,7 +150,13 @@ export function ConfirmarBiblioteca({
   ];
 
   return (
-    <AlertDialog open={site != null} onOpenChange={(o) => !o && onCancelar()}>
+    <AlertDialog
+      open={site != null}
+      onOpenChange={(o) => {
+        // Nao deixa fechar no meio da remocao (Esc, clique fora).
+        if (!o && estado === "parado") onCancelar();
+      }}
+    >
       <AlertDialogContent className="max-w-sm! gap-0 overflow-hidden p-0">
         {/* Cabecalho */}
         <div className="flex flex-col items-center justify-center gap-1.5 px-4 pt-6 pb-5 text-center">
@@ -200,14 +234,63 @@ export function ConfirmarBiblioteca({
               </Field>
             </TooltipProvider>
           )}
-          <AlertDialogAction
-            variant={conectando ? "default" : "destructive"}
+          {conectando ? (
+            <AlertDialogAction className="flex-1" onClick={onConfirmar}>
+              Continuar
+            </AlertDialogAction>
+          ) : (
+            /* Fora do AlertDialogAction de proposito: aquele fecha o dialogo no
+               clique, e aqui o dialogo precisa ficar aberto para mostrar o
+               processamento e o sucesso. */
+            <AnimatedButton.Root
+              variant={estado === "sucesso" ? "success" : "error"}
+              mode="animatedBorder"
+              size="medium"
+              onClick={remover}
+              animateBorder={estado === "processando"}
+              showAnimatedBorder={estado === "processando"}
+              animatedBorderStyle={estado === "processando" ? "dashed" : "solid"}
+              disabled={estado !== "parado"}
+              /* O componente so tem cor para tema claro (bg-red-50 / bg-green-50
+                 fixos), entao no escuro virava um bloco claro no meio do
+                 dialogo. As variantes dark vao aqui, no uso, para o arquivo do
+                 registry continuar intocado. */
+              className={cn(
+                "w-full",
+                estado === "sucesso"
+                  ? "dark:border-green-500/40 dark:bg-green-950/40 dark:text-green-300 dark:hover:bg-green-950/60 dark:hover:text-green-200"
+                  : "dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60"
+              )}
+            >
+              <AnimatePresence mode="popLayout">
+                <motion.div
+                  key={estado === "sucesso" ? "sucesso" : "remover"}
+                  initial={false}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.4, y: 10 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                >
+                  <AnimatedButton.Icon
+                    as={estado === "sucesso" ? SuccessIcon : TrashIcon}
+                    className="size-5"
+                    aria-hidden
+                  />
+                </motion.div>
+              </AnimatePresence>
+              <TextMorph>
+                {estado === "sucesso"
+                  ? "Removida"
+                  : estado === "processando"
+                    ? "Removendo"
+                    : "Remover biblioteca"}
+              </TextMorph>
+            </AnimatedButton.Root>
+          )}
+          <AlertDialogCancel
+            variant="ghost"
             className="flex-1"
-            onClick={onConfirmar}
+            disabled={estado !== "parado"}
           >
-            {conectando ? "Continuar" : "Remover biblioteca"}
-          </AlertDialogAction>
-          <AlertDialogCancel variant="ghost" className="flex-1">
             {conectando ? "Deixar pra depois" : "Cancelar"}
           </AlertDialogCancel>
         </AlertDialogFooter>

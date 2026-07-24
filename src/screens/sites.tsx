@@ -22,6 +22,7 @@ import { FolderOpenIcon } from "@/components/ui/folder-open";
 import { FolderTreeIcon } from "@/components/ui/folder-tree";
 import { FoldersIcon } from "@/components/ui/folders";
 import { HammerIcon } from "@/components/ui/hammer";
+import { Spinner } from "@/components/ui/spinner";
 import { SquareActivityIcon } from "@/components/ui/square-activity";
 import {
   ConfirmarBiblioteca,
@@ -51,17 +52,30 @@ const ABAS = [
 
 const fmt = (n: number) => n.toLocaleString("pt-BR");
 
-/** Chip de metrica. Some quando o numero ainda nao chegou (ou falhou). */
+/**
+ * Chip de metrica. Enquanto o Graph responde, mostra um spinner no lugar do
+ * numero; se a consulta terminar sem valor, o chip some (nao fica girando).
+ */
 function Metrica({
   icone,
   valor,
   titulo,
+  carregando,
 }: {
   icone: React.ReactNode;
   valor?: string;
   titulo: string;
+  carregando?: boolean;
 }) {
-  if (!valor) return null;
+  if (!valor) {
+    if (!carregando) return null;
+    return (
+      <Badge variant="secondary" size="lg" title={`${titulo} — consultando`}>
+        <Spinner data-icon="inline-start" />
+        {icone}
+      </Badge>
+    );
+  }
   return (
     <Badge variant="secondary" size="lg" title={titulo}>
       {icone}
@@ -85,6 +99,7 @@ function BibliotecaPanel({
   const ocupado = site.status === "connecting";
   const semAcesso = site.status === "noaccess";
   const destino = site.libraryUrl ?? site.webUrl;
+  const carregandoDetalhes = site.detalhes === "carregando";
 
   return (
     <FramePanel className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -98,16 +113,19 @@ function BibliotecaPanel({
             icone={<SquareActivityIcon size={13} />}
             valor={site.bytes != null ? formatBytes(site.bytes) : undefined}
             titulo="Tamanho da biblioteca"
+            carregando={carregandoDetalhes}
           />
           <Metrica
             icone={<FoldersIcon size={13} />}
             valor={site.folders != null ? `${fmt(site.folders)} pastas` : undefined}
             titulo="Pastas (aproximado, vem da busca do SharePoint)"
+            carregando={carregandoDetalhes}
           />
           <Metrica
             icone={<FileStackIcon size={13} />}
             valor={site.files != null ? `${fmt(site.files)} arquivos` : undefined}
             titulo="Arquivos (aproximado, vem da busca do SharePoint)"
+            carregando={carregandoDetalhes}
           />
         </div>
       </div>
@@ -174,9 +192,9 @@ export function SitesScreen({
   sites: Site[];
   loading?: boolean;
   error?: string | null;
-  onConnect: (s: Site) => void;
+  onConnect: (s: Site) => Promise<void>;
   onOpen: (s: Site) => void;
-  onDisconnect: (s: Site) => void;
+  onDisconnect: (s: Site) => Promise<void>;
   onAbrirUrl: (url: string) => void;
 }) {
   const [aba, setAba] = useState("bibliotecas");
@@ -196,16 +214,18 @@ export function SitesScreen({
     setConfirmando(site);
   }
 
-  function confirmar() {
+  async function confirmar() {
     const alvo = confirmando;
-    setConfirmando(null);
     if (!alvo) return;
     if (modo === "conectar") {
+      setConfirmando(null);
       gravarPularConfirmacao(pular);
-      onConnect(alvo);
-    } else {
-      onDisconnect(alvo);
+      await onConnect(alvo);
+      return;
     }
+    // Na remocao o dialogo continua aberto: ele mostra o processamento e o
+    // sucesso no proprio botao, e se fecha sozinho depois.
+    await onDisconnect(alvo);
   }
 
   return (
