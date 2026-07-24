@@ -192,6 +192,15 @@
   * {
     @apply border-border outline-ring/50;
   }
+  /* Diz ao navegador em que tema estamos. E o que faz a barra de rolagem, o
+     cursor de texto e os controles nativos virem escuros — sem isso a barra
+     sai branca no app escuro. Mecanismo padrao, nao estilizacao propria. */
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
   html,
   body,
   #root {
