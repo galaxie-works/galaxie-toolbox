@@ -1,8 +1,8 @@
-﻿{
+{
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "GALAXIE Toolbox",
-  "version": "0.9.3",
-  "identifier": "com.tauri.dev",
+  "version": "0.9.4",
+  "identifier": "works.galaxie.toolbox",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -36,7 +36,12 @@
     "android": {
       "debugApplicationIdSuffix": ".debug"
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "publisher": "Galaxie Works",
+    "copyright": "Galaxie Works",
+    "category": "Business",
+    "shortDescription": "Ferramentas de Microsoft 365 e Windows",
+    "longDescription": "Conecta as bibliotecas do SharePoint ao OneDrive do usuario e reune ferramentas de apoio ao Microsoft 365."
   },
   "plugins": {
     "updater": {

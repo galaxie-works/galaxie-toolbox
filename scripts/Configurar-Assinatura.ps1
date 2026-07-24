@@ -197,7 +197,10 @@ $novo = [Regex]::Replace($json, '("pubkey"\s*:\s*")[^"]*(")', "`${1}$publica`${2
 if ($novo -eq $json) {
     Aviso "A chave publica no tauri.conf.json ja era essa (ou o campo nao existe)"
 } else {
-    Set-Content -Path $conf -Value $novo -Encoding utf8 -NoNewline
+    # -Encoding utf8 no PowerShell 5.1 grava COM BOM, e o BOM quebra parsers
+    # que leem o JSON como UTF-8 puro. WriteAllText com UTF8Encoding($false)
+    # grava sem BOM em qualquer versao.
+    [System.IO.File]::WriteAllText($conf, $novo, (New-Object System.Text.UTF8Encoding $false))
     Ok "tauri.conf.json atualizado"
 }
 
