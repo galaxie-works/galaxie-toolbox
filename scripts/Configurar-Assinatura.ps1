@@ -39,6 +39,19 @@ function Confirmar($pergunta) {
     return ($r -eq "s" -or $r -eq "S")
 }
 
+# Read-Host devolve o texto cru: quem cola um caminho do Explorer traz as aspas
+# junto, e ai o PowerShell tenta usar `"G` como nome de unidade.
+function LimparCaminho($texto) {
+    if ($null -eq $texto) { return "" }
+    $t = $texto.Trim()
+    if ($t.Length -ge 2) {
+        if (($t[0] -eq '"' -and $t[-1] -eq '"') -or ($t[0] -eq "'" -and $t[-1] -eq "'")) {
+            $t = $t.Substring(1, $t.Length - 2)
+        }
+    }
+    return $t.Trim()
+}
+
 Write-Host ""
 Write-Host "  GALAXIE Toolbox - assinatura do atualizador" -ForegroundColor White
 
@@ -83,13 +96,43 @@ Write-Host "  instalou fica preso na versao atual. Nao existe recuperacao."
 Write-Host ""
 
 $padrao = Join-Path $HOME ".galaxie\galaxie-updater.key"
-$destino = Read-Host "  Onde salvar? (Enter para $padrao)"
+Nota "Pode colar o caminho com ou sem aspas."
+$destino = LimparCaminho (Read-Host "  Onde salvar? (Enter para $padrao)")
 if ([string]::IsNullOrWhiteSpace($destino)) { $destino = $padrao }
 
 $pasta = Split-Path -Parent $destino
+if ([string]::IsNullOrWhiteSpace($pasta)) {
+    Erro "Informe o caminho completo do arquivo, incluindo a pasta."
+    exit 1
+}
+
+# A unidade tem que existir: em caminho de rede ou OneDrive nao montado, o
+# New-Item falharia com uma mensagem bem menos clara do que esta.
+$unidade = Split-Path -Qualifier $pasta -ErrorAction SilentlyContinue
+if ($unidade -and -not (Test-Path "$unidade\")) {
+    Erro "A unidade $unidade nao existe ou nao esta acessivel."
+    Nota "Caminho recebido: $destino"
+    exit 1
+}
+
 if (-not (Test-Path $pasta)) {
-    New-Item -ItemType Directory -Force -Path $pasta | Out-Null
-    Ok "Pasta criada: $pasta"
+    try {
+        New-Item -ItemType Directory -Force -Path $pasta -ErrorAction Stop | Out-Null
+        Ok "Pasta criada: $pasta"
+    } catch {
+        Erro "Nao consegui criar a pasta: $pasta"
+        Nota $_.Exception.Message
+        exit 1
+    }
+} else {
+    Ok "Pasta: $pasta"
+}
+
+# Pasta sincronizada guarda a chave na nuvem e em toda maquina que sincroniza.
+# Com senha esta defensavel, mas vale saber.
+if ($pasta -match "OneDrive|Dropbox|Google Drive") {
+    Aviso "Essa pasta e sincronizada: a chave sera replicada para a nuvem"
+    Nota "Com senha forte esta aceitavel, mas o gerenciador de senhas e melhor."
 }
 
 if (Test-Path $destino) {
