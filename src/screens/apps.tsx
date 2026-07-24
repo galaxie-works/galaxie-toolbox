@@ -13,7 +13,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/animate-ui/components/radix/dropdown-menu";
-import { APPS, CATEGORIAS, MAIS_USADOS, porCategoria, type AppM365 } from "@/lib/apps";
+import {
+  APPS,
+  CATEGORIAS,
+  MAIS_USADOS,
+  porCategoria,
+  urlIcone,
+  type AppM365,
+} from "@/lib/apps";
 import { useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import { ExternalLink, Info, MoreHorizontal, SquareArrowOutUpRight } from "lucide-react";
@@ -48,9 +55,12 @@ function AppCard({
         onClick={() => onAbrirAqui(app)}
         className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 text-left"
       >
-        <span className="grid size-9 shrink-0 place-items-center rounded-md bg-primary/10 text-[13px] font-semibold text-primary">
-          {app.nome.slice(0, 2)}
-        </span>
+        <img
+          src={urlIcone(app)}
+          alt=""
+          draggable={false}
+          className="size-8 shrink-0"
+        />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium">{app.nome}</span>
           {!compacto && (

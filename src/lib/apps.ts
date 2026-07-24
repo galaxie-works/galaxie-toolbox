@@ -20,6 +20,8 @@ export interface AppM365 {
   nome: string;
   resumo: Record<Idioma, string>;
   url: string;
+  /** Nome do arquivo em assets/apps — icone oficial do Fluent UI. */
+  icone: string;
   /** Um app aparece em mais de uma categoria, como no portal. */
   categorias: Categoria[];
 }
@@ -41,6 +43,7 @@ export interface AppM365 {
 export const APPS: AppM365[] = [
   {
     id: "outlook",
+    icone: "outlook",
     nome: "Outlook",
     resumo: { "pt-BR": "E-mail, agenda e tarefas.", en: "Email, schedule, and set tasks." },
     url: "https://outlook.office.com/mail/",
@@ -48,6 +51,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "word",
+    icone: "word",
     nome: "Word",
     resumo: { "pt-BR": "Documentos de texto.", en: "Text documents." },
     url: "https://www.office.com/launch/word",
@@ -55,6 +59,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "excel",
+    icone: "excel",
     nome: "Excel",
     resumo: { "pt-BR": "Planilhas e análises.", en: "Spreadsheets and analysis." },
     url: "https://www.office.com/launch/excel",
@@ -62,6 +67,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "powerpoint",
+    icone: "powerpoint",
     nome: "PowerPoint",
     resumo: { "pt-BR": "Apresentações.", en: "Presentations." },
     url: "https://www.office.com/launch/powerpoint",
@@ -69,6 +75,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "onenote",
+    icone: "onenote",
     nome: "OneNote",
     resumo: { "pt-BR": "Blocos de anotações.", en: "Notebooks." },
     url: "https://www.onenote.com/notebooks",
@@ -76,6 +83,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "onedrive",
+    icone: "onedrive",
     nome: "OneDrive",
     resumo: { "pt-BR": "Seus arquivos na nuvem.", en: "Your files in the cloud." },
     url: "https://www.office.com/launch/onedrive",
@@ -83,6 +91,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "teams",
+    icone: "teams",
     nome: "Teams",
     resumo: { "pt-BR": "Reuniões, chamadas e conversas.", en: "Meetings, calls, and chat." },
     url: "https://teams.cloud.microsoft",
@@ -90,6 +99,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "sharepoint",
+    icone: "sharepoint",
     nome: "SharePoint",
     resumo: { "pt-BR": "Sites e bibliotecas da empresa.", en: "Company sites and libraries." },
     url: "https://www.office.com/launch/sharepoint",
@@ -97,6 +107,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "clipchamp",
+    icone: "clipchamp",
     nome: "Clipchamp",
     resumo: { "pt-BR": "Edição de vídeo no navegador.", en: "Video editing in the browser." },
     url: "https://app.clipchamp.com",
@@ -104,6 +115,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "bookings",
+    icone: "bookings",
     nome: "Bookings",
     resumo: {
       "pt-BR": "Organiza agendamentos dentro e fora da empresa.",
@@ -114,6 +126,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "calendario",
+    icone: "calendar",
     nome: "Calendário",
     resumo: { "pt-BR": "Gerencie e compartilhe sua agenda.", en: "Manage and share your schedule." },
     url: "https://outlook.office.com/calendar/",
@@ -121,6 +134,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "connections",
+    icone: "vivaconnections",
     nome: "Connections",
     resumo: {
       "pt-BR": "Ferramentas, notícias e recursos personalizados.",
@@ -131,6 +145,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "engage",
+    icone: "vivaengage",
     nome: "Engage",
     resumo: {
       "pt-BR": "Conecte-se com colegas e organize-se por projeto.",
@@ -141,6 +156,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "forms",
+    icone: "forms",
     nome: "Forms",
     resumo: {
       "pt-BR": "Pesquisas e questionários com resultado em tempo real.",
@@ -151,6 +167,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "insights",
+    icone: "vivainsights",
     nome: "Insights",
     resumo: {
       "pt-BR": "Produtividade e bem-estar com o Viva Insights.",
@@ -161,6 +178,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "learning",
+    icone: "vivalearning",
     nome: "Learning",
     resumo: {
       "pt-BR": "Continue aprendendo com o Viva Learning.",
@@ -171,6 +189,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "lists",
+    icone: "lists",
     nome: "Lists",
     resumo: {
       "pt-BR": "Crie, compartilhe e acompanhe dados em listas.",
@@ -181,6 +200,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "loop",
+    icone: "loop",
     nome: "Loop",
     resumo: {
       "pt-BR": "Pensar, planejar e criar junto.",
@@ -191,6 +211,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "power-pages",
+    icone: "powerpages",
     nome: "Power Pages",
     resumo: {
       "pt-BR": "Sites corporativos seguros, com pouco código.",
@@ -201,6 +222,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "planner",
+    icone: "planner",
     nome: "Planner",
     resumo: {
       "pt-BR": "Planos, tarefas, arquivos e progresso.",
@@ -211,6 +233,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "power-automate",
+    icone: "powerautomate",
     nome: "Power Automate",
     resumo: {
       "pt-BR": "Automatize fluxos e sincronizações.",
@@ -221,6 +244,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "power-apps",
+    icone: "powerapps",
     nome: "Power Apps",
     resumo: {
       "pt-BR": "Aplicativos web e móveis com os dados que a empresa já usa.",
@@ -231,6 +255,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "sway",
+    icone: "sway",
     nome: "Sway",
     resumo: {
       "pt-BR": "Relatórios e apresentações interativas.",
@@ -241,6 +266,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "todo",
+    icone: "todo",
     nome: "To Do",
     resumo: { "pt-BR": "Liste e gerencie suas tarefas.", en: "List and manage your tasks." },
     url: "https://to-do.office.com",
@@ -248,6 +274,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "visio",
+    icone: "visio",
     nome: "Visio",
     resumo: {
       "pt-BR": "Comunique informação complexa visualmente.",
@@ -258,6 +285,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "whiteboard",
+    icone: "whiteboard",
     nome: "Whiteboard",
     resumo: {
       "pt-BR": "Quadro livre para caneta, toque e teclado.",
@@ -268,6 +296,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "pessoas",
+    icone: "people",
     nome: "Pessoas",
     resumo: {
       "pt-BR": "Agrupe, compartilhe e gerencie contatos.",
@@ -278,6 +307,7 @@ export const APPS: AppM365[] = [
   },
   {
     id: "admin",
+    icone: "admin",
     nome: "Admin",
     resumo: {
       "pt-BR": "Portal de administração da assinatura.",
@@ -316,6 +346,26 @@ export const MAIS_USADOS = [
   "sharepoint",
   "clipchamp",
 ];
+
+/**
+ * Icones oficiais do Fluent UI, os mesmos que o portal do M365 usa. Baixados
+ * para dentro do projeto de proposito: assim funcionam sem rede e o CDN da
+ * Microsoft nao recebe uma requisicao por card renderizado.
+ */
+const ARQUIVOS = import.meta.glob("@/assets/apps/*.svg", {
+  eager: true,
+  query: "?url",
+  import: "default",
+}) as Record<string, string>;
+
+const ICONES: Record<string, string> = Object.fromEntries(
+  Object.entries(ARQUIVOS).map(([caminho, url]) => [
+    caminho.split("/").pop()!.replace(".svg", ""),
+    url,
+  ])
+);
+
+export const urlIcone = (app: AppM365) => ICONES[app.icone];
 
 export const porId = (id: string) => APPS.find((a) => a.id === id);
 
