@@ -34,3 +34,7 @@ src-tauri/gen/
 
 # Artefatos locais
 *.pdb
+
+# Chave privada do updater — nunca versionar
+*.key
+*.key.pub

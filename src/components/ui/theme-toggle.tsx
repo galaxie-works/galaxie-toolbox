@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import AnimatedToggle from "@/components/smoothui/animated-toggle";
 import { useIdioma } from "@/lib/idioma";
-
-const STORAGE_KEY = "galaxie-theme";
+import { aplicarTema, temaEscuro } from "@/lib/tema";
 
 const SunIcon = () => (
   <svg
@@ -42,21 +41,13 @@ const MoonIcon = () => (
   </svg>
 );
 
-function initialDark(): boolean {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (saved) return saved === "dark";
-  // sem preferencia salva: segue o que o documento ja tem (boot = dark)
-  return document.documentElement.classList.contains("dark");
-}
-
 /** Alterna claro/escuro. Ligado = tema escuro. A escolha fica salva. */
 export function ThemeToggle() {
   const { t } = useIdioma();
-  const [dark, setDark] = useState(initialDark);
+  const [dark, setDark] = useState(temaEscuro);
 
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    localStorage.setItem(STORAGE_KEY, dark ? "dark" : "light");
+    aplicarTema(dark);
 
     // A barra de titulo e desenhada pelo Windows, nao pelo WebView: sem avisar
     // a janela, ela fica clara com o app escuro. setTheme liga o modo escuro

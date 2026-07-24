@@ -201,6 +201,13 @@
   html.dark {
     color-scheme: dark;
   }
+  input,
+  textarea,
+  [contenteditable],
+  [data-selecionavel] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
   html,
   body,
   #root {
@@ -208,6 +215,11 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Janela de app, nao pagina web: texto de interface nao se seleciona, como
+       no Explorer. Campos continuam editaveis e o que a pessoa precisa copiar
+       (mensagem de erro) e liberado por data-selecionavel. */
+    -webkit-user-select: none;
+    user-select: none;
     /* janela de app: quem rola e o conteudo, nao o documento */
     overflow: hidden;
   }

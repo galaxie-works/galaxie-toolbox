@@ -226,6 +226,8 @@ async fn long_paths_status() -> Result<bool, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(Arc::new(TokenStore::default()))
         .setup(|app| {
             if cfg!(debug_assertions) {

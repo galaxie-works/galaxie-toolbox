@@ -5,6 +5,7 @@ import { AppsScreen } from "@/screens/apps";
 import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
+import { Atualizacao } from "@/components/atualizacao";
 import { Estrelas } from "@/components/estrelas";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -227,6 +228,7 @@ export default function App() {
        app), entao ninguem rolava. Travando a altura em h-svh, quem passa a
        rolar e o <main> abaixo. */
     <SidebarProvider className="h-svh">
+      <Atualizacao />
       <AppSidebar
         user={user}
         tela={tela}

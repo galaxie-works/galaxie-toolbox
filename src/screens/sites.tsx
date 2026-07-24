@@ -275,7 +275,7 @@ export function SitesScreen({
           {error && (
             <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3.5">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-              <p className="text-[12.5px] leading-relaxed text-destructive">{error}</p>
+              <p data-selecionavel className="text-[12.5px] leading-relaxed text-destructive">{error}</p>
             </div>
           )}
 

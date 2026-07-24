@@ -161,6 +161,17 @@ const pt = {
       "Os aplicativos abrem aqui dentro. Na primeira vez a Microsoft pede o seu login nesta janela; depois a sessão fica guardada.",
   },
 
+  atualizacao: {
+    titulo: "Atualização disponível!",
+    versao: "Versão {v} ({d})",
+    descricao:
+      "Uma nova versão do aplicativo está pronta. Ao atualizar agora, o app reinicia e volta com as últimas correções.",
+    baixando: "Baixando a atualização... {p}%",
+    agora: "Atualizar agora",
+    atualizando: "Atualizando",
+    depois: "Lembrar depois",
+  },
+
   caminhosLongos: {
     titulo: "Caminhos longos",
     descricao:
@@ -319,6 +330,17 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     desenvolvimento: "Developer tools",
     avisoSessao:
       "Apps open right here. The first time, Microsoft asks you to sign in inside this window; after that the session is kept.",
+  },
+
+  atualizacao: {
+    titulo: "Update available!",
+    versao: "Version {v} ({d})",
+    descricao:
+      "A new version of the app is ready. Updating now restarts the app and brings the latest fixes.",
+    baixando: "Downloading the update... {p}%",
+    agora: "Update now",
+    atualizando: "Updating",
+    depois: "Remind me later",
   },
 
   caminhosLongos: {
