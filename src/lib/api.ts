@@ -85,13 +85,14 @@ export async function listSites(): Promise<Site[]> {
 /** Tamanho e contagens de uma biblioteca. Uma chamada por site. */
 export async function siteDetails(
   site: Site
-): Promise<Pick<Site, "bytes" | "folders" | "files">> {
+): Promise<Pick<Site, "bytes" | "folders" | "files" | "libraryUrl">> {
   if (!inTauri()) {
     await sleep(200 + Math.random() * 900);
     return {
       bytes: site.bytes,
       files: site.files,
       folders: site.files ? Math.round(site.files / 12) : undefined,
+      libraryUrl: `https://exemplo.sharepoint.com/sites/${site.key}/Documentos%20Compartilhados`,
     };
   }
   return invoke("site_details", { siteId: site.siteId, webUrl: site.webUrl });

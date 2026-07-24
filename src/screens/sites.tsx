@@ -22,6 +22,12 @@ import { FolderTreeIcon } from "@/components/ui/folder-tree";
 import { FoldersIcon } from "@/components/ui/folders";
 import { HammerIcon } from "@/components/ui/hammer";
 import { SquareActivityIcon } from "@/components/ui/square-activity";
+import {
+  ConfirmarBiblioteca,
+  gravarPularConfirmacao,
+  podePularConfirmacao,
+  type ModoConfirmacao,
+} from "@/components/confirmar-biblioteca";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { formatBytes } from "@/lib/utils";
 import type { Site } from "@/lib/types";
@@ -65,20 +71,19 @@ function Metrica({
 
 function BibliotecaPanel({
   site,
-  onConnect,
+  onAlternar,
   onOpen,
-  onDisconnect,
   onAbrirUrl,
 }: {
   site: Site;
-  onConnect: (s: Site) => void;
+  onAlternar: (s: Site, ligar: boolean) => void;
   onOpen: (s: Site) => void;
-  onDisconnect: (s: Site) => void;
   onAbrirUrl: (url: string) => void;
 }) {
   const conectado = site.status === "connected";
   const ocupado = site.status === "connecting";
   const semAcesso = site.status === "noaccess";
+  const destino = site.libraryUrl ?? site.webUrl;
 
   return (
     <FramePanel className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -118,9 +123,11 @@ function BibliotecaPanel({
               <DropdownMenuItem onClick={() => onOpen(site)}>
                 Abrir no Explorer
               </DropdownMenuItem>
+              {/* libraryUrl leva direto aos arquivos; webUrl e a home do site,
+                  que num site de comunicacao cai na pagina inicial. */}
               <DropdownMenuItem
-                disabled={!site.webUrl}
-                onClick={() => site.webUrl && onAbrirUrl(site.webUrl)}
+                disabled={!destino}
+                onClick={() => destino && onAbrirUrl(destino)}
               >
                 Abrir no SharePoint
               </DropdownMenuItem>
@@ -128,7 +135,10 @@ function BibliotecaPanel({
           </DropdownMenu>
         )}
 
-        <label className="flex cursor-pointer items-center gap-2 text-sm">
+        {/* DIV, nao <label>: o Switch do Radix e um <button>, e o label
+            reenviava o clique para ele — o handler disparava duas vezes
+            (liga/desliga) e nada acontecia. */}
+        <div className="flex items-center gap-2 text-sm">
           {ocupado ? (
             <Loader2 className="size-4 animate-spin text-muted-foreground" />
           ) : semAcesso ? (
@@ -140,11 +150,12 @@ function BibliotecaPanel({
             {semAcesso ? "Sem acesso" : conectado ? "Conectado" : "Desconectado"}
           </span>
           <Switch
+            aria-label={`${conectado ? "Desconectar" : "Conectar"} ${site.name}`}
             checked={conectado}
             disabled={ocupado || semAcesso}
-            onCheckedChange={(on) => (on ? onConnect(site) : onDisconnect(site))}
+            onCheckedChange={(on) => onAlternar(site, on)}
           />
-        </label>
+        </div>
       </div>
     </FramePanel>
   );
@@ -168,6 +179,33 @@ export function SitesScreen({
   onAbrirUrl: (url: string) => void;
 }) {
   const [aba, setAba] = useState("bibliotecas");
+  // Biblioteca aguardando confirmacao, e o que sera feito com ela.
+  const [confirmando, setConfirmando] = useState<Site | null>(null);
+  const [modo, setModo] = useState<ModoConfirmacao>("conectar");
+  const [pular, setPular] = useState(podePularConfirmacao);
+
+  function alternar(site: Site, ligar: boolean) {
+    // Desconectar sempre confirma: e destrutivo do lado da maquina. Conectar
+    // respeita o "nao pedir novamente".
+    if (ligar && pular) {
+      onConnect(site);
+      return;
+    }
+    setModo(ligar ? "conectar" : "desconectar");
+    setConfirmando(site);
+  }
+
+  function confirmar() {
+    const alvo = confirmando;
+    setConfirmando(null);
+    if (!alvo) return;
+    if (modo === "conectar") {
+      gravarPularConfirmacao(pular);
+      onConnect(alvo);
+    } else {
+      onDisconnect(alvo);
+    }
+  }
 
   return (
     <div className="w-full">
@@ -229,9 +267,8 @@ export function SitesScreen({
                 <BibliotecaPanel
                   key={s.key}
                   site={s}
-                  onConnect={onConnect}
+                  onAlternar={alternar}
                   onOpen={onOpen}
-                  onDisconnect={onDisconnect}
                   onAbrirUrl={onAbrirUrl}
                 />
               ))}
@@ -242,6 +279,15 @@ export function SitesScreen({
             As bibliotecas aparecem no seu OneDrive, no Explorer. Só ocupam espaço
             quando você abre um arquivo.
           </p>
+
+          <ConfirmarBiblioteca
+            site={confirmando}
+            modo={modo}
+            pular={pular}
+            onPularChange={setPular}
+            onConfirmar={confirmar}
+            onCancelar={() => setConfirmando(null)}
+          />
         </>
       )}
     </div>

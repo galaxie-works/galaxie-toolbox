@@ -27,6 +27,11 @@ pub struct SiteDto {
 #[derive(serde::Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct SiteDetalhes {
+    /// Endereco da BIBLIOTECA (nao do site). O webUrl que /sites devolve e a
+    /// home do site — num site de comunicacao isso cai na pagina inicial, e nao
+    /// nos arquivos. Este vem do proprio drive, entao aponta exatamente para a
+    /// biblioteca que o atalho conecta.
+    pub library_url: Option<String>,
     /// Tamanho recursivo da biblioteca padrao. Exato (vem do proprio drive).
     pub bytes: Option<u64>,
     /// Pastas e arquivos, recursivos. Vem do indice de busca do SharePoint,
@@ -279,11 +284,12 @@ pub fn site_details(
 
     let mut det = SiteDetalhes::default();
 
-    let url = format!("{GRAPH}/sites/{site_id}/drive/root?$select=size");
+    let url = format!("{GRAPH}/sites/{site_id}/drive/root?$select=size,webUrl");
     if let Ok(resp) = client.get(&url).bearer_auth(&token).send() {
         if resp.status().is_success() {
             if let Ok(v) = resp.json::<serde_json::Value>() {
                 det.bytes = v["size"].as_u64();
+                det.library_url = v["webUrl"].as_str().map(|s| s.to_string());
             }
         }
     }

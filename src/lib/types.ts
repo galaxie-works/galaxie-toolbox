@@ -10,9 +10,10 @@ export interface Site {
   status: SiteStatus;
   description?: string; // descricao do site no SharePoint (costuma vir vazia)
   siteId?: string; // id composto do Graph (hostname,siteGuid,webGuid)
-  webUrl?: string; // url da biblioteca (siteUrl do atalho)
+  webUrl?: string; // home do site (usada para criar o atalho)
   // Preenchidos depois da lista, um site por vez (ver SiteDetalhes no Rust).
   // files/folders sao aproximados: vem do indice de busca do SharePoint.
+  libraryUrl?: string; // endereco da biblioteca em si — e para ca que mandamos
   bytes?: number;
   folders?: number;
   files?: number;
