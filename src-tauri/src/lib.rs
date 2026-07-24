@@ -93,6 +93,19 @@ async fn list_sites(state: State<'_, Store>) -> Result<Vec<graph::SiteDto>, Stri
         .map_err(|e| e.to_string())?
 }
 
+/// Tamanho e contagens de uma biblioteca (chamado por site, depois da lista).
+#[tauri::command]
+async fn site_details(
+    state: State<'_, Store>,
+    site_id: String,
+    web_url: String,
+) -> Result<graph::SiteDetalhes, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::site_details(&store, &site_id, &web_url))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Cria o atalho da biblioteca no OneDrive do usuario (idempotente).
 #[tauri::command]
 async fn connect_site(
@@ -186,6 +199,7 @@ pub fn run() {
             detect_tenant,
             cached_identity,
             list_sites,
+            site_details,
             connect_site,
             disconnect_site,
             open_in_explorer,

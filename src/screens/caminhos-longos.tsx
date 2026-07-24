@@ -31,7 +31,7 @@ export function CaminhosLongosScreen() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <div className="rounded-xl border border-border bg-card p-6">
         <div className="flex items-start justify-between gap-4">
           <div>

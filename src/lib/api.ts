@@ -82,6 +82,21 @@ export async function listSites(): Promise<Site[]> {
   return invoke<Site[]>("list_sites");
 }
 
+/** Tamanho e contagens de uma biblioteca. Uma chamada por site. */
+export async function siteDetails(
+  site: Site
+): Promise<Pick<Site, "bytes" | "folders" | "files">> {
+  if (!inTauri()) {
+    await sleep(200 + Math.random() * 900);
+    return {
+      bytes: site.bytes,
+      files: site.files,
+      folders: site.files ? Math.round(site.files / 12) : undefined,
+    };
+  }
+  return invoke("site_details", { siteId: site.siteId, webUrl: site.webUrl });
+}
+
 export async function connectSite(site: Site): Promise<void> {
   if (!inTauri()) {
     await sleep(1000);

@@ -18,6 +18,22 @@ pub struct SiteDto {
     pub status: String, // "connected" | "available"
     pub site_id: String,
     pub web_url: String,
+    /// Descricao do site, como configurada no SharePoint. Costuma vir vazia.
+    pub description: String,
+}
+
+/// Numeros de uma biblioteca. Buscados depois da lista, um site por vez, para
+/// a tela aparecer na hora.
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteDetalhes {
+    /// Tamanho recursivo da biblioteca padrao. Exato (vem do proprio drive).
+    pub bytes: Option<u64>,
+    /// Pastas e arquivos, recursivos. Vem do indice de busca do SharePoint,
+    /// entao sao APROXIMADOS: o indice leva minutos para refletir um upload
+    /// grande, e o total que a API devolve e estimado.
+    pub folders: Option<u64>,
+    pub files: Option<u64>,
 }
 
 fn now_secs() -> u64 {
@@ -44,6 +60,27 @@ pub fn access_token(store: &TokenStore) -> Result<String, String> {
 /// GUID do site a partir do id composto "hostname,siteGuid,webGuid".
 fn site_guid(site_id: &str) -> Option<&str> {
     site_id.split(',').nth(1)
+}
+
+/// Sites que o proprio M365 cria e que nao sao biblioteca de trabalho: o grupo
+/// de respostas do Viva Engage (vem com um id numerico no fim), o "All Company"
+/// do Viva e o site de equipe padrao do tenant. Sao ruido pro usuario final.
+///
+/// Comparacao por PREFIXO, em minusculas: pega o sufixo numerico do Viva sem
+/// depender do travessao no meio do nome. As variantes em portugues e ingles
+/// estao aqui porque o produto e multi-tenant e o idioma varia por cliente.
+const SITES_OCULTOS: &[&str] = &[
+    "group for answers in viva engage",
+    "all company",
+    "toda a empresa",
+    "toda a organiza", // "Organizacao"/"Organização": corta antes do acento
+    "site da equipe",
+    "team site",
+];
+
+fn site_oculto(name: &str) -> bool {
+    let n = name.trim().to_lowercase();
+    SITES_OCULTOS.iter().any(|p| n.starts_with(p))
 }
 
 /// Ultimo segmento de /sites/<KEY> como chave curta.
@@ -173,6 +210,9 @@ pub fn list_sites(store: &TokenStore) -> Result<Vec<SiteDto>, String> {
                 .or_else(|| it["name"].as_str())
                 .unwrap_or("")
                 .to_string();
+            if site_oculto(&name) {
+                continue;
+            }
             // O Graph nao lista atalhos (ver estado.rs), entao o estado vem do
             // registro local; a consulta ao Graph fica como reforco, caso um
             // dia a API passe a devolver.
@@ -184,12 +224,75 @@ pub fn list_sites(store: &TokenStore) -> Result<Vec<SiteDto>, String> {
                 name,
                 status: if is_connected { "connected".into() } else { "available".into() },
                 site_id,
+                description: it["description"].as_str().unwrap_or("").to_string(),
                 web_url,
             });
         }
     }
     sites.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(sites)
+}
+
+/// Total de itens que o indice de busca do SharePoint conhece para uma consulta
+/// KQL. `None` quando a busca falha (indice frio, throttling, sem permissao) —
+/// nesse caso a interface simplesmente nao mostra o numero, em vez de mentir.
+fn contar_busca(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    kql: &str,
+) -> Option<u64> {
+    let corpo = serde_json::json!({
+        "requests": [{
+            "entityTypes": ["driveItem"],
+            "query": { "queryString": kql },
+            "from": 0,
+            "size": 1,
+            "fields": ["name"]
+        }]
+    });
+    let resp = client
+        .post(format!("{GRAPH}/search/query"))
+        .bearer_auth(token)
+        .json(&corpo)
+        .send()
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().ok()?;
+    v["value"][0]["hitsContainers"][0]["total"].as_u64()
+}
+
+/// Tamanho e contagens de uma biblioteca.
+///
+/// O tamanho sai do proprio drive (exato e barato). Pastas e arquivos nao tem
+/// endpoint de contagem no Graph: a unica alternativa seria enumerar item a
+/// item (centenas de requisicoes por site), entao vem da busca — aproximadas,
+/// como documentado em SiteDetalhes.
+pub fn site_details(
+    store: &TokenStore,
+    site_id: &str,
+    web_url: &str,
+) -> Result<SiteDetalhes, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let mut det = SiteDetalhes::default();
+
+    let url = format!("{GRAPH}/sites/{site_id}/drive/root?$select=size");
+    if let Ok(resp) = client.get(&url).bearer_auth(&token).send() {
+        if resp.status().is_success() {
+            if let Ok(v) = resp.json::<serde_json::Value>() {
+                det.bytes = v["size"].as_u64();
+            }
+        }
+    }
+
+    // As aspas do path fazem parte do KQL; sem elas a URL quebra a consulta.
+    det.files = contar_busca(&client, &token, &format!("path:\"{web_url}\" AND IsDocument:true"));
+    det.folders = contar_busca(&client, &token, &format!("path:\"{web_url}\" AND IsContainer:true"));
+
+    Ok(det)
 }
 
 /// Cria o atalho no OneDrive do usuario apontando pra biblioteca padrao do

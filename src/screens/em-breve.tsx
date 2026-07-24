@@ -13,7 +13,7 @@ export function EmBreveScreen({
   itens?: string[];
 }) {
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="max-w-3xl">
       <div className="rounded-xl border border-dashed border-border bg-card/40 p-10 text-center">
         <div className="mx-auto grid size-12 place-items-center rounded-lg bg-muted text-muted-foreground">
           <Icone className="size-6" />

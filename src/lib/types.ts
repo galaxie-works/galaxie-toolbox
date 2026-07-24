@@ -8,10 +8,14 @@ export interface Site {
   key: string; // codigo curto do site (PROJ, ADM...)
   name: string; // nome de exibicao / nome do atalho (limpo, curto)
   status: SiteStatus;
-  files?: number;
-  bytes?: number;
+  description?: string; // descricao do site no SharePoint (costuma vir vazia)
   siteId?: string; // id composto do Graph (hostname,siteGuid,webGuid)
   webUrl?: string; // url da biblioteca (siteUrl do atalho)
+  // Preenchidos depois da lista, um site por vez (ver SiteDetalhes no Rust).
+  // files/folders sao aproximados: vem do indice de busca do SharePoint.
+  bytes?: number;
+  folders?: number;
+  files?: number;
 }
 
 export interface AppUser {

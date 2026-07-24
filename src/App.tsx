@@ -46,7 +46,10 @@ export default function App() {
         if (u) {
           setUser(u);
           setLoadingSites(true);
-          setSites(await api.listSites());
+          const lista = await api.listSites();
+          if (!vivo) return;
+          setSites(lista);
+          carregarDetalhes(lista);
         }
       } catch {
         // sessao invalida: cai no login normal
@@ -69,7 +72,9 @@ export default function App() {
       const u = await api.login(email);
       setUser(u);
       setLoadingSites(true);
-      setSites(await api.listSites());
+      const lista = await api.listSites();
+      setSites(lista);
+      carregarDetalhes(lista);
     } catch (e) {
       setError(String(e));
       setUser(null);
@@ -77,6 +82,30 @@ export default function App() {
       setLoginLoading(false);
       setLoadingSites(false);
     }
+  }
+
+  /**
+   * Numeros das bibliotecas, buscados depois que a lista ja apareceu.
+   * Fila com pouca concorrencia de proposito: sao 3 requisicoes por site e o
+   * Graph devolve 429 se dispararmos todos os sites de uma vez.
+   */
+  async function carregarDetalhes(lista: Site[]) {
+    const fila = lista.filter((s) => s.status !== "noaccess");
+    let i = 0;
+    const worker = async () => {
+      while (i < fila.length) {
+        const alvo = fila[i++];
+        try {
+          const det = await api.siteDetails(alvo);
+          setSites((prev) =>
+            prev.map((s) => (s.key === alvo.key ? { ...s, ...det } : s))
+          );
+        } catch {
+          // sem numeros: os badges daquele site simplesmente nao aparecem
+        }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
   }
 
   function patch(key: string, status: Site["status"]) {
@@ -94,12 +123,6 @@ export default function App() {
       setError(String(e));
       patch(target.key, "available");
     }
-  }
-
-  function connectAll() {
-    sites
-      .filter((s) => s.status === "available")
-      .forEach((s, i) => setTimeout(() => connect(s), i * 250));
   }
 
   async function disconnect(target: Site) {
@@ -178,7 +201,11 @@ export default function App() {
   const info = TELAS[tela];
 
   return (
-    <SidebarProvider>
+    /* O wrapper do sidebar e min-h-svh: cresce com o conteudo. Numa pagina web
+       quem rola e o documento, mas aqui o body e overflow:hidden (janela de
+       app), entao ninguem rolava. Travando a altura em h-svh, quem passa a
+       rolar e o <main> abaixo. */
+    <SidebarProvider className="h-svh">
       <AppSidebar
         user={user}
         tela={tela}
@@ -212,7 +239,9 @@ export default function App() {
           </div>
         </header>
 
-        <main className="relative z-10 flex flex-1 flex-col overflow-y-auto p-4 pt-0">
+        {/* min-h-0: sem isso o flex-1 nao encolhe abaixo do conteudo e o
+            overflow-y-auto nunca chega a valer. */}
+        <main className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto p-4 pt-0">
           {tela === "onedrive" && (
             <SitesScreen
               sites={sites}
@@ -221,7 +250,7 @@ export default function App() {
               onConnect={connect}
               onOpen={openSite}
               onDisconnect={disconnect}
-              onConnectAll={connectAll}
+              onAbrirUrl={abrirUrl}
             />
           )}
           {tela === "outlook" && (

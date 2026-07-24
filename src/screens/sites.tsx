@@ -1,129 +1,152 @@
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { cn, formatBytes } from "@/lib/utils";
-import type { Site } from "@/lib/types";
+import AnimatedTabs from "@/components/smoothui/animated-tabs";
+import { Badge } from "@/components/reui/badge";
 import {
-  AlertTriangle,
-  Check,
-  Folder,
-  FolderCheck,
-  Loader2,
-  Lock,
-  Plug,
-  Sparkles,
-  Unplug,
-} from "lucide-react";
+  Frame,
+  FrameDescription,
+  FrameHeader,
+  FramePanel,
+  FrameTitle,
+} from "@/components/reui/frame";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/animate-ui/components/radix/dropdown-menu";
+import { Switch } from "@/components/animate-ui/components/radix/switch";
+import { ConnectIcon } from "@/components/ui/connect";
+import { FileStackIcon } from "@/components/ui/file-stack";
+import { FolderOpenIcon } from "@/components/ui/folder-open";
+import { FolderTreeIcon } from "@/components/ui/folder-tree";
+import { FoldersIcon } from "@/components/ui/folders";
+import { HammerIcon } from "@/components/ui/hammer";
+import { SquareActivityIcon } from "@/components/ui/square-activity";
+import { EmBreveScreen } from "@/screens/em-breve";
+import { formatBytes } from "@/lib/utils";
+import type { Site } from "@/lib/types";
+import { AlertTriangle, Hammer, Loader2, Lock } from "lucide-react";
+import { useState } from "react";
 
-function StatusBadge({ status }: { status: Site["status"] }) {
-  if (status === "connected")
-    return (
-      <Badge variant="success">
-        <Check className="size-3" /> Conectado
-      </Badge>
-    );
-  if (status === "connecting")
-    return (
-      <Badge variant="warning">
-        <Loader2 className="size-3 animate-spin" /> Conectando
-      </Badge>
-    );
-  if (status === "noaccess")
-    return (
-      <Badge variant="muted">
-        <Lock className="size-3" /> Sem acesso
-      </Badge>
-    );
-  return <Badge variant="outline">Disponível</Badge>;
+/* size padrao dos icones animados e 28, alto demais pra linha da aba */
+const ABAS = [
+  {
+    id: "bibliotecas",
+    label: "Bibliotecas",
+    icon: <FolderTreeIcon size={17} />,
+  },
+  {
+    id: "problemas",
+    label: "Solução de problemas",
+    icon: <HammerIcon size={17} />,
+  },
+];
+
+const fmt = (n: number) => n.toLocaleString("pt-BR");
+
+/** Chip de metrica. Some quando o numero ainda nao chegou (ou falhou). */
+function Metrica({
+  icone,
+  valor,
+  titulo,
+}: {
+  icone: React.ReactNode;
+  valor?: string;
+  titulo: string;
+}) {
+  if (!valor) return null;
+  return (
+    <Badge variant="secondary" size="lg" title={titulo}>
+      {icone}
+      {valor}
+    </Badge>
+  );
 }
 
-function SiteCard({
+function BibliotecaPanel({
   site,
   onConnect,
   onOpen,
   onDisconnect,
+  onAbrirUrl,
 }: {
   site: Site;
   onConnect: (s: Site) => void;
   onOpen: (s: Site) => void;
   onDisconnect: (s: Site) => void;
+  onAbrirUrl: (url: string) => void;
 }) {
-  const connected = site.status === "connected";
-  const disabled = site.status === "noaccess";
+  const conectado = site.status === "connected";
+  const ocupado = site.status === "connecting";
+  const semAcesso = site.status === "noaccess";
+
   return (
-    <div
-      className={cn(
-        "group relative flex flex-col gap-4 rounded-xl border border-border bg-card p-4 transition-all",
-        !disabled && "hover:border-primary/40 hover:shadow-md hover:shadow-primary/5",
-        disabled && "opacity-55"
-      )}
-    >
-      <div className="flex items-start justify-between">
-        <div
-          className={cn(
-            "grid size-11 place-items-center rounded-lg transition-colors",
-            connected
-              ? "bg-[color:var(--success)]/12 text-[color:var(--success)]"
-              : "bg-primary/10 text-primary"
-          )}
-        >
-          {connected ? (
-            <FolderCheck className="size-5" />
-          ) : (
-            <Folder className="size-5" />
-          )}
-        </div>
-        <StatusBadge status={site.status} />
-      </div>
-
-      <div className="min-w-0">
-        <div className="truncate text-[15px] font-semibold">{site.name}</div>
-        <div className="mt-0.5 text-xs text-muted-foreground">
-          {site.files != null && site.bytes != null
-            ? `${site.files.toLocaleString("pt-BR")} arquivos · ${formatBytes(site.bytes)}`
-            : "Biblioteca do SharePoint"}
+    <FramePanel className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 space-y-2">
+        <h2 className="text-sm font-semibold">{site.name}</h2>
+        <p className="text-muted-foreground text-sm">
+          {site.description || "Biblioteca de documentos do SharePoint."}
+        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Metrica
+            icone={<SquareActivityIcon size={13} />}
+            valor={site.bytes != null ? formatBytes(site.bytes) : undefined}
+            titulo="Tamanho da biblioteca"
+          />
+          <Metrica
+            icone={<FoldersIcon size={13} />}
+            valor={site.folders != null ? `${fmt(site.folders)} pastas` : undefined}
+            titulo="Pastas (aproximado, vem da busca do SharePoint)"
+          />
+          <Metrica
+            icone={<FileStackIcon size={13} />}
+            valor={site.files != null ? `${fmt(site.files)} arquivos` : undefined}
+            titulo="Arquivos (aproximado, vem da busca do SharePoint)"
+          />
         </div>
       </div>
 
-      <div className="flex gap-2">
-        <Button
-          variant={connected ? "outline" : "default"}
-          size="sm"
-          className="w-full"
-          disabled={disabled || site.status === "connecting"}
-          onClick={() => (connected ? onOpen(site) : onConnect(site))}
-        >
-          {connected ? (
-            <>
-              <FolderCheck className="size-4" /> Abrir no Explorer
-            </>
-          ) : site.status === "connecting" ? (
-            <>
-              <Loader2 className="size-4 animate-spin" /> Aguarde...
-            </>
-          ) : disabled ? (
-            <>
-              <Lock className="size-4" /> Sem acesso
-            </>
-          ) : (
-            <>
-              <Plug className="size-4" /> Conectar
-            </>
-          )}
-        </Button>
-        {connected && (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="shrink-0 text-muted-foreground hover:text-foreground"
-            title="Desconectar (remove o atalho do seu OneDrive)"
-            aria-label="Desconectar"
-            onClick={() => onDisconnect(site)}
-          >
-            <Unplug className="size-4" />
-          </Button>
+      <div className="flex shrink-0 items-center gap-3">
+        {conectado && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" aria-label="Abrir biblioteca">
+                <FolderOpenIcon size={16} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => onOpen(site)}>
+                Abrir no Explorer
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={!site.webUrl}
+                onClick={() => site.webUrl && onAbrirUrl(site.webUrl)}
+              >
+                Abrir no SharePoint
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
+
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          {ocupado ? (
+            <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          ) : semAcesso ? (
+            <Lock className="size-4 text-muted-foreground" />
+          ) : (
+            <ConnectIcon size={16} />
+          )}
+          <span className="text-muted-foreground w-27 shrink-0">
+            {semAcesso ? "Sem acesso" : conectado ? "Conectado" : "Desconectado"}
+          </span>
+          <Switch
+            checked={conectado}
+            disabled={ocupado || semAcesso}
+            onCheckedChange={(on) => (on ? onConnect(site) : onDisconnect(site))}
+          />
+        </label>
       </div>
-    </div>
+    </FramePanel>
   );
 }
 
@@ -134,7 +157,7 @@ export function SitesScreen({
   onConnect,
   onOpen,
   onDisconnect,
-  onConnectAll,
+  onAbrirUrl,
 }: {
   sites: Site[];
   loading?: boolean;
@@ -142,34 +165,40 @@ export function SitesScreen({
   onConnect: (s: Site) => void;
   onOpen: (s: Site) => void;
   onDisconnect: (s: Site) => void;
-  onConnectAll: () => void;
+  onAbrirUrl: (url: string) => void;
 }) {
-  const accessible = sites.filter((s) => s.status !== "noaccess");
-  const connected = sites.filter((s) => s.status === "connected").length;
-  const pending = accessible.filter((s) => s.status === "available").length;
+  const [aba, setAba] = useState("bibliotecas");
 
   return (
-    <div className="mx-auto max-w-5xl">
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <h2 className="text-xl font-semibold tracking-tight">
-                Suas bibliotecas
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {connected} conectada{connected === 1 ? "" : "s"} · {pending}{" "}
-                disponíve{pending === 1 ? "l" : "is"} para conectar
-              </p>
-            </div>
-            {pending > 0 && (
-              <Button onClick={onConnectAll} className="gap-2">
-                <Sparkles className="size-4" />
-                Conectar todas ({pending})
-              </Button>
-            )}
-          </div>
+    <div className="w-full">
+      {/* Icone em cima do rotulo e rotulo em uma linha so. Feito pelo
+          className que o componente expoe, para nao mexer no arquivo do
+          registry (assim uma reinstalacao nao derruba o ajuste). */}
+      <AnimatedTabs
+        activeTab={aba}
+        className="mb-6 [&>button]:flex-col [&>button]:gap-1.5 [&>button]:whitespace-nowrap"
+        layoutId="onedrive-abas"
+        onChange={setAba}
+        tabs={ABAS}
+        variant="segment"
+      />
 
+      {aba === "problemas" ? (
+        <EmBreveScreen
+          titulo="Solução de problemas"
+          icone={Hammer}
+          descricao="Correções para os perrengues clássicos do OneDrive, sem precisar abrir chamado."
+          itens={[
+            "Reiniciar o OneDrive",
+            "Destravar a sincronização",
+            "Reconectar a conta do Microsoft 365",
+            "Liberar espaço com arquivos sob demanda",
+          ]}
+        />
+      ) : (
+        <>
           {error && (
-            <div className="mt-4 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3.5">
+            <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3.5">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
               <p className="text-[12.5px] leading-relaxed text-destructive">{error}</p>
             </div>
@@ -185,17 +214,36 @@ export function SitesScreen({
               Nenhuma biblioteca disponível para a sua conta.
             </div>
           ) : (
-            <div className="mt-6 grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+            <Frame className="w-full">
+              <FrameHeader>
+                <FrameTitle>Biblioteca de documentos</FrameTitle>
+                <FrameDescription>
+                  As bibliotecas de documentos organizam todo o inventário da
+                  empresa em sites do SharePoint. Use esta seção para habilitar a
+                  sincronização do seu OneDrive com as bibliotecas que você tem
+                  acesso.
+                </FrameDescription>
+              </FrameHeader>
+
               {sites.map((s) => (
-                <SiteCard key={s.key} site={s} onConnect={onConnect} onOpen={onOpen} onDisconnect={onDisconnect} />
+                <BibliotecaPanel
+                  key={s.key}
+                  site={s}
+                  onConnect={onConnect}
+                  onOpen={onOpen}
+                  onDisconnect={onDisconnect}
+                  onAbrirUrl={onAbrirUrl}
+                />
               ))}
-            </div>
+            </Frame>
           )}
 
-          <p className="mt-6 text-center text-[11.5px] text-muted-foreground/70">
+          <p className="mt-6 text-[11.5px] text-muted-foreground/70">
             As bibliotecas aparecem no seu OneDrive, no Explorer. Só ocupam espaço
             quando você abre um arquivo.
           </p>
+        </>
+      )}
     </div>
   );
 }
