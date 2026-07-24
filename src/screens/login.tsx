@@ -1,0 +1,112 @@
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { GalaxieMark } from "@/components/brand";
+import { ShieldCheck, Loader2, AlertTriangle } from "lucide-react";
+
+/** Logo colorido da Microsoft para o botao de entrar. */
+function MsLogo() {
+  return (
+    <svg viewBox="0 0 21 21" className="size-4" aria-hidden>
+      <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+      <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+    </svg>
+  );
+}
+
+const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function LoginScreen({
+  onLogin,
+  loading,
+  error,
+}: {
+  onLogin: (email: string) => void;
+  loading: boolean;
+  error?: string | null;
+}) {
+  const [email, setEmail] = useState("");
+  const valido = EMAIL_RX.test(email.trim());
+
+  function enviar(e: React.FormEvent) {
+    e.preventDefault();
+    if (valido && !loading) onLogin(email.trim());
+  }
+
+  return (
+    <div className="relative grid h-full place-items-center overflow-hidden px-6">
+      {/* brilho de fundo sutil */}
+      <div className="pointer-events-none absolute -top-40 left-1/2 h-[520px] w-[720px] -translate-x-1/2 rounded-full bg-foreground/[0.04] blur-[120px]" />
+      <div className="pointer-events-none absolute bottom-[-160px] right-[-80px] h-[380px] w-[380px] rounded-full bg-foreground/[0.03] blur-[120px]" />
+
+      <div className="relative w-full max-w-[400px] animate-[fade-in_0.4s_ease]">
+        <div className="flex flex-col items-center text-center">
+          <GalaxieMark className="mb-4 h-11" />
+          <h1 className="text-2xl font-semibold tracking-tight">Toolbox</h1>
+          <p className="mt-2 text-[15px] text-muted-foreground">
+            Seus arquivos e ferramentas da empresa, num lugar só.
+          </p>
+        </div>
+
+        <form onSubmit={enviar} className="mt-9">
+          <label htmlFor="email" className="mb-1.5 block text-[13px] font-medium">
+            E-mail corporativo
+          </label>
+          <Input
+            id="email"
+            type="email"
+            autoFocus
+            autoComplete="username"
+            spellCheck={false}
+            placeholder="voce@suaempresa.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={loading}
+          />
+          <p className="mt-1.5 text-[11.5px] text-muted-foreground">
+            Usamos o domínio do seu e-mail para identificar a sua organização.
+          </p>
+
+          <Button
+            type="submit"
+            size="lg"
+            className="mt-4 w-full gap-3 text-[15px]"
+            disabled={!valido || loading}
+          >
+            {loading ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Abrindo o login da Microsoft...
+              </>
+            ) : (
+              <>
+                <MsLogo />
+                Entrar com Microsoft
+              </>
+            )}
+          </Button>
+
+          <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 p-3.5">
+            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[color:var(--success)]" />
+            <p className="text-left text-[12.5px] leading-relaxed text-muted-foreground">
+              Você entra na página oficial da Microsoft. O app{" "}
+              <span className="font-medium text-foreground">nunca vê sua senha</span> —
+              recebe apenas uma autorização.
+            </p>
+          </div>
+
+          {error && (
+            <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3.5">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+              <p className="text-left text-[12.5px] leading-relaxed text-destructive">
+                {error}
+              </p>
+            </div>
+          )}
+        </form>
+      </div>
+    </div>
+  );
+}

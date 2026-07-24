@@ -1,0 +1,38 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "GALAXIE Toolbox"
+authors = ["Galaxie Works"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3", features = [] }
+tauri-plugin-log = "2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+tiny_http = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+urlencoding = "2"
+open = "5"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+# DPAPI para cifrar a sessao em disco (o Cofre de Credenciais tem limite de
+# 2560 bytes por blob e o refresh token da Microsoft nao cabe).
+winapi = { version = "0.3", features = ["dpapi", "wincrypt", "minwindef", "winbase"] }
