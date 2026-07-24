@@ -6,6 +6,7 @@ import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Atualizacao } from "@/components/atualizacao";
+import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
 import { Estrelas } from "@/components/estrelas";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -188,6 +189,8 @@ export default function App() {
   if (restoring) {
     return (
       <div className="relative grid h-full place-items-center overflow-hidden">
+        <FaixaArrasto />
+        <BarraJanela />
         <Estrelas />
         <div className="relative flex flex-col items-center gap-4">
           <Avatar className="logo-in size-18 ring-2 ring-border">
@@ -229,6 +232,7 @@ export default function App() {
        rolar e o <main> abaixo. */
     <SidebarProvider className="h-svh">
       <Atualizacao />
+      <BarraJanela />
       <AppSidebar
         user={user}
         tela={tela}
@@ -239,8 +243,13 @@ export default function App() {
       <SidebarInset className="relative overflow-hidden">
         <Estrelas className="pointer-events-none" />
 
-        <header className="relative z-10 flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
-          <div className="flex flex-1 items-center gap-2 px-4">
+        <header
+          data-tauri-drag-region
+          className="relative z-10 flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12"
+        >
+          {/* pr-[150px]: os tres controles de janela ocupam o canto superior
+              direito e o tema ficaria embaixo deles. */}
+          <div data-tauri-drag-region className="flex flex-1 items-center gap-2 px-4 pr-[150px]">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-2 h-4" />
             <Breadcrumb>

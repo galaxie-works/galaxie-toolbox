@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "GALAXIE Toolbox",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "identifier": "works.galaxie.toolbox",
   "build": {
     "frontendDist": "../dist",
@@ -16,7 +16,9 @@
         "width": 800,
         "height": 600,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "decorations": false,
+        "shadow": true
       }
     ],
     "security": {
