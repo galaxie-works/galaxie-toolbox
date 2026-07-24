@@ -1,6 +1,12 @@
-import { Cloud, Mail, MonitorCog, Gauge, FolderTree, Settings } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { MonitorCog, Gauge, FolderTree, Settings } from "lucide-react";
+import type { ComponentType } from "react";
+import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
+import { OneDriveIcon } from "@/components/ui/icons/marca/onedrive";
+import { OutlookIcon } from "@/components/ui/icons/marca/outlook";
 import type { Dicionario } from "@/lib/strings";
+
+/** Aceita icone do lucide e os SVGs de marca — os dois so precisam de className. */
+export type IconeNav = ComponentType<{ className?: string }>;
 
 /** Telas do canvas. Cada uma sabe onde fica no menu (para o breadcrumb). */
 export type Tela =
@@ -16,11 +22,12 @@ type ChaveNav = keyof Dicionario["nav"];
 export interface ItemFilho {
   id: Tela;
   titulo: ChaveNav;
+  icone?: IconeNav;
 }
 
 export interface ItemNav {
   titulo: ChaveNav;
-  icone: LucideIcon;
+  icone: IconeNav;
   filhos: ItemFilho[];
 }
 
@@ -34,11 +41,11 @@ export const NAV: GrupoNav[] = [
     titulo: "plataforma",
     itens: [
       {
-        titulo: "microsoft365",
-        icone: Cloud,
+        titulo: "copilot",
+        icone: CopilotIcon,
         filhos: [
-          { id: "outlook", titulo: "outlook" },
-          { id: "onedrive", titulo: "onedrive" },
+          { id: "outlook", titulo: "outlook", icone: OutlookIcon },
+          { id: "onedrive", titulo: "onedrive", icone: OneDriveIcon },
         ],
       },
       {
@@ -56,10 +63,10 @@ export const NAV: GrupoNav[] = [
 /** Ícone e trilha de cada tela, usados no cabeçalho do canvas. */
 export const TELAS: Record<
   Tela,
-  { titulo: ChaveNav; secao: ChaveNav; icone: LucideIcon }
+  { titulo: ChaveNav; secao: ChaveNav; icone: IconeNav }
 > = {
-  outlook: { titulo: "outlook", secao: "microsoft365", icone: Mail },
-  onedrive: { titulo: "onedrive", secao: "microsoft365", icone: Cloud },
+  outlook: { titulo: "outlook", secao: "copilot", icone: OutlookIcon },
+  onedrive: { titulo: "onedrive", secao: "copilot", icone: OneDriveIcon },
   performance: { titulo: "performance", secao: "windows", icone: Gauge },
   "caminhos-longos": { titulo: "caminhosLongos", secao: "windows", icone: FolderTree },
   configuracoes: { titulo: "configuracoes", secao: "conta", icone: Settings },

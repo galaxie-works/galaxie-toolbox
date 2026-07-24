@@ -1,4 +1,4 @@
-import type { LucideIcon } from "lucide-react";
+import type { IconeNav } from "@/lib/navegacao";
 
 /** Placeholder das telas que ainda vao ser construidas. */
 export function EmBreveScreen({
@@ -8,7 +8,7 @@ export function EmBreveScreen({
   itens,
 }: {
   titulo: string;
-  icone: LucideIcon;
+  icone: IconeNav;
   descricao: string;
   itens?: string[];
 }) {

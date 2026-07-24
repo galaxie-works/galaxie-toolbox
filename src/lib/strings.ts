@@ -42,6 +42,9 @@ const pt = {
     organizacao: "Organização",
     plataforma: "Plataforma",
     microsoft365: "Microsoft 365",
+    // Grupo da sidebar. Separado do "Microsoft 365" acima, que e a legenda da
+    // organizacao no topo e continua sendo o nome da plataforma.
+    copilot: "M365 Copilot",
     windows: "Windows",
     outlook: "Outlook",
     onedrive: "OneDrive",
@@ -183,6 +186,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     organizacao: "Organization",
     plataforma: "Platform",
     microsoft365: "Microsoft 365",
+    copilot: "M365 Copilot",
     windows: "Windows",
     outlook: "Outlook",
     onedrive: "OneDrive",

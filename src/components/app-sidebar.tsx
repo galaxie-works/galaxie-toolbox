@@ -113,6 +113,7 @@ export function AppSidebar({
                                   onNavegar(filho.id);
                                 }}
                               >
+                                {filho.icone && <filho.icone />}
                                 <span>{t.nav[filho.titulo]}</span>
                               </a>
                             </SidebarMenuSubButton>
