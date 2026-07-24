@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GalaxieMark } from "@/components/brand";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { ShieldCheck, Loader2, AlertTriangle } from "lucide-react";
 
 /** Logo colorido da Microsoft para o botao de entrar. */
@@ -43,11 +44,20 @@ export function LoginScreen({
 
       <div className="relative w-full max-w-[400px] animate-[fade-in_0.4s_ease]">
         <div className="flex flex-col items-center text-center">
-          <GalaxieMark className="mb-4 h-11" />
-          <h1 className="text-2xl font-semibold tracking-tight">Toolbox</h1>
-          <p className="mt-2 text-[15px] text-muted-foreground">
-            Seus arquivos e ferramentas da empresa, num lugar só.
-          </p>
+          <GalaxieMark className="logo-in mb-4 h-11" />
+          <SoftBlurIn
+            className="text-3xl font-semibold tracking-tight"
+            delay={260}
+          >
+            Toolbox
+          </SoftBlurIn>
+          <SoftBlurIn
+            className="mt-2 text-[15px] text-muted-foreground"
+            delay={620}
+            stagger={14}
+          >
+            Entre para desbloquear um universo de possibilidades.
+          </SoftBlurIn>
         </div>
 
         <form onSubmit={enviar} className="mt-9">

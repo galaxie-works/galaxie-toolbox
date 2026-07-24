@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { LoginScreen } from "@/screens/login";
 import { SitesScreen } from "@/screens/sites";
 import { Avatar } from "@/components/ui/avatar";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
 
@@ -118,15 +119,21 @@ export default function App() {
             photo={cache?.photo}
             initials={cache?.initials ?? "·"}
             size={72}
-            className="ring-2 ring-border"
+            className="logo-in ring-2 ring-border"
           />
           <div className="text-center">
             {cache?.displayName && (
-              <p className="text-[15px] font-medium">{cache.displayName}</p>
+              <SoftBlurIn className="text-[17px] font-medium" delay={220}>
+                {cache.displayName}
+              </SoftBlurIn>
             )}
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Retomando sua sessão...
-            </p>
+            <SoftBlurIn
+              className="mt-1 block text-sm text-muted-foreground"
+              delay={cache?.displayName ? 520 : 220}
+              stagger={16}
+            >
+              Preparando o seu universo...
+            </SoftBlurIn>
           </div>
         </div>
       </div>
