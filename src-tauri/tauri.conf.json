@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "GALAXIE Toolbox",
   "version": "0.9.1",
@@ -43,7 +43,7 @@
       "endpoints": [
         "https://github.com/galaxie-works/galaxie-toolbox-releases/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzMTYzOEJCNTkxQUQzRTAKUldUZzB4cFp1emdXOHdNaThTaUVzWUErbE9HQ2JNVjlSaWg4RlJNQkFPbVVJc0V6Q3psK0NLaisK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNBNDZDMkZEQzQ5MjcwQzkKUldUSmNKTEUvY0pHT2hobXY5SS92U1Zyd05BSjgyZjV2MURqNHV3dC8yVmF1M1JrSURGZGUxQ1YK",
       "windows": {
         "installMode": "passive"
       }
