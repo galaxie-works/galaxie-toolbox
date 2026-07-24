@@ -22,11 +22,15 @@ async fn detect_tenant(email: String) -> Result<auth::TenantInfo, String> {
 /// Login interativo: detecta o tenant pelo e-mail e abre a pagina oficial da
 /// Microsoft (com o e-mail ja preenchido).
 #[tauri::command]
-async fn login(state: State<'_, Store>, email: String) -> Result<Account, String> {
+async fn login(
+    state: State<'_, Store>,
+    email: String,
+    idioma: String,
+) -> Result<Account, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let info = auth::detectar_tenant(&email)?;
-        let tokens = auth::interactive_login(&info.tenant_id, &email)?;
+        let tokens = auth::interactive_login(&info.tenant_id, &email, &idioma)?;
         let account = tokens.account.clone();
         *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = Some(tokens);
         Ok::<Account, String>(account)

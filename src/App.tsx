@@ -25,8 +25,10 @@ import {
 import { TELAS, type Tela } from "@/lib/navegacao";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
+import { useIdioma } from "@/lib/idioma";
 
 export default function App() {
+  const { idioma, t } = useIdioma();
   const [user, setUser] = useState<AppUser | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -69,7 +71,7 @@ export default function App() {
     setLoginLoading(true);
     setError(null);
     try {
-      const u = await api.login(email);
+      const u = await api.login(email, idioma);
       setUser(u);
       setLoadingSites(true);
       const lista = await api.listSites();
@@ -193,7 +195,7 @@ export default function App() {
               delay={cache?.displayName ? 520 : 220}
               stagger={16}
             >
-              Preparando o seu universo...
+              {t.carregando.preparando}
             </SoftBlurIn>
           </div>
         </div>
@@ -232,12 +234,12 @@ export default function App() {
               <BreadcrumbList>
                 <BreadcrumbItem className="hidden md:block">
                   <BreadcrumbLink asChild>
-                    <span>{info.secao}</span>
+                    <span>{t.nav[info.secao]}</span>
                   </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>{info.titulo}</BreadcrumbPage>
+                  <BreadcrumbPage>{t.nav[info.titulo]}</BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
@@ -263,34 +265,34 @@ export default function App() {
           )}
           {tela === "outlook" && (
             <EmBreveScreen
-              titulo="Outlook"
+              titulo={t.nav.outlook}
               icone={TELAS.outlook.icone}
-              descricao="Ferramentas de diagnóstico do e-mail vão aparecer aqui."
+              descricao={t.emBreveOutlook.descricao}
               itens={[
-                "Verificar regras e encaminhamentos",
-                "Tamanho da caixa e limpeza",
-                "Reparar perfil do Outlook",
+                t.emBreveOutlook.item1,
+                t.emBreveOutlook.item2,
+                t.emBreveOutlook.item3,
               ]}
             />
           )}
           {tela === "performance" && (
             <EmBreveScreen
-              titulo="Performance"
+              titulo={t.nav.performance}
               icone={TELAS.performance.icone}
-              descricao="Diagnóstico e ajustes de desempenho da máquina."
+              descricao={t.emBrevePerformance.descricao}
               itens={[
-                "Espaço em disco e arquivos temporários",
-                "Programas que iniciam com o Windows",
-                "Estado da sincronização do OneDrive",
+                t.emBrevePerformance.item1,
+                t.emBrevePerformance.item2,
+                t.emBrevePerformance.item3,
               ]}
             />
           )}
           {tela === "caminhos-longos" && <CaminhosLongosScreen />}
           {tela === "configuracoes" && (
             <EmBreveScreen
-              titulo="Configurações"
+              titulo={t.nav.configuracoes}
               icone={TELAS.configuracoes.icone}
-              descricao="Preferências do aplicativo e da sua conta."
+              descricao={t.emBreveConfig.descricao}
             />
           )}
         </main>

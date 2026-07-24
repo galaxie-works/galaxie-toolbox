@@ -32,25 +32,17 @@ import {
 } from "@/components/confirmar-biblioteca";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { formatBytes } from "@/lib/utils";
+import { preencher, useIdioma } from "@/lib/idioma";
+import type { Dicionario } from "@/lib/strings";
 import type { Site } from "@/lib/types";
 import { AlertTriangle, Hammer, Info, Loader2, Lock } from "lucide-react";
 import { useState } from "react";
 
 /* size padrao dos icones animados e 28, alto demais pra linha da aba */
-const ABAS = [
-  {
-    id: "bibliotecas",
-    label: "Bibliotecas",
-    icon: <FolderTreeIcon size={17} />,
-  },
-  {
-    id: "problemas",
-    label: "Solução de problemas",
-    icon: <HammerIcon size={17} />,
-  },
+const abas = (t: Dicionario) => [
+  { id: "bibliotecas", label: t.abas.bibliotecas, icon: <FolderTreeIcon size={17} /> },
+  { id: "problemas", label: t.abas.problemas, icon: <HammerIcon size={17} /> },
 ];
-
-const fmt = (n: number) => n.toLocaleString("pt-BR");
 
 /**
  * Chip de metrica. Enquanto o Graph responde, mostra um spinner no lugar do
@@ -60,17 +52,19 @@ function Metrica({
   icone,
   valor,
   titulo,
+  consultando,
   carregando,
 }: {
   icone: React.ReactNode;
   valor?: string;
   titulo: string;
+  consultando: string;
   carregando?: boolean;
 }) {
   if (!valor) {
     if (!carregando) return null;
     return (
-      <Badge variant="secondary" size="lg" title={`${titulo} — consultando`}>
+      <Badge variant="secondary" size="lg" title={consultando}>
         <Spinner data-icon="inline-start" />
         {icone}
       </Badge>
@@ -95,36 +89,54 @@ function BibliotecaPanel({
   onOpen: (s: Site) => void;
   onAbrirUrl: (url: string) => void;
 }) {
+  const { idioma, t } = useIdioma();
+  const fmt = (n: number) => n.toLocaleString(idioma);
   const conectado = site.status === "connected";
   const ocupado = site.status === "connecting";
   const semAcesso = site.status === "noaccess";
   const destino = site.libraryUrl ?? site.webUrl;
   const carregandoDetalhes = site.detalhes === "carregando";
+  const estado = semAcesso
+    ? t.bibliotecas.semAcesso
+    : conectado
+      ? t.bibliotecas.conectado
+      : t.bibliotecas.desconectado;
 
   return (
     <FramePanel className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0 space-y-2">
         <h2 className="text-sm font-semibold">{site.name}</h2>
         <p className="text-muted-foreground text-sm">
-          {site.description || "Biblioteca de documentos do SharePoint."}
+          {site.description || t.bibliotecas.descricaoPadrao}
         </p>
         <div className="flex flex-wrap items-center gap-1.5">
           <Metrica
             icone={<SquareActivityIcon size={13} />}
             valor={site.bytes != null ? formatBytes(site.bytes) : undefined}
-            titulo="Tamanho da biblioteca"
+            titulo={t.bibliotecas.tamanho}
+            consultando={preencher(t.bibliotecas.consultando, { o: t.bibliotecas.tamanho })}
             carregando={carregandoDetalhes}
           />
           <Metrica
             icone={<FoldersIcon size={13} />}
-            valor={site.folders != null ? `${fmt(site.folders)} pastas` : undefined}
-            titulo="Pastas (aproximado, vem da busca do SharePoint)"
+            valor={
+              site.folders != null
+                ? preencher(t.bibliotecas.pastas, { n: fmt(site.folders) })
+                : undefined
+            }
+            titulo={t.bibliotecas.tituloPastas}
+            consultando={preencher(t.bibliotecas.consultando, { o: t.confirmar.cartaoPastas })}
             carregando={carregandoDetalhes}
           />
           <Metrica
             icone={<FileStackIcon size={13} />}
-            valor={site.files != null ? `${fmt(site.files)} arquivos` : undefined}
-            titulo="Arquivos (aproximado, vem da busca do SharePoint)"
+            valor={
+              site.files != null
+                ? preencher(t.bibliotecas.arquivos, { n: fmt(site.files) })
+                : undefined
+            }
+            titulo={t.bibliotecas.tituloArquivos}
+            consultando={preencher(t.bibliotecas.consultando, { o: t.confirmar.cartaoArquivos })}
             carregando={carregandoDetalhes}
           />
         </div>
@@ -134,13 +146,13 @@ function BibliotecaPanel({
         {conectado && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" aria-label="Abrir biblioteca">
+              <Button variant="outline" size="icon" aria-label={t.bibliotecas.abrir}>
                 <FolderOpenIcon size={16} />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => onOpen(site)}>
-                Abrir no Explorer
+                {t.bibliotecas.abrirExplorer}
               </DropdownMenuItem>
               {/* libraryUrl leva direto aos arquivos; webUrl e a home do site,
                   que num site de comunicacao cai na pagina inicial. */}
@@ -148,7 +160,7 @@ function BibliotecaPanel({
                 disabled={!destino}
                 onClick={() => destino && onAbrirUrl(destino)}
               >
-                Abrir no SharePoint
+                {t.bibliotecas.abrirSharepoint}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -166,10 +178,13 @@ function BibliotecaPanel({
             <ConnectIcon size={16} />
           )}
           <span className="text-muted-foreground w-27 shrink-0">
-            {semAcesso ? "Sem acesso" : conectado ? "Conectado" : "Desconectado"}
+            {estado}
           </span>
           <Switch
-            aria-label={`${conectado ? "Desconectar" : "Conectar"} ${site.name}`}
+            aria-label={preencher(
+              conectado ? t.bibliotecas.desconectar : t.bibliotecas.conectar,
+              { nome: site.name }
+            )}
             checked={conectado}
             disabled={ocupado || semAcesso}
             onCheckedChange={(on) => onAlternar(site, on)}
@@ -197,6 +212,7 @@ export function SitesScreen({
   onDisconnect: (s: Site) => Promise<void>;
   onAbrirUrl: (url: string) => void;
 }) {
+  const { t } = useIdioma();
   const [aba, setAba] = useState("bibliotecas");
   // Biblioteca aguardando confirmacao, e o que sera feito com ela.
   const [confirmando, setConfirmando] = useState<Site | null>(null);
@@ -238,20 +254,20 @@ export function SitesScreen({
         className="mb-6 [&>button]:flex-col [&>button]:gap-1.5 [&>button]:whitespace-nowrap"
         layoutId="onedrive-abas"
         onChange={setAba}
-        tabs={ABAS}
+        tabs={abas(t)}
         variant="segment"
       />
 
       {aba === "problemas" ? (
         <EmBreveScreen
-          titulo="Solução de problemas"
+          titulo={t.problemas.titulo}
           icone={Hammer}
-          descricao="Correções para os perrengues clássicos do OneDrive, sem precisar abrir chamado."
+          descricao={t.problemas.descricao}
           itens={[
-            "Reiniciar o OneDrive",
-            "Destravar a sincronização",
-            "Reconectar a conta do Microsoft 365",
-            "Liberar espaço com arquivos sob demanda",
+            t.problemas.item1,
+            t.problemas.item2,
+            t.problemas.item3,
+            t.problemas.item4,
           ]}
         />
       ) : (
@@ -266,21 +282,18 @@ export function SitesScreen({
           {loading && sites.length === 0 ? (
             <div className="mt-16 flex flex-col items-center gap-3 text-muted-foreground">
               <Loader2 className="size-6 animate-spin" />
-              <p className="text-sm">Carregando suas bibliotecas...</p>
+              <p className="text-sm">{t.bibliotecas.carregando}</p>
             </div>
           ) : sites.length === 0 ? (
             <div className="mt-16 text-center text-sm text-muted-foreground">
-              Nenhuma biblioteca disponível para a sua conta.
+              {t.bibliotecas.vazio}
             </div>
           ) : (
             <Frame className="w-full">
               <FrameHeader>
-                <FrameTitle>Biblioteca de documentos</FrameTitle>
+                <FrameTitle>{t.bibliotecas.titulo}</FrameTitle>
                 <FrameDescription>
-                  As bibliotecas de documentos organizam todo o inventário da
-                  empresa em sites do SharePoint. Use esta seção para habilitar a
-                  sincronização do seu OneDrive com as bibliotecas que você tem
-                  acesso.
+                  {t.bibliotecas.descricao}
                 </FrameDescription>
               </FrameHeader>
 
@@ -299,8 +312,7 @@ export function SitesScreen({
               <FrameFooter className="flex-row items-center gap-2">
                 <Info className="size-4 shrink-0 text-blue-500 dark:text-blue-400" />
                 <p className="text-muted-foreground text-sm">
-                  As bibliotecas aparecem no seu OneDrive, no Explorer. Só ocupam
-                  espaço quando você abre um arquivo.
+                  {t.bibliotecas.rodape}
                 </p>
               </FrameFooter>
             </Frame>

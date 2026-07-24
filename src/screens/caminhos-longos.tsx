@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import * as api from "@/lib/api";
+import { useIdioma } from "@/lib/idioma";
 import { AlertTriangle, Check, Loader2, ShieldCheck } from "lucide-react";
 
 /**
@@ -9,6 +10,7 @@ import { AlertTriangle, Check, Loader2, ShieldCheck } from "lucide-react";
  * Escrever em HKLM exige elevacao, entao o backend dispara um UAC.
  */
 export function CaminhosLongosScreen() {
+  const { t } = useIdioma();
   const [ligado, setLigado] = useState<boolean | null>(null);
   const [aplicando, setAplicando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -35,31 +37,26 @@ export function CaminhosLongosScreen() {
       <div className="rounded-xl border border-border bg-card p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="text-lg font-semibold">Caminhos longos</h2>
+            <h2 className="text-lg font-semibold">{t.caminhosLongos.titulo}</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Por padrão o Windows trava em 260 caracteres de caminho. Pastas de
-              projeto muito aninhadas passam disso e o arquivo simplesmente não
-              abre — nem pelo Explorer, nem pelos aplicativos.
+              {t.caminhosLongos.descricao}
             </p>
           </div>
           {ligado === null ? (
-            <Badge variant="muted">verificando</Badge>
+            <Badge variant="muted">{t.caminhosLongos.verificando}</Badge>
           ) : ligado ? (
             <Badge variant="success">
-              <Check className="size-3" /> Ativado
+              <Check className="size-3" /> {t.caminhosLongos.ativado}
             </Badge>
           ) : (
-            <Badge variant="warning">Desativado</Badge>
+            <Badge variant="warning">{t.caminhosLongos.desativado}</Badge>
           )}
         </div>
 
         <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 p-3.5">
           <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[color:var(--success)]" />
           <p className="text-[12.5px] leading-relaxed text-muted-foreground">
-            A alteração é feita no registro do Windows e vale para o computador
-            inteiro, por isso o Windows vai pedir sua confirmação de
-            administrador. Alguns programas só reconhecem a mudança depois de
-            reiniciar.
+            {t.caminhosLongos.aviso}
           </p>
         </div>
 
@@ -73,16 +70,16 @@ export function CaminhosLongosScreen() {
         <div className="mt-5">
           {ligado ? (
             <p className="text-sm text-muted-foreground">
-              Nada a fazer — este computador já aceita caminhos longos.
+              {t.caminhosLongos.nadaAFazer}
             </p>
           ) : (
             <Button onClick={ligar} disabled={aplicando || ligado === null}>
               {aplicando ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" /> Aplicando...
+                  <Loader2 className="size-4 animate-spin" /> {t.caminhosLongos.aplicando}
                 </>
               ) : (
-                "Ativar caminhos longos"
+                t.caminhosLongos.ativar
               )}
             </Button>
           )}

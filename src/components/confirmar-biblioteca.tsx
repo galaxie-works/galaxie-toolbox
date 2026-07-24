@@ -24,6 +24,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { TextMorph } from "torph/react";
 import { useEffect, useState } from "react";
 import { cn, formatBytes } from "@/lib/utils";
+import { comDestaque, useIdioma } from "@/lib/idioma";
 import type { Site } from "@/lib/types";
 import {
   CloudDownload,
@@ -47,8 +48,6 @@ export function gravarPularConfirmacao(pular: boolean) {
   if (pular) localStorage.setItem(CHAVE_PULAR, "1");
   else localStorage.removeItem(CHAVE_PULAR);
 }
-
-const fmt = (n: number) => n.toLocaleString("pt-BR");
 
 function Cartao({
   icone,
@@ -96,6 +95,8 @@ export function ConfirmarBiblioteca({
   onConfirmar: () => Promise<void>;
   onCancelar: () => void;
 }) {
+  const { idioma, t } = useIdioma();
+  const fmt = (n: number) => n.toLocaleString(idioma);
   const conectando = modo === "conectar";
   const desconhecido = "—";
 
@@ -124,27 +125,27 @@ export function ConfirmarBiblioteca({
   const cartoes = [
     {
       icone: <Folders className="text-muted-foreground size-4" />,
-      titulo: "Pastas",
+      titulo: t.confirmar.cartaoPastas,
       descricao: conectando
-        ? "Quantidade de pastas na biblioteca"
-        : "Pastas que saem do seu Explorer",
+        ? t.confirmar.pastasConectar
+        : t.confirmar.pastasDesconectar,
       valor: site?.folders != null ? fmt(site.folders) : desconhecido,
     },
     {
       icone: <FileStack className="text-muted-foreground size-4" />,
-      titulo: "Arquivos",
+      titulo: t.confirmar.cartaoArquivos,
       descricao: conectando
-        ? "Quantidade de arquivos na biblioteca"
-        : "Arquivos que saem do seu Explorer",
+        ? t.confirmar.arquivosConectar
+        : t.confirmar.arquivosDesconectar,
       valor: site?.files != null ? fmt(site.files) : desconhecido,
     },
     {
       icone: <SquareActivity className="text-muted-foreground size-4" />,
-      titulo: "Peso",
+      titulo: t.confirmar.cartaoPeso,
       // De proposito NAO dizemos "espaco que sera liberado": com arquivos sob
       // demanda a maior parte nao ocupa disco, entao prometer espaco livre
       // seria mentira.
-      descricao: "Tamanho da biblioteca na nuvem",
+      descricao: t.confirmar.pesoDescricao,
       valor: site?.bytes != null ? formatBytes(site.bytes) : desconhecido,
     },
   ];
@@ -174,22 +175,15 @@ export function ConfirmarBiblioteca({
             )}
           </AlertDialogMedia>
           <AlertDialogTitle className="text-base font-semibold">
-            {conectando ? "Antes de continuar" : "Remover esta biblioteca?"}
+            {conectando
+              ? t.confirmar.tituloConectar
+              : t.confirmar.tituloDesconectar}
           </AlertDialogTitle>
           <AlertDialogDescription className="p-0 text-sm">
-            {conectando ? (
-              <>
-                Ao habilitar <strong>{site?.name}</strong>, o OneDrive vai
-                sincronizar todas as pastas e arquivos dela com a sua máquina.
-                Eles aparecem no Explorer, mas só ocupam espaço quando você abre.
-              </>
-            ) : (
-              <>
-                A pasta <strong>{site?.name}</strong> sai do seu OneDrive e do
-                Explorer, inclusive os arquivos que você baixou para uso offline.
-                Nada é apagado do SharePoint: a biblioteca continua lá e você
-                pode reconectar quando quiser.
-              </>
+            {comDestaque(
+              conectando ? t.confirmar.descConectar : t.confirmar.descDesconectar,
+              "nome",
+              site?.name ?? ""
             )}
           </AlertDialogDescription>
         </div>
@@ -219,15 +213,14 @@ export function ConfirmarBiblioteca({
                 />
                 <div className="flex items-center gap-1.5">
                   <FieldLabel htmlFor="pular-confirmacao">
-                    Não pedir confirmação novamente
+                    {t.confirmar.naoPerguntar}
                   </FieldLabel>
                   <Tooltip>
                     <TooltipTrigger className="text-muted-foreground">
                       <HelpCircleIcon aria-hidden="true" className="size-3.5" />
                     </TooltipTrigger>
                     <TooltipContent side="top">
-                      Nas próximas vezes, a biblioteca conecta direto ao ligar a
-                      chave. Dá para reativar o aviso em Configurações.
+                      {t.confirmar.naoPerguntarAjuda}
                     </TooltipContent>
                   </Tooltip>
                 </div>
@@ -236,7 +229,7 @@ export function ConfirmarBiblioteca({
           )}
           {conectando ? (
             <AlertDialogAction className="flex-1" onClick={onConfirmar}>
-              Continuar
+              {t.confirmar.continuar}
             </AlertDialogAction>
           ) : (
             /* Fora do AlertDialogAction de proposito: aquele fecha o dialogo no
@@ -279,10 +272,10 @@ export function ConfirmarBiblioteca({
               </AnimatePresence>
               <TextMorph>
                 {estado === "sucesso"
-                  ? "Removida"
+                  ? t.confirmar.removida
                   : estado === "processando"
-                    ? "Removendo"
-                    : "Remover biblioteca"}
+                    ? t.confirmar.removendo
+                    : t.confirmar.remover}
               </TextMorph>
             </AnimatedButton.Root>
           )}
@@ -291,7 +284,7 @@ export function ConfirmarBiblioteca({
             className="flex-1"
             disabled={estado !== "parado"}
           >
-            {conectando ? "Deixar pra depois" : "Cancelar"}
+            {conectando ? t.confirmar.depois : t.confirmar.cancelar}
           </AlertDialogCancel>
         </AlertDialogFooter>
       </AlertDialogContent>

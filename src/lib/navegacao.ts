@@ -1,5 +1,6 @@
 import { Cloud, Mail, MonitorCog, Gauge, FolderTree, Settings } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import type { Dicionario } from "@/lib/strings";
 
 /** Telas do canvas. Cada uma sabe onde fica no menu (para o breadcrumb). */
 export type Tela =
@@ -9,40 +10,43 @@ export type Tela =
   | "caminhos-longos"
   | "configuracoes";
 
+/** Chave dentro de `t.nav` — o texto sai do dicionario, nao daqui. */
+type ChaveNav = keyof Dicionario["nav"];
+
 export interface ItemFilho {
   id: Tela;
-  titulo: string;
+  titulo: ChaveNav;
 }
 
 export interface ItemNav {
-  titulo: string;
+  titulo: ChaveNav;
   icone: LucideIcon;
   filhos: ItemFilho[];
 }
 
 export interface GrupoNav {
-  titulo: string;
+  titulo: ChaveNav;
   itens: ItemNav[];
 }
 
 export const NAV: GrupoNav[] = [
   {
-    titulo: "Plataforma",
+    titulo: "plataforma",
     itens: [
       {
-        titulo: "Microsoft 365",
+        titulo: "microsoft365",
         icone: Cloud,
         filhos: [
-          { id: "outlook", titulo: "Outlook" },
-          { id: "onedrive", titulo: "OneDrive" },
+          { id: "outlook", titulo: "outlook" },
+          { id: "onedrive", titulo: "onedrive" },
         ],
       },
       {
-        titulo: "Windows",
+        titulo: "windows",
         icone: MonitorCog,
         filhos: [
-          { id: "performance", titulo: "Performance" },
-          { id: "caminhos-longos", titulo: "Caminhos longos" },
+          { id: "performance", titulo: "performance" },
+          { id: "caminhos-longos", titulo: "caminhosLongos" },
         ],
       },
     ],
@@ -50,10 +54,13 @@ export const NAV: GrupoNav[] = [
 ];
 
 /** Ícone e trilha de cada tela, usados no cabeçalho do canvas. */
-export const TELAS: Record<Tela, { titulo: string; secao: string; icone: LucideIcon }> = {
-  outlook: { titulo: "Outlook", secao: "Microsoft 365", icone: Mail },
-  onedrive: { titulo: "OneDrive", secao: "Microsoft 365", icone: Cloud },
-  performance: { titulo: "Performance", secao: "Windows", icone: Gauge },
-  "caminhos-longos": { titulo: "Caminhos longos", secao: "Windows", icone: FolderTree },
-  configuracoes: { titulo: "Configurações", secao: "Conta", icone: Settings },
+export const TELAS: Record<
+  Tela,
+  { titulo: ChaveNav; secao: ChaveNav; icone: LucideIcon }
+> = {
+  outlook: { titulo: "outlook", secao: "microsoft365", icone: Mail },
+  onedrive: { titulo: "onedrive", secao: "microsoft365", icone: Cloud },
+  performance: { titulo: "performance", secao: "windows", icone: Gauge },
+  "caminhos-longos": { titulo: "caminhosLongos", secao: "windows", icone: FolderTree },
+  configuracoes: { titulo: "configuracoes", secao: "conta", icone: Settings },
 };

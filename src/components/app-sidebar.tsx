@@ -32,6 +32,7 @@ import { ClienteMark } from "@/components/brand";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { AppUser } from "@/lib/types";
 import { NAV, type Tela } from "@/lib/navegacao";
+import { useIdioma } from "@/lib/idioma";
 import {
   ChevronRight,
   ChevronsUpDown,
@@ -54,6 +55,7 @@ export function AppSidebar({
   onAbrirUrl: (url: string) => void;
 }) {
   const isMobile = useIsMobile();
+  const { t } = useIdioma();
 
   return (
     <Sidebar collapsible="icon">
@@ -67,9 +69,9 @@ export function AppSidebar({
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-semibold">
-                  {user.organizacao ?? "Organização"}
+                  {user.organizacao ?? t.nav.organizacao}
                 </span>
-                <span className="truncate text-xs">Microsoft 365</span>
+                <span className="truncate text-xs">{t.nav.microsoft365}</span>
               </div>
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -79,7 +81,7 @@ export function AppSidebar({
       <SidebarContent>
         {NAV.map((grupo) => (
           <SidebarGroup key={grupo.titulo}>
-            <SidebarGroupLabel>{grupo.titulo}</SidebarGroupLabel>
+            <SidebarGroupLabel>{t.nav[grupo.titulo]}</SidebarGroupLabel>
             <SidebarMenu>
               {grupo.itens.map((item) => (
                 <Collapsible
@@ -90,9 +92,9 @@ export function AppSidebar({
                 >
                   <SidebarMenuItem>
                     <CollapsibleTrigger asChild>
-                      <SidebarMenuButton tooltip={item.titulo}>
+                      <SidebarMenuButton tooltip={t.nav[item.titulo]}>
                         <item.icone />
-                        <span>{item.titulo}</span>
+                        <span>{t.nav[item.titulo]}</span>
                         <ChevronRight className="ml-auto transition-transform duration-300 group-data-[state=open]/collapsible:rotate-90" />
                       </SidebarMenuButton>
                     </CollapsibleTrigger>
@@ -111,7 +113,7 @@ export function AppSidebar({
                                   onNavegar(filho.id);
                                 }}
                               >
-                                <span>{filho.titulo}</span>
+                                <span>{t.nav[filho.titulo]}</span>
                               </a>
                             </SidebarMenuSubButton>
                           </SidebarMenuSubItem>
@@ -183,7 +185,7 @@ export function AppSidebar({
                     onClick={() => onAbrirUrl("https://www.microsoft365.com")}
                   >
                     <ExternalLink />
-                    Ir para Microsoft 365
+                    {t.nav.irPara365}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     onClick={() =>
@@ -191,17 +193,17 @@ export function AppSidebar({
                     }
                   >
                     <ExternalLink />
-                    SharePoint
+                    {t.nav.sharepoint}
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => onNavegar("configuracoes")}>
                     <Settings />
-                    Configurações
+                    {t.nav.configuracoes}
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={onLogout}>
                   <LogOut />
-                  Sair
+                  {t.nav.sair}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

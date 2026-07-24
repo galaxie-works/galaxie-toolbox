@@ -436,7 +436,11 @@ fn build_tokens(v: serde_json::Value, tenant: &str) -> Result<Tokens, String> {
 
 /// Login interativo: sobe o loopback, abre a pagina oficial da Microsoft e
 /// espera o redirect com o code. Bloqueante — rodar em spawn_blocking.
-pub fn interactive_login(tenant: &str, login_hint: &str) -> Result<Tokens, String> {
+pub fn interactive_login(
+    tenant: &str,
+    login_hint: &str,
+    idioma: &str,
+) -> Result<Tokens, String> {
     let cid = config::client_id();
     if cid.is_empty() || cid == "REPLACE_WITH_CLIENT_ID" {
         return Err(
@@ -511,14 +515,36 @@ pub fn interactive_login(tenant: &str, login_hint: &str) -> Result<Tokens, Strin
             }
         }
 
-        let body_ok = html_page(
-            "Você entrou",
-            "O universo está em suas mãos. Pode fechar esta janela e continuar no aplicativo.",
-        );
-        let body_err = html_page(
-            "Login falhou",
-            "Feche esta janela e tente novamente no GALAXIE Toolbox.",
-        );
+        // A pagina de retorno e servida por este loopback, fora do React, entao
+        // os textos dela vivem aqui. O idioma vem da escolha feita na tela de
+        // login, para nao dar "Você entrou" a quem selecionou ingles.
+        let en = idioma.starts_with("en");
+        let body_ok = if en {
+            html_page(
+                idioma,
+                "You're in",
+                "The universe is in your hands. You can close this window and go back to the app.",
+            )
+        } else {
+            html_page(
+                idioma,
+                "Você entrou",
+                "O universo está em suas mãos. Pode fechar esta janela e continuar no aplicativo.",
+            )
+        };
+        let body_err = if en {
+            html_page(
+                idioma,
+                "Sign-in failed",
+                "Close this window and try again in GALAXIE Toolbox.",
+            )
+        } else {
+            html_page(
+                idioma,
+                "Login falhou",
+                "Feche esta janela e tente novamente no GALAXIE Toolbox.",
+            )
+        };
 
         if let Some(e) = err {
             let _ = req.respond(html_response(&body_err));
@@ -555,10 +581,10 @@ fn logo_data_uri() -> String {
     format!("data:image/png;base64,{}", STANDARD.encode(LOGO_PNG))
 }
 
-fn html_page(titulo: &str, msg: &str) -> String {
+fn html_page(idioma: &str, titulo: &str, msg: &str) -> String {
     let logo = logo_data_uri();
     format!(
-        "<!doctype html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\">\
+        "<!doctype html><html lang=\"{idioma}\"><head><meta charset=\"utf-8\">\
          <title>GALAXIE Toolbox</title>\
          <link rel=\"icon\" type=\"image/png\" href=\"{logo}\">\
          </head>\

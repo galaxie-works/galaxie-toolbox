@@ -46,12 +46,17 @@ const MOCK_DETALHES: Record<string, { files: number; bytes: number }> = {
   ADM: { files: 1020, bytes: 17_000_000_000 },
 };
 
-export async function login(email: string): Promise<AppUser> {
+/**
+ * `idioma` vai para o backend porque a pagina de retorno do login e servida
+ * pelo loopback em Rust, fora do React — sem isso ela sairia sempre em
+ * portugues.
+ */
+export async function login(email: string, idioma: string): Promise<AppUser> {
   if (!inTauri()) {
     await sleep(800);
     return { ...MOCK_USER, email };
   }
-  return invoke<AppUser>("login", { email });
+  return invoke<AppUser>("login", { email, idioma });
 }
 
 /** Descobre o tenant pelo dominio do e-mail (sem logar). */

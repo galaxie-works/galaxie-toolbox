@@ -4,7 +4,9 @@ import { Input } from "@/components/ui/input";
 import { GalaxieMark } from "@/components/brand";
 import { Estrelas } from "@/components/estrelas";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { IdiomaSelect } from "@/components/ui/idioma-select";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
+import { comDestaque, useIdioma } from "@/lib/idioma";
 import { ShieldCheck, Loader2, AlertTriangle } from "lucide-react";
 
 /** Logo colorido da Microsoft para o botao de entrar. */
@@ -30,6 +32,7 @@ export function LoginScreen({
   loading: boolean;
   error?: string | null;
 }) {
+  const { t } = useIdioma();
   const [email, setEmail] = useState("");
   const valido = EMAIL_RX.test(email.trim());
 
@@ -52,13 +55,13 @@ export function LoginScreen({
             delay={260}
             stagger={14}
           >
-            Entre para desbloquear um universo de possibilidades.
+            {t.login.convite}
           </SoftBlurIn>
         </div>
 
         <form onSubmit={enviar} className="mt-9">
           <label htmlFor="email" className="mb-1.5 block text-[13px] font-medium">
-            E-mail corporativo
+            {t.login.rotuloEmail}
           </label>
           <Input
             id="email"
@@ -66,13 +69,13 @@ export function LoginScreen({
             autoFocus
             autoComplete="username"
             spellCheck={false}
-            placeholder="voce@suaempresa.com"
+            placeholder={t.login.placeholderEmail}
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             disabled={loading}
           />
           <p className="mt-1.5 text-[11.5px] text-muted-foreground">
-            Usamos o domínio do seu e-mail para identificar a sua organização.
+            {t.login.ajudaEmail}
           </p>
 
           <Button
@@ -84,12 +87,12 @@ export function LoginScreen({
             {loading ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
-                Abrindo o login da Microsoft...
+                {t.login.entrando}
               </>
             ) : (
               <>
                 <MsLogo />
-                Entrar com Microsoft
+                {t.login.entrar}
               </>
             )}
           </Button>
@@ -97,9 +100,7 @@ export function LoginScreen({
           <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 p-3.5">
             <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[color:var(--success)]" />
             <p className="text-left text-[12.5px] leading-relaxed text-muted-foreground">
-              Você entra na página oficial da Microsoft. O app{" "}
-              <span className="font-medium text-foreground">nunca vê sua senha</span> —
-              recebe apenas uma autorização.
+              {comDestaque(t.login.aviso, "senha", t.login.avisoSenha)}
             </p>
           </div>
 
@@ -114,8 +115,10 @@ export function LoginScreen({
         </form>
       </div>
 
-      {/* Tema no rodape: a escolha fica salva e vale para o app todo. */}
-      <div className="absolute bottom-6 left-1/2 -translate-x-1/2">
+      {/* Idioma e tema no rodape: as duas escolhas ficam salvas e valem para
+          o app todo. */}
+      <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 items-center gap-3">
+        <IdiomaSelect className="h-9" />
         <ThemeToggle />
       </div>
     </div>
