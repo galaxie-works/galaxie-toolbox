@@ -3,6 +3,7 @@ import { Badge } from "@/components/reui/badge";
 import {
   Frame,
   FrameDescription,
+  FrameFooter,
   FrameHeader,
   FramePanel,
   FrameTitle,
@@ -31,7 +32,7 @@ import {
 import { EmBreveScreen } from "@/screens/em-breve";
 import { formatBytes } from "@/lib/utils";
 import type { Site } from "@/lib/types";
-import { AlertTriangle, Hammer, Loader2, Lock } from "lucide-react";
+import { AlertTriangle, Hammer, Info, Loader2, Lock } from "lucide-react";
 import { useState } from "react";
 
 /* size padrao dos icones animados e 28, alto demais pra linha da aba */
@@ -272,13 +273,18 @@ export function SitesScreen({
                   onAbrirUrl={onAbrirUrl}
                 />
               ))}
+
+              {/* O token --info do reui e violeta, que ao lado do magenta da
+                  marca nao le como "informacao". Por isso o azul da paleta. */}
+              <FrameFooter className="flex-row items-center gap-2">
+                <Info className="size-4 shrink-0 text-blue-500 dark:text-blue-400" />
+                <p className="text-muted-foreground text-sm">
+                  As bibliotecas aparecem no seu OneDrive, no Explorer. Só ocupam
+                  espaço quando você abre um arquivo.
+                </p>
+              </FrameFooter>
             </Frame>
           )}
-
-          <p className="mt-6 text-[11.5px] text-muted-foreground/70">
-            As bibliotecas aparecem no seu OneDrive, no Explorer. Só ocupam espaço
-            quando você abre um arquivo.
-          </p>
 
           <ConfirmarBiblioteca
             site={confirmando}
