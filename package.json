@@ -1,7 +1,7 @@
 {
   "name": "galaxie-toolbox",
   "private": true,
-  "version": "0.9.2",
+  "version": "0.9.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -38,5 +38,6 @@
     "typescript": "~6.0.2",
     "vite": "^8.1.1"
   },
-  "description": "Acesso aos arquivos da empresa no SharePoint e ferramentas de auto-ajuda do Microsoft 365."
+  "description": "Acesso aos arquivos da empresa no SharePoint e ferramentas de auto-ajuda do Microsoft 365.",
+  "packageManager": "pnpm@11.5.0"
 }
