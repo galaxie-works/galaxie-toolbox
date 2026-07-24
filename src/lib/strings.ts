@@ -48,6 +48,7 @@ const pt = {
     windows: "Windows",
     outlook: "Outlook",
     onedrive: "OneDrive",
+    apps: "Apps",
     performance: "Performance",
     caminhosLongos: "Caminhos longos",
     configuracoes: "Configurações",
@@ -142,6 +143,24 @@ const pt = {
     descricao: "Preferências do aplicativo e da sua conta.",
   },
 
+  apps: {
+    maisUsados: "Mais utilizados",
+    explorar: "Explore por categoria",
+    abrirAqui: "Abrir aqui",
+    abrirNavegador: "Abrir no navegador padrão",
+    maisOpcoes: "Mais opções",
+    produtividade: "Produtividade",
+    utilitarios: "Utilitários",
+    educacao: "Educação",
+    comunicacao: "Comunicação",
+    conteudo: "Gestão de conteúdo",
+    projetos: "Gestão de projetos",
+    experiencia: "Experiência do funcionário",
+    desenvolvimento: "Ferramentas de desenvolvimento",
+    avisoSessao:
+      "Os aplicativos abrem aqui dentro. Na primeira vez a Microsoft pede o seu login nesta janela; depois a sessão fica guardada.",
+  },
+
   caminhosLongos: {
     titulo: "Caminhos longos",
     descricao:
@@ -190,6 +209,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     windows: "Windows",
     outlook: "Outlook",
     onedrive: "OneDrive",
+    apps: "Apps",
     performance: "Performance",
     caminhosLongos: "Long paths",
     configuracoes: "Settings",
@@ -281,6 +301,24 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
 
   emBreveConfig: {
     descricao: "App and account preferences.",
+  },
+
+  apps: {
+    maisUsados: "Most used",
+    explorar: "Explore by category",
+    abrirAqui: "Open here",
+    abrirNavegador: "Open in default browser",
+    maisOpcoes: "More options",
+    produtividade: "Productivity",
+    utilitarios: "Utilities",
+    educacao: "Education",
+    comunicacao: "Communication",
+    conteudo: "Content management",
+    projetos: "Project management",
+    experiencia: "Employee Experience",
+    desenvolvimento: "Developer tools",
+    avisoSessao:
+      "Apps open right here. The first time, Microsoft asks you to sign in inside this window; after that the session is kept.",
   },
 
   caminhosLongos: {

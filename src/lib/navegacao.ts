@@ -1,5 +1,6 @@
 import { MonitorCog, Gauge, FolderTree, Settings } from "lucide-react";
 import type { ComponentType } from "react";
+import { LayoutGrid } from "lucide-react";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
 import { OneDriveIcon } from "@/components/ui/icons/marca/onedrive";
 import { OutlookIcon } from "@/components/ui/icons/marca/outlook";
@@ -11,6 +12,7 @@ export type IconeNav = ComponentType<{ className?: string }>;
 /** Telas do canvas. Cada uma sabe onde fica no menu (para o breadcrumb). */
 export type Tela =
   | "onedrive"
+  | "apps"
   | "outlook"
   | "performance"
   | "caminhos-longos"
@@ -44,6 +46,7 @@ export const NAV: GrupoNav[] = [
         titulo: "copilot",
         icone: CopilotIcon,
         filhos: [
+          { id: "apps", titulo: "apps", icone: LayoutGrid },
           { id: "outlook", titulo: "outlook", icone: OutlookIcon },
           { id: "onedrive", titulo: "onedrive", icone: OneDriveIcon },
         ],
@@ -65,6 +68,7 @@ export const TELAS: Record<
   Tela,
   { titulo: ChaveNav; secao: ChaveNav; icone: IconeNav }
 > = {
+  apps: { titulo: "apps", secao: "copilot", icone: LayoutGrid },
   outlook: { titulo: "outlook", secao: "copilot", icone: OutlookIcon },
   onedrive: { titulo: "onedrive", secao: "copilot", icone: OneDriveIcon },
   performance: { titulo: "performance", secao: "windows", icone: Gauge },

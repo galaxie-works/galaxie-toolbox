@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { LoginScreen } from "@/screens/login";
 import { SitesScreen } from "@/screens/sites";
+import { AppsScreen } from "@/screens/apps";
 import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -27,6 +28,7 @@ import { TELAS, type Tela } from "@/lib/navegacao";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
+import type { AppM365 } from "@/lib/apps";
 
 export default function App() {
   const { idioma, t } = useIdioma();
@@ -157,6 +159,14 @@ export default function App() {
     }
   }
 
+  async function abrirAppAqui(app: AppM365) {
+    try {
+      await api.abrirAppInterno(app.id, app.url, `${app.nome} — GALAXIE Toolbox`);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   async function abrirUrl(url: string) {
     try {
       await api.openUrl(url);
@@ -265,6 +275,12 @@ export default function App() {
               onOpen={openSite}
               onDisconnect={disconnect}
               onAbrirUrl={abrirUrl}
+            />
+          )}
+          {tela === "apps" && (
+            <AppsScreen
+              onAbrirAqui={abrirAppAqui}
+              onAbrirNavegador={(a) => abrirUrl(a.url)}
             />
           )}
           {tela === "outlook" && (

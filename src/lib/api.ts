@@ -155,6 +155,19 @@ export async function openUrl(url: string): Promise<void> {
   return invoke<void>("open_url", { url });
 }
 
+/** Abre um app do M365 numa janela interna do Toolbox. */
+export async function abrirAppInterno(
+  id: string,
+  url: string,
+  titulo: string
+): Promise<void> {
+  if (!inTauri()) {
+    window.open(url, "_blank");
+    return;
+  }
+  return invoke<void>("abrir_app_interno", { id, url, titulo });
+}
+
 export async function longPathsStatus(): Promise<boolean> {
   if (!inTauri()) return true;
   return invoke<boolean>("long_paths_status");

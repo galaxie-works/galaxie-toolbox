@@ -5,7 +5,7 @@ mod graph;
 mod system;
 
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Manager, State};
 
 use auth::{Account, TokenStore};
 
@@ -168,6 +168,48 @@ async fn open_url(url: String) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Abre um app do M365 numa janela interna do proprio Toolbox.
+///
+/// A sessao NAO vem do login do app: o que temos e token OAuth para a API do
+/// Graph, e nao cookie de navegador — nao existe conversao entre os dois. O que
+/// acontece e que esta janela usa o mesmo perfil do WebView2 do aplicativo,
+/// entao a pessoa entra uma vez aqui dentro e a sessao fica guardada para as
+/// proximas. Em maquina ingressada no Entra, o SSO do Windows costuma resolver
+/// sozinho.
+#[tauri::command]
+async fn abrir_app_interno(
+    app: tauri::AppHandle,
+    id: String,
+    url: String,
+    titulo: String,
+) -> Result<(), String> {
+    if !url.starts_with("https://") {
+        return Err("endereco invalido".into());
+    }
+    // Rotulo de janela so aceita [a-zA-Z0-9-_/:#]; o id vem do catalogo, mas
+    // filtrar aqui evita que um id novo derrube a criacao da janela.
+    let rotulo = format!(
+        "app-{}",
+        id.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>()
+    );
+
+    // Ja aberto: traz para frente em vez de abrir outra.
+    if let Some(j) = app.get_webview_window(&rotulo) {
+        let _ = j.show();
+        let _ = j.unminimize();
+        let _ = j.set_focus();
+        return Ok(());
+    }
+
+    let destino = url.parse().map_err(|_| "endereco invalido".to_string())?;
+    tauri::WebviewWindowBuilder::new(&app, &rotulo, tauri::WebviewUrl::External(destino))
+        .title(titulo)
+        .inner_size(1280.0, 860.0)
+        .build()
+        .map(|_| ())
+        .map_err(|e| format!("falha ao abrir a janela: {e}"))
+}
+
 /// Liga LongPathsEnabled (>260 caracteres) via UAC.
 #[tauri::command]
 async fn enable_long_paths() -> Result<String, String> {
@@ -208,6 +250,7 @@ pub fn run() {
             disconnect_site,
             open_in_explorer,
             open_url,
+            abrir_app_interno,
             enable_long_paths,
             long_paths_status,
         ])
