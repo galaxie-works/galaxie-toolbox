@@ -20,6 +20,8 @@ export interface AppUser {
   initials: string;
   /** Foto do perfil (data URI). Ausente = usa as iniciais. */
   photo?: string | null;
+  /** Nome da organizacao, exibido no topo da sidebar. */
+  organizacao?: string | null;
 }
 
 /** Identidade em cache, usada na tela de carregamento (sem rede). */

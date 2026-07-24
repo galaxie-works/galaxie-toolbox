@@ -13,7 +13,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::config;
 
 const GRAPH_ME: &str =
-    "https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName";
+    "https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName,companyName";
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +23,9 @@ pub struct Account {
     pub initials: String,
     /// Foto do perfil como data URI. None = sem foto (usa as iniciais).
     pub photo: Option<String>,
+    /// Nome da organizacao, pro topo da sidebar. Vem do companyName do perfil;
+    /// sem ele, cai no dominio do e-mail (nao exige escopo extra).
+    pub organizacao: Option<String>,
 }
 
 #[derive(Clone)]
@@ -141,6 +144,12 @@ fn fetch_account(access_token: &str) -> Result<Account, String> {
         .to_string();
     let initials = initials_from(&display_name);
 
+    let organizacao = v["companyName"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| nome_pelo_dominio(&email));
+
     // Foto: reaproveita o cache pra nao pagar a chamada em todo refresh.
     let photo = match crate::estado::ler_foto() {
         Some(f) => Some(f),
@@ -153,9 +162,22 @@ fn fetch_account(access_token: &str) -> Result<Account, String> {
         }
     };
 
-    let conta = Account { display_name, email, initials, photo };
+    let conta = Account { display_name, email, initials, photo, organizacao };
     crate::estado::salvar_identidade(&conta.display_name, &conta.initials);
     Ok(conta)
+}
+
+/// "wagner@voaz.builders" -> "Voaz". Melhor que mostrar o dominio cru quando o
+/// perfil nao traz companyName.
+fn nome_pelo_dominio(email: &str) -> Option<String> {
+    let dominio = email.rsplit('@').next()?;
+    let base = dominio.split('.').next()?;
+    if base.is_empty() {
+        return None;
+    }
+    let mut c = base.chars();
+    let primeira = c.next()?.to_uppercase().to_string();
+    Some(primeira + c.as_str())
 }
 
 /// Busca a foto do perfil do usuario logado e devolve como data URI.

@@ -17,6 +17,7 @@ const MOCK_USER: AppUser = {
   displayName: "Wagner Consani",
   email: "wagner@voaz.builders",
   initials: "WC",
+  organizacao: "Voaz",
 };
 
 const MOCK_SITES: Site[] = [
@@ -108,6 +109,15 @@ export async function openInExplorer(name: string): Promise<void> {
     return;
   }
   return invoke<void>("open_in_explorer", { name });
+}
+
+/** Abre uma URL no navegador padrao (menu do usuario). */
+export async function openUrl(url: string): Promise<void> {
+  if (!inTauri()) {
+    window.open(url, "_blank");
+    return;
+  }
+  return invoke<void>("open_url", { url });
 }
 
 export async function longPathsStatus(): Promise<boolean> {

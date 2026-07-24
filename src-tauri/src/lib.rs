@@ -137,6 +137,20 @@ async fn open_in_explorer(state: State<'_, Store>, name: String) -> Result<(), S
     .map_err(|e| e.to_string())?
 }
 
+/// Abre uma URL no navegador padrao (menu do usuario: Microsoft 365, SharePoint).
+#[tauri::command]
+async fn open_url(url: String) -> Result<(), String> {
+    // So http(s): evita abrir esquemas arbitrarios vindos da interface.
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("endereco invalido".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        open::that(&url).map_err(|e| format!("falha ao abrir o navegador: {e}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Liga LongPathsEnabled (>260 caracteres) via UAC.
 #[tauri::command]
 async fn enable_long_paths() -> Result<String, String> {
@@ -175,6 +189,7 @@ pub fn run() {
             connect_site,
             disconnect_site,
             open_in_explorer,
+            open_url,
             enable_long_paths,
             long_paths_status,
         ])

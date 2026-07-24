@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GalaxieMark } from "@/components/brand";
+import { Estrelas } from "@/components/estrelas";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { ShieldCheck, Loader2, AlertTriangle } from "lucide-react";
 
@@ -38,22 +40,16 @@ export function LoginScreen({
 
   return (
     <div className="relative grid h-full place-items-center overflow-hidden px-6">
-      {/* brilho de fundo sutil */}
+      <Estrelas />
+      {/* brilho de fundo sutil, por cima das estrelas */}
       <div className="pointer-events-none absolute -top-40 left-1/2 h-[520px] w-[720px] -translate-x-1/2 rounded-full bg-foreground/[0.04] blur-[120px]" />
-      <div className="pointer-events-none absolute bottom-[-160px] right-[-80px] h-[380px] w-[380px] rounded-full bg-foreground/[0.03] blur-[120px]" />
 
       <div className="relative w-full max-w-[400px] animate-[fade-in_0.4s_ease]">
         <div className="flex flex-col items-center text-center">
-          <GalaxieMark className="logo-in mb-4 h-11" />
+          <GalaxieMark className="logo-in mb-5 h-12" />
           <SoftBlurIn
-            className="text-3xl font-semibold tracking-tight"
+            className="text-[15px] text-muted-foreground"
             delay={260}
-          >
-            Toolbox
-          </SoftBlurIn>
-          <SoftBlurIn
-            className="mt-2 text-[15px] text-muted-foreground"
-            delay={620}
             stagger={14}
           >
             Entre para desbloquear um universo de possibilidades.
@@ -116,6 +112,11 @@ export function LoginScreen({
             </div>
           )}
         </form>
+      </div>
+
+      {/* Tema no rodape: a escolha fica salva e vale para o app todo. */}
+      <div className="absolute bottom-6 left-1/2 -translate-x-1/2">
+        <ThemeToggle />
       </div>
     </div>
   );

@@ -1,8 +1,28 @@
 import { useEffect, useState } from "react";
 import { LoginScreen } from "@/screens/login";
 import { SitesScreen } from "@/screens/sites";
-import { Avatar } from "@/components/ui/avatar";
+import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
+import { EmBreveScreen } from "@/screens/em-breve";
+import { AppSidebar } from "@/components/app-sidebar";
+import { Estrelas } from "@/components/estrelas";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ThemeToggle } from "@/components/ui/theme-toggle";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/animate-ui/components/radix/sidebar";
+import { Separator } from "@/components/ui/separator";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import { TELAS, type Tela } from "@/lib/navegacao";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
 
@@ -12,10 +32,9 @@ export default function App() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [loadingSites, setLoadingSites] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // enquanto tenta retomar a sessao guardada, nao mostra o login (evita piscar)
   const [restoring, setRestoring] = useState(true);
-  // identidade em cache: pinta a tela de carregamento sem esperar a rede
   const [cache, setCache] = useState<Identidade | null>(null);
+  const [tela, setTela] = useState<Tela>("onedrive");
 
   useEffect(() => {
     let vivo = true;
@@ -104,23 +123,34 @@ export default function App() {
     }
   }
 
+  async function abrirUrl(url: string) {
+    try {
+      await api.openUrl(url);
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
   async function logout() {
     await api.logout();
     setUser(null);
     setSites([]);
     setError(null);
+    setTela("onedrive");
   }
 
+  // --- Retomando a sessao -------------------------------------------------
   if (restoring) {
     return (
-      <div className="grid h-full place-items-center">
-        <div className="flex flex-col items-center gap-4 animate-[fade-in_0.3s_ease]">
-          <Avatar
-            photo={cache?.photo}
-            initials={cache?.initials ?? "·"}
-            size={72}
-            className="logo-in ring-2 ring-border"
-          />
+      <div className="relative grid h-full place-items-center overflow-hidden">
+        <Estrelas />
+        <div className="relative flex flex-col items-center gap-4">
+          <Avatar className="logo-in size-18 ring-2 ring-border">
+            {cache?.photo && <AvatarImage src={cache.photo} alt="" />}
+            <AvatarFallback className="text-xl">
+              {cache?.initials ?? "·"}
+            </AvatarFallback>
+          </Avatar>
           <div className="text-center">
             {cache?.displayName && (
               <SoftBlurIn className="text-[17px] font-medium" delay={220}>
@@ -144,17 +174,90 @@ export default function App() {
     return <LoginScreen onLogin={handleLogin} loading={loginLoading} error={error} />;
   }
 
+  // --- Aplicativo ---------------------------------------------------------
+  const info = TELAS[tela];
+
   return (
-    <SitesScreen
-      user={user}
-      sites={sites}
-      loading={loadingSites}
-      error={error}
-      onConnect={connect}
-      onOpen={openSite}
-      onDisconnect={disconnect}
-      onConnectAll={connectAll}
-      onLogout={logout}
-    />
+    <SidebarProvider>
+      <AppSidebar
+        user={user}
+        tela={tela}
+        onNavegar={setTela}
+        onLogout={logout}
+        onAbrirUrl={abrirUrl}
+      />
+      <SidebarInset className="relative overflow-hidden">
+        <Estrelas className="pointer-events-none" />
+
+        <header className="relative z-10 flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12">
+          <div className="flex flex-1 items-center gap-2 px-4">
+            <SidebarTrigger className="-ml-1" />
+            <Separator orientation="vertical" className="mr-2 h-4" />
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem className="hidden md:block">
+                  <BreadcrumbLink asChild>
+                    <span>{info.secao}</span>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator className="hidden md:block" />
+                <BreadcrumbItem>
+                  <BreadcrumbPage>{info.titulo}</BreadcrumbPage>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+            <div className="ml-auto">
+              <ThemeToggle />
+            </div>
+          </div>
+        </header>
+
+        <main className="relative z-10 flex flex-1 flex-col overflow-y-auto p-4 pt-0">
+          {tela === "onedrive" && (
+            <SitesScreen
+              sites={sites}
+              loading={loadingSites}
+              error={error}
+              onConnect={connect}
+              onOpen={openSite}
+              onDisconnect={disconnect}
+              onConnectAll={connectAll}
+            />
+          )}
+          {tela === "outlook" && (
+            <EmBreveScreen
+              titulo="Outlook"
+              icone={TELAS.outlook.icone}
+              descricao="Ferramentas de diagnóstico do e-mail vão aparecer aqui."
+              itens={[
+                "Verificar regras e encaminhamentos",
+                "Tamanho da caixa e limpeza",
+                "Reparar perfil do Outlook",
+              ]}
+            />
+          )}
+          {tela === "performance" && (
+            <EmBreveScreen
+              titulo="Performance"
+              icone={TELAS.performance.icone}
+              descricao="Diagnóstico e ajustes de desempenho da máquina."
+              itens={[
+                "Espaço em disco e arquivos temporários",
+                "Programas que iniciam com o Windows",
+                "Estado da sincronização do OneDrive",
+              ]}
+            />
+          )}
+          {tela === "caminhos-longos" && <CaminhosLongosScreen />}
+          {tela === "configuracoes" && (
+            <EmBreveScreen
+              titulo="Configurações"
+              icone={TELAS.configuracoes.icone}
+              descricao="Preferências do aplicativo e da sua conta."
+            />
+          )}
+        </main>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }

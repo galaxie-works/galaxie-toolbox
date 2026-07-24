@@ -1,10 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { Avatar } from "@/components/ui/avatar";
-import { Wordmark } from "@/components/brand";
 import { cn, formatBytes } from "@/lib/utils";
-import type { AppUser, Site } from "@/lib/types";
+import type { Site } from "@/lib/types";
 import {
   AlertTriangle,
   Check,
@@ -12,7 +9,6 @@ import {
   FolderCheck,
   Loader2,
   Lock,
-  LogOut,
   Plug,
   Sparkles,
   Unplug,
@@ -132,7 +128,6 @@ function SiteCard({
 }
 
 export function SitesScreen({
-  user,
   sites,
   loading,
   error,
@@ -140,9 +135,7 @@ export function SitesScreen({
   onOpen,
   onDisconnect,
   onConnectAll,
-  onLogout,
 }: {
-  user: AppUser;
   sites: Site[];
   loading?: boolean;
   error?: string | null;
@@ -150,36 +143,13 @@ export function SitesScreen({
   onOpen: (s: Site) => void;
   onDisconnect: (s: Site) => void;
   onConnectAll: () => void;
-  onLogout: () => void;
 }) {
   const accessible = sites.filter((s) => s.status !== "noaccess");
   const connected = sites.filter((s) => s.status === "connected").length;
   const pending = accessible.filter((s) => s.status === "available").length;
 
   return (
-    <div className="flex h-full flex-col">
-      {/* barra superior */}
-      <header className="flex items-center justify-between border-b border-border px-6 py-3.5">
-        <Wordmark />
-        <div className="flex items-center gap-2">
-          <ThemeToggle />
-          <div className="mx-1 h-6 w-px bg-border" />
-          <div className="flex items-center gap-2.5">
-            <div className="text-right leading-tight">
-              <div className="text-[13px] font-medium">{user.displayName}</div>
-              <div className="text-[11px] text-muted-foreground">{user.email}</div>
-            </div>
-            <Avatar photo={user.photo} initials={user.initials} size={36} />
-          </div>
-          <Button variant="ghost" size="icon" onClick={onLogout} aria-label="Sair">
-            <LogOut className="size-4" />
-          </Button>
-        </div>
-      </header>
-
-      {/* conteudo */}
-      <main className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-5xl">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold tracking-tight">
@@ -226,8 +196,6 @@ export function SitesScreen({
             As bibliotecas aparecem no seu OneDrive, no Explorer. Só ocupam espaço
             quando você abre um arquivo.
           </p>
-        </div>
-      </main>
     </div>
   );
 }
