@@ -13,6 +13,7 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/animate-ui/components/radix/sidebar";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
   Breadcrumb,
@@ -249,9 +250,12 @@ export default function App() {
           </div>
         </header>
 
-        {/* min-h-0: sem isso o flex-1 nao encolhe abaixo do conteudo e o
-            overflow-y-auto nunca chega a valer. */}
-        <main className="relative z-10 flex min-h-0 flex-1 flex-col overflow-y-auto p-4 pt-0">
+        {/* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
+            design system em vez da nativa do sistema.
+            min-h-0: sem isso o flex-1 nao encolhe abaixo do conteudo e nao
+            existe area rolavel nenhuma. */}
+        <ScrollArea className="relative z-10 min-h-0 flex-1">
+          <main className="flex flex-col p-4 pt-0">
           {tela === "onedrive" && (
             <SitesScreen
               sites={sites}
@@ -295,7 +299,8 @@ export default function App() {
               descricao={t.emBreveConfig.descricao}
             />
           )}
-        </main>
+          </main>
+        </ScrollArea>
       </SidebarInset>
     </SidebarProvider>
   );
