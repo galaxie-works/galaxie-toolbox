@@ -37,3 +37,55 @@ export interface Identidade {
   initials: string;
   photo?: string | null;
 }
+
+/** Pasta de primeiro nivel do OneDrive do usuario (aba "My files"). */
+export interface PastaOD {
+  id: string;
+  name: string;
+  bytes: number; // recursivo, exato
+  webUrl: string;
+  childCount: number; // filhos imediatos
+  // folders/files sao recursivos e APROXIMADOS (indice de busca), como no
+  // SharePoint. Buscados depois da lista, pasta por pasta.
+  detalhes?: "carregando" | "pronto";
+  folders?: number;
+  files?: number;
+}
+
+/** Uso do OneDrive: usado x limite. */
+export interface UsoOneDrive {
+  used: number;
+  total: number;
+  webUrl: string;
+}
+
+/** Tipo de arquivo com contagem (nao peso — ver graph::onedrive_tipos). */
+export interface TipoArquivo {
+  tipo: string;
+  quantidade: number;
+}
+
+// --- Control room (dashboard) --------------------------------------------
+export interface Reuniao {
+  assunto: string;
+  inicio: string; // ISO UTC (sem Z; o front adiciona)
+  fim: string;
+  local: string;
+  online: boolean;
+}
+
+export interface EmailRecente {
+  assunto: string;
+  de: string;
+  recebido: string;
+}
+
+export interface CaixaEntrada {
+  naoLidos: number;
+  recentes: EmailRecente[];
+}
+
+export interface Tarefa {
+  titulo: string;
+  lista: string;
+}

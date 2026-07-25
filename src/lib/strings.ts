@@ -53,6 +53,7 @@ const pt = {
     outlook: "Outlook",
     onedrive: "OneDrive",
     apps: "Apps",
+    controlRoom: "Control room",
     navegador: "Cruiser",
     performance: "Performance",
     caminhosLongos: "Caminhos longos",
@@ -65,7 +66,8 @@ const pt = {
   },
 
   abas: {
-    bibliotecas: "Bibliotecas",
+    bibliotecas: "Bibliotecas online",
+    meusArquivos: "Meus arquivos",
     problemas: "Solução de problemas",
   },
 
@@ -166,6 +168,19 @@ const pt = {
       "Os aplicativos abrem aqui dentro. Na primeira vez a Microsoft pede o seu login nesta janela; depois a sessão fica guardada.",
   },
 
+  meusArquivos: {
+    titulo: "Meus arquivos",
+    descricao:
+      "As pastas do seu OneDrive pessoal. Tamanho, pastas e arquivos de cada uma — para achar o que mais ocupa espaço.",
+    carregando: "Carregando suas pastas...",
+    vazio: "Nenhuma pasta no seu OneDrive.",
+    usoTitulo: "Uso do OneDrive",
+    usoLinha: "{u} de {t}",
+    tiposTitulo: "Tipos de arquivo mais comuns",
+    tiposNota: "Por quantidade — o Graph não informa o peso por tipo.",
+    tiposUnidade: "{n} arquivos",
+  },
+
   navegador: {
     buscar: "Buscar apps ou traçar uma rota...",
     vazio: "Nada por aqui.",
@@ -185,11 +200,28 @@ const pt = {
     depois: "Lembrar depois",
   },
 
+  controlRoom: {
+    saudacao: "Olá, {nome}",
+    subtitulo: "Seu resumo de hoje.",
+    reunioes: "Próximas reuniões",
+    semReunioes: "Nada na agenda por enquanto.",
+    online: "Online",
+    caixaEntrada: "Caixa de entrada",
+    naoLidos: "não lidos",
+    semEmail: "Tudo em dia.",
+    tarefas: "Tarefas pendentes",
+    semTarefas: "Nenhuma tarefa pendente.",
+    armazenamento: "Armazenamento",
+    usoLinha: "{u} de {t}",
+  },
+  emBreveControlRoom: {
+    descricao: "O painel de controle da Galaxie — sua visão geral. Em breve.",
+  },
   emBreveComms: {
-    descricao: "Comunicações da equipe, num só lugar.",
+    descricao: "Comunicação rápida entre a equipe. Em breve.",
   },
   emBreveAstro: {
-    descricao: "O copiloto da Galaxie vai morar aqui.",
+    descricao: "O chatbot da Galaxie vai morar aqui. Em breve.",
   },
   emBrevePulsar: {
     descricao: "Central de notificações e alertas — cada pulso, um aviso.",
@@ -248,6 +280,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     outlook: "Outlook",
     onedrive: "OneDrive",
     apps: "Apps",
+    controlRoom: "Control room",
     navegador: "Cruiser",
     performance: "Performance",
     caminhosLongos: "Long paths",
@@ -260,7 +293,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   },
 
   abas: {
-    bibliotecas: "Libraries",
+    bibliotecas: "Online libraries",
+    meusArquivos: "My files",
     problemas: "Troubleshooting",
   },
 
@@ -360,6 +394,19 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
       "Apps open right here. The first time, Microsoft asks you to sign in inside this window; after that the session is kept.",
   },
 
+  meusArquivos: {
+    titulo: "My files",
+    descricao:
+      "The folders in your personal OneDrive. Size, folders and files of each — to find what's eating space.",
+    carregando: "Loading your folders...",
+    vazio: "No folders in your OneDrive.",
+    usoTitulo: "OneDrive usage",
+    usoLinha: "{u} of {t}",
+    tiposTitulo: "Most common file types",
+    tiposNota: "By count — Graph doesn't give size per type.",
+    tiposUnidade: "{n} files",
+  },
+
   navegador: {
     buscar: "Search apps or set a course...",
     vazio: "Nothing here.",
@@ -379,11 +426,28 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     depois: "Remind me later",
   },
 
+  controlRoom: {
+    saudacao: "Hi, {nome}",
+    subtitulo: "Your day at a glance.",
+    reunioes: "Upcoming meetings",
+    semReunioes: "Nothing on the agenda yet.",
+    online: "Online",
+    caixaEntrada: "Inbox",
+    naoLidos: "unread",
+    semEmail: "All caught up.",
+    tarefas: "Pending tasks",
+    semTarefas: "No pending tasks.",
+    armazenamento: "Storage",
+    usoLinha: "{u} of {t}",
+  },
+  emBreveControlRoom: {
+    descricao: "The Galaxie control panel — your overview. Coming soon.",
+  },
   emBreveComms: {
-    descricao: "Team communications, all in one place.",
+    descricao: "Fast team chat. Coming soon.",
   },
   emBreveAstro: {
-    descricao: "The Galaxie copilot will live here.",
+    descricao: "The Galaxie chatbot will live here. Coming soon.",
   },
   emBrevePulsar: {
     descricao: "Notifications and alerts — every pulse, a heads-up.",

@@ -16,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/animate-ui/components/radix/dropdown-menu";
 import { Switch } from "@/components/animate-ui/components/radix/switch";
-import { ConnectIcon } from "@/components/ui/connect";
+import { ConnectIcon, type ConnectIconHandle } from "@/components/ui/connect";
 import { FileStackIcon } from "@/components/ui/file-stack";
 import { FolderOpenIcon } from "@/components/ui/folder-open";
 import { FolderTreeIcon } from "@/components/ui/folder-tree";
@@ -31,16 +31,18 @@ import {
   type ModoConfirmacao,
 } from "@/components/confirmar-biblioteca";
 import { EmBreveScreen } from "@/screens/em-breve";
+import { MeusArquivosScreen } from "@/screens/meus-arquivos";
 import { formatBytes } from "@/lib/utils";
 import { preencher, useIdioma } from "@/lib/idioma";
 import type { Dicionario } from "@/lib/strings";
 import type { Site } from "@/lib/types";
 import { AlertTriangle, Hammer, Info, Loader2, Lock } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /* size padrao dos icones animados e 28, alto demais pra linha da aba */
 const abas = (t: Dicionario) => [
   { id: "bibliotecas", label: t.abas.bibliotecas, icon: <FolderTreeIcon size={17} /> },
+  { id: "meusArquivos", label: t.abas.meusArquivos, icon: <FolderOpenIcon size={17} /> },
   { id: "problemas", label: t.abas.problemas, icon: <HammerIcon size={17} /> },
 ];
 
@@ -101,6 +103,16 @@ function BibliotecaPanel({
     : conectado
       ? t.bibliotecas.conectado
       : t.bibliotecas.desconectado;
+
+  // O icone de conexao tem duas poses: "normal" = plugue JUNTO (conectado),
+  // "animate" = plugue SEPARADO (desconectado). Fixamos por estado, senao ate
+  // o desconectado pareceria conectado.
+  const conexaoRef = useRef<ConnectIconHandle>(null);
+  useEffect(() => {
+    if (semAcesso || ocupado) return;
+    if (conectado) conexaoRef.current?.stopAnimation();
+    else conexaoRef.current?.startAnimation();
+  }, [conectado, semAcesso, ocupado]);
 
   return (
     <FramePanel className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -175,7 +187,7 @@ function BibliotecaPanel({
           ) : semAcesso ? (
             <Lock className="size-4 text-muted-foreground" />
           ) : (
-            <ConnectIcon size={16} />
+            <ConnectIcon ref={conexaoRef} size={16} />
           )}
           <span className="text-muted-foreground w-27 shrink-0">
             {estado}
@@ -270,6 +282,8 @@ export function SitesScreen({
             t.problemas.item4,
           ]}
         />
+      ) : aba === "meusArquivos" ? (
+        <MeusArquivosScreen />
       ) : (
         <>
           {error && (

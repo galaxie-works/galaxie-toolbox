@@ -1,8 +1,26 @@
 import { cn } from "@/lib/utils";
 import galaxieLight from "@/assets/brand/galaxie_logo_light.png";
 import galaxieDark from "@/assets/brand/galaxie_logo_dark.png";
+import galaxieSimbolo from "@/assets/brand/galaxie-symbol.png";
 import clienteLight from "@/assets/brand/voaz-cloud-light.png";
 import clienteDark from "@/assets/brand/voaz-cloud-dark.png";
+
+/**
+ * Símbolo quadrado da Galaxie (só o planeta/galáxia, sem o wordmark). Usado
+ * como ícone do grupo Galaxie na sidebar. Colorido de propósito — é a marca,
+ * como os ícones de produto do M365. Traz size-4 por padrão porque a sidebar
+ * dimensiona SVGs por CSS, e isto é um <img> (o CSS de svg não o alcança).
+ */
+export function GalaxieSymbol({ className }: { className?: string }) {
+  return (
+    <img
+      src={galaxieSimbolo}
+      alt=""
+      draggable={false}
+      className={cn("size-4 shrink-0 object-contain", className)}
+    />
+  );
+}
 
 /**
  * Marca do CLIENTE, exibida no topo da sidebar (o slot que no shadcn e o

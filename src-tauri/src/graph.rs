@@ -429,3 +429,357 @@ fn fix_existing_name(client: &reqwest::blocking::Client, token: &str, site_guid:
         }
     }
 }
+
+// ============================================================================
+// OneDrive pessoal (aba "My files"): pastas do usuario, uso e tipos de arquivo.
+// Tudo delegado (/me/drive), a conta logada no app.
+// ============================================================================
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PastaOneDrive {
+    pub id: String,
+    pub name: String,
+    /// Tamanho recursivo da pasta (exato, vem do proprio drive).
+    pub bytes: u64,
+    pub web_url: String,
+    /// Filhos imediatos (nao recursivo) — barato, vem no proprio item.
+    pub child_count: u64,
+}
+
+/// Pastas de primeiro nivel do OneDrive do usuario, maiores primeiro.
+pub fn onedrive_folders(store: &TokenStore) -> Result<Vec<PastaOneDrive>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let mut pastas = Vec::new();
+    let mut proxima = Some(format!(
+        "{GRAPH}/me/drive/root/children?$select=id,name,size,webUrl,folder&$top=200"
+    ));
+    while let Some(url) = proxima {
+        let resp = client
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .map_err(|e| format!("falha ao listar o OneDrive: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("/me/drive/root/children retornou {}", resp.status()));
+        }
+        let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+        if let Some(items) = v["value"].as_array() {
+            for it in items {
+                // So pastas; arquivos soltos na raiz nao viram card.
+                if !it["folder"].is_object() {
+                    continue;
+                }
+                pastas.push(PastaOneDrive {
+                    id: it["id"].as_str().unwrap_or("").to_string(),
+                    name: it["name"].as_str().unwrap_or("").to_string(),
+                    bytes: it["size"].as_u64().unwrap_or(0),
+                    web_url: it["webUrl"].as_str().unwrap_or("").to_string(),
+                    child_count: it["folder"]["childCount"].as_u64().unwrap_or(0),
+                });
+            }
+        }
+        proxima = v["@odata.nextLink"].as_str().map(|s| s.to_string());
+    }
+    pastas.sort_by(|a, b| b.bytes.cmp(&a.bytes));
+    Ok(pastas)
+}
+
+/// Contagens (recursivas, APROXIMADAS) de uma pasta do OneDrive — vem do indice
+/// de busca, mesma ressalva do SharePoint. bytes ja e conhecido da listagem.
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PastaDetalhes {
+    pub folders: Option<u64>,
+    pub files: Option<u64>,
+}
+
+pub fn onedrive_folder_details(
+    store: &TokenStore,
+    web_url: &str,
+) -> Result<PastaDetalhes, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    Ok(PastaDetalhes {
+        files: contar_busca(&client, &token, &format!("path:\"{web_url}\" AND IsDocument:true")),
+        folders: contar_busca(&client, &token, &format!("path:\"{web_url}\" AND IsContainer:true")),
+    })
+}
+
+/// Uso do OneDrive: usado e limite (bytes). Exato, vem da quota do drive.
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct UsoOneDrive {
+    pub used: u64,
+    pub total: u64,
+    /// Endereco raiz do drive — usado para escopar a busca de tipos de arquivo.
+    pub web_url: String,
+}
+
+pub fn onedrive_quota(store: &TokenStore) -> Result<UsoOneDrive, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/drive/root?$select=webUrl");
+    let web_url = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .ok()
+        .and_then(|r| r.json::<serde_json::Value>().ok())
+        .and_then(|v| v["webUrl"].as_str().map(|s| s.to_string()))
+        .unwrap_or_default();
+
+    let url = format!("{GRAPH}/me/drive?$select=quota");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler a quota: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/drive retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(UsoOneDrive {
+        used: v["quota"]["used"].as_u64().unwrap_or(0),
+        total: v["quota"]["total"].as_u64().unwrap_or(0),
+        web_url,
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TipoArquivo {
+    pub tipo: String,
+    pub quantidade: u64,
+}
+
+/// Tipos de arquivo que a pessoa MAIS tem no OneDrive, por CONTAGEM (via
+/// agregacao da busca). O peso por tipo NAO vem daqui: a agregacao do Graph
+/// devolve contagem por bucket, nao soma de tamanho — para peso seria preciso
+/// enumerar arquivo a arquivo (lento demais para uma tela). Por isso mostramos
+/// "quantos", nao "quanto pesam".
+pub fn onedrive_tipos(store: &TokenStore, web_url: &str) -> Result<Vec<TipoArquivo>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let kql = if web_url.is_empty() {
+        "IsDocument:true".to_string()
+    } else {
+        format!("path:\"{web_url}\" AND IsDocument:true")
+    };
+    let corpo = serde_json::json!({
+        "requests": [{
+            "entityTypes": ["driveItem"],
+            "query": { "queryString": kql },
+            "from": 0,
+            "size": 0,
+            "aggregations": [{
+                "field": "fileType",
+                "size": 8,
+                "bucketDefinition": {
+                    "sortBy": "count",
+                    "isDescending": true,
+                    "minimumCount": 1
+                }
+            }]
+        }]
+    });
+    let resp = client
+        .post(format!("{GRAPH}/search/query"))
+        .bearer_auth(&token)
+        .json(&corpo)
+        .send()
+        .map_err(|e| format!("falha na agregacao: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/search/query retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut tipos = Vec::new();
+    if let Some(buckets) = v["value"][0]["hitsContainers"][0]["aggregations"][0]["buckets"].as_array() {
+        for b in buckets {
+            let tipo = b["key"].as_str().unwrap_or("").to_string();
+            let quantidade = b["count"].as_u64().unwrap_or(0);
+            if !tipo.is_empty() {
+                tipos.push(TipoArquivo { tipo, quantidade });
+            }
+        }
+    }
+    Ok(tipos)
+}
+
+// ============================================================================
+// Control room (dashboard): visao pessoal do usuario logado. Tudo delegado,
+// escopos sem admin consent (Calendars.Read, Mail.Read, Tasks.ReadWrite).
+// ============================================================================
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reuniao {
+    pub assunto: String,
+    /// Inicio em ISO UTC (o front converte para o horario local).
+    pub inicio: String,
+    pub fim: String,
+    pub local: String,
+    pub online: bool,
+}
+
+/// Proximas reunioes (janela de 7 dias, ate 6). Calendars.Read.
+pub fn cr_reunioes(store: &TokenStore) -> Result<Vec<Reuniao>, String> {
+    use chrono::{Duration, Utc};
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let agora = Utc::now();
+    let ini = agora.format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let fim = (agora + Duration::days(7)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let url = format!(
+        "{GRAPH}/me/calendarView?startDateTime={ini}&endDateTime={fim}\
+         &$select=subject,start,end,location,isAllDay,onlineMeeting\
+         &$orderby=start/dateTime&$top=6"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        // times em UTC, deterministico para o front converter.
+        .header("Prefer", "outlook.timezone=\"UTC\"")
+        .send()
+        .map_err(|e| format!("falha no calendario: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/calendarView retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut reunioes = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            reunioes.push(Reuniao {
+                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+                inicio: it["start"]["dateTime"].as_str().unwrap_or("").to_string(),
+                fim: it["end"]["dateTime"].as_str().unwrap_or("").to_string(),
+                local: it["location"]["displayName"].as_str().unwrap_or("").to_string(),
+                online: it["onlineMeeting"].is_object(),
+            });
+        }
+    }
+    Ok(reunioes)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailRecente {
+    pub assunto: String,
+    pub de: String,
+    pub recebido: String,
+}
+
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CaixaEntrada {
+    pub nao_lidos: u64,
+    pub recentes: Vec<EmailRecente>,
+}
+
+/// Nao-lidos da Caixa de Entrada + ultimas mensagens nao lidas. Mail.Read.
+pub fn cr_email(store: &TokenStore) -> Result<CaixaEntrada, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let mut cx = CaixaEntrada::default();
+
+    let url = format!("{GRAPH}/me/mailFolders/inbox?$select=unreadItemCount");
+    if let Ok(resp) = client.get(&url).bearer_auth(&token).send() {
+        if resp.status().is_success() {
+            if let Ok(v) = resp.json::<serde_json::Value>() {
+                cx.nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
+            }
+        }
+    }
+
+    let url = format!(
+        "{GRAPH}/me/mailFolders/inbox/messages?$filter=isRead eq false\
+         &$select=subject,from,receivedDateTime&$top=5&$orderby=receivedDateTime desc"
+    );
+    if let Ok(resp) = client.get(&url).bearer_auth(&token).send() {
+        if resp.status().is_success() {
+            if let Ok(v) = resp.json::<serde_json::Value>() {
+                if let Some(items) = v["value"].as_array() {
+                    for it in items {
+                        cx.recentes.push(EmailRecente {
+                            assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+                            de: it["from"]["emailAddress"]["name"]
+                                .as_str()
+                                .or_else(|| it["from"]["emailAddress"]["address"].as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(cx)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tarefa {
+    pub titulo: String,
+    pub lista: String,
+}
+
+/// Tarefas pendentes do To Do (todas as listas, ate 8). Tasks.ReadWrite.
+pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // 1) listas
+    let url = format!("{GRAPH}/me/todo/lists?$select=id,displayName&$top=50");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler as listas: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/todo/lists retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let mut tarefas = Vec::new();
+    if let Some(listas) = v["value"].as_array() {
+        for l in listas {
+            if tarefas.len() >= 8 {
+                break;
+            }
+            let id = l["id"].as_str().unwrap_or("");
+            let nome = l["displayName"].as_str().unwrap_or("").to_string();
+            if id.is_empty() {
+                continue;
+            }
+            // 2) tarefas nao concluidas de cada lista
+            let url = format!(
+                "{GRAPH}/me/todo/lists/{id}/tasks?$filter=status ne 'completed'\
+                 &$select=title&$top=8"
+            );
+            if let Ok(r) = client.get(&url).bearer_auth(&token).send() {
+                if r.status().is_success() {
+                    if let Ok(vt) = r.json::<serde_json::Value>() {
+                        if let Some(items) = vt["value"].as_array() {
+                            for it in items {
+                                if tarefas.len() >= 8 {
+                                    break;
+                                }
+                                tarefas.push(Tarefa {
+                                    titulo: it["title"].as_str().unwrap_or("").to_string(),
+                                    lista: nome.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(tarefas)
+}

@@ -93,7 +93,7 @@ export function AppSidebar({
                   <SidebarMenuItem>
                     <CollapsibleTrigger asChild>
                       <SidebarMenuButton tooltip={t.nav[item.titulo]}>
-                        <item.icone />
+                        <item.icone className="size-5!" />
                         <span>{t.nav[item.titulo]}</span>
                         <ChevronRight className="ml-auto transition-transform duration-300 group-data-[state=open]/collapsible:rotate-90" />
                       </SidebarMenuButton>
@@ -113,7 +113,7 @@ export function AppSidebar({
                                   onNavegar(filho.id);
                                 }}
                               >
-                                {filho.icone && <filho.icone />}
+                                {filho.icone && <filho.icone className="size-5!" />}
                                 <span>{t.nav[filho.titulo]}</span>
                               </a>
                             </SidebarMenuSubButton>

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { LoginScreen } from "@/screens/login";
 import { SitesScreen } from "@/screens/sites";
 import { AppsScreen } from "@/screens/apps";
+import { ControlRoomScreen } from "@/screens/control-room";
 import { NavegadorScreen, type AbaBrowser } from "@/screens/navegador";
 import * as browser from "@/lib/browser";
 import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
@@ -356,6 +357,7 @@ export default function App() {
               onAbrirNavegador={(a) => abrirUrl(a.url)}
             />
           )}
+          {tela === "control-room" && <ControlRoomScreen user={user} />}
           {tela === "comms" && (
             <EmBreveScreen
               titulo={t.nav.comms}

@@ -16,9 +16,14 @@
 /// publico com PKCE, sem secret.
 pub const CLIENT_ID: &str = "214d735e-eb9b-4052-8851-578d3bd91627";
 
-/// Escopos delegados. offline_access garante refresh_token.
-pub const SCOPES: &str =
-    "openid profile offline_access User.Read Files.ReadWrite Sites.Read.All";
+/// Escopos delegados que o app PEDE no login. offline_access garante
+/// refresh_token. So Microsoft Graph — o app tem muito mais permissao concedida
+/// no registro, mas pedimos so o que cada feature usa (token enxuto, tela de
+/// consentimento sana). Calendars/Mail/Tasks alimentam o Control room; nenhum
+/// exige admin consent.
+pub const SCOPES: &str = "openid profile offline_access \
+     User.Read Files.ReadWrite Sites.Read.All \
+     Calendars.Read Mail.Read Tasks.ReadWrite";
 
 pub fn client_id() -> String {
     // GALAXIE_CLIENT_ID permite apontar para outro registro sem recompilar

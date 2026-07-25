@@ -69,6 +69,7 @@ name = "app"
 version = "0.9.6"
 dependencies = [
  "base64 0.22.1",
+ "chrono",
  "log",
  "open",
  "rand 0.8.7",

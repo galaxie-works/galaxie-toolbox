@@ -111,6 +111,75 @@ async fn site_details(
         .map_err(|e| e.to_string())?
 }
 
+/// Pastas de primeiro nivel do OneDrive do usuario logado.
+#[tauri::command]
+async fn onedrive_folders(state: State<'_, Store>) -> Result<Vec<graph::PastaOneDrive>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::onedrive_folders(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Contagens de pastas/arquivos de uma pasta do OneDrive (por pasta, depois da lista).
+#[tauri::command]
+async fn onedrive_folder_details(
+    state: State<'_, Store>,
+    web_url: String,
+) -> Result<graph::PastaDetalhes, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::onedrive_folder_details(&store, &web_url))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Uso do OneDrive (usado/limite) do usuario logado.
+#[tauri::command]
+async fn onedrive_quota(state: State<'_, Store>) -> Result<graph::UsoOneDrive, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::onedrive_quota(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Tipos de arquivo mais frequentes no OneDrive (por contagem).
+#[tauri::command]
+async fn onedrive_tipos(
+    state: State<'_, Store>,
+    web_url: String,
+) -> Result<Vec<graph::TipoArquivo>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::onedrive_tipos(&store, &web_url))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: proximas reunioes do usuario.
+#[tauri::command]
+async fn cr_reunioes(state: State<'_, Store>) -> Result<Vec<graph::Reuniao>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_reunioes(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: caixa de entrada (nao-lidos + recentes).
+#[tauri::command]
+async fn cr_email(state: State<'_, Store>) -> Result<graph::CaixaEntrada, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_email(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: tarefas pendentes do To Do.
+#[tauri::command]
+async fn cr_tarefas(state: State<'_, Store>) -> Result<Vec<graph::Tarefa>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_tarefas(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Cria o atalho da biblioteca no OneDrive do usuario (idempotente).
 #[tauri::command]
 async fn connect_site(
@@ -277,6 +346,13 @@ pub fn run() {
             cached_identity,
             list_sites,
             site_details,
+            onedrive_folders,
+            onedrive_folder_details,
+            onedrive_quota,
+            onedrive_tipos,
+            cr_reunioes,
+            cr_email,
+            cr_tarefas,
             connect_site,
             disconnect_site,
             open_in_explorer,

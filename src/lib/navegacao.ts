@@ -4,13 +4,14 @@ import {
   FolderTree,
   Settings,
   LayoutGrid,
-  Orbit,
   RadioTower,
   Radar,
   Sparkles,
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { CruiserIcon } from "@/components/ui/icons/marca/cruiser";
+import { ControlRoomIcon } from "@/components/ui/icons/marca/control-room";
+import { GalaxieSymbol } from "@/components/brand";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
 import { OneDriveIcon } from "@/components/ui/icons/marca/onedrive";
 import { OutlookIcon } from "@/components/ui/icons/marca/outlook";
@@ -23,6 +24,7 @@ export type IconeNav = ComponentType<{ className?: string }>;
 export type Tela =
   | "onedrive"
   | "apps"
+  | "control-room"
   | "navegador"
   | "comms"
   | "astro"
@@ -59,8 +61,9 @@ export const NAV: GrupoNav[] = [
       // Produtos da propria Galaxie, com nomes galacticos.
       {
         titulo: "galaxie",
-        icone: Orbit,
+        icone: GalaxieSymbol,
         filhos: [
+          { id: "control-room", titulo: "controlRoom", icone: ControlRoomIcon },
           { id: "navegador", titulo: "navegador", icone: CruiserIcon },
           { id: "comms", titulo: "comms", icone: RadioTower },
           { id: "astro", titulo: "astro", icone: Sparkles },
@@ -94,6 +97,7 @@ export const TELAS: Record<
   { titulo: ChaveNav; secao: ChaveNav; icone: IconeNav }
 > = {
   // Produtos Galaxie
+  "control-room": { titulo: "controlRoom", secao: "galaxie", icone: ControlRoomIcon },
   navegador: { titulo: "navegador", secao: "galaxie", icone: CruiserIcon },
   comms: { titulo: "comms", secao: "galaxie", icone: RadioTower },
   astro: { titulo: "astro", secao: "galaxie", icone: Sparkles },
