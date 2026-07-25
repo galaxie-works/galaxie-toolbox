@@ -1489,14 +1489,34 @@ pub fn cr_folder_mensagens(
          ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
          &$orderby={ordenar} desc&$top=50&$skip={skip}"
     );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .map_err(|e| format!("falha ao ler a pasta: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("/me/mailFolders/{folder_id}/messages retornou {}", resp.status()));
+    // Retry no 429: na abertura o app dispara várias chamadas Graph juntas
+    // (pastas + mensagens + agenda + categorias) e a Inbox vinha vazia quando
+    // esta era estrangulada. Respeita Retry-After, até 3 tentativas.
+    let mut resposta = None;
+    for tentativa in 0..3u8 {
+        match client.get(&url).bearer_auth(&token).send() {
+            Ok(r) if r.status().is_success() => {
+                resposta = Some(r);
+                break;
+            }
+            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
+                let espera = r
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(1)
+                    .min(5);
+                log::warn!("[mail] mensagens de '{folder_id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(r) => {
+                return Err(format!("/me/mailFolders/{folder_id}/messages retornou {}", r.status()));
+            }
+            Err(e) => return Err(format!("falha ao ler a pasta: {e}")),
+        }
     }
+    let resp = resposta.ok_or_else(|| "sem resposta ao ler a pasta".to_string())?;
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let mut itens = Vec::new();
     if let Some(items) = v["value"].as_array() {
