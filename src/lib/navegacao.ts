@@ -3,14 +3,16 @@ import {
   Gauge,
   FolderTree,
   Settings,
-  LayoutGrid,
-  RadioTower,
   Radar,
-  Sparkles,
 } from "lucide-react";
 import type { ComponentType } from "react";
-import { CruiserIcon } from "@/components/ui/icons/marca/cruiser";
-import { ControlRoomIcon } from "@/components/ui/icons/marca/control-room";
+import {
+  RudderIcon,
+  ShipIcon,
+  WalkieTalkieIcon,
+  AstronautIcon,
+} from "@/components/ui/icons/marca-anim";
+import { AppsIcon } from "@/components/ui/icons/apps-anim";
 import { GalaxieSymbol } from "@/components/brand";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
 import { OneDriveIcon } from "@/components/ui/icons/marca/onedrive";
@@ -63,10 +65,10 @@ export const NAV: GrupoNav[] = [
         titulo: "galaxie",
         icone: GalaxieSymbol,
         filhos: [
-          { id: "control-room", titulo: "controlRoom", icone: ControlRoomIcon },
-          { id: "navegador", titulo: "navegador", icone: CruiserIcon },
-          { id: "comms", titulo: "comms", icone: RadioTower },
-          { id: "astro", titulo: "astro", icone: Sparkles },
+          { id: "control-room", titulo: "controlRoom", icone: RudderIcon },
+          { id: "navegador", titulo: "navegador", icone: ShipIcon },
+          { id: "comms", titulo: "comms", icone: WalkieTalkieIcon },
+          { id: "astro", titulo: "astro", icone: AstronautIcon },
           { id: "pulsar", titulo: "pulsar", icone: Radar },
         ],
       },
@@ -74,7 +76,7 @@ export const NAV: GrupoNav[] = [
         titulo: "copilot",
         icone: CopilotIcon,
         filhos: [
-          { id: "apps", titulo: "apps", icone: LayoutGrid },
+          { id: "apps", titulo: "apps", icone: AppsIcon },
           { id: "outlook", titulo: "outlook", icone: OutlookIcon },
           { id: "onedrive", titulo: "onedrive", icone: OneDriveIcon },
         ],
@@ -97,13 +99,13 @@ export const TELAS: Record<
   { titulo: ChaveNav; secao: ChaveNav; icone: IconeNav }
 > = {
   // Produtos Galaxie
-  "control-room": { titulo: "controlRoom", secao: "galaxie", icone: ControlRoomIcon },
-  navegador: { titulo: "navegador", secao: "galaxie", icone: CruiserIcon },
-  comms: { titulo: "comms", secao: "galaxie", icone: RadioTower },
-  astro: { titulo: "astro", secao: "galaxie", icone: Sparkles },
+  "control-room": { titulo: "controlRoom", secao: "galaxie", icone: RudderIcon },
+  navegador: { titulo: "navegador", secao: "galaxie", icone: ShipIcon },
+  comms: { titulo: "comms", secao: "galaxie", icone: WalkieTalkieIcon },
+  astro: { titulo: "astro", secao: "galaxie", icone: AstronautIcon },
   pulsar: { titulo: "pulsar", secao: "galaxie", icone: Radar },
   // Microsoft 365
-  apps: { titulo: "apps", secao: "copilot", icone: LayoutGrid },
+  apps: { titulo: "apps", secao: "copilot", icone: AppsIcon },
   outlook: { titulo: "outlook", secao: "copilot", icone: OutlookIcon },
   onedrive: { titulo: "onedrive", secao: "copilot", icone: OneDriveIcon },
   // Windows

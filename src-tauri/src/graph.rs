@@ -783,3 +783,844 @@ pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
     }
     Ok(tarefas)
 }
+
+// ----------------------------------------------------------------------------
+// Agenda do dia + inbox do dia (visao "Control room" rica). O front escolhe uma
+// data no calendario e manda os limites do dia em ISO UTC; o backend so repassa.
+// ----------------------------------------------------------------------------
+
+/// Iniciais de um nome (ate 2 letras) para o fallback do avatar.
+fn iniciais(nome: &str) -> String {
+    let partes: Vec<&str> = nome.split_whitespace().filter(|p| !p.is_empty()).collect();
+    match partes.as_slice() {
+        [] => "?".to_string(),
+        [um] => um.chars().take(2).collect::<String>().to_uppercase(),
+        [primeiro, .., ultimo] => {
+            let a = primeiro.chars().next().unwrap_or('?');
+            let b = ultimo.chars().next().unwrap_or('?');
+            format!("{a}{b}").to_uppercase()
+        }
+    }
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Participante {
+    pub nome: String,
+    pub email: String,
+    pub iniciais: String,
+    /// Foto em data URI. Sempre None por ora (buscar por pessoa custa 1 req cada).
+    pub foto: Option<String>,
+}
+
+fn participante(no: &serde_json::Value) -> Participante {
+    let nome = no["name"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .or_else(|| no["address"].as_str())
+        .unwrap_or("")
+        .to_string();
+    Participante {
+        iniciais: iniciais(&nome),
+        email: no["address"].as_str().unwrap_or("").to_string(),
+        nome,
+        foto: None,
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventoAgenda {
+    pub id: String,
+    pub assunto: String,
+    pub inicio: String, // ISO UTC
+    pub fim: String,
+    pub local: String,
+    pub online: bool,
+    pub dia_inteiro: bool,
+    /// "meeting" quando tem convidados; "event" caso contrario.
+    pub categoria: String,
+    pub participantes: Vec<Participante>,
+    pub total_participantes: usize,
+    pub tem_anexos: bool,
+    pub categorias: Vec<String>,
+}
+
+/// Eventos do dia escolhido (limites em ISO UTC). Calendars.Read.
+pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/calendarView?startDateTime={inicio}&endDateTime={fim}\
+         &$select=id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories\
+         &$orderby=start/dateTime&$top=100"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .header("Prefer", "outlook.timezone=\"UTC\"")
+        .send()
+        .map_err(|e| format!("falha no calendario: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/calendarView retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut eventos = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            let convidados: Vec<Participante> = it["attendees"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|a| participante(&a["emailAddress"]))
+                        .filter(|p| !p.nome.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let total = convidados.len();
+            let categorias: Vec<String> = it["categories"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|c| c.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            eventos.push(EventoAgenda {
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+                inicio: it["start"]["dateTime"].as_str().unwrap_or("").to_string(),
+                fim: it["end"]["dateTime"].as_str().unwrap_or("").to_string(),
+                local: it["location"]["displayName"].as_str().unwrap_or("").to_string(),
+                online: it["onlineMeeting"].is_object() || it["isOnlineMeeting"].as_bool().unwrap_or(false),
+                dia_inteiro: it["isAllDay"].as_bool().unwrap_or(false),
+                categoria: if total > 0 { "meeting" } else { "event" }.to_string(),
+                // mostra ate 5 avatares; o resto vira "+N"
+                participantes: convidados.into_iter().take(5).collect(),
+                total_participantes: total,
+                tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
+                categorias,
+            });
+        }
+    }
+    Ok(eventos)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoriaCor {
+    pub nome: String,
+    pub cor: String,
+}
+
+/// Mapeia um preset de cor do Outlook para o hex correspondente.
+fn preset_para_hex(preset: &str) -> &'static str {
+    match preset {
+        "preset0" => "#D13438",
+        "preset1" => "#FF8C00",
+        "preset2" => "#986F0B",
+        "preset3" => "#EAA300",
+        "preset4" => "#498205",
+        "preset5" => "#00B7C3",
+        "preset6" => "#7A7574",
+        "preset7" => "#0078D4",
+        "preset8" => "#8764B8",
+        "preset9" => "#C239B3",
+        "preset10" => "#69797E",
+        "preset11" => "#4A5459",
+        "preset12" => "#8A8886",
+        "preset13" => "#5D5A58",
+        "preset14" => "#252423",
+        "preset15" => "#A80000",
+        "preset16" => "#D83B01",
+        "preset17" => "#7A4B00",
+        "preset18" => "#C19C00",
+        "preset19" => "#0B6A0B",
+        "preset20" => "#005E5E",
+        "preset21" => "#4C4A00",
+        "preset22" => "#004E8C",
+        "preset23" => "#5C2E91",
+        "preset24" => "#881798",
+        // "none" ou desconhecido
+        _ => "#8A8886",
+    }
+}
+
+/// Categorias mestras do usuario com a cor (hex) de cada uma. Calendars.Read / Mail.Read.
+pub fn cr_categorias(store: &TokenStore) -> Result<Vec<CategoriaCor>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/outlook/masterCategories?$select=displayName,color");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler as categorias: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/outlook/masterCategories retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut categorias = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            let nome = it["displayName"].as_str().unwrap_or("").to_string();
+            let preset = it["color"].as_str().unwrap_or("none");
+            categorias.push(CategoriaCor {
+                nome,
+                cor: preset_para_hex(preset).to_string(),
+            });
+        }
+    }
+    Ok(categorias)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventoDetalhe {
+    pub assunto: String,
+    pub inicio: String,
+    pub fim: String,
+    pub local: String,
+    pub online: bool,
+    pub join_url: Option<String>,
+    pub organizador: String,
+    pub corpo: String,
+    pub corpo_tipo: String, // "html" | "text"
+    pub participantes: Vec<Participante>,
+    pub web_link: String,
+}
+
+/// Detalhe completo de um evento (corpo + todos os convidados). Calendars.Read.
+pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/events/{id}?$select=subject,start,end,location,onlineMeeting,\
+         isOnlineMeeting,onlineMeetingUrl,organizer,body,attendees,webLink"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .header("Prefer", "outlook.timezone=\"UTC\"")
+        .send()
+        .map_err(|e| format!("falha ao ler o evento: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/events retornou {}", resp.status()));
+    }
+    let it: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let participantes: Vec<Participante> = it["attendees"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|a| participante(&a["emailAddress"]))
+                .filter(|p| !p.nome.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let join_url = it["onlineMeeting"]["joinUrl"]
+        .as_str()
+        .or_else(|| it["onlineMeetingUrl"].as_str())
+        .map(|s| s.to_string());
+
+    Ok(EventoDetalhe {
+        assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+        inicio: it["start"]["dateTime"].as_str().unwrap_or("").to_string(),
+        fim: it["end"]["dateTime"].as_str().unwrap_or("").to_string(),
+        local: it["location"]["displayName"].as_str().unwrap_or("").to_string(),
+        online: it["onlineMeeting"].is_object() || it["isOnlineMeeting"].as_bool().unwrap_or(false),
+        join_url,
+        organizador: it["organizer"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
+        corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
+        corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
+        participantes,
+        web_link: it["webLink"].as_str().unwrap_or("").to_string(),
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailItem {
+    pub id: String,
+    pub assunto: String,
+    pub de: String,
+    pub de_email: String,
+    pub iniciais: String,
+    pub recebido: String, // ISO UTC
+    pub preview: String,
+    pub lido: bool,
+    pub tem_anexos: bool,
+    pub sinalizado: bool,
+}
+
+/// E-mails recebidos no dia escolhido (limites em ISO UTC). Mail.Read.
+pub fn cr_inbox_dia(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EmailItem>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/mailFolders/inbox/messages\
+         ?$filter=receivedDateTime ge {inicio} and receivedDateTime lt {fim}\
+         &$select=subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments,flag\
+         &$orderby=receivedDateTime desc&$top=50"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler a inbox: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/mailFolders/inbox/messages retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut itens = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            let de = it["from"]["emailAddress"]["name"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .or_else(|| it["from"]["emailAddress"]["address"].as_str())
+                .unwrap_or("")
+                .to_string();
+            itens.push(EmailItem {
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+                iniciais: iniciais(&de),
+                de,
+                de_email: it["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
+                recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
+                preview: it["bodyPreview"].as_str().unwrap_or("").trim().to_string(),
+                lido: it["isRead"].as_bool().unwrap_or(true),
+                tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
+                sinalizado: it["flag"]["flagStatus"].as_str() == Some("flagged"),
+            });
+        }
+    }
+    Ok(itens)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnexoEmail {
+    pub id: String,
+    pub nome: String,
+    pub tamanho: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailDetalhe {
+    pub assunto: String,
+    pub de: String,
+    pub de_email: String,
+    pub para: Vec<String>,
+    pub cc: Vec<String>,
+    pub recebido: String,
+    pub corpo: String,
+    pub corpo_tipo: String, // "html" | "text"
+    pub anexos: Vec<AnexoEmail>,
+    pub web_link: String,
+}
+
+/// Nomes (ou e-mails) de uma lista de recipients do Graph.
+fn nomes_recipients(v: &serde_json::Value) -> Vec<String> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|r| {
+                    r["emailAddress"]["name"]
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| r["emailAddress"]["address"].as_str())
+                        .unwrap_or("")
+                        .to_string()
+                })
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Corpo completo de um e-mail + destinatarios e anexos. Mail.Read.
+pub fn cr_email_corpo(store: &TokenStore, id: &str) -> Result<EmailDetalhe, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/messages/{id}\
+         ?$select=subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments,webLink"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler o e-mail: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/messages retornou {}", resp.status()));
+    }
+    let it: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let para = nomes_recipients(&it["toRecipients"]);
+    let cc = nomes_recipients(&it["ccRecipients"]);
+
+    // Anexos so quando houver (poupa uma chamada).
+    let mut anexos = Vec::new();
+    if it["hasAttachments"].as_bool().unwrap_or(false) {
+        let au = format!("{GRAPH}/me/messages/{id}/attachments?$select=id,name,size");
+        if let Ok(r) = client.get(&au).bearer_auth(&token).send() {
+            if r.status().is_success() {
+                if let Ok(va) = r.json::<serde_json::Value>() {
+                    if let Some(arr) = va["value"].as_array() {
+                        for a in arr {
+                            anexos.push(AnexoEmail {
+                                id: a["id"].as_str().unwrap_or("").to_string(),
+                                nome: a["name"].as_str().unwrap_or("arquivo").to_string(),
+                                tamanho: a["size"].as_u64().unwrap_or(0),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(EmailDetalhe {
+        assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+        de: it["from"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
+        de_email: it["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
+        para,
+        cc,
+        recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
+        corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
+        corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
+        anexos,
+        web_link: it["webLink"].as_str().unwrap_or("").to_string(),
+    })
+}
+
+/// Baixa um anexo de um e-mail para a pasta Downloads do usuario e devolve o
+/// caminho absoluto do arquivo gravado. Mail.Read.
+///
+/// O fileAttachment do Graph traz o conteudo em `contentBytes` (base64). Grava
+/// em %USERPROFILE%\Downloads, criando a pasta se nao existir, e resolve
+/// colisoes de nome anexando " (1)", " (2)", ... antes da extensao.
+pub fn cr_baixar_anexo(
+    store: &TokenStore,
+    message_id: &str,
+    attachment_id: &str,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/messages/{message_id}/attachments/{attachment_id}");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao baixar o anexo: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/messages/attachments retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let nome = v["name"].as_str().unwrap_or("anexo").to_string();
+    let bytes_str = v["contentBytes"]
+        .as_str()
+        .ok_or("anexo sem conteudo (nao e um arquivo?)")?;
+    let bytes = general_purpose::STANDARD
+        .decode(bytes_str)
+        .map_err(|e| format!("conteudo do anexo invalido: {e}"))?;
+
+    // Pasta Downloads da conta do Windows; cria se nao existir.
+    let perfil = std::env::var("USERPROFILE")
+        .map_err(|_| "nao encontrei a pasta do usuario".to_string())?;
+    let downloads = std::path::Path::new(&perfil).join("Downloads");
+    std::fs::create_dir_all(&downloads)
+        .map_err(|e| format!("falha ao criar a pasta Downloads: {e}"))?;
+
+    // Sanitiza o nome: descarta qualquer componente de caminho que venha no
+    // nome do anexo (evita escrever fora da pasta Downloads).
+    let seguro = std::path::Path::new(&nome)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("anexo")
+        .to_string();
+
+    let destino = caminho_livre(&downloads, &seguro);
+    std::fs::write(&destino, &bytes)
+        .map_err(|e| format!("falha ao gravar o arquivo: {e}"))?;
+
+    Ok(destino.to_string_lossy().to_string())
+}
+
+/// Devolve um caminho ainda livre dentro de `dir` para `nome`. Se ja existir,
+/// anexa " (1)", " (2)", ... antes da extensao ate achar um nome disponivel.
+fn caminho_livre(dir: &std::path::Path, nome: &str) -> std::path::PathBuf {
+    let inicial = dir.join(nome);
+    if !inicial.exists() {
+        return inicial;
+    }
+    let base = std::path::Path::new(nome);
+    let tronco = base
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(nome)
+        .to_string();
+    let ext = base.extension().and_then(|s| s.to_str());
+
+    let mut n = 1u32;
+    loop {
+        let candidato = match ext {
+            Some(e) => format!("{tronco} ({n}).{e}"),
+            None => format!("{tronco} ({n})"),
+        };
+        let p = dir.join(&candidato);
+        if !p.exists() {
+            return p;
+        }
+        n += 1;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Envio: responder / encaminhar. Fluxo em 3 passos pra preservar o histórico
+// citado e enviar o HTML composto pelo editor:
+//   1) POST createReply|createReplyAll|createForward  -> rascunho (com a citação)
+//   2) PATCH /messages/{rascunho}                      -> prepende o texto novo
+//   3) POST  /messages/{rascunho}/send                 -> dispara (202)
+// Escopos: Mail.ReadWrite (rascunho) + Mail.Send (envio).
+// ----------------------------------------------------------------------------
+
+/// Cria um rascunho de resposta/encaminhamento, injeta o corpo e envia.
+fn compor_e_enviar(
+    store: &TokenStore,
+    id: &str,
+    acao: &str, // "createReply" | "createReplyAll" | "createForward"
+    corpo_html: &str,
+    para: &[String],
+) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // 1) rascunho a partir da mensagem original
+    let url = format!("{GRAPH}/me/messages/{id}/{acao}");
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .header("Content-Length", "0")
+        .send()
+        .map_err(|e| format!("falha ao criar o rascunho: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("{acao} retornou {}", resp.status()));
+    }
+    let rascunho: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let draft_id = rascunho["id"].as_str().ok_or("rascunho sem id")?.to_string();
+    // corpo original (com a citação) que o Graph montou — preservamos abaixo
+    let citacao = rascunho["body"]["content"].as_str().unwrap_or("");
+    let corpo_final = format!("{corpo_html}<br>{citacao}");
+
+    // 2) PATCH: injeta o HTML composto (+ destinatários no encaminhamento)
+    let mut patch = serde_json::json!({
+        "body": { "contentType": "HTML", "content": corpo_final }
+    });
+    if !para.is_empty() {
+        let dest: Vec<serde_json::Value> = para
+            .iter()
+            .filter(|e| !e.trim().is_empty())
+            .map(|e| serde_json::json!({ "emailAddress": { "address": e.trim() } }))
+            .collect();
+        patch["toRecipients"] = serde_json::Value::Array(dest);
+    }
+    let url = format!("{GRAPH}/me/messages/{draft_id}");
+    let resp = client
+        .patch(&url)
+        .bearer_auth(&token)
+        .json(&patch)
+        .send()
+        .map_err(|e| format!("falha ao preencher o rascunho: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("PATCH do rascunho retornou {}", resp.status()));
+    }
+
+    // 3) envia
+    let url = format!("{GRAPH}/me/messages/{draft_id}/send");
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .header("Content-Length", "0")
+        .send()
+        .map_err(|e| format!("falha ao enviar: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("envio retornou {}", resp.status()));
+    }
+    Ok(())
+}
+
+/// Responde um e-mail (Mail.ReadWrite + Mail.Send). `todos` = responder a todos.
+pub fn cr_responder(
+    store: &TokenStore,
+    id: &str,
+    corpo_html: &str,
+    todos: bool,
+) -> Result<(), String> {
+    let acao = if todos { "createReplyAll" } else { "createReply" };
+    compor_e_enviar(store, id, acao, corpo_html, &[])
+}
+
+/// Encaminha um e-mail para os destinatários informados.
+pub fn cr_encaminhar(
+    store: &TokenStore,
+    id: &str,
+    corpo_html: &str,
+    para: Vec<String>,
+) -> Result<(), String> {
+    if para.iter().all(|e| e.trim().is_empty()) {
+        return Err("informe ao menos um destinatário".into());
+    }
+    compor_e_enviar(store, id, "createForward", corpo_html, &para)
+}
+
+// ----------------------------------------------------------------------------
+// Cliente de e-mail (Control room): pastas + mensagens por pasta.
+// ----------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PastaEmail {
+    /// id well-known da pasta (serve direto no endpoint de mensagens).
+    pub id: String,
+    /// chave estável pro ícone/rótulo no front (ex.: "inbox", "sentitems").
+    pub tipo: String,
+    /// displayName localizado (fallback caso o front não traduza).
+    pub nome: String,
+    pub nao_lidos: u64,
+    pub total: u64,
+}
+
+/// Pastas de e-mail padrão do usuário, com contagens. Mail.Read.
+pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // Pastas well-known (o id textual funciona direto no Graph).
+    let alvos = [
+        "inbox",
+        "drafts",
+        "sentitems",
+        "archive",
+        "junkemail",
+        "deleteditems",
+    ];
+    let mut pastas = Vec::new();
+    for id in alvos {
+        // Sempre inclui a pasta (mesmo que a contagem falhe): o Inbox não pode
+        // sumir do sidebar por causa de um 404/erro transitório numa das chamadas.
+        let mut nao_lidos = 0;
+        let mut total = 0;
+        let mut nome = id.to_string();
+        let url = format!(
+            "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount"
+        );
+        match client.get(&url).bearer_auth(&token).send() {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(v) = resp.json::<serde_json::Value>() {
+                    nome = v["displayName"].as_str().unwrap_or(id).to_string();
+                    nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
+                    total = v["totalItemCount"].as_u64().unwrap_or(0);
+                }
+            }
+            Ok(resp) => log::warn!("[mail] pasta '{id}' retornou {}", resp.status()),
+            Err(e) => log::warn!("[mail] pasta '{id}' falhou: {e}"),
+        }
+        pastas.push(PastaEmail {
+            id: id.to_string(),
+            tipo: id.to_string(),
+            nome,
+            nao_lidos,
+            total,
+        });
+    }
+    Ok(pastas)
+}
+
+/// Mensagens de uma pasta (até 50, mais recentes primeiro). Mail.Read.
+/// Em Enviados/Rascunhos o "de" vira o destinatário (faz mais sentido na lista).
+pub fn cr_folder_mensagens(
+    store: &TokenStore,
+    folder_id: &str,
+    skip: u32,
+) -> Result<Vec<EmailItem>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let saida = matches!(folder_id, "sentitems" | "drafts");
+    let ordenar = if saida { "sentDateTime" } else { "receivedDateTime" };
+    // Página de 50, com $skip para o lazy load (rolar até o fim carrega mais).
+    let url = format!(
+        "{GRAPH}/me/mailFolders/{folder_id}/messages\
+         ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
+         &$orderby={ordenar} desc&$top=50&$skip={skip}"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler a pasta: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/mailFolders/{folder_id}/messages retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut itens = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            // Em pastas de saída, mostra o destinatário; nas demais, o remetente.
+            let contraparte = if saida {
+                it["toRecipients"][0]["emailAddress"]["name"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| it["toRecipients"][0]["emailAddress"]["address"].as_str())
+                    .unwrap_or("")
+                    .to_string()
+            } else {
+                it["from"]["emailAddress"]["name"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| it["from"]["emailAddress"]["address"].as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            let quando = if saida {
+                it["sentDateTime"].as_str().unwrap_or("")
+            } else {
+                it["receivedDateTime"].as_str().unwrap_or("")
+            };
+            itens.push(EmailItem {
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+                iniciais: iniciais(&contraparte),
+                de_email: it["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
+                de: contraparte,
+                recebido: quando.to_string(),
+                preview: it["bodyPreview"].as_str().unwrap_or("").trim().to_string(),
+                lido: it["isRead"].as_bool().unwrap_or(true),
+                tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
+                sinalizado: it["flag"]["flagStatus"].as_str() == Some("flagged"),
+            });
+        }
+    }
+    Ok(itens)
+}
+
+// ----------------------------------------------------------------------------
+// Ações de e-mail (Control room): excluir, sinalizar, esvaziar a lixeira.
+// Escopo: Mail.ReadWrite.
+// ----------------------------------------------------------------------------
+
+/// Exclui um e-mail (DELETE move para a Lixeira; se já estiver lá, apaga em
+/// definitivo). Mail.ReadWrite.
+pub fn cr_excluir_email(store: &TokenStore, id: &str) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/messages/{id}");
+    let resp = client
+        .delete(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao excluir o e-mail: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("DELETE /me/messages retornou {}", resp.status()));
+    }
+    Ok(())
+}
+
+/// Sinaliza ou remove a sinalização de um e-mail. Mail.ReadWrite.
+pub fn cr_marcar_email(store: &TokenStore, id: &str, sinalizado: bool) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let status = if sinalizado { "flagged" } else { "notFlagged" };
+    let patch = serde_json::json!({ "flag": { "flagStatus": status } });
+
+    let url = format!("{GRAPH}/me/messages/{id}");
+    let resp = client
+        .patch(&url)
+        .bearer_auth(&token)
+        .json(&patch)
+        .send()
+        .map_err(|e| format!("falha ao sinalizar o e-mail: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("PATCH /me/messages retornou {}", resp.status()));
+    }
+    Ok(())
+}
+
+/// Esvazia a Lixeira (Deleted Items): apaga em definitivo cada mensagem.
+/// Retorna quantas foram excluídas. Mail.ReadWrite.
+pub fn cr_esvaziar_lixeira(store: &TokenStore) -> Result<u64, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // Trava de segurança: evita loops infinitos caso algum DELETE não remova.
+    const LIMITE: u64 = 1000;
+    let mut apagados: u64 = 0;
+
+    loop {
+        let url = format!(
+            "{GRAPH}/me/mailFolders/deleteditems/messages?$select=id&$top=50"
+        );
+        let resp = client
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .map_err(|e| format!("falha ao ler a lixeira: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!(
+                "/me/mailFolders/deleteditems/messages retornou {}",
+                resp.status()
+            ));
+        }
+        let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+        let ids: Vec<String> = v["value"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|it| it["id"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Nada mais a apagar: terminamos.
+        if ids.is_empty() {
+            break;
+        }
+
+        for id in ids {
+            let url = format!("{GRAPH}/me/messages/{id}");
+            let resp = client
+                .delete(&url)
+                .bearer_auth(&token)
+                .send()
+                .map_err(|e| format!("falha ao apagar da lixeira: {e}"))?;
+            if !resp.status().is_success() {
+                return Err(format!("DELETE /me/messages retornou {}", resp.status()));
+            }
+            apagados += 1;
+
+            if apagados >= LIMITE {
+                log::warn!(
+                    "[mail] esvaziar lixeira: limite de {LIMITE} atingido, interrompendo"
+                );
+                return Ok(apagados);
+            }
+        }
+    }
+
+    Ok(apagados)
+}

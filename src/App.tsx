@@ -33,6 +33,7 @@ import { TELAS, type Tela } from "@/lib/navegacao";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
+import { comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
 
 export default function App() {
@@ -44,7 +45,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
   const [cache, setCache] = useState<Identidade | null>(null);
-  const [tela, setTela] = useState<Tela>("onedrive");
+  const [tela, setTela] = useState<Tela>("control-room");
   // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
   const [abas, setAbas] = useState<AbaBrowser[]>([]);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
@@ -169,10 +170,11 @@ export default function App() {
 
   /** Abre o app como ABA do navegador embutido e vai para a tela dele. */
   function abrirAppAqui(app: AppM365) {
+    const url = comLoginHint(app.url, user?.email);
     setAbas((prev) =>
       prev.some((a) => a.id === app.id)
         ? prev
-        : [...prev, { id: app.id, nome: app.nome, url: app.url }]
+        : [...prev, { id: app.id, nome: app.nome, url }]
     );
     setAbaAtiva(app.id);
     setTela("navegador");
@@ -333,6 +335,12 @@ export default function App() {
               onNavegar={abrirUrlLivre}
             />
           </div>
+        ) : tela === "control-room" ? (
+          /* Control room = cliente de e-mail: ocupa a altura toda e cada painel
+             rola por dentro (fora do ScrollArea externo, como o navegador). */
+          <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
+            <ControlRoomScreen user={user} />
+          </div>
         ) : (
         /* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
             design system em vez da nativa do sistema.
@@ -357,7 +365,6 @@ export default function App() {
               onAbrirNavegador={(a) => abrirUrl(a.url)}
             />
           )}
-          {tela === "control-room" && <ControlRoomScreen user={user} />}
           {tela === "comms" && (
             <EmBreveScreen
               titulo={t.nav.comms}

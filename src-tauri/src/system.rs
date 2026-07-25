@@ -86,6 +86,28 @@ pub fn open_in_explorer(name: &str, email: &str, tenant: &str) -> Result<(), Str
     open::that(to_open).map_err(|e| format!("falha ao abrir o Explorer: {e}"))
 }
 
+/// Abre um arquivo com o aplicativo padrao do Windows. O "" e o argumento de
+/// titulo do `start` (sem ele, um caminho entre aspas seria lido como titulo).
+#[cfg(windows)]
+pub fn abrir_caminho(path: &str) -> Result<(), String> {
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", path])
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("falha ao abrir o arquivo: {e}"))
+}
+
+/// Abre o Explorer com o arquivo selecionado. O `/select,<path>` (sem espaco
+/// apos a virgula) abre a pasta e destaca o arquivo.
+#[cfg(windows)]
+pub fn revelar_no_explorer(path: &str) -> Result<(), String> {
+    std::process::Command::new("explorer")
+        .arg(format!("/select,{path}"))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("falha ao abrir o Explorer: {e}"))
+}
+
 // --- Stubs para plataformas nao-Windows (dev/CI) ---
 
 #[cfg(not(windows))]
@@ -100,5 +122,15 @@ pub fn enable_long_paths() -> Result<String, String> {
 
 #[cfg(not(windows))]
 pub fn open_in_explorer(_name: &str, _email: &str, _tenant: &str) -> Result<(), String> {
+    Err("disponivel apenas no Windows".into())
+}
+
+#[cfg(not(windows))]
+pub fn abrir_caminho(_path: &str) -> Result<(), String> {
+    Err("disponivel apenas no Windows".into())
+}
+
+#[cfg(not(windows))]
+pub fn revelar_no_explorer(_path: &str) -> Result<(), String> {
     Err("disponivel apenas no Windows".into())
 }

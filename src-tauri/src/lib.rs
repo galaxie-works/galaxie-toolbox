@@ -12,6 +12,29 @@ use auth::{Account, TokenStore};
 
 type Store = Arc<TokenStore>;
 
+/// Garante que os cookies do navegador interno pertencem a conta ativa. Se a
+/// conta mudou (ou e a primeira vez com este recurso), limpa os dados de
+/// navegacao da WebView2 — assim Outlook/Teams/SharePoint reautenticam na conta
+/// certa em vez de reaproveitar a sessao web de outra conta.
+fn sincronizar_navegador(app: &tauri::AppHandle, upn: &str) {
+    if upn.is_empty() {
+        return;
+    }
+    if estado::ler_conta_navegador().as_deref() == Some(upn) {
+        return; // mesma conta: mantem a sessao web (nao obriga relogar)
+    }
+    if let Some(win) = app.get_webview_window("main") {
+        // Limpa o cookie jar compartilhado. Custo: perde prefs em localStorage e
+        // sessoes web das apps internas — aceitavel, so acontece na troca de conta.
+        if let Err(e) = win.clear_all_browsing_data() {
+            log::warn!("[navegador] falha ao limpar dados de navegacao: {e}");
+        } else {
+            log::info!("[navegador] sessao web limpa (conta -> {upn})");
+        }
+    }
+    estado::salvar_conta_navegador(upn);
+}
+
 /// Detecta o tenant pelo dominio do e-mail (sem logar).
 #[tauri::command]
 async fn detect_tenant(email: String) -> Result<auth::TenantInfo, String> {
@@ -24,12 +47,13 @@ async fn detect_tenant(email: String) -> Result<auth::TenantInfo, String> {
 /// Microsoft (com o e-mail ja preenchido).
 #[tauri::command]
 async fn login(
+    app: tauri::AppHandle,
     state: State<'_, Store>,
     email: String,
     idioma: String,
 ) -> Result<Account, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let account = tauri::async_runtime::spawn_blocking(move || {
         let info = auth::detectar_tenant(&email)?;
         let tokens = auth::interactive_login(&info.tenant_id, &email, &idioma)?;
         let account = tokens.account.clone();
@@ -37,7 +61,10 @@ async fn login(
         Ok::<Account, String>(account)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    // Conta pode ter mudado: alinha o cookie jar do navegador interno.
+    sincronizar_navegador(&app, &account.email);
+    Ok(account)
 }
 
 #[tauri::command]
@@ -59,9 +86,12 @@ async fn cached_identity() -> Result<Option<estado::Identidade>, String> {
 /// Retoma a sessao guardada no cofre do Windows (sem abrir o navegador).
 /// Devolve None quando nao ha sessao valida - ai a tela de login aparece.
 #[tauri::command]
-async fn restore_session(state: State<'_, Store>) -> Result<Option<Account>, String> {
+async fn restore_session(
+    app: tauri::AppHandle,
+    state: State<'_, Store>,
+) -> Result<Option<Account>, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let conta = tauri::async_runtime::spawn_blocking(move || {
         {
             let guard = store.inner.lock().map_err(|_| "estado de token corrompido".to_string())?;
             if let Some(t) = guard.as_ref() {
@@ -78,7 +108,12 @@ async fn restore_session(state: State<'_, Store>) -> Result<Option<Account>, Str
         }
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())??;
+    // Sessao retomada: se a conta dos cookies internos nao bate, limpa (uma vez).
+    if let Some(acc) = conta.as_ref() {
+        sincronizar_navegador(&app, &acc.email);
+    }
+    Ok(conta)
 }
 
 /// Conta atualmente logada, se houver (sessao vive so em memoria).
@@ -176,6 +211,181 @@ async fn cr_email(state: State<'_, Store>) -> Result<graph::CaixaEntrada, String
 async fn cr_tarefas(state: State<'_, Store>) -> Result<Vec<graph::Tarefa>, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || graph::cr_tarefas(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: eventos da agenda no dia escolhido (limites ISO UTC).
+#[tauri::command]
+async fn cr_agenda(
+    state: State<'_, Store>,
+    inicio: String,
+    fim: String,
+) -> Result<Vec<graph::EventoAgenda>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_agenda(&store, &inicio, &fim))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: detalhe completo de um evento (corpo + convidados).
+#[tauri::command]
+async fn cr_evento_corpo(
+    state: State<'_, Store>,
+    id: String,
+) -> Result<graph::EventoDetalhe, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_evento_corpo(&store, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: e-mails recebidos no dia escolhido (limites ISO UTC).
+#[tauri::command]
+async fn cr_inbox_dia(
+    state: State<'_, Store>,
+    inicio: String,
+    fim: String,
+) -> Result<Vec<graph::EmailItem>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_inbox_dia(&store, &inicio, &fim))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: corpo completo de um e-mail.
+#[tauri::command]
+async fn cr_email_corpo(
+    state: State<'_, Store>,
+    id: String,
+) -> Result<graph::EmailDetalhe, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_email_corpo(&store, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: categorias mestras do usuário com a cor (hex) de cada uma.
+#[tauri::command]
+async fn cr_categorias(
+    state: State<'_, Store>,
+) -> Result<Vec<graph::CategoriaCor>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_categorias(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: pastas de e-mail padrão (com contagens).
+#[tauri::command]
+async fn cr_mail_folders(state: State<'_, Store>) -> Result<Vec<graph::PastaEmail>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_mail_folders(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: mensagens de uma pasta.
+#[tauri::command]
+async fn cr_folder_mensagens(
+    state: State<'_, Store>,
+    folder_id: String,
+    skip: u32,
+) -> Result<Vec<graph::EmailItem>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_folder_mensagens(&store, &folder_id, skip)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Control room: responde um e-mail (responder / responder a todos).
+#[tauri::command]
+async fn cr_responder(
+    state: State<'_, Store>,
+    id: String,
+    corpo: String,
+    todos: bool,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_responder(&store, &id, &corpo, todos))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: encaminha um e-mail para os destinatarios informados.
+#[tauri::command]
+async fn cr_encaminhar(
+    state: State<'_, Store>,
+    id: String,
+    corpo: String,
+    para: Vec<String>,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_encaminhar(&store, &id, &corpo, para))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: exclui um e-mail (move para a Lixeira).
+#[tauri::command]
+async fn cr_excluir_email(state: State<'_, Store>, id: String) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_email(&store, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: sinaliza ou remove a sinalizacao de um e-mail.
+#[tauri::command]
+async fn cr_marcar_email(
+    state: State<'_, Store>,
+    id: String,
+    sinalizado: bool,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_marcar_email(&store, &id, sinalizado))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: esvazia a Lixeira (apaga em definitivo). Retorna a contagem.
+#[tauri::command]
+async fn cr_esvaziar_lixeira(state: State<'_, Store>) -> Result<u64, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_esvaziar_lixeira(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: baixa um anexo para a pasta Downloads. Retorna o caminho.
+#[tauri::command]
+async fn cr_baixar_anexo(
+    state: State<'_, Store>,
+    message_id: String,
+    attachment_id: String,
+) -> Result<String, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_baixar_anexo(&store, &message_id, &attachment_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Abre um arquivo local com o aplicativo padrao do Windows.
+#[tauri::command]
+async fn abrir_caminho(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || system::abrir_caminho(&path))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Abre o Explorer com o arquivo selecionado.
+#[tauri::command]
+async fn revelar_no_explorer(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || system::revelar_no_explorer(&path))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -353,6 +563,21 @@ pub fn run() {
             cr_reunioes,
             cr_email,
             cr_tarefas,
+            cr_agenda,
+            cr_evento_corpo,
+            cr_inbox_dia,
+            cr_email_corpo,
+            cr_categorias,
+            cr_mail_folders,
+            cr_folder_mensagens,
+            cr_responder,
+            cr_encaminhar,
+            cr_excluir_email,
+            cr_marcar_email,
+            cr_esvaziar_lixeira,
+            cr_baixar_anexo,
+            abrir_caminho,
+            revelar_no_explorer,
             connect_site,
             disconnect_site,
             open_in_explorer,
