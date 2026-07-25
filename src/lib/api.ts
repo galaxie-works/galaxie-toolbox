@@ -9,6 +9,7 @@ import type {
   Identidade,
   PastaEmail,
   PastaOD,
+  Pessoa,
   Reuniao,
   Site,
   Tarefa,
@@ -354,6 +355,62 @@ export async function crMailFolders(): Promise<PastaEmail[]> {
     return MOCK_PASTAS.map((p) => ({ ...p }));
   }
   return invoke<PastaEmail[]>("cr_mail_folders");
+}
+
+/** Subpastas de uma pasta de e-mail (para a árvore de pastas). */
+export async function crSubpastas(folderId: string): Promise<PastaEmail[]> {
+  if (!inTauri()) {
+    await sleep(300);
+    return [
+      { id: `${folderId}-sub1`, tipo: "child", nome: "Clientes", naoLidos: 2, total: 40 },
+    ];
+  }
+  return invoke<PastaEmail[]>("cr_subpastas", { folderId });
+}
+
+// --- Compositor de e-mail (pessoas, envio novo, contatos) -----------------
+const MOCK_PESSOAS: Pessoa[] = [
+  { nome: "Ana Silva", email: "ana@voaz.com.br" },
+  { nome: "Bruno Costa", email: "bruno@voaz.com.br" },
+  { nome: "Carla Dias", email: "carla@voaz.com.br" },
+  { nome: "Wagner Consani", email: "wagner@voaz.builders" },
+];
+
+/** Busca pessoas para o autocomplete do compositor. */
+export async function crPessoas(query: string): Promise<Pessoa[]> {
+  if (!inTauri()) {
+    await sleep(200);
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return MOCK_PESSOAS.filter(
+      (p) => p.nome.toLowerCase().includes(q) || p.email.toLowerCase().includes(q)
+    );
+  }
+  return invoke<Pessoa[]>("cr_pessoas", { query });
+}
+
+/** Envia um e-mail novo (do zero). */
+export async function crEnviarNovo(
+  para: string[],
+  cc: string[],
+  cco: string[],
+  assunto: string,
+  corpo: string
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(700);
+    return;
+  }
+  return invoke<void>("cr_enviar_novo", { para, cc, cco, assunto, corpo });
+}
+
+/** Salva contatos pessoais (sem duplicar). Retorna quantos foram criados. */
+export async function crSalvarContatos(pessoas: Pessoa[]): Promise<number> {
+  if (!inTauri()) {
+    await sleep(400);
+    return pessoas.length;
+  }
+  return invoke<number>("cr_salvar_contatos", { pessoas });
 }
 
 export async function crFolderMensagens(

@@ -166,8 +166,14 @@ export interface EmailDetalhe {
 
 export interface PastaEmail {
   id: string;
-  tipo: string; // "inbox" | "drafts" | "sentitems" | "archive" | "junkemail" | "deleteditems"
+  tipo: string; // "inbox" | "drafts" | "sentitems" | "archive" | "junkemail" | "deleteditems" | "child"
   nome: string;
   naoLidos: number;
   total: number;
+}
+
+/** Pessoa sugerida no autocomplete do compositor de e-mail. */
+export interface Pessoa {
+  nome: string;
+  email: string;
 }

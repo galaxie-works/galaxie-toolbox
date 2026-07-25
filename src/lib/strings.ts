@@ -208,6 +208,8 @@ const pt = {
     hoje: "Hoje",
     // Cliente de e-mail
     novoEmail: "Novo e-mail",
+    composeOutlook: "Escrever no Outlook",
+    composerEmBreve: "Compositor no app chega em breve — use \"Escrever no Outlook\".",
     grupoMail: "E-mail",
     grupoOutras: "Pastas",
     pastaInbox: "Caixa de entrada",
@@ -219,6 +221,7 @@ const pt = {
     abaAnexos: "Com anexos",
     semMensagens: "Nenhuma mensagem nesta pasta.",
     semMensagensTitulo: "Caixa limpa",
+    semResultados: "Nenhum resultado.",
     escolhaEmail: "Escolha um e-mail para ver os detalhes.",
     ccLabel: "Cc",
     semEventosTitulo: "Sem eventos",
@@ -246,6 +249,14 @@ const pt = {
     conversaSelecionada: "1 conversa selecionada",
     conversasSelecionadas: "{n} conversas selecionadas",
     multiSelecaoDica: "Del exclui as selecionadas · Ctrl+A seleciona todas · Esc desfaz.",
+    // Compose (modal nova mensagem + reply/forward)
+    novaMensagem: "Nova mensagem",
+    ccoLabel: "Cco",
+    assunto: "Assunto",
+    assuntoPlaceholder: "Assunto",
+    corpoPlaceholder: "Escreva sua mensagem...",
+    mostrarCcCco: "Cc/Cco",
+    contatosSalvos: "{n} contatos salvos.",
     // Agenda / Up Next
     upNext: "A seguir",
     semEventos: "Nada na agenda neste dia.",
@@ -508,6 +519,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     hoje: "Today",
     // Cliente de e-mail
     novoEmail: "New Mail",
+    composeOutlook: "Compose in Outlook",
+    composerEmBreve: "In-app composer coming soon — use \"Compose in Outlook\".",
     grupoMail: "Mail",
     grupoOutras: "Folders",
     pastaInbox: "Inbox",
@@ -519,6 +532,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     abaAnexos: "Files",
     semMensagens: "No messages in this folder.",
     semMensagensTitulo: "All clear",
+    semResultados: "No results.",
     escolhaEmail: "Choose an email to view details.",
     ccLabel: "Cc",
     semEventosTitulo: "No events",
@@ -546,6 +560,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     conversaSelecionada: "1 conversation selected",
     conversasSelecionadas: "{n} conversations selected",
     multiSelecaoDica: "Del deletes selected · Ctrl+A selects all · Esc clears.",
+    // Compose (new message modal + reply/forward)
+    novaMensagem: "New message",
+    ccoLabel: "Bcc",
+    assunto: "Subject",
+    assuntoPlaceholder: "Subject",
+    corpoPlaceholder: "Write your message...",
+    mostrarCcCco: "Cc/Bcc",
+    contatosSalvos: "{n} contacts saved.",
     // Agenda / Up Next
     upNext: "Up Next",
     semEventos: "Nothing on the agenda this day.",

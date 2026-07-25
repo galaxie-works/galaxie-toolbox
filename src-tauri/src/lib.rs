@@ -276,6 +276,60 @@ async fn cr_categorias(
         .map_err(|e| e.to_string())?
 }
 
+/// Compositor: busca de pessoas para o autocomplete (People.Read + diretorio).
+#[tauri::command]
+async fn cr_pessoas(
+    state: State<'_, Store>,
+    query: String,
+) -> Result<Vec<graph::Pessoa>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_pessoas(&store, &query))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Compositor: envia um e-mail novo (do zero). Mail.Send.
+#[tauri::command]
+async fn cr_enviar_novo(
+    state: State<'_, Store>,
+    para: Vec<String>,
+    cc: Vec<String>,
+    cco: Vec<String>,
+    assunto: String,
+    corpo: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_enviar_novo(&store, para, cc, cco, &assunto, &corpo)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Compositor: salva contatos pessoais (sem duplicar). Retorna quantos criou.
+#[tauri::command]
+async fn cr_salvar_contatos(
+    state: State<'_, Store>,
+    pessoas: Vec<graph::Pessoa>,
+) -> Result<u64, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_salvar_contatos(&store, pessoas))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Cliente de e-mail: subpastas de uma pasta (para a arvore de pastas).
+#[tauri::command]
+async fn cr_subpastas(
+    state: State<'_, Store>,
+    folder_id: String,
+) -> Result<Vec<graph::PastaEmail>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_subpastas(&store, &folder_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: pastas de e-mail padrão (com contagens).
 #[tauri::command]
 async fn cr_mail_folders(state: State<'_, Store>) -> Result<Vec<graph::PastaEmail>, String> {
@@ -568,6 +622,10 @@ pub fn run() {
             cr_inbox_dia,
             cr_email_corpo,
             cr_categorias,
+            cr_pessoas,
+            cr_enviar_novo,
+            cr_salvar_contatos,
+            cr_subpastas,
             cr_mail_folders,
             cr_folder_mensagens,
             cr_responder,

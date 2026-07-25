@@ -7,6 +7,13 @@ import {
 } from "@/components/ui/avatar";
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonGroup } from "@/components/ui/button-group";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Calendar } from "@/components/ui/calendar";
 import { DayButton } from "react-day-picker";
 import { Frame, FramePanel } from "@/components/reui/frame";
@@ -48,7 +55,10 @@ import {
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
-import { ComporEmail, type ComporHandle } from "@/components/compor-email";
+import {
+  ComporMensagem,
+  type ComporMensagemHandle,
+} from "@/components/compose/compor-mensagem";
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
@@ -67,6 +77,7 @@ import type {
 import {
   Archive,
   CalendarClock,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -180,34 +191,44 @@ function CorpoHtml({ corpo }: { corpo: string }) {
   useEffect(() => {
     const iframe = ref.current;
     if (!iframe) return;
+    let ultimaLargura = 0;
     const ajustar = () => {
       try {
         const d = iframe.contentDocument;
         const body = d?.body;
         if (!body) return;
-        // `zoom` (Chromium/WebView2) escala reflowando: a largura passa a caber
-        // e o scrollHeight já vem na escala certa — nada de math de transform.
+        // `zoom` (Chromium/WebView2) escala reflowando: a largura passa a caber.
         body.style.zoom = "1";
         const conteudo = body.scrollWidth;
         const disponivel = iframe.clientWidth;
         const zoom = conteudo > disponivel && conteudo > 0 ? disponivel / conteudo : 1;
         body.style.zoom = String(zoom);
-        const h = Math.max(body.scrollHeight, d!.documentElement.scrollHeight);
-        setAltura(Math.ceil(h) + 4);
+        // altura VISÍVEL (pós-zoom) via bounding rect; setAltura só se mudou de
+        // verdade (evita re-render à toa).
+        const h = Math.ceil(body.getBoundingClientRect().height) + 4;
+        setAltura((a) => (Math.abs(a - h) > 1 ? h : a));
       } catch {
         /* srcDoc é same-origin; catch só por segurança */
       }
     };
     const onLoad = () => {
+      ultimaLargura = iframe.clientWidth;
       ajustar();
-      // imagens carregam depois → re-medir quando cada uma chega
       const d = iframe.contentDocument;
       d?.querySelectorAll("img").forEach((img) => {
         if (!img.complete) img.addEventListener("load", ajustar, { once: true });
       });
     };
     iframe.addEventListener("load", onLoad);
-    const ro = new ResizeObserver(ajustar); // re-encaixa ao arrastar o splitter
+    // IMPORTANTE: só re-mede quando a LARGURA muda (arrastar o splitter). Reagir
+    // à altura criava loop de feedback (setAltura -> resize -> ajustar -> cresce).
+    const ro = new ResizeObserver(() => {
+      const w = iframe.clientWidth;
+      if (w !== ultimaLargura) {
+        ultimaLargura = w;
+        ajustar();
+      }
+    });
     ro.observe(iframe);
     return () => {
       iframe.removeEventListener("load", onLoad);
@@ -392,6 +413,7 @@ function FolderSidebar({
   sel,
   onSel,
   onNovo,
+  onComposeOutlook,
   colapsada,
   t,
 }: {
@@ -399,28 +421,46 @@ function FolderSidebar({
   sel: string;
   onSel: (id: string) => void;
   onNovo: () => void;
+  onComposeOutlook: () => void;
   colapsada: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   const mail = (pastas ?? []).filter((p) => GRUPO_MAIL.includes(p.tipo));
   const outras = (pastas ?? []).filter((p) => !GRUPO_MAIL.includes(p.tipo));
 
-  const Linha = (p: PastaEmail) => {
+  // Subpastas (childFolders): carregadas sob demanda ao expandir.
+  const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
+  const [filhos, setFilhos] = useState<Record<string, PastaEmail[]>>({});
+  const alternarExpandir = async (id: string) => {
+    setExpandidas((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+    if (filhos[id] === undefined) {
+      try {
+        const cs = await api.crSubpastas(id);
+        setFilhos((f) => ({ ...f, [id]: cs }));
+      } catch {
+        setFilhos((f) => ({ ...f, [id]: [] }));
+      }
+    }
+  };
+
+  const Linha = (p: PastaEmail, ehFilho = false) => {
     const Ico = ICONE_PASTA[p.tipo] ?? Inbox;
     const ativo = p.id === sel;
     const contagem = p.tipo === "drafts" || p.tipo === "sentitems" ? p.total : p.naoLidos;
     const rotulo = rotuloPasta(p.tipo, p.nome, t);
-    return (
+    const linhaBtn = (
       <button
-        key={p.id}
         type="button"
         onClick={() => onSel(p.id)}
         title={colapsada ? rotulo : undefined}
         className={cn(
           "flex items-center rounded-md text-sm transition-colors",
-          colapsada
-            ? "relative size-9 justify-center"
-            : "w-full gap-2.5 px-2.5 py-2",
+          colapsada ? "relative size-9 justify-center" : "flex-1 gap-2.5 px-2.5 py-2",
           ativo ? "bg-secondary font-medium text-secondary-foreground" : "hover:bg-accent/50"
         )}
       >
@@ -439,6 +479,33 @@ function FolderSidebar({
         )}
       </button>
     );
+    if (colapsada) return <div key={p.id}>{linhaBtn}</div>;
+    return (
+      <div key={p.id}>
+        <div className={cn("flex items-center", ehFilho && "pl-5")}>
+          {!ehFilho ? (
+            <button
+              type="button"
+              onClick={() => alternarExpandir(p.id)}
+              aria-label={rotulo}
+              className="grid size-5 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
+            >
+              <ChevronRight
+                className={cn(
+                  "size-3.5 transition-transform",
+                  expandidas.has(p.id) && "rotate-90"
+                )}
+              />
+            </button>
+          ) : (
+            <span className="size-5 shrink-0" />
+          )}
+          {linhaBtn}
+        </div>
+        {expandidas.has(p.id) &&
+          (filhos[p.id] ?? []).map((c) => Linha({ ...c, tipo: "child" }, true))}
+      </div>
+    );
   };
 
   return (
@@ -453,9 +520,23 @@ function FolderSidebar({
           <PenSquare />
         </Button>
       ) : (
-        <Button className="w-full" onClick={onNovo}>
-          <PenSquare /> {t.controlRoom.novoEmail}
-        </Button>
+        <ButtonGroup className="w-full">
+          <Button className="flex-1" onClick={onNovo}>
+            <PenSquare /> {t.controlRoom.novoEmail}
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="icon" aria-label={t.controlRoom.composeOutlook}>
+                <ChevronDown />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={onComposeOutlook}>
+                {t.controlRoom.composeOutlook}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </ButtonGroup>
       )}
 
       {!pastas ? (
@@ -471,7 +552,7 @@ function FolderSidebar({
               </p>
             )}
             <div className={cn("flex flex-col gap-0.5", colapsada && "items-center")}>
-              {mail.map(Linha)}
+              {mail.map((p) => Linha(p))}
             </div>
 
             {outras.length > 0 && (
@@ -484,7 +565,7 @@ function FolderSidebar({
                   </p>
                 )}
                 <div className={cn("flex flex-col gap-0.5", colapsada && "items-center")}>
-                  {outras.map(Linha)}
+                  {outras.map((p) => Linha(p))}
                 </div>
               </>
             )}
@@ -513,10 +594,12 @@ function MessageList({
   onEsvaziar,
   onCarregarMais,
   carregandoMais,
+  temMais,
   onFlag,
   onExcluir,
   selecionados,
   setSelecionados,
+  naoLidosPasta,
   t,
   idioma,
 }: {
@@ -531,10 +614,12 @@ function MessageList({
   onEsvaziar: () => void;
   onCarregarMais: () => void;
   carregandoMais: boolean;
+  temMais: boolean;
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void;
   selecionados: Set<string>;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
+  naoLidosPasta: number;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
@@ -568,12 +653,20 @@ function MessageList({
     });
   }, [mensagens, aba, busca]);
 
-  const naoLidos = mensagens?.filter((m) => !m.lido).length ?? 0;
+  const filtrando = busca.trim() !== "" || aba !== "todos";
+  // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
+  // carrega a próxima (progressivo) até aparecer resultado ou acabar.
+  useEffect(() => {
+    if (filtrando && filtrada.length === 0 && temMais && !carregandoMais) onCarregarMais();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtrando, filtrada.length, temMais, carregandoMais]);
+
   const comEstrela = mensagens?.filter((m) => m.sinalizado).length ?? 0;
   const comAnexo = mensagens?.filter((m) => m.temAnexos).length ?? 0;
   const abas: { id: Aba; label: string; n?: number }[] = [
     { id: "todos", label: t.controlRoom.abaTodos },
-    { id: "naoLidos", label: t.controlRoom.abaNaoLidos, n: naoLidos },
+    // não lidos = total REAL da pasta (não só os carregados na lista)
+    { id: "naoLidos", label: t.controlRoom.abaNaoLidos, n: naoLidosPasta },
     { id: "sinalizados", label: t.controlRoom.abaSinalizados, n: comEstrela },
     { id: "anexos", label: t.controlRoom.abaAnexos, n: comAnexo },
   ];
@@ -608,9 +701,12 @@ function MessageList({
           ?.querySelector(`[data-msgid="${alvo.id}"]`)
           ?.scrollIntoView({ block: "nearest" });
       }
-    } else if (e.key === "Delete" && sel) {
-      e.preventDefault();
-      onExcluir([sel]);
+    } else if (e.key === "Delete") {
+      const alvos = selecionados.size > 0 ? [...selecionados] : sel ? [sel] : [];
+      if (alvos.length > 0) {
+        e.preventDefault();
+        onExcluir(alvos);
+      }
     }
   }
 
@@ -720,8 +816,14 @@ function MessageList({
           <Spinner className="size-5 text-muted-foreground" />
         </div>
       ) : filtrada.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center">
-          <PastaVazia t={t} />
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
+          {carregandoMais ? (
+            <Spinner className="size-5 text-muted-foreground" />
+          ) : filtrando ? (
+            <p className="text-sm text-muted-foreground">{t.controlRoom.semResultados}</p>
+          ) : (
+            <PastaVazia t={t} />
+          )}
         </div>
       ) : (
         <div
@@ -857,24 +959,26 @@ function LinhaPessoas({ rotulo, nomes }: { rotulo: string; nomes: string[] }) {
 function MessageDetail({
   id,
   userEmail,
-  sinalizadoInicial,
+  sinalizado,
+  onFlag,
+  onExcluir,
   onMudou,
   t,
   idioma,
 }: {
   id: string | null;
   userEmail?: string | null;
-  sinalizadoInicial: boolean;
+  sinalizado: boolean;
+  onFlag: (id: string, novo: boolean) => void;
+  onExcluir: (ids: string[]) => void;
   onMudou: () => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
   const [det, setDet] = useState<EmailDetalhe | null>(null);
   const [modo, setModo] = useState<null | "responder" | "responderTodos" | "encaminhar">(null);
-  const [para, setPara] = useState("");
   const [enviando, setEnviando] = useState(false);
-  const [sinalizado, setSinalizado] = useState(sinalizadoInicial);
-  const comporRef = useRef<ComporHandle>(null);
+  const comporRef = useRef<ComporMensagemHandle>(null);
 
   useEffect(() => {
     if (!id) {
@@ -884,32 +988,11 @@ function MessageDetail({
     let vivo = true;
     setDet(null);
     setModo(null);
-    setPara("");
-    setSinalizado(sinalizadoInicial);
     api.crEmailCorpo(id).then((d) => vivo && setDet(d)).catch(() => {});
     return () => {
       vivo = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
-
-  async function alternarSinalizar() {
-    if (!id) return;
-    const novo = !sinalizado;
-    setSinalizado(novo); // otimista
-    try {
-      await api.crMarcarEmail(id, novo);
-      toastIcone(
-        novo ? t.controlRoom.flagAdicionada : t.controlRoom.flagRemovida,
-        "",
-        novo ? "marcado" : "desmarcado"
-      );
-      onMudou();
-    } catch (e) {
-      setSinalizado(!novo);
-      toast.error(t.controlRoom.erroAcao, { description: String(e) });
-    }
-  }
 
   async function baixarAnexo(anexo: AnexoEmail) {
     if (!id) return;
@@ -932,29 +1015,22 @@ function MessageDetail({
     }
   }
 
-  async function excluir() {
-    if (!id) return;
-    try {
-      await api.crExcluirEmail(id);
-      toast.success(t.controlRoom.emailExcluido);
-      onMudou();
-    } catch (e) {
-      toast.error(t.controlRoom.erroAcao, { description: String(e) });
-    }
-  }
-
   const abrirOutlook = () =>
     det?.webLink && api.abrirAppInterno("outlook", comLoginHint(det.webLink, userEmail), "Outlook");
 
   async function enviar() {
     if (!id) return;
-    const html = comporRef.current?.getHtml() ?? "";
-    const texto = comporRef.current?.getTexto()?.trim() ?? "";
+    const c = comporRef.current;
+    const html = c?.getHtml() ?? "";
+    const texto = c?.getTexto()?.trim() ?? "";
     if (!texto) {
       toast.error(t.controlRoom.escrevaAlgo);
       return;
     }
-    const destinos = para.split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+    const destinos =
+      modo === "encaminhar"
+        ? [...(c?.getPara() ?? []), ...(c?.getCc() ?? []), ...(c?.getCco() ?? [])]
+        : [];
     if (modo === "encaminhar" && destinos.length === 0) {
       toast.error(t.controlRoom.informeDestino);
       return;
@@ -963,6 +1039,10 @@ function MessageDetail({
     try {
       if (modo === "encaminhar") {
         await api.crEncaminhar(id, html, destinos);
+        // salva os destinatários nos Contatos (best-effort, silencioso)
+        api
+          .crSalvarContatos(destinos.map((e) => ({ nome: e, email: e })))
+          .catch(() => {});
       } else {
         await api.crResponder(id, html, modo === "responderTodos");
       }
@@ -975,6 +1055,16 @@ function MessageDetail({
       setEnviando(false);
     }
   }
+
+  const textosCompose = {
+    para: t.controlRoom.para,
+    cc: t.controlRoom.ccLabel,
+    cco: t.controlRoom.ccoLabel,
+    assunto: t.controlRoom.assunto,
+    assuntoPlaceholder: t.controlRoom.assuntoPlaceholder,
+    corpoPlaceholder: t.controlRoom.corpoPlaceholder,
+    mostrarCcCco: t.controlRoom.mostrarCcCco,
+  };
 
   if (!id) {
     return (
@@ -1012,7 +1102,7 @@ function MessageDetail({
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={alternarSinalizar}
+            onClick={() => id && onFlag(id, !sinalizado)}
             aria-label={t.controlRoom.sinalizar}
           >
             <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
@@ -1020,7 +1110,7 @@ function MessageDetail({
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={excluir}
+            onClick={() => id && onExcluir([id])}
             aria-label={t.controlRoom.excluir}
             className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           >
@@ -1092,10 +1182,10 @@ function MessageDetail({
         </div>
       </div>
 
-      {/* Painel de compose (abaixo do e-mail) */}
+      {/* Painel de compose (abaixo do e-mail) — redimensionável (resize-y). */}
       {modo && (
-        <div className="space-y-3 border-t bg-muted/20 p-4">
-          <div className="flex items-center gap-2">
+        <div className="flex max-h-[75vh] min-h-[240px] flex-col overflow-hidden border-t bg-muted/20">
+          <div className="flex shrink-0 items-center gap-2 px-4 py-2">
             <span className="text-sm font-medium">
               {modo === "encaminhar"
                 ? t.controlRoom.encaminhar
@@ -1113,24 +1203,16 @@ function MessageDetail({
               <X />
             </Button>
           </div>
-          {modo === "encaminhar" && (
-            <input
-              value={para}
-              onChange={(e) => setPara(e.target.value)}
-              placeholder={t.controlRoom.paraPlaceholder}
-              className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          {/* arrasta a borda inferior desta área pra crescer/encolher */}
+          <div className="min-h-0 flex-1 resize-y overflow-hidden px-4">
+            <ComporMensagem
+              key={modo}
+              ref={comporRef}
+              mostrarDestinatarios={modo === "encaminhar"}
+              textos={textosCompose}
             />
-          )}
-          <ComporEmail
-            ref={comporRef}
-            className="bg-background"
-            placeholder={
-              modo === "encaminhar"
-                ? t.controlRoom.encaminharPlaceholder
-                : t.controlRoom.responderPlaceholder
-            }
-          />
-          <div className="flex justify-end gap-2">
+          </div>
+          <div className="flex shrink-0 justify-end gap-2 px-4 py-2">
             <Button variant="ghost" onClick={() => setModo(null)} disabled={enviando}>
               {t.controlRoom.cancelar}
             </Button>
@@ -1522,6 +1604,76 @@ function EventoDialog({
   );
 }
 
+// --- modal "Nova mensagem" -------------------------------------------------
+
+function NovaMensagemModal({
+  aberto,
+  onClose,
+  t,
+}: {
+  aberto: boolean;
+  onClose: () => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const comporRef = useRef<ComporMensagemHandle>(null);
+  const [enviando, setEnviando] = useState(false);
+  const textos = {
+    para: t.controlRoom.para,
+    cc: t.controlRoom.ccLabel,
+    cco: t.controlRoom.ccoLabel,
+    assunto: t.controlRoom.assunto,
+    assuntoPlaceholder: t.controlRoom.assuntoPlaceholder,
+    corpoPlaceholder: t.controlRoom.corpoPlaceholder,
+    mostrarCcCco: t.controlRoom.mostrarCcCco,
+  };
+
+  async function enviar() {
+    const c = comporRef.current;
+    const para = c?.getPara() ?? [];
+    const cc = c?.getCc() ?? [];
+    const cco = c?.getCco() ?? [];
+    if (para.length === 0) {
+      toast.error(t.controlRoom.informeDestino);
+      return;
+    }
+    setEnviando(true);
+    try {
+      await api.crEnviarNovo(para, cc, cco, c?.getAssunto() ?? "", c?.getHtml() ?? "");
+      api
+        .crSalvarContatos([...para, ...cc, ...cco].map((e) => ({ nome: e, email: e })))
+        .catch(() => {});
+      toastIcone(t.controlRoom.enviado, t.controlRoom.enviadoDescricao, "enviado");
+      onClose();
+    } catch (e) {
+      toast.error(t.controlRoom.erroEnvio, { description: String(e) });
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <Dialog open={aberto} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="flex h-[72vh] max-w-2xl flex-col gap-0 overflow-hidden p-0">
+        <DialogHeader className="border-b px-4 py-3">
+          <DialogTitle className="text-left">{t.controlRoom.novaMensagem}</DialogTitle>
+        </DialogHeader>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <ComporMensagem key={String(aberto)} ref={comporRef} mostrarAssunto textos={textos} />
+        </div>
+        <DialogFooter className="border-t px-4 py-3">
+          <Button variant="ghost" onClick={onClose} disabled={enviando}>
+            {t.controlRoom.cancelar}
+          </Button>
+          <Button onClick={enviar} disabled={enviando}>
+            {enviando ? <Spinner className="size-4" /> : <Send />}
+            {t.controlRoom.enviar}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ===========================================================================
 // Tela
 // ===========================================================================
@@ -1534,23 +1686,27 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   const [msgSel, setMsgSel] = useState<string | null>(null);
   const [eventoSel, setEventoSel] = useState<string | null>(null);
   const [recarga, setRecarga] = useState(0);
+  // recargaPastas atualiza SÓ as contagens do sidebar, sem recarregar a lista
+  // (ações como excluir/responder não devem zerar o lazy load nem o scroll).
+  const [recargaPastas, setRecargaPastas] = useState(0);
   const [sidebarAberta, setSidebarAberta] = useState(true);
   const [temMais, setTemMais] = useState(false);
   const [carregandoMais, setCarregandoMais] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [novaAberta, setNovaAberta] = useState(false);
   const carregandoMaisRef = useRef(false);
   const PAGINA = 50;
 
   const primeiroNome = user.displayName.split(" ")[0];
 
-  // pastas (recarrega junto com as ações, pra atualizar contagens)
+  // pastas (recarrega as contagens junto com as ações e no refresh manual)
   useEffect(() => {
     let vivo = true;
     api.crMailFolders().then((p) => vivo && setPastas(p)).catch(() => vivo && setPastas([]));
     return () => {
       vivo = false;
     };
-  }, [recarga]);
+  }, [recarga, recargaPastas]);
 
   // Polling leve da Inbox: baseline no mount (sem toast), depois a cada 15 min
   // avisa por toast os e-mails novos não lidos. TODO: intervalo configurável em
@@ -1608,7 +1764,12 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   }
 
   // Ações rápidas da LISTA (sinalizar/excluir por linha ou em lote).
+  // Atualizam a lista NO LUGAR (nada de recarregar tudo e perder scroll/páginas).
   async function acaoFlag(id: string, novo: boolean) {
+    // otimista: pinta o item já
+    setMensagens((prev) =>
+      prev?.map((m) => (m.id === id ? { ...m, sinalizado: novo } : m)) ?? prev
+    );
     try {
       await api.crMarcarEmail(id, novo);
       toastIcone(
@@ -1616,25 +1777,37 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
         "",
         novo ? "marcado" : "desmarcado"
       );
-      setRecarga((x) => x + 1);
     } catch (e) {
+      // desfaz
+      setMensagens((prev) =>
+        prev?.map((m) => (m.id === id ? { ...m, sinalizado: !novo } : m)) ?? prev
+      );
       toast.error(t.controlRoom.erroAcao, { description: String(e) });
     }
   }
 
   async function acaoExcluir(ids: string[]) {
     if (ids.length === 0) return;
-    try {
-      for (const id of ids) await api.crExcluirEmail(id);
+    const res = await Promise.allSettled(ids.map((id) => api.crExcluirEmail(id)));
+    const ok = ids.filter((_, i) => res[i].status === "fulfilled");
+    if (ok.length > 0) {
+      const okSet = new Set(ok);
+      setMensagens((prev) => prev?.filter((m) => !okSet.has(m.id)) ?? prev);
+      if (msgSel && okSet.has(msgSel)) setMsgSel(null);
+      setSelecionados((s) => {
+        const n = new Set(s);
+        ok.forEach((id) => n.delete(id));
+        return n;
+      });
+      setRecargaPastas((x) => x + 1); // atualiza contagens do sidebar
       toast.success(
-        ids.length > 1
-          ? preencher(t.controlRoom.selecionadosExcluidos, { n: ids.length })
+        ok.length > 1
+          ? preencher(t.controlRoom.selecionadosExcluidos, { n: ok.length })
           : t.controlRoom.emailExcluido
       );
-      if (msgSel && ids.includes(msgSel)) setMsgSel(null);
-      setRecarga((x) => x + 1);
-    } catch (e) {
-      toast.error(t.controlRoom.erroAcao, { description: String(e) });
+    }
+    if (ok.length < ids.length) {
+      toast.error(t.controlRoom.erroAcao);
     }
   }
 
@@ -1643,7 +1816,6 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   useEffect(() => {
     let vivo = true;
     setMensagens(null);
-    setMsgSel(null);
     setTemMais(false);
     setSelecionados(new Set());
     carregandoMaisRef.current = false;
@@ -1652,7 +1824,10 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
       .then((ms) => {
         if (!vivo) return;
         setMensagens(ms);
-        setMsgSel(ms[0]?.id ?? null);
+        // mantém a mensagem já selecionada se ela existir na lista nova (ex.:
+        // clicar "Responder" num toast já selecionou a msg antes do fetch);
+        // senão pega a primeira.
+        setMsgSel((cur) => (cur && ms.some((m) => m.id === cur) ? cur : (ms[0]?.id ?? null)));
         setTemMais(ms.length === PAGINA);
         if (pastaSel === "inbox" && ms[0]) ultimoVistoRef.current = ms[0].recebido;
       })
@@ -1683,12 +1858,15 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   const tituloLista = pastaAtual ? rotuloPasta(pastaAtual.tipo, pastaAtual.nome, t) : "";
   const msgAtual = mensagens?.find((m) => m.id === msgSel);
 
-  const novoEmail = () =>
+  // "Compose in Outlook" — comportamento atual (abre o Outlook interno).
+  const composeOutlook = () =>
     api.abrirAppInterno(
       "outlook",
       comLoginHint("https://outlook.office.com/mail/deeplink/compose", user.email),
       "Outlook"
     );
+  // "New mail" — abre o nosso composer em modal.
+  const novoEmailModal = () => setNovaAberta(true);
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -1712,7 +1890,8 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
           pastas={pastas}
           sel={pastaSel}
           onSel={setPastaSel}
-          onNovo={novoEmail}
+          onNovo={novoEmailModal}
+          onComposeOutlook={composeOutlook}
           colapsada={!sidebarAberta}
           t={t}
         />
@@ -1732,10 +1911,12 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
               onEsvaziar={esvaziarLixeira}
               onCarregarMais={carregarMais}
               carregandoMais={carregandoMais}
+              temMais={temMais}
               onFlag={acaoFlag}
               onExcluir={acaoExcluir}
               selecionados={selecionados}
               setSelecionados={setSelecionados}
+              naoLidosPasta={pastaAtual?.naoLidos ?? 0}
               t={t}
               idioma={idioma}
             />
@@ -1756,8 +1937,10 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
               <MessageDetail
                 id={msgSel}
                 userEmail={user.email}
-                sinalizadoInicial={msgAtual?.sinalizado ?? false}
-                onMudou={() => setRecarga((n) => n + 1)}
+                sinalizado={msgAtual?.sinalizado ?? false}
+                onFlag={acaoFlag}
+                onExcluir={acaoExcluir}
+                onMudou={() => setRecargaPastas((n) => n + 1)}
                 t={t}
                 idioma={idioma}
               />
@@ -1769,6 +1952,7 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
       </div>
 
       <EventoDialog id={eventoSel} userEmail={user.email} onClose={() => setEventoSel(null)} />
+      <NovaMensagemModal aberto={novaAberta} onClose={() => setNovaAberta(false)} t={t} />
     </div>
   );
 }

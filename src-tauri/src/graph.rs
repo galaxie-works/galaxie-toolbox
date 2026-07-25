@@ -1427,16 +1427,38 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
         let url = format!(
             "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount"
         );
-        match client.get(&url).bearer_auth(&token).send() {
-            Ok(resp) if resp.status().is_success() => {
-                if let Ok(v) = resp.json::<serde_json::Value>() {
-                    nome = v["displayName"].as_str().unwrap_or(id).to_string();
-                    nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
-                    total = v["totalItemCount"].as_u64().unwrap_or(0);
+        // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas. Sem
+        // isso o Inbox aparecia sem contagem de não lidos quando o Graph limitava.
+        for tentativa in 0..3u8 {
+            match client.get(&url).bearer_auth(&token).send() {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(v) = resp.json::<serde_json::Value>() {
+                        nome = v["displayName"].as_str().unwrap_or(id).to_string();
+                        nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
+                        total = v["totalItemCount"].as_u64().unwrap_or(0);
+                    }
+                    break;
+                }
+                Ok(resp) if resp.status().as_u16() == 429 && tentativa < 2 => {
+                    let espera = resp
+                        .headers()
+                        .get("Retry-After")
+                        .and_then(|h| h.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(1)
+                        .min(5);
+                    log::warn!("[mail] pasta '{id}' 429; retry em {espera}s");
+                    std::thread::sleep(std::time::Duration::from_secs(espera));
+                }
+                Ok(resp) => {
+                    log::warn!("[mail] pasta '{id}' retornou {}", resp.status());
+                    break;
+                }
+                Err(e) => {
+                    log::warn!("[mail] pasta '{id}' falhou: {e}");
+                    break;
                 }
             }
-            Ok(resp) => log::warn!("[mail] pasta '{id}' retornou {}", resp.status()),
-            Err(e) => log::warn!("[mail] pasta '{id}' falhou: {e}"),
         }
         pastas.push(PastaEmail {
             id: id.to_string(),
@@ -1500,11 +1522,18 @@ pub fn cr_folder_mensagens(
             } else {
                 it["receivedDateTime"].as_str().unwrap_or("")
             };
+            // e-mail da contraparte: em saída é o destinatário, senão o remetente
+            // (antes ficava sempre o "from", desalinhando com o nome mostrado).
+            let contraparte_email = if saida {
+                it["toRecipients"][0]["emailAddress"]["address"].as_str().unwrap_or("")
+            } else {
+                it["from"]["emailAddress"]["address"].as_str().unwrap_or("")
+            };
             itens.push(EmailItem {
                 id: it["id"].as_str().unwrap_or("").to_string(),
                 assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
                 iniciais: iniciais(&contraparte),
-                de_email: it["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
+                de_email: contraparte_email.to_string(),
                 de: contraparte,
                 recebido: quando.to_string(),
                 preview: it["bodyPreview"].as_str().unwrap_or("").trim().to_string(),
@@ -1623,4 +1652,245 @@ pub fn cr_esvaziar_lixeira(store: &TokenStore) -> Result<u64, String> {
     }
 
     Ok(apagados)
+}
+
+// ----------------------------------------------------------------------------
+// Compositor de e-mail: busca de pessoas (autocomplete), envio de mensagem
+// nova, salvar contatos e subpastas. Escopos: People.Read, Contacts.ReadWrite,
+// Mail.Send (ja concedido). Tudo delegado (/me).
+// ----------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pessoa {
+    pub nome: String,
+    pub email: String,
+}
+
+/// Busca pessoas para o autocomplete do compositor. Combina o "relevant people"
+/// do usuario (/me/people) com um $search no diretorio (/users). Se um dos dois
+/// falhar, usa so o que veio do outro; erro so quando AMBOS falham. People.Read.
+pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let enc = urlencoding::encode(q);
+
+    let mut resultados: Vec<Pessoa> = Vec::new();
+    let mut algum_ok = false;
+
+    // 1) Pessoas relevantes do usuario (contatos, colegas com quem troca e-mail).
+    let url = format!(
+        "{GRAPH}/me/people?$search=\"{enc}\"&$top=8&$select=displayName,scoredEmailAddresses"
+    );
+    match client.get(&url).bearer_auth(&token).send() {
+        Ok(resp) if resp.status().is_success() => {
+            algum_ok = true;
+            if let Ok(v) = resp.json::<serde_json::Value>() {
+                if let Some(items) = v["value"].as_array() {
+                    for it in items {
+                        let nome = it["displayName"].as_str().unwrap_or("").to_string();
+                        let email = it["scoredEmailAddresses"][0]["address"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        resultados.push(Pessoa { nome, email });
+                    }
+                }
+            }
+        }
+        Ok(resp) => log::warn!("[pessoas] /me/people retornou {}", resp.status()),
+        Err(e) => log::warn!("[pessoas] /me/people falhou: {e}"),
+    }
+
+    // 2) Diretorio da organizacao. $search em /users exige ConsistencyLevel.
+    let url = format!(
+        "{GRAPH}/users?$search=\"displayName:{enc}\"&$top=8&$select=displayName,mail,userPrincipalName"
+    );
+    match client
+        .get(&url)
+        .bearer_auth(&token)
+        .header("ConsistencyLevel", "eventual")
+        .send()
+    {
+        Ok(resp) if resp.status().is_success() => {
+            algum_ok = true;
+            if let Ok(v) = resp.json::<serde_json::Value>() {
+                if let Some(items) = v["value"].as_array() {
+                    for it in items {
+                        let nome = it["displayName"].as_str().unwrap_or("").to_string();
+                        let email = it["mail"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| it["userPrincipalName"].as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        resultados.push(Pessoa { nome, email });
+                    }
+                }
+            }
+        }
+        Ok(resp) => log::warn!("[pessoas] /users retornou {}", resp.status()),
+        Err(e) => log::warn!("[pessoas] /users falhou: {e}"),
+    }
+
+    if !algum_ok {
+        return Err("falha ao buscar pessoas".into());
+    }
+
+    // Dedupe por e-mail (minusculas), descarta sem e-mail, limita a ~10.
+    let mut vistos = std::collections::HashSet::new();
+    let mut saida = Vec::new();
+    for p in resultados {
+        let chave = p.email.trim().to_lowercase();
+        if chave.is_empty() || !vistos.insert(chave) {
+            continue;
+        }
+        saida.push(p);
+        if saida.len() >= 10 {
+            break;
+        }
+    }
+    Ok(saida)
+}
+
+/// Envia um e-mail novo (do zero, sem citacao). Guarda em Enviados. Mail.Send.
+pub fn cr_enviar_novo(
+    store: &TokenStore,
+    para: Vec<String>,
+    cc: Vec<String>,
+    cco: Vec<String>,
+    assunto: &str,
+    corpo_html: &str,
+) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // Mapeia cada e-mail para o formato do Graph, descartando os vazios.
+    let recipients = |lista: &[String]| -> Vec<serde_json::Value> {
+        lista
+            .iter()
+            .filter(|e| !e.trim().is_empty())
+            .map(|e| serde_json::json!({ "emailAddress": { "address": e.trim() } }))
+            .collect()
+    };
+
+    let body = serde_json::json!({
+        "message": {
+            "subject": assunto,
+            "body": { "contentType": "HTML", "content": corpo_html },
+            "toRecipients": recipients(&para),
+            "ccRecipients": recipients(&cc),
+            "bccRecipients": recipients(&cco),
+        },
+        "saveToSentItems": true
+    });
+
+    let resp = client
+        .post(format!("{GRAPH}/me/sendMail"))
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .map_err(|e| format!("falha ao enviar o e-mail: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("envio retornou {}", resp.status()));
+    }
+    Ok(())
+}
+
+/// Salva os contatos informados na pasta pessoal do usuario, sem duplicar.
+/// Retorna quantos foram efetivamente criados. Contacts.ReadWrite.
+pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u64, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let mut criados: u64 = 0;
+    for p in pessoas {
+        let email = p.email.trim();
+        if email.is_empty() {
+            continue;
+        }
+
+        // Ja existe um contato com este e-mail? (as aspas fazem parte do filtro
+        // OData; aspa simples no valor escapa dobrando — escape correto do OData).
+        let email_odata = email.replace('\'', "''");
+        let filtro = format!("emailAddresses/any(a:a/address eq '{email_odata}')");
+        let url = format!(
+            "{GRAPH}/me/contacts?$filter={}&$top=1",
+            urlencoding::encode(&filtro)
+        );
+        let existe = match client.get(&url).bearer_auth(&token).send() {
+            Ok(resp) if resp.status().is_success() => resp
+                .json::<serde_json::Value>()
+                .ok()
+                .and_then(|v| v["value"].as_array().map(|a| !a.is_empty()))
+                .unwrap_or(false),
+            Ok(resp) => {
+                log::warn!("[contatos] filtro '{email}' retornou {}", resp.status());
+                // Nao da pra ter certeza: pula para nao arriscar duplicar.
+                true
+            }
+            Err(e) => {
+                log::warn!("[contatos] filtro '{email}' falhou: {e}");
+                true
+            }
+        };
+        if existe {
+            continue;
+        }
+
+        let nome = if p.nome.trim().is_empty() { email } else { p.nome.trim() };
+        let body = serde_json::json!({
+            "givenName": nome,
+            "emailAddresses": [{ "address": email, "name": p.nome.trim() }]
+        });
+        match client
+            .post(format!("{GRAPH}/me/contacts"))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+        {
+            Ok(resp) if resp.status().is_success() => criados += 1,
+            Ok(resp) => log::warn!("[contatos] criar '{email}' retornou {}", resp.status()),
+            Err(e) => log::warn!("[contatos] criar '{email}' falhou: {e}"),
+        }
+    }
+    Ok(criados)
+}
+
+/// Subpastas de uma pasta de e-mail. O id do filho serve direto no endpoint de
+/// mensagens, entao o caminho existente de carga funciona sem mudanca. Mail.Read.
+pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmail>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/mailFolders/{folder_id}/childFolders\
+         ?$select=id,displayName,unreadItemCount,totalItemCount&$top=50"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler as subpastas: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/mailFolders/childFolders retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut pastas = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            pastas.push(PastaEmail {
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                tipo: "child".to_string(),
+                nome: it["displayName"].as_str().unwrap_or("").to_string(),
+                nao_lidos: it["unreadItemCount"].as_u64().unwrap_or(0),
+                total: it["totalItemCount"].as_u64().unwrap_or(0),
+            });
+        }
+    }
+    Ok(pastas)
 }
