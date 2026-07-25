@@ -224,3 +224,20 @@
     overflow: hidden;
   }
 }
+
+@layer utilities {
+  /* Barra de rolagem fina para listas dentro de card (launcher do Cruiser).
+     Pedido explicito — customizacao com motivo, nao gratuita. WebView2 e
+     Chromium, entao ::-webkit-scrollbar funciona. */
+  .scrollbar-fina::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-fina::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 9999px;
+  }
+  .scrollbar-fina::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}

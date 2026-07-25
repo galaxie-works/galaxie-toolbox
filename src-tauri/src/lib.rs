@@ -1,4 +1,5 @@
 mod auth;
+mod browser;
 mod config;
 mod estado;
 mod graph;
@@ -228,6 +229,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Lembra tamanho e posicao da janela entre execucoes (salva ao fechar,
+        // restaura ao abrir).
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(Arc::new(TokenStore::default()))
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -236,6 +240,31 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+
+            // Primeira vez (sem estado salvo): abre com 50% da resolucao do
+            // monitor, centralizado. Nas proximas, o plugin acima restaura o
+            // tamanho que o usuario deixou. A janela nasce invisivel
+            // (visible:false na config) e so aparece aqui, ja no tamanho certo
+            // — sem flash de redimensionamento.
+            if let Some(win) = app.get_webview_window("main") {
+                let ja_tem_estado = app
+                    .path()
+                    .app_config_dir()
+                    .map(|d| d.join(".window-state.json").exists())
+                    .unwrap_or(false);
+
+                if !ja_tem_estado {
+                    if let Ok(Some(mon)) = win.primary_monitor() {
+                        let escala = mon.scale_factor();
+                        let fis = mon.size();
+                        let w = (fis.width as f64 / escala) * 0.5;
+                        let h = (fis.height as f64 / escala) * 0.5;
+                        let _ = win.set_size(tauri::LogicalSize::new(w, h));
+                        let _ = win.center();
+                    }
+                }
+                let _ = win.show();
             }
             Ok(())
         })
@@ -253,6 +282,11 @@ pub fn run() {
             open_in_explorer,
             open_url,
             abrir_app_interno,
+            browser::browser_abrir,
+            browser::browser_trocar,
+            browser::browser_layout,
+            browser::browser_fechar,
+            browser::browser_esconder_todas,
             enable_long_paths,
             long_paths_status,
         ])

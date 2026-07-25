@@ -1,6 +1,16 @@
-import { MonitorCog, Gauge, FolderTree, Settings } from "lucide-react";
+import {
+  MonitorCog,
+  Gauge,
+  FolderTree,
+  Settings,
+  LayoutGrid,
+  Orbit,
+  RadioTower,
+  Radar,
+  Sparkles,
+} from "lucide-react";
 import type { ComponentType } from "react";
-import { LayoutGrid } from "lucide-react";
+import { CruiserIcon } from "@/components/ui/icons/marca/cruiser";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
 import { OneDriveIcon } from "@/components/ui/icons/marca/onedrive";
 import { OutlookIcon } from "@/components/ui/icons/marca/outlook";
@@ -13,6 +23,10 @@ export type IconeNav = ComponentType<{ className?: string }>;
 export type Tela =
   | "onedrive"
   | "apps"
+  | "navegador"
+  | "comms"
+  | "astro"
+  | "pulsar"
   | "outlook"
   | "performance"
   | "caminhos-longos"
@@ -42,6 +56,17 @@ export const NAV: GrupoNav[] = [
   {
     titulo: "plataforma",
     itens: [
+      // Produtos da propria Galaxie, com nomes galacticos.
+      {
+        titulo: "galaxie",
+        icone: Orbit,
+        filhos: [
+          { id: "navegador", titulo: "navegador", icone: CruiserIcon },
+          { id: "comms", titulo: "comms", icone: RadioTower },
+          { id: "astro", titulo: "astro", icone: Sparkles },
+          { id: "pulsar", titulo: "pulsar", icone: Radar },
+        ],
+      },
       {
         titulo: "copilot",
         icone: CopilotIcon,
@@ -68,9 +93,16 @@ export const TELAS: Record<
   Tela,
   { titulo: ChaveNav; secao: ChaveNav; icone: IconeNav }
 > = {
+  // Produtos Galaxie
+  navegador: { titulo: "navegador", secao: "galaxie", icone: CruiserIcon },
+  comms: { titulo: "comms", secao: "galaxie", icone: RadioTower },
+  astro: { titulo: "astro", secao: "galaxie", icone: Sparkles },
+  pulsar: { titulo: "pulsar", secao: "galaxie", icone: Radar },
+  // Microsoft 365
   apps: { titulo: "apps", secao: "copilot", icone: LayoutGrid },
   outlook: { titulo: "outlook", secao: "copilot", icone: OutlookIcon },
   onedrive: { titulo: "onedrive", secao: "copilot", icone: OneDriveIcon },
+  // Windows
   performance: { titulo: "performance", secao: "windows", icone: Gauge },
   "caminhos-longos": { titulo: "caminhosLongos", secao: "windows", icone: FolderTree },
   configuracoes: { titulo: "configuracoes", secao: "conta", icone: Settings },

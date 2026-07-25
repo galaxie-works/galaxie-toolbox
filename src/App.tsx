@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { LoginScreen } from "@/screens/login";
 import { SitesScreen } from "@/screens/sites";
 import { AppsScreen } from "@/screens/apps";
+import { NavegadorScreen, type AbaBrowser } from "@/screens/navegador";
+import * as browser from "@/lib/browser";
 import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -42,6 +44,9 @@ export default function App() {
   const [restoring, setRestoring] = useState(true);
   const [cache, setCache] = useState<Identidade | null>(null);
   const [tela, setTela] = useState<Tela>("onedrive");
+  // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
+  const [abas, setAbas] = useState<AbaBrowser[]>([]);
+  const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
 
   useEffect(() => {
     let vivo = true;
@@ -161,11 +166,33 @@ export default function App() {
     }
   }
 
-  async function abrirAppAqui(app: AppM365) {
-    try {
-      await api.abrirAppInterno(app.id, app.url, `${app.nome} — GALAXIE Toolbox`);
-    } catch (e) {
-      setError(String(e));
+  /** Abre o app como ABA do navegador embutido e vai para a tela dele. */
+  function abrirAppAqui(app: AppM365) {
+    setAbas((prev) =>
+      prev.some((a) => a.id === app.id)
+        ? prev
+        : [...prev, { id: app.id, nome: app.nome, url: app.url }]
+    );
+    setAbaAtiva(app.id);
+    setTela("navegador");
+  }
+
+  /** Abre uma URL/busca livre (da omnibox do Cruiser) como aba própria. */
+  function abrirUrlLivre(url: string, nome: string) {
+    const id = `web-${Date.now()}`;
+    setAbas((prev) => [...prev, { id, nome, url }]);
+    setAbaAtiva(id);
+    setTela("navegador");
+  }
+
+  function fecharAba(id: string) {
+    browser.fechar(id);
+    const resto = abas.filter((a) => a.id !== id);
+    setAbas(resto);
+    if (abaAtiva === id) {
+      const prox = resto[resto.length - 1];
+      setAbaAtiva(prox ? prox.id : null);
+      if (!prox) setTela("apps"); // sem abas, volta para a lista de apps
     }
   }
 
@@ -224,6 +251,7 @@ export default function App() {
 
   // --- Aplicativo ---------------------------------------------------------
   const info = TELAS[tela];
+  const abaAtivaObj = abas.find((a) => a.id === abaAtiva);
 
   return (
     /* O wrapper do sidebar e min-h-svh: cresce com o conteudo. Numa pagina web
@@ -261,8 +289,26 @@ export default function App() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>{t.nav[info.titulo]}</BreadcrumbPage>
+                  {/* No Cruiser com aba aberta, o nome dela vem como 3o nivel,
+                      entao "Cruiser" deixa de ser a pagina final. */}
+                  {tela === "navegador" && abaAtivaObj ? (
+                    <span className="text-muted-foreground">
+                      {t.nav[info.titulo]}
+                    </span>
+                  ) : (
+                    <BreadcrumbPage>{t.nav[info.titulo]}</BreadcrumbPage>
+                  )}
                 </BreadcrumbItem>
+                {tela === "navegador" && abaAtivaObj && (
+                  <>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                      <BreadcrumbPage className="max-w-40 truncate">
+                        {abaAtivaObj.nome}
+                      </BreadcrumbPage>
+                    </BreadcrumbItem>
+                  </>
+                )}
               </BreadcrumbList>
             </Breadcrumb>
             <div className="ml-auto">
@@ -271,10 +317,26 @@ export default function App() {
           </div>
         </header>
 
-        {/* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
+        {/* O navegador fica FORA do ScrollArea, em tela cheia e sem padding: o
+            webview nativo ocupa toda a area medida, e quem rola e a propria
+            pagina web, nao o nosso ScrollArea. */}
+        {tela === "navegador" ? (
+          <div className="relative z-10 min-h-0 flex-1">
+            <NavegadorScreen
+              abas={abas}
+              ativa={abaAtiva}
+              onTrocar={setAbaAtiva}
+              onFechar={fecharAba}
+              onAbrir={abrirAppAqui}
+              onNovaAba={() => setAbaAtiva(null)}
+              onNavegar={abrirUrlLivre}
+            />
+          </div>
+        ) : (
+        /* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
             design system em vez da nativa do sistema.
             min-h-0: sem isso o flex-1 nao encolhe abaixo do conteudo e nao
-            existe area rolavel nenhuma. */}
+            existe area rolavel nenhuma. */
         <ScrollArea className="relative z-10 min-h-0 flex-1">
           <main className="flex flex-col p-4 pt-0">
           {tela === "onedrive" && (
@@ -292,6 +354,27 @@ export default function App() {
             <AppsScreen
               onAbrirAqui={abrirAppAqui}
               onAbrirNavegador={(a) => abrirUrl(a.url)}
+            />
+          )}
+          {tela === "comms" && (
+            <EmBreveScreen
+              titulo={t.nav.comms}
+              icone={TELAS.comms.icone}
+              descricao={t.emBreveComms.descricao}
+            />
+          )}
+          {tela === "astro" && (
+            <EmBreveScreen
+              titulo={t.nav.astro}
+              icone={TELAS.astro.icone}
+              descricao={t.emBreveAstro.descricao}
+            />
+          )}
+          {tela === "pulsar" && (
+            <EmBreveScreen
+              titulo={t.nav.pulsar}
+              icone={TELAS.pulsar.icone}
+              descricao={t.emBrevePulsar.descricao}
             />
           )}
           {tela === "outlook" && (
@@ -328,6 +411,7 @@ export default function App() {
           )}
           </main>
         </ScrollArea>
+        )}
       </SidebarInset>
     </SidebarProvider>
   );

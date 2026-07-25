@@ -44,11 +44,16 @@ const pt = {
     microsoft365: "Microsoft 365",
     // Grupo da sidebar. Separado do "Microsoft 365" acima, que e a legenda da
     // organizacao no topo e continua sendo o nome da plataforma.
+    galaxie: "Galaxie",
     copilot: "M365 Copilot",
+    comms: "Comms",
+    astro: "Astro",
+    pulsar: "Pulsar",
     windows: "Windows",
     outlook: "Outlook",
     onedrive: "OneDrive",
     apps: "Apps",
+    navegador: "Cruiser",
     performance: "Performance",
     caminhosLongos: "Caminhos longos",
     configuracoes: "Configurações",
@@ -161,6 +166,14 @@ const pt = {
       "Os aplicativos abrem aqui dentro. Na primeira vez a Microsoft pede o seu login nesta janela; depois a sessão fica guardada.",
   },
 
+  navegador: {
+    buscar: "Buscar apps ou traçar uma rota...",
+    vazio: "Nada por aqui.",
+    navegar: "Traçar rota",
+    irPara: "Ir para {nome}",
+    pesquisar: "Pesquisar “{q}” na web",
+  },
+
   atualizacao: {
     titulo: "Atualização disponível!",
     versao: "Versão {v} ({d})",
@@ -170,6 +183,16 @@ const pt = {
     agora: "Atualizar agora",
     atualizando: "Atualizando",
     depois: "Lembrar depois",
+  },
+
+  emBreveComms: {
+    descricao: "Comunicações da equipe, num só lugar.",
+  },
+  emBreveAstro: {
+    descricao: "O copiloto da Galaxie vai morar aqui.",
+  },
+  emBrevePulsar: {
+    descricao: "Central de notificações e alertas — cada pulso, um aviso.",
   },
 
   caminhosLongos: {
@@ -216,11 +239,16 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     organizacao: "Organization",
     plataforma: "Platform",
     microsoft365: "Microsoft 365",
+    galaxie: "Galaxie",
     copilot: "M365 Copilot",
+    comms: "Comms",
+    astro: "Astro",
+    pulsar: "Pulsar",
     windows: "Windows",
     outlook: "Outlook",
     onedrive: "OneDrive",
     apps: "Apps",
+    navegador: "Cruiser",
     performance: "Performance",
     caminhosLongos: "Long paths",
     configuracoes: "Settings",
@@ -332,6 +360,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
       "Apps open right here. The first time, Microsoft asks you to sign in inside this window; after that the session is kept.",
   },
 
+  navegador: {
+    buscar: "Search apps or set a course...",
+    vazio: "Nothing here.",
+    navegar: "Set a course",
+    irPara: "Go to {nome}",
+    pesquisar: "Search the web for “{q}”",
+  },
+
   atualizacao: {
     titulo: "Update available!",
     versao: "Version {v} ({d})",
@@ -341,6 +377,16 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     agora: "Update now",
     atualizando: "Updating",
     depois: "Remind me later",
+  },
+
+  emBreveComms: {
+    descricao: "Team communications, all in one place.",
+  },
+  emBreveAstro: {
+    descricao: "The Galaxie copilot will live here.",
+  },
+  emBrevePulsar: {
+    descricao: "Notifications and alerts — every pulse, a heads-up.",
   },
 
   caminhosLongos: {
