@@ -9,6 +9,8 @@ Tauri 2 + React 19 + TypeScript + Tailwind v4. Fala com **Microsoft Graph delega
 ## 2. Board de trabalho (GitHub Projects) — a fonte da verdade
 Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3`.
 
+> ⚠️ **SEMPRE verifique o board antes de cobrar/perguntar ao PO no chat.** O PO responde **movendo cards** (Status), **comentando issues** e **criando itens** no board — não no chat. Antes de pedir confirmação/decisão, cheque Status (QA Approved/Rejected), comentários novos e itens novos. Só pergunte no chat o que o board não responder.
+
 ### Fluxo de colunas (campo Status) e quem move
 | Coluna | Descrição | Quem move |
 |---|---|---|
