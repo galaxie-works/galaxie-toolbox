@@ -783,3 +783,1553 @@ pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
     }
     Ok(tarefas)
 }
+
+// ----------------------------------------------------------------------------
+// Agenda do dia + inbox do dia (visao "Control room" rica). O front escolhe uma
+// data no calendario e manda os limites do dia em ISO UTC; o backend so repassa.
+// ----------------------------------------------------------------------------
+
+/// Iniciais de um nome (ate 2 letras) para o fallback do avatar.
+fn iniciais(nome: &str) -> String {
+    let partes: Vec<&str> = nome.split_whitespace().filter(|p| !p.is_empty()).collect();
+    match partes.as_slice() {
+        [] => "?".to_string(),
+        [um] => um.chars().take(2).collect::<String>().to_uppercase(),
+        [primeiro, .., ultimo] => {
+            let a = primeiro.chars().next().unwrap_or('?');
+            let b = ultimo.chars().next().unwrap_or('?');
+            format!("{a}{b}").to_uppercase()
+        }
+    }
+}
+
+#[derive(serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Participante {
+    pub nome: String,
+    pub email: String,
+    pub iniciais: String,
+    /// Foto em data URI. Sempre None por ora (buscar por pessoa custa 1 req cada).
+    pub foto: Option<String>,
+}
+
+fn participante(no: &serde_json::Value) -> Participante {
+    let nome = no["name"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .or_else(|| no["address"].as_str())
+        .unwrap_or("")
+        .to_string();
+    Participante {
+        iniciais: iniciais(&nome),
+        email: no["address"].as_str().unwrap_or("").to_string(),
+        nome,
+        foto: None,
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventoAgenda {
+    pub id: String,
+    pub assunto: String,
+    pub inicio: String, // ISO UTC
+    pub fim: String,
+    pub local: String,
+    pub online: bool,
+    pub dia_inteiro: bool,
+    /// "meeting" quando tem convidados; "event" caso contrario.
+    pub categoria: String,
+    pub participantes: Vec<Participante>,
+    pub total_participantes: usize,
+    pub tem_anexos: bool,
+    pub categorias: Vec<String>,
+}
+
+/// Eventos do dia escolhido (limites em ISO UTC). Calendars.Read.
+pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/calendarView?startDateTime={inicio}&endDateTime={fim}\
+         &$select=id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories\
+         &$orderby=start/dateTime&$top=100"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .header("Prefer", "outlook.timezone=\"UTC\"")
+        .send()
+        .map_err(|e| format!("falha no calendario: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/calendarView retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut eventos = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            let convidados: Vec<Participante> = it["attendees"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|a| participante(&a["emailAddress"]))
+                        .filter(|p| !p.nome.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            let total = convidados.len();
+            let categorias: Vec<String> = it["categories"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|c| c.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            eventos.push(EventoAgenda {
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+                inicio: it["start"]["dateTime"].as_str().unwrap_or("").to_string(),
+                fim: it["end"]["dateTime"].as_str().unwrap_or("").to_string(),
+                local: it["location"]["displayName"].as_str().unwrap_or("").to_string(),
+                online: it["onlineMeeting"].is_object() || it["isOnlineMeeting"].as_bool().unwrap_or(false),
+                dia_inteiro: it["isAllDay"].as_bool().unwrap_or(false),
+                categoria: if total > 0 { "meeting" } else { "event" }.to_string(),
+                // mostra ate 5 avatares; o resto vira "+N"
+                participantes: convidados.into_iter().take(5).collect(),
+                total_participantes: total,
+                tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
+                categorias,
+            });
+        }
+    }
+    Ok(eventos)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CategoriaCor {
+    pub nome: String,
+    pub cor: String,
+}
+
+/// Mapeia um preset de cor do Outlook para o hex correspondente.
+fn preset_para_hex(preset: &str) -> &'static str {
+    match preset {
+        "preset0" => "#D13438",
+        "preset1" => "#FF8C00",
+        "preset2" => "#986F0B",
+        "preset3" => "#EAA300",
+        "preset4" => "#498205",
+        "preset5" => "#00B7C3",
+        "preset6" => "#7A7574",
+        "preset7" => "#0078D4",
+        "preset8" => "#8764B8",
+        "preset9" => "#C239B3",
+        "preset10" => "#69797E",
+        "preset11" => "#4A5459",
+        "preset12" => "#8A8886",
+        "preset13" => "#5D5A58",
+        "preset14" => "#252423",
+        "preset15" => "#A80000",
+        "preset16" => "#D83B01",
+        "preset17" => "#7A4B00",
+        "preset18" => "#C19C00",
+        "preset19" => "#0B6A0B",
+        "preset20" => "#005E5E",
+        "preset21" => "#4C4A00",
+        "preset22" => "#004E8C",
+        "preset23" => "#5C2E91",
+        "preset24" => "#881798",
+        // "none" ou desconhecido
+        _ => "#8A8886",
+    }
+}
+
+/// Categorias mestras do usuario com a cor (hex) de cada uma. Calendars.Read / Mail.Read.
+pub fn cr_categorias(store: &TokenStore) -> Result<Vec<CategoriaCor>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/outlook/masterCategories?$select=displayName,color");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler as categorias: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/outlook/masterCategories retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut categorias = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            let nome = it["displayName"].as_str().unwrap_or("").to_string();
+            let preset = it["color"].as_str().unwrap_or("none");
+            categorias.push(CategoriaCor {
+                nome,
+                cor: preset_para_hex(preset).to_string(),
+            });
+        }
+    }
+    Ok(categorias)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventoDetalhe {
+    pub assunto: String,
+    pub inicio: String,
+    pub fim: String,
+    pub local: String,
+    pub online: bool,
+    pub join_url: Option<String>,
+    pub organizador: String,
+    pub corpo: String,
+    pub corpo_tipo: String, // "html" | "text"
+    pub participantes: Vec<Participante>,
+    pub web_link: String,
+}
+
+/// Detalhe completo de um evento (corpo + todos os convidados). Calendars.Read.
+pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/events/{id}?$select=subject,start,end,location,onlineMeeting,\
+         isOnlineMeeting,onlineMeetingUrl,organizer,body,attendees,webLink"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .header("Prefer", "outlook.timezone=\"UTC\"")
+        .send()
+        .map_err(|e| format!("falha ao ler o evento: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/events retornou {}", resp.status()));
+    }
+    let it: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let participantes: Vec<Participante> = it["attendees"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|a| participante(&a["emailAddress"]))
+                .filter(|p| !p.nome.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let join_url = it["onlineMeeting"]["joinUrl"]
+        .as_str()
+        .or_else(|| it["onlineMeetingUrl"].as_str())
+        .map(|s| s.to_string());
+
+    Ok(EventoDetalhe {
+        assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+        inicio: it["start"]["dateTime"].as_str().unwrap_or("").to_string(),
+        fim: it["end"]["dateTime"].as_str().unwrap_or("").to_string(),
+        local: it["location"]["displayName"].as_str().unwrap_or("").to_string(),
+        online: it["onlineMeeting"].is_object() || it["isOnlineMeeting"].as_bool().unwrap_or(false),
+        join_url,
+        organizador: it["organizer"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
+        corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
+        corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
+        participantes,
+        web_link: it["webLink"].as_str().unwrap_or("").to_string(),
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailItem {
+    pub id: String,
+    pub assunto: String,
+    pub de: String,
+    pub de_email: String,
+    pub iniciais: String,
+    pub recebido: String, // ISO UTC
+    pub preview: String,
+    pub lido: bool,
+    pub tem_anexos: bool,
+    pub sinalizado: bool,
+}
+
+/// E-mails recebidos no dia escolhido (limites em ISO UTC). Mail.Read.
+pub fn cr_inbox_dia(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EmailItem>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/mailFolders/inbox/messages\
+         ?$filter=receivedDateTime ge {inicio} and receivedDateTime lt {fim}\
+         &$select=subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments,flag\
+         &$orderby=receivedDateTime desc&$top=50"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler a inbox: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/mailFolders/inbox/messages retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut itens = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            let de = it["from"]["emailAddress"]["name"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .or_else(|| it["from"]["emailAddress"]["address"].as_str())
+                .unwrap_or("")
+                .to_string();
+            itens.push(EmailItem {
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+                iniciais: iniciais(&de),
+                de,
+                de_email: it["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
+                recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
+                preview: it["bodyPreview"].as_str().unwrap_or("").trim().to_string(),
+                lido: it["isRead"].as_bool().unwrap_or(true),
+                tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
+                sinalizado: it["flag"]["flagStatus"].as_str() == Some("flagged"),
+            });
+        }
+    }
+    Ok(itens)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnexoEmail {
+    pub id: String,
+    pub nome: String,
+    pub tamanho: u64,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmailDetalhe {
+    pub assunto: String,
+    pub de: String,
+    pub de_email: String,
+    pub para: Vec<String>,
+    pub cc: Vec<String>,
+    pub recebido: String,
+    pub corpo: String,
+    pub corpo_tipo: String, // "html" | "text"
+    pub anexos: Vec<AnexoEmail>,
+    pub web_link: String,
+}
+
+/// Nomes (ou e-mails) de uma lista de recipients do Graph.
+fn nomes_recipients(v: &serde_json::Value) -> Vec<String> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .map(|r| {
+                    r["emailAddress"]["name"]
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                        .or_else(|| r["emailAddress"]["address"].as_str())
+                        .unwrap_or("")
+                        .to_string()
+                })
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Corpo completo de um e-mail + destinatarios e anexos. Mail.Read.
+pub fn cr_email_corpo(store: &TokenStore, id: &str) -> Result<EmailDetalhe, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/messages/{id}\
+         ?$select=subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments,webLink"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler o e-mail: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/messages retornou {}", resp.status()));
+    }
+    let it: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let para = nomes_recipients(&it["toRecipients"]);
+    let cc = nomes_recipients(&it["ccRecipients"]);
+
+    // Anexos so quando houver (poupa uma chamada).
+    let mut anexos = Vec::new();
+    if it["hasAttachments"].as_bool().unwrap_or(false) {
+        let au = format!("{GRAPH}/me/messages/{id}/attachments?$select=id,name,size");
+        if let Ok(r) = client.get(&au).bearer_auth(&token).send() {
+            if r.status().is_success() {
+                if let Ok(va) = r.json::<serde_json::Value>() {
+                    if let Some(arr) = va["value"].as_array() {
+                        for a in arr {
+                            anexos.push(AnexoEmail {
+                                id: a["id"].as_str().unwrap_or("").to_string(),
+                                nome: a["name"].as_str().unwrap_or("arquivo").to_string(),
+                                tamanho: a["size"].as_u64().unwrap_or(0),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(EmailDetalhe {
+        assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+        de: it["from"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
+        de_email: it["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
+        para,
+        cc,
+        recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
+        corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
+        corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
+        anexos,
+        web_link: it["webLink"].as_str().unwrap_or("").to_string(),
+    })
+}
+
+/// Baixa um anexo de um e-mail para a pasta Downloads do usuario e devolve o
+/// caminho absoluto do arquivo gravado. Mail.Read.
+///
+/// O fileAttachment do Graph traz o conteudo em `contentBytes` (base64). Grava
+/// em %USERPROFILE%\Downloads, criando a pasta se nao existir, e resolve
+/// colisoes de nome anexando " (1)", " (2)", ... antes da extensao.
+pub fn cr_baixar_anexo(
+    store: &TokenStore,
+    message_id: &str,
+    attachment_id: &str,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/messages/{message_id}/attachments/{attachment_id}");
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao baixar o anexo: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/messages/attachments retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let nome = v["name"].as_str().unwrap_or("anexo").to_string();
+    let bytes_str = v["contentBytes"]
+        .as_str()
+        .ok_or("anexo sem conteudo (nao e um arquivo?)")?;
+    let bytes = general_purpose::STANDARD
+        .decode(bytes_str)
+        .map_err(|e| format!("conteudo do anexo invalido: {e}"))?;
+
+    // Pasta Downloads da conta do Windows; cria se nao existir.
+    let perfil = std::env::var("USERPROFILE")
+        .map_err(|_| "nao encontrei a pasta do usuario".to_string())?;
+    let downloads = std::path::Path::new(&perfil).join("Downloads");
+    std::fs::create_dir_all(&downloads)
+        .map_err(|e| format!("falha ao criar a pasta Downloads: {e}"))?;
+
+    // Sanitiza o nome: descarta qualquer componente de caminho que venha no
+    // nome do anexo (evita escrever fora da pasta Downloads).
+    let seguro = std::path::Path::new(&nome)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("anexo")
+        .to_string();
+
+    let destino = caminho_livre(&downloads, &seguro);
+    std::fs::write(&destino, &bytes)
+        .map_err(|e| format!("falha ao gravar o arquivo: {e}"))?;
+
+    Ok(destino.to_string_lossy().to_string())
+}
+
+/// Devolve um caminho ainda livre dentro de `dir` para `nome`. Se ja existir,
+/// anexa " (1)", " (2)", ... antes da extensao ate achar um nome disponivel.
+fn caminho_livre(dir: &std::path::Path, nome: &str) -> std::path::PathBuf {
+    let inicial = dir.join(nome);
+    if !inicial.exists() {
+        return inicial;
+    }
+    let base = std::path::Path::new(nome);
+    let tronco = base
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(nome)
+        .to_string();
+    let ext = base.extension().and_then(|s| s.to_str());
+
+    let mut n = 1u32;
+    loop {
+        let candidato = match ext {
+            Some(e) => format!("{tronco} ({n}).{e}"),
+            None => format!("{tronco} ({n})"),
+        };
+        let p = dir.join(&candidato);
+        if !p.exists() {
+            return p;
+        }
+        n += 1;
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Envio: responder / encaminhar. Fluxo em 3 passos pra preservar o histórico
+// citado e enviar o HTML composto pelo editor:
+//   1) POST createReply|createReplyAll|createForward  -> rascunho (com a citação)
+//   2) PATCH /messages/{rascunho}                      -> prepende o texto novo
+//   3) POST  /messages/{rascunho}/send                 -> dispara (202)
+// Escopos: Mail.ReadWrite (rascunho) + Mail.Send (envio).
+// ----------------------------------------------------------------------------
+
+/// Anexo recebido do front, pronto para virar fileAttachment do Graph.
+/// `conteudo_b64` (camelCase `conteudoB64`) é o binário já em base64.
+#[derive(serde::Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnexoUp {
+    pub nome: String,
+    pub tipo: String,
+    pub conteudo_b64: String,
+}
+
+/// Monta o corpo de um `#microsoft.graph.fileAttachment` a partir de um AnexoUp.
+fn anexo_json(a: &AnexoUp) -> serde_json::Value {
+    serde_json::json!({
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        "name": a.nome,
+        "contentType": if a.tipo.is_empty() { "application/octet-stream" } else { &a.tipo },
+        "contentBytes": a.conteudo_b64,
+    })
+}
+
+/// Cria um rascunho de resposta/encaminhamento, injeta o corpo e envia.
+fn compor_e_enviar(
+    store: &TokenStore,
+    id: &str,
+    acao: &str, // "createReply" | "createReplyAll" | "createForward"
+    corpo_html: &str,
+    para: &[String],
+    anexos: &[AnexoUp],
+) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // 1) rascunho a partir da mensagem original
+    let url = format!("{GRAPH}/me/messages/{id}/{acao}");
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .header("Content-Length", "0")
+        .send()
+        .map_err(|e| format!("falha ao criar o rascunho: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("{acao} retornou {}", resp.status()));
+    }
+    let rascunho: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let draft_id = rascunho["id"].as_str().ok_or("rascunho sem id")?.to_string();
+    // corpo original (com a citação) que o Graph montou — preservamos abaixo
+    let citacao = rascunho["body"]["content"].as_str().unwrap_or("");
+    let corpo_final = format!("{corpo_html}<br>{citacao}");
+
+    // 2) PATCH: injeta o HTML composto (+ destinatários no encaminhamento)
+    let mut patch = serde_json::json!({
+        "body": { "contentType": "HTML", "content": corpo_final }
+    });
+    if !para.is_empty() {
+        let dest: Vec<serde_json::Value> = para
+            .iter()
+            .filter(|e| !e.trim().is_empty())
+            .map(|e| serde_json::json!({ "emailAddress": { "address": e.trim() } }))
+            .collect();
+        patch["toRecipients"] = serde_json::Value::Array(dest);
+    }
+    let url = format!("{GRAPH}/me/messages/{draft_id}");
+    let resp = client
+        .patch(&url)
+        .bearer_auth(&token)
+        .json(&patch)
+        .send()
+        .map_err(|e| format!("falha ao preencher o rascunho: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("PATCH do rascunho retornou {}", resp.status()));
+    }
+
+    // 2.5) anexa os arquivos no rascunho (POST /attachments), um por vez.
+    for a in anexos {
+        if a.conteudo_b64.trim().is_empty() {
+            continue;
+        }
+        let url = format!("{GRAPH}/me/messages/{draft_id}/attachments");
+        let resp = client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&anexo_json(a))
+            .send()
+            .map_err(|e| format!("falha ao anexar '{}': {e}", a.nome))?;
+        if !resp.status().is_success() {
+            return Err(format!(
+                "anexar '{}' retornou {}",
+                a.nome,
+                resp.status()
+            ));
+        }
+    }
+
+    // 3) envia
+    let url = format!("{GRAPH}/me/messages/{draft_id}/send");
+    let resp = client
+        .post(&url)
+        .bearer_auth(&token)
+        .header("Content-Length", "0")
+        .send()
+        .map_err(|e| format!("falha ao enviar: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("envio retornou {}", resp.status()));
+    }
+    Ok(())
+}
+
+/// Responde um e-mail (Mail.ReadWrite + Mail.Send). `todos` = responder a todos.
+pub fn cr_responder(
+    store: &TokenStore,
+    id: &str,
+    corpo_html: &str,
+    todos: bool,
+    anexos: Vec<AnexoUp>,
+) -> Result<(), String> {
+    let acao = if todos { "createReplyAll" } else { "createReply" };
+    compor_e_enviar(store, id, acao, corpo_html, &[], &anexos)
+}
+
+/// Encaminha um e-mail para os destinatários informados.
+pub fn cr_encaminhar(
+    store: &TokenStore,
+    id: &str,
+    corpo_html: &str,
+    para: Vec<String>,
+    anexos: Vec<AnexoUp>,
+) -> Result<(), String> {
+    if para.iter().all(|e| e.trim().is_empty()) {
+        return Err("informe ao menos um destinatário".into());
+    }
+    compor_e_enviar(store, id, "createForward", corpo_html, &para, &anexos)
+}
+
+/// Espera do header Retry-After (segundos), com teto. Fallback quando ausente.
+fn retry_after_secs(resp: &reqwest::blocking::Response, padrao: u64, teto: u64) -> u64 {
+    resp.headers()
+        .get("Retry-After")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(padrao)
+        .min(teto)
+}
+
+/// Sobe um arquivo para a pasta "Bridge Anexos" no OneDrive do usuário e cria um
+/// link de compartilhamento (view, escopo da organização). Retorna o webUrl do
+/// link, que o front insere no corpo do e-mail. Retry no 429 nos dois passos.
+///
+/// PUT simples de conteúdo (bom até ~4 MB — anexos de e-mail cabem folgado);
+/// arquivos maiores exigiriam upload session, fora do escopo aqui. Files.ReadWrite.
+pub fn cr_compartilhar_onedrive(
+    store: &TokenStore,
+    nome: &str,
+    conteudo_b64: &str,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let bytes = general_purpose::STANDARD
+        .decode(conteudo_b64.trim())
+        .map_err(|e| format!("conteudo do arquivo invalido: {e}"))?;
+
+    // Sanitiza: descarta qualquer componente de caminho no nome (sem traversal)
+    // e percent-encoda para caber no addressing por path do Graph.
+    let seguro = std::path::Path::new(nome)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("arquivo");
+    let nome_enc = urlencoding::encode(seguro);
+
+    // 1) PUT do conteúdo em /Bridge Anexos/{nome} (cria a pasta se preciso).
+    let put_url = format!("{GRAPH}/me/drive/root:/Bridge%20Anexos/{nome_enc}:/content");
+    let mut item: Option<serde_json::Value> = None;
+    for tentativa in 0..3u8 {
+        let resp = client
+            .put(&put_url)
+            .bearer_auth(&token)
+            .header("Content-Type", "application/octet-stream")
+            .body(bytes.clone())
+            .send()
+            .map_err(|e| format!("falha no upload: {e}"))?;
+        let st = resp.status();
+        if st.is_success() {
+            item = Some(resp.json().map_err(|e| e.to_string())?);
+            break;
+        }
+        if st.as_u16() == 429 && tentativa < 2 {
+            let espera = retry_after_secs(&resp, 2, 10);
+            log::warn!("[onedrive] upload '{seguro}' 429; retry em {espera}s");
+            std::thread::sleep(std::time::Duration::from_secs(espera));
+            continue;
+        }
+        let txt = resp.text().unwrap_or_default();
+        return Err(format!("upload retornou {st}: {txt}"));
+    }
+    let item = item.ok_or("upload esgotou as tentativas (429)")?;
+    let item_id = item["id"].as_str().ok_or("item enviado sem id")?;
+
+    // 2) POST /createLink (view, organization) -> devolve o webUrl do link.
+    let link_url = format!("{GRAPH}/me/drive/items/{item_id}/createLink");
+    let corpo = serde_json::json!({ "type": "view", "scope": "organization" });
+    for tentativa in 0..3u8 {
+        let resp = client
+            .post(&link_url)
+            .bearer_auth(&token)
+            .json(&corpo)
+            .send()
+            .map_err(|e| format!("falha ao criar o link: {e}"))?;
+        let st = resp.status();
+        if st.is_success() {
+            let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+            let web = v["link"]["webUrl"]
+                .as_str()
+                .ok_or("link sem webUrl")?
+                .to_string();
+            return Ok(web);
+        }
+        if st.as_u16() == 429 && tentativa < 2 {
+            let espera = retry_after_secs(&resp, 2, 10);
+            log::warn!("[onedrive] createLink '{seguro}' 429; retry em {espera}s");
+            std::thread::sleep(std::time::Duration::from_secs(espera));
+            continue;
+        }
+        let txt = resp.text().unwrap_or_default();
+        return Err(format!("createLink retornou {st}: {txt}"));
+    }
+    Err("createLink esgotou as tentativas (429)".to_string())
+}
+
+// ----------------------------------------------------------------------------
+// Cliente de e-mail (Control room): pastas + mensagens por pasta.
+// ----------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PastaEmail {
+    /// id well-known da pasta (serve direto no endpoint de mensagens).
+    pub id: String,
+    /// chave estável pro ícone/rótulo no front (ex.: "inbox", "sentitems").
+    pub tipo: String,
+    /// displayName localizado (fallback caso o front não traduza).
+    pub nome: String,
+    pub nao_lidos: u64,
+    pub total: u64,
+    /// nº de subpastas — o front só mostra o chevron de expandir quando > 0.
+    pub filhos: u64,
+}
+
+/// Pastas de e-mail padrão do usuário, com contagens. Mail.Read.
+pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // Pastas well-known (o id textual funciona direto no Graph).
+    let alvos = [
+        "inbox",
+        "drafts",
+        "sentitems",
+        "archive",
+        "junkemail",
+        "deleteditems",
+    ];
+    let mut pastas = Vec::new();
+    for id in alvos {
+        // Sempre inclui a pasta (mesmo que a contagem falhe): o Inbox não pode
+        // sumir do sidebar por causa de um 404/erro transitório numa das chamadas.
+        let mut nao_lidos = 0;
+        let mut total = 0;
+        let mut filhos = 0;
+        let mut nome = id.to_string();
+        let url = format!(
+            "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount,childFolderCount"
+        );
+        // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas. Sem
+        // isso o Inbox aparecia sem contagem de não lidos quando o Graph limitava.
+        for tentativa in 0..3u8 {
+            match client.get(&url).bearer_auth(&token).send() {
+                Ok(resp) if resp.status().is_success() => {
+                    if let Ok(v) = resp.json::<serde_json::Value>() {
+                        nome = v["displayName"].as_str().unwrap_or(id).to_string();
+                        nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
+                        total = v["totalItemCount"].as_u64().unwrap_or(0);
+                        filhos = v["childFolderCount"].as_u64().unwrap_or(0);
+                    }
+                    break;
+                }
+                Ok(resp) if resp.status().as_u16() == 429 && tentativa < 2 => {
+                    let espera = resp
+                        .headers()
+                        .get("Retry-After")
+                        .and_then(|h| h.to_str().ok())
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(1)
+                        .min(5);
+                    log::warn!("[mail] pasta '{id}' 429; retry em {espera}s");
+                    std::thread::sleep(std::time::Duration::from_secs(espera));
+                }
+                Ok(resp) => {
+                    log::warn!("[mail] pasta '{id}' retornou {}", resp.status());
+                    break;
+                }
+                Err(e) => {
+                    log::warn!("[mail] pasta '{id}' falhou: {e}");
+                    break;
+                }
+            }
+        }
+        pastas.push(PastaEmail {
+            id: id.to_string(),
+            tipo: id.to_string(),
+            nome,
+            nao_lidos,
+            total,
+            filhos,
+        });
+    }
+    Ok(pastas)
+}
+
+/// Monta um EmailItem a partir de um item de mensagem do Graph. `saida` = pasta
+/// de saída (Enviados/Rascunhos): mostra o destinatário no lugar do remetente e
+/// usa a data de envio. Compartilhado por cr_folder_mensagens e cr_buscar para
+/// que a lista fique idêntica nos dois caminhos.
+fn montar_email_item(it: &serde_json::Value, saida: bool) -> EmailItem {
+    // Em pastas de saída, mostra o destinatário; nas demais, o remetente.
+    let contraparte = if saida {
+        it["toRecipients"][0]["emailAddress"]["name"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .or_else(|| it["toRecipients"][0]["emailAddress"]["address"].as_str())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        it["from"]["emailAddress"]["name"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .or_else(|| it["from"]["emailAddress"]["address"].as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let quando = if saida {
+        it["sentDateTime"].as_str().unwrap_or("")
+    } else {
+        it["receivedDateTime"].as_str().unwrap_or("")
+    };
+    // e-mail da contraparte: em saída é o destinatário, senão o remetente
+    // (antes ficava sempre o "from", desalinhando com o nome mostrado).
+    let contraparte_email = if saida {
+        it["toRecipients"][0]["emailAddress"]["address"].as_str().unwrap_or("")
+    } else {
+        it["from"]["emailAddress"]["address"].as_str().unwrap_or("")
+    };
+    EmailItem {
+        id: it["id"].as_str().unwrap_or("").to_string(),
+        assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+        iniciais: iniciais(&contraparte),
+        de_email: contraparte_email.to_string(),
+        de: contraparte,
+        recebido: quando.to_string(),
+        preview: it["bodyPreview"].as_str().unwrap_or("").trim().to_string(),
+        lido: it["isRead"].as_bool().unwrap_or(true),
+        tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
+        sinalizado: it["flag"]["flagStatus"].as_str() == Some("flagged"),
+    }
+}
+
+/// Mensagens de uma pasta (até 50, mais recentes primeiro). Mail.Read.
+/// Em Enviados/Rascunhos o "de" vira o destinatário (faz mais sentido na lista).
+pub fn cr_folder_mensagens(
+    store: &TokenStore,
+    folder_id: &str,
+    skip: u32,
+) -> Result<Vec<EmailItem>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let saida = matches!(folder_id, "sentitems" | "drafts");
+    let ordenar = if saida { "sentDateTime" } else { "receivedDateTime" };
+    // Página de 50, com $skip para o lazy load (rolar até o fim carrega mais).
+    let url = format!(
+        "{GRAPH}/me/mailFolders/{folder_id}/messages\
+         ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
+         &$orderby={ordenar} desc&$top=50&$skip={skip}"
+    );
+    // Retry no 429: na abertura o app dispara várias chamadas Graph juntas
+    // (pastas + mensagens + agenda + categorias) e a Inbox vinha vazia quando
+    // esta era estrangulada. Respeita Retry-After, até 3 tentativas.
+    let mut resposta = None;
+    for tentativa in 0..3u8 {
+        match client.get(&url).bearer_auth(&token).send() {
+            Ok(r) if r.status().is_success() => {
+                resposta = Some(r);
+                break;
+            }
+            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
+                let espera = r
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(1)
+                    .min(5);
+                log::warn!("[mail] mensagens de '{folder_id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(r) => {
+                return Err(format!("/me/mailFolders/{folder_id}/messages retornou {}", r.status()));
+            }
+            Err(e) => return Err(format!("falha ao ler a pasta: {e}")),
+        }
+    }
+    let resp = resposta.ok_or_else(|| "sem resposta ao ler a pasta".to_string())?;
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut itens = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            itens.push(montar_email_item(it, saida));
+        }
+    }
+    Ok(itens)
+}
+
+/// Busca mensagens numa pasta pelo termo, no SERVIDOR (via $search do Graph).
+/// Devolve a mesma lista de cr_folder_mensagens (reusa montar_email_item), em
+/// páginas de 50 com $skip. O $search do Graph NÃO aceita $orderby junto — por
+/// isso não incluímos orderby aqui (o Graph já ordena por relevância). Exige o
+/// header ConsistencyLevel: eventual. Retry no 429. Mail.Read.
+pub fn cr_buscar(
+    store: &TokenStore,
+    folder_id: &str,
+    termo: &str,
+    skip: u32,
+) -> Result<Vec<EmailItem>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let saida = matches!(folder_id, "sentitems" | "drafts");
+    // As aspas duplas fazem parte da sintaxe do $search; as que vierem no próprio
+    // termo são trocadas por espaço para não fechar a expressão antes da hora.
+    let termo_limpo = termo.replace('"', " ");
+    let enc = urlencoding::encode(termo_limpo.trim());
+    // Sem $orderby: o Graph rejeita orderby combinado com $search.
+    let url = format!(
+        "{GRAPH}/me/mailFolders/{folder_id}/messages\
+         ?$search=\"{enc}\"\
+         &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
+         &$top=50&$skip={skip}"
+    );
+    // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas —
+    // mesmo padrão de cr_folder_mensagens.
+    let mut resposta = None;
+    for tentativa in 0..3u8 {
+        match client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+        {
+            Ok(r) if r.status().is_success() => {
+                resposta = Some(r);
+                break;
+            }
+            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
+                let espera = r
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(1)
+                    .min(5);
+                log::warn!("[mail] busca em '{folder_id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(r) => {
+                return Err(format!(
+                    "busca em /me/mailFolders/{folder_id}/messages retornou {}",
+                    r.status()
+                ));
+            }
+            Err(e) => return Err(format!("falha na busca: {e}")),
+        }
+    }
+    let resp = resposta.ok_or_else(|| "sem resposta na busca".to_string())?;
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut itens = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            itens.push(montar_email_item(it, saida));
+        }
+    }
+    Ok(itens)
+}
+
+// ----------------------------------------------------------------------------
+// Ações de e-mail (Control room): excluir, sinalizar, esvaziar a lixeira.
+// Escopo: Mail.ReadWrite.
+// ----------------------------------------------------------------------------
+
+/// DELETE de uma mensagem com retry no 429 (throttling) respeitando Retry-After.
+/// 404 conta como sucesso (já foi removida — idempotente). Até 4 tentativas.
+fn deletar_msg(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    id: &str,
+) -> Result<(), String> {
+    let url = format!("{GRAPH}/me/messages/{id}");
+    for tentativa in 0..4u8 {
+        match client.delete(&url).bearer_auth(token).send() {
+            Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {
+                return Ok(());
+            }
+            Ok(resp) if resp.status().as_u16() == 429 && tentativa < 3 => {
+                let espera = resp
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(2)
+                    .min(10);
+                log::warn!("[mail] excluir '{id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(resp) => {
+                return Err(format!("DELETE /me/messages retornou {}", resp.status()));
+            }
+            Err(e) => return Err(format!("falha ao excluir o e-mail: {e}")),
+        }
+    }
+    Err("DELETE /me/messages esgotou as tentativas (429)".to_string())
+}
+
+/// Move uma mensagem para uma pasta (well-known como "deleteditems" ou id).
+/// 404 conta como sucesso (idempotente). Retry no 429. Mail.ReadWrite.
+fn mover_msg(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    id: &str,
+    destino: &str,
+) -> Result<(), String> {
+    let url = format!("{GRAPH}/me/messages/{id}/move");
+    let body = serde_json::json!({ "destinationId": destino });
+    for tentativa in 0..4u8 {
+        match client.post(&url).bearer_auth(token).json(&body).send() {
+            Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {
+                return Ok(());
+            }
+            Ok(resp) if resp.status().as_u16() == 429 && tentativa < 3 => {
+                let espera = resp
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(2)
+                    .min(10);
+                log::warn!("[mail] mover '{id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(resp) => return Err(format!("POST /me/messages/move retornou {}", resp.status())),
+            Err(e) => return Err(format!("falha ao mover o e-mail: {e}")),
+        }
+    }
+    Err("POST /me/messages/move esgotou as tentativas (429)".to_string())
+}
+
+/// Exclui um e-mail (move para a Lixeira; recuperável). Mail.ReadWrite.
+pub fn cr_excluir_email(store: &TokenStore, id: &str) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    mover_msg(&client, &token, id, "deleteditems")
+}
+
+/// Exclui vários e-mails em série (evita a rajada concorrente que leva o Graph a
+/// 429). Por padrão MOVE para a Lixeira (recuperável) — o DELETE puro podia ir
+/// pra exclusão definitiva. Com `permanente=true` (ex.: excluindo de dentro da
+/// própria Lixeira) apaga de vez. Cada item tem retry no 429; 404 = já saiu.
+/// Retorna os ids que realmente saíram. Mail.ReadWrite.
+pub fn cr_excluir_emails(
+    store: &TokenStore,
+    ids: Vec<String>,
+    permanente: bool,
+) -> Result<Vec<String>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut ok = Vec::with_capacity(ids.len());
+    for id in &ids {
+        let r = if permanente {
+            deletar_msg(&client, &token, id)
+        } else {
+            mover_msg(&client, &token, id, "deleteditems")
+        };
+        match r {
+            Ok(()) => ok.push(id.clone()),
+            Err(e) => log::warn!("[mail] excluir '{id}' falhou: {e}"),
+        }
+    }
+    Ok(ok)
+}
+
+/// Sinaliza ou remove a sinalização de um e-mail. Mail.ReadWrite.
+pub fn cr_marcar_email(store: &TokenStore, id: &str, sinalizado: bool) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let status = if sinalizado { "flagged" } else { "notFlagged" };
+    let patch = serde_json::json!({ "flag": { "flagStatus": status } });
+
+    let url = format!("{GRAPH}/me/messages/{id}");
+    let resp = client
+        .patch(&url)
+        .bearer_auth(&token)
+        .json(&patch)
+        .send()
+        .map_err(|e| format!("falha ao sinalizar o e-mail: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("PATCH /me/messages retornou {}", resp.status()));
+    }
+    Ok(())
+}
+
+/// Marca um e-mail como lido ou não lido (PATCH isRead). Retry no 429
+/// respeitando Retry-After, até 3 tentativas. Mail.ReadWrite.
+pub fn cr_marcar_lido(store: &TokenStore, id: &str, lido: bool) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let patch = serde_json::json!({ "isRead": lido });
+    let url = format!("{GRAPH}/me/messages/{id}");
+    for tentativa in 0..3u8 {
+        match client.patch(&url).bearer_auth(&token).json(&patch).send() {
+            Ok(resp) if resp.status().is_success() => return Ok(()),
+            Ok(resp) if resp.status().as_u16() == 429 && tentativa < 2 => {
+                let espera = resp
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(1)
+                    .min(5);
+                log::warn!("[mail] marcar lido '{id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(resp) => return Err(format!("PATCH /me/messages retornou {}", resp.status())),
+            Err(e) => return Err(format!("falha ao marcar como lido: {e}")),
+        }
+    }
+    Err("PATCH /me/messages esgotou as tentativas (429)".to_string())
+}
+
+/// Esvazia a Lixeira (Deleted Items): apaga em definitivo cada mensagem.
+/// Retorna quantas foram excluídas. Mail.ReadWrite.
+pub fn cr_esvaziar_lixeira(store: &TokenStore) -> Result<u64, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // Trava de segurança: evita loops infinitos caso algum DELETE não remova.
+    const LIMITE: u64 = 1000;
+    let mut apagados: u64 = 0;
+
+    loop {
+        let url = format!(
+            "{GRAPH}/me/mailFolders/deleteditems/messages?$select=id&$top=50"
+        );
+        let resp = client
+            .get(&url)
+            .bearer_auth(&token)
+            .send()
+            .map_err(|e| format!("falha ao ler a lixeira: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!(
+                "/me/mailFolders/deleteditems/messages retornou {}",
+                resp.status()
+            ));
+        }
+        let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+        let ids: Vec<String> = v["value"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|it| it["id"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Nada mais a apagar: terminamos.
+        if ids.is_empty() {
+            break;
+        }
+
+        // deletar_msg trata 404 como sucesso (item já saiu) e tem retry no 429 —
+        // era o 404 num item da lixeira que abortava o "Empty trash" inteiro.
+        let mut progrediu = false;
+        for id in ids {
+            match deletar_msg(&client, &token, &id) {
+                Ok(()) => {
+                    apagados += 1;
+                    progrediu = true;
+                    if apagados >= LIMITE {
+                        log::warn!(
+                            "[mail] esvaziar lixeira: limite de {LIMITE} atingido, interrompendo"
+                        );
+                        return Ok(apagados);
+                    }
+                }
+                Err(e) => log::warn!("[mail] esvaziar lixeira: '{id}' falhou: {e}"),
+            }
+        }
+        // Página inteira sem sair nada: evita reler as mesmas em loop infinito.
+        if !progrediu {
+            log::warn!("[mail] esvaziar lixeira: página sem progresso, interrompendo");
+            break;
+        }
+    }
+
+    Ok(apagados)
+}
+
+// ----------------------------------------------------------------------------
+// Compositor de e-mail: busca de pessoas (autocomplete), envio de mensagem
+// nova, salvar contatos e subpastas. Escopos: People.Read, Contacts.ReadWrite,
+// Mail.Send (ja concedido). Tudo delegado (/me).
+// ----------------------------------------------------------------------------
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pessoa {
+    pub nome: String,
+    pub email: String,
+}
+
+/// Busca pessoas para o autocomplete do compositor. Combina o "relevant people"
+/// do usuario (/me/people) com um $search no diretorio (/users). Se um dos dois
+/// falhar, usa so o que veio do outro; erro so quando AMBOS falham. People.Read.
+pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Ok(Vec::new());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let enc = urlencoding::encode(q);
+
+    let mut resultados: Vec<Pessoa> = Vec::new();
+    let mut algum_ok = false;
+
+    // 1) Pessoas relevantes do usuario (contatos, colegas com quem troca e-mail).
+    let url = format!(
+        "{GRAPH}/me/people?$search=\"{enc}\"&$top=8&$select=displayName,scoredEmailAddresses"
+    );
+    match client.get(&url).bearer_auth(&token).send() {
+        Ok(resp) if resp.status().is_success() => {
+            algum_ok = true;
+            if let Ok(v) = resp.json::<serde_json::Value>() {
+                if let Some(items) = v["value"].as_array() {
+                    for it in items {
+                        let nome = it["displayName"].as_str().unwrap_or("").to_string();
+                        let email = it["scoredEmailAddresses"][0]["address"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        resultados.push(Pessoa { nome, email });
+                    }
+                }
+            }
+        }
+        Ok(resp) => log::warn!("[pessoas] /me/people retornou {}", resp.status()),
+        Err(e) => log::warn!("[pessoas] /me/people falhou: {e}"),
+    }
+
+    // 2) Diretorio da organizacao. $search em /users exige ConsistencyLevel.
+    let url = format!(
+        "{GRAPH}/users?$search=\"displayName:{enc}\"&$top=8&$select=displayName,mail,userPrincipalName"
+    );
+    match client
+        .get(&url)
+        .bearer_auth(&token)
+        .header("ConsistencyLevel", "eventual")
+        .send()
+    {
+        Ok(resp) if resp.status().is_success() => {
+            algum_ok = true;
+            if let Ok(v) = resp.json::<serde_json::Value>() {
+                if let Some(items) = v["value"].as_array() {
+                    for it in items {
+                        let nome = it["displayName"].as_str().unwrap_or("").to_string();
+                        let email = it["mail"]
+                            .as_str()
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| it["userPrincipalName"].as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        resultados.push(Pessoa { nome, email });
+                    }
+                }
+            }
+        }
+        Ok(resp) => log::warn!("[pessoas] /users retornou {}", resp.status()),
+        Err(e) => log::warn!("[pessoas] /users falhou: {e}"),
+    }
+
+    if !algum_ok {
+        return Err("falha ao buscar pessoas".into());
+    }
+
+    // Dedupe por e-mail (minusculas), descarta sem e-mail, limita a ~10.
+    let mut vistos = std::collections::HashSet::new();
+    let mut saida = Vec::new();
+    for p in resultados {
+        let chave = p.email.trim().to_lowercase();
+        if chave.is_empty() || !vistos.insert(chave) {
+            continue;
+        }
+        saida.push(p);
+        if saida.len() >= 10 {
+            break;
+        }
+    }
+    Ok(saida)
+}
+
+/// Envia um e-mail novo (do zero, sem citacao). Guarda em Enviados. Mail.Send.
+pub fn cr_enviar_novo(
+    store: &TokenStore,
+    para: Vec<String>,
+    cc: Vec<String>,
+    cco: Vec<String>,
+    assunto: &str,
+    corpo_html: &str,
+    anexos: Vec<AnexoUp>,
+) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // Mapeia cada e-mail para o formato do Graph, descartando os vazios.
+    let recipients = |lista: &[String]| -> Vec<serde_json::Value> {
+        lista
+            .iter()
+            .filter(|e| !e.trim().is_empty())
+            .map(|e| serde_json::json!({ "emailAddress": { "address": e.trim() } }))
+            .collect()
+    };
+
+    // Anexos direto no sendMail (fileAttachment); sem arquivo, campo omitido.
+    let anexos_json: Vec<serde_json::Value> = anexos
+        .iter()
+        .filter(|a| !a.conteudo_b64.trim().is_empty())
+        .map(anexo_json)
+        .collect();
+
+    let mut message = serde_json::json!({
+        "subject": assunto,
+        "body": { "contentType": "HTML", "content": corpo_html },
+        "toRecipients": recipients(&para),
+        "ccRecipients": recipients(&cc),
+        "bccRecipients": recipients(&cco),
+    });
+    if !anexos_json.is_empty() {
+        message["attachments"] = serde_json::Value::Array(anexos_json);
+    }
+
+    let body = serde_json::json!({
+        "message": message,
+        "saveToSentItems": true
+    });
+
+    let resp = client
+        .post(format!("{GRAPH}/me/sendMail"))
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .map_err(|e| format!("falha ao enviar o e-mail: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("envio retornou {}", resp.status()));
+    }
+    Ok(())
+}
+
+/// Salva os contatos informados na pasta pessoal do usuario, sem duplicar.
+/// Retorna quantos foram efetivamente criados. Contacts.ReadWrite.
+pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u64, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let mut criados: u64 = 0;
+    for p in pessoas {
+        let email = p.email.trim();
+        if email.is_empty() {
+            continue;
+        }
+
+        // Ja existe um contato com este e-mail? (as aspas fazem parte do filtro
+        // OData; aspa simples no valor escapa dobrando — escape correto do OData).
+        let email_odata = email.replace('\'', "''");
+        let filtro = format!("emailAddresses/any(a:a/address eq '{email_odata}')");
+        let url = format!(
+            "{GRAPH}/me/contacts?$filter={}&$top=1",
+            urlencoding::encode(&filtro)
+        );
+        let existe = match client.get(&url).bearer_auth(&token).send() {
+            Ok(resp) if resp.status().is_success() => resp
+                .json::<serde_json::Value>()
+                .ok()
+                .and_then(|v| v["value"].as_array().map(|a| !a.is_empty()))
+                .unwrap_or(false),
+            Ok(resp) => {
+                log::warn!("[contatos] filtro '{email}' retornou {}", resp.status());
+                // Nao da pra ter certeza: pula para nao arriscar duplicar.
+                true
+            }
+            Err(e) => {
+                log::warn!("[contatos] filtro '{email}' falhou: {e}");
+                true
+            }
+        };
+        if existe {
+            continue;
+        }
+
+        let nome = if p.nome.trim().is_empty() { email } else { p.nome.trim() };
+        let body = serde_json::json!({
+            "givenName": nome,
+            "emailAddresses": [{ "address": email, "name": p.nome.trim() }]
+        });
+        match client
+            .post(format!("{GRAPH}/me/contacts"))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+        {
+            Ok(resp) if resp.status().is_success() => criados += 1,
+            Ok(resp) => log::warn!("[contatos] criar '{email}' retornou {}", resp.status()),
+            Err(e) => log::warn!("[contatos] criar '{email}' falhou: {e}"),
+        }
+    }
+    Ok(criados)
+}
+
+/// Subpastas de uma pasta de e-mail. O id do filho serve direto no endpoint de
+/// mensagens, entao o caminho existente de carga funciona sem mudanca. Mail.Read.
+pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmail>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/mailFolders/{folder_id}/childFolders\
+         ?$select=id,displayName,unreadItemCount,totalItemCount,childFolderCount&$top=50"
+    );
+    let resp = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .map_err(|e| format!("falha ao ler as subpastas: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/mailFolders/childFolders retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut pastas = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            pastas.push(PastaEmail {
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                tipo: "child".to_string(),
+                nome: it["displayName"].as_str().unwrap_or("").to_string(),
+                nao_lidos: it["unreadItemCount"].as_u64().unwrap_or(0),
+                total: it["totalItemCount"].as_u64().unwrap_or(0),
+                filhos: it["childFolderCount"].as_u64().unwrap_or(0),
+            });
+        }
+    }
+    Ok(pastas)
+}
+
+/// Conta, na PASTA inteira (não só no que está carregado), quantas mensagens
+/// batem com um filtro. Usa o endpoint /$count, que devolve um número puro
+/// (texto) no corpo — daí o parse para u64. O $filter exige o header
+/// ConsistencyLevel: eventual. Retry no 429. Mail.Read.
+///
+/// `filtro` aceita:
+///   - "flagged" → mensagens sinalizadas (flag/flagStatus eq 'flagged')
+///   - "anexos"  → mensagens com anexos (hasAttachments eq true)
+/// Qualquer outro valor é rejeitado com erro (em vez de contar tudo em
+/// silêncio, o que enganaria a UI): assim um filtro digitado errado aparece
+/// como falha em vez de virar um total sem sentido.
+pub fn cr_contar(store: &TokenStore, folder_id: &str, filtro: &str) -> Result<u64, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // Mapeia o filtro lógico para a expressão OData. Desconhecido → erro.
+    let odata = match filtro {
+        "flagged" => "flag/flagStatus eq 'flagged'",
+        "anexos" => "hasAttachments eq true",
+        outro => return Err(format!("filtro desconhecido: '{outro}'")),
+    };
+
+    // O $filter vai percent-encodado; o /$count devolve o total como texto puro.
+    let url = format!(
+        "{GRAPH}/me/mailFolders/{folder_id}/messages/$count?$filter={}",
+        urlencoding::encode(odata)
+    );
+
+    // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas — mesmo
+    // padrão de cr_buscar. O /$count com $filter exige ConsistencyLevel: eventual.
+    let mut resposta = None;
+    for tentativa in 0..3u8 {
+        match client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+        {
+            Ok(r) if r.status().is_success() => {
+                resposta = Some(r);
+                break;
+            }
+            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
+                let espera = retry_after_secs(&r, 1, 5);
+                log::warn!("[mail] contar em '{folder_id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(r) => {
+                return Err(format!(
+                    "/me/mailFolders/{folder_id}/messages/$count retornou {}",
+                    r.status()
+                ));
+            }
+            Err(e) => return Err(format!("falha ao contar: {e}")),
+        }
+    }
+    let resp = resposta.ok_or_else(|| "sem resposta na contagem".to_string())?;
+    let corpo = resp.text().map_err(|e| e.to_string())?;
+    corpo
+        .trim()
+        .parse::<u64>()
+        .map_err(|e| format!("resposta do /$count não é um número ('{corpo}'): {e}"))
+}

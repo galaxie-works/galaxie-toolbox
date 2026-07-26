@@ -89,3 +89,92 @@ export interface Tarefa {
   titulo: string;
   lista: string;
 }
+
+// --- Agenda do dia + inbox do dia (Control room rico) --------------------
+export interface Participante {
+  nome: string;
+  email: string;
+  iniciais: string;
+  foto?: string | null;
+}
+
+export interface EventoAgenda {
+  id: string;
+  assunto: string;
+  inicio: string; // ISO UTC
+  fim: string;
+  local: string;
+  online: boolean;
+  diaInteiro: boolean;
+  categoria: "meeting" | "event";
+  participantes: Participante[];
+  totalParticipantes: number;
+  temAnexos: boolean;
+  categorias: string[];
+}
+
+export interface CategoriaCor {
+  nome: string;
+  cor: string;
+}
+
+export interface EventoDetalhe {
+  assunto: string;
+  inicio: string;
+  fim: string;
+  local: string;
+  online: boolean;
+  joinUrl?: string | null;
+  organizador: string;
+  corpo: string;
+  corpoTipo: "html" | "text";
+  participantes: Participante[];
+  webLink: string;
+}
+
+export interface EmailItem {
+  id: string;
+  assunto: string;
+  de: string;
+  deEmail: string;
+  iniciais: string;
+  recebido: string; // ISO UTC
+  preview: string;
+  lido: boolean;
+  temAnexos: boolean;
+  sinalizado: boolean;
+}
+
+export interface AnexoEmail {
+  id: string;
+  nome: string;
+  tamanho: number;
+}
+
+export interface EmailDetalhe {
+  assunto: string;
+  de: string;
+  deEmail: string;
+  para: string[];
+  cc: string[];
+  recebido: string;
+  corpo: string;
+  corpoTipo: "html" | "text";
+  anexos: AnexoEmail[];
+  webLink: string;
+}
+
+export interface PastaEmail {
+  id: string;
+  tipo: string; // "inbox" | "drafts" | "sentitems" | "archive" | "junkemail" | "deleteditems" | "child"
+  nome: string;
+  naoLidos: number;
+  total: number;
+  filhos: number; // nº de subpastas — chevron de expandir só aparece quando > 0
+}
+
+/** Pessoa sugerida no autocomplete do compositor de e-mail. */
+export interface Pessoa {
+  nome: string;
+  email: string;
+}

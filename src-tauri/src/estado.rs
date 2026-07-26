@@ -129,3 +129,22 @@ pub fn limpar_identidade() {
         }
     }
 }
+
+// --- Conta dona da sessao do navegador interno ------------------------------
+// Os webviews internos (Cruiser + apps do M365) dividem UM cookie jar da
+// WebView2. Guardamos aqui de quem sao os cookies atuais; quando a conta ativa
+// do app muda, limpamos os dados de navegacao pra nao vazar sessao entre contas.
+// NAO e apagado no logout de proposito: representa o dono dos cookies em disco.
+
+pub fn ler_conta_navegador() -> Option<String> {
+    let p = caminho_arquivo("navegador-conta.txt")?;
+    let s = std::fs::read_to_string(p).ok()?;
+    let s = s.trim();
+    if s.is_empty() { None } else { Some(s.to_string()) }
+}
+
+pub fn salvar_conta_navegador(upn: &str) {
+    if let Some(p) = caminho_arquivo("navegador-conta.txt") {
+        let _ = std::fs::write(p, upn);
+    }
+}

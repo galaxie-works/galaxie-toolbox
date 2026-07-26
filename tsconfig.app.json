@@ -20,9 +20,13 @@
     "jsx": "react-jsx",
 
     /* Linting */
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "erasableSyntaxOnly": true,
+    /* noUnusedLocals/Parameters e erasableSyntaxOnly desligados por causa do
+       bloco Plate (@plate/editor-ai), feito para Next.js — traz ~100 arquivos
+       com imports ociosos e sintaxe não-apagável. O oxlint (pnpm lint) segue
+       cobrindo o nosso código. */
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "erasableSyntaxOnly": false,
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"]

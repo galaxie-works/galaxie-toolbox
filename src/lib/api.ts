@@ -1,8 +1,15 @@
 import type {
   AppUser,
   CaixaEntrada,
+  CategoriaCor,
+  EmailDetalhe,
+  EmailItem,
+  EventoAgenda,
+  EventoDetalhe,
   Identidade,
+  PastaEmail,
   PastaOD,
+  Pessoa,
   Reuniao,
   Site,
   Tarefa,
@@ -213,6 +220,402 @@ export async function crTarefas(): Promise<Tarefa[]> {
     ];
   }
   return invoke<Tarefa[]>("cr_tarefas");
+}
+
+// --- Agenda do dia + inbox do dia ----------------------------------------
+const MOCK_PARTS = [
+  { nome: "Ana Silva", email: "ana@voaz.com.br", iniciais: "AS", foto: null },
+  { nome: "Bruno Costa", email: "bruno@voaz.com.br", iniciais: "BC", foto: null },
+  { nome: "Carla Dias", email: "carla@voaz.com.br", iniciais: "CD", foto: null },
+];
+
+export async function crAgenda(inicio: string, fim: string): Promise<EventoAgenda[]> {
+  if (!inTauri()) {
+    await sleep(400);
+    const base = new Date(inicio);
+    const em = (h: number) => {
+      const d = new Date(base);
+      d.setHours(h, 0, 0, 0);
+      return d.toISOString().replace("Z", "");
+    };
+    return [
+      {
+        id: "ev1",
+        assunto: "PROH + VOAZ — Orçamento e Compras",
+        inicio: em(9),
+        fim: em(10),
+        local: "Teams",
+        online: true,
+        diaInteiro: false,
+        categoria: "meeting",
+        participantes: MOCK_PARTS.slice(0, 2),
+        totalParticipantes: 2,
+        temAnexos: false,
+        categorias: ["Crítico"],
+      },
+      {
+        id: "ev2",
+        assunto: "KPMG RJ — Checkpoint interno",
+        inicio: em(14),
+        fim: em(15),
+        local: "Sala 2",
+        online: false,
+        diaInteiro: false,
+        categoria: "meeting",
+        participantes: MOCK_PARTS,
+        totalParticipantes: 6,
+        temAnexos: true,
+        categorias: [],
+      },
+    ];
+  }
+  return invoke<EventoAgenda[]>("cr_agenda", { inicio, fim });
+}
+
+export async function crCategorias(): Promise<CategoriaCor[]> {
+  if (!inTauri()) {
+    await sleep(200);
+    return [
+      { nome: "Crítico", cor: "#D13438" },
+      { nome: "Categoria Azul", cor: "#0078D4" },
+      { nome: "Categoria verde", cor: "#498205" },
+    ];
+  }
+  return invoke<CategoriaCor[]>("cr_categorias");
+}
+
+export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
+  if (!inTauri()) {
+    await sleep(300);
+    return {
+      assunto: "PROH + VOAZ — Orçamento e Compras",
+      inicio: new Date().toISOString().replace("Z", ""),
+      fim: new Date().toISOString().replace("Z", ""),
+      local: "Teams",
+      online: true,
+      joinUrl: "https://teams.microsoft.com/l/meetup-join/mock",
+      organizador: "Wagner Consani",
+      corpo: "<p>Pauta: revisar orçamento de compras do trimestre e alinhar próximos passos.</p>",
+      corpoTipo: "html",
+      participantes: MOCK_PARTS,
+      webLink: "https://outlook.office365.com/mock",
+    };
+  }
+  return invoke<EventoDetalhe>("cr_evento_corpo", { id });
+}
+
+export async function crInboxDia(inicio: string, fim: string): Promise<EmailItem[]> {
+  if (!inTauri()) {
+    await sleep(500);
+    const t = (h: number) => {
+      const d = new Date(inicio);
+      d.setHours(h, 12, 0, 0);
+      return d.toISOString();
+    };
+    return [
+      { id: "m1", assunto: "Fatura de julho", de: "Financeiro VOAZ", deEmail: "fin@voaz.com.br", iniciais: "FV", recebido: t(8), preview: "Segue em anexo a fatura referente aos serviços de julho.", lido: false, temAnexos: true, sinalizado: false },
+      { id: "m2", assunto: "Aprovação pendente — compra PROH", de: "João Pereira", deEmail: "joao@proh.com.br", iniciais: "JP", recebido: t(10), preview: "Oi Wagner, preciso da sua aprovação para seguir com o pedido.", lido: false, temAnexos: false, sinalizado: true },
+      { id: "m3", assunto: "Seu OneDrive está sem espaço", de: "Microsoft", deEmail: "no-reply@microsoft.com", iniciais: "MS", recebido: t(13), preview: "Seu armazenamento do OneDrive está cheio. Libere espaço para continuar.", lido: true, temAnexos: false, sinalizado: false },
+    ];
+  }
+  return invoke<EmailItem[]>("cr_inbox_dia", { inicio, fim });
+}
+
+export async function crEmailCorpo(id: string): Promise<EmailDetalhe> {
+  if (!inTauri()) {
+    await sleep(300);
+    return {
+      assunto: "Aprovação pendente — compra PROH",
+      de: "João Pereira",
+      deEmail: "joao@proh.com.br",
+      para: ["Wagner Consani"],
+      cc: ["Financeiro VOAZ", "Ana Silva"],
+      recebido: new Date().toISOString(),
+      corpo: "<p>Oi Wagner,</p><p>Preciso da sua aprovação para seguir com o pedido de compra da PROH. Fico no aguardo.</p><p>Abraço,<br/>João</p>",
+      corpoTipo: "html",
+      anexos: [],
+      webLink: "https://outlook.office365.com/mock",
+    };
+  }
+  return invoke<EmailDetalhe>("cr_email_corpo", { id });
+}
+
+const MOCK_PASTAS: PastaEmail[] = [
+  { id: "inbox", tipo: "inbox", nome: "Caixa de entrada", naoLidos: 3, total: 128, filhos: 1 },
+  { id: "drafts", tipo: "drafts", nome: "Rascunhos", naoLidos: 0, total: 45, filhos: 0 },
+  { id: "sentitems", tipo: "sentitems", nome: "Enviados", naoLidos: 0, total: 312, filhos: 0 },
+  { id: "archive", tipo: "archive", nome: "Arquivo", naoLidos: 0, total: 12, filhos: 0 },
+  { id: "junkemail", tipo: "junkemail", nome: "Lixo eletrônico", naoLidos: 3, total: 8, filhos: 0 },
+  { id: "deleteditems", tipo: "deleteditems", nome: "Itens excluídos", naoLidos: 0, total: 34, filhos: 0 },
+];
+
+export async function crMailFolders(): Promise<PastaEmail[]> {
+  if (!inTauri()) {
+    await sleep(300);
+    return MOCK_PASTAS.map((p) => ({ ...p }));
+  }
+  return invoke<PastaEmail[]>("cr_mail_folders");
+}
+
+/** Subpastas de uma pasta de e-mail (para a árvore de pastas). */
+export async function crSubpastas(folderId: string): Promise<PastaEmail[]> {
+  if (!inTauri()) {
+    await sleep(300);
+    return [
+      { id: `${folderId}-sub1`, tipo: "child", nome: "Clientes", naoLidos: 2, total: 40, filhos: 0 },
+    ];
+  }
+  return invoke<PastaEmail[]>("cr_subpastas", { folderId });
+}
+
+// --- Compositor de e-mail (pessoas, envio novo, contatos) -----------------
+const MOCK_PESSOAS: Pessoa[] = [
+  { nome: "Ana Silva", email: "ana@voaz.com.br" },
+  { nome: "Bruno Costa", email: "bruno@voaz.com.br" },
+  { nome: "Carla Dias", email: "carla@voaz.com.br" },
+  { nome: "Wagner Consani", email: "wagner@voaz.builders" },
+];
+
+/** Busca pessoas para o autocomplete do compositor. */
+export async function crPessoas(query: string): Promise<Pessoa[]> {
+  if (!inTauri()) {
+    await sleep(200);
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return MOCK_PESSOAS.filter(
+      (p) => p.nome.toLowerCase().includes(q) || p.email.toLowerCase().includes(q)
+    );
+  }
+  return invoke<Pessoa[]>("cr_pessoas", { query });
+}
+
+/**
+ * Anexo pronto para enviar: nome do arquivo, MIME e o conteúdo já em base64.
+ * É o que `ComporMensagemHandle.getAnexos()` devolve e o que os comandos de
+ * envio recebem (fileAttachment do Graph).
+ */
+export interface AnexoEnvio {
+  nome: string;
+  tipo: string;
+  conteudoB64: string;
+}
+
+/** Envia um e-mail novo (do zero), opcionalmente com anexos. */
+export async function crEnviarNovo(
+  para: string[],
+  cc: string[],
+  cco: string[],
+  assunto: string,
+  corpo: string,
+  anexos: AnexoEnvio[] = []
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(700);
+    return;
+  }
+  return invoke<void>("cr_enviar_novo", { para, cc, cco, assunto, corpo, anexos });
+}
+
+/**
+ * Sobe um arquivo para "Bridge Anexos" no OneDrive do usuário e devolve um link
+ * de compartilhamento (visualização, escopo da organização). O front insere
+ * esse link no corpo do e-mail. Files.ReadWrite.
+ */
+export async function crCompartilharOneDrive(
+  nome: string,
+  conteudoB64: string
+): Promise<string> {
+  if (!inTauri()) {
+    await sleep(700);
+    return `https://exemplo-my.sharepoint.com/:b:/g/mock/${encodeURIComponent(nome)}`;
+  }
+  return invoke<string>("cr_compartilhar_onedrive", { nome, conteudoB64 });
+}
+
+/** Salva contatos pessoais (sem duplicar). Retorna quantos foram criados. */
+export async function crSalvarContatos(pessoas: Pessoa[]): Promise<number> {
+  if (!inTauri()) {
+    await sleep(400);
+    return pessoas.length;
+  }
+  return invoke<number>("cr_salvar_contatos", { pessoas });
+}
+
+export async function crFolderMensagens(
+  folderId: string,
+  skip = 0
+): Promise<EmailItem[]> {
+  if (!inTauri()) {
+    await sleep(400);
+    if (skip >= 24) return []; // mock: acaba depois de algumas páginas
+    const base = new Date();
+    const t = (h: number) => new Date(base.getTime() - h * 3600_000).toISOString();
+    const nomes = [
+      "Marcus Lee",
+      "Emma Wilson",
+      "GitHub",
+      "Stripe",
+      "Alex Martin",
+      "Vercel",
+      "Jessica Brooks",
+      "Linear",
+    ];
+    return nomes.map((n, i) => ({
+      id: `${folderId}-${skip}-${i}`,
+      assunto: [
+        "Q4 Sprint planning, your input needed",
+        "Partnership proposal · ReUI integration",
+        "[keenthemes] Security advisory on rollup",
+        "Payment received · $299 from Acme Corp",
+        "Invoice #1024 · November services",
+        "Deployment successful · reui.io/pro",
+        "Following up on your Config 2024 talk",
+        "Sprint review: 18 issues closed this week",
+      ][i],
+      de: n,
+      deEmail: `${n.toLowerCase().replace(/\s+/g, ".")}@example.com`,
+      iniciais: n.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+      recebido: t(i * 5),
+      preview:
+        "Hey team, sharing the draft for review. Let me know your thoughts before we finalize...",
+      lido: i > 2,
+      temAnexos: i === 0 || i === 4,
+      sinalizado: i === 6,
+    }));
+  }
+  return invoke<EmailItem[]>("cr_folder_mensagens", { folderId, skip });
+}
+
+export async function crResponder(
+  id: string,
+  corpo: string,
+  todos: boolean,
+  anexos: AnexoEnvio[] = []
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(700);
+    return;
+  }
+  return invoke<void>("cr_responder", { id, corpo, todos, anexos });
+}
+
+export async function crEncaminhar(
+  id: string,
+  corpo: string,
+  para: string[],
+  anexos: AnexoEnvio[] = []
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(700);
+    return;
+  }
+  return invoke<void>("cr_encaminhar", { id, corpo, para, anexos });
+}
+
+export async function crExcluirEmail(id: string): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  return invoke<void>("cr_excluir_email", { id });
+}
+
+/** Exclui vários e-mails em série (com retry no 429 no backend). Retorna os ids
+ *  que foram realmente excluídos. */
+export async function crExcluirEmails(
+  ids: string[],
+  permanente = false
+): Promise<string[]> {
+  if (!inTauri()) {
+    await sleep(300);
+    return ids;
+  }
+  return invoke<string[]>("cr_excluir_emails", { ids, permanente });
+}
+
+export async function crMarcarEmail(
+  id: string,
+  sinalizado: boolean
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  return invoke<void>("cr_marcar_email", { id, sinalizado });
+}
+
+/** Marca um e-mail como lido ou não lido (com retry no 429 no backend). */
+export async function crMarcarLido(id: string, lido: boolean): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  return invoke<void>("cr_marcar_lido", { id, lido });
+}
+
+/** Busca mensagens numa pasta pelo termo (busca no servidor, páginas de 50). */
+export async function crBuscar(
+  folderId: string,
+  termo: string,
+  skip = 0
+): Promise<EmailItem[]> {
+  if (!inTauri()) {
+    await sleep(400);
+    return [];
+  }
+  return invoke<EmailItem[]>("cr_buscar", { folderId, termo, skip });
+}
+
+/**
+ * Conta na pasta inteira as mensagens que batem com um filtro ("flagged" |
+ * "anexos"), via endpoint /$count do Graph. Fora do Tauri (mock) devolve 0.
+ */
+export async function crContar(folderId: string, filtro: string): Promise<number> {
+  if (!inTauri()) {
+    await sleep(200);
+    return 0;
+  }
+  return invoke<number>("cr_contar", { folderId, filtro });
+}
+
+export async function crEsvaziarLixeira(): Promise<number> {
+  if (!inTauri()) {
+    await sleep(500);
+    return 12;
+  }
+  return invoke<number>("cr_esvaziar_lixeira", {});
+}
+
+/** Baixa um anexo para a pasta Downloads e devolve o caminho absoluto. */
+export async function crBaixarAnexo(
+  messageId: string,
+  attachmentId: string
+): Promise<string> {
+  if (!inTauri()) {
+    await sleep(600);
+    return "C:/Users/voce/Downloads/exemplo.pdf";
+  }
+  return invoke<string>("cr_baixar_anexo", { messageId, attachmentId });
+}
+
+/** Abre um arquivo local com o aplicativo padrao. */
+export async function abrirCaminho(path: string): Promise<void> {
+  if (!inTauri()) {
+    // eslint-disable-next-line no-console
+    console.log("[dev] abrir arquivo:", path);
+    return;
+  }
+  return invoke<void>("abrir_caminho", { path });
+}
+
+/** Abre o Explorer com o arquivo selecionado. */
+export async function revelarNoExplorer(path: string): Promise<void> {
+  if (!inTauri()) {
+    // eslint-disable-next-line no-console
+    console.log("[dev] revelar no Explorer:", path);
+    return;
+  }
+  return invoke<void>("revelar_no_explorer", { path });
 }
 
 export async function connectSite(site: Site): Promise<void> {
