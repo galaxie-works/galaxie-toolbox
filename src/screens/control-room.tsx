@@ -267,6 +267,12 @@ function CorpoHtml({
 
   return (
     <iframe
+      // Remonta o iframe quando o tema muda: alterar `sandbox` (add/remove
+      // allow-scripts) num iframe JÁ montado não reaplica na mesma carga do
+      // novo srcDoc, então o Dark Reader era bloqueado ao trocar claro→escuro
+      // com o e-mail aberto (só pegava ao trocar de e-mail). Um `key` por tema
+      // cria um iframe novo com o sandbox correto desde o início (#73).
+      key={escuro ? "dark" : "light"}
       ref={ref}
       srcDoc={doc}
       // allow-scripts só no escuro: é o que o Dark Reader precisa pra rodar no
