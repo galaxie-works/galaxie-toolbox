@@ -2045,8 +2045,15 @@ export function ControlRoomScreen({
   const notificarNovos = useCallback(
     (ms: EmailItem[]) => {
       if (ms.length === 0) return;
+      // Baseline = o MAIOR recebido da lista, não ms[0]: com a inbox ordenável
+      // (#32) o topo pode não ser o mais recente (ordem ≠ data / ascendente),
+      // o que geraria toast espúrio/ausente no poll seguinte (#54).
+      const maxRecebido = ms.reduce(
+        (mx, m) => (m.recebido > mx ? m.recebido : mx),
+        ms[0].recebido
+      );
       const anterior = ultimoVistoRef.current;
-      ultimoVistoRef.current = ms[0].recebido;
+      ultimoVistoRef.current = maxRecebido;
       if (anterior === null) return; // baseline: não avisa no 1º carregamento
       const novos = ms.filter((m) => m.recebido > anterior && !m.lido);
       for (const m of novos.slice(0, 3)) {
