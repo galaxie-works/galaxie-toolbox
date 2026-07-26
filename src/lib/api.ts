@@ -593,6 +593,27 @@ export async function crBuscar(
 }
 
 /**
+ * Filtra a pasta pelos filtros que EXIGEM o servidor ("tome" | "mentions" |
+ * "invites") — os client-side (all/unread/flagged/files) são aplicados no
+ * front sobre a lista carregada. Devolve a mesma `BuscaPagina` de `crBuscar`
+ * (itens + `proximo` para continuação). Fora do Tauri (mock) devolve vazio.
+ *
+ * D6: "mentions"/"invites" podem não existir no tenant; nesse caso o backend
+ * rejeita com um erro iniciado por "HTTP 400" para o chamador esconder a opção.
+ */
+export async function crFiltrar(
+  folderId: string,
+  filtro: string,
+  nextLink?: string | null
+): Promise<BuscaPagina> {
+  if (!inTauri()) {
+    await sleep(400);
+    return { itens: [], proximo: null };
+  }
+  return invoke<BuscaPagina>("cr_filtrar", { folderId, filtro, nextLink });
+}
+
+/**
  * Conta na pasta inteira as mensagens que batem com um filtro ("flagged" |
  * "anexos"), via endpoint /$count do Graph. Fora do Tauri (mock) devolve 0.
  */

@@ -472,6 +472,23 @@ async fn cr_buscar(
     .map_err(|e| e.to_string())?
 }
 
+/// Control room: filtra a pasta pelos filtros que exigem o servidor
+/// ("tome" | "mentions" | "invites"), paginando pela continuação (nextLink).
+#[tauri::command]
+async fn cr_filtrar(
+    state: State<'_, Store>,
+    folder_id: String,
+    filtro: String,
+    next_link: Option<String>,
+) -> Result<graph::BuscaPagina, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_filtrar(&store, &folder_id, &filtro, next_link)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Control room: conta na pasta inteira as mensagens que batem com um filtro
 /// ("flagged" | "anexos"), via endpoint /$count do Graph.
 #[tauri::command]
@@ -722,6 +739,7 @@ pub fn run() {
             cr_marcar_email,
             cr_marcar_lido,
             cr_buscar,
+            cr_filtrar,
             cr_contar,
             cr_esvaziar_lixeira,
             cr_baixar_anexo,
