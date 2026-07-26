@@ -186,6 +186,8 @@ const pt = {
   },
 
   navegador: {
+    titulo: "Navigator",
+    subtitulo: "Hora de zarpar",
     buscar: "Buscar apps ou traçar uma rota...",
     vazio: "Nada por aqui.",
     navegar: "Traçar rota",
@@ -524,6 +526,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   },
 
   navegador: {
+    titulo: "Navigator",
+    subtitulo: "Time to set sail",
     buscar: "Search apps or set a course...",
     vazio: "Nothing here.",
     navegar: "Set a course",
