@@ -15,6 +15,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Frame, FrameHeader, FrameTitle } from "@/components/reui/frame";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -948,10 +949,15 @@ function MessageList({
     []
   );
   const colapsados = useMemo(() => new Set(colapsadosArr), [colapsadosArr]);
-  const alternarColapso = (chave: string) =>
+  // Quantas linhas de MENSAGEM o último auto-preenchimento (#82) já tinha visto.
+  // null = auto-preenchimento liberado (o usuário mexeu no colapso / rolou).
+  const autoPreencheuRef = useRef<number | null>(null);
+  const alternarColapso = (chave: string) => {
+    autoPreencheuRef.current = null; // abrir/fechar grupo libera o auto-preenchimento
     setColapsadosArr((arr) =>
       arr.includes(chave) ? arr.filter((c) => c !== chave) : [...arr, chave]
     );
+  };
   // Rótulo do período por idioma: hoje/ontem/older via strings; mês via nome
   // localizado (Intl, capitalizado); ano anterior via o número do ano (#30).
   const rotuloDePeriodo = useCallback(
@@ -1091,16 +1097,53 @@ function MessageList({
   // CURTA que a área visível — e aí não dá pra rolar até os 90% que disparam o
   // carregar-mais, então os grupos ficam incompletos (o "buraco" entre períodos).
   // Este efeito carrega páginas até o conteúdo encher o viewport (ou acabar
-  // `temMais`). Converge porque cada página adiciona altura; guardado por
-  // `carregandoMais` pra não empilhar requisições.
+  // `temMais`).
+  //
+  // ⚠️ REWORK (rejeição do PO: "Flagged some quando todos os grupos estão
+  // colapsados"): a versão anterior só olhava a ALTURA. Com todos os grupos
+  // colapsados a lista fica presa em ~10 linhas de header — altura que nunca
+  // enche o viewport — então o efeito repaginava a pasta INTEIRA, página atrás
+  // de página, sem nada mudar na tela. Cada página remontava `linhas`/o
+  // virtualizer e a lista piscava/perdia as primeiras linhas (o header
+  // "Flagged", que é a linha 0). Agora o efeito exige PROGRESSO: se o auto-load
+  // anterior não aumentou o número de linhas de MENSAGEM visíveis (páginas
+  // caindo todas dentro de grupos colapsados), ele para. Rolar ou abrir/fechar
+  // um grupo libera de novo (`autoPreencheuRef = null`), então "grupo colapsado
+  // não trava a carga" continua valendo.
+  const linhasMsg = useMemo(
+    () => linhas.reduce((n, l) => n + (l.tipo === "msg" ? 1 : 0), 0),
+    [linhas]
+  );
   useEffect(() => {
     const el = listaRef.current;
     if (!el || carregandoMais || !temMais) return;
-    // +8 de folga (padding/borda). Se o conteúdo não passa da área visível,
-    // não há como rolar pra buscar mais — então busca proativamente.
-    if (el.scrollHeight <= el.clientHeight + 8) onCarregarMais();
+    // +8 de folga (padding/borda). Se o conteúdo passa da área visível, o
+    // gatilho de scroll (90%) já dá conta — solta o trava do auto-preenchimento.
+    if (el.scrollHeight > el.clientHeight + 8) {
+      autoPreencheuRef.current = null;
+      return;
+    }
+    // Sem progresso desde o último auto-load → para (senão baixa a pasta toda).
+    if (autoPreencheuRef.current !== null && linhasMsg <= autoPreencheuRef.current) return;
+    autoPreencheuRef.current = linhasMsg;
+    onCarregarMais();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linhas.length, temMais, carregandoMais, colapsadosArr]);
+  }, [linhas.length, linhasMsg, temMais, carregandoMais, colapsadosArr]);
+
+  // #82: colapsar grupos ENCOLHE muito a lista virtual (de milhares de px para
+  // ~10 linhas de header). Se o scroll estava além do novo fim, o browser prende
+  // o `scrollTop` no máximo mas o virtualizer segue com o offset antigo e passa a
+  // renderizar uma faixa de índices que não existe mais — some justamente o topo
+  // da lista, onde fica o header "Flagged" (linha 0). Reancorar o virtualizer no
+  // offset válido sempre que a lista encolhe garante o AC "Flagged aparece acima
+  // de todos" mesmo com todos os grupos colapsados.
+  useEffect(() => {
+    const el = listaRef.current;
+    if (!el) return;
+    const max = Math.max(0, virtualizer.getTotalSize() - el.clientHeight);
+    if (el.scrollTop > max) virtualizer.scrollToOffset(max);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhas.length, colapsadosArr]);
 
   const idsFiltrados = filtrada.map((m) => m.id);
   const todosSel = idsFiltrados.length > 0 && idsFiltrados.every((id) => selecionados.has(id));
@@ -1292,6 +1335,8 @@ function MessageList({
             // Pré-carga antecipada: ao passar de 90% da lista já busca a próxima
             // página, pra sempre haver buffer à frente (não espera bater no fim).
             const el = e.currentTarget;
+            // rolar = interação do usuário: libera o auto-preenchimento (#82)
+            autoPreencheuRef.current = null;
             if (el.scrollTop + el.clientHeight >= el.scrollHeight * 0.9) onCarregarMais();
           }}
         >
@@ -1322,29 +1367,52 @@ function MessageList({
                         transform: `translateY(${vr.start}px)`,
                       }}
                     >
-                      {/* Grupo colapsável no padrão @reui/c-collapsible-6:
-                          Collapsible controlado + CollapsibleTrigger com chevron
-                          que gira via group-data-[state=open] (#30). O conteúdo
-                          são as msgs virtualizadas (linhas separadas), então o
-                          colapso emite/omite essas linhas via `colapsados`. */}
-                      <Collapsible
-                        open={!colapsado}
-                        onOpenChange={() => alternarColapso(linha.chave)}
+                      {/* Cabeçalho de grupo = @reui/c-collapsible-6 LITERAL
+                          (`pnpm dlx shadcn@latest add @reui/c-collapsible-6`,
+                          style `radix-nova`): Frame > Collapsible >
+                          CollapsibleTrigger > FrameHeader > FrameTitle +
+                          chevron com `in-data-[state=open]:rotate-90`, na mesma
+                          composição do bloco instalado em
+                          `src/components/examples/c-collapsible-6.tsx` (#30).
+
+                          Duas adaptações, obrigatórias por ser LINHA de lista
+                          virtualizada e não card solto:
+                          1. `variant="ghost"` + `bg-transparent`: o Frame é um
+                             card (borda + fundo); numa linha de lista ele viraria
+                             uma caixa por grupo. Ghost tira a borda e o fundo, o
+                             componente continua sendo o do registry.
+                          2. Sem `CollapsibleContent`/`FramePanel`: o conteúdo do
+                             grupo são as MENSAGENS, que são outras linhas
+                             virtuais do react-virtual — o colapso emite/omite
+                             essas linhas via `colapsados`, não desmontando um
+                             painel (senão a virtualização quebra). */}
+                      <Frame
+                        dense
+                        spacing="sm"
+                        variant="ghost"
+                        className="w-full bg-transparent"
                       >
-                        <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-muted-foreground hover:text-foreground">
-                          <ChevronRight
-                            className={cn(
-                              "size-3.5 shrink-0 transition-transform",
-                              !colapsado && "rotate-90"
-                            )}
-                          />
-                          {linha.chave === "flagged" && (
-                            <Flag className="size-3 shrink-0 fill-red-500 text-red-500" />
-                          )}
-                          <span className="uppercase tracking-wide">{linha.rotulo}</span>
-                          <span className="font-normal opacity-70">{linha.n}</span>
-                        </CollapsibleTrigger>
-                      </Collapsible>
+                        <Collapsible
+                          open={!colapsado}
+                          onOpenChange={() => alternarColapso(linha.chave)}
+                        >
+                          <CollapsibleTrigger className="flex w-full">
+                            <FrameHeader className="flex grow flex-row items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-muted-foreground hover:text-foreground">
+                              <ChevronRight
+                                aria-hidden="true"
+                                className="size-3.5 shrink-0 transition-transform in-data-[state=open]:rotate-90"
+                              />
+                              {linha.chave === "flagged" && (
+                                <Flag className="size-3 shrink-0 fill-red-500 text-red-500" />
+                              )}
+                              <FrameTitle className="text-xs font-semibold uppercase tracking-wide">
+                                {linha.rotulo}
+                              </FrameTitle>
+                              <span className="font-normal opacity-70">{linha.n}</span>
+                            </FrameHeader>
+                          </CollapsibleTrigger>
+                        </Collapsible>
+                      </Frame>
                     </div>
                   );
                 }

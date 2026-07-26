@@ -22,7 +22,7 @@ export function Pattern() {
               <FrameTitle className="text-sm font-medium">
                 Deployment successful
               </FrameTitle>
-              <ChevronRightIcon aria-hidden="true" className="text-muted-foreground size-4 transition-transform in-data-open:rotate-90" />
+              <ChevronRightIcon aria-hidden="true" className="text-muted-foreground size-4 transition-transform in-data-[state=open]:rotate-90" />
             </FrameHeader>
           </CollapsibleTrigger>
           <CollapsibleContent>
