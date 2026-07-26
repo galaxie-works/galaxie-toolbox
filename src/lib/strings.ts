@@ -242,8 +242,19 @@ const pt = {
     excluirPermanente: "Excluir permanentemente",
     esvaziarLixeira: "Esvaziar lixeira",
     emailExcluido: "E-mail excluído.",
-    lixeiraEsvaziada: "Lixeira esvaziada ({n}).",
     erroAcao: "Não consegui completar a ação.",
+    // Menu de contexto de PASTA (#89)
+    marcarTodasLidas: "Marcar todas como lidas",
+    esvaziarPasta: "Esvaziar pasta",
+    marcandoTodasLidas: "Marcando todas como lidas…",
+    todasMarcadasLidas: "{n} marcadas como lidas.",
+    nenhumaNaoLida: "Nenhuma mensagem não lida nesta pasta.",
+    esvaziandoPasta: "Esvaziando a pasta…",
+    pastaEsvaziada: "Pasta esvaziada ({n}).",
+    esvaziarPastaTitulo: "Esvaziar “{pasta}”?",
+    esvaziarPastaDesc:
+      "Todas as mensagens desta pasta serão apagadas. Esta ação não pode ser desfeita.",
+    esvaziarPastaConfirmar: "Esvaziar",
     // Toasts
     enviadoDescricao: "Sua mensagem foi entregue.",
     flagAdicionada: "E-mail sinalizado",
@@ -593,8 +604,19 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     excluirPermanente: "Delete permanently",
     esvaziarLixeira: "Empty trash",
     emailExcluido: "Email deleted.",
-    lixeiraEsvaziada: "Trash emptied ({n}).",
     erroAcao: "Couldn't complete the action.",
+    // Menu de contexto de PASTA (#89)
+    marcarTodasLidas: "Mark all as read",
+    esvaziarPasta: "Empty folder",
+    marcandoTodasLidas: "Marking all as read…",
+    todasMarcadasLidas: "{n} marked as read.",
+    nenhumaNaoLida: "No unread messages in this folder.",
+    esvaziandoPasta: "Emptying the folder…",
+    pastaEsvaziada: "Folder emptied ({n}).",
+    esvaziarPastaTitulo: "Empty “{pasta}”?",
+    esvaziarPastaDesc:
+      "Every message in this folder will be deleted. This action can't be undone.",
+    esvaziarPastaConfirmar: "Empty",
     // Toasts
     enviadoDescricao: "Your message was delivered.",
     flagAdicionada: "Email flagged",
