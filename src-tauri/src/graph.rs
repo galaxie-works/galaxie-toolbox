@@ -45,6 +45,126 @@ fn now_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+// ---------------------------------------------------------------------------
+// Throttling do Graph (#64): pool de concorrência + retry com Retry-After + jitter
+//
+// A carga inicial do Bridge dispara pastas + mensagens + 3 contadores + agenda +
+// categorias quase juntas; o tenant responde com rajada de 429 (tela vazia). Duas
+// defesas, centralizadas aqui e reaproveitadas por todas as chamadas via
+// `graph_enviar` (em vez de cada `cr_*` repetir seu próprio laço de retry):
+//
+//  1. LIMITADOR DE CONCORRÊNCIA: no máximo N requisições Graph em voo ao mesmo
+//     tempo na app inteira. Corta a rajada na ORIGEM, antes do primeiro 429. A
+//     vaga é tomada só durante o `.send()`; enquanto uma chamada dorme para
+//     re-tentar, a vaga volta pro pool e outra progride.
+//  2. RETRY COM RETRY-AFTER + JITTER: em 429 respeita o `Retry-After` do servidor
+//     como PISO (nunca dorme menos que o pedido, com teto); na ausência, backoff
+//     exponencial 2^n. Em ambos soma jitter aleatório para vários workers não
+//     re-sincronizarem a rajada. Teto de tentativas por chamada.
+// ---------------------------------------------------------------------------
+
+/// Máximo de requisições Graph simultâneas na app inteira. Baixo de propósito: a
+/// carga inicial é uma rajada e o tenant estrangula rápido.
+const GRAPH_MAX_CONCORRENTES: usize = 4;
+/// Teto de tentativas por chamada Graph (inclui a 1ª).
+const GRAPH_MAX_TENTATIVAS: u8 = 4;
+/// Teto padrão (segundos) para o Retry-After / backoff — evita dormir demais se o
+/// servidor pedir um valor absurdo.
+const GRAPH_TETO_ESPERA_S: u64 = 10;
+
+struct Limitador {
+    vagas: std::sync::Mutex<usize>,
+    liberou: std::sync::Condvar,
+}
+
+/// Pool global. `Mutex::new`/`Condvar::new` são const desde 1.63, então cabem num
+/// `static` sem lazy-init.
+static LIMITADOR: Limitador = Limitador {
+    vagas: std::sync::Mutex::new(GRAPH_MAX_CONCORRENTES),
+    liberou: std::sync::Condvar::new(),
+};
+
+/// Vaga do pool com liberação automática (RAII): ao sair de escopo devolve a
+/// vaga e acorda quem espera. Assim uma chamada que dorme para re-tentar não
+/// segura a vaga.
+struct Vaga;
+impl Drop for Vaga {
+    fn drop(&mut self) {
+        if let Ok(mut n) = LIMITADOR.vagas.lock() {
+            *n += 1;
+            LIMITADOR.liberou.notify_one();
+        }
+    }
+}
+
+/// Bloqueia até haver vaga no pool e a reserva.
+fn adquirir_vaga() -> Vaga {
+    let mut n = LIMITADOR.vagas.lock().unwrap_or_else(|e| e.into_inner());
+    while *n == 0 {
+        n = LIMITADOR.liberou.wait(n).unwrap_or_else(|e| e.into_inner());
+    }
+    *n -= 1;
+    Vaga
+}
+
+/// Milissegundos a dormir antes de re-tentar um 429. Prioriza o `Retry-After`
+/// (segundos → ms) como PISO, com teto; na ausência usa backoff exponencial
+/// 2^tentativa s (com teto). Sempre soma jitter para dessincronizar os workers.
+fn espera_backoff_ms(resp: &reqwest::blocking::Response, tentativa: u8, teto_s: u64) -> u64 {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let retry_after = resp
+        .headers()
+        .get("Retry-After")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+    match retry_after {
+        // Respeita o Retry-After como piso + jitter aditivo (0–500ms) só pra
+        // espalhar as re-tentativas — nunca dorme MENOS que o servidor pediu.
+        Some(s) => s.min(teto_s) * 1000 + rng.gen_range(0..500u64),
+        // Sem Retry-After: backoff exponencial com jitter multiplicativo
+        // delay*(0.5 + rand*0.5) (fica entre 50% e 100% do backoff).
+        None => {
+            let base = (1u64 << tentativa.min(6)).min(teto_s.max(1)) * 1000;
+            ((base as f64) * (0.5 + rng.gen::<f64>() * 0.5)).round() as u64
+        }
+    }
+}
+
+/// Executa uma chamada Graph sob o pool de concorrência, re-tentando em 429 com
+/// Retry-After + jitter (ver bloco acima). `enviar` deve MONTAR e disparar a
+/// requisição do zero a cada tentativa (a resposta é consumida). Devolve a última
+/// resposta — inclusive um 429 final —, deixando o chamador produzir a mensagem
+/// de erro que já usava; só propaga o erro de transporte do reqwest.
+fn graph_enviar<F>(
+    rotulo: &str,
+    teto_s: u64,
+    mut enviar: F,
+) -> reqwest::Result<reqwest::blocking::Response>
+where
+    F: FnMut() -> reqwest::Result<reqwest::blocking::Response>,
+{
+    let mut tentativa: u8 = 0;
+    loop {
+        // A vaga é segurada só durante o send; o `_vaga` cai no fim deste bloco.
+        let resp = {
+            let _vaga = adquirir_vaga();
+            enviar()
+        }?;
+        if resp.status().as_u16() != 429 || tentativa + 1 >= GRAPH_MAX_TENTATIVAS {
+            return Ok(resp);
+        }
+        let espera = espera_backoff_ms(&resp, tentativa, teto_s);
+        log::warn!(
+            "[{rotulo}] 429 (tentativa {}/{}); aguardando {espera}ms",
+            tentativa + 1,
+            GRAPH_MAX_TENTATIVAS
+        );
+        std::thread::sleep(std::time::Duration::from_millis(espera));
+        tentativa += 1;
+    }
+}
+
 /// Devolve um access_token valido, renovando via refresh_token se estiver
 /// perto de expirar. Atualiza o store.
 pub fn access_token(store: &TokenStore) -> Result<String, String> {
@@ -856,31 +976,22 @@ pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<Even
          &$select=id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories\
          &$orderby=start/dateTime&$top=100"
     );
-    // Retry no 429 (Too Many Requests): o Graph estrangula com frequência e o
+    // Sob o pool + retry central (#64): respeita Retry-After e usa jitter. O
     // calendarView era a única chamada sem retry — um 429 transitório derrubava
-    // a agenda até um F5 no app inteiro (#41). Respeita o Retry-After, até 3x.
-    let mut v: Option<serde_json::Value> = None;
-    for tentativa in 0..3u8 {
-        let resp = client
+    // a agenda até um F5 no app inteiro (#41).
+    let resp = graph_enviar("agenda", GRAPH_TETO_ESPERA_S, || {
+        client
             .get(&url)
             .bearer_auth(&token)
             .header("Prefer", "outlook.timezone=\"UTC\"")
             .send()
-            .map_err(|e| format!("falha no calendario: {e}"))?;
-        let st = resp.status();
-        if st.is_success() {
-            v = Some(resp.json().map_err(|e| e.to_string())?);
-            break;
-        }
-        if st.as_u16() == 429 && tentativa < 2 {
-            let espera = retry_after_secs(&resp, 2, 10);
-            log::warn!("[agenda] calendarView 429; retry em {espera}s");
-            std::thread::sleep(std::time::Duration::from_secs(espera));
-            continue;
-        }
+    })
+    .map_err(|e| format!("falha no calendario: {e}"))?;
+    let st = resp.status();
+    if !st.is_success() {
         return Err(format!("/me/calendarView retornou {st}"));
     }
-    let v = v.ok_or("calendarView esgotou as tentativas (429)")?;
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let mut eventos = Vec::new();
     if let Some(items) = v["value"].as_array() {
         for it in items {
@@ -968,11 +1079,12 @@ pub fn cr_categorias(store: &TokenStore) -> Result<Vec<CategoriaCor>, String> {
     let client = reqwest::blocking::Client::new();
 
     let url = format!("{GRAPH}/me/outlook/masterCategories?$select=displayName,color");
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .map_err(|e| format!("falha ao ler as categorias: {e}"))?;
+    // Sob o pool + retry central (#64): faz parte da rajada de abertura, então
+    // passa pelo limitador e respeita Retry-After/jitter como as demais.
+    let resp = graph_enviar("categorias", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler as categorias: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("/me/outlook/masterCategories retornou {}", resp.status()));
     }
@@ -1445,16 +1557,6 @@ pub fn cr_encaminhar(
     compor_e_enviar(store, id, "createForward", corpo_html, &para, &anexos)
 }
 
-/// Espera do header Retry-After (segundos), com teto. Fallback quando ausente.
-fn retry_after_secs(resp: &reqwest::blocking::Response, padrao: u64, teto: u64) -> u64 {
-    resp.headers()
-        .get("Retry-After")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(padrao)
-        .min(teto)
-}
-
 /// Sobe um arquivo para a pasta "Bridge Anexos" no OneDrive do usuário e cria um
 /// link de compartilhamento (view, escopo da organização). Retorna o webUrl do
 /// link, que o front insere no corpo do e-mail. Retry no 429 nos dois passos.
@@ -1485,62 +1587,43 @@ pub fn cr_compartilhar_onedrive(
     let nome_enc = urlencoding::encode(seguro);
 
     // 1) PUT do conteúdo em /Bridge Anexos/{nome} (cria a pasta se preciso).
+    // Sob o pool + retry central (#64): Retry-After + jitter.
     let put_url = format!("{GRAPH}/me/drive/root:/Bridge%20Anexos/{nome_enc}:/content");
-    let mut item: Option<serde_json::Value> = None;
-    for tentativa in 0..3u8 {
-        let resp = client
+    let resp = graph_enviar("onedrive:upload", GRAPH_TETO_ESPERA_S, || {
+        client
             .put(&put_url)
             .bearer_auth(&token)
             .header("Content-Type", "application/octet-stream")
             .body(bytes.clone())
             .send()
-            .map_err(|e| format!("falha no upload: {e}"))?;
+    })
+    .map_err(|e| format!("falha no upload: {e}"))?;
+    if !resp.status().is_success() {
         let st = resp.status();
-        if st.is_success() {
-            item = Some(resp.json().map_err(|e| e.to_string())?);
-            break;
-        }
-        if st.as_u16() == 429 && tentativa < 2 {
-            let espera = retry_after_secs(&resp, 2, 10);
-            log::warn!("[onedrive] upload '{seguro}' 429; retry em {espera}s");
-            std::thread::sleep(std::time::Duration::from_secs(espera));
-            continue;
-        }
         let txt = resp.text().unwrap_or_default();
         return Err(format!("upload retornou {st}: {txt}"));
     }
-    let item = item.ok_or("upload esgotou as tentativas (429)")?;
+    let item: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let item_id = item["id"].as_str().ok_or("item enviado sem id")?;
 
     // 2) POST /createLink (view, organization) -> devolve o webUrl do link.
     let link_url = format!("{GRAPH}/me/drive/items/{item_id}/createLink");
     let corpo = serde_json::json!({ "type": "view", "scope": "organization" });
-    for tentativa in 0..3u8 {
-        let resp = client
-            .post(&link_url)
-            .bearer_auth(&token)
-            .json(&corpo)
-            .send()
-            .map_err(|e| format!("falha ao criar o link: {e}"))?;
+    let resp = graph_enviar("onedrive:createLink", GRAPH_TETO_ESPERA_S, || {
+        client.post(&link_url).bearer_auth(&token).json(&corpo).send()
+    })
+    .map_err(|e| format!("falha ao criar o link: {e}"))?;
+    if !resp.status().is_success() {
         let st = resp.status();
-        if st.is_success() {
-            let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
-            let web = v["link"]["webUrl"]
-                .as_str()
-                .ok_or("link sem webUrl")?
-                .to_string();
-            return Ok(web);
-        }
-        if st.as_u16() == 429 && tentativa < 2 {
-            let espera = retry_after_secs(&resp, 2, 10);
-            log::warn!("[onedrive] createLink '{seguro}' 429; retry em {espera}s");
-            std::thread::sleep(std::time::Duration::from_secs(espera));
-            continue;
-        }
         let txt = resp.text().unwrap_or_default();
         return Err(format!("createLink retornou {st}: {txt}"));
     }
-    Err("createLink esgotou as tentativas (429)".to_string())
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let web = v["link"]["webUrl"]
+        .as_str()
+        .ok_or("link sem webUrl")?
+        .to_string();
+    Ok(web)
 }
 
 // ----------------------------------------------------------------------------
@@ -1592,39 +1675,25 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
         let url = format!(
             "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount&$expand=childFolders($select=id;$top=1)"
         );
-        // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas. Sem
+        // Sob o pool + retry central (#64): respeita Retry-After e usa jitter. Sem
         // isso o Inbox aparecia sem contagem de não lidos quando o Graph limitava.
-        for tentativa in 0..3u8 {
-            match client.get(&url).bearer_auth(&token).send() {
-                Ok(resp) if resp.status().is_success() => {
-                    if let Ok(v) = resp.json::<serde_json::Value>() {
-                        nome = v["displayName"].as_str().unwrap_or(id).to_string();
-                        nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
-                        total = v["totalItemCount"].as_u64().unwrap_or(0);
-                        // conta só as subpastas VISÍVEIS que o $expand trouxe (#62)
-                        filhos = v["childFolders"].as_array().map(|a| a.len() as u64).unwrap_or(0);
-                    }
-                    break;
+        match graph_enviar("mail:pasta", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        }) {
+            Ok(resp) if resp.status().is_success() => {
+                if let Ok(v) = resp.json::<serde_json::Value>() {
+                    nome = v["displayName"].as_str().unwrap_or(id).to_string();
+                    nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
+                    total = v["totalItemCount"].as_u64().unwrap_or(0);
+                    // conta só as subpastas VISÍVEIS que o $expand trouxe (#62)
+                    filhos = v["childFolders"].as_array().map(|a| a.len() as u64).unwrap_or(0);
                 }
-                Ok(resp) if resp.status().as_u16() == 429 && tentativa < 2 => {
-                    let espera = resp
-                        .headers()
-                        .get("Retry-After")
-                        .and_then(|h| h.to_str().ok())
-                        .and_then(|s| s.parse::<u64>().ok())
-                        .unwrap_or(1)
-                        .min(5);
-                    log::warn!("[mail] pasta '{id}' 429; retry em {espera}s");
-                    std::thread::sleep(std::time::Duration::from_secs(espera));
-                }
-                Ok(resp) => {
-                    log::warn!("[mail] pasta '{id}' retornou {}", resp.status());
-                    break;
-                }
-                Err(e) => {
-                    log::warn!("[mail] pasta '{id}' falhou: {e}");
-                    break;
-                }
+            }
+            Ok(resp) => {
+                log::warn!("[mail] pasta '{id}' retornou {}", resp.status());
+            }
+            Err(e) => {
+                log::warn!("[mail] pasta '{id}' falhou: {e}");
             }
         }
         pastas.push(PastaEmail {
@@ -1728,40 +1797,27 @@ pub fn cr_folder_mensagens(
     // uma ordenação inválida NUNCA pode travar o carregamento da pasta.
     // Retry no 429 (Retry-After): na abertura o app dispara várias chamadas
     // juntas e o Graph estrangula.
+    // O 429 fica com o pool + retry central (#64: Retry-After + jitter); aqui só
+    // resta o fallback de $orderby: se o Graph REJEITAR (400), refaz com o
+    // default (data). Loop pequeno — no máximo uma segunda passada.
     let padrao = format!("{} desc", if saida { "sentDateTime" } else { "receivedDateTime" });
     let mut orderby = format!("{campo} {dir}");
-    let mut caiu_no_padrao = false;
-    let mut resposta = None;
-    for tentativa in 0..4u8 {
+    let resp = loop {
         let url = format!("{base}&$orderby={orderby}");
-        match client.get(&url).bearer_auth(&token).send() {
-            Ok(r) if r.status().is_success() => {
-                resposta = Some(r);
-                break;
-            }
-            Ok(r) if r.status().as_u16() == 429 && tentativa < 3 => {
-                let espera = r
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(1)
-                    .min(5);
-                log::warn!("[mail] mensagens de '{folder_id}' 429; retry em {espera}s");
-                std::thread::sleep(std::time::Duration::from_secs(espera));
-            }
-            Ok(r) if r.status().as_u16() == 400 && !caiu_no_padrao => {
-                log::warn!("[mail] orderby '{orderby}' rejeitado (400); caindo no default (data)");
-                caiu_no_padrao = true;
-                orderby = padrao.clone();
-            }
-            Ok(r) => {
-                return Err(format!("/me/mailFolders/{folder_id}/messages retornou {}", r.status()));
-            }
-            Err(e) => return Err(format!("falha ao ler a pasta: {e}")),
+        let r = graph_enviar("mail:mensagens", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        })
+        .map_err(|e| format!("falha ao ler a pasta: {e}"))?;
+        if r.status().is_success() {
+            break r;
         }
-    }
-    let resp = resposta.ok_or_else(|| "sem resposta ao ler a pasta".to_string())?;
+        if r.status().as_u16() == 400 && orderby != padrao {
+            log::warn!("[mail] orderby '{orderby}' rejeitado (400); caindo no default (data)");
+            orderby = padrao.clone();
+            continue;
+        }
+        return Err(format!("/me/mailFolders/{folder_id}/messages retornou {}", r.status()));
+    };
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let mut itens = Vec::new();
     if let Some(items) = v["value"].as_array() {
@@ -1823,41 +1879,21 @@ pub fn cr_buscar(
             )
         }
     };
-    // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas —
-    // mesmo padrão de cr_folder_mensagens.
-    let mut resposta = None;
-    for tentativa in 0..3u8 {
-        match client
+    // Sob o pool + retry central (#64): Retry-After + jitter.
+    let resp = graph_enviar("mail:busca", GRAPH_TETO_ESPERA_S, || {
+        client
             .get(&url)
             .bearer_auth(&token)
             .header("ConsistencyLevel", "eventual")
             .send()
-        {
-            Ok(r) if r.status().is_success() => {
-                resposta = Some(r);
-                break;
-            }
-            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
-                let espera = r
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(1)
-                    .min(5);
-                log::warn!("[mail] busca em '{folder_id}' 429; retry em {espera}s");
-                std::thread::sleep(std::time::Duration::from_secs(espera));
-            }
-            Ok(r) => {
-                return Err(format!(
-                    "busca em /me/mailFolders/{folder_id}/messages retornou {}",
-                    r.status()
-                ));
-            }
-            Err(e) => return Err(format!("falha na busca: {e}")),
-        }
+    })
+    .map_err(|e| format!("falha na busca: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "busca em /me/mailFolders/{folder_id}/messages retornou {}",
+            resp.status()
+        ));
     }
-    let resp = resposta.ok_or_else(|| "sem resposta na busca".to_string())?;
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let mut itens = Vec::new();
     if let Some(items) = v["value"].as_array() {
@@ -1882,29 +1918,16 @@ fn deletar_msg(
     id: &str,
 ) -> Result<(), String> {
     let url = format!("{GRAPH}/me/messages/{id}");
-    for tentativa in 0..4u8 {
-        match client.delete(&url).bearer_auth(token).send() {
-            Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {
-                return Ok(());
-            }
-            Ok(resp) if resp.status().as_u16() == 429 && tentativa < 3 => {
-                let espera = resp
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(2)
-                    .min(10);
-                log::warn!("[mail] excluir '{id}' 429; retry em {espera}s");
-                std::thread::sleep(std::time::Duration::from_secs(espera));
-            }
-            Ok(resp) => {
-                return Err(format!("DELETE /me/messages retornou {}", resp.status()));
-            }
-            Err(e) => return Err(format!("falha ao excluir o e-mail: {e}")),
-        }
+    // Sob o pool + retry central (#64): Retry-After + jitter. 404 = idempotente.
+    let resp = graph_enviar("mail:excluir", GRAPH_TETO_ESPERA_S, || {
+        client.delete(&url).bearer_auth(token).send()
+    })
+    .map_err(|e| format!("falha ao excluir o e-mail: {e}"))?;
+    if resp.status().is_success() || resp.status().as_u16() == 404 {
+        Ok(())
+    } else {
+        Err(format!("DELETE /me/messages retornou {}", resp.status()))
     }
-    Err("DELETE /me/messages esgotou as tentativas (429)".to_string())
 }
 
 /// Move uma mensagem para uma pasta (well-known como "deleteditems" ou id).
@@ -1917,27 +1940,16 @@ fn mover_msg(
 ) -> Result<(), String> {
     let url = format!("{GRAPH}/me/messages/{id}/move");
     let body = serde_json::json!({ "destinationId": destino });
-    for tentativa in 0..4u8 {
-        match client.post(&url).bearer_auth(token).json(&body).send() {
-            Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {
-                return Ok(());
-            }
-            Ok(resp) if resp.status().as_u16() == 429 && tentativa < 3 => {
-                let espera = resp
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(2)
-                    .min(10);
-                log::warn!("[mail] mover '{id}' 429; retry em {espera}s");
-                std::thread::sleep(std::time::Duration::from_secs(espera));
-            }
-            Ok(resp) => return Err(format!("POST /me/messages/move retornou {}", resp.status())),
-            Err(e) => return Err(format!("falha ao mover o e-mail: {e}")),
-        }
+    // Sob o pool + retry central (#64): Retry-After + jitter. 404 = idempotente.
+    let resp = graph_enviar("mail:mover", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao mover o e-mail: {e}"))?;
+    if resp.status().is_success() || resp.status().as_u16() == 404 {
+        Ok(())
+    } else {
+        Err(format!("POST /me/messages/move retornou {}", resp.status()))
     }
-    Err("POST /me/messages/move esgotou as tentativas (429)".to_string())
 }
 
 /// Exclui um e-mail (move para a Lixeira; recuperável). Mail.ReadWrite.
@@ -2003,25 +2015,16 @@ pub fn cr_marcar_lido(store: &TokenStore, id: &str, lido: bool) -> Result<(), St
 
     let patch = serde_json::json!({ "isRead": lido });
     let url = format!("{GRAPH}/me/messages/{id}");
-    for tentativa in 0..3u8 {
-        match client.patch(&url).bearer_auth(&token).json(&patch).send() {
-            Ok(resp) if resp.status().is_success() => return Ok(()),
-            Ok(resp) if resp.status().as_u16() == 429 && tentativa < 2 => {
-                let espera = resp
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .unwrap_or(1)
-                    .min(5);
-                log::warn!("[mail] marcar lido '{id}' 429; retry em {espera}s");
-                std::thread::sleep(std::time::Duration::from_secs(espera));
-            }
-            Ok(resp) => return Err(format!("PATCH /me/messages retornou {}", resp.status())),
-            Err(e) => return Err(format!("falha ao marcar como lido: {e}")),
-        }
+    // Sob o pool + retry central (#64): Retry-After + jitter.
+    let resp = graph_enviar("mail:marcar-lido", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&patch).send()
+    })
+    .map_err(|e| format!("falha ao marcar como lido: {e}"))?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("PATCH /me/messages retornou {}", resp.status()))
     }
-    Err("PATCH /me/messages esgotou as tentativas (429)".to_string())
 }
 
 /// Esvazia a Lixeira (Deleted Items): apaga em definitivo cada mensagem.
@@ -2375,35 +2378,23 @@ pub fn cr_contar(store: &TokenStore, folder_id: &str, filtro: &str) -> Result<u6
         urlencoding::encode(odata)
     );
 
-    // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas — mesmo
-    // padrão de cr_buscar. O /$count com $filter exige ConsistencyLevel: eventual.
-    let mut resposta = None;
-    for tentativa in 0..3u8 {
-        match client
+    // Sob o pool + retry central (#64): Retry-After + jitter. Contadores são a
+    // parte da rajada de abertura que mais tomava 429. O /$count com $filter
+    // exige ConsistencyLevel: eventual.
+    let resp = graph_enviar("mail:contar", GRAPH_TETO_ESPERA_S, || {
+        client
             .get(&url)
             .bearer_auth(&token)
             .header("ConsistencyLevel", "eventual")
             .send()
-        {
-            Ok(r) if r.status().is_success() => {
-                resposta = Some(r);
-                break;
-            }
-            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
-                let espera = retry_after_secs(&r, 1, 5);
-                log::warn!("[mail] contar em '{folder_id}' 429; retry em {espera}s");
-                std::thread::sleep(std::time::Duration::from_secs(espera));
-            }
-            Ok(r) => {
-                return Err(format!(
-                    "/me/mailFolders/{folder_id}/messages/$count retornou {}",
-                    r.status()
-                ));
-            }
-            Err(e) => return Err(format!("falha ao contar: {e}")),
-        }
+    })
+    .map_err(|e| format!("falha ao contar: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "/me/mailFolders/{folder_id}/messages/$count retornou {}",
+            resp.status()
+        ));
     }
-    let resp = resposta.ok_or_else(|| "sem resposta na contagem".to_string())?;
     let corpo = resp.text().map_err(|e| e.to_string())?;
     corpo
         .trim()
