@@ -1,5 +1,10 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/reui/badge";
+import {
+  Filters,
+  type Filter,
+  type FilterFieldConfig,
+} from "@/components/reui/filters";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -1025,7 +1030,7 @@ function MessageList({
 
   const comEstrela = mensagens?.filter((m) => m.sinalizado).length ?? 0;
   const comAnexo = mensagens?.filter((m) => m.temAnexos).length ?? 0;
-  // Opções do dropdown de filtros (#31). Os 4 primeiros são client-side (com
+  // Opções do filtro da lista (#31). Os 4 primeiros são client-side (com
   // contador real da pasta); os 3 Graph não têm contador. mentions/invites
   // somem quando o tenant não suporta (D6 — `filtrosOcultos`).
   const filtroOpcoes = (
@@ -1041,7 +1046,40 @@ function MessageList({
     { id: "invites", label: t.controlRoom.filtroInvites, icon: <CalendarCheck className="size-4" /> },
     ] as { id: FiltroLista; label: string; icon: React.ReactNode; n?: number }[]
   ).filter((o) => !filtrosOcultos.has(o.id));
-  const filtroAtual = filtroOpcoes.find((o) => o.id === filtro) ?? filtroOpcoes[0];
+
+  // O @reui/filters (variante Radix) é um filter-builder: campo → operador →
+  // valor. Como o comportamento pedido é escolher UM filtro, modelamos um único
+  // campo `view` do tipo `select` com as 7 opções (single-select). O contador
+  // vai no rótulo da opção — o chip do componente não tem slot de badge.
+  const filtroCampos: FilterFieldConfig<FiltroLista>[] = [
+    {
+      key: "view",
+      label: t.controlRoom.filtroLabel,
+      icon: <ListFilter className="size-3.5" />,
+      type: "select",
+      // 7 opções: a busca dentro do submenu só atrapalharia.
+      searchable: false,
+      operators: [{ value: "is", label: t.controlRoom.filtroOperadorIs }],
+      options: filtroOpcoes.map((o) => ({
+        value: o.id,
+        label: o.n != null && o.n > 0 ? `${o.label} (${o.n})` : o.label,
+        icon: o.icon,
+      })),
+    },
+  ];
+  // "all" = sem filtro → nenhum chip, e o botão "Filtro" volta a aparecer
+  // (`allowMultiple={false}` esconde o botão enquanto houver filtro ativo).
+  // Id fixo pra não recriar o chip a cada render.
+  const filtrosAtivos: Filter<FiltroLista>[] =
+    filtro === "all"
+      ? []
+      : [{ id: "view", field: "view", operator: "is", values: [filtro] }];
+
+  // Single-select: o chip mais recente manda; lista vazia (X no chip) = "all".
+  function aoMudarFiltro(fs: Filter<FiltroLista>[]) {
+    const v = fs[fs.length - 1]?.values[0];
+    onFiltro(v != null && filtroOpcoes.some((o) => o.id === v) ? v : "all");
+  }
 
   // Teclado: ESC desfaz multi-seleção; Ctrl+A seleciona tudo (se já há ≥1);
   // ↑/↓ movem a seleção; Delete exclui.
@@ -1223,46 +1261,23 @@ function MessageList({
         </div>
       ) : (
         <div className="flex items-center gap-1 px-3 pb-2">
-          {/* Dropdown de Filtros estilo Outlook (#31): single-select, substitui
-              as antigas abas. Filtro ativo destacado; contadores nos client-side. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant={filtro === "all" ? "ghost" : "secondary"}
-                size="sm"
-                className="gap-1.5"
-                aria-label={t.controlRoom.filtroLabel}
-              >
-                <ListFilter className="size-3.5" />
-                <span className="text-xs">{filtroAtual.label}</span>
-                {filtroAtual.n != null && filtroAtual.n > 0 && (
-                  <Badge variant="primary-light" size="xs" radius="full">
-                    {filtroAtual.n}
-                  </Badge>
-                )}
-                <ChevronDown className="size-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-52">
-              <DropdownMenuLabel>{t.controlRoom.filtroLabel}</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={filtro}
-                onValueChange={(v) => onFiltro(v as FiltroLista)}
-              >
-                {filtroOpcoes.map((o) => (
-                  <DropdownMenuRadioItem key={o.id} value={o.id} className="gap-2">
-                    {o.icon}
-                    <span className="flex-1">{o.label}</span>
-                    {o.n != null && o.n > 0 && (
-                      <Badge variant="primary-light" size="xs" radius="full">
-                        {o.n}
-                      </Badge>
-                    )}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* Filtro da lista (#31) com o @reui/filters — variante RADIX,
+              instalada do registry (`@reui/filters` em style `radix-nova`) e
+              usada literal. Um único campo `view` com as 7 opções: enquanto
+              não há filtro aparece o botão "Filtro"; escolhida uma opção, ela
+              vira o chip `Filtro · é · <opção>` com X pra voltar a "Todos". */}
+          <Filters<FiltroLista>
+            filters={filtrosAtivos}
+            fields={filtroCampos}
+            onChange={aoMudarFiltro}
+            size="sm"
+            allowMultiple={false}
+            showSearchInput={false}
+            i18n={{
+              addFilter: t.controlRoom.filtroLabel,
+              select: t.controlRoom.filtroSelecione,
+            }}
+          />
         </div>
       )}
 

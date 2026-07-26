@@ -311,6 +311,10 @@ const pt = {
     filtroToMe: "Para mim",
     filtroMentions: "Me mencionam",
     filtroInvites: "Convites de agenda",
+    // Rótulos do componente reui Filters (#31): o operador único do campo
+    // "Filtro" e o texto quando nenhum valor foi escolhido ainda.
+    filtroOperadorIs: "é",
+    filtroSelecione: "Selecione...",
     // Detalhe do evento
     organizador: "Organizador",
     local: "Local",
@@ -658,6 +662,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     filtroToMe: "To me",
     filtroMentions: "Mentions me",
     filtroInvites: "Calendar invites",
+    filtroOperadorIs: "is",
+    filtroSelecione: "Select...",
     // Detalhe do evento
     organizador: "Organizer",
     local: "Location",
