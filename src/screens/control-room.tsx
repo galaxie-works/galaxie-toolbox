@@ -44,6 +44,11 @@ import {
   ComporMensagem,
   type ComporMensagemHandle,
 } from "@/components/compose/compor-mensagem";
+import * as AnimatedButton from "@/components/morphin/animated-border-button";
+import SuccessIcon from "@/components/ui/icons/success";
+import TrashIcon from "@/components/ui/icons/trash";
+import { AnimatePresence, motion } from "motion/react";
+import { TextMorph } from "torph/react";
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
@@ -334,6 +339,92 @@ function PastaVazia({ t }: { t: ReturnType<typeof useIdioma>["t"] }) {
   );
 }
 
+/**
+ * Botão de exclusão no padrão destrutivo do app — o mesmo animated-border-button
+ * do registry @morphin usado no "Remover biblioteca": parado → processando
+ * (borda tracejada animada) → sucesso (verde, brevemente). `onExcluir` pode ser
+ * async; `onConcluir` (opcional) roda após o flash de sucesso — usado pra limpar
+ * a seleção sem cortar a animação. Cores dark vão no uso (o registry só tem claro).
+ */
+function BotaoExcluir({
+  onExcluir,
+  onConcluir,
+  rotulo,
+  rotuloProcessando,
+  rotuloConcluido,
+  size = "small",
+  className,
+}: {
+  onExcluir: () => void | Promise<void>;
+  onConcluir?: () => void;
+  rotulo: string;
+  rotuloProcessando: string;
+  rotuloConcluido: string;
+  size?: "medium" | "small" | "xsmall";
+  className?: string;
+}) {
+  const [estado, setEstado] = useState<"parado" | "processando" | "sucesso">("parado");
+
+  useEffect(() => {
+    if (estado !== "sucesso" || !onConcluir) return;
+    const id = setTimeout(onConcluir, 900);
+    return () => clearTimeout(id);
+  }, [estado, onConcluir]);
+
+  async function run() {
+    if (estado !== "parado") return;
+    setEstado("processando");
+    try {
+      await onExcluir();
+      setEstado("sucesso");
+    } catch {
+      setEstado("parado");
+    }
+  }
+
+  return (
+    <AnimatedButton.Root
+      variant={estado === "sucesso" ? "success" : "error"}
+      mode="animatedBorder"
+      size={size}
+      onClick={run}
+      animateBorder={estado === "processando"}
+      showAnimatedBorder={estado === "processando"}
+      animatedBorderStyle={estado === "processando" ? "dashed" : "solid"}
+      disabled={estado !== "parado"}
+      className={cn(
+        estado === "sucesso"
+          ? "dark:border-green-500/40 dark:bg-green-950/40 dark:text-green-300 dark:hover:bg-green-950/60 dark:hover:text-green-200"
+          : "dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60",
+        className
+      )}
+    >
+      <AnimatePresence mode="popLayout">
+        <motion.div
+          key={estado === "sucesso" ? "sucesso" : "excluir"}
+          initial={false}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.4, y: 10 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+        >
+          <AnimatedButton.Icon
+            as={estado === "sucesso" ? SuccessIcon : TrashIcon}
+            className="size-4"
+            aria-hidden
+          />
+        </motion.div>
+      </AnimatePresence>
+      <TextMorph>
+        {estado === "sucesso"
+          ? rotuloConcluido
+          : estado === "processando"
+            ? rotuloProcessando
+            : rotulo}
+      </TextMorph>
+    </AnimatedButton.Root>
+  );
+}
+
 /** Contexto exibido no painel de detalhe quando há multi-seleção (c-empty-15). */
 function MultiSelecaoContexto({
   n,
@@ -342,7 +433,7 @@ function MultiSelecaoContexto({
   t,
 }: {
   n: number;
-  onExcluir: () => void;
+  onExcluir: () => void | Promise<void>;
   onLimpar: () => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
@@ -366,12 +457,14 @@ function MultiSelecaoContexto({
             <Button variant="outline" onClick={onLimpar}>
               {t.controlRoom.limparSelecao}
             </Button>
-            <Button
-              className="bg-destructive text-white hover:bg-destructive/90"
-              onClick={onExcluir}
-            >
-              <Trash2 /> {t.controlRoom.excluirSelecionados}
-            </Button>
+            <BotaoExcluir
+              size="medium"
+              onExcluir={onExcluir}
+              onConcluir={onLimpar}
+              rotulo={t.controlRoom.excluirSelecionados}
+              rotuloProcessando={t.controlRoom.excluindo}
+              rotuloConcluido={t.controlRoom.excluidos}
+            />
           </div>
         </EmptyContent>
       </Empty>
@@ -633,7 +726,7 @@ function MessageList({
   carregandoMais: boolean;
   temMais: boolean;
   onFlag: (id: string, novo: boolean) => void;
-  onExcluir: (ids: string[]) => void;
+  onExcluir: (ids: string[]) => void | Promise<void>;
   selecionados: Set<string>;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
   naoLidosPasta: number;
@@ -806,17 +899,14 @@ function MessageList({
           <span className="text-xs font-medium">
             {preencher(t.controlRoom.nSelecionados, { n: selecionados.size })}
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="ml-auto text-destructive hover:bg-destructive/10 hover:text-destructive"
-            onClick={() => {
-              onExcluir([...selecionados]);
-              setSelecionados(new Set());
-            }}
-          >
-            <Trash2 /> {t.controlRoom.excluirSelecionados}
-          </Button>
+          <BotaoExcluir
+            className="ml-auto"
+            onExcluir={() => onExcluir([...selecionados])}
+            onConcluir={() => setSelecionados(new Set())}
+            rotulo={t.controlRoom.excluirSelecionados}
+            rotuloProcessando={t.controlRoom.excluindo}
+            rotuloConcluido={t.controlRoom.excluidos}
+          />
           <Button variant="ghost" size="icon-sm" onClick={() => setSelecionados(new Set())}>
             <X />
           </Button>
@@ -2168,10 +2258,7 @@ export function ControlRoomScreen({
             {selecionados.size > 0 ? (
               <MultiSelecaoContexto
                 n={selecionados.size}
-                onExcluir={() => {
-                  acaoExcluir([...selecionados]);
-                  setSelecionados(new Set());
-                }}
+                onExcluir={() => acaoExcluir([...selecionados])}
                 onLimpar={() => setSelecionados(new Set())}
                 t={t}
               />
