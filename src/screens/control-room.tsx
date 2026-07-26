@@ -43,6 +43,13 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -84,9 +91,11 @@ import {
   ExternalLink,
   FilePen,
   Flag,
+  FlagOff,
   Forward,
   Inbox,
   Mail,
+  MailOpen,
   MapPin,
   PanelLeftClose,
   PanelLeftOpen,
@@ -831,6 +840,7 @@ function MessageList({
   temMais,
   onFlag,
   onExcluir,
+  onMarcarLido,
   selecionados,
   setSelecionados,
   naoLidosPasta,
@@ -858,6 +868,7 @@ function MessageList({
   temMais: boolean;
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void | Promise<void>;
+  onMarcarLido: (id: string, lido: boolean) => void;
   selecionados: Set<string>;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
   naoLidosPasta: number;
@@ -1283,6 +1294,12 @@ function MessageList({
                 const m = linha.m;
                 const ativo = m.id === sel;
                 const marcado = selecionados.has(m.id);
+                // Ações do menu de contexto valem para a seleção quando o item
+                // clicado faz parte dela; senão, só para o próprio item (#86).
+                const alvos =
+                  selecionados.has(m.id) && selecionados.size > 0
+                    ? [...selecionados]
+                    : [m.id];
                 return (
                   <div
                     key={vr.key}
@@ -1297,6 +1314,8 @@ function MessageList({
                       transform: `translateY(${vr.start}px)`,
                     }}
                   >
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
                     <Item
                       size="sm"
                       data-msgid={m.id}
@@ -1408,6 +1427,39 @@ function MessageList({
                         </ItemDescription>
                       </ItemContent>
                     </Item>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="w-56">
+                        <ContextMenuItem
+                          className="gap-2"
+                          onClick={() =>
+                            alvos.forEach((id) => onMarcarLido(id, !m.lido))
+                          }
+                        >
+                          {m.lido ? <Mail /> : <MailOpen />}
+                          {m.lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
+                        </ContextMenuItem>
+                        <ContextMenuItem
+                          className="gap-2"
+                          onClick={() =>
+                            alvos.forEach((id) => onFlag(id, !m.sinalizado))
+                          }
+                        >
+                          {m.sinalizado ? <FlagOff /> : <Flag />}
+                          {m.sinalizado ? t.controlRoom.removerSinal : t.controlRoom.sinalizar}
+                        </ContextMenuItem>
+                        <ContextMenuSeparator />
+                        <ContextMenuItem
+                          variant="destructive"
+                          className="gap-2"
+                          onClick={() => onExcluir(alvos)}
+                        >
+                          <Trash2 />
+                          {pastaTipo === "deleteditems"
+                            ? t.controlRoom.excluirPermanente
+                            : t.controlRoom.excluir}
+                        </ContextMenuItem>
+                      </ContextMenuContent>
+                    </ContextMenu>
                   </div>
                 );
               })}
@@ -2612,6 +2664,7 @@ export function ControlRoomScreen({
               temMais={buscaAtiva ? temMaisBusca : temMais}
               onFlag={acaoFlag}
               onExcluir={acaoExcluir}
+              onMarcarLido={acaoMarcarLido}
               selecionados={selecionados}
               setSelecionados={setSelecionados}
               naoLidosPasta={pastaAtual?.naoLidos ?? 0}
