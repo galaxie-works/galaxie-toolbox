@@ -1584,8 +1584,13 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
         let mut total = 0;
         let mut filhos = 0;
         let mut nome = id.to_string();
+        // $expand=childFolders (não $select=childFolderCount): o childFolderCount
+        // conta subpastas OCULTAS de sistema (ex.: em Deleted), fazendo aparecer
+        // um chevron que expande pra nada. O $expand — como o /childFolders da
+        // busca ao expandir — só traz as VISÍVEIS, então `filhos` bate com o que
+        // o usuário vê. $top=1 basta pra saber se há ≥1 (chevron sim/não). (#62)
         let url = format!(
-            "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount,childFolderCount"
+            "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount&$expand=childFolders($select=id;$top=1)"
         );
         // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas. Sem
         // isso o Inbox aparecia sem contagem de não lidos quando o Graph limitava.
@@ -1596,7 +1601,8 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
                         nome = v["displayName"].as_str().unwrap_or(id).to_string();
                         nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
                         total = v["totalItemCount"].as_u64().unwrap_or(0);
-                        filhos = v["childFolderCount"].as_u64().unwrap_or(0);
+                        // conta só as subpastas VISÍVEIS que o $expand trouxe (#62)
+                        filhos = v["childFolders"].as_array().map(|a| a.len() as u64).unwrap_or(0);
                     }
                     break;
                 }
