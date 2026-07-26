@@ -1451,7 +1451,18 @@ function MessageList({
                         <ContextMenuItem
                           variant="destructive"
                           className="gap-2"
-                          onClick={() => onExcluir(alvos)}
+                          onClick={() => {
+                            onExcluir(alvos);
+                            // Tira da seleção o que foi excluído — senão a barra
+                            // "N selected" fica fantasma após excluir pelo menu de
+                            // contexto (o atalho Delete já limpava; o menu não)
+                            // (rejeição do #86 pelo PO).
+                            setSelecionados((s) => {
+                              const n = new Set(s);
+                              alvos.forEach((id) => n.delete(id));
+                              return n;
+                            });
+                          }}
                         >
                           <Trash2 />
                           {pastaTipo === "deleteditems"
