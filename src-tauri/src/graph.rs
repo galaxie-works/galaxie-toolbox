@@ -856,16 +856,31 @@ pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<Even
          &$select=id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories\
          &$orderby=start/dateTime&$top=100"
     );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .header("Prefer", "outlook.timezone=\"UTC\"")
-        .send()
-        .map_err(|e| format!("falha no calendario: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("/me/calendarView retornou {}", resp.status()));
+    // Retry no 429 (Too Many Requests): o Graph estrangula com frequência e o
+    // calendarView era a única chamada sem retry — um 429 transitório derrubava
+    // a agenda até um F5 no app inteiro (#41). Respeita o Retry-After, até 3x.
+    let mut v: Option<serde_json::Value> = None;
+    for tentativa in 0..3u8 {
+        let resp = client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("Prefer", "outlook.timezone=\"UTC\"")
+            .send()
+            .map_err(|e| format!("falha no calendario: {e}"))?;
+        let st = resp.status();
+        if st.is_success() {
+            v = Some(resp.json().map_err(|e| e.to_string())?);
+            break;
+        }
+        if st.as_u16() == 429 && tentativa < 2 {
+            let espera = retry_after_secs(&resp, 2, 10);
+            log::warn!("[agenda] calendarView 429; retry em {espera}s");
+            std::thread::sleep(std::time::Duration::from_secs(espera));
+            continue;
+        }
+        return Err(format!("/me/calendarView retornou {st}"));
     }
-    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let v = v.ok_or("calendarView esgotou as tentativas (429)")?;
     let mut eventos = Vec::new();
     if let Some(items) = v["value"].as_array() {
         for it in items {

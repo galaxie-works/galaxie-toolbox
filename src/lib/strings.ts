@@ -226,6 +226,8 @@ const pt = {
     ccLabel: "Cc",
     semEventosTitulo: "Sem eventos",
     agendaErroTitulo: "Não foi possível carregar a agenda",
+    agendaErroDica: "Falha momentânea na conexão. Tente atualizar.",
+    atualizar: "Atualizar",
     tentarNovamente: "Tentar novamente",
     // Ações de e-mail
     excluir: "Excluir",
@@ -545,6 +547,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     ccLabel: "Cc",
     semEventosTitulo: "No events",
     agendaErroTitulo: "Couldn't load the calendar",
+    agendaErroDica: "Temporary connection glitch. Try refreshing.",
+    atualizar: "Refresh",
     tentarNovamente: "Try again",
     // Ações de e-mail
     excluir: "Delete",
