@@ -171,8 +171,12 @@ function CorpoHtml({
       `<style>:root{color-scheme:light}html,body{margin:0;padding:0;overflow:hidden}` +
       `body{background:#fff;color:#111;` +
       `font-family:system-ui,-apple-system,Segoe UI,sans-serif;` +
-      `font-size:14px;line-height:1.5;padding:6px}img{max-width:100%;height:auto}` +
-      `a{color:#7c3aed}</style>`;
+      // overflow-wrap:anywhere quebra strings longas (URLs/tokens sem espaço)
+      // que, sozinhas, inflavam o scrollWidth e faziam o e-mail inteiro ser
+      // reduzido a um tamanho minúsculo pelo zoom (#57). Não afeta o layout de
+      // newsletters (só quebra o que não caberia mesmo).
+      `font-size:14px;line-height:1.5;padding:6px;overflow-wrap:anywhere}` +
+      `img{max-width:100%;height:auto}a{color:#7c3aed}</style>`;
     const dr = escuro ? getDarkReaderInlineScripts() : "";
     // Sanitiza o HTML do e-mail (tira <script>, handlers on*, javascript: etc.)
     // ANTES de injetar. Como habilitamos allow-scripts pro Dark Reader rodar, um
@@ -201,7 +205,11 @@ function CorpoHtml({
         body.style.zoom = "1";
         const conteudo = body.scrollWidth;
         const disponivel = iframe.clientWidth;
-        const zoom = conteudo > disponivel && conteudo > 0 ? disponivel / conteudo : 1;
+        const ideal = conteudo > disponivel && conteudo > 0 ? disponivel / conteudo : 1;
+        // Piso de 0.5: mesmo que algo (imagem/tabela larga) ainda estoure a
+        // largura, o e-mail nunca vira microscópico — o excedente clipa (o
+        // iframe tem overflow:hidden) em vez de encolher o conteúdo inteiro (#57).
+        const zoom = Math.max(0.5, ideal);
         body.style.zoom = String(zoom);
         // altura VISÍVEL (pós-zoom) via bounding rect; setAltura só se mudou de
         // verdade (evita re-render à toa).
