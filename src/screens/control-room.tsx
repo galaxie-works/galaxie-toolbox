@@ -573,6 +573,8 @@ function FolderSidebar({
   onNovo,
   onComposeOutlook,
   colapsada,
+  agendaAberta,
+  onToggleAgenda,
   t,
 }: {
   pastas: PastaEmail[] | null;
@@ -581,6 +583,8 @@ function FolderSidebar({
   onNovo: () => void;
   onComposeOutlook: () => void;
   colapsada: boolean;
+  agendaAberta: boolean;
+  onToggleAgenda: () => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   const mail = (pastas ?? []).filter((p) => GRUPO_MAIL.includes(p.tipo));
@@ -745,6 +749,25 @@ function FolderSidebar({
           </div>
         </ScrollArea>
       )}
+
+      {/* Agenda — ancorada no RODAPÉ do sidebar do BRIDGE (separador acima). A
+          Agenda pertence ao Bridge, não ao app principal (#50). Selecionado ⟺
+          card da Agenda visível; nasce fechada (menos requisições no startup). */}
+      <Separator className={cn("shrink-0", colapsada && "w-6")} />
+      <Button
+        variant={agendaAberta ? "secondary" : "ghost"}
+        onClick={onToggleAgenda}
+        title={t.controlRoom.agendaTitulo}
+        aria-label={t.controlRoom.agendaTitulo}
+        className={cn(
+          "shrink-0",
+          colapsada ? "size-9 justify-center p-0" : "w-full justify-start gap-2.5",
+          !agendaAberta && "text-muted-foreground"
+        )}
+      >
+        <CalendarDays className="size-4 shrink-0" />
+        {!colapsada && <span>{t.controlRoom.agendaTitulo}</span>}
+      </Button>
     </aside>
   );
 }
@@ -2024,15 +2047,17 @@ function NovaMensagemModal({
 
 export function ControlRoomScreen({
   user,
-  agendaAberta,
   onAbrirLink,
 }: {
   user: AppUser;
-  /** Visibilidade do card da Agenda — controlada pelo item do sidebar (#50). */
-  agendaAberta: boolean;
   onAbrirLink: (url: string) => void;
 }) {
   const { idioma, t } = useIdioma();
+  // Visibilidade do card da Agenda — controlada pelo item no RODAPÉ do sidebar
+  // de pastas do Bridge (a Agenda pertence ao Bridge, não ao app principal).
+  // Nasce FECHADA (chave nova, reseta persistidos antigos) pra fazer menos
+  // requisições no startup — só carrega quando o usuário abre (#50).
+  const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agendaVisivel", false);
   const [pastas, setPastas] = useState<PastaEmail[] | null>(null);
   const [pastaSel, setPastaSel] = useState("inbox");
   const [mensagens, setMensagens] = useState<EmailItem[] | null>(null);
@@ -2499,6 +2524,8 @@ export function ControlRoomScreen({
           onNovo={novoEmailModal}
           onComposeOutlook={composeOutlook}
           colapsada={!sidebarAberta}
+          agendaAberta={agendaAberta}
+          onToggleAgenda={() => setAgendaAberta((v) => !v)}
           t={t}
         />
 
