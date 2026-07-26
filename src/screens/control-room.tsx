@@ -147,7 +147,13 @@ function quandoCurto(iso: string, idioma: string): string {
  * O HTML é sanitizado (DOMPurify) e o `allow-scripts` (necessário pro Dark
  * Reader no tema escuro) só permite o DR — scripts do e-mail são removidos.
  */
-function CorpoHtml({ corpo }: { corpo: string }) {
+function CorpoHtml({
+  corpo,
+  onAbrirLink,
+}: {
+  corpo: string;
+  onAbrirLink?: (url: string) => void;
+}) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [altura, setAltura] = useState(120);
   // Render ciente do tema do app (como leitores modernos). O baseline é SEMPRE
@@ -210,6 +216,17 @@ function CorpoHtml({ corpo }: { corpo: string }) {
       d?.querySelectorAll("img").forEach((img) => {
         if (!img.complete) img.addEventListener("load", ajustar, { once: true });
       });
+      // Links do e-mail: o `target=_blank` não navega no Tauri (nada acontecia
+      // ao clicar). Interceptamos o clique e abrimos http(s) no Navigator (aba
+      // própria); outros esquemas (mailto/tel) vão pro handler padrão do SO.
+      d?.addEventListener("click", (e) => {
+        const a = (e.target as HTMLElement | null)?.closest?.("a") as HTMLAnchorElement | null;
+        const href = a?.href;
+        if (!href) return;
+        e.preventDefault();
+        if (/^https?:/i.test(href) && onAbrirLink) onAbrirLink(href);
+        else api.openUrl(href).catch(() => {});
+      });
     };
     iframe.addEventListener("load", onLoad);
     // IMPORTANTE: só re-mede quando a LARGURA muda (arrastar o splitter). Reagir
@@ -243,12 +260,20 @@ function CorpoHtml({ corpo }: { corpo: string }) {
   );
 }
 
-function CorpoMensagem({ corpo, tipo }: { corpo: string; tipo: "html" | "text" }) {
+function CorpoMensagem({
+  corpo,
+  tipo,
+  onAbrirLink,
+}: {
+  corpo: string;
+  tipo: "html" | "text";
+  onAbrirLink?: (url: string) => void;
+}) {
   const { t } = useIdioma();
   if (!corpo.trim()) {
     return <p className="text-sm text-muted-foreground">{t.controlRoom.semCorpo}</p>;
   }
-  if (tipo === "html") return <CorpoHtml corpo={corpo} />;
+  if (tipo === "html") return <CorpoHtml corpo={corpo} onAbrirLink={onAbrirLink} />;
   return (
     <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{corpo}</p>
   );
@@ -1005,6 +1030,7 @@ function MessageDetail({
   onFlag,
   onExcluir,
   onMarcarLido,
+  onAbrirLink,
   onMudou,
   t,
   idioma,
@@ -1015,6 +1041,7 @@ function MessageDetail({
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void;
   onMarcarLido: (id: string, lido: boolean) => void;
+  onAbrirLink: (url: string) => void;
   onMudou: () => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
@@ -1132,7 +1159,7 @@ function MessageDetail({
 
   const corpoInterno = (
     <div className="px-5 py-4">
-      <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} />
+      <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} onAbrirLink={onAbrirLink} />
       {det.anexos.length > 0 && (
         <>
           <Separator className="my-4" />
@@ -1681,7 +1708,13 @@ function NovaMensagemModal({
 // Tela
 // ===========================================================================
 
-export function ControlRoomScreen({ user }: { user: AppUser }) {
+export function ControlRoomScreen({
+  user,
+  onAbrirLink,
+}: {
+  user: AppUser;
+  onAbrirLink: (url: string) => void;
+}) {
   const { idioma, t } = useIdioma();
   const [pastas, setPastas] = useState<PastaEmail[] | null>(null);
   const [pastaSel, setPastaSel] = useState("inbox");
@@ -2164,6 +2197,7 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
                 onFlag={acaoFlag}
                 onExcluir={acaoExcluir}
                 onMarcarLido={acaoMarcarLido}
+                onAbrirLink={onAbrirLink}
                 onMudou={() => setRecargaPastas((n) => n + 1)}
                 t={t}
                 idioma={idioma}
