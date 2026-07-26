@@ -962,7 +962,9 @@ function MessageList({
                         </div>
                         <p className={cn("truncate text-sm", !m.lido && "font-medium")}>{m.assunto}</p>
                         <ItemDescription className="flex items-center gap-1">
-                          <span className="min-w-0 flex-1 truncate">{m.preview}</span>
+                          <span className="min-w-0 flex-1 truncate">
+                            {m.preview.replace(/\s*(?:…|\.\.\.)\s*$/, "")}
+                          </span>
                           {m.temAnexos && <Paperclip className="size-3 shrink-0" />}
                         </ItemDescription>
                       </ItemContent>
@@ -1384,6 +1386,19 @@ function AgendaConteudo({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mesEventos, dia]);
 
+  // Dias que têm compromisso — pra marcar com um pontinho no calendário (o
+  // schedule-8 antigo mostrava; o c-calendar-22 não, e sem isso o usuário não
+  // acha os dias com evento e acha que "não carregou").
+  const diasComEvento = useMemo(() => {
+    const s = new Set<string>();
+    for (const ev of mesEventos ?? []) {
+      const d = new Date(comZ(ev.inicio));
+      if (!Number.isNaN(d.getTime())) s.add(chaveDia(d));
+    }
+    return s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mesEventos]);
+
   const rotuloDia = dia.toLocaleDateString(idioma, {
     day: "numeric",
     month: "long",
@@ -1420,6 +1435,11 @@ function AgendaConteudo({
           formatters={{
             formatWeekdayName: (d) =>
               d.toLocaleDateString(idioma, { weekday: "short" }).slice(0, 3),
+          }}
+          modifiers={{ evento: (date: Date) => diasComEvento.has(chaveDia(date)) }}
+          modifiersClassNames={{
+            evento:
+              "relative after:pointer-events-none after:absolute after:bottom-1 after:left-1/2 after:size-1 after:-translate-x-1/2 after:rounded-full after:bg-primary",
           }}
           required
         />
@@ -1689,6 +1709,9 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   const [contAnexos, setContAnexos] = useState<number | null>(null);
   const proximoBuscaRef = useRef<string | null>(null);
   const carregandoMaisRef = useRef(false);
+  // pasta atual (pra closures assíncronas que precisam do valor mais novo).
+  const pastaSelRef = useRef(pastaSel);
+  pastaSelRef.current = pastaSel;
   // Âncora de paginação: nº já buscado do servidor (skip). NÃO é mensagens.length
   // — a lista encolhe ao excluir, mas o skip do Graph continua avançando.
   const carregadosRef = useRef(0);
@@ -1899,12 +1922,21 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     // 4) Exclusão real em background + reconcile. Se algum falhar, avisa e
     //    recarrega a pasta pra ressincronizar (o item volta se não saiu).
     (async () => {
+      // Enquanto a exclusão roda, vai atualizando as contagens (a Lixeira
+      // "preenchendo") — e a lista da Lixeira se o usuário estiver vendo ela —
+      // pra não ficar parado até o fim (o move é sequencial e pode demorar).
+      const pulso = setInterval(() => {
+        setRecargaPastas((x) => x + 1);
+        if (pastaSelRef.current === "deleteditems") setRecarga((x) => x + 1);
+      }, 2500);
       let ok: string[] = [];
       try {
         // Dentro da própria Lixeira = exclusão definitiva; senão move pra Lixeira.
         ok = await api.crExcluirEmails(ids, pastaSel === "deleteditems");
       } catch {
         ok = [];
+      } finally {
+        clearInterval(pulso);
       }
       const falharam = ids.filter((id) => !ok.includes(id));
       if (falharam.length > 0) {
@@ -1913,6 +1945,7 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
         setRecarga((n) => n + 1); // ressincroniza lista + contagens do zero
       } else {
         setRecargaPastas((x) => x + 1); // reconcilia contagens reais
+        if (pastaSelRef.current === "deleteditems") setRecarga((x) => x + 1);
       }
     })();
   }
