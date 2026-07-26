@@ -856,16 +856,31 @@ pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<Even
          &$select=id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories\
          &$orderby=start/dateTime&$top=100"
     );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .header("Prefer", "outlook.timezone=\"UTC\"")
-        .send()
-        .map_err(|e| format!("falha no calendario: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("/me/calendarView retornou {}", resp.status()));
+    // Retry no 429 (Too Many Requests): o Graph estrangula com frequência e o
+    // calendarView era a única chamada sem retry — um 429 transitório derrubava
+    // a agenda até um F5 no app inteiro (#41). Respeita o Retry-After, até 3x.
+    let mut v: Option<serde_json::Value> = None;
+    for tentativa in 0..3u8 {
+        let resp = client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("Prefer", "outlook.timezone=\"UTC\"")
+            .send()
+            .map_err(|e| format!("falha no calendario: {e}"))?;
+        let st = resp.status();
+        if st.is_success() {
+            v = Some(resp.json().map_err(|e| e.to_string())?);
+            break;
+        }
+        if st.as_u16() == 429 && tentativa < 2 {
+            let espera = retry_after_secs(&resp, 2, 10);
+            log::warn!("[agenda] calendarView 429; retry em {espera}s");
+            std::thread::sleep(std::time::Duration::from_secs(espera));
+            continue;
+        }
+        return Err(format!("/me/calendarView retornou {st}"));
     }
-    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let v = v.ok_or("calendarView esgotou as tentativas (429)")?;
     let mut eventos = Vec::new();
     if let Some(items) = v["value"].as_array() {
         for it in items {
@@ -1721,32 +1736,57 @@ pub fn cr_folder_mensagens(
     Ok(itens)
 }
 
+/// Uma página de resultados de busca: os itens desta página e a URL de
+/// continuação do Graph (`@odata.nextLink`), quando houver mais páginas.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuscaPagina {
+    pub itens: Vec<EmailItem>,
+    /// `@odata.nextLink` desta resposta, para pedir a próxima página. `None`
+    /// quando esta foi a última página.
+    pub proximo: Option<String>,
+}
+
 /// Busca mensagens numa pasta pelo termo, no SERVIDOR (via $search do Graph).
 /// Devolve a mesma lista de cr_folder_mensagens (reusa montar_email_item), em
-/// páginas de 50 com $skip. O $search do Graph NÃO aceita $orderby junto — por
-/// isso não incluímos orderby aqui (o Graph já ordena por relevância). Exige o
-/// header ConsistencyLevel: eventual. Retry no 429. Mail.Read.
+/// páginas de 50. O $search do Graph NÃO aceita $orderby junto — por isso não
+/// incluímos orderby aqui (o Graph já ordena por relevância). Exige o header
+/// ConsistencyLevel: eventual. Retry no 429. Mail.Read.
+///
+/// Paginação por CONTINUAÇÃO: o $search do Graph NÃO suporta $skip (paginar com
+/// $skip junto de $search quebra além da 1ª página). A forma correta é seguir o
+/// `@odata.nextLink` (skiptoken), que este devolve em `proximo`. Passe essa URL
+/// de volta em `next_link` para pedir a próxima página; ela já vem com
+/// $search+$top+skiptoken embutidos, então é usada como GET direto.
 pub fn cr_buscar(
     store: &TokenStore,
     folder_id: &str,
     termo: &str,
-    skip: u32,
-) -> Result<Vec<EmailItem>, String> {
+    next_link: Option<String>,
+) -> Result<BuscaPagina, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
-    // As aspas duplas fazem parte da sintaxe do $search; as que vierem no próprio
-    // termo são trocadas por espaço para não fechar a expressão antes da hora.
-    let termo_limpo = termo.replace('"', " ");
-    let enc = urlencoding::encode(termo_limpo.trim());
-    // Sem $orderby: o Graph rejeita orderby combinado com $search.
-    let url = format!(
-        "{GRAPH}/me/mailFolders/{folder_id}/messages\
-         ?$search=\"{enc}\"\
-         &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
-         &$top=50&$skip={skip}"
-    );
+    // Continuação: se veio um nextLink, ele já traz $search+$top+skiptoken —
+    // usa-se tal e qual. Só na 1ª página montamos a URL inicial.
+    let url = match next_link {
+        Some(link) => link,
+        None => {
+            // As aspas duplas fazem parte da sintaxe do $search; as que vierem no
+            // próprio termo são trocadas por espaço para não fechar a expressão
+            // antes da hora.
+            let termo_limpo = termo.replace('"', " ");
+            let enc = urlencoding::encode(termo_limpo.trim());
+            // Sem $orderby: o Graph rejeita orderby combinado com $search.
+            format!(
+                "{GRAPH}/me/mailFolders/{folder_id}/messages\
+                 ?$search=\"{enc}\"\
+                 &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
+                 &$top=50"
+            )
+        }
+    };
     // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas —
     // mesmo padrão de cr_folder_mensagens.
     let mut resposta = None;
@@ -1789,7 +1829,8 @@ pub fn cr_buscar(
             itens.push(montar_email_item(it, saida));
         }
     }
-    Ok(itens)
+    let proximo = v["@odata.nextLink"].as_str().map(|s| s.to_string());
+    Ok(BuscaPagina { itens, proximo })
 }
 
 // ----------------------------------------------------------------------------

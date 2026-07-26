@@ -16,13 +16,6 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Sheet,
   SheetContent,
   SheetFooter,
@@ -51,6 +44,11 @@ import {
   ComporMensagem,
   type ComporMensagemHandle,
 } from "@/components/compose/compor-mensagem";
+import * as AnimatedButton from "@/components/morphin/animated-border-button";
+import SuccessIcon from "@/components/ui/icons/success";
+import TrashIcon from "@/components/ui/icons/trash";
+import { AnimatePresence, motion } from "motion/react";
+import { TextMorph } from "torph/react";
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
@@ -101,7 +99,7 @@ import {
   Video,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // --- helpers de data/horário ------------------------------------------------
 
@@ -147,7 +145,13 @@ function quandoCurto(iso: string, idioma: string): string {
  * O HTML é sanitizado (DOMPurify) e o `allow-scripts` (necessário pro Dark
  * Reader no tema escuro) só permite o DR — scripts do e-mail são removidos.
  */
-function CorpoHtml({ corpo }: { corpo: string }) {
+function CorpoHtml({
+  corpo,
+  onAbrirLink,
+}: {
+  corpo: string;
+  onAbrirLink?: (url: string) => void;
+}) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [altura, setAltura] = useState(120);
   // Render ciente do tema do app (como leitores modernos). O baseline é SEMPRE
@@ -210,6 +214,17 @@ function CorpoHtml({ corpo }: { corpo: string }) {
       d?.querySelectorAll("img").forEach((img) => {
         if (!img.complete) img.addEventListener("load", ajustar, { once: true });
       });
+      // Links do e-mail: o `target=_blank` não navega no Tauri (nada acontecia
+      // ao clicar). Interceptamos o clique e abrimos http(s) no Navigator (aba
+      // própria); outros esquemas (mailto/tel) vão pro handler padrão do SO.
+      d?.addEventListener("click", (e) => {
+        const a = (e.target as HTMLElement | null)?.closest?.("a") as HTMLAnchorElement | null;
+        const href = a?.href;
+        if (!href) return;
+        e.preventDefault();
+        if (/^https?:/i.test(href) && onAbrirLink) onAbrirLink(href);
+        else api.openUrl(href).catch(() => {});
+      });
     };
     iframe.addEventListener("load", onLoad);
     // IMPORTANTE: só re-mede quando a LARGURA muda (arrastar o splitter). Reagir
@@ -243,12 +258,20 @@ function CorpoHtml({ corpo }: { corpo: string }) {
   );
 }
 
-function CorpoMensagem({ corpo, tipo }: { corpo: string; tipo: "html" | "text" }) {
+function CorpoMensagem({
+  corpo,
+  tipo,
+  onAbrirLink,
+}: {
+  corpo: string;
+  tipo: "html" | "text";
+  onAbrirLink?: (url: string) => void;
+}) {
   const { t } = useIdioma();
   if (!corpo.trim()) {
     return <p className="text-sm text-muted-foreground">{t.controlRoom.semCorpo}</p>;
   }
-  if (tipo === "html") return <CorpoHtml corpo={corpo} />;
+  if (tipo === "html") return <CorpoHtml corpo={corpo} onAbrirLink={onAbrirLink} />;
   return (
     <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{corpo}</p>
   );
@@ -316,6 +339,97 @@ function PastaVazia({ t }: { t: ReturnType<typeof useIdioma>["t"] }) {
   );
 }
 
+/**
+ * Botão de exclusão no padrão destrutivo do app — o mesmo animated-border-button
+ * do registry @morphin usado no "Remover biblioteca": parado → processando
+ * (borda tracejada animada) → sucesso (verde, brevemente). `onExcluir` pode ser
+ * async; `onConcluir` (opcional) roda após o flash de sucesso — usado pra limpar
+ * a seleção sem cortar a animação. Cores dark vão no uso (o registry só tem claro).
+ */
+function BotaoExcluir({
+  onExcluir,
+  onConcluir,
+  rotulo,
+  rotuloProcessando,
+  rotuloConcluido,
+  size = "small",
+  className,
+}: {
+  onExcluir: () => void | Promise<void>;
+  onConcluir?: () => void;
+  rotulo: string;
+  rotuloProcessando: string;
+  rotuloConcluido: string;
+  size?: "medium" | "small" | "xsmall";
+  className?: string;
+}) {
+  const [estado, setEstado] = useState<"parado" | "processando" | "sucesso">("parado");
+
+  useEffect(() => {
+    if (estado !== "sucesso" || !onConcluir) return;
+    const id = setTimeout(onConcluir, 900);
+    return () => clearTimeout(id);
+  }, [estado, onConcluir]);
+
+  async function run() {
+    if (estado !== "parado") return;
+    setEstado("processando");
+    try {
+      // Duração mínima pra a animação (borda tracejada) ser visível mesmo quando
+      // a exclusão é otimista/instantânea — antes o botão sumia sem animar (#23).
+      await Promise.all([
+        Promise.resolve(onExcluir()),
+        new Promise((r) => setTimeout(r, 650)),
+      ]);
+      setEstado("sucesso");
+    } catch {
+      setEstado("parado");
+    }
+  }
+
+  return (
+    <AnimatedButton.Root
+      variant={estado === "sucesso" ? "success" : "error"}
+      mode="animatedBorder"
+      size={size}
+      onClick={run}
+      animateBorder={estado === "processando"}
+      showAnimatedBorder={estado === "processando"}
+      animatedBorderStyle={estado === "processando" ? "dashed" : "solid"}
+      disabled={estado !== "parado"}
+      className={cn(
+        estado === "sucesso"
+          ? "dark:border-green-500/40 dark:bg-green-950/40 dark:text-green-300 dark:hover:bg-green-950/60 dark:hover:text-green-200"
+          : "dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60",
+        className
+      )}
+    >
+      <AnimatePresence mode="popLayout">
+        <motion.div
+          key={estado === "sucesso" ? "sucesso" : "excluir"}
+          initial={false}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.4, y: 10 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+        >
+          <AnimatedButton.Icon
+            as={estado === "sucesso" ? SuccessIcon : TrashIcon}
+            className="size-4"
+            aria-hidden
+          />
+        </motion.div>
+      </AnimatePresence>
+      <TextMorph>
+        {estado === "sucesso"
+          ? rotuloConcluido
+          : estado === "processando"
+            ? rotuloProcessando
+            : rotulo}
+      </TextMorph>
+    </AnimatedButton.Root>
+  );
+}
+
 /** Contexto exibido no painel de detalhe quando há multi-seleção (c-empty-15). */
 function MultiSelecaoContexto({
   n,
@@ -324,7 +438,7 @@ function MultiSelecaoContexto({
   t,
 }: {
   n: number;
-  onExcluir: () => void;
+  onExcluir: () => void | Promise<void>;
   onLimpar: () => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
@@ -348,12 +462,14 @@ function MultiSelecaoContexto({
             <Button variant="outline" onClick={onLimpar}>
               {t.controlRoom.limparSelecao}
             </Button>
-            <Button
-              className="bg-destructive text-white hover:bg-destructive/90"
-              onClick={onExcluir}
-            >
-              <Trash2 /> {t.controlRoom.excluirSelecionados}
-            </Button>
+            <BotaoExcluir
+              size="medium"
+              onExcluir={onExcluir}
+              onConcluir={onLimpar}
+              rotulo={t.controlRoom.excluirSelecionados}
+              rotuloProcessando={t.controlRoom.excluindo}
+              rotuloConcluido={t.controlRoom.excluidos}
+            />
           </div>
         </EmptyContent>
       </Empty>
@@ -371,6 +487,42 @@ function AgendaVazia({ t }: { t: ReturnType<typeof useIdioma>["t"] }) {
         <EmptyTitle>{t.controlRoom.semEventosTitulo}</EmptyTitle>
         <EmptyDescription>{t.controlRoom.semEventos}</EmptyDescription>
       </EmptyHeader>
+    </Empty>
+  );
+}
+
+/** Falha ao carregar a agenda — distinta do "sem eventos", com o erro real e
+ *  um retry. Antes uma falha do Graph era mascarada como mês vazio (#21). */
+function AgendaErro({
+  mensagem,
+  onRetry,
+  t,
+}: {
+  mensagem: string;
+  onRetry: () => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  // Mensagem amigável na UI (o usuário não deve ver "/me/calendarView 429");
+  // o detalhe técnico vai pro console pra diagnóstico. #41
+  useEffect(() => {
+    console.warn("[agenda] falha ao carregar:", mensagem);
+  }, [mensagem]);
+  return (
+    <Empty className="py-8">
+      <EmptyHeader>
+        <EmptyMedia>
+          <CalendarClock className="size-8 text-muted-foreground" />
+        </EmptyMedia>
+        <EmptyTitle>{t.controlRoom.agendaErroTitulo}</EmptyTitle>
+        <EmptyDescription className="text-xs">
+          {t.controlRoom.agendaErroDica}
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCw /> {t.controlRoom.atualizar}
+        </Button>
+      </EmptyContent>
     </Empty>
   );
 }
@@ -458,13 +610,19 @@ function FolderSidebar({
           ativo ? "bg-secondary font-medium text-secondary-foreground" : "hover:bg-accent/50"
         )}
       >
-        <Ico className="size-4 shrink-0 text-muted-foreground" />
         {colapsada ? (
-          contagem > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-primary" />
-          )
+          // Dot ancorado ao ÍCONE (não ao botão): com o ring na cor do card ele
+          // fica dentro dos limites e o ScrollArea não corta (#37). Não-lido em
+          // Lixeira/Junk é ruído → sem dot nessas pastas.
+          <span className="relative">
+            <Ico className="size-4 shrink-0 text-muted-foreground" />
+            {contagem > 0 && p.tipo !== "deleteditems" && p.tipo !== "junkemail" && (
+              <span className="absolute -top-1 -right-1 size-2 rounded-full bg-primary ring-2 ring-card" />
+            )}
+          </span>
         ) : (
           <>
+            <Ico className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate text-left">{rotulo}</span>
             {contagem > 0 && (
               <span className="shrink-0 text-xs text-muted-foreground">{contagem}</span>
@@ -615,7 +773,7 @@ function MessageList({
   carregandoMais: boolean;
   temMais: boolean;
   onFlag: (id: string, novo: boolean) => void;
-  onExcluir: (ids: string[]) => void;
+  onExcluir: (ids: string[]) => void | Promise<void>;
   selecionados: Set<string>;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
   naoLidosPasta: number;
@@ -721,12 +879,18 @@ function MessageList({
       if (alvos.length > 0) {
         e.preventDefault();
         onExcluir(alvos);
+        // acaoExcluir não limpa mais a seleção (pro BotaoExcluir animar antes de
+        // desmontar); no atalho, limpamos aqui.
+        setSelecionados(new Set());
       }
     }
   }
 
   const idsFiltrados = filtrada.map((m) => m.id);
   const todosSel = idsFiltrados.length > 0 && idsFiltrados.every((id) => selecionados.has(id));
+  // Em "modo seleção" (≥1 marcado): checkboxes sempre visíveis e as ações de
+  // hover por linha somem — o usuário opera pela barra de seleção (#23).
+  const haSelecao = selecionados.size > 0;
 
   return (
     <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
@@ -788,17 +952,14 @@ function MessageList({
           <span className="text-xs font-medium">
             {preencher(t.controlRoom.nSelecionados, { n: selecionados.size })}
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="ml-auto text-destructive hover:bg-destructive/10 hover:text-destructive"
-            onClick={() => {
-              onExcluir([...selecionados]);
-              setSelecionados(new Set());
-            }}
-          >
-            <Trash2 /> {t.controlRoom.excluirSelecionados}
-          </Button>
+          <BotaoExcluir
+            className="ml-auto"
+            onExcluir={() => onExcluir([...selecionados])}
+            onConcluir={() => setSelecionados(new Set())}
+            rotulo={t.controlRoom.excluirSelecionados}
+            rotuloProcessando={t.controlRoom.excluindo}
+            rotuloConcluido={t.controlRoom.excluidos}
+          />
           <Button variant="ghost" size="icon-sm" onClick={() => setSelecionados(new Set())}>
             <X />
           </Button>
@@ -818,7 +979,11 @@ function MessageList({
               )}
             >
               {a.label}
-              {a.n != null && a.n > 0 && <span className="text-muted-foreground">{a.n}</span>}
+              {a.n != null && a.n > 0 && (
+                <Badge variant="primary-light" size="xs" radius="full">
+                  {a.n}
+                </Badge>
+              )}
             </button>
           ))}
         </div>
@@ -895,7 +1060,7 @@ function MessageList({
                       <label
                         className={cn(
                           "flex items-center self-start pt-1.5 transition-opacity",
-                          !marcado && "opacity-0 group-hover/row:opacity-100"
+                          !marcado && !haSelecao && "opacity-0 group-hover/row:opacity-100"
                         )}
                         onClick={(e) => e.stopPropagation()}
                       >
@@ -929,40 +1094,55 @@ function MessageList({
                           {m.sinalizado && (
                             <Flag className="size-3.5 shrink-0 fill-red-500 text-red-500" />
                           )}
-                          {/* data (some no hover) + ações rápidas (aparecem no hover) */}
-                          <span className="shrink-0 text-xs text-muted-foreground group-hover/row:hidden">
-                            {quandoCurto(m.recebido, idioma)}
-                          </span>
-                          <div
-                            className="hidden shrink-0 items-center gap-0.5 group-hover/row:flex"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => onFlag(m.id, !m.sinalizado)}
-                              className="grid size-6 place-items-center rounded hover:bg-background"
-                              aria-label={t.controlRoom.sinalizar}
+                          {/* Slot de largura fixa pra data/ações: a data fica
+                              `invisible` no hover (mantém o espaço) e as ações
+                              entram em OVERLAY absoluto — assim o card NÃO muda
+                              de tamanho ao passar o mouse (#45). Ações somem em
+                              modo seleção (#23). */}
+                          <div className="relative flex min-w-14 shrink-0 items-center justify-end self-stretch">
+                            <span
+                              className={cn(
+                                "text-xs text-muted-foreground",
+                                !haSelecao && "group-hover/row:invisible"
+                              )}
                             >
-                              <Flag
-                                className={cn(
-                                  "size-3.5",
-                                  m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
-                                )}
-                              />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onExcluir([m.id])}
-                              className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                              aria-label={t.controlRoom.excluir}
-                            >
-                              <Trash2 className="size-3.5" />
-                            </button>
+                              {quandoCurto(m.recebido, idioma)}
+                            </span>
+                            {!haSelecao && (
+                              <div
+                                className="absolute top-1/2 right-0 hidden -translate-y-1/2 items-center gap-0.5 group-hover/row:flex"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => onFlag(m.id, !m.sinalizado)}
+                                  className="grid size-6 place-items-center rounded bg-accent hover:bg-background"
+                                  aria-label={t.controlRoom.sinalizar}
+                                >
+                                  <Flag
+                                    className={cn(
+                                      "size-3.5",
+                                      m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
+                                    )}
+                                  />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onExcluir([m.id])}
+                                  className="grid size-6 place-items-center rounded bg-accent text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                  aria-label={t.controlRoom.excluir}
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </div>
                         <p className={cn("truncate text-sm", !m.lido && "font-medium")}>{m.assunto}</p>
                         <ItemDescription className="flex items-center gap-1">
-                          <span className="min-w-0 flex-1 truncate">{m.preview}</span>
+                          <span className="min-w-0 flex-1 truncate">
+                            {m.preview.replace(/\s*(?:…|\.\.\.)\s*$/, "")}
+                          </span>
                           {m.temAnexos && <Paperclip className="size-3 shrink-0" />}
                         </ItemDescription>
                       </ItemContent>
@@ -1003,6 +1183,7 @@ function MessageDetail({
   onFlag,
   onExcluir,
   onMarcarLido,
+  onAbrirLink,
   onMudou,
   t,
   idioma,
@@ -1013,6 +1194,7 @@ function MessageDetail({
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void;
   onMarcarLido: (id: string, lido: boolean) => void;
+  onAbrirLink: (url: string) => void;
   onMudou: () => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
@@ -1130,7 +1312,7 @@ function MessageDetail({
 
   const corpoInterno = (
     <div className="px-5 py-4">
-      <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} />
+      <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} onAbrirLink={onAbrirLink} />
       {det.anexos.length > 0 && (
         <>
           <Separator className="my-4" />
@@ -1233,56 +1415,65 @@ function MessageDetail({
         </div>
       </div>
 
-      {/* Corpo do e-mail + (quando compondo) painel de resposta que cresce pra cima. */}
-      {modo ? (
-        <ResizablePanelGroup autoSaveId="bridge.reply" direction="vertical" className="min-h-0 flex-1">
-          <ResizablePanel defaultSize={42} minSize={12} className="overflow-hidden">
-            <div className="h-full overflow-y-auto scrollbar-fina">{corpoInterno}</div>
-          </ResizablePanel>
-          <ResizableHandle withHandle className="my-0 bg-transparent hover:bg-border" />
-          <ResizablePanel defaultSize={58} minSize={28} className="overflow-hidden">
-            <div className="flex h-full flex-col border-t bg-muted/20">
-              <div className="flex shrink-0 items-center gap-2 px-4 py-2">
-                <span className="text-sm font-medium">
-                  {modo === "encaminhar"
-                    ? t.controlRoom.encaminhar
-                    : modo === "responderTodos"
-                      ? t.controlRoom.responderTodos
-                      : t.controlRoom.responder}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="ml-auto"
-                  onClick={() => setModo(null)}
-                  aria-label="×"
-                >
-                  <X />
-                </Button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-hidden px-4">
+      {/* Corpo do e-mail — sempre em altura cheia (sem compose espremido). */}
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina">{corpoInterno}</div>
+
+      {/* Reply / Reply all / Forward num Sheet lateral (como o New Mail): não
+          corta a toolbar do compose e deixa o e-mail original visível atrás. A
+          citação do original vai no envio (fluxo do backend). */}
+      <Sheet open={modo !== null} onOpenChange={(o) => !o && setModo(null)}>
+        <SheetContent
+          side="right"
+          className="flex w-1/2 flex-col gap-0 p-0 sm:max-w-[50vw]"
+        >
+          <SheetHeader className="border-b px-4 py-3">
+            <SheetTitle className="text-left">
+              {modo === "encaminhar"
+                ? t.controlRoom.encaminhar
+                : modo === "responderTodos"
+                  ? t.controlRoom.responderTodos
+                  : t.controlRoom.responder}
+            </SheetTitle>
+          </SheetHeader>
+          {/* Composer (editável) em cima + a mensagem original como referência
+              read-only embaixo, como todo mailclient. O original NÃO faz parte
+              do editor (edRef), então o getHtml() sai só com a resposta e o
+              backend segue anexando a citação limpa do Graph — sem duplicar. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="min-h-0 flex-[3] overflow-hidden">
+              {modo && (
                 <ComporMensagem
                   key={modo}
                   ref={comporRef}
                   mostrarDestinatarios={modo === "encaminhar"}
                   textos={textosCompose}
                 />
+              )}
+            </div>
+            <div className="flex min-h-0 flex-[2] flex-col border-t">
+              <div className="flex shrink-0 items-center gap-2 bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground">
+                <Reply className="size-3 shrink-0" />
+                <span className="font-medium">{t.controlRoom.mensagemOriginal}</span>
+                <span className="ml-auto truncate">
+                  {det.de} · {new Date(comZ(det.recebido)).toLocaleString(idioma)}
+                </span>
               </div>
-              <div className="flex shrink-0 justify-end gap-2 px-4 py-2">
-                <Button variant="ghost" onClick={() => setModo(null)} disabled={enviando}>
-                  {t.controlRoom.cancelar}
-                </Button>
-                <Button onClick={enviar} disabled={enviando}>
-                  {enviando ? <Spinner className="size-4" /> : <Send />}
-                  {t.controlRoom.enviar}
-                </Button>
+              <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina">
+                <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} onAbrirLink={onAbrirLink} />
               </div>
             </div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina">{corpoInterno}</div>
-      )}
+          </div>
+          <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
+            <Button variant="ghost" onClick={() => setModo(null)} disabled={enviando}>
+              {t.controlRoom.cancelar}
+            </Button>
+            <Button onClick={enviar} disabled={enviando}>
+              {enviando ? <Spinner className="size-4" /> : <Send />}
+              {t.controlRoom.enviar}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </section>
   );
 }
@@ -1339,6 +1530,11 @@ function AgendaConteudo({
 }) {
   const [dia, setDia] = useState<Date>(() => new Date());
   const [mesEventos, setMesEventos] = useState<EventoAgenda[] | null>(null);
+  // Erro de carga separado do "vazio": sem isso, uma falha do Graph
+  // (403 de escopo, rede, etc.) virava um mês "sem eventos" idêntico ao real,
+  // mascarando o problema (#21). `recargaAgenda` re-dispara o fetch no retry.
+  const [erroAgenda, setErroAgenda] = useState<string | null>(null);
+  const [recargaAgenda, setRecargaAgenda] = useState(0);
 
   const chaveDia = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 
@@ -1355,11 +1551,24 @@ function AgendaConteudo({
   useEffect(() => {
     let vivo = true;
     setMesEventos(null);
-    api.crAgenda(mesIni, mesFim).then((d) => vivo && setMesEventos(d)).catch(() => vivo && setMesEventos([]));
+    setErroAgenda(null);
+    api
+      .crAgenda(mesIni, mesFim)
+      .then((d) => {
+        if (vivo) setMesEventos(d);
+      })
+      .catch((e) => {
+        // Surface o erro real (ex.: "/me/calendarView retornou 403") em vez de
+        // fingir "sem eventos".
+        if (vivo) {
+          setErroAgenda(String(e));
+          setMesEventos([]);
+        }
+      });
     return () => {
       vivo = false;
     };
-  }, [mesIni, mesFim]);
+  }, [mesIni, mesFim, recargaAgenda]);
 
   // Cores reais das categorias do Outlook (nome -> hex), carregadas uma vez.
   const [coresCat, setCoresCat] = useState<Map<string, string>>(new Map());
@@ -1383,6 +1592,19 @@ function AgendaConteudo({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mesEventos, dia]);
+
+  // Dias que têm compromisso — pra marcar com um pontinho no calendário (o
+  // schedule-8 antigo mostrava; o c-calendar-22 não, e sem isso o usuário não
+  // acha os dias com evento e acha que "não carregou").
+  const diasComEvento = useMemo(() => {
+    const s = new Set<string>();
+    for (const ev of mesEventos ?? []) {
+      const d = new Date(comZ(ev.inicio));
+      if (!Number.isNaN(d.getTime())) s.add(chaveDia(d));
+    }
+    return s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mesEventos]);
 
   const rotuloDia = dia.toLocaleDateString(idioma, {
     day: "numeric",
@@ -1421,6 +1643,11 @@ function AgendaConteudo({
             formatWeekdayName: (d) =>
               d.toLocaleDateString(idioma, { weekday: "short" }).slice(0, 3),
           }}
+          modifiers={{ evento: (date: Date) => diasComEvento.has(chaveDia(date)) }}
+          modifiersClassNames={{
+            evento:
+              "relative after:pointer-events-none after:absolute after:bottom-1 after:left-1/2 after:size-1 after:-translate-x-1/2 after:rounded-full after:bg-primary",
+          }}
           required
         />
       </CardContent>
@@ -1430,7 +1657,13 @@ function AgendaConteudo({
         </div>
         {/* Eventos do dia — rola por dentro; empty state do dia inalterado. */}
         <div className="min-h-0 w-full flex-1 overflow-y-auto scrollbar-fina">
-          {agenda === null ? (
+          {erroAgenda ? (
+            <AgendaErro
+              mensagem={erroAgenda}
+              onRetry={() => setRecargaAgenda((n) => n + 1)}
+              t={t}
+            />
+          ) : agenda === null ? (
             <div className="flex justify-center py-8">
               <Spinner className="size-5 text-muted-foreground" />
             </div>
@@ -1501,18 +1734,18 @@ function EventoDialog({
   }, [id]);
 
   return (
-    <Dialog open={!!id} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+    <Sheet open={!!id} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="right" className="flex w-[30%] flex-col gap-0 p-0 sm:max-w-[30vw]">
         {!det ? (
-          <div className="flex justify-center py-10">
+          <div className="flex flex-1 items-center justify-center py-10">
             <Spinner className="size-6 text-muted-foreground" />
           </div>
         ) : (
           <>
-            <DialogHeader>
-              <DialogTitle className="pr-6 text-left">{det.assunto}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3 text-sm">
+            <SheetHeader className="border-b px-4 py-3">
+              <SheetTitle className="pr-6 text-left">{det.assunto}</SheetTitle>
+            </SheetHeader>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto scrollbar-fina px-4 py-4 text-sm">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <CalendarClock className="size-4 shrink-0" />
                 <span>{faixaHora(det.inicio, det.fim, idioma)}</span>
@@ -1554,13 +1787,11 @@ function EventoDialog({
               {det.corpo.trim() && (
                 <>
                   <Separator />
-                  <div className="max-h-64 overflow-auto">
-                    <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} />
-                  </div>
+                  <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} />
                 </>
               )}
             </div>
-            <DialogFooter>
+            <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
               {det.online && det.joinUrl && (
                 <Button onClick={() => api.openUrl(det.joinUrl!)}>
                   <Video /> {t.controlRoom.entrarReuniao}
@@ -1574,11 +1805,11 @@ function EventoDialog({
                   <ExternalLink /> {t.controlRoom.abrirOutlook}
                 </Button>
               )}
-            </DialogFooter>
+            </SheetFooter>
           </>
         )}
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -1661,7 +1892,13 @@ function NovaMensagemModal({
 // Tela
 // ===========================================================================
 
-export function ControlRoomScreen({ user }: { user: AppUser }) {
+export function ControlRoomScreen({
+  user,
+  onAbrirLink,
+}: {
+  user: AppUser;
+  onAbrirLink: (url: string) => void;
+}) {
   const { idioma, t } = useIdioma();
   const [pastas, setPastas] = useState<PastaEmail[] | null>(null);
   const [pastaSel, setPastaSel] = useState("inbox");
@@ -1687,8 +1924,11 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   // Contadores REAIS da pasta (não só o carregado) pras abas Flagged/Files.
   const [contFlagged, setContFlagged] = useState<number | null>(null);
   const [contAnexos, setContAnexos] = useState<number | null>(null);
-  const carregadosBuscaRef = useRef(0);
+  const proximoBuscaRef = useRef<string | null>(null);
   const carregandoMaisRef = useRef(false);
+  // pasta atual (pra closures assíncronas que precisam do valor mais novo).
+  const pastaSelRef = useRef(pastaSel);
+  pastaSelRef.current = pastaSel;
   // Âncora de paginação: nº já buscado do servidor (skip). NÃO é mensagens.length
   // — a lista encolhe ao excluir, mas o skip do Graph continua avançando.
   const carregadosRef = useRef(0);
@@ -1718,6 +1958,10 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   }, [recarga, recargaPastas]);
 
   // Contadores reais das abas Flagged/Files (na pasta inteira, via $count).
+  // Só refaz na TROCA de pasta / refresh manual — NÃO em cada recargaPastas
+  // (o polling do delete bumpava recargaPastas e os refetch em rajada resolviam
+  // fora de ordem, fazendo o count piscar 8↔15). Entre refetches, os ajustes
+  // otimistas (flag/excluir) mantêm o número certo.
   useEffect(() => {
     let vivo = true;
     setContFlagged(null);
@@ -1727,52 +1971,59 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     return () => {
       vivo = false;
     };
-  }, [pastaSel, recarga, recargaPastas]);
+  }, [pastaSel, recarga]);
 
-  // Polling leve da Inbox: baseline no mount (sem toast), depois a cada 15 min
-  // avisa por toast os e-mails novos não lidos. TODO: intervalo configurável em
-  // Settings (ver memória projeto). Roda só enquanto o Bridge está montado.
+  // Detecção central de e-mails novos na Inbox: compara o topo da lista com o
+  // último visto e dispara o toast rico (c-sonner-9). Chamada tanto pelo poll
+  // (usuário parado) QUANTO ao recarregar a lista da inbox (refresh manual).
+  // Antes o refresh só resetava o baseline sem avisar — por isso o toast "não
+  // aparecia" ao dar refresh depois de receber um e-mail (#43).
   const ultimoVistoRef = useRef<string | null>(null);
+  const notificarNovos = useCallback(
+    (ms: EmailItem[]) => {
+      if (ms.length === 0) return;
+      const anterior = ultimoVistoRef.current;
+      ultimoVistoRef.current = ms[0].recebido;
+      if (anterior === null) return; // baseline: não avisa no 1º carregamento
+      const novos = ms.filter((m) => m.recebido > anterior && !m.lido);
+      for (const m of novos.slice(0, 3)) {
+        toastMensagem({
+          nome: m.de,
+          iniciais: m.iniciais,
+          texto: `${m.assunto} — ${m.preview}`,
+          quando: quandoCurto(m.recebido, idioma),
+          rotuloResponder: t.controlRoom.responder,
+          rotuloDispensar: t.controlRoom.dispensar,
+          onResponder: () => {
+            setPastaSel("inbox");
+            setMsgSel(m.id);
+          },
+        });
+      }
+    },
+    // idioma/t só mudam ao trocar idioma; setters são estáveis.
+    [idioma, t]
+  );
+
+  // Poll leve da Inbox a cada 15 min (pega e-mail novo enquanto o usuário está
+  // parado). No mount NÃO chamamos — o efeito de mensagens já busca a inbox e
+  // semeia o baseline; um fetch duplo aqui competia e o Graph estrangulava (429).
   useEffect(() => {
     let vivo = true;
     const INTERVALO = 15 * 60 * 1000;
-    const checar = async () => {
+    const iv = setInterval(async () => {
       try {
         const msgs = await api.crFolderMensagens("inbox");
-        if (!vivo || msgs.length === 0) return;
-        const anterior = ultimoVistoRef.current;
-        ultimoVistoRef.current = msgs[0].recebido;
-        if (!anterior) return; // baseline: não avisa no primeiro carregamento
-        const novos = msgs.filter((m) => m.recebido > anterior && !m.lido);
-        for (const m of novos.slice(0, 3)) {
-          toastMensagem({
-            nome: m.de,
-            iniciais: m.iniciais,
-            texto: `${m.assunto} — ${m.preview}`,
-            quando: quandoCurto(m.recebido, idioma),
-            rotuloResponder: t.controlRoom.responder,
-            rotuloDispensar: t.controlRoom.dispensar,
-            onResponder: () => {
-              setPastaSel("inbox");
-              setMsgSel(m.id);
-            },
-          });
-        }
+        if (vivo) notificarNovos(msgs);
       } catch {
         /* silencioso: é só o aviso de novos e-mails */
       }
-    };
-    // NÃO chamamos checar() no mount de propósito: o efeito de mensagens já
-    // busca a inbox e semeia ultimoVistoRef; um fetch duplo aqui competia com
-    // ele e o Graph estrangulava (429), deixando a lista vazia até trocar de
-    // pasta. O baseline vem de lá; aqui só o intervalo.
-    const iv = setInterval(checar, INTERVALO);
+    }, INTERVALO);
     return () => {
       vivo = false;
       clearInterval(iv);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idioma]);
+  }, [notificarNovos]);
 
   async function esvaziarLixeira() {
     try {
@@ -1786,21 +2037,35 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
 
   // Ações rápidas da LISTA (sinalizar/excluir por linha ou em lote).
   // Atualizam a lista NO LUGAR (nada de recarregar tudo e perder scroll/páginas).
+  //
+  // Aplicam a AMBAS as listas (pasta + resultados de busca) — quando a busca
+  // está ativa o que aparece é `resultadosBusca`, então mutar só `mensagens`
+  // não refletia na tela (QA #1).
+  const mutarNasListas = (fn: (m: EmailItem) => EmailItem) => {
+    setMensagens((prev) => prev?.map(fn) ?? prev);
+    setResultadosBusca((prev) => prev?.map(fn) ?? prev);
+  };
+  const removerNasListas = (ids: Set<string>) => {
+    setMensagens((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
+    setResultadosBusca((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
+  };
+
   // Marca lido/não-lido (otimista, nos dois sentidos): ajusta o ponto de
   // não-lido e a contagem da pasta na hora; PATCH isRead em background com
   // rollback. Usado pelo auto-mark ao abrir e pela ação manual de "não-lido".
   function acaoMarcarLido(id: string, lido: boolean) {
-    const m = mensagens?.find((x) => x.id === id);
+    const m =
+      mensagens?.find((x) => x.id === id) ?? resultadosBusca?.find((x) => x.id === id);
     if (!m || m.lido === lido) return;
     const delta = lido ? -1 : 1; // lido → menos 1 não-lido; não-lido → mais 1
-    setMensagens((prev) => prev?.map((x) => (x.id === id ? { ...x, lido } : x)) ?? prev);
+    mutarNasListas((x) => (x.id === id ? { ...x, lido } : x));
     setPastas((prev) =>
       prev?.map((p) =>
         p.id === pastaSel ? { ...p, naoLidos: Math.max(0, p.naoLidos + delta) } : p
       ) ?? prev
     );
     api.crMarcarLido(id, lido).catch(() => {
-      setMensagens((prev) => prev?.map((x) => (x.id === id ? { ...x, lido: !lido } : x)) ?? prev);
+      mutarNasListas((x) => (x.id === id ? { ...x, lido: !lido } : x));
       setPastas((prev) =>
         prev?.map((p) =>
           p.id === pastaSel ? { ...p, naoLidos: Math.max(0, p.naoLidos - delta) } : p
@@ -1815,11 +2080,18 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [msgSel]);
 
+  // Ajustes otimistas dos contadores reais das abas (Flagged/Files), pra não
+  // ficarem estagnados enquanto o $count do servidor não reflete ainda
+  // (QA #4 flag; QA #14 excluir e-mail com anexo).
+  const ajustarContFlagged = (d: number) =>
+    setContFlagged((c) => (c === null ? c : Math.max(0, c + d)));
+  const ajustarContAnexos = (d: number) =>
+    setContAnexos((c) => (c === null ? c : Math.max(0, c + d)));
+
   async function acaoFlag(id: string, novo: boolean) {
-    // otimista: pinta o item já
-    setMensagens((prev) =>
-      prev?.map((m) => (m.id === id ? { ...m, sinalizado: novo } : m)) ?? prev
-    );
+    // otimista: pinta o item já (nas duas listas) e mexe no count da aba
+    mutarNasListas((m) => (m.id === id ? { ...m, sinalizado: novo } : m));
+    ajustarContFlagged(novo ? 1 : -1);
     try {
       await api.crMarcarEmail(id, novo);
       toastIcone(
@@ -1829,9 +2101,8 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
       );
     } catch (e) {
       // desfaz
-      setMensagens((prev) =>
-        prev?.map((m) => (m.id === id ? { ...m, sinalizado: !novo } : m)) ?? prev
-      );
+      mutarNasListas((m) => (m.id === id ? { ...m, sinalizado: !novo } : m));
+      ajustarContFlagged(novo ? -1 : 1);
       toast.error(t.controlRoom.erroAcao, { description: String(e) });
     }
   }
@@ -1839,15 +2110,23 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   async function acaoExcluir(ids: string[]) {
     if (ids.length === 0) return;
     const idsSet = new Set(ids);
-    const removidas = (mensagens ?? []).filter((m) => idsSet.has(m.id));
+    // Fonte = lista atualmente visível (pasta ou resultados de busca), pra
+    // contar não-lidos certo e remover de onde o item de fato está (QA #1).
+    const fonte = (busca.trim() !== "" ? resultadosBusca : mensagens) ?? [];
+    const removidas = fonte.filter((m) => idsSet.has(m.id));
     const naoLidosFora = removidas.filter((m) => !m.lido).length;
+    const anexosFora = removidas.filter((m) => m.temAnexos).length;
 
-    // 1) OTIMISTA: tira da tela na hora + marca como "deletada" (pro backfill
-    //    não trazê-las de volta) + toast imediato. Nada de esperar o Graph.
+    // 1) OTIMISTA: tira da tela na hora (das duas listas) + marca como
+    //    "deletada" (pro backfill não trazê-las de volta) + toast imediato.
     ids.forEach((id) => deletadasRef.current.add(id));
-    setMensagens((prev) => prev?.filter((m) => !idsSet.has(m.id)) ?? prev);
+    removerNasListas(idsSet);
+    // count real da aba Files reflete na hora (QA #14: senão piscava no refetch)
+    if (anexosFora > 0) ajustarContAnexos(-anexosFora);
     if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
-    setSelecionados(new Set());
+    // NÃO limpamos a seleção aqui: o BotaoExcluir precisa ficar montado pra
+    // completar a animação (processando → sucesso) e só então limpa via
+    // onConcluir. Os outros gatilhos (atalho Delete) limpam explicitamente (#23).
 
     // 2) Contagens do sidebar já refletem: pasta atual −N (e −não lidos),
     //    Lixeira +N (a menos que a exclusão seja dentro da própria Lixeira).
@@ -1879,12 +2158,21 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     // 4) Exclusão real em background + reconcile. Se algum falhar, avisa e
     //    recarrega a pasta pra ressincronizar (o item volta se não saiu).
     (async () => {
+      // Enquanto a exclusão roda, vai atualizando as contagens (a Lixeira
+      // "preenchendo") — e a lista da Lixeira se o usuário estiver vendo ela —
+      // pra não ficar parado até o fim (o move é sequencial e pode demorar).
+      const pulso = setInterval(() => {
+        setRecargaPastas((x) => x + 1);
+        if (pastaSelRef.current === "deleteditems") setRecarga((x) => x + 1);
+      }, 2500);
       let ok: string[] = [];
       try {
         // Dentro da própria Lixeira = exclusão definitiva; senão move pra Lixeira.
         ok = await api.crExcluirEmails(ids, pastaSel === "deleteditems");
       } catch {
         ok = [];
+      } finally {
+        clearInterval(pulso);
       }
       const falharam = ids.filter((id) => !ok.includes(id));
       if (falharam.length > 0) {
@@ -1893,6 +2181,7 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
         setRecarga((n) => n + 1); // ressincroniza lista + contagens do zero
       } else {
         setRecargaPastas((x) => x + 1); // reconcilia contagens reais
+        if (pastaSelRef.current === "deleteditems") setRecarga((x) => x + 1);
       }
     })();
   }
@@ -1919,12 +2208,17 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
         // senão pega a primeira.
         setMsgSel((cur) => (cur && ms.some((m) => m.id === cur) ? cur : (ms[0]?.id ?? null)));
         setTemMais(ms.length === PAGINA);
-        if (pastaSel === "inbox" && ms[0]) ultimoVistoRef.current = ms[0].recebido;
+        // Inbox: detecta e avisa e-mails novos (também no refresh manual) — não
+        // só reseta o baseline. O 1º carregamento apenas semeia (sem toast). #43
+        if (pastaSel === "inbox") notificarNovos(ms);
       })
       .catch(() => vivo && setMensagens([]));
     return () => {
       vivo = false;
     };
+    // notificarNovos é estável (useCallback [idioma,t]); fora das deps de
+    // propósito pra não recarregar a lista ao trocar idioma.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastaSel, recarga]);
 
   // Pré-carga: busca a próxima página do servidor pela âncora (skip = já
@@ -1968,13 +2262,13 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     }
     const id = setTimeout(() => {
       setResultadosBusca(null); // null = mostra o spinner de carregando
-      carregadosBuscaRef.current = 0;
+      proximoBuscaRef.current = null;
       api
-        .crBuscar(pastaSel, termo, 0)
+        .crBuscar(pastaSel, termo)
         .then((res) => {
-          carregadosBuscaRef.current = res.length;
-          setResultadosBusca(res.filter((m) => !deletadasRef.current.has(m.id)));
-          setTemMaisBusca(res.length === PAGINA);
+          proximoBuscaRef.current = res.proximo;
+          setResultadosBusca(res.itens.filter((m) => !deletadasRef.current.has(m.id)));
+          setTemMaisBusca(res.proximo !== null);
         })
         .catch(() => {
           setResultadosBusca([]);
@@ -1984,17 +2278,19 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     return () => clearTimeout(id);
   }, [busca, pastaSel]);
 
-  // Paginação dos resultados de busca (skip por âncora, dedup igual à pasta).
+  // Paginação dos resultados de busca via @odata.nextLink (o Graph não aceita
+  // $skip com $search); dedup igual à pasta.
   async function carregarMaisBusca() {
     const termo = busca.trim();
-    if (carregandoMaisRef.current || !termo || !temMaisBusca) return;
+    const proximo = proximoBuscaRef.current;
+    if (carregandoMaisRef.current || !termo || !proximo) return;
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
     try {
-      const res = await api.crBuscar(pastaSel, termo, carregadosBuscaRef.current);
-      carregadosBuscaRef.current += res.length;
-      setResultadosBusca((prev) => juntar(prev ?? [], res));
-      setTemMaisBusca(res.length === PAGINA);
+      const res = await api.crBuscar(pastaSel, termo, proximo);
+      proximoBuscaRef.current = res.proximo;
+      setResultadosBusca((prev) => juntar(prev ?? [], res.itens));
+      setTemMaisBusca(res.proximo !== null);
     } catch {
       /* silencioso */
     } finally {
@@ -2084,10 +2380,7 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
             {selecionados.size > 0 ? (
               <MultiSelecaoContexto
                 n={selecionados.size}
-                onExcluir={() => {
-                  acaoExcluir([...selecionados]);
-                  setSelecionados(new Set());
-                }}
+                onExcluir={() => acaoExcluir([...selecionados])}
                 onLimpar={() => setSelecionados(new Set())}
                 t={t}
               />
@@ -2099,6 +2392,7 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
                 onFlag={acaoFlag}
                 onExcluir={acaoExcluir}
                 onMarcarLido={acaoMarcarLido}
+                onAbrirLink={onAbrirLink}
                 onMudou={() => setRecargaPastas((n) => n + 1)}
                 t={t}
                 idioma={idioma}

@@ -33,7 +33,7 @@ import { TELAS, type Tela } from "@/lib/navegacao";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
-import { comLoginHint } from "@/lib/utils";
+import { cn, comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
 
 export default function App() {
@@ -195,7 +195,8 @@ export default function App() {
     if (abaAtiva === id) {
       const prox = resto[resto.length - 1];
       setAbaAtiva(prox ? prox.id : null);
-      if (!prox) setTela("apps"); // sem abas, volta para a lista de apps
+      // Sem abas: permanece no Navigator com a aba em branco (Launcher), em vez
+      // de chutar o usuário para a lista de Apps (#24).
     }
   }
 
@@ -323,6 +324,33 @@ export default function App() {
         {/* O navegador fica FORA do ScrollArea, em tela cheia e sem padding: o
             webview nativo ocupa toda a area medida, e quem rola e a propria
             pagina web, nao o nosso ScrollArea. */}
+        {/* Control room = cliente de e-mail: fica SEMPRE montado (keep-alive) e
+            apenas escondido quando não é a tela ativa. Antes ele desmontava ao
+            trocar de área e remontava ao voltar, recarregando tudo do Graph (e
+            vazando listeners/intervals a cada volta — "cada vez mais lento").
+            Mantendo montado, o estado (pastas, mensagens, scroll, iframes)
+            persiste e o retorno é instantâneo (#25). Fora do ScrollArea externo,
+            altura cheia, cada painel rola por dentro (como o navegador). */}
+        <div
+          className={cn(
+            "relative z-10 min-h-0 flex-1 p-4 pt-0",
+            tela !== "control-room" && "hidden"
+          )}
+        >
+          <ControlRoomScreen
+            user={user}
+            onAbrirLink={(url) => {
+              let nome = url;
+              try {
+                nome = new URL(url).hostname || url;
+              } catch {
+                /* url estranha: usa a própria string */
+              }
+              abrirUrlLivre(url, nome);
+            }}
+          />
+        </div>
+
         {tela === "navegador" ? (
           <div className="relative z-10 min-h-0 flex-1">
             <NavegadorScreen
@@ -335,13 +363,7 @@ export default function App() {
               onNavegar={abrirUrlLivre}
             />
           </div>
-        ) : tela === "control-room" ? (
-          /* Control room = cliente de e-mail: ocupa a altura toda e cada painel
-             rola por dentro (fora do ScrollArea externo, como o navegador). */
-          <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
-            <ControlRoomScreen user={user} />
-          </div>
-        ) : (
+        ) : tela === "control-room" ? null : (
         /* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
             design system em vez da nativa do sistema.
             min-h-0: sem isso o flex-1 nao encolhe abaixo do conteudo e nao

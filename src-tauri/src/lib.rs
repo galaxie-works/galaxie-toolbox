@@ -460,12 +460,14 @@ async fn cr_buscar(
     state: State<'_, Store>,
     folder_id: String,
     termo: String,
-    skip: u32,
-) -> Result<Vec<graph::EmailItem>, String> {
+    next_link: Option<String>,
+) -> Result<graph::BuscaPagina, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_buscar(&store, &folder_id, &termo, skip))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_buscar(&store, &folder_id, &termo, next_link)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: conta na pasta inteira as mensagens que batem com um filtro

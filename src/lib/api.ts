@@ -553,17 +553,31 @@ export async function crMarcarLido(id: string, lido: boolean): Promise<void> {
   return invoke<void>("cr_marcar_lido", { id, lido });
 }
 
-/** Busca mensagens numa pasta pelo termo (busca no servidor, páginas de 50). */
+/** Uma página de resultados de busca: os itens e a URL de continuação. */
+export interface BuscaPagina {
+  itens: EmailItem[];
+  /** `@odata.nextLink` do Graph para pedir a próxima página; `null` na última. */
+  proximo: string | null;
+}
+
+/**
+ * Busca mensagens numa pasta pelo termo (busca no servidor, páginas de 50).
+ *
+ * Paginação por CONTINUAÇÃO: o $search do Graph não aceita $skip, então a
+ * próxima página é pedida com o `nextLink` devolvido em `proximo`. Chame sem
+ * `nextLink` para a 1ª página; passe `proximo` de volta para as seguintes. A
+ * última página vem com `proximo: null`.
+ */
 export async function crBuscar(
   folderId: string,
   termo: string,
-  skip = 0
-): Promise<EmailItem[]> {
+  nextLink?: string | null
+): Promise<BuscaPagina> {
   if (!inTauri()) {
     await sleep(400);
-    return [];
+    return { itens: [], proximo: null };
   }
-  return invoke<EmailItem[]>("cr_buscar", { folderId, termo, skip });
+  return invoke<BuscaPagina>("cr_buscar", { folderId, termo, nextLink });
 }
 
 /**
