@@ -1682,21 +1682,41 @@ fn montar_email_item(it: &serde_json::Value, saida: bool) -> EmailItem {
 
 /// Mensagens de uma pasta (até 50, mais recentes primeiro). Mail.Read.
 /// Em Enviados/Rascunhos o "de" vira o destinatário (faz mais sentido na lista).
+/// Mapeia a chave de ordenação do front para o campo $orderby do Graph. Data
+/// respeita a pasta (enviados/rascunhos ordenam por envio). "type" do Outlook
+/// não é sortável no Graph → cai no default (data). Só campos que o Graph aceita
+/// em $orderby de mensagens.
+fn campo_ordenacao(folder_id: &str, chave: &str) -> &'static str {
+    let saida = matches!(folder_id, "sentitems" | "drafts");
+    let data = if saida { "sentDateTime" } else { "receivedDateTime" };
+    match chave {
+        "remetente" => "from/emailAddress/name",
+        "assunto" => "subject",
+        "tamanho" => "size",
+        "importancia" => "importance",
+        "flag" => "flag/flagStatus",
+        _ => data, // "data" e qualquer desconhecido
+    }
+}
+
 pub fn cr_folder_mensagens(
     store: &TokenStore,
     folder_id: &str,
     skip: u32,
+    ordenar: &str,
+    descendente: bool,
 ) -> Result<Vec<EmailItem>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
-    let ordenar = if saida { "sentDateTime" } else { "receivedDateTime" };
+    let campo = campo_ordenacao(folder_id, ordenar);
+    let dir = if descendente { "desc" } else { "asc" };
     // Página de 50, com $skip para o lazy load (rolar até o fim carrega mais).
     let url = format!(
         "{GRAPH}/me/mailFolders/{folder_id}/messages\
          ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
-         &$orderby={ordenar} desc&$top=50&$skip={skip}"
+         &$orderby={campo} {dir}&$top=50&$skip={skip}"
     );
     // Retry no 429: na abertura o app dispara várias chamadas Graph juntas
     // (pastas + mensagens + agenda + categorias) e a Inbox vinha vazia quando
