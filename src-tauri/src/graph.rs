@@ -2000,9 +2000,9 @@ pub fn cr_filtrar(
                 break;
             }
             Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
-                let espera = retry_after_secs(&r, 1, 5);
-                log::warn!("[mail] filtro '{filtro}' em '{folder_id}' 429; retry em {espera}s");
-                std::thread::sleep(std::time::Duration::from_secs(espera));
+                let espera = espera_backoff_ms(&r, tentativa, 5);
+                log::warn!("[mail] filtro '{filtro}' em '{folder_id}' 429; retry em {espera}ms");
+                std::thread::sleep(std::time::Duration::from_millis(espera));
             }
             Ok(r) if r.status().as_u16() == 400 => {
                 // Tenant não suporta este filtro → sentinela pro front esconder
