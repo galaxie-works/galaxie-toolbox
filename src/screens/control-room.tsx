@@ -1088,45 +1088,49 @@ function MessageList({
                           {m.sinalizado && (
                             <Flag className="size-3.5 shrink-0 fill-red-500 text-red-500" />
                           )}
-                          {/* data (some no hover só fora do modo seleção) +
-                              ações rápidas (aparecem no hover; escondidas em
-                              modo seleção — o usuário opera pela barra) (#23) */}
-                          <span
-                            className={cn(
-                              "shrink-0 text-xs text-muted-foreground",
-                              !haSelecao && "group-hover/row:hidden"
-                            )}
-                          >
-                            {quandoCurto(m.recebido, idioma)}
-                          </span>
-                          {!haSelecao && (
-                            <div
-                              className="hidden shrink-0 items-center gap-0.5 group-hover/row:flex"
-                              onClick={(e) => e.stopPropagation()}
+                          {/* Slot de largura fixa pra data/ações: a data fica
+                              `invisible` no hover (mantém o espaço) e as ações
+                              entram em OVERLAY absoluto — assim o card NÃO muda
+                              de tamanho ao passar o mouse (#45). Ações somem em
+                              modo seleção (#23). */}
+                          <div className="relative flex min-w-14 shrink-0 items-center justify-end self-stretch">
+                            <span
+                              className={cn(
+                                "text-xs text-muted-foreground",
+                                !haSelecao && "group-hover/row:invisible"
+                              )}
                             >
-                              <button
-                                type="button"
-                                onClick={() => onFlag(m.id, !m.sinalizado)}
-                                className="grid size-6 place-items-center rounded hover:bg-background"
-                                aria-label={t.controlRoom.sinalizar}
+                              {quandoCurto(m.recebido, idioma)}
+                            </span>
+                            {!haSelecao && (
+                              <div
+                                className="absolute top-1/2 right-0 hidden -translate-y-1/2 items-center gap-0.5 group-hover/row:flex"
+                                onClick={(e) => e.stopPropagation()}
                               >
-                                <Flag
-                                  className={cn(
-                                    "size-3.5",
-                                    m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
-                                  )}
-                                />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => onExcluir([m.id])}
-                                className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                                aria-label={t.controlRoom.excluir}
-                              >
-                                <Trash2 className="size-3.5" />
-                              </button>
-                            </div>
-                          )}
+                                <button
+                                  type="button"
+                                  onClick={() => onFlag(m.id, !m.sinalizado)}
+                                  className="grid size-6 place-items-center rounded bg-accent hover:bg-background"
+                                  aria-label={t.controlRoom.sinalizar}
+                                >
+                                  <Flag
+                                    className={cn(
+                                      "size-3.5",
+                                      m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
+                                    )}
+                                  />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => onExcluir([m.id])}
+                                  className="grid size-6 place-items-center rounded bg-accent text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                  aria-label={t.controlRoom.excluir}
+                                >
+                                  <Trash2 className="size-3.5" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                         <p className={cn("truncate text-sm", !m.lido && "font-medium")}>{m.assunto}</p>
                         <ItemDescription className="flex items-center gap-1">
