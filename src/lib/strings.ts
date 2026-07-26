@@ -59,6 +59,8 @@ const pt = {
     caminhosLongos: "Caminhos longos",
     configuracoes: "Configurações",
     conta: "Conta",
+    // Agenda vive no rodapé do sidebar, seção separada da caixa de entrada (#50).
+    agenda: "Agenda",
     irPara365: "Ir para Microsoft 365",
     sharepoint: "SharePoint",
     sair: "Sair",
@@ -396,6 +398,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     caminhosLongos: "Long paths",
     configuracoes: "Settings",
     conta: "Account",
+    // Agenda lives at the bottom of the sidebar, a section apart from the inbox (#50).
+    agenda: "Agenda",
     irPara365: "Go to Microsoft 365",
     sharepoint: "SharePoint",
     sair: "Sign out",

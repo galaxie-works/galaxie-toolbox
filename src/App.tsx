@@ -32,6 +32,7 @@ import {
 import { TELAS, type Tela } from "@/lib/navegacao";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
+import { usePersistedState } from "@/lib/persist";
 import { useIdioma } from "@/lib/idioma";
 import { cn, comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
@@ -49,6 +50,11 @@ export default function App() {
   // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
   const [abas, setAbas] = useState<AbaBrowser[]>([]);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
+  // Visibilidade do card da Agenda (lado direito do Bridge). Mora aqui, no App,
+  // porque o TOGGLE virou item do sidebar esquerdo (#50) e o card vive dentro do
+  // ControlRoomScreen — os dois precisam do mesmo estado. Mantém a chave antiga
+  // ("bridge.agenda") pra preservar a preferência já persistida do usuário.
+  const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agenda", true);
 
   useEffect(() => {
     let vivo = true;
@@ -208,6 +214,21 @@ export default function App() {
     }
   }
 
+  /**
+   * Toggle da Agenda a partir do item do sidebar (#50). Abrir também leva ao
+   * Bridge, onde o card é exibido (lado direito) — senão o botão ficaria
+   * "selecionado" sem nada visível. Fechar quando já visível apenas esconde e
+   * volta ao normal (lista+detalhe ocupam a largura toda).
+   */
+  function alternarAgenda() {
+    if (agendaAberta && tela === "control-room") {
+      setAgendaAberta(false);
+    } else {
+      setAgendaAberta(true);
+      setTela("control-room");
+    }
+  }
+
   async function logout() {
     await api.logout();
     setUser(null);
@@ -271,6 +292,8 @@ export default function App() {
         onNavegar={setTela}
         onLogout={logout}
         onAbrirUrl={abrirUrl}
+        agendaAberta={agendaAberta}
+        onToggleAgenda={alternarAgenda}
       />
       <SidebarInset className="relative overflow-hidden">
         <Estrelas className="pointer-events-none" />
@@ -339,6 +362,7 @@ export default function App() {
         >
           <ControlRoomScreen
             user={user}
+            agendaAberta={agendaAberta}
             onAbrirLink={(url) => {
               let nome = url;
               try {
