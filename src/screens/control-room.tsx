@@ -1266,56 +1266,47 @@ function MessageDetail({
         </div>
       </div>
 
-      {/* Corpo do e-mail + (quando compondo) painel de resposta que cresce pra cima. */}
-      {modo ? (
-        <ResizablePanelGroup autoSaveId="bridge.reply" direction="vertical" className="min-h-0 flex-1">
-          <ResizablePanel defaultSize={42} minSize={12} className="overflow-hidden">
-            <div className="h-full overflow-y-auto scrollbar-fina">{corpoInterno}</div>
-          </ResizablePanel>
-          <ResizableHandle withHandle className="my-0 bg-transparent hover:bg-border" />
-          <ResizablePanel defaultSize={58} minSize={28} className="overflow-hidden">
-            <div className="flex h-full flex-col border-t bg-muted/20">
-              <div className="flex shrink-0 items-center gap-2 px-4 py-2">
-                <span className="text-sm font-medium">
-                  {modo === "encaminhar"
-                    ? t.controlRoom.encaminhar
-                    : modo === "responderTodos"
-                      ? t.controlRoom.responderTodos
-                      : t.controlRoom.responder}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="ml-auto"
-                  onClick={() => setModo(null)}
-                  aria-label="×"
-                >
-                  <X />
-                </Button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-hidden px-4">
-                <ComporMensagem
-                  key={modo}
-                  ref={comporRef}
-                  mostrarDestinatarios={modo === "encaminhar"}
-                  textos={textosCompose}
-                />
-              </div>
-              <div className="flex shrink-0 justify-end gap-2 px-4 py-2">
-                <Button variant="ghost" onClick={() => setModo(null)} disabled={enviando}>
-                  {t.controlRoom.cancelar}
-                </Button>
-                <Button onClick={enviar} disabled={enviando}>
-                  {enviando ? <Spinner className="size-4" /> : <Send />}
-                  {t.controlRoom.enviar}
-                </Button>
-              </div>
-            </div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      ) : (
-        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina">{corpoInterno}</div>
-      )}
+      {/* Corpo do e-mail — sempre em altura cheia (sem compose espremido). */}
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina">{corpoInterno}</div>
+
+      {/* Reply / Reply all / Forward num Sheet lateral (como o New Mail): não
+          corta a toolbar do compose e deixa o e-mail original visível atrás. A
+          citação do original vai no envio (fluxo do backend). */}
+      <Sheet open={modo !== null} onOpenChange={(o) => !o && setModo(null)}>
+        <SheetContent
+          side="right"
+          className="flex w-1/2 flex-col gap-0 p-0 sm:max-w-[50vw]"
+        >
+          <SheetHeader className="border-b px-4 py-3">
+            <SheetTitle className="text-left">
+              {modo === "encaminhar"
+                ? t.controlRoom.encaminhar
+                : modo === "responderTodos"
+                  ? t.controlRoom.responderTodos
+                  : t.controlRoom.responder}
+            </SheetTitle>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {modo && (
+              <ComporMensagem
+                key={modo}
+                ref={comporRef}
+                mostrarDestinatarios={modo === "encaminhar"}
+                textos={textosCompose}
+              />
+            )}
+          </div>
+          <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
+            <Button variant="ghost" onClick={() => setModo(null)} disabled={enviando}>
+              {t.controlRoom.cancelar}
+            </Button>
+            <Button onClick={enviar} disabled={enviando}>
+              {enviando ? <Spinner className="size-4" /> : <Send />}
+              {t.controlRoom.enviar}
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </section>
   );
 }
