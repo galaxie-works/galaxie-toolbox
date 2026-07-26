@@ -54,6 +54,9 @@ Mapeamentos para os campos do board:
 - **MoSCoW → Priority**: Must→P0 · Should→P1 · Could→P2.
 - **Sprint** conforme o roadmap.
 
+## 3.1 Dúvidas de UI/UX/design → subagente de UX Research
+Para **dúvidas de design** (padrão de componente, comportamento de interação, hierarquia visual, quando mostrar/esconder algo), **não decida sozinho por achismo**: levante um **subagente** com skill global de **UX Research** (ex.: `ux-researcher-designer`, `design:user-research`, `design:design-critique`, `product-designer`) pra embasar a recomendação, e traga a conclusão pro PO validar. Continua valendo a regra "não inventar UI" (usar componentes reui literais do registry).
+
 ## 4. Fluxo de desenvolvimento (padrão exemplar)
 - **Assignee `galaxie-works`** em TODA issue criada.
 - **Branch por issue** criada ANTES de editar, PR atrelado com `Closes #N`.
