@@ -1687,7 +1687,7 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   // Contadores REAIS da pasta (não só o carregado) pras abas Flagged/Files.
   const [contFlagged, setContFlagged] = useState<number | null>(null);
   const [contAnexos, setContAnexos] = useState<number | null>(null);
-  const carregadosBuscaRef = useRef(0);
+  const proximoBuscaRef = useRef<string | null>(null);
   const carregandoMaisRef = useRef(false);
   // Âncora de paginação: nº já buscado do servidor (skip). NÃO é mensagens.length
   // — a lista encolhe ao excluir, mas o skip do Graph continua avançando.
@@ -1786,21 +1786,35 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
 
   // Ações rápidas da LISTA (sinalizar/excluir por linha ou em lote).
   // Atualizam a lista NO LUGAR (nada de recarregar tudo e perder scroll/páginas).
+  //
+  // Aplicam a AMBAS as listas (pasta + resultados de busca) — quando a busca
+  // está ativa o que aparece é `resultadosBusca`, então mutar só `mensagens`
+  // não refletia na tela (QA #1).
+  const mutarNasListas = (fn: (m: EmailItem) => EmailItem) => {
+    setMensagens((prev) => prev?.map(fn) ?? prev);
+    setResultadosBusca((prev) => prev?.map(fn) ?? prev);
+  };
+  const removerNasListas = (ids: Set<string>) => {
+    setMensagens((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
+    setResultadosBusca((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
+  };
+
   // Marca lido/não-lido (otimista, nos dois sentidos): ajusta o ponto de
   // não-lido e a contagem da pasta na hora; PATCH isRead em background com
   // rollback. Usado pelo auto-mark ao abrir e pela ação manual de "não-lido".
   function acaoMarcarLido(id: string, lido: boolean) {
-    const m = mensagens?.find((x) => x.id === id);
+    const m =
+      mensagens?.find((x) => x.id === id) ?? resultadosBusca?.find((x) => x.id === id);
     if (!m || m.lido === lido) return;
     const delta = lido ? -1 : 1; // lido → menos 1 não-lido; não-lido → mais 1
-    setMensagens((prev) => prev?.map((x) => (x.id === id ? { ...x, lido } : x)) ?? prev);
+    mutarNasListas((x) => (x.id === id ? { ...x, lido } : x));
     setPastas((prev) =>
       prev?.map((p) =>
         p.id === pastaSel ? { ...p, naoLidos: Math.max(0, p.naoLidos + delta) } : p
       ) ?? prev
     );
     api.crMarcarLido(id, lido).catch(() => {
-      setMensagens((prev) => prev?.map((x) => (x.id === id ? { ...x, lido: !lido } : x)) ?? prev);
+      mutarNasListas((x) => (x.id === id ? { ...x, lido: !lido } : x));
       setPastas((prev) =>
         prev?.map((p) =>
           p.id === pastaSel ? { ...p, naoLidos: Math.max(0, p.naoLidos - delta) } : p
@@ -1815,11 +1829,15 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [msgSel]);
 
+  // Ajuste otimista do contador real de Flagged (aba), pra não ficar estagnado
+  // ao (des)sinalizar enquanto o $count do servidor não reflete ainda (QA #4).
+  const ajustarContFlagged = (d: number) =>
+    setContFlagged((c) => (c === null ? c : Math.max(0, c + d)));
+
   async function acaoFlag(id: string, novo: boolean) {
-    // otimista: pinta o item já
-    setMensagens((prev) =>
-      prev?.map((m) => (m.id === id ? { ...m, sinalizado: novo } : m)) ?? prev
-    );
+    // otimista: pinta o item já (nas duas listas) e mexe no count da aba
+    mutarNasListas((m) => (m.id === id ? { ...m, sinalizado: novo } : m));
+    ajustarContFlagged(novo ? 1 : -1);
     try {
       await api.crMarcarEmail(id, novo);
       toastIcone(
@@ -1829,9 +1847,8 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
       );
     } catch (e) {
       // desfaz
-      setMensagens((prev) =>
-        prev?.map((m) => (m.id === id ? { ...m, sinalizado: !novo } : m)) ?? prev
-      );
+      mutarNasListas((m) => (m.id === id ? { ...m, sinalizado: !novo } : m));
+      ajustarContFlagged(novo ? -1 : 1);
       toast.error(t.controlRoom.erroAcao, { description: String(e) });
     }
   }
@@ -1839,13 +1856,16 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   async function acaoExcluir(ids: string[]) {
     if (ids.length === 0) return;
     const idsSet = new Set(ids);
-    const removidas = (mensagens ?? []).filter((m) => idsSet.has(m.id));
+    // Fonte = lista atualmente visível (pasta ou resultados de busca), pra
+    // contar não-lidos certo e remover de onde o item de fato está (QA #1).
+    const fonte = (busca.trim() !== "" ? resultadosBusca : mensagens) ?? [];
+    const removidas = fonte.filter((m) => idsSet.has(m.id));
     const naoLidosFora = removidas.filter((m) => !m.lido).length;
 
-    // 1) OTIMISTA: tira da tela na hora + marca como "deletada" (pro backfill
-    //    não trazê-las de volta) + toast imediato. Nada de esperar o Graph.
+    // 1) OTIMISTA: tira da tela na hora (das duas listas) + marca como
+    //    "deletada" (pro backfill não trazê-las de volta) + toast imediato.
     ids.forEach((id) => deletadasRef.current.add(id));
-    setMensagens((prev) => prev?.filter((m) => !idsSet.has(m.id)) ?? prev);
+    removerNasListas(idsSet);
     if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
     setSelecionados(new Set());
 
@@ -1968,13 +1988,13 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     }
     const id = setTimeout(() => {
       setResultadosBusca(null); // null = mostra o spinner de carregando
-      carregadosBuscaRef.current = 0;
+      proximoBuscaRef.current = null;
       api
-        .crBuscar(pastaSel, termo, 0)
+        .crBuscar(pastaSel, termo)
         .then((res) => {
-          carregadosBuscaRef.current = res.length;
-          setResultadosBusca(res.filter((m) => !deletadasRef.current.has(m.id)));
-          setTemMaisBusca(res.length === PAGINA);
+          proximoBuscaRef.current = res.proximo;
+          setResultadosBusca(res.itens.filter((m) => !deletadasRef.current.has(m.id)));
+          setTemMaisBusca(res.proximo !== null);
         })
         .catch(() => {
           setResultadosBusca([]);
@@ -1984,17 +2004,19 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     return () => clearTimeout(id);
   }, [busca, pastaSel]);
 
-  // Paginação dos resultados de busca (skip por âncora, dedup igual à pasta).
+  // Paginação dos resultados de busca via @odata.nextLink (o Graph não aceita
+  // $skip com $search); dedup igual à pasta.
   async function carregarMaisBusca() {
     const termo = busca.trim();
-    if (carregandoMaisRef.current || !termo || !temMaisBusca) return;
+    const proximo = proximoBuscaRef.current;
+    if (carregandoMaisRef.current || !termo || !proximo) return;
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
     try {
-      const res = await api.crBuscar(pastaSel, termo, carregadosBuscaRef.current);
-      carregadosBuscaRef.current += res.length;
-      setResultadosBusca((prev) => juntar(prev ?? [], res));
-      setTemMaisBusca(res.length === PAGINA);
+      const res = await api.crBuscar(pastaSel, termo, proximo);
+      proximoBuscaRef.current = res.proximo;
+      setResultadosBusca((prev) => juntar(prev ?? [], res.itens));
+      setTemMaisBusca(res.proximo !== null);
     } catch {
       /* silencioso */
     } finally {
