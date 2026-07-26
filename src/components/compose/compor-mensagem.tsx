@@ -1,7 +1,9 @@
 import {
   forwardRef,
   useCallback,
+  useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -195,45 +197,38 @@ export const ComporMensagem = forwardRef<
   const [cco, setCco] = useState<string[]>([]);
   const [assunto, setAssunto] = useState(assuntoInicial);
   const [mostrarCcCco, setMostrarCcCco] = useState(false);
-  const [anexos, setAnexos] = useState<AnexoEnvio[]>([]);
   const [compartilhando, setCompartilhando] = useState(false);
 
   // O uploader (c-file-upload-9) é a fonte da lista visível; `anexos` (o que vai
-  // no envio) é derivado dele. Como base64 é assíncrono, guardamos cada anexo já
-  // convertido num cache por id de arquivo e reconstruímos `anexos` na ordem dos
-  // arquivos sempre que a lista muda (adicionar/remover/limpar).
-  const arquivosRef = useRef<FileWithPreview[]>([]);
+  // no envio) é DERIVADO de forma síncrona a partir de `arquivos` (o estado do
+  // uploader, fonte da verdade de ordem/pertencimento) casado com um cache
+  // estável por id de arquivo. Como o base64 é assíncrono, cada conversão grava
+  // no cache por id e bumpa `cacheVersao` para reprojetar `anexos` na próxima
+  // renderização — sem depender de nenhum ref de lista possivelmente defasado,
+  // que era a fonte da corrida entre o picker do Tauri e a sincronização.
   const anexosCacheRef = useRef<Map<string, AnexoEnvio>>(new Map());
+  const [cacheVersao, setCacheVersao] = useState(0);
 
-  const sincronizarAnexos = useCallback((lista: FileWithPreview[]) => {
-    const ids = new Set(lista.map((f) => f.id));
-    for (const id of [...anexosCacheRef.current.keys()]) {
-      if (!ids.has(id)) anexosCacheRef.current.delete(id);
-    }
-    setAnexos(
-      lista
-        .map((f) => anexosCacheRef.current.get(f.id))
-        .filter((a): a is AnexoEnvio => Boolean(a))
-    );
-  }, []);
-
-  /** Converte cada `File` novo para base64 e realimenta `anexos`. */
+  /** Converte cada `File` novo para base64 e grava no cache, indexado por id. */
   const aoAdicionarArquivos = useCallback(
     async (adicionados: FileWithPreview[]) => {
-      for (const item of adicionados) {
-        // Só arquivos reais (do drop/browse/picker) têm bytes para converter.
-        if (item.file instanceof File) {
-          const bytes = new Uint8Array(await item.file.arrayBuffer());
-          anexosCacheRef.current.set(item.id, {
-            nome: item.file.name,
-            tipo: item.file.type || tipoPorNome(item.file.name),
-            conteudoB64: bytesParaB64(bytes),
-          });
-        }
-      }
-      sincronizarAnexos(arquivosRef.current);
+      await Promise.all(
+        adicionados.map(async (item) => {
+          // Só arquivos reais (do drop/browse/picker) têm bytes para converter.
+          if (item.file instanceof File) {
+            const bytes = new Uint8Array(await item.file.arrayBuffer());
+            anexosCacheRef.current.set(item.id, {
+              nome: item.file.name,
+              tipo: item.file.type || tipoPorNome(item.file.name),
+              conteudoB64: bytesParaB64(bytes),
+            });
+          }
+        })
+      );
+      // Novos base64 no cache: força reprojetar `anexos` na próxima renderização.
+      setCacheVersao((v) => v + 1);
     },
-    [sincronizarAnexos]
+    []
   );
 
   const [
@@ -254,10 +249,27 @@ export const ComporMensagem = forwardRef<
     maxFiles: MAX_ARQUIVOS,
     maxSize: MAX_TAMANHO,
     onFilesAdded: aoAdicionarArquivos,
-    onFilesChange: sincronizarAnexos,
   });
-  // Espelho síncrono da lista de arquivos, para o callback assíncrono de conversão.
-  arquivosRef.current = arquivos;
+
+  // `anexos` sai sempre da lista atual do uploader (`arquivos`) casada com o
+  // cache por id. Todo arquivo já convertido entra assim que sua renderização
+  // ocorre — nunca omitido por leitura de ref defasada — e remover/limpar some
+  // do envio na hora, porque some de `arquivos`.
+  const anexos = useMemo(
+    () =>
+      arquivos
+        .map((f) => anexosCacheRef.current.get(f.id))
+        .filter((a): a is AnexoEnvio => Boolean(a)),
+    [arquivos, cacheVersao]
+  );
+
+  // Poda o cache de arquivos removidos (remover/limpar) para não vazar memória.
+  useEffect(() => {
+    const ids = new Set(arquivos.map((f) => f.id));
+    for (const id of [...anexosCacheRef.current.keys()]) {
+      if (!ids.has(id)) anexosCacheRef.current.delete(id);
+    }
+  }, [arquivos]);
 
   const editor = usePlateEditor({
     plugins: COMPOSE_KIT,
