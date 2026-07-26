@@ -441,14 +441,10 @@ export async function crSalvarContatos(pessoas: Pessoa[]): Promise<number> {
   return invoke<number>("cr_salvar_contatos", { pessoas });
 }
 
-/** Chave de ordenação da lista (mapeada no backend para $orderby do Graph). */
-export type OrdenarMensagens =
-  | "data"
-  | "remetente"
-  | "assunto"
-  | "tamanho"
-  | "importancia"
-  | "flag";
+/** Chave de ordenação da lista (mapeada no backend para $orderby do Graph).
+ *  Só campos ordenáveis server-side, sem dependência: tamanho/importância/flag
+ *  saíram do escopo (não são ordenáveis no Graph / dependem de feature irmã). */
+export type OrdenarMensagens = "data" | "remetente" | "assunto";
 
 export async function crFolderMensagens(
   folderId: string,
