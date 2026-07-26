@@ -168,13 +168,16 @@ function CorpoHtml({
     // overflow:hidden garante ZERO scrollbar interna do iframe — nós ajustamos
     // a altura por fora; a largura encaixa via `zoom` (reflui o layout).
     const baseline =
-      `<style>:root{color-scheme:light}html,body{margin:0;padding:0;overflow:hidden}` +
-      `body{background:#fff;color:#111;` +
+      // O ROOT (viewport do iframe) rola no eixo X quando algum elemento largo
+      // ainda estoura depois do zoom mínimo — ex.: a tabela "Saltos de Mensagem"
+      // que o Exchange anexa a encaminhados (~880px fixos). Assim o excedente
+      // vira SCROLL horizontal em vez de espremer/clipar o e-mail inteiro (#57).
+      // overflow-y fica hidden: a altura é medida e aplicada por fora.
+      `<style>:root{color-scheme:light}html{margin:0;padding:0;overflow-x:auto;overflow-y:hidden}` +
+      `body{margin:0;background:#fff;color:#111;` +
       `font-family:system-ui,-apple-system,Segoe UI,sans-serif;` +
       // overflow-wrap:anywhere quebra strings longas (URLs/tokens sem espaço)
-      // que, sozinhas, inflavam o scrollWidth e faziam o e-mail inteiro ser
-      // reduzido a um tamanho minúsculo pelo zoom (#57). Não afeta o layout de
-      // newsletters (só quebra o que não caberia mesmo).
+      // que, sozinhas, inflavam o scrollWidth.
       `font-size:14px;line-height:1.5;padding:6px;overflow-wrap:anywhere}` +
       `img{max-width:100%;height:auto}a{color:#7c3aed}</style>`;
     const dr = escuro ? getDarkReaderInlineScripts() : "";
@@ -206,14 +209,20 @@ function CorpoHtml({
         const conteudo = body.scrollWidth;
         const disponivel = iframe.clientWidth;
         const ideal = conteudo > disponivel && conteudo > 0 ? disponivel / conteudo : 1;
-        // Piso de 0.5: mesmo que algo (imagem/tabela larga) ainda estoure a
-        // largura, o e-mail nunca vira microscópico — o excedente clipa (o
-        // iframe tem overflow:hidden) em vez de encolher o conteúdo inteiro (#57).
-        const zoom = Math.max(0.5, ideal);
+        // PISO DE LEGIBILIDADE (#57): nunca encolher abaixo de 0.75 (14px -> ~10.5px).
+        // Um único elemento largo de baixo valor (a tabela "Saltos de Mensagem"
+        // dos encaminhados, ~880px) não pode espremer o e-mail inteiro a um
+        // tamanho ilegível. Se o piso bater, o excedente NÃO clipa: rola no eixo
+        // X (overflow-x:auto no root) e continua acessível.
+        const PISO = 0.75;
+        const zoom = Math.max(PISO, ideal);
         body.style.zoom = String(zoom);
+        // Se o piso segurou o zoom acima do ideal, ainda sobra largura -> haverá
+        // scrollbar horizontal; reserva a altura dela pra não clipar a última linha.
+        const rolaX = zoom > ideal + 1e-3;
         // altura VISÍVEL (pós-zoom) via bounding rect; setAltura só se mudou de
         // verdade (evita re-render à toa).
-        const h = Math.ceil(body.getBoundingClientRect().height) + 4;
+        const h = Math.ceil(body.getBoundingClientRect().height) + 4 + (rolaX ? 16 : 0);
         setAltura((a) => (Math.abs(a - h) > 1 ? h : a));
       } catch {
         /* srcDoc é same-origin; catch só por segurança */
@@ -263,7 +272,6 @@ function CorpoHtml({
       // load. No claro mantemos o sandbox estrito (nenhum script do e-mail roda).
       sandbox={escuro ? "allow-same-origin allow-popups allow-scripts" : "allow-same-origin allow-popups"}
       title="e-mail"
-      scrolling="no"
       className="w-full border-0 bg-white"
       style={{ height: altura }}
     />
