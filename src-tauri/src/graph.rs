@@ -1721,32 +1721,57 @@ pub fn cr_folder_mensagens(
     Ok(itens)
 }
 
+/// Uma página de resultados de busca: os itens desta página e a URL de
+/// continuação do Graph (`@odata.nextLink`), quando houver mais páginas.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuscaPagina {
+    pub itens: Vec<EmailItem>,
+    /// `@odata.nextLink` desta resposta, para pedir a próxima página. `None`
+    /// quando esta foi a última página.
+    pub proximo: Option<String>,
+}
+
 /// Busca mensagens numa pasta pelo termo, no SERVIDOR (via $search do Graph).
 /// Devolve a mesma lista de cr_folder_mensagens (reusa montar_email_item), em
-/// páginas de 50 com $skip. O $search do Graph NÃO aceita $orderby junto — por
-/// isso não incluímos orderby aqui (o Graph já ordena por relevância). Exige o
-/// header ConsistencyLevel: eventual. Retry no 429. Mail.Read.
+/// páginas de 50. O $search do Graph NÃO aceita $orderby junto — por isso não
+/// incluímos orderby aqui (o Graph já ordena por relevância). Exige o header
+/// ConsistencyLevel: eventual. Retry no 429. Mail.Read.
+///
+/// Paginação por CONTINUAÇÃO: o $search do Graph NÃO suporta $skip (paginar com
+/// $skip junto de $search quebra além da 1ª página). A forma correta é seguir o
+/// `@odata.nextLink` (skiptoken), que este devolve em `proximo`. Passe essa URL
+/// de volta em `next_link` para pedir a próxima página; ela já vem com
+/// $search+$top+skiptoken embutidos, então é usada como GET direto.
 pub fn cr_buscar(
     store: &TokenStore,
     folder_id: &str,
     termo: &str,
-    skip: u32,
-) -> Result<Vec<EmailItem>, String> {
+    next_link: Option<String>,
+) -> Result<BuscaPagina, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
-    // As aspas duplas fazem parte da sintaxe do $search; as que vierem no próprio
-    // termo são trocadas por espaço para não fechar a expressão antes da hora.
-    let termo_limpo = termo.replace('"', " ");
-    let enc = urlencoding::encode(termo_limpo.trim());
-    // Sem $orderby: o Graph rejeita orderby combinado com $search.
-    let url = format!(
-        "{GRAPH}/me/mailFolders/{folder_id}/messages\
-         ?$search=\"{enc}\"\
-         &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
-         &$top=50&$skip={skip}"
-    );
+    // Continuação: se veio um nextLink, ele já traz $search+$top+skiptoken —
+    // usa-se tal e qual. Só na 1ª página montamos a URL inicial.
+    let url = match next_link {
+        Some(link) => link,
+        None => {
+            // As aspas duplas fazem parte da sintaxe do $search; as que vierem no
+            // próprio termo são trocadas por espaço para não fechar a expressão
+            // antes da hora.
+            let termo_limpo = termo.replace('"', " ");
+            let enc = urlencoding::encode(termo_limpo.trim());
+            // Sem $orderby: o Graph rejeita orderby combinado com $search.
+            format!(
+                "{GRAPH}/me/mailFolders/{folder_id}/messages\
+                 ?$search=\"{enc}\"\
+                 &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
+                 &$top=50"
+            )
+        }
+    };
     // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas —
     // mesmo padrão de cr_folder_mensagens.
     let mut resposta = None;
@@ -1789,7 +1814,8 @@ pub fn cr_buscar(
             itens.push(montar_email_item(it, saida));
         }
     }
-    Ok(itens)
+    let proximo = v["@odata.nextLink"].as_str().map(|s| s.to_string());
+    Ok(BuscaPagina { itens, proximo })
 }
 
 // ----------------------------------------------------------------------------
