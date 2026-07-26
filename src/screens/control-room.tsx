@@ -54,6 +54,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -66,6 +69,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -112,6 +116,8 @@ import {
   FilePen,
   Flag,
   FlagOff,
+  Folder,
+  FolderInput,
   Forward,
   Inbox,
   Mail,
@@ -627,8 +633,45 @@ function podeEsvaziar(tipo: string): boolean {
   return tipo === "deleteditems" || tipo === "junkemail";
 }
 
+/**
+ * Pasta ACHATADA para o seletor de destino do "Mover para pasta…" (#88): a
+ * árvore (raízes de `crMailFolders` + subpastas de `crSubpastas`) vira uma lista
+ * plana, com a profundidade para indentar — o padrão do `MoveToFolderDropdown`
+ * do MailVault. `caminho` é o nome completo ("Caixa de entrada / Clientes"):
+ * alimenta a busca (achar "Clientes" pela pasta-mãe) e o title da linha.
+ */
+type PastaDestino = {
+  id: string;
+  rotulo: string;
+  caminho: string;
+  profundidade: number;
+};
+
+/** Achata a árvore de pastas em profundidade (pai antes dos filhos). */
+function achatarPastas(
+  raizes: PastaEmail[],
+  subpastas: Record<string, PastaEmail[]>,
+  t: ReturnType<typeof useIdioma>["t"],
+  profundidade = 0,
+  prefixo = ""
+): PastaDestino[] {
+  const out: PastaDestino[] = [];
+  for (const p of raizes) {
+    const rotulo = rotuloPasta(p.tipo, p.nome, t);
+    const caminho = prefixo ? `${prefixo} / ${rotulo}` : rotulo;
+    out.push({ id: p.id, rotulo, caminho, profundidade });
+    const filhos = subpastas[p.id];
+    if (filhos && filhos.length > 0) {
+      out.push(...achatarPastas(filhos, subpastas, t, profundidade + 1, caminho));
+    }
+  }
+  return out;
+}
+
 function FolderSidebar({
   pastas,
+  subpastas,
+  onCarregarSubpastas,
   sel,
   onSel,
   onNovo,
@@ -641,6 +684,8 @@ function FolderSidebar({
   t,
 }: {
   pastas: PastaEmail[] | null;
+  subpastas: Record<string, PastaEmail[]>;
+  onCarregarSubpastas: (id: string) => void;
   sel: string;
   onSel: (id: string) => void;
   onNovo: () => void;
@@ -660,24 +705,20 @@ function FolderSidebar({
   const mail = (pastas ?? []).filter((p) => GRUPO_MAIL.includes(p.tipo));
   const outras = (pastas ?? []).filter((p) => !GRUPO_MAIL.includes(p.tipo));
 
-  // Subpastas (childFolders): carregadas sob demanda ao expandir.
+  // Subpastas (childFolders): carregadas sob demanda ao expandir. O CACHE mora
+  // no pai (#88) porque o submenu "Mover para pasta…" precisa da mesma árvore —
+  // assim expandir no sidebar e abrir o submenu não buscam a mesma subpasta
+  // duas vezes, e o que já foi carregado num lado aparece no outro.
+  const filhos = subpastas;
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
-  const [filhos, setFilhos] = useState<Record<string, PastaEmail[]>>({});
-  const alternarExpandir = async (id: string) => {
+  const alternarExpandir = (id: string) => {
     setExpandidas((s) => {
       const n = new Set(s);
       if (n.has(id)) n.delete(id);
       else n.add(id);
       return n;
     });
-    if (filhos[id] === undefined) {
-      try {
-        const cs = await api.crSubpastas(id);
-        setFilhos((f) => ({ ...f, [id]: cs }));
-      } catch {
-        setFilhos((f) => ({ ...f, [id]: [] }));
-      }
-    }
+    onCarregarSubpastas(id);
   };
 
   const Linha = (p: PastaEmail, ehFilho = false) => {
@@ -957,6 +998,98 @@ function periodoChave(recebido: string, agora: Date): string {
 }
 
 /**
+ * Submenu "Mover para pasta…" (#88) — a árvore de pastas ACHATADA (indentada
+ * por profundidade) com BUSCA por nome, portando o padrão do
+ * `MoveToFolderDropdown` do MailVault para o menu de contexto do Bridge.
+ *
+ * Montado com `ContextMenuSub`/`SubTrigger`/`SubContent` do @reui/context-menu
+ * (Radix) e o `Input` do registry — o mesmo arranjo "campo de busca + separador
+ * + lista rolável" que o @reui/filters usa na sua lista pesquisável.
+ *
+ * A pasta ATUAL não entra na lista (já vem filtrada do pai): mover para onde a
+ * mensagem já está não é uma opção.
+ */
+function SubmenuMover({
+  alvos,
+  pastas,
+  carregando,
+  onAbrir,
+  onMover,
+  t,
+}: {
+  alvos: string[];
+  pastas: PastaDestino[];
+  carregando: boolean;
+  onAbrir: () => void;
+  onMover: (ids: string[], destino: string, rotulo: string) => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const [busca, setBusca] = useState("");
+  const filtradas = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return pastas;
+    // Busca no CAMINHO: digitar o nome da pasta-mãe também acha as filhas.
+    return pastas.filter((p) => p.caminho.toLowerCase().includes(q));
+  }, [pastas, busca]);
+
+  return (
+    <ContextMenuSub
+      onOpenChange={(aberto) => {
+        // Abrir o submenu é o gatilho pra completar a árvore (as subpastas são
+        // lazy); fechar limpa a busca pra próxima abertura começar do zero.
+        if (aberto) onAbrir();
+        else setBusca("");
+      }}
+    >
+      <ContextMenuSubTrigger className="gap-2">
+        <FolderInput />
+        {t.controlRoom.moverPara}
+      </ContextMenuSubTrigger>
+      <ContextMenuSubContent className="w-64 p-0">
+        <Input
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder={t.controlRoom.moverBuscarPasta}
+          aria-label={t.controlRoom.moverBuscarPasta}
+          className="h-8 rounded-none border-0 bg-transparent! px-2 text-sm shadow-none focus-visible:border-border focus-visible:ring-0"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            // Escape/Tab seguem pro Radix (fecham o menu); o resto fica no
+            // input — senão a navegação-por-digitação do menu roubaria as
+            // letras e a busca nunca receberia texto.
+            if (e.key !== "Escape" && e.key !== "Tab") e.stopPropagation();
+          }}
+        />
+        <ContextMenuSeparator className="mx-0 my-0" />
+        {filtradas.length === 0 ? (
+          <p className="px-3 py-3 text-center text-sm text-muted-foreground">
+            {carregando ? t.controlRoom.moverCarregandoPastas : t.controlRoom.moverSemPastas}
+          </p>
+        ) : (
+          <ScrollArea className="max-h-64">
+            <div className="p-1">
+              {filtradas.map((p) => (
+                <ContextMenuItem
+                  key={p.id}
+                  className="gap-2"
+                  title={p.caminho}
+                  onClick={() => onMover(alvos, p.id, p.rotulo)}
+                >
+                  {/* Indentação por profundidade = a hierarquia continua
+                      legível mesmo com a árvore achatada (MailVault). */}
+                  <Folder style={{ marginLeft: p.profundidade * 12 }} />
+                  <span className="truncate">{p.rotulo}</span>
+                </ContextMenuItem>
+              ))}
+            </div>
+          </ScrollArea>
+        )}
+      </ContextMenuSubContent>
+    </ContextMenuSub>
+  );
+}
+
+/**
  * Itens do menu de contexto de e-mail (#86). Fica compartilhado entre o menu da
  * LINHA e o menu da ÁREA da lista (botão direito fora das linhas) para que os
  * dois ofereçam exatamente as mesmas ações — inclusive as folder-aware (em
@@ -973,6 +1106,10 @@ function ItensMenuEmail({
   onMarcarLido,
   onFlag,
   onExcluir,
+  pastasDestino,
+  pastasCarregando,
+  onAbrirMover,
+  onMover,
   setSelecionados,
   t,
 }: {
@@ -983,6 +1120,10 @@ function ItensMenuEmail({
   onMarcarLido: (id: string, lido: boolean) => void;
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void | Promise<void>;
+  pastasDestino: PastaDestino[];
+  pastasCarregando: boolean;
+  onAbrirMover: () => void;
+  onMover: (ids: string[], destino: string, rotulo: string) => void;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
@@ -1002,6 +1143,16 @@ function ItensMenuEmail({
         {sinalizado ? <FlagOff /> : <Flag />}
         {sinalizado ? t.controlRoom.removerSinal : t.controlRoom.sinalizar}
       </ContextMenuItem>
+      <ContextMenuSeparator />
+      {/* "Mover para pasta…" (#88): submenu com a árvore achatada + busca. */}
+      <SubmenuMover
+        alvos={alvos}
+        pastas={pastasDestino}
+        carregando={pastasCarregando}
+        onAbrir={onAbrirMover}
+        onMover={onMover}
+        t={t}
+      />
       <ContextMenuSeparator />
       <ContextMenuItem
         variant="destructive"
@@ -1042,6 +1193,10 @@ function MessageList({
   onFlag,
   onExcluir,
   onMarcarLido,
+  pastasDestino,
+  pastasCarregando,
+  onAbrirMover,
+  onMover,
   selecionados,
   setSelecionados,
   naoLidosPasta,
@@ -1074,6 +1229,10 @@ function MessageList({
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void | Promise<void>;
   onMarcarLido: (id: string, lido: boolean) => void;
+  pastasDestino: PastaDestino[];
+  pastasCarregando: boolean;
+  onAbrirMover: () => void;
+  onMover: (ids: string[], destino: string, rotulo: string) => void;
   selecionados: Set<string>;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
   naoLidosPasta: number;
@@ -1822,6 +1981,10 @@ function MessageList({
                           onMarcarLido={onMarcarLido}
                           onFlag={onFlag}
                           onExcluir={onExcluir}
+                          pastasDestino={pastasDestino}
+                          pastasCarregando={pastasCarregando}
+                          onAbrirMover={onAbrirMover}
+                          onMover={onMover}
                           setSelecionados={setSelecionados}
                           t={t}
                         />
@@ -1848,6 +2011,10 @@ function MessageList({
               onMarcarLido={onMarcarLido}
               onFlag={onFlag}
               onExcluir={onExcluir}
+              pastasDestino={pastasDestino}
+              pastasCarregando={pastasCarregando}
+              onAbrirMover={onAbrirMover}
+              onMover={onMover}
               setSelecionados={setSelecionados}
               t={t}
             />
@@ -2657,6 +2824,48 @@ export function ControlRoomScreen({
     };
   }, [recarga, recargaPastas]);
 
+  // Cache de SUBPASTAS (childFolders), compartilhado pelo sidebar (expandir) e
+  // pelo submenu "Mover para pasta…" (#88). Carrega sob demanda e memoriza; o
+  // ref evita pedir duas vezes a mesma pasta (o sidebar e o submenu podem pedir
+  // quase ao mesmo tempo).
+  const [subpastas, setSubpastas] = useState<Record<string, PastaEmail[]>>({});
+  const subpastasPedidasRef = useRef<Set<string>>(new Set());
+  const carregarSubpastas = useCallback((id: string) => {
+    if (subpastasPedidasRef.current.has(id)) return;
+    subpastasPedidasRef.current.add(id);
+    api
+      .crSubpastas(id)
+      .then((cs) => setSubpastas((f) => ({ ...f, [id]: cs })))
+      .catch(() => setSubpastas((f) => ({ ...f, [id]: [] })));
+  }, []);
+
+  // O submenu "Mover para…" precisa da árvore INTEIRA (não só do que o usuário
+  // expandiu no sidebar). Ao abrir pela primeira vez, `pedirArvore` liga e este
+  // efeito pede as subpastas que faltam; como ele depende de `subpastas`, cada
+  // lote que chega dispara o nível seguinte — a árvore se completa sozinha, sem
+  // recursão manual e sem buscar nada antes do usuário precisar.
+  const [pedirArvore, setPedirArvore] = useState(false);
+  const conhecidas = useMemo(
+    () => [...(pastas ?? []), ...Object.values(subpastas).flat()],
+    [pastas, subpastas]
+  );
+  // Pastas que declaram filhos (childFolderCount > 0) mas ainda não voltaram.
+  const arvorePendentes = useMemo(
+    () => conhecidas.filter((p) => p.filhos > 0 && subpastas[p.id] === undefined),
+    [conhecidas, subpastas]
+  );
+  useEffect(() => {
+    if (!pedirArvore) return;
+    for (const p of arvorePendentes) carregarSubpastas(p.id);
+  }, [pedirArvore, arvorePendentes, carregarSubpastas]);
+
+  // Lista plana de destinos do "Mover para…": a árvore achatada MENOS a pasta
+  // atual (mover pra onde a mensagem já está não é opção).
+  const pastasDestino = useMemo(
+    () => achatarPastas(pastas ?? [], subpastas, t).filter((p) => p.id !== pastaSel),
+    [pastas, subpastas, t, pastaSel]
+  );
+
   // Contadores reais das abas Flagged/Files (na pasta inteira, via $count).
   // Só refaz na TROCA de pasta / refresh manual — NÃO em cada recargaPastas
   // (o polling do delete bumpava recargaPastas e os refetch em rajada resolviam
@@ -2928,6 +3137,86 @@ export function ControlRoomScreen({
     })();
   }
 
+  /**
+   * Move e-mails para outra pasta (#88) — mesmo desenho otimista do
+   * `acaoExcluir` (que também é um move, pra Lixeira): some da lista na hora,
+   * contadores das pastas ORIGEM e DESTINO ajustados, toast imediato e, no
+   * fundo, o POST /messages/{id}/move em série. Se algum falhar, avisa e
+   * recarrega a pasta pra ressincronizar (o item volta se não saiu).
+   */
+  async function acaoMover(ids: string[], destino: string, rotuloDestino: string) {
+    if (ids.length === 0 || !destino || destino === pastaSel) return;
+    const idsSet = new Set(ids);
+    // Fonte = lista visível (pasta, busca ou filtro Graph), como no excluir.
+    const fonte =
+      (filtroGraph
+        ? resultadosFiltro
+        : busca.trim() !== ""
+          ? resultadosBusca
+          : mensagens) ?? [];
+    const movidas = fonte.filter((m) => idsSet.has(m.id));
+    const naoLidosFora = movidas.filter((m) => !m.lido).length;
+    const anexosFora = movidas.filter((m) => m.temAnexos).length;
+    const flaggedFora = movidas.filter((m) => m.sinalizado).length;
+
+    // 1) OTIMISTA: tira da tela e marca como "saiu daqui" (mesmo registro que o
+    //    excluir usa) pra o backfill/paginação não trazer as mensagens de volta.
+    ids.forEach((id) => deletadasRef.current.add(id));
+    removerNasListas(idsSet);
+    if (anexosFora > 0) ajustarContAnexos(-anexosFora);
+    if (flaggedFora > 0) ajustarContFlagged(-flaggedFora);
+    if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
+    setSelecionados((s) => {
+      const n = new Set(s);
+      ids.forEach((id) => n.delete(id));
+      return n;
+    });
+
+    // 2) Contadores do sidebar: origem −N, destino +N (só se o destino for uma
+    //    pasta do sidebar — subpasta não aparece lá e não tem o que ajustar).
+    setPastas((prev) =>
+      prev?.map((p) => {
+        if (p.id === pastaSel) {
+          return {
+            ...p,
+            total: Math.max(0, p.total - ids.length),
+            naoLidos: Math.max(0, p.naoLidos - naoLidosFora),
+          };
+        }
+        if (p.id === destino) {
+          return { ...p, total: p.total + ids.length, naoLidos: p.naoLidos + naoLidosFora };
+        }
+        return p;
+      }) ?? prev
+    );
+
+    // 3) Toast imediato de confirmação.
+    toast.success(
+      ids.length > 1
+        ? preencher(t.controlRoom.selecionadosMovidos, {
+            n: ids.length,
+            pasta: rotuloDestino,
+          })
+        : preencher(t.controlRoom.emailMovido, { pasta: rotuloDestino })
+    );
+
+    // 4) Move de verdade em background + reconcile.
+    let ok: string[] = [];
+    try {
+      ok = await api.crMoverEmails(ids, destino);
+    } catch {
+      ok = [];
+    }
+    const falharam = ids.filter((id) => !ok.includes(id));
+    if (falharam.length > 0) {
+      falharam.forEach((id) => deletadasRef.current.delete(id));
+      toast.error(t.controlRoom.erroAcao);
+      setRecarga((n) => n + 1); // ressincroniza lista + contagens do zero
+    } else {
+      setRecargaPastas((x) => x + 1); // reconcilia as contagens reais
+    }
+  }
+
   // mensagens da pasta (1ª página); auto-seleciona a primeira e semeia o
   // baseline do polling quando é a inbox.
   useEffect(() => {
@@ -3180,6 +3469,8 @@ export function ControlRoomScreen({
       <div className="flex min-h-0 flex-1 gap-4">
         <FolderSidebar
           pastas={pastas}
+          subpastas={subpastas}
+          onCarregarSubpastas={carregarSubpastas}
           sel={pastaSel}
           onSel={setPastaSel}
           onNovo={novoEmailModal}
@@ -3217,6 +3508,10 @@ export function ControlRoomScreen({
               onFlag={acaoFlag}
               onExcluir={acaoExcluir}
               onMarcarLido={acaoMarcarLido}
+              pastasDestino={pastasDestino}
+              pastasCarregando={arvorePendentes.length > 0}
+              onAbrirMover={() => setPedirArvore(true)}
+              onMover={acaoMover}
               selecionados={selecionados}
               setSelecionados={setSelecionados}
               naoLidosPasta={pastaAtual?.naoLidos ?? 0}

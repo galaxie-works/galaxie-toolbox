@@ -565,6 +565,22 @@ export async function crExcluirEmails(
   return invoke<string[]>("cr_excluir_emails", { ids, permanente });
 }
 
+/** Move vários e-mails para uma pasta (#88), em série e com retry no 429 no
+ *  backend. `destino` é o id da pasta — well-known ("archive", "junkemail"…) ou
+ *  o id real de uma subpasta, do jeitinho que `crMailFolders`/`crSubpastas`
+ *  devolvem. Retorna os ids que realmente saíram (o front reconcilia o
+ *  otimista com isso). */
+export async function crMoverEmails(
+  ids: string[],
+  destino: string
+): Promise<string[]> {
+  if (!inTauri()) {
+    await sleep(300);
+    return ids;
+  }
+  return invoke<string[]>("cr_mover_emails", { ids, destino });
+}
+
 export async function crMarcarEmail(
   id: string,
   sinalizado: boolean
