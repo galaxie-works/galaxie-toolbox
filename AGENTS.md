@@ -25,6 +25,8 @@ Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3
 
 Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pra PO Approved — isso é do usuário (PO), que também **ajusta a Sprint** se necessário.
 
+> 🚀 **RELEASE de PO Approved é decisão do agente** (delegado pelo PO em 2026-07-26). Uma vez em **PO Approved**, o agente decide quando **mergear na `main`, cortar release** (bump de versão + tag + notas) e mover pra **Done - Released**, sem cobrar o PO. A autonomia começa em PO Approved (QA Approved→PO Approved continua sendo do PO). Não cortar release com código não-aprovado/rejeitado ainda na `feat` (ex.: rework com `Closes #N` já mergeado) — limpar/reworkar antes.
+
 > ⚠️ **O QA valida a HISTÓRIA e os CRITÉRIOS DE ACEITE (Given/When/Then), não só code review.** Todo prompt de QA deve: ler a issue (`gh issue view N`), extrair história + cada AC, e para CADA AC traçar o caminho do código confirmando que o **Then** é satisfeito. Onde exigir runtime (login Graph), listar explicitamente os ACs que o PO precisa validar no app. `tsc`/`cargo` + code review são necessários mas **não suficientes**. Reprovar se algum AC não for atendido.
 >
 > ⚠️ **NÃO parafrasear os ACs no prompt do QA.** O prompt do orquestrador deve só dizer **qual issue ler** — o QA **puxa o corpo real** (`gh issue view N`), **cita verbatim** os ACs que encontrou lá (prova de que leu a fonte) e valida cada um. Se o QA não conseguiu ler o corpo (ex.: `gh` falhou), ele **REPROVA/avisa** — nunca valida de memória nem da paráfrase. (Erro pego pelo PO no #50, 2026-07-26: QA validou contra a paráfrase do orquestrador.)
