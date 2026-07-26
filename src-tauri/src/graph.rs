@@ -2056,7 +2056,8 @@ pub fn cr_filtrar(
 }
 
 // ----------------------------------------------------------------------------
-// Ações de e-mail (Control room): excluir, sinalizar, esvaziar a lixeira.
+// Ações de e-mail (Control room): excluir, sinalizar, marcar lido; e ações de
+// PASTA inteira: esvaziar (Lixeira/Lixo) e marcar todas como lidas (#89).
 // Escopo: Mail.ReadWrite.
 // ----------------------------------------------------------------------------
 
@@ -2177,28 +2178,34 @@ pub fn cr_marcar_lido(store: &TokenStore, id: &str, lido: bool) -> Result<(), St
     }
 }
 
-/// Esvazia a Lixeira (Deleted Items): apaga em definitivo cada mensagem.
+/// Trava de segurança das varreduras de pasta inteira (esvaziar / marcar todas
+/// lidas): teto de itens por chamada, para nenhum laço rodar sem fim se o Graph
+/// não refletir a mutação na página seguinte.
+const CR_PASTA_LIMITE: u64 = 1000;
+
+/// Esvazia uma pasta (Lixeira ou Lixo Eletrônico): apaga cada mensagem via
+/// DELETE, paginando até a pasta ficar vazia. `folder_id` aceita tanto o nome
+/// well-known ("deleteditems", "junkemail") quanto o id real da pasta.
 /// Retorna quantas foram excluídas. Mail.ReadWrite.
-pub fn cr_esvaziar_lixeira(store: &TokenStore) -> Result<u64, String> {
+///
+/// Não usa `$skip`: cada volta relê a PRIMEIRA página, porque os itens da volta
+/// anterior já saíram da pasta — paginar por offset puliria mensagens.
+pub fn cr_esvaziar_pasta(store: &TokenStore, folder_id: &str) -> Result<u64, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
 
-    // Trava de segurança: evita loops infinitos caso algum DELETE não remova.
-    const LIMITE: u64 = 1000;
     let mut apagados: u64 = 0;
 
     loop {
-        let url = format!(
-            "{GRAPH}/me/mailFolders/deleteditems/messages?$select=id&$top=50"
-        );
-        let resp = client
-            .get(&url)
-            .bearer_auth(&token)
-            .send()
-            .map_err(|e| format!("falha ao ler a lixeira: {e}"))?;
+        let url = format!("{GRAPH}/me/mailFolders/{folder_id}/messages?$select=id&$top=50");
+        // Sob o pool + retry central (#64): Retry-After + jitter.
+        let resp = graph_enviar("mail:esvaziar", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        })
+        .map_err(|e| format!("falha ao ler a pasta: {e}"))?;
         if !resp.status().is_success() {
             return Err(format!(
-                "/me/mailFolders/deleteditems/messages retornou {}",
+                "/me/mailFolders/{folder_id}/messages retornou {}",
                 resp.status()
             ));
         }
@@ -2225,24 +2232,108 @@ pub fn cr_esvaziar_lixeira(store: &TokenStore) -> Result<u64, String> {
                 Ok(()) => {
                     apagados += 1;
                     progrediu = true;
-                    if apagados >= LIMITE {
+                    if apagados >= CR_PASTA_LIMITE {
                         log::warn!(
-                            "[mail] esvaziar lixeira: limite de {LIMITE} atingido, interrompendo"
+                            "[mail] esvaziar '{folder_id}': limite de {CR_PASTA_LIMITE} atingido, interrompendo"
                         );
                         return Ok(apagados);
                     }
                 }
-                Err(e) => log::warn!("[mail] esvaziar lixeira: '{id}' falhou: {e}"),
+                Err(e) => log::warn!("[mail] esvaziar '{folder_id}': '{id}' falhou: {e}"),
             }
         }
         // Página inteira sem sair nada: evita reler as mesmas em loop infinito.
         if !progrediu {
-            log::warn!("[mail] esvaziar lixeira: página sem progresso, interrompendo");
+            log::warn!("[mail] esvaziar '{folder_id}': página sem progresso, interrompendo");
             break;
         }
     }
 
     Ok(apagados)
+}
+
+/// Marca como lidas TODAS as mensagens não lidas de uma pasta (#89). Pagina
+/// `?$filter=isRead eq false` e faz `PATCH {isRead:true}` em série — em série de
+/// propósito: a rajada concorrente é justamente o que leva o tenant a 429.
+/// `folder_id` aceita well-known ("inbox", "junkemail") ou id real.
+/// Retorna quantas foram marcadas. Mail.ReadWrite.
+///
+/// Mesma estratégia de paginação do `cr_esvaziar_pasta`: relê sempre a primeira
+/// página, porque o item marcado sai do filtro `isRead eq false`.
+pub fn cr_marcar_pasta_lida(store: &TokenStore, folder_id: &str) -> Result<u64, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let filtro = urlencoding::encode("isRead eq false");
+    let patch = serde_json::json!({ "isRead": true });
+    let mut marcadas: u64 = 0;
+
+    loop {
+        let url = format!(
+            "{GRAPH}/me/mailFolders/{folder_id}/messages?$filter={filtro}&$select=id&$top=50"
+        );
+        // Sob o pool + retry central (#64): Retry-After + jitter.
+        let resp = graph_enviar("mail:marcar-pasta-lida", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        })
+        .map_err(|e| format!("falha ao ler a pasta: {e}"))?;
+        if !resp.status().is_success() {
+            return Err(format!(
+                "/me/mailFolders/{folder_id}/messages retornou {}",
+                resp.status()
+            ));
+        }
+        let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+        let ids: Vec<String> = v["value"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|it| it["id"].as_str().map(|s| s.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Não sobrou não-lido: terminamos.
+        if ids.is_empty() {
+            break;
+        }
+
+        let mut progrediu = false;
+        for id in &ids {
+            let msg_url = format!("{GRAPH}/me/messages/{id}");
+            let r = graph_enviar("mail:marcar-pasta-lida", GRAPH_TETO_ESPERA_S, || {
+                client.patch(&msg_url).bearer_auth(&token).json(&patch).send()
+            });
+            match r {
+                // 404 = a mensagem saiu da pasta no meio do caminho: idempotente,
+                // conta como progresso pra não travar o laço nessa página.
+                Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {
+                    if resp.status().is_success() {
+                        marcadas += 1;
+                    }
+                    progrediu = true;
+                    if marcadas >= CR_PASTA_LIMITE {
+                        log::warn!(
+                            "[mail] marcar lidas '{folder_id}': limite de {CR_PASTA_LIMITE} atingido, interrompendo"
+                        );
+                        return Ok(marcadas);
+                    }
+                }
+                Ok(resp) => log::warn!(
+                    "[mail] marcar lidas '{folder_id}': '{id}' retornou {}",
+                    resp.status()
+                ),
+                Err(e) => log::warn!("[mail] marcar lidas '{folder_id}': '{id}' falhou: {e}"),
+            }
+        }
+        // Página inteira sem progresso: evita reler as mesmas em loop infinito.
+        if !progrediu {
+            log::warn!("[mail] marcar lidas '{folder_id}': página sem progresso, interrompendo");
+            break;
+        }
+    }
+
+    Ok(marcadas)
 }
 
 // ----------------------------------------------------------------------------

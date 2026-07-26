@@ -515,11 +515,22 @@ async fn cr_contar(
         .map_err(|e| e.to_string())?
 }
 
-/// Control room: esvazia a Lixeira (apaga em definitivo). Retorna a contagem.
+/// Control room: esvazia uma pasta (Lixeira / Lixo Eletrônico), apagando cada
+/// mensagem. Retorna a contagem do que saiu.
 #[tauri::command]
-async fn cr_esvaziar_lixeira(state: State<'_, Store>) -> Result<u64, String> {
+async fn cr_esvaziar_pasta(state: State<'_, Store>, folder_id: String) -> Result<u64, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_esvaziar_lixeira(&store))
+    tauri::async_runtime::spawn_blocking(move || graph::cr_esvaziar_pasta(&store, &folder_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: marca como lidas todas as mensagens não lidas de uma pasta
+/// (#89). Retorna quantas foram marcadas.
+#[tauri::command]
+async fn cr_marcar_pasta_lida(state: State<'_, Store>, folder_id: String) -> Result<u64, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_marcar_pasta_lida(&store, &folder_id))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -754,7 +765,8 @@ pub fn run() {
             cr_buscar,
             cr_filtrar,
             cr_contar,
-            cr_esvaziar_lixeira,
+            cr_esvaziar_pasta,
+            cr_marcar_pasta_lida,
             cr_baixar_anexo,
             abrir_caminho,
             revelar_no_explorer,

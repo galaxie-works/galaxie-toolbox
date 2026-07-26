@@ -56,6 +56,16 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -601,12 +611,30 @@ function rotuloPasta(tipo: string, nome: string, t: ReturnType<typeof useIdioma>
   return m[tipo] ?? nome;
 }
 
+/**
+ * Ações do menu de contexto de PASTA (#89), por TIPO de pasta. Escopo aprovado
+ * pelo PO na #71/S3:
+ *  - "Marcar todas como lidas": inbox, junkemail e subpastas (child). Fora de
+ *    drafts/sentitems, onde "não-lido" não faz sentido (ali a contagem é o
+ *    total, #56).
+ *  - "Esvaziar pasta": SÓ deleteditems e junkemail — as duas pastas em que
+ *    apagar tudo de uma vez é operação normal do usuário.
+ */
+function podeMarcarTodasLidas(tipo: string): boolean {
+  return tipo === "inbox" || tipo === "junkemail" || tipo === "child";
+}
+function podeEsvaziar(tipo: string): boolean {
+  return tipo === "deleteditems" || tipo === "junkemail";
+}
+
 function FolderSidebar({
   pastas,
   sel,
   onSel,
   onNovo,
   onComposeOutlook,
+  onMarcarTodasLidas,
+  onEsvaziarPasta,
   colapsada,
   agendaAberta,
   onToggleAgenda,
@@ -617,11 +645,18 @@ function FolderSidebar({
   onSel: (id: string) => void;
   onNovo: () => void;
   onComposeOutlook: () => void;
+  onMarcarTodasLidas: (folderId: string) => void;
+  onEsvaziarPasta: (folderId: string) => void;
   colapsada: boolean;
   agendaAberta: boolean;
   onToggleAgenda: () => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
+  // Pasta pendente de confirmação do "Esvaziar" — ação destrutiva nunca sai
+  // direto do menu: passa pelo AlertDialog (DoD + padrão do app).
+  const [aEsvaziar, setAEsvaziar] = useState<{ id: string; rotulo: string } | null>(
+    null
+  );
   const mail = (pastas ?? []).filter((p) => GRUPO_MAIL.includes(p.tipo));
   const outras = (pastas ?? []).filter((p) => !GRUPO_MAIL.includes(p.tipo));
 
@@ -690,30 +725,66 @@ function FolderSidebar({
         )}
       </button>
     );
-    if (colapsada) return <div key={p.id}>{linhaBtn}</div>;
+    // Menu de contexto da PASTA (#89). Itens condicionais ao tipo; se a pasta
+    // não oferece nenhuma ação (drafts/sentitems/archive), o trigger fica
+    // desabilitado — nada abre, nem menu vazio (mesmo padrão do menu da ÁREA da
+    // lista, #86). O ContextMenuTrigger do Radix já suprime o menu nativo.
+    const marcarLidas = podeMarcarTodasLidas(p.tipo);
+    const esvaziar = podeEsvaziar(p.tipo);
+    const semAcoes = !marcarLidas && !esvaziar;
+    const comMenu = (conteudo: React.ReactNode) => (
+      <ContextMenu>
+        <ContextMenuTrigger asChild disabled={semAcoes}>
+          {conteudo}
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-56">
+          {marcarLidas && (
+            <ContextMenuItem className="gap-2" onClick={() => onMarcarTodasLidas(p.id)}>
+              <MailOpen />
+              {t.controlRoom.marcarTodasLidas}
+            </ContextMenuItem>
+          )}
+          {marcarLidas && esvaziar && <ContextMenuSeparator />}
+          {esvaziar && (
+            <ContextMenuItem
+              variant="destructive"
+              className="gap-2"
+              onClick={() => setAEsvaziar({ id: p.id, rotulo })}
+            >
+              <Trash2 />
+              {t.controlRoom.esvaziarPasta}
+            </ContextMenuItem>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+    );
+
+    if (colapsada) return <div key={p.id}>{comMenu(linhaBtn)}</div>;
     return (
       <div key={p.id}>
-        <div className={cn("flex items-center", ehFilho && "pl-5")}>
-          {/* chevron só quando a pasta realmente tem subpastas (childFolderCount > 0) */}
-          {p.filhos > 0 ? (
-            <button
-              type="button"
-              onClick={() => alternarExpandir(p.id)}
-              aria-label={rotulo}
-              className="grid size-5 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
-            >
-              <ChevronRight
-                className={cn(
-                  "size-3.5 transition-transform",
-                  expandidas.has(p.id) && "rotate-90"
-                )}
-              />
-            </button>
-          ) : (
-            <span className="size-5 shrink-0" />
-          )}
-          {linhaBtn}
-        </div>
+        {comMenu(
+          <div className={cn("flex items-center", ehFilho && "pl-5")}>
+            {/* chevron só quando a pasta realmente tem subpastas (childFolderCount > 0) */}
+            {p.filhos > 0 ? (
+              <button
+                type="button"
+                onClick={() => alternarExpandir(p.id)}
+                aria-label={rotulo}
+                className="grid size-5 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
+              >
+                <ChevronRight
+                  className={cn(
+                    "size-3.5 transition-transform",
+                    expandidas.has(p.id) && "rotate-90"
+                  )}
+                />
+              </button>
+            ) : (
+              <span className="size-5 shrink-0" />
+            )}
+            {linhaBtn}
+          </div>
+        )}
         {expandidas.has(p.id) &&
           (filhos[p.id] ?? []).map((c) => Linha({ ...c, tipo: "child" }, true))}
       </div>
@@ -803,6 +874,40 @@ function FolderSidebar({
         <CalendarDays className="size-4 shrink-0" />
         {!colapsada && <span>{t.controlRoom.agendaTitulo}</span>}
       </Button>
+
+      {/* Confirmação do "Esvaziar pasta": destrutiva e não desfazível, então
+          nunca dispara direto do menu de contexto (#89). */}
+      <AlertDialog
+        open={aEsvaziar !== null}
+        onOpenChange={(aberto) => {
+          if (!aberto) setAEsvaziar(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-sm!">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {preencher(t.controlRoom.esvaziarPastaTitulo, {
+                pasta: aEsvaziar?.rotulo ?? "",
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.esvaziarPastaDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.controlRoom.cancelar}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (aEsvaziar) onEsvaziarPasta(aEsvaziar.id);
+                setAEsvaziar(null);
+              }}
+            >
+              {t.controlRoom.esvaziarPastaConfirmar}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </aside>
   );
 }
@@ -2627,13 +2732,39 @@ export function ControlRoomScreen({
     };
   }, [notificarNovos]);
 
-  async function esvaziarLixeira() {
+  // Recarrega o que a mutação de uma PASTA invalidou: as contagens do sidebar
+  // sempre; a LISTA só quando a pasta mexida é a que está aberta (senão a lista
+  // perderia scroll/páginas à toa).
+  function recarregarAposPasta(folderId: string) {
+    if (folderId === pastaSelRef.current) setRecarga((x) => x + 1);
+    else setRecargaPastas((x) => x + 1);
+  }
+
+  // Esvazia uma pasta (Lixeira / Lixo Eletrônico). Chamado pelo botão do
+  // cabeçalho da lista e pelo menu de contexto da pasta (#89) — este último já
+  // passou pelo AlertDialog de confirmação.
+  async function esvaziarPasta(folderId: string) {
+    const aviso = toast.loading(t.controlRoom.esvaziandoPasta);
     try {
-      const n = await api.crEsvaziarLixeira();
-      toast.success(preencher(t.controlRoom.lixeiraEsvaziada, { n }));
-      setRecarga((x) => x + 1);
+      const n = await api.crEsvaziarPasta(folderId);
+      toast.success(preencher(t.controlRoom.pastaEsvaziada, { n }), { id: aviso });
+      recarregarAposPasta(folderId);
     } catch (e) {
-      toast.error(t.controlRoom.erroAcao, { description: String(e) });
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+    }
+  }
+
+  // Marca como lidas todas as não lidas de uma pasta (#89). Pode demorar (loop
+  // de PATCH no Graph), então mostra toast de progresso.
+  async function marcarPastaLida(folderId: string) {
+    const aviso = toast.loading(t.controlRoom.marcandoTodasLidas);
+    try {
+      const n = await api.crMarcarPastaLida(folderId);
+      if (n === 0) toast.info(t.controlRoom.nenhumaNaoLida, { id: aviso });
+      else toast.success(preencher(t.controlRoom.todasMarcadasLidas, { n }), { id: aviso });
+      recarregarAposPasta(folderId);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
     }
   }
 
@@ -3053,6 +3184,8 @@ export function ControlRoomScreen({
           onSel={setPastaSel}
           onNovo={novoEmailModal}
           onComposeOutlook={composeOutlook}
+          onMarcarTodasLidas={marcarPastaLida}
+          onEsvaziarPasta={esvaziarPasta}
           colapsada={!sidebarAberta}
           agendaAberta={agendaAberta}
           onToggleAgenda={() => setAgendaAberta((v) => !v)}
@@ -3077,7 +3210,7 @@ export function ControlRoomScreen({
               onToggleSidebar={() => setSidebarAberta((v) => !v)}
               pastaId={pastaSel}
               pastaTipo={pastaAtual?.tipo ?? ""}
-              onEsvaziar={esvaziarLixeira}
+              onEsvaziar={() => esvaziarPasta(pastaSel)}
               onCarregarMais={onCarregarMaisLista}
               carregandoMais={carregandoMais}
               temMais={temMaisLista}
