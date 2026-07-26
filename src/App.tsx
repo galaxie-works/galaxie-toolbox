@@ -339,7 +339,18 @@ export default function App() {
           /* Control room = cliente de e-mail: ocupa a altura toda e cada painel
              rola por dentro (fora do ScrollArea externo, como o navegador). */
           <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
-            <ControlRoomScreen user={user} />
+            <ControlRoomScreen
+              user={user}
+              onAbrirLink={(url) => {
+                let nome = url;
+                try {
+                  nome = new URL(url).hostname || url;
+                } catch {
+                  /* url estranha: usa a própria string */
+                }
+                abrirUrlLivre(url, nome);
+              }}
+            />
           </div>
         ) : (
         /* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
