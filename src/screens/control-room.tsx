@@ -99,7 +99,7 @@ import {
   Video,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 // --- helpers de data/horário ------------------------------------------------
 
@@ -1973,50 +1973,57 @@ export function ControlRoomScreen({
     };
   }, [pastaSel, recarga]);
 
-  // Polling leve da Inbox: baseline no mount (sem toast), depois a cada 15 min
-  // avisa por toast os e-mails novos não lidos. TODO: intervalo configurável em
-  // Settings (ver memória projeto). Roda só enquanto o Bridge está montado.
+  // Detecção central de e-mails novos na Inbox: compara o topo da lista com o
+  // último visto e dispara o toast rico (c-sonner-9). Chamada tanto pelo poll
+  // (usuário parado) QUANTO ao recarregar a lista da inbox (refresh manual).
+  // Antes o refresh só resetava o baseline sem avisar — por isso o toast "não
+  // aparecia" ao dar refresh depois de receber um e-mail (#43).
   const ultimoVistoRef = useRef<string | null>(null);
+  const notificarNovos = useCallback(
+    (ms: EmailItem[]) => {
+      if (ms.length === 0) return;
+      const anterior = ultimoVistoRef.current;
+      ultimoVistoRef.current = ms[0].recebido;
+      if (anterior === null) return; // baseline: não avisa no 1º carregamento
+      const novos = ms.filter((m) => m.recebido > anterior && !m.lido);
+      for (const m of novos.slice(0, 3)) {
+        toastMensagem({
+          nome: m.de,
+          iniciais: m.iniciais,
+          texto: `${m.assunto} — ${m.preview}`,
+          quando: quandoCurto(m.recebido, idioma),
+          rotuloResponder: t.controlRoom.responder,
+          rotuloDispensar: t.controlRoom.dispensar,
+          onResponder: () => {
+            setPastaSel("inbox");
+            setMsgSel(m.id);
+          },
+        });
+      }
+    },
+    // idioma/t só mudam ao trocar idioma; setters são estáveis.
+    [idioma, t]
+  );
+
+  // Poll leve da Inbox a cada 15 min (pega e-mail novo enquanto o usuário está
+  // parado). No mount NÃO chamamos — o efeito de mensagens já busca a inbox e
+  // semeia o baseline; um fetch duplo aqui competia e o Graph estrangulava (429).
   useEffect(() => {
     let vivo = true;
     const INTERVALO = 15 * 60 * 1000;
-    const checar = async () => {
+    const iv = setInterval(async () => {
       try {
         const msgs = await api.crFolderMensagens("inbox");
-        if (!vivo || msgs.length === 0) return;
-        const anterior = ultimoVistoRef.current;
-        ultimoVistoRef.current = msgs[0].recebido;
-        if (!anterior) return; // baseline: não avisa no primeiro carregamento
-        const novos = msgs.filter((m) => m.recebido > anterior && !m.lido);
-        for (const m of novos.slice(0, 3)) {
-          toastMensagem({
-            nome: m.de,
-            iniciais: m.iniciais,
-            texto: `${m.assunto} — ${m.preview}`,
-            quando: quandoCurto(m.recebido, idioma),
-            rotuloResponder: t.controlRoom.responder,
-            rotuloDispensar: t.controlRoom.dispensar,
-            onResponder: () => {
-              setPastaSel("inbox");
-              setMsgSel(m.id);
-            },
-          });
-        }
+        if (vivo) notificarNovos(msgs);
       } catch {
         /* silencioso: é só o aviso de novos e-mails */
       }
-    };
-    // NÃO chamamos checar() no mount de propósito: o efeito de mensagens já
-    // busca a inbox e semeia ultimoVistoRef; um fetch duplo aqui competia com
-    // ele e o Graph estrangulava (429), deixando a lista vazia até trocar de
-    // pasta. O baseline vem de lá; aqui só o intervalo.
-    const iv = setInterval(checar, INTERVALO);
+    }, INTERVALO);
     return () => {
       vivo = false;
       clearInterval(iv);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [idioma]);
+  }, [notificarNovos]);
 
   async function esvaziarLixeira() {
     try {
@@ -2201,12 +2208,17 @@ export function ControlRoomScreen({
         // senão pega a primeira.
         setMsgSel((cur) => (cur && ms.some((m) => m.id === cur) ? cur : (ms[0]?.id ?? null)));
         setTemMais(ms.length === PAGINA);
-        if (pastaSel === "inbox" && ms[0]) ultimoVistoRef.current = ms[0].recebido;
+        // Inbox: detecta e avisa e-mails novos (também no refresh manual) — não
+        // só reseta o baseline. O 1º carregamento apenas semeia (sem toast). #43
+        if (pastaSel === "inbox") notificarNovos(ms);
       })
       .catch(() => vivo && setMensagens([]));
     return () => {
       vivo = false;
     };
+    // notificarNovos é estável (useCallback [idioma,t]); fora das deps de
+    // propósito pra não recarregar a lista ao trocar idioma.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastaSel, recarga]);
 
   // Pré-carga: busca a próxima página do servidor pela âncora (skip = já
