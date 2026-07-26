@@ -276,6 +276,18 @@ async fn cr_categorias(
         .map_err(|e| e.to_string())?
 }
 
+/// Control room: fotos (avatar) de remetentes internos, em lote. User.Read.All.
+#[tauri::command]
+async fn cr_fotos_contatos(
+    state: State<'_, Store>,
+    emails: Vec<String>,
+) -> Result<Vec<graph::FotoContato>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_fotos_contatos(&store, emails))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Compositor: busca de pessoas para o autocomplete (People.Read + diretorio).
 #[tauri::command]
 async fn cr_pessoas(
@@ -725,6 +737,7 @@ pub fn run() {
             cr_inbox_dia,
             cr_email_corpo,
             cr_categorias,
+            cr_fotos_contatos,
             cr_pessoas,
             cr_enviar_novo,
             cr_compartilhar_onedrive,

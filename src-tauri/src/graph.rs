@@ -155,11 +155,6 @@ fn calc_espera_ms(retry_after_s: Option<u64>, tentativa: u8, teto_s: u64) -> u64
     }
 }
 
-/// Wrapper sobre `calc_espera_ms` que extrai o `Retry-After` da resposta real.
-fn espera_backoff_ms(resp: &reqwest::blocking::Response, tentativa: u8, teto_s: u64) -> u64 {
-    calc_espera_ms(resp.retry_after_s(), tentativa, teto_s)
-}
-
 /// Executa uma chamada Graph sob o pool de concorrência, re-tentando em 429 com
 /// Retry-After + jitter (ver bloco acima). `enviar` deve MONTAR e disparar a
 /// requisição do zero a cada tentativa (a resposta é consumida). Devolve a última
@@ -2027,40 +2022,28 @@ pub fn cr_filtrar(
     };
 
     // ConsistencyLevel: eventual é exigido por $search e pelo $filter de
-    // mentions; inofensivo no cast de invites. Retry no 429 igual a cr_buscar.
-    let mut resposta = None;
-    for tentativa in 0..3u8 {
-        match client
+    // mentions; inofensivo no cast de invites. Retry no 429 pelo pool central
+    // (#64), igual a cr_buscar.
+    let resp = graph_enviar("mail:filtro", GRAPH_TETO_ESPERA_S, || {
+        client
             .get(&url)
             .bearer_auth(&token)
             .header("ConsistencyLevel", "eventual")
             .send()
-        {
-            Ok(r) if r.status().is_success() => {
-                resposta = Some(r);
-                break;
-            }
-            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
-                let espera = espera_backoff_ms(&r, tentativa, 5);
-                log::warn!("[mail] filtro '{filtro}' em '{folder_id}' 429; retry em {espera}ms");
-                std::thread::sleep(std::time::Duration::from_millis(espera));
-            }
-            Ok(r) if r.status().as_u16() == 400 => {
-                // Tenant não suporta este filtro → sentinela pro front esconder
-                // a opção (D6). Não é falha "real", então fica em nível debug.
-                log::debug!("[mail] filtro '{filtro}' retornou 400 (não suportado no tenant)");
-                return Err(format!("HTTP 400: filtro '{filtro}' não suportado neste tenant"));
-            }
-            Ok(r) => {
-                return Err(format!(
-                    "filtro '{filtro}' em /me/mailFolders/{folder_id}/messages retornou {}",
-                    r.status()
-                ));
-            }
-            Err(e) => return Err(format!("falha ao filtrar: {e}")),
-        }
+    })
+    .map_err(|e| format!("falha ao filtrar: {e}"))?;
+    if resp.status().as_u16() == 400 {
+        // Tenant não suporta este filtro → sentinela pro front esconder a opção
+        // (D6). Não é falha "real", então fica em nível debug.
+        log::debug!("[mail] filtro '{filtro}' retornou 400 (não suportado no tenant)");
+        return Err(format!("HTTP 400: filtro '{filtro}' não suportado neste tenant"));
     }
-    let resp = resposta.ok_or_else(|| "sem resposta ao filtrar".to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "filtro '{filtro}' em /me/mailFolders/{folder_id}/messages retornou {}",
+            resp.status()
+        ));
+    }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let mut itens = Vec::new();
     if let Some(items) = v["value"].as_array() {
@@ -3003,4 +2986,167 @@ mod testes_throttling {
         println!("[QA #64] sem Retry-After (tentativa 2): {min}..{max}ms - nunca 0ms");
         assert!(min > 0, "nunca pode ser 0ms (re-tentativa imediata re-sincroniza a rajada)");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Fotos de contatos internos (#39)
+//
+// Mostra o avatar (foto de exibição) dos remetentes internos na lista, no
+// detalhe e nos participantes de evento. Usa a MESMA técnica do molde de
+// `auth::buscar_foto` (bytes → data URI), mas aqui em LOTE via `$batch` do Graph
+// (até 20 sub-requisições por chamada) para não disparar 1 request por foto.
+//
+// Escopo: User.Read.All (admin consent já concedido; ver config::SCOPES). Só faz
+// sentido para remetente INTERNO — o filtro por domínio do tenant é do front
+// (fotos.ts), que já manda só e-mails internos.
+//
+// Por foto: 200 = a resposta do $batch traz o binário JÁ em base64 no campo
+// `body` (é assim que o $batch serializa corpo binário), então montamos o data
+// URI direto, sem decode/encode. 404 = sem foto (None). 403 = sem permissão
+// ainda / re-consent pendente (None). O front faz o negative-cache.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FotoContato {
+    pub email: String,
+    pub foto: Option<String>,
+}
+
+/// Resultado de uma sub-requisição de foto no $batch.
+enum FotoRes {
+    /// 200 com corpo: data URI pronto.
+    Data(String),
+    /// 404: sem foto nesse endpoint — vale tentar o fallback `/photo/$value`.
+    SemFoto,
+    /// 403/erro: sem foto e sem tentar fallback (só custaria outro 403).
+    Nenhum,
+}
+
+/// Fotos (64x64, com fallback pra original) de até 20 contatos internos, em UMA
+/// chamada `$batch`. Devolve uma entrada por e-mail (na ordem de entrada, já em
+/// minúsculas e sem duplicatas). `User.Read.All`.
+pub fn cr_fotos_contatos(
+    store: &TokenStore,
+    emails: Vec<String>,
+) -> Result<Vec<FotoContato>, String> {
+    use std::collections::{HashMap, HashSet};
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // Normaliza (minúsculas), remove vazios/duplicatas e limita a 20 (teto do
+    // $batch). O front já debouncia e manda no máximo 20, mas o teto aqui protege
+    // contra chamada malformada.
+    let mut vistos = HashSet::new();
+    let alvos: Vec<String> = emails
+        .into_iter()
+        .map(|e| e.trim().to_lowercase())
+        .filter(|e| !e.is_empty() && vistos.insert(e.clone()))
+        .take(20)
+        .collect();
+    if alvos.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut fotos: HashMap<String, Option<String>> = HashMap::new();
+    // Passo 1: tamanho reduzido (64x64) — o avatar é pequeno na UI.
+    let mut fallback: Vec<String> = Vec::new();
+    for (email, res) in batch_fotos(&client, &token, &alvos, "photos/64x64/$value")? {
+        match res {
+            FotoRes::Data(d) => {
+                fotos.insert(email, Some(d));
+            }
+            FotoRes::SemFoto => fallback.push(email), // 404 → tenta a original
+            FotoRes::Nenhum => {
+                fotos.insert(email, None);
+            }
+        }
+    }
+    // Passo 2 (só pros 404 do passo 1): foto original, sem tamanho fixo.
+    if !fallback.is_empty() {
+        for (email, res) in batch_fotos(&client, &token, &fallback, "photo/$value")? {
+            let foto = match res {
+                FotoRes::Data(d) => Some(d),
+                _ => None,
+            };
+            fotos.insert(email, foto);
+        }
+    }
+
+    Ok(alvos
+        .into_iter()
+        .map(|email| {
+            let foto = fotos.get(&email).cloned().flatten();
+            FotoContato { email, foto }
+        })
+        .collect())
+}
+
+/// Uma passada de `$batch`: pede `/users/{email}/{sufixo}` para cada e-mail e
+/// devolve (email, resultado). Reusa `graph_enviar` (pool + Retry-After +
+/// jitter). O `id` de cada sub-resposta é o índice no slice — o Graph não
+/// garante a ordem, então casamos pelo id de volta.
+fn batch_fotos(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    emails: &[String],
+    sufixo: &str,
+) -> Result<Vec<(String, FotoRes)>, String> {
+    let requests: Vec<serde_json::Value> = emails
+        .iter()
+        .enumerate()
+        .map(|(i, email)| {
+            serde_json::json!({
+                "id": i.to_string(),
+                "method": "GET",
+                "url": format!("/users/{}/{}", urlencoding::encode(email), sufixo),
+            })
+        })
+        .collect();
+    let body = serde_json::json!({ "requests": requests });
+    let url = format!("{GRAPH}/$batch");
+
+    let resp = graph_enviar("fotos", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao buscar fotos: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/$batch retornou {}", resp.status()));
+    }
+
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    if let Some(items) = v["responses"].as_array() {
+        for it in items {
+            let idx: usize = it["id"].as_str().and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+            let email = match emails.get(idx) {
+                Some(e) => e.clone(),
+                None => continue,
+            };
+            let status = it["status"].as_u64().unwrap_or(0);
+            let res = if status == 200 {
+                // O corpo binário vem base64 no próprio JSON do $batch. O
+                // content-type pode vir com capitalização variada.
+                let mime = it["headers"]["Content-Type"]
+                    .as_str()
+                    .or_else(|| it["headers"]["content-type"].as_str())
+                    .unwrap_or("image/jpeg");
+                let mime = mime.split(';').next().unwrap_or("image/jpeg").trim();
+                match it["body"].as_str() {
+                    Some(b64) if !b64.is_empty() => {
+                        FotoRes::Data(format!("data:{mime};base64,{b64}"))
+                    }
+                    _ => FotoRes::SemFoto,
+                }
+            } else if status == 404 {
+                FotoRes::SemFoto
+            } else {
+                // 403 (sem permissão / re-consent pendente) e outros: None.
+                FotoRes::Nenhum
+            };
+            out.push((email, res));
+        }
+    }
+    Ok(out)
 }
