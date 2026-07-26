@@ -305,6 +305,14 @@ const pt = {
     corpoPlaceholder: "Escreva sua mensagem...",
     mostrarCcCco: "Cc/Cco",
     contatosSalvos: "{n} contatos salvos.",
+    // Autocomplete de destinatários (#40)
+    destinatariosPlaceholder: "Adicionar destinatários...",
+    secaoSeusContatos: "Seus contatos",
+    secaoOrganizacao: "De sua organização",
+    secaoDigitado: "Usar o endereço digitado",
+    semContatos: "Nenhum contato encontrado.",
+    buscandoContatos: "Buscando contatos...",
+    removerDestinatario: "Remover {nome}",
     // Agenda / Up Next
     upNext: "A seguir",
     semEventos: "Nada na agenda neste dia.",
@@ -674,6 +682,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     corpoPlaceholder: "Write your message...",
     mostrarCcCco: "Cc/Bcc",
     contatosSalvos: "{n} contacts saved.",
+    // Recipient autocomplete (#40)
+    destinatariosPlaceholder: "Add recipients...",
+    secaoSeusContatos: "Your contacts",
+    secaoOrganizacao: "From your organization",
+    secaoDigitado: "Use the address you typed",
+    semContatos: "No contacts found.",
+    buscandoContatos: "Searching contacts...",
+    removerDestinatario: "Remove {nome}",
     // Agenda / Up Next
     upNext: "Up Next",
     semEventos: "Nothing on the agenda this day.",

@@ -42,6 +42,9 @@ const itemVariants = cva(
       size: {
         default: "gap-4 p-4",
         sm: "gap-2.5 px-4 py-3",
+        // Linha compacta usada pelos blocos reui dentro de popovers/listas
+        // (ex.: @reui/c-combobox-20). Aditivo — não mexe em default/sm.
+        xs: "gap-2 px-2 py-1.5",
       },
     },
     defaultVariants: {

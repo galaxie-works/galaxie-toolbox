@@ -370,10 +370,10 @@ export async function crSubpastas(folderId: string): Promise<PastaEmail[]> {
 
 // --- Compositor de e-mail (pessoas, envio novo, contatos) -----------------
 const MOCK_PESSOAS: Pessoa[] = [
-  { nome: "Ana Silva", email: "ana@voaz.com.br" },
-  { nome: "Bruno Costa", email: "bruno@voaz.com.br" },
-  { nome: "Carla Dias", email: "carla@voaz.com.br" },
-  { nome: "Wagner Consani", email: "wagner@voaz.builders" },
+  { nome: "Ana Silva", email: "ana@voaz.com.br", cargo: "Gerente de Projetos", origem: "contatos" },
+  { nome: "Bruno Costa", email: "bruno@voaz.com.br", cargo: "Engenheiro Civil", origem: "contatos" },
+  { nome: "Carla Dias", email: "carla@voaz.com.br", cargo: "Arquiteta", origem: "organizacao" },
+  { nome: "Wagner Consani", email: "wagner@voaz.builders", cargo: null, origem: "organizacao" },
 ];
 
 /**
