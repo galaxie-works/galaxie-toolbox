@@ -610,13 +610,19 @@ function FolderSidebar({
           ativo ? "bg-secondary font-medium text-secondary-foreground" : "hover:bg-accent/50"
         )}
       >
-        <Ico className="size-4 shrink-0 text-muted-foreground" />
         {colapsada ? (
-          contagem > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-primary" />
-          )
+          // Dot ancorado ao ÍCONE (não ao botão): com o ring na cor do card ele
+          // fica dentro dos limites e o ScrollArea não corta (#37). Não-lido em
+          // Lixeira/Junk é ruído → sem dot nessas pastas.
+          <span className="relative">
+            <Ico className="size-4 shrink-0 text-muted-foreground" />
+            {contagem > 0 && p.tipo !== "deleteditems" && p.tipo !== "junkemail" && (
+              <span className="absolute -top-1 -right-1 size-2 rounded-full bg-primary ring-2 ring-card" />
+            )}
+          </span>
         ) : (
           <>
+            <Ico className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate text-left">{rotulo}</span>
             {contagem > 0 && (
               <span className="shrink-0 text-xs text-muted-foreground">{contagem}</span>
