@@ -267,6 +267,12 @@ function CorpoHtml({
 
   return (
     <iframe
+      // Remonta o iframe quando o tema muda: alterar `sandbox` (add/remove
+      // allow-scripts) num iframe JÁ montado não reaplica na mesma carga do
+      // novo srcDoc, então o Dark Reader era bloqueado ao trocar claro→escuro
+      // com o e-mail aberto (só pegava ao trocar de e-mail). Um `key` por tema
+      // cria um iframe novo com o sandbox correto desde o início (#73).
+      key={escuro ? "dark" : "light"}
       ref={ref}
       srcDoc={doc}
       // allow-scripts só no escuro: é o que o Dark Reader precisa pra rodar no
@@ -1323,7 +1329,16 @@ function MessageList({
                             {m.de}
                           </ItemTitle>
                           {m.sinalizado && (
-                            <Flag className="size-3.5 shrink-0 fill-red-500 text-red-500" />
+                            <Flag
+                              className={cn(
+                                "size-3.5 shrink-0 fill-red-500 text-red-500",
+                                // No hover as ações (incl. o botão de flag) entram
+                                // no slot da data; esconder o indicador persistente
+                                // evita a flag DUPLICADA (#63). Em modo seleção não
+                                // há ações, então o indicador permanece.
+                                !haSelecao && "group-hover/row:hidden"
+                              )}
+                            />
                           )}
                           {/* Slot de largura fixa pra data/ações: a data fica
                               `invisible` no hover (mantém o espaço) e as ações
