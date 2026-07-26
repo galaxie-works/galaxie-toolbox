@@ -59,8 +59,10 @@ Para **dúvidas de design** (padrão de componente, comportamento de interação
 
 ## 4. Fluxo de desenvolvimento (padrão exemplar)
 - **Assignee `galaxie-works`** em TODA issue criada.
-- **Branch por issue** criada ANTES de editar, PR atrelado com `Closes #N`.
+- **Branch ATRELADA à issue**, criada ANTES de editar, com **`gh issue develop <N> --base feat/bridge-email-client --name fix/N-slug`** (ou GraphQL `createLinkedBranch`). Isso liga a branch à issue na seção **Development**. ⚠️ **`git checkout -b` NÃO atrela** — só nomeia; toda issue precisa da branch aparecendo atrelada nela.
+- **PR atrelado** com `Closes #N` (fecha automático no merge). É adicional ao linked branch — juntos dão rastreabilidade issue ↔ branch ↔ PR.
 - PRs vão pra **`feat/bridge-email-client`**; issues **auto-fecham só no merge à `main`** (default branch).
+- **Higiene:** após merge, deletar a branch (`gh pr merge --delete-branch`), e periodicamente varrer branches órfãs no origin (`gh api repos/.../branches`).
 - Cada feature que mereça commit, comita. `tsc` + `cargo check` verdes antes de PR.
 
 ## 5. Definition of Done
