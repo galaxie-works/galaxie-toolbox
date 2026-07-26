@@ -7,10 +7,10 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import {
-  RudderIcon,
-  ShipIcon,
-  WalkieTalkieIcon,
-  AstronautIcon,
+  BridgeIcon,
+  NavigatorIcon,
+  CommsIcon,
+  AstroIcon,
 } from "@/components/ui/icons/marca-anim";
 import { AppsIcon } from "@/components/ui/icons/apps-anim";
 import { GalaxieSymbol } from "@/components/brand";
@@ -65,10 +65,10 @@ export const NAV: GrupoNav[] = [
         titulo: "galaxie",
         icone: GalaxieSymbol,
         filhos: [
-          { id: "control-room", titulo: "controlRoom", icone: RudderIcon },
-          { id: "navegador", titulo: "navegador", icone: ShipIcon },
-          { id: "comms", titulo: "comms", icone: WalkieTalkieIcon },
-          { id: "astro", titulo: "astro", icone: AstronautIcon },
+          { id: "control-room", titulo: "controlRoom", icone: BridgeIcon },
+          { id: "navegador", titulo: "navegador", icone: NavigatorIcon },
+          { id: "comms", titulo: "comms", icone: CommsIcon },
+          { id: "astro", titulo: "astro", icone: AstroIcon },
           { id: "pulsar", titulo: "pulsar", icone: Radar },
         ],
       },
@@ -99,10 +99,10 @@ export const TELAS: Record<
   { titulo: ChaveNav; secao: ChaveNav; icone: IconeNav }
 > = {
   // Produtos Galaxie
-  "control-room": { titulo: "controlRoom", secao: "galaxie", icone: RudderIcon },
-  navegador: { titulo: "navegador", secao: "galaxie", icone: ShipIcon },
-  comms: { titulo: "comms", secao: "galaxie", icone: WalkieTalkieIcon },
-  astro: { titulo: "astro", secao: "galaxie", icone: AstronautIcon },
+  "control-room": { titulo: "controlRoom", secao: "galaxie", icone: BridgeIcon },
+  navegador: { titulo: "navegador", secao: "galaxie", icone: NavigatorIcon },
+  comms: { titulo: "comms", secao: "galaxie", icone: CommsIcon },
+  astro: { titulo: "astro", secao: "galaxie", icone: AstroIcon },
   pulsar: { titulo: "pulsar", secao: "galaxie", icone: Radar },
   // Microsoft 365
   apps: { titulo: "apps", secao: "copilot", icone: AppsIcon },

@@ -1,10 +1,4 @@
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarGroup,
-  AvatarGroupCount,
-  AvatarImage,
-} from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -15,8 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Calendar } from "@/components/ui/calendar";
-import { DayButton } from "react-day-picker";
-import { Frame, FramePanel } from "@/components/reui/frame";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -30,14 +23,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import type { DropdownProps } from "react-day-picker";
 import {
   Empty,
   EmptyContent,
@@ -62,7 +47,12 @@ import {
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
+import { useTemaEscuro } from "@/lib/tema";
+import { usePersistedState } from "@/lib/persist";
+import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
+import DOMPurify from "dompurify";
 import { cn, comLoginHint } from "@/lib/utils";
 import type {
   AnexoEmail,
@@ -72,13 +62,12 @@ import type {
   EventoAgenda,
   EventoDetalhe,
   PastaEmail,
-  Participante,
 } from "@/lib/types";
 import {
   Archive,
   CalendarClock,
+  CalendarDays,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Download,
   ExternalLink,
@@ -89,6 +78,7 @@ import {
   MapPin,
   PanelLeftClose,
   PanelLeftOpen,
+  PanelRightClose,
   Paperclip,
   PenSquare,
   RefreshCw,
@@ -139,30 +129,6 @@ function quandoCurto(iso: string, idioma: string): string {
   return `${data} · ${hora}`;
 }
 
-// --- avatares dos participantes --------------------------------------------
-
-function GrupoParticipantes({
-  participantes,
-  total,
-}: {
-  participantes: Participante[];
-  total: number;
-}) {
-  if (participantes.length === 0) return null;
-  const extra = total - participantes.length;
-  return (
-    <AvatarGroup>
-      {participantes.map((p) => (
-        <Avatar key={p.email || p.nome} size="sm">
-          {p.foto && <AvatarImage src={p.foto} alt={p.nome} />}
-          <AvatarFallback>{p.iniciais}</AvatarFallback>
-        </Avatar>
-      ))}
-      {extra > 0 && <AvatarGroupCount>+{extra}</AvatarGroupCount>}
-    </AvatarGroup>
-  );
-}
-
 // --- corpo (html/texto) do Graph -------------------------------------------
 
 /**
@@ -170,23 +136,41 @@ function GrupoParticipantes({
  * (1) o CSS do nosso app não mutila o layout do e-mail (e vice-versa);
  * (2) e-mails de largura fixa (tabelas 600px+) são ESCALADOS pra caber no painel
  *     em vez de cortar — não-responsividade é do remetente, mas mitigamos aqui.
- * `sandbox` sem `allow-scripts` = nenhum script do e-mail roda.
+ * O HTML é sanitizado (DOMPurify) e o `allow-scripts` (necessário pro Dark
+ * Reader no tema escuro) só permite o DR — scripts do e-mail são removidos.
  */
 function CorpoHtml({ corpo }: { corpo: string }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [altura, setAltura] = useState(120);
+  // Render ciente do tema do app (como leitores modernos). O baseline é SEMPRE
+  // claro — dá ao Dark Reader um conjunto limpo de cores pra inverter. No modo
+  // escuro, injetamos o Dark Reader real (como o MailVault) no <head> do srcDoc:
+  // ele roda no load (sem flash) e o MutationObserver dele pega conteúdo tardio.
+  const escuro = useTemaEscuro();
 
-  const doc = useMemo(
-    () =>
-      `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">` +
-      // overflow:hidden garante ZERO scrollbar interna do iframe — nós ajustamos
-      // a altura por fora; a largura encaixa via `zoom` (reflui o layout).
-      `<style>html,body{margin:0;padding:0;overflow:hidden}body{background:#fff;` +
-      `color:#111;font-family:system-ui,-apple-system,Segoe UI,sans-serif;` +
+  const doc = useMemo(() => {
+    // overflow:hidden garante ZERO scrollbar interna do iframe — nós ajustamos
+    // a altura por fora; a largura encaixa via `zoom` (reflui o layout).
+    const baseline =
+      `<style>:root{color-scheme:light}html,body{margin:0;padding:0;overflow:hidden}` +
+      `body{background:#fff;color:#111;` +
+      `font-family:system-ui,-apple-system,Segoe UI,sans-serif;` +
       `font-size:14px;line-height:1.5;padding:6px}img{max-width:100%;height:auto}` +
-      `a{color:#7c3aed}</style></head><body>${corpo}</body></html>`,
-    [corpo]
-  );
+      `a{color:#7c3aed}</style>`;
+    const dr = escuro ? getDarkReaderInlineScripts() : "";
+    // Sanitiza o HTML do e-mail (tira <script>, handlers on*, javascript: etc.)
+    // ANTES de injetar. Como habilitamos allow-scripts pro Dark Reader rodar, um
+    // e-mail malicioso poderia rodar script na nossa origem — o DOMPurify fecha
+    // isso, mantendo tabelas/estilos/imagens do e-mail intactos.
+    const corpoLimpo = DOMPurify.sanitize(corpo, { ADD_ATTR: ["target"] });
+    return (
+      `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">` +
+      `<meta name="color-scheme" content="light">` +
+      baseline +
+      dr +
+      `</head><body>${corpoLimpo}</body></html>`
+    );
+  }, [corpo, escuro]);
 
   useEffect(() => {
     const iframe = ref.current;
@@ -240,7 +224,9 @@ function CorpoHtml({ corpo }: { corpo: string }) {
     <iframe
       ref={ref}
       srcDoc={doc}
-      sandbox="allow-same-origin allow-popups"
+      // allow-scripts só no escuro: é o que o Dark Reader precisa pra rodar no
+      // load. No claro mantemos o sandbox estrito (nenhum script do e-mail roda).
+      sandbox={escuro ? "allow-same-origin allow-popups allow-scripts" : "allow-same-origin allow-popups"}
       title="e-mail"
       scrolling="no"
       className="w-full border-0 bg-white"
@@ -483,7 +469,8 @@ function FolderSidebar({
     return (
       <div key={p.id}>
         <div className={cn("flex items-center", ehFilho && "pl-5")}>
-          {!ehFilho ? (
+          {/* chevron só quando a pasta realmente tem subpastas (childFolderCount > 0) */}
+          {p.filhos > 0 ? (
             <button
               type="button"
               onClick={() => alternarExpandir(p.id)}
@@ -600,6 +587,8 @@ function MessageList({
   selecionados,
   setSelecionados,
   naoLidosPasta,
+  busca,
+  setBusca,
   t,
   idioma,
 }: {
@@ -620,11 +609,12 @@ function MessageList({
   selecionados: Set<string>;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
   naoLidosPasta: number;
+  busca: string;
+  setBusca: (v: string) => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
   const [aba, setAba] = useState<Aba>("todos");
-  const [busca, setBusca] = useState("");
   const listaRef = useRef<HTMLDivElement>(null);
 
   // ESC limpa a busca e volta a mostrar tudo.
@@ -641,17 +631,17 @@ function MessageList({
       return n;
     });
 
+  // A busca por TEXTO é server-side (o pai passa os resultados como `mensagens`);
+  // aqui só aplicamos o filtro de aba (All/Unread/Flagged/Files) sobre a fonte.
   const filtrada = useMemo(() => {
     if (!mensagens) return [];
-    const q = busca.trim().toLowerCase();
     return mensagens.filter((m) => {
       if (aba === "naoLidos" && m.lido) return false;
       if (aba === "sinalizados" && !m.sinalizado) return false;
       if (aba === "anexos" && !m.temAnexos) return false;
-      if (q && !`${m.de} ${m.assunto} ${m.preview}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [mensagens, aba, busca]);
+  }, [mensagens, aba]);
 
   const filtrando = busca.trim() !== "" || aba !== "todos";
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
@@ -660,6 +650,18 @@ function MessageList({
     if (filtrando && filtrada.length === 0 && temMais && !carregandoMais) onCarregarMais();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtrando, filtrada.length, temMais, carregandoMais]);
+
+  // Virtualização da lista — só renderiza as linhas visíveis (+overscan), em vez
+  // de montar todos os itens de `filtrada`. Altura fixa estimada por linha; o
+  // measureElement corrige para a altura real (~84px) sem risco de sobreposição.
+  const ROW_ALTURA = 76;
+  const virtualizer = useVirtualizer({
+    count: filtrada.length,
+    getScrollElement: () => listaRef.current,
+    estimateSize: () => ROW_ALTURA,
+    overscan: 8,
+    getItemKey: (i) => filtrada[i].id,
+  });
 
   const comEstrela = mensagens?.filter((m) => m.sinalizado).length ?? 0;
   const comAnexo = mensagens?.filter((m) => m.temAnexos).length ?? 0;
@@ -697,9 +699,9 @@ function MessageList({
       const alvo = filtrada[prox];
       if (alvo) {
         onSel(alvo.id);
-        listaRef.current
-          ?.querySelector(`[data-msgid="${alvo.id}"]`)
-          ?.scrollIntoView({ block: "nearest" });
+        // Com a lista virtualizada, o item pode não estar no DOM — usa o
+        // scrollToIndex do virtualizer (align "auto" ≈ block:"nearest").
+        virtualizer.scrollToIndex(prox);
       }
     } else if (e.key === "Delete") {
       const alvos = selecionados.size > 0 ? [...selecionados] : sel ? [sel] : [];
@@ -832,105 +834,130 @@ function MessageList({
           onKeyDown={navegar}
           className="min-h-0 flex-1 overflow-y-auto scrollbar-fina outline-none"
           onScroll={(e) => {
+            // Pré-carga antecipada: ao passar de 90% da lista já busca a próxima
+            // página, pra sempre haver buffer à frente (não espera bater no fim).
             const el = e.currentTarget;
-            if (el.scrollHeight - el.scrollTop - el.clientHeight < 240) onCarregarMais();
+            if (el.scrollTop + el.clientHeight >= el.scrollHeight * 0.9) onCarregarMais();
           }}
         >
-          <div className="flex flex-col gap-0.5 px-2 py-1">
-            {filtrada.map((m) => {
-              const ativo = m.id === sel;
-              const marcado = selecionados.has(m.id);
-              return (
-                <Item
-                  key={m.id}
-                  size="sm"
-                  data-msgid={m.id}
-                  onClick={() => onSel(m.id)}
-                  data-active={ativo}
-                  className={cn(
-                    "group/row cursor-pointer flex-nowrap gap-2.5 px-2 py-2.5",
-                    ativo ? "bg-accent" : "hover:bg-accent/50",
-                    !m.lido && !ativo && "bg-primary/[0.03]"
-                  )}
-                >
-                  {/* checkbox — aparece no hover ou quando marcado */}
-                  <label
-                    className={cn(
-                      "flex items-center self-start pt-1.5 transition-opacity",
-                      !marcado && "opacity-0 group-hover/row:opacity-100"
-                    )}
-                    onClick={(e) => e.stopPropagation()}
+          <div className="px-2 py-1">
+            <div
+              style={{
+                height: virtualizer.getTotalSize(),
+                width: "100%",
+                position: "relative",
+              }}
+            >
+              {virtualizer.getVirtualItems().map((vr) => {
+                const m = filtrada[vr.index];
+                if (!m) return null;
+                const ativo = m.id === sel;
+                const marcado = selecionados.has(m.id);
+                return (
+                  <div
+                    key={vr.key}
+                    data-index={vr.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      paddingBottom: 2,
+                      transform: `translateY(${vr.start}px)`,
+                    }}
                   >
-                    <input
-                      type="checkbox"
-                      checked={marcado}
-                      onChange={() => alternarSel(m.id)}
-                      className="size-3.5 accent-primary"
-                      aria-label={m.assunto}
-                    />
-                  </label>
-
-                  <ItemMedia className="relative self-start">
-                    <Avatar>
-                      <AvatarFallback>{m.iniciais}</AvatarFallback>
-                    </Avatar>
-                    {!m.lido && (
-                      <span className="absolute -top-0.5 -left-0.5 size-2.5 rounded-full bg-primary ring-2 ring-background" />
-                    )}
-                  </ItemMedia>
-                  <ItemContent className="min-w-0 gap-0.5">
-                    <div className="flex items-center gap-2">
-                      <ItemTitle
-                        className={cn(
-                          "min-w-0 flex-1 truncate",
-                          m.lido ? "font-medium" : "font-semibold"
-                        )}
-                      >
-                        {m.de}
-                      </ItemTitle>
-                      {m.sinalizado && (
-                        <Flag className="size-3.5 shrink-0 fill-red-500 text-red-500" />
+                    <Item
+                      size="sm"
+                      data-msgid={m.id}
+                      onClick={() => onSel(m.id)}
+                      data-active={ativo}
+                      className={cn(
+                        "group/row cursor-pointer flex-nowrap gap-2.5 px-2 py-2.5",
+                        ativo ? "bg-accent" : "hover:bg-accent/50",
+                        !m.lido && !ativo && "bg-primary/[0.03]"
                       )}
-                      {/* data (some no hover) + ações rápidas (aparecem no hover) */}
-                      <span className="shrink-0 text-xs text-muted-foreground group-hover/row:hidden">
-                        {quandoCurto(m.recebido, idioma)}
-                      </span>
-                      <div
-                        className="hidden shrink-0 items-center gap-0.5 group-hover/row:flex"
+                    >
+                      {/* checkbox — aparece no hover ou quando marcado */}
+                      <label
+                        className={cn(
+                          "flex items-center self-start pt-1.5 transition-opacity",
+                          !marcado && "opacity-0 group-hover/row:opacity-100"
+                        )}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <button
-                          type="button"
-                          onClick={() => onFlag(m.id, !m.sinalizado)}
-                          className="grid size-6 place-items-center rounded hover:bg-background"
-                          aria-label={t.controlRoom.sinalizar}
-                        >
-                          <Flag
+                        <input
+                          type="checkbox"
+                          checked={marcado}
+                          onChange={() => alternarSel(m.id)}
+                          className="size-3.5 accent-primary"
+                          aria-label={m.assunto}
+                        />
+                      </label>
+
+                      <ItemMedia className="relative self-start">
+                        <Avatar>
+                          <AvatarFallback>{m.iniciais}</AvatarFallback>
+                        </Avatar>
+                        {!m.lido && (
+                          <span className="absolute -top-0.5 -left-0.5 size-2.5 rounded-full bg-primary ring-2 ring-background" />
+                        )}
+                      </ItemMedia>
+                      <ItemContent className="min-w-0 gap-0.5">
+                        <div className="flex items-center gap-2">
+                          <ItemTitle
                             className={cn(
-                              "size-3.5",
-                              m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
+                              "min-w-0 flex-1 truncate",
+                              m.lido ? "font-medium" : "font-semibold"
                             )}
-                          />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onExcluir([m.id])}
-                          className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                          aria-label={t.controlRoom.excluir}
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                    <p className={cn("truncate text-sm", !m.lido && "font-medium")}>{m.assunto}</p>
-                    <ItemDescription className="flex items-center gap-1">
-                      <span className="min-w-0 flex-1 truncate">{m.preview}</span>
-                      {m.temAnexos && <Paperclip className="size-3 shrink-0" />}
-                    </ItemDescription>
-                  </ItemContent>
-                </Item>
-              );
-            })}
+                          >
+                            {m.de}
+                          </ItemTitle>
+                          {m.sinalizado && (
+                            <Flag className="size-3.5 shrink-0 fill-red-500 text-red-500" />
+                          )}
+                          {/* data (some no hover) + ações rápidas (aparecem no hover) */}
+                          <span className="shrink-0 text-xs text-muted-foreground group-hover/row:hidden">
+                            {quandoCurto(m.recebido, idioma)}
+                          </span>
+                          <div
+                            className="hidden shrink-0 items-center gap-0.5 group-hover/row:flex"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => onFlag(m.id, !m.sinalizado)}
+                              className="grid size-6 place-items-center rounded hover:bg-background"
+                              aria-label={t.controlRoom.sinalizar}
+                            >
+                              <Flag
+                                className={cn(
+                                  "size-3.5",
+                                  m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
+                                )}
+                              />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onExcluir([m.id])}
+                              className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              aria-label={t.controlRoom.excluir}
+                            >
+                              <Trash2 className="size-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        <p className={cn("truncate text-sm", !m.lido && "font-medium")}>{m.assunto}</p>
+                        <ItemDescription className="flex items-center gap-1">
+                          <span className="min-w-0 flex-1 truncate">{m.preview}</span>
+                          {m.temAnexos && <Paperclip className="size-3 shrink-0" />}
+                        </ItemDescription>
+                      </ItemContent>
+                    </Item>
+                  </div>
+                );
+              })}
+            </div>
           </div>
           {carregandoMais && (
             <div className="flex justify-center py-3">
@@ -1037,14 +1064,15 @@ function MessageDetail({
     }
     setEnviando(true);
     try {
+      const anexos = c?.getAnexos() ?? [];
       if (modo === "encaminhar") {
-        await api.crEncaminhar(id, html, destinos);
+        await api.crEncaminhar(id, html, destinos, anexos);
         // salva os destinatários nos Contatos (best-effort, silencioso)
         api
           .crSalvarContatos(destinos.map((e) => ({ nome: e, email: e })))
           .catch(() => {});
       } else {
-        await api.crResponder(id, html, modo === "responderTodos");
+        await api.crResponder(id, html, modo === "responderTodos", anexos);
       }
       toastIcone(t.controlRoom.enviado, t.controlRoom.enviadoDescricao, "enviado");
       setModo(null);
@@ -1084,6 +1112,33 @@ function MessageDetail({
       </section>
     );
   }
+
+  const corpoInterno = (
+    <div className="px-5 py-4">
+      <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} />
+      {det.anexos.length > 0 && (
+        <>
+          <Separator className="my-4" />
+          <p className="mb-2 text-xs font-medium">{t.controlRoom.anexosTitulo}</p>
+          <div className="flex flex-wrap gap-2">
+            {det.anexos.map((a, i) => (
+              <button
+                key={a.id || i}
+                type="button"
+                onClick={() => baixarAnexo(a)}
+                className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
+                title={t.controlRoom.abrirArquivo}
+              >
+                <Paperclip className="size-3.5 text-muted-foreground" />
+                <span className="max-w-40 truncate">{a.nome}</span>
+                <Download className="size-3.5 text-muted-foreground" />
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
 
   return (
     <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
@@ -1154,74 +1209,55 @@ function MessageDetail({
         </div>
       </div>
 
-      {/* Corpo + anexos (rola) */}
-      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina">
-        <div className="px-5 py-4">
-          <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} />
-          {det.anexos.length > 0 && (
-            <>
-              <Separator className="my-4" />
-              <p className="mb-2 text-xs font-medium">{t.controlRoom.anexosTitulo}</p>
-              <div className="flex flex-wrap gap-2">
-                {det.anexos.map((a, i) => (
-                  <button
-                    key={a.id || i}
-                    type="button"
-                    onClick={() => baixarAnexo(a)}
-                    className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
-                    title={t.controlRoom.abrirArquivo}
-                  >
-                    <Paperclip className="size-3.5 text-muted-foreground" />
-                    <span className="max-w-40 truncate">{a.nome}</span>
-                    <Download className="size-3.5 text-muted-foreground" />
-                  </button>
-                ))}
+      {/* Corpo do e-mail + (quando compondo) painel de resposta que cresce pra cima. */}
+      {modo ? (
+        <ResizablePanelGroup autoSaveId="bridge.reply" direction="vertical" className="min-h-0 flex-1">
+          <ResizablePanel defaultSize={42} minSize={12} className="overflow-hidden">
+            <div className="h-full overflow-y-auto scrollbar-fina">{corpoInterno}</div>
+          </ResizablePanel>
+          <ResizableHandle withHandle className="my-0 bg-transparent hover:bg-border" />
+          <ResizablePanel defaultSize={58} minSize={28} className="overflow-hidden">
+            <div className="flex h-full flex-col border-t bg-muted/20">
+              <div className="flex shrink-0 items-center gap-2 px-4 py-2">
+                <span className="text-sm font-medium">
+                  {modo === "encaminhar"
+                    ? t.controlRoom.encaminhar
+                    : modo === "responderTodos"
+                      ? t.controlRoom.responderTodos
+                      : t.controlRoom.responder}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="ml-auto"
+                  onClick={() => setModo(null)}
+                  aria-label="×"
+                >
+                  <X />
+                </Button>
               </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Painel de compose (abaixo do e-mail) — redimensionável (resize-y). */}
-      {modo && (
-        <div className="flex max-h-[75vh] min-h-[240px] flex-col overflow-hidden border-t bg-muted/20">
-          <div className="flex shrink-0 items-center gap-2 px-4 py-2">
-            <span className="text-sm font-medium">
-              {modo === "encaminhar"
-                ? t.controlRoom.encaminhar
-                : modo === "responderTodos"
-                  ? t.controlRoom.responderTodos
-                  : t.controlRoom.responder}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="ml-auto"
-              onClick={() => setModo(null)}
-              aria-label="×"
-            >
-              <X />
-            </Button>
-          </div>
-          {/* arrasta a borda inferior desta área pra crescer/encolher */}
-          <div className="min-h-0 flex-1 resize-y overflow-hidden px-4">
-            <ComporMensagem
-              key={modo}
-              ref={comporRef}
-              mostrarDestinatarios={modo === "encaminhar"}
-              textos={textosCompose}
-            />
-          </div>
-          <div className="flex shrink-0 justify-end gap-2 px-4 py-2">
-            <Button variant="ghost" onClick={() => setModo(null)} disabled={enviando}>
-              {t.controlRoom.cancelar}
-            </Button>
-            <Button onClick={enviar} disabled={enviando}>
-              {enviando ? <Spinner className="size-4" /> : <Send />}
-              {t.controlRoom.enviar}
-            </Button>
-          </div>
-        </div>
+              <div className="min-h-0 flex-1 overflow-hidden px-4">
+                <ComporMensagem
+                  key={modo}
+                  ref={comporRef}
+                  mostrarDestinatarios={modo === "encaminhar"}
+                  textos={textosCompose}
+                />
+              </div>
+              <div className="flex shrink-0 justify-end gap-2 px-4 py-2">
+                <Button variant="ghost" onClick={() => setModo(null)} disabled={enviando}>
+                  {t.controlRoom.cancelar}
+                </Button>
+                <Button onClick={enviar} disabled={enviando}>
+                  {enviando ? <Spinner className="size-4" /> : <Send />}
+                  {t.controlRoom.enviar}
+                </Button>
+              </div>
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina">{corpoInterno}</div>
       )}
     </section>
   );
@@ -1231,44 +1267,52 @@ function MessageDetail({
 // Painel 4 — calendário + agenda do dia (schedule-8)
 // ===========================================================================
 
-/** Dropdown de mês/ano estilizado (do @reui/c-calendar-8). */
-function DropdownCalendario(props: DropdownProps) {
-  const { options, value, onChange } = props;
-  return (
-    <Select
-      value={String(value)}
-      onValueChange={(v) => {
-        if (onChange) {
-          onChange({ target: { value: v } } as unknown as React.ChangeEvent<HTMLSelectElement>);
-        }
-      }}
-    >
-      <SelectTrigger size="sm" className="h-7 first:grow">
-        <SelectValue>{options?.find((o) => o.value === value)?.label}</SelectValue>
-      </SelectTrigger>
-      <SelectContent align="start" className="max-h-64">
-        {options?.map((o) => (
-          <SelectItem key={o.value} value={String(o.value)} disabled={o.disabled}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-}
-
 function AgendaPanel({
   user,
   onEvento,
+  colapsada,
+  onToggle,
   t,
   idioma,
 }: {
   user: AppUser;
   onEvento: (id: string) => void;
+  colapsada: boolean;
+  onToggle: () => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
   void user;
+  // Colapsado: tira o cálculo/rede — só a tira com o ícone pra reabrir.
+  if (colapsada) {
+    return (
+      <div className="flex h-full w-12 shrink-0 flex-col items-center rounded-xl border bg-card py-3">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onToggle}
+          title={t.controlRoom.agendaTitulo}
+          aria-label={t.controlRoom.agendaTitulo}
+        >
+          <CalendarDays className="size-4 text-muted-foreground" />
+        </Button>
+      </div>
+    );
+  }
+  return <AgendaConteudo onEvento={onEvento} onToggle={onToggle} t={t} idioma={idioma} />;
+}
+
+function AgendaConteudo({
+  onEvento,
+  onToggle,
+  t,
+  idioma,
+}: {
+  onEvento: (id: string) => void;
+  onToggle: () => void;
+  t: ReturnType<typeof useIdioma>["t"];
+  idioma: string;
+}) {
   const [dia, setDia] = useState<Date>(() => new Date());
   const [mesEventos, setMesEventos] = useState<EventoAgenda[] | null>(null);
 
@@ -1316,182 +1360,92 @@ function AgendaPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mesEventos, dia]);
 
-  // dia (YYYY-M-D) -> cores (hex) dos pontos, até 3. Só eventos COM categoria
-  // definida pelo usuário no Outlook — a cor é a real da categoria.
-  const pontos = useMemo(() => {
-    const m = new Map<string, string[]>();
-    for (const ev of mesEventos ?? []) {
-      if (!ev.categorias || ev.categorias.length === 0) continue;
-      const d = new Date(comZ(ev.inicio));
-      if (Number.isNaN(d.getTime())) continue;
-      const k = chaveDia(d);
-      const arr = m.get(k) ?? [];
-      for (const nome of ev.categorias) {
-        if (arr.length >= 3) break;
-        arr.push(coresCat.get(nome) ?? "#8A8886");
-      }
-      m.set(k, arr);
-    }
-    return m;
-  }, [mesEventos, coresCat]);
-
-  // Botão de dia com células preenchidas + pontos (schedule-8).
-  const DiaBotao = (props: React.ComponentProps<typeof DayButton>) => {
-    const { day, modifiers, className, ...rest } = props;
-    const cores = pontos.get(chaveDia(day.date)) ?? [];
-    const sel = modifiers.selected && !modifiers.range_middle;
-    return (
-      <Button
-        variant="ghost"
-        size="icon"
-        data-selected-single={sel || undefined}
-        className={cn(
-          "relative flex aspect-square size-auto w-full min-w-(--cell-size) flex-col gap-1 rounded-md bg-muted/50 font-normal leading-none hover:bg-muted",
-          "data-[selected-single=true]:bg-primary data-[selected-single=true]:text-primary-foreground data-[selected-single=true]:hover:bg-primary",
-          className
-        )}
-        {...rest}
-      >
-        {day.date.getDate()}
-        {cores.length > 0 && (
-          <span className="absolute bottom-1 left-1/2 flex -translate-x-1/2 gap-0.5">
-            {cores.map((c, i) => (
-              <span
-                key={i}
-                className="size-1 rounded-full"
-                style={{ backgroundColor: c }}
-                aria-hidden
-              />
-            ))}
-          </span>
-        )}
-      </Button>
-    );
-  };
-
   const rotuloDia = dia.toLocaleDateString(idioma, {
-    weekday: "long",
     day: "numeric",
     month: "long",
+    year: "numeric",
   });
 
   return (
-    <div className="w-80 shrink-0">
-      <Frame className="h-full">
-        <FramePanel className="flex h-full flex-col gap-3 p-3">
-          <Calendar
-            mode="single"
-            captionLayout="dropdown"
-            selected={dia}
-            month={dia}
-            onMonthChange={setDia}
-            onSelect={(d) => d && setDia(d)}
-            showOutsideDays
-            className="w-full p-0 [--cell-size:--spacing(9)]"
-            classNames={{
-              weekdays: "flex gap-1",
-              week: "mt-1 flex gap-1",
-              weekday:
-                "flex h-6 flex-1 items-center justify-center text-xs font-medium text-muted-foreground",
-              day: "aspect-square flex-1 p-0",
-            }}
-            formatters={{
-              formatWeekdayName: (d) =>
-                d.toLocaleDateString(idioma, { weekday: "short" }).slice(0, 3).toUpperCase(),
-            }}
-            components={{ DayButton: DiaBotao, Dropdown: DropdownCalendario }}
-          />
-
-          <Separator />
-
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold capitalize">{rotuloDia}</h3>
-            <div className="ml-auto flex items-center gap-0.5">
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() =>
-                  setDia((d) => {
-                    const n = new Date(d);
-                    n.setDate(n.getDate() - 1);
-                    return n;
-                  })
-                }
-                aria-label="−1"
-              >
-                <ChevronLeft />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() =>
-                  setDia((d) => {
-                    const n = new Date(d);
-                    n.setDate(n.getDate() + 1);
-                    return n;
-                  })
-                }
-                aria-label="+1"
-              >
-                <ChevronRight />
-              </Button>
+    <Card className="flex h-full w-80 shrink-0 flex-col gap-0 overflow-hidden py-4">
+      {/* Título genérico + colapsar (igual ao sidebar do mail). */}
+      <div className="flex items-center justify-between px-4 pb-3">
+        <div className="flex items-center gap-2">
+          <CalendarDays className="size-4 text-muted-foreground" />
+          <span className="text-sm font-semibold">{t.controlRoom.agendaTitulo}</span>
+        </div>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={onToggle}
+          title={t.controlRoom.colapsar}
+          aria-label={t.controlRoom.colapsar}
+        >
+          <PanelRightClose className="size-4" />
+        </Button>
+      </div>
+      <CardContent className="px-4">
+        <Calendar
+          mode="single"
+          selected={dia}
+          month={dia}
+          onMonthChange={setDia}
+          onSelect={(d) => d && setDia(d)}
+          showOutsideDays
+          className="w-full bg-transparent p-0"
+          formatters={{
+            formatWeekdayName: (d) =>
+              d.toLocaleDateString(idioma, { weekday: "short" }).slice(0, 3),
+          }}
+          required
+        />
+      </CardContent>
+      <CardFooter className="flex min-h-0 flex-1 flex-col items-start gap-3 border-t px-4! pt-3! pb-0!">
+        <div className="flex w-full items-center justify-between px-1">
+          <div className="text-sm font-medium capitalize">{rotuloDia}</div>
+        </div>
+        {/* Eventos do dia — rola por dentro; empty state do dia inalterado. */}
+        <div className="min-h-0 w-full flex-1 overflow-y-auto scrollbar-fina">
+          {agenda === null ? (
+            <div className="flex justify-center py-8">
+              <Spinner className="size-5 text-muted-foreground" />
             </div>
-          </div>
-
-          {/* Lista de eventos: rola por dentro, com esmaecimento no fim */}
-          <div className="relative min-h-0 flex-1">
-            {agenda === null ? (
-              <div className="flex justify-center py-8">
-                <Spinner className="size-5 text-muted-foreground" />
-              </div>
-            ) : agenda.length === 0 ? (
-              <AgendaVazia t={t} />
-            ) : (
-              <div className="h-full overflow-y-auto scrollbar-fina">
-                <div className="flex flex-col gap-2 pr-2 pb-6">
-                  {agenda.map((ev) => (
-                    <button
-                      key={ev.id}
-                      type="button"
-                      onClick={() => onEvento(ev.id)}
-                      className="rounded-lg border bg-card p-3 text-left transition-colors hover:bg-accent/50"
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <span
-                            className={cn(
-                              "size-2 shrink-0 rounded-full",
-                              ev.categoria === "event" ? "bg-info" : "bg-primary"
-                            )}
-                          />
-                          <span className="truncate text-sm font-semibold">{ev.assunto}</span>
-                        </div>
-                        {ev.online && <Video className="size-3.5 shrink-0 text-muted-foreground" />}
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {ev.diaInteiro
-                          ? t.controlRoom.diaInteiro
-                          : faixaHora(ev.inicio, ev.fim, idioma)}
-                      </p>
-                      {ev.totalParticipantes > 0 && (
-                        <div className="mt-2">
-                          <GrupoParticipantes
-                            participantes={ev.participantes}
-                            total={ev.totalParticipantes}
-                          />
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* esmaecimento no fim do frame */}
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-linear-to-t from-card to-transparent" />
-          </div>
-        </FramePanel>
-      </Frame>
-    </div>
+          ) : agenda.length === 0 ? (
+            <AgendaVazia t={t} />
+          ) : (
+            <div className="flex w-full flex-col gap-2 pb-1">
+              {agenda.map((ev) => {
+                // Barra colorida = cor real da categoria do Outlook (se houver).
+                const cor = ev.categorias?.[0] ? coresCat.get(ev.categorias[0]) : undefined;
+                return (
+                  <button
+                    key={ev.id}
+                    type="button"
+                    onClick={() => onEvento(ev.id)}
+                    style={cor ? ({ "--barra": cor } as React.CSSProperties) : undefined}
+                    className={cn(
+                      "relative w-full rounded-md bg-muted p-2 pl-6 text-left text-sm transition-colors hover:bg-muted/70",
+                      "after:absolute after:inset-y-2 after:left-2 after:w-1 after:rounded-full",
+                      cor ? "after:bg-[var(--barra)]" : "after:bg-primary"
+                    )}
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate font-medium">{ev.assunto}</span>
+                      {ev.online && <Video className="size-3 shrink-0 text-muted-foreground" />}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {ev.diaInteiro
+                        ? t.controlRoom.diaInteiro
+                        : faixaHora(ev.inicio, ev.fim, idioma)}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </CardFooter>
+    </Card>
   );
 }
 
@@ -1638,7 +1592,7 @@ function NovaMensagemModal({
     }
     setEnviando(true);
     try {
-      await api.crEnviarNovo(para, cc, cco, c?.getAssunto() ?? "", c?.getHtml() ?? "");
+      await api.crEnviarNovo(para, cc, cco, c?.getAssunto() ?? "", c?.getHtml() ?? "", c?.getAnexos() ?? []);
       api
         .crSalvarContatos([...para, ...cc, ...cco].map((e) => ({ nome: e, email: e })))
         .catch(() => {});
@@ -1689,13 +1643,36 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   // recargaPastas atualiza SÓ as contagens do sidebar, sem recarregar a lista
   // (ações como excluir/responder não devem zerar o lazy load nem o scroll).
   const [recargaPastas, setRecargaPastas] = useState(0);
-  const [sidebarAberta, setSidebarAberta] = useState(true);
+  // Colapsos persistem (o app guarda o estado que o usuário deixa).
+  const [sidebarAberta, setSidebarAberta] = usePersistedState("bridge.sidebar", true);
+  const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agenda", true);
   const [temMais, setTemMais] = useState(false);
   const [carregandoMais, setCarregandoMais] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [novaAberta, setNovaAberta] = useState(false);
+  // Busca server-side ($search do Graph): resultados vêm do servidor (inclui
+  // corpo), não do filtro local sobre o carregado.
+  const [busca, setBusca] = useState("");
+  const [resultadosBusca, setResultadosBusca] = useState<EmailItem[] | null>(null);
+  const [temMaisBusca, setTemMaisBusca] = useState(false);
+  const carregadosBuscaRef = useRef(0);
   const carregandoMaisRef = useRef(false);
+  // Âncora de paginação: nº já buscado do servidor (skip). NÃO é mensagens.length
+  // — a lista encolhe ao excluir, mas o skip do Graph continua avançando.
+  const carregadosRef = useRef(0);
+  // Ids excluídos de forma otimista: filtrados de qualquer fetch/append até o
+  // Graph processar (evita a msg deletada "voltar" ao paginar/backfill).
+  const deletadasRef = useRef<Set<string>>(new Set());
   const PAGINA = 50;
+
+  // Junta páginas deduplicando por id e removendo o que foi excluído otimista.
+  const juntar = (prev: EmailItem[], nova: EmailItem[]) => {
+    const vistos = new Set(prev.map((m) => m.id));
+    return [
+      ...prev,
+      ...nova.filter((m) => !vistos.has(m.id) && !deletadasRef.current.has(m.id)),
+    ];
+  };
 
   const primeiroNome = user.displayName.split(" ")[0];
 
@@ -1765,6 +1742,26 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
 
   // Ações rápidas da LISTA (sinalizar/excluir por linha ou em lote).
   // Atualizam a lista NO LUGAR (nada de recarregar tudo e perder scroll/páginas).
+  // Marca como lido ao abrir (otimista): some o ponto de não-lido e decrementa
+  // a contagem da pasta na hora; o PATCH isRead vai em background e reverte se
+  // falhar. Previewar a mensagem = lê-la, como em qualquer leitor.
+  useEffect(() => {
+    if (!msgSel) return;
+    const m = mensagens?.find((x) => x.id === msgSel);
+    if (!m || m.lido) return;
+    setMensagens((prev) => prev?.map((x) => (x.id === msgSel ? { ...x, lido: true } : x)) ?? prev);
+    setPastas((prev) =>
+      prev?.map((p) => (p.id === pastaSel ? { ...p, naoLidos: Math.max(0, p.naoLidos - 1) } : p)) ?? prev
+    );
+    api.crMarcarLido(msgSel, true).catch(() => {
+      setMensagens((prev) => prev?.map((x) => (x.id === msgSel ? { ...x, lido: false } : x)) ?? prev);
+      setPastas((prev) =>
+        prev?.map((p) => (p.id === pastaSel ? { ...p, naoLidos: p.naoLidos + 1 } : p)) ?? prev
+      );
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [msgSel]);
+
   async function acaoFlag(id: string, novo: boolean) {
     // otimista: pinta o item já
     setMensagens((prev) =>
@@ -1788,27 +1785,63 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
 
   async function acaoExcluir(ids: string[]) {
     if (ids.length === 0) return;
-    const res = await Promise.allSettled(ids.map((id) => api.crExcluirEmail(id)));
-    const ok = ids.filter((_, i) => res[i].status === "fulfilled");
-    if (ok.length > 0) {
-      const okSet = new Set(ok);
-      setMensagens((prev) => prev?.filter((m) => !okSet.has(m.id)) ?? prev);
-      if (msgSel && okSet.has(msgSel)) setMsgSel(null);
-      setSelecionados((s) => {
-        const n = new Set(s);
-        ok.forEach((id) => n.delete(id));
-        return n;
-      });
-      setRecargaPastas((x) => x + 1); // atualiza contagens do sidebar
-      toast.success(
-        ok.length > 1
-          ? preencher(t.controlRoom.selecionadosExcluidos, { n: ok.length })
-          : t.controlRoom.emailExcluido
-      );
-    }
-    if (ok.length < ids.length) {
-      toast.error(t.controlRoom.erroAcao);
-    }
+    const idsSet = new Set(ids);
+    const removidas = (mensagens ?? []).filter((m) => idsSet.has(m.id));
+    const naoLidosFora = removidas.filter((m) => !m.lido).length;
+
+    // 1) OTIMISTA: tira da tela na hora + marca como "deletada" (pro backfill
+    //    não trazê-las de volta) + toast imediato. Nada de esperar o Graph.
+    ids.forEach((id) => deletadasRef.current.add(id));
+    setMensagens((prev) => prev?.filter((m) => !idsSet.has(m.id)) ?? prev);
+    if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
+    setSelecionados(new Set());
+
+    // 2) Contagens do sidebar já refletem: pasta atual −N (e −não lidos),
+    //    Lixeira +N (a menos que a exclusão seja dentro da própria Lixeira).
+    setPastas((prev) =>
+      prev?.map((p) => {
+        if (p.id === pastaSel && p.tipo !== "deleteditems") {
+          return {
+            ...p,
+            total: Math.max(0, p.total - ids.length),
+            naoLidos: Math.max(0, p.naoLidos - naoLidosFora),
+          };
+        }
+        if (p.tipo === "deleteditems" && pastaSel !== "deleteditems") {
+          return { ...p, total: p.total + ids.length };
+        }
+        return p;
+      }) ?? prev
+    );
+
+    // 3) Toast imediato de confirmação.
+    toast.success(
+      ids.length > 1
+        ? preencher(t.controlRoom.selecionadosExcluidos, { n: ids.length })
+        : t.controlRoom.emailExcluido
+    );
+
+    // (o backfill acontece sozinho pelo efeito de buffer quando a lista encurta)
+
+    // 4) Exclusão real em background + reconcile. Se algum falhar, avisa e
+    //    recarrega a pasta pra ressincronizar (o item volta se não saiu).
+    (async () => {
+      let ok: string[] = [];
+      try {
+        // Dentro da própria Lixeira = exclusão definitiva; senão move pra Lixeira.
+        ok = await api.crExcluirEmails(ids, pastaSel === "deleteditems");
+      } catch {
+        ok = [];
+      }
+      const falharam = ids.filter((id) => !ok.includes(id));
+      if (falharam.length > 0) {
+        falharam.forEach((id) => deletadasRef.current.delete(id));
+        toast.error(t.controlRoom.erroAcao);
+        setRecarga((n) => n + 1); // ressincroniza lista + contagens do zero
+      } else {
+        setRecargaPastas((x) => x + 1); // reconcilia contagens reais
+      }
+    })();
   }
 
   // mensagens da pasta (1ª página); auto-seleciona a primeira e semeia o
@@ -1818,11 +1851,15 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     setMensagens(null);
     setTemMais(false);
     setSelecionados(new Set());
+    setBusca(""); // troca de pasta zera a busca
     carregandoMaisRef.current = false;
+    carregadosRef.current = 0;
+    deletadasRef.current = new Set();
     api
       .crFolderMensagens(pastaSel, 0)
       .then((ms) => {
         if (!vivo) return;
+        carregadosRef.current = ms.length;
         setMensagens(ms);
         // mantém a mensagem já selecionada se ela existir na lista nova (ex.:
         // clicar "Responder" num toast já selecionou a msg antes do fetch);
@@ -1837,15 +1874,74 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     };
   }, [pastaSel, recarga]);
 
-  // Lazy load: rolar até o fim carrega a próxima página e concatena.
+  // Pré-carga: busca a próxima página do servidor pela âncora (skip = já
+  // buscado, não o tamanho da lista) e concatena deduplicando. Serve tanto pro
+  // scroll (90%) quanto pro backfill pós-exclusão.
   async function carregarMais() {
-    if (carregandoMaisRef.current || !temMais || !mensagens) return;
+    if (carregandoMaisRef.current || !temMais) return;
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
     try {
-      const pagina = await api.crFolderMensagens(pastaSel, mensagens.length);
-      setMensagens((prev) => [...(prev ?? []), ...pagina]);
+      const pagina = await api.crFolderMensagens(pastaSel, carregadosRef.current);
+      carregadosRef.current += pagina.length; // avança pelo offset do servidor
+      setMensagens((prev) => juntar(prev ?? [], pagina));
       setTemMais(pagina.length === PAGINA);
+    } catch {
+      /* silencioso */
+    } finally {
+      carregandoMaisRef.current = false;
+      setCarregandoMais(false);
+    }
+  }
+
+  // Buffer: se a lista ficou curta (ex.: excluiu uma página inteira) e ainda há
+  // mais no servidor, repõe automaticamente — o usuário nunca vê a lista vazia
+  // com mensagens sobrando na pasta.
+  useEffect(() => {
+    if (mensagens && mensagens.length < PAGINA && temMais && !carregandoMaisRef.current) {
+      carregarMais();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mensagens, temMais]);
+
+  // Busca server-side com debounce (300ms). Vazio = mostra a pasta normal.
+  const buscaAtiva = busca.trim() !== "";
+  useEffect(() => {
+    const termo = busca.trim();
+    if (!termo) {
+      setResultadosBusca(null);
+      setTemMaisBusca(false);
+      return;
+    }
+    const id = setTimeout(() => {
+      setResultadosBusca(null); // null = mostra o spinner de carregando
+      carregadosBuscaRef.current = 0;
+      api
+        .crBuscar(pastaSel, termo, 0)
+        .then((res) => {
+          carregadosBuscaRef.current = res.length;
+          setResultadosBusca(res.filter((m) => !deletadasRef.current.has(m.id)));
+          setTemMaisBusca(res.length === PAGINA);
+        })
+        .catch(() => {
+          setResultadosBusca([]);
+          setTemMaisBusca(false);
+        });
+    }, 300);
+    return () => clearTimeout(id);
+  }, [busca, pastaSel]);
+
+  // Paginação dos resultados de busca (skip por âncora, dedup igual à pasta).
+  async function carregarMaisBusca() {
+    const termo = busca.trim();
+    if (carregandoMaisRef.current || !termo || !temMaisBusca) return;
+    carregandoMaisRef.current = true;
+    setCarregandoMais(true);
+    try {
+      const res = await api.crBuscar(pastaSel, termo, carregadosBuscaRef.current);
+      carregadosBuscaRef.current += res.length;
+      setResultadosBusca((prev) => juntar(prev ?? [], res));
+      setTemMaisBusca(res.length === PAGINA);
     } catch {
       /* silencioso */
     } finally {
@@ -1896,12 +1992,17 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
           t={t}
         />
 
-        {/* Lista e detalhe compartilham o espaço, com splitter arrastável. */}
-        <ResizablePanelGroup direction="horizontal" className="min-w-0 flex-1 overflow-hidden">
+        {/* Lista e detalhe compartilham o espaço, com splitter arrastável.
+            autoSaveId persiste a proporção que o usuário deixa. */}
+        <ResizablePanelGroup
+          autoSaveId="bridge.layout"
+          direction="horizontal"
+          className="min-w-0 flex-1 overflow-hidden"
+        >
           <ResizablePanel defaultSize={38} minSize={24} maxSize={55} className="overflow-hidden">
             <MessageList
               titulo={tituloLista}
-              mensagens={mensagens}
+              mensagens={buscaAtiva ? resultadosBusca : mensagens}
               sel={msgSel}
               onSel={setMsgSel}
               onRefresh={() => setRecarga((n) => n + 1)}
@@ -1909,14 +2010,16 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
               onToggleSidebar={() => setSidebarAberta((v) => !v)}
               pastaTipo={pastaAtual?.tipo ?? ""}
               onEsvaziar={esvaziarLixeira}
-              onCarregarMais={carregarMais}
+              onCarregarMais={buscaAtiva ? carregarMaisBusca : carregarMais}
               carregandoMais={carregandoMais}
-              temMais={temMais}
+              temMais={buscaAtiva ? temMaisBusca : temMais}
               onFlag={acaoFlag}
               onExcluir={acaoExcluir}
               selecionados={selecionados}
               setSelecionados={setSelecionados}
               naoLidosPasta={pastaAtual?.naoLidos ?? 0}
+              busca={busca}
+              setBusca={setBusca}
               t={t}
               idioma={idioma}
             />
@@ -1948,7 +2051,14 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
           </ResizablePanel>
         </ResizablePanelGroup>
 
-        <AgendaPanel user={user} onEvento={setEventoSel} t={t} idioma={idioma} />
+        <AgendaPanel
+          user={user}
+          onEvento={setEventoSel}
+          colapsada={!agendaAberta}
+          onToggle={() => setAgendaAberta((v) => !v)}
+          t={t}
+          idioma={idioma}
+        />
       </div>
 
       <EventoDialog id={eventoSel} userEmail={user.email} onClose={() => setEventoSel(null)} />

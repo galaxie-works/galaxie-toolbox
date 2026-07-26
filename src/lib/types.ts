@@ -170,6 +170,7 @@ export interface PastaEmail {
   nome: string;
   naoLidos: number;
   total: number;
+  filhos: number; // nº de subpastas — chevron de expandir só aparece quando > 0
 }
 
 /** Pessoa sugerida no autocomplete do compositor de e-mail. */

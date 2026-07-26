@@ -7,6 +7,8 @@
  * class="dark" fixo e ninguem corrigia ate o toggle montar.
  */
 
+import { useSyncExternalStore } from "react";
+
 const CHAVE = "galaxie-theme";
 
 export function temaEscuro(): boolean {
@@ -24,3 +26,20 @@ export function aplicarTema(escuro: boolean) {
 
 /** Vale a partir do import, sem esperar componente nenhum. */
 document.documentElement.classList.toggle("dark", temaEscuro());
+
+/**
+ * Hook reativo: acompanha a classe `dark` do <html> e re-renderiza quando o
+ * tema muda (usado pra render de e-mail ciente do tema, por exemplo).
+ */
+function assinarTema(cb: () => void) {
+  const obs = new MutationObserver(cb);
+  obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
+  return () => obs.disconnect();
+}
+export function useTemaEscuro(): boolean {
+  return useSyncExternalStore(
+    assinarTema,
+    () => document.documentElement.classList.contains("dark"),
+    () => true
+  );
+}

@@ -297,10 +297,27 @@ async fn cr_enviar_novo(
     cco: Vec<String>,
     assunto: String,
     corpo: String,
+    anexos: Vec<graph::AnexoUp>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_enviar_novo(&store, para, cc, cco, &assunto, &corpo)
+        graph::cr_enviar_novo(&store, para, cc, cco, &assunto, &corpo, anexos)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Compositor: sobe um arquivo pro OneDrive e devolve um link de
+/// compartilhamento (view/organization). Files.ReadWrite.
+#[tauri::command]
+async fn cr_compartilhar_onedrive(
+    state: State<'_, Store>,
+    nome: String,
+    conteudo_b64: String,
+) -> Result<String, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_compartilhar_onedrive(&store, &nome, &conteudo_b64)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -361,11 +378,14 @@ async fn cr_responder(
     id: String,
     corpo: String,
     todos: bool,
+    anexos: Vec<graph::AnexoUp>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_responder(&store, &id, &corpo, todos))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_responder(&store, &id, &corpo, todos, anexos)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: encaminha um e-mail para os destinatarios informados.
@@ -375,11 +395,14 @@ async fn cr_encaminhar(
     id: String,
     corpo: String,
     para: Vec<String>,
+    anexos: Vec<graph::AnexoUp>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_encaminhar(&store, &id, &corpo, para))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_encaminhar(&store, &id, &corpo, para, anexos)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: exclui um e-mail (move para a Lixeira).
@@ -387,6 +410,20 @@ async fn cr_encaminhar(
 async fn cr_excluir_email(state: State<'_, Store>, id: String) -> Result<(), String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_email(&store, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: exclui vários e-mails em série (com retry no 429). Retorna os
+/// ids que foram realmente excluídos.
+#[tauri::command]
+async fn cr_excluir_emails(
+    state: State<'_, Store>,
+    ids: Vec<String>,
+    permanente: bool,
+) -> Result<Vec<String>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_emails(&store, ids, permanente))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -400,6 +437,33 @@ async fn cr_marcar_email(
 ) -> Result<(), String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || graph::cr_marcar_email(&store, &id, sinalizado))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: marca um e-mail como lido ou não lido (com retry no 429).
+#[tauri::command]
+async fn cr_marcar_lido(
+    state: State<'_, Store>,
+    id: String,
+    lido: bool,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_marcar_lido(&store, &id, lido))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: busca mensagens numa pasta pelo termo (busca no servidor).
+#[tauri::command]
+async fn cr_buscar(
+    state: State<'_, Store>,
+    folder_id: String,
+    termo: String,
+    skip: u32,
+) -> Result<Vec<graph::EmailItem>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_buscar(&store, &folder_id, &termo, skip))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -562,6 +626,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Anexos e "compartilhar via OneDrive": seletor de arquivo (dialog) e
+        // leitura dos bytes (fs), ambos chamados pelo front (compor-mensagem).
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         // Lembra tamanho e posicao da janela entre execucoes (salva ao fechar,
         // restaura ao abrir).
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -624,6 +692,7 @@ pub fn run() {
             cr_categorias,
             cr_pessoas,
             cr_enviar_novo,
+            cr_compartilhar_onedrive,
             cr_salvar_contatos,
             cr_subpastas,
             cr_mail_folders,
@@ -631,7 +700,10 @@ pub fn run() {
             cr_responder,
             cr_encaminhar,
             cr_excluir_email,
+            cr_excluir_emails,
             cr_marcar_email,
+            cr_marcar_lido,
+            cr_buscar,
             cr_esvaziar_lixeira,
             cr_baixar_anexo,
             abrir_caminho,

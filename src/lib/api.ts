@@ -341,12 +341,12 @@ export async function crEmailCorpo(id: string): Promise<EmailDetalhe> {
 }
 
 const MOCK_PASTAS: PastaEmail[] = [
-  { id: "inbox", tipo: "inbox", nome: "Caixa de entrada", naoLidos: 3, total: 128 },
-  { id: "drafts", tipo: "drafts", nome: "Rascunhos", naoLidos: 0, total: 45 },
-  { id: "sentitems", tipo: "sentitems", nome: "Enviados", naoLidos: 0, total: 312 },
-  { id: "archive", tipo: "archive", nome: "Arquivo", naoLidos: 0, total: 12 },
-  { id: "junkemail", tipo: "junkemail", nome: "Lixo eletrônico", naoLidos: 3, total: 8 },
-  { id: "deleteditems", tipo: "deleteditems", nome: "Itens excluídos", naoLidos: 0, total: 34 },
+  { id: "inbox", tipo: "inbox", nome: "Caixa de entrada", naoLidos: 3, total: 128, filhos: 1 },
+  { id: "drafts", tipo: "drafts", nome: "Rascunhos", naoLidos: 0, total: 45, filhos: 0 },
+  { id: "sentitems", tipo: "sentitems", nome: "Enviados", naoLidos: 0, total: 312, filhos: 0 },
+  { id: "archive", tipo: "archive", nome: "Arquivo", naoLidos: 0, total: 12, filhos: 0 },
+  { id: "junkemail", tipo: "junkemail", nome: "Lixo eletrônico", naoLidos: 3, total: 8, filhos: 0 },
+  { id: "deleteditems", tipo: "deleteditems", nome: "Itens excluídos", naoLidos: 0, total: 34, filhos: 0 },
 ];
 
 export async function crMailFolders(): Promise<PastaEmail[]> {
@@ -362,7 +362,7 @@ export async function crSubpastas(folderId: string): Promise<PastaEmail[]> {
   if (!inTauri()) {
     await sleep(300);
     return [
-      { id: `${folderId}-sub1`, tipo: "child", nome: "Clientes", naoLidos: 2, total: 40 },
+      { id: `${folderId}-sub1`, tipo: "child", nome: "Clientes", naoLidos: 2, total: 40, filhos: 0 },
     ];
   }
   return invoke<PastaEmail[]>("cr_subpastas", { folderId });
@@ -389,19 +389,47 @@ export async function crPessoas(query: string): Promise<Pessoa[]> {
   return invoke<Pessoa[]>("cr_pessoas", { query });
 }
 
-/** Envia um e-mail novo (do zero). */
+/**
+ * Anexo pronto para enviar: nome do arquivo, MIME e o conteúdo já em base64.
+ * É o que `ComporMensagemHandle.getAnexos()` devolve e o que os comandos de
+ * envio recebem (fileAttachment do Graph).
+ */
+export interface AnexoEnvio {
+  nome: string;
+  tipo: string;
+  conteudoB64: string;
+}
+
+/** Envia um e-mail novo (do zero), opcionalmente com anexos. */
 export async function crEnviarNovo(
   para: string[],
   cc: string[],
   cco: string[],
   assunto: string,
-  corpo: string
+  corpo: string,
+  anexos: AnexoEnvio[] = []
 ): Promise<void> {
   if (!inTauri()) {
     await sleep(700);
     return;
   }
-  return invoke<void>("cr_enviar_novo", { para, cc, cco, assunto, corpo });
+  return invoke<void>("cr_enviar_novo", { para, cc, cco, assunto, corpo, anexos });
+}
+
+/**
+ * Sobe um arquivo para "Bridge Anexos" no OneDrive do usuário e devolve um link
+ * de compartilhamento (visualização, escopo da organização). O front insere
+ * esse link no corpo do e-mail. Files.ReadWrite.
+ */
+export async function crCompartilharOneDrive(
+  nome: string,
+  conteudoB64: string
+): Promise<string> {
+  if (!inTauri()) {
+    await sleep(700);
+    return `https://exemplo-my.sharepoint.com/:b:/g/mock/${encodeURIComponent(nome)}`;
+  }
+  return invoke<string>("cr_compartilhar_onedrive", { nome, conteudoB64 });
 }
 
 /** Salva contatos pessoais (sem duplicar). Retorna quantos foram criados. */
@@ -461,25 +489,27 @@ export async function crFolderMensagens(
 export async function crResponder(
   id: string,
   corpo: string,
-  todos: boolean
+  todos: boolean,
+  anexos: AnexoEnvio[] = []
 ): Promise<void> {
   if (!inTauri()) {
     await sleep(700);
     return;
   }
-  return invoke<void>("cr_responder", { id, corpo, todos });
+  return invoke<void>("cr_responder", { id, corpo, todos, anexos });
 }
 
 export async function crEncaminhar(
   id: string,
   corpo: string,
-  para: string[]
+  para: string[],
+  anexos: AnexoEnvio[] = []
 ): Promise<void> {
   if (!inTauri()) {
     await sleep(700);
     return;
   }
-  return invoke<void>("cr_encaminhar", { id, corpo, para });
+  return invoke<void>("cr_encaminhar", { id, corpo, para, anexos });
 }
 
 export async function crExcluirEmail(id: string): Promise<void> {
@@ -488,6 +518,19 @@ export async function crExcluirEmail(id: string): Promise<void> {
     return;
   }
   return invoke<void>("cr_excluir_email", { id });
+}
+
+/** Exclui vários e-mails em série (com retry no 429 no backend). Retorna os ids
+ *  que foram realmente excluídos. */
+export async function crExcluirEmails(
+  ids: string[],
+  permanente = false
+): Promise<string[]> {
+  if (!inTauri()) {
+    await sleep(300);
+    return ids;
+  }
+  return invoke<string[]>("cr_excluir_emails", { ids, permanente });
 }
 
 export async function crMarcarEmail(
@@ -499,6 +542,28 @@ export async function crMarcarEmail(
     return;
   }
   return invoke<void>("cr_marcar_email", { id, sinalizado });
+}
+
+/** Marca um e-mail como lido ou não lido (com retry no 429 no backend). */
+export async function crMarcarLido(id: string, lido: boolean): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  return invoke<void>("cr_marcar_lido", { id, lido });
+}
+
+/** Busca mensagens numa pasta pelo termo (busca no servidor, páginas de 50). */
+export async function crBuscar(
+  folderId: string,
+  termo: string,
+  skip = 0
+): Promise<EmailItem[]> {
+  if (!inTauri()) {
+    await sleep(400);
+    return [];
+  }
+  return invoke<EmailItem[]>("cr_buscar", { folderId, termo, skip });
 }
 
 export async function crEsvaziarLixeira(): Promise<number> {

@@ -1297,6 +1297,26 @@ fn caminho_livre(dir: &std::path::Path, nome: &str) -> std::path::PathBuf {
 // Escopos: Mail.ReadWrite (rascunho) + Mail.Send (envio).
 // ----------------------------------------------------------------------------
 
+/// Anexo recebido do front, pronto para virar fileAttachment do Graph.
+/// `conteudo_b64` (camelCase `conteudoB64`) é o binário já em base64.
+#[derive(serde::Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AnexoUp {
+    pub nome: String,
+    pub tipo: String,
+    pub conteudo_b64: String,
+}
+
+/// Monta o corpo de um `#microsoft.graph.fileAttachment` a partir de um AnexoUp.
+fn anexo_json(a: &AnexoUp) -> serde_json::Value {
+    serde_json::json!({
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        "name": a.nome,
+        "contentType": if a.tipo.is_empty() { "application/octet-stream" } else { &a.tipo },
+        "contentBytes": a.conteudo_b64,
+    })
+}
+
 /// Cria um rascunho de resposta/encaminhamento, injeta o corpo e envia.
 fn compor_e_enviar(
     store: &TokenStore,
@@ -1304,6 +1324,7 @@ fn compor_e_enviar(
     acao: &str, // "createReply" | "createReplyAll" | "createForward"
     corpo_html: &str,
     para: &[String],
+    anexos: &[AnexoUp],
 ) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
@@ -1348,6 +1369,27 @@ fn compor_e_enviar(
         return Err(format!("PATCH do rascunho retornou {}", resp.status()));
     }
 
+    // 2.5) anexa os arquivos no rascunho (POST /attachments), um por vez.
+    for a in anexos {
+        if a.conteudo_b64.trim().is_empty() {
+            continue;
+        }
+        let url = format!("{GRAPH}/me/messages/{draft_id}/attachments");
+        let resp = client
+            .post(&url)
+            .bearer_auth(&token)
+            .json(&anexo_json(a))
+            .send()
+            .map_err(|e| format!("falha ao anexar '{}': {e}", a.nome))?;
+        if !resp.status().is_success() {
+            return Err(format!(
+                "anexar '{}' retornou {}",
+                a.nome,
+                resp.status()
+            ));
+        }
+    }
+
     // 3) envia
     let url = format!("{GRAPH}/me/messages/{draft_id}/send");
     let resp = client
@@ -1368,9 +1410,10 @@ pub fn cr_responder(
     id: &str,
     corpo_html: &str,
     todos: bool,
+    anexos: Vec<AnexoUp>,
 ) -> Result<(), String> {
     let acao = if todos { "createReplyAll" } else { "createReply" };
-    compor_e_enviar(store, id, acao, corpo_html, &[])
+    compor_e_enviar(store, id, acao, corpo_html, &[], &anexos)
 }
 
 /// Encaminha um e-mail para os destinatários informados.
@@ -1379,11 +1422,110 @@ pub fn cr_encaminhar(
     id: &str,
     corpo_html: &str,
     para: Vec<String>,
+    anexos: Vec<AnexoUp>,
 ) -> Result<(), String> {
     if para.iter().all(|e| e.trim().is_empty()) {
         return Err("informe ao menos um destinatário".into());
     }
-    compor_e_enviar(store, id, "createForward", corpo_html, &para)
+    compor_e_enviar(store, id, "createForward", corpo_html, &para, &anexos)
+}
+
+/// Espera do header Retry-After (segundos), com teto. Fallback quando ausente.
+fn retry_after_secs(resp: &reqwest::blocking::Response, padrao: u64, teto: u64) -> u64 {
+    resp.headers()
+        .get("Retry-After")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(padrao)
+        .min(teto)
+}
+
+/// Sobe um arquivo para a pasta "Bridge Anexos" no OneDrive do usuário e cria um
+/// link de compartilhamento (view, escopo da organização). Retorna o webUrl do
+/// link, que o front insere no corpo do e-mail. Retry no 429 nos dois passos.
+///
+/// PUT simples de conteúdo (bom até ~4 MB — anexos de e-mail cabem folgado);
+/// arquivos maiores exigiriam upload session, fora do escopo aqui. Files.ReadWrite.
+pub fn cr_compartilhar_onedrive(
+    store: &TokenStore,
+    nome: &str,
+    conteudo_b64: &str,
+) -> Result<String, String> {
+    use base64::{engine::general_purpose, Engine as _};
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let bytes = general_purpose::STANDARD
+        .decode(conteudo_b64.trim())
+        .map_err(|e| format!("conteudo do arquivo invalido: {e}"))?;
+
+    // Sanitiza: descarta qualquer componente de caminho no nome (sem traversal)
+    // e percent-encoda para caber no addressing por path do Graph.
+    let seguro = std::path::Path::new(nome)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("arquivo");
+    let nome_enc = urlencoding::encode(seguro);
+
+    // 1) PUT do conteúdo em /Bridge Anexos/{nome} (cria a pasta se preciso).
+    let put_url = format!("{GRAPH}/me/drive/root:/Bridge%20Anexos/{nome_enc}:/content");
+    let mut item: Option<serde_json::Value> = None;
+    for tentativa in 0..3u8 {
+        let resp = client
+            .put(&put_url)
+            .bearer_auth(&token)
+            .header("Content-Type", "application/octet-stream")
+            .body(bytes.clone())
+            .send()
+            .map_err(|e| format!("falha no upload: {e}"))?;
+        let st = resp.status();
+        if st.is_success() {
+            item = Some(resp.json().map_err(|e| e.to_string())?);
+            break;
+        }
+        if st.as_u16() == 429 && tentativa < 2 {
+            let espera = retry_after_secs(&resp, 2, 10);
+            log::warn!("[onedrive] upload '{seguro}' 429; retry em {espera}s");
+            std::thread::sleep(std::time::Duration::from_secs(espera));
+            continue;
+        }
+        let txt = resp.text().unwrap_or_default();
+        return Err(format!("upload retornou {st}: {txt}"));
+    }
+    let item = item.ok_or("upload esgotou as tentativas (429)")?;
+    let item_id = item["id"].as_str().ok_or("item enviado sem id")?;
+
+    // 2) POST /createLink (view, organization) -> devolve o webUrl do link.
+    let link_url = format!("{GRAPH}/me/drive/items/{item_id}/createLink");
+    let corpo = serde_json::json!({ "type": "view", "scope": "organization" });
+    for tentativa in 0..3u8 {
+        let resp = client
+            .post(&link_url)
+            .bearer_auth(&token)
+            .json(&corpo)
+            .send()
+            .map_err(|e| format!("falha ao criar o link: {e}"))?;
+        let st = resp.status();
+        if st.is_success() {
+            let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+            let web = v["link"]["webUrl"]
+                .as_str()
+                .ok_or("link sem webUrl")?
+                .to_string();
+            return Ok(web);
+        }
+        if st.as_u16() == 429 && tentativa < 2 {
+            let espera = retry_after_secs(&resp, 2, 10);
+            log::warn!("[onedrive] createLink '{seguro}' 429; retry em {espera}s");
+            std::thread::sleep(std::time::Duration::from_secs(espera));
+            continue;
+        }
+        let txt = resp.text().unwrap_or_default();
+        return Err(format!("createLink retornou {st}: {txt}"));
+    }
+    Err("createLink esgotou as tentativas (429)".to_string())
 }
 
 // ----------------------------------------------------------------------------
@@ -1401,6 +1543,8 @@ pub struct PastaEmail {
     pub nome: String,
     pub nao_lidos: u64,
     pub total: u64,
+    /// nº de subpastas — o front só mostra o chevron de expandir quando > 0.
+    pub filhos: u64,
 }
 
 /// Pastas de e-mail padrão do usuário, com contagens. Mail.Read.
@@ -1423,9 +1567,10 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
         // sumir do sidebar por causa de um 404/erro transitório numa das chamadas.
         let mut nao_lidos = 0;
         let mut total = 0;
+        let mut filhos = 0;
         let mut nome = id.to_string();
         let url = format!(
-            "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount"
+            "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount,childFolderCount"
         );
         // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas. Sem
         // isso o Inbox aparecia sem contagem de não lidos quando o Graph limitava.
@@ -1436,6 +1581,7 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
                         nome = v["displayName"].as_str().unwrap_or(id).to_string();
                         nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
                         total = v["totalItemCount"].as_u64().unwrap_or(0);
+                        filhos = v["childFolderCount"].as_u64().unwrap_or(0);
                     }
                     break;
                 }
@@ -1466,9 +1612,57 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
             nome,
             nao_lidos,
             total,
+            filhos,
         });
     }
     Ok(pastas)
+}
+
+/// Monta um EmailItem a partir de um item de mensagem do Graph. `saida` = pasta
+/// de saída (Enviados/Rascunhos): mostra o destinatário no lugar do remetente e
+/// usa a data de envio. Compartilhado por cr_folder_mensagens e cr_buscar para
+/// que a lista fique idêntica nos dois caminhos.
+fn montar_email_item(it: &serde_json::Value, saida: bool) -> EmailItem {
+    // Em pastas de saída, mostra o destinatário; nas demais, o remetente.
+    let contraparte = if saida {
+        it["toRecipients"][0]["emailAddress"]["name"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .or_else(|| it["toRecipients"][0]["emailAddress"]["address"].as_str())
+            .unwrap_or("")
+            .to_string()
+    } else {
+        it["from"]["emailAddress"]["name"]
+            .as_str()
+            .filter(|s| !s.is_empty())
+            .or_else(|| it["from"]["emailAddress"]["address"].as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    let quando = if saida {
+        it["sentDateTime"].as_str().unwrap_or("")
+    } else {
+        it["receivedDateTime"].as_str().unwrap_or("")
+    };
+    // e-mail da contraparte: em saída é o destinatário, senão o remetente
+    // (antes ficava sempre o "from", desalinhando com o nome mostrado).
+    let contraparte_email = if saida {
+        it["toRecipients"][0]["emailAddress"]["address"].as_str().unwrap_or("")
+    } else {
+        it["from"]["emailAddress"]["address"].as_str().unwrap_or("")
+    };
+    EmailItem {
+        id: it["id"].as_str().unwrap_or("").to_string(),
+        assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+        iniciais: iniciais(&contraparte),
+        de_email: contraparte_email.to_string(),
+        de: contraparte,
+        recebido: quando.to_string(),
+        preview: it["bodyPreview"].as_str().unwrap_or("").trim().to_string(),
+        lido: it["isRead"].as_bool().unwrap_or(true),
+        tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
+        sinalizado: it["flag"]["flagStatus"].as_str() == Some("flagged"),
+    }
 }
 
 /// Mensagens de uma pasta (até 50, mais recentes primeiro). Mail.Read.
@@ -1521,46 +1715,78 @@ pub fn cr_folder_mensagens(
     let mut itens = Vec::new();
     if let Some(items) = v["value"].as_array() {
         for it in items {
-            // Em pastas de saída, mostra o destinatário; nas demais, o remetente.
-            let contraparte = if saida {
-                it["toRecipients"][0]["emailAddress"]["name"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| it["toRecipients"][0]["emailAddress"]["address"].as_str())
-                    .unwrap_or("")
-                    .to_string()
-            } else {
-                it["from"]["emailAddress"]["name"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| it["from"]["emailAddress"]["address"].as_str())
-                    .unwrap_or("")
-                    .to_string()
-            };
-            let quando = if saida {
-                it["sentDateTime"].as_str().unwrap_or("")
-            } else {
-                it["receivedDateTime"].as_str().unwrap_or("")
-            };
-            // e-mail da contraparte: em saída é o destinatário, senão o remetente
-            // (antes ficava sempre o "from", desalinhando com o nome mostrado).
-            let contraparte_email = if saida {
-                it["toRecipients"][0]["emailAddress"]["address"].as_str().unwrap_or("")
-            } else {
-                it["from"]["emailAddress"]["address"].as_str().unwrap_or("")
-            };
-            itens.push(EmailItem {
-                id: it["id"].as_str().unwrap_or("").to_string(),
-                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
-                iniciais: iniciais(&contraparte),
-                de_email: contraparte_email.to_string(),
-                de: contraparte,
-                recebido: quando.to_string(),
-                preview: it["bodyPreview"].as_str().unwrap_or("").trim().to_string(),
-                lido: it["isRead"].as_bool().unwrap_or(true),
-                tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
-                sinalizado: it["flag"]["flagStatus"].as_str() == Some("flagged"),
-            });
+            itens.push(montar_email_item(it, saida));
+        }
+    }
+    Ok(itens)
+}
+
+/// Busca mensagens numa pasta pelo termo, no SERVIDOR (via $search do Graph).
+/// Devolve a mesma lista de cr_folder_mensagens (reusa montar_email_item), em
+/// páginas de 50 com $skip. O $search do Graph NÃO aceita $orderby junto — por
+/// isso não incluímos orderby aqui (o Graph já ordena por relevância). Exige o
+/// header ConsistencyLevel: eventual. Retry no 429. Mail.Read.
+pub fn cr_buscar(
+    store: &TokenStore,
+    folder_id: &str,
+    termo: &str,
+    skip: u32,
+) -> Result<Vec<EmailItem>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let saida = matches!(folder_id, "sentitems" | "drafts");
+    // As aspas duplas fazem parte da sintaxe do $search; as que vierem no próprio
+    // termo são trocadas por espaço para não fechar a expressão antes da hora.
+    let termo_limpo = termo.replace('"', " ");
+    let enc = urlencoding::encode(termo_limpo.trim());
+    // Sem $orderby: o Graph rejeita orderby combinado com $search.
+    let url = format!(
+        "{GRAPH}/me/mailFolders/{folder_id}/messages\
+         ?$search=\"{enc}\"\
+         &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
+         &$top=50&$skip={skip}"
+    );
+    // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas —
+    // mesmo padrão de cr_folder_mensagens.
+    let mut resposta = None;
+    for tentativa in 0..3u8 {
+        match client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+        {
+            Ok(r) if r.status().is_success() => {
+                resposta = Some(r);
+                break;
+            }
+            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
+                let espera = r
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(1)
+                    .min(5);
+                log::warn!("[mail] busca em '{folder_id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(r) => {
+                return Err(format!(
+                    "busca em /me/mailFolders/{folder_id}/messages retornou {}",
+                    r.status()
+                ));
+            }
+            Err(e) => return Err(format!("falha na busca: {e}")),
+        }
+    }
+    let resp = resposta.ok_or_else(|| "sem resposta na busca".to_string())?;
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut itens = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            itens.push(montar_email_item(it, saida));
         }
     }
     Ok(itens)
@@ -1571,22 +1797,104 @@ pub fn cr_folder_mensagens(
 // Escopo: Mail.ReadWrite.
 // ----------------------------------------------------------------------------
 
-/// Exclui um e-mail (DELETE move para a Lixeira; se já estiver lá, apaga em
-/// definitivo). Mail.ReadWrite.
+/// DELETE de uma mensagem com retry no 429 (throttling) respeitando Retry-After.
+/// 404 conta como sucesso (já foi removida — idempotente). Até 4 tentativas.
+fn deletar_msg(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    id: &str,
+) -> Result<(), String> {
+    let url = format!("{GRAPH}/me/messages/{id}");
+    for tentativa in 0..4u8 {
+        match client.delete(&url).bearer_auth(token).send() {
+            Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {
+                return Ok(());
+            }
+            Ok(resp) if resp.status().as_u16() == 429 && tentativa < 3 => {
+                let espera = resp
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(2)
+                    .min(10);
+                log::warn!("[mail] excluir '{id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(resp) => {
+                return Err(format!("DELETE /me/messages retornou {}", resp.status()));
+            }
+            Err(e) => return Err(format!("falha ao excluir o e-mail: {e}")),
+        }
+    }
+    Err("DELETE /me/messages esgotou as tentativas (429)".to_string())
+}
+
+/// Move uma mensagem para uma pasta (well-known como "deleteditems" ou id).
+/// 404 conta como sucesso (idempotente). Retry no 429. Mail.ReadWrite.
+fn mover_msg(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    id: &str,
+    destino: &str,
+) -> Result<(), String> {
+    let url = format!("{GRAPH}/me/messages/{id}/move");
+    let body = serde_json::json!({ "destinationId": destino });
+    for tentativa in 0..4u8 {
+        match client.post(&url).bearer_auth(token).json(&body).send() {
+            Ok(resp) if resp.status().is_success() || resp.status().as_u16() == 404 => {
+                return Ok(());
+            }
+            Ok(resp) if resp.status().as_u16() == 429 && tentativa < 3 => {
+                let espera = resp
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(2)
+                    .min(10);
+                log::warn!("[mail] mover '{id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(resp) => return Err(format!("POST /me/messages/move retornou {}", resp.status())),
+            Err(e) => return Err(format!("falha ao mover o e-mail: {e}")),
+        }
+    }
+    Err("POST /me/messages/move esgotou as tentativas (429)".to_string())
+}
+
+/// Exclui um e-mail (move para a Lixeira; recuperável). Mail.ReadWrite.
 pub fn cr_excluir_email(store: &TokenStore, id: &str) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    mover_msg(&client, &token, id, "deleteditems")
+}
 
-    let url = format!("{GRAPH}/me/messages/{id}");
-    let resp = client
-        .delete(&url)
-        .bearer_auth(&token)
-        .send()
-        .map_err(|e| format!("falha ao excluir o e-mail: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("DELETE /me/messages retornou {}", resp.status()));
+/// Exclui vários e-mails em série (evita a rajada concorrente que leva o Graph a
+/// 429). Por padrão MOVE para a Lixeira (recuperável) — o DELETE puro podia ir
+/// pra exclusão definitiva. Com `permanente=true` (ex.: excluindo de dentro da
+/// própria Lixeira) apaga de vez. Cada item tem retry no 429; 404 = já saiu.
+/// Retorna os ids que realmente saíram. Mail.ReadWrite.
+pub fn cr_excluir_emails(
+    store: &TokenStore,
+    ids: Vec<String>,
+    permanente: bool,
+) -> Result<Vec<String>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut ok = Vec::with_capacity(ids.len());
+    for id in &ids {
+        let r = if permanente {
+            deletar_msg(&client, &token, id)
+        } else {
+            mover_msg(&client, &token, id, "deleteditems")
+        };
+        match r {
+            Ok(()) => ok.push(id.clone()),
+            Err(e) => log::warn!("[mail] excluir '{id}' falhou: {e}"),
+        }
     }
-    Ok(())
+    Ok(ok)
 }
 
 /// Sinaliza ou remove a sinalização de um e-mail. Mail.ReadWrite.
@@ -1608,6 +1916,35 @@ pub fn cr_marcar_email(store: &TokenStore, id: &str, sinalizado: bool) -> Result
         return Err(format!("PATCH /me/messages retornou {}", resp.status()));
     }
     Ok(())
+}
+
+/// Marca um e-mail como lido ou não lido (PATCH isRead). Retry no 429
+/// respeitando Retry-After, até 3 tentativas. Mail.ReadWrite.
+pub fn cr_marcar_lido(store: &TokenStore, id: &str, lido: bool) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let patch = serde_json::json!({ "isRead": lido });
+    let url = format!("{GRAPH}/me/messages/{id}");
+    for tentativa in 0..3u8 {
+        match client.patch(&url).bearer_auth(&token).json(&patch).send() {
+            Ok(resp) if resp.status().is_success() => return Ok(()),
+            Ok(resp) if resp.status().as_u16() == 429 && tentativa < 2 => {
+                let espera = resp
+                    .headers()
+                    .get("Retry-After")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(1)
+                    .min(5);
+                log::warn!("[mail] marcar lido '{id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(resp) => return Err(format!("PATCH /me/messages retornou {}", resp.status())),
+            Err(e) => return Err(format!("falha ao marcar como lido: {e}")),
+        }
+    }
+    Err("PATCH /me/messages esgotou as tentativas (429)".to_string())
 }
 
 /// Esvazia a Lixeira (Deleted Items): apaga em definitivo cada mensagem.
@@ -1650,24 +1987,28 @@ pub fn cr_esvaziar_lixeira(store: &TokenStore) -> Result<u64, String> {
             break;
         }
 
+        // deletar_msg trata 404 como sucesso (item já saiu) e tem retry no 429 —
+        // era o 404 num item da lixeira que abortava o "Empty trash" inteiro.
+        let mut progrediu = false;
         for id in ids {
-            let url = format!("{GRAPH}/me/messages/{id}");
-            let resp = client
-                .delete(&url)
-                .bearer_auth(&token)
-                .send()
-                .map_err(|e| format!("falha ao apagar da lixeira: {e}"))?;
-            if !resp.status().is_success() {
-                return Err(format!("DELETE /me/messages retornou {}", resp.status()));
+            match deletar_msg(&client, &token, &id) {
+                Ok(()) => {
+                    apagados += 1;
+                    progrediu = true;
+                    if apagados >= LIMITE {
+                        log::warn!(
+                            "[mail] esvaziar lixeira: limite de {LIMITE} atingido, interrompendo"
+                        );
+                        return Ok(apagados);
+                    }
+                }
+                Err(e) => log::warn!("[mail] esvaziar lixeira: '{id}' falhou: {e}"),
             }
-            apagados += 1;
-
-            if apagados >= LIMITE {
-                log::warn!(
-                    "[mail] esvaziar lixeira: limite de {LIMITE} atingido, interrompendo"
-                );
-                return Ok(apagados);
-            }
+        }
+        // Página inteira sem sair nada: evita reler as mesmas em loop infinito.
+        if !progrediu {
+            log::warn!("[mail] esvaziar lixeira: página sem progresso, interrompendo");
+            break;
         }
     }
 
@@ -1785,6 +2126,7 @@ pub fn cr_enviar_novo(
     cco: Vec<String>,
     assunto: &str,
     corpo_html: &str,
+    anexos: Vec<AnexoUp>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
@@ -1798,14 +2140,26 @@ pub fn cr_enviar_novo(
             .collect()
     };
 
+    // Anexos direto no sendMail (fileAttachment); sem arquivo, campo omitido.
+    let anexos_json: Vec<serde_json::Value> = anexos
+        .iter()
+        .filter(|a| !a.conteudo_b64.trim().is_empty())
+        .map(anexo_json)
+        .collect();
+
+    let mut message = serde_json::json!({
+        "subject": assunto,
+        "body": { "contentType": "HTML", "content": corpo_html },
+        "toRecipients": recipients(&para),
+        "ccRecipients": recipients(&cc),
+        "bccRecipients": recipients(&cco),
+    });
+    if !anexos_json.is_empty() {
+        message["attachments"] = serde_json::Value::Array(anexos_json);
+    }
+
     let body = serde_json::json!({
-        "message": {
-            "subject": assunto,
-            "body": { "contentType": "HTML", "content": corpo_html },
-            "toRecipients": recipients(&para),
-            "ccRecipients": recipients(&cc),
-            "bccRecipients": recipients(&cco),
-        },
+        "message": message,
         "saveToSentItems": true
     });
 
@@ -1889,7 +2243,7 @@ pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmai
 
     let url = format!(
         "{GRAPH}/me/mailFolders/{folder_id}/childFolders\
-         ?$select=id,displayName,unreadItemCount,totalItemCount&$top=50"
+         ?$select=id,displayName,unreadItemCount,totalItemCount,childFolderCount&$top=50"
     );
     let resp = client
         .get(&url)
@@ -1909,6 +2263,7 @@ pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmai
                 nome: it["displayName"].as_str().unwrap_or("").to_string(),
                 nao_lidos: it["unreadItemCount"].as_u64().unwrap_or(0),
                 total: it["totalItemCount"].as_u64().unwrap_or(0),
+                filhos: it["childFolderCount"].as_u64().unwrap_or(0),
             });
         }
     }

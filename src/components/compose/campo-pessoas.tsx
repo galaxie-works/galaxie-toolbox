@@ -169,7 +169,7 @@ export function CampoPessoas({
       </div>
 
       {aberto && sugestoes.length > 0 && (
-        <ul className="absolute top-full left-0 z-50 mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover shadow-md">
+        <ul className="absolute top-full left-0 z-[60] mt-1 max-h-56 w-full overflow-auto rounded-md border bg-popover shadow-md">
           {sugestoes.map((p, i) => (
             <li key={`${p.email}-${i}`}>
               <button
