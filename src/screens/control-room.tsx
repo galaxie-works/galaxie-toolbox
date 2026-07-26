@@ -850,6 +850,75 @@ function periodoChave(recebido: string, agora: Date): string {
   return "older";
 }
 
+/**
+ * Itens do menu de contexto de e-mail (#86). Fica compartilhado entre o menu da
+ * LINHA e o menu da ÁREA da lista (botão direito fora das linhas) para que os
+ * dois ofereçam exatamente as mesmas ações — inclusive as folder-aware (em
+ * Itens Excluídos "Excluir" vira "Excluir permanentemente").
+ *
+ * `lido`/`sinalizado` são o estado do ALVO (a linha clicada ou, na seleção, o
+ * estado comum dela): definem o rótulo e o valor novo aplicado a `alvos`.
+ */
+function ItensMenuEmail({
+  alvos,
+  lido,
+  sinalizado,
+  permanente,
+  onMarcarLido,
+  onFlag,
+  onExcluir,
+  setSelecionados,
+  t,
+}: {
+  alvos: string[];
+  lido: boolean;
+  sinalizado: boolean;
+  permanente: boolean;
+  onMarcarLido: (id: string, lido: boolean) => void;
+  onFlag: (id: string, novo: boolean) => void;
+  onExcluir: (ids: string[]) => void | Promise<void>;
+  setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  return (
+    <>
+      <ContextMenuItem
+        className="gap-2"
+        onClick={() => alvos.forEach((id) => onMarcarLido(id, !lido))}
+      >
+        {lido ? <Mail /> : <MailOpen />}
+        {lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
+      </ContextMenuItem>
+      <ContextMenuItem
+        className="gap-2"
+        onClick={() => alvos.forEach((id) => onFlag(id, !sinalizado))}
+      >
+        {sinalizado ? <FlagOff /> : <Flag />}
+        {sinalizado ? t.controlRoom.removerSinal : t.controlRoom.sinalizar}
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      <ContextMenuItem
+        variant="destructive"
+        className="gap-2"
+        onClick={() => {
+          onExcluir(alvos);
+          // Tira da seleção o que foi excluído — senão a barra "N selected"
+          // fica fantasma após excluir pelo menu de contexto (o atalho Delete
+          // já limpava; o menu não) (rejeição do #86 pelo PO).
+          setSelecionados((s) => {
+            const n = new Set(s);
+            alvos.forEach((id) => n.delete(id));
+            return n;
+          });
+        }}
+      >
+        <Trash2 />
+        {permanente ? t.controlRoom.excluirPermanente : t.controlRoom.excluir}
+      </ContextMenuItem>
+    </>
+  );
+}
+
 function MessageList({
   titulo,
   mensagens,
@@ -858,6 +927,7 @@ function MessageList({
   onRefresh,
   sidebarAberta,
   onToggleSidebar,
+  pastaId,
   pastaTipo,
   onEsvaziar,
   onCarregarMais,
@@ -889,6 +959,7 @@ function MessageList({
   onRefresh: () => void;
   sidebarAberta: boolean;
   onToggleSidebar: () => void;
+  pastaId: string;
   pastaTipo: string;
   onEsvaziar: () => void;
   onCarregarMais: () => void;
@@ -949,15 +1020,34 @@ function MessageList({
   // filtros Graph — ex.: "To me" via $search — o Graph ordena por relevância).
   // Colapso persiste (regra: o app guarda o estado do usuário).
   const AGRUPAR = ordenar === "data" && busca.trim() === "" && !filtroGraph;
-  const [colapsadosArr, setColapsadosArr] = usePersistedState<string[]>(
-    "bridge.gruposColapsados",
-    []
+  // O colapso persiste POR PASTA. A chave do grupo é o PERÍODO ("hoje",
+  // "mes-5", "ano-2025", "older"…) e antes era guardada numa lista ÚNICA, comum
+  // a todas as pastas: colapsar "Junho" na Inbox escondia também todo o "Junho"
+  // de Itens Excluídos/Lixo Eletrônico — pastas de mail ANTIGO, onde quase tudo
+  // cai nos períodos velhos. Com todos os grupos colapsados a lista renderiza
+  // SÓ cabeçalhos (que não são linhas de e-mail), e aí o botão direito não
+  // encontra nada pra abrir o menu de contexto — a causa do "não há menu de
+  // contexto em Deleted e Junk" (#86). Guardar por pasta mantém o estado do
+  // usuário sem vazar de uma pasta pra outra.
+  const [colapsadosMapa, setColapsadosMapa] = usePersistedState<Record<string, string[]>>(
+    "bridge.gruposColapsados.v2",
+    {}
+  );
+  const colapsadosArr = useMemo(
+    () => colapsadosMapa[pastaId] ?? [],
+    [colapsadosMapa, pastaId]
   );
   const colapsados = useMemo(() => new Set(colapsadosArr), [colapsadosArr]);
   const alternarColapso = (chave: string) =>
-    setColapsadosArr((arr) =>
-      arr.includes(chave) ? arr.filter((c) => c !== chave) : [...arr, chave]
-    );
+    setColapsadosMapa((mapa) => {
+      const atual = mapa[pastaId] ?? [];
+      return {
+        ...mapa,
+        [pastaId]: atual.includes(chave)
+          ? atual.filter((c) => c !== chave)
+          : [...atual, chave],
+      };
+    });
   // Rótulo do período por idioma: hoje/ontem/older via strings; mês via nome
   // localizado (Intl, capitalizado); ano anterior via o número do ano (#30).
   const rotuloDePeriodo = useCallback(
@@ -1166,6 +1256,19 @@ function MessageList({
   // Em "modo seleção" (≥1 marcado): checkboxes sempre visíveis e as ações de
   // hover por linha somem — o usuário opera pela barra de seleção (#23).
   const haSelecao = selecionados.size > 0;
+  // Em Itens Excluídos o "Excluir" já é DEFINITIVO (acaoExcluir é folder-aware).
+  const excluirPermanente = pastaTipo === "deleteditems";
+  // Mensagens da seleção: alimentam o menu de contexto da ÁREA da lista (botão
+  // direito fora das linhas). Estado comum = "todas lidas/sinalizadas?", que
+  // define o rótulo e o valor novo aplicado ao lote.
+  const msgsSelecionadas = useMemo(
+    () => (mensagens ?? []).filter((m) => selecionados.has(m.id)),
+    [mensagens, selecionados]
+  );
+  const selTodasLidas =
+    msgsSelecionadas.length > 0 && msgsSelecionadas.every((m) => m.lido);
+  const selTodasSinalizadas =
+    msgsSelecionadas.length > 0 && msgsSelecionadas.every((m) => m.sinalizado);
 
   // Rótulos das opções de ordenação (chave → string i18n) (#32).
   const rotuloOrdena: Record<api.OrdenarMensagens, string> = {
@@ -1319,6 +1422,14 @@ function MessageList({
           )}
         </div>
       ) : (
+        // Menu de contexto da ÁREA da lista: o botão direito FORA das linhas
+        // (espaço vazio abaixo da última mensagem, cabeçalho de grupo) também
+        // precisa responder — em pastas curtas como Itens Excluídos/Lixo
+        // Eletrônico boa parte do painel é área vazia e o usuário nunca acerta
+        // uma linha (#86). Age sobre a SELEÇÃO; sem seleção não há alvo, então
+        // o trigger fica desabilitado (nada abre, nem menu vazio).
+        <ContextMenu>
+          <ContextMenuTrigger asChild disabled={!haSelecao}>
         <div
           ref={listaRef}
           tabIndex={0}
@@ -1400,6 +1511,11 @@ function MessageList({
                     key={vr.key}
                     data-index={vr.index}
                     ref={virtualizer.measureElement}
+                    // O menu da LINHA e o menu da ÁREA são dois triggers do
+                    // Radix aninhados e o trigger não interrompe a propagação:
+                    // sem isso o clique na linha abriria os DOIS. A linha tem
+                    // prioridade (alvo mais específico).
+                    onContextMenu={(e) => e.stopPropagation()}
                     style={{
                       position: "absolute",
                       top: 0,
@@ -1525,46 +1641,17 @@ function MessageList({
                     </Item>
                       </ContextMenuTrigger>
                       <ContextMenuContent className="w-56">
-                        <ContextMenuItem
-                          className="gap-2"
-                          onClick={() =>
-                            alvos.forEach((id) => onMarcarLido(id, !m.lido))
-                          }
-                        >
-                          {m.lido ? <Mail /> : <MailOpen />}
-                          {m.lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
-                        </ContextMenuItem>
-                        <ContextMenuItem
-                          className="gap-2"
-                          onClick={() =>
-                            alvos.forEach((id) => onFlag(id, !m.sinalizado))
-                          }
-                        >
-                          {m.sinalizado ? <FlagOff /> : <Flag />}
-                          {m.sinalizado ? t.controlRoom.removerSinal : t.controlRoom.sinalizar}
-                        </ContextMenuItem>
-                        <ContextMenuSeparator />
-                        <ContextMenuItem
-                          variant="destructive"
-                          className="gap-2"
-                          onClick={() => {
-                            onExcluir(alvos);
-                            // Tira da seleção o que foi excluído — senão a barra
-                            // "N selected" fica fantasma após excluir pelo menu de
-                            // contexto (o atalho Delete já limpava; o menu não)
-                            // (rejeição do #86 pelo PO).
-                            setSelecionados((s) => {
-                              const n = new Set(s);
-                              alvos.forEach((id) => n.delete(id));
-                              return n;
-                            });
-                          }}
-                        >
-                          <Trash2 />
-                          {pastaTipo === "deleteditems"
-                            ? t.controlRoom.excluirPermanente
-                            : t.controlRoom.excluir}
-                        </ContextMenuItem>
+                        <ItensMenuEmail
+                          alvos={alvos}
+                          lido={m.lido}
+                          sinalizado={m.sinalizado}
+                          permanente={excluirPermanente}
+                          onMarcarLido={onMarcarLido}
+                          onFlag={onFlag}
+                          onExcluir={onExcluir}
+                          setSelecionados={setSelecionados}
+                          t={t}
+                        />
                       </ContextMenuContent>
                     </ContextMenu>
                   </div>
@@ -1578,6 +1665,21 @@ function MessageList({
             </div>
           )}
         </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-56">
+            <ItensMenuEmail
+              alvos={[...selecionados]}
+              lido={selTodasLidas}
+              sinalizado={selTodasSinalizadas}
+              permanente={excluirPermanente}
+              onMarcarLido={onMarcarLido}
+              onFlag={onFlag}
+              onExcluir={onExcluir}
+              setSelecionados={setSelecionados}
+              t={t}
+            />
+          </ContextMenuContent>
+        </ContextMenu>
       )}
     </section>
   );
@@ -2905,6 +3007,7 @@ export function ControlRoomScreen({
               onRefresh={() => setRecarga((n) => n + 1)}
               sidebarAberta={sidebarAberta}
               onToggleSidebar={() => setSidebarAberta((v) => !v)}
+              pastaId={pastaSel}
               pastaTipo={pastaAtual?.tipo ?? ""}
               onEsvaziar={esvaziarLixeira}
               onCarregarMais={onCarregarMaisLista}
