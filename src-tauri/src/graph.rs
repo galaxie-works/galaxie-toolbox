@@ -2269,3 +2269,67 @@ pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmai
     }
     Ok(pastas)
 }
+
+/// Conta, na PASTA inteira (não só no que está carregado), quantas mensagens
+/// batem com um filtro. Usa o endpoint /$count, que devolve um número puro
+/// (texto) no corpo — daí o parse para u64. O $filter exige o header
+/// ConsistencyLevel: eventual. Retry no 429. Mail.Read.
+///
+/// `filtro` aceita:
+///   - "flagged" → mensagens sinalizadas (flag/flagStatus eq 'flagged')
+///   - "anexos"  → mensagens com anexos (hasAttachments eq true)
+/// Qualquer outro valor é rejeitado com erro (em vez de contar tudo em
+/// silêncio, o que enganaria a UI): assim um filtro digitado errado aparece
+/// como falha em vez de virar um total sem sentido.
+pub fn cr_contar(store: &TokenStore, folder_id: &str, filtro: &str) -> Result<u64, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // Mapeia o filtro lógico para a expressão OData. Desconhecido → erro.
+    let odata = match filtro {
+        "flagged" => "flag/flagStatus eq 'flagged'",
+        "anexos" => "hasAttachments eq true",
+        outro => return Err(format!("filtro desconhecido: '{outro}'")),
+    };
+
+    // O $filter vai percent-encodado; o /$count devolve o total como texto puro.
+    let url = format!(
+        "{GRAPH}/me/mailFolders/{folder_id}/messages/$count?$filter={}",
+        urlencoding::encode(odata)
+    );
+
+    // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas — mesmo
+    // padrão de cr_buscar. O /$count com $filter exige ConsistencyLevel: eventual.
+    let mut resposta = None;
+    for tentativa in 0..3u8 {
+        match client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+        {
+            Ok(r) if r.status().is_success() => {
+                resposta = Some(r);
+                break;
+            }
+            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
+                let espera = retry_after_secs(&r, 1, 5);
+                log::warn!("[mail] contar em '{folder_id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(r) => {
+                return Err(format!(
+                    "/me/mailFolders/{folder_id}/messages/$count retornou {}",
+                    r.status()
+                ));
+            }
+            Err(e) => return Err(format!("falha ao contar: {e}")),
+        }
+    }
+    let resp = resposta.ok_or_else(|| "sem resposta na contagem".to_string())?;
+    let corpo = resp.text().map_err(|e| e.to_string())?;
+    corpo
+        .trim()
+        .parse::<u64>()
+        .map_err(|e| format!("resposta do /$count não é um número ('{corpo}'): {e}"))
+}

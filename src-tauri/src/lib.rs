@@ -468,6 +468,20 @@ async fn cr_buscar(
         .map_err(|e| e.to_string())?
 }
 
+/// Control room: conta na pasta inteira as mensagens que batem com um filtro
+/// ("flagged" | "anexos"), via endpoint /$count do Graph.
+#[tauri::command]
+async fn cr_contar(
+    state: State<'_, Store>,
+    folder_id: String,
+    filtro: String,
+) -> Result<u64, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_contar(&store, &folder_id, &filtro))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: esvazia a Lixeira (apaga em definitivo). Retorna a contagem.
 #[tauri::command]
 async fn cr_esvaziar_lixeira(state: State<'_, Store>) -> Result<u64, String> {
@@ -704,6 +718,7 @@ pub fn run() {
             cr_marcar_email,
             cr_marcar_lido,
             cr_buscar,
+            cr_contar,
             cr_esvaziar_lixeira,
             cr_baixar_anexo,
             abrir_caminho,

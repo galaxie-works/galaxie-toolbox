@@ -566,6 +566,18 @@ export async function crBuscar(
   return invoke<EmailItem[]>("cr_buscar", { folderId, termo, skip });
 }
 
+/**
+ * Conta na pasta inteira as mensagens que batem com um filtro ("flagged" |
+ * "anexos"), via endpoint /$count do Graph. Fora do Tauri (mock) devolve 0.
+ */
+export async function crContar(folderId: string, filtro: string): Promise<number> {
+  if (!inTauri()) {
+    await sleep(200);
+    return 0;
+  }
+  return invoke<number>("cr_contar", { folderId, filtro });
+}
+
 export async function crEsvaziarLixeira(): Promise<number> {
   if (!inTauri()) {
     await sleep(500);
