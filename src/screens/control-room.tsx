@@ -64,6 +64,7 @@ import { TextMorph } from "torph/react";
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
+import { useFotos, configurarDominioFotos } from "@/lib/fotos";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
@@ -1023,6 +1024,26 @@ function MessageList({
     },
   });
 
+  // Avatares dos remetentes internos (#39): coleta os e-mails das linhas
+  // VISÍVEIS (virtualizadas) e pede as fotos em lote (debounce + $batch no
+  // cache). `getFoto` é lido na hora de renderizar cada linha.
+  const { getFoto, pedirFotos } = useFotos();
+  const itensVirtuais = virtualizer.getVirtualItems();
+  // Assinatura estável do intervalo visível: evita re-disparar o efeito a cada
+  // render (o array de itens virtuais tem identidade nova toda vez).
+  const faixaVisivel = itensVirtuais.length
+    ? `${itensVirtuais[0].index}-${itensVirtuais[itensVirtuais.length - 1].index}`
+    : "";
+  useEffect(() => {
+    const emails: string[] = [];
+    for (const vr of itensVirtuais) {
+      const l = linhas[vr.index];
+      if (l && l.tipo === "msg" && l.m.deEmail) emails.push(l.m.deEmail);
+    }
+    if (emails.length) pedirFotos(emails);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [faixaVisivel, linhas, pedirFotos]);
+
   const comEstrela = mensagens?.filter((m) => m.sinalizado).length ?? 0;
   const comAnexo = mensagens?.filter((m) => m.temAnexos).length ?? 0;
   // Opções do dropdown de filtros (#31). Os 4 primeiros são client-side (com
@@ -1351,6 +1372,8 @@ function MessageList({
                 const m = linha.m;
                 const ativo = m.id === sel;
                 const marcado = selecionados.has(m.id);
+                // Foto do remetente interno (#39); ausente → iniciais.
+                const foto = m.foto ?? getFoto(m.deEmail);
                 // Ações do menu de contexto valem para a seleção quando o item
                 // clicado faz parte dela; senão, só para o próprio item (#86).
                 const alvos =
@@ -1403,6 +1426,7 @@ function MessageList({
 
                       <ItemMedia className="relative self-start">
                         <Avatar>
+                          {foto && <AvatarImage src={foto} alt="" />}
                           <AvatarFallback>{m.iniciais}</AvatarFallback>
                         </Avatar>
                         {!m.lido && (
@@ -1584,6 +1608,8 @@ function MessageDetail({
   const [modo, setModo] = useState<null | "responder" | "responderTodos" | "encaminhar">(null);
   const [enviando, setEnviando] = useState(false);
   const comporRef = useRef<ComporMensagemHandle>(null);
+  // Avatar do remetente interno (#39).
+  const { getFoto, pedirFotos } = useFotos();
 
   useEffect(() => {
     if (!id) {
@@ -1598,6 +1624,11 @@ function MessageDetail({
       vivo = false;
     };
   }, [id]);
+
+  // Pede a foto do remetente quando o detalhe carrega.
+  useEffect(() => {
+    if (det?.deEmail) pedirFotos([det.deEmail]);
+  }, [det?.deEmail, pedirFotos]);
 
   async function baixarAnexo(anexo: AnexoEmail) {
     if (!id) return;
@@ -1769,6 +1800,9 @@ function MessageDetail({
         <h1 className="text-base font-semibold">{det.assunto}</h1>
         <div className="mt-3 flex items-start gap-3">
           <Avatar>
+            {getFoto(det.deEmail) && (
+              <AvatarImage src={getFoto(det.deEmail)!} alt="" />
+            )}
             <AvatarFallback>
               {det.de
                 .split(" ")
@@ -2052,6 +2086,8 @@ function EventoDialog({
 }) {
   const { idioma, t } = useIdioma();
   const [det, setDet] = useState<EventoDetalhe | null>(null);
+  // Avatares dos participantes internos (#39).
+  const { getFoto, pedirFotos } = useFotos();
 
   useEffect(() => {
     if (!id) {
@@ -2065,6 +2101,11 @@ function EventoDialog({
       vivo = false;
     };
   }, [id]);
+
+  // Pede as fotos dos participantes quando o detalhe carrega.
+  useEffect(() => {
+    if (det?.participantes.length) pedirFotos(det.participantes.map((p) => p.email));
+  }, [det, pedirFotos]);
 
   return (
     <Sheet open={!!id} onOpenChange={(o) => !o && onClose()}>
@@ -2103,17 +2144,21 @@ function EventoDialog({
                 <div>
                   <p className="mb-2 text-xs font-medium">{t.controlRoom.convidadosTitulo}</p>
                   <div className="flex flex-wrap gap-2">
-                    {det.participantes.map((p) => (
-                      <div
-                        key={p.email || p.nome}
-                        className="flex items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1"
-                      >
-                        <Avatar size="sm">
-                          <AvatarFallback>{p.iniciais}</AvatarFallback>
-                        </Avatar>
-                        <span className="text-xs">{p.nome}</span>
-                      </div>
-                    ))}
+                    {det.participantes.map((p) => {
+                      const foto = p.foto ?? getFoto(p.email);
+                      return (
+                        <div
+                          key={p.email || p.nome}
+                          className="flex items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1"
+                        >
+                          <Avatar size="sm">
+                            {foto && <AvatarImage src={foto} alt="" />}
+                            <AvatarFallback>{p.iniciais}</AvatarFallback>
+                          </Avatar>
+                          <span className="text-xs">{p.nome}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -2233,6 +2278,11 @@ export function ControlRoomScreen({
   onAbrirLink: (url: string) => void;
 }) {
   const { idioma, t } = useIdioma();
+  // Fotos de contatos (#39): só buscamos avatar de remetente do MESMO domínio do
+  // tenant (o do usuário logado). Configura o domínio do cache aqui.
+  useEffect(() => {
+    configurarDominioFotos(user.email);
+  }, [user.email]);
   // Visibilidade do card da Agenda — controlada pelo item no RODAPÉ do sidebar
   // de pastas do Bridge (a Agenda pertence ao Bridge, não ao app principal).
   // Nasce FECHADA (chave nova, reseta persistidos antigos) pra fazer menos

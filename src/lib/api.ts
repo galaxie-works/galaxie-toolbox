@@ -376,6 +376,26 @@ const MOCK_PESSOAS: Pessoa[] = [
   { nome: "Wagner Consani", email: "wagner@voaz.builders" },
 ];
 
+/**
+ * Fotos (avatar) de remetentes internos, em lote (#39). Recebe e-mails e devolve
+ * um mapa e-mail(minúsculo) → data URI | null (null = sem foto). Fora do Tauri
+ * (mock) devolve {} — no browser não há fotos reais, então o AvatarFallback
+ * (iniciais) continua. O backend usa `$batch` (até 20/chamada); o cache
+ * (`fotos.ts`) já limita a 20 e filtra por domínio do tenant.
+ */
+export async function crFotosContatos(
+  emails: string[]
+): Promise<Record<string, string | null>> {
+  if (!inTauri()) return {};
+  const arr = await invoke<{ email: string; foto: string | null }[]>(
+    "cr_fotos_contatos",
+    { emails }
+  );
+  const map: Record<string, string | null> = {};
+  for (const f of arr) map[f.email] = f.foto;
+  return map;
+}
+
 /** Busca pessoas para o autocomplete do compositor. */
 export async function crPessoas(query: string): Promise<Pessoa[]> {
   if (!inTauri()) {

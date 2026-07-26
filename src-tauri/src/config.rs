@@ -19,10 +19,13 @@ pub const CLIENT_ID: &str = "214d735e-eb9b-4052-8851-578d3bd91627";
 /// Escopos delegados que o app PEDE no login. offline_access garante
 /// refresh_token. So Microsoft Graph — o app tem muito mais permissao concedida
 /// no registro, mas pedimos so o que cada feature usa (token enxuto, tela de
-/// consentimento sana). Calendars/Mail/Tasks alimentam o Control room; nenhum
-/// exige admin consent.
+/// consentimento sana). Calendars/Mail/Tasks alimentam o Control room.
+///
+/// User.Read.All (foto de remetente interno, #39): admin consent JA concedido
+/// pelo PO no registro. E escopo NOVO no pedido, entao sessoes logadas antes
+/// dele so ganham a permissao ao re-logar (ate la, foto = 403 -> so iniciais).
 pub const SCOPES: &str = "openid profile offline_access \
-     User.Read Files.ReadWrite Sites.Read.All \
+     User.Read User.Read.All Files.ReadWrite Sites.Read.All \
      Calendars.Read Mail.ReadWrite Mail.Send Tasks.ReadWrite \
      People.Read Contacts.ReadWrite";
 

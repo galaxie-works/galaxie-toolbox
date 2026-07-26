@@ -143,6 +143,9 @@ export interface EmailItem {
   lido: boolean;
   temAnexos: boolean;
   sinalizado: boolean;
+  /** Foto (data URI) do remetente interno, resolvida pelo cache de fotos (#39).
+   *  Ausente/null = usa as iniciais (AvatarFallback). */
+  foto?: string | null;
 }
 
 export interface AnexoEmail {
