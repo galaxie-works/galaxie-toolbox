@@ -1584,8 +1584,13 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
         let mut total = 0;
         let mut filhos = 0;
         let mut nome = id.to_string();
+        // $expand=childFolders (não $select=childFolderCount): o childFolderCount
+        // conta subpastas OCULTAS de sistema (ex.: em Deleted), fazendo aparecer
+        // um chevron que expande pra nada. O $expand — como o /childFolders da
+        // busca ao expandir — só traz as VISÍVEIS, então `filhos` bate com o que
+        // o usuário vê. $top=1 basta pra saber se há ≥1 (chevron sim/não). (#62)
         let url = format!(
-            "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount,childFolderCount"
+            "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount&$expand=childFolders($select=id;$top=1)"
         );
         // Retry no 429 (throttling): respeita Retry-After, até 3 tentativas. Sem
         // isso o Inbox aparecia sem contagem de não lidos quando o Graph limitava.
@@ -1596,7 +1601,8 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
                         nome = v["displayName"].as_str().unwrap_or(id).to_string();
                         nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
                         total = v["totalItemCount"].as_u64().unwrap_or(0);
-                        filhos = v["childFolderCount"].as_u64().unwrap_or(0);
+                        // conta só as subpastas VISÍVEIS que o $expand trouxe (#62)
+                        filhos = v["childFolders"].as_array().map(|a| a.len() as u64).unwrap_or(0);
                     }
                     break;
                 }
@@ -1682,33 +1688,58 @@ fn montar_email_item(it: &serde_json::Value, saida: bool) -> EmailItem {
 
 /// Mensagens de uma pasta (até 50, mais recentes primeiro). Mail.Read.
 /// Em Enviados/Rascunhos o "de" vira o destinatário (faz mais sentido na lista).
+/// Mapeia a chave de ordenação do front para o campo $orderby do Graph. Data
+/// respeita a pasta (enviados/rascunhos ordenam por envio). "type" do Outlook
+/// não é sortável no Graph → cai no default (data). Só campos que o Graph aceita
+/// em $orderby de mensagens.
+fn campo_ordenacao(folder_id: &str, chave: &str) -> &'static str {
+    let saida = matches!(folder_id, "sentitems" | "drafts");
+    let data = if saida { "sentDateTime" } else { "receivedDateTime" };
+    match chave {
+        "remetente" => "from/emailAddress/name",
+        "assunto" => "subject",
+        // tamanho/importancia/flag NÃO são ordenáveis server-side no Graph
+        // (400) — foram tirados do escopo (#60). Persistidos antigos caem aqui.
+        _ => data, // "data" e qualquer desconhecido/removido
+    }
+}
+
 pub fn cr_folder_mensagens(
     store: &TokenStore,
     folder_id: &str,
     skip: u32,
+    ordenar: &str,
+    descendente: bool,
 ) -> Result<Vec<EmailItem>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
-    let ordenar = if saida { "sentDateTime" } else { "receivedDateTime" };
+    let campo = campo_ordenacao(folder_id, ordenar);
+    let dir = if descendente { "desc" } else { "asc" };
     // Página de 50, com $skip para o lazy load (rolar até o fim carrega mais).
-    let url = format!(
+    let base = format!(
         "{GRAPH}/me/mailFolders/{folder_id}/messages\
          ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
-         &$orderby={ordenar} desc&$top=50&$skip={skip}"
+         &$top=50&$skip={skip}"
     );
-    // Retry no 429: na abertura o app dispara várias chamadas Graph juntas
-    // (pastas + mensagens + agenda + categorias) e a Inbox vinha vazia quando
-    // esta era estrangulada. Respeita Retry-After, até 3 tentativas.
+    // Ordenação escolhida; se o Graph REJEITAR o $orderby (400 — ex.: alguns
+    // tenants não ordenam por flag/flagStatus), cai no default (data) e refaz —
+    // uma ordenação inválida NUNCA pode travar o carregamento da pasta.
+    // Retry no 429 (Retry-After): na abertura o app dispara várias chamadas
+    // juntas e o Graph estrangula.
+    let padrao = format!("{} desc", if saida { "sentDateTime" } else { "receivedDateTime" });
+    let mut orderby = format!("{campo} {dir}");
+    let mut caiu_no_padrao = false;
     let mut resposta = None;
-    for tentativa in 0..3u8 {
+    for tentativa in 0..4u8 {
+        let url = format!("{base}&$orderby={orderby}");
         match client.get(&url).bearer_auth(&token).send() {
             Ok(r) if r.status().is_success() => {
                 resposta = Some(r);
                 break;
             }
-            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
+            Ok(r) if r.status().as_u16() == 429 && tentativa < 3 => {
                 let espera = r
                     .headers()
                     .get("Retry-After")
@@ -1718,6 +1749,11 @@ pub fn cr_folder_mensagens(
                     .min(5);
                 log::warn!("[mail] mensagens de '{folder_id}' 429; retry em {espera}s");
                 std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(r) if r.status().as_u16() == 400 && !caiu_no_padrao => {
+                log::warn!("[mail] orderby '{orderby}' rejeitado (400); caindo no default (data)");
+                caiu_no_padrao = true;
+                orderby = padrao.clone();
             }
             Ok(r) => {
                 return Err(format!("/me/mailFolders/{folder_id}/messages retornou {}", r.status()));

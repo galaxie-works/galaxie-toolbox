@@ -6,10 +6,15 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
+import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -70,6 +75,7 @@ import type {
 } from "@/lib/types";
 import {
   Archive,
+  ArrowDownUp,
   CalendarClock,
   CalendarDays,
   ChevronDown,
@@ -84,7 +90,6 @@ import {
   MapPin,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
   Paperclip,
   PenSquare,
   RefreshCw,
@@ -164,11 +169,18 @@ function CorpoHtml({
     // overflow:hidden garante ZERO scrollbar interna do iframe — nós ajustamos
     // a altura por fora; a largura encaixa via `zoom` (reflui o layout).
     const baseline =
-      `<style>:root{color-scheme:light}html,body{margin:0;padding:0;overflow:hidden}` +
-      `body{background:#fff;color:#111;` +
+      // O ROOT (viewport do iframe) rola no eixo X quando algum elemento largo
+      // ainda estoura depois do zoom mínimo — ex.: a tabela "Saltos de Mensagem"
+      // que o Exchange anexa a encaminhados (~880px fixos). Assim o excedente
+      // vira SCROLL horizontal em vez de espremer/clipar o e-mail inteiro (#57).
+      // overflow-y fica hidden: a altura é medida e aplicada por fora.
+      `<style>:root{color-scheme:light}html{margin:0;padding:0;overflow-x:auto;overflow-y:hidden}` +
+      `body{margin:0;background:#fff;color:#111;` +
       `font-family:system-ui,-apple-system,Segoe UI,sans-serif;` +
-      `font-size:14px;line-height:1.5;padding:6px}img{max-width:100%;height:auto}` +
-      `a{color:#7c3aed}</style>`;
+      // overflow-wrap:anywhere quebra strings longas (URLs/tokens sem espaço)
+      // que, sozinhas, inflavam o scrollWidth.
+      `font-size:14px;line-height:1.5;padding:6px;overflow-wrap:anywhere}` +
+      `img{max-width:100%;height:auto}a{color:#7c3aed}</style>`;
     const dr = escuro ? getDarkReaderInlineScripts() : "";
     // Sanitiza o HTML do e-mail (tira <script>, handlers on*, javascript: etc.)
     // ANTES de injetar. Como habilitamos allow-scripts pro Dark Reader rodar, um
@@ -197,11 +209,21 @@ function CorpoHtml({
         body.style.zoom = "1";
         const conteudo = body.scrollWidth;
         const disponivel = iframe.clientWidth;
-        const zoom = conteudo > disponivel && conteudo > 0 ? disponivel / conteudo : 1;
+        const ideal = conteudo > disponivel && conteudo > 0 ? disponivel / conteudo : 1;
+        // PISO DE LEGIBILIDADE (#57): nunca encolher abaixo de 0.75 (14px -> ~10.5px).
+        // Um único elemento largo de baixo valor (a tabela "Saltos de Mensagem"
+        // dos encaminhados, ~880px) não pode espremer o e-mail inteiro a um
+        // tamanho ilegível. Se o piso bater, o excedente NÃO clipa: rola no eixo
+        // X (overflow-x:auto no root) e continua acessível.
+        const PISO = 0.75;
+        const zoom = Math.max(PISO, ideal);
         body.style.zoom = String(zoom);
+        // Se o piso segurou o zoom acima do ideal, ainda sobra largura -> haverá
+        // scrollbar horizontal; reserva a altura dela pra não clipar a última linha.
+        const rolaX = zoom > ideal + 1e-3;
         // altura VISÍVEL (pós-zoom) via bounding rect; setAltura só se mudou de
         // verdade (evita re-render à toa).
-        const h = Math.ceil(body.getBoundingClientRect().height) + 4;
+        const h = Math.ceil(body.getBoundingClientRect().height) + 4 + (rolaX ? 16 : 0);
         setAltura((a) => (Math.abs(a - h) > 1 ? h : a));
       } catch {
         /* srcDoc é same-origin; catch só por segurança */
@@ -251,7 +273,6 @@ function CorpoHtml({
       // load. No claro mantemos o sandbox estrito (nenhum script do e-mail roda).
       sandbox={escuro ? "allow-same-origin allow-popups allow-scripts" : "allow-same-origin allow-popups"}
       title="e-mail"
-      scrolling="no"
       className="w-full border-0 bg-white"
       style={{ height: altura }}
     />
@@ -561,6 +582,8 @@ function FolderSidebar({
   onNovo,
   onComposeOutlook,
   colapsada,
+  agendaAberta,
+  onToggleAgenda,
   t,
 }: {
   pastas: PastaEmail[] | null;
@@ -569,6 +592,8 @@ function FolderSidebar({
   onNovo: () => void;
   onComposeOutlook: () => void;
   colapsada: boolean;
+  agendaAberta: boolean;
+  onToggleAgenda: () => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   const mail = (pastas ?? []).filter((p) => GRUPO_MAIL.includes(p.tipo));
@@ -597,7 +622,10 @@ function FolderSidebar({
   const Linha = (p: PastaEmail, ehFilho = false) => {
     const Ico = ICONE_PASTA[p.tipo] ?? Inbox;
     const ativo = p.id === sel;
-    const contagem = p.tipo === "drafts" || p.tipo === "sentitems" ? p.total : p.naoLidos;
+    // `contagem` é NÃO-LIDOS para inbox/junk/lixeira/custom; para drafts/sentitems
+    // é o TOTAL de itens (não-lido não faz sentido em enviados/rascunhos).
+    const contagemEhNaoLidos = p.tipo !== "drafts" && p.tipo !== "sentitems";
+    const contagem = contagemEhNaoLidos ? p.naoLidos : p.total;
     const rotulo = rotuloPasta(p.tipo, p.nome, t);
     const linhaBtn = (
       <button
@@ -612,13 +640,18 @@ function FolderSidebar({
       >
         {colapsada ? (
           // Dot ancorado ao ÍCONE (não ao botão): com o ring na cor do card ele
-          // fica dentro dos limites e o ScrollArea não corta (#37). Não-lido em
-          // Lixeira/Junk é ruído → sem dot nessas pastas.
+          // fica dentro dos limites e o ScrollArea não corta (#37). O dot é
+          // indicador de NÃO-LIDO: só aparece onde `contagem` são não-lidos —
+          // nunca em drafts/sentitems (ali é o total, #56); Lixeira/Junk são
+          // ruído → também sem dot.
           <span className="relative">
             <Ico className="size-4 shrink-0 text-muted-foreground" />
-            {contagem > 0 && p.tipo !== "deleteditems" && p.tipo !== "junkemail" && (
-              <span className="absolute -top-1 -right-1 size-2 rounded-full bg-primary ring-2 ring-card" />
-            )}
+            {contagem > 0 &&
+              contagemEhNaoLidos &&
+              p.tipo !== "deleteditems" &&
+              p.tipo !== "junkemail" && (
+                <span className="absolute -top-1 -right-1 size-2 rounded-full bg-primary ring-2 ring-card" />
+              )}
           </span>
         ) : (
           <>
@@ -725,6 +758,25 @@ function FolderSidebar({
           </div>
         </ScrollArea>
       )}
+
+      {/* Agenda — ancorada no RODAPÉ do sidebar do BRIDGE (separador acima). A
+          Agenda pertence ao Bridge, não ao app principal (#50). Selecionado ⟺
+          card da Agenda visível; nasce fechada (menos requisições no startup). */}
+      <Separator className={cn("shrink-0", colapsada && "w-6")} />
+      <Button
+        variant={agendaAberta ? "secondary" : "ghost"}
+        onClick={onToggleAgenda}
+        title={t.controlRoom.agendaTitulo}
+        aria-label={t.controlRoom.agendaTitulo}
+        className={cn(
+          "shrink-0",
+          colapsada ? "size-9 justify-center p-0" : "w-full justify-start gap-2.5",
+          !agendaAberta && "text-muted-foreground"
+        )}
+      >
+        <CalendarDays className="size-4 shrink-0" />
+        {!colapsada && <span>{t.controlRoom.agendaTitulo}</span>}
+      </Button>
     </aside>
   );
 }
@@ -734,6 +786,29 @@ function FolderSidebar({
 // ===========================================================================
 
 type Aba = "todos" | "naoLidos" | "sinalizados" | "anexos";
+
+// Linha da lista virtualizada: cabeçalho de grupo OU mensagem. Agrupar por
+// período (+ grupo Flagged no topo) vira linhas planas pra não quebrar o
+// react-virtual (#30).
+type LinhaLista =
+  | { tipo: "grupo"; chave: string; rotulo: string; n: number }
+  | { tipo: "msg"; m: EmailItem };
+
+/** Bucket de período estilo Outlook (#30): Hoje / Ontem / <mês do ano
+ *  corrente> / <ano anterior> / Older. Ex.: em jul/2026 → Hoje, Ontem, Julho,
+ *  Junho, ..., Janeiro, 2025, Older. A chave carrega o dado bruto; o rótulo é
+ *  resolvido por idioma em `rotuloDePeriodo`. */
+function periodoChave(recebido: string, agora: Date): string {
+  const d = new Date(comZ(recebido));
+  if (Number.isNaN(d.getTime())) return "older";
+  const dia = (x: Date) => Date.UTC(x.getFullYear(), x.getMonth(), x.getDate());
+  const diff = Math.round((dia(agora) - dia(d)) / 86400000);
+  if (diff <= 0) return "hoje";
+  if (diff === 1) return "ontem";
+  if (d.getFullYear() === agora.getFullYear()) return `mes-${d.getMonth()}`;
+  if (d.getFullYear() === agora.getFullYear() - 1) return `ano-${d.getFullYear()}`;
+  return "older";
+}
 
 function MessageList({
   titulo,
@@ -757,6 +832,9 @@ function MessageList({
   contAnexos,
   busca,
   setBusca,
+  ordenar,
+  ordemDesc,
+  onOrdenar,
   t,
   idioma,
 }: {
@@ -781,6 +859,9 @@ function MessageList({
   contAnexos: number | null;
   busca: string;
   setBusca: (v: string) => void;
+  ordenar: api.OrdenarMensagens;
+  ordemDesc: boolean;
+  onOrdenar: (ordenar: api.OrdenarMensagens, descendente: boolean) => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
@@ -813,6 +894,67 @@ function MessageList({
     });
   }, [mensagens, aba]);
 
+  // Agrupamento por período + grupo Flagged no topo (#30). Só quando ordenado
+  // por DATA e fora de busca (período segue a ordem; em busca o Graph ordena por
+  // relevância). Colapso persiste (regra: o app guarda o estado do usuário).
+  const AGRUPAR = ordenar === "data" && busca.trim() === "";
+  const [colapsadosArr, setColapsadosArr] = usePersistedState<string[]>(
+    "bridge.gruposColapsados",
+    []
+  );
+  const colapsados = useMemo(() => new Set(colapsadosArr), [colapsadosArr]);
+  const alternarColapso = (chave: string) =>
+    setColapsadosArr((arr) =>
+      arr.includes(chave) ? arr.filter((c) => c !== chave) : [...arr, chave]
+    );
+  // Rótulo do período por idioma: hoje/ontem/older via strings; mês via nome
+  // localizado (Intl, capitalizado); ano anterior via o número do ano (#30).
+  const rotuloDePeriodo = useCallback(
+    (chave: string): string => {
+      if (chave === "hoje") return t.controlRoom.grupoHoje;
+      if (chave === "ontem") return t.controlRoom.grupoOntem;
+      if (chave === "older") return t.controlRoom.grupoAntigos;
+      if (chave.startsWith("ano-")) return chave.slice(4);
+      if (chave.startsWith("mes-")) {
+        const idx = Number(chave.slice(4));
+        const nome = new Date(2000, idx, 1).toLocaleDateString(idioma, {
+          month: "long",
+        });
+        return nome.charAt(0).toUpperCase() + nome.slice(1);
+      }
+      return chave;
+    },
+    [t, idioma]
+  );
+  // Lista PLANA de linhas (headers + msgs) pra virtualizar — headers viram
+  // linhas virtuais sem quebrar o react-virtual. Flagged são puxados pro topo
+  // (não duplicam nos períodos). Grupo colapsado = só o header.
+  const linhas = useMemo<LinhaLista[]>(() => {
+    if (!AGRUPAR) return filtrada.map((m) => ({ tipo: "msg", m }) as LinhaLista);
+    const out: LinhaLista[] = [];
+    const agora = new Date();
+    const flagged = filtrada.filter((m) => m.sinalizado);
+    const resto = filtrada.filter((m) => !m.sinalizado);
+    if (flagged.length > 0) {
+      out.push({ tipo: "grupo", chave: "flagged", rotulo: t.controlRoom.grupoFlagged, n: flagged.length });
+      if (!colapsados.has("flagged")) for (const m of flagged) out.push({ tipo: "msg", m });
+    }
+    let atual: string | null = null;
+    let header: Extract<LinhaLista, { tipo: "grupo" }> | null = null;
+    for (const m of resto) {
+      const chave = periodoChave(m.recebido, agora);
+      if (chave !== atual) {
+        atual = chave;
+        header = { tipo: "grupo", chave, rotulo: rotuloDePeriodo(chave), n: 0 };
+        out.push(header);
+      }
+      if (header) header.n++;
+      if (!colapsados.has(chave)) out.push({ tipo: "msg", m });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtrada, AGRUPAR, colapsados, t, rotuloDePeriodo]);
+
   const filtrando = busca.trim() !== "" || aba !== "todos";
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
   // carrega a próxima (progressivo) até aparecer resultado ou acabar.
@@ -826,11 +968,14 @@ function MessageList({
   // measureElement corrige para a altura real (~84px) sem risco de sobreposição.
   const ROW_ALTURA = 76;
   const virtualizer = useVirtualizer({
-    count: filtrada.length,
+    count: linhas.length,
     getScrollElement: () => listaRef.current,
-    estimateSize: () => ROW_ALTURA,
+    estimateSize: (i) => (linhas[i]?.tipo === "grupo" ? 32 : ROW_ALTURA),
     overscan: 8,
-    getItemKey: (i) => filtrada[i].id,
+    getItemKey: (i) => {
+      const l = linhas[i];
+      return l ? (l.tipo === "grupo" ? `g:${l.chave}` : l.m.id) : i;
+    },
   });
 
   const comEstrela = mensagens?.filter((m) => m.sinalizado).length ?? 0;
@@ -871,8 +1016,10 @@ function MessageList({
       if (alvo) {
         onSel(alvo.id);
         // Com a lista virtualizada, o item pode não estar no DOM — usa o
-        // scrollToIndex do virtualizer (align "auto" ≈ block:"nearest").
-        virtualizer.scrollToIndex(prox);
+        // scrollToIndex do virtualizer. O índice é o da lista PLANA (linhas),
+        // que difere de `filtrada` quando há headers de grupo (#30).
+        const vi = linhas.findIndex((l) => l.tipo === "msg" && l.m.id === alvo.id);
+        if (vi >= 0) virtualizer.scrollToIndex(vi);
       }
     } else if (e.key === "Delete") {
       const alvos = selecionados.size > 0 ? [...selecionados] : sel ? [sel] : [];
@@ -891,6 +1038,13 @@ function MessageList({
   // Em "modo seleção" (≥1 marcado): checkboxes sempre visíveis e as ações de
   // hover por linha somem — o usuário opera pela barra de seleção (#23).
   const haSelecao = selecionados.size > 0;
+
+  // Rótulos das opções de ordenação (chave → string i18n) (#32).
+  const rotuloOrdena: Record<api.OrdenarMensagens, string> = {
+    data: t.controlRoom.ordenaData,
+    remetente: t.controlRoom.ordenaRemetente,
+    assunto: t.controlRoom.ordenaAssunto,
+  };
 
   return (
     <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
@@ -915,6 +1069,40 @@ function MessageList({
               <Trash2 /> {t.controlRoom.esvaziarLixeira}
             </Button>
           )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-1.5" aria-label={t.controlRoom.ordenarPor}>
+                <ArrowDownUp className="size-3.5" />
+                <span className="hidden text-xs sm:inline">{rotuloOrdena[ordenar]}</span>
+                <ChevronDown className="size-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuLabel>{t.controlRoom.ordenarPor}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={ordenar}
+                onValueChange={(v) => onOrdenar(v as api.OrdenarMensagens, ordemDesc)}
+              >
+                {(["data", "remetente", "assunto"] as const).map((o) => (
+                  <DropdownMenuRadioItem key={o} value={o}>
+                    {rotuloOrdena[o]}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuRadioGroup
+                value={ordemDesc ? "desc" : "asc"}
+                onValueChange={(v) => onOrdenar(ordenar, v === "desc")}
+              >
+                <DropdownMenuRadioItem value="desc">
+                  {t.controlRoom.ordemDecrescente}
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="asc">
+                  {t.controlRoom.ordemCrescente}
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label="↻">
             <RefreshCw />
           </Button>
@@ -1027,8 +1215,51 @@ function MessageList({
               }}
             >
               {virtualizer.getVirtualItems().map((vr) => {
-                const m = filtrada[vr.index];
-                if (!m) return null;
+                const linha = linhas[vr.index];
+                if (!linha) return null;
+                // Cabeçalho de grupo (Flagged / período) como linha virtual (#30).
+                if (linha.tipo === "grupo") {
+                  const colapsado = colapsados.has(linha.chave);
+                  return (
+                    <div
+                      key={vr.key}
+                      data-index={vr.index}
+                      ref={virtualizer.measureElement}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${vr.start}px)`,
+                      }}
+                    >
+                      {/* Grupo colapsável no padrão @reui/c-collapsible-6:
+                          Collapsible controlado + CollapsibleTrigger com chevron
+                          que gira via group-data-[state=open] (#30). O conteúdo
+                          são as msgs virtualizadas (linhas separadas), então o
+                          colapso emite/omite essas linhas via `colapsados`. */}
+                      <Collapsible
+                        open={!colapsado}
+                        onOpenChange={() => alternarColapso(linha.chave)}
+                      >
+                        <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-muted-foreground hover:text-foreground">
+                          <ChevronRight
+                            className={cn(
+                              "size-3.5 shrink-0 transition-transform",
+                              !colapsado && "rotate-90"
+                            )}
+                          />
+                          {linha.chave === "flagged" && (
+                            <Flag className="size-3 shrink-0 fill-red-500 text-red-500" />
+                          )}
+                          <span className="uppercase tracking-wide">{linha.rotulo}</span>
+                          <span className="font-normal opacity-70">{linha.n}</span>
+                        </CollapsibleTrigger>
+                      </Collapsible>
+                    </div>
+                  );
+                }
+                const m = linha.m;
                 const ativo = m.id === sel;
                 const marcado = selecionados.has(m.id);
                 return (
@@ -1482,49 +1713,12 @@ function MessageDetail({
 // Painel 4 — calendário + agenda do dia (schedule-8)
 // ===========================================================================
 
-function AgendaPanel({
-  user,
-  onEvento,
-  colapsada,
-  onToggle,
-  t,
-  idioma,
-}: {
-  user: AppUser;
-  onEvento: (id: string) => void;
-  colapsada: boolean;
-  onToggle: () => void;
-  t: ReturnType<typeof useIdioma>["t"];
-  idioma: string;
-}) {
-  void user;
-  // Colapsado: tira o cálculo/rede — só a tira com o ícone pra reabrir.
-  if (colapsada) {
-    return (
-      <div className="flex h-full w-12 shrink-0 flex-col items-center rounded-xl border bg-card py-3">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onToggle}
-          title={t.controlRoom.agendaTitulo}
-          aria-label={t.controlRoom.agendaTitulo}
-        >
-          <CalendarDays className="size-4 text-muted-foreground" />
-        </Button>
-      </div>
-    );
-  }
-  return <AgendaConteudo onEvento={onEvento} onToggle={onToggle} t={t} idioma={idioma} />;
-}
-
 function AgendaConteudo({
   onEvento,
-  onToggle,
   t,
   idioma,
 }: {
   onEvento: (id: string) => void;
-  onToggle: () => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
@@ -1614,21 +1808,10 @@ function AgendaConteudo({
 
   return (
     <Card className="flex h-full w-80 shrink-0 flex-col gap-0 overflow-hidden py-4">
-      {/* Título genérico + colapsar (igual ao sidebar do mail). */}
-      <div className="flex items-center justify-between px-4 pb-3">
-        <div className="flex items-center gap-2">
-          <CalendarDays className="size-4 text-muted-foreground" />
-          <span className="text-sm font-semibold">{t.controlRoom.agendaTitulo}</span>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onToggle}
-          title={t.controlRoom.colapsar}
-          aria-label={t.controlRoom.colapsar}
-        >
-          <PanelRightClose className="size-4" />
-        </Button>
+      {/* Só o título — o toggle de visibilidade agora é o item do sidebar (#50). */}
+      <div className="flex items-center gap-2 px-4 pb-3">
+        <CalendarDays className="size-4 text-muted-foreground" />
+        <span className="text-sm font-semibold">{t.controlRoom.agendaTitulo}</span>
       </div>
       <CardContent className="px-4">
         <Calendar
@@ -1900,6 +2083,11 @@ export function ControlRoomScreen({
   onAbrirLink: (url: string) => void;
 }) {
   const { idioma, t } = useIdioma();
+  // Visibilidade do card da Agenda — controlada pelo item no RODAPÉ do sidebar
+  // de pastas do Bridge (a Agenda pertence ao Bridge, não ao app principal).
+  // Nasce FECHADA (chave nova, reseta persistidos antigos) pra fazer menos
+  // requisições no startup — só carrega quando o usuário abre (#50).
+  const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agendaVisivel", false);
   const [pastas, setPastas] = useState<PastaEmail[] | null>(null);
   const [pastaSel, setPastaSel] = useState("inbox");
   const [mensagens, setMensagens] = useState<EmailItem[] | null>(null);
@@ -1911,7 +2099,18 @@ export function ControlRoomScreen({
   const [recargaPastas, setRecargaPastas] = useState(0);
   // Colapsos persistem (o app guarda o estado que o usuário deixa).
   const [sidebarAberta, setSidebarAberta] = usePersistedState("bridge.sidebar", true);
-  const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agenda", true);
+  // Ordenação da lista (persistida): campo + direção → $orderby no Graph (#32).
+  const [ordenar, setOrdenar] = usePersistedState<api.OrdenarMensagens>(
+    "bridge.ordenar",
+    "data"
+  );
+  const [ordemDesc, setOrdemDesc] = usePersistedState("bridge.ordemDesc", true);
+  // Migração: sorts removidos do escopo (tamanho/importancia/flag — #60) que
+  // ficaram no localStorage voltam pra "data", evitando estado inconsistente.
+  useEffect(() => {
+    if (!["data", "remetente", "assunto"].includes(ordenar as string)) setOrdenar("data");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [temMais, setTemMais] = useState(false);
   const [carregandoMais, setCarregandoMais] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
@@ -1982,8 +2181,15 @@ export function ControlRoomScreen({
   const notificarNovos = useCallback(
     (ms: EmailItem[]) => {
       if (ms.length === 0) return;
+      // Baseline = o MAIOR recebido da lista, não ms[0]: com a inbox ordenável
+      // (#32) o topo pode não ser o mais recente (ordem ≠ data / ascendente),
+      // o que geraria toast espúrio/ausente no poll seguinte (#54).
+      const maxRecebido = ms.reduce(
+        (mx, m) => (m.recebido > mx ? m.recebido : mx),
+        ms[0].recebido
+      );
       const anterior = ultimoVistoRef.current;
-      ultimoVistoRef.current = ms[0].recebido;
+      ultimoVistoRef.current = maxRecebido;
       if (anterior === null) return; // baseline: não avisa no 1º carregamento
       const novos = ms.filter((m) => m.recebido > anterior && !m.lido);
       for (const m of novos.slice(0, 3)) {
@@ -2198,7 +2404,7 @@ export function ControlRoomScreen({
     carregadosRef.current = 0;
     deletadasRef.current = new Set();
     api
-      .crFolderMensagens(pastaSel, 0)
+      .crFolderMensagens(pastaSel, 0, ordenar, ordemDesc)
       .then((ms) => {
         if (!vivo) return;
         carregadosRef.current = ms.length;
@@ -2208,18 +2414,23 @@ export function ControlRoomScreen({
         // senão pega a primeira.
         setMsgSel((cur) => (cur && ms.some((m) => m.id === cur) ? cur : (ms[0]?.id ?? null)));
         setTemMais(ms.length === PAGINA);
-        // Inbox: detecta e avisa e-mails novos (também no refresh manual) — não
-        // só reseta o baseline. O 1º carregamento apenas semeia (sem toast). #43
-        if (pastaSel === "inbox") notificarNovos(ms);
+        // Inbox: detecta e avisa e-mails novos (também no refresh manual). SÓ
+        // quando a lista está em DATA-DESC — aí `ms` está com o mais novo no
+        // topo e o baseline (max recebido) é confiável. Em outra ordem (ex.:
+        // data-asc), a 1ª página não contém o mais novo, o baseline ficaria
+        // baixo e o poll seguinte dispararia toast espúrio (#54). Nesses casos
+        // o poll (que SEMPRE busca date-desc) mantém o baseline sozinho. #43
+        if (pastaSel === "inbox" && ordenar === "data" && ordemDesc) notificarNovos(ms);
       })
       .catch(() => vivo && setMensagens([]));
     return () => {
       vivo = false;
     };
     // notificarNovos é estável (useCallback [idioma,t]); fora das deps de
-    // propósito pra não recarregar a lista ao trocar idioma.
+    // propósito pra não recarregar a lista ao trocar idioma. ordenar/ordemDesc
+    // ENTRAM: trocar a ordenação re-busca a lista já ordenada pelo Graph (#32).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastaSel, recarga]);
+  }, [pastaSel, recarga, ordenar, ordemDesc]);
 
   // Pré-carga: busca a próxima página do servidor pela âncora (skip = já
   // buscado, não o tamanho da lista) e concatena deduplicando. Serve tanto pro
@@ -2229,7 +2440,12 @@ export function ControlRoomScreen({
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
     try {
-      const pagina = await api.crFolderMensagens(pastaSel, carregadosRef.current);
+      const pagina = await api.crFolderMensagens(
+        pastaSel,
+        carregadosRef.current,
+        ordenar,
+        ordemDesc
+      );
       carregadosRef.current += pagina.length; // avança pelo offset do servidor
       setMensagens((prev) => juntar(prev ?? [], pagina));
       setTemMais(pagina.length === PAGINA);
@@ -2338,6 +2554,8 @@ export function ControlRoomScreen({
           onNovo={novoEmailModal}
           onComposeOutlook={composeOutlook}
           colapsada={!sidebarAberta}
+          agendaAberta={agendaAberta}
+          onToggleAgenda={() => setAgendaAberta((v) => !v)}
           t={t}
         />
 
@@ -2371,6 +2589,12 @@ export function ControlRoomScreen({
               contAnexos={buscaAtiva ? null : contAnexos}
               busca={busca}
               setBusca={setBusca}
+              ordenar={ordenar}
+              ordemDesc={ordemDesc}
+              onOrdenar={(o, desc) => {
+                setOrdenar(o);
+                setOrdemDesc(desc);
+              }}
               t={t}
               idioma={idioma}
             />
@@ -2401,14 +2625,12 @@ export function ControlRoomScreen({
           </ResizablePanel>
         </ResizablePanelGroup>
 
-        <AgendaPanel
-          user={user}
-          onEvento={setEventoSel}
-          colapsada={!agendaAberta}
-          onToggle={() => setAgendaAberta((v) => !v)}
-          t={t}
-          idioma={idioma}
-        />
+        {/* Card da Agenda no MESMO lugar de sempre (lado direito). Agora quem
+            controla a visibilidade é o item do sidebar esquerdo (#50): visível =
+            renderiza; escondido = some e a lista+detalhe ocupam a largura toda. */}
+        {agendaAberta && (
+          <AgendaConteudo onEvento={setEventoSel} t={t} idioma={idioma} />
+        )}
       </div>
 
       <EventoDialog id={eventoSel} userEmail={user.email} onClose={() => setEventoSel(null)} />

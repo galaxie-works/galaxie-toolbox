@@ -208,6 +208,7 @@ export default function App() {
     }
   }
 
+
   async function logout() {
     await api.logout();
     setUser(null);

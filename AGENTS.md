@@ -9,6 +9,8 @@ Tauri 2 + React 19 + TypeScript + Tailwind v4. Fala com **Microsoft Graph delega
 ## 2. Board de trabalho (GitHub Projects) — a fonte da verdade
 Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3`.
 
+> ⚠️ **SEMPRE verifique o board antes de cobrar/perguntar ao PO no chat.** O PO responde **movendo cards** (Status), **comentando issues** e **criando itens** no board — não no chat. Antes de pedir confirmação/decisão, cheque Status (QA Approved/Rejected), comentários novos e itens novos. Só pergunte no chat o que o board não responder.
+
 ### Fluxo de colunas (campo Status) e quem move
 | Coluna | Descrição | Quem move |
 |---|---|---|
@@ -22,6 +24,14 @@ Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3
 | **Done - Released** | concluído/lançado | no release |
 
 Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pra PO Approved — isso é do usuário (PO), que também **ajusta a Sprint** se necessário.
+
+> 🚀 **RELEASE de PO Approved é decisão do agente** (delegado pelo PO em 2026-07-26). Uma vez em **PO Approved**, o agente decide quando **mergear na `main`, cortar release** (bump de versão + tag + notas) e mover pra **Done - Released**, sem cobrar o PO. A autonomia começa em PO Approved (QA Approved→PO Approved continua sendo do PO). Não cortar release com código não-aprovado/rejeitado ainda na `feat` (ex.: rework com `Closes #N` já mergeado) — limpar/reworkar antes.
+
+> ⚠️ **O QA valida a HISTÓRIA e os CRITÉRIOS DE ACEITE (Given/When/Then), não só code review.** Todo prompt de QA deve: ler a issue (`gh issue view N`), extrair história + cada AC, e para CADA AC traçar o caminho do código confirmando que o **Then** é satisfeito. Onde exigir runtime (login Graph), listar explicitamente os ACs que o PO precisa validar no app. `tsc`/`cargo` + code review são necessários mas **não suficientes**. Reprovar se algum AC não for atendido.
+>
+> ⚠️ **NÃO parafrasear os ACs no prompt do QA.** O prompt do orquestrador deve só dizer **qual issue ler** — o QA **puxa o corpo real** (`gh issue view N`), **cita verbatim** os ACs que encontrou lá (prova de que leu a fonte) e valida cada um. Se o QA não conseguiu ler o corpo (ex.: `gh` falhou), ele **REPROVA/avisa** — nunca valida de memória nem da paráfrase. (Erro pego pelo PO no #50, 2026-07-26: QA validou contra a paráfrase do orquestrador.)
+>
+> 🖥️ **O QA PODE validar visualmente** (ACs de layout/estrutura), sem login Graph real. O Vite dev server serve o frontend em `http://localhost:1420`; aberto **fora do Tauri** (browser), o `api.ts` usa **dados MOCK** (`inTauri()` = false). Fluxo do QA: `preview_start {url:"http://localhost:1420"}` → `read_page` (login screen) → `form_input` email + `left_click` "Sign in with Microsoft" (o mock loga qualquer email como usuário fake) → cai no Bridge com dados mock → **`read_page`** inspeciona a árvore de acessibilidade **renderizada** (posição/presença de componentes, estados colapsado/expandido, tema, labels). **`read_page` funciona headless** (não precisa da pane visível); **screenshot** só funciona com a pane exibida. **Limite:** mock ≠ Graph real — comportamento dependente de dados reais (carregar/ordenar e-mail, contadores, `$search`, fotos, autocomplete, 429/retry) continua sendo validação de **runtime do PO**. Use validação visual para todo AC de UI que o mock consiga exercer; deixe explícito quais ACs sobraram pro PO.
 
 ### IDs (para automação via `gh`/GraphQL)
 - **projId**: `PVT_kwHOD_4JN84BedaN`
@@ -62,7 +72,7 @@ Para **dúvidas de design** (padrão de componente, comportamento de interação
 - **Branch ATRELADA à issue**, criada ANTES de editar, com **`gh issue develop <N> --base feat/bridge-email-client --name fix/N-slug`** (ou GraphQL `createLinkedBranch`). Isso liga a branch à issue na seção **Development**. ⚠️ **`git checkout -b` NÃO atrela** — só nomeia; toda issue precisa da branch aparecendo atrelada nela.
 - **PR atrelado** com `Closes #N` (fecha automático no merge). É adicional ao linked branch — juntos dão rastreabilidade issue ↔ branch ↔ PR.
 - PRs vão pra **`feat/bridge-email-client`**; issues **auto-fecham só no merge à `main`** (default branch).
-- **Higiene:** após merge, deletar a branch (`gh pr merge --delete-branch`), e periodicamente varrer branches órfãs no origin (`gh api repos/.../branches`).
+- **NÃO deletar a branch após o merge** (⚠️ NÃO usar `--delete-branch`). O PO exige que a seção **Development** da issue continue mostrando a branch atrelada; deletar apaga esse vínculo (foi motivo de Rejected). Como toda branch é **atrelada a uma issue** (via `gh issue develop`), elas são rastreáveis — não são "órfãs". Só varrer branches genuinamente órfãs (sem issue, pré-era do linked-branch).
 - Cada feature que mereça commit, comita. `tsc` + `cargo check` verdes antes de PR.
 
 ## 5. Definition of Done
