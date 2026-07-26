@@ -2351,9 +2351,13 @@ export function ControlRoomScreen({
         // senão pega a primeira.
         setMsgSel((cur) => (cur && ms.some((m) => m.id === cur) ? cur : (ms[0]?.id ?? null)));
         setTemMais(ms.length === PAGINA);
-        // Inbox: detecta e avisa e-mails novos (também no refresh manual) — não
-        // só reseta o baseline. O 1º carregamento apenas semeia (sem toast). #43
-        if (pastaSel === "inbox") notificarNovos(ms);
+        // Inbox: detecta e avisa e-mails novos (também no refresh manual). SÓ
+        // quando a lista está em DATA-DESC — aí `ms` está com o mais novo no
+        // topo e o baseline (max recebido) é confiável. Em outra ordem (ex.:
+        // data-asc), a 1ª página não contém o mais novo, o baseline ficaria
+        // baixo e o poll seguinte dispararia toast espúrio (#54). Nesses casos
+        // o poll (que SEMPRE busca date-desc) mantém o baseline sozinho. #43
+        if (pastaSel === "inbox" && ordenar === "data" && ordemDesc) notificarNovos(ms);
       })
       .catch(() => vivo && setMensagens([]));
     return () => {
