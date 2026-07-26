@@ -22,6 +22,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  Sheet,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Empty,
@@ -75,6 +82,7 @@ import {
   Flag,
   Forward,
   Inbox,
+  Mail,
   MapPin,
   PanelLeftClose,
   PanelLeftOpen,
@@ -587,6 +595,8 @@ function MessageList({
   selecionados,
   setSelecionados,
   naoLidosPasta,
+  contFlagged,
+  contAnexos,
   busca,
   setBusca,
   t,
@@ -609,6 +619,8 @@ function MessageList({
   selecionados: Set<string>;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
   naoLidosPasta: number;
+  contFlagged: number | null;
+  contAnexos: number | null;
   busca: string;
   setBusca: (v: string) => void;
   t: ReturnType<typeof useIdioma>["t"];
@@ -669,8 +681,9 @@ function MessageList({
     { id: "todos", label: t.controlRoom.abaTodos },
     // não lidos = total REAL da pasta (não só os carregados na lista)
     { id: "naoLidos", label: t.controlRoom.abaNaoLidos, n: naoLidosPasta },
-    { id: "sinalizados", label: t.controlRoom.abaSinalizados, n: comEstrela },
-    { id: "anexos", label: t.controlRoom.abaAnexos, n: comAnexo },
+    // Flagged/Files = total REAL da pasta (fallback pro carregado enquanto carrega)
+    { id: "sinalizados", label: t.controlRoom.abaSinalizados, n: contFlagged ?? comEstrela },
+    { id: "anexos", label: t.controlRoom.abaAnexos, n: contAnexos ?? comAnexo },
   ];
 
   // Teclado: ESC desfaz multi-seleção; Ctrl+A seleciona tudo (se já há ≥1);
@@ -989,6 +1002,7 @@ function MessageDetail({
   sinalizado,
   onFlag,
   onExcluir,
+  onMarcarLido,
   onMudou,
   t,
   idioma,
@@ -998,6 +1012,7 @@ function MessageDetail({
   sinalizado: boolean;
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void;
+  onMarcarLido: (id: string, lido: boolean) => void;
   onMudou: () => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
@@ -1161,6 +1176,15 @@ function MessageDetail({
             aria-label={t.controlRoom.sinalizar}
           >
             <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => id && onMarcarLido(id, false)}
+            aria-label={t.controlRoom.marcarNaoLido}
+            title={t.controlRoom.marcarNaoLido}
+          >
+            <Mail className="size-4" />
           </Button>
           <Button
             variant="ghost"
@@ -1605,16 +1629,21 @@ function NovaMensagemModal({
     }
   }
 
+  // Sheet lateral (não modal-bloqueante) com ~50% da largura: assim dá pra
+  // consultar/copiar de e-mails atrás enquanto compõe.
   return (
-    <Dialog open={aberto} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="flex h-[72vh] max-w-2xl flex-col gap-0 overflow-hidden p-0">
-        <DialogHeader className="border-b px-4 py-3">
-          <DialogTitle className="text-left">{t.controlRoom.novaMensagem}</DialogTitle>
-        </DialogHeader>
+    <Sheet open={aberto} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent
+        side="right"
+        className="flex w-1/2 flex-col gap-0 p-0 sm:max-w-[50vw]"
+      >
+        <SheetHeader className="border-b px-4 py-3">
+          <SheetTitle className="text-left">{t.controlRoom.novaMensagem}</SheetTitle>
+        </SheetHeader>
         <div className="min-h-0 flex-1 overflow-hidden">
           <ComporMensagem key={String(aberto)} ref={comporRef} mostrarAssunto textos={textos} />
         </div>
-        <DialogFooter className="border-t px-4 py-3">
+        <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
           <Button variant="ghost" onClick={onClose} disabled={enviando}>
             {t.controlRoom.cancelar}
           </Button>
@@ -1622,9 +1651,9 @@ function NovaMensagemModal({
             {enviando ? <Spinner className="size-4" /> : <Send />}
             {t.controlRoom.enviar}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -1655,6 +1684,9 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   const [busca, setBusca] = useState("");
   const [resultadosBusca, setResultadosBusca] = useState<EmailItem[] | null>(null);
   const [temMaisBusca, setTemMaisBusca] = useState(false);
+  // Contadores REAIS da pasta (não só o carregado) pras abas Flagged/Files.
+  const [contFlagged, setContFlagged] = useState<number | null>(null);
+  const [contAnexos, setContAnexos] = useState<number | null>(null);
   const carregadosBuscaRef = useRef(0);
   const carregandoMaisRef = useRef(false);
   // Âncora de paginação: nº já buscado do servidor (skip). NÃO é mensagens.length
@@ -1684,6 +1716,18 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
       vivo = false;
     };
   }, [recarga, recargaPastas]);
+
+  // Contadores reais das abas Flagged/Files (na pasta inteira, via $count).
+  useEffect(() => {
+    let vivo = true;
+    setContFlagged(null);
+    setContAnexos(null);
+    api.crContar(pastaSel, "flagged").then((n) => vivo && setContFlagged(n)).catch(() => {});
+    api.crContar(pastaSel, "anexos").then((n) => vivo && setContAnexos(n)).catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, [pastaSel, recarga, recargaPastas]);
 
   // Polling leve da Inbox: baseline no mount (sem toast), depois a cada 15 min
   // avisa por toast os e-mails novos não lidos. TODO: intervalo configurável em
@@ -1742,23 +1786,32 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
 
   // Ações rápidas da LISTA (sinalizar/excluir por linha ou em lote).
   // Atualizam a lista NO LUGAR (nada de recarregar tudo e perder scroll/páginas).
-  // Marca como lido ao abrir (otimista): some o ponto de não-lido e decrementa
-  // a contagem da pasta na hora; o PATCH isRead vai em background e reverte se
-  // falhar. Previewar a mensagem = lê-la, como em qualquer leitor.
-  useEffect(() => {
-    if (!msgSel) return;
-    const m = mensagens?.find((x) => x.id === msgSel);
-    if (!m || m.lido) return;
-    setMensagens((prev) => prev?.map((x) => (x.id === msgSel ? { ...x, lido: true } : x)) ?? prev);
+  // Marca lido/não-lido (otimista, nos dois sentidos): ajusta o ponto de
+  // não-lido e a contagem da pasta na hora; PATCH isRead em background com
+  // rollback. Usado pelo auto-mark ao abrir e pela ação manual de "não-lido".
+  function acaoMarcarLido(id: string, lido: boolean) {
+    const m = mensagens?.find((x) => x.id === id);
+    if (!m || m.lido === lido) return;
+    const delta = lido ? -1 : 1; // lido → menos 1 não-lido; não-lido → mais 1
+    setMensagens((prev) => prev?.map((x) => (x.id === id ? { ...x, lido } : x)) ?? prev);
     setPastas((prev) =>
-      prev?.map((p) => (p.id === pastaSel ? { ...p, naoLidos: Math.max(0, p.naoLidos - 1) } : p)) ?? prev
+      prev?.map((p) =>
+        p.id === pastaSel ? { ...p, naoLidos: Math.max(0, p.naoLidos + delta) } : p
+      ) ?? prev
     );
-    api.crMarcarLido(msgSel, true).catch(() => {
-      setMensagens((prev) => prev?.map((x) => (x.id === msgSel ? { ...x, lido: false } : x)) ?? prev);
+    api.crMarcarLido(id, lido).catch(() => {
+      setMensagens((prev) => prev?.map((x) => (x.id === id ? { ...x, lido: !lido } : x)) ?? prev);
       setPastas((prev) =>
-        prev?.map((p) => (p.id === pastaSel ? { ...p, naoLidos: p.naoLidos + 1 } : p)) ?? prev
+        prev?.map((p) =>
+          p.id === pastaSel ? { ...p, naoLidos: Math.max(0, p.naoLidos - delta) } : p
+        ) ?? prev
       );
     });
+  }
+
+  // Previewar a mensagem = lê-la (como em qualquer leitor): marca lido ao abrir.
+  useEffect(() => {
+    if (msgSel) acaoMarcarLido(msgSel, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [msgSel]);
 
@@ -2018,6 +2071,8 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
               selecionados={selecionados}
               setSelecionados={setSelecionados}
               naoLidosPasta={pastaAtual?.naoLidos ?? 0}
+              contFlagged={buscaAtiva ? null : contFlagged}
+              contAnexos={buscaAtiva ? null : contAnexos}
               busca={busca}
               setBusca={setBusca}
               t={t}
@@ -2043,6 +2098,7 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
                 sinalizado={msgAtual?.sinalizado ?? false}
                 onFlag={acaoFlag}
                 onExcluir={acaoExcluir}
+                onMarcarLido={acaoMarcarLido}
                 onMudou={() => setRecargaPastas((n) => n + 1)}
                 t={t}
                 idioma={idioma}

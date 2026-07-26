@@ -228,6 +228,7 @@ const pt = {
     // Ações de e-mail
     excluir: "Excluir",
     sinalizar: "Sinalizar",
+    marcarNaoLido: "Marcar como não lido",
     esvaziarLixeira: "Esvaziar lixeira",
     emailExcluido: "E-mail excluído.",
     lixeiraEsvaziada: "Lixeira esvaziada ({n}).",
@@ -541,6 +542,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Ações de e-mail
     excluir: "Delete",
     sinalizar: "Flag",
+    marcarNaoLido: "Mark as unread",
     esvaziarLixeira: "Empty trash",
     emailExcluido: "Email deleted.",
     lixeiraEsvaziada: "Trash emptied ({n}).",
