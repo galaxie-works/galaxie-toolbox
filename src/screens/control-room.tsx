@@ -1039,6 +1039,21 @@ function MessageList({
     }
   }
 
+  // #82: com agrupamento (#30) + grupos colapsados, a lista pode ficar mais
+  // CURTA que a área visível — e aí não dá pra rolar até os 90% que disparam o
+  // carregar-mais, então os grupos ficam incompletos (o "buraco" entre períodos).
+  // Este efeito carrega páginas até o conteúdo encher o viewport (ou acabar
+  // `temMais`). Converge porque cada página adiciona altura; guardado por
+  // `carregandoMais` pra não empilhar requisições.
+  useEffect(() => {
+    const el = listaRef.current;
+    if (!el || carregandoMais || !temMais) return;
+    // +8 de folga (padding/borda). Se o conteúdo não passa da área visível,
+    // não há como rolar pra buscar mais — então busca proativamente.
+    if (el.scrollHeight <= el.clientHeight + 8) onCarregarMais();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhas.length, temMais, carregandoMais, colapsadosArr]);
+
   const idsFiltrados = filtrada.map((m) => m.id);
   const todosSel = idsFiltrados.length > 0 && idsFiltrados.every((id) => selecionados.has(id));
   // Em "modo seleção" (≥1 marcado): checkboxes sempre visíveis e as ações de
