@@ -89,7 +89,6 @@ import {
   MapPin,
   PanelLeftClose,
   PanelLeftOpen,
-  PanelRightClose,
   Paperclip,
   PenSquare,
   RefreshCw,
@@ -1645,49 +1644,12 @@ function MessageDetail({
 // Painel 4 — calendário + agenda do dia (schedule-8)
 // ===========================================================================
 
-function AgendaPanel({
-  user,
-  onEvento,
-  colapsada,
-  onToggle,
-  t,
-  idioma,
-}: {
-  user: AppUser;
-  onEvento: (id: string) => void;
-  colapsada: boolean;
-  onToggle: () => void;
-  t: ReturnType<typeof useIdioma>["t"];
-  idioma: string;
-}) {
-  void user;
-  // Colapsado: tira o cálculo/rede — só a tira com o ícone pra reabrir.
-  if (colapsada) {
-    return (
-      <div className="flex h-full w-12 shrink-0 flex-col items-center rounded-xl border bg-card py-3">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onToggle}
-          title={t.controlRoom.agendaTitulo}
-          aria-label={t.controlRoom.agendaTitulo}
-        >
-          <CalendarDays className="size-4 text-muted-foreground" />
-        </Button>
-      </div>
-    );
-  }
-  return <AgendaConteudo onEvento={onEvento} onToggle={onToggle} t={t} idioma={idioma} />;
-}
-
 function AgendaConteudo({
   onEvento,
-  onToggle,
   t,
   idioma,
 }: {
   onEvento: (id: string) => void;
-  onToggle: () => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
@@ -1777,21 +1739,10 @@ function AgendaConteudo({
 
   return (
     <Card className="flex h-full w-80 shrink-0 flex-col gap-0 overflow-hidden py-4">
-      {/* Título genérico + colapsar (igual ao sidebar do mail). */}
-      <div className="flex items-center justify-between px-4 pb-3">
-        <div className="flex items-center gap-2">
-          <CalendarDays className="size-4 text-muted-foreground" />
-          <span className="text-sm font-semibold">{t.controlRoom.agendaTitulo}</span>
-        </div>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onToggle}
-          title={t.controlRoom.colapsar}
-          aria-label={t.controlRoom.colapsar}
-        >
-          <PanelRightClose className="size-4" />
-        </Button>
+      {/* Só o título — o toggle de visibilidade agora é o item do sidebar (#50). */}
+      <div className="flex items-center gap-2 px-4 pb-3">
+        <CalendarDays className="size-4 text-muted-foreground" />
+        <span className="text-sm font-semibold">{t.controlRoom.agendaTitulo}</span>
       </div>
       <CardContent className="px-4">
         <Calendar
@@ -2057,9 +2008,12 @@ function NovaMensagemModal({
 
 export function ControlRoomScreen({
   user,
+  agendaAberta,
   onAbrirLink,
 }: {
   user: AppUser;
+  /** Visibilidade do card da Agenda — controlada pelo item do sidebar (#50). */
+  agendaAberta: boolean;
   onAbrirLink: (url: string) => void;
 }) {
   const { idioma, t } = useIdioma();
@@ -2074,7 +2028,6 @@ export function ControlRoomScreen({
   const [recargaPastas, setRecargaPastas] = useState(0);
   // Colapsos persistem (o app guarda o estado que o usuário deixa).
   const [sidebarAberta, setSidebarAberta] = usePersistedState("bridge.sidebar", true);
-  const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agenda", true);
   // Ordenação da lista (persistida): campo + direção → $orderby no Graph (#32).
   const [ordenar, setOrdenar] = usePersistedState<api.OrdenarMensagens>(
     "bridge.ordenar",
@@ -2595,14 +2548,12 @@ export function ControlRoomScreen({
           </ResizablePanel>
         </ResizablePanelGroup>
 
-        <AgendaPanel
-          user={user}
-          onEvento={setEventoSel}
-          colapsada={!agendaAberta}
-          onToggle={() => setAgendaAberta((v) => !v)}
-          t={t}
-          idioma={idioma}
-        />
+        {/* Card da Agenda no MESMO lugar de sempre (lado direito). Agora quem
+            controla a visibilidade é o item do sidebar esquerdo (#50): visível =
+            renderiza; escondido = some e a lista+detalhe ocupam a largura toda. */}
+        {agendaAberta && (
+          <AgendaConteudo onEvento={setEventoSel} t={t} idioma={idioma} />
+        )}
       </div>
 
       <EventoDialog id={eventoSel} userEmail={user.email} onClose={() => setEventoSel(null)} />
