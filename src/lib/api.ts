@@ -645,12 +645,29 @@ export async function crContar(folderId: string, filtro: string): Promise<number
   return invoke<number>("cr_contar", { folderId, filtro });
 }
 
-export async function crEsvaziarLixeira(): Promise<number> {
+/**
+ * Esvazia uma pasta (só faz sentido em Lixeira e Lixo Eletrônico): apaga cada
+ * mensagem, paginando até a pasta ficar vazia. `folderId` aceita o nome
+ * well-known ("deleteditems"/"junkemail") ou o id real. Devolve quantas saíram.
+ */
+export async function crEsvaziarPasta(folderId: string): Promise<number> {
   if (!inTauri()) {
     await sleep(500);
     return 12;
   }
-  return invoke<number>("cr_esvaziar_lixeira", {});
+  return invoke<number>("cr_esvaziar_pasta", { folderId });
+}
+
+/**
+ * Marca como lidas TODAS as mensagens não lidas de uma pasta (#89). Devolve
+ * quantas foram marcadas (0 = a pasta já estava toda lida).
+ */
+export async function crMarcarPastaLida(folderId: string): Promise<number> {
+  if (!inTauri()) {
+    await sleep(500);
+    return 7;
+  }
+  return invoke<number>("cr_marcar_pasta_lida", { folderId });
 }
 
 /** Baixa um anexo para a pasta Downloads e devolve o caminho absoluto. */
