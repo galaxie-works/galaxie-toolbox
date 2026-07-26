@@ -1692,10 +1692,9 @@ fn campo_ordenacao(folder_id: &str, chave: &str) -> &'static str {
     match chave {
         "remetente" => "from/emailAddress/name",
         "assunto" => "subject",
-        "tamanho" => "size",
-        "importancia" => "importance",
-        "flag" => "flag/flagStatus",
-        _ => data, // "data" e qualquer desconhecido
+        // tamanho/importancia/flag NÃO são ordenáveis server-side no Graph
+        // (400) — foram tirados do escopo (#60). Persistidos antigos caem aqui.
+        _ => data, // "data" e qualquer desconhecido/removido
     }
 }
 
@@ -1713,22 +1712,28 @@ pub fn cr_folder_mensagens(
     let campo = campo_ordenacao(folder_id, ordenar);
     let dir = if descendente { "desc" } else { "asc" };
     // Página de 50, com $skip para o lazy load (rolar até o fim carrega mais).
-    let url = format!(
+    let base = format!(
         "{GRAPH}/me/mailFolders/{folder_id}/messages\
          ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
-         &$orderby={campo} {dir}&$top=50&$skip={skip}"
+         &$top=50&$skip={skip}"
     );
-    // Retry no 429: na abertura o app dispara várias chamadas Graph juntas
-    // (pastas + mensagens + agenda + categorias) e a Inbox vinha vazia quando
-    // esta era estrangulada. Respeita Retry-After, até 3 tentativas.
+    // Ordenação escolhida; se o Graph REJEITAR o $orderby (400 — ex.: alguns
+    // tenants não ordenam por flag/flagStatus), cai no default (data) e refaz —
+    // uma ordenação inválida NUNCA pode travar o carregamento da pasta.
+    // Retry no 429 (Retry-After): na abertura o app dispara várias chamadas
+    // juntas e o Graph estrangula.
+    let padrao = format!("{} desc", if saida { "sentDateTime" } else { "receivedDateTime" });
+    let mut orderby = format!("{campo} {dir}");
+    let mut caiu_no_padrao = false;
     let mut resposta = None;
-    for tentativa in 0..3u8 {
+    for tentativa in 0..4u8 {
+        let url = format!("{base}&$orderby={orderby}");
         match client.get(&url).bearer_auth(&token).send() {
             Ok(r) if r.status().is_success() => {
                 resposta = Some(r);
                 break;
             }
-            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
+            Ok(r) if r.status().as_u16() == 429 && tentativa < 3 => {
                 let espera = r
                     .headers()
                     .get("Retry-After")
@@ -1738,6 +1743,11 @@ pub fn cr_folder_mensagens(
                     .min(5);
                 log::warn!("[mail] mensagens de '{folder_id}' 429; retry em {espera}s");
                 std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(r) if r.status().as_u16() == 400 && !caiu_no_padrao => {
+                log::warn!("[mail] orderby '{orderby}' rejeitado (400); caindo no default (data)");
+                caiu_no_padrao = true;
+                orderby = padrao.clone();
             }
             Ok(r) => {
                 return Err(format!("/me/mailFolders/{folder_id}/messages retornou {}", r.status()));

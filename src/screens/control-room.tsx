@@ -982,9 +982,6 @@ function MessageList({
     data: t.controlRoom.ordenaData,
     remetente: t.controlRoom.ordenaRemetente,
     assunto: t.controlRoom.ordenaAssunto,
-    tamanho: t.controlRoom.ordenaTamanho,
-    importancia: t.controlRoom.ordenaImportancia,
-    flag: t.controlRoom.ordenaFlag,
   };
 
   return (
@@ -1024,13 +1021,11 @@ function MessageList({
                 value={ordenar}
                 onValueChange={(v) => onOrdenar(v as api.OrdenarMensagens, ordemDesc)}
               >
-                {(["data", "remetente", "assunto", "tamanho", "importancia", "flag"] as const).map(
-                  (o) => (
-                    <DropdownMenuRadioItem key={o} value={o}>
-                      {rotuloOrdena[o]}
-                    </DropdownMenuRadioItem>
-                  )
-                )}
+                {(["data", "remetente", "assunto"] as const).map((o) => (
+                  <DropdownMenuRadioItem key={o} value={o}>
+                    {rotuloOrdena[o]}
+                  </DropdownMenuRadioItem>
+                ))}
               </DropdownMenuRadioGroup>
               <DropdownMenuSeparator />
               <DropdownMenuRadioGroup
@@ -2086,6 +2081,12 @@ export function ControlRoomScreen({
     "data"
   );
   const [ordemDesc, setOrdemDesc] = usePersistedState("bridge.ordemDesc", true);
+  // Migração: sorts removidos do escopo (tamanho/importancia/flag — #60) que
+  // ficaram no localStorage voltam pra "data", evitando estado inconsistente.
+  useEffect(() => {
+    if (!["data", "remetente", "assunto"].includes(ordenar as string)) setOrdenar("data");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [temMais, setTemMais] = useState(false);
   const [carregandoMais, setCarregandoMais] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
