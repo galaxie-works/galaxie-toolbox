@@ -16,13 +16,6 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Sheet,
   SheetContent,
   SheetFooter,
@@ -1543,18 +1536,18 @@ function EventoDialog({
   }, [id]);
 
   return (
-    <Dialog open={!!id} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+    <Sheet open={!!id} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent side="right" className="flex w-[30%] flex-col gap-0 p-0 sm:max-w-[30vw]">
         {!det ? (
-          <div className="flex justify-center py-10">
+          <div className="flex flex-1 items-center justify-center py-10">
             <Spinner className="size-6 text-muted-foreground" />
           </div>
         ) : (
           <>
-            <DialogHeader>
-              <DialogTitle className="pr-6 text-left">{det.assunto}</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-3 text-sm">
+            <SheetHeader className="border-b px-4 py-3">
+              <SheetTitle className="pr-6 text-left">{det.assunto}</SheetTitle>
+            </SheetHeader>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto scrollbar-fina px-4 py-4 text-sm">
               <div className="flex items-center gap-2 text-muted-foreground">
                 <CalendarClock className="size-4 shrink-0" />
                 <span>{faixaHora(det.inicio, det.fim, idioma)}</span>
@@ -1596,13 +1589,11 @@ function EventoDialog({
               {det.corpo.trim() && (
                 <>
                   <Separator />
-                  <div className="max-h-64 overflow-auto">
-                    <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} />
-                  </div>
+                  <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} />
                 </>
               )}
             </div>
-            <DialogFooter>
+            <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
               {det.online && det.joinUrl && (
                 <Button onClick={() => api.openUrl(det.joinUrl!)}>
                   <Video /> {t.controlRoom.entrarReuniao}
@@ -1616,11 +1607,11 @@ function EventoDialog({
                   <ExternalLink /> {t.controlRoom.abrirOutlook}
                 </Button>
               )}
-            </DialogFooter>
+            </SheetFooter>
           </>
         )}
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   );
 }
 
