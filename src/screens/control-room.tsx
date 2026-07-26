@@ -1323,7 +1323,16 @@ function MessageList({
                             {m.de}
                           </ItemTitle>
                           {m.sinalizado && (
-                            <Flag className="size-3.5 shrink-0 fill-red-500 text-red-500" />
+                            <Flag
+                              className={cn(
+                                "size-3.5 shrink-0 fill-red-500 text-red-500",
+                                // No hover as ações (incl. o botão de flag) entram
+                                // no slot da data; esconder o indicador persistente
+                                // evita a flag DUPLICADA (#63). Em modo seleção não
+                                // há ações, então o indicador permanece.
+                                !haSelecao && "group-hover/row:hidden"
+                              )}
+                            />
                           )}
                           {/* Slot de largura fixa pra data/ações: a data fica
                               `invisible` no hover (mantém o espaço) e as ações
