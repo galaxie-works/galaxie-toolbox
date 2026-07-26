@@ -225,6 +225,8 @@ const pt = {
     escolhaEmail: "Escolha um e-mail para ver os detalhes.",
     ccLabel: "Cc",
     semEventosTitulo: "Sem eventos",
+    agendaErroTitulo: "Não foi possível carregar a agenda",
+    tentarNovamente: "Tentar novamente",
     // Ações de e-mail
     excluir: "Excluir",
     sinalizar: "Sinalizar",
@@ -247,6 +249,7 @@ const pt = {
     excluirSelecionados: "Excluir selecionados",
     excluindo: "Excluindo…",
     excluidos: "Excluídos",
+    mensagemOriginal: "Mensagem original",
     limparSelecao: "Limpar seleção",
     selecionadosExcluidos: "{n} e-mails excluídos.",
     conversaSelecionada: "1 conversa selecionada",
@@ -541,6 +544,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     escolhaEmail: "Choose an email to view details.",
     ccLabel: "Cc",
     semEventosTitulo: "No events",
+    agendaErroTitulo: "Couldn't load the calendar",
+    tentarNovamente: "Try again",
     // Ações de e-mail
     excluir: "Delete",
     sinalizar: "Flag",
@@ -563,6 +568,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     excluirSelecionados: "Delete selected",
     excluindo: "Deleting…",
     excluidos: "Deleted",
+    mensagemOriginal: "Original message",
     limparSelecao: "Clear selection",
     selecionadosExcluidos: "{n} emails deleted.",
     conversaSelecionada: "1 conversation selected",
