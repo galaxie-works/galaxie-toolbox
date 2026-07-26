@@ -843,7 +843,11 @@ function MessageList({
               )}
             >
               {a.label}
-              {a.n != null && a.n > 0 && <span className="text-muted-foreground">{a.n}</span>}
+              {a.n != null && a.n > 0 && (
+                <Badge variant="primary-light" size="xs" radius="full">
+                  {a.n}
+                </Badge>
+              )}
             </button>
           ))}
         </div>
