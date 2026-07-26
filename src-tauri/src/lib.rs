@@ -442,6 +442,21 @@ async fn cr_excluir_emails(
         .map_err(|e| e.to_string())?
 }
 
+/// Control room: move vários e-mails para uma pasta (com retry no 429).
+/// `destino` é o id (well-known ou real) da pasta de destino. Retorna os ids
+/// que foram realmente movidos.
+#[tauri::command]
+async fn cr_mover_emails(
+    state: State<'_, Store>,
+    ids: Vec<String>,
+    destino: String,
+) -> Result<Vec<String>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_mover_emails(&store, ids, destino))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: sinaliza ou remove a sinalizacao de um e-mail.
 #[tauri::command]
 async fn cr_marcar_email(
@@ -749,6 +764,7 @@ pub fn run() {
             cr_encaminhar,
             cr_excluir_email,
             cr_excluir_emails,
+            cr_mover_emails,
             cr_marcar_email,
             cr_marcar_lido,
             cr_buscar,

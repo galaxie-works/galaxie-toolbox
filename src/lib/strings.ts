@@ -244,6 +244,13 @@ const pt = {
     emailExcluido: "E-mail excluído.",
     lixeiraEsvaziada: "Lixeira esvaziada ({n}).",
     erroAcao: "Não consegui completar a ação.",
+    // Mover para pasta (submenu do menu de contexto, #88)
+    moverPara: "Mover para pasta…",
+    moverBuscarPasta: "Buscar pasta…",
+    moverSemPastas: "Nenhuma pasta encontrada.",
+    moverCarregandoPastas: "Carregando pastas…",
+    emailMovido: "E-mail movido para {pasta}.",
+    selecionadosMovidos: "{n} e-mails movidos para {pasta}.",
     // Toasts
     enviadoDescricao: "Sua mensagem foi entregue.",
     flagAdicionada: "E-mail sinalizado",
@@ -595,6 +602,13 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     emailExcluido: "Email deleted.",
     lixeiraEsvaziada: "Trash emptied ({n}).",
     erroAcao: "Couldn't complete the action.",
+    // Move to folder (context menu submenu, #88)
+    moverPara: "Move to folder…",
+    moverBuscarPasta: "Search folders…",
+    moverSemPastas: "No folders found.",
+    moverCarregandoPastas: "Loading folders…",
+    emailMovido: "Email moved to {pasta}.",
+    selecionadosMovidos: "{n} emails moved to {pasta}.",
     // Toasts
     enviadoDescricao: "Your message was delivered.",
     flagAdicionada: "Email flagged",

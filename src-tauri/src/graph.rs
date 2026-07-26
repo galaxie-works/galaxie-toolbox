@@ -2136,6 +2136,31 @@ pub fn cr_excluir_emails(
     Ok(ok)
 }
 
+/// Move vários e-mails para uma pasta (#88), em série — evita a rajada
+/// concorrente que leva o Graph a 429. `destino` aceita tanto um nome
+/// well-known ("archive", "junkemail"…) quanto o id real de uma subpasta, que é
+/// exatamente o que `cr_mail_folders`/`cr_subpastas` devolvem como `id`.
+/// Reusa `mover_msg` (POST /me/messages/{id}/move com `destinationId`), que já
+/// roda sob o pool + retry central do 429 (Retry-After + jitter); 404 = a
+/// mensagem já saiu (idempotente). Retorna os ids que realmente foram movidos —
+/// o front usa isso para reconciliar o otimista. Mail.ReadWrite.
+pub fn cr_mover_emails(
+    store: &TokenStore,
+    ids: Vec<String>,
+    destino: String,
+) -> Result<Vec<String>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut ok = Vec::with_capacity(ids.len());
+    for id in &ids {
+        match mover_msg(&client, &token, id, &destino) {
+            Ok(()) => ok.push(id.clone()),
+            Err(e) => log::warn!("[mail] mover '{id}' para '{destino}' falhou: {e}"),
+        }
+    }
+    Ok(ok)
+}
+
 /// Sinaliza ou remove a sinalização de um e-mail. Mail.ReadWrite.
 pub fn cr_marcar_email(store: &TokenStore, id: &str, sinalizado: bool) -> Result<(), String> {
     let token = access_token(store)?;
