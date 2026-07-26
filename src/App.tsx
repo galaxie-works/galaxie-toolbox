@@ -195,7 +195,8 @@ export default function App() {
     if (abaAtiva === id) {
       const prox = resto[resto.length - 1];
       setAbaAtiva(prox ? prox.id : null);
-      if (!prox) setTela("apps"); // sem abas, volta para a lista de apps
+      // Sem abas: permanece no Navigator com a aba em branco (Launcher), em vez
+      // de chutar o usuário para a lista de Apps (#24).
     }
   }
 
