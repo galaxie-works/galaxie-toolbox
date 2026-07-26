@@ -1741,6 +1741,10 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
   }, [recarga, recargaPastas]);
 
   // Contadores reais das abas Flagged/Files (na pasta inteira, via $count).
+  // Só refaz na TROCA de pasta / refresh manual — NÃO em cada recargaPastas
+  // (o polling do delete bumpava recargaPastas e os refetch em rajada resolviam
+  // fora de ordem, fazendo o count piscar 8↔15). Entre refetches, os ajustes
+  // otimistas (flag/excluir) mantêm o número certo.
   useEffect(() => {
     let vivo = true;
     setContFlagged(null);
@@ -1750,7 +1754,7 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     return () => {
       vivo = false;
     };
-  }, [pastaSel, recarga, recargaPastas]);
+  }, [pastaSel, recarga]);
 
   // Polling leve da Inbox: baseline no mount (sem toast), depois a cada 15 min
   // avisa por toast os e-mails novos não lidos. TODO: intervalo configurável em
@@ -1852,10 +1856,13 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [msgSel]);
 
-  // Ajuste otimista do contador real de Flagged (aba), pra não ficar estagnado
-  // ao (des)sinalizar enquanto o $count do servidor não reflete ainda (QA #4).
+  // Ajustes otimistas dos contadores reais das abas (Flagged/Files), pra não
+  // ficarem estagnados enquanto o $count do servidor não reflete ainda
+  // (QA #4 flag; QA #14 excluir e-mail com anexo).
   const ajustarContFlagged = (d: number) =>
     setContFlagged((c) => (c === null ? c : Math.max(0, c + d)));
+  const ajustarContAnexos = (d: number) =>
+    setContAnexos((c) => (c === null ? c : Math.max(0, c + d)));
 
   async function acaoFlag(id: string, novo: boolean) {
     // otimista: pinta o item já (nas duas listas) e mexe no count da aba
@@ -1884,11 +1891,14 @@ export function ControlRoomScreen({ user }: { user: AppUser }) {
     const fonte = (busca.trim() !== "" ? resultadosBusca : mensagens) ?? [];
     const removidas = fonte.filter((m) => idsSet.has(m.id));
     const naoLidosFora = removidas.filter((m) => !m.lido).length;
+    const anexosFora = removidas.filter((m) => m.temAnexos).length;
 
     // 1) OTIMISTA: tira da tela na hora (das duas listas) + marca como
     //    "deletada" (pro backfill não trazê-las de volta) + toast imediato.
     ids.forEach((id) => deletadasRef.current.add(id));
     removerNasListas(idsSet);
+    // count real da aba Files reflete na hora (QA #14: senão piscava no refetch)
+    if (anexosFora > 0) ajustarContAnexos(-anexosFora);
     if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
     setSelecionados(new Set());
 
