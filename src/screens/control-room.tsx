@@ -6,6 +6,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Calendar } from "@/components/ui/calendar";
@@ -70,6 +74,7 @@ import type {
 } from "@/lib/types";
 import {
   Archive,
+  ArrowDownUp,
   CalendarClock,
   CalendarDays,
   ChevronDown,
@@ -757,6 +762,9 @@ function MessageList({
   contAnexos,
   busca,
   setBusca,
+  ordenar,
+  ordemDesc,
+  onOrdenar,
   t,
   idioma,
 }: {
@@ -781,6 +789,9 @@ function MessageList({
   contAnexos: number | null;
   busca: string;
   setBusca: (v: string) => void;
+  ordenar: api.OrdenarMensagens;
+  ordemDesc: boolean;
+  onOrdenar: (ordenar: api.OrdenarMensagens, descendente: boolean) => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
@@ -892,6 +903,16 @@ function MessageList({
   // hover por linha somem — o usuário opera pela barra de seleção (#23).
   const haSelecao = selecionados.size > 0;
 
+  // Rótulos das opções de ordenação (chave → string i18n) (#32).
+  const rotuloOrdena: Record<api.OrdenarMensagens, string> = {
+    data: t.controlRoom.ordenaData,
+    remetente: t.controlRoom.ordenaRemetente,
+    assunto: t.controlRoom.ordenaAssunto,
+    tamanho: t.controlRoom.ordenaTamanho,
+    importancia: t.controlRoom.ordenaImportancia,
+    flag: t.controlRoom.ordenaFlag,
+  };
+
   return (
     <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
       <div className="flex items-center gap-2 px-3 py-3">
@@ -915,6 +936,42 @@ function MessageList({
               <Trash2 /> {t.controlRoom.esvaziarLixeira}
             </Button>
           )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="gap-1.5" aria-label={t.controlRoom.ordenarPor}>
+                <ArrowDownUp className="size-3.5" />
+                <span className="hidden text-xs sm:inline">{rotuloOrdena[ordenar]}</span>
+                <ChevronDown className="size-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuLabel>{t.controlRoom.ordenarPor}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={ordenar}
+                onValueChange={(v) => onOrdenar(v as api.OrdenarMensagens, ordemDesc)}
+              >
+                {(["data", "remetente", "assunto", "tamanho", "importancia", "flag"] as const).map(
+                  (o) => (
+                    <DropdownMenuRadioItem key={o} value={o}>
+                      {rotuloOrdena[o]}
+                    </DropdownMenuRadioItem>
+                  )
+                )}
+              </DropdownMenuRadioGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuRadioGroup
+                value={ordemDesc ? "desc" : "asc"}
+                onValueChange={(v) => onOrdenar(ordenar, v === "desc")}
+              >
+                <DropdownMenuRadioItem value="desc">
+                  {t.controlRoom.ordemDecrescente}
+                </DropdownMenuRadioItem>
+                <DropdownMenuRadioItem value="asc">
+                  {t.controlRoom.ordemCrescente}
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label="↻">
             <RefreshCw />
           </Button>
@@ -1912,6 +1969,12 @@ export function ControlRoomScreen({
   // Colapsos persistem (o app guarda o estado que o usuário deixa).
   const [sidebarAberta, setSidebarAberta] = usePersistedState("bridge.sidebar", true);
   const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agenda", true);
+  // Ordenação da lista (persistida): campo + direção → $orderby no Graph (#32).
+  const [ordenar, setOrdenar] = usePersistedState<api.OrdenarMensagens>(
+    "bridge.ordenar",
+    "data"
+  );
+  const [ordemDesc, setOrdemDesc] = usePersistedState("bridge.ordemDesc", true);
   const [temMais, setTemMais] = useState(false);
   const [carregandoMais, setCarregandoMais] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
@@ -2198,7 +2261,7 @@ export function ControlRoomScreen({
     carregadosRef.current = 0;
     deletadasRef.current = new Set();
     api
-      .crFolderMensagens(pastaSel, 0)
+      .crFolderMensagens(pastaSel, 0, ordenar, ordemDesc)
       .then((ms) => {
         if (!vivo) return;
         carregadosRef.current = ms.length;
@@ -2217,9 +2280,10 @@ export function ControlRoomScreen({
       vivo = false;
     };
     // notificarNovos é estável (useCallback [idioma,t]); fora das deps de
-    // propósito pra não recarregar a lista ao trocar idioma.
+    // propósito pra não recarregar a lista ao trocar idioma. ordenar/ordemDesc
+    // ENTRAM: trocar a ordenação re-busca a lista já ordenada pelo Graph (#32).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastaSel, recarga]);
+  }, [pastaSel, recarga, ordenar, ordemDesc]);
 
   // Pré-carga: busca a próxima página do servidor pela âncora (skip = já
   // buscado, não o tamanho da lista) e concatena deduplicando. Serve tanto pro
@@ -2229,7 +2293,12 @@ export function ControlRoomScreen({
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
     try {
-      const pagina = await api.crFolderMensagens(pastaSel, carregadosRef.current);
+      const pagina = await api.crFolderMensagens(
+        pastaSel,
+        carregadosRef.current,
+        ordenar,
+        ordemDesc
+      );
       carregadosRef.current += pagina.length; // avança pelo offset do servidor
       setMensagens((prev) => juntar(prev ?? [], pagina));
       setTemMais(pagina.length === PAGINA);
@@ -2371,6 +2440,12 @@ export function ControlRoomScreen({
               contAnexos={buscaAtiva ? null : contAnexos}
               busca={busca}
               setBusca={setBusca}
+              ordenar={ordenar}
+              ordemDesc={ordemDesc}
+              onOrdenar={(o, desc) => {
+                setOrdenar(o);
+                setOrdemDesc(desc);
+              }}
               t={t}
               idioma={idioma}
             />

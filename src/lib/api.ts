@@ -441,9 +441,20 @@ export async function crSalvarContatos(pessoas: Pessoa[]): Promise<number> {
   return invoke<number>("cr_salvar_contatos", { pessoas });
 }
 
+/** Chave de ordenação da lista (mapeada no backend para $orderby do Graph). */
+export type OrdenarMensagens =
+  | "data"
+  | "remetente"
+  | "assunto"
+  | "tamanho"
+  | "importancia"
+  | "flag";
+
 export async function crFolderMensagens(
   folderId: string,
-  skip = 0
+  skip = 0,
+  ordenar: OrdenarMensagens = "data",
+  descendente = true
 ): Promise<EmailItem[]> {
   if (!inTauri()) {
     await sleep(400);
@@ -483,7 +494,12 @@ export async function crFolderMensagens(
       sinalizado: i === 6,
     }));
   }
-  return invoke<EmailItem[]>("cr_folder_mensagens", { folderId, skip });
+  return invoke<EmailItem[]>("cr_folder_mensagens", {
+    folderId,
+    skip,
+    ordenar,
+    descendente,
+  });
 }
 
 export async function crResponder(
