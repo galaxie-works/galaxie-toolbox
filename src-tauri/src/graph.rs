@@ -1869,6 +1869,132 @@ pub fn cr_buscar(
     Ok(BuscaPagina { itens, proximo })
 }
 
+/// Resolve o endereço do próprio usuário a partir do token (`/me`). Usado pelo
+/// filtro "To me" (D5): "me" é resolvido no backend, não passado pelo front.
+fn meu_endereco(client: &reqwest::blocking::Client, token: &str) -> Option<String> {
+    let url = format!("{GRAPH}/me?$select=mail,userPrincipalName");
+    let r = client.get(&url).bearer_auth(token).send().ok()?;
+    if !r.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = r.json().ok()?;
+    v["mail"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .or_else(|| v["userPrincipalName"].as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Filtra mensagens de uma pasta por um dos filtros que EXIGEM o servidor
+/// (os client-side — All/Unread/Flagged/Files — são aplicados no front sobre a
+/// lista já carregada). Devolve a mesma `BuscaPagina` de cr_buscar (reusa
+/// `montar_email_item`), em páginas de 50, paginando pela CONTINUAÇÃO
+/// (`@odata.nextLink`) igual à busca.
+///
+/// `filtro` aceita:
+///   - "tome"     → endereçadas a mim: `$search="to:<meu-email>"` (D5: só a
+///                  linha To; "me" resolvido no backend pelo token).
+///   - "mentions" → onde fui mencionado: `$filter=mentionsPreview/isMentioned
+///                  eq true` (exige ConsistencyLevel: eventual).
+///   - "invites"  → convites de agenda: cast OData
+///                  `/messages/microsoft.graph.eventMessage`.
+///
+/// Suporte de "mentions"/"invites" varia por tenant. Quando o Graph responde
+/// 400, devolvemos um erro sentinela iniciado por "HTTP 400" para o front
+/// esconder a opção silenciosamente (D6) em vez de mostrar erro.
+pub fn cr_filtrar(
+    store: &TokenStore,
+    folder_id: &str,
+    filtro: &str,
+    next_link: Option<String>,
+) -> Result<BuscaPagina, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let saida = matches!(folder_id, "sentitems" | "drafts");
+    // Campos idênticos aos de cr_buscar/cr_folder_mensagens: a lista fica igual
+    // nos três caminhos (montados por montar_email_item).
+    const SELECT: &str = "subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag";
+
+    // Continuação: o nextLink já traz filtro+select+top+skiptoken embutidos —
+    // usa-se tal e qual. Só na 1ª página montamos a URL inicial por filtro.
+    let url = match next_link {
+        Some(link) => link,
+        None => match filtro {
+            "tome" => {
+                let email = meu_endereco(&client, &token)
+                    .ok_or_else(|| "não foi possível resolver o endereço do usuário".to_string())?;
+                // KQL: restringe à linha To (D5). Aspas do $search fazem parte da
+                // sintaxe; o valor vai percent-encodado.
+                let kql = format!("to:{email}");
+                let enc = urlencoding::encode(&kql);
+                format!(
+                    "{GRAPH}/me/mailFolders/{folder_id}/messages\
+                     ?$search=\"{enc}\"&$select={SELECT}&$top=50"
+                )
+            }
+            "mentions" => {
+                let flt = urlencoding::encode("mentionsPreview/isMentioned eq true");
+                format!(
+                    "{GRAPH}/me/mailFolders/{folder_id}/messages\
+                     ?$filter={flt}&$select={SELECT}&$top=50"
+                )
+            }
+            "invites" => format!(
+                "{GRAPH}/me/mailFolders/{folder_id}/messages/microsoft.graph.eventMessage\
+                 ?$select={SELECT}&$top=50"
+            ),
+            outro => return Err(format!("filtro de servidor desconhecido: '{outro}'")),
+        },
+    };
+
+    // ConsistencyLevel: eventual é exigido por $search e pelo $filter de
+    // mentions; inofensivo no cast de invites. Retry no 429 igual a cr_buscar.
+    let mut resposta = None;
+    for tentativa in 0..3u8 {
+        match client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+        {
+            Ok(r) if r.status().is_success() => {
+                resposta = Some(r);
+                break;
+            }
+            Ok(r) if r.status().as_u16() == 429 && tentativa < 2 => {
+                let espera = retry_after_secs(&r, 1, 5);
+                log::warn!("[mail] filtro '{filtro}' em '{folder_id}' 429; retry em {espera}s");
+                std::thread::sleep(std::time::Duration::from_secs(espera));
+            }
+            Ok(r) if r.status().as_u16() == 400 => {
+                // Tenant não suporta este filtro → sentinela pro front esconder
+                // a opção (D6). Não é falha "real", então fica em nível debug.
+                log::debug!("[mail] filtro '{filtro}' retornou 400 (não suportado no tenant)");
+                return Err(format!("HTTP 400: filtro '{filtro}' não suportado neste tenant"));
+            }
+            Ok(r) => {
+                return Err(format!(
+                    "filtro '{filtro}' em /me/mailFolders/{folder_id}/messages retornou {}",
+                    r.status()
+                ));
+            }
+            Err(e) => return Err(format!("falha ao filtrar: {e}")),
+        }
+    }
+    let resp = resposta.ok_or_else(|| "sem resposta ao filtrar".to_string())?;
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut itens = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            itens.push(montar_email_item(it, saida));
+        }
+    }
+    let proximo = v["@odata.nextLink"].as_str().map(|s| s.to_string());
+    Ok(BuscaPagina { itens, proximo })
+}
+
 // ----------------------------------------------------------------------------
 // Ações de e-mail (Control room): excluir, sinalizar, esvaziar a lixeira.
 // Escopo: Mail.ReadWrite.

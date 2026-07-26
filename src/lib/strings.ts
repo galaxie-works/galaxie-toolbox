@@ -304,6 +304,10 @@ const pt = {
     abaTodos: "Todos",
     abaNaoLidos: "Não lidos",
     abaSinalizados: "Sinalizados",
+    filtroLabel: "Filtro",
+    filtroToMe: "Para mim",
+    filtroMentions: "Me mencionam",
+    filtroInvites: "Convites de agenda",
     // Detalhe do evento
     organizador: "Organizador",
     local: "Local",
@@ -644,6 +648,10 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     abaTodos: "All",
     abaNaoLidos: "Unread",
     abaSinalizados: "Flagged",
+    filtroLabel: "Filter",
+    filtroToMe: "To me",
+    filtroMentions: "Mentions me",
+    filtroInvites: "Calendar invites",
     // Detalhe do evento
     organizador: "Organizer",
     local: "Location",

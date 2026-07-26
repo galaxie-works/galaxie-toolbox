@@ -76,9 +76,12 @@ import type {
 import {
   Archive,
   ArrowDownUp,
+  AtSign,
+  CalendarCheck,
   CalendarClock,
   CalendarDays,
   ChevronDown,
+  ListFilter,
   ChevronRight,
   Download,
   ExternalLink,
@@ -101,6 +104,7 @@ import {
   ShieldAlert,
   Star,
   Trash2,
+  User,
   Video,
   X,
 } from "lucide-react";
@@ -791,7 +795,22 @@ function FolderSidebar({
 // Painel 2 — lista de mensagens
 // ===========================================================================
 
-type Aba = "todos" | "naoLidos" | "sinalizados" | "anexos";
+// Filtro único da lista (dropdown estilo Outlook, #31). Os 4 primeiros são
+// client-side (aplicados sobre a lista já carregada, como as antigas abas); os
+// 3 últimos exigem o servidor (cr_filtrar) e são buscados pelo pai.
+type FiltroLista =
+  | "all"
+  | "unread"
+  | "flagged"
+  | "files"
+  | "tome"
+  | "mentions"
+  | "invites";
+
+/** true para os filtros que precisam ir ao Graph (não dá só no carregado). */
+function ehFiltroGraph(f: FiltroLista): boolean {
+  return f === "tome" || f === "mentions" || f === "invites";
+}
 
 // Linha da lista virtualizada: cabeçalho de grupo OU mensagem. Agrupar por
 // período (+ grupo Flagged no topo) vira linhas planas pra não quebrar o
@@ -836,6 +855,9 @@ function MessageList({
   naoLidosPasta,
   contFlagged,
   contAnexos,
+  filtro,
+  onFiltro,
+  filtrosOcultos,
   busca,
   setBusca,
   ordenar,
@@ -863,6 +885,9 @@ function MessageList({
   naoLidosPasta: number;
   contFlagged: number | null;
   contAnexos: number | null;
+  filtro: FiltroLista;
+  onFiltro: (f: FiltroLista) => void;
+  filtrosOcultos: Set<FiltroLista>;
   busca: string;
   setBusca: (v: string) => void;
   ordenar: api.OrdenarMensagens;
@@ -871,13 +896,13 @@ function MessageList({
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
-  const [aba, setAba] = useState<Aba>("todos");
   const listaRef = useRef<HTMLDivElement>(null);
+  const filtroGraph = ehFiltroGraph(filtro);
 
-  // ESC limpa a busca e volta a mostrar tudo.
+  // ESC limpa só a busca de texto (o filtro é global/persistido, controlado
+  // pelo pai — não é resetado aqui).
   const limparBusca = () => {
     setBusca("");
-    setAba("todos");
   };
 
   const alternarSel = (id: string) =>
@@ -888,22 +913,25 @@ function MessageList({
       return n;
     });
 
-  // A busca por TEXTO é server-side (o pai passa os resultados como `mensagens`);
-  // aqui só aplicamos o filtro de aba (All/Unread/Flagged/Files) sobre a fonte.
+  // A busca por TEXTO e os filtros Graph são resolvidos pelo pai (que passa os
+  // resultados como `mensagens`); aqui só aplicamos os filtros CLIENT-side
+  // (Unread/Flagged/Files) sobre a fonte. "all" e os filtros Graph não filtram
+  // mais nada aqui.
   const filtrada = useMemo(() => {
     if (!mensagens) return [];
     return mensagens.filter((m) => {
-      if (aba === "naoLidos" && m.lido) return false;
-      if (aba === "sinalizados" && !m.sinalizado) return false;
-      if (aba === "anexos" && !m.temAnexos) return false;
+      if (filtro === "unread" && m.lido) return false;
+      if (filtro === "flagged" && !m.sinalizado) return false;
+      if (filtro === "files" && !m.temAnexos) return false;
       return true;
     });
-  }, [mensagens, aba]);
+  }, [mensagens, filtro]);
 
   // Agrupamento por período + grupo Flagged no topo (#30). Só quando ordenado
-  // por DATA e fora de busca (período segue a ordem; em busca o Graph ordena por
-  // relevância). Colapso persiste (regra: o app guarda o estado do usuário).
-  const AGRUPAR = ordenar === "data" && busca.trim() === "";
+  // por DATA e fora de busca/filtro-Graph (período segue a ordem; em busca e nos
+  // filtros Graph — ex.: "To me" via $search — o Graph ordena por relevância).
+  // Colapso persiste (regra: o app guarda o estado do usuário).
+  const AGRUPAR = ordenar === "data" && busca.trim() === "" && !filtroGraph;
   const [colapsadosArr, setColapsadosArr] = usePersistedState<string[]>(
     "bridge.gruposColapsados",
     []
@@ -961,7 +989,7 @@ function MessageList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtrada, AGRUPAR, colapsados, t, rotuloDePeriodo]);
 
-  const filtrando = busca.trim() !== "" || aba !== "todos";
+  const filtrando = busca.trim() !== "" || filtro !== "all";
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
   // carrega a próxima (progressivo) até aparecer resultado ou acabar.
   useEffect(() => {
@@ -986,14 +1014,23 @@ function MessageList({
 
   const comEstrela = mensagens?.filter((m) => m.sinalizado).length ?? 0;
   const comAnexo = mensagens?.filter((m) => m.temAnexos).length ?? 0;
-  const abas: { id: Aba; label: string; n?: number }[] = [
-    { id: "todos", label: t.controlRoom.abaTodos },
+  // Opções do dropdown de filtros (#31). Os 4 primeiros são client-side (com
+  // contador real da pasta); os 3 Graph não têm contador. mentions/invites
+  // somem quando o tenant não suporta (D6 — `filtrosOcultos`).
+  const filtroOpcoes = (
+    [
+    { id: "all", label: t.controlRoom.abaTodos, icon: <Inbox className="size-4" /> },
     // não lidos = total REAL da pasta (não só os carregados na lista)
-    { id: "naoLidos", label: t.controlRoom.abaNaoLidos, n: naoLidosPasta },
+    { id: "unread", label: t.controlRoom.abaNaoLidos, icon: <Mail className="size-4" />, n: naoLidosPasta },
     // Flagged/Files = total REAL da pasta (fallback pro carregado enquanto carrega)
-    { id: "sinalizados", label: t.controlRoom.abaSinalizados, n: contFlagged ?? comEstrela },
-    { id: "anexos", label: t.controlRoom.abaAnexos, n: contAnexos ?? comAnexo },
-  ];
+    { id: "flagged", label: t.controlRoom.abaSinalizados, icon: <Flag className="size-4" />, n: contFlagged ?? comEstrela },
+    { id: "files", label: t.controlRoom.abaAnexos, icon: <Paperclip className="size-4" />, n: contAnexos ?? comAnexo },
+    { id: "tome", label: t.controlRoom.filtroToMe, icon: <User className="size-4" /> },
+    { id: "mentions", label: t.controlRoom.filtroMentions, icon: <AtSign className="size-4" /> },
+    { id: "invites", label: t.controlRoom.filtroInvites, icon: <CalendarCheck className="size-4" /> },
+    ] as { id: FiltroLista; label: string; icon: React.ReactNode; n?: number }[]
+  ).filter((o) => !filtrosOcultos.has(o.id));
+  const filtroAtual = filtroOpcoes.find((o) => o.id === filtro) ?? filtroOpcoes[0];
 
   // Teclado: ESC desfaz multi-seleção; Ctrl+A seleciona tudo (se já há ≥1);
   // ↑/↓ movem a seleção; Delete exclui.
@@ -1175,26 +1212,46 @@ function MessageList({
         </div>
       ) : (
         <div className="flex items-center gap-1 px-3 pb-2">
-          {abas.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              onClick={() => setAba(a.id)}
-              className={cn(
-                "flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors",
-                aba === a.id
-                  ? "bg-secondary font-medium text-secondary-foreground"
-                  : "text-muted-foreground hover:bg-accent/50"
-              )}
-            >
-              {a.label}
-              {a.n != null && a.n > 0 && (
-                <Badge variant="primary-light" size="xs" radius="full">
-                  {a.n}
-                </Badge>
-              )}
-            </button>
-          ))}
+          {/* Dropdown de Filtros estilo Outlook (#31): single-select, substitui
+              as antigas abas. Filtro ativo destacado; contadores nos client-side. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant={filtro === "all" ? "ghost" : "secondary"}
+                size="sm"
+                className="gap-1.5"
+                aria-label={t.controlRoom.filtroLabel}
+              >
+                <ListFilter className="size-3.5" />
+                <span className="text-xs">{filtroAtual.label}</span>
+                {filtroAtual.n != null && filtroAtual.n > 0 && (
+                  <Badge variant="primary-light" size="xs" radius="full">
+                    {filtroAtual.n}
+                  </Badge>
+                )}
+                <ChevronDown className="size-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-52">
+              <DropdownMenuLabel>{t.controlRoom.filtroLabel}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={filtro}
+                onValueChange={(v) => onFiltro(v as FiltroLista)}
+              >
+                {filtroOpcoes.map((o) => (
+                  <DropdownMenuRadioItem key={o.id} value={o.id} className="gap-2">
+                    {o.icon}
+                    <span className="flex-1">{o.label}</span>
+                    {o.n != null && o.n > 0 && (
+                      <Badge variant="primary-light" size="xs" radius="full">
+                        {o.n}
+                      </Badge>
+                    )}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       )}
 
@@ -2153,6 +2210,17 @@ export function ControlRoomScreen({
   // Contadores REAIS da pasta (não só o carregado) pras abas Flagged/Files.
   const [contFlagged, setContFlagged] = useState<number | null>(null);
   const [contAnexos, setContAnexos] = useState<number | null>(null);
+  // Filtro da lista (#31): dropdown Outlook-like, single-select. Persistido
+  // global (D3) — sobrevive ao restart — mas resetado visualmente ao TROCAR de
+  // pasta (efeito abaixo). Os 3 filtros Graph (tome/mentions/invites) buscam no
+  // servidor via cr_filtrar; os 4 client-side são aplicados no MessageList.
+  const [filtro, setFiltro] = usePersistedState<FiltroLista>("bridge.filtroLista", "all");
+  const filtroGraph = ehFiltroGraph(filtro);
+  const [resultadosFiltro, setResultadosFiltro] = useState<EmailItem[] | null>(null);
+  const [temMaisFiltro, setTemMaisFiltro] = useState(false);
+  const proximoFiltroRef = useRef<string | null>(null);
+  // D6: filtros Graph que o tenant rejeitou (400) — escondidos silenciosamente.
+  const [filtrosOcultos, setFiltrosOcultos] = useState<Set<FiltroLista>>(new Set());
   const proximoBuscaRef = useRef<string | null>(null);
   const carregandoMaisRef = useRef(false);
   // pasta atual (pra closures assíncronas que precisam do valor mais novo).
@@ -2280,10 +2348,12 @@ export function ControlRoomScreen({
   const mutarNasListas = (fn: (m: EmailItem) => EmailItem) => {
     setMensagens((prev) => prev?.map(fn) ?? prev);
     setResultadosBusca((prev) => prev?.map(fn) ?? prev);
+    setResultadosFiltro((prev) => prev?.map(fn) ?? prev);
   };
   const removerNasListas = (ids: Set<string>) => {
     setMensagens((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
     setResultadosBusca((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
+    setResultadosFiltro((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
   };
 
   // Marca lido/não-lido (otimista, nos dois sentidos): ajusta o ponto de
@@ -2291,7 +2361,9 @@ export function ControlRoomScreen({
   // rollback. Usado pelo auto-mark ao abrir e pela ação manual de "não-lido".
   function acaoMarcarLido(id: string, lido: boolean) {
     const m =
-      mensagens?.find((x) => x.id === id) ?? resultadosBusca?.find((x) => x.id === id);
+      mensagens?.find((x) => x.id === id) ??
+      resultadosBusca?.find((x) => x.id === id) ??
+      resultadosFiltro?.find((x) => x.id === id);
     if (!m || m.lido === lido) return;
     const delta = lido ? -1 : 1; // lido → menos 1 não-lido; não-lido → mais 1
     mutarNasListas((x) => (x.id === id ? { ...x, lido } : x));
@@ -2348,7 +2420,12 @@ export function ControlRoomScreen({
     const idsSet = new Set(ids);
     // Fonte = lista atualmente visível (pasta ou resultados de busca), pra
     // contar não-lidos certo e remover de onde o item de fato está (QA #1).
-    const fonte = (busca.trim() !== "" ? resultadosBusca : mensagens) ?? [];
+    const fonte =
+      (filtroGraph
+        ? resultadosFiltro
+        : busca.trim() !== ""
+          ? resultadosBusca
+          : mensagens) ?? [];
     const removidas = fonte.filter((m) => idsSet.has(m.id));
     const naoLidosFora = removidas.filter((m) => !m.lido).length;
     const anexosFora = removidas.filter((m) => m.temAnexos).length;
@@ -2501,7 +2578,9 @@ export function ControlRoomScreen({
   const buscaAtiva = busca.trim() !== "";
   useEffect(() => {
     const termo = busca.trim();
-    if (!termo) {
+    // Com um filtro Graph ativo NÃO fazemos $search no servidor: o texto é
+    // aplicado client-side por cima do resultado do filtro (D2).
+    if (!termo || filtroGraph) {
       setResultadosBusca(null);
       setTemMaisBusca(false);
       return;
@@ -2522,7 +2601,76 @@ export function ControlRoomScreen({
         });
     }, 300);
     return () => clearTimeout(id);
-  }, [busca, pastaSel]);
+  }, [busca, pastaSel, filtroGraph]);
+
+  // Reset visual do filtro ao TROCAR de pasta (#31 / D3): um filtro Graph da
+  // Inbox não faz sentido carregar pra Enviados. Só reseta em troca REAL — no
+  // 1º render mantém o valor persistido (não zera o que veio do localStorage).
+  const filtroPastaRef = useRef(pastaSel);
+  useEffect(() => {
+    if (filtroPastaRef.current !== pastaSel) {
+      filtroPastaRef.current = pastaSel;
+      setFiltro("all");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastaSel]);
+
+  // Filtros que EXIGEM o servidor (tome/mentions/invites): busca via cr_filtrar
+  // e pagina pela continuação (nextLink), igual à busca. Fora deles, limpa.
+  useEffect(() => {
+    if (!filtroGraph) {
+      setResultadosFiltro(null);
+      setTemMaisFiltro(false);
+      proximoFiltroRef.current = null;
+      return;
+    }
+    let vivo = true;
+    setResultadosFiltro(null); // null = spinner
+    proximoFiltroRef.current = null;
+    api
+      .crFiltrar(pastaSel, filtro)
+      .then((res) => {
+        if (!vivo) return;
+        proximoFiltroRef.current = res.proximo;
+        setResultadosFiltro(res.itens.filter((m) => !deletadasRef.current.has(m.id)));
+        setTemMaisFiltro(res.proximo !== null);
+      })
+      .catch((e) => {
+        if (!vivo) return;
+        // D6: tenant sem suporte (HTTP 400) → esconde a opção e volta pra "all",
+        // silenciosamente. Outros erros só deixam a lista vazia.
+        const msg = String(e);
+        if ((filtro === "mentions" || filtro === "invites") && msg.includes("400")) {
+          setFiltrosOcultos((s) => new Set(s).add(filtro));
+          setFiltro("all");
+        }
+        setResultadosFiltro([]);
+        setTemMaisFiltro(false);
+      });
+    return () => {
+      vivo = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtro, filtroGraph, pastaSel, recarga]);
+
+  // Paginação do filtro Graph via @odata.nextLink; dedup igual à busca.
+  async function carregarMaisFiltro() {
+    const proximo = proximoFiltroRef.current;
+    if (carregandoMaisRef.current || !filtroGraph || !proximo) return;
+    carregandoMaisRef.current = true;
+    setCarregandoMais(true);
+    try {
+      const res = await api.crFiltrar(pastaSel, filtro, proximo);
+      proximoFiltroRef.current = res.proximo;
+      setResultadosFiltro((prev) => juntar(prev ?? [], res.itens));
+      setTemMaisFiltro(res.proximo !== null);
+    } catch {
+      /* silencioso */
+    } finally {
+      carregandoMaisRef.current = false;
+      setCarregandoMais(false);
+    }
+  }
 
   // Paginação dos resultados de busca via @odata.nextLink (o Graph não aceita
   // $skip com $search); dedup igual à pasta.
@@ -2545,9 +2693,33 @@ export function ControlRoomScreen({
     }
   }
 
+  // Fonte da lista mostrada, por precedência: filtro Graph (com o texto da busca
+  // aplicado client-side por cima — D2) > busca de texto server-side > pasta.
+  const textoBuscaLower = busca.trim().toLowerCase();
+  const fonteLista = useMemo<EmailItem[] | null>(() => {
+    if (filtroGraph) {
+      if (!resultadosFiltro) return null; // spinner enquanto o filtro carrega
+      if (!textoBuscaLower) return resultadosFiltro;
+      return resultadosFiltro.filter(
+        (m) =>
+          m.assunto.toLowerCase().includes(textoBuscaLower) ||
+          m.de.toLowerCase().includes(textoBuscaLower) ||
+          m.preview.toLowerCase().includes(textoBuscaLower)
+      );
+    }
+    return buscaAtiva ? resultadosBusca : mensagens;
+  }, [filtroGraph, resultadosFiltro, textoBuscaLower, buscaAtiva, resultadosBusca, mensagens]);
+  const onCarregarMaisLista = filtroGraph
+    ? carregarMaisFiltro
+    : buscaAtiva
+      ? carregarMaisBusca
+      : carregarMais;
+  const temMaisLista = filtroGraph ? temMaisFiltro : buscaAtiva ? temMaisBusca : temMais;
+
   const pastaAtual = pastas?.find((p) => p.id === pastaSel);
   const tituloLista = pastaAtual ? rotuloPasta(pastaAtual.tipo, pastaAtual.nome, t) : "";
-  const msgAtual = mensagens?.find((m) => m.id === msgSel);
+  const msgAtual =
+    fonteLista?.find((m) => m.id === msgSel) ?? mensagens?.find((m) => m.id === msgSel);
 
   // "Compose in Outlook" — comportamento atual (abre o Outlook interno).
   const composeOutlook = () =>
@@ -2599,7 +2771,7 @@ export function ControlRoomScreen({
           <ResizablePanel defaultSize={38} minSize={24} maxSize={55} className="overflow-hidden">
             <MessageList
               titulo={tituloLista}
-              mensagens={buscaAtiva ? resultadosBusca : mensagens}
+              mensagens={fonteLista}
               sel={msgSel}
               onSel={setMsgSel}
               onRefresh={() => setRecarga((n) => n + 1)}
@@ -2607,16 +2779,19 @@ export function ControlRoomScreen({
               onToggleSidebar={() => setSidebarAberta((v) => !v)}
               pastaTipo={pastaAtual?.tipo ?? ""}
               onEsvaziar={esvaziarLixeira}
-              onCarregarMais={buscaAtiva ? carregarMaisBusca : carregarMais}
+              onCarregarMais={onCarregarMaisLista}
               carregandoMais={carregandoMais}
-              temMais={buscaAtiva ? temMaisBusca : temMais}
+              temMais={temMaisLista}
               onFlag={acaoFlag}
               onExcluir={acaoExcluir}
               selecionados={selecionados}
               setSelecionados={setSelecionados}
               naoLidosPasta={pastaAtual?.naoLidos ?? 0}
-              contFlagged={buscaAtiva ? null : contFlagged}
-              contAnexos={buscaAtiva ? null : contAnexos}
+              contFlagged={contFlagged}
+              contAnexos={contAnexos}
+              filtro={filtro}
+              onFiltro={setFiltro}
+              filtrosOcultos={filtrosOcultos}
               busca={busca}
               setBusca={setBusca}
               ordenar={ordenar}
