@@ -486,6 +486,37 @@ function AgendaVazia({ t }: { t: ReturnType<typeof useIdioma>["t"] }) {
   );
 }
 
+/** Falha ao carregar a agenda — distinta do "sem eventos", com o erro real e
+ *  um retry. Antes uma falha do Graph era mascarada como mês vazio (#21). */
+function AgendaErro({
+  mensagem,
+  onRetry,
+  t,
+}: {
+  mensagem: string;
+  onRetry: () => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  return (
+    <Empty className="py-8">
+      <EmptyHeader>
+        <EmptyMedia>
+          <ShieldAlert className="size-8 text-muted-foreground" />
+        </EmptyMedia>
+        <EmptyTitle>{t.controlRoom.agendaErroTitulo}</EmptyTitle>
+        <EmptyDescription className="break-all text-xs opacity-80">
+          {mensagem}
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          <RefreshCw /> {t.controlRoom.tentarNovamente}
+        </Button>
+      </EmptyContent>
+    </Empty>
+  );
+}
+
 // ===========================================================================
 // Painel 1 — pastas
 // ===========================================================================
@@ -1369,15 +1400,33 @@ function MessageDetail({
                   : t.controlRoom.responder}
             </SheetTitle>
           </SheetHeader>
-          <div className="min-h-0 flex-1 overflow-hidden">
-            {modo && (
-              <ComporMensagem
-                key={modo}
-                ref={comporRef}
-                mostrarDestinatarios={modo === "encaminhar"}
-                textos={textosCompose}
-              />
-            )}
+          {/* Composer (editável) em cima + a mensagem original como referência
+              read-only embaixo, como todo mailclient. O original NÃO faz parte
+              do editor (edRef), então o getHtml() sai só com a resposta e o
+              backend segue anexando a citação limpa do Graph — sem duplicar. */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="min-h-0 flex-[3] overflow-hidden">
+              {modo && (
+                <ComporMensagem
+                  key={modo}
+                  ref={comporRef}
+                  mostrarDestinatarios={modo === "encaminhar"}
+                  textos={textosCompose}
+                />
+              )}
+            </div>
+            <div className="flex min-h-0 flex-[2] flex-col border-t">
+              <div className="flex shrink-0 items-center gap-2 bg-muted/30 px-4 py-1.5 text-xs text-muted-foreground">
+                <Reply className="size-3 shrink-0" />
+                <span className="font-medium">{t.controlRoom.mensagemOriginal}</span>
+                <span className="ml-auto truncate">
+                  {det.de} · {new Date(comZ(det.recebido)).toLocaleString(idioma)}
+                </span>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina">
+                <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} onAbrirLink={onAbrirLink} />
+              </div>
+            </div>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
             <Button variant="ghost" onClick={() => setModo(null)} disabled={enviando}>
@@ -1446,6 +1495,11 @@ function AgendaConteudo({
 }) {
   const [dia, setDia] = useState<Date>(() => new Date());
   const [mesEventos, setMesEventos] = useState<EventoAgenda[] | null>(null);
+  // Erro de carga separado do "vazio": sem isso, uma falha do Graph
+  // (403 de escopo, rede, etc.) virava um mês "sem eventos" idêntico ao real,
+  // mascarando o problema (#21). `recargaAgenda` re-dispara o fetch no retry.
+  const [erroAgenda, setErroAgenda] = useState<string | null>(null);
+  const [recargaAgenda, setRecargaAgenda] = useState(0);
 
   const chaveDia = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 
@@ -1462,11 +1516,24 @@ function AgendaConteudo({
   useEffect(() => {
     let vivo = true;
     setMesEventos(null);
-    api.crAgenda(mesIni, mesFim).then((d) => vivo && setMesEventos(d)).catch(() => vivo && setMesEventos([]));
+    setErroAgenda(null);
+    api
+      .crAgenda(mesIni, mesFim)
+      .then((d) => {
+        if (vivo) setMesEventos(d);
+      })
+      .catch((e) => {
+        // Surface o erro real (ex.: "/me/calendarView retornou 403") em vez de
+        // fingir "sem eventos".
+        if (vivo) {
+          setErroAgenda(String(e));
+          setMesEventos([]);
+        }
+      });
     return () => {
       vivo = false;
     };
-  }, [mesIni, mesFim]);
+  }, [mesIni, mesFim, recargaAgenda]);
 
   // Cores reais das categorias do Outlook (nome -> hex), carregadas uma vez.
   const [coresCat, setCoresCat] = useState<Map<string, string>>(new Map());
@@ -1555,7 +1622,13 @@ function AgendaConteudo({
         </div>
         {/* Eventos do dia — rola por dentro; empty state do dia inalterado. */}
         <div className="min-h-0 w-full flex-1 overflow-y-auto scrollbar-fina">
-          {agenda === null ? (
+          {erroAgenda ? (
+            <AgendaErro
+              mensagem={erroAgenda}
+              onRetry={() => setRecargaAgenda((n) => n + 1)}
+              t={t}
+            />
+          ) : agenda === null ? (
             <div className="flex justify-center py-8">
               <Spinner className="size-5 text-muted-foreground" />
             </div>
