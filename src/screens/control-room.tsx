@@ -882,6 +882,9 @@ function MessageList({
 
   const idsFiltrados = filtrada.map((m) => m.id);
   const todosSel = idsFiltrados.length > 0 && idsFiltrados.every((id) => selecionados.has(id));
+  // Em "modo seleção" (≥1 marcado): checkboxes sempre visíveis e as ações de
+  // hover por linha somem — o usuário opera pela barra de seleção (#23).
+  const haSelecao = selecionados.size > 0;
 
   return (
     <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
@@ -1051,7 +1054,7 @@ function MessageList({
                       <label
                         className={cn(
                           "flex items-center self-start pt-1.5 transition-opacity",
-                          !marcado && "opacity-0 group-hover/row:opacity-100"
+                          !marcado && !haSelecao && "opacity-0 group-hover/row:opacity-100"
                         )}
                         onClick={(e) => e.stopPropagation()}
                       >
@@ -1085,36 +1088,45 @@ function MessageList({
                           {m.sinalizado && (
                             <Flag className="size-3.5 shrink-0 fill-red-500 text-red-500" />
                           )}
-                          {/* data (some no hover) + ações rápidas (aparecem no hover) */}
-                          <span className="shrink-0 text-xs text-muted-foreground group-hover/row:hidden">
+                          {/* data (some no hover só fora do modo seleção) +
+                              ações rápidas (aparecem no hover; escondidas em
+                              modo seleção — o usuário opera pela barra) (#23) */}
+                          <span
+                            className={cn(
+                              "shrink-0 text-xs text-muted-foreground",
+                              !haSelecao && "group-hover/row:hidden"
+                            )}
+                          >
                             {quandoCurto(m.recebido, idioma)}
                           </span>
-                          <div
-                            className="hidden shrink-0 items-center gap-0.5 group-hover/row:flex"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <button
-                              type="button"
-                              onClick={() => onFlag(m.id, !m.sinalizado)}
-                              className="grid size-6 place-items-center rounded hover:bg-background"
-                              aria-label={t.controlRoom.sinalizar}
+                          {!haSelecao && (
+                            <div
+                              className="hidden shrink-0 items-center gap-0.5 group-hover/row:flex"
+                              onClick={(e) => e.stopPropagation()}
                             >
-                              <Flag
-                                className={cn(
-                                  "size-3.5",
-                                  m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
-                                )}
-                              />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => onExcluir([m.id])}
-                              className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                              aria-label={t.controlRoom.excluir}
-                            >
-                              <Trash2 className="size-3.5" />
-                            </button>
-                          </div>
+                              <button
+                                type="button"
+                                onClick={() => onFlag(m.id, !m.sinalizado)}
+                                className="grid size-6 place-items-center rounded hover:bg-background"
+                                aria-label={t.controlRoom.sinalizar}
+                              >
+                                <Flag
+                                  className={cn(
+                                    "size-3.5",
+                                    m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
+                                  )}
+                                />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => onExcluir([m.id])}
+                                className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                aria-label={t.controlRoom.excluir}
+                              >
+                                <Trash2 className="size-3.5" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                         <p className={cn("truncate text-sm", !m.lido && "font-medium")}>{m.assunto}</p>
                         <ItemDescription className="flex items-center gap-1">
