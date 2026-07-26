@@ -740,6 +740,26 @@ function FolderSidebar({
 
 type Aba = "todos" | "naoLidos" | "sinalizados" | "anexos";
 
+// Linha da lista virtualizada: cabeçalho de grupo OU mensagem. Agrupar por
+// período (+ grupo Flagged no topo) vira linhas planas pra não quebrar o
+// react-virtual (#30).
+type LinhaLista =
+  | { tipo: "grupo"; chave: string; rotulo: string; n: number }
+  | { tipo: "msg"; m: EmailItem };
+
+/** Bucket de período do recebido, por dia de calendário (local). */
+function periodoChave(recebido: string, agora: Date): string {
+  const d = new Date(comZ(recebido));
+  if (Number.isNaN(d.getTime())) return "antigos";
+  const dia = (x: Date) => Date.UTC(x.getFullYear(), x.getMonth(), x.getDate());
+  const diff = Math.round((dia(agora) - dia(d)) / 86400000);
+  if (diff <= 0) return "hoje";
+  if (diff === 1) return "ontem";
+  if (diff <= 7) return "7dias";
+  if (diff <= 30) return "30dias";
+  return "antigos";
+}
+
 function MessageList({
   titulo,
   mensagens,
@@ -824,6 +844,55 @@ function MessageList({
     });
   }, [mensagens, aba]);
 
+  // Agrupamento por período + grupo Flagged no topo (#30). Só quando ordenado
+  // por DATA e fora de busca (período segue a ordem; em busca o Graph ordena por
+  // relevância). Colapso persiste (regra: o app guarda o estado do usuário).
+  const AGRUPAR = ordenar === "data" && busca.trim() === "";
+  const [colapsadosArr, setColapsadosArr] = usePersistedState<string[]>(
+    "bridge.gruposColapsados",
+    []
+  );
+  const colapsados = useMemo(() => new Set(colapsadosArr), [colapsadosArr]);
+  const alternarColapso = (chave: string) =>
+    setColapsadosArr((arr) =>
+      arr.includes(chave) ? arr.filter((c) => c !== chave) : [...arr, chave]
+    );
+  const rotuloPeriodo: Record<string, string> = {
+    hoje: t.controlRoom.grupoHoje,
+    ontem: t.controlRoom.grupoOntem,
+    "7dias": t.controlRoom.grupo7dias,
+    "30dias": t.controlRoom.grupo30dias,
+    antigos: t.controlRoom.grupoAntigos,
+  };
+  // Lista PLANA de linhas (headers + msgs) pra virtualizar — headers viram
+  // linhas virtuais sem quebrar o react-virtual. Flagged são puxados pro topo
+  // (não duplicam nos períodos). Grupo colapsado = só o header.
+  const linhas = useMemo<LinhaLista[]>(() => {
+    if (!AGRUPAR) return filtrada.map((m) => ({ tipo: "msg", m }) as LinhaLista);
+    const out: LinhaLista[] = [];
+    const agora = new Date();
+    const flagged = filtrada.filter((m) => m.sinalizado);
+    const resto = filtrada.filter((m) => !m.sinalizado);
+    if (flagged.length > 0) {
+      out.push({ tipo: "grupo", chave: "flagged", rotulo: t.controlRoom.grupoFlagged, n: flagged.length });
+      if (!colapsados.has("flagged")) for (const m of flagged) out.push({ tipo: "msg", m });
+    }
+    let atual: string | null = null;
+    let header: Extract<LinhaLista, { tipo: "grupo" }> | null = null;
+    for (const m of resto) {
+      const chave = periodoChave(m.recebido, agora);
+      if (chave !== atual) {
+        atual = chave;
+        header = { tipo: "grupo", chave, rotulo: rotuloPeriodo[chave] ?? chave, n: 0 };
+        out.push(header);
+      }
+      if (header) header.n++;
+      if (!colapsados.has(chave)) out.push({ tipo: "msg", m });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtrada, AGRUPAR, colapsados, t]);
+
   const filtrando = busca.trim() !== "" || aba !== "todos";
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
   // carrega a próxima (progressivo) até aparecer resultado ou acabar.
@@ -837,11 +906,14 @@ function MessageList({
   // measureElement corrige para a altura real (~84px) sem risco de sobreposição.
   const ROW_ALTURA = 76;
   const virtualizer = useVirtualizer({
-    count: filtrada.length,
+    count: linhas.length,
     getScrollElement: () => listaRef.current,
-    estimateSize: () => ROW_ALTURA,
+    estimateSize: (i) => (linhas[i]?.tipo === "grupo" ? 32 : ROW_ALTURA),
     overscan: 8,
-    getItemKey: (i) => filtrada[i].id,
+    getItemKey: (i) => {
+      const l = linhas[i];
+      return l ? (l.tipo === "grupo" ? `g:${l.chave}` : l.m.id) : i;
+    },
   });
 
   const comEstrela = mensagens?.filter((m) => m.sinalizado).length ?? 0;
@@ -882,8 +954,10 @@ function MessageList({
       if (alvo) {
         onSel(alvo.id);
         // Com a lista virtualizada, o item pode não estar no DOM — usa o
-        // scrollToIndex do virtualizer (align "auto" ≈ block:"nearest").
-        virtualizer.scrollToIndex(prox);
+        // scrollToIndex do virtualizer. O índice é o da lista PLANA (linhas),
+        // que difere de `filtrada` quando há headers de grupo (#30).
+        const vi = linhas.findIndex((l) => l.tipo === "msg" && l.m.id === alvo.id);
+        if (vi >= 0) virtualizer.scrollToIndex(vi);
       }
     } else if (e.key === "Delete") {
       const alvos = selecionados.size > 0 ? [...selecionados] : sel ? [sel] : [];
@@ -1084,8 +1158,45 @@ function MessageList({
               }}
             >
               {virtualizer.getVirtualItems().map((vr) => {
-                const m = filtrada[vr.index];
-                if (!m) return null;
+                const linha = linhas[vr.index];
+                if (!linha) return null;
+                // Cabeçalho de grupo (Flagged / período) como linha virtual (#30).
+                if (linha.tipo === "grupo") {
+                  const colapsado = colapsados.has(linha.chave);
+                  return (
+                    <div
+                      key={vr.key}
+                      data-index={vr.index}
+                      ref={virtualizer.measureElement}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${vr.start}px)`,
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => alternarColapso(linha.chave)}
+                        className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-muted-foreground hover:text-foreground"
+                      >
+                        <ChevronRight
+                          className={cn(
+                            "size-3.5 shrink-0 transition-transform",
+                            !colapsado && "rotate-90"
+                          )}
+                        />
+                        {linha.chave === "flagged" && (
+                          <Flag className="size-3 shrink-0 fill-red-500 text-red-500" />
+                        )}
+                        <span className="uppercase tracking-wide">{linha.rotulo}</span>
+                        <span className="font-normal opacity-70">{linha.n}</span>
+                      </button>
+                    </div>
+                  );
+                }
+                const m = linha.m;
                 const ativo = m.id === sel;
                 const marcado = selecionados.has(m.id);
                 return (
