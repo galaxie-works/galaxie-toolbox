@@ -21,6 +21,37 @@ import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import { Compass, Globe, Loader2, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { ShipIcon, type ShipIconHandle } from "@/components/ui/ship";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
+
+/**
+ * Hero da aba vazia do Navigator (#74): a nave (lucide-animated) balançando em
+ * loop infinito + título "Navigator" + subtítulo "Time to set sail", todos com
+ * animação de entrada (ícone: fade/scale via `logo-in`; textos: SoftBlurIn — o
+ * mesmo reveal da tela de login/reconexão). Fica acima da omnibox.
+ */
+function NavigatorHero({ titulo, subtitulo }: { titulo: string; subtitulo: string }) {
+  const nave = useRef<ShipIconHandle>(null);
+  // Anima no mount e mantém o balanço infinito (o <g> do barco tem repeat:Infinity).
+  useEffect(() => {
+    nave.current?.startAnimation();
+  }, []);
+  return (
+    <div className="flex flex-col items-center gap-2 text-center">
+      <ShipIcon
+        ref={nave}
+        size={40}
+        className="logo-in text-primary [&_svg]:size-10"
+      />
+      <SoftBlurIn className="text-2xl font-semibold tracking-tight" delay={120} stagger={16}>
+        {titulo}
+      </SoftBlurIn>
+      <SoftBlurIn className="text-[15px] text-muted-foreground" delay={300} stagger={14}>
+        {subtitulo}
+      </SoftBlurIn>
+    </div>
+  );
+}
 
 export interface AbaBrowser {
   id: string;
@@ -57,7 +88,8 @@ function Launcher({
     : "";
 
   return (
-    <div className="flex h-full items-center justify-center p-6">
+    <div className="flex h-full flex-col items-center justify-center gap-7 p-6">
+      <NavigatorHero titulo={t.navegador.titulo} subtitulo={t.navegador.subtitulo} />
       <Command
         // h-auto anula o h-full padrao do Command, senao o card estica pra
         // tela toda. Card flutuante, centralizado, sobre o fundo estrelado.
