@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
+import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -793,17 +794,20 @@ type LinhaLista =
   | { tipo: "grupo"; chave: string; rotulo: string; n: number }
   | { tipo: "msg"; m: EmailItem };
 
-/** Bucket de período do recebido, por dia de calendário (local). */
+/** Bucket de período estilo Outlook (#30): Hoje / Ontem / <mês do ano
+ *  corrente> / <ano anterior> / Older. Ex.: em jul/2026 → Hoje, Ontem, Julho,
+ *  Junho, ..., Janeiro, 2025, Older. A chave carrega o dado bruto; o rótulo é
+ *  resolvido por idioma em `rotuloDePeriodo`. */
 function periodoChave(recebido: string, agora: Date): string {
   const d = new Date(comZ(recebido));
-  if (Number.isNaN(d.getTime())) return "antigos";
+  if (Number.isNaN(d.getTime())) return "older";
   const dia = (x: Date) => Date.UTC(x.getFullYear(), x.getMonth(), x.getDate());
   const diff = Math.round((dia(agora) - dia(d)) / 86400000);
   if (diff <= 0) return "hoje";
   if (diff === 1) return "ontem";
-  if (diff <= 7) return "7dias";
-  if (diff <= 30) return "30dias";
-  return "antigos";
+  if (d.getFullYear() === agora.getFullYear()) return `mes-${d.getMonth()}`;
+  if (d.getFullYear() === agora.getFullYear() - 1) return `ano-${d.getFullYear()}`;
+  return "older";
 }
 
 function MessageList({
@@ -903,13 +907,25 @@ function MessageList({
     setColapsadosArr((arr) =>
       arr.includes(chave) ? arr.filter((c) => c !== chave) : [...arr, chave]
     );
-  const rotuloPeriodo: Record<string, string> = {
-    hoje: t.controlRoom.grupoHoje,
-    ontem: t.controlRoom.grupoOntem,
-    "7dias": t.controlRoom.grupo7dias,
-    "30dias": t.controlRoom.grupo30dias,
-    antigos: t.controlRoom.grupoAntigos,
-  };
+  // Rótulo do período por idioma: hoje/ontem/older via strings; mês via nome
+  // localizado (Intl, capitalizado); ano anterior via o número do ano (#30).
+  const rotuloDePeriodo = useCallback(
+    (chave: string): string => {
+      if (chave === "hoje") return t.controlRoom.grupoHoje;
+      if (chave === "ontem") return t.controlRoom.grupoOntem;
+      if (chave === "older") return t.controlRoom.grupoAntigos;
+      if (chave.startsWith("ano-")) return chave.slice(4);
+      if (chave.startsWith("mes-")) {
+        const idx = Number(chave.slice(4));
+        const nome = new Date(2000, idx, 1).toLocaleDateString(idioma, {
+          month: "long",
+        });
+        return nome.charAt(0).toUpperCase() + nome.slice(1);
+      }
+      return chave;
+    },
+    [t, idioma]
+  );
   // Lista PLANA de linhas (headers + msgs) pra virtualizar — headers viram
   // linhas virtuais sem quebrar o react-virtual. Flagged são puxados pro topo
   // (não duplicam nos períodos). Grupo colapsado = só o header.
@@ -929,7 +945,7 @@ function MessageList({
       const chave = periodoChave(m.recebido, agora);
       if (chave !== atual) {
         atual = chave;
-        header = { tipo: "grupo", chave, rotulo: rotuloPeriodo[chave] ?? chave, n: 0 };
+        header = { tipo: "grupo", chave, rotulo: rotuloDePeriodo(chave), n: 0 };
         out.push(header);
       }
       if (header) header.n++;
@@ -937,7 +953,7 @@ function MessageList({
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtrada, AGRUPAR, colapsados, t]);
+  }, [filtrada, AGRUPAR, colapsados, t, rotuloDePeriodo]);
 
   const filtrando = busca.trim() !== "" || aba !== "todos";
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
@@ -1217,23 +1233,29 @@ function MessageList({
                         transform: `translateY(${vr.start}px)`,
                       }}
                     >
-                      <button
-                        type="button"
-                        onClick={() => alternarColapso(linha.chave)}
-                        className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-muted-foreground hover:text-foreground"
+                      {/* Grupo colapsável no padrão @reui/c-collapsible-6:
+                          Collapsible controlado + CollapsibleTrigger com chevron
+                          que gira via group-data-[state=open] (#30). O conteúdo
+                          são as msgs virtualizadas (linhas separadas), então o
+                          colapso emite/omite essas linhas via `colapsados`. */}
+                      <Collapsible
+                        open={!colapsado}
+                        onOpenChange={() => alternarColapso(linha.chave)}
                       >
-                        <ChevronRight
-                          className={cn(
-                            "size-3.5 shrink-0 transition-transform",
-                            !colapsado && "rotate-90"
+                        <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-muted-foreground hover:text-foreground">
+                          <ChevronRight
+                            className={cn(
+                              "size-3.5 shrink-0 transition-transform",
+                              !colapsado && "rotate-90"
+                            )}
+                          />
+                          {linha.chave === "flagged" && (
+                            <Flag className="size-3 shrink-0 fill-red-500 text-red-500" />
                           )}
-                        />
-                        {linha.chave === "flagged" && (
-                          <Flag className="size-3 shrink-0 fill-red-500 text-red-500" />
-                        )}
-                        <span className="uppercase tracking-wide">{linha.rotulo}</span>
-                        <span className="font-normal opacity-70">{linha.n}</span>
-                      </button>
+                          <span className="uppercase tracking-wide">{linha.rotulo}</span>
+                          <span className="font-normal opacity-70">{linha.n}</span>
+                        </CollapsibleTrigger>
+                      </Collapsible>
                     </div>
                   );
                 }
