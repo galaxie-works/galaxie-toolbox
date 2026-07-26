@@ -2251,11 +2251,34 @@ pub fn cr_esvaziar_lixeira(store: &TokenStore) -> Result<u64, String> {
 // Mail.Send (ja concedido). Tudo delegado (/me).
 // ----------------------------------------------------------------------------
 
+/// Origem da sugestao no autocomplete — vira a secao ("Seus contatos" x "De sua
+/// organizacao") na lista do compositor (#40).
+pub const ORIGEM_CONTATOS: &str = "contatos";
+pub const ORIGEM_ORGANIZACAO: &str = "organizacao";
+
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Pessoa {
     pub nome: String,
     pub email: String,
+    /// Cargo (`jobTitle`) — 2a linha da sugestao. Costuma faltar em contato
+    /// pessoal/externo, entao e opcional.
+    #[serde(default)]
+    pub cargo: Option<String>,
+    /// `contatos` (/me/people) ou `organizacao` (/users). Opcional porque o
+    /// front tambem manda `Pessoa` de volta em `cr_salvar_contatos`, sem isso.
+    #[serde(default)]
+    pub origem: Option<String>,
+}
+
+/// `jobTitle` do item do Graph, descartando string vazia/null (o Graph devolve
+/// `null` para quem nao tem cargo preenchido no diretorio).
+fn cargo_de(item: &serde_json::Value) -> Option<String> {
+    item["jobTitle"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// Busca pessoas para o autocomplete do compositor. Combina o "relevant people"
@@ -2275,7 +2298,7 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
 
     // 1) Pessoas relevantes do usuario (contatos, colegas com quem troca e-mail).
     let url = format!(
-        "{GRAPH}/me/people?$search=\"{enc}\"&$top=8&$select=displayName,scoredEmailAddresses"
+        "{GRAPH}/me/people?$search=\"{enc}\"&$top=8&$select=displayName,scoredEmailAddresses,jobTitle"
     );
     match client.get(&url).bearer_auth(&token).send() {
         Ok(resp) if resp.status().is_success() => {
@@ -2288,7 +2311,12 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
                             .as_str()
                             .unwrap_or("")
                             .to_string();
-                        resultados.push(Pessoa { nome, email });
+                        resultados.push(Pessoa {
+                            nome,
+                            email,
+                            cargo: cargo_de(it),
+                            origem: Some(ORIGEM_CONTATOS.to_string()),
+                        });
                     }
                 }
             }
@@ -2299,7 +2327,7 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
 
     // 2) Diretorio da organizacao. $search em /users exige ConsistencyLevel.
     let url = format!(
-        "{GRAPH}/users?$search=\"displayName:{enc}\"&$top=8&$select=displayName,mail,userPrincipalName"
+        "{GRAPH}/users?$search=\"displayName:{enc}\"&$top=8&$select=displayName,mail,userPrincipalName,jobTitle"
     );
     match client
         .get(&url)
@@ -2319,7 +2347,12 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
                             .or_else(|| it["userPrincipalName"].as_str())
                             .unwrap_or("")
                             .to_string();
-                        resultados.push(Pessoa { nome, email });
+                        resultados.push(Pessoa {
+                            nome,
+                            email,
+                            cargo: cargo_de(it),
+                            origem: Some(ORIGEM_ORGANIZACAO.to_string()),
+                        });
                     }
                 }
             }
