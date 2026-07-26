@@ -26,7 +26,6 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarRail,
-  SidebarSeparator,
 } from "@/components/animate-ui/components/radix/sidebar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ClienteMark } from "@/components/brand";
@@ -35,7 +34,6 @@ import type { AppUser } from "@/lib/types";
 import { NAV, type Tela } from "@/lib/navegacao";
 import { useIdioma } from "@/lib/idioma";
 import {
-  CalendarDays,
   ChevronRight,
   ChevronsUpDown,
   ExternalLink,
@@ -49,16 +47,12 @@ export function AppSidebar({
   onNavegar,
   onLogout,
   onAbrirUrl,
-  agendaAberta,
-  onToggleAgenda,
 }: {
   user: AppUser;
   tela: Tela;
   onNavegar: (t: Tela) => void;
   onLogout: () => void;
   onAbrirUrl: (url: string) => void;
-  agendaAberta: boolean;
-  onToggleAgenda: () => void;
 }) {
   const isMobile = useIsMobile();
   const { t } = useIdioma();
@@ -133,26 +127,6 @@ export function AppSidebar({
             </SidebarMenu>
           </SidebarGroup>
         ))}
-
-        {/* Agenda — ancorada no rodapé (mt-auto empurra pra baixo), separada por
-            uma linha das seções de navegação acima. O topo do sidebar fica livre
-            pra caixa de entrada e futuras caixas compartilhadas. É um TOGGLE do
-            card da Agenda no Bridge: selecionado ⟺ agenda visível (#50). */}
-        <SidebarGroup className="mt-auto">
-          <SidebarSeparator className="mb-1" />
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip={t.nav.agenda}
-                isActive={agendaAberta}
-                onClick={onToggleAgenda}
-              >
-                <CalendarDays className="size-5!" />
-                <span>{t.nav.agenda}</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarGroup>
       </SidebarContent>
 
       {/* Usuario */}
