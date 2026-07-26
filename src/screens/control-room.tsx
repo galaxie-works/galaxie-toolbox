@@ -375,7 +375,12 @@ function BotaoExcluir({
     if (estado !== "parado") return;
     setEstado("processando");
     try {
-      await onExcluir();
+      // Duração mínima pra a animação (borda tracejada) ser visível mesmo quando
+      // a exclusão é otimista/instantânea — antes o botão sumia sem animar (#23).
+      await Promise.all([
+        Promise.resolve(onExcluir()),
+        new Promise((r) => setTimeout(r, 650)),
+      ]);
       setEstado("sucesso");
     } catch {
       setEstado("parado");
@@ -497,20 +502,25 @@ function AgendaErro({
   onRetry: () => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
+  // Mensagem amigável na UI (o usuário não deve ver "/me/calendarView 429");
+  // o detalhe técnico vai pro console pra diagnóstico. #41
+  useEffect(() => {
+    console.warn("[agenda] falha ao carregar:", mensagem);
+  }, [mensagem]);
   return (
     <Empty className="py-8">
       <EmptyHeader>
         <EmptyMedia>
-          <ShieldAlert className="size-8 text-muted-foreground" />
+          <CalendarClock className="size-8 text-muted-foreground" />
         </EmptyMedia>
         <EmptyTitle>{t.controlRoom.agendaErroTitulo}</EmptyTitle>
-        <EmptyDescription className="break-all text-xs opacity-80">
-          {mensagem}
+        <EmptyDescription className="text-xs">
+          {t.controlRoom.agendaErroDica}
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>
         <Button variant="outline" size="sm" onClick={onRetry}>
-          <RefreshCw /> {t.controlRoom.tentarNovamente}
+          <RefreshCw /> {t.controlRoom.atualizar}
         </Button>
       </EmptyContent>
     </Empty>
@@ -863,6 +873,9 @@ function MessageList({
       if (alvos.length > 0) {
         e.preventDefault();
         onExcluir(alvos);
+        // acaoExcluir não limpa mais a seleção (pro BotaoExcluir animar antes de
+        // desmontar); no atalho, limpamos aqui.
+        setSelecionados(new Set());
       }
     }
   }
@@ -2082,7 +2095,9 @@ export function ControlRoomScreen({
     // count real da aba Files reflete na hora (QA #14: senão piscava no refetch)
     if (anexosFora > 0) ajustarContAnexos(-anexosFora);
     if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
-    setSelecionados(new Set());
+    // NÃO limpamos a seleção aqui: o BotaoExcluir precisa ficar montado pra
+    // completar a animação (processando → sucesso) e só então limpa via
+    // onConcluir. Os outros gatilhos (atalho Delete) limpam explicitamente (#23).
 
     // 2) Contagens do sidebar já refletem: pasta atual −N (e −não lidos),
     //    Lixeira +N (a menos que a exclusão seja dentro da própria Lixeira).
