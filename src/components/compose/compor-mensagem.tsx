@@ -1,17 +1,39 @@
-import { forwardRef, useImperativeHandle, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { KEYS, type TElement } from "platejs";
 import { Plate, usePlateEditor } from "platejs/react";
 import {
   BoldIcon,
+  FileArchiveIcon,
+  FileIcon,
+  FileSpreadsheetIcon,
+  FileTextIcon,
+  HeadphonesIcon,
+  ImageIcon,
   ItalicIcon,
   PaperclipIcon,
   PenLineIcon,
   StrikethroughIcon,
+  Trash2Icon,
   UnderlineIcon,
   UploadCloudIcon,
+  UploadIcon,
+  VideoIcon,
   XIcon,
 } from "lucide-react";
 import { toast } from "sonner";
+
+import {
+  formatBytes,
+  useFileUpload,
+  type FileMetadata,
+  type FileWithPreview,
+} from "@/hooks/use-file-upload";
 
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
@@ -121,6 +143,27 @@ function nomeDoCaminho(caminho: string): string {
   return caminho.split(/[\\/]/).pop() || caminho;
 }
 
+/** Limites do uploader (c-file-upload-9). Grandes o suficiente para e-mail. */
+const MAX_ARQUIVOS = 20;
+const MAX_TAMANHO = 25 * 1024 * 1024; // 25 MB
+
+/** Ícone por tipo MIME, no espírito do getFileIcon do c-file-upload-9. */
+function getFileIcon(file: File | FileMetadata) {
+  const type = file.type ?? "";
+  const cls = "size-6";
+  if (type.startsWith("image/")) return <ImageIcon className={cls} />;
+  if (type.startsWith("video/")) return <VideoIcon className={cls} />;
+  if (type.startsWith("audio/")) return <HeadphonesIcon className={cls} />;
+  if (type.includes("pdf")) return <FileTextIcon className={cls} />;
+  if (type.includes("word") || type.includes("doc"))
+    return <FileTextIcon className={cls} />;
+  if (type.includes("excel") || type.includes("sheet"))
+    return <FileSpreadsheetIcon className={cls} />;
+  if (type.includes("zip") || type.includes("rar"))
+    return <FileArchiveIcon className={cls} />;
+  return <FileIcon className={cls} />;
+}
+
 /**
  * Abre o seletor de arquivo do sistema e devolve `{nome, bytes}` do que foi
  * escolhido, ou `null` se o usuário cancelou. Usa os plugins JS do Tauri
@@ -155,6 +198,67 @@ export const ComporMensagem = forwardRef<
   const [anexos, setAnexos] = useState<AnexoEnvio[]>([]);
   const [compartilhando, setCompartilhando] = useState(false);
 
+  // O uploader (c-file-upload-9) é a fonte da lista visível; `anexos` (o que vai
+  // no envio) é derivado dele. Como base64 é assíncrono, guardamos cada anexo já
+  // convertido num cache por id de arquivo e reconstruímos `anexos` na ordem dos
+  // arquivos sempre que a lista muda (adicionar/remover/limpar).
+  const arquivosRef = useRef<FileWithPreview[]>([]);
+  const anexosCacheRef = useRef<Map<string, AnexoEnvio>>(new Map());
+
+  const sincronizarAnexos = useCallback((lista: FileWithPreview[]) => {
+    const ids = new Set(lista.map((f) => f.id));
+    for (const id of [...anexosCacheRef.current.keys()]) {
+      if (!ids.has(id)) anexosCacheRef.current.delete(id);
+    }
+    setAnexos(
+      lista
+        .map((f) => anexosCacheRef.current.get(f.id))
+        .filter((a): a is AnexoEnvio => Boolean(a))
+    );
+  }, []);
+
+  /** Converte cada `File` novo para base64 e realimenta `anexos`. */
+  const aoAdicionarArquivos = useCallback(
+    async (adicionados: FileWithPreview[]) => {
+      for (const item of adicionados) {
+        // Só arquivos reais (do drop/browse/picker) têm bytes para converter.
+        if (item.file instanceof File) {
+          const bytes = new Uint8Array(await item.file.arrayBuffer());
+          anexosCacheRef.current.set(item.id, {
+            nome: item.file.name,
+            tipo: item.file.type || tipoPorNome(item.file.name),
+            conteudoB64: bytesParaB64(bytes),
+          });
+        }
+      }
+      sincronizarAnexos(arquivosRef.current);
+    },
+    [sincronizarAnexos]
+  );
+
+  const [
+    { files: arquivos, isDragging, errors },
+    {
+      addFiles,
+      removeFile,
+      clearFiles,
+      handleDragEnter,
+      handleDragLeave,
+      handleDragOver,
+      handleDrop,
+      openFileDialog,
+      getInputProps,
+    },
+  ] = useFileUpload({
+    multiple: true,
+    maxFiles: MAX_ARQUIVOS,
+    maxSize: MAX_TAMANHO,
+    onFilesAdded: aoAdicionarArquivos,
+    onFilesChange: sincronizarAnexos,
+  });
+  // Espelho síncrono da lista de arquivos, para o callback assíncrono de conversão.
+  arquivosRef.current = arquivos;
+
   const editor = usePlateEditor({
     plugins: COMPOSE_KIT,
     value: [{ type: "p", children: [{ text: "" }] }],
@@ -184,27 +288,25 @@ export const ComporMensagem = forwardRef<
     );
   }
 
-  /** Anexa um arquivo local (fileAttachment): lê os bytes e guarda em base64. */
+  /**
+   * Atalho da toolbar: abre o picker do Tauri e injeta os arquivos escolhidos no
+   * mesmo uploader (c-file-upload-9), que cuida da conversão para base64/anexo.
+   */
   async function anexarArquivo() {
     try {
       const arqs = await escolherArquivos();
       if (arqs.length === 0) return;
-      const novos: AnexoEnvio[] = arqs.map((arq) => ({
-        nome: arq.nome,
-        tipo: tipoPorNome(arq.nome),
-        conteudoB64: bytesParaB64(arq.bytes),
-      }));
-      setAnexos((atual) => [...atual, ...novos]);
-      toast.success(
-        novos.length > 1 ? `${novos.length} arquivos anexados` : `Anexado: ${novos[0].nome}`
-      );
+      const novos = arqs.map((arq) => {
+        // Cópia para um ArrayBuffer "puro" (o Uint8Array do Tauri não casa com
+        // BlobPart por causa da união com SharedArrayBuffer).
+        const buffer = new ArrayBuffer(arq.bytes.byteLength);
+        new Uint8Array(buffer).set(arq.bytes);
+        return new File([buffer], arq.nome, { type: tipoPorNome(arq.nome) });
+      });
+      addFiles(novos);
     } catch (e) {
       toast.error("Falha ao anexar o arquivo", { description: String(e) });
     }
-  }
-
-  function removerAnexo(indice: number) {
-    setAnexos((atual) => atual.filter((_, i) => i !== indice));
   }
 
   /**
@@ -331,29 +433,6 @@ export const ComporMensagem = forwardRef<
           </ToolbarButton>
         </FixedToolbar>
 
-        {/* Chips dos anexos, removíveis. Só aparece quando há algum. */}
-        {anexos.length > 0 && (
-          <div className="flex flex-wrap gap-2 border-b px-3 py-2">
-            {anexos.map((a, i) => (
-              <span
-                key={`${a.nome}-${i}`}
-                className="inline-flex items-center gap-1.5 rounded-md border bg-muted/50 px-2 py-1 text-xs"
-              >
-                <PaperclipIcon className="size-3 shrink-0 text-muted-foreground" />
-                <span className="max-w-40 truncate">{a.nome}</span>
-                <button
-                  type="button"
-                  aria-label={`Remover ${a.nome}`}
-                  className="shrink-0 text-muted-foreground hover:text-foreground"
-                  onClick={() => removerAnexo(i)}
-                >
-                  <XIcon className="size-3" />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-
         <EditorContainer className={cn("min-h-0 flex-1 overflow-auto")}>
           <Editor
             ref={edRef}
@@ -362,6 +441,140 @@ export const ComporMensagem = forwardRef<
             className="min-h-40 px-3 py-2 text-sm"
           />
         </EditorContainer>
+
+        {/*
+          Rodapé: uploader c-file-upload-9 (markup literal do registry, sem o
+          mock de progresso/simulateUpload e sem defaultFiles). O drop nativo
+          pode ser interceptado pelo Tauri; o "selecione"/browse via <input
+          type=file> sempre funciona e entrega File com .arrayBuffer().
+        */}
+        <div className="w-full space-y-4 border-t p-3">
+          {/* Área de upload */}
+          <div
+            className={cn(
+              "rounded-lg relative border border-dashed p-6 text-center transition-colors",
+              isDragging
+                ? "border-primary bg-primary/5"
+                : "border-muted-foreground/25 hover:border-muted-foreground/50"
+            )}
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+          >
+            <input {...getInputProps()} className="sr-only" />
+
+            <div className="flex flex-col items-center gap-4">
+              <div
+                className={cn(
+                  "bg-muted flex h-12 w-12 items-center justify-center rounded-full transition-colors",
+                  isDragging
+                    ? "border-primary bg-primary/10"
+                    : "border-muted-foreground/25"
+                )}
+              >
+                <UploadIcon className="text-muted-foreground h-5 w-5" />
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium">
+                  Arraste arquivos aqui ou{" "}
+                  <button
+                    type="button"
+                    onClick={openFileDialog}
+                    className="text-primary cursor-pointer underline-offset-4 hover:underline"
+                  >
+                    selecione
+                  </button>
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  Tamanho máximo: {formatBytes(MAX_TAMANHO)} • Máximo de
+                  arquivos: {MAX_ARQUIVOS}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Grid de arquivos */}
+          {arquivos.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium">
+                  Anexos ({arquivos.length})
+                </h3>
+                <div className="flex gap-2">
+                  <Button onClick={openFileDialog} variant="outline" size="sm">
+                    <UploadCloudIcon />
+                    Adicionar
+                  </Button>
+                  <Button onClick={clearFiles} variant="outline" size="sm">
+                    <Trash2Icon />
+                    Remover todos
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-4 lg:grid-cols-6">
+                {arquivos.map((fileItem) => (
+                  <div key={fileItem.id} className="group/item relative">
+                    {/* Botão remover */}
+                    <Button
+                      onClick={() => removeFile(fileItem.id)}
+                      variant="outline"
+                      size="icon"
+                      aria-label={`Remover ${fileItem.file.name}`}
+                      className="absolute -end-2 -top-2 z-10 size-6 rounded-full opacity-0 transition-opacity group-hover/item:opacity-100 dark:bg-zinc-800 hover:dark:bg-zinc-700"
+                    >
+                      <XIcon className="size-3.5" />
+                    </Button>
+
+                    {/* Wrapper */}
+                    <div className="bg-card rounded-lg relative overflow-hidden border transition-colors">
+                      {/* Preview de imagem ou ícone do arquivo */}
+                      <div className="bg-muted border-border relative aspect-square border-b">
+                        {fileItem.file.type.startsWith("image/") &&
+                        fileItem.preview ? (
+                          <img
+                            src={fileItem.preview}
+                            alt={fileItem.file.name}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="text-muted-foreground/80 flex h-full items-center justify-center">
+                            <div className="text-4xl">
+                              {getFileIcon(fileItem.file)}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Rodapé com nome e tamanho */}
+                      <div className="p-3">
+                        <div className="space-y-1">
+                          <p className="truncate text-sm font-medium">
+                            {fileItem.file.name}
+                          </p>
+                          <span className="text-muted-foreground text-xs">
+                            {formatBytes(fileItem.file.size)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Mensagens de erro do uploader */}
+          {errors.length > 0 && (
+            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {errors.map((error, index) => (
+                <p key={index}>{error}</p>
+              ))}
+            </div>
+          )}
+        </div>
       </Plate>
     </div>
   );
