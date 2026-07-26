@@ -90,10 +90,13 @@ static LIMITADOR: Limitador = Limitador {
 struct Vaga;
 impl Drop for Vaga {
     fn drop(&mut self) {
-        if let Ok(mut n) = LIMITADOR.vagas.lock() {
-            *n += 1;
-            LIMITADOR.liberou.notify_one();
-        }
+        // `unwrap_or_else(into_inner)` e não `if let Ok(..)`: se o Mutex for
+        // envenenado (panic de outra thread), engolir o erro VAZARIA a vaga para
+        // sempre e o pool secaria em deadlock. `adquirir_vaga` já se recupera do
+        // envenenamento; a devolução tem de fazer o mesmo.
+        let mut n = LIMITADOR.vagas.lock().unwrap_or_else(|e| e.into_inner());
+        *n += 1;
+        LIMITADOR.liberou.notify_one();
     }
 }
 
@@ -107,21 +110,42 @@ fn adquirir_vaga() -> Vaga {
     Vaga
 }
 
-/// Milissegundos a dormir antes de re-tentar um 429. Prioriza o `Retry-After`
+/// Jitter aditivo máximo (ms) somado ao `Retry-After` pedido pelo servidor.
+const GRAPH_JITTER_RETRY_AFTER_MS: u64 = 500;
+
+/// A parte da resposta HTTP que o laço de retry precisa enxergar. Existe para o
+/// laço (`executar_com_pool`) ser testável sem rede: em produção o impl é o
+/// `reqwest::blocking::Response`; no teste, uma resposta forjada.
+trait RespostaThrottling {
+    fn status_u16(&self) -> u16;
+    /// `Retry-After` em segundos (delta-seconds). `None` se ausente ou ilegível.
+    fn retry_after_s(&self) -> Option<u64>;
+}
+
+impl RespostaThrottling for reqwest::blocking::Response {
+    fn status_u16(&self) -> u16 {
+        self.status().as_u16()
+    }
+    fn retry_after_s(&self) -> Option<u64> {
+        self.headers()
+            .get("Retry-After")
+            .and_then(|h| h.to_str().ok())
+            .and_then(|s| s.trim().parse::<u64>().ok())
+    }
+}
+
+/// Milissegundos a dormir antes de re-tentar um 429 — lógica PURA (sem rede,
+/// sem relógio), para ser exercitada em teste. Prioriza o `Retry-After`
 /// (segundos → ms) como PISO, com teto; na ausência usa backoff exponencial
 /// 2^tentativa s (com teto). Sempre soma jitter para dessincronizar os workers.
-fn espera_backoff_ms(resp: &reqwest::blocking::Response, tentativa: u8, teto_s: u64) -> u64 {
+fn calc_espera_ms(retry_after_s: Option<u64>, tentativa: u8, teto_s: u64) -> u64 {
     use rand::Rng;
     let mut rng = rand::thread_rng();
-    let retry_after = resp
-        .headers()
-        .get("Retry-After")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok());
-    match retry_after {
+    match retry_after_s {
         // Respeita o Retry-After como piso + jitter aditivo (0–500ms) só pra
-        // espalhar as re-tentativas — nunca dorme MENOS que o servidor pediu.
-        Some(s) => s.min(teto_s) * 1000 + rng.gen_range(0..500u64),
+        // espalhar as re-tentativas — nunca dorme MENOS que o servidor pediu
+        // (salvo o teto, que é proteção nossa contra pedido absurdo).
+        Some(s) => s.min(teto_s) * 1000 + rng.gen_range(0..GRAPH_JITTER_RETRY_AFTER_MS),
         // Sem Retry-After: backoff exponencial com jitter multiplicativo
         // delay*(0.5 + rand*0.5) (fica entre 50% e 100% do backoff).
         None => {
@@ -129,6 +153,11 @@ fn espera_backoff_ms(resp: &reqwest::blocking::Response, tentativa: u8, teto_s: 
             ((base as f64) * (0.5 + rng.gen::<f64>() * 0.5)).round() as u64
         }
     }
+}
+
+/// Wrapper sobre `calc_espera_ms` que extrai o `Retry-After` da resposta real.
+fn espera_backoff_ms(resp: &reqwest::blocking::Response, tentativa: u8, teto_s: u64) -> u64 {
+    calc_espera_ms(resp.retry_after_s(), tentativa, teto_s)
 }
 
 /// Executa uma chamada Graph sob o pool de concorrência, re-tentando em 429 com
@@ -139,22 +168,34 @@ fn espera_backoff_ms(resp: &reqwest::blocking::Response, tentativa: u8, teto_s: 
 fn graph_enviar<F>(
     rotulo: &str,
     teto_s: u64,
-    mut enviar: F,
+    enviar: F,
 ) -> reqwest::Result<reqwest::blocking::Response>
 where
     F: FnMut() -> reqwest::Result<reqwest::blocking::Response>,
 {
+    executar_com_pool(rotulo, teto_s, enviar)
+}
+
+/// O laço de verdade, genérico na resposta (`RespostaThrottling`) e no erro, para
+/// ser testável sem rede. `graph_enviar` é só a instanciação com os tipos do
+/// reqwest — as assinaturas dos `cr_*` não mudam.
+fn executar_com_pool<R, E, F>(rotulo: &str, teto_s: u64, mut enviar: F) -> Result<R, E>
+where
+    R: RespostaThrottling,
+    F: FnMut() -> Result<R, E>,
+{
     let mut tentativa: u8 = 0;
     loop {
-        // A vaga é segurada só durante o send; o `_vaga` cai no fim deste bloco.
+        // A vaga é segurada só durante o send; o `_vaga` cai no fim deste bloco,
+        // ANTES do sleep abaixo — quem dorme esperando re-tentar não ocupa vaga.
         let resp = {
             let _vaga = adquirir_vaga();
             enviar()
         }?;
-        if resp.status().as_u16() != 429 || tentativa + 1 >= GRAPH_MAX_TENTATIVAS {
+        if resp.status_u16() != 429 || tentativa + 1 >= GRAPH_MAX_TENTATIVAS {
             return Ok(resp);
         }
-        let espera = espera_backoff_ms(&resp, tentativa, teto_s);
+        let espera = calc_espera_ms(resp.retry_after_s(), tentativa, teto_s);
         log::warn!(
             "[{rotulo}] 429 (tentativa {}/{}); aguardando {espera}ms",
             tentativa + 1,
@@ -2526,4 +2567,440 @@ pub fn cr_contar(store: &TokenStore, folder_id: &str, filtro: &str) -> Result<u6
         .trim()
         .parse::<u64>()
         .map_err(|e| format!("resposta do /$count não é um número ('{corpo}'): {e}"))
+}
+
+// ---------------------------------------------------------------------------
+// Testes do throttling (#64) — evidência de QA.
+//
+// Este item é puramente técnico: o AC ("sob throttling a lista/agenda ainda
+// carregam") não é observável na UI sem provocar um 429 real do tenant. Então a
+// prova é aqui: exercitamos o pool e o backoff SEM REDE, com números.
+//
+// Rodar: cargo test --lib graph::testes_throttling -- --nocapture
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod testes_throttling {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    use std::sync::{mpsc, Arc, Barrier, Mutex, MutexGuard};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    /// O pool (`LIMITADOR`) é um `static` global compartilhado; o cargo test roda
+    /// os testes em paralelo. Sem esta trava, dois testes de concorrência
+    /// disputariam as MESMAS 4 vagas e o pico medido seria dos dois somados.
+    static TRAVA_POOL: Mutex<()> = Mutex::new(());
+
+    fn trava_pool() -> MutexGuard<'static, ()> {
+        let g = TRAVA_POOL.lock().unwrap_or_else(|e| e.into_inner());
+        // Sanidade: todo teste começa com o pool cheio. Se falhar aqui, algum
+        // teste anterior VAZOU vaga (é exatamente o bug que o Drop RAII evita).
+        assert_eq!(
+            vagas_livres(),
+            GRAPH_MAX_CONCORRENTES,
+            "pool nao voltou ao estado inicial: vagas vazaram"
+        );
+        g
+    }
+
+    fn vagas_livres() -> usize {
+        *LIMITADOR.vagas.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Medidor de "requisições em voo": conta simultâneos e guarda o pico.
+    #[derive(Default)]
+    struct EmVoo {
+        atual: AtomicUsize,
+        pico: AtomicUsize,
+    }
+    impl EmVoo {
+        fn entrar(&self) {
+            let n = self.atual.fetch_add(1, SeqCst) + 1;
+            self.pico.fetch_max(n, SeqCst);
+        }
+        fn sair(&self) {
+            self.atual.fetch_sub(1, SeqCst);
+        }
+        fn pico(&self) -> usize {
+            self.pico.load(SeqCst)
+        }
+    }
+
+    /// Resposta forjada: implementa só o que o laço de retry enxerga, então dá
+    /// pra dirigir `executar_com_pool` sem tocar na rede.
+    struct RespostaFake {
+        status: u16,
+        retry_after: Option<u64>,
+    }
+    impl RespostaFake {
+        fn ok() -> Self {
+            RespostaFake { status: 200, retry_after: None }
+        }
+        fn throttled(retry_after_s: Option<u64>) -> Self {
+            RespostaFake { status: 429, retry_after: retry_after_s }
+        }
+    }
+    impl RespostaThrottling for RespostaFake {
+        fn status_u16(&self) -> u16 {
+            self.status
+        }
+        fn retry_after_s(&self) -> Option<u64> {
+            self.retry_after
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 1. POOL DE CONCORRÊNCIA
+    // -----------------------------------------------------------------------
+
+    /// AC: "as chamadas Graph passam por um pool de concorrência limitado (N
+    /// baixo) em vez de dispararem todas de uma vez".
+    /// 20 threads largam JUNTAS (barreira) — o pico em voo nunca pode passar de 4.
+    #[test]
+    fn pool_limita_o_pico_de_requisicoes_em_voo() {
+        let _t = trava_pool();
+        const THREADS: usize = 20;
+
+        let em_voo = Arc::new(EmVoo::default());
+        let largada = Arc::new(Barrier::new(THREADS));
+        let inicio = Instant::now();
+
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let em_voo = Arc::clone(&em_voo);
+                let largada = Arc::clone(&largada);
+                thread::spawn(move || {
+                    largada.wait(); // a "rajada" da carga inicial do Bridge
+                    let vaga = adquirir_vaga();
+                    em_voo.entrar();
+                    thread::sleep(Duration::from_millis(20)); // simula o .send()
+                    em_voo.sair();
+                    drop(vaga);
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("thread do pool entrou em panico");
+        }
+
+        let pico = em_voo.pico();
+        println!(
+            "[QA #64] pool: {THREADS} threads simultaneas, 20ms cada -> PICO EM VOO = {pico} \
+             (limite {GRAPH_MAX_CONCORRENTES}); tempo total {:?}",
+            inicio.elapsed()
+        );
+        assert!(
+            pico <= GRAPH_MAX_CONCORRENTES,
+            "pool furou: {pico} requisicoes em voo (limite {GRAPH_MAX_CONCORRENTES})"
+        );
+        // Se nunca chegasse a 4, o teste não teria exercitado contenção nenhuma.
+        assert_eq!(pico, GRAPH_MAX_CONCORRENTES, "o teste nao saturou o pool - inconclusivo");
+        assert_eq!(vagas_livres(), GRAPH_MAX_CONCORRENTES, "vaga vazou no fim");
+    }
+
+    /// A vaga é devolvida no `Drop` (RAII): com o pool cheio ninguém entra, e
+    /// basta uma devolução para o próximo passar.
+    #[test]
+    fn pool_bloqueia_quando_cheio_e_libera_no_drop() {
+        let _t = trava_pool();
+        let mut ocupadas: Vec<Vaga> =
+            (0..GRAPH_MAX_CONCORRENTES).map(|_| adquirir_vaga()).collect();
+        assert_eq!(vagas_livres(), 0);
+
+        let (tx, rx) = mpsc::channel();
+        let h = thread::spawn(move || {
+            let v = adquirir_vaga();
+            tx.send(()).ok();
+            drop(v);
+        });
+
+        // Pool cheio -> o 5º NÃO pode entrar.
+        assert!(
+            rx.recv_timeout(Duration::from_millis(250)).is_err(),
+            "entrou uma 5a requisicao com o pool cheio"
+        );
+        // Devolve UMA vaga -> o 5º tem de passar.
+        ocupadas.pop();
+        assert!(
+            rx.recv_timeout(Duration::from_secs(2)).is_ok(),
+            "vaga devolvida no Drop nao acordou quem esperava (Condvar)"
+        );
+        h.join().unwrap();
+        drop(ocupadas);
+        println!("[QA #64] RAII: pool cheio bloqueia o 5o; 1 Drop libera exatamente 1 vaga");
+        assert_eq!(vagas_livres(), GRAPH_MAX_CONCORRENTES);
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. LIBERAÇÃO DA VAGA DURANTE O RETRY
+    // -----------------------------------------------------------------------
+
+    /// O design segura a vaga SÓ no `.send()`: enquanto a thread dorme o backoff
+    /// do 429, a vaga tem de estar no pool para outra chamada progredir.
+    /// Prova: ocupa 3 vagas, põe 1 worker (4ª vaga) tomar um 429 com
+    /// `Retry-After: 1` (dorme 1000–1500ms) e, no meio desse sono, tenta pegar
+    /// vaga. Se o design segurasse a vaga no sleep, isso travaria.
+    #[test]
+    fn vaga_e_devolvida_enquanto_a_thread_dorme_no_backoff() {
+        let _t = trava_pool();
+        let ocupadas: Vec<Vaga> =
+            (0..GRAPH_MAX_CONCORRENTES - 1).map(|_| adquirir_vaga()).collect();
+        assert_eq!(vagas_livres(), 1, "sobrou exatamente 1 vaga para o worker");
+
+        let (tx_429, rx_429) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let mut tentativas = 0u32;
+            let r: Result<RespostaFake, ()> = executar_com_pool("qa-retry", 5, || {
+                tentativas += 1;
+                if tentativas == 1 {
+                    tx_429.send(Instant::now()).ok();
+                    Ok(RespostaFake::throttled(Some(1))) // -> dorme 1000..1500ms
+                } else {
+                    Ok(RespostaFake::ok())
+                }
+            });
+            assert_eq!(r.unwrap().status_u16(), 200);
+            tentativas
+        });
+
+        let t429 = rx_429
+            .recv_timeout(Duration::from_secs(5))
+            .expect("worker nao chegou a receber o 429");
+
+        // Worker está dormindo o backoff. A 4ª vaga TEM de estar livre.
+        let (tx_v, rx_v) = mpsc::channel();
+        let ladrao = thread::spawn(move || {
+            let v = adquirir_vaga();
+            tx_v.send(Instant::now()).ok();
+            thread::sleep(Duration::from_millis(50));
+            drop(v);
+        });
+        let obtida = rx_v.recv_timeout(Duration::from_millis(400));
+        assert!(
+            obtida.is_ok(),
+            "a vaga NAO foi devolvida durante o backoff: nada entrou em 400ms \
+             enquanto o worker dormia ~1000-1500ms"
+        );
+        println!(
+            "[QA #64] liberacao no retry: vaga reaproveitada {:?} apos o 429, \
+             com o worker ainda dormindo o backoff (>=1000ms)",
+            obtida.unwrap().duration_since(t429)
+        );
+
+        ladrao.join().unwrap();
+        drop(ocupadas);
+        let tentativas = worker.join().expect("worker entrou em panico");
+        assert_eq!(tentativas, 2, "esperado 1 retry apos o 429");
+        assert_eq!(vagas_livres(), GRAPH_MAX_CONCORRENTES, "vaga vazou no fim");
+    }
+
+    /// N (=12) > GRAPH_MAX_CONCORRENTES (=4) threads TODAS em retry ao mesmo
+    /// tempo: se a vaga ficasse presa durante o sleep — ou se o Drop vazasse —
+    /// isto travaria. Também confere que o pool continua valendo no caminho real
+    /// (`executar_com_pool`), não só no `adquirir_vaga` cru.
+    #[test]
+    fn n_maior_que_o_pool_em_retry_nao_da_deadlock() {
+        let _t = trava_pool();
+        const THREADS: usize = 12;
+        const RETRIES: u32 = 2; // 429, 429, 200
+
+        let em_voo = Arc::new(EmVoo::default());
+        let largada = Arc::new(Barrier::new(THREADS));
+        let (fim_tx, fim_rx) = mpsc::channel();
+        let inicio = Instant::now();
+
+        let supervisor = {
+            let em_voo = Arc::clone(&em_voo);
+            thread::spawn(move || {
+                let handles: Vec<_> = (0..THREADS)
+                    .map(|_| {
+                        let em_voo = Arc::clone(&em_voo);
+                        let largada = Arc::clone(&largada);
+                        thread::spawn(move || {
+                            largada.wait();
+                            let mut tentativas = 0u32;
+                            let r: Result<RespostaFake, ()> =
+                                executar_com_pool("qa-storm", 0, || {
+                                    em_voo.entrar();
+                                    thread::sleep(Duration::from_millis(5));
+                                    em_voo.sair();
+                                    tentativas += 1;
+                                    if tentativas <= RETRIES {
+                                        // teto_s=0 -> dorme so o jitter (0..500ms)
+                                        Ok(RespostaFake::throttled(Some(30)))
+                                    } else {
+                                        Ok(RespostaFake::ok())
+                                    }
+                                });
+                            (r.unwrap().status_u16(), tentativas)
+                        })
+                    })
+                    .collect();
+                let res: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+                fim_tx.send(res).ok();
+            })
+        };
+
+        let res = fim_rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("DEADLOCK: 12 threads em retry nao terminaram em 60s");
+        supervisor.join().unwrap();
+
+        let pico = em_voo.pico();
+        let total_tentativas: u32 = res.iter().map(|(_, t)| *t).sum();
+        println!(
+            "[QA #64] storm: {THREADS} threads x {} tentativas = {total_tentativas} chamadas \
+             (2x 429 + 1x 200 cada) -> PICO EM VOO = {pico} (limite {GRAPH_MAX_CONCORRENTES}); \
+             concluido em {:?}, sem deadlock",
+            RETRIES + 1,
+            inicio.elapsed()
+        );
+        assert!(res.iter().all(|(s, t)| *s == 200 && *t == RETRIES + 1), "resultados: {res:?}");
+        assert!(pico <= GRAPH_MAX_CONCORRENTES, "pool furou sob retry: pico {pico}");
+        assert_eq!(pico, GRAPH_MAX_CONCORRENTES, "nao saturou o pool - inconclusivo");
+        assert_eq!(vagas_livres(), GRAPH_MAX_CONCORRENTES, "vaga vazou no fim");
+    }
+
+    /// O laço não re-tenta para sempre: para em `GRAPH_MAX_TENTATIVAS` e devolve
+    /// o último 429 pro chamador montar o erro (degradação graciosa).
+    #[test]
+    fn retry_para_no_teto_de_tentativas_e_devolve_o_429() {
+        let _t = trava_pool();
+        let mut tentativas = 0u8;
+        let r: Result<RespostaFake, ()> = executar_com_pool("qa-teto", 0, || {
+            tentativas += 1;
+            Ok(RespostaFake::throttled(Some(0)))
+        });
+        assert_eq!(r.unwrap().status_u16(), 429);
+        assert_eq!(tentativas, GRAPH_MAX_TENTATIVAS);
+        println!(
+            "[QA #64] teto: 429 permanente -> {tentativas} tentativas e devolve 429 (sem loop infinito)"
+        );
+        assert_eq!(vagas_livres(), GRAPH_MAX_CONCORRENTES);
+    }
+
+    /// Sucesso de primeira não deve custar retry nenhum nem segurar vaga.
+    #[test]
+    fn resposta_ok_nao_re_tenta() {
+        let _t = trava_pool();
+        let mut tentativas = 0u8;
+        let r: Result<RespostaFake, ()> = executar_com_pool("qa-ok", 5, || {
+            tentativas += 1;
+            Ok(RespostaFake::ok())
+        });
+        assert_eq!(r.unwrap().status_u16(), 200);
+        assert_eq!(tentativas, 1);
+        assert_eq!(vagas_livres(), GRAPH_MAX_CONCORRENTES);
+    }
+
+    // -----------------------------------------------------------------------
+    // 3. BACKOFF: Retry-After como piso, teto e jitter
+    // -----------------------------------------------------------------------
+
+    fn amostras(retry_after: Option<u64>, tentativa: u8, teto_s: u64, n: usize) -> Vec<u64> {
+        (0..n).map(|_| calc_espera_ms(retry_after, tentativa, teto_s)).collect()
+    }
+
+    fn faixa(v: &[u64]) -> (u64, u64, u64) {
+        let min = *v.iter().min().unwrap();
+        let max = *v.iter().max().unwrap();
+        let media = v.iter().sum::<u64>() / v.len() as u64;
+        (min, media, max)
+    }
+
+    /// AC: "o app respeita o `Retry-After` (dorme o tempo pedido, com teto)".
+    /// O valor pedido é PISO: nunca dormimos menos do que o servidor mandou.
+    #[test]
+    fn retry_after_e_respeitado_como_piso() {
+        for pedido_s in [1u64, 2, 3, 5, 10] {
+            let v = amostras(Some(pedido_s), 0, GRAPH_TETO_ESPERA_S, 500);
+            let (min, media, max) = faixa(&v);
+            let piso = pedido_s * 1000;
+            println!(
+                "[QA #64] Retry-After: {pedido_s}s -> espera min={min}ms media={media}ms \
+                 max={max}ms (piso {piso}ms, jitter +0..{GRAPH_JITTER_RETRY_AFTER_MS}ms)"
+            );
+            assert!(min >= piso, "dormiu MENOS que o Retry-After: {min}ms < {piso}ms");
+            assert!(
+                max < piso + GRAPH_JITTER_RETRY_AFTER_MS,
+                "jitter estourou a janela: {max}ms"
+            );
+        }
+    }
+
+    /// AC: "...com teto sensato" — pedido absurdo do servidor não congela o app.
+    #[test]
+    fn retry_after_absurdo_e_limitado_pelo_teto() {
+        let teto = GRAPH_TETO_ESPERA_S;
+        for pedido_s in [60u64, 300, 3600] {
+            let v = amostras(Some(pedido_s), 0, teto, 200);
+            let (min, _, max) = faixa(&v);
+            println!(
+                "[QA #64] teto: servidor pediu {pedido_s}s -> dormimos {min}..{max}ms (teto {}ms)",
+                teto * 1000
+            );
+            assert!(min >= teto * 1000, "abaixo do teto: {min}ms");
+            assert!(max < teto * 1000 + GRAPH_JITTER_RETRY_AFTER_MS, "acima do teto: {max}ms");
+        }
+    }
+
+    /// AC: "há jitter no backoff pra não re-sincronizar a rajada".
+    /// Com Retry-After fixo, chamadas sucessivas TÊM de divergir.
+    #[test]
+    fn jitter_dessincroniza_com_retry_after() {
+        let v = amostras(Some(2), 0, GRAPH_TETO_ESPERA_S, 500);
+        let distintos: std::collections::HashSet<u64> = v.iter().copied().collect();
+        let (min, media, max) = faixa(&v);
+        println!(
+            "[QA #64] jitter (Retry-After 2s, 500 amostras): {} valores distintos, \
+             min={min}ms media={media}ms max={max}ms, espalhamento={}ms",
+            distintos.len(),
+            max - min
+        );
+        assert!(
+            distintos.len() > 100,
+            "jitter fraco: so {} valores distintos em 500 amostras",
+            distintos.len()
+        );
+        assert!(max - min > 300, "espalhamento pequeno demais: {}ms", max - min);
+    }
+
+    /// Sem `Retry-After` no 429: backoff EXPONENCIAL 2^n, com jitter
+    /// multiplicativo delay*(0.5+rand*0.5) -> cada espera cai em [50%,100%] da base.
+    #[test]
+    fn sem_retry_after_usa_backoff_exponencial_com_jitter() {
+        let teto = GRAPH_TETO_ESPERA_S;
+        let mut medias = Vec::new();
+        for tentativa in 0..GRAPH_MAX_TENTATIVAS {
+            let base = (1u64 << tentativa.min(6)).min(teto.max(1)) * 1000;
+            let v = amostras(None, tentativa, teto, 500);
+            let (min, media, max) = faixa(&v);
+            let distintos: std::collections::HashSet<u64> = v.iter().copied().collect();
+            println!(
+                "[QA #64] backoff s/ Retry-After tentativa {tentativa}: base={base}ms -> \
+                 min={min}ms media={media}ms max={max}ms ({} valores distintos)",
+                distintos.len()
+            );
+            assert!(min >= base / 2, "abaixo de 50% da base: {min}ms < {}ms", base / 2);
+            assert!(max <= base, "acima de 100% da base: {max}ms > {base}ms");
+            assert!(distintos.len() > 100, "jitter fraco na tentativa {tentativa}");
+            medias.push(media);
+        }
+        // Cresce a cada tentativa (até bater o teto).
+        for par in medias.windows(2) {
+            assert!(par[1] > par[0], "backoff nao cresceu: {medias:?}");
+        }
+        println!("[QA #64] backoff exponencial (medias por tentativa): {medias:?} ms");
+    }
+
+    /// `Retry-After` ausente ou ilegível (ex.: HTTP-date, que o Graph não usa)
+    /// não pode virar 0ms nem pânico — cai no backoff exponencial.
+    #[test]
+    fn retry_after_ausente_ou_ilegivel_cai_no_exponencial() {
+        let v = amostras(None, 2, GRAPH_TETO_ESPERA_S, 200);
+        let (min, _, max) = faixa(&v);
+        assert!(min >= 2000 && max <= 4000, "esperado 2000..4000ms, veio {min}..{max}ms");
+        println!("[QA #64] sem Retry-After (tentativa 2): {min}..{max}ms - nunca 0ms");
+        assert!(min > 0, "nunca pode ser 0ms (re-tentativa imediata re-sincroniza a rajada)");
+    }
 }
