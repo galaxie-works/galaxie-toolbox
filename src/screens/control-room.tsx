@@ -601,7 +601,10 @@ function FolderSidebar({
   const Linha = (p: PastaEmail, ehFilho = false) => {
     const Ico = ICONE_PASTA[p.tipo] ?? Inbox;
     const ativo = p.id === sel;
-    const contagem = p.tipo === "drafts" || p.tipo === "sentitems" ? p.total : p.naoLidos;
+    // `contagem` é NÃO-LIDOS para inbox/junk/lixeira/custom; para drafts/sentitems
+    // é o TOTAL de itens (não-lido não faz sentido em enviados/rascunhos).
+    const contagemEhNaoLidos = p.tipo !== "drafts" && p.tipo !== "sentitems";
+    const contagem = contagemEhNaoLidos ? p.naoLidos : p.total;
     const rotulo = rotuloPasta(p.tipo, p.nome, t);
     const linhaBtn = (
       <button
@@ -616,13 +619,18 @@ function FolderSidebar({
       >
         {colapsada ? (
           // Dot ancorado ao ÍCONE (não ao botão): com o ring na cor do card ele
-          // fica dentro dos limites e o ScrollArea não corta (#37). Não-lido em
-          // Lixeira/Junk é ruído → sem dot nessas pastas.
+          // fica dentro dos limites e o ScrollArea não corta (#37). O dot é
+          // indicador de NÃO-LIDO: só aparece onde `contagem` são não-lidos —
+          // nunca em drafts/sentitems (ali é o total, #56); Lixeira/Junk são
+          // ruído → também sem dot.
           <span className="relative">
             <Ico className="size-4 shrink-0 text-muted-foreground" />
-            {contagem > 0 && p.tipo !== "deleteditems" && p.tipo !== "junkemail" && (
-              <span className="absolute -top-1 -right-1 size-2 rounded-full bg-primary ring-2 ring-card" />
-            )}
+            {contagem > 0 &&
+              contagemEhNaoLidos &&
+              p.tipo !== "deleteditems" &&
+              p.tipo !== "junkemail" && (
+                <span className="absolute -top-1 -right-1 size-2 rounded-full bg-primary ring-2 ring-card" />
+              )}
           </span>
         ) : (
           <>
