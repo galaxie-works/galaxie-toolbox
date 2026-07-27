@@ -134,6 +134,7 @@ import {
   Send,
   Send as SendIcon,
   ShieldAlert,
+  SlidersHorizontal,
   Star,
   Trash2,
   User,
@@ -974,6 +975,21 @@ function ehFiltroGraph(f: FiltroLista): boolean {
   return f === "tome" || f === "mentions" || f === "invites";
 }
 
+// Quando a mensagem aberta é marcada como lida (#95). Espelha as três opções do
+// BehaviorSettings do MailVault: imediato (default, o comportamento histórico),
+// após um atraso configurável, ou só manualmente pela ação de marcar lido.
+type MarcarLidoModo = "imediato" | "atraso" | "manual";
+const MARCAR_LIDO_MODOS: readonly MarcarLidoModo[] = ["imediato", "atraso", "manual"];
+/**
+ * Atrasos oferecidos no modo "após um atraso" (segundos). Poucos presets em vez
+ * do slider 1-10s do MailVault: dentro de um DropdownMenu o Radix já usa as
+ * setas pro roving focus (slider ficaria inoperável no teclado), e ninguém tem
+ * opinião sobre 7s vs 8s — as três intenções reais são "rápido", "só se eu
+ * ficar" e "nunca". (Recomendação da pesquisa de UX da #95.)
+ */
+const MARCAR_LIDO_ATRASOS = [2, 5, 10] as const;
+const MARCAR_LIDO_ATRASO_PADRAO = 2;
+
 // Linha da lista virtualizada: cabeçalho de grupo OU mensagem. Agrupar por
 // período (+ grupo Flagged no topo) vira linhas planas pra não quebrar o
 // react-virtual (#30).
@@ -1210,6 +1226,10 @@ function MessageList({
   ordenar,
   ordemDesc,
   onOrdenar,
+  marcarLidoModo,
+  marcarLidoAtraso,
+  onMarcarLidoModo,
+  onMarcarLidoAtraso,
   t,
   idioma,
 }: {
@@ -1246,6 +1266,10 @@ function MessageList({
   ordenar: api.OrdenarMensagens;
   ordemDesc: boolean;
   onOrdenar: (ordenar: api.OrdenarMensagens, descendente: boolean) => void;
+  marcarLidoModo: MarcarLidoModo;
+  marcarLidoAtraso: number;
+  onMarcarLidoModo: (m: MarcarLidoModo) => void;
+  onMarcarLidoAtraso: (s: number) => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
@@ -1637,6 +1661,57 @@ function MessageList({
                 </DropdownMenuRadioItem>
                 <DropdownMenuRadioItem value="asc">
                   {t.controlRoom.ordemCrescente}
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {/* Preferências de LEITURA (#95): quando a mensagem aberta vira lida.
+              Mora aqui, no cluster de preferências do cabeçalho da lista, pelo
+              mesmo motivo da ordenação: é chrome permanente (a toolbar do leitor
+              só existe com mensagem aberta) e evita um segundo lugar de
+              preferências no Bridge. Mesmo padrão visual do menu vizinho
+              (Label + RadioGroup); trigger só-ícone como o refresh, e NÃO a
+              engrenagem `Settings` — essa já significa "tela Configurações" do
+              Toolbox no sidebar.
+              As opções são uma escala única (ao abrir → 2s → 5s → 10s) em vez de
+              "modo + atraso" em dois controles: sem UI condicional, sem estado
+              escondido, e o RadioGroup do Radix já dá role/aria + setas. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={t.controlRoom.prefLeitura}>
+                <SlidersHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>{t.controlRoom.prefMarcarLidoTitulo}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={
+                  marcarLidoModo === "atraso"
+                    ? `atraso:${marcarLidoAtraso}`
+                    : marcarLidoModo
+                }
+                onValueChange={(v) => {
+                  if (v.startsWith("atraso:")) {
+                    onMarcarLidoAtraso(Number(v.slice("atraso:".length)));
+                    onMarcarLidoModo("atraso");
+                  } else {
+                    onMarcarLidoModo(v as MarcarLidoModo);
+                  }
+                }}
+              >
+                <DropdownMenuRadioItem value="imediato">
+                  {t.controlRoom.prefMarcarLidoImediato}
+                </DropdownMenuRadioItem>
+                {MARCAR_LIDO_ATRASOS.map((s) => (
+                  <DropdownMenuRadioItem key={s} value={`atraso:${s}`}>
+                    {preencher(t.controlRoom.prefMarcarLidoAtraso, { n: s })}
+                  </DropdownMenuRadioItem>
+                ))}
+                {/* "Manualmente" não é um ponto da escala de tempo: é desligar
+                    o automatismo. Daí o separador. */}
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioItem value="manual">
+                  {t.controlRoom.prefMarcarLidoManual}
                 </DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
@@ -2042,6 +2117,7 @@ function MessageDetail({
   id,
   userEmail,
   sinalizado,
+  lido,
   onFlag,
   onExcluir,
   onMarcarLido,
@@ -2053,6 +2129,7 @@ function MessageDetail({
   id: string | null;
   userEmail?: string | null;
   sinalizado: boolean;
+  lido: boolean;
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void;
   onMarcarLido: (id: string, lido: boolean) => void;
@@ -2228,14 +2305,18 @@ function MessageDetail({
           >
             <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
           </Button>
+          {/* Botão de lido/não-lido: ALTERNA (#95). Antes era só "marcar como
+              não lido" — o que bastava quando o app marcava lido sozinho ao
+              abrir. Nos modos "após atraso"/"manual" a mensagem pode continuar
+              não-lida no leitor, então o botão precisa marcar LIDO também. */}
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={() => id && onMarcarLido(id, false)}
-            aria-label={t.controlRoom.marcarNaoLido}
-            title={t.controlRoom.marcarNaoLido}
+            onClick={() => id && onMarcarLido(id, !lido)}
+            aria-label={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
+            title={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
           >
-            <Mail className="size-4" />
+            {lido ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
           </Button>
           <Button
             variant="ghost"
@@ -2768,6 +2849,24 @@ export function ControlRoomScreen({
     if (!["data", "remetente", "assunto"].includes(ordenar as string)) setOrdenar("data");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Preferência de "marcar como lido" (#95), persistida: o app sempre guarda o
+  // estado que o usuário deixa. Default = "imediato" (comportamento histórico).
+  const [marcarLidoModo, setMarcarLidoModo] = usePersistedState<MarcarLidoModo>(
+    "bridge.marcarLidoModo",
+    "imediato"
+  );
+  const [marcarLidoAtraso, setMarcarLidoAtraso] = usePersistedState<number>(
+    "bridge.marcarLidoAtraso",
+    MARCAR_LIDO_ATRASO_PADRAO
+  );
+  // localStorage é editável por fora (e pode ter sobra de versões antigas):
+  // valor inválido volta ao padrão em vez de virar um timer NaN/eterno.
+  useEffect(() => {
+    if (!MARCAR_LIDO_MODOS.includes(marcarLidoModo)) setMarcarLidoModo("imediato");
+    if (!MARCAR_LIDO_ATRASOS.includes(marcarLidoAtraso as (typeof MARCAR_LIDO_ATRASOS)[number]))
+      setMarcarLidoAtraso(MARCAR_LIDO_ATRASO_PADRAO);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [temMais, setTemMais] = useState(false);
   const [carregandoMais, setCarregandoMais] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
@@ -3020,11 +3119,36 @@ export function ControlRoomScreen({
     });
   }
 
-  // Previewar a mensagem = lê-la (como em qualquer leitor): marca lido ao abrir.
+  // `acaoMarcarLido` é recriada a cada render (fecha sobre mensagens/pastas). O
+  // timer do modo "atraso" dispara MUITO depois do render que o agendou, então
+  // guardamos sempre a versão mais nova num ref: o callback atrasado lê o estado
+  // atual (inclusive o guard `m.lido === lido`, que evita contar duas vezes se o
+  // usuário marcou lido na mão antes do tempo).
+  const marcarLidoRef = useRef(acaoMarcarLido);
   useEffect(() => {
-    if (msgSel) acaoMarcarLido(msgSel, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [msgSel]);
+    marcarLidoRef.current = acaoMarcarLido;
+  });
+
+  // Previewar a mensagem = lê-la (como em qualquer leitor) — mas AGORA conforme
+  // a preferência do usuário (#95):
+  //  - "imediato": marca lido assim que a mensagem é selecionada (default);
+  //  - "atraso":   marca lido depois de N segundos DE LEITURA. O cleanup do
+  //                efeito cancela o timer quando o usuário troca de mensagem
+  //                antes do tempo (ou sai da tela / muda a preferência), então
+  //                passar por cima de várias mensagens não marca nenhuma;
+  //  - "manual":   não marca nada — só a ação explícita de marcar lido marca.
+  useEffect(() => {
+    if (!msgSel || marcarLidoModo === "manual") return;
+    if (marcarLidoModo === "imediato") {
+      marcarLidoRef.current(msgSel, true);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => marcarLidoRef.current(msgSel, true),
+      Math.max(1, marcarLidoAtraso) * 1000
+    );
+    return () => window.clearTimeout(timer);
+  }, [msgSel, marcarLidoModo, marcarLidoAtraso]);
 
   // Ajustes otimistas dos contadores reais das abas (Flagged/Files), pra não
   // ficarem estagnados enquanto o $count do servidor não reflete ainda
@@ -3528,6 +3652,10 @@ export function ControlRoomScreen({
                 setOrdenar(o);
                 setOrdemDesc(desc);
               }}
+              marcarLidoModo={marcarLidoModo}
+              marcarLidoAtraso={marcarLidoAtraso}
+              onMarcarLidoModo={setMarcarLidoModo}
+              onMarcarLidoAtraso={setMarcarLidoAtraso}
               t={t}
               idioma={idioma}
             />
@@ -3546,6 +3674,7 @@ export function ControlRoomScreen({
                 id={msgSel}
                 userEmail={user.email}
                 sinalizado={msgAtual?.sinalizado ?? false}
+                lido={msgAtual?.lido ?? false}
                 onFlag={acaoFlag}
                 onExcluir={acaoExcluir}
                 onMarcarLido={acaoMarcarLido}
