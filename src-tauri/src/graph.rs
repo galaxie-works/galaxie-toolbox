@@ -3776,7 +3776,7 @@ pub struct InsightsRemetente {
 /// CUSTO (chamadas Graph, todas sob o pool + retry #64; disparadas LAZY, só
 /// quando o usuário abre o popover): até 4 GET por endereço.
 ///   1. recebidos: `/me/messages/$count?$filter=from/emailAddress/address eq '{addr}'`
-///   2. último:    `/me/messages?$filter=(from…) and (receivedDateTime ge <epoch>)`
+///   2. último:    `/me/messages?$filter=(receivedDateTime ge <epoch>) and (from…)`
 ///                 `&$orderby=receivedDateTime desc&$top=1&$select=receivedDateTime`
 ///   3. primeiro:  idem, `$orderby=receivedDateTime asc`
 ///   4. enviados:  `/me/mailFolders/sentitems/messages/$count`
@@ -3787,7 +3787,9 @@ pub struct InsightsRemetente {
 /// `ConsistencyLevel: eventual`. O Graph só aceita `$filter` junto de `$orderby`
 /// quando a propriedade ordenada (`receivedDateTime`) TAMBÉM aparece no filtro —
 /// por isso a cláusula `receivedDateTime ge <epoch>` (sempre verdadeira), que é
-/// o workaround documentado pela Microsoft.
+/// o workaround documentado pela Microsoft — E precisa vir ANTES da cláusula
+/// `from` (senão o Graph devolve 400 "restriction or sort order too complex";
+/// era o bug do #94). Ver `data_extrema_recebido`.
 ///
 /// Só propaga erro se a contagem de recebidos — a âncora — falhar de fato
 /// (rede/auth/permissão), para o front mostrar o estado de erro discreto. As
@@ -3867,6 +3869,21 @@ fn contar_mensagens(
 /// recente (`asc=false`) de um endereço. Best-effort: devolve `None` se a chamada
 /// ou o parse falharem. Ver as notas de API em `cr_insights_remetente` sobre o
 /// combo `$filter`+`$orderby`.
+///
+/// BUG #94 (corrigido): a ORDEM das cláusulas no `$filter` importa. Quando o
+/// Graph combina `$filter`+`$orderby`, a propriedade ordenada
+/// (`receivedDateTime`) precisa aparecer no `$filter` ANTES das que NÃO estão no
+/// `$orderby` (`from/emailAddress/address`). Com a ordem invertida o Graph
+/// devolve 400 *"The restriction or sort order is too complex for this
+/// operation."* — a chamada virava `None` e sumiam 1º/último contato e a
+/// frequência (mesmo com `recebidos > 0`), exatamente o que o PO reprovou no
+/// remetente unidirecional "VOAZ | SERVER". Por isso `receivedDateTime ge …` vem
+/// PRIMEIRO no filtro agora.
+///
+/// Robustez extra: se a query combinada ainda falhar, o caso "último" (desc) cai
+/// num fallback sem `$orderby` — `/me/messages` já vem ordenado por
+/// `receivedDateTime desc`, então `$top=1` filtrado pelo remetente dá o mais
+/// recente. Não há fallback barato p/ "primeiro" (asc) sem varrer tudo.
 fn data_extrema_recebido(
     client: &reqwest::blocking::Client,
     token: &str,
@@ -3874,18 +3891,43 @@ fn data_extrema_recebido(
     asc: bool,
 ) -> Option<String> {
     let dir = if asc { "asc" } else { "desc" };
+    // Ordem correta: a propriedade do $orderby (receivedDateTime) ANTES do from.
     let filtro = format!(
-        "(from/emailAddress/address eq '{addr_odata}') and \
-         (receivedDateTime ge 1970-01-01T00:00:00Z)"
+        "(receivedDateTime ge 1970-01-01T00:00:00Z) and \
+         (from/emailAddress/address eq '{addr_odata}')"
     );
     let url = format!(
         "{GRAPH}/me/messages?$filter={}&$orderby=receivedDateTime%20{dir}\
          &$top=1&$select=receivedDateTime",
         urlencoding::encode(&filtro)
     );
+    if let Some(data) = buscar_data(client, token, &url) {
+        return Some(data);
+    }
+
+    // Fallback só p/ o "último" recebido: sem $orderby (evita o combo frágil),
+    // aproveitando a ordem default de /me/messages (receivedDateTime desc).
+    if !asc {
+        let filtro_from = format!("from/emailAddress/address eq '{addr_odata}'");
+        let url = format!(
+            "{GRAPH}/me/messages?$filter={}&$top=1&$select=receivedDateTime",
+            urlencoding::encode(&filtro_from)
+        );
+        return buscar_data(client, token, &url);
+    }
+    None
+}
+
+/// GET numa URL de mensagens e extrai `value[0].receivedDateTime`. `None` em
+/// qualquer falha de rede/status/parse. Sob o pool + retry (#64).
+fn buscar_data(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    url: &str,
+) -> Option<String> {
     let resp = graph_enviar("mail:insights:data", GRAPH_TETO_ESPERA_S, || {
         client
-            .get(&url)
+            .get(url)
             .bearer_auth(token)
             .header("ConsistencyLevel", "eventual")
             .send()

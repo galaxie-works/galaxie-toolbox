@@ -326,6 +326,23 @@ export async function crInboxDia(inicio: string, fim: string): Promise<EmailItem
 export async function crEmailCorpo(id: string): Promise<EmailDetalhe> {
   if (!inTauri()) {
     await sleep(300);
+    // Remetente UNIDIRECIONAL (#94): servidor/no-reply. Casa com a mensagem
+    // "server" da lista → o popover de insights recebe server@voaz.builders e
+    // mostra recebidos + 1º/último contato + frequência, com enviados = 0.
+    if (/server/i.test(id)) {
+      return {
+        assunto: "Relatório diário de backup — VOAZ",
+        de: "VOAZ | SERVER",
+        deEmail: "server@voaz.builders",
+        para: ["Wagner Consani"],
+        cc: [],
+        recebido: new Date().toISOString(),
+        corpo: "<p>Backup concluído com sucesso às 03:00. Nenhuma ação necessária.</p>",
+        corpoTipo: "html",
+        anexos: [],
+        webLink: "https://outlook.office365.com/mock",
+      };
+    }
     // Corpo com links variados p/ exercitar o link-safety (#91):
     //  - mismatch: texto "www.bradesco.com.br" mas href aponta pra evil.ru
     //  - encurtador: bit.ly (destino escondido)
@@ -542,7 +559,7 @@ export async function crFolderMensagens(
       "Jessica Brooks",
       "Linear",
     ];
-    return nomes.map((n, i) => ({
+    const itens: EmailItem[] = nomes.map((n, i) => ({
       id: `${folderId}-${skip}-${i}`,
       assunto: [
         "Q4 Sprint planning, your input needed",
@@ -564,6 +581,26 @@ export async function crFolderMensagens(
       temAnexos: i === 0 || i === 4,
       sinalizado: i === 6,
     }));
+    // Remetente UNIDIRECIONAL (#94): servidor/no-reply que só MANDA e-mail e nunca
+    // é respondido. Abrir esta mensagem e clicar no nome prova que 1º/último
+    // contato e frequência aparecem mesmo com enviados = 0 (o bug que o PO
+    // reprovou). O id contém "server" → `crEmailCorpo` devolve este remetente.
+    if (skip === 0) {
+      itens.unshift({
+        id: `${folderId}-${skip}-server`,
+        assunto: "Relatório diário de backup — VOAZ",
+        de: "VOAZ | SERVER",
+        deEmail: "server@voaz.builders",
+        iniciais: "VS",
+        recebido: t(0),
+        preview:
+          "Backup concluído com sucesso às 03:00. Nenhuma ação necessária.",
+        lido: true,
+        temAnexos: false,
+        sinalizado: false,
+      });
+    }
+    return itens;
   }
   return invoke<EmailItem[]>("cr_folder_mensagens", {
     folderId,
@@ -745,8 +782,10 @@ export async function crContadores(folderId: string): Promise<Contadores> {
  *
  * Custo real (dentro do Tauri): até 4 chamadas Graph — ver
  * `graph::cr_insights_remetente`. Fora do Tauri devolve um mock coerente para o
- * QA visual: endereços "no-reply"/"microsoft"/"noreply" simulam PRIMEIRO CONTATO
- * (tudo zerado); os demais, um histórico plausível derivado do próprio endereço.
+ * QA visual: endereços de servidor ("server"/"mailer"/"newsletter"/…) simulam um
+ * remetente UNIDIRECIONAL (903 recebidos, 0 enviados, mas COM 1º/último contato e
+ * frequência — o caso do #94); "no-reply"/"microsoft"/"noreply" simulam PRIMEIRO
+ * CONTATO (tudo zerado); os demais, um histórico plausível derivado do endereço.
  */
 export async function crInsightsRemetente(
   endereco: string
@@ -754,7 +793,16 @@ export async function crInsightsRemetente(
   if (!inTauri()) {
     await sleep(500);
     const addr = (endereco || "").toLowerCase();
-    // Remetentes automáticos: primeiro contato (sem histórico).
+    const agora = Date.now();
+    const iso = (dias: number) =>
+      new Date(agora - dias * 86_400_000).toISOString();
+    // Remetente UNIDIRECIONAL (servidor/no-reply que só MANDA e-mail; o usuário
+    // nunca respondeu): muitos recebidos, ZERO enviados, mas COM 1º/último
+    // contato e frequência. Prova o fix do #94 — antes só a contagem aparecia.
+    if (/server|mailer|newsletter|notifica|daemon/.test(addr)) {
+      return { recebidos: 903, enviados: 0, primeiro: iso(540), ultimo: iso(1) };
+    }
+    // Remetentes automáticos sem histórico: primeiro contato (estado vazio).
     if (/no-?reply|microsoft|noreply/.test(addr)) {
       return { recebidos: 0, enviados: 0, primeiro: null, ultimo: null };
     }
@@ -765,9 +813,6 @@ export async function crInsightsRemetente(
     const enviados = 3 + (h % 60);
     const diasPrimeiro = 200 + (h % 900); // ~7 meses a ~3 anos atrás
     const diasUltimo = h % 20; // até ~3 semanas atrás
-    const agora = Date.now();
-    const iso = (dias: number) =>
-      new Date(agora - dias * 86_400_000).toISOString();
     return {
       recebidos,
       enviados,
