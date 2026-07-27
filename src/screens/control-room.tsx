@@ -154,6 +154,7 @@ import {
   FilePen,
   Flag,
   FlagOff,
+  FunnelX,
   Folder,
   FolderInput,
   FolderPlus,
@@ -2123,67 +2124,83 @@ function MessageList({
     ] as FilterOption<string>[]
   ).filter((o) => !filtrosOcultos.has(o.value as string));
 
+  // Campos agrupados como no exemplo canônico do reui (`Pattern()` do
+  // c-filters-5): um grupo "Básico" com os campos de texto e um grupo "Seleção"
+  // com os campos de opção. A lista de campos flattena os grupos, mas manter a
+  // estrutura de `group` casa 1:1 com o exemplo que o PO pediu.
   const filtroCampos: FilterFieldConfig<string>[] = [
     {
-      key: "from",
-      label: t.controlRoom.filtroDe,
-      icon: <User className="size-3.5" />,
-      type: "text",
-      operators: OP_TEXTO,
-      defaultOperator: "contains",
-      placeholder: t.controlRoom.filtroDePlaceholder,
-    },
-    {
-      key: "status",
-      label: t.controlRoom.filtroStatus,
-      icon: <Mail className="size-3.5" />,
-      type: "select",
-      searchable: false,
-      operators: OP_SELECT,
-      options: [
-        { value: "unread", label: t.controlRoom.abaNaoLidos },
-        { value: "read", label: t.controlRoom.filtroLidos },
+      group: t.controlRoom.filtroGrupoBasico,
+      fields: [
+        {
+          key: "from",
+          label: t.controlRoom.filtroDe,
+          icon: <User className="size-3.5" />,
+          type: "text",
+          operators: OP_TEXTO,
+          defaultOperator: "contains",
+          placeholder: t.controlRoom.filtroDePlaceholder,
+        },
       ],
     },
     {
-      key: "flagged",
-      label: t.controlRoom.abaSinalizados,
-      icon: <Flag className="size-3.5" />,
-      type: "select",
-      searchable: false,
-      operators: OP_SELECT,
-      options: [
-        { value: "yes", label: t.controlRoom.filtroSim },
-        { value: "no", label: t.controlRoom.filtroNao },
+      group: t.controlRoom.filtroGrupoSelecao,
+      fields: [
+        {
+          key: "status",
+          label: t.controlRoom.filtroStatus,
+          icon: <Mail className="size-3.5" />,
+          type: "select",
+          searchable: false,
+          operators: OP_SELECT,
+          options: [
+            { value: "unread", label: t.controlRoom.abaNaoLidos },
+            { value: "read", label: t.controlRoom.filtroLidos },
+          ],
+        },
+        {
+          key: "flagged",
+          label: t.controlRoom.abaSinalizados,
+          icon: <Flag className="size-3.5" />,
+          type: "select",
+          searchable: false,
+          operators: OP_SELECT,
+          options: [
+            { value: "yes", label: t.controlRoom.filtroSim },
+            { value: "no", label: t.controlRoom.filtroNao },
+          ],
+        },
+        {
+          key: "files",
+          label: t.controlRoom.abaAnexos,
+          icon: <Paperclip className="size-3.5" />,
+          type: "select",
+          searchable: false,
+          operators: OP_SELECT,
+          options: [
+            { value: "yes", label: t.controlRoom.filtroSim },
+            { value: "no", label: t.controlRoom.filtroNao },
+          ],
+        },
+        // Escopo só entra se houver ao menos uma opção não escondida (D6).
+        ...(escopoOpcoes.length > 0
+          ? [
+              {
+                key: "scope",
+                label: t.controlRoom.filtroEscopo,
+                icon: <ListFilter className="size-3.5" />,
+                type: "select" as const,
+                searchable: false,
+                // Escopo é resolvido no servidor; só "é" faz sentido.
+                operators: [
+                  { value: "is", label: t.controlRoom.filtroOperadorIs },
+                ],
+                options: escopoOpcoes,
+              },
+            ]
+          : []),
       ],
     },
-    {
-      key: "files",
-      label: t.controlRoom.abaAnexos,
-      icon: <Paperclip className="size-3.5" />,
-      type: "select",
-      searchable: false,
-      operators: OP_SELECT,
-      options: [
-        { value: "yes", label: t.controlRoom.filtroSim },
-        { value: "no", label: t.controlRoom.filtroNao },
-      ],
-    },
-    // Escopo só entra se houver ao menos uma opção não escondida (D6).
-    ...(escopoOpcoes.length > 0
-      ? [
-          {
-            key: "scope",
-            label: t.controlRoom.filtroEscopo,
-            icon: <ListFilter className="size-3.5" />,
-            type: "select" as const,
-            searchable: false,
-            // Escopo é resolvido no servidor; só "é" faz sentido.
-            operators: [{ value: "is", label: t.controlRoom.filtroOperadorIs }],
-            options: escopoOpcoes,
-          },
-        ]
-      : []),
   ];
 
   // Move a seleção ativa (↑/↓ e j/k) e rola o virtualizer até ela.
@@ -2611,25 +2628,44 @@ function MessageList({
           </Button>
         </div>
       ) : (
-        <div className="flex items-center gap-1 px-3 pb-2">
+        <div className="flex items-start gap-2.5 px-3 pb-2">
           {/* Filtro da lista (#31) com o @reui/filters — variante RADIX,
               instalada do registry (`@reui/filters` em style `radix-nova`) e
-              usada literal, como FILTER-BUILDER multi-campo (o padrão do
-              exemplo da reui). O gatilho "Filtro" abre a lista de campos
-              direto (De, Status, Sinalizado, Anexos, Escopo); cada um vira um
-              chip `campo · operador · valor`, combináveis com E (`allowMultiple`).
+              usada literal, como FILTER-BUILDER multi-campo. Montagem espelha o
+              exemplo canônico do reui (`Pattern()` do c-filters-5): trigger
+              `<Button variant="outline"><ListFilter/> Filtro>` com atalho "F",
+              campos agrupados (Básico/Seleção), e um botão "Limpar" separado
+              que aparece só quando há filtro ativo. O gatilho abre a lista de
+              campos direto (De, Status, Sinalizado, Anexos, Escopo); cada um
+              vira um chip `campo · operador · valor`, combináveis com E
+              (`allowMultiple`). Sem `size="sm"` → os inputs seguem o `h-9`
+              padrão do app (bug de altura do input de texto, reprovado antes).
               `onChange` recebe o array completo → persistido no pai. */}
           <Filters<string>
             filters={filtros}
             fields={filtroCampos}
             onChange={onFiltros}
-            size="sm"
+            enableShortcut
+            shortcutKey="f"
+            shortcutLabel="F"
+            trigger={
+              <Button variant="outline">
+                <ListFilter />
+                {t.controlRoom.filtroLabel}
+              </Button>
+            }
             i18n={{
               addFilter: t.controlRoom.filtroLabel,
               searchFields: t.controlRoom.filtroBuscarCampo,
               select: t.controlRoom.filtroSelecione,
             }}
           />
+          {filtros.length > 0 && (
+            <Button variant="outline" onClick={() => onFiltros([])}>
+              <FunnelX />
+              {t.controlRoom.filtroLimpar}
+            </Button>
+          )}
         </div>
       )}
 
