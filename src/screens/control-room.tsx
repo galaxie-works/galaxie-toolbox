@@ -142,6 +142,7 @@ import {
   RefreshCw,
   Reply,
   ReplyAll,
+  RotateCcw,
   Search,
   Send,
   Send as SendIcon,
@@ -199,6 +200,18 @@ function quandoCurto(iso: string, idioma: string): string {
  * O HTML é sanitizado (DOMPurify) e o `allow-scripts` (necessário pro Dark
  * Reader no tema escuro) só permite o DR — scripts do e-mail são removidos.
  */
+
+// Zoom MANUAL do leitor (#76) — camada por cima do auto-fit do #57.
+// O fator do usuário (1 = auto-fit puro) multiplica o zoom que o app calculou:
+// `efetivo = base(auto-fit) × fator`. Piso/teto e passo consistentes entre
+// teclado (CTRL +/−) e roda (CTRL+scroll). CTRL+0 volta ao auto-fit (fator 1).
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3.0;
+const ZOOM_PASSO = 0.1;
+/** Clampa e arredonda pra 2 casas (evita drift de float ao somar 0.1). */
+const clampZoom = (v: number) =>
+  Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(v * 100) / 100));
+
 function CorpoHtml({
   corpo,
   onAbrirLink,
@@ -208,6 +221,15 @@ function CorpoHtml({
 }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [altura, setAltura] = useState(120);
+  // Zoom manual (#76): fator do USUÁRIO aplicado POR CIMA do auto-fit do #57.
+  // GLOBAL e persistido (não por-mensagem): a preferência sobrevive a fechar/
+  // reabrir o app e a trocar de mensagem e voltar (decisão da issue #76 — o
+  // leitor tem UM nível de zoom, como o zoom de página de um navegador).
+  const [fator, setFator] = usePersistedState("bridge.leitorZoom", 1);
+  // Ref pro fator (lido dentro dos listeners do iframe sem re-bindar) e ref pra
+  // função de reaplicar o zoom (chamada pelo efeito que reage à mudança de fator).
+  const fatorRef = useRef(fator);
+  const ajustarRef = useRef<() => void>(() => {});
   // Render ciente do tema do app (como leitores modernos). O baseline é SEMPRE
   // claro — dá ao Dark Reader um conjunto limpo de cores pra inverter. No modo
   // escuro, injetamos o Dark Reader real (como o MailVault) no <head> do srcDoc:
@@ -275,11 +297,13 @@ function CorpoHtml({
         // tamanho ilegível. Se o piso bater, o excedente NÃO clipa: rola no eixo
         // X (overflow-x:auto no root) e continua acessível.
         const PISO = 0.75;
-        const zoom = Math.max(PISO, ideal);
-        body.style.zoom = String(zoom);
-        // Se o piso segurou o zoom acima do ideal, ainda sobra largura -> haverá
+        const base = Math.max(PISO, ideal); // auto-fit calculado pelo app (#57)
+        // Zoom manual (#76) por cima do auto-fit: base × fator do usuário.
+        const efetivo = base * fatorRef.current;
+        body.style.zoom = String(efetivo);
+        // Se, na escala efetiva, o conteúdo ainda estoura a largura útil, haverá
         // scrollbar horizontal; reserva a altura dela pra não clipar a última linha.
-        const rolaX = zoom > ideal + 1e-3;
+        const rolaX = conteudo * efetivo > disponivel + 1;
         // altura VISÍVEL (pós-zoom) via bounding rect; setAltura só se mudou de
         // verdade (evita re-render à toa).
         const h = Math.ceil(body.getBoundingClientRect().height) + 4 + (rolaX ? 16 : 0);
@@ -288,6 +312,8 @@ function CorpoHtml({
         /* srcDoc é same-origin; catch só por segurança */
       }
     };
+    // Exposto pra fora do onLoad: o efeito de [fator] reaplica o zoom + re-mede.
+    ajustarRef.current = ajustar;
     const onLoad = () => {
       ultimaLargura = iframe.clientWidth;
       ajustar();
@@ -312,6 +338,35 @@ function CorpoHtml({
         if (/^https?:/i.test(href) && onAbrirLink) onAbrirLink(href);
         else api.openUrl(href).catch(() => {});
       });
+      // Zoom manual (#76). Estes handlers são código NOSSO (realm do app),
+      // capturados NO documento do iframe — então rodam mesmo com o sandbox sem
+      // allow-scripts (tema claro), e ficam restritos ao leitor: nunca tocam a
+      // lista/sidebar/UI do app. `preventDefault` bloqueia o zoom nativo do
+      // WebView2/Chromium (CTRL+roda) e os atalhos nativos (CTRL +/−/0).
+      // O `wheel` precisa de `passive:false` pra poder dar preventDefault.
+      d?.addEventListener(
+        "wheel",
+        (e) => {
+          if (!e.ctrlKey) return;
+          e.preventDefault();
+          const passo = e.deltaY < 0 ? ZOOM_PASSO : -ZOOM_PASSO;
+          setFator((f) => clampZoom(f + passo));
+        },
+        { passive: false },
+      );
+      d?.addEventListener("keydown", (e) => {
+        if (!e.ctrlKey) return;
+        if (e.key === "+" || e.key === "=") {
+          e.preventDefault();
+          setFator((f) => clampZoom(f + ZOOM_PASSO));
+        } else if (e.key === "-" || e.key === "_") {
+          e.preventDefault();
+          setFator((f) => clampZoom(f - ZOOM_PASSO));
+        } else if (e.key === "0") {
+          e.preventDefault();
+          setFator(1); // volta ao auto-fit do #57
+        }
+      });
     };
     iframe.addEventListener("load", onLoad);
     // IMPORTANTE: só re-mede quando a LARGURA muda (arrastar o splitter). Reagir
@@ -330,23 +385,57 @@ function CorpoHtml({
     };
   }, [doc]);
 
+  // Reaplica o zoom quando o fator manual muda (teclado/roda/reset/persistido),
+  // re-rodando a MESMA medição de altura do #57 pra não clipar nem sobrar espaço.
+  useEffect(() => {
+    fatorRef.current = fator;
+    ajustarRef.current();
+  }, [fator]);
+
+  const zoomAlterado = fator !== 1;
+
   return (
-    <iframe
-      // Remonta o iframe quando o tema muda: alterar `sandbox` (add/remove
-      // allow-scripts) num iframe JÁ montado não reaplica na mesma carga do
-      // novo srcDoc, então o Dark Reader era bloqueado ao trocar claro→escuro
-      // com o e-mail aberto (só pegava ao trocar de e-mail). Um `key` por tema
-      // cria um iframe novo com o sandbox correto desde o início (#73).
-      key={escuro ? "dark" : "light"}
-      ref={ref}
-      srcDoc={doc}
-      // allow-scripts só no escuro: é o que o Dark Reader precisa pra rodar no
-      // load. No claro mantemos o sandbox estrito (nenhum script do e-mail roda).
-      sandbox={escuro ? "allow-same-origin allow-popups allow-scripts" : "allow-same-origin allow-popups"}
-      title="e-mail"
-      className="w-full border-0 bg-white"
-      style={{ height: altura }}
-    />
+    <div className="relative w-full">
+      <iframe
+        // Remonta o iframe quando o tema muda: alterar `sandbox` (add/remove
+        // allow-scripts) num iframe JÁ montado não reaplica na mesma carga do
+        // novo srcDoc, então o Dark Reader era bloqueado ao trocar claro→escuro
+        // com o e-mail aberto (só pegava ao trocar de e-mail). Um `key` por tema
+        // cria um iframe novo com o sandbox correto desde o início (#73).
+        key={escuro ? "dark" : "light"}
+        ref={ref}
+        srcDoc={doc}
+        // allow-scripts só no escuro: é o que o Dark Reader precisa pra rodar no
+        // load. No claro mantemos o sandbox estrito (nenhum script do e-mail roda).
+        sandbox={escuro ? "allow-same-origin allow-popups allow-scripts" : "allow-same-origin allow-popups"}
+        title="e-mail"
+        className="w-full border-0 bg-white"
+        style={{ height: altura }}
+      />
+      {/* Indicador do nível de zoom manual (#76) + reset via UI. Só aparece
+          quando o usuário mudou o zoom (fator ≠ auto-fit); some ao resetar.
+          O % é relativo ao auto-fit (100% = o que o app calculou), como o zoom
+          de página de um navegador. Fica sobreposto ao canto do leitor, sem
+          empurrar o layout do e-mail. */}
+      {zoomAlterado && (
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-1 rounded-full border bg-background/90 py-0.5 pr-0.5 pl-2 shadow-sm backdrop-blur">
+          <span className="text-xs font-medium tabular-nums text-muted-foreground">
+            {Math.round(fator * 100)}%
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="rounded-full text-muted-foreground"
+            onClick={() => setFator(1)}
+            title={t.controlRoom.zoomResetar}
+            aria-label={t.controlRoom.zoomResetar}
+          >
+            <RotateCcw />
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 

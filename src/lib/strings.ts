@@ -415,6 +415,7 @@ const pt = {
     abrirOutlook: "Abrir no Outlook",
     semCorpo: "(sem conteúdo)",
     conteudoAparado: "Mostrar conteúdo aparado",
+    zoomResetar: "Restaurar zoom (Ctrl+0)",
     // Compose / envio
     responderTodos: "Responder a todos",
     paraPlaceholder: "Para (separe por vírgula)",
@@ -852,6 +853,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     abrirOutlook: "Open in Outlook",
     semCorpo: "(no content)",
     conteudoAparado: "Show trimmed content",
+    zoomResetar: "Reset zoom (Ctrl+0)",
     // Compose / envio
     responderTodos: "Reply all",
     paraPlaceholder: "To (comma-separated)",
