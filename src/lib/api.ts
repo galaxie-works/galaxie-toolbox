@@ -662,6 +662,28 @@ export async function crContar(folderId: string, filtro: string): Promise<number
   return invoke<number>("cr_contar", { folderId, filtro });
 }
 
+/** Os dois contadores por-pasta das abas (Sinalizados / Com anexos). */
+export interface Contadores {
+  flagged: number;
+  anexos: number;
+}
+
+/**
+ * Conta os dois contadores por-pasta das abas (Sinalizados/Flagged e Com
+ * anexos/Files) numa ÚNICA chamada — no backend é um `$batch` do Graph (1
+ * request em vez de 2 `$count` separados), reduzindo a rajada de 429 na carga
+ * inicial e na troca de pasta (#87). O contador de não lidos NÃO entra aqui: já
+ * vem coalescido (1 request pra todas as pastas) em `crMailFolders` e carrega os
+ * ajustes otimistas. Fora do Tauri (mock) devolve zeros.
+ */
+export async function crContadores(folderId: string): Promise<Contadores> {
+  if (!inTauri()) {
+    await sleep(200);
+    return { flagged: 0, anexos: 0 };
+  }
+  return invoke<Contadores>("cr_contadores", { folderId });
+}
+
 /**
  * Insights do remetente (#94): resumo do relacionamento com um endereço —
  * e-mails recebidos/enviados e data do 1º/último contato. Chamada LAZY: só

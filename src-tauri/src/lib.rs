@@ -530,6 +530,19 @@ async fn cr_contar(
         .map_err(|e| e.to_string())?
 }
 
+/// Control room: os dois contadores por-pasta das abas (Sinalizados / Com anexos)
+/// numa ÚNICA chamada $batch — substitui as duas `cr_contar` em paralelo (#87).
+#[tauri::command]
+async fn cr_contadores(
+    state: State<'_, Store>,
+    folder_id: String,
+) -> Result<graph::Contadores, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_contadores(&store, &folder_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: insights do remetente (#94) — recebidos/enviados + data do 1º e
 /// do último e-mail deste endereço. Ver o custo de chamadas em
 /// `graph::cr_insights_remetente`.
@@ -848,6 +861,7 @@ pub fn run() {
             cr_buscar,
             cr_filtrar,
             cr_contar,
+            cr_contadores,
             cr_insights_remetente,
             cr_esvaziar_pasta,
             cr_marcar_pasta_lida,
