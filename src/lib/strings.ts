@@ -360,6 +360,7 @@ const pt = {
     encaminhar: "Encaminhar",
     abrirOutlook: "Abrir no Outlook",
     semCorpo: "(sem conteúdo)",
+    conteudoAparado: "Mostrar conteúdo aparado",
     // Compose / envio
     responderTodos: "Responder a todos",
     paraPlaceholder: "Para (separe por vírgula)",
@@ -742,6 +743,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     encaminhar: "Forward",
     abrirOutlook: "Open in Outlook",
     semCorpo: "(no content)",
+    conteudoAparado: "Show trimmed content",
     // Compose / envio
     responderTodos: "Reply all",
     paraPlaceholder: "To (comma-separated)",
