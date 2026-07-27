@@ -370,11 +370,31 @@ export async function crSubpastas(folderId: string): Promise<PastaEmail[]> {
 
 // --- Compositor de e-mail (pessoas, envio novo, contatos) -----------------
 const MOCK_PESSOAS: Pessoa[] = [
-  { nome: "Ana Silva", email: "ana@voaz.com.br" },
-  { nome: "Bruno Costa", email: "bruno@voaz.com.br" },
-  { nome: "Carla Dias", email: "carla@voaz.com.br" },
-  { nome: "Wagner Consani", email: "wagner@voaz.builders" },
+  { nome: "Ana Silva", email: "ana@voaz.com.br", cargo: "Gerente de Projetos", origem: "contatos" },
+  { nome: "Bruno Costa", email: "bruno@voaz.com.br", cargo: "Engenheiro Civil", origem: "contatos" },
+  { nome: "Carla Dias", email: "carla@voaz.com.br", cargo: "Arquiteta", origem: "organizacao" },
+  { nome: "Wagner Consani", email: "wagner@voaz.builders", cargo: null, origem: "organizacao" },
 ];
+
+/**
+ * Fotos (avatar) de remetentes internos, em lote (#39). Recebe e-mails e devolve
+ * um mapa e-mail(minúsculo) → data URI | null (null = sem foto). Fora do Tauri
+ * (mock) devolve {} — no browser não há fotos reais, então o AvatarFallback
+ * (iniciais) continua. O backend usa `$batch` (até 20/chamada); o cache
+ * (`fotos.ts`) já limita a 20 e filtra por domínio do tenant.
+ */
+export async function crFotosContatos(
+  emails: string[]
+): Promise<Record<string, string | null>> {
+  if (!inTauri()) return {};
+  const arr = await invoke<{ email: string; foto: string | null }[]>(
+    "cr_fotos_contatos",
+    { emails }
+  );
+  const map: Record<string, string | null> = {};
+  for (const f of arr) map[f.email] = f.foto;
+  return map;
+}
 
 /** Busca pessoas para o autocomplete do compositor. */
 export async function crPessoas(query: string): Promise<Pessoa[]> {
@@ -545,6 +565,22 @@ export async function crExcluirEmails(
   return invoke<string[]>("cr_excluir_emails", { ids, permanente });
 }
 
+/** Move vários e-mails para uma pasta (#88), em série e com retry no 429 no
+ *  backend. `destino` é o id da pasta — well-known ("archive", "junkemail"…) ou
+ *  o id real de uma subpasta, do jeitinho que `crMailFolders`/`crSubpastas`
+ *  devolvem. Retorna os ids que realmente saíram (o front reconcilia o
+ *  otimista com isso). */
+export async function crMoverEmails(
+  ids: string[],
+  destino: string
+): Promise<string[]> {
+  if (!inTauri()) {
+    await sleep(300);
+    return ids;
+  }
+  return invoke<string[]>("cr_mover_emails", { ids, destino });
+}
+
 export async function crMarcarEmail(
   id: string,
   sinalizado: boolean
@@ -593,6 +629,27 @@ export async function crBuscar(
 }
 
 /**
+ * Filtra a pasta pelos filtros que EXIGEM o servidor ("tome" | "mentions" |
+ * "invites") — os client-side (all/unread/flagged/files) são aplicados no
+ * front sobre a lista carregada. Devolve a mesma `BuscaPagina` de `crBuscar`
+ * (itens + `proximo` para continuação). Fora do Tauri (mock) devolve vazio.
+ *
+ * D6: "mentions"/"invites" podem não existir no tenant; nesse caso o backend
+ * rejeita com um erro iniciado por "HTTP 400" para o chamador esconder a opção.
+ */
+export async function crFiltrar(
+  folderId: string,
+  filtro: string,
+  nextLink?: string | null
+): Promise<BuscaPagina> {
+  if (!inTauri()) {
+    await sleep(400);
+    return { itens: [], proximo: null };
+  }
+  return invoke<BuscaPagina>("cr_filtrar", { folderId, filtro, nextLink });
+}
+
+/**
  * Conta na pasta inteira as mensagens que batem com um filtro ("flagged" |
  * "anexos"), via endpoint /$count do Graph. Fora do Tauri (mock) devolve 0.
  */
@@ -604,12 +661,96 @@ export async function crContar(folderId: string, filtro: string): Promise<number
   return invoke<number>("cr_contar", { folderId, filtro });
 }
 
-export async function crEsvaziarLixeira(): Promise<number> {
+/**
+ * Esvazia uma pasta (só faz sentido em Lixeira e Lixo Eletrônico): apaga cada
+ * mensagem, paginando até a pasta ficar vazia. `folderId` aceita o nome
+ * well-known ("deleteditems"/"junkemail") ou o id real. Devolve quantas saíram.
+ */
+export async function crEsvaziarPasta(folderId: string): Promise<number> {
   if (!inTauri()) {
     await sleep(500);
     return 12;
   }
-  return invoke<number>("cr_esvaziar_lixeira", {});
+  return invoke<number>("cr_esvaziar_pasta", { folderId });
+}
+
+/**
+ * Marca como lidas TODAS as mensagens não lidas de uma pasta (#89). Devolve
+ * quantas foram marcadas (0 = a pasta já estava toda lida).
+ */
+export async function crMarcarPastaLida(folderId: string): Promise<number> {
+  if (!inTauri()) {
+    await sleep(500);
+    return 7;
+  }
+  return invoke<number>("cr_marcar_pasta_lida", { folderId });
+}
+
+// --- CRUD de pastas (#90) ---------------------------------------------------
+// Só o menu de contexto de pasta CUSTOM oferece renomear/excluir/mover; "criar
+// subpasta" vale também em inbox/archive. O backend aceita qualquer id — quem
+// esconde as ações inválidas é a UI (decisão do PO na #71/S4).
+
+/**
+ * Cria uma subpasta dentro de `paiId` (well-known como "inbox"/"archive" ou o id
+ * real de uma custom). Devolve a pasta criada. Nome duplicado estoura no Graph
+ * (409) — a UI já barra antes, comparando com as irmãs conhecidas.
+ */
+export async function crCriarSubpasta(
+  paiId: string,
+  nome: string
+): Promise<PastaEmail> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      id: `${paiId}-nova-${Date.now()}`,
+      tipo: "child",
+      nome,
+      naoLidos: 0,
+      total: 0,
+      filhos: 0,
+    };
+  }
+  return invoke<PastaEmail>("cr_criar_subpasta", { paiId, nome });
+}
+
+/** Renomeia uma pasta (#90). Devolve a pasta já com o nome novo. */
+export async function crRenomearPasta(
+  id: string,
+  nome: string
+): Promise<PastaEmail> {
+  if (!inTauri()) {
+    await sleep(400);
+    return { id, tipo: "child", nome, naoLidos: 0, total: 0, filhos: 0 };
+  }
+  return invoke<PastaEmail>("cr_renomear_pasta", { id, nome });
+}
+
+/**
+ * Exclui uma pasta (#90). Decisão do PO na #71/D3: é REVERSÍVEL — a pasta vai
+ * para a Lixeira (`POST /move` com `destinationId:"deleteditems"`), não é
+ * apagada de vez. Devolve `true` quando foi pra lixeira e `false` quando o move
+ * não rolou e o backend caiu no fallback `DELETE` (aí sim definitivo) — a UI usa
+ * isso pra escolher o texto do toast.
+ */
+export async function crExcluirPasta(id: string): Promise<boolean> {
+  if (!inTauri()) {
+    await sleep(400);
+    return true;
+  }
+  return invoke<boolean>("cr_excluir_pasta", { id });
+}
+
+/** Move uma pasta (com conteúdo e subpastas) para dentro de `novoPai` (#90). */
+export async function crMoverPasta(
+  id: string,
+  novoPai: string
+): Promise<PastaEmail> {
+  if (!inTauri()) {
+    await sleep(400);
+    return { id, tipo: "child", nome: "Pasta", naoLidos: 0, total: 0, filhos: 0 };
+  }
+  return invoke<PastaEmail>("cr_mover_pasta", { id, novoPai });
 }
 
 /** Baixa um anexo para a pasta Downloads e devolve o caminho absoluto. */

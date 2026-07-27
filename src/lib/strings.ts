@@ -148,8 +148,34 @@ const pt = {
     item3: "Estado da sincronização do OneDrive",
   },
 
-  emBreveConfig: {
+  configuracoes: {
     descricao: "Preferências do aplicativo e da sua conta.",
+  },
+
+  templates: {
+    titulo: "Templates de e-mail",
+    descricao:
+      "Modelos reutilizáveis para inserir no corpo de uma mensagem. Ficam guardados neste computador.",
+    novo: "Novo template",
+    vazio:
+      "Nenhum template ainda. Crie um para reaproveitar os textos que você manda sempre.",
+    nome: "Nome",
+    nomePlaceholder: "Ex.: Resposta padrão de suporte",
+    corpo: "Corpo",
+    corpoPlaceholder: "Escreva o conteúdo do template...",
+    novoTitulo: "Novo template",
+    editarTitulo: "Editar template",
+    salvar: "Salvar",
+    cancelar: "Cancelar",
+    editar: "Editar",
+    excluir: "Excluir",
+    excluirTitulo: "Excluir template?",
+    excluirDescricao:
+      "O template “{nome}” será removido deste computador. Não dá para desfazer.",
+    salvo: "Template salvo",
+    excluido: "Template excluído",
+    inserir: "Inserir template",
+    semTemplates: "Nenhum template salvo",
   },
 
   apps: {
@@ -186,6 +212,8 @@ const pt = {
   },
 
   navegador: {
+    titulo: "Navigator",
+    subtitulo: "Hora de zarpar",
     buscar: "Buscar apps ou traçar uma rota...",
     vazio: "Nada por aqui.",
     navegar: "Traçar rota",
@@ -235,10 +263,59 @@ const pt = {
     excluir: "Excluir",
     sinalizar: "Sinalizar",
     marcarNaoLido: "Marcar como não lido",
+    marcarLido: "Marcar como lido",
+    removerSinal: "Remover sinalização",
+    excluirPermanente: "Excluir permanentemente",
     esvaziarLixeira: "Esvaziar lixeira",
     emailExcluido: "E-mail excluído.",
-    lixeiraEsvaziada: "Lixeira esvaziada ({n}).",
     erroAcao: "Não consegui completar a ação.",
+    // Menu de contexto de PASTA (#89)
+    marcarTodasLidas: "Marcar todas como lidas",
+    esvaziarPasta: "Esvaziar pasta",
+    marcandoTodasLidas: "Marcando todas como lidas…",
+    todasMarcadasLidas: "{n} marcadas como lidas.",
+    nenhumaNaoLida: "Nenhuma mensagem não lida nesta pasta.",
+    esvaziandoPasta: "Esvaziando a pasta…",
+    pastaEsvaziada: "Pasta esvaziada ({n}).",
+    esvaziarPastaTitulo: "Esvaziar “{pasta}”?",
+    esvaziarPastaDesc:
+      "Todas as mensagens desta pasta serão apagadas. Esta ação não pode ser desfeita.",
+    esvaziarPastaConfirmar: "Esvaziar",
+    // Mover para pasta (submenu do menu de contexto, #88)
+    moverPara: "Mover para pasta…",
+    moverBuscarPasta: "Buscar pasta…",
+    moverSemPastas: "Nenhuma pasta encontrada.",
+    moverCarregandoPastas: "Carregando pastas…",
+    emailMovido: "E-mail movido para {pasta}.",
+    selecionadosMovidos: "{n} e-mails movidos para {pasta}.",
+    // CRUD de subpastas (#90)
+    criarSubpasta: "Criar subpasta",
+    renomearPasta: "Renomear",
+    excluirPasta: "Excluir pasta",
+    moverPasta: "Mover pasta…",
+    criarSubpastaTitulo: "Nova subpasta em “{pasta}”",
+    criarSubpastaDesc: "Digite o nome da subpasta.",
+    renomearPastaTitulo: "Renomear “{pasta}”",
+    renomearPastaDesc: "Digite o novo nome da pasta.",
+    nomePastaRotulo: "Nome da pasta",
+    nomePastaPlaceholder: "Ex.: Clientes",
+    nomePastaVazio: "Digite um nome para a pasta.",
+    nomePastaDuplicado: "Já existe uma pasta com esse nome aqui.",
+    criar: "Criar",
+    salvar: "Salvar",
+    criandoSubpasta: "Criando a subpasta…",
+    subpastaCriada: "Subpasta “{pasta}” criada.",
+    renomeandoPasta: "Renomeando a pasta…",
+    pastaRenomeada: "Pasta renomeada para “{pasta}”.",
+    excluirPastaTitulo: "Excluir “{pasta}”?",
+    excluirPastaDesc:
+      "A pasta e todo o conteúdo vão para a Lixeira. Você pode recuperar de lá.",
+    excluirPastaConfirmar: "Excluir",
+    excluindoPasta: "Excluindo a pasta…",
+    pastaExcluida: "Pasta “{pasta}” movida para a Lixeira.",
+    pastaExcluidaDefinitiva: "Pasta “{pasta}” excluída definitivamente.",
+    movendoPasta: "Movendo a pasta…",
+    pastaMovida: "Pasta movida para {pasta}.",
     // Toasts
     enviadoDescricao: "Sua mensagem foi entregue.",
     flagAdicionada: "E-mail sinalizado",
@@ -263,6 +340,13 @@ const pt = {
     ordenaFlag: "Sinalização",
     ordemDecrescente: "Decrescente",
     ordemCrescente: "Crescente",
+    // Preferências de leitura (#95) — quando marcar a mensagem aberta como lida.
+    // Namespace próprio (pref*) pra não colidir com as AÇÕES marcarLido/marcarNaoLido.
+    prefLeitura: "Preferências de leitura",
+    prefMarcarLidoTitulo: "Marcar como lido",
+    prefMarcarLidoImediato: "Ao abrir",
+    prefMarcarLidoAtraso: "Após {n} segundos",
+    prefMarcarLidoManual: "Somente manualmente",
     grupoFlagged: "Sinalizados",
     grupoHoje: "Hoje",
     grupoOntem: "Ontem",
@@ -282,6 +366,14 @@ const pt = {
     corpoPlaceholder: "Escreva sua mensagem...",
     mostrarCcCco: "Cc/Cco",
     contatosSalvos: "{n} contatos salvos.",
+    // Autocomplete de destinatários (#40)
+    destinatariosPlaceholder: "Adicionar destinatários...",
+    secaoSeusContatos: "Seus contatos",
+    secaoOrganizacao: "De sua organização",
+    secaoDigitado: "Usar o endereço digitado",
+    semContatos: "Nenhum contato encontrado.",
+    buscandoContatos: "Buscando contatos...",
+    removerDestinatario: "Remover {nome}",
     // Agenda / Up Next
     upNext: "A seguir",
     semEventos: "Nada na agenda neste dia.",
@@ -302,6 +394,14 @@ const pt = {
     abaTodos: "Todos",
     abaNaoLidos: "Não lidos",
     abaSinalizados: "Sinalizados",
+    filtroLabel: "Filtro",
+    filtroToMe: "Para mim",
+    filtroMentions: "Me mencionam",
+    filtroInvites: "Convites de agenda",
+    // Rótulos do componente reui Filters (#31): o operador único do campo
+    // "Filtro" e o texto quando nenhum valor foi escolhido ainda.
+    filtroOperadorIs: "é",
+    filtroSelecione: "Selecione...",
     // Detalhe do evento
     organizador: "Organizador",
     local: "Local",
@@ -314,6 +414,7 @@ const pt = {
     encaminhar: "Encaminhar",
     abrirOutlook: "Abrir no Outlook",
     semCorpo: "(sem conteúdo)",
+    conteudoAparado: "Mostrar conteúdo aparado",
     // Compose / envio
     responderTodos: "Responder a todos",
     paraPlaceholder: "Para (separe por vírgula)",
@@ -486,8 +587,34 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     item3: "OneDrive sync status",
   },
 
-  emBreveConfig: {
+  configuracoes: {
     descricao: "App and account preferences.",
+  },
+
+  templates: {
+    titulo: "Email templates",
+    descricao:
+      "Reusable models you can drop into a message body. They are kept on this computer.",
+    novo: "New template",
+    vazio:
+      "No templates yet. Create one to reuse the texts you send all the time.",
+    nome: "Name",
+    nomePlaceholder: "e.g. Standard support reply",
+    corpo: "Body",
+    corpoPlaceholder: "Write the template content...",
+    novoTitulo: "New template",
+    editarTitulo: "Edit template",
+    salvar: "Save",
+    cancelar: "Cancel",
+    editar: "Edit",
+    excluir: "Delete",
+    excluirTitulo: "Delete template?",
+    excluirDescricao:
+      "The template “{nome}” will be removed from this computer. This can't be undone.",
+    salvo: "Template saved",
+    excluido: "Template deleted",
+    inserir: "Insert template",
+    semTemplates: "No saved templates",
   },
 
   apps: {
@@ -524,6 +651,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   },
 
   navegador: {
+    titulo: "Navigator",
+    subtitulo: "Time to set sail",
     buscar: "Search apps or set a course...",
     vazio: "Nothing here.",
     navegar: "Set a course",
@@ -573,10 +702,59 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     excluir: "Delete",
     sinalizar: "Flag",
     marcarNaoLido: "Mark as unread",
+    marcarLido: "Mark as read",
+    removerSinal: "Unflag",
+    excluirPermanente: "Delete permanently",
     esvaziarLixeira: "Empty trash",
     emailExcluido: "Email deleted.",
-    lixeiraEsvaziada: "Trash emptied ({n}).",
     erroAcao: "Couldn't complete the action.",
+    // Menu de contexto de PASTA (#89)
+    marcarTodasLidas: "Mark all as read",
+    esvaziarPasta: "Empty folder",
+    marcandoTodasLidas: "Marking all as read…",
+    todasMarcadasLidas: "{n} marked as read.",
+    nenhumaNaoLida: "No unread messages in this folder.",
+    esvaziandoPasta: "Emptying the folder…",
+    pastaEsvaziada: "Folder emptied ({n}).",
+    esvaziarPastaTitulo: "Empty “{pasta}”?",
+    esvaziarPastaDesc:
+      "Every message in this folder will be deleted. This action can't be undone.",
+    esvaziarPastaConfirmar: "Empty",
+    // Move to folder (context menu submenu, #88)
+    moverPara: "Move to folder…",
+    moverBuscarPasta: "Search folders…",
+    moverSemPastas: "No folders found.",
+    moverCarregandoPastas: "Loading folders…",
+    emailMovido: "Email moved to {pasta}.",
+    selecionadosMovidos: "{n} emails moved to {pasta}.",
+    // Subfolder CRUD (#90)
+    criarSubpasta: "Create subfolder",
+    renomearPasta: "Rename",
+    excluirPasta: "Delete folder",
+    moverPasta: "Move folder…",
+    criarSubpastaTitulo: "New subfolder in “{pasta}”",
+    criarSubpastaDesc: "Type the subfolder name.",
+    renomearPastaTitulo: "Rename “{pasta}”",
+    renomearPastaDesc: "Type the new folder name.",
+    nomePastaRotulo: "Folder name",
+    nomePastaPlaceholder: "e.g. Clients",
+    nomePastaVazio: "Type a name for the folder.",
+    nomePastaDuplicado: "A folder with this name already exists here.",
+    criar: "Create",
+    salvar: "Save",
+    criandoSubpasta: "Creating the subfolder…",
+    subpastaCriada: "Subfolder “{pasta}” created.",
+    renomeandoPasta: "Renaming the folder…",
+    pastaRenomeada: "Folder renamed to “{pasta}”.",
+    excluirPastaTitulo: "Delete “{pasta}”?",
+    excluirPastaDesc:
+      "The folder and all its contents go to the Trash. You can restore them from there.",
+    excluirPastaConfirmar: "Delete",
+    excluindoPasta: "Deleting the folder…",
+    pastaExcluida: "Folder “{pasta}” moved to Trash.",
+    pastaExcluidaDefinitiva: "Folder “{pasta}” permanently deleted.",
+    movendoPasta: "Moving the folder…",
+    pastaMovida: "Folder moved to {pasta}.",
     // Toasts
     enviadoDescricao: "Your message was delivered.",
     flagAdicionada: "Email flagged",
@@ -601,6 +779,13 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     ordenaFlag: "Flag",
     ordemDecrescente: "Descending",
     ordemCrescente: "Ascending",
+    // Preferências de leitura (#95) — quando marcar a mensagem aberta como lida.
+    // Namespace próprio (pref*) pra não colidir com as AÇÕES marcarLido/marcarNaoLido.
+    prefLeitura: "Reading preferences",
+    prefMarcarLidoTitulo: "Mark as read",
+    prefMarcarLidoImediato: "When opened",
+    prefMarcarLidoAtraso: "After {n} seconds",
+    prefMarcarLidoManual: "Manually only",
     grupoFlagged: "Flagged",
     grupoHoje: "Today",
     grupoOntem: "Yesterday",
@@ -620,6 +805,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     corpoPlaceholder: "Write your message...",
     mostrarCcCco: "Cc/Bcc",
     contatosSalvos: "{n} contacts saved.",
+    // Recipient autocomplete (#40)
+    destinatariosPlaceholder: "Add recipients...",
+    secaoSeusContatos: "Your contacts",
+    secaoOrganizacao: "From your organization",
+    secaoDigitado: "Use the address you typed",
+    semContatos: "No contacts found.",
+    buscandoContatos: "Searching contacts...",
+    removerDestinatario: "Remove {nome}",
     // Agenda / Up Next
     upNext: "Up Next",
     semEventos: "Nothing on the agenda this day.",
@@ -640,6 +833,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     abaTodos: "All",
     abaNaoLidos: "Unread",
     abaSinalizados: "Flagged",
+    filtroLabel: "Filter",
+    filtroToMe: "To me",
+    filtroMentions: "Mentions me",
+    filtroInvites: "Calendar invites",
+    filtroOperadorIs: "is",
+    filtroSelecione: "Select...",
     // Detalhe do evento
     organizador: "Organizer",
     local: "Location",
@@ -652,6 +851,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     encaminhar: "Forward",
     abrirOutlook: "Open in Outlook",
     semCorpo: "(no content)",
+    conteudoAparado: "Show trimmed content",
     // Compose / envio
     responderTodos: "Reply all",
     paraPlaceholder: "To (comma-separated)",

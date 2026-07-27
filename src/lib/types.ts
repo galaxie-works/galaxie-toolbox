@@ -143,6 +143,9 @@ export interface EmailItem {
   lido: boolean;
   temAnexos: boolean;
   sinalizado: boolean;
+  /** Foto (data URI) do remetente interno, resolvida pelo cache de fotos (#39).
+   *  Ausente/null = usa as iniciais (AvatarFallback). */
+  foto?: string | null;
 }
 
 export interface AnexoEmail {
@@ -173,8 +176,19 @@ export interface PastaEmail {
   filhos: number; // nº de subpastas — chevron de expandir só aparece quando > 0
 }
 
+/** Seção do autocomplete de destinatários (#40): de onde a sugestão veio. */
+export type OrigemPessoa = "contatos" | "organizacao";
+
 /** Pessoa sugerida no autocomplete do compositor de e-mail. */
 export interface Pessoa {
   nome: string;
   email: string;
+  /** Cargo (`jobTitle`) exibido como 2ª linha da sugestão. Pode faltar. */
+  cargo?: string | null;
+  /** `contatos` = /me/people · `organizacao` = diretório (/users). Ausente em
+   *  endereço digitado à mão e nos contatos que o front manda pro backend. */
+  origem?: OrigemPessoa | null;
+  /** Foto (data URI) do contato interno, resolvida pelo cache de fotos (#39).
+   *  Ausente/null = usa as iniciais (AvatarFallback). */
+  foto?: string | null;
 }

@@ -6,6 +6,7 @@ import { ControlRoomScreen } from "@/screens/control-room";
 import { NavegadorScreen, type AbaBrowser } from "@/screens/navegador";
 import * as browser from "@/lib/browser";
 import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
+import { ConfiguracoesScreen } from "@/screens/configuracoes";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Atualizacao } from "@/components/atualizacao";
@@ -32,6 +33,7 @@ import {
 import { TELAS, type Tela } from "@/lib/navegacao";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
+import { limparFotos } from "@/lib/fotos";
 import { useIdioma } from "@/lib/idioma";
 import { cn, comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
@@ -84,6 +86,9 @@ export default function App() {
     setError(null);
     try {
       const u = await api.login(email, idioma);
+      // Login novo pode trazer o escopo de fotos (#39) recém-consentido: zera o
+      // cache pra não herdar negative-cache de sessão sem permissão.
+      limparFotos();
       setUser(u);
       setLoadingSites(true);
       const lista = await api.listSites();
@@ -211,6 +216,7 @@ export default function App() {
 
   async function logout() {
     await api.logout();
+    limparFotos(); // privacidade (#39): não deixa fotos no disco após sair
     setUser(null);
     setSites([]);
     setError(null);
@@ -434,13 +440,7 @@ export default function App() {
             />
           )}
           {tela === "caminhos-longos" && <CaminhosLongosScreen />}
-          {tela === "configuracoes" && (
-            <EmBreveScreen
-              titulo={t.nav.configuracoes}
-              icone={TELAS.configuracoes.icone}
-              descricao={t.emBreveConfig.descricao}
-            />
-          )}
+          {tela === "configuracoes" && <ConfiguracoesScreen />}
           </main>
         </ScrollArea>
         )}

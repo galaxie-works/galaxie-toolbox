@@ -1,5 +1,10 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/reui/badge";
+import {
+  Filters,
+  type Filter,
+  type FilterFieldConfig,
+} from "@/components/reui/filters";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -15,6 +20,7 @@ import {
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Frame, FrameHeader, FrameTitle } from "@/components/reui/frame";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -43,6 +49,36 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -57,11 +93,13 @@ import { TextMorph } from "torph/react";
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
+import { useFotos, configurarDominioFotos } from "@/lib/fotos";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
 import { usePersistedState } from "@/lib/persist";
 import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
+import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
 import DOMPurify from "dompurify";
 import { cn, comLoginHint } from "@/lib/utils";
 import type {
@@ -76,22 +114,31 @@ import type {
 import {
   Archive,
   ArrowDownUp,
+  AtSign,
+  CalendarCheck,
   CalendarClock,
   CalendarDays,
   ChevronDown,
+  ListFilter,
   ChevronRight,
   Download,
   ExternalLink,
   FilePen,
   Flag,
+  FlagOff,
+  Folder,
+  FolderInput,
+  FolderPlus,
   Forward,
   Inbox,
   Mail,
+  MailOpen,
   MapPin,
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
   PenSquare,
+  Pencil,
   RefreshCw,
   Reply,
   ReplyAll,
@@ -99,8 +146,10 @@ import {
   Send,
   Send as SendIcon,
   ShieldAlert,
+  SlidersHorizontal,
   Star,
   Trash2,
+  User,
   Video,
   X,
 } from "lucide-react";
@@ -164,6 +213,8 @@ function CorpoHtml({
   // escuro, injetamos o Dark Reader real (como o MailVault) no <head> do srcDoc:
   // ele roda no load (sem flash) e o MutationObserver dele pega conteúdo tardio.
   const escuro = useTemaEscuro();
+  const { t } = useIdioma();
+  const rotuloAparado = t.controlRoom.conteudoAparado;
 
   const doc = useMemo(() => {
     // overflow:hidden garante ZERO scrollbar interna do iframe — nós ajustamos
@@ -180,21 +231,29 @@ function CorpoHtml({
       // overflow-wrap:anywhere quebra strings longas (URLs/tokens sem espaço)
       // que, sozinhas, inflavam o scrollWidth.
       `font-size:14px;line-height:1.5;padding:6px;overflow-wrap:anywhere}` +
-      `img{max-width:100%;height:auto}a{color:#7c3aed}</style>`;
+      `img{max-width:100%;height:auto}a{color:#7c3aed}` +
+      // Botão "⋯" da dobra do citado/assinatura (#92) — CSS puro, sem script.
+      estiloDobra(escuro) +
+      `</style>`;
     const dr = escuro ? getDarkReaderInlineScripts() : "";
     // Sanitiza o HTML do e-mail (tira <script>, handlers on*, javascript: etc.)
     // ANTES de injetar. Como habilitamos allow-scripts pro Dark Reader rodar, um
     // e-mail malicioso poderia rodar script na nossa origem — o DOMPurify fecha
     // isso, mantendo tabelas/estilos/imagens do e-mail intactos.
     const corpoLimpo = DOMPurify.sanitize(corpo, { ADD_ATTR: ["target"] });
+    // Dobra o histórico citado/assinatura DEPOIS do sanitize (senão o <details>
+    // que criamos seria removido) e ANTES de virar srcDoc — o toggle é o
+    // <details> nativo, então funciona também no tema claro, onde o sandbox
+    // NÃO tem allow-scripts.
+    const corpoDobrado = dobrarCitado(corpoLimpo, rotuloAparado);
     return (
       `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">` +
       `<meta name="color-scheme" content="light">` +
       baseline +
       dr +
-      `</head><body>${corpoLimpo}</body></html>`
+      `</head><body>${corpoDobrado}</body></html>`
     );
-  }, [corpo, escuro]);
+  }, [corpo, escuro, rotuloAparado]);
 
   useEffect(() => {
     const iframe = ref.current;
@@ -236,6 +295,12 @@ function CorpoHtml({
       d?.querySelectorAll("img").forEach((img) => {
         if (!img.complete) img.addEventListener("load", ajustar, { once: true });
       });
+      // Dobra do citado/assinatura (#92): abrir/fechar o <details> muda a
+      // altura (e pode mudar a largura -> zoom). O `toggle` NÃO borbulha, por
+      // isso escutamos na fase de CAPTURA, no documento. Este listener é código
+      // NOSSO (realm do app), então roda mesmo com o sandbox sem allow-scripts
+      // — mesmo mecanismo já usado no clique dos links, logo abaixo.
+      d?.addEventListener("toggle", ajustar, true);
       // Links do e-mail: o `target=_blank` não navega no Tauri (nada acontecia
       // ao clicar). Interceptamos o clique e abrimos http(s) no Navigator (aba
       // própria); outros esquemas (mailto/tel) vão pro handler padrão do SO.
@@ -581,51 +646,287 @@ function rotuloPasta(tipo: string, nome: string, t: ReturnType<typeof useIdioma>
   return m[tipo] ?? nome;
 }
 
+/**
+ * Ações do menu de contexto de PASTA (#89), por TIPO de pasta. Escopo aprovado
+ * pelo PO na #71/S3:
+ *  - "Marcar todas como lidas": inbox, junkemail e subpastas (child). Fora de
+ *    drafts/sentitems, onde "não-lido" não faz sentido (ali a contagem é o
+ *    total, #56).
+ *  - "Esvaziar pasta": SÓ deleteditems e junkemail — as duas pastas em que
+ *    apagar tudo de uma vez é operação normal do usuário.
+ */
+function podeMarcarTodasLidas(tipo: string): boolean {
+  return tipo === "inbox" || tipo === "junkemail" || tipo === "child";
+}
+function podeEsvaziar(tipo: string): boolean {
+  return tipo === "deleteditems" || tipo === "junkemail";
+}
+
+/**
+ * CRUD de subpastas (#90), por TIPO de pasta. Decisão do PO na #71/S4: em pasta
+ * well-known as ações inválidas **não aparecem** (esconder, não desabilitar).
+ *  - "Criar subpasta": inbox, archive e custom — as três onde criar filha faz
+ *    sentido (não em enviados/rascunhos/lixeira/lixo).
+ *  - Renomear / Mover / Excluir: SÓ custom (`tipo === "child"`). Well-known é
+ *    pasta do sistema: renomear ou apagar quebraria o próprio Outlook.
+ */
+function podeCriarSubpasta(tipo: string): boolean {
+  return tipo === "inbox" || tipo === "archive" || tipo === "child";
+}
+function ehPastaCustom(tipo: string): boolean {
+  return tipo === "child";
+}
+
+/**
+ * A pasta + TODAS as descendentes já conhecidas. É o conjunto de destinos
+ * PROIBIDOS do "Mover pasta…" (#90): mover uma pasta para dentro de si mesma ou
+ * de uma filha criaria um ciclo — o Graph recusaria, mas barrar na UI evita a
+ * viagem e não oferece uma opção que nunca vai funcionar.
+ */
+function subarvoreIds(
+  id: string,
+  subpastas: Record<string, PastaEmail[]>
+): Set<string> {
+  const out = new Set<string>([id]);
+  const fila = [id];
+  while (fila.length > 0) {
+    const atual = fila.pop()!;
+    for (const f of subpastas[atual] ?? []) {
+      if (!out.has(f.id)) {
+        out.add(f.id);
+        fila.push(f.id);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Pasta ACHATADA para o seletor de destino do "Mover para pasta…" (#88): a
+ * árvore (raízes de `crMailFolders` + subpastas de `crSubpastas`) vira uma lista
+ * plana, com a profundidade para indentar — o padrão do `MoveToFolderDropdown`
+ * do MailVault. `caminho` é o nome completo ("Caixa de entrada / Clientes"):
+ * alimenta a busca (achar "Clientes" pela pasta-mãe) e o title da linha.
+ */
+type PastaDestino = {
+  id: string;
+  rotulo: string;
+  caminho: string;
+  profundidade: number;
+};
+
+/** Achata a árvore de pastas em profundidade (pai antes dos filhos). */
+function achatarPastas(
+  raizes: PastaEmail[],
+  subpastas: Record<string, PastaEmail[]>,
+  t: ReturnType<typeof useIdioma>["t"],
+  profundidade = 0,
+  prefixo = ""
+): PastaDestino[] {
+  const out: PastaDestino[] = [];
+  for (const p of raizes) {
+    const rotulo = rotuloPasta(p.tipo, p.nome, t);
+    const caminho = prefixo ? `${prefixo} / ${rotulo}` : rotulo;
+    out.push({ id: p.id, rotulo, caminho, profundidade });
+    const filhos = subpastas[p.id];
+    if (filhos && filhos.length > 0) {
+      out.push(...achatarPastas(filhos, subpastas, t, profundidade + 1, caminho));
+    }
+  }
+  return out;
+}
+
+/**
+ * Dialog de NOME de pasta (#90) — serve tanto "Criar subpasta" quanto
+ * "Renomear": os dois pedem exatamente um texto, então é o mesmo `Dialog` do
+ * registry (Radix) com títulos/rótulos diferentes, em vez de dois componentes
+ * quase idênticos. Não é `AlertDialog` de propósito: AlertDialog é pra decisão
+ * destrutiva (o "Excluir pasta" usa), não pra formulário.
+ *
+ * Validação, derivada no render (sem efeito): nome vazio e nome duplicado entre
+ * as IRMÃS bloqueiam o botão de confirmar. `irmas` já vem sem a própria pasta no
+ * caso do renomear — manter o nome atual não é "duplicado".
+ *
+ * O componente é montado só quando o dialog abre (`key` no chamador), então o
+ * `useState` inicial já entra com o valor certo e sai limpo na próxima abertura.
+ */
+function DialogNomePasta({
+  titulo,
+  descricao,
+  valorInicial,
+  irmas,
+  rotuloConfirmar,
+  onConfirmar,
+  onFechar,
+  t,
+}: {
+  titulo: string;
+  descricao: string;
+  valorInicial: string;
+  irmas: string[];
+  rotuloConfirmar: string;
+  onConfirmar: (nome: string) => void;
+  onFechar: () => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const [nome, setNome] = useState(valorInicial);
+  const [tocado, setTocado] = useState(false);
+
+  const limpo = nome.trim();
+  const duplicado =
+    limpo !== "" &&
+    irmas.some((n) => n.trim().toLowerCase() === limpo.toLowerCase());
+  const podeConfirmar = limpo !== "" && !duplicado;
+  const erro = duplicado
+    ? t.controlRoom.nomePastaDuplicado
+    : tocado && limpo === ""
+      ? t.controlRoom.nomePastaVazio
+      : null;
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(aberto) => {
+        if (!aberto) onFechar();
+      }}
+    >
+      <DialogContent className="max-w-sm!">
+        <form
+          onSubmit={(e) => {
+            // Enter confirma (é um formulário de um campo só) — sem isso o
+            // usuário teria que ir de mouse até o botão.
+            e.preventDefault();
+            if (podeConfirmar) onConfirmar(limpo);
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{titulo}</DialogTitle>
+            <DialogDescription>{descricao}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 py-4">
+            <Label htmlFor="nome-pasta">{t.controlRoom.nomePastaRotulo}</Label>
+            <Input
+              id="nome-pasta"
+              autoFocus
+              value={nome}
+              onChange={(e) => {
+                setNome(e.target.value);
+                setTocado(true);
+              }}
+              placeholder={t.controlRoom.nomePastaPlaceholder}
+              aria-invalid={erro !== null}
+              aria-describedby={erro ? "nome-pasta-erro" : undefined}
+            />
+            {erro !== null ? (
+              <p id="nome-pasta-erro" className="text-sm text-destructive">
+                {erro}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onFechar}>
+              {t.controlRoom.cancelar}
+            </Button>
+            <Button type="submit" disabled={!podeConfirmar}>
+              {rotuloConfirmar}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function FolderSidebar({
   pastas,
+  subpastas,
+  onCarregarSubpastas,
   sel,
   onSel,
   onNovo,
   onComposeOutlook,
+  onMarcarTodasLidas,
+  onEsvaziarPasta,
+  arvore,
+  arvoreCarregando,
+  onAbrirArvore,
+  onCriarSubpasta,
+  onRenomearPasta,
+  onExcluirPasta,
+  onMoverPasta,
   colapsada,
   agendaAberta,
   onToggleAgenda,
   t,
 }: {
   pastas: PastaEmail[] | null;
+  subpastas: Record<string, PastaEmail[]>;
+  onCarregarSubpastas: (id: string) => void;
   sel: string;
   onSel: (id: string) => void;
   onNovo: () => void;
   onComposeOutlook: () => void;
+  onMarcarTodasLidas: (folderId: string) => void;
+  onEsvaziarPasta: (folderId: string) => void;
+  /** Árvore achatada COMPLETA (#88), reusada como destino do "Mover pasta…". */
+  arvore: PastaDestino[];
+  arvoreCarregando: boolean;
+  onAbrirArvore: () => void;
+  onCriarSubpasta: (paiId: string, nome: string) => void;
+  onRenomearPasta: (id: string, nome: string, paiId?: string) => void;
+  onExcluirPasta: (id: string, rotulo: string, paiId?: string) => void;
+  onMoverPasta: (
+    id: string,
+    destino: string,
+    rotuloDestino: string,
+    paiId?: string
+  ) => void;
   colapsada: boolean;
   agendaAberta: boolean;
   onToggleAgenda: () => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
+  // Pasta pendente de confirmação do "Esvaziar" — ação destrutiva nunca sai
+  // direto do menu: passa pelo AlertDialog (DoD + padrão do app).
+  const [aEsvaziar, setAEsvaziar] = useState<{ id: string; rotulo: string } | null>(
+    null
+  );
+  // Mesma regra pro "Excluir pasta" (#90): destrutivo → AlertDialog.
+  const [aExcluir, setAExcluir] = useState<{
+    id: string;
+    rotulo: string;
+    paiId?: string;
+  } | null>(null);
+  // Dialog de nome, compartilhado por "Criar subpasta" e "Renomear" (#90).
+  const [dialogNome, setDialogNome] = useState<
+    | { modo: "criar"; paiId: string; rotulo: string; irmas: string[] }
+    | { modo: "renomear"; id: string; rotulo: string; paiId?: string; irmas: string[] }
+    | null
+  >(null);
   const mail = (pastas ?? []).filter((p) => GRUPO_MAIL.includes(p.tipo));
   const outras = (pastas ?? []).filter((p) => !GRUPO_MAIL.includes(p.tipo));
 
-  // Subpastas (childFolders): carregadas sob demanda ao expandir.
+  // Subpastas (childFolders): carregadas sob demanda ao expandir. O CACHE mora
+  // no pai (#88) porque o submenu "Mover para pasta…" precisa da mesma árvore —
+  // assim expandir no sidebar e abrir o submenu não buscam a mesma subpasta
+  // duas vezes, e o que já foi carregado num lado aparece no outro.
+  const filhos = subpastas;
   const [expandidas, setExpandidas] = useState<Set<string>>(new Set());
-  const [filhos, setFilhos] = useState<Record<string, PastaEmail[]>>({});
-  const alternarExpandir = async (id: string) => {
+  const alternarExpandir = (id: string) => {
     setExpandidas((s) => {
       const n = new Set(s);
       if (n.has(id)) n.delete(id);
       else n.add(id);
       return n;
     });
-    if (filhos[id] === undefined) {
-      try {
-        const cs = await api.crSubpastas(id);
-        setFilhos((f) => ({ ...f, [id]: cs }));
-      } catch {
-        setFilhos((f) => ({ ...f, [id]: [] }));
-      }
-    }
+    onCarregarSubpastas(id);
   };
 
-  const Linha = (p: PastaEmail, ehFilho = false) => {
+  // `paiId` (só nas subpastas) é o que permite ao menu de contexto saber quais
+  // são as IRMÃS (validação de nome duplicado) e qual cache invalidar depois da
+  // mutação (#90). Nas raízes é `undefined`.
+  const Linha = (p: PastaEmail, paiId?: string) => {
+    const ehFilho = paiId !== undefined;
     const Ico = ICONE_PASTA[p.tipo] ?? Inbox;
     const ativo = p.id === sel;
     // `contagem` é NÃO-LIDOS para inbox/junk/lixeira/custom; para drafts/sentitems
@@ -670,32 +971,147 @@ function FolderSidebar({
         )}
       </button>
     );
-    if (colapsada) return <div key={p.id}>{linhaBtn}</div>;
+    // Menu de contexto da PASTA (#89). Itens condicionais ao tipo; se a pasta
+    // não oferece nenhuma ação (drafts/sentitems/archive), o trigger fica
+    // desabilitado — nada abre, nem menu vazio (mesmo padrão do menu da ÁREA da
+    // lista, #86). O ContextMenuTrigger do Radix já suprime o menu nativo.
+    const marcarLidas = podeMarcarTodasLidas(p.tipo);
+    const esvaziar = podeEsvaziar(p.tipo);
+    // CRUD (#90): criar subpasta em inbox/archive/custom; renomear/mover/excluir
+    // SÓ em custom — em well-known essas ações nem aparecem (decisão do PO).
+    const criarSub = podeCriarSubpasta(p.tipo);
+    const custom = ehPastaCustom(p.tipo);
+    const semAcoes = !marcarLidas && !esvaziar && !criarSub && !custom;
+
+    // Irmãs da pasta (para barrar nome duplicado antes de ir ao Graph): as
+    // filhas do pai. Nas raízes, as próprias raízes.
+    const irmas = (paiId ? (filhos[paiId] ?? []) : (pastas ?? [])).map((f) => f.nome);
+    // Destinos válidos do "Mover pasta…": a árvore inteira MENOS a própria
+    // pasta e suas descendentes (mover pra dentro de si mesma = ciclo).
+    const proibidos = subarvoreIds(p.id, subpastas);
+    const destinos = arvore.filter((d) => !proibidos.has(d.id));
+
+    const comMenu = (conteudo: React.ReactNode) => (
+      <ContextMenu>
+        <ContextMenuTrigger asChild disabled={semAcoes}>
+          {conteudo}
+        </ContextMenuTrigger>
+        <ContextMenuContent className="w-56">
+          {marcarLidas && (
+            <ContextMenuItem className="gap-2" onClick={() => onMarcarTodasLidas(p.id)}>
+              <MailOpen />
+              {t.controlRoom.marcarTodasLidas}
+            </ContextMenuItem>
+          )}
+          {marcarLidas && (criarSub || custom || esvaziar) && <ContextMenuSeparator />}
+          {criarSub && (
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => {
+                // Garante as filhas em cache: sem elas não dá pra validar o
+                // nome duplicado no cliente (o 409 do Graph é a rede embaixo).
+                onCarregarSubpastas(p.id);
+                setDialogNome({
+                  modo: "criar",
+                  paiId: p.id,
+                  rotulo,
+                  irmas: (filhos[p.id] ?? []).map((f) => f.nome),
+                });
+              }}
+            >
+              <FolderPlus />
+              {t.controlRoom.criarSubpasta}
+            </ContextMenuItem>
+          )}
+          {custom && (
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() =>
+                setDialogNome({
+                  modo: "renomear",
+                  id: p.id,
+                  rotulo,
+                  paiId,
+                  // Sem a própria pasta: manter o nome atual não é duplicata.
+                  irmas: irmas.filter((n) => n !== p.nome),
+                })
+              }
+            >
+              <Pencil />
+              {t.controlRoom.renomearPasta}
+            </ContextMenuItem>
+          )}
+          {custom && (
+            // Mesmo submenu do "Mover para pasta…" do #88 (árvore achatada +
+            // busca), só com outro rótulo e outro alvo — não é uma segunda
+            // implementação.
+            <SubmenuMover
+              alvos={[p.id]}
+              pastas={destinos}
+              carregando={arvoreCarregando}
+              rotulo={t.controlRoom.moverPasta}
+              onAbrir={onAbrirArvore}
+              onMover={(ids, destino, rotuloDestino) =>
+                onMoverPasta(ids[0], destino, rotuloDestino, paiId)
+              }
+              t={t}
+            />
+          )}
+          {custom && <ContextMenuSeparator />}
+          {custom && (
+            <ContextMenuItem
+              variant="destructive"
+              className="gap-2"
+              onClick={() => setAExcluir({ id: p.id, rotulo, paiId })}
+            >
+              <Trash2 />
+              {t.controlRoom.excluirPasta}
+            </ContextMenuItem>
+          )}
+          {/* "Esvaziar" só existe em deleted/junk, que nunca têm criar/custom —
+              o separador de cima (depois de "Marcar todas") já dá conta. */}
+          {esvaziar && (
+            <ContextMenuItem
+              variant="destructive"
+              className="gap-2"
+              onClick={() => setAEsvaziar({ id: p.id, rotulo })}
+            >
+              <Trash2 />
+              {t.controlRoom.esvaziarPasta}
+            </ContextMenuItem>
+          )}
+        </ContextMenuContent>
+      </ContextMenu>
+    );
+
+    if (colapsada) return <div key={p.id}>{comMenu(linhaBtn)}</div>;
     return (
       <div key={p.id}>
-        <div className={cn("flex items-center", ehFilho && "pl-5")}>
-          {/* chevron só quando a pasta realmente tem subpastas (childFolderCount > 0) */}
-          {p.filhos > 0 ? (
-            <button
-              type="button"
-              onClick={() => alternarExpandir(p.id)}
-              aria-label={rotulo}
-              className="grid size-5 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
-            >
-              <ChevronRight
-                className={cn(
-                  "size-3.5 transition-transform",
-                  expandidas.has(p.id) && "rotate-90"
-                )}
-              />
-            </button>
-          ) : (
-            <span className="size-5 shrink-0" />
-          )}
-          {linhaBtn}
-        </div>
+        {comMenu(
+          <div className={cn("flex items-center", ehFilho && "pl-5")}>
+            {/* chevron só quando a pasta realmente tem subpastas (childFolderCount > 0) */}
+            {p.filhos > 0 ? (
+              <button
+                type="button"
+                onClick={() => alternarExpandir(p.id)}
+                aria-label={rotulo}
+                className="grid size-5 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
+              >
+                <ChevronRight
+                  className={cn(
+                    "size-3.5 transition-transform",
+                    expandidas.has(p.id) && "rotate-90"
+                  )}
+                />
+              </button>
+            ) : (
+              <span className="size-5 shrink-0" />
+            )}
+            {linhaBtn}
+          </div>
+        )}
         {expandidas.has(p.id) &&
-          (filhos[p.id] ?? []).map((c) => Linha({ ...c, tipo: "child" }, true))}
+          (filhos[p.id] ?? []).map((c) => Linha({ ...c, tipo: "child" }, p.id))}
       </div>
     );
   };
@@ -783,6 +1199,117 @@ function FolderSidebar({
         <CalendarDays className="size-4 shrink-0" />
         {!colapsada && <span>{t.controlRoom.agendaTitulo}</span>}
       </Button>
+
+      {/* Confirmação do "Esvaziar pasta": destrutiva e não desfazível, então
+          nunca dispara direto do menu de contexto (#89). */}
+      <AlertDialog
+        open={aEsvaziar !== null}
+        onOpenChange={(aberto) => {
+          if (!aberto) setAEsvaziar(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-sm!">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {preencher(t.controlRoom.esvaziarPastaTitulo, {
+                pasta: aEsvaziar?.rotulo ?? "",
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.esvaziarPastaDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.controlRoom.cancelar}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (aEsvaziar) onEsvaziarPasta(aEsvaziar.id);
+                setAEsvaziar(null);
+              }}
+            >
+              {t.controlRoom.esvaziarPastaConfirmar}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Confirmação do "Excluir pasta" (#90). Destrutiva, então AlertDialog —
+          mas REVERSÍVEL: o texto diz que a pasta vai pra Lixeira (decisão do PO
+          na #71/D3), não que some pra sempre. */}
+      <AlertDialog
+        open={aExcluir !== null}
+        onOpenChange={(aberto) => {
+          if (!aberto) setAExcluir(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-sm!">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {preencher(t.controlRoom.excluirPastaTitulo, {
+                pasta: aExcluir?.rotulo ?? "",
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.excluirPastaDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.controlRoom.cancelar}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (aExcluir)
+                  onExcluirPasta(aExcluir.id, aExcluir.rotulo, aExcluir.paiId);
+                setAExcluir(null);
+              }}
+            >
+              {t.controlRoom.excluirPastaConfirmar}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Dialog de nome — "Criar subpasta" e "Renomear" (#90). Montado só quando
+          abre (e com `key`), então o campo já nasce com o valor certo e não
+          carrega o texto da abertura anterior. */}
+      {dialogNome !== null ? (
+        dialogNome.modo === "criar" ? (
+          <DialogNomePasta
+            key={`criar-${dialogNome.paiId}`}
+            titulo={preencher(t.controlRoom.criarSubpastaTitulo, {
+              pasta: dialogNome.rotulo,
+            })}
+            descricao={t.controlRoom.criarSubpastaDesc}
+            valorInicial=""
+            irmas={dialogNome.irmas}
+            rotuloConfirmar={t.controlRoom.criar}
+            onConfirmar={(nome) => {
+              onCriarSubpasta(dialogNome.paiId, nome);
+              setDialogNome(null);
+            }}
+            onFechar={() => setDialogNome(null)}
+            t={t}
+          />
+        ) : (
+          <DialogNomePasta
+            key={`renomear-${dialogNome.id}`}
+            titulo={preencher(t.controlRoom.renomearPastaTitulo, {
+              pasta: dialogNome.rotulo,
+            })}
+            descricao={t.controlRoom.renomearPastaDesc}
+            valorInicial={dialogNome.rotulo}
+            irmas={dialogNome.irmas}
+            rotuloConfirmar={t.controlRoom.salvar}
+            onConfirmar={(nome) => {
+              onRenomearPasta(dialogNome.id, nome, dialogNome.paiId);
+              setDialogNome(null);
+            }}
+            onFechar={() => setDialogNome(null)}
+            t={t}
+          />
+        )
+      ) : null}
     </aside>
   );
 }
@@ -791,7 +1318,37 @@ function FolderSidebar({
 // Painel 2 — lista de mensagens
 // ===========================================================================
 
-type Aba = "todos" | "naoLidos" | "sinalizados" | "anexos";
+// Filtro único da lista (dropdown estilo Outlook, #31). Os 4 primeiros são
+// client-side (aplicados sobre a lista já carregada, como as antigas abas); os
+// 3 últimos exigem o servidor (cr_filtrar) e são buscados pelo pai.
+type FiltroLista =
+  | "all"
+  | "unread"
+  | "flagged"
+  | "files"
+  | "tome"
+  | "mentions"
+  | "invites";
+
+/** true para os filtros que precisam ir ao Graph (não dá só no carregado). */
+function ehFiltroGraph(f: FiltroLista): boolean {
+  return f === "tome" || f === "mentions" || f === "invites";
+}
+
+// Quando a mensagem aberta é marcada como lida (#95). Espelha as três opções do
+// BehaviorSettings do MailVault: imediato (default, o comportamento histórico),
+// após um atraso configurável, ou só manualmente pela ação de marcar lido.
+type MarcarLidoModo = "imediato" | "atraso" | "manual";
+const MARCAR_LIDO_MODOS: readonly MarcarLidoModo[] = ["imediato", "atraso", "manual"];
+/**
+ * Atrasos oferecidos no modo "após um atraso" (segundos). Poucos presets em vez
+ * do slider 1-10s do MailVault: dentro de um DropdownMenu o Radix já usa as
+ * setas pro roving focus (slider ficaria inoperável no teclado), e ninguém tem
+ * opinião sobre 7s vs 8s — as três intenções reais são "rápido", "só se eu
+ * ficar" e "nunca". (Recomendação da pesquisa de UX da #95.)
+ */
+const MARCAR_LIDO_ATRASOS = [2, 5, 10] as const;
+const MARCAR_LIDO_ATRASO_PADRAO = 2;
 
 // Linha da lista virtualizada: cabeçalho de grupo OU mensagem. Agrupar por
 // período (+ grupo Flagged no topo) vira linhas planas pra não quebrar o
@@ -816,6 +1373,193 @@ function periodoChave(recebido: string, agora: Date): string {
   return "older";
 }
 
+/**
+ * Submenu "Mover para pasta…" (#88) — a árvore de pastas ACHATADA (indentada
+ * por profundidade) com BUSCA por nome, portando o padrão do
+ * `MoveToFolderDropdown` do MailVault para o menu de contexto do Bridge.
+ *
+ * Montado com `ContextMenuSub`/`SubTrigger`/`SubContent` do @reui/context-menu
+ * (Radix) e o `Input` do registry — o mesmo arranjo "campo de busca + separador
+ * + lista rolável" que o @reui/filters usa na sua lista pesquisável.
+ *
+ * A pasta ATUAL não entra na lista (já vem filtrada do pai): mover para onde a
+ * mensagem já está não é uma opção.
+ *
+ * Serve aos DOIS "mover" do Bridge: o de mensagens (#88, `alvos` = ids das
+ * mensagens) e o de PASTA (#90, `alvos` = [id da pasta], com `rotulo` próprio e
+ * a lista já sem a própria pasta/descendentes). Só muda o rótulo do gatilho — a
+ * árvore achatada, a busca e o comportamento do menu são os mesmos.
+ */
+function SubmenuMover({
+  alvos,
+  pastas,
+  carregando,
+  rotulo,
+  onAbrir,
+  onMover,
+  t,
+}: {
+  alvos: string[];
+  pastas: PastaDestino[];
+  carregando: boolean;
+  /** Texto do gatilho; padrão é o "Mover para pasta…" das mensagens (#88). */
+  rotulo?: string;
+  onAbrir: () => void;
+  onMover: (ids: string[], destino: string, rotulo: string) => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const [busca, setBusca] = useState("");
+  const filtradas = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    if (!q) return pastas;
+    // Busca no CAMINHO: digitar o nome da pasta-mãe também acha as filhas.
+    return pastas.filter((p) => p.caminho.toLowerCase().includes(q));
+  }, [pastas, busca]);
+
+  return (
+    <ContextMenuSub
+      onOpenChange={(aberto) => {
+        // Abrir o submenu é o gatilho pra completar a árvore (as subpastas são
+        // lazy); fechar limpa a busca pra próxima abertura começar do zero.
+        if (aberto) onAbrir();
+        else setBusca("");
+      }}
+    >
+      <ContextMenuSubTrigger className="gap-2">
+        <FolderInput />
+        {rotulo ?? t.controlRoom.moverPara}
+      </ContextMenuSubTrigger>
+      <ContextMenuSubContent className="w-64 p-0">
+        <Input
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder={t.controlRoom.moverBuscarPasta}
+          aria-label={t.controlRoom.moverBuscarPasta}
+          className="h-8 rounded-none border-0 bg-transparent! px-2 text-sm shadow-none focus-visible:border-border focus-visible:ring-0"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            // Escape/Tab seguem pro Radix (fecham o menu); o resto fica no
+            // input — senão a navegação-por-digitação do menu roubaria as
+            // letras e a busca nunca receberia texto.
+            if (e.key !== "Escape" && e.key !== "Tab") e.stopPropagation();
+          }}
+        />
+        <ContextMenuSeparator className="mx-0 my-0" />
+        {filtradas.length === 0 ? (
+          <p className="px-3 py-3 text-center text-sm text-muted-foreground">
+            {carregando ? t.controlRoom.moverCarregandoPastas : t.controlRoom.moverSemPastas}
+          </p>
+        ) : (
+          <ScrollArea className="max-h-64">
+            <div className="p-1">
+              {filtradas.map((p) => (
+                <ContextMenuItem
+                  key={p.id}
+                  className="gap-2"
+                  title={p.caminho}
+                  onClick={() => onMover(alvos, p.id, p.rotulo)}
+                >
+                  {/* Indentação por profundidade = a hierarquia continua
+                      legível mesmo com a árvore achatada (MailVault). */}
+                  <Folder style={{ marginLeft: p.profundidade * 12 }} />
+                  <span className="truncate">{p.rotulo}</span>
+                </ContextMenuItem>
+              ))}
+            </div>
+          </ScrollArea>
+        )}
+      </ContextMenuSubContent>
+    </ContextMenuSub>
+  );
+}
+
+/**
+ * Itens do menu de contexto de e-mail (#86). Fica compartilhado entre o menu da
+ * LINHA e o menu da ÁREA da lista (botão direito fora das linhas) para que os
+ * dois ofereçam exatamente as mesmas ações — inclusive as folder-aware (em
+ * Itens Excluídos "Excluir" vira "Excluir permanentemente").
+ *
+ * `lido`/`sinalizado` são o estado do ALVO (a linha clicada ou, na seleção, o
+ * estado comum dela): definem o rótulo e o valor novo aplicado a `alvos`.
+ */
+function ItensMenuEmail({
+  alvos,
+  lido,
+  sinalizado,
+  permanente,
+  onMarcarLido,
+  onFlag,
+  onExcluir,
+  pastasDestino,
+  pastasCarregando,
+  onAbrirMover,
+  onMover,
+  setSelecionados,
+  t,
+}: {
+  alvos: string[];
+  lido: boolean;
+  sinalizado: boolean;
+  permanente: boolean;
+  onMarcarLido: (id: string, lido: boolean) => void;
+  onFlag: (id: string, novo: boolean) => void;
+  onExcluir: (ids: string[]) => void | Promise<void>;
+  pastasDestino: PastaDestino[];
+  pastasCarregando: boolean;
+  onAbrirMover: () => void;
+  onMover: (ids: string[], destino: string, rotulo: string) => void;
+  setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  return (
+    <>
+      <ContextMenuItem
+        className="gap-2"
+        onClick={() => alvos.forEach((id) => onMarcarLido(id, !lido))}
+      >
+        {lido ? <Mail /> : <MailOpen />}
+        {lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
+      </ContextMenuItem>
+      <ContextMenuItem
+        className="gap-2"
+        onClick={() => alvos.forEach((id) => onFlag(id, !sinalizado))}
+      >
+        {sinalizado ? <FlagOff /> : <Flag />}
+        {sinalizado ? t.controlRoom.removerSinal : t.controlRoom.sinalizar}
+      </ContextMenuItem>
+      <ContextMenuSeparator />
+      {/* "Mover para pasta…" (#88): submenu com a árvore achatada + busca. */}
+      <SubmenuMover
+        alvos={alvos}
+        pastas={pastasDestino}
+        carregando={pastasCarregando}
+        onAbrir={onAbrirMover}
+        onMover={onMover}
+        t={t}
+      />
+      <ContextMenuSeparator />
+      <ContextMenuItem
+        variant="destructive"
+        className="gap-2"
+        onClick={() => {
+          onExcluir(alvos);
+          // Tira da seleção o que foi excluído — senão a barra "N selected"
+          // fica fantasma após excluir pelo menu de contexto (o atalho Delete
+          // já limpava; o menu não) (rejeição do #86 pelo PO).
+          setSelecionados((s) => {
+            const n = new Set(s);
+            alvos.forEach((id) => n.delete(id));
+            return n;
+          });
+        }}
+      >
+        <Trash2 />
+        {permanente ? t.controlRoom.excluirPermanente : t.controlRoom.excluir}
+      </ContextMenuItem>
+    </>
+  );
+}
+
 function MessageList({
   titulo,
   mensagens,
@@ -824,6 +1568,7 @@ function MessageList({
   onRefresh,
   sidebarAberta,
   onToggleSidebar,
+  pastaId,
   pastaTipo,
   onEsvaziar,
   onCarregarMais,
@@ -831,16 +1576,28 @@ function MessageList({
   temMais,
   onFlag,
   onExcluir,
+  onMarcarLido,
+  pastasDestino,
+  pastasCarregando,
+  onAbrirMover,
+  onMover,
   selecionados,
   setSelecionados,
   naoLidosPasta,
   contFlagged,
   contAnexos,
+  filtro,
+  onFiltro,
+  filtrosOcultos,
   busca,
   setBusca,
   ordenar,
   ordemDesc,
   onOrdenar,
+  marcarLidoModo,
+  marcarLidoAtraso,
+  onMarcarLidoModo,
+  onMarcarLidoAtraso,
   t,
   idioma,
 }: {
@@ -851,6 +1608,7 @@ function MessageList({
   onRefresh: () => void;
   sidebarAberta: boolean;
   onToggleSidebar: () => void;
+  pastaId: string;
   pastaTipo: string;
   onEsvaziar: () => void;
   onCarregarMais: () => void;
@@ -858,26 +1616,38 @@ function MessageList({
   temMais: boolean;
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void | Promise<void>;
+  onMarcarLido: (id: string, lido: boolean) => void;
+  pastasDestino: PastaDestino[];
+  pastasCarregando: boolean;
+  onAbrirMover: () => void;
+  onMover: (ids: string[], destino: string, rotulo: string) => void;
   selecionados: Set<string>;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
   naoLidosPasta: number;
   contFlagged: number | null;
   contAnexos: number | null;
+  filtro: FiltroLista;
+  onFiltro: (f: FiltroLista) => void;
+  filtrosOcultos: Set<FiltroLista>;
   busca: string;
   setBusca: (v: string) => void;
   ordenar: api.OrdenarMensagens;
   ordemDesc: boolean;
   onOrdenar: (ordenar: api.OrdenarMensagens, descendente: boolean) => void;
+  marcarLidoModo: MarcarLidoModo;
+  marcarLidoAtraso: number;
+  onMarcarLidoModo: (m: MarcarLidoModo) => void;
+  onMarcarLidoAtraso: (s: number) => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
-  const [aba, setAba] = useState<Aba>("todos");
   const listaRef = useRef<HTMLDivElement>(null);
+  const filtroGraph = ehFiltroGraph(filtro);
 
-  // ESC limpa a busca e volta a mostrar tudo.
+  // ESC limpa só a busca de texto (o filtro é global/persistido, controlado
+  // pelo pai — não é resetado aqui).
   const limparBusca = () => {
     setBusca("");
-    setAba("todos");
   };
 
   const alternarSel = (id: string) =>
@@ -888,31 +1658,58 @@ function MessageList({
       return n;
     });
 
-  // A busca por TEXTO é server-side (o pai passa os resultados como `mensagens`);
-  // aqui só aplicamos o filtro de aba (All/Unread/Flagged/Files) sobre a fonte.
+  // A busca por TEXTO e os filtros Graph são resolvidos pelo pai (que passa os
+  // resultados como `mensagens`); aqui só aplicamos os filtros CLIENT-side
+  // (Unread/Flagged/Files) sobre a fonte. "all" e os filtros Graph não filtram
+  // mais nada aqui.
   const filtrada = useMemo(() => {
     if (!mensagens) return [];
     return mensagens.filter((m) => {
-      if (aba === "naoLidos" && m.lido) return false;
-      if (aba === "sinalizados" && !m.sinalizado) return false;
-      if (aba === "anexos" && !m.temAnexos) return false;
+      if (filtro === "unread" && m.lido) return false;
+      if (filtro === "flagged" && !m.sinalizado) return false;
+      if (filtro === "files" && !m.temAnexos) return false;
       return true;
     });
-  }, [mensagens, aba]);
+  }, [mensagens, filtro]);
 
   // Agrupamento por período + grupo Flagged no topo (#30). Só quando ordenado
-  // por DATA e fora de busca (período segue a ordem; em busca o Graph ordena por
-  // relevância). Colapso persiste (regra: o app guarda o estado do usuário).
-  const AGRUPAR = ordenar === "data" && busca.trim() === "";
-  const [colapsadosArr, setColapsadosArr] = usePersistedState<string[]>(
-    "bridge.gruposColapsados",
-    []
+  // por DATA e fora de busca/filtro-Graph (período segue a ordem; em busca e nos
+  // filtros Graph — ex.: "To me" via $search — o Graph ordena por relevância).
+  // Colapso persiste (regra: o app guarda o estado do usuário).
+  const AGRUPAR = ordenar === "data" && busca.trim() === "" && !filtroGraph;
+  // O colapso persiste POR PASTA. A chave do grupo é o PERÍODO ("hoje",
+  // "mes-5", "ano-2025", "older"…) e antes era guardada numa lista ÚNICA, comum
+  // a todas as pastas: colapsar "Junho" na Inbox escondia também todo o "Junho"
+  // de Itens Excluídos/Lixo Eletrônico — pastas de mail ANTIGO, onde quase tudo
+  // cai nos períodos velhos. Com todos os grupos colapsados a lista renderiza
+  // SÓ cabeçalhos (que não são linhas de e-mail), e aí o botão direito não
+  // encontra nada pra abrir o menu de contexto — a causa do "não há menu de
+  // contexto em Deleted e Junk" (#86). Guardar por pasta mantém o estado do
+  // usuário sem vazar de uma pasta pra outra.
+  const [colapsadosMapa, setColapsadosMapa] = usePersistedState<Record<string, string[]>>(
+    "bridge.gruposColapsados.v2",
+    {}
+  );
+  const colapsadosArr = useMemo(
+    () => colapsadosMapa[pastaId] ?? [],
+    [colapsadosMapa, pastaId]
   );
   const colapsados = useMemo(() => new Set(colapsadosArr), [colapsadosArr]);
-  const alternarColapso = (chave: string) =>
-    setColapsadosArr((arr) =>
-      arr.includes(chave) ? arr.filter((c) => c !== chave) : [...arr, chave]
-    );
+  // Quantas linhas de MENSAGEM o último auto-preenchimento (#82) já tinha visto.
+  // null = auto-preenchimento liberado (o usuário mexeu no colapso / rolou).
+  const autoPreencheuRef = useRef<number | null>(null);
+  const alternarColapso = (chave: string) => {
+    autoPreencheuRef.current = null; // abrir/fechar grupo libera o auto-preenchimento
+    setColapsadosMapa((mapa) => {
+      const atual = mapa[pastaId] ?? [];
+      return {
+        ...mapa,
+        [pastaId]: atual.includes(chave)
+          ? atual.filter((c) => c !== chave)
+          : [...atual, chave],
+      };
+    });
+  };
   // Rótulo do período por idioma: hoje/ontem/older via strings; mês via nome
   // localizado (Intl, capitalizado); ano anterior via o número do ano (#30).
   const rotuloDePeriodo = useCallback(
@@ -961,7 +1758,7 @@ function MessageList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtrada, AGRUPAR, colapsados, t, rotuloDePeriodo]);
 
-  const filtrando = busca.trim() !== "" || aba !== "todos";
+  const filtrando = busca.trim() !== "" || filtro !== "all";
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
   // carrega a próxima (progressivo) até aparecer resultado ou acabar.
   useEffect(() => {
@@ -984,16 +1781,78 @@ function MessageList({
     },
   });
 
+  // Avatares dos remetentes internos (#39): coleta os e-mails das linhas
+  // VISÍVEIS (virtualizadas) e pede as fotos em lote (debounce + $batch no
+  // cache). `getFoto` é lido na hora de renderizar cada linha.
+  const { getFoto, pedirFotos } = useFotos();
+  const itensVirtuais = virtualizer.getVirtualItems();
+  // Assinatura estável do intervalo visível: evita re-disparar o efeito a cada
+  // render (o array de itens virtuais tem identidade nova toda vez).
+  const faixaVisivel = itensVirtuais.length
+    ? `${itensVirtuais[0].index}-${itensVirtuais[itensVirtuais.length - 1].index}`
+    : "";
+  useEffect(() => {
+    const emails: string[] = [];
+    for (const vr of itensVirtuais) {
+      const l = linhas[vr.index];
+      if (l && l.tipo === "msg" && l.m.deEmail) emails.push(l.m.deEmail);
+    }
+    if (emails.length) pedirFotos(emails);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [faixaVisivel, linhas, pedirFotos]);
+
   const comEstrela = mensagens?.filter((m) => m.sinalizado).length ?? 0;
   const comAnexo = mensagens?.filter((m) => m.temAnexos).length ?? 0;
-  const abas: { id: Aba; label: string; n?: number }[] = [
-    { id: "todos", label: t.controlRoom.abaTodos },
+  // Opções do filtro da lista (#31). Os 4 primeiros são client-side (com
+  // contador real da pasta); os 3 Graph não têm contador. mentions/invites
+  // somem quando o tenant não suporta (D6 — `filtrosOcultos`).
+  const filtroOpcoes = (
+    [
+    { id: "all", label: t.controlRoom.abaTodos, icon: <Inbox className="size-4" /> },
     // não lidos = total REAL da pasta (não só os carregados na lista)
-    { id: "naoLidos", label: t.controlRoom.abaNaoLidos, n: naoLidosPasta },
+    { id: "unread", label: t.controlRoom.abaNaoLidos, icon: <Mail className="size-4" />, n: naoLidosPasta },
     // Flagged/Files = total REAL da pasta (fallback pro carregado enquanto carrega)
-    { id: "sinalizados", label: t.controlRoom.abaSinalizados, n: contFlagged ?? comEstrela },
-    { id: "anexos", label: t.controlRoom.abaAnexos, n: contAnexos ?? comAnexo },
+    { id: "flagged", label: t.controlRoom.abaSinalizados, icon: <Flag className="size-4" />, n: contFlagged ?? comEstrela },
+    { id: "files", label: t.controlRoom.abaAnexos, icon: <Paperclip className="size-4" />, n: contAnexos ?? comAnexo },
+    { id: "tome", label: t.controlRoom.filtroToMe, icon: <User className="size-4" /> },
+    { id: "mentions", label: t.controlRoom.filtroMentions, icon: <AtSign className="size-4" /> },
+    { id: "invites", label: t.controlRoom.filtroInvites, icon: <CalendarCheck className="size-4" /> },
+    ] as { id: FiltroLista; label: string; icon: React.ReactNode; n?: number }[]
+  ).filter((o) => !filtrosOcultos.has(o.id));
+
+  // O @reui/filters (variante Radix) é um filter-builder: campo → operador →
+  // valor. Como o comportamento pedido é escolher UM filtro, modelamos um único
+  // campo `view` do tipo `select` com as 7 opções (single-select). O contador
+  // vai no rótulo da opção — o chip do componente não tem slot de badge.
+  const filtroCampos: FilterFieldConfig<FiltroLista>[] = [
+    {
+      key: "view",
+      label: t.controlRoom.filtroLabel,
+      icon: <ListFilter className="size-3.5" />,
+      type: "select",
+      // 7 opções: a busca dentro do submenu só atrapalharia.
+      searchable: false,
+      operators: [{ value: "is", label: t.controlRoom.filtroOperadorIs }],
+      options: filtroOpcoes.map((o) => ({
+        value: o.id,
+        label: o.n != null && o.n > 0 ? `${o.label} (${o.n})` : o.label,
+        icon: o.icon,
+      })),
+    },
   ];
+  // "all" = sem filtro → nenhum chip, e o botão "Filtro" volta a aparecer
+  // (`allowMultiple={false}` esconde o botão enquanto houver filtro ativo).
+  // Id fixo pra não recriar o chip a cada render.
+  const filtrosAtivos: Filter<FiltroLista>[] =
+    filtro === "all"
+      ? []
+      : [{ id: "view", field: "view", operator: "is", values: [filtro] }];
+
+  // Single-select: o chip mais recente manda; lista vazia (X no chip) = "all".
+  function aoMudarFiltro(fs: Filter<FiltroLista>[]) {
+    const v = fs[fs.length - 1]?.values[0];
+    onFiltro(v != null && filtroOpcoes.some((o) => o.id === v) ? v : "all");
+  }
 
   // Teclado: ESC desfaz multi-seleção; Ctrl+A seleciona tudo (se já há ≥1);
   // ↑/↓ movem a seleção; Delete exclui.
@@ -1039,11 +1898,76 @@ function MessageList({
     }
   }
 
+  // #82: com agrupamento (#30) + grupos colapsados, a lista pode ficar mais
+  // CURTA que a área visível — e aí não dá pra rolar até os 90% que disparam o
+  // carregar-mais, então os grupos ficam incompletos (o "buraco" entre períodos).
+  // Este efeito carrega páginas até o conteúdo encher o viewport (ou acabar
+  // `temMais`).
+  //
+  // ⚠️ REWORK (rejeição do PO: "Flagged some quando todos os grupos estão
+  // colapsados"): a versão anterior só olhava a ALTURA. Com todos os grupos
+  // colapsados a lista fica presa em ~10 linhas de header — altura que nunca
+  // enche o viewport — então o efeito repaginava a pasta INTEIRA, página atrás
+  // de página, sem nada mudar na tela. Cada página remontava `linhas`/o
+  // virtualizer e a lista piscava/perdia as primeiras linhas (o header
+  // "Flagged", que é a linha 0). Agora o efeito exige PROGRESSO: se o auto-load
+  // anterior não aumentou o número de linhas de MENSAGEM visíveis (páginas
+  // caindo todas dentro de grupos colapsados), ele para. Rolar ou abrir/fechar
+  // um grupo libera de novo (`autoPreencheuRef = null`), então "grupo colapsado
+  // não trava a carga" continua valendo.
+  const linhasMsg = useMemo(
+    () => linhas.reduce((n, l) => n + (l.tipo === "msg" ? 1 : 0), 0),
+    [linhas]
+  );
+  useEffect(() => {
+    const el = listaRef.current;
+    if (!el || carregandoMais || !temMais) return;
+    // +8 de folga (padding/borda). Se o conteúdo passa da área visível, o
+    // gatilho de scroll (90%) já dá conta — solta o trava do auto-preenchimento.
+    if (el.scrollHeight > el.clientHeight + 8) {
+      autoPreencheuRef.current = null;
+      return;
+    }
+    // Sem progresso desde o último auto-load → para (senão baixa a pasta toda).
+    if (autoPreencheuRef.current !== null && linhasMsg <= autoPreencheuRef.current) return;
+    autoPreencheuRef.current = linhasMsg;
+    onCarregarMais();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhas.length, linhasMsg, temMais, carregandoMais, colapsadosArr]);
+
+  // #82: colapsar grupos ENCOLHE muito a lista virtual (de milhares de px para
+  // ~10 linhas de header). Se o scroll estava além do novo fim, o browser prende
+  // o `scrollTop` no máximo mas o virtualizer segue com o offset antigo e passa a
+  // renderizar uma faixa de índices que não existe mais — some justamente o topo
+  // da lista, onde fica o header "Flagged" (linha 0). Reancorar o virtualizer no
+  // offset válido sempre que a lista encolhe garante o AC "Flagged aparece acima
+  // de todos" mesmo com todos os grupos colapsados.
+  useEffect(() => {
+    const el = listaRef.current;
+    if (!el) return;
+    const max = Math.max(0, virtualizer.getTotalSize() - el.clientHeight);
+    if (el.scrollTop > max) virtualizer.scrollToOffset(max);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linhas.length, colapsadosArr]);
+
   const idsFiltrados = filtrada.map((m) => m.id);
   const todosSel = idsFiltrados.length > 0 && idsFiltrados.every((id) => selecionados.has(id));
   // Em "modo seleção" (≥1 marcado): checkboxes sempre visíveis e as ações de
   // hover por linha somem — o usuário opera pela barra de seleção (#23).
   const haSelecao = selecionados.size > 0;
+  // Em Itens Excluídos o "Excluir" já é DEFINITIVO (acaoExcluir é folder-aware).
+  const excluirPermanente = pastaTipo === "deleteditems";
+  // Mensagens da seleção: alimentam o menu de contexto da ÁREA da lista (botão
+  // direito fora das linhas). Estado comum = "todas lidas/sinalizadas?", que
+  // define o rótulo e o valor novo aplicado ao lote.
+  const msgsSelecionadas = useMemo(
+    () => (mensagens ?? []).filter((m) => selecionados.has(m.id)),
+    [mensagens, selecionados]
+  );
+  const selTodasLidas =
+    msgsSelecionadas.length > 0 && msgsSelecionadas.every((m) => m.lido);
+  const selTodasSinalizadas =
+    msgsSelecionadas.length > 0 && msgsSelecionadas.every((m) => m.sinalizado);
 
   // Rótulos das opções de ordenação (chave → string i18n) (#32).
   const rotuloOrdena: Record<api.OrdenarMensagens, string> = {
@@ -1109,6 +2033,57 @@ function MessageList({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
+          {/* Preferências de LEITURA (#95): quando a mensagem aberta vira lida.
+              Mora aqui, no cluster de preferências do cabeçalho da lista, pelo
+              mesmo motivo da ordenação: é chrome permanente (a toolbar do leitor
+              só existe com mensagem aberta) e evita um segundo lugar de
+              preferências no Bridge. Mesmo padrão visual do menu vizinho
+              (Label + RadioGroup); trigger só-ícone como o refresh, e NÃO a
+              engrenagem `Settings` — essa já significa "tela Configurações" do
+              Toolbox no sidebar.
+              As opções são uma escala única (ao abrir → 2s → 5s → 10s) em vez de
+              "modo + atraso" em dois controles: sem UI condicional, sem estado
+              escondido, e o RadioGroup do Radix já dá role/aria + setas. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon-sm" aria-label={t.controlRoom.prefLeitura}>
+                <SlidersHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuLabel>{t.controlRoom.prefMarcarLidoTitulo}</DropdownMenuLabel>
+              <DropdownMenuRadioGroup
+                value={
+                  marcarLidoModo === "atraso"
+                    ? `atraso:${marcarLidoAtraso}`
+                    : marcarLidoModo
+                }
+                onValueChange={(v) => {
+                  if (v.startsWith("atraso:")) {
+                    onMarcarLidoAtraso(Number(v.slice("atraso:".length)));
+                    onMarcarLidoModo("atraso");
+                  } else {
+                    onMarcarLidoModo(v as MarcarLidoModo);
+                  }
+                }}
+              >
+                <DropdownMenuRadioItem value="imediato">
+                  {t.controlRoom.prefMarcarLidoImediato}
+                </DropdownMenuRadioItem>
+                {MARCAR_LIDO_ATRASOS.map((s) => (
+                  <DropdownMenuRadioItem key={s} value={`atraso:${s}`}>
+                    {preencher(t.controlRoom.prefMarcarLidoAtraso, { n: s })}
+                  </DropdownMenuRadioItem>
+                ))}
+                {/* "Manualmente" não é um ponto da escala de tempo: é desligar
+                    o automatismo. Daí o separador. */}
+                <DropdownMenuSeparator />
+                <DropdownMenuRadioItem value="manual">
+                  {t.controlRoom.prefMarcarLidoManual}
+                </DropdownMenuRadioItem>
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label="↻">
             <RefreshCw />
           </Button>
@@ -1160,26 +2135,23 @@ function MessageList({
         </div>
       ) : (
         <div className="flex items-center gap-1 px-3 pb-2">
-          {abas.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              onClick={() => setAba(a.id)}
-              className={cn(
-                "flex items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors",
-                aba === a.id
-                  ? "bg-secondary font-medium text-secondary-foreground"
-                  : "text-muted-foreground hover:bg-accent/50"
-              )}
-            >
-              {a.label}
-              {a.n != null && a.n > 0 && (
-                <Badge variant="primary-light" size="xs" radius="full">
-                  {a.n}
-                </Badge>
-              )}
-            </button>
-          ))}
+          {/* Filtro da lista (#31) com o @reui/filters — variante RADIX,
+              instalada do registry (`@reui/filters` em style `radix-nova`) e
+              usada literal. Um único campo `view` com as 7 opções: enquanto
+              não há filtro aparece o botão "Filtro"; escolhida uma opção, ela
+              vira o chip `Filtro · é · <opção>` com X pra voltar a "Todos". */}
+          <Filters<FiltroLista>
+            filters={filtrosAtivos}
+            fields={filtroCampos}
+            onChange={aoMudarFiltro}
+            size="sm"
+            allowMultiple={false}
+            showSearchInput={false}
+            i18n={{
+              addFilter: t.controlRoom.filtroLabel,
+              select: t.controlRoom.filtroSelecione,
+            }}
+          />
         </div>
       )}
 
@@ -1200,6 +2172,14 @@ function MessageList({
           )}
         </div>
       ) : (
+        // Menu de contexto da ÁREA da lista: o botão direito FORA das linhas
+        // (espaço vazio abaixo da última mensagem, cabeçalho de grupo) também
+        // precisa responder — em pastas curtas como Itens Excluídos/Lixo
+        // Eletrônico boa parte do painel é área vazia e o usuário nunca acerta
+        // uma linha (#86). Age sobre a SELEÇÃO; sem seleção não há alvo, então
+        // o trigger fica desabilitado (nada abre, nem menu vazio).
+        <ContextMenu>
+          <ContextMenuTrigger asChild disabled={!haSelecao}>
         <div
           ref={listaRef}
           tabIndex={0}
@@ -1209,6 +2189,8 @@ function MessageList({
             // Pré-carga antecipada: ao passar de 90% da lista já busca a próxima
             // página, pra sempre haver buffer à frente (não espera bater no fim).
             const el = e.currentTarget;
+            // rolar = interação do usuário: libera o auto-preenchimento (#82)
+            autoPreencheuRef.current = null;
             if (el.scrollTop + el.clientHeight >= el.scrollHeight * 0.9) onCarregarMais();
           }}
         >
@@ -1239,40 +2221,76 @@ function MessageList({
                         transform: `translateY(${vr.start}px)`,
                       }}
                     >
-                      {/* Grupo colapsável no padrão @reui/c-collapsible-6:
-                          Collapsible controlado + CollapsibleTrigger com chevron
-                          que gira via group-data-[state=open] (#30). O conteúdo
-                          são as msgs virtualizadas (linhas separadas), então o
-                          colapso emite/omite essas linhas via `colapsados`. */}
-                      <Collapsible
-                        open={!colapsado}
-                        onOpenChange={() => alternarColapso(linha.chave)}
+                      {/* Cabeçalho de grupo = @reui/c-collapsible-6 LITERAL
+                          (`pnpm dlx shadcn@latest add @reui/c-collapsible-6`,
+                          style `radix-nova`): Frame > Collapsible >
+                          CollapsibleTrigger > FrameHeader > FrameTitle +
+                          chevron com `in-data-[state=open]:rotate-90`, na mesma
+                          composição do bloco instalado em
+                          `src/components/examples/c-collapsible-6.tsx` (#30).
+
+                          Duas adaptações, obrigatórias por ser LINHA de lista
+                          virtualizada e não card solto:
+                          1. `variant="ghost"` + `bg-transparent`: o Frame é um
+                             card (borda + fundo); numa linha de lista ele viraria
+                             uma caixa por grupo. Ghost tira a borda e o fundo, o
+                             componente continua sendo o do registry.
+                          2. Sem `CollapsibleContent`/`FramePanel`: o conteúdo do
+                             grupo são as MENSAGENS, que são outras linhas
+                             virtuais do react-virtual — o colapso emite/omite
+                             essas linhas via `colapsados`, não desmontando um
+                             painel (senão a virtualização quebra). */}
+                      <Frame
+                        dense
+                        spacing="sm"
+                        variant="ghost"
+                        className="w-full bg-transparent"
                       >
-                        <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-muted-foreground hover:text-foreground">
-                          <ChevronRight
-                            className={cn(
-                              "size-3.5 shrink-0 transition-transform",
-                              !colapsado && "rotate-90"
-                            )}
-                          />
-                          {linha.chave === "flagged" && (
-                            <Flag className="size-3 shrink-0 fill-red-500 text-red-500" />
-                          )}
-                          <span className="uppercase tracking-wide">{linha.rotulo}</span>
-                          <span className="font-normal opacity-70">{linha.n}</span>
-                        </CollapsibleTrigger>
-                      </Collapsible>
+                        <Collapsible
+                          open={!colapsado}
+                          onOpenChange={() => alternarColapso(linha.chave)}
+                        >
+                          <CollapsibleTrigger className="flex w-full">
+                            <FrameHeader className="flex grow flex-row items-center gap-1.5 px-2 py-1.5 text-left text-xs font-semibold text-muted-foreground hover:text-foreground">
+                              <ChevronRight
+                                aria-hidden="true"
+                                className="size-3.5 shrink-0 transition-transform in-data-[state=open]:rotate-90"
+                              />
+                              {linha.chave === "flagged" && (
+                                <Flag className="size-3 shrink-0 fill-red-500 text-red-500" />
+                              )}
+                              <FrameTitle className="text-xs font-semibold uppercase tracking-wide">
+                                {linha.rotulo}
+                              </FrameTitle>
+                              <span className="font-normal opacity-70">{linha.n}</span>
+                            </FrameHeader>
+                          </CollapsibleTrigger>
+                        </Collapsible>
+                      </Frame>
                     </div>
                   );
                 }
                 const m = linha.m;
                 const ativo = m.id === sel;
                 const marcado = selecionados.has(m.id);
+                // Foto do remetente interno (#39); ausente → iniciais.
+                const foto = m.foto ?? getFoto(m.deEmail);
+                // Ações do menu de contexto valem para a seleção quando o item
+                // clicado faz parte dela; senão, só para o próprio item (#86).
+                const alvos =
+                  selecionados.has(m.id) && selecionados.size > 0
+                    ? [...selecionados]
+                    : [m.id];
                 return (
                   <div
                     key={vr.key}
                     data-index={vr.index}
                     ref={virtualizer.measureElement}
+                    // O menu da LINHA e o menu da ÁREA são dois triggers do
+                    // Radix aninhados e o trigger não interrompe a propagação:
+                    // sem isso o clique na linha abriria os DOIS. A linha tem
+                    // prioridade (alvo mais específico).
+                    onContextMenu={(e) => e.stopPropagation()}
                     style={{
                       position: "absolute",
                       top: 0,
@@ -1282,6 +2300,8 @@ function MessageList({
                       transform: `translateY(${vr.start}px)`,
                     }}
                   >
+                    <ContextMenu>
+                      <ContextMenuTrigger asChild>
                     <Item
                       size="sm"
                       data-msgid={m.id}
@@ -1312,6 +2332,7 @@ function MessageList({
 
                       <ItemMedia className="relative self-start">
                         <Avatar>
+                          {foto && <AvatarImage src={foto} alt="" />}
                           <AvatarFallback>{m.iniciais}</AvatarFallback>
                         </Avatar>
                         {!m.lido && (
@@ -1393,6 +2414,25 @@ function MessageList({
                         </ItemDescription>
                       </ItemContent>
                     </Item>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent className="w-56">
+                        <ItensMenuEmail
+                          alvos={alvos}
+                          lido={m.lido}
+                          sinalizado={m.sinalizado}
+                          permanente={excluirPermanente}
+                          onMarcarLido={onMarcarLido}
+                          onFlag={onFlag}
+                          onExcluir={onExcluir}
+                          pastasDestino={pastasDestino}
+                          pastasCarregando={pastasCarregando}
+                          onAbrirMover={onAbrirMover}
+                          onMover={onMover}
+                          setSelecionados={setSelecionados}
+                          t={t}
+                        />
+                      </ContextMenuContent>
+                    </ContextMenu>
                   </div>
                 );
               })}
@@ -1404,6 +2444,25 @@ function MessageList({
             </div>
           )}
         </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-56">
+            <ItensMenuEmail
+              alvos={[...selecionados]}
+              lido={selTodasLidas}
+              sinalizado={selTodasSinalizadas}
+              permanente={excluirPermanente}
+              onMarcarLido={onMarcarLido}
+              onFlag={onFlag}
+              onExcluir={onExcluir}
+              pastasDestino={pastasDestino}
+              pastasCarregando={pastasCarregando}
+              onAbrirMover={onAbrirMover}
+              onMover={onMover}
+              setSelecionados={setSelecionados}
+              t={t}
+            />
+          </ContextMenuContent>
+        </ContextMenu>
       )}
     </section>
   );
@@ -1426,6 +2485,7 @@ function MessageDetail({
   id,
   userEmail,
   sinalizado,
+  lido,
   onFlag,
   onExcluir,
   onMarcarLido,
@@ -1437,6 +2497,7 @@ function MessageDetail({
   id: string | null;
   userEmail?: string | null;
   sinalizado: boolean;
+  lido: boolean;
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void;
   onMarcarLido: (id: string, lido: boolean) => void;
@@ -1449,6 +2510,8 @@ function MessageDetail({
   const [modo, setModo] = useState<null | "responder" | "responderTodos" | "encaminhar">(null);
   const [enviando, setEnviando] = useState(false);
   const comporRef = useRef<ComporMensagemHandle>(null);
+  // Avatar do remetente interno (#39).
+  const { getFoto, pedirFotos } = useFotos();
 
   useEffect(() => {
     if (!id) {
@@ -1463,6 +2526,11 @@ function MessageDetail({
       vivo = false;
     };
   }, [id]);
+
+  // Pede a foto do remetente quando o detalhe carrega.
+  useEffect(() => {
+    if (det?.deEmail) pedirFotos([det.deEmail]);
+  }, [det?.deEmail, pedirFotos]);
 
   async function baixarAnexo(anexo: AnexoEmail) {
     if (!id) return;
@@ -1605,14 +2673,18 @@ function MessageDetail({
           >
             <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
           </Button>
+          {/* Botão de lido/não-lido: ALTERNA (#95). Antes era só "marcar como
+              não lido" — o que bastava quando o app marcava lido sozinho ao
+              abrir. Nos modos "após atraso"/"manual" a mensagem pode continuar
+              não-lida no leitor, então o botão precisa marcar LIDO também. */}
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={() => id && onMarcarLido(id, false)}
-            aria-label={t.controlRoom.marcarNaoLido}
-            title={t.controlRoom.marcarNaoLido}
+            onClick={() => id && onMarcarLido(id, !lido)}
+            aria-label={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
+            title={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
           >
-            <Mail className="size-4" />
+            {lido ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
           </Button>
           <Button
             variant="ghost"
@@ -1634,6 +2706,9 @@ function MessageDetail({
         <h1 className="text-base font-semibold">{det.assunto}</h1>
         <div className="mt-3 flex items-start gap-3">
           <Avatar>
+            {getFoto(det.deEmail) && (
+              <AvatarImage src={getFoto(det.deEmail)!} alt="" />
+            )}
             <AvatarFallback>
               {det.de
                 .split(" ")
@@ -1917,6 +2992,8 @@ function EventoDialog({
 }) {
   const { idioma, t } = useIdioma();
   const [det, setDet] = useState<EventoDetalhe | null>(null);
+  // Avatares dos participantes internos (#39).
+  const { getFoto, pedirFotos } = useFotos();
 
   useEffect(() => {
     if (!id) {
@@ -1930,6 +3007,11 @@ function EventoDialog({
       vivo = false;
     };
   }, [id]);
+
+  // Pede as fotos dos participantes quando o detalhe carrega.
+  useEffect(() => {
+    if (det?.participantes.length) pedirFotos(det.participantes.map((p) => p.email));
+  }, [det, pedirFotos]);
 
   return (
     <Sheet open={!!id} onOpenChange={(o) => !o && onClose()}>
@@ -1968,17 +3050,21 @@ function EventoDialog({
                 <div>
                   <p className="mb-2 text-xs font-medium">{t.controlRoom.convidadosTitulo}</p>
                   <div className="flex flex-wrap gap-2">
-                    {det.participantes.map((p) => (
-                      <div
-                        key={p.email || p.nome}
-                        className="flex items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1"
-                      >
-                        <Avatar size="sm">
-                          <AvatarFallback>{p.iniciais}</AvatarFallback>
-                        </Avatar>
-                        <span className="text-xs">{p.nome}</span>
-                      </div>
-                    ))}
+                    {det.participantes.map((p) => {
+                      const foto = p.foto ?? getFoto(p.email);
+                      return (
+                        <div
+                          key={p.email || p.nome}
+                          className="flex items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1"
+                        >
+                          <Avatar size="sm">
+                            {foto && <AvatarImage src={foto} alt="" />}
+                            <AvatarFallback>{p.iniciais}</AvatarFallback>
+                          </Avatar>
+                          <span className="text-xs">{p.nome}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -2098,6 +3184,11 @@ export function ControlRoomScreen({
   onAbrirLink: (url: string) => void;
 }) {
   const { idioma, t } = useIdioma();
+  // Fotos de contatos (#39): só buscamos avatar de remetente do MESMO domínio do
+  // tenant (o do usuário logado). Configura o domínio do cache aqui.
+  useEffect(() => {
+    configurarDominioFotos(user.email);
+  }, [user.email]);
   // Visibilidade do card da Agenda — controlada pelo item no RODAPÉ do sidebar
   // de pastas do Bridge (a Agenda pertence ao Bridge, não ao app principal).
   // Nasce FECHADA (chave nova, reseta persistidos antigos) pra fazer menos
@@ -2126,6 +3217,24 @@ export function ControlRoomScreen({
     if (!["data", "remetente", "assunto"].includes(ordenar as string)) setOrdenar("data");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Preferência de "marcar como lido" (#95), persistida: o app sempre guarda o
+  // estado que o usuário deixa. Default = "imediato" (comportamento histórico).
+  const [marcarLidoModo, setMarcarLidoModo] = usePersistedState<MarcarLidoModo>(
+    "bridge.marcarLidoModo",
+    "imediato"
+  );
+  const [marcarLidoAtraso, setMarcarLidoAtraso] = usePersistedState<number>(
+    "bridge.marcarLidoAtraso",
+    MARCAR_LIDO_ATRASO_PADRAO
+  );
+  // localStorage é editável por fora (e pode ter sobra de versões antigas):
+  // valor inválido volta ao padrão em vez de virar um timer NaN/eterno.
+  useEffect(() => {
+    if (!MARCAR_LIDO_MODOS.includes(marcarLidoModo)) setMarcarLidoModo("imediato");
+    if (!MARCAR_LIDO_ATRASOS.includes(marcarLidoAtraso as (typeof MARCAR_LIDO_ATRASOS)[number]))
+      setMarcarLidoAtraso(MARCAR_LIDO_ATRASO_PADRAO);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [temMais, setTemMais] = useState(false);
   const [carregandoMais, setCarregandoMais] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
@@ -2138,6 +3247,17 @@ export function ControlRoomScreen({
   // Contadores REAIS da pasta (não só o carregado) pras abas Flagged/Files.
   const [contFlagged, setContFlagged] = useState<number | null>(null);
   const [contAnexos, setContAnexos] = useState<number | null>(null);
+  // Filtro da lista (#31): dropdown Outlook-like, single-select. Persistido
+  // global (D3) — sobrevive ao restart — mas resetado visualmente ao TROCAR de
+  // pasta (efeito abaixo). Os 3 filtros Graph (tome/mentions/invites) buscam no
+  // servidor via cr_filtrar; os 4 client-side são aplicados no MessageList.
+  const [filtro, setFiltro] = usePersistedState<FiltroLista>("bridge.filtroLista", "all");
+  const filtroGraph = ehFiltroGraph(filtro);
+  const [resultadosFiltro, setResultadosFiltro] = useState<EmailItem[] | null>(null);
+  const [temMaisFiltro, setTemMaisFiltro] = useState(false);
+  const proximoFiltroRef = useRef<string | null>(null);
+  // D6: filtros Graph que o tenant rejeitou (400) — escondidos silenciosamente.
+  const [filtrosOcultos, setFiltrosOcultos] = useState<Set<FiltroLista>>(new Set());
   const proximoBuscaRef = useRef<string | null>(null);
   const carregandoMaisRef = useRef(false);
   // pasta atual (pra closures assíncronas que precisam do valor mais novo).
@@ -2170,6 +3290,54 @@ export function ControlRoomScreen({
       vivo = false;
     };
   }, [recarga, recargaPastas]);
+
+  // Cache de SUBPASTAS (childFolders), compartilhado pelo sidebar (expandir) e
+  // pelo submenu "Mover para pasta…" (#88). Carrega sob demanda e memoriza; o
+  // ref evita pedir duas vezes a mesma pasta (o sidebar e o submenu podem pedir
+  // quase ao mesmo tempo).
+  const [subpastas, setSubpastas] = useState<Record<string, PastaEmail[]>>({});
+  const subpastasPedidasRef = useRef<Set<string>>(new Set());
+  const carregarSubpastas = useCallback((id: string) => {
+    if (subpastasPedidasRef.current.has(id)) return;
+    subpastasPedidasRef.current.add(id);
+    api
+      .crSubpastas(id)
+      .then((cs) => setSubpastas((f) => ({ ...f, [id]: cs })))
+      .catch(() => setSubpastas((f) => ({ ...f, [id]: [] })));
+  }, []);
+
+  // O submenu "Mover para…" precisa da árvore INTEIRA (não só do que o usuário
+  // expandiu no sidebar). Ao abrir pela primeira vez, `pedirArvore` liga e este
+  // efeito pede as subpastas que faltam; como ele depende de `subpastas`, cada
+  // lote que chega dispara o nível seguinte — a árvore se completa sozinha, sem
+  // recursão manual e sem buscar nada antes do usuário precisar.
+  const [pedirArvore, setPedirArvore] = useState(false);
+  const conhecidas = useMemo(
+    () => [...(pastas ?? []), ...Object.values(subpastas).flat()],
+    [pastas, subpastas]
+  );
+  // Pastas que declaram filhos (childFolderCount > 0) mas ainda não voltaram.
+  const arvorePendentes = useMemo(
+    () => conhecidas.filter((p) => p.filhos > 0 && subpastas[p.id] === undefined),
+    [conhecidas, subpastas]
+  );
+  useEffect(() => {
+    if (!pedirArvore) return;
+    for (const p of arvorePendentes) carregarSubpastas(p.id);
+  }, [pedirArvore, arvorePendentes, carregarSubpastas]);
+
+  // Árvore achatada COMPLETA: base dos dois "mover". O de MENSAGENS (#88) tira
+  // a pasta atual (mover pra onde a mensagem já está não é opção); o de PASTA
+  // (#90) tira a própria pasta e as descendentes, mas isso depende de qual pasta
+  // foi clicada — quem filtra é o sidebar.
+  const arvorePastas = useMemo(
+    () => achatarPastas(pastas ?? [], subpastas, t),
+    [pastas, subpastas, t]
+  );
+  const pastasDestino = useMemo(
+    () => arvorePastas.filter((p) => p.id !== pastaSel),
+    [arvorePastas, pastaSel]
+  );
 
   // Contadores reais das abas Flagged/Files (na pasta inteira, via $count).
   // Só refaz na TROCA de pasta / refresh manual — NÃO em cada recargaPastas
@@ -2246,13 +3414,135 @@ export function ControlRoomScreen({
     };
   }, [notificarNovos]);
 
-  async function esvaziarLixeira() {
+  // Recarrega o que a mutação de uma PASTA invalidou: as contagens do sidebar
+  // sempre; a LISTA só quando a pasta mexida é a que está aberta (senão a lista
+  // perderia scroll/páginas à toa).
+  function recarregarAposPasta(folderId: string) {
+    if (folderId === pastaSelRef.current) setRecarga((x) => x + 1);
+    else setRecargaPastas((x) => x + 1);
+  }
+
+  // Esvazia uma pasta (Lixeira / Lixo Eletrônico). Chamado pelo botão do
+  // cabeçalho da lista e pelo menu de contexto da pasta (#89) — este último já
+  // passou pelo AlertDialog de confirmação.
+  async function esvaziarPasta(folderId: string) {
+    const aviso = toast.loading(t.controlRoom.esvaziandoPasta);
     try {
-      const n = await api.crEsvaziarLixeira();
-      toast.success(preencher(t.controlRoom.lixeiraEsvaziada, { n }));
-      setRecarga((x) => x + 1);
+      const n = await api.crEsvaziarPasta(folderId);
+      toast.success(preencher(t.controlRoom.pastaEsvaziada, { n }), { id: aviso });
+      recarregarAposPasta(folderId);
     } catch (e) {
-      toast.error(t.controlRoom.erroAcao, { description: String(e) });
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+    }
+  }
+
+  // Marca como lidas todas as não lidas de uma pasta (#89). Pode demorar (loop
+  // de PATCH no Graph), então mostra toast de progresso.
+  async function marcarPastaLida(folderId: string) {
+    const aviso = toast.loading(t.controlRoom.marcandoTodasLidas);
+    try {
+      const n = await api.crMarcarPastaLida(folderId);
+      if (n === 0) toast.info(t.controlRoom.nenhumaNaoLida, { id: aviso });
+      else toast.success(preencher(t.controlRoom.todasMarcadasLidas, { n }), { id: aviso });
+      recarregarAposPasta(folderId);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+    }
+  }
+
+  // ---- CRUD de subpastas (#90) --------------------------------------------
+  // Toda mutação de pasta invalida DUAS coisas: as contagens/lista de raízes
+  // (`recargaPastas` → refaz `crMailFolders`) e o cache de subpastas do(s) pai(s)
+  // afetado(s) — que é memoizado e não voltaria sozinho.
+  const recarregarSubpastas = useCallback(
+    (...ids: (string | undefined)[]) => {
+      for (const id of ids) {
+        if (!id) continue;
+        // Solta a trava de "já pedi" e limpa o cache, senão `carregarSubpastas`
+        // devolveria a lista velha (sem a pasta nova / com a que saiu).
+        subpastasPedidasRef.current.delete(id);
+        setSubpastas((f) => {
+          const n = { ...f };
+          delete n[id];
+          return n;
+        });
+        carregarSubpastas(id);
+      }
+      setRecargaPastas((x) => x + 1);
+    },
+    [carregarSubpastas]
+  );
+
+  async function criarSubpasta(paiId: string, nome: string) {
+    const aviso = toast.loading(t.controlRoom.criandoSubpasta);
+    try {
+      const nova = await api.crCriarSubpasta(paiId, nome);
+      toast.success(preencher(t.controlRoom.subpastaCriada, { pasta: nova.nome }), {
+        id: aviso,
+      });
+      recarregarSubpastas(paiId);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+    }
+  }
+
+  async function renomearPasta(id: string, nome: string, paiId?: string) {
+    const aviso = toast.loading(t.controlRoom.renomeandoPasta);
+    try {
+      const nova = await api.crRenomearPasta(id, nome);
+      toast.success(preencher(t.controlRoom.pastaRenomeada, { pasta: nova.nome }), {
+        id: aviso,
+      });
+      recarregarSubpastas(paiId);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+    }
+  }
+
+  async function excluirPasta(id: string, rotulo: string, paiId?: string) {
+    const aviso = toast.loading(t.controlRoom.excluindoPasta);
+    try {
+      // `true` = foi pra Lixeira (reversível, o caminho normal); `false` = o
+      // backend teve que cair no DELETE definitivo. O toast diz qual foi.
+      const paraLixeira = await api.crExcluirPasta(id);
+      toast.success(
+        preencher(
+          paraLixeira
+            ? t.controlRoom.pastaExcluida
+            : t.controlRoom.pastaExcluidaDefinitiva,
+          { pasta: rotulo }
+        ),
+        { id: aviso }
+      );
+      // A pasta saiu do pai e (quando vai pra lixeira) virou filha de
+      // deleteditems — os dois caches precisam voltar do Graph.
+      recarregarSubpastas(paiId, "deleteditems");
+      // Estava aberta? O id morreu junto: cai na inbox em vez de ficar numa
+      // pasta fantasma com a lista vazia.
+      if (pastaSelRef.current === id) setPastaSel("inbox");
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+    }
+  }
+
+  async function moverPasta(
+    id: string,
+    destino: string,
+    rotuloDestino: string,
+    paiId?: string
+  ) {
+    const aviso = toast.loading(t.controlRoom.movendoPasta);
+    try {
+      const nova = await api.crMoverPasta(id, destino);
+      toast.success(preencher(t.controlRoom.pastaMovida, { pasta: rotuloDestino }), {
+        id: aviso,
+      });
+      recarregarSubpastas(paiId, destino);
+      // O move do Graph devolve a pasta com id NOVO: se ela estava selecionada,
+      // seguir com o id antigo deixaria a lista quebrada.
+      if (pastaSelRef.current === id) setPastaSel(nova.id);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
     }
   }
 
@@ -2265,10 +3555,12 @@ export function ControlRoomScreen({
   const mutarNasListas = (fn: (m: EmailItem) => EmailItem) => {
     setMensagens((prev) => prev?.map(fn) ?? prev);
     setResultadosBusca((prev) => prev?.map(fn) ?? prev);
+    setResultadosFiltro((prev) => prev?.map(fn) ?? prev);
   };
   const removerNasListas = (ids: Set<string>) => {
     setMensagens((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
     setResultadosBusca((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
+    setResultadosFiltro((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
   };
 
   // Marca lido/não-lido (otimista, nos dois sentidos): ajusta o ponto de
@@ -2276,7 +3568,9 @@ export function ControlRoomScreen({
   // rollback. Usado pelo auto-mark ao abrir e pela ação manual de "não-lido".
   function acaoMarcarLido(id: string, lido: boolean) {
     const m =
-      mensagens?.find((x) => x.id === id) ?? resultadosBusca?.find((x) => x.id === id);
+      mensagens?.find((x) => x.id === id) ??
+      resultadosBusca?.find((x) => x.id === id) ??
+      resultadosFiltro?.find((x) => x.id === id);
     if (!m || m.lido === lido) return;
     const delta = lido ? -1 : 1; // lido → menos 1 não-lido; não-lido → mais 1
     mutarNasListas((x) => (x.id === id ? { ...x, lido } : x));
@@ -2295,11 +3589,36 @@ export function ControlRoomScreen({
     });
   }
 
-  // Previewar a mensagem = lê-la (como em qualquer leitor): marca lido ao abrir.
+  // `acaoMarcarLido` é recriada a cada render (fecha sobre mensagens/pastas). O
+  // timer do modo "atraso" dispara MUITO depois do render que o agendou, então
+  // guardamos sempre a versão mais nova num ref: o callback atrasado lê o estado
+  // atual (inclusive o guard `m.lido === lido`, que evita contar duas vezes se o
+  // usuário marcou lido na mão antes do tempo).
+  const marcarLidoRef = useRef(acaoMarcarLido);
   useEffect(() => {
-    if (msgSel) acaoMarcarLido(msgSel, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [msgSel]);
+    marcarLidoRef.current = acaoMarcarLido;
+  });
+
+  // Previewar a mensagem = lê-la (como em qualquer leitor) — mas AGORA conforme
+  // a preferência do usuário (#95):
+  //  - "imediato": marca lido assim que a mensagem é selecionada (default);
+  //  - "atraso":   marca lido depois de N segundos DE LEITURA. O cleanup do
+  //                efeito cancela o timer quando o usuário troca de mensagem
+  //                antes do tempo (ou sai da tela / muda a preferência), então
+  //                passar por cima de várias mensagens não marca nenhuma;
+  //  - "manual":   não marca nada — só a ação explícita de marcar lido marca.
+  useEffect(() => {
+    if (!msgSel || marcarLidoModo === "manual") return;
+    if (marcarLidoModo === "imediato") {
+      marcarLidoRef.current(msgSel, true);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => marcarLidoRef.current(msgSel, true),
+      Math.max(1, marcarLidoAtraso) * 1000
+    );
+    return () => window.clearTimeout(timer);
+  }, [msgSel, marcarLidoModo, marcarLidoAtraso]);
 
   // Ajustes otimistas dos contadores reais das abas (Flagged/Files), pra não
   // ficarem estagnados enquanto o $count do servidor não reflete ainda
@@ -2333,7 +3652,12 @@ export function ControlRoomScreen({
     const idsSet = new Set(ids);
     // Fonte = lista atualmente visível (pasta ou resultados de busca), pra
     // contar não-lidos certo e remover de onde o item de fato está (QA #1).
-    const fonte = (busca.trim() !== "" ? resultadosBusca : mensagens) ?? [];
+    const fonte =
+      (filtroGraph
+        ? resultadosFiltro
+        : busca.trim() !== ""
+          ? resultadosBusca
+          : mensagens) ?? [];
     const removidas = fonte.filter((m) => idsSet.has(m.id));
     const naoLidosFora = removidas.filter((m) => !m.lido).length;
     const anexosFora = removidas.filter((m) => m.temAnexos).length;
@@ -2405,6 +3729,86 @@ export function ControlRoomScreen({
         if (pastaSelRef.current === "deleteditems") setRecarga((x) => x + 1);
       }
     })();
+  }
+
+  /**
+   * Move e-mails para outra pasta (#88) — mesmo desenho otimista do
+   * `acaoExcluir` (que também é um move, pra Lixeira): some da lista na hora,
+   * contadores das pastas ORIGEM e DESTINO ajustados, toast imediato e, no
+   * fundo, o POST /messages/{id}/move em série. Se algum falhar, avisa e
+   * recarrega a pasta pra ressincronizar (o item volta se não saiu).
+   */
+  async function acaoMover(ids: string[], destino: string, rotuloDestino: string) {
+    if (ids.length === 0 || !destino || destino === pastaSel) return;
+    const idsSet = new Set(ids);
+    // Fonte = lista visível (pasta, busca ou filtro Graph), como no excluir.
+    const fonte =
+      (filtroGraph
+        ? resultadosFiltro
+        : busca.trim() !== ""
+          ? resultadosBusca
+          : mensagens) ?? [];
+    const movidas = fonte.filter((m) => idsSet.has(m.id));
+    const naoLidosFora = movidas.filter((m) => !m.lido).length;
+    const anexosFora = movidas.filter((m) => m.temAnexos).length;
+    const flaggedFora = movidas.filter((m) => m.sinalizado).length;
+
+    // 1) OTIMISTA: tira da tela e marca como "saiu daqui" (mesmo registro que o
+    //    excluir usa) pra o backfill/paginação não trazer as mensagens de volta.
+    ids.forEach((id) => deletadasRef.current.add(id));
+    removerNasListas(idsSet);
+    if (anexosFora > 0) ajustarContAnexos(-anexosFora);
+    if (flaggedFora > 0) ajustarContFlagged(-flaggedFora);
+    if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
+    setSelecionados((s) => {
+      const n = new Set(s);
+      ids.forEach((id) => n.delete(id));
+      return n;
+    });
+
+    // 2) Contadores do sidebar: origem −N, destino +N (só se o destino for uma
+    //    pasta do sidebar — subpasta não aparece lá e não tem o que ajustar).
+    setPastas((prev) =>
+      prev?.map((p) => {
+        if (p.id === pastaSel) {
+          return {
+            ...p,
+            total: Math.max(0, p.total - ids.length),
+            naoLidos: Math.max(0, p.naoLidos - naoLidosFora),
+          };
+        }
+        if (p.id === destino) {
+          return { ...p, total: p.total + ids.length, naoLidos: p.naoLidos + naoLidosFora };
+        }
+        return p;
+      }) ?? prev
+    );
+
+    // 3) Toast imediato de confirmação.
+    toast.success(
+      ids.length > 1
+        ? preencher(t.controlRoom.selecionadosMovidos, {
+            n: ids.length,
+            pasta: rotuloDestino,
+          })
+        : preencher(t.controlRoom.emailMovido, { pasta: rotuloDestino })
+    );
+
+    // 4) Move de verdade em background + reconcile.
+    let ok: string[] = [];
+    try {
+      ok = await api.crMoverEmails(ids, destino);
+    } catch {
+      ok = [];
+    }
+    const falharam = ids.filter((id) => !ok.includes(id));
+    if (falharam.length > 0) {
+      falharam.forEach((id) => deletadasRef.current.delete(id));
+      toast.error(t.controlRoom.erroAcao);
+      setRecarga((n) => n + 1); // ressincroniza lista + contagens do zero
+    } else {
+      setRecargaPastas((x) => x + 1); // reconcilia as contagens reais
+    }
   }
 
   // mensagens da pasta (1ª página); auto-seleciona a primeira e semeia o
@@ -2486,7 +3890,9 @@ export function ControlRoomScreen({
   const buscaAtiva = busca.trim() !== "";
   useEffect(() => {
     const termo = busca.trim();
-    if (!termo) {
+    // Com um filtro Graph ativo NÃO fazemos $search no servidor: o texto é
+    // aplicado client-side por cima do resultado do filtro (D2).
+    if (!termo || filtroGraph) {
       setResultadosBusca(null);
       setTemMaisBusca(false);
       return;
@@ -2507,7 +3913,76 @@ export function ControlRoomScreen({
         });
     }, 300);
     return () => clearTimeout(id);
-  }, [busca, pastaSel]);
+  }, [busca, pastaSel, filtroGraph]);
+
+  // Reset visual do filtro ao TROCAR de pasta (#31 / D3): um filtro Graph da
+  // Inbox não faz sentido carregar pra Enviados. Só reseta em troca REAL — no
+  // 1º render mantém o valor persistido (não zera o que veio do localStorage).
+  const filtroPastaRef = useRef(pastaSel);
+  useEffect(() => {
+    if (filtroPastaRef.current !== pastaSel) {
+      filtroPastaRef.current = pastaSel;
+      setFiltro("all");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastaSel]);
+
+  // Filtros que EXIGEM o servidor (tome/mentions/invites): busca via cr_filtrar
+  // e pagina pela continuação (nextLink), igual à busca. Fora deles, limpa.
+  useEffect(() => {
+    if (!filtroGraph) {
+      setResultadosFiltro(null);
+      setTemMaisFiltro(false);
+      proximoFiltroRef.current = null;
+      return;
+    }
+    let vivo = true;
+    setResultadosFiltro(null); // null = spinner
+    proximoFiltroRef.current = null;
+    api
+      .crFiltrar(pastaSel, filtro)
+      .then((res) => {
+        if (!vivo) return;
+        proximoFiltroRef.current = res.proximo;
+        setResultadosFiltro(res.itens.filter((m) => !deletadasRef.current.has(m.id)));
+        setTemMaisFiltro(res.proximo !== null);
+      })
+      .catch((e) => {
+        if (!vivo) return;
+        // D6: tenant sem suporte (HTTP 400) → esconde a opção e volta pra "all",
+        // silenciosamente. Outros erros só deixam a lista vazia.
+        const msg = String(e);
+        if ((filtro === "mentions" || filtro === "invites") && msg.includes("400")) {
+          setFiltrosOcultos((s) => new Set(s).add(filtro));
+          setFiltro("all");
+        }
+        setResultadosFiltro([]);
+        setTemMaisFiltro(false);
+      });
+    return () => {
+      vivo = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtro, filtroGraph, pastaSel, recarga]);
+
+  // Paginação do filtro Graph via @odata.nextLink; dedup igual à busca.
+  async function carregarMaisFiltro() {
+    const proximo = proximoFiltroRef.current;
+    if (carregandoMaisRef.current || !filtroGraph || !proximo) return;
+    carregandoMaisRef.current = true;
+    setCarregandoMais(true);
+    try {
+      const res = await api.crFiltrar(pastaSel, filtro, proximo);
+      proximoFiltroRef.current = res.proximo;
+      setResultadosFiltro((prev) => juntar(prev ?? [], res.itens));
+      setTemMaisFiltro(res.proximo !== null);
+    } catch {
+      /* silencioso */
+    } finally {
+      carregandoMaisRef.current = false;
+      setCarregandoMais(false);
+    }
+  }
 
   // Paginação dos resultados de busca via @odata.nextLink (o Graph não aceita
   // $skip com $search); dedup igual à pasta.
@@ -2530,9 +4005,33 @@ export function ControlRoomScreen({
     }
   }
 
+  // Fonte da lista mostrada, por precedência: filtro Graph (com o texto da busca
+  // aplicado client-side por cima — D2) > busca de texto server-side > pasta.
+  const textoBuscaLower = busca.trim().toLowerCase();
+  const fonteLista = useMemo<EmailItem[] | null>(() => {
+    if (filtroGraph) {
+      if (!resultadosFiltro) return null; // spinner enquanto o filtro carrega
+      if (!textoBuscaLower) return resultadosFiltro;
+      return resultadosFiltro.filter(
+        (m) =>
+          m.assunto.toLowerCase().includes(textoBuscaLower) ||
+          m.de.toLowerCase().includes(textoBuscaLower) ||
+          m.preview.toLowerCase().includes(textoBuscaLower)
+      );
+    }
+    return buscaAtiva ? resultadosBusca : mensagens;
+  }, [filtroGraph, resultadosFiltro, textoBuscaLower, buscaAtiva, resultadosBusca, mensagens]);
+  const onCarregarMaisLista = filtroGraph
+    ? carregarMaisFiltro
+    : buscaAtiva
+      ? carregarMaisBusca
+      : carregarMais;
+  const temMaisLista = filtroGraph ? temMaisFiltro : buscaAtiva ? temMaisBusca : temMais;
+
   const pastaAtual = pastas?.find((p) => p.id === pastaSel);
   const tituloLista = pastaAtual ? rotuloPasta(pastaAtual.tipo, pastaAtual.nome, t) : "";
-  const msgAtual = mensagens?.find((m) => m.id === msgSel);
+  const msgAtual =
+    fonteLista?.find((m) => m.id === msgSel) ?? mensagens?.find((m) => m.id === msgSel);
 
   // "Compose in Outlook" — comportamento atual (abre o Outlook interno).
   const composeOutlook = () =>
@@ -2564,10 +4063,21 @@ export function ControlRoomScreen({
       <div className="flex min-h-0 flex-1 gap-4">
         <FolderSidebar
           pastas={pastas}
+          subpastas={subpastas}
+          onCarregarSubpastas={carregarSubpastas}
           sel={pastaSel}
           onSel={setPastaSel}
           onNovo={novoEmailModal}
           onComposeOutlook={composeOutlook}
+          onMarcarTodasLidas={marcarPastaLida}
+          onEsvaziarPasta={esvaziarPasta}
+          arvore={arvorePastas}
+          arvoreCarregando={arvorePendentes.length > 0}
+          onAbrirArvore={() => setPedirArvore(true)}
+          onCriarSubpasta={criarSubpasta}
+          onRenomearPasta={renomearPasta}
+          onExcluirPasta={excluirPasta}
+          onMoverPasta={moverPasta}
           colapsada={!sidebarAberta}
           agendaAberta={agendaAberta}
           onToggleAgenda={() => setAgendaAberta((v) => !v)}
@@ -2584,24 +4094,33 @@ export function ControlRoomScreen({
           <ResizablePanel defaultSize={38} minSize={24} maxSize={55} className="overflow-hidden">
             <MessageList
               titulo={tituloLista}
-              mensagens={buscaAtiva ? resultadosBusca : mensagens}
+              mensagens={fonteLista}
               sel={msgSel}
               onSel={setMsgSel}
               onRefresh={() => setRecarga((n) => n + 1)}
               sidebarAberta={sidebarAberta}
               onToggleSidebar={() => setSidebarAberta((v) => !v)}
+              pastaId={pastaSel}
               pastaTipo={pastaAtual?.tipo ?? ""}
-              onEsvaziar={esvaziarLixeira}
-              onCarregarMais={buscaAtiva ? carregarMaisBusca : carregarMais}
+              onEsvaziar={() => esvaziarPasta(pastaSel)}
+              onCarregarMais={onCarregarMaisLista}
               carregandoMais={carregandoMais}
-              temMais={buscaAtiva ? temMaisBusca : temMais}
+              temMais={temMaisLista}
               onFlag={acaoFlag}
               onExcluir={acaoExcluir}
+              onMarcarLido={acaoMarcarLido}
+              pastasDestino={pastasDestino}
+              pastasCarregando={arvorePendentes.length > 0}
+              onAbrirMover={() => setPedirArvore(true)}
+              onMover={acaoMover}
               selecionados={selecionados}
               setSelecionados={setSelecionados}
               naoLidosPasta={pastaAtual?.naoLidos ?? 0}
-              contFlagged={buscaAtiva ? null : contFlagged}
-              contAnexos={buscaAtiva ? null : contAnexos}
+              contFlagged={contFlagged}
+              contAnexos={contAnexos}
+              filtro={filtro}
+              onFiltro={setFiltro}
+              filtrosOcultos={filtrosOcultos}
               busca={busca}
               setBusca={setBusca}
               ordenar={ordenar}
@@ -2610,6 +4129,10 @@ export function ControlRoomScreen({
                 setOrdenar(o);
                 setOrdemDesc(desc);
               }}
+              marcarLidoModo={marcarLidoModo}
+              marcarLidoAtraso={marcarLidoAtraso}
+              onMarcarLidoModo={setMarcarLidoModo}
+              onMarcarLidoAtraso={setMarcarLidoAtraso}
               t={t}
               idioma={idioma}
             />
@@ -2628,6 +4151,7 @@ export function ControlRoomScreen({
                 id={msgSel}
                 userEmail={user.email}
                 sinalizado={msgAtual?.sinalizado ?? false}
+                lido={msgAtual?.lido ?? false}
                 onFlag={acaoFlag}
                 onExcluir={acaoExcluir}
                 onMarcarLido={acaoMarcarLido}
