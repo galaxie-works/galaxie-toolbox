@@ -85,6 +85,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -120,7 +127,18 @@ import type {
   EventoDetalhe,
   InsightsRemetente,
   PastaEmail,
+  SegurancaEmail,
 } from "@/lib/types";
+import {
+  analisarLink,
+  nivelAutenticacao,
+  parseAuthResults,
+  replyToDivergente,
+  type AnaliseLink,
+  type AvisoLink,
+  type NivelAutenticacao,
+  type ResultadoAutenticacao,
+} from "@/lib/seguranca-leitor";
 import {
   Archive,
   ArrowDownUp,
@@ -156,10 +174,14 @@ import {
   Search,
   Send,
   Send as SendIcon,
+  Shield,
   ShieldAlert,
+  ShieldCheck,
+  ShieldX,
   SlidersHorizontal,
   Star,
   Trash2,
+  TriangleAlert,
   User,
   Video,
   X,
@@ -241,6 +263,9 @@ function CorpoHtml({
 }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [altura, setAltura] = useState(120);
+  // Link-safety (#91): clique num link do corpo abre um modal de confirmação
+  // com o DESTINO REAL + avisos, em vez de abrir direto. `null` = modal fechado.
+  const [linkPendente, setLinkPendente] = useState<AnaliseLink | null>(null);
   // Zoom manual (#76): fator do USUÁRIO aplicado POR CIMA do auto-fit do #57.
   // GLOBAL e persistido (não por-mensagem): a preferência sobrevive a fechar/
   // reabrir o app e a trocar de mensagem e voltar (decisão da issue #76 — o
@@ -348,15 +373,24 @@ function CorpoHtml({
       // — mesmo mecanismo já usado no clique dos links, logo abaixo.
       d?.addEventListener("toggle", ajustar, true);
       // Links do e-mail: o `target=_blank` não navega no Tauri (nada acontecia
-      // ao clicar). Interceptamos o clique e abrimos http(s) no Navigator (aba
-      // própria); outros esquemas (mailto/tel) vão pro handler padrão do SO.
+      // ao clicar). Interceptamos o clique. Para http(s), NÃO abrimos direto:
+      // link-safety (#91) — analisamos texto × href e abrimos um modal de
+      // confirmação com o DESTINO REAL e os avisos (mismatch/encurtador/etc).
+      // Este listener é código NOSSO (realm do app), capturado no documento do
+      // iframe, então roda mesmo no tema claro (sandbox sem allow-scripts).
+      // Outros esquemas (mailto/tel) seguem pro handler padrão do SO.
       d?.addEventListener("click", (e) => {
         const a = (e.target as HTMLElement | null)?.closest?.("a") as HTMLAnchorElement | null;
         const href = a?.href;
         if (!href) return;
         e.preventDefault();
-        if (/^https?:/i.test(href) && onAbrirLink) onAbrirLink(href);
-        else api.openUrl(href).catch(() => {});
+        if (/^https?:/i.test(href)) {
+          // `a.href` é a URL RESOLVIDA (absoluta); `a.textContent` é o texto
+          // visível — a base do teste de mismatch texto × destino.
+          setLinkPendente(analisarLink(a.textContent ?? "", href));
+        } else {
+          api.openUrl(href).catch(() => {});
+        }
       });
       // Zoom manual (#76). Estes handlers são código NOSSO (realm do app),
       // capturados NO documento do iframe — então rodam mesmo com o sandbox sem
@@ -455,7 +489,120 @@ function CorpoHtml({
           </Button>
         </div>
       )}
+      <ModalLinkSeguro
+        analise={linkPendente}
+        onFechar={() => setLinkPendente(null)}
+        onAbrir={(url) => {
+          setLinkPendente(null);
+          onAbrirLink?.(url);
+        }}
+        t={t}
+      />
     </div>
+  );
+}
+
+/** Texto localizado de cada aviso de link (#91). */
+function textoAviso(t: ReturnType<typeof useIdioma>["t"], a: AvisoLink): string {
+  switch (a) {
+    case "mismatch":
+      return t.controlRoom.segAvisoMismatch;
+    case "encurtador":
+      return t.controlRoom.segAvisoEncurtador;
+    case "ip":
+      return t.controlRoom.segAvisoIp;
+    case "punycode":
+      return t.controlRoom.segAvisoPunycode;
+    case "inseguro":
+      return t.controlRoom.segAvisoInseguro;
+    case "redirecionamento":
+      return t.controlRoom.segAvisoRedirecionamento;
+  }
+}
+
+/**
+ * Modal de confirmação de link (#91, parte a). Mostra o DESTINO REAL antes de
+ * abrir e, quando há sinais de risco (mismatch/encurtador/IP/punycode/redirect/
+ * http), lista os avisos num Alert. O botão de abrir fica destrutivo quando o
+ * link é suspeito, pra o usuário pensar duas vezes.
+ */
+function ModalLinkSeguro({
+  analise,
+  onFechar,
+  onAbrir,
+  t,
+}: {
+  analise: AnaliseLink | null;
+  onFechar: () => void;
+  onAbrir: (url: string) => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const suspeito = analise?.suspeito ?? false;
+  return (
+    <Dialog open={analise !== null} onOpenChange={(o) => !o && onFechar()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {suspeito ? (
+              <TriangleAlert className="size-4 text-[color:var(--destructive)]" />
+            ) : (
+              <ShieldCheck className="size-4 text-[color:var(--success)]" />
+            )}
+            {t.controlRoom.segLinkTitulo}
+          </DialogTitle>
+          <DialogDescription>{t.controlRoom.segLinkDescricao}</DialogDescription>
+        </DialogHeader>
+        {analise && (
+          <div className="space-y-3">
+            <div>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">
+                {t.controlRoom.segLinkDestino}
+              </p>
+              <p className="rounded-md border bg-muted/40 px-2 py-1.5 font-mono text-xs break-all">
+                {analise.href}
+              </p>
+            </div>
+            {analise.textoLink && analise.textoLink !== analise.href && (
+              <div>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">
+                  {t.controlRoom.segLinkTexto}
+                </p>
+                <p className="text-sm break-all">{analise.textoLink}</p>
+              </div>
+            )}
+            {analise.avisos.length > 0 ? (
+              <Alert variant={suspeito ? "destructive" : "warning"}>
+                <TriangleAlert />
+                <AlertTitle>{t.controlRoom.segLinkSuspeito}</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc pl-4">
+                    {analise.avisos.map((a) => (
+                      <li key={a}>{textoAviso(t, a)}</li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <ShieldCheck className="size-3.5 text-[color:var(--success)]" />
+                {t.controlRoom.segLinkVerificado}
+              </p>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={onFechar}>
+            {t.controlRoom.segLinkCancelar}
+          </Button>
+          <Button
+            variant={suspeito ? "destructive" : "default"}
+            onClick={() => analise && onAbrir(analise.href)}
+          >
+            <ExternalLink /> {t.controlRoom.segLinkAbrir}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -3014,6 +3161,70 @@ function InsightsRemetentePopover({
   );
 }
 
+/**
+ * Badge de autenticação do remetente (#91, parte b). Cor/ícone conforme o
+ * veredito SPF/DKIM/DMARC; o tooltip detalha cada mecanismo. Verde = autenticado,
+ * amarelo = parcial, vermelho = falha, cinza = sem dados.
+ */
+function BadgeAutenticacao({
+  nivel,
+  resultado,
+  t,
+}: {
+  nivel: NivelAutenticacao;
+  resultado: ResultadoAutenticacao;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const cfg = {
+    autenticado: {
+      variant: "success-light" as const,
+      Icone: ShieldCheck,
+      rotulo: t.controlRoom.segAutAutenticado,
+      dica: t.controlRoom.segAutTooltipAutenticado,
+    },
+    parcial: {
+      variant: "warning-light" as const,
+      Icone: ShieldAlert,
+      rotulo: t.controlRoom.segAutParcial,
+      dica: t.controlRoom.segAutTooltipParcial,
+    },
+    falhou: {
+      variant: "destructive-light" as const,
+      Icone: ShieldX,
+      rotulo: t.controlRoom.segAutFalhou,
+      dica: t.controlRoom.segAutTooltipFalhou,
+    },
+    indisponivel: {
+      variant: "secondary" as const,
+      Icone: Shield,
+      rotulo: t.controlRoom.segAutIndisponivel,
+      dica: t.controlRoom.segAutTooltipIndisponivel,
+    },
+  }[nivel];
+  const est = (v: string | null) => (v ?? "—");
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex cursor-default">
+            <Badge variant={cfg.variant} size="sm" className="shrink-0 gap-1">
+              <cfg.Icone />
+              {cfg.rotulo}
+            </Badge>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p>{cfg.dica}</p>
+          <p className="mt-1 font-mono text-[0.65rem] opacity-80">
+            SPF: {est(resultado.spf)} · DKIM: {est(resultado.dkim)} · DMARC:{" "}
+            {est(resultado.dmarc)}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
 // Handle imperativo do leitor (#28): os atalhos r/a/f abrem o Sheet de resposta
 // chamando estas funções — a UI de reply/forward já existe, só ligamos a tecla.
 export interface MessageDetailHandle {
@@ -3054,6 +3265,9 @@ const MessageDetail = forwardRef<
   ref
 ) {
   const [det, setDet] = useState<EmailDetalhe | null>(null);
+  // Segurança do leitor (#91): Reply-To + headers de autenticação. Best-effort,
+  // carregado à parte do corpo pra não atrasar a leitura.
+  const [seg, setSeg] = useState<SegurancaEmail | null>(null);
   const [modo, setModo] = useState<null | "responder" | "responderTodos" | "encaminhar">(null);
   const [enviando, setEnviando] = useState(false);
   const comporRef = useRef<ComporMensagemHandle>(null);
@@ -3075,16 +3289,32 @@ const MessageDetail = forwardRef<
   useEffect(() => {
     if (!id) {
       setDet(null);
+      setSeg(null);
       return;
     }
     let vivo = true;
     setDet(null);
+    setSeg(null);
     setModo(null);
     api.crEmailCorpo(id).then((d) => vivo && setDet(d)).catch(() => {});
+    // Segurança (#91) em paralelo; falha silenciosa (badge some, sem quebrar).
+    api.crEmailSeguranca(id).then((s) => vivo && setSeg(s)).catch(() => {});
     return () => {
       vivo = false;
     };
   }, [id]);
+
+  // Deriva veredito de autenticação (SPF/DKIM/DMARC) e divergência de Reply-To
+  // a partir dos headers brutos — lógica pura, testada em seguranca-leitor.ts.
+  const auth = useMemo(
+    () => (seg ? parseAuthResults(seg.autenticacao, seg.receivedSpf) : null),
+    [seg],
+  );
+  const nivelAuth = useMemo(() => (auth ? nivelAutenticacao(auth) : null), [auth]);
+  const divergencia = useMemo(
+    () => (seg && det ? replyToDivergente(det.deEmail, seg.replyTo) : null),
+    [seg, det],
+  );
 
   // Pede a foto do remetente quando o detalhe carrega.
   useEffect(() => {
@@ -3292,6 +3522,10 @@ const MessageDetail = forwardRef<
               {det.deEmail && (
                 <span className="truncate text-xs text-muted-foreground">&lt;{det.deEmail}&gt;</span>
               )}
+              {/* Badge de autenticação do remetente (#91, parte b). */}
+              {nivelAuth && auth && (
+                <BadgeAutenticacao nivel={nivelAuth} resultado={auth} t={t} />
+              )}
               <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                 {new Date(comZ(det.recebido)).toLocaleString(idioma)}
               </span>
@@ -3302,6 +3536,20 @@ const MessageDetail = forwardRef<
             </div>
           </div>
         </div>
+        {/* Alerta de Reply-To divergente (#91, parte c) — discreto, abaixo do
+            cabeçalho, só quando as respostas iriam para outro endereço. */}
+        {divergencia?.divergente && (
+          <Alert variant="warning" className="mt-3">
+            <TriangleAlert />
+            <AlertTitle>{t.controlRoom.segReplyToTitulo}</AlertTitle>
+            <AlertDescription>
+              {preencher(t.controlRoom.segReplyToDescricao, {
+                enderecos: divergencia.enderecos.join(", "),
+                de: det.deEmail,
+              })}
+            </AlertDescription>
+          </Alert>
+        )}
       </div>
 
       {/* Corpo do e-mail — sempre em altura cheia (sem compose espremido). */}

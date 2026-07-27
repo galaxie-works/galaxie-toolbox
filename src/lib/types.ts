@@ -167,6 +167,20 @@ export interface EmailDetalhe {
   webLink: string;
 }
 
+/**
+ * Dados de segurança de um e-mail (#91): Reply-To + headers de autenticação
+ * brutos. O parse de SPF/DKIM/DMARC e a detecção de divergência ficam no helper
+ * `seguranca-leitor.ts` (testável). Buscado à parte do corpo (best-effort).
+ */
+export interface SegurancaEmail {
+  /** Endereços de Reply-To (para detectar divergência do From). */
+  replyTo: { nome: string; email: string }[];
+  /** Valores dos headers `Authentication-Results` / `ARC-Authentication-Results`. */
+  autenticacao: string[];
+  /** Valores de `Received-SPF` (fallback de SPF). */
+  receivedSpf: string[];
+}
+
 export interface PastaEmail {
   id: string;
   tipo: string; // "inbox" | "drafts" | "sentitems" | "archive" | "junkemail" | "deleteditems" | "child"

@@ -29,5 +29,7 @@
     "erasableSyntaxOnly": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "//": "Testes headless (*.test.ts) rodam via `node --test` (type-stripping do Node); ficam fora do build do app pra não exigir @types/node no bundle.",
+  "exclude": ["src/**/*.test.ts"]
 }
