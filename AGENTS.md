@@ -6,6 +6,21 @@ Escopo atual em foco: **Bridge** (cliente de e-mail dentro do app) + track paral
 ## 1. O app em uma frase
 Tauri 2 + React 19 + TypeScript + Tailwind v4. Fala com **Microsoft Graph delegado (`/me`)** — **não há IMAP**. Login sempre na página oficial da Microsoft; o app **nunca** vê a senha/MFA/token do usuário.
 
+### 1.1 Permissões Graph — GRANTED vs. REQUESTED
+Public client + PKCE, delegado `/me`. Distinção que importa pro roadmap:
+- **GRANTED** = concedido no app registration (admin consent do tenant Galaxie Works Ltd). Disponível **sem novo consent** — 53 escopos delegados (lista completa abaixo).
+- **REQUESTED** = subconjunto **mínimo** que a app pede no token, em `src-tauri/src/config.rs` const `SCOPES`. Adicionar um escopo já-GRANTED aqui **não** dispara re-consent (admin já consentiu); só exige o usuário **relogar** pra token novo.
+
+**REQUESTED hoje:** `openid profile offline_access User.Read User.Read.All Files.ReadWrite Sites.Read.All Calendars.Read Mail.ReadWrite Mail.Send Tasks.ReadWrite People.Read Contacts.ReadWrite`
+
+**GRANTED (53, todos admin-consented):** Analytics.Read · AuditLogsQuery(-Exchange/-OneDrive/-SharePoint/).Read.All · Bookings.Read.All · Calendars.Read · Chat.ReadWrite · Contacts.Read · Domain.Read.All · EAS.AccessAsUser.All · email · EWS.AccessAsUser.All · ExchangeMessageTrace.Read.All · Files.ReadWrite · Files.ReadWrite.All · IMAP.AccessAsUser.All · Mail-Advanced.ReadWrite(.Shared) · Mail.Read · **Mail.Read.Shared** · Mail.ReadBasic(.Shared) · Mail.ReadWrite · **Mail.ReadWrite.Shared** · Mail.Send · **Mail.Send.Shared** · MailboxFolder.Read(Write) · MailboxItem.Read(Write) · Notes.Create/Read/Read.All/ReadWrite/ReadWrite.All · Organization.Read.All · OrganizationalBranding.Read.All · OrgContact.Read.All · profile · ProfilePhoto.Read.All · ProfilePhoto.ReadWrite.All · Reports.Read.All · Schedule.Read.All · ServiceHealth.Read.All · Sites.Read.All · Tasks.ReadWrite · TeamMember.Read.All · TeamsActivity.Read · User.Read · User.Read.All · User.ReadBasic.All · UserNotification.ReadWrite.CreatedByApp
+
+**Implicações:**
+- **#27 (caixas compartilhadas) NÃO está bloqueado** — `Mail.Read.Shared`/`Mail.ReadWrite.Shared`/`Mail.Send.Shared` já GRANTED. Basta adicionar à const `SCOPES` + relogar; sem ação admin nova.
+- **#91 (segurança no leitor):** `internetMessageHeaders` (SPF/DKIM/DMARC, Reply-To) vem com `Mail.Read`/`Mail.ReadWrite` — sem escopo novo.
+- ⚠️ Reconciliar: a app pede `Contacts.ReadWrite` e `People.Read`, mas o granted mostra `Contacts.Read` (sem Write) e não lista `People.Read` — verificar antes de depender de escrita em contatos / People API.
+- **NÃO usar IMAP/EWS/EAS** apesar de granted — arquitetura é **Graph-only, delegado /me**.
+
 ## 2. Board de trabalho (GitHub Projects) — a fonte da verdade
 Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3`.
 
@@ -24,6 +39,8 @@ Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3
 | **Done - Released** | concluído/lançado | no release |
 
 Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pra PO Approved — isso é do usuário (PO), que também **ajusta a Sprint** se necessário.
+
+> 📌 **OBRIGATÓRIO ao mover pra QA Approved: postar a EVIDÊNCIA como comentário NA issue** (`gh issue comment N`). Mover o card sem comentar faz o PO abrir a issue, não ver prova, e reprovar com *"Faltam evidências e comentários relativos ao desenvolvimento"* (aconteceu com #31/#76/#94/#96 em 2026-07-27, com código certo). O comentário deve ter: **(1) Desenvolvimento** — o que foi feito, arquivos, decisões, commit hash; **(2) QA** — `tsc`/`cargo` verdes + passos da QA visual e resultado observado + cada AC (Given/When/Then) traçado; **(3) Pro PO validar em runtime** — comportamento dependente de Graph real que o mock não exercita. ⚠️ **Mock ≠ real:** para features de interação (scroll/teclado/hover/tooltip/dados reais), exercitar esses caminhos no mock e listar o que só o PO valida no app — a QA de mock do #40 passou mas o PO achou 5 bugs de interação no app real.
 
 > 🚀 **RELEASE de PO Approved é decisão do agente** (delegado pelo PO em 2026-07-26). Uma vez em **PO Approved**, o agente decide quando **mergear na `main`, cortar release** (bump de versão + tag + notas) e mover pra **Done - Released**, sem cobrar o PO. A autonomia começa em PO Approved (QA Approved→PO Approved continua sendo do PO). Não cortar release com código não-aprovado/rejeitado ainda na `feat` (ex.: rework com `Closes #N` já mergeado) — limpar/reworkar antes.
 

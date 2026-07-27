@@ -167,6 +167,20 @@ export interface EmailDetalhe {
   webLink: string;
 }
 
+/**
+ * Dados de segurança de um e-mail (#91): Reply-To + headers de autenticação
+ * brutos. O parse de SPF/DKIM/DMARC e a detecção de divergência ficam no helper
+ * `seguranca-leitor.ts` (testável). Buscado à parte do corpo (best-effort).
+ */
+export interface SegurancaEmail {
+  /** Endereços de Reply-To (para detectar divergência do From). */
+  replyTo: { nome: string; email: string }[];
+  /** Valores dos headers `Authentication-Results` / `ARC-Authentication-Results`. */
+  autenticacao: string[];
+  /** Valores de `Received-SPF` (fallback de SPF). */
+  receivedSpf: string[];
+}
+
 export interface PastaEmail {
   id: string;
   tipo: string; // "inbox" | "drafts" | "sentitems" | "archive" | "junkemail" | "deleteditems" | "child"
@@ -174,6 +188,22 @@ export interface PastaEmail {
   naoLidos: number;
   total: number;
   filhos: number; // nº de subpastas — chevron de expandir só aparece quando > 0
+}
+
+/**
+ * Insights do remetente (#94): resumo do relacionamento com um endereço,
+ * mostrado no popover do leitor. Todos os campos são opcionais — cada parte é
+ * buscada de forma best-effort no backend e pode faltar sem quebrar o painel.
+ */
+export interface InsightsRemetente {
+  /** Nº de e-mails recebidos deste endereço (filtro por `from`). */
+  recebidos?: number | null;
+  /** Nº de e-mails enviados a este endereço. Ausente = não foi possível contar. */
+  enviados?: number | null;
+  /** ISO do e-mail recebido mais antigo (1º contato). */
+  primeiro?: string | null;
+  /** ISO do e-mail recebido mais recente (último contato). */
+  ultimo?: string | null;
 }
 
 /** Seção do autocomplete de destinatários (#40): de onde a sugestão veio. */

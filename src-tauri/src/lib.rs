@@ -265,6 +265,19 @@ async fn cr_email_corpo(
         .map_err(|e| e.to_string())?
 }
 
+/// Control room: dados de segurança de um e-mail (#91) — Reply-To + headers de
+/// autenticação (SPF/DKIM/DMARC via internetMessageHeaders).
+#[tauri::command]
+async fn cr_email_seguranca(
+    state: State<'_, Store>,
+    id: String,
+) -> Result<graph::SegurancaEmail, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_email_seguranca(&store, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: categorias mestras do usuário com a cor (hex) de cada uma.
 #[tauri::command]
 async fn cr_categorias(
@@ -528,6 +541,35 @@ async fn cr_contar(
     tauri::async_runtime::spawn_blocking(move || graph::cr_contar(&store, &folder_id, &filtro))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Control room: os dois contadores por-pasta das abas (Sinalizados / Com anexos)
+/// numa ÚNICA chamada $batch — substitui as duas `cr_contar` em paralelo (#87).
+#[tauri::command]
+async fn cr_contadores(
+    state: State<'_, Store>,
+    folder_id: String,
+) -> Result<graph::Contadores, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_contadores(&store, &folder_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: insights do remetente (#94) — recebidos/enviados + data do 1º e
+/// do último e-mail deste endereço. Ver o custo de chamadas em
+/// `graph::cr_insights_remetente`.
+#[tauri::command]
+async fn cr_insights_remetente(
+    state: State<'_, Store>,
+    endereco: String,
+) -> Result<graph::InsightsRemetente, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_insights_remetente(&store, &endereco)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: esvazia uma pasta (Lixeira / Lixo Eletrônico), apagando cada
@@ -813,6 +855,7 @@ pub fn run() {
             cr_evento_corpo,
             cr_inbox_dia,
             cr_email_corpo,
+            cr_email_seguranca,
             cr_categorias,
             cr_fotos_contatos,
             cr_pessoas,
@@ -832,6 +875,8 @@ pub fn run() {
             cr_buscar,
             cr_filtrar,
             cr_contar,
+            cr_contadores,
+            cr_insights_remetente,
             cr_esvaziar_pasta,
             cr_marcar_pasta_lida,
             cr_criar_subpasta,

@@ -7,10 +7,12 @@ import type {
   EventoAgenda,
   EventoDetalhe,
   Identidade,
+  InsightsRemetente,
   PastaEmail,
   PastaOD,
   Pessoa,
   Reuniao,
+  SegurancaEmail,
   Site,
   Tarefa,
   TipoArquivo,
@@ -324,6 +326,35 @@ export async function crInboxDia(inicio: string, fim: string): Promise<EmailItem
 export async function crEmailCorpo(id: string): Promise<EmailDetalhe> {
   if (!inTauri()) {
     await sleep(300);
+    // Remetente UNIDIRECIONAL (#94): servidor/no-reply. Casa com a mensagem
+    // "server" da lista → o popover de insights recebe server@voaz.builders e
+    // mostra recebidos + 1º/último contato + frequência, com enviados = 0.
+    if (/server/i.test(id)) {
+      return {
+        assunto: "Relatório diário de backup — VOAZ",
+        de: "VOAZ | SERVER",
+        deEmail: "server@voaz.builders",
+        para: ["Wagner Consani"],
+        cc: [],
+        recebido: new Date().toISOString(),
+        corpo: "<p>Backup concluído com sucesso às 03:00. Nenhuma ação necessária.</p>",
+        corpoTipo: "html",
+        anexos: [],
+        webLink: "https://outlook.office365.com/mock",
+      };
+    }
+    // Corpo com links variados p/ exercitar o link-safety (#91):
+    //  - mismatch: texto "www.bradesco.com.br" mas href aponta pra evil.ru
+    //  - encurtador: bit.ly (destino escondido)
+    //  - limpo: outlook.office365.com (sem avisos)
+    const corpo =
+      "<p>Oi Wagner,</p>" +
+      "<p>Preciso da sua aprovação para seguir com o pedido de compra da PROH. " +
+      "Confirme os dados bancários em " +
+      '<a href="https://evil.ru/login">www.bradesco.com.br</a>.</p>' +
+      '<p>Veja a proposta encurtada: <a href="https://bit.ly/3xYzAbC">abrir proposta</a>.</p>' +
+      '<p>Ou acesse direto no <a href="https://outlook.office365.com/mail">Outlook</a>.</p>' +
+      "<p>Abraço,<br/>João</p>";
     return {
       assunto: "Aprovação pendente — compra PROH",
       de: "João Pereira",
@@ -331,13 +362,54 @@ export async function crEmailCorpo(id: string): Promise<EmailDetalhe> {
       para: ["Wagner Consani"],
       cc: ["Financeiro VOAZ", "Ana Silva"],
       recebido: new Date().toISOString(),
-      corpo: "<p>Oi Wagner,</p><p>Preciso da sua aprovação para seguir com o pedido de compra da PROH. Fico no aguardo.</p><p>Abraço,<br/>João</p>",
+      corpo,
       corpoTipo: "html",
       anexos: [],
       webLink: "https://outlook.office365.com/mock",
     };
   }
   return invoke<EmailDetalhe>("cr_email_corpo", { id });
+}
+
+/**
+ * Dados de segurança do e-mail (#91). No mock (browser), varia por id p/ o QA
+ * ver os três estados do badge + o alerta de Reply-To. Cicla pelo último número
+ * do id (ex.: "inbox-0-2" → índice 2): 0 = autenticado (verde), 1 = parcial
+ * (amarelo) + Reply-To divergente, 2 = falha (vermelho) + Reply-To divergente.
+ */
+export async function crEmailSeguranca(id: string): Promise<SegurancaEmail> {
+  if (!inTauri()) {
+    await sleep(200);
+    const ultimoNum = id.match(/(\d+)(?!.*\d)/);
+    const caso = ultimoNum ? Number(ultimoNum[1]) % 3 : 1;
+    if (caso === 0) {
+      return {
+        replyTo: [],
+        autenticacao: [
+          "spf=pass (sender IP is 40.1.2.3) smtp.mailfrom=voaz.com.br; " +
+            "dkim=pass header.d=voaz.com.br; dmarc=pass action=none header.from=voaz.com.br",
+        ],
+        receivedSpf: [],
+      };
+    }
+    if (caso === 2) {
+      return {
+        replyTo: [{ nome: "Suporte", email: "suporte@microsoft-alerta.ru" }],
+        autenticacao: [
+          "spf=fail (sender IP is 5.6.7.8) smtp.mailfrom=microsoft-alerta.ru; " +
+            "dkim=none; dmarc=fail action=oreject header.from=microsoft.com",
+        ],
+        receivedSpf: [],
+      };
+    }
+    // caso 1 (default): parcial + Reply-To divergente do From
+    return {
+      replyTo: [{ nome: "Cobranças PROH", email: "cobranca@proh-pagamentos.ru" }],
+      autenticacao: ["spf=pass smtp.mailfrom=proh.com.br; dkim=none; dmarc=none"],
+      receivedSpf: [],
+    };
+  }
+  return invoke<SegurancaEmail>("cr_email_seguranca", { id });
 }
 
 const MOCK_PASTAS: PastaEmail[] = [
@@ -370,10 +442,19 @@ export async function crSubpastas(folderId: string): Promise<PastaEmail[]> {
 
 // --- Compositor de e-mail (pessoas, envio novo, contatos) -----------------
 const MOCK_PESSOAS: Pessoa[] = [
+  // "Seus contatos" = contatos PESSOAIS do usuário (/me/contacts).
   { nome: "Ana Silva", email: "ana@voaz.com.br", cargo: "Gerente de Projetos", origem: "contatos" },
   { nome: "Bruno Costa", email: "bruno@voaz.com.br", cargo: "Engenheiro Civil", origem: "contatos" },
+  { nome: "Amanda Rocha", email: "amanda.rocha@gmail.com", cargo: "Fornecedora", origem: "contatos" },
+  { nome: "Marca Ferramentas", email: "vendas@marcaferramentas.com.br", cargo: null, origem: "contatos" },
+  // "De sua organização" = diretório do tenant (/users).
   { nome: "Carla Dias", email: "carla@voaz.com.br", cargo: "Arquiteta", origem: "organizacao" },
   { nome: "Wagner Consani", email: "wagner@voaz.builders", cargo: null, origem: "organizacao" },
+  { nome: "Henrique Garcia", email: "henrique.garcia@voaz.com.br", cargo: "Coordenador de Obras", origem: "organizacao" },
+  { nome: "Mariana Alves", email: "mariana.alves@voaz.com.br", cargo: "Analista Financeira", origem: "organizacao" },
+  { nome: "Rafael Andrade", email: "rafael.andrade@voaz.com.br", cargo: "Comprador", origem: "organizacao" },
+  { nome: "Fernanda Aguiar", email: "fernanda.aguiar@voaz.com.br", cargo: "Assistente Administrativa", origem: "organizacao" },
+  { nome: "Gustavo Barata", email: "gustavo.barata@voaz.com.br", cargo: "Estagiário de Engenharia", origem: "organizacao" },
 ];
 
 /**
@@ -487,7 +568,7 @@ export async function crFolderMensagens(
       "Jessica Brooks",
       "Linear",
     ];
-    return nomes.map((n, i) => ({
+    const itens: EmailItem[] = nomes.map((n, i) => ({
       id: `${folderId}-${skip}-${i}`,
       assunto: [
         "Q4 Sprint planning, your input needed",
@@ -509,6 +590,26 @@ export async function crFolderMensagens(
       temAnexos: i === 0 || i === 4,
       sinalizado: i === 6,
     }));
+    // Remetente UNIDIRECIONAL (#94): servidor/no-reply que só MANDA e-mail e nunca
+    // é respondido. Abrir esta mensagem e clicar no nome prova que 1º/último
+    // contato e frequência aparecem mesmo com enviados = 0 (o bug que o PO
+    // reprovou). O id contém "server" → `crEmailCorpo` devolve este remetente.
+    if (skip === 0) {
+      itens.unshift({
+        id: `${folderId}-${skip}-server`,
+        assunto: "Relatório diário de backup — VOAZ",
+        de: "VOAZ | SERVER",
+        deEmail: "server@voaz.builders",
+        iniciais: "VS",
+        recebido: t(0),
+        preview:
+          "Backup concluído com sucesso às 03:00. Nenhuma ação necessária.",
+        lido: true,
+        temAnexos: false,
+        sinalizado: false,
+      });
+    }
+    return itens;
   }
   return invoke<EmailItem[]>("cr_folder_mensagens", {
     folderId,
@@ -659,6 +760,76 @@ export async function crContar(folderId: string, filtro: string): Promise<number
     return 0;
   }
   return invoke<number>("cr_contar", { folderId, filtro });
+}
+
+/** Os dois contadores por-pasta das abas (Sinalizados / Com anexos). */
+export interface Contadores {
+  flagged: number;
+  anexos: number;
+}
+
+/**
+ * Conta os dois contadores por-pasta das abas (Sinalizados/Flagged e Com
+ * anexos/Files) numa ÚNICA chamada — no backend é um `$batch` do Graph (1
+ * request em vez de 2 `$count` separados), reduzindo a rajada de 429 na carga
+ * inicial e na troca de pasta (#87). O contador de não lidos NÃO entra aqui: já
+ * vem coalescido (1 request pra todas as pastas) em `crMailFolders` e carrega os
+ * ajustes otimistas. Fora do Tauri (mock) devolve zeros.
+ */
+export async function crContadores(folderId: string): Promise<Contadores> {
+  if (!inTauri()) {
+    await sleep(200);
+    return { flagged: 0, anexos: 0 };
+  }
+  return invoke<Contadores>("cr_contadores", { folderId });
+}
+
+/**
+ * Insights do remetente (#94): resumo do relacionamento com um endereço —
+ * e-mails recebidos/enviados e data do 1º/último contato. Chamada LAZY: só
+ * dispara quando o usuário abre o popover no leitor.
+ *
+ * Custo real (dentro do Tauri): até 4 chamadas Graph — ver
+ * `graph::cr_insights_remetente`. Fora do Tauri devolve um mock coerente para o
+ * QA visual: endereços de servidor ("server"/"mailer"/"newsletter"/…) simulam um
+ * remetente UNIDIRECIONAL (903 recebidos, 0 enviados, mas COM 1º/último contato e
+ * frequência — o caso do #94); "no-reply"/"microsoft"/"noreply" simulam PRIMEIRO
+ * CONTATO (tudo zerado); os demais, um histórico plausível derivado do endereço.
+ */
+export async function crInsightsRemetente(
+  endereco: string
+): Promise<InsightsRemetente> {
+  if (!inTauri()) {
+    await sleep(500);
+    const addr = (endereco || "").toLowerCase();
+    const agora = Date.now();
+    const iso = (dias: number) =>
+      new Date(agora - dias * 86_400_000).toISOString();
+    // Remetente UNIDIRECIONAL (servidor/no-reply que só MANDA e-mail; o usuário
+    // nunca respondeu): muitos recebidos, ZERO enviados, mas COM 1º/último
+    // contato e frequência. Prova o fix do #94 — antes só a contagem aparecia.
+    if (/server|mailer|newsletter|notifica|daemon/.test(addr)) {
+      return { recebidos: 903, enviados: 0, primeiro: iso(540), ultimo: iso(1) };
+    }
+    // Remetentes automáticos sem histórico: primeiro contato (estado vazio).
+    if (/no-?reply|microsoft|noreply/.test(addr)) {
+      return { recebidos: 0, enviados: 0, primeiro: null, ultimo: null };
+    }
+    // Histórico plausível e estável por endereço (hash simples do texto).
+    let h = 0;
+    for (let i = 0; i < addr.length; i++) h = (h * 31 + addr.charCodeAt(i)) >>> 0;
+    const recebidos = 12 + (h % 180);
+    const enviados = 3 + (h % 60);
+    const diasPrimeiro = 200 + (h % 900); // ~7 meses a ~3 anos atrás
+    const diasUltimo = h % 20; // até ~3 semanas atrás
+    return {
+      recebidos,
+      enviados,
+      primeiro: iso(diasPrimeiro),
+      ultimo: iso(diasUltimo),
+    };
+  }
+  return invoke<InsightsRemetente>("cr_insights_remetente", { endereco });
 }
 
 /**

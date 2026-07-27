@@ -44,6 +44,28 @@ arquivo copiado para outro computador é inútil.
 O `CLIENT_ID` em `src-tauri/src/config.rs` é público por natureza — aplicações
 *public client* não têm secret, e o PKCE é o que protege o fluxo.
 
+## Permissões Microsoft Graph
+
+O app é **delegado (`/me`)** e **Graph-only** (sem IMAP/EWS/EAS, ainda que esses
+escopos estejam disponíveis no registro). Há duas listas que não se confundem:
+
+- **Concedidas (*granted*)** — 53 escopos delegados com *admin consent* do tenant.
+  Ficam disponíveis **sem novo consent**. Inclui, entre outros, os de caixa
+  compartilhada (`Mail.Read.Shared`, `Mail.ReadWrite.Shared`, `Mail.Send.Shared`),
+  `MailboxFolder.ReadWrite`, `User.Read.All` e `ProfilePhoto.Read.All`.
+- **Requisitadas (*requested*)** — o subconjunto **mínimo** que o app pede no token,
+  na const `SCOPES` de `src-tauri/src/config.rs`. Hoje:
+
+  ```
+  openid profile offline_access User.Read User.Read.All Files.ReadWrite
+  Sites.Read.All Calendars.Read Mail.ReadWrite Mail.Send Tasks.ReadWrite
+  People.Read Contacts.ReadWrite
+  ```
+
+Adicionar um escopo **já concedido** à lista requisitada **não** dispara re-consent
+— o admin já consentiu; basta o usuário relogar para obter um token novo. A lista
+completa de concedidas e as implicações por feature estão no **AGENTS.md** (§1.1).
+
 ## Stack
 
 - **[Tauri 2](https://tauri.app)** — binário nativo pequeno, WebView2 no Windows

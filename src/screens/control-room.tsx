@@ -4,6 +4,8 @@ import {
   Filters,
   type Filter,
   type FilterFieldConfig,
+  type FilterOperator,
+  type FilterOption,
 } from "@/components/reui/filters";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -34,6 +36,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Empty,
   EmptyContent,
@@ -77,6 +85,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -98,6 +113,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
 import { usePersistedState } from "@/lib/persist";
+import { useDebounce } from "@/hooks/use-debounce";
 import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
 import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
 import DOMPurify from "dompurify";
@@ -109,8 +125,20 @@ import type {
   EmailItem,
   EventoAgenda,
   EventoDetalhe,
+  InsightsRemetente,
   PastaEmail,
+  SegurancaEmail,
 } from "@/lib/types";
+import {
+  analisarLink,
+  nivelAutenticacao,
+  parseAuthResults,
+  replyToDivergente,
+  type AnaliseLink,
+  type AvisoLink,
+  type NivelAutenticacao,
+  type ResultadoAutenticacao,
+} from "@/lib/seguranca-leitor";
 import {
   Archive,
   ArrowDownUp,
@@ -126,6 +154,7 @@ import {
   FilePen,
   Flag,
   FlagOff,
+  FunnelX,
   Folder,
   FolderInput,
   FolderPlus,
@@ -142,18 +171,33 @@ import {
   RefreshCw,
   Reply,
   ReplyAll,
+  RotateCcw,
   Search,
   Send,
   Send as SendIcon,
+  Shield,
   ShieldAlert,
+  ShieldCheck,
+  ShieldX,
   SlidersHorizontal,
   Star,
   Trash2,
+  TriangleAlert,
   User,
   Video,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useAtalhos, isTypingTarget, ehModPrincipal } from "@/hooks/use-atalhos";
+import { AtalhosAjuda } from "@/components/atalhos-ajuda";
 
 // --- helpers de data/horário ------------------------------------------------
 
@@ -199,6 +243,18 @@ function quandoCurto(iso: string, idioma: string): string {
  * O HTML é sanitizado (DOMPurify) e o `allow-scripts` (necessário pro Dark
  * Reader no tema escuro) só permite o DR — scripts do e-mail são removidos.
  */
+
+// Zoom MANUAL do leitor (#76) — camada por cima do auto-fit do #57.
+// O fator do usuário (1 = auto-fit puro) multiplica o zoom que o app calculou:
+// `efetivo = base(auto-fit) × fator`. Piso/teto e passo consistentes entre
+// teclado (CTRL +/−) e roda (CTRL+scroll). CTRL+0 volta ao auto-fit (fator 1).
+const ZOOM_MIN = 0.5;
+const ZOOM_MAX = 3.0;
+const ZOOM_PASSO = 0.1;
+/** Clampa e arredonda pra 2 casas (evita drift de float ao somar 0.1). */
+const clampZoom = (v: number) =>
+  Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(v * 100) / 100));
+
 function CorpoHtml({
   corpo,
   onAbrirLink,
@@ -208,6 +264,18 @@ function CorpoHtml({
 }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [altura, setAltura] = useState(120);
+  // Link-safety (#91): clique num link do corpo abre um modal de confirmação
+  // com o DESTINO REAL + avisos, em vez de abrir direto. `null` = modal fechado.
+  const [linkPendente, setLinkPendente] = useState<AnaliseLink | null>(null);
+  // Zoom manual (#76): fator do USUÁRIO aplicado POR CIMA do auto-fit do #57.
+  // GLOBAL e persistido (não por-mensagem): a preferência sobrevive a fechar/
+  // reabrir o app e a trocar de mensagem e voltar (decisão da issue #76 — o
+  // leitor tem UM nível de zoom, como o zoom de página de um navegador).
+  const [fator, setFator] = usePersistedState("bridge.leitorZoom", 1);
+  // Ref pro fator (lido dentro dos listeners do iframe sem re-bindar) e ref pra
+  // função de reaplicar o zoom (chamada pelo efeito que reage à mudança de fator).
+  const fatorRef = useRef(fator);
+  const ajustarRef = useRef<() => void>(() => {});
   // Render ciente do tema do app (como leitores modernos). O baseline é SEMPRE
   // claro — dá ao Dark Reader um conjunto limpo de cores pra inverter. No modo
   // escuro, injetamos o Dark Reader real (como o MailVault) no <head> do srcDoc:
@@ -275,11 +343,13 @@ function CorpoHtml({
         // tamanho ilegível. Se o piso bater, o excedente NÃO clipa: rola no eixo
         // X (overflow-x:auto no root) e continua acessível.
         const PISO = 0.75;
-        const zoom = Math.max(PISO, ideal);
-        body.style.zoom = String(zoom);
-        // Se o piso segurou o zoom acima do ideal, ainda sobra largura -> haverá
+        const base = Math.max(PISO, ideal); // auto-fit calculado pelo app (#57)
+        // Zoom manual (#76) por cima do auto-fit: base × fator do usuário.
+        const efetivo = base * fatorRef.current;
+        body.style.zoom = String(efetivo);
+        // Se, na escala efetiva, o conteúdo ainda estoura a largura útil, haverá
         // scrollbar horizontal; reserva a altura dela pra não clipar a última linha.
-        const rolaX = zoom > ideal + 1e-3;
+        const rolaX = conteudo * efetivo > disponivel + 1;
         // altura VISÍVEL (pós-zoom) via bounding rect; setAltura só se mudou de
         // verdade (evita re-render à toa).
         const h = Math.ceil(body.getBoundingClientRect().height) + 4 + (rolaX ? 16 : 0);
@@ -288,6 +358,8 @@ function CorpoHtml({
         /* srcDoc é same-origin; catch só por segurança */
       }
     };
+    // Exposto pra fora do onLoad: o efeito de [fator] reaplica o zoom + re-mede.
+    ajustarRef.current = ajustar;
     const onLoad = () => {
       ultimaLargura = iframe.clientWidth;
       ajustar();
@@ -302,15 +374,53 @@ function CorpoHtml({
       // — mesmo mecanismo já usado no clique dos links, logo abaixo.
       d?.addEventListener("toggle", ajustar, true);
       // Links do e-mail: o `target=_blank` não navega no Tauri (nada acontecia
-      // ao clicar). Interceptamos o clique e abrimos http(s) no Navigator (aba
-      // própria); outros esquemas (mailto/tel) vão pro handler padrão do SO.
+      // ao clicar). Interceptamos o clique. Para http(s), NÃO abrimos direto:
+      // link-safety (#91) — analisamos texto × href e abrimos um modal de
+      // confirmação com o DESTINO REAL e os avisos (mismatch/encurtador/etc).
+      // Este listener é código NOSSO (realm do app), capturado no documento do
+      // iframe, então roda mesmo no tema claro (sandbox sem allow-scripts).
+      // Outros esquemas (mailto/tel) seguem pro handler padrão do SO.
       d?.addEventListener("click", (e) => {
         const a = (e.target as HTMLElement | null)?.closest?.("a") as HTMLAnchorElement | null;
         const href = a?.href;
         if (!href) return;
         e.preventDefault();
-        if (/^https?:/i.test(href) && onAbrirLink) onAbrirLink(href);
-        else api.openUrl(href).catch(() => {});
+        if (/^https?:/i.test(href)) {
+          // `a.href` é a URL RESOLVIDA (absoluta); `a.textContent` é o texto
+          // visível — a base do teste de mismatch texto × destino.
+          setLinkPendente(analisarLink(a.textContent ?? "", href));
+        } else {
+          api.openUrl(href).catch(() => {});
+        }
+      });
+      // Zoom manual (#76). Estes handlers são código NOSSO (realm do app),
+      // capturados NO documento do iframe — então rodam mesmo com o sandbox sem
+      // allow-scripts (tema claro), e ficam restritos ao leitor: nunca tocam a
+      // lista/sidebar/UI do app. `preventDefault` bloqueia o zoom nativo do
+      // WebView2/Chromium (CTRL+roda) e os atalhos nativos (CTRL +/−/0).
+      // O `wheel` precisa de `passive:false` pra poder dar preventDefault.
+      d?.addEventListener(
+        "wheel",
+        (e) => {
+          if (!e.ctrlKey) return;
+          e.preventDefault();
+          const passo = e.deltaY < 0 ? ZOOM_PASSO : -ZOOM_PASSO;
+          setFator((f) => clampZoom(f + passo));
+        },
+        { passive: false },
+      );
+      d?.addEventListener("keydown", (e) => {
+        if (!e.ctrlKey) return;
+        if (e.key === "+" || e.key === "=") {
+          e.preventDefault();
+          setFator((f) => clampZoom(f + ZOOM_PASSO));
+        } else if (e.key === "-" || e.key === "_") {
+          e.preventDefault();
+          setFator((f) => clampZoom(f - ZOOM_PASSO));
+        } else if (e.key === "0") {
+          e.preventDefault();
+          setFator(1); // volta ao auto-fit do #57
+        }
       });
     };
     iframe.addEventListener("load", onLoad);
@@ -330,23 +440,170 @@ function CorpoHtml({
     };
   }, [doc]);
 
+  // Reaplica o zoom quando o fator manual muda (teclado/roda/reset/persistido),
+  // re-rodando a MESMA medição de altura do #57 pra não clipar nem sobrar espaço.
+  useEffect(() => {
+    fatorRef.current = fator;
+    ajustarRef.current();
+  }, [fator]);
+
+  const zoomAlterado = fator !== 1;
+
   return (
-    <iframe
-      // Remonta o iframe quando o tema muda: alterar `sandbox` (add/remove
-      // allow-scripts) num iframe JÁ montado não reaplica na mesma carga do
-      // novo srcDoc, então o Dark Reader era bloqueado ao trocar claro→escuro
-      // com o e-mail aberto (só pegava ao trocar de e-mail). Um `key` por tema
-      // cria um iframe novo com o sandbox correto desde o início (#73).
-      key={escuro ? "dark" : "light"}
-      ref={ref}
-      srcDoc={doc}
-      // allow-scripts só no escuro: é o que o Dark Reader precisa pra rodar no
-      // load. No claro mantemos o sandbox estrito (nenhum script do e-mail roda).
-      sandbox={escuro ? "allow-same-origin allow-popups allow-scripts" : "allow-same-origin allow-popups"}
-      title="e-mail"
-      className="w-full border-0 bg-white"
-      style={{ height: altura }}
-    />
+    <div className="relative w-full">
+      <iframe
+        // Remonta o iframe quando o tema muda: alterar `sandbox` (add/remove
+        // allow-scripts) num iframe JÁ montado não reaplica na mesma carga do
+        // novo srcDoc, então o Dark Reader era bloqueado ao trocar claro→escuro
+        // com o e-mail aberto (só pegava ao trocar de e-mail). Um `key` por tema
+        // cria um iframe novo com o sandbox correto desde o início (#73).
+        key={escuro ? "dark" : "light"}
+        ref={ref}
+        srcDoc={doc}
+        // allow-scripts só no escuro: é o que o Dark Reader precisa pra rodar no
+        // load. No claro mantemos o sandbox estrito (nenhum script do e-mail roda).
+        sandbox={escuro ? "allow-same-origin allow-popups allow-scripts" : "allow-same-origin allow-popups"}
+        title="e-mail"
+        className="w-full border-0 bg-white"
+        style={{ height: altura }}
+      />
+      {/* Indicador do nível de zoom manual (#76) + reset via UI. Só aparece
+          quando o usuário mudou o zoom (fator ≠ auto-fit); some ao resetar.
+          O % é relativo ao auto-fit (100% = o que o app calculou), como o zoom
+          de página de um navegador. Fica sobreposto ao canto do leitor, sem
+          empurrar o layout do e-mail. */}
+      {zoomAlterado && (
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-1 rounded-full border bg-background/90 py-0.5 pr-0.5 pl-2 shadow-sm backdrop-blur">
+          <span className="text-xs font-medium tabular-nums text-muted-foreground">
+            {Math.round(fator * 100)}%
+          </span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="rounded-full text-muted-foreground"
+            onClick={() => setFator(1)}
+            title={t.controlRoom.zoomResetar}
+            aria-label={t.controlRoom.zoomResetar}
+          >
+            <RotateCcw />
+          </Button>
+        </div>
+      )}
+      <ModalLinkSeguro
+        analise={linkPendente}
+        onFechar={() => setLinkPendente(null)}
+        onAbrir={(url) => {
+          setLinkPendente(null);
+          onAbrirLink?.(url);
+        }}
+        t={t}
+      />
+    </div>
+  );
+}
+
+/** Texto localizado de cada aviso de link (#91). */
+function textoAviso(t: ReturnType<typeof useIdioma>["t"], a: AvisoLink): string {
+  switch (a) {
+    case "mismatch":
+      return t.controlRoom.segAvisoMismatch;
+    case "encurtador":
+      return t.controlRoom.segAvisoEncurtador;
+    case "ip":
+      return t.controlRoom.segAvisoIp;
+    case "punycode":
+      return t.controlRoom.segAvisoPunycode;
+    case "inseguro":
+      return t.controlRoom.segAvisoInseguro;
+    case "redirecionamento":
+      return t.controlRoom.segAvisoRedirecionamento;
+  }
+}
+
+/**
+ * Modal de confirmação de link (#91, parte a). Mostra o DESTINO REAL antes de
+ * abrir e, quando há sinais de risco (mismatch/encurtador/IP/punycode/redirect/
+ * http), lista os avisos num Alert. O botão de abrir fica destrutivo quando o
+ * link é suspeito, pra o usuário pensar duas vezes.
+ */
+function ModalLinkSeguro({
+  analise,
+  onFechar,
+  onAbrir,
+  t,
+}: {
+  analise: AnaliseLink | null;
+  onFechar: () => void;
+  onAbrir: (url: string) => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const suspeito = analise?.suspeito ?? false;
+  return (
+    <Dialog open={analise !== null} onOpenChange={(o) => !o && onFechar()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {suspeito ? (
+              <TriangleAlert className="size-4 text-[color:var(--destructive)]" />
+            ) : (
+              <ShieldCheck className="size-4 text-[color:var(--success)]" />
+            )}
+            {t.controlRoom.segLinkTitulo}
+          </DialogTitle>
+          <DialogDescription>{t.controlRoom.segLinkDescricao}</DialogDescription>
+        </DialogHeader>
+        {analise && (
+          <div className="space-y-3">
+            <div>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">
+                {t.controlRoom.segLinkDestino}
+              </p>
+              <p className="rounded-md border bg-muted/40 px-2 py-1.5 font-mono text-xs break-all">
+                {analise.href}
+              </p>
+            </div>
+            {analise.textoLink && analise.textoLink !== analise.href && (
+              <div>
+                <p className="mb-1 text-xs font-medium text-muted-foreground">
+                  {t.controlRoom.segLinkTexto}
+                </p>
+                <p className="text-sm break-all">{analise.textoLink}</p>
+              </div>
+            )}
+            {analise.avisos.length > 0 ? (
+              <Alert variant={suspeito ? "destructive" : "warning"}>
+                <TriangleAlert />
+                <AlertTitle>{t.controlRoom.segLinkSuspeito}</AlertTitle>
+                <AlertDescription>
+                  <ul className="list-disc pl-4">
+                    {analise.avisos.map((a) => (
+                      <li key={a}>{textoAviso(t, a)}</li>
+                    ))}
+                  </ul>
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <ShieldCheck className="size-3.5 text-[color:var(--success)]" />
+                {t.controlRoom.segLinkVerificado}
+              </p>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="ghost" onClick={onFechar}>
+            {t.controlRoom.segLinkCancelar}
+          </Button>
+          <Button
+            variant={suspeito ? "destructive" : "default"}
+            onClick={() => analise && onAbrir(analise.href)}
+          >
+            <ExternalLink /> {t.controlRoom.segLinkAbrir}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1321,18 +1578,51 @@ function FolderSidebar({
 // Filtro único da lista (dropdown estilo Outlook, #31). Os 4 primeiros são
 // client-side (aplicados sobre a lista já carregada, como as antigas abas); os
 // 3 últimos exigem o servidor (cr_filtrar) e são buscados pelo pai.
-type FiltroLista =
-  | "all"
-  | "unread"
-  | "flagged"
-  | "files"
-  | "tome"
-  | "mentions"
-  | "invites";
+// Escopos que EXIGEM o servidor (não dá só na lista carregada) — resolvidos por
+// `api.crFiltrar`. Modelados como o campo `scope` do filter-builder reui (#31).
+type FiltroServidor = "tome" | "mentions" | "invites";
 
-/** true para os filtros que precisam ir ao Graph (não dá só no carregado). */
-function ehFiltroGraph(f: FiltroLista): boolean {
-  return f === "tome" || f === "mentions" || f === "invites";
+/**
+ * Deriva o escopo de servidor ativo (1 por vez) da lista de filtros do builder.
+ * O componente reui é um filter-builder multi-campo; só o campo `scope` vai ao
+ * Graph. Se houver mais de um chip `scope` (allowMultiple), o primeiro manda —
+ * os client-side (De/Status/Sinalizado/Anexos) combinam por cima com E (AND).
+ */
+function escopoDeFiltros(filtros: Filter<string>[]): FiltroServidor | null {
+  const v = filtros.find((f) => f.field === "scope")?.values[0];
+  return v === "tome" || v === "mentions" || v === "invites" ? v : null;
+}
+
+/**
+ * Aplica os filtros client-side (De, Status, Sinalizado, Anexos) sobre um item,
+ * combinados com E (AND). O campo `scope` é resolvido no servidor, então aqui é
+ * ignorado. Honra os operadores is/is_not (selects) e contains/not_contains
+ * (texto De).
+ */
+function passaFiltrosClient(m: EmailItem, filtros: Filter<string>[]): boolean {
+  for (const f of filtros) {
+    const v = f.values[0];
+    if (f.field === "from") {
+      const termo = String(v ?? "").trim().toLowerCase();
+      if (!termo) continue;
+      const contem = `${m.de} ${m.deEmail}`.toLowerCase().includes(termo);
+      if (f.operator === "not_contains" ? contem : !contem) return false;
+    } else if (f.field === "status") {
+      if (v == null) continue;
+      const bate = v === "unread" ? !m.lido : m.lido;
+      if (f.operator === "is_not" ? bate : !bate) return false;
+    } else if (f.field === "flagged") {
+      if (v == null) continue;
+      const bate = v === "yes" ? m.sinalizado : !m.sinalizado;
+      if (f.operator === "is_not" ? bate : !bate) return false;
+    } else if (f.field === "files") {
+      if (v == null) continue;
+      const bate = v === "yes" ? m.temAnexos : !m.temAnexos;
+      if (f.operator === "is_not" ? bate : !bate) return false;
+    }
+    // `scope` → servidor (crFiltrar), ignorado no client-side.
+  }
+  return true;
 }
 
 // Quando a mensagem aberta é marcada como lida (#95). Espelha as três opções do
@@ -1586,8 +1876,8 @@ function MessageList({
   naoLidosPasta,
   contFlagged,
   contAnexos,
-  filtro,
-  onFiltro,
+  filtros,
+  onFiltros,
   filtrosOcultos,
   busca,
   setBusca,
@@ -1598,6 +1888,10 @@ function MessageList({
   marcarLidoAtraso,
   onMarcarLidoModo,
   onMarcarLidoAtraso,
+  onResponder,
+  onResponderTodos,
+  onEncaminhar,
+  onCompor,
   t,
   idioma,
 }: {
@@ -1626,9 +1920,9 @@ function MessageList({
   naoLidosPasta: number;
   contFlagged: number | null;
   contAnexos: number | null;
-  filtro: FiltroLista;
-  onFiltro: (f: FiltroLista) => void;
-  filtrosOcultos: Set<FiltroLista>;
+  filtros: Filter<string>[];
+  onFiltros: (fs: Filter<string>[]) => void;
+  filtrosOcultos: Set<string>;
   busca: string;
   setBusca: (v: string) => void;
   ordenar: api.OrdenarMensagens;
@@ -1638,11 +1932,22 @@ function MessageList({
   marcarLidoAtraso: number;
   onMarcarLidoModo: (m: MarcarLidoModo) => void;
   onMarcarLidoAtraso: (s: number) => void;
+  // Atalhos de teclado (#28): ações que vivem no LEITOR (reply/forward via
+  // handle imperativo) e no PAI (compor). MessageList só dispara a tecla.
+  onResponder: () => void;
+  onResponderTodos: () => void;
+  onEncaminhar: () => void;
+  onCompor: () => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
   const listaRef = useRef<HTMLDivElement>(null);
-  const filtroGraph = ehFiltroGraph(filtro);
+  // Busca (para o atalho "/" focar) e âncora do intervalo de Shift+clique (#28).
+  const buscaRef = useRef<HTMLInputElement>(null);
+  const ancoraRef = useRef<string | null>(null);
+  const [ajudaAberta, setAjudaAberta] = useState(false);
+  const filtroServidor = escopoDeFiltros(filtros);
+  const filtroGraph = filtroServidor !== null;
 
   // ESC limpa só a busca de texto (o filtro é global/persistido, controlado
   // pelo pai — não é resetado aqui).
@@ -1664,13 +1969,8 @@ function MessageList({
   // mais nada aqui.
   const filtrada = useMemo(() => {
     if (!mensagens) return [];
-    return mensagens.filter((m) => {
-      if (filtro === "unread" && m.lido) return false;
-      if (filtro === "flagged" && !m.sinalizado) return false;
-      if (filtro === "files" && !m.temAnexos) return false;
-      return true;
-    });
-  }, [mensagens, filtro]);
+    return mensagens.filter((m) => passaFiltrosClient(m, filtros));
+  }, [mensagens, filtros]);
 
   // Agrupamento por período + grupo Flagged no topo (#30). Só quando ordenado
   // por DATA e fora de busca/filtro-Graph (período segue a ordem; em busca e nos
@@ -1758,7 +2058,7 @@ function MessageList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtrada, AGRUPAR, colapsados, t, rotuloDePeriodo]);
 
-  const filtrando = busca.trim() !== "" || filtro !== "all";
+  const filtrando = busca.trim() !== "" || filtros.length > 0;
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
   // carrega a próxima (progressivo) até aparecer resultado ou acabar.
   useEffect(() => {
@@ -1801,102 +2101,288 @@ function MessageList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [faixaVisivel, linhas, pedirFotos]);
 
-  const comEstrela = mensagens?.filter((m) => m.sinalizado).length ?? 0;
-  const comAnexo = mensagens?.filter((m) => m.temAnexos).length ?? 0;
-  // Opções do filtro da lista (#31). Os 4 primeiros são client-side (com
-  // contador real da pasta); os 3 Graph não têm contador. mentions/invites
-  // somem quando o tenant não suporta (D6 — `filtrosOcultos`).
-  const filtroOpcoes = (
+  // Campos do filter-builder reui (#31), combináveis com E (AND) via
+  // `allowMultiple`. Client-side (sobre a lista carregada): De, Status,
+  // Sinalizado, Anexos. Servidor (via `crFiltrar`): Escopo — Para mim / Me
+  // mencionam / Convites, 1 por vez. Nada de campo "view" único (que gerava o
+  // submenu "Filtro >" redundante que o PO reprovou): com vários campos reais o
+  // gatilho abre a LISTA de campos direto, como no exemplo da reui.
+  const OP_TEXTO: FilterOperator[] = [
+    { value: "contains", label: t.controlRoom.filtroOpContem },
+    { value: "not_contains", label: t.controlRoom.filtroOpNaoContem },
+  ];
+  const OP_SELECT: FilterOperator[] = [
+    { value: "is", label: t.controlRoom.filtroOperadorIs },
+    { value: "is_not", label: t.controlRoom.filtroOpNaoE },
+  ];
+  // D6: escopos que o tenant rejeitou (400) somem (`filtrosOcultos`).
+  const escopoOpcoes = (
     [
-    { id: "all", label: t.controlRoom.abaTodos, icon: <Inbox className="size-4" /> },
-    // não lidos = total REAL da pasta (não só os carregados na lista)
-    { id: "unread", label: t.controlRoom.abaNaoLidos, icon: <Mail className="size-4" />, n: naoLidosPasta },
-    // Flagged/Files = total REAL da pasta (fallback pro carregado enquanto carrega)
-    { id: "flagged", label: t.controlRoom.abaSinalizados, icon: <Flag className="size-4" />, n: contFlagged ?? comEstrela },
-    { id: "files", label: t.controlRoom.abaAnexos, icon: <Paperclip className="size-4" />, n: contAnexos ?? comAnexo },
-    { id: "tome", label: t.controlRoom.filtroToMe, icon: <User className="size-4" /> },
-    { id: "mentions", label: t.controlRoom.filtroMentions, icon: <AtSign className="size-4" /> },
-    { id: "invites", label: t.controlRoom.filtroInvites, icon: <CalendarCheck className="size-4" /> },
-    ] as { id: FiltroLista; label: string; icon: React.ReactNode; n?: number }[]
-  ).filter((o) => !filtrosOcultos.has(o.id));
+      { value: "tome", label: t.controlRoom.filtroToMe, icon: <User className="size-3.5" /> },
+      { value: "mentions", label: t.controlRoom.filtroMentions, icon: <AtSign className="size-3.5" /> },
+      { value: "invites", label: t.controlRoom.filtroInvites, icon: <CalendarCheck className="size-3.5" /> },
+    ] as FilterOption<string>[]
+  ).filter((o) => !filtrosOcultos.has(o.value as string));
 
-  // O @reui/filters (variante Radix) é um filter-builder: campo → operador →
-  // valor. Como o comportamento pedido é escolher UM filtro, modelamos um único
-  // campo `view` do tipo `select` com as 7 opções (single-select). O contador
-  // vai no rótulo da opção — o chip do componente não tem slot de badge.
-  const filtroCampos: FilterFieldConfig<FiltroLista>[] = [
+  // Campos agrupados como no exemplo canônico do reui (`Pattern()` do
+  // c-filters-5): um grupo "Básico" com os campos de texto e um grupo "Seleção"
+  // com os campos de opção. A lista de campos flattena os grupos, mas manter a
+  // estrutura de `group` casa 1:1 com o exemplo que o PO pediu.
+  const filtroCampos: FilterFieldConfig<string>[] = [
     {
-      key: "view",
-      label: t.controlRoom.filtroLabel,
-      icon: <ListFilter className="size-3.5" />,
-      type: "select",
-      // 7 opções: a busca dentro do submenu só atrapalharia.
-      searchable: false,
-      operators: [{ value: "is", label: t.controlRoom.filtroOperadorIs }],
-      options: filtroOpcoes.map((o) => ({
-        value: o.id,
-        label: o.n != null && o.n > 0 ? `${o.label} (${o.n})` : o.label,
-        icon: o.icon,
-      })),
+      group: t.controlRoom.filtroGrupoBasico,
+      fields: [
+        {
+          key: "from",
+          label: t.controlRoom.filtroDe,
+          icon: <User className="size-3.5" />,
+          type: "text",
+          operators: OP_TEXTO,
+          defaultOperator: "contains",
+          placeholder: t.controlRoom.filtroDePlaceholder,
+        },
+      ],
+    },
+    {
+      group: t.controlRoom.filtroGrupoSelecao,
+      fields: [
+        {
+          key: "status",
+          label: t.controlRoom.filtroStatus,
+          icon: <Mail className="size-3.5" />,
+          type: "select",
+          searchable: false,
+          operators: OP_SELECT,
+          options: [
+            { value: "unread", label: t.controlRoom.abaNaoLidos },
+            { value: "read", label: t.controlRoom.filtroLidos },
+          ],
+        },
+        {
+          key: "flagged",
+          label: t.controlRoom.abaSinalizados,
+          icon: <Flag className="size-3.5" />,
+          type: "select",
+          searchable: false,
+          operators: OP_SELECT,
+          options: [
+            { value: "yes", label: t.controlRoom.filtroSim },
+            { value: "no", label: t.controlRoom.filtroNao },
+          ],
+        },
+        {
+          key: "files",
+          label: t.controlRoom.abaAnexos,
+          icon: <Paperclip className="size-3.5" />,
+          type: "select",
+          searchable: false,
+          operators: OP_SELECT,
+          options: [
+            { value: "yes", label: t.controlRoom.filtroSim },
+            { value: "no", label: t.controlRoom.filtroNao },
+          ],
+        },
+        // Escopo só entra se houver ao menos uma opção não escondida (D6).
+        ...(escopoOpcoes.length > 0
+          ? [
+              {
+                key: "scope",
+                label: t.controlRoom.filtroEscopo,
+                icon: <ListFilter className="size-3.5" />,
+                type: "select" as const,
+                searchable: false,
+                // Escopo é resolvido no servidor; só "é" faz sentido.
+                operators: [
+                  { value: "is", label: t.controlRoom.filtroOperadorIs },
+                ],
+                options: escopoOpcoes,
+              },
+            ]
+          : []),
+      ],
     },
   ];
-  // "all" = sem filtro → nenhum chip, e o botão "Filtro" volta a aparecer
-  // (`allowMultiple={false}` esconde o botão enquanto houver filtro ativo).
-  // Id fixo pra não recriar o chip a cada render.
-  const filtrosAtivos: Filter<FiltroLista>[] =
-    filtro === "all"
-      ? []
-      : [{ id: "view", field: "view", operator: "is", values: [filtro] }];
 
-  // Single-select: o chip mais recente manda; lista vazia (X no chip) = "all".
-  function aoMudarFiltro(fs: Filter<FiltroLista>[]) {
-    const v = fs[fs.length - 1]?.values[0];
-    onFiltro(v != null && filtroOpcoes.some((o) => o.id === v) ? v : "all");
-  }
+  // Move a seleção ativa (↑/↓ e j/k) e rola o virtualizer até ela.
+  const irPara = (idx: number) => {
+    const alvo = filtrada[idx];
+    if (!alvo) return;
+    onSel(alvo.id);
+    ancoraRef.current = alvo.id;
+    // Com a lista virtualizada, o item pode não estar no DOM — usa o
+    // scrollToIndex do virtualizer. O índice é o da lista PLANA (linhas),
+    // que difere de `filtrada` quando há headers de grupo (#30).
+    const vi = linhas.findIndex((l) => l.tipo === "msg" && l.m.id === alvo.id);
+    if (vi >= 0) virtualizer.scrollToIndex(vi);
+  };
 
-  // Teclado: ESC desfaz multi-seleção; Ctrl+A seleciona tudo (se já há ≥1);
-  // ↑/↓ movem a seleção; Delete exclui.
-  function navegar(e: React.KeyboardEvent) {
-    if (e.key === "Escape" && selecionados.size > 0) {
-      e.preventDefault();
-      setSelecionados(new Set());
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && selecionados.size > 0) {
+  // Handler CENTRAL de atalhos (#28) — instalado no `window` via `useAtalhos`
+  // (funciona mesmo sem a lista focada; antes o ESC/Ctrl+A/setas exigiam foco
+  // no container). Respeita foco em campos de texto (`isTypingTarget`) e a
+  // reserva do zoom do leitor (#76): NÃO captura Ctrl +/−/0.
+  function aoTeclar(e: KeyboardEvent) {
+    // #76: faixa do zoom do leitor é intocável aqui.
+    if (ehModPrincipal(e) && ["+", "-", "=", "_", "0"].includes(e.key)) return;
+
+    const digitando = isTypingTarget(e.target);
+
+    // Ctrl/⌘+A: seleciona TUDO — inclusive sem nada selecionado antes (AC #28).
+    // Em campo de texto, deixa o Ctrl+A nativo (selecionar o texto) passar.
+    if (ehModPrincipal(e) && e.key.toLowerCase() === "a" && !e.shiftKey && !e.altKey) {
+      if (digitando) return;
+      if (idsFiltrados.length === 0) return;
       e.preventDefault();
       setSelecionados(new Set(idsFiltrados));
       return;
     }
-    if (filtrada.length === 0) return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+
+    // "?" abre a ajuda dos atalhos (funciona mesmo sem lista); demais atalhos
+    // de tecla única não disparam enquanto o usuário digita.
+    if (e.key === "?" && !digitando) {
       e.preventDefault();
-      const idx = filtrada.findIndex((m) => m.id === sel);
-      const prox =
-        idx === -1
-          ? 0
-          : e.key === "ArrowDown"
-            ? Math.min(filtrada.length - 1, idx + 1)
-            : Math.max(0, idx - 1);
-      const alvo = filtrada[prox];
-      if (alvo) {
-        onSel(alvo.id);
-        // Com a lista virtualizada, o item pode não estar no DOM — usa o
-        // scrollToIndex do virtualizer. O índice é o da lista PLANA (linhas),
-        // que difere de `filtrada` quando há headers de grupo (#30).
-        const vi = linhas.findIndex((l) => l.tipo === "msg" && l.m.id === alvo.id);
-        if (vi >= 0) virtualizer.scrollToIndex(vi);
+      setAjudaAberta((v) => !v);
+      return;
+    }
+    if (digitando) return;
+
+    // Esc unificado: fecha ajuda → limpa seleção → limpa busca.
+    if (e.key === "Escape") {
+      if (ajudaAberta) {
+        setAjudaAberta(false);
+        return;
       }
-    } else if (e.key === "Delete") {
-      const alvos = selecionados.size > 0 ? [...selecionados] : sel ? [sel] : [];
+      if (selecionados.size > 0) {
+        e.preventDefault();
+        setSelecionados(new Set());
+        ancoraRef.current = null;
+        return;
+      }
+      if (busca) {
+        e.preventDefault();
+        limparBusca();
+      }
+      return;
+    }
+
+    // "/" foca a busca.
+    if (e.key === "/") {
+      e.preventDefault();
+      buscaRef.current?.focus();
+      return;
+    }
+
+    // "c" compõe nova mensagem (ação do pai).
+    if (e.key.toLowerCase() === "c" && !ehModPrincipal(e) && !e.altKey) {
+      e.preventDefault();
+      onCompor();
+      return;
+    }
+
+    if (filtrada.length === 0) return;
+    const idxAtivo = filtrada.findIndex((m) => m.id === sel);
+
+    // Navegação: ↑/↓ e j/k (MailVault).
+    const desce = e.key === "ArrowDown" || e.key === "j";
+    const sobe = e.key === "ArrowUp" || e.key === "k";
+    if (desce || sobe) {
+      e.preventDefault();
+      const prox =
+        idxAtivo === -1
+          ? 0
+          : desce
+            ? Math.min(filtrada.length - 1, idxAtivo + 1)
+            : Math.max(0, idxAtivo - 1);
+      irPara(prox);
+      return;
+    }
+
+    // Ações que dependem de UMA mensagem ativa (ou da seleção, no excluir).
+    const ativoId = sel ?? (idxAtivo >= 0 ? filtrada[idxAtivo].id : null);
+    const msgAtiva = ativoId ? filtrada.find((m) => m.id === ativoId) : undefined;
+
+    // Delete exclui a seleção (se houver) ou a ativa.
+    if (e.key === "Delete") {
+      const alvos = selecionados.size > 0 ? [...selecionados] : ativoId ? [ativoId] : [];
       if (alvos.length > 0) {
         e.preventDefault();
         onExcluir(alvos);
         // acaoExcluir não limpa mais a seleção (pro BotaoExcluir animar antes de
         // desmontar); no atalho, limpamos aqui.
         setSelecionados(new Set());
+        ancoraRef.current = null;
       }
+      return;
+    }
+
+    // Atalhos de tecla única sem modificadores.
+    if (ehModPrincipal(e) || e.altKey || e.shiftKey) return;
+    switch (e.key.toLowerCase()) {
+      case "r": // responder
+        e.preventDefault();
+        onResponder();
+        return;
+      case "a": // responder a todos
+        e.preventDefault();
+        onResponderTodos();
+        return;
+      case "f": // encaminhar
+        e.preventDefault();
+        onEncaminhar();
+        return;
+      case "x": // marcar/desmarcar a mensagem ativa
+        if (ativoId) {
+          e.preventDefault();
+          alternarSel(ativoId);
+          ancoraRef.current = ativoId;
+        }
+        return;
+      case "u": // alterna lido/não-lido
+        if (msgAtiva) {
+          e.preventDefault();
+          onMarcarLido(msgAtiva.id, !msgAtiva.lido);
+        }
+        return;
+      case "s": // alterna sinalizado
+        if (msgAtiva) {
+          e.preventDefault();
+          onFlag(msgAtiva.id, !msgAtiva.sinalizado);
+        }
+        return;
     }
   }
+  useAtalhos(aoTeclar);
+
+  // Clique na linha (#28): Shift+clique seleciona o INTERVALO entre a âncora e
+  // o item clicado (sobre a ordem de exibição `idsFiltrados`, ignorando headers
+  // de grupo); Ctrl/⌘+clique alterna; clique simples abre e vira a nova âncora.
+  const aoClicarLinha = (e: React.MouseEvent, id: string) => {
+    if (e.shiftKey) {
+      const ancora = ancoraRef.current;
+      if (ancora && ancora !== id) {
+        const i = idsExibidos.indexOf(ancora);
+        const j = idsExibidos.indexOf(id);
+        if (i >= 0 && j >= 0) {
+          e.preventDefault();
+          const [lo, hi] = i < j ? [i, j] : [j, i];
+          const faixa = idsExibidos.slice(lo, hi + 1);
+          setSelecionados((s) => {
+            const n = new Set(s);
+            for (const x of faixa) n.add(x);
+            return n;
+          });
+          return;
+        }
+      }
+      // Sem âncora válida → comporta como clique simples (fixa a âncora).
+    }
+    if (e.ctrlKey || e.metaKey) {
+      alternarSel(id);
+      ancoraRef.current = id;
+      return;
+    }
+    onSel(id);
+    ancoraRef.current = id;
+  };
 
   // #82: com agrupamento (#30) + grupos colapsados, a lista pode ficar mais
   // CURTA que a área visível — e aí não dá pra rolar até os 90% que disparam o
@@ -1951,6 +2437,13 @@ function MessageList({
   }, [linhas.length, colapsadosArr]);
 
   const idsFiltrados = filtrada.map((m) => m.id);
+  // Ordem de EXIBIÇÃO das mensagens (respeita agrupamento/Flagged-no-topo e
+  // ignora headers e grupos colapsados): é o que o Shift+clique usa como
+  // "itens compreendidos entre" — o intervalo segue o que o usuário vê (#28).
+  const idsExibidos = useMemo(
+    () => linhas.flatMap((l) => (l.tipo === "msg" ? [l.m.id] : [])),
+    [linhas]
+  );
   const todosSel = idsFiltrados.length > 0 && idsFiltrados.every((id) => selecionados.has(id));
   // Em "modo seleção" (≥1 marcado): checkboxes sempre visíveis e as ações de
   // hover por linha somem — o usuário opera pela barra de seleção (#23).
@@ -1983,7 +2476,7 @@ function MessageList({
           variant="ghost"
           size="icon-sm"
           onClick={onToggleSidebar}
-          aria-label={sidebarAberta ? "‹" : "›"}
+          aria-label={t.nav.alternarMenu}
         >
           {sidebarAberta ? <PanelLeftClose /> : <PanelLeftOpen />}
         </Button>
@@ -2084,7 +2577,7 @@ function MessageList({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label="↻">
+          <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label={t.controlRoom.atualizar}>
             <RefreshCw />
           </Button>
         </div>
@@ -2094,6 +2587,7 @@ function MessageList({
         <div className="relative">
           <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
+            ref={buscaRef}
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
             onKeyDown={(e) => {
@@ -2134,24 +2628,44 @@ function MessageList({
           </Button>
         </div>
       ) : (
-        <div className="flex items-center gap-1 px-3 pb-2">
+        <div className="flex items-start gap-2.5 px-3 pb-2">
           {/* Filtro da lista (#31) com o @reui/filters — variante RADIX,
               instalada do registry (`@reui/filters` em style `radix-nova`) e
-              usada literal. Um único campo `view` com as 7 opções: enquanto
-              não há filtro aparece o botão "Filtro"; escolhida uma opção, ela
-              vira o chip `Filtro · é · <opção>` com X pra voltar a "Todos". */}
-          <Filters<FiltroLista>
-            filters={filtrosAtivos}
+              usada literal, como FILTER-BUILDER multi-campo. Montagem espelha o
+              exemplo canônico do reui (`Pattern()` do c-filters-5): trigger
+              `<Button variant="outline"><ListFilter/> Filtro>` com atalho "F",
+              campos agrupados (Básico/Seleção), e um botão "Limpar" separado
+              que aparece só quando há filtro ativo. O gatilho abre a lista de
+              campos direto (De, Status, Sinalizado, Anexos, Escopo); cada um
+              vira um chip `campo · operador · valor`, combináveis com E
+              (`allowMultiple`). Sem `size="sm"` → os inputs seguem o `h-9`
+              padrão do app (bug de altura do input de texto, reprovado antes).
+              `onChange` recebe o array completo → persistido no pai. */}
+          <Filters<string>
+            filters={filtros}
             fields={filtroCampos}
-            onChange={aoMudarFiltro}
-            size="sm"
-            allowMultiple={false}
-            showSearchInput={false}
+            onChange={onFiltros}
+            enableShortcut
+            shortcutKey="f"
+            shortcutLabel="F"
+            trigger={
+              <Button variant="outline">
+                <ListFilter />
+                {t.controlRoom.filtroLabel}
+              </Button>
+            }
             i18n={{
               addFilter: t.controlRoom.filtroLabel,
+              searchFields: t.controlRoom.filtroBuscarCampo,
               select: t.controlRoom.filtroSelecione,
             }}
           />
+          {filtros.length > 0 && (
+            <Button variant="outline" onClick={() => onFiltros([])}>
+              <FunnelX />
+              {t.controlRoom.filtroLimpar}
+            </Button>
+          )}
         </div>
       )}
 
@@ -2183,7 +2697,6 @@ function MessageList({
         <div
           ref={listaRef}
           tabIndex={0}
-          onKeyDown={navegar}
           className="min-h-0 flex-1 overflow-y-auto scrollbar-fina outline-none"
           onScroll={(e) => {
             // Pré-carga antecipada: ao passar de 90% da lista já busca a próxima
@@ -2305,7 +2818,7 @@ function MessageList({
                     <Item
                       size="sm"
                       data-msgid={m.id}
-                      onClick={() => onSel(m.id)}
+                      onClick={(e) => aoClicarLinha(e, m.id)}
                       data-active={ativo}
                       className={cn(
                         "group/row cursor-pointer flex-nowrap gap-2.5 px-2 py-2.5",
@@ -2464,6 +2977,9 @@ function MessageList({
           </ContextMenuContent>
         </ContextMenu>
       )}
+
+      {/* Ajuda dos atalhos ("?") — documentação viva do keymap (#28). */}
+      <AtalhosAjuda aberto={ajudaAberta} onOpenChange={setAjudaAberta} t={t} />
     </section>
   );
 }
@@ -2481,51 +2997,360 @@ function LinhaPessoas({ rotulo, nomes }: { rotulo: string; nomes: string[] }) {
   );
 }
 
-function MessageDetail({
-  id,
-  userEmail,
-  sinalizado,
-  lido,
-  onFlag,
-  onExcluir,
-  onMarcarLido,
-  onAbrirLink,
-  onMudou,
+// --- Insights do remetente (#94) --------------------------------------------
+// Popover acionado por CLIQUE no nome do remetente (padrão Gmail/Outlook: o
+// contact-card mora atrás do identificador da pessoa). Escolhido por ser o
+// MENOS INTRUSIVO — insights são secundários e não podem competir com o corpo
+// nem roubar espaço permanente do leitor (um painel fixo faria isso). A busca é
+// LAZY: só dispara ao abrir o popover, não ao abrir o e-mail — poupa as ~4
+// chamadas Graph quando o usuário não pede. Estados: skeleton (carregando),
+// "primeiro contato" (vazio, positivo), e erro discreto com "tentar de novo"
+// (nunca derruba o leitor). Decisão embasada em pesquisa de UX (AGENTS §3.1).
+
+/** Data curta ("12 mar 2023") ciente do idioma. */
+function dataCurta(iso: string, idioma: string): string {
+  const d = new Date(comZ(iso));
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(idioma, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+/** Recência relativa ("há 3 dias", "hoje") via Intl.RelativeTimeFormat. */
+function recencia(iso: string, idioma: string): string {
+  const d = new Date(comZ(iso));
+  if (Number.isNaN(d.getTime())) return "";
+  const dias = Math.round((Date.now() - d.getTime()) / 86_400_000);
+  const rtf = new Intl.RelativeTimeFormat(idioma, { numeric: "auto" });
+  if (dias <= 0) return rtf.format(0, "day");
+  if (dias < 45) return rtf.format(-dias, "day");
+  const meses = Math.round(dias / 30);
+  if (meses < 18) return rtf.format(-meses, "month");
+  return rtf.format(-Math.round(dias / 365), "year");
+}
+
+/** Frequência aproximada de e-mails/mês, do 1º contato até o último. */
+function porMes(total: number, primeiro?: string | null, ultimo?: string | null): number {
+  if (!primeiro || total <= 0) return 0;
+  const ini = new Date(comZ(primeiro)).getTime();
+  const fim = ultimo ? new Date(comZ(ultimo)).getTime() : Date.now();
+  const meses = Math.max(1, (fim - ini) / (30 * 86_400_000));
+  return Math.max(1, Math.round(total / meses));
+}
+
+function InsightsRemetentePopover({
+  nome,
+  email,
   t,
   idioma,
 }: {
-  id: string | null;
-  userEmail?: string | null;
-  sinalizado: boolean;
-  lido: boolean;
-  onFlag: (id: string, novo: boolean) => void;
-  onExcluir: (ids: string[]) => void;
-  onMarcarLido: (id: string, lido: boolean) => void;
-  onAbrirLink: (url: string) => void;
-  onMudou: () => void;
+  nome: string;
+  email: string;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
+  const [aberto, setAberto] = useState(false);
+  const [estado, setEstado] = useState<"idle" | "carregando" | "ok" | "erro">("idle");
+  const [dados, setDados] = useState<InsightsRemetente | null>(null);
+  const [tentativa, setTentativa] = useState(0);
+  // E-mail (+ tentativa) já solicitado — evita refetch a cada reabertura mas
+  // permite o "tentar de novo". NÃO metemos `estado` nas deps do efeito de
+  // busca: como o efeito seta `estado`, isso faria a limpeza cancelar a própria
+  // chamada em voo (ficava preso no skeleton).
+  const pedidoRef = useRef<string | null>(null);
+
+  // Troca de remetente → esquece o cache e fecha.
+  useEffect(() => {
+    pedidoRef.current = null;
+    setEstado("idle");
+    setDados(null);
+    setAberto(false);
+  }, [email]);
+
+  // Busca lazy: só quando o popover abre (ou o usuário pede "tentar de novo").
+  useEffect(() => {
+    if (!aberto || !email) return;
+    const chave = `${email}#${tentativa}`;
+    if (pedidoRef.current === chave) return; // já buscado neste e-mail/tentativa
+    pedidoRef.current = chave;
+    let vivo = true;
+    setEstado("carregando");
+    api
+      .crInsightsRemetente(email)
+      .then((d) => {
+        if (!vivo) return;
+        setDados(d);
+        setEstado("ok");
+      })
+      .catch(() => {
+        if (vivo) setEstado("erro");
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [aberto, email, tentativa]);
+
+  const rec = dados?.recebidos ?? 0;
+  const env = dados?.enviados;
+  const total = rec + (env ?? 0);
+  const vazio =
+    estado === "ok" && rec === 0 && (env == null || env === 0) && !dados?.primeiro;
+
+  return (
+    <Popover
+      open={aberto}
+      onOpenChange={(o) => {
+        setAberto(o);
+        // Fechou no meio do carregamento → permite refazer ao reabrir.
+        if (!o && estado === "carregando") {
+          pedidoRef.current = null;
+          setEstado("idle");
+        }
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="group inline-flex items-center gap-1 rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={preencher(t.controlRoom.insightsAbrir, { nome })}
+          aria-haspopup="dialog"
+        >
+          <span className="underline-offset-2 group-hover:underline">{nome}</span>
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground opacity-50 transition-opacity group-hover:opacity-100" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80" aria-live="polite">
+        <p className="mb-3 text-xs font-medium text-muted-foreground">
+          {t.controlRoom.insightsTitulo}
+        </p>
+
+        {estado === "carregando" && (
+          <div className="space-y-2.5">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-4/5" />
+            <Skeleton className="h-4 w-3/5" />
+          </div>
+        )}
+
+        {estado === "erro" && (
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">{t.controlRoom.insightsErro}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setTentativa((n) => n + 1)}
+            >
+              <RefreshCw /> {t.controlRoom.insightsTentar}
+            </Button>
+          </div>
+        )}
+
+        {estado === "ok" && vazio && (
+          <p className="text-sm text-muted-foreground">
+            {t.controlRoom.insightsPrimeiroContato}
+          </p>
+        )}
+
+        {estado === "ok" && !vazio && dados && (
+          <dl className="space-y-2 text-sm">
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted-foreground">{t.controlRoom.insightsRecebidos}</dt>
+              <dd className="font-medium tabular-nums">{rec}</dd>
+            </div>
+            {env != null && (
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">{t.controlRoom.insightsEnviados}</dt>
+                <dd className="font-medium tabular-nums">{env}</dd>
+              </div>
+            )}
+            {dados.primeiro && (
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">{t.controlRoom.insightsPrimeiro}</dt>
+                <dd className="font-medium">{dataCurta(dados.primeiro, idioma)}</dd>
+              </div>
+            )}
+            {dados.ultimo && (
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">{t.controlRoom.insightsUltimo}</dt>
+                <dd className="font-medium">{recencia(dados.ultimo, idioma)}</dd>
+              </div>
+            )}
+            {porMes(total, dados.primeiro, dados.ultimo) > 0 && (
+              <>
+                <Separator className="my-1" />
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">{t.controlRoom.insightsFrequencia}</dt>
+                  <dd className="font-medium tabular-nums">
+                    {preencher(t.controlRoom.insightsPorMes, {
+                      n: porMes(total, dados.primeiro, dados.ultimo),
+                    })}
+                  </dd>
+                </div>
+              </>
+            )}
+          </dl>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/**
+ * Badge de autenticação do remetente (#91, parte b). Cor/ícone conforme o
+ * veredito SPF/DKIM/DMARC; o tooltip detalha cada mecanismo. Verde = autenticado,
+ * amarelo = parcial, vermelho = falha, cinza = sem dados.
+ */
+function BadgeAutenticacao({
+  nivel,
+  resultado,
+  t,
+}: {
+  nivel: NivelAutenticacao;
+  resultado: ResultadoAutenticacao;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const cfg = {
+    autenticado: {
+      variant: "success-light" as const,
+      Icone: ShieldCheck,
+      rotulo: t.controlRoom.segAutAutenticado,
+      dica: t.controlRoom.segAutTooltipAutenticado,
+    },
+    parcial: {
+      variant: "warning-light" as const,
+      Icone: ShieldAlert,
+      rotulo: t.controlRoom.segAutParcial,
+      dica: t.controlRoom.segAutTooltipParcial,
+    },
+    falhou: {
+      variant: "destructive-light" as const,
+      Icone: ShieldX,
+      rotulo: t.controlRoom.segAutFalhou,
+      dica: t.controlRoom.segAutTooltipFalhou,
+    },
+    indisponivel: {
+      variant: "secondary" as const,
+      Icone: Shield,
+      rotulo: t.controlRoom.segAutIndisponivel,
+      dica: t.controlRoom.segAutTooltipIndisponivel,
+    },
+  }[nivel];
+  const est = (v: string | null) => (v ?? "—");
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex cursor-default">
+            <Badge variant={cfg.variant} size="sm" className="shrink-0 gap-1">
+              <cfg.Icone />
+              {cfg.rotulo}
+            </Badge>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p>{cfg.dica}</p>
+          <p className="mt-1 font-mono text-[0.65rem] opacity-80">
+            SPF: {est(resultado.spf)} · DKIM: {est(resultado.dkim)} · DMARC:{" "}
+            {est(resultado.dmarc)}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+// Handle imperativo do leitor (#28): os atalhos r/a/f abrem o Sheet de resposta
+// chamando estas funções — a UI de reply/forward já existe, só ligamos a tecla.
+export interface MessageDetailHandle {
+  responder: () => void;
+  responderTodos: () => void;
+  encaminhar: () => void;
+}
+
+const MessageDetail = forwardRef<
+  MessageDetailHandle,
+  {
+    id: string | null;
+    userEmail?: string | null;
+    sinalizado: boolean;
+    lido: boolean;
+    onFlag: (id: string, novo: boolean) => void;
+    onExcluir: (ids: string[]) => void;
+    onMarcarLido: (id: string, lido: boolean) => void;
+    onAbrirLink: (url: string) => void;
+    onMudou: () => void;
+    t: ReturnType<typeof useIdioma>["t"];
+    idioma: string;
+  }
+>(function MessageDetail(
+  {
+    id,
+    userEmail,
+    sinalizado,
+    lido,
+    onFlag,
+    onExcluir,
+    onMarcarLido,
+    onAbrirLink,
+    onMudou,
+    t,
+    idioma,
+  },
+  ref
+) {
   const [det, setDet] = useState<EmailDetalhe | null>(null);
+  // Segurança do leitor (#91): Reply-To + headers de autenticação. Best-effort,
+  // carregado à parte do corpo pra não atrasar a leitura.
+  const [seg, setSeg] = useState<SegurancaEmail | null>(null);
   const [modo, setModo] = useState<null | "responder" | "responderTodos" | "encaminhar">(null);
   const [enviando, setEnviando] = useState(false);
   const comporRef = useRef<ComporMensagemHandle>(null);
   // Avatar do remetente interno (#39).
   const { getFoto, pedirFotos } = useFotos();
 
+  // Atalhos r/a/f: só fazem sentido com uma mensagem aberta (`id`). Abrir o
+  // Sheet reusa exatamente o mesmo `setModo` dos botões da toolbar.
+  useImperativeHandle(
+    ref,
+    () => ({
+      responder: () => id && setModo("responder"),
+      responderTodos: () => id && setModo("responderTodos"),
+      encaminhar: () => id && setModo("encaminhar"),
+    }),
+    [id]
+  );
+
   useEffect(() => {
     if (!id) {
       setDet(null);
+      setSeg(null);
       return;
     }
     let vivo = true;
     setDet(null);
+    setSeg(null);
     setModo(null);
     api.crEmailCorpo(id).then((d) => vivo && setDet(d)).catch(() => {});
+    // Segurança (#91) em paralelo; falha silenciosa (badge some, sem quebrar).
+    api.crEmailSeguranca(id).then((s) => vivo && setSeg(s)).catch(() => {});
     return () => {
       vivo = false;
     };
   }, [id]);
+
+  // Deriva veredito de autenticação (SPF/DKIM/DMARC) e divergência de Reply-To
+  // a partir dos headers brutos — lógica pura, testada em seguranca-leitor.ts.
+  const auth = useMemo(
+    () => (seg ? parseAuthResults(seg.autenticacao, seg.receivedSpf) : null),
+    [seg],
+  );
+  const nivelAuth = useMemo(() => (auth ? nivelAutenticacao(auth) : null), [auth]);
+  const divergencia = useMemo(
+    () => (seg && det ? replyToDivergente(det.deEmail, seg.replyTo) : null),
+    [seg, det],
+  );
 
   // Pede a foto do remetente quando o detalhe carrega.
   useEffect(() => {
@@ -2695,7 +3520,7 @@ function MessageDetail({
           >
             <Trash2 />
           </Button>
-          <Button variant="ghost" size="icon-sm" onClick={abrirOutlook} aria-label="Outlook">
+          <Button variant="ghost" size="icon-sm" onClick={abrirOutlook} aria-label={t.controlRoom.abrirOutlook}>
             <ExternalLink />
           </Button>
         </div>
@@ -2720,9 +3545,22 @@ function MessageDetail({
           </Avatar>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">{det.de}</span>
+              {det.deEmail ? (
+                <InsightsRemetentePopover
+                  nome={det.de}
+                  email={det.deEmail}
+                  t={t}
+                  idioma={idioma}
+                />
+              ) : (
+                <span className="text-sm font-medium">{det.de}</span>
+              )}
               {det.deEmail && (
                 <span className="truncate text-xs text-muted-foreground">&lt;{det.deEmail}&gt;</span>
+              )}
+              {/* Badge de autenticação do remetente (#91, parte b). */}
+              {nivelAuth && auth && (
+                <BadgeAutenticacao nivel={nivelAuth} resultado={auth} t={t} />
               )}
               <span className="ml-auto shrink-0 text-xs text-muted-foreground">
                 {new Date(comZ(det.recebido)).toLocaleString(idioma)}
@@ -2734,6 +3572,20 @@ function MessageDetail({
             </div>
           </div>
         </div>
+        {/* Alerta de Reply-To divergente (#91, parte c) — discreto, abaixo do
+            cabeçalho, só quando as respostas iriam para outro endereço. */}
+        {divergencia?.divergente && (
+          <Alert variant="warning" className="mt-3">
+            <TriangleAlert />
+            <AlertTitle>{t.controlRoom.segReplyToTitulo}</AlertTitle>
+            <AlertDescription>
+              {preencher(t.controlRoom.segReplyToDescricao, {
+                enderecos: divergencia.enderecos.join(", "),
+                de: det.deEmail,
+              })}
+            </AlertDescription>
+          </Alert>
+        )}
       </div>
 
       {/* Corpo do e-mail — sempre em altura cheia (sem compose espremido). */}
@@ -2797,7 +3649,7 @@ function MessageDetail({
       </Sheet>
     </section>
   );
-}
+});
 
 // ===========================================================================
 // Painel 4 — calendário + agenda do dia (schedule-8)
@@ -3196,6 +4048,14 @@ export function ControlRoomScreen({
   const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agendaVisivel", false);
   const [pastas, setPastas] = useState<PastaEmail[] | null>(null);
   const [pastaSel, setPastaSel] = useState("inbox");
+  // Coalescing da troca de pasta (#87): a SELEÇÃO (`pastaSel`) muda na hora — o
+  // sidebar já destaca a pasta clicada e o cabeçalho troca de nome —, mas as
+  // CARGAS de rede (mensagens + contadores) seguem `pastaCarga`, a versão
+  // debounced. Clicar 5 pastas em 1s NÃO dispara 5 cargas: só a pasta em que o
+  // usuário parou é buscada. Debounce curto (180ms) pra não pesar ao navegar
+  // rápido sem atrasar perceptivelmente uma troca isolada.
+  const DEBOUNCE_PASTA_MS = 180;
+  const pastaCarga = useDebounce(pastaSel, DEBOUNCE_PASTA_MS);
   const [mensagens, setMensagens] = useState<EmailItem[] | null>(null);
   const [msgSel, setMsgSel] = useState<string | null>(null);
   const [eventoSel, setEventoSel] = useState<string | null>(null);
@@ -3239,6 +4099,8 @@ export function ControlRoomScreen({
   const [carregandoMais, setCarregandoMais] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [novaAberta, setNovaAberta] = useState(false);
+  // Handle do leitor para os atalhos r/a/f (#28) abrirem o Sheet de resposta.
+  const detalheRef = useRef<MessageDetailHandle>(null);
   // Busca server-side ($search do Graph): resultados vêm do servidor (inclui
   // corpo), não do filtro local sobre o carregado.
   const [busca, setBusca] = useState("");
@@ -3251,13 +4113,21 @@ export function ControlRoomScreen({
   // global (D3) — sobrevive ao restart — mas resetado visualmente ao TROCAR de
   // pasta (efeito abaixo). Os 3 filtros Graph (tome/mentions/invites) buscam no
   // servidor via cr_filtrar; os 4 client-side são aplicados no MessageList.
-  const [filtro, setFiltro] = usePersistedState<FiltroLista>("bridge.filtroLista", "all");
-  const filtroGraph = ehFiltroGraph(filtro);
+  // Filtros do builder (#31), multi-condição (AND). Chave nova (`.v2`) porque o
+  // shape mudou de string única ("all"/…) para array de `Filter` — reusar a
+  // chave antiga quebraria o parse do valor persistido. Global + persistido;
+  // resetado na troca de pasta (D3).
+  const [filtros, setFiltros] = usePersistedState<Filter<string>[]>(
+    "bridge.filtrosLista.v2",
+    []
+  );
+  const filtroServidor = escopoDeFiltros(filtros);
+  const filtroGraph = filtroServidor !== null;
   const [resultadosFiltro, setResultadosFiltro] = useState<EmailItem[] | null>(null);
   const [temMaisFiltro, setTemMaisFiltro] = useState(false);
   const proximoFiltroRef = useRef<string | null>(null);
-  // D6: filtros Graph que o tenant rejeitou (400) — escondidos silenciosamente.
-  const [filtrosOcultos, setFiltrosOcultos] = useState<Set<FiltroLista>>(new Set());
+  // D6: escopos Graph que o tenant rejeitou (400) — escondidos silenciosamente.
+  const [filtrosOcultos, setFiltrosOcultos] = useState<Set<string>>(new Set());
   const proximoBuscaRef = useRef<string | null>(null);
   const carregandoMaisRef = useRef(false);
   // pasta atual (pra closures assíncronas que precisam do valor mais novo).
@@ -3339,21 +4209,48 @@ export function ControlRoomScreen({
     [arvorePastas, pastaSel]
   );
 
-  // Contadores reais das abas Flagged/Files (na pasta inteira, via $count).
-  // Só refaz na TROCA de pasta / refresh manual — NÃO em cada recargaPastas
-  // (o polling do delete bumpava recargaPastas e os refetch em rajada resolviam
-  // fora de ordem, fazendo o count piscar 8↔15). Entre refetches, os ajustes
-  // otimistas (flag/excluir) mantêm o número certo.
+  // Contadores reais das abas Flagged/Files (na pasta inteira). Só refaz na
+  // TROCA de pasta / refresh manual — NÃO em cada recargaPastas (o polling do
+  // delete bumpava recargaPastas e os refetch em rajada resolviam fora de ordem,
+  // fazendo o count piscar 8↔15). Entre refetches, os ajustes otimistas
+  // (flag/excluir) mantêm o número certo.
+  //
+  // Zera na troca de pasta / refresh (mostra o skeleton), mas NÃO na troca de
+  // ORDENAÇÃO: reordenar recarrega a lista, não muda os contadores da pasta —
+  // zerar ali só faria piscar null→n à toa. Segue `pastaCarga` (debounced): na
+  // navegação rápida não pisca a cada clique, só na pasta final.
   useEffect(() => {
-    let vivo = true;
     setContFlagged(null);
     setContAnexos(null);
-    api.crContar(pastaSel, "flagged").then((n) => vivo && setContFlagged(n)).catch(() => {});
-    api.crContar(pastaSel, "anexos").then((n) => vivo && setContAnexos(n)).catch(() => {});
+  }, [pastaCarga, recarga]);
+
+  // #87 — foreground-first + $batch: os contadores das abas são FUNDO. Só
+  // disparam DEPOIS que a lista visível carrega (`mensagens !== null`), pra carga
+  // inicial gastar o pool primeiro na pasta que o usuário vê. `crContadores` junta
+  // Flagged + Files num único `$batch` do Graph (1 request em vez de 2 `$count`).
+  // O `contadoresKeyRef` evita refazer a chamada quando o foreground recicla por
+  // OUTRA razão (troca de ordenação recarrega a lista, mas os contadores da pasta
+  // não mudam) — só (re)busca quando a pasta ou o refresh (recarga) mudam.
+  const foregroundPronto = mensagens !== null;
+  const contadoresKeyRef = useRef<string>("");
+  useEffect(() => {
+    if (!foregroundPronto) return; // espera a lista (foreground) antes do fundo
+    const chave = `${pastaCarga}|${recarga}`;
+    if (contadoresKeyRef.current === chave) return; // já buscado p/ esta pasta
+    contadoresKeyRef.current = chave;
+    let vivo = true;
+    api
+      .crContadores(pastaCarga)
+      .then((c) => {
+        if (!vivo) return;
+        setContFlagged(c.flagged);
+        setContAnexos(c.anexos);
+      })
+      .catch(() => {});
     return () => {
       vivo = false;
     };
-  }, [pastaSel, recarga]);
+  }, [pastaCarga, recarga, foregroundPronto]);
 
   // Detecção central de e-mails novos na Inbox: compara o topo da lista com o
   // último visto e dispara o toast rico (c-sonner-9). Chamada tanto pelo poll
@@ -3823,7 +4720,7 @@ export function ControlRoomScreen({
     carregadosRef.current = 0;
     deletadasRef.current = new Set();
     api
-      .crFolderMensagens(pastaSel, 0, ordenar, ordemDesc)
+      .crFolderMensagens(pastaCarga, 0, ordenar, ordemDesc)
       .then((ms) => {
         if (!vivo) return;
         carregadosRef.current = ms.length;
@@ -3839,7 +4736,7 @@ export function ControlRoomScreen({
         // data-asc), a 1ª página não contém o mais novo, o baseline ficaria
         // baixo e o poll seguinte dispararia toast espúrio (#54). Nesses casos
         // o poll (que SEMPRE busca date-desc) mantém o baseline sozinho. #43
-        if (pastaSel === "inbox" && ordenar === "data" && ordemDesc) notificarNovos(ms);
+        if (pastaCarga === "inbox" && ordenar === "data" && ordemDesc) notificarNovos(ms);
       })
       .catch(() => vivo && setMensagens([]));
     return () => {
@@ -3848,8 +4745,9 @@ export function ControlRoomScreen({
     // notificarNovos é estável (useCallback [idioma,t]); fora das deps de
     // propósito pra não recarregar a lista ao trocar idioma. ordenar/ordemDesc
     // ENTRAM: trocar a ordenação re-busca a lista já ordenada pelo Graph (#32).
+    // pastaCarga (debounced) no lugar de pastaSel: coalesce a troca rápida (#87).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastaSel, recarga, ordenar, ordemDesc]);
+  }, [pastaCarga, recarga, ordenar, ordemDesc]);
 
   // Pré-carga: busca a próxima página do servidor pela âncora (skip = já
   // buscado, não o tamanho da lista) e concatena deduplicando. Serve tanto pro
@@ -3860,7 +4758,7 @@ export function ControlRoomScreen({
     setCarregandoMais(true);
     try {
       const pagina = await api.crFolderMensagens(
-        pastaSel,
+        pastaCarga,
         carregadosRef.current,
         ordenar,
         ordemDesc
@@ -3922,7 +4820,7 @@ export function ControlRoomScreen({
   useEffect(() => {
     if (filtroPastaRef.current !== pastaSel) {
       filtroPastaRef.current = pastaSel;
-      setFiltro("all");
+      setFiltros([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastaSel]);
@@ -3939,8 +4837,9 @@ export function ControlRoomScreen({
     let vivo = true;
     setResultadosFiltro(null); // null = spinner
     proximoFiltroRef.current = null;
+    const escopo = filtroServidor;
     api
-      .crFiltrar(pastaSel, filtro)
+      .crFiltrar(pastaSel, escopo!)
       .then((res) => {
         if (!vivo) return;
         proximoFiltroRef.current = res.proximo;
@@ -3949,12 +4848,12 @@ export function ControlRoomScreen({
       })
       .catch((e) => {
         if (!vivo) return;
-        // D6: tenant sem suporte (HTTP 400) → esconde a opção e volta pra "all",
-        // silenciosamente. Outros erros só deixam a lista vazia.
+        // D6: tenant sem suporte (HTTP 400) → esconde a opção e remove o chip de
+        // escopo, silenciosamente. Outros erros só deixam a lista vazia.
         const msg = String(e);
-        if ((filtro === "mentions" || filtro === "invites") && msg.includes("400")) {
-          setFiltrosOcultos((s) => new Set(s).add(filtro));
-          setFiltro("all");
+        if ((escopo === "mentions" || escopo === "invites") && msg.includes("400")) {
+          setFiltrosOcultos((s) => new Set(s).add(escopo));
+          setFiltros((fs) => fs.filter((f) => f.field !== "scope"));
         }
         setResultadosFiltro([]);
         setTemMaisFiltro(false);
@@ -3963,7 +4862,7 @@ export function ControlRoomScreen({
       vivo = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtro, filtroGraph, pastaSel, recarga]);
+  }, [filtroServidor, filtroGraph, pastaSel, recarga]);
 
   // Paginação do filtro Graph via @odata.nextLink; dedup igual à busca.
   async function carregarMaisFiltro() {
@@ -3972,7 +4871,7 @@ export function ControlRoomScreen({
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
     try {
-      const res = await api.crFiltrar(pastaSel, filtro, proximo);
+      const res = await api.crFiltrar(pastaSel, filtroServidor!, proximo);
       proximoFiltroRef.current = res.proximo;
       setResultadosFiltro((prev) => juntar(prev ?? [], res.itens));
       setTemMaisFiltro(res.proximo !== null);
@@ -4118,8 +5017,8 @@ export function ControlRoomScreen({
               naoLidosPasta={pastaAtual?.naoLidos ?? 0}
               contFlagged={contFlagged}
               contAnexos={contAnexos}
-              filtro={filtro}
-              onFiltro={setFiltro}
+              filtros={filtros}
+              onFiltros={setFiltros}
               filtrosOcultos={filtrosOcultos}
               busca={busca}
               setBusca={setBusca}
@@ -4133,6 +5032,10 @@ export function ControlRoomScreen({
               marcarLidoAtraso={marcarLidoAtraso}
               onMarcarLidoModo={setMarcarLidoModo}
               onMarcarLidoAtraso={setMarcarLidoAtraso}
+              onResponder={() => detalheRef.current?.responder()}
+              onResponderTodos={() => detalheRef.current?.responderTodos()}
+              onEncaminhar={() => detalheRef.current?.encaminhar()}
+              onCompor={() => setNovaAberta(true)}
               t={t}
               idioma={idioma}
             />
@@ -4148,6 +5051,7 @@ export function ControlRoomScreen({
               />
             ) : (
               <MessageDetail
+                ref={detalheRef}
                 id={msgSel}
                 userEmail={user.email}
                 sinalizado={msgAtual?.sinalizado ?? false}

@@ -1365,6 +1365,95 @@ pub fn cr_email_corpo(store: &TokenStore, id: &str) -> Result<EmailDetalhe, Stri
     })
 }
 
+// --- Segurança do leitor (#91) ---------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemetenteNomeado {
+    pub nome: String,
+    pub email: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegurancaEmail {
+    /// Endereços de Reply-To (para detectar divergência do From no front).
+    pub reply_to: Vec<RemetenteNomeado>,
+    /// Valores dos headers `Authentication-Results` / `ARC-Authentication-Results`
+    /// (SPF/DKIM/DMARC). O parse fica no front (`seguranca-leitor.ts`, testável).
+    pub autenticacao: Vec<String>,
+    /// Valores de `Received-SPF` (fallback de SPF quando o AR não traz).
+    pub received_spf: Vec<String>,
+}
+
+/// Nome + e-mail de cada recipient de uma lista do Graph (mantém pares vazios
+/// fora do resultado).
+fn recipients_nomeados(v: &serde_json::Value) -> Vec<RemetenteNomeado> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| {
+                    let email = r["emailAddress"]["address"].as_str().unwrap_or("");
+                    if email.is_empty() {
+                        return None;
+                    }
+                    let nome = r["emailAddress"]["name"].as_str().unwrap_or("");
+                    Some(RemetenteNomeado {
+                        nome: nome.to_string(),
+                        email: email.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Dados de segurança de um e-mail (#91): Reply-To + headers de autenticação.
+/// `internetMessageHeaders` vem só quando explicitamente selecionado e requer
+/// apenas `Mail.Read` (já concedido; ver AGENTS.md §1.1). Passa pelo pool
+/// `graph_enviar` (#64) como as demais chamadas.
+pub fn cr_email_seguranca(store: &TokenStore, id: &str) -> Result<SegurancaEmail, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/messages/{id}?$select=replyTo,internetMessageHeaders");
+    let resp = graph_enviar("mail:seguranca", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler cabeçalhos do e-mail: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/messages (segurança) retornou {}", resp.status()));
+    }
+    let it: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let reply_to = recipients_nomeados(&it["replyTo"]);
+
+    let mut autenticacao = Vec::new();
+    let mut received_spf = Vec::new();
+    if let Some(hdrs) = it["internetMessageHeaders"].as_array() {
+        for h in hdrs {
+            let nome = h["name"].as_str().unwrap_or("").to_ascii_lowercase();
+            let valor = h["value"].as_str().unwrap_or("");
+            if valor.is_empty() {
+                continue;
+            }
+            match nome.as_str() {
+                "authentication-results" | "arc-authentication-results" => {
+                    autenticacao.push(valor.to_string());
+                }
+                "received-spf" => received_spf.push(valor.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    Ok(SegurancaEmail {
+        reply_to,
+        autenticacao,
+        received_spf,
+    })
+}
+
 /// Baixa um anexo de um e-mail para a pasta Downloads do usuario e devolve o
 /// caminho absoluto do arquivo gravado. Mail.Read.
 ///
@@ -2171,12 +2260,13 @@ pub fn cr_marcar_email(store: &TokenStore, id: &str, sinalizado: bool) -> Result
     let patch = serde_json::json!({ "flag": { "flagStatus": status } });
 
     let url = format!("{GRAPH}/me/messages/{id}");
-    let resp = client
-        .patch(&url)
-        .bearer_auth(&token)
-        .json(&patch)
-        .send()
-        .map_err(|e| format!("falha ao sinalizar o e-mail: {e}"))?;
+    // Sob o pool + retry central (#64): Retry-After + jitter. Escrita idempotente:
+    // grava um flagStatus FIXO ("flagged"/"notFlagged"), e o retry do pool só
+    // dispara em 429 (rejeitado antes de aplicar) — reenviar deixa o mesmo estado.
+    let resp = graph_enviar("mail:sinalizar", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&patch).send()
+    })
+    .map_err(|e| format!("falha ao sinalizar o e-mail: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("PATCH /me/messages retornou {}", resp.status()));
     }
@@ -2397,9 +2487,15 @@ fn cargo_de(item: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Busca pessoas para o autocomplete do compositor. Combina o "relevant people"
-/// do usuario (/me/people) com um $search no diretorio (/users). Se um dos dois
-/// falhar, usa so o que veio do outro; erro so quando AMBOS falham. People.Read.
+/// Busca pessoas para o autocomplete do compositor. Combina os contatos PESSOAIS
+/// do usuario (/me/contacts) com um $search no diretorio do tenant (/users). Se um
+/// dos dois falhar, usa so o que veio do outro; erro so quando AMBOS falham.
+///
+/// "Seus contatos" = /me/contacts (contatos que o usuario salvou — e onde
+/// `cr_salvar_contatos` grava quem ele envia e-mail). "De sua organizacao" =
+/// diretorio /users. Antes usavamos /me/people ("relevant people"), que retorna
+/// sobretudo COLEGAS da organizacao — por isso o PO via gente do tenant sob "Seus
+/// contatos" (#40). Escopos: Contacts.Read + User.Read.All.
 pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String> {
     let q = query.trim();
     if q.is_empty() {
@@ -2412,18 +2508,21 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
     let mut resultados: Vec<Pessoa> = Vec::new();
     let mut algum_ok = false;
 
-    // 1) Pessoas relevantes do usuario (contatos, colegas com quem troca e-mail).
+    // 1) Contatos PESSOAIS do usuario (/me/contacts) — a agenda dele de verdade.
     let url = format!(
-        "{GRAPH}/me/people?$search=\"{enc}\"&$top=8&$select=displayName,scoredEmailAddresses,jobTitle"
+        "{GRAPH}/me/contacts?$search=\"{enc}\"&$top=8&$select=displayName,emailAddresses,jobTitle"
     );
-    match client.get(&url).bearer_auth(&token).send() {
+    // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
+    match graph_enviar("pessoas:people", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    }) {
         Ok(resp) if resp.status().is_success() => {
             algum_ok = true;
             if let Ok(v) = resp.json::<serde_json::Value>() {
                 if let Some(items) = v["value"].as_array() {
                     for it in items {
                         let nome = it["displayName"].as_str().unwrap_or("").to_string();
-                        let email = it["scoredEmailAddresses"][0]["address"]
+                        let email = it["emailAddresses"][0]["address"]
                             .as_str()
                             .unwrap_or("")
                             .to_string();
@@ -2437,20 +2536,22 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
                 }
             }
         }
-        Ok(resp) => log::warn!("[pessoas] /me/people retornou {}", resp.status()),
-        Err(e) => log::warn!("[pessoas] /me/people falhou: {e}"),
+        Ok(resp) => log::warn!("[pessoas] /me/contacts retornou {}", resp.status()),
+        Err(e) => log::warn!("[pessoas] /me/contacts falhou: {e}"),
     }
 
     // 2) Diretorio da organizacao. $search em /users exige ConsistencyLevel.
     let url = format!(
         "{GRAPH}/users?$search=\"displayName:{enc}\"&$top=8&$select=displayName,mail,userPrincipalName,jobTitle"
     );
-    match client
-        .get(&url)
-        .bearer_auth(&token)
-        .header("ConsistencyLevel", "eventual")
-        .send()
-    {
+    // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
+    match graph_enviar("pessoas:diretorio", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+    }) {
         Ok(resp) if resp.status().is_success() => {
             algum_ok = true;
             if let Ok(v) = resp.json::<serde_json::Value>() {
@@ -2542,12 +2643,19 @@ pub fn cr_enviar_novo(
         "saveToSentItems": true
     });
 
-    let resp = client
-        .post(format!("{GRAPH}/me/sendMail"))
-        .bearer_auth(&token)
-        .json(&body)
-        .send()
-        .map_err(|e| format!("falha ao enviar o e-mail: {e}"))?;
+    // Sob o pool + retry central (#64): concorrência + Retry-After + jitter.
+    // ⚠️ sendMail NÃO é idempotente, mas o retry aqui é SEGURO porque
+    // `graph_enviar` só re-tenta em 429 — e um 429 é rejeição ANTES de processar
+    // (a mensagem não chegou a ser enviada), então reenviar não duplica o envio.
+    // Erro de transporte/timeout (envio AMBÍGUO, que pode ter aplicado) NÃO é
+    // re-tentado: `graph_enviar` propaga o erro do reqwest na hora. 5xx também não
+    // re-tenta (devolve a resposta e o chamador vira erro). Ou seja: cega
+    // reemissão de um sendMail já potencialmente aplicado nunca acontece.
+    let url = format!("{GRAPH}/me/sendMail");
+    let resp = graph_enviar("mail:enviar", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao enviar o e-mail: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("envio retornou {}", resp.status()));
     }
@@ -2575,7 +2683,10 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
             "{GRAPH}/me/contacts?$filter={}&$top=1",
             urlencoding::encode(&filtro)
         );
-        let existe = match client.get(&url).bearer_auth(&token).send() {
+        // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
+        let existe = match graph_enviar("contatos:existe", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        }) {
             Ok(resp) if resp.status().is_success() => resp
                 .json::<serde_json::Value>()
                 .ok()
@@ -2600,12 +2711,15 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
             "givenName": nome,
             "emailAddresses": [{ "address": email, "name": p.nome.trim() }]
         });
-        match client
-            .post(format!("{GRAPH}/me/contacts"))
-            .bearer_auth(&token)
-            .json(&body)
-            .send()
-        {
+        // Sob o pool + retry central (#64): Retry-After + jitter. ⚠️ Criar contato
+        // NÃO é idempotente, mas é seguro aqui: (a) só criamos DEPOIS de o filtro
+        // acima não achar duplicado, e (b) o retry do pool só dispara em 429
+        // (rejeitado antes de criar) — reenviar não gera contato em dobro. Erro de
+        // transporte/timeout e 5xx não re-tentam (propaga/retorna ao chamador).
+        let criar_url = format!("{GRAPH}/me/contacts");
+        match graph_enviar("contatos:criar", GRAPH_TETO_ESPERA_S, || {
+            client.post(&criar_url).bearer_auth(&token).json(&body).send()
+        }) {
             Ok(resp) if resp.status().is_success() => criados += 1,
             Ok(resp) => log::warn!("[contatos] criar '{email}' retornou {}", resp.status()),
             Err(e) => log::warn!("[contatos] criar '{email}' falhou: {e}"),
@@ -2624,11 +2738,11 @@ pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmai
         "{GRAPH}/me/mailFolders/{folder_id}/childFolders\
          ?$select=id,displayName,unreadItemCount,totalItemCount,childFolderCount&$top=50"
     );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .map_err(|e| format!("falha ao ler as subpastas: {e}"))?;
+    // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
+    let resp = graph_enviar("mail:subpastas", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler as subpastas: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("/me/mailFolders/childFolders retornou {}", resp.status()));
     }
@@ -2877,6 +2991,96 @@ pub fn cr_contar(store: &TokenStore, folder_id: &str, filtro: &str) -> Result<u6
         .trim()
         .parse::<u64>()
         .map_err(|e| format!("resposta do /$count não é um número ('{corpo}'): {e}"))
+}
+
+/// Os dois contadores por-pasta que a UI mostra nas abas (Sinalizados / Com
+/// anexos), buscados juntos.
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Contadores {
+    pub flagged: u64,
+    pub anexos: u64,
+}
+
+/// Conta, em UMA chamada `$batch`, os dois contadores por-pasta que a UI exibe
+/// nas abas: Sinalizados (flagged) e Com anexos (files). Substitui as DUAS
+/// chamadas `/$count` separadas (`cr_contar` ×2) que a carga inicial disparava em
+/// paralelo — parte da rajada de 429 que o #64/#87 ataca. 2 requests → 1.
+///
+/// O contador de NÃO LIDOS de propósito NÃO entra aqui: ele já chega coalescido
+/// (uma request para TODAS as pastas) em `cr_mail_folders` e carrega os ajustes
+/// otimistas do front (marcar lido/excluir). Recontá-lo por pasta aqui seria
+/// redundante e reintroduziria a divergência/piscar que o front evita.
+///
+/// Cada sub-requisição é um GET `/$count` com `$filter` (exige
+/// `ConsistencyLevel: eventual`, setado por sub-requisição). O `$batch` inteiro
+/// passa pelo `graph_enviar` (pool + Retry-After + jitter, #64): o 429 costuma
+/// vir no ENVELOPE e é re-tentado ali. Se ainda assim uma SUB-resposta falhar, o
+/// contador daquela aba cai no fallback 0 (degradação graciosa aceita pelo AC —
+/// a lista nunca fica vazia por causa de um contador). Mail.Read.
+pub fn cr_contadores(store: &TokenStore, folder_id: &str) -> Result<Contadores, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // O `id` de cada sub-requisição casa a resposta de volta (o Graph não garante
+    // a ordem das sub-respostas). Mesmas expressões OData do `cr_contar`.
+    let filtros: [(&str, &str); 2] = [
+        ("flagged", "flag/flagStatus eq 'flagged'"),
+        ("anexos", "hasAttachments eq true"),
+    ];
+    let requests: Vec<serde_json::Value> = filtros
+        .iter()
+        .map(|(id, odata)| {
+            serde_json::json!({
+                "id": id,
+                "method": "GET",
+                "url": format!(
+                    "/me/mailFolders/{folder_id}/messages/$count?$filter={}",
+                    urlencoding::encode(odata)
+                ),
+                "headers": { "ConsistencyLevel": "eventual" },
+            })
+        })
+        .collect();
+    let body = serde_json::json!({ "requests": requests });
+    let url = format!("{GRAPH}/$batch");
+
+    let resp = graph_enviar("mail:contadores", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao contar: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/$batch (contadores) retornou {}", resp.status()));
+    }
+
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(contadores_de_batch(&v))
+}
+
+/// Extrai `Contadores` do JSON de resposta do `$batch` — lógica PURA (sem rede),
+/// para ser exercitada em teste. Casa cada sub-resposta pelo `id` (o Graph não
+/// garante a ordem), aceita o corpo do `/$count` como número JSON (42) OU string
+/// ("42"), e trata qualquer sub-resposta que não seja 200 como 0 (degradação
+/// graciosa: um contador que falhou não zera a lista nem estoura a chamada toda).
+fn contadores_de_batch(v: &serde_json::Value) -> Contadores {
+    let mut out = Contadores::default();
+    if let Some(items) = v["responses"].as_array() {
+        for it in items {
+            if it["status"].as_u64().unwrap_or(0) != 200 {
+                continue; // sub-falha → mantém 0 (degradação graciosa)
+            }
+            let n = it["body"]
+                .as_u64()
+                .or_else(|| it["body"].as_str().and_then(|s| s.trim().parse().ok()))
+                .unwrap_or(0);
+            match it["id"].as_str().unwrap_or("") {
+                "flagged" => out.flagged = n,
+                "anexos" => out.anexos = n,
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -3203,6 +3407,27 @@ mod testes_throttling {
         assert_eq!(vagas_livres(), GRAPH_MAX_CONCORRENTES);
     }
 
+    /// SEGURANÇA DAS ESCRITAS (#97): o pool só re-tenta em 429. Um 5xx (ou
+    /// qualquer status != 429) é devolvido ao chamador SEM re-tentar. É essa
+    /// propriedade que torna seguro envolver operações NÃO-idempotentes
+    /// (`cr_enviar_novo`/sendMail, `cr_salvar_contatos`/criar contato) no
+    /// `graph_enviar`: só o 429 — rejeição ANTES de aplicar — dispara reenvio;
+    /// um 5xx ambíguo (que PODE ter aplicado) nunca é reemitido cegamente.
+    #[test]
+    fn erro_5xx_nao_re_tenta() {
+        let _t = trava_pool();
+        for status in [500u16, 502, 503, 400, 404] {
+            let mut tentativas = 0u8;
+            let r: Result<RespostaFake, ()> = executar_com_pool("qa-5xx", 5, || {
+                tentativas += 1;
+                Ok(RespostaFake { status, retry_after: None })
+            });
+            assert_eq!(r.unwrap().status_u16(), status);
+            assert_eq!(tentativas, 1, "status {status} NAO devia ter re-tentado");
+        }
+        assert_eq!(vagas_livres(), GRAPH_MAX_CONCORRENTES);
+    }
+
     // -----------------------------------------------------------------------
     // 3. BACKOFF: Retry-After como piso, teto e jitter
     // -----------------------------------------------------------------------
@@ -3312,6 +3537,56 @@ mod testes_throttling {
         assert!(min >= 2000 && max <= 4000, "esperado 2000..4000ms, veio {min}..{max}ms");
         println!("[QA #64] sem Retry-After (tentativa 2): {min}..{max}ms - nunca 0ms");
         assert!(min > 0, "nunca pode ser 0ms (re-tentativa imediata re-sincroniza a rajada)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Testes do $batch dos contadores (#87) — prova de que 1 request devolve os
+// dois contadores certos, casando por id (ordem não garantida), aceitando corpo
+// número OU string, e degradando pra 0 numa sub-resposta que falhou.
+//
+// Rodar: cargo test --lib graph::testes_contadores
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod testes_contadores {
+    use super::*;
+
+    #[test]
+    fn casa_por_id_fora_de_ordem_e_aceita_numero_ou_string() {
+        // Sub-respostas propositalmente FORA de ordem (anexos antes de flagged) e
+        // com corpos de tipos diferentes: número JSON e string — os dois válidos.
+        let v = serde_json::json!({
+            "responses": [
+                { "id": "anexos",  "status": 200, "body": "42" },
+                { "id": "flagged", "status": 200, "body": 7 }
+            ]
+        });
+        let c = contadores_de_batch(&v);
+        assert_eq!(c.flagged, 7, "flagged casou pelo id, não pela posição");
+        assert_eq!(c.anexos, 42, "anexos aceitou o corpo em string");
+    }
+
+    #[test]
+    fn sub_resposta_com_erro_degrada_para_zero() {
+        // flagged OK; anexos tomou 429 (raro, mas possível numa sub-resposta): o
+        // contador que falhou vira 0 em vez de derrubar a chamada inteira (AC:
+        // "degradação graciosa dos contadores é aceitável").
+        let v = serde_json::json!({
+            "responses": [
+                { "id": "flagged", "status": 200, "body": 3 },
+                { "id": "anexos",  "status": 429, "body": { "error": {} } }
+            ]
+        });
+        let c = contadores_de_batch(&v);
+        assert_eq!(c.flagged, 3);
+        assert_eq!(c.anexos, 0, "sub-falha não pode virar lixo — cai em 0");
+    }
+
+    #[test]
+    fn respostas_ausentes_viram_zero() {
+        let c = contadores_de_batch(&serde_json::json!({}));
+        assert_eq!(c.flagged, 0);
+        assert_eq!(c.anexos, 0);
     }
 }
 
@@ -3476,4 +3751,199 @@ fn batch_fotos(
         }
     }
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Insights do remetente (#94)
+// ---------------------------------------------------------------------------
+
+/// Resumo do relacionamento com um endereço, exibido no popover do leitor do
+/// Bridge. Todos os campos são `Option`: cada parte é buscada de forma
+/// independente e best-effort, então uma sub-chamada que falhe vira `None` sem
+/// derrubar o painel (insights são secundários).
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightsRemetente {
+    /// Nº de e-mails RECEBIDOS deste endereço (filtro por `from`).
+    pub recebidos: Option<u64>,
+    /// Nº de e-mails ENVIADOS a este endereço (pasta Enviados). Best-effort:
+    /// `None` quando o tenant não aceita o filtro por destinatário ou a chamada
+    /// falha — nesse caso a UI mostra só os recebidos.
+    pub enviados: Option<u64>,
+    /// Data (ISO) do e-mail recebido mais ANTIGO deste remetente (1º contato).
+    pub primeiro: Option<String>,
+    /// Data (ISO) do e-mail recebido mais RECENTE deste remetente (último contato).
+    pub ultimo: Option<String>,
+}
+
+/// Insights do remetente (#94): quantos e-mails recebidos deste endereço,
+/// quantos enviados a ele, e a data do 1º e do último e-mail recebido.
+///
+/// CUSTO (chamadas Graph, todas sob o pool + retry #64; disparadas LAZY, só
+/// quando o usuário abre o popover): até 4 GET por endereço.
+///   1. recebidos: `/me/messages/$count?$filter=from/emailAddress/address eq '{addr}'`
+///   2. último:    `/me/messages?$filter=(receivedDateTime ge <epoch>) and (from…)`
+///                 `&$orderby=receivedDateTime desc&$top=1&$select=receivedDateTime`
+///   3. primeiro:  idem, `$orderby=receivedDateTime asc`
+///   4. enviados:  `/me/mailFolders/sentitems/messages/$count`
+///                 `?$filter=toRecipients/any(r:r/emailAddress/address eq '{addr}')`
+/// As chamadas 2 e 3 só rodam quando `recebidos > 0` (poupa 2 GET no 1º contato).
+///
+/// Notas de API: `/$count` e o combo `$filter`+`$orderby` exigem o header
+/// `ConsistencyLevel: eventual`. O Graph só aceita `$filter` junto de `$orderby`
+/// quando a propriedade ordenada (`receivedDateTime`) TAMBÉM aparece no filtro —
+/// por isso a cláusula `receivedDateTime ge <epoch>` (sempre verdadeira), que é
+/// o workaround documentado pela Microsoft — E precisa vir ANTES da cláusula
+/// `from` (senão o Graph devolve 400 "restriction or sort order too complex";
+/// era o bug do #94). Ver `data_extrema_recebido`.
+///
+/// Só propaga erro se a contagem de recebidos — a âncora — falhar de fato
+/// (rede/auth/permissão), para o front mostrar o estado de erro discreto. As
+/// demais partes degradam para `None`. Mail.Read.
+pub fn cr_insights_remetente(
+    store: &TokenStore,
+    endereco: &str,
+) -> Result<InsightsRemetente, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let addr = endereco.trim().to_lowercase();
+    if addr.is_empty() {
+        return Err("endereço vazio".into());
+    }
+    // Aspas simples no OData escapam duplicando (' → '').
+    let addr_odata = addr.replace('\'', "''");
+
+    // 1. Recebidos (âncora). Falha aqui = erro real → propaga.
+    let filtro_from = format!("from/emailAddress/address eq '{addr_odata}'");
+    let recebidos = contar_mensagens(&client, &token, "me/messages", &filtro_from)
+        .map_err(|e| format!("falha ao contar recebidos: {e}"))?;
+
+    // 2/3. Datas do 1º e do último recebido — só fazem sentido se há recebidos.
+    let (mut primeiro, mut ultimo) = (None, None);
+    if recebidos > 0 {
+        ultimo = data_extrema_recebido(&client, &token, &addr_odata, false);
+        primeiro = data_extrema_recebido(&client, &token, &addr_odata, true);
+    }
+
+    // 4. Enviados (best-effort): conta na pasta Enviados por destinatário.
+    let filtro_to =
+        format!("toRecipients/any(r:r/emailAddress/address eq '{addr_odata}')");
+    let enviados =
+        contar_mensagens(&client, &token, "me/mailFolders/sentitems/messages", &filtro_to)
+            .ok();
+
+    Ok(InsightsRemetente {
+        recebidos: Some(recebidos),
+        enviados,
+        primeiro,
+        ultimo,
+    })
+}
+
+/// `GET {caminho}/$count?$filter=…` com `ConsistencyLevel: eventual`. O `/$count`
+/// devolve o total como texto puro. Sob o pool + retry (#64).
+fn contar_mensagens(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    caminho: &str,
+    filtro_odata: &str,
+) -> Result<u64, String> {
+    let url = format!(
+        "{GRAPH}/{caminho}/$count?$filter={}",
+        urlencoding::encode(filtro_odata)
+    );
+    let resp = graph_enviar("mail:insights:contar", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(&url)
+            .bearer_auth(token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+    })
+    .map_err(|e| format!("falha ao contar: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/$count retornou {}", resp.status()));
+    }
+    let corpo = resp.text().map_err(|e| e.to_string())?;
+    corpo
+        .trim()
+        .parse::<u64>()
+        .map_err(|e| format!("resposta do /$count não é número ('{corpo}'): {e}"))
+}
+
+/// Data (`receivedDateTime`) do e-mail recebido mais antigo (`asc=true`) ou mais
+/// recente (`asc=false`) de um endereço. Best-effort: devolve `None` se a chamada
+/// ou o parse falharem. Ver as notas de API em `cr_insights_remetente` sobre o
+/// combo `$filter`+`$orderby`.
+///
+/// BUG #94 (corrigido): a ORDEM das cláusulas no `$filter` importa. Quando o
+/// Graph combina `$filter`+`$orderby`, a propriedade ordenada
+/// (`receivedDateTime`) precisa aparecer no `$filter` ANTES das que NÃO estão no
+/// `$orderby` (`from/emailAddress/address`). Com a ordem invertida o Graph
+/// devolve 400 *"The restriction or sort order is too complex for this
+/// operation."* — a chamada virava `None` e sumiam 1º/último contato e a
+/// frequência (mesmo com `recebidos > 0`), exatamente o que o PO reprovou no
+/// remetente unidirecional "VOAZ | SERVER". Por isso `receivedDateTime ge …` vem
+/// PRIMEIRO no filtro agora.
+///
+/// Robustez extra: se a query combinada ainda falhar, o caso "último" (desc) cai
+/// num fallback sem `$orderby` — `/me/messages` já vem ordenado por
+/// `receivedDateTime desc`, então `$top=1` filtrado pelo remetente dá o mais
+/// recente. Não há fallback barato p/ "primeiro" (asc) sem varrer tudo.
+fn data_extrema_recebido(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    addr_odata: &str,
+    asc: bool,
+) -> Option<String> {
+    let dir = if asc { "asc" } else { "desc" };
+    // Ordem correta: a propriedade do $orderby (receivedDateTime) ANTES do from.
+    let filtro = format!(
+        "(receivedDateTime ge 1970-01-01T00:00:00Z) and \
+         (from/emailAddress/address eq '{addr_odata}')"
+    );
+    let url = format!(
+        "{GRAPH}/me/messages?$filter={}&$orderby=receivedDateTime%20{dir}\
+         &$top=1&$select=receivedDateTime",
+        urlencoding::encode(&filtro)
+    );
+    if let Some(data) = buscar_data(client, token, &url) {
+        return Some(data);
+    }
+
+    // Fallback só p/ o "último" recebido: sem $orderby (evita o combo frágil),
+    // aproveitando a ordem default de /me/messages (receivedDateTime desc).
+    if !asc {
+        let filtro_from = format!("from/emailAddress/address eq '{addr_odata}'");
+        let url = format!(
+            "{GRAPH}/me/messages?$filter={}&$top=1&$select=receivedDateTime",
+            urlencoding::encode(&filtro_from)
+        );
+        return buscar_data(client, token, &url);
+    }
+    None
+}
+
+/// GET numa URL de mensagens e extrai `value[0].receivedDateTime`. `None` em
+/// qualquer falha de rede/status/parse. Sob o pool + retry (#64).
+fn buscar_data(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    url: &str,
+) -> Option<String> {
+    let resp = graph_enviar("mail:insights:data", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(url)
+            .bearer_auth(token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+    })
+    .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().ok()?;
+    v["value"][0]["receivedDateTime"]
+        .as_str()
+        .map(|s| s.to_string())
 }
