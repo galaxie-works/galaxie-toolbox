@@ -550,6 +550,57 @@ async fn cr_marcar_pasta_lida(state: State<'_, Store>, folder_id: String) -> Res
         .map_err(|e| e.to_string())?
 }
 
+/// Control room: cria uma subpasta dentro de `pai_id` (#90). Retorna a pasta
+/// criada.
+#[tauri::command]
+async fn cr_criar_subpasta(
+    state: State<'_, Store>,
+    pai_id: String,
+    nome: String,
+) -> Result<graph::PastaEmail, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_criar_subpasta(&store, &pai_id, &nome))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: renomeia uma pasta (#90). Retorna a pasta com o nome novo.
+#[tauri::command]
+async fn cr_renomear_pasta(
+    state: State<'_, Store>,
+    id: String,
+    nome: String,
+) -> Result<graph::PastaEmail, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_renomear_pasta(&store, &id, &nome))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: exclui uma pasta (#90) — MOVE para a Lixeira (reversível,
+/// decisão do PO na #71/D3). `true` = foi pra lixeira; `false` = caiu no
+/// fallback DELETE (definitivo).
+#[tauri::command]
+async fn cr_excluir_pasta(state: State<'_, Store>, id: String) -> Result<bool, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_pasta(&store, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Control room: move uma pasta para dentro de outra (#90).
+#[tauri::command]
+async fn cr_mover_pasta(
+    state: State<'_, Store>,
+    id: String,
+    novo_pai: String,
+) -> Result<graph::PastaEmail, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_mover_pasta(&store, &id, &novo_pai))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: baixa um anexo para a pasta Downloads. Retorna o caminho.
 #[tauri::command]
 async fn cr_baixar_anexo(
@@ -783,6 +834,10 @@ pub fn run() {
             cr_contar,
             cr_esvaziar_pasta,
             cr_marcar_pasta_lida,
+            cr_criar_subpasta,
+            cr_renomear_pasta,
+            cr_excluir_pasta,
+            cr_mover_pasta,
             cr_baixar_anexo,
             abrir_caminho,
             revelar_no_explorer,

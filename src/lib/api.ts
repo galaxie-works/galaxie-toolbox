@@ -686,6 +686,73 @@ export async function crMarcarPastaLida(folderId: string): Promise<number> {
   return invoke<number>("cr_marcar_pasta_lida", { folderId });
 }
 
+// --- CRUD de pastas (#90) ---------------------------------------------------
+// Só o menu de contexto de pasta CUSTOM oferece renomear/excluir/mover; "criar
+// subpasta" vale também em inbox/archive. O backend aceita qualquer id — quem
+// esconde as ações inválidas é a UI (decisão do PO na #71/S4).
+
+/**
+ * Cria uma subpasta dentro de `paiId` (well-known como "inbox"/"archive" ou o id
+ * real de uma custom). Devolve a pasta criada. Nome duplicado estoura no Graph
+ * (409) — a UI já barra antes, comparando com as irmãs conhecidas.
+ */
+export async function crCriarSubpasta(
+  paiId: string,
+  nome: string
+): Promise<PastaEmail> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      id: `${paiId}-nova-${Date.now()}`,
+      tipo: "child",
+      nome,
+      naoLidos: 0,
+      total: 0,
+      filhos: 0,
+    };
+  }
+  return invoke<PastaEmail>("cr_criar_subpasta", { paiId, nome });
+}
+
+/** Renomeia uma pasta (#90). Devolve a pasta já com o nome novo. */
+export async function crRenomearPasta(
+  id: string,
+  nome: string
+): Promise<PastaEmail> {
+  if (!inTauri()) {
+    await sleep(400);
+    return { id, tipo: "child", nome, naoLidos: 0, total: 0, filhos: 0 };
+  }
+  return invoke<PastaEmail>("cr_renomear_pasta", { id, nome });
+}
+
+/**
+ * Exclui uma pasta (#90). Decisão do PO na #71/D3: é REVERSÍVEL — a pasta vai
+ * para a Lixeira (`POST /move` com `destinationId:"deleteditems"`), não é
+ * apagada de vez. Devolve `true` quando foi pra lixeira e `false` quando o move
+ * não rolou e o backend caiu no fallback `DELETE` (aí sim definitivo) — a UI usa
+ * isso pra escolher o texto do toast.
+ */
+export async function crExcluirPasta(id: string): Promise<boolean> {
+  if (!inTauri()) {
+    await sleep(400);
+    return true;
+  }
+  return invoke<boolean>("cr_excluir_pasta", { id });
+}
+
+/** Move uma pasta (com conteúdo e subpastas) para dentro de `novoPai` (#90). */
+export async function crMoverPasta(
+  id: string,
+  novoPai: string
+): Promise<PastaEmail> {
+  if (!inTauri()) {
+    await sleep(400);
+    return { id, tipo: "child", nome: "Pasta", naoLidos: 0, total: 0, filhos: 0 };
+  }
+  return invoke<PastaEmail>("cr_mover_pasta", { id, novoPai });
+}
+
 /** Baixa um anexo para a pasta Downloads e devolve o caminho absoluto. */
 export async function crBaixarAnexo(
   messageId: string,

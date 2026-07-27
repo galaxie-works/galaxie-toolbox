@@ -2649,6 +2649,184 @@ pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmai
     Ok(pastas)
 }
 
+// ----------------------------------------------------------------------------
+// CRUD de PASTAS (#90) — criar / renomear / excluir / mover subpastas.
+//
+// Todas as chamadas passam pelo `graph_enviar` (pool de concorrência + retry no
+// 429 respeitando Retry-After + jitter, #64) — nada de retry ad-hoc aqui.
+// Escopo: Mail.ReadWrite (o mesmo já concedido; nenhum re-consent novo).
+//
+// O front só oferece essas ações em pasta CUSTOM (`tipo == "child"`), fora
+// "Criar subpasta", que também vale em inbox/archive — mas o backend aceita
+// qualquer id: quem decide o que aparece é a UI (decisão do PO na #71/S4:
+// esconder as ações inválidas em well-known, não desabilitar).
+// ----------------------------------------------------------------------------
+
+/// Converte a resposta de um mailFolder do Graph no `PastaEmail` do front.
+/// `tipo` é sempre "child": tudo que este CRUD cria/altera é subpasta custom
+/// (well-known não passa por aqui) — é essa chave que o front usa pro ícone e
+/// para liberar as ações do menu de contexto.
+fn pasta_de_json(v: &serde_json::Value) -> PastaEmail {
+    PastaEmail {
+        id: v["id"].as_str().unwrap_or("").to_string(),
+        tipo: "child".to_string(),
+        nome: v["displayName"].as_str().unwrap_or("").to_string(),
+        nao_lidos: v["unreadItemCount"].as_u64().unwrap_or(0),
+        total: v["totalItemCount"].as_u64().unwrap_or(0),
+        filhos: v["childFolderCount"].as_u64().unwrap_or(0),
+    }
+}
+
+/// Cria uma subpasta dentro de `pai_id` (`POST /me/mailFolders/{pai}/childFolders`
+/// com `{displayName}`). `pai_id` aceita well-known ("inbox", "archive") ou o id
+/// real de uma pasta custom. Retorna a pasta criada.
+///
+/// Nome duplicado: o Graph responde 409 (ErrorFolderExists) e a mensagem de erro
+/// sobe pro front — que já barra o duplicado *antes* de chamar, comparando com
+/// as irmãs conhecidas. O 409 é a rede de segurança pro caso de a pasta ter sido
+/// criada em outro cliente (Outlook Web) desde o último carregamento.
+/// Mail.ReadWrite.
+pub fn cr_criar_subpasta(
+    store: &TokenStore,
+    pai_id: &str,
+    nome: &str,
+) -> Result<PastaEmail, String> {
+    let nome = nome.trim();
+    if nome.is_empty() {
+        return Err("o nome da pasta não pode ficar vazio".to_string());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/mailFolders/{pai_id}/childFolders");
+    let body = serde_json::json!({ "displayName": nome });
+    // Sob o pool + retry central (#64): Retry-After + jitter.
+    let resp = graph_enviar("mail:criar-subpasta", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao criar a subpasta: {e}"))?;
+    if !resp.status().is_success() {
+        let st = resp.status();
+        return Err(format!(
+            "POST /me/mailFolders/{pai_id}/childFolders retornou {st}"
+        ));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(pasta_de_json(&v))
+}
+
+/// Renomeia uma pasta (`PATCH /me/mailFolders/{id}` com `{displayName}`).
+/// Retorna a pasta já com o nome novo. Mail.ReadWrite.
+pub fn cr_renomear_pasta(
+    store: &TokenStore,
+    id: &str,
+    nome: &str,
+) -> Result<PastaEmail, String> {
+    let nome = nome.trim();
+    if nome.is_empty() {
+        return Err("o nome da pasta não pode ficar vazio".to_string());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/mailFolders/{id}");
+    let body = serde_json::json!({ "displayName": nome });
+    // Sob o pool + retry central (#64): Retry-After + jitter.
+    let resp = graph_enviar("mail:renomear-pasta", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao renomear a pasta: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("PATCH /me/mailFolders retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(pasta_de_json(&v))
+}
+
+/// Move uma pasta INTEIRA (com mensagens e subpastas) para dentro de outra:
+/// `POST /me/mailFolders/{id}/move` com `{destinationId}`. `destino` aceita
+/// well-known ("archive", "deleteditems") ou id real. Retorna a pasta no novo
+/// lugar. Mail.ReadWrite.
+///
+/// É o mesmo endpoint que o "excluir pasta" usa (destino = "deleteditems"), daí
+/// o helper compartilhado.
+fn mover_pasta_graph(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    id: &str,
+    destino: &str,
+) -> Result<serde_json::Value, String> {
+    let url = format!("{GRAPH}/me/mailFolders/{id}/move");
+    let body = serde_json::json!({ "destinationId": destino });
+    // Sob o pool + retry central (#64): Retry-After + jitter.
+    let resp = graph_enviar("mail:mover-pasta", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao mover a pasta: {e}"))?;
+    let st = resp.status();
+    if !st.is_success() {
+        return Err(format!("POST /me/mailFolders/{id}/move retornou {st}"));
+    }
+    resp.json::<serde_json::Value>().map_err(|e| e.to_string())
+}
+
+/// Move uma pasta para dentro de `novo_pai` (#90). O front impede escolher a
+/// própria pasta ou uma descendente como destino (isso o Graph rejeitaria, mas
+/// barrar na UI evita a viagem e dá mensagem melhor). Mail.ReadWrite.
+pub fn cr_mover_pasta(
+    store: &TokenStore,
+    id: &str,
+    novo_pai: &str,
+) -> Result<PastaEmail, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let v = mover_pasta_graph(&client, &token, id, novo_pai)?;
+    Ok(pasta_de_json(&v))
+}
+
+/// Exclui uma pasta — **movendo para a Lixeira**, não apagando de vez.
+///
+/// Decisão do PO na #71/D3: exclusão de pasta é REVERSÍVEL. Então a via
+/// primária é `POST /me/mailFolders/{id}/move` com `destinationId:"deleteditems"`
+/// — a pasta (com o conteúdo) vira subpasta de Itens Excluídos e o usuário pode
+/// arrastar de volta no Outlook.
+///
+/// `DELETE /me/mailFolders/{id}` só entra como FALLBACK, e apenas quando o move
+/// falhou por não ser suportado naquele item (4xx que não seja 429 — o 429 já é
+/// tratado pelo `graph_enviar`). Isso cobre o caso de o tenant/pasta recusar o
+/// move; o DELETE é definitivo, por isso nunca é a primeira escolha.
+/// Retorna `true` quando foi para a lixeira e `false` quando caiu no DELETE —
+/// o front usa isso para escolher o texto do toast (reversível vs definitivo).
+/// Mail.ReadWrite.
+pub fn cr_excluir_pasta(store: &TokenStore, id: &str) -> Result<bool, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    match mover_pasta_graph(&client, &token, id, "deleteditems") {
+        Ok(_) => Ok(true),
+        Err(e) => {
+            log::warn!(
+                "[mail] excluir pasta '{id}': move p/ lixeira falhou ({e}); tentando DELETE"
+            );
+            let url = format!("{GRAPH}/me/mailFolders/{id}");
+            // Sob o pool + retry central (#64): Retry-After + jitter.
+            let resp = graph_enviar("mail:excluir-pasta", GRAPH_TETO_ESPERA_S, || {
+                client.delete(&url).bearer_auth(&token).send()
+            })
+            .map_err(|e| format!("falha ao excluir a pasta: {e}"))?;
+            // 404 = a pasta já não existe: idempotente.
+            if resp.status().is_success() || resp.status().as_u16() == 404 {
+                Ok(false)
+            } else {
+                Err(format!(
+                    "DELETE /me/mailFolders retornou {} (move p/ lixeira antes: {e})",
+                    resp.status()
+                ))
+            }
+        }
+    }
+}
+
 /// Conta, na PASTA inteira (não só no que está carregado), quantas mensagens
 /// batem com um filtro. Usa o endpoint /$count, que devolve um número puro
 /// (texto) no corpo — daí o parse para u64. O $filter exige o header
