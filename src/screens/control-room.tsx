@@ -163,7 +163,17 @@ import {
   Video,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { useAtalhos, isTypingTarget, ehModPrincipal } from "@/hooks/use-atalhos";
+import { AtalhosAjuda } from "@/components/atalhos-ajuda";
 
 // --- helpers de data/horário ------------------------------------------------
 
@@ -1729,6 +1739,10 @@ function MessageList({
   marcarLidoAtraso,
   onMarcarLidoModo,
   onMarcarLidoAtraso,
+  onResponder,
+  onResponderTodos,
+  onEncaminhar,
+  onCompor,
   t,
   idioma,
 }: {
@@ -1769,10 +1783,20 @@ function MessageList({
   marcarLidoAtraso: number;
   onMarcarLidoModo: (m: MarcarLidoModo) => void;
   onMarcarLidoAtraso: (s: number) => void;
+  // Atalhos de teclado (#28): ações que vivem no LEITOR (reply/forward via
+  // handle imperativo) e no PAI (compor). MessageList só dispara a tecla.
+  onResponder: () => void;
+  onResponderTodos: () => void;
+  onEncaminhar: () => void;
+  onCompor: () => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
   const listaRef = useRef<HTMLDivElement>(null);
+  // Busca (para o atalho "/" focar) e âncora do intervalo de Shift+clique (#28).
+  const buscaRef = useRef<HTMLInputElement>(null);
+  const ancoraRef = useRef<string | null>(null);
+  const [ajudaAberta, setAjudaAberta] = useState(false);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
 
@@ -2014,49 +2038,186 @@ function MessageList({
       : []),
   ];
 
-  // Teclado: ESC desfaz multi-seleção; Ctrl+A seleciona tudo (se já há ≥1);
-  // ↑/↓ movem a seleção; Delete exclui.
-  function navegar(e: React.KeyboardEvent) {
-    if (e.key === "Escape" && selecionados.size > 0) {
-      e.preventDefault();
-      setSelecionados(new Set());
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a" && selecionados.size > 0) {
+  // Move a seleção ativa (↑/↓ e j/k) e rola o virtualizer até ela.
+  const irPara = (idx: number) => {
+    const alvo = filtrada[idx];
+    if (!alvo) return;
+    onSel(alvo.id);
+    ancoraRef.current = alvo.id;
+    // Com a lista virtualizada, o item pode não estar no DOM — usa o
+    // scrollToIndex do virtualizer. O índice é o da lista PLANA (linhas),
+    // que difere de `filtrada` quando há headers de grupo (#30).
+    const vi = linhas.findIndex((l) => l.tipo === "msg" && l.m.id === alvo.id);
+    if (vi >= 0) virtualizer.scrollToIndex(vi);
+  };
+
+  // Handler CENTRAL de atalhos (#28) — instalado no `window` via `useAtalhos`
+  // (funciona mesmo sem a lista focada; antes o ESC/Ctrl+A/setas exigiam foco
+  // no container). Respeita foco em campos de texto (`isTypingTarget`) e a
+  // reserva do zoom do leitor (#76): NÃO captura Ctrl +/−/0.
+  function aoTeclar(e: KeyboardEvent) {
+    // #76: faixa do zoom do leitor é intocável aqui.
+    if (ehModPrincipal(e) && ["+", "-", "=", "_", "0"].includes(e.key)) return;
+
+    const digitando = isTypingTarget(e.target);
+
+    // Ctrl/⌘+A: seleciona TUDO — inclusive sem nada selecionado antes (AC #28).
+    // Em campo de texto, deixa o Ctrl+A nativo (selecionar o texto) passar.
+    if (ehModPrincipal(e) && e.key.toLowerCase() === "a" && !e.shiftKey && !e.altKey) {
+      if (digitando) return;
+      if (idsFiltrados.length === 0) return;
       e.preventDefault();
       setSelecionados(new Set(idsFiltrados));
       return;
     }
-    if (filtrada.length === 0) return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+
+    // "?" abre a ajuda dos atalhos (funciona mesmo sem lista); demais atalhos
+    // de tecla única não disparam enquanto o usuário digita.
+    if (e.key === "?" && !digitando) {
       e.preventDefault();
-      const idx = filtrada.findIndex((m) => m.id === sel);
-      const prox =
-        idx === -1
-          ? 0
-          : e.key === "ArrowDown"
-            ? Math.min(filtrada.length - 1, idx + 1)
-            : Math.max(0, idx - 1);
-      const alvo = filtrada[prox];
-      if (alvo) {
-        onSel(alvo.id);
-        // Com a lista virtualizada, o item pode não estar no DOM — usa o
-        // scrollToIndex do virtualizer. O índice é o da lista PLANA (linhas),
-        // que difere de `filtrada` quando há headers de grupo (#30).
-        const vi = linhas.findIndex((l) => l.tipo === "msg" && l.m.id === alvo.id);
-        if (vi >= 0) virtualizer.scrollToIndex(vi);
+      setAjudaAberta((v) => !v);
+      return;
+    }
+    if (digitando) return;
+
+    // Esc unificado: fecha ajuda → limpa seleção → limpa busca.
+    if (e.key === "Escape") {
+      if (ajudaAberta) {
+        setAjudaAberta(false);
+        return;
       }
-    } else if (e.key === "Delete") {
-      const alvos = selecionados.size > 0 ? [...selecionados] : sel ? [sel] : [];
+      if (selecionados.size > 0) {
+        e.preventDefault();
+        setSelecionados(new Set());
+        ancoraRef.current = null;
+        return;
+      }
+      if (busca) {
+        e.preventDefault();
+        limparBusca();
+      }
+      return;
+    }
+
+    // "/" foca a busca.
+    if (e.key === "/") {
+      e.preventDefault();
+      buscaRef.current?.focus();
+      return;
+    }
+
+    // "c" compõe nova mensagem (ação do pai).
+    if (e.key.toLowerCase() === "c" && !ehModPrincipal(e) && !e.altKey) {
+      e.preventDefault();
+      onCompor();
+      return;
+    }
+
+    if (filtrada.length === 0) return;
+    const idxAtivo = filtrada.findIndex((m) => m.id === sel);
+
+    // Navegação: ↑/↓ e j/k (MailVault).
+    const desce = e.key === "ArrowDown" || e.key === "j";
+    const sobe = e.key === "ArrowUp" || e.key === "k";
+    if (desce || sobe) {
+      e.preventDefault();
+      const prox =
+        idxAtivo === -1
+          ? 0
+          : desce
+            ? Math.min(filtrada.length - 1, idxAtivo + 1)
+            : Math.max(0, idxAtivo - 1);
+      irPara(prox);
+      return;
+    }
+
+    // Ações que dependem de UMA mensagem ativa (ou da seleção, no excluir).
+    const ativoId = sel ?? (idxAtivo >= 0 ? filtrada[idxAtivo].id : null);
+    const msgAtiva = ativoId ? filtrada.find((m) => m.id === ativoId) : undefined;
+
+    // Delete exclui a seleção (se houver) ou a ativa.
+    if (e.key === "Delete") {
+      const alvos = selecionados.size > 0 ? [...selecionados] : ativoId ? [ativoId] : [];
       if (alvos.length > 0) {
         e.preventDefault();
         onExcluir(alvos);
         // acaoExcluir não limpa mais a seleção (pro BotaoExcluir animar antes de
         // desmontar); no atalho, limpamos aqui.
         setSelecionados(new Set());
+        ancoraRef.current = null;
       }
+      return;
+    }
+
+    // Atalhos de tecla única sem modificadores.
+    if (ehModPrincipal(e) || e.altKey || e.shiftKey) return;
+    switch (e.key.toLowerCase()) {
+      case "r": // responder
+        e.preventDefault();
+        onResponder();
+        return;
+      case "a": // responder a todos
+        e.preventDefault();
+        onResponderTodos();
+        return;
+      case "f": // encaminhar
+        e.preventDefault();
+        onEncaminhar();
+        return;
+      case "x": // marcar/desmarcar a mensagem ativa
+        if (ativoId) {
+          e.preventDefault();
+          alternarSel(ativoId);
+          ancoraRef.current = ativoId;
+        }
+        return;
+      case "u": // alterna lido/não-lido
+        if (msgAtiva) {
+          e.preventDefault();
+          onMarcarLido(msgAtiva.id, !msgAtiva.lido);
+        }
+        return;
+      case "s": // alterna sinalizado
+        if (msgAtiva) {
+          e.preventDefault();
+          onFlag(msgAtiva.id, !msgAtiva.sinalizado);
+        }
+        return;
     }
   }
+  useAtalhos(aoTeclar);
+
+  // Clique na linha (#28): Shift+clique seleciona o INTERVALO entre a âncora e
+  // o item clicado (sobre a ordem de exibição `idsFiltrados`, ignorando headers
+  // de grupo); Ctrl/⌘+clique alterna; clique simples abre e vira a nova âncora.
+  const aoClicarLinha = (e: React.MouseEvent, id: string) => {
+    if (e.shiftKey) {
+      const ancora = ancoraRef.current;
+      if (ancora && ancora !== id) {
+        const i = idsExibidos.indexOf(ancora);
+        const j = idsExibidos.indexOf(id);
+        if (i >= 0 && j >= 0) {
+          e.preventDefault();
+          const [lo, hi] = i < j ? [i, j] : [j, i];
+          const faixa = idsExibidos.slice(lo, hi + 1);
+          setSelecionados((s) => {
+            const n = new Set(s);
+            for (const x of faixa) n.add(x);
+            return n;
+          });
+          return;
+        }
+      }
+      // Sem âncora válida → comporta como clique simples (fixa a âncora).
+    }
+    if (e.ctrlKey || e.metaKey) {
+      alternarSel(id);
+      ancoraRef.current = id;
+      return;
+    }
+    onSel(id);
+    ancoraRef.current = id;
+  };
 
   // #82: com agrupamento (#30) + grupos colapsados, a lista pode ficar mais
   // CURTA que a área visível — e aí não dá pra rolar até os 90% que disparam o
@@ -2111,6 +2272,13 @@ function MessageList({
   }, [linhas.length, colapsadosArr]);
 
   const idsFiltrados = filtrada.map((m) => m.id);
+  // Ordem de EXIBIÇÃO das mensagens (respeita agrupamento/Flagged-no-topo e
+  // ignora headers e grupos colapsados): é o que o Shift+clique usa como
+  // "itens compreendidos entre" — o intervalo segue o que o usuário vê (#28).
+  const idsExibidos = useMemo(
+    () => linhas.flatMap((l) => (l.tipo === "msg" ? [l.m.id] : [])),
+    [linhas]
+  );
   const todosSel = idsFiltrados.length > 0 && idsFiltrados.every((id) => selecionados.has(id));
   // Em "modo seleção" (≥1 marcado): checkboxes sempre visíveis e as ações de
   // hover por linha somem — o usuário opera pela barra de seleção (#23).
@@ -2254,6 +2422,7 @@ function MessageList({
         <div className="relative">
           <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
           <input
+            ref={buscaRef}
             value={busca}
             onChange={(e) => setBusca(e.target.value)}
             onKeyDown={(e) => {
@@ -2344,7 +2513,6 @@ function MessageList({
         <div
           ref={listaRef}
           tabIndex={0}
-          onKeyDown={navegar}
           className="min-h-0 flex-1 overflow-y-auto scrollbar-fina outline-none"
           onScroll={(e) => {
             // Pré-carga antecipada: ao passar de 90% da lista já busca a próxima
@@ -2466,7 +2634,7 @@ function MessageList({
                     <Item
                       size="sm"
                       data-msgid={m.id}
-                      onClick={() => onSel(m.id)}
+                      onClick={(e) => aoClicarLinha(e, m.id)}
                       data-active={ativo}
                       className={cn(
                         "group/row cursor-pointer flex-nowrap gap-2.5 px-2 py-2.5",
@@ -2625,6 +2793,9 @@ function MessageList({
           </ContextMenuContent>
         </ContextMenu>
       )}
+
+      {/* Ajuda dos atalhos ("?") — documentação viva do keymap (#28). */}
+      <AtalhosAjuda aberto={ajudaAberta} onOpenChange={setAjudaAberta} t={t} />
     </section>
   );
 }
@@ -2842,37 +3013,63 @@ function InsightsRemetentePopover({
   );
 }
 
-function MessageDetail({
-  id,
-  userEmail,
-  sinalizado,
-  lido,
-  onFlag,
-  onExcluir,
-  onMarcarLido,
-  onAbrirLink,
-  onMudou,
-  t,
-  idioma,
-}: {
-  id: string | null;
-  userEmail?: string | null;
-  sinalizado: boolean;
-  lido: boolean;
-  onFlag: (id: string, novo: boolean) => void;
-  onExcluir: (ids: string[]) => void;
-  onMarcarLido: (id: string, lido: boolean) => void;
-  onAbrirLink: (url: string) => void;
-  onMudou: () => void;
-  t: ReturnType<typeof useIdioma>["t"];
-  idioma: string;
-}) {
+// Handle imperativo do leitor (#28): os atalhos r/a/f abrem o Sheet de resposta
+// chamando estas funções — a UI de reply/forward já existe, só ligamos a tecla.
+export interface MessageDetailHandle {
+  responder: () => void;
+  responderTodos: () => void;
+  encaminhar: () => void;
+}
+
+const MessageDetail = forwardRef<
+  MessageDetailHandle,
+  {
+    id: string | null;
+    userEmail?: string | null;
+    sinalizado: boolean;
+    lido: boolean;
+    onFlag: (id: string, novo: boolean) => void;
+    onExcluir: (ids: string[]) => void;
+    onMarcarLido: (id: string, lido: boolean) => void;
+    onAbrirLink: (url: string) => void;
+    onMudou: () => void;
+    t: ReturnType<typeof useIdioma>["t"];
+    idioma: string;
+  }
+>(function MessageDetail(
+  {
+    id,
+    userEmail,
+    sinalizado,
+    lido,
+    onFlag,
+    onExcluir,
+    onMarcarLido,
+    onAbrirLink,
+    onMudou,
+    t,
+    idioma,
+  },
+  ref
+) {
   const [det, setDet] = useState<EmailDetalhe | null>(null);
   const [modo, setModo] = useState<null | "responder" | "responderTodos" | "encaminhar">(null);
   const [enviando, setEnviando] = useState(false);
   const comporRef = useRef<ComporMensagemHandle>(null);
   // Avatar do remetente interno (#39).
   const { getFoto, pedirFotos } = useFotos();
+
+  // Atalhos r/a/f: só fazem sentido com uma mensagem aberta (`id`). Abrir o
+  // Sheet reusa exatamente o mesmo `setModo` dos botões da toolbar.
+  useImperativeHandle(
+    ref,
+    () => ({
+      responder: () => id && setModo("responder"),
+      responderTodos: () => id && setModo("responderTodos"),
+      encaminhar: () => id && setModo("encaminhar"),
+    }),
+    [id]
+  );
 
   useEffect(() => {
     if (!id) {
@@ -3167,7 +3364,7 @@ function MessageDetail({
       </Sheet>
     </section>
   );
-}
+});
 
 // ===========================================================================
 // Painel 4 — calendário + agenda do dia (schedule-8)
@@ -3609,6 +3806,8 @@ export function ControlRoomScreen({
   const [carregandoMais, setCarregandoMais] = useState(false);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [novaAberta, setNovaAberta] = useState(false);
+  // Handle do leitor para os atalhos r/a/f (#28) abrirem o Sheet de resposta.
+  const detalheRef = useRef<MessageDetailHandle>(null);
   // Busca server-side ($search do Graph): resultados vêm do servidor (inclui
   // corpo), não do filtro local sobre o carregado.
   const [busca, setBusca] = useState("");
@@ -4512,6 +4711,10 @@ export function ControlRoomScreen({
               marcarLidoAtraso={marcarLidoAtraso}
               onMarcarLidoModo={setMarcarLidoModo}
               onMarcarLidoAtraso={setMarcarLidoAtraso}
+              onResponder={() => detalheRef.current?.responder()}
+              onResponderTodos={() => detalheRef.current?.responderTodos()}
+              onEncaminhar={() => detalheRef.current?.encaminhar()}
+              onCompor={() => setNovaAberta(true)}
               t={t}
               idioma={idioma}
             />
@@ -4527,6 +4730,7 @@ export function ControlRoomScreen({
               />
             ) : (
               <MessageDetail
+                ref={detalheRef}
                 id={msgSel}
                 userEmail={user.email}
                 sinalizado={msgAtual?.sinalizado ?? false}
