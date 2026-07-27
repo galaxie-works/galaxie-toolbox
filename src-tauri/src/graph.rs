@@ -1365,6 +1365,95 @@ pub fn cr_email_corpo(store: &TokenStore, id: &str) -> Result<EmailDetalhe, Stri
     })
 }
 
+// --- Segurança do leitor (#91) ---------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemetenteNomeado {
+    pub nome: String,
+    pub email: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegurancaEmail {
+    /// Endereços de Reply-To (para detectar divergência do From no front).
+    pub reply_to: Vec<RemetenteNomeado>,
+    /// Valores dos headers `Authentication-Results` / `ARC-Authentication-Results`
+    /// (SPF/DKIM/DMARC). O parse fica no front (`seguranca-leitor.ts`, testável).
+    pub autenticacao: Vec<String>,
+    /// Valores de `Received-SPF` (fallback de SPF quando o AR não traz).
+    pub received_spf: Vec<String>,
+}
+
+/// Nome + e-mail de cada recipient de uma lista do Graph (mantém pares vazios
+/// fora do resultado).
+fn recipients_nomeados(v: &serde_json::Value) -> Vec<RemetenteNomeado> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| {
+                    let email = r["emailAddress"]["address"].as_str().unwrap_or("");
+                    if email.is_empty() {
+                        return None;
+                    }
+                    let nome = r["emailAddress"]["name"].as_str().unwrap_or("");
+                    Some(RemetenteNomeado {
+                        nome: nome.to_string(),
+                        email: email.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Dados de segurança de um e-mail (#91): Reply-To + headers de autenticação.
+/// `internetMessageHeaders` vem só quando explicitamente selecionado e requer
+/// apenas `Mail.Read` (já concedido; ver AGENTS.md §1.1). Passa pelo pool
+/// `graph_enviar` (#64) como as demais chamadas.
+pub fn cr_email_seguranca(store: &TokenStore, id: &str) -> Result<SegurancaEmail, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/messages/{id}?$select=replyTo,internetMessageHeaders");
+    let resp = graph_enviar("mail:seguranca", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler cabeçalhos do e-mail: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/messages (segurança) retornou {}", resp.status()));
+    }
+    let it: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let reply_to = recipients_nomeados(&it["replyTo"]);
+
+    let mut autenticacao = Vec::new();
+    let mut received_spf = Vec::new();
+    if let Some(hdrs) = it["internetMessageHeaders"].as_array() {
+        for h in hdrs {
+            let nome = h["name"].as_str().unwrap_or("").to_ascii_lowercase();
+            let valor = h["value"].as_str().unwrap_or("");
+            if valor.is_empty() {
+                continue;
+            }
+            match nome.as_str() {
+                "authentication-results" | "arc-authentication-results" => {
+                    autenticacao.push(valor.to_string());
+                }
+                "received-spf" => received_spf.push(valor.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    Ok(SegurancaEmail {
+        reply_to,
+        autenticacao,
+        received_spf,
+    })
+}
+
 /// Baixa um anexo de um e-mail para a pasta Downloads do usuario e devolve o
 /// caminho absoluto do arquivo gravado. Mail.Read.
 ///

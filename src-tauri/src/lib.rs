@@ -265,6 +265,19 @@ async fn cr_email_corpo(
         .map_err(|e| e.to_string())?
 }
 
+/// Control room: dados de segurança de um e-mail (#91) — Reply-To + headers de
+/// autenticação (SPF/DKIM/DMARC via internetMessageHeaders).
+#[tauri::command]
+async fn cr_email_seguranca(
+    state: State<'_, Store>,
+    id: String,
+) -> Result<graph::SegurancaEmail, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_email_seguranca(&store, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: categorias mestras do usuário com a cor (hex) de cada uma.
 #[tauri::command]
 async fn cr_categorias(
@@ -829,6 +842,7 @@ pub fn run() {
             cr_evento_corpo,
             cr_inbox_dia,
             cr_email_corpo,
+            cr_email_seguranca,
             cr_categorias,
             cr_fotos_contatos,
             cr_pessoas,
