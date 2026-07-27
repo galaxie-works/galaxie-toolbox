@@ -98,7 +98,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
@@ -3490,26 +3489,33 @@ function BadgeAutenticacao({
     },
   }[nivel];
   const est = (v: string | null) => (v ?? "—");
+  // Tooltip canônico (#98): SEM TooltipProvider local — o provider único do app
+  // (delay/animação/seta padronizados) vive em src/main.tsx. Texto humano é o
+  // principal; a linha crua SPF/DKIM/DMARC fica discreta e secundária, e só
+  // aparece quando há dados (evita a "sopa" de traços no nível indisponível).
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-flex cursor-default">
-            <Badge variant={cfg.variant} size="sm" className="shrink-0 gap-1">
-              <cfg.Icone />
-              {cfg.rotulo}
-            </Badge>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>{cfg.dica}</p>
-          <p className="mt-1 font-mono text-[0.65rem] opacity-80">
-            SPF: {est(resultado.spf)} · DKIM: {est(resultado.dkim)} · DMARC:{" "}
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-default">
+          <Badge variant={cfg.variant} size="sm" className="shrink-0 gap-1">
+            <cfg.Icone />
+            {cfg.rotulo}
+          </Badge>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs">
+        <p>{cfg.dica}</p>
+        {nivel !== "indisponivel" && (
+          <p className="mt-1.5 font-mono text-[0.65rem] opacity-70">
+            <span className="mr-1 font-sans opacity-80">
+              {t.controlRoom.segAutDetalhesTecnicos}:
+            </span>
+            SPF {est(resultado.spf)} · DKIM {est(resultado.dkim)} · DMARC{" "}
             {est(resultado.dmarc)}
           </p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+        )}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

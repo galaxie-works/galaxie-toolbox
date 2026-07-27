@@ -489,13 +489,17 @@ const pt = {
     segAutParcial: "Parcial",
     segAutFalhou: "Falha de autenticação",
     segAutIndisponivel: "Sem dados",
-    segAutTooltipAutenticado: "Remetente autenticado (SPF/DKIM/DMARC).",
-    segAutTooltipParcial: "Autenticação parcial — confirme o remetente.",
-    segAutTooltipFalhou: "Falha na autenticação — possível remetente forjado.",
-    segAutTooltipIndisponivel: "Não foi possível verificar a autenticação.",
+    segAutTooltipAutenticado:
+      "Remetente verificado — este e-mail passou nas checagens de autenticação (SPF, DKIM e DMARC).",
+    segAutTooltipParcial:
+      "Autenticação parcial — parte das checagens não passou. Confira o remetente antes de confiar.",
+    segAutTooltipFalhou:
+      "Falha de autenticação — este e-mail pode não ser de quem diz ser. Cuidado com links e anexos.",
+    segAutTooltipIndisponivel: "Sem dados de autenticação para este e-mail.",
+    segAutDetalhesTecnicos: "Detalhes técnicos",
     segReplyToTitulo: "As respostas vão para outro endereço",
     segReplyToDescricao:
-      "Responder envia para {enderecos}, diferente do remetente ({de}). Tática comum de phishing.",
+      "Ao responder, sua mensagem vai para {enderecos}, e não para o remetente ({de}). Isso é comum em phishing — confirme antes de responder.",
     // Compose / envio
     responderTodos: "Responder a todos",
     paraPlaceholder: "Para (separe por vírgula)",
@@ -1035,13 +1039,17 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     segAutParcial: "Partial",
     segAutFalhou: "Authentication failed",
     segAutIndisponivel: "No data",
-    segAutTooltipAutenticado: "Sender authenticated (SPF/DKIM/DMARC).",
-    segAutTooltipParcial: "Partial authentication — verify the sender.",
-    segAutTooltipFalhou: "Authentication failed — sender may be spoofed.",
-    segAutTooltipIndisponivel: "Could not verify authentication.",
+    segAutTooltipAutenticado:
+      "Verified sender — this email passed the authentication checks (SPF, DKIM and DMARC).",
+    segAutTooltipParcial:
+      "Partial authentication — some checks didn't pass. Verify the sender before trusting it.",
+    segAutTooltipFalhou:
+      "Authentication failed — this email may not be from who it claims to be. Be careful with links and attachments.",
+    segAutTooltipIndisponivel: "No authentication data for this email.",
+    segAutDetalhesTecnicos: "Technical details",
     segReplyToTitulo: "Replies go to a different address",
     segReplyToDescricao:
-      "Replying sends to {enderecos}, different from the sender ({de}). Common phishing tactic.",
+      "When you reply, your message goes to {enderecos}, not to the sender ({de}). This is common in phishing — confirm before replying.",
     // Compose / envio
     responderTodos: "Reply all",
     paraPlaceholder: "To (comma-separated)",
