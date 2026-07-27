@@ -1833,6 +1833,93 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
     Ok(pastas)
 }
 
+// ===========================================================================
+// Caixas compartilhadas (#111) — adicionar caixa por endereço
+// ===========================================================================
+
+/// Resultado da validação de uma caixa compartilhada por endereço (#111). O
+/// front decide o que fazer a partir do discriminante `status`:
+/// - "ok"             → 200: acesso confirmado, adiciona ao seletor.
+/// - "sem_acesso"     → 403 com o escopo presente: sem permissão nessa caixa.
+/// - "nao_encontrado" → 404: endereço não existe no tenant.
+/// - "precisa_relogin"→ 403 mas o token atual NÃO traz Mail.Read.Shared (sessão
+///                      aberta antes do escopo novo): pede relogin, não é falta
+///                      de acesso.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidacaoCaixa {
+    /// Endereço normalizado (trim + minúsculas) — o que vai pro seletor.
+    pub endereco: String,
+    pub status: String,
+}
+
+/// Verdadeiro se o token ATUAL foi emitido com o escopo Mail.Read.Shared. Usado
+/// pra distinguir 403-por-falta-de-escopo (pede relogin) de 403-por-falta-de-
+/// acesso-à-caixa, e pra sinalizar relogin já ao abrir o seletor (#111, AC5).
+pub fn mail_shared_disponivel(store: &TokenStore) -> Result<bool, String> {
+    // Renova se necessário (o refresh reusa a MESMA `config::SCOPES`, então um
+    // token renovado já reflete o escopo novo sem novo login interativo — desde
+    // que o refresh_token original tenha o offline_access, que sempre pedimos).
+    access_token(store)?;
+    let guard = store
+        .inner
+        .lock()
+        .map_err(|_| "estado de token corrompido".to_string())?;
+    let atual = guard.as_ref().ok_or("nao autenticado")?;
+    Ok(escopo_presente(&atual.scopes, "Mail.Read.Shared"))
+}
+
+/// Checa se um escopo (case-insensitive) está na string `scope` do OAuth (lista
+/// separada por espaço). Compara token a token pra não casar por substring.
+fn escopo_presente(scopes: &str, alvo: &str) -> bool {
+    scopes
+        .split_whitespace()
+        .any(|s| s.eq_ignore_ascii_case(alvo))
+}
+
+/// Valida na hora se o usuário tem acesso a uma caixa por endereço (#111):
+/// `GET /users/{addr}/mailFolders/inbox?$select=id`. Reusa o mesmo encode de
+/// endereço do `batch_fotos` (urlencoding::encode em `/users/{email}/...`).
+///
+/// NÃO lista o conteúdo — isso é a #112. Aqui só confirmamos 200/403/404 para
+/// adicionar (ou não) a caixa ao seletor.
+pub fn cr_validar_caixa(store: &TokenStore, endereco: &str) -> Result<ValidacaoCaixa, String> {
+    let addr = endereco.trim().to_lowercase();
+    if addr.is_empty() || !addr.contains('@') || !addr.contains('.') {
+        return Err("endereco invalido".into());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!(
+        "{GRAPH}/users/{}/mailFolders/inbox?$select=id",
+        urlencoding::encode(&addr)
+    );
+    let resp = graph_enviar("mail:validar-caixa", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao validar a caixa: {e}"))?;
+
+    let status = resp.status().as_u16();
+    let discriminante = match status {
+        200 => "ok",
+        403 => {
+            // 403 pode ser falta de acesso à caixa OU token sem o escopo novo
+            // (sessão anterior ao Mail.Read.Shared). Distinguir olhando o token.
+            if mail_shared_disponivel(store).unwrap_or(true) {
+                "sem_acesso"
+            } else {
+                "precisa_relogin"
+            }
+        }
+        404 => "nao_encontrado",
+        outro => return Err(format!("resposta inesperada do Graph: {outro}")),
+    };
+    Ok(ValidacaoCaixa {
+        endereco: addr,
+        status: discriminante.to_string(),
+    })
+}
+
 /// Monta um EmailItem a partir de um item de mensagem do Graph. `saida` = pasta
 /// de saída (Enviados/Rascunhos): mostra o destinatário no lugar do remetente e
 /// usa a data de envio. Compartilhado por cr_folder_mensagens e cr_buscar para

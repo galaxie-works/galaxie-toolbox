@@ -381,6 +381,31 @@ async fn cr_mail_folders(state: State<'_, Store>) -> Result<Vec<graph::PastaEmai
         .map_err(|e| e.to_string())?
 }
 
+/// Bridge / caixas compartilhadas (#111): valida acesso a uma caixa por
+/// endereço (GET /users/{addr}/mailFolders/inbox). Não lista conteúdo (isso é a
+/// #112) — só devolve 200/403/404 pro seletor decidir se adiciona.
+#[tauri::command]
+async fn cr_validar_caixa(
+    state: State<'_, Store>,
+    endereco: String,
+) -> Result<graph::ValidacaoCaixa, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_validar_caixa(&store, &endereco))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Bridge / caixas compartilhadas (#111): o token atual traz Mail.Read.Shared?
+/// Falso ⇒ o app sinaliza "faça login novamente" (escopo novo, sem consent
+/// admin — já concedido). Ver AGENTS.md §1.1.
+#[tauri::command]
+async fn cr_mail_shared_disponivel(state: State<'_, Store>) -> Result<bool, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::mail_shared_disponivel(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: mensagens de uma pasta.
 #[tauri::command]
 async fn cr_folder_mensagens(
@@ -864,6 +889,8 @@ pub fn run() {
             cr_salvar_contatos,
             cr_subpastas,
             cr_mail_folders,
+            cr_validar_caixa,
+            cr_mail_shared_disponivel,
             cr_folder_mensagens,
             cr_responder,
             cr_encaminhar,

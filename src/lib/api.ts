@@ -429,6 +429,52 @@ export async function crMailFolders(): Promise<PastaEmail[]> {
   return invoke<PastaEmail[]>("cr_mail_folders");
 }
 
+// --- Caixas compartilhadas (#111) — adicionar caixa por endereço ----------
+
+/** Discriminante devolvido pela validação de uma caixa compartilhada. */
+export type StatusCaixa = "ok" | "sem_acesso" | "nao_encontrado" | "precisa_relogin";
+
+export type ValidacaoCaixa = { endereco: string; status: StatusCaixa };
+
+/**
+ * Valida na hora se o usuário tem acesso a uma caixa por endereço (#111):
+ * `GET /users/{addr}/mailFolders/inbox`. NÃO lista o conteúdo (isso é a #112) —
+ * só devolve 200/403/404 para o seletor decidir se adiciona.
+ *
+ * MOCK (fora do Tauri, para QA visual dos 3 caminhos):
+ * - `semacesso@x.com`            → sem_acesso (403)
+ * - `naoexiste@x.com`            → nao_encontrado (404)
+ * - qualquer `@voaz.builders`    → ok (200) — ex.: compartilhada@voaz.builders
+ * - qualquer outro e-mail válido → nao_encontrado (404)
+ */
+export async function crValidarCaixa(endereco: string): Promise<ValidacaoCaixa> {
+  const addr = endereco.trim().toLowerCase();
+  if (!inTauri()) {
+    await sleep(600);
+    if (!addr.includes("@") || !addr.includes(".")) throw new Error("endereco invalido");
+    let status: StatusCaixa;
+    if (addr === "semacesso@x.com") status = "sem_acesso";
+    else if (addr === "naoexiste@x.com") status = "nao_encontrado";
+    else if (addr.endsWith("@voaz.builders")) status = "ok";
+    else status = "nao_encontrado";
+    return { endereco: addr, status };
+  }
+  return invoke<ValidacaoCaixa>("cr_validar_caixa", { endereco: addr });
+}
+
+/**
+ * O token atual traz o escopo Mail.Read.Shared? Falso ⇒ o app sinaliza "faça
+ * login novamente" (escopo novo na SCOPES, sem consent admin — já concedido).
+ * MOCK: sempre `true` (o mock não tem token real).
+ */
+export async function crMailSharedDisponivel(): Promise<boolean> {
+  if (!inTauri()) {
+    await sleep(150);
+    return true;
+  }
+  return invoke<boolean>("cr_mail_shared_disponivel");
+}
+
 /** Subpastas de uma pasta de e-mail (para a árvore de pastas). */
 export async function crSubpastas(folderId: string): Promise<PastaEmail[]> {
   if (!inTauri()) {

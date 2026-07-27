@@ -36,6 +36,13 @@ pub struct Tokens {
     pub account: Account,
     /// Tenant usado nesta sessao - o refresh precisa da mesma authority.
     pub tenant: String,
+    /// Escopos delegados que o Entra ID DE FATO concedeu neste token (campo
+    /// `scope` da resposta OAuth). Guardado para sinalizar quando um escopo novo
+    /// da `config::SCOPES` (ex.: Mail.Read.Shared, #111) ainda nao esta no token
+    /// porque a sessao foi aberta antes de ele entrar no pedido — nesse caso o
+    /// app pede "faca login novamente" em vez de tratar o 403 como falta de
+    /// acesso a caixa.
+    pub scopes: String,
 }
 
 /// Resultado da deteccao de tenant a partir do e-mail.
@@ -431,6 +438,9 @@ fn build_tokens(v: serde_json::Value, tenant: &str) -> Result<Tokens, String> {
         expires_at: now_secs() + expires_in,
         account,
         tenant: tenant.to_string(),
+        // `escopos` = campo `scope` da resposta (ou marcador se ausente). Usado
+        // por `graph::mail_shared_disponivel` pra decidir se pede relogin (#111).
+        scopes: escopos.to_string(),
     })
 }
 
