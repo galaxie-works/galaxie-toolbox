@@ -152,6 +152,22 @@ const pt = {
     descricao: "Preferências do aplicativo e da sua conta.",
   },
 
+  notificacoes: {
+    titulo: "Notificações",
+    subtitulo: "Escolha um som para cada tipo de aviso do Bridge.",
+    emailTitulo: "E-mails recebidos",
+    emailDescricao:
+      "Toca uma vez quando chegam novos e-mails na sua Caixa de entrada.",
+    mensagemTitulo: "Mensagens recebidas",
+    mensagemDescricao: "Toca quando você recebe uma nova mensagem de chat.",
+    sincronizacaoTitulo: "Problemas de sincronização",
+    sincronizacaoDescricao:
+      "Toca quando o Bridge encontra um erro ao sincronizar com o Microsoft 365.",
+    semSom: "Não tocar nada",
+    sonsDisponiveis: "Sons disponíveis",
+    preview: "Preview",
+  },
+
   templates: {
     titulo: "Templates de e-mail",
     descricao:
@@ -662,6 +678,21 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
 
   configuracoes: {
     descricao: "App and account preferences.",
+  },
+
+  notificacoes: {
+    titulo: "Notifications",
+    subtitulo: "Pick a sound for each kind of Bridge alert.",
+    emailTitulo: "Received emails",
+    emailDescricao: "Plays once when new emails arrive in your Inbox.",
+    mensagemTitulo: "Received messages",
+    mensagemDescricao: "Plays when you get a new chat message.",
+    sincronizacaoTitulo: "Sync problems",
+    sincronizacaoDescricao:
+      "Plays when Bridge hits an error syncing with Microsoft 365.",
+    semSom: "Do not play a thing",
+    sonsDisponiveis: "Available sounds",
+    preview: "Preview",
   },
 
   templates: {
