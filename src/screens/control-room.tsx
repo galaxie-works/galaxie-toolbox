@@ -1983,7 +1983,7 @@ function MessageList({
           variant="ghost"
           size="icon-sm"
           onClick={onToggleSidebar}
-          aria-label={sidebarAberta ? "‹" : "›"}
+          aria-label={t.nav.alternarMenu}
         >
           {sidebarAberta ? <PanelLeftClose /> : <PanelLeftOpen />}
         </Button>
@@ -2084,7 +2084,7 @@ function MessageList({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label="↻">
+          <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label={t.controlRoom.atualizar}>
             <RefreshCw />
           </Button>
         </div>
@@ -2695,7 +2695,7 @@ function MessageDetail({
           >
             <Trash2 />
           </Button>
-          <Button variant="ghost" size="icon-sm" onClick={abrirOutlook} aria-label="Outlook">
+          <Button variant="ghost" size="icon-sm" onClick={abrirOutlook} aria-label={t.controlRoom.abrirOutlook}>
             <ExternalLink />
           </Button>
         </div>
