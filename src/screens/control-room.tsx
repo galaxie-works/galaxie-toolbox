@@ -69,7 +69,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -118,6 +127,7 @@ import {
   FlagOff,
   Folder,
   FolderInput,
+  FolderPlus,
   Forward,
   Inbox,
   Mail,
@@ -127,6 +137,7 @@ import {
   PanelLeftOpen,
   Paperclip,
   PenSquare,
+  Pencil,
   RefreshCw,
   Reply,
   ReplyAll,
@@ -634,6 +645,45 @@ function podeEsvaziar(tipo: string): boolean {
 }
 
 /**
+ * CRUD de subpastas (#90), por TIPO de pasta. Decisão do PO na #71/S4: em pasta
+ * well-known as ações inválidas **não aparecem** (esconder, não desabilitar).
+ *  - "Criar subpasta": inbox, archive e custom — as três onde criar filha faz
+ *    sentido (não em enviados/rascunhos/lixeira/lixo).
+ *  - Renomear / Mover / Excluir: SÓ custom (`tipo === "child"`). Well-known é
+ *    pasta do sistema: renomear ou apagar quebraria o próprio Outlook.
+ */
+function podeCriarSubpasta(tipo: string): boolean {
+  return tipo === "inbox" || tipo === "archive" || tipo === "child";
+}
+function ehPastaCustom(tipo: string): boolean {
+  return tipo === "child";
+}
+
+/**
+ * A pasta + TODAS as descendentes já conhecidas. É o conjunto de destinos
+ * PROIBIDOS do "Mover pasta…" (#90): mover uma pasta para dentro de si mesma ou
+ * de uma filha criaria um ciclo — o Graph recusaria, mas barrar na UI evita a
+ * viagem e não oferece uma opção que nunca vai funcionar.
+ */
+function subarvoreIds(
+  id: string,
+  subpastas: Record<string, PastaEmail[]>
+): Set<string> {
+  const out = new Set<string>([id]);
+  const fila = [id];
+  while (fila.length > 0) {
+    const atual = fila.pop()!;
+    for (const f of subpastas[atual] ?? []) {
+      if (!out.has(f.id)) {
+        out.add(f.id);
+        fila.push(f.id);
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Pasta ACHATADA para o seletor de destino do "Mover para pasta…" (#88): a
  * árvore (raízes de `crMailFolders` + subpastas de `crSubpastas`) vira uma lista
  * plana, com a profundidade para indentar — o padrão do `MoveToFolderDropdown`
@@ -668,6 +718,107 @@ function achatarPastas(
   return out;
 }
 
+/**
+ * Dialog de NOME de pasta (#90) — serve tanto "Criar subpasta" quanto
+ * "Renomear": os dois pedem exatamente um texto, então é o mesmo `Dialog` do
+ * registry (Radix) com títulos/rótulos diferentes, em vez de dois componentes
+ * quase idênticos. Não é `AlertDialog` de propósito: AlertDialog é pra decisão
+ * destrutiva (o "Excluir pasta" usa), não pra formulário.
+ *
+ * Validação, derivada no render (sem efeito): nome vazio e nome duplicado entre
+ * as IRMÃS bloqueiam o botão de confirmar. `irmas` já vem sem a própria pasta no
+ * caso do renomear — manter o nome atual não é "duplicado".
+ *
+ * O componente é montado só quando o dialog abre (`key` no chamador), então o
+ * `useState` inicial já entra com o valor certo e sai limpo na próxima abertura.
+ */
+function DialogNomePasta({
+  titulo,
+  descricao,
+  valorInicial,
+  irmas,
+  rotuloConfirmar,
+  onConfirmar,
+  onFechar,
+  t,
+}: {
+  titulo: string;
+  descricao: string;
+  valorInicial: string;
+  irmas: string[];
+  rotuloConfirmar: string;
+  onConfirmar: (nome: string) => void;
+  onFechar: () => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const [nome, setNome] = useState(valorInicial);
+  const [tocado, setTocado] = useState(false);
+
+  const limpo = nome.trim();
+  const duplicado =
+    limpo !== "" &&
+    irmas.some((n) => n.trim().toLowerCase() === limpo.toLowerCase());
+  const podeConfirmar = limpo !== "" && !duplicado;
+  const erro = duplicado
+    ? t.controlRoom.nomePastaDuplicado
+    : tocado && limpo === ""
+      ? t.controlRoom.nomePastaVazio
+      : null;
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(aberto) => {
+        if (!aberto) onFechar();
+      }}
+    >
+      <DialogContent className="max-w-sm!">
+        <form
+          onSubmit={(e) => {
+            // Enter confirma (é um formulário de um campo só) — sem isso o
+            // usuário teria que ir de mouse até o botão.
+            e.preventDefault();
+            if (podeConfirmar) onConfirmar(limpo);
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{titulo}</DialogTitle>
+            <DialogDescription>{descricao}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2 py-4">
+            <Label htmlFor="nome-pasta">{t.controlRoom.nomePastaRotulo}</Label>
+            <Input
+              id="nome-pasta"
+              autoFocus
+              value={nome}
+              onChange={(e) => {
+                setNome(e.target.value);
+                setTocado(true);
+              }}
+              placeholder={t.controlRoom.nomePastaPlaceholder}
+              aria-invalid={erro !== null}
+              aria-describedby={erro ? "nome-pasta-erro" : undefined}
+            />
+            {erro !== null ? (
+              <p id="nome-pasta-erro" className="text-sm text-destructive">
+                {erro}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onFechar}>
+              {t.controlRoom.cancelar}
+            </Button>
+            <Button type="submit" disabled={!podeConfirmar}>
+              {rotuloConfirmar}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function FolderSidebar({
   pastas,
   subpastas,
@@ -678,6 +829,13 @@ function FolderSidebar({
   onComposeOutlook,
   onMarcarTodasLidas,
   onEsvaziarPasta,
+  arvore,
+  arvoreCarregando,
+  onAbrirArvore,
+  onCriarSubpasta,
+  onRenomearPasta,
+  onExcluirPasta,
+  onMoverPasta,
   colapsada,
   agendaAberta,
   onToggleAgenda,
@@ -692,6 +850,19 @@ function FolderSidebar({
   onComposeOutlook: () => void;
   onMarcarTodasLidas: (folderId: string) => void;
   onEsvaziarPasta: (folderId: string) => void;
+  /** Árvore achatada COMPLETA (#88), reusada como destino do "Mover pasta…". */
+  arvore: PastaDestino[];
+  arvoreCarregando: boolean;
+  onAbrirArvore: () => void;
+  onCriarSubpasta: (paiId: string, nome: string) => void;
+  onRenomearPasta: (id: string, nome: string, paiId?: string) => void;
+  onExcluirPasta: (id: string, rotulo: string, paiId?: string) => void;
+  onMoverPasta: (
+    id: string,
+    destino: string,
+    rotuloDestino: string,
+    paiId?: string
+  ) => void;
   colapsada: boolean;
   agendaAberta: boolean;
   onToggleAgenda: () => void;
@@ -702,6 +873,18 @@ function FolderSidebar({
   const [aEsvaziar, setAEsvaziar] = useState<{ id: string; rotulo: string } | null>(
     null
   );
+  // Mesma regra pro "Excluir pasta" (#90): destrutivo → AlertDialog.
+  const [aExcluir, setAExcluir] = useState<{
+    id: string;
+    rotulo: string;
+    paiId?: string;
+  } | null>(null);
+  // Dialog de nome, compartilhado por "Criar subpasta" e "Renomear" (#90).
+  const [dialogNome, setDialogNome] = useState<
+    | { modo: "criar"; paiId: string; rotulo: string; irmas: string[] }
+    | { modo: "renomear"; id: string; rotulo: string; paiId?: string; irmas: string[] }
+    | null
+  >(null);
   const mail = (pastas ?? []).filter((p) => GRUPO_MAIL.includes(p.tipo));
   const outras = (pastas ?? []).filter((p) => !GRUPO_MAIL.includes(p.tipo));
 
@@ -721,7 +904,11 @@ function FolderSidebar({
     onCarregarSubpastas(id);
   };
 
-  const Linha = (p: PastaEmail, ehFilho = false) => {
+  // `paiId` (só nas subpastas) é o que permite ao menu de contexto saber quais
+  // são as IRMÃS (validação de nome duplicado) e qual cache invalidar depois da
+  // mutação (#90). Nas raízes é `undefined`.
+  const Linha = (p: PastaEmail, paiId?: string) => {
+    const ehFilho = paiId !== undefined;
     const Ico = ICONE_PASTA[p.tipo] ?? Inbox;
     const ativo = p.id === sel;
     // `contagem` é NÃO-LIDOS para inbox/junk/lixeira/custom; para drafts/sentitems
@@ -772,7 +959,20 @@ function FolderSidebar({
     // lista, #86). O ContextMenuTrigger do Radix já suprime o menu nativo.
     const marcarLidas = podeMarcarTodasLidas(p.tipo);
     const esvaziar = podeEsvaziar(p.tipo);
-    const semAcoes = !marcarLidas && !esvaziar;
+    // CRUD (#90): criar subpasta em inbox/archive/custom; renomear/mover/excluir
+    // SÓ em custom — em well-known essas ações nem aparecem (decisão do PO).
+    const criarSub = podeCriarSubpasta(p.tipo);
+    const custom = ehPastaCustom(p.tipo);
+    const semAcoes = !marcarLidas && !esvaziar && !criarSub && !custom;
+
+    // Irmãs da pasta (para barrar nome duplicado antes de ir ao Graph): as
+    // filhas do pai. Nas raízes, as próprias raízes.
+    const irmas = (paiId ? (filhos[paiId] ?? []) : (pastas ?? [])).map((f) => f.nome);
+    // Destinos válidos do "Mover pasta…": a árvore inteira MENOS a própria
+    // pasta e suas descendentes (mover pra dentro de si mesma = ciclo).
+    const proibidos = subarvoreIds(p.id, subpastas);
+    const destinos = arvore.filter((d) => !proibidos.has(d.id));
+
     const comMenu = (conteudo: React.ReactNode) => (
       <ContextMenu>
         <ContextMenuTrigger asChild disabled={semAcoes}>
@@ -785,7 +985,73 @@ function FolderSidebar({
               {t.controlRoom.marcarTodasLidas}
             </ContextMenuItem>
           )}
-          {marcarLidas && esvaziar && <ContextMenuSeparator />}
+          {marcarLidas && (criarSub || custom || esvaziar) && <ContextMenuSeparator />}
+          {criarSub && (
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => {
+                // Garante as filhas em cache: sem elas não dá pra validar o
+                // nome duplicado no cliente (o 409 do Graph é a rede embaixo).
+                onCarregarSubpastas(p.id);
+                setDialogNome({
+                  modo: "criar",
+                  paiId: p.id,
+                  rotulo,
+                  irmas: (filhos[p.id] ?? []).map((f) => f.nome),
+                });
+              }}
+            >
+              <FolderPlus />
+              {t.controlRoom.criarSubpasta}
+            </ContextMenuItem>
+          )}
+          {custom && (
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() =>
+                setDialogNome({
+                  modo: "renomear",
+                  id: p.id,
+                  rotulo,
+                  paiId,
+                  // Sem a própria pasta: manter o nome atual não é duplicata.
+                  irmas: irmas.filter((n) => n !== p.nome),
+                })
+              }
+            >
+              <Pencil />
+              {t.controlRoom.renomearPasta}
+            </ContextMenuItem>
+          )}
+          {custom && (
+            // Mesmo submenu do "Mover para pasta…" do #88 (árvore achatada +
+            // busca), só com outro rótulo e outro alvo — não é uma segunda
+            // implementação.
+            <SubmenuMover
+              alvos={[p.id]}
+              pastas={destinos}
+              carregando={arvoreCarregando}
+              rotulo={t.controlRoom.moverPasta}
+              onAbrir={onAbrirArvore}
+              onMover={(ids, destino, rotuloDestino) =>
+                onMoverPasta(ids[0], destino, rotuloDestino, paiId)
+              }
+              t={t}
+            />
+          )}
+          {custom && <ContextMenuSeparator />}
+          {custom && (
+            <ContextMenuItem
+              variant="destructive"
+              className="gap-2"
+              onClick={() => setAExcluir({ id: p.id, rotulo, paiId })}
+            >
+              <Trash2 />
+              {t.controlRoom.excluirPasta}
+            </ContextMenuItem>
+          )}
+          {/* "Esvaziar" só existe em deleted/junk, que nunca têm criar/custom —
+              o separador de cima (depois de "Marcar todas") já dá conta. */}
           {esvaziar && (
             <ContextMenuItem
               variant="destructive"
@@ -827,7 +1093,7 @@ function FolderSidebar({
           </div>
         )}
         {expandidas.has(p.id) &&
-          (filhos[p.id] ?? []).map((c) => Linha({ ...c, tipo: "child" }, true))}
+          (filhos[p.id] ?? []).map((c) => Linha({ ...c, tipo: "child" }, p.id))}
       </div>
     );
   };
@@ -949,6 +1215,83 @@ function FolderSidebar({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Confirmação do "Excluir pasta" (#90). Destrutiva, então AlertDialog —
+          mas REVERSÍVEL: o texto diz que a pasta vai pra Lixeira (decisão do PO
+          na #71/D3), não que some pra sempre. */}
+      <AlertDialog
+        open={aExcluir !== null}
+        onOpenChange={(aberto) => {
+          if (!aberto) setAExcluir(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-sm!">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {preencher(t.controlRoom.excluirPastaTitulo, {
+                pasta: aExcluir?.rotulo ?? "",
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.excluirPastaDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.controlRoom.cancelar}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (aExcluir)
+                  onExcluirPasta(aExcluir.id, aExcluir.rotulo, aExcluir.paiId);
+                setAExcluir(null);
+              }}
+            >
+              {t.controlRoom.excluirPastaConfirmar}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Dialog de nome — "Criar subpasta" e "Renomear" (#90). Montado só quando
+          abre (e com `key`), então o campo já nasce com o valor certo e não
+          carrega o texto da abertura anterior. */}
+      {dialogNome !== null ? (
+        dialogNome.modo === "criar" ? (
+          <DialogNomePasta
+            key={`criar-${dialogNome.paiId}`}
+            titulo={preencher(t.controlRoom.criarSubpastaTitulo, {
+              pasta: dialogNome.rotulo,
+            })}
+            descricao={t.controlRoom.criarSubpastaDesc}
+            valorInicial=""
+            irmas={dialogNome.irmas}
+            rotuloConfirmar={t.controlRoom.criar}
+            onConfirmar={(nome) => {
+              onCriarSubpasta(dialogNome.paiId, nome);
+              setDialogNome(null);
+            }}
+            onFechar={() => setDialogNome(null)}
+            t={t}
+          />
+        ) : (
+          <DialogNomePasta
+            key={`renomear-${dialogNome.id}`}
+            titulo={preencher(t.controlRoom.renomearPastaTitulo, {
+              pasta: dialogNome.rotulo,
+            })}
+            descricao={t.controlRoom.renomearPastaDesc}
+            valorInicial={dialogNome.rotulo}
+            irmas={dialogNome.irmas}
+            rotuloConfirmar={t.controlRoom.salvar}
+            onConfirmar={(nome) => {
+              onRenomearPasta(dialogNome.id, nome, dialogNome.paiId);
+              setDialogNome(null);
+            }}
+            onFechar={() => setDialogNome(null)}
+            t={t}
+          />
+        )
+      ) : null}
     </aside>
   );
 }
@@ -1008,11 +1351,17 @@ function periodoChave(recebido: string, agora: Date): string {
  *
  * A pasta ATUAL não entra na lista (já vem filtrada do pai): mover para onde a
  * mensagem já está não é uma opção.
+ *
+ * Serve aos DOIS "mover" do Bridge: o de mensagens (#88, `alvos` = ids das
+ * mensagens) e o de PASTA (#90, `alvos` = [id da pasta], com `rotulo` próprio e
+ * a lista já sem a própria pasta/descendentes). Só muda o rótulo do gatilho — a
+ * árvore achatada, a busca e o comportamento do menu são os mesmos.
  */
 function SubmenuMover({
   alvos,
   pastas,
   carregando,
+  rotulo,
   onAbrir,
   onMover,
   t,
@@ -1020,6 +1369,8 @@ function SubmenuMover({
   alvos: string[];
   pastas: PastaDestino[];
   carregando: boolean;
+  /** Texto do gatilho; padrão é o "Mover para pasta…" das mensagens (#88). */
+  rotulo?: string;
   onAbrir: () => void;
   onMover: (ids: string[], destino: string, rotulo: string) => void;
   t: ReturnType<typeof useIdioma>["t"];
@@ -1043,7 +1394,7 @@ function SubmenuMover({
     >
       <ContextMenuSubTrigger className="gap-2">
         <FolderInput />
-        {t.controlRoom.moverPara}
+        {rotulo ?? t.controlRoom.moverPara}
       </ContextMenuSubTrigger>
       <ContextMenuSubContent className="w-64 p-0">
         <Input
@@ -2859,11 +3210,17 @@ export function ControlRoomScreen({
     for (const p of arvorePendentes) carregarSubpastas(p.id);
   }, [pedirArvore, arvorePendentes, carregarSubpastas]);
 
-  // Lista plana de destinos do "Mover para…": a árvore achatada MENOS a pasta
-  // atual (mover pra onde a mensagem já está não é opção).
+  // Árvore achatada COMPLETA: base dos dois "mover". O de MENSAGENS (#88) tira
+  // a pasta atual (mover pra onde a mensagem já está não é opção); o de PASTA
+  // (#90) tira a própria pasta e as descendentes, mas isso depende de qual pasta
+  // foi clicada — quem filtra é o sidebar.
+  const arvorePastas = useMemo(
+    () => achatarPastas(pastas ?? [], subpastas, t),
+    [pastas, subpastas, t]
+  );
   const pastasDestino = useMemo(
-    () => achatarPastas(pastas ?? [], subpastas, t).filter((p) => p.id !== pastaSel),
-    [pastas, subpastas, t, pastaSel]
+    () => arvorePastas.filter((p) => p.id !== pastaSel),
+    [arvorePastas, pastaSel]
   );
 
   // Contadores reais das abas Flagged/Files (na pasta inteira, via $count).
@@ -2972,6 +3329,102 @@ export function ControlRoomScreen({
       if (n === 0) toast.info(t.controlRoom.nenhumaNaoLida, { id: aviso });
       else toast.success(preencher(t.controlRoom.todasMarcadasLidas, { n }), { id: aviso });
       recarregarAposPasta(folderId);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+    }
+  }
+
+  // ---- CRUD de subpastas (#90) --------------------------------------------
+  // Toda mutação de pasta invalida DUAS coisas: as contagens/lista de raízes
+  // (`recargaPastas` → refaz `crMailFolders`) e o cache de subpastas do(s) pai(s)
+  // afetado(s) — que é memoizado e não voltaria sozinho.
+  const recarregarSubpastas = useCallback(
+    (...ids: (string | undefined)[]) => {
+      for (const id of ids) {
+        if (!id) continue;
+        // Solta a trava de "já pedi" e limpa o cache, senão `carregarSubpastas`
+        // devolveria a lista velha (sem a pasta nova / com a que saiu).
+        subpastasPedidasRef.current.delete(id);
+        setSubpastas((f) => {
+          const n = { ...f };
+          delete n[id];
+          return n;
+        });
+        carregarSubpastas(id);
+      }
+      setRecargaPastas((x) => x + 1);
+    },
+    [carregarSubpastas]
+  );
+
+  async function criarSubpasta(paiId: string, nome: string) {
+    const aviso = toast.loading(t.controlRoom.criandoSubpasta);
+    try {
+      const nova = await api.crCriarSubpasta(paiId, nome);
+      toast.success(preencher(t.controlRoom.subpastaCriada, { pasta: nova.nome }), {
+        id: aviso,
+      });
+      recarregarSubpastas(paiId);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+    }
+  }
+
+  async function renomearPasta(id: string, nome: string, paiId?: string) {
+    const aviso = toast.loading(t.controlRoom.renomeandoPasta);
+    try {
+      const nova = await api.crRenomearPasta(id, nome);
+      toast.success(preencher(t.controlRoom.pastaRenomeada, { pasta: nova.nome }), {
+        id: aviso,
+      });
+      recarregarSubpastas(paiId);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+    }
+  }
+
+  async function excluirPasta(id: string, rotulo: string, paiId?: string) {
+    const aviso = toast.loading(t.controlRoom.excluindoPasta);
+    try {
+      // `true` = foi pra Lixeira (reversível, o caminho normal); `false` = o
+      // backend teve que cair no DELETE definitivo. O toast diz qual foi.
+      const paraLixeira = await api.crExcluirPasta(id);
+      toast.success(
+        preencher(
+          paraLixeira
+            ? t.controlRoom.pastaExcluida
+            : t.controlRoom.pastaExcluidaDefinitiva,
+          { pasta: rotulo }
+        ),
+        { id: aviso }
+      );
+      // A pasta saiu do pai e (quando vai pra lixeira) virou filha de
+      // deleteditems — os dois caches precisam voltar do Graph.
+      recarregarSubpastas(paiId, "deleteditems");
+      // Estava aberta? O id morreu junto: cai na inbox em vez de ficar numa
+      // pasta fantasma com a lista vazia.
+      if (pastaSelRef.current === id) setPastaSel("inbox");
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+    }
+  }
+
+  async function moverPasta(
+    id: string,
+    destino: string,
+    rotuloDestino: string,
+    paiId?: string
+  ) {
+    const aviso = toast.loading(t.controlRoom.movendoPasta);
+    try {
+      const nova = await api.crMoverPasta(id, destino);
+      toast.success(preencher(t.controlRoom.pastaMovida, { pasta: rotuloDestino }), {
+        id: aviso,
+      });
+      recarregarSubpastas(paiId, destino);
+      // O move do Graph devolve a pasta com id NOVO: se ela estava selecionada,
+      // seguir com o id antigo deixaria a lista quebrada.
+      if (pastaSelRef.current === id) setPastaSel(nova.id);
     } catch (e) {
       toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
     }
@@ -3477,6 +3930,13 @@ export function ControlRoomScreen({
           onComposeOutlook={composeOutlook}
           onMarcarTodasLidas={marcarPastaLida}
           onEsvaziarPasta={esvaziarPasta}
+          arvore={arvorePastas}
+          arvoreCarregando={arvorePendentes.length > 0}
+          onAbrirArvore={() => setPedirArvore(true)}
+          onCriarSubpasta={criarSubpasta}
+          onRenomearPasta={renomearPasta}
+          onExcluirPasta={excluirPasta}
+          onMoverPasta={moverPasta}
           colapsada={!sidebarAberta}
           agendaAberta={agendaAberta}
           onToggleAgenda={() => setAgendaAberta((v) => !v)}
