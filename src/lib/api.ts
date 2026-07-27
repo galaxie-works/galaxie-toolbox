@@ -371,10 +371,19 @@ export async function crSubpastas(folderId: string): Promise<PastaEmail[]> {
 
 // --- Compositor de e-mail (pessoas, envio novo, contatos) -----------------
 const MOCK_PESSOAS: Pessoa[] = [
+  // "Seus contatos" = contatos PESSOAIS do usuário (/me/contacts).
   { nome: "Ana Silva", email: "ana@voaz.com.br", cargo: "Gerente de Projetos", origem: "contatos" },
   { nome: "Bruno Costa", email: "bruno@voaz.com.br", cargo: "Engenheiro Civil", origem: "contatos" },
+  { nome: "Amanda Rocha", email: "amanda.rocha@gmail.com", cargo: "Fornecedora", origem: "contatos" },
+  { nome: "Marca Ferramentas", email: "vendas@marcaferramentas.com.br", cargo: null, origem: "contatos" },
+  // "De sua organização" = diretório do tenant (/users).
   { nome: "Carla Dias", email: "carla@voaz.com.br", cargo: "Arquiteta", origem: "organizacao" },
   { nome: "Wagner Consani", email: "wagner@voaz.builders", cargo: null, origem: "organizacao" },
+  { nome: "Henrique Garcia", email: "henrique.garcia@voaz.com.br", cargo: "Coordenador de Obras", origem: "organizacao" },
+  { nome: "Mariana Alves", email: "mariana.alves@voaz.com.br", cargo: "Analista Financeira", origem: "organizacao" },
+  { nome: "Rafael Andrade", email: "rafael.andrade@voaz.com.br", cargo: "Comprador", origem: "organizacao" },
+  { nome: "Fernanda Aguiar", email: "fernanda.aguiar@voaz.com.br", cargo: "Assistente Administrativa", origem: "organizacao" },
+  { nome: "Gustavo Barata", email: "gustavo.barata@voaz.com.br", cargo: "Estagiário de Engenharia", origem: "organizacao" },
 ];
 
 /**

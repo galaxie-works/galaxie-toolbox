@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Combobox,
   ComboboxChip,
@@ -174,11 +175,15 @@ export function CampoPessoas({
       out.push({ rotulo: textos.secaoDigitado, items: [{ nome: q, email: q }] });
     }
 
-    const contatos = sugestoes.filter((p) => p.origem !== "organizacao");
+    // "Seus contatos" = SÓ os contatos pessoais (origem `contatos` = /me/contacts).
+    // Qualquer outra origem — inclusive `organizacao` (diretório /users) e o caso
+    // ambíguo sem origem — cai em "De sua organização". Assim ninguém do tenant
+    // aparece indevidamente sob "Seus contatos" (bug reportado pelo PO no #40).
+    const contatos = sugestoes.filter((p) => p.origem === "contatos");
     if (contatos.length > 0) {
       out.push({ rotulo: textos.secaoSeusContatos, items: contatos });
     }
-    const organizacao = sugestoes.filter((p) => p.origem === "organizacao");
+    const organizacao = sugestoes.filter((p) => p.origem !== "contatos");
     if (organizacao.length > 0) {
       out.push({ rotulo: textos.secaoOrganizacao, items: organizacao });
     }
@@ -306,13 +311,24 @@ export function CampoPessoas({
 
         <ComboboxContent
           anchor={anchor}
-          className="max-w-(--anchor-width) min-w-(--anchor-width)"
+          // `pointer-events-auto`: o compose é um Sheet MODAL (Radix Dialog), que
+          // trava `body { pointer-events: none }` enquanto aberto. Como este popup
+          // é portalado no body (irmão do Sheet), sem isto ele HERDA o none e o
+          // mouse "atravessa" para a toolbar de baixo — era o que fazia o hover
+          // vazar o tooltip "Anexar arquivo" e a roda do mouse rolar o editor em
+          // vez da lista. `flex flex-col` para o ScrollArea preencher a altura.
+          className="pointer-events-auto flex max-w-(--anchor-width) min-w-(--anchor-width) flex-col"
         >
           <ComboboxEmpty>
             {carregando ? textos.buscandoContatos : textos.semContatos}
           </ComboboxEmpty>
-          <ComboboxList>
-            {(grupo: GrupoPessoas) => (
+          {/* Scroll no padrão do app: o ScrollArea (radix) que o resto do Bridge
+              usa (mesma casca do reui/autocomplete). A lista perde o overflow
+              nativo e quem rola é o viewport do ScrollArea — a roda do mouse e o
+              scroll-into-view do teclado (↑/↓) agem sobre ele. */}
+          <ScrollArea className="min-h-0 flex-1 **:data-[slot=scroll-area-viewport]:max-h-80 **:data-[slot=scroll-area-viewport]:overscroll-contain">
+            <ComboboxList className="max-h-none overflow-visible">
+              {(grupo: GrupoPessoas) => (
               <ComboboxGroup key={grupo.rotulo} items={grupo.items}>
                 <ComboboxLabel className="bg-popover sticky top-0 z-10 py-2 text-xs font-medium">
                   {grupo.rotulo}
@@ -353,8 +369,9 @@ export function CampoPessoas({
                   }}
                 </ComboboxCollection>
               </ComboboxGroup>
-            )}
-          </ComboboxList>
+              )}
+            </ComboboxList>
+          </ScrollArea>
         </ComboboxContent>
       </Combobox>
     </div>
