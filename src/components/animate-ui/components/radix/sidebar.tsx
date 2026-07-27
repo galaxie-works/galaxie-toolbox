@@ -20,11 +20,10 @@ import {
   SheetTitle,
 } from '@/components/animate-ui/components/radix/sheet';
 import {
-  TooltipProvider,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/animate-ui/components/animate/tooltip';
+} from '@/components/ui/tooltip';
 import {
   Highlight,
   HighlightItem,
@@ -128,25 +127,28 @@ function SidebarProvider({
 
   return (
     <LocalSidebarProvider value={contextValue}>
-      <TooltipProvider openDelay={0}>
-        <div
-          data-slot="sidebar-wrapper"
-          style={
-            {
-              '--sidebar-width': SIDEBAR_WIDTH,
-              '--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
-              ...style,
-            } as React.CSSProperties
-          }
-          className={cn(
-            'group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex min-h-svh w-full',
-            className,
-          )}
-          {...props}
-        >
-          {children}
-        </div>
-      </TooltipProvider>
+      {/*
+        Tooltip unificado (#98): o TooltipProvider único vive em src/main.tsx
+        (delayDuration={300}). A sidebar não monta mais um provider próprio
+        (antes: animate-ui com openDelay={0}), garantindo delay alinhado.
+      */}
+      <div
+        data-slot="sidebar-wrapper"
+        style={
+          {
+            '--sidebar-width': SIDEBAR_WIDTH,
+            '--sidebar-width-icon': SIDEBAR_WIDTH_ICON,
+            ...style,
+          } as React.CSSProperties
+        }
+        className={cn(
+          'group/sidebar-wrapper has-data-[variant=inset]:bg-sidebar flex min-h-svh w-full',
+          className,
+        )}
+        {...props}
+      >
+        {children}
+      </div>
     </LocalSidebarProvider>
   );
 }
@@ -613,10 +615,15 @@ function SidebarMenuButton({
     };
   }
 
+  // Só faz sentido mostrar o tooltip quando a sidebar está colapsada (icon-only).
+  const mostrarTooltip = state === 'collapsed' && !isMobile;
+
   return (
-    <Tooltip side="right" align="center">
+    <Tooltip>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
-      <TooltipContent hidden={state !== 'collapsed' || isMobile} {...tooltip} />
+      {mostrarTooltip && (
+        <TooltipContent side="right" align="center" {...tooltip} />
+      )}
     </Tooltip>
   );
 }
