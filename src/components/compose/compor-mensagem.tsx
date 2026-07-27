@@ -60,6 +60,8 @@ import { lerTemplates, type TemplateEmail } from "@/lib/templates";
 
 import { CampoPessoas } from "./campo-pessoas";
 import { COMPOSE_KIT } from "./compose-kit";
+import { MENCAO_KIT, MencionaveisProvider } from "./mencao-kit";
+import type { Pessoa } from "@/lib/types";
 
 /**
  * Compose completo de e-mail reutilizável: campos de destinatários com
@@ -204,6 +206,11 @@ export const ComporMensagem = forwardRef<
   const [templates, setTemplates] = useState<TemplateEmail[]>([]);
   const [cc, setCc] = useState<string[]>([]);
   const [cco, setCco] = useState<string[]>([]);
+  // Destinatários como `Pessoa` (nome/foto), reportados pelos campos, para
+  // alimentar o autocomplete de menção @ no corpo (#106).
+  const [pessoasPara, setPessoasPara] = useState<Pessoa[]>([]);
+  const [pessoasCc, setPessoasCc] = useState<Pessoa[]>([]);
+  const [pessoasCco, setPessoasCco] = useState<Pessoa[]>([]);
   const [assunto, setAssunto] = useState(assuntoInicial);
   const [mostrarCcCco, setMostrarCcCco] = useState(false);
   const [compartilhando, setCompartilhando] = useState(false);
@@ -280,8 +287,22 @@ export const ComporMensagem = forwardRef<
     }
   }, [arquivos]);
 
+  // Destinatários mencionáveis: união (sem repetir e-mail) de Para/Cc/Cco. É a
+  // fonte dos itens do autocomplete de menção @ no corpo (#106).
+  const mencionaveis = useMemo<Pessoa[]>(() => {
+    const vistos = new Set<string>();
+    const out: Pessoa[] = [];
+    for (const p of [...pessoasPara, ...pessoasCc, ...pessoasCco]) {
+      const chave = p.email.trim().toLowerCase();
+      if (!chave || vistos.has(chave)) continue;
+      vistos.add(chave);
+      out.push(p);
+    }
+    return out;
+  }, [pessoasPara, pessoasCc, pessoasCco]);
+
   const editor = usePlateEditor({
-    plugins: COMPOSE_KIT,
+    plugins: [...COMPOSE_KIT, ...MENCAO_KIT],
     value: [{ type: "p", children: [{ text: "" }] }],
   });
   const edRef = useRef<HTMLDivElement>(null);
@@ -387,7 +408,12 @@ export const ComporMensagem = forwardRef<
           {/* Linha "Para" com o toggle de Cc/Cco à direita. */}
           <div className="flex items-start border-b">
             <div className="flex-1">
-              <CampoPessoas rotulo={textos.para} valor={para} onChange={setPara} />
+              <CampoPessoas
+                rotulo={textos.para}
+                valor={para}
+                onChange={setPara}
+                onPessoas={setPessoasPara}
+              />
             </div>
             {!mostrarCcCco && (
               <Button
@@ -405,10 +431,20 @@ export const ComporMensagem = forwardRef<
           {mostrarCcCco && (
             <>
               <div className="border-b">
-                <CampoPessoas rotulo={textos.cc} valor={cc} onChange={setCc} />
+                <CampoPessoas
+                  rotulo={textos.cc}
+                  valor={cc}
+                  onChange={setCc}
+                  onPessoas={setPessoasCc}
+                />
               </div>
               <div className="border-b">
-                <CampoPessoas rotulo={textos.cco} valor={cco} onChange={setCco} />
+                <CampoPessoas
+                  rotulo={textos.cco}
+                  valor={cco}
+                  onChange={setCco}
+                  onPessoas={setPessoasCco}
+                />
               </div>
             </>
           )}
@@ -428,7 +464,10 @@ export const ComporMensagem = forwardRef<
         </div>
       )}
 
-      {/* Toolbar + corpo dentro do Plate para os botões mirarem o editor. */}
+      {/* Toolbar + corpo dentro do Plate para os botões mirarem o editor.
+          O provider expõe os destinatários atuais (Para/Cc/Cco) ao autocomplete
+          de menção @ do corpo (#106). */}
+      <MencionaveisProvider pessoas={mencionaveis}>
       <Plate editor={editor}>
         <FixedToolbar className="justify-start rounded-none border-b bg-background">
           <MarkToolbarButton nodeType={KEYS.bold} tooltip="Negrito (⌘+B)">
@@ -642,6 +681,7 @@ export const ComporMensagem = forwardRef<
           )}
         </div>
       </Plate>
+      </MencionaveisProvider>
     </div>
   );
 });
