@@ -3477,3 +3477,156 @@ fn batch_fotos(
     }
     Ok(out)
 }
+
+// ---------------------------------------------------------------------------
+// Insights do remetente (#94)
+// ---------------------------------------------------------------------------
+
+/// Resumo do relacionamento com um endereço, exibido no popover do leitor do
+/// Bridge. Todos os campos são `Option`: cada parte é buscada de forma
+/// independente e best-effort, então uma sub-chamada que falhe vira `None` sem
+/// derrubar o painel (insights são secundários).
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct InsightsRemetente {
+    /// Nº de e-mails RECEBIDOS deste endereço (filtro por `from`).
+    pub recebidos: Option<u64>,
+    /// Nº de e-mails ENVIADOS a este endereço (pasta Enviados). Best-effort:
+    /// `None` quando o tenant não aceita o filtro por destinatário ou a chamada
+    /// falha — nesse caso a UI mostra só os recebidos.
+    pub enviados: Option<u64>,
+    /// Data (ISO) do e-mail recebido mais ANTIGO deste remetente (1º contato).
+    pub primeiro: Option<String>,
+    /// Data (ISO) do e-mail recebido mais RECENTE deste remetente (último contato).
+    pub ultimo: Option<String>,
+}
+
+/// Insights do remetente (#94): quantos e-mails recebidos deste endereço,
+/// quantos enviados a ele, e a data do 1º e do último e-mail recebido.
+///
+/// CUSTO (chamadas Graph, todas sob o pool + retry #64; disparadas LAZY, só
+/// quando o usuário abre o popover): até 4 GET por endereço.
+///   1. recebidos: `/me/messages/$count?$filter=from/emailAddress/address eq '{addr}'`
+///   2. último:    `/me/messages?$filter=(from…) and (receivedDateTime ge <epoch>)`
+///                 `&$orderby=receivedDateTime desc&$top=1&$select=receivedDateTime`
+///   3. primeiro:  idem, `$orderby=receivedDateTime asc`
+///   4. enviados:  `/me/mailFolders/sentitems/messages/$count`
+///                 `?$filter=toRecipients/any(r:r/emailAddress/address eq '{addr}')`
+/// As chamadas 2 e 3 só rodam quando `recebidos > 0` (poupa 2 GET no 1º contato).
+///
+/// Notas de API: `/$count` e o combo `$filter`+`$orderby` exigem o header
+/// `ConsistencyLevel: eventual`. O Graph só aceita `$filter` junto de `$orderby`
+/// quando a propriedade ordenada (`receivedDateTime`) TAMBÉM aparece no filtro —
+/// por isso a cláusula `receivedDateTime ge <epoch>` (sempre verdadeira), que é
+/// o workaround documentado pela Microsoft.
+///
+/// Só propaga erro se a contagem de recebidos — a âncora — falhar de fato
+/// (rede/auth/permissão), para o front mostrar o estado de erro discreto. As
+/// demais partes degradam para `None`. Mail.Read.
+pub fn cr_insights_remetente(
+    store: &TokenStore,
+    endereco: &str,
+) -> Result<InsightsRemetente, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let addr = endereco.trim().to_lowercase();
+    if addr.is_empty() {
+        return Err("endereço vazio".into());
+    }
+    // Aspas simples no OData escapam duplicando (' → '').
+    let addr_odata = addr.replace('\'', "''");
+
+    // 1. Recebidos (âncora). Falha aqui = erro real → propaga.
+    let filtro_from = format!("from/emailAddress/address eq '{addr_odata}'");
+    let recebidos = contar_mensagens(&client, &token, "me/messages", &filtro_from)
+        .map_err(|e| format!("falha ao contar recebidos: {e}"))?;
+
+    // 2/3. Datas do 1º e do último recebido — só fazem sentido se há recebidos.
+    let (mut primeiro, mut ultimo) = (None, None);
+    if recebidos > 0 {
+        ultimo = data_extrema_recebido(&client, &token, &addr_odata, false);
+        primeiro = data_extrema_recebido(&client, &token, &addr_odata, true);
+    }
+
+    // 4. Enviados (best-effort): conta na pasta Enviados por destinatário.
+    let filtro_to =
+        format!("toRecipients/any(r:r/emailAddress/address eq '{addr_odata}')");
+    let enviados =
+        contar_mensagens(&client, &token, "me/mailFolders/sentitems/messages", &filtro_to)
+            .ok();
+
+    Ok(InsightsRemetente {
+        recebidos: Some(recebidos),
+        enviados,
+        primeiro,
+        ultimo,
+    })
+}
+
+/// `GET {caminho}/$count?$filter=…` com `ConsistencyLevel: eventual`. O `/$count`
+/// devolve o total como texto puro. Sob o pool + retry (#64).
+fn contar_mensagens(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    caminho: &str,
+    filtro_odata: &str,
+) -> Result<u64, String> {
+    let url = format!(
+        "{GRAPH}/{caminho}/$count?$filter={}",
+        urlencoding::encode(filtro_odata)
+    );
+    let resp = graph_enviar("mail:insights:contar", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(&url)
+            .bearer_auth(token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+    })
+    .map_err(|e| format!("falha ao contar: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/$count retornou {}", resp.status()));
+    }
+    let corpo = resp.text().map_err(|e| e.to_string())?;
+    corpo
+        .trim()
+        .parse::<u64>()
+        .map_err(|e| format!("resposta do /$count não é número ('{corpo}'): {e}"))
+}
+
+/// Data (`receivedDateTime`) do e-mail recebido mais antigo (`asc=true`) ou mais
+/// recente (`asc=false`) de um endereço. Best-effort: devolve `None` se a chamada
+/// ou o parse falharem. Ver as notas de API em `cr_insights_remetente` sobre o
+/// combo `$filter`+`$orderby`.
+fn data_extrema_recebido(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    addr_odata: &str,
+    asc: bool,
+) -> Option<String> {
+    let dir = if asc { "asc" } else { "desc" };
+    let filtro = format!(
+        "(from/emailAddress/address eq '{addr_odata}') and \
+         (receivedDateTime ge 1970-01-01T00:00:00Z)"
+    );
+    let url = format!(
+        "{GRAPH}/me/messages?$filter={}&$orderby=receivedDateTime%20{dir}\
+         &$top=1&$select=receivedDateTime",
+        urlencoding::encode(&filtro)
+    );
+    let resp = graph_enviar("mail:insights:data", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(&url)
+            .bearer_auth(token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+    })
+    .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().ok()?;
+    v["value"][0]["receivedDateTime"]
+        .as_str()
+        .map(|s| s.to_string())
+}

@@ -35,6 +35,12 @@ import {
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
   Empty,
   EmptyContent,
   EmptyDescription,
@@ -109,6 +115,7 @@ import type {
   EmailItem,
   EventoAgenda,
   EventoDetalhe,
+  InsightsRemetente,
   PastaEmail,
 } from "@/lib/types";
 import {
@@ -2481,6 +2488,206 @@ function LinhaPessoas({ rotulo, nomes }: { rotulo: string; nomes: string[] }) {
   );
 }
 
+// --- Insights do remetente (#94) --------------------------------------------
+// Popover acionado por CLIQUE no nome do remetente (padrão Gmail/Outlook: o
+// contact-card mora atrás do identificador da pessoa). Escolhido por ser o
+// MENOS INTRUSIVO — insights são secundários e não podem competir com o corpo
+// nem roubar espaço permanente do leitor (um painel fixo faria isso). A busca é
+// LAZY: só dispara ao abrir o popover, não ao abrir o e-mail — poupa as ~4
+// chamadas Graph quando o usuário não pede. Estados: skeleton (carregando),
+// "primeiro contato" (vazio, positivo), e erro discreto com "tentar de novo"
+// (nunca derruba o leitor). Decisão embasada em pesquisa de UX (AGENTS §3.1).
+
+/** Data curta ("12 mar 2023") ciente do idioma. */
+function dataCurta(iso: string, idioma: string): string {
+  const d = new Date(comZ(iso));
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(idioma, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+/** Recência relativa ("há 3 dias", "hoje") via Intl.RelativeTimeFormat. */
+function recencia(iso: string, idioma: string): string {
+  const d = new Date(comZ(iso));
+  if (Number.isNaN(d.getTime())) return "";
+  const dias = Math.round((Date.now() - d.getTime()) / 86_400_000);
+  const rtf = new Intl.RelativeTimeFormat(idioma, { numeric: "auto" });
+  if (dias <= 0) return rtf.format(0, "day");
+  if (dias < 45) return rtf.format(-dias, "day");
+  const meses = Math.round(dias / 30);
+  if (meses < 18) return rtf.format(-meses, "month");
+  return rtf.format(-Math.round(dias / 365), "year");
+}
+
+/** Frequência aproximada de e-mails/mês, do 1º contato até o último. */
+function porMes(total: number, primeiro?: string | null, ultimo?: string | null): number {
+  if (!primeiro || total <= 0) return 0;
+  const ini = new Date(comZ(primeiro)).getTime();
+  const fim = ultimo ? new Date(comZ(ultimo)).getTime() : Date.now();
+  const meses = Math.max(1, (fim - ini) / (30 * 86_400_000));
+  return Math.max(1, Math.round(total / meses));
+}
+
+function InsightsRemetentePopover({
+  nome,
+  email,
+  t,
+  idioma,
+}: {
+  nome: string;
+  email: string;
+  t: ReturnType<typeof useIdioma>["t"];
+  idioma: string;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [estado, setEstado] = useState<"idle" | "carregando" | "ok" | "erro">("idle");
+  const [dados, setDados] = useState<InsightsRemetente | null>(null);
+  const [tentativa, setTentativa] = useState(0);
+  // E-mail (+ tentativa) já solicitado — evita refetch a cada reabertura mas
+  // permite o "tentar de novo". NÃO metemos `estado` nas deps do efeito de
+  // busca: como o efeito seta `estado`, isso faria a limpeza cancelar a própria
+  // chamada em voo (ficava preso no skeleton).
+  const pedidoRef = useRef<string | null>(null);
+
+  // Troca de remetente → esquece o cache e fecha.
+  useEffect(() => {
+    pedidoRef.current = null;
+    setEstado("idle");
+    setDados(null);
+    setAberto(false);
+  }, [email]);
+
+  // Busca lazy: só quando o popover abre (ou o usuário pede "tentar de novo").
+  useEffect(() => {
+    if (!aberto || !email) return;
+    const chave = `${email}#${tentativa}`;
+    if (pedidoRef.current === chave) return; // já buscado neste e-mail/tentativa
+    pedidoRef.current = chave;
+    let vivo = true;
+    setEstado("carregando");
+    api
+      .crInsightsRemetente(email)
+      .then((d) => {
+        if (!vivo) return;
+        setDados(d);
+        setEstado("ok");
+      })
+      .catch(() => {
+        if (vivo) setEstado("erro");
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [aberto, email, tentativa]);
+
+  const rec = dados?.recebidos ?? 0;
+  const env = dados?.enviados;
+  const total = rec + (env ?? 0);
+  const vazio =
+    estado === "ok" && rec === 0 && (env == null || env === 0) && !dados?.primeiro;
+
+  return (
+    <Popover
+      open={aberto}
+      onOpenChange={(o) => {
+        setAberto(o);
+        // Fechou no meio do carregamento → permite refazer ao reabrir.
+        if (!o && estado === "carregando") {
+          pedidoRef.current = null;
+          setEstado("idle");
+        }
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="group inline-flex items-center gap-1 rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={preencher(t.controlRoom.insightsAbrir, { nome })}
+          aria-haspopup="dialog"
+        >
+          <span className="underline-offset-2 group-hover:underline">{nome}</span>
+          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground opacity-50 transition-opacity group-hover:opacity-100" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-80" aria-live="polite">
+        <p className="mb-3 text-xs font-medium text-muted-foreground">
+          {t.controlRoom.insightsTitulo}
+        </p>
+
+        {estado === "carregando" && (
+          <div className="space-y-2.5">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-4/5" />
+            <Skeleton className="h-4 w-3/5" />
+          </div>
+        )}
+
+        {estado === "erro" && (
+          <div className="space-y-3 text-sm">
+            <p className="text-muted-foreground">{t.controlRoom.insightsErro}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setTentativa((n) => n + 1)}
+            >
+              <RefreshCw /> {t.controlRoom.insightsTentar}
+            </Button>
+          </div>
+        )}
+
+        {estado === "ok" && vazio && (
+          <p className="text-sm text-muted-foreground">
+            {t.controlRoom.insightsPrimeiroContato}
+          </p>
+        )}
+
+        {estado === "ok" && !vazio && dados && (
+          <dl className="space-y-2 text-sm">
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted-foreground">{t.controlRoom.insightsRecebidos}</dt>
+              <dd className="font-medium tabular-nums">{rec}</dd>
+            </div>
+            {env != null && (
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">{t.controlRoom.insightsEnviados}</dt>
+                <dd className="font-medium tabular-nums">{env}</dd>
+              </div>
+            )}
+            {dados.primeiro && (
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">{t.controlRoom.insightsPrimeiro}</dt>
+                <dd className="font-medium">{dataCurta(dados.primeiro, idioma)}</dd>
+              </div>
+            )}
+            {dados.ultimo && (
+              <div className="flex items-center justify-between gap-4">
+                <dt className="text-muted-foreground">{t.controlRoom.insightsUltimo}</dt>
+                <dd className="font-medium">{recencia(dados.ultimo, idioma)}</dd>
+              </div>
+            )}
+            {porMes(total, dados.primeiro, dados.ultimo) > 0 && (
+              <>
+                <Separator className="my-1" />
+                <div className="flex items-center justify-between gap-4">
+                  <dt className="text-muted-foreground">{t.controlRoom.insightsFrequencia}</dt>
+                  <dd className="font-medium tabular-nums">
+                    {preencher(t.controlRoom.insightsPorMes, {
+                      n: porMes(total, dados.primeiro, dados.ultimo),
+                    })}
+                  </dd>
+                </div>
+              </>
+            )}
+          </dl>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 function MessageDetail({
   id,
   userEmail,
@@ -2720,7 +2927,16 @@ function MessageDetail({
           </Avatar>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">{det.de}</span>
+              {det.deEmail ? (
+                <InsightsRemetentePopover
+                  nome={det.de}
+                  email={det.deEmail}
+                  t={t}
+                  idioma={idioma}
+                />
+              ) : (
+                <span className="text-sm font-medium">{det.de}</span>
+              )}
               {det.deEmail && (
                 <span className="truncate text-xs text-muted-foreground">&lt;{det.deEmail}&gt;</span>
               )}
