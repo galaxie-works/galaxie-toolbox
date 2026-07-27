@@ -113,6 +113,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
 import { usePersistedState } from "@/lib/persist";
+import { tocarSomEscopo } from "@/lib/sons-notificacao";
 import { useDebounce } from "@/hooks/use-debounce";
 import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
 import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
@@ -4272,6 +4273,9 @@ export function ControlRoomScreen({
       ultimoVistoRef.current = maxRecebido;
       if (anterior === null) return; // baseline: não avisa no 1º carregamento
       const novos = ms.filter((m) => m.recebido > anterior && !m.lido);
+      // #48: toca o som configurado para "E-mails recebidos" uma vez por lote
+      // (nada se o usuário escolheu "Não tocar nada").
+      if (novos.length > 0) tocarSomEscopo("emailRecebido");
       for (const m of novos.slice(0, 3)) {
         toastMensagem({
           nome: m.de,

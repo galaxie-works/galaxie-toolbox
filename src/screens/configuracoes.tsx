@@ -1,4 +1,5 @@
 import { TemplatesEmail } from "@/components/templates-email";
+import { NotificacoesSettings } from "@/components/notificacoes-settings";
 import { useIdioma } from "@/lib/idioma";
 
 /**
@@ -12,6 +13,7 @@ export function ConfiguracoesScreen() {
   return (
     <div className="max-w-3xl space-y-4">
       <p className="text-sm text-muted-foreground">{t.configuracoes.descricao}</p>
+      <NotificacoesSettings />
       <TemplatesEmail />
     </div>
   );
