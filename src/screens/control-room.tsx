@@ -4725,8 +4725,9 @@ export function ControlRoomScreen({
   const [resultadosFiltro, setResultadosFiltro] = useState<EmailItem[] | null>(null);
   const [temMaisFiltro, setTemMaisFiltro] = useState(false);
   const proximoFiltroRef = useRef<string | null>(null);
-  // D6: escopos Graph que o tenant rejeitou (400) — escondidos silenciosamente.
-  const [filtrosOcultos, setFiltrosOcultos] = useState<Set<string>>(new Set());
+  // #109: mantido sempre vazio (o D6 de esconder escopo no 400 foi removido — o
+  // filtro agora só mostra o empty state). A prop segue no filho por compat.
+  const [filtrosOcultos] = useState<Set<string>>(new Set());
   const proximoBuscaRef = useRef<string | null>(null);
   const carregandoMaisRef = useRef(false);
   // pasta atual (pra closures assíncronas que precisam do valor mais novo).
@@ -5448,15 +5449,13 @@ export function ControlRoomScreen({
         setResultadosFiltro(res.itens.filter((m) => !deletadasRef.current.has(m.id)));
         setTemMaisFiltro(res.proximo !== null);
       })
-      .catch((e) => {
+      .catch(() => {
         if (!vivo) return;
-        // D6: tenant sem suporte (HTTP 400) → esconde a opção e remove o chip de
-        // escopo, silenciosamente. Outros erros só deixam a lista vazia.
-        const msg = String(e);
-        if ((escopo === "mentions" || escopo === "invites") && msg.includes("400")) {
-          setFiltrosOcultos((s) => new Set(s).add(escopo));
-          setFiltros((fs) => fs.filter((f) => f.field !== "scope"));
-        }
+        // #109: qualquer falha do filtro de escopo (inclusive o 400 de tenant sem
+        // suporte a mentions/invites) agora apenas mostra o EMPTY STATE padrão,
+        // mantendo o chip. Antes o D6 removia o chip e escondia a opção — o
+        // usuário via o filtro "sumir" e a lista piscar (decisão do PO: filtrar e
+        // apresentar o empty state, não fazer o filtro desaparecer).
         setResultadosFiltro([]);
         setTemMaisFiltro(false);
       });
