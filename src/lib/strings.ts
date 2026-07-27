@@ -268,6 +268,13 @@ const pt = {
     ordenaFlag: "Sinalização",
     ordemDecrescente: "Decrescente",
     ordemCrescente: "Crescente",
+    // Preferências de leitura (#95) — quando marcar a mensagem aberta como lida.
+    // Namespace próprio (pref*) pra não colidir com as AÇÕES marcarLido/marcarNaoLido.
+    prefLeitura: "Preferências de leitura",
+    prefMarcarLidoTitulo: "Marcar como lido",
+    prefMarcarLidoImediato: "Ao abrir",
+    prefMarcarLidoAtraso: "Após {n} segundos",
+    prefMarcarLidoManual: "Somente manualmente",
     grupoFlagged: "Sinalizados",
     grupoHoje: "Hoje",
     grupoOntem: "Ontem",
@@ -619,6 +626,13 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     ordenaFlag: "Flag",
     ordemDecrescente: "Descending",
     ordemCrescente: "Ascending",
+    // Preferências de leitura (#95) — quando marcar a mensagem aberta como lida.
+    // Namespace próprio (pref*) pra não colidir com as AÇÕES marcarLido/marcarNaoLido.
+    prefLeitura: "Reading preferences",
+    prefMarcarLidoTitulo: "Mark as read",
+    prefMarcarLidoImediato: "When opened",
+    prefMarcarLidoAtraso: "After {n} seconds",
+    prefMarcarLidoManual: "Manually only",
     grupoFlagged: "Flagged",
     grupoHoje: "Today",
     grupoOntem: "Yesterday",
