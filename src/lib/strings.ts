@@ -148,8 +148,34 @@ const pt = {
     item3: "Estado da sincronização do OneDrive",
   },
 
-  emBreveConfig: {
+  configuracoes: {
     descricao: "Preferências do aplicativo e da sua conta.",
+  },
+
+  templates: {
+    titulo: "Templates de e-mail",
+    descricao:
+      "Modelos reutilizáveis para inserir no corpo de uma mensagem. Ficam guardados neste computador.",
+    novo: "Novo template",
+    vazio:
+      "Nenhum template ainda. Crie um para reaproveitar os textos que você manda sempre.",
+    nome: "Nome",
+    nomePlaceholder: "Ex.: Resposta padrão de suporte",
+    corpo: "Corpo",
+    corpoPlaceholder: "Escreva o conteúdo do template...",
+    novoTitulo: "Novo template",
+    editarTitulo: "Editar template",
+    salvar: "Salvar",
+    cancelar: "Cancelar",
+    editar: "Editar",
+    excluir: "Excluir",
+    excluirTitulo: "Excluir template?",
+    excluirDescricao:
+      "O template “{nome}” será removido deste computador. Não dá para desfazer.",
+    salvo: "Template salvo",
+    excluido: "Template excluído",
+    inserir: "Inserir template",
+    semTemplates: "Nenhum template salvo",
   },
 
   apps: {
@@ -533,8 +559,34 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     item3: "OneDrive sync status",
   },
 
-  emBreveConfig: {
+  configuracoes: {
     descricao: "App and account preferences.",
+  },
+
+  templates: {
+    titulo: "Email templates",
+    descricao:
+      "Reusable models you can drop into a message body. They are kept on this computer.",
+    novo: "New template",
+    vazio:
+      "No templates yet. Create one to reuse the texts you send all the time.",
+    nome: "Name",
+    nomePlaceholder: "e.g. Standard support reply",
+    corpo: "Body",
+    corpoPlaceholder: "Write the template content...",
+    novoTitulo: "New template",
+    editarTitulo: "Edit template",
+    salvar: "Save",
+    cancelar: "Cancel",
+    editar: "Edit",
+    excluir: "Delete",
+    excluirTitulo: "Delete template?",
+    excluirDescricao:
+      "The template “{nome}” will be removed from this computer. This can't be undone.",
+    salvo: "Template saved",
+    excluido: "Template deleted",
+    inserir: "Insert template",
+    semTemplates: "No saved templates",
   },
 
   apps: {
