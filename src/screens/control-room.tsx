@@ -37,6 +37,15 @@ import {
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -162,8 +171,10 @@ import {
   Forward,
   Inbox,
   Mail,
+  Mailbox,
   MailOpen,
   MapPin,
+  Plus,
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
@@ -1095,6 +1106,225 @@ function DialogNomePasta({
   );
 }
 
+// ===========================================================================
+// Caixas compartilhadas (#111) — seletor + dialog "Adicionar caixa…"
+// ===========================================================================
+
+/** Valor da própria caixa (/me), o padrão do seletor. */
+const CAIXA_PROPRIA = "me";
+/** Sentinela do item "Adicionar caixa…": nunca vira caixa ativa — só abre o
+ *  dialog (o Select do Radix precisa de um `value` não-vazio no item). */
+const CAIXA_ADICIONAR = "__adicionar__";
+
+/**
+ * Seletor de caixa no TOPO do sidebar do Bridge (#111). "Minha caixa" (/me) é o
+ * padrão; abaixo, as caixas compartilhadas adicionadas; por fim "Adicionar
+ * caixa…". Selecionar troca a caixa ativa; escolher "Adicionar…" abre o dialog.
+ *
+ * Nesta issue selecionar uma caixa compartilhada só TROCA o estado de caixa
+ * ativa e a sinaliza (o próprio trigger mostra qual está ativa) — a listagem do
+ * conteúdo dela é a #112. Colapsado, vira um ícone que abre o dialog direto.
+ */
+function SeletorCaixa({
+  caixas,
+  ativa,
+  onSelecionar,
+  onAdicionar,
+  colapsada,
+  t,
+}: {
+  caixas: string[];
+  ativa: string;
+  onSelecionar: (v: string) => void;
+  onAdicionar: () => void;
+  colapsada: boolean;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  if (colapsada) {
+    return (
+      <Button
+        size="icon"
+        variant="ghost"
+        onClick={onAdicionar}
+        aria-label={t.controlRoom.caixaAdicionarItem}
+        title={ativa === CAIXA_PROPRIA ? t.controlRoom.caixaMinha : ativa}
+        className={cn(ativa !== CAIXA_PROPRIA && "text-primary")}
+      >
+        <Mailbox />
+      </Button>
+    );
+  }
+  return (
+    <Select
+      value={ativa}
+      onValueChange={(v) => {
+        if (v === CAIXA_ADICIONAR) onAdicionar();
+        else onSelecionar(v);
+      }}
+    >
+      <SelectTrigger className="w-full" aria-label={t.controlRoom.caixaSeletor}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          <SelectItem value={CAIXA_PROPRIA}>
+            <span className="flex items-center gap-2">
+              <Inbox className="size-4 shrink-0 text-muted-foreground" />
+              <span className="truncate">{t.controlRoom.caixaMinha}</span>
+            </span>
+          </SelectItem>
+          {caixas.map((c) => (
+            <SelectItem key={c} value={c}>
+              <span className="flex items-center gap-2">
+                <Mailbox className="size-4 shrink-0 text-muted-foreground" />
+                <span className="truncate">{c}</span>
+              </span>
+            </SelectItem>
+          ))}
+        </SelectGroup>
+        <SelectSeparator />
+        <SelectItem value={CAIXA_ADICIONAR}>
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <Plus className="size-4 shrink-0" />
+            <span>{t.controlRoom.caixaAdicionarItem}</span>
+          </span>
+        </SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+/**
+ * Dialog "Adicionar caixa compartilhada" (#111). Valida o endereço na hora via
+ * `api.crValidarCaixa` (GET /users/{addr}/mailFolders/inbox no backend): 200
+ * adiciona; 403 → "você não tem acesso a essa caixa"; 404 → "endereço não
+ * encontrado"; precisa_relogin → "faça login novamente" (escopo Mail.Read.Shared
+ * novo na SCOPES, ainda fora do token da sessão atual).
+ */
+function DialogAdicionarCaixa({
+  existentes,
+  avisoRelogin,
+  onAdicionada,
+  onFechar,
+  t,
+}: {
+  existentes: string[];
+  /** Token atual sem Mail.Read.Shared: mostra o aviso de relogin já ao abrir. */
+  avisoRelogin: boolean;
+  onAdicionada: (endereco: string) => void;
+  onFechar: () => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const [endereco, setEndereco] = useState("");
+  const [validando, setValidando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const limpo = endereco.trim().toLowerCase();
+  // Validação de forma no cliente (o backend revalida): reduz idas ao Graph.
+  const pareceEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(limpo);
+
+  async function confirmar() {
+    if (!pareceEmail) {
+      setErro(t.controlRoom.caixaEnderecoInvalido);
+      return;
+    }
+    if (existentes.includes(limpo)) {
+      setErro(t.controlRoom.caixaJaAdicionada);
+      return;
+    }
+    setValidando(true);
+    setErro(null);
+    try {
+      const r = await api.crValidarCaixa(limpo);
+      if (r.status === "ok") {
+        onAdicionada(r.endereco);
+        toast.success(preencher(t.controlRoom.caixaAdicionada, { addr: r.endereco }));
+        onFechar();
+      } else if (r.status === "sem_acesso") {
+        setErro(t.controlRoom.caixaSemAcesso);
+      } else if (r.status === "nao_encontrado") {
+        setErro(t.controlRoom.caixaNaoEncontrada);
+      } else {
+        setErro(t.controlRoom.caixaRelogin);
+      }
+    } catch {
+      setErro(t.controlRoom.caixaErro);
+    } finally {
+      setValidando(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(aberto) => {
+        if (!aberto && !validando) onFechar();
+      }}
+    >
+      <DialogContent className="max-w-sm!">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!validando) confirmar();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{t.controlRoom.caixaDialogTitulo}</DialogTitle>
+            <DialogDescription>{t.controlRoom.caixaDialogDesc}</DialogDescription>
+          </DialogHeader>
+          {avisoRelogin ? (
+            <Alert variant="warning" className="mt-2">
+              <TriangleAlert />
+              <AlertDescription>{t.controlRoom.caixaRelogin}</AlertDescription>
+            </Alert>
+          ) : null}
+          <div className="grid gap-2 py-4">
+            <Label htmlFor="caixa-endereco">{t.controlRoom.caixaEnderecoRotulo}</Label>
+            <Input
+              id="caixa-endereco"
+              type="email"
+              autoFocus
+              value={endereco}
+              onChange={(e) => {
+                setEndereco(e.target.value);
+                setErro(null);
+              }}
+              placeholder={t.controlRoom.caixaEnderecoPlaceholder}
+              disabled={validando}
+              aria-invalid={erro !== null}
+              aria-describedby={erro ? "caixa-endereco-erro" : undefined}
+            />
+            {erro !== null ? (
+              <p id="caixa-endereco-erro" className="text-sm text-destructive">
+                {erro}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onFechar}
+              disabled={validando}
+            >
+              {t.controlRoom.cancelar}
+            </Button>
+            <Button type="submit" disabled={!pareceEmail || validando}>
+              {validando ? (
+                <>
+                  <Spinner className="size-4" /> {t.controlRoom.caixaValidando}
+                </>
+              ) : (
+                t.controlRoom.caixaAdicionarConfirmar
+              )}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function FolderSidebar({
   pastas,
   subpastas,
@@ -1112,6 +1342,10 @@ function FolderSidebar({
   onRenomearPasta,
   onExcluirPasta,
   onMoverPasta,
+  caixas,
+  caixaAtiva,
+  onSelecionarCaixa,
+  onAbrirAdicionarCaixa,
   colapsada,
   agendaAberta,
   onToggleAgenda,
@@ -1139,6 +1373,12 @@ function FolderSidebar({
     rotuloDestino: string,
     paiId?: string
   ) => void;
+  /** Caixas compartilhadas adicionadas (#111), por endereço. */
+  caixas: string[];
+  /** Caixa ativa: CAIXA_PROPRIA (/me) ou um endereço de `caixas`. */
+  caixaAtiva: string;
+  onSelecionarCaixa: (v: string) => void;
+  onAbrirAdicionarCaixa: () => void;
   colapsada: boolean;
   agendaAberta: boolean;
   onToggleAgenda: () => void;
@@ -1381,6 +1621,17 @@ function FolderSidebar({
         colapsada ? "w-16 items-center" : "w-52"
       )}
     >
+      {/* Seletor de caixa (#111): TOPO do sidebar. Minha caixa (/me) é o padrão;
+          caixas compartilhadas adicionadas + "Adicionar caixa…" abaixo. */}
+      <SeletorCaixa
+        caixas={caixas}
+        ativa={caixaAtiva}
+        onSelecionar={onSelecionarCaixa}
+        onAdicionar={onAbrirAdicionarCaixa}
+        colapsada={colapsada}
+        t={t}
+      />
+
       {colapsada ? (
         <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
           <PenSquare />
@@ -4047,6 +4298,35 @@ export function ControlRoomScreen({
   // Nasce FECHADA (chave nova, reseta persistidos antigos) pra fazer menos
   // requisições no startup — só carrega quando o usuário abre (#50).
   const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agendaVisivel", false);
+  // Caixas compartilhadas (#111): lista de endereços adicionados (persistida) +
+  // qual está ativa. Adicionar/validar/persistir/selecionar é o escopo desta
+  // issue; a LISTAGEM do conteúdo de uma caixa compartilhada é a #112 (por isso
+  // a caixa ativa por ora só troca o estado e mostra um placeholder "em breve").
+  const [caixasCompartilhadas, setCaixasCompartilhadas] = usePersistedState<string[]>(
+    "bridge.caixasCompartilhadas",
+    []
+  );
+  // Caixa ativa reseta pra própria (/me) a cada sessão — a lista é que persiste.
+  const [caixaAtiva, setCaixaAtiva] = useState<string>(CAIXA_PROPRIA);
+  const [adicionarCaixaAberto, setAdicionarCaixaAberto] = useState(false);
+  // O token atual traz Mail.Read.Shared? Falso ⇒ sinaliza relogin (escopo novo
+  // na SCOPES; sem consent admin — já concedido, ver AGENTS.md §1.1).
+  const [sharedEscopoOk, setSharedEscopoOk] = useState(true);
+  useEffect(() => {
+    let vivo = true;
+    api
+      .crMailSharedDisponivel()
+      .then((ok) => {
+        if (vivo) setSharedEscopoOk(ok);
+      })
+      .catch(() => {
+        /* falha ao checar escopo: não trava a UI, assume ok */
+      });
+    return () => {
+      vivo = false;
+    };
+  }, []);
+  const caixaCompartilhadaAtiva = caixaAtiva !== CAIXA_PROPRIA;
   const [pastas, setPastas] = useState<PastaEmail[] | null>(null);
   const [pastaSel, setPastaSel] = useState("inbox");
   // Coalescing da troca de pasta (#87): a SELEÇÃO (`pastaSel`) muda na hora — o
@@ -4981,14 +5261,36 @@ export function ControlRoomScreen({
           onRenomearPasta={renomearPasta}
           onExcluirPasta={excluirPasta}
           onMoverPasta={moverPasta}
+          caixas={caixasCompartilhadas}
+          caixaAtiva={caixaAtiva}
+          onSelecionarCaixa={setCaixaAtiva}
+          onAbrirAdicionarCaixa={() => setAdicionarCaixaAberto(true)}
           colapsada={!sidebarAberta}
           agendaAberta={agendaAberta}
           onToggleAgenda={() => setAgendaAberta((v) => !v)}
           t={t}
         />
 
-        {/* Lista e detalhe compartilham o espaço, com splitter arrastável.
-            autoSaveId persiste a proporção que o usuário deixa. */}
+        {/* Caixa compartilhada ativa (#111): a LISTAGEM do conteúdo é a #112 —
+            aqui só sinalizamos qual caixa está ativa (o seletor no sidebar) e
+            mostramos um placeholder "em breve". A caixa /me segue intacta. */}
+        {caixaCompartilhadaAtiva ? (
+          <div className="flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-xl border bg-card">
+            <Empty className="py-10">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Mailbox />
+                </EmptyMedia>
+                <EmptyTitle>{caixaAtiva}</EmptyTitle>
+                <EmptyDescription>
+                  {t.controlRoom.caixaCompartilhadaDesc}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </div>
+        ) : (
+        /* Lista e detalhe compartilham o espaço, com splitter arrastável.
+            autoSaveId persiste a proporção que o usuário deixa. */
         <ResizablePanelGroup
           autoSaveId="bridge.layout"
           direction="horizontal"
@@ -5071,6 +5373,7 @@ export function ControlRoomScreen({
             )}
           </ResizablePanel>
         </ResizablePanelGroup>
+        )}
 
         {/* Card da Agenda no MESMO lugar de sempre (lado direito). Agora quem
             controla a visibilidade é o item do sidebar esquerdo (#50): visível =
@@ -5082,6 +5385,26 @@ export function ControlRoomScreen({
 
       <EventoDialog id={eventoSel} userEmail={user.email} onClose={() => setEventoSel(null)} />
       <NovaMensagemModal aberto={novaAberta} onClose={() => setNovaAberta(false)} t={t} />
+
+      {/* Dialog "Adicionar caixa compartilhada" (#111). Montado só quando abre
+          (com `key`) pra nascer limpo. Se o token não traz Mail.Read.Shared,
+          sinaliza relogin já ao abrir — sem travar (o backend também revalida). */}
+      {adicionarCaixaAberto && (
+        <DialogAdicionarCaixa
+          key="adicionar-caixa"
+          existentes={caixasCompartilhadas}
+          avisoRelogin={!sharedEscopoOk}
+          onAdicionada={(addr) => {
+            setCaixasCompartilhadas((atual) =>
+              atual.includes(addr) ? atual : [...atual, addr]
+            );
+            setCaixaAtiva(addr);
+            if (!sharedEscopoOk) toast.warning(t.controlRoom.caixaRelogin);
+          }}
+          onFechar={() => setAdicionarCaixaAberto(false)}
+          t={t}
+        />
+      )}
     </div>
   );
 }
