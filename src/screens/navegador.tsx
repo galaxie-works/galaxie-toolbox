@@ -17,6 +17,11 @@ import {
   type AppM365,
 } from "@/lib/apps";
 import * as browser from "@/lib/browser";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import { Compass, Globe, Loader2, Plus, Search, X } from "lucide-react";
@@ -202,6 +207,7 @@ export function NavegadorScreen({
   onNovaAba: () => void;
   onNavegar: (url: string, nome: string) => void;
 }) {
+  const { t } = useIdioma();
   const area = useRef<HTMLDivElement>(null);
 
   function medir(): browser.Retangulo | null {
@@ -256,7 +262,6 @@ export function NavegadorScreen({
               <div
                 key={aba.id}
                 onClick={() => onTrocar(aba.id)}
-                title={aba.nome}
                 className={cn(
                   "group flex w-40 shrink-0 cursor-pointer items-center gap-2 rounded-t-md border border-b-0 px-3 py-1.5 text-sm transition-colors",
                   ativaAba
@@ -274,34 +279,51 @@ export function NavegadorScreen({
                 ) : (
                   <Globe className="size-4 shrink-0 text-muted-foreground" />
                 )}
-                <span className="min-w-0 flex-1 truncate">{aba.nome}</span>
-                <button
-                  type="button"
-                  aria-label={`Fechar ${aba.nome}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onFechar(aba.id);
-                  }}
-                  className="grid size-4 shrink-0 place-items-center rounded opacity-60 hover:bg-foreground/10 hover:opacity-100"
-                >
-                  <X className="size-3" />
-                </button>
+                {/* Tooltip só no rótulo: mostra o nome inteiro quando truncado,
+                    sem competir com o tooltip do "X" ao lado. */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="min-w-0 flex-1 truncate">{aba.nome}</span>
+                  </TooltipTrigger>
+                  <TooltipContent>{aba.nome}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={t.navegador.fecharAba}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onFechar(aba.id);
+                      }}
+                      className="grid size-4 shrink-0 place-items-center rounded opacity-60 hover:bg-foreground/10 hover:opacity-100"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t.navegador.fecharAba}</TooltipContent>
+                </Tooltip>
               </div>
             );
           })}
         </div>
-        <button
-          type="button"
-          aria-label="Nova aba"
-          onClick={onNovaAba}
-          className={cn(
-            "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
-            "hover:bg-accent hover:text-foreground",
-            ativa === null && abas.length > 0 && "bg-accent text-foreground"
-          )}
-        >
-          <Plus className="size-4" />
-        </button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={t.navegador.novaAba}
+              onClick={onNovaAba}
+              className={cn(
+                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
+                "hover:bg-accent hover:text-foreground",
+                ativa === null && abas.length > 0 && "bg-accent text-foreground"
+              )}
+            >
+              <Plus className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{t.navegador.novaAba}</TooltipContent>
+        </Tooltip>
       </div>
 
       {ativa === null ? (
