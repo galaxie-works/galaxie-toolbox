@@ -7,6 +7,13 @@ import {
   type FilterOperator,
   type FilterOption,
 } from "@/components/reui/filters";
+import {
+  DateSelector,
+  formatDateValue,
+  DEFAULT_DATE_SELECTOR_I18N,
+  type DateSelectorValue,
+  type DateSelectorI18nConfig,
+} from "@/components/reui/date-selector";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -88,11 +95,13 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
 import {
@@ -1871,10 +1880,290 @@ function passaFiltrosClient(m: EmailItem, filtros: Filter<string>[]): boolean {
       if (v == null) continue;
       const bate = v === "yes" ? m.temAnexos : !m.temAnexos;
       if (f.operator === "is_not" ? bate : !bate) return false;
+    } else if (f.field === "data") {
+      // Intervalo de datas (#110): o valor é um DateSelectorValue serializado
+      // (ISO) em values[0]. Reidrata, resolve o intervalo concreto e testa
+      // `início ≤ recebido ≤ fim`. Seleção incompleta = sem restrição (passa).
+      const dv = desserializarDataFiltro(v as string | undefined);
+      if (!dv) continue;
+      const range = resolveIntervaloData(dv);
+      if (!range) continue;
+      const quando = new Date(comZ(m.recebido)).getTime();
+      if (Number.isNaN(quando)) return false;
+      if (range.ini !== null && quando < range.ini) return false;
+      if (range.fim !== null && quando > range.fim) return false;
     }
     // `scope` → servidor (crFiltrar), ignorado no client-side.
   }
   return true;
+}
+
+// --- Filtro de intervalo de datas (#110) -----------------------------------
+// O DateSelector (reui) guarda a seleção num `DateSelectorValue` que contém
+// Dates (não sobrevivem a JSON cru) e campos de período (mês/trimestre/ano). O
+// filter-builder reui trabalha com `Filter<string>` e o localStorage serializa
+// o array inteiro. Guardamos o valor como JSON com as datas em ISO em
+// `values[0]` e reidratamos as Dates ao ler — mesmo shape `bridge.filtrosLista.v2`
+// do #31.
+function serializarDataFiltro(v: DateSelectorValue): string {
+  return JSON.stringify(v, (_k, val) =>
+    val instanceof Date ? val.toISOString() : val,
+  );
+}
+
+function desserializarDataFiltro(
+  s: string | undefined,
+): DateSelectorValue | undefined {
+  if (!s) return undefined;
+  try {
+    const raw = JSON.parse(s) as DateSelectorValue;
+    return {
+      ...raw,
+      startDate: raw.startDate ? new Date(raw.startDate) : undefined,
+      endDate: raw.endDate ? new Date(raw.endDate) : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+const inicioDoDia = (d: Date) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+const fimDoDia = (d: Date) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
+const inicioDoMes = (ano: number, mes: number) =>
+  new Date(ano, mes, 1, 0, 0, 0, 0).getTime();
+// `new Date(ano, mes+1, 0)` = último dia do mês `mes` (0-indexado).
+const fimDoMes = (ano: number, mes: number) =>
+  new Date(ano, mes + 1, 0, 23, 59, 59, 999).getTime();
+
+// Meses (0-indexados) que abrem/fecham cada período de um dado tipo/valor.
+// month: value é o próprio mês; quarter: 0→jan..; half-year: 0→jan/1→jul; year.
+function mesesDoPeriodo(
+  period: DateSelectorValue["period"],
+  value: number,
+): { mesIni: number; mesFim: number } {
+  switch (period) {
+    case "quarter":
+      return { mesIni: value * 3, mesFim: value * 3 + 2 };
+    case "half-year":
+      return { mesIni: value * 6, mesFim: value * 6 + 5 };
+    case "year":
+      return { mesIni: 0, mesFim: 11 };
+    default: // "month"
+      return { mesIni: value, mesFim: value };
+  }
+}
+
+// Faixa-base [s, e] (epoch ms) coberta pela seleção, ignorando o operador. Os
+// campos preenchidos espelham `formatDateValue`: day → startDate/endDate;
+// month/quarter/half-year/year → year+unidade OU rangeStart/rangeEnd.
+function faixaBaseData(v: DateSelectorValue): { s: number; e: number } | null {
+  if (v.period === "day") {
+    if (v.startDate && v.endDate) {
+      return { s: inicioDoDia(v.startDate), e: fimDoDia(v.endDate) };
+    }
+    if (v.startDate) {
+      return { s: inicioDoDia(v.startDate), e: fimDoDia(v.startDate) };
+    }
+    return null;
+  }
+  // Períodos calendáricos (mês/trimestre/semestre/ano).
+  const unidade =
+    v.period === "month"
+      ? v.month
+      : v.period === "quarter"
+        ? v.quarter
+        : v.period === "half-year"
+          ? v.halfYear
+          : 0; // "year" não usa unidade
+  if (v.rangeStart && v.rangeEnd) {
+    const ini = mesesDoPeriodo(v.period, v.rangeStart.value);
+    const fim = mesesDoPeriodo(v.period, v.rangeEnd.value);
+    return {
+      s: inicioDoMes(v.rangeStart.year, ini.mesIni),
+      e: fimDoMes(v.rangeEnd.year, fim.mesFim),
+    };
+  }
+  if (v.year !== undefined && (v.period === "year" || unidade !== undefined)) {
+    const { mesIni, mesFim } = mesesDoPeriodo(v.period, unidade ?? 0);
+    return { s: inicioDoMes(v.year, mesIni), e: fimDoMes(v.year, mesFim) };
+  }
+  return null;
+}
+
+/**
+ * Resolve o `DateSelectorValue` num intervalo concreto [ini, fim] (epoch ms,
+ * inclusivo; `null` = ilimitado daquele lado), honrando o operador da seleção:
+ * `is`/`between` = a faixa em si; `before` = tudo antes dela; `after` = tudo
+ * depois. Retorna `null` quando a seleção está incompleta (o filtro não
+ * restringe nada).
+ */
+function resolveIntervaloData(
+  v: DateSelectorValue,
+): { ini: number | null; fim: number | null } | null {
+  const base = faixaBaseData(v);
+  if (!base) return null;
+  switch (v.operator) {
+    case "before":
+      return { ini: null, fim: base.s - 1 };
+    case "after":
+      return { ini: base.e + 1, fim: null };
+    default: // "is" | "between"
+      return { ini: base.s, fim: base.e };
+  }
+}
+
+// i18n em português do DateSelector (o registry vem só em inglês). Trimestres
+// (Q1–Q4) e semestres (H1–H2) ficam como no padrão — são notação de negócio
+// usada também em BR e batem com o parser de linguagem natural do input.
+const DATE_SELECTOR_I18N_PT: Partial<DateSelectorI18nConfig> = {
+  selectDate: "Selecionar data",
+  apply: "Aplicar",
+  cancel: "Cancelar",
+  clear: "Limpar",
+  today: "Hoje",
+  filterTypes: { is: "é", before: "antes", after: "depois", between: "entre" },
+  periodTypes: {
+    day: "Dia",
+    month: "Mês",
+    quarter: "Trimestre",
+    halfYear: "Semestre",
+    year: "Ano",
+  },
+  months: [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+  ],
+  monthsShort: [
+    "Jan",
+    "Fev",
+    "Mar",
+    "Abr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Ago",
+    "Set",
+    "Out",
+    "Nov",
+    "Dez",
+  ],
+  quarters: ["Q1", "Q2", "Q3", "Q4"],
+  halfYears: ["H1", "H2"],
+  weekdays: [
+    "Domingo",
+    "Segunda",
+    "Terça",
+    "Quarta",
+    "Quinta",
+    "Sexta",
+    "Sábado",
+  ],
+  weekdaysShort: ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"],
+  placeholder: "Selecionar data...",
+  rangePlaceholder: "Selecionar intervalo...",
+};
+
+/**
+ * Campo "Data" do filter-builder reui (#110) como o `type: "custom"` do exemplo
+ * `c-filters-6` do PO: um Dialog (modal) com o `DateSelector` literal do
+ * registry. O valor vive serializado em `values[0]`; ao Aplicar, chama o
+ * `onChange` do reui com a string ISO. O gatilho do chip mostra o intervalo
+ * legível (ex.: "01/05/2025 - 10/05/2025") via `formatDateValue`.
+ */
+function SeletorDataFiltro({
+  values,
+  onChange,
+  t,
+  idioma,
+}: {
+  values: string[];
+  onChange: (values: string[]) => void;
+  t: ReturnType<typeof useIdioma>["t"];
+  idioma: string;
+}) {
+  const atual = desserializarDataFiltro(values?.[0]);
+  const [aberto, setAberto] = useState(false);
+  // `valorInicial` alimenta o DateSelector como valor de partida (semente),
+  // ESTÁVEL enquanto o modal fica aberto. `rascunho` acumula o que o
+  // DateSelector emite. NÃO realimentamos `rascunho` como `value`: o
+  // DateSelector reidrata o estado interno a partir de `value` (efeito próprio)
+  // e, se `value` mudasse a cada clique, ele zeraria a seleção do dia (o clique
+  // no calendário nunca "grudava"). Semente estável + rascunho separado quebra
+  // esse laço.
+  const [valorInicial, setValorInicial] = useState<DateSelectorValue | undefined>(
+    atual,
+  );
+  const [rascunho, setRascunho] = useState<DateSelectorValue | undefined>(atual);
+
+  const ehPt = idioma === "pt-BR";
+  const dsI18n = ehPt ? DATE_SELECTOR_I18N_PT : undefined;
+  const fmt = ehPt ? "dd/MM/yyyy" : "MM/dd/yyyy";
+  const rotulo = atual
+    ? formatDateValue(
+        atual,
+        ehPt ? { ...DEFAULT_DATE_SELECTOR_I18N, ...DATE_SELECTOR_I18N_PT } : undefined,
+        fmt,
+      )
+    : "";
+  const texto = rotulo || t.controlRoom.filtroDataSelecione;
+
+  // Ao abrir, semeia a partida e o rascunho com o valor persistido.
+  useEffect(() => {
+    if (aberto) {
+      const v = desserializarDataFiltro(values?.[0]);
+      setValorInicial(v);
+      setRascunho(v);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aberto]);
+
+  const aplicar = () => {
+    // Só persiste um intervalo REALMENTE resolvível (senão o chip fica vazio).
+    const resolvivel = rascunho && resolveIntervaloData(rascunho) !== null;
+    onChange(resolvivel ? [serializarDataFiltro(rascunho!)] : []);
+    setAberto(false);
+  };
+
+  return (
+    <Dialog open={aberto} onOpenChange={setAberto}>
+      <DialogTrigger className="outline-hidden">{texto}</DialogTrigger>
+      <DialogContent className="sm:max-w-lg" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>{t.controlRoom.filtroDataTitulo}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {t.controlRoom.filtroDataDescricao}
+          </DialogDescription>
+        </DialogHeader>
+        <DateSelector
+          value={valorInicial}
+          onChange={setRascunho}
+          showInput
+          label={t.controlRoom.filtroData}
+          inputHint={t.controlRoom.filtroDataDica}
+          i18n={dsI18n}
+          dayDateFormat={fmt}
+        />
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="outline">{t.controlRoom.cancelar}</Button>
+          </DialogClose>
+          <Button onClick={aplicar}>{t.controlRoom.filtroAplicar}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // Quando a mensagem aberta é marcada como lida (#95). Espelha as três opções do
@@ -2398,6 +2687,29 @@ function MessageList({
     {
       group: t.controlRoom.filtroGrupoSelecao,
       fields: [
+        // Intervalo de datas (#110): campo `type: "custom"` com o DateSelector
+        // do registry num modal (padrão do exemplo `c-filters-6` do PO). O
+        // range é aplicado client-side (`passaFiltrosClient`) e combina por E
+        // (AND) com os demais. Único operador ("é") — o modo real (é/antes/
+        // depois/entre) mora no próprio DateSelectorValue.
+        {
+          key: "data",
+          label: t.controlRoom.filtroData,
+          icon: <CalendarDays className="size-3.5" />,
+          type: "custom",
+          operators: [
+            { value: "is", label: t.controlRoom.filtroOperadorIs },
+          ],
+          defaultOperator: "is",
+          customRenderer: ({ values, onChange }) => (
+            <SeletorDataFiltro
+              values={values}
+              onChange={onChange}
+              t={t}
+              idioma={idioma}
+            />
+          ),
+        },
         {
           key: "status",
           label: t.controlRoom.filtroStatus,

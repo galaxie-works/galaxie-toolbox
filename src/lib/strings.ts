@@ -433,6 +433,14 @@ const pt = {
     filtroOpContem: "contém",
     filtroOpNaoContem: "não contém",
     filtroSelecione: "Selecione...",
+    // Filtro de intervalo de datas (#110): campo "Data" com DateSelector no modal.
+    filtroData: "Data",
+    filtroDataSelecione: "Selecionar data",
+    filtroDataTitulo: "Filtrar por data",
+    filtroDataDescricao:
+      "Escolha um período para filtrar as mensagens por data.",
+    filtroDataDica: "Ex.: 2025, Q4, 05/10/2025",
+    filtroAplicar: "Aplicar",
     // Detalhe do evento
     organizador: "Organizador",
     local: "Local",
@@ -980,6 +988,13 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     filtroOpContem: "contains",
     filtroOpNaoContem: "doesn't contain",
     filtroSelecione: "Select...",
+    // Date range filter (#110): "Date" field with DateSelector in a modal.
+    filtroData: "Date",
+    filtroDataSelecione: "Select a date",
+    filtroDataTitulo: "Filter by date",
+    filtroDataDescricao: "Choose a period to filter messages by date.",
+    filtroDataDica: "Try: 2025, Q4, 05/10/2025",
+    filtroAplicar: "Apply",
     // Detalhe do evento
     organizador: "Organizer",
     local: "Location",

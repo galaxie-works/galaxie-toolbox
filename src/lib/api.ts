@@ -629,7 +629,9 @@ export async function crFolderMensagens(
       de: n,
       deEmail: `${n.toLowerCase().replace(/\s+/g, ".")}@example.com`,
       iniciais: n.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
-      recebido: t(i * 5),
+      // Espalha 1 item por dia (24h) — dá datas variadas p/ exercitar o filtro
+      // de intervalo de datas (#110) e os buckets de período (#30) no mock.
+      recebido: t(i * 24),
       preview:
         "Hey team, sharing the draft for review. Let me know your thoughts before we finalize...",
       lido: i > 2,
