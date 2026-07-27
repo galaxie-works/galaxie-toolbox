@@ -6,6 +6,7 @@ import { ControlRoomScreen } from "@/screens/control-room";
 import { NavegadorScreen, type AbaBrowser } from "@/screens/navegador";
 import * as browser from "@/lib/browser";
 import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
+import { ConfiguracoesScreen } from "@/screens/configuracoes";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Atualizacao } from "@/components/atualizacao";
@@ -439,13 +440,7 @@ export default function App() {
             />
           )}
           {tela === "caminhos-longos" && <CaminhosLongosScreen />}
-          {tela === "configuracoes" && (
-            <EmBreveScreen
-              titulo={t.nav.configuracoes}
-              icone={TELAS.configuracoes.icone}
-              descricao={t.emBreveConfig.descricao}
-            />
-          )}
+          {tela === "configuracoes" && <ConfiguracoesScreen />}
           </main>
         </ScrollArea>
         )}

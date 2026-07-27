@@ -15,6 +15,7 @@ import {
   FileIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
+  FileType2Icon,
   HeadphonesIcon,
   ImageIcon,
   ItalicIcon,
@@ -38,6 +39,12 @@ import {
 } from "@/hooks/use-file-upload";
 
 import { Editor, EditorContainer } from "@/components/ui/editor";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { MarkToolbarButton } from "@/components/ui/mark-toolbar-button";
 import { ToolbarButton } from "@/components/ui/toolbar";
@@ -45,15 +52,14 @@ import {
   BulletedListToolbarButton,
 } from "@/components/ui/list-toolbar-button";
 import { LinkToolbarButton } from "@/components/ui/link-toolbar-button";
-import { BasicNodesKit } from "@/components/editor/plugins/basic-nodes-kit";
-import { ListKit } from "@/components/editor/plugins/list-kit";
-import { LinkKit } from "@/components/editor/plugins/link-kit";
-import { AutoformatKit } from "@/components/editor/plugins/autoformat-kit";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { crCompartilharOneDrive, type AnexoEnvio } from "@/lib/api";
+import { useIdioma } from "@/lib/idioma";
+import { lerTemplates, type TemplateEmail } from "@/lib/templates";
 
 import { CampoPessoas } from "./campo-pessoas";
+import { COMPOSE_KIT } from "./compose-kit";
 
 /**
  * Compose completo de e-mail reutilizável: campos de destinatários com
@@ -90,8 +96,6 @@ export interface ComporMensagemProps {
     mostrarCcCco: string;
   };
 }
-
-const COMPOSE_KIT = [...BasicNodesKit, ...ListKit, ...LinkKit, ...AutoformatKit];
 
 /** Chave do localStorage onde a assinatura fica guardada (editável em Settings). */
 const ASSINATURA_KEY = "bridge.assinatura";
@@ -192,7 +196,12 @@ export const ComporMensagem = forwardRef<
   { mostrarAssunto = false, mostrarDestinatarios = true, assuntoInicial = "", textos },
   ref
 ) {
+  const { t } = useIdioma();
   const [para, setPara] = useState<string[]>([]);
+  // Lida do localStorage a cada abertura do menu (e não em estado persistido):
+  // este compose fica montado junto do Bridge, então uma cópia guardada aqui
+  // ficaria velha assim que o usuário mexesse nos templates em Configurações.
+  const [templates, setTemplates] = useState<TemplateEmail[]>([]);
   const [cc, setCc] = useState<string[]>([]);
   const [cco, setCco] = useState<string[]>([]);
   const [assunto, setAssunto] = useState(assuntoInicial);
@@ -298,6 +307,21 @@ export const ComporMensagem = forwardRef<
     inserirNoFim(
       linhas.map((linha) => ({ type: "p", children: [{ text: linha }] }))
     );
+  }
+
+  /**
+   * Insere o corpo de um template ao final da mensagem. O template é salvo como
+   * HTML do próprio Plate, então basta desserializar de volta pelos mesmos
+   * plugins (COMPOSE_KIT) — os blocos voltam formatados, não como texto cru.
+   */
+  function inserirTemplate(tpl: TemplateEmail) {
+    // O corpo sai sempre do editor de templates, que é um Plate: o nível de
+    // cima é sempre bloco, nunca texto solto.
+    const nodes = editor.api.html.deserialize({
+      element: tpl.corpo,
+    }) as TElement[];
+    if (nodes.length === 0) return;
+    inserirNoFim(nodes);
   }
 
   /**
@@ -433,6 +457,36 @@ export const ComporMensagem = forwardRef<
           >
             <PenLineIcon />
           </ToolbarButton>
+          {/* Templates: lista o que está salvo em Configurações e insere no fim. */}
+          <DropdownMenu
+            modal={false}
+            onOpenChange={(aberto) => aberto && setTemplates(lerTemplates())}
+          >
+            <DropdownMenuTrigger asChild>
+              <ToolbarButton tooltip={t.templates.inserir} isDropdown>
+                <FileType2Icon />
+              </ToolbarButton>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              className="ignore-click-outside/toolbar min-w-48"
+              align="start"
+            >
+              {templates.length === 0 ? (
+                <DropdownMenuItem disabled>
+                  {t.templates.semTemplates}
+                </DropdownMenuItem>
+              ) : (
+                templates.map((tpl) => (
+                  <DropdownMenuItem
+                    key={tpl.id}
+                    onSelect={() => inserirTemplate(tpl)}
+                  >
+                    <span className="truncate">{tpl.nome}</span>
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
           <ToolbarButton tooltip="Anexar arquivo" onClick={anexarArquivo}>
             <PaperclipIcon />
           </ToolbarButton>
