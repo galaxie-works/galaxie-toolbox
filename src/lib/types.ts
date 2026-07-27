@@ -176,6 +176,22 @@ export interface PastaEmail {
   filhos: number; // nº de subpastas — chevron de expandir só aparece quando > 0
 }
 
+/**
+ * Insights do remetente (#94): resumo do relacionamento com um endereço,
+ * mostrado no popover do leitor. Todos os campos são opcionais — cada parte é
+ * buscada de forma best-effort no backend e pode faltar sem quebrar o painel.
+ */
+export interface InsightsRemetente {
+  /** Nº de e-mails recebidos deste endereço (filtro por `from`). */
+  recebidos?: number | null;
+  /** Nº de e-mails enviados a este endereço. Ausente = não foi possível contar. */
+  enviados?: number | null;
+  /** ISO do e-mail recebido mais antigo (1º contato). */
+  primeiro?: string | null;
+  /** ISO do e-mail recebido mais recente (último contato). */
+  ultimo?: string | null;
+}
+
 /** Seção do autocomplete de destinatários (#40): de onde a sugestão veio. */
 export type OrigemPessoa = "contatos" | "organizacao";
 

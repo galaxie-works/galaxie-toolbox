@@ -7,6 +7,7 @@ import type {
   EventoAgenda,
   EventoDetalhe,
   Identidade,
+  InsightsRemetente,
   PastaEmail,
   PastaOD,
   Pessoa,
@@ -659,6 +660,46 @@ export async function crContar(folderId: string, filtro: string): Promise<number
     return 0;
   }
   return invoke<number>("cr_contar", { folderId, filtro });
+}
+
+/**
+ * Insights do remetente (#94): resumo do relacionamento com um endereço —
+ * e-mails recebidos/enviados e data do 1º/último contato. Chamada LAZY: só
+ * dispara quando o usuário abre o popover no leitor.
+ *
+ * Custo real (dentro do Tauri): até 4 chamadas Graph — ver
+ * `graph::cr_insights_remetente`. Fora do Tauri devolve um mock coerente para o
+ * QA visual: endereços "no-reply"/"microsoft"/"noreply" simulam PRIMEIRO CONTATO
+ * (tudo zerado); os demais, um histórico plausível derivado do próprio endereço.
+ */
+export async function crInsightsRemetente(
+  endereco: string
+): Promise<InsightsRemetente> {
+  if (!inTauri()) {
+    await sleep(500);
+    const addr = (endereco || "").toLowerCase();
+    // Remetentes automáticos: primeiro contato (sem histórico).
+    if (/no-?reply|microsoft|noreply/.test(addr)) {
+      return { recebidos: 0, enviados: 0, primeiro: null, ultimo: null };
+    }
+    // Histórico plausível e estável por endereço (hash simples do texto).
+    let h = 0;
+    for (let i = 0; i < addr.length; i++) h = (h * 31 + addr.charCodeAt(i)) >>> 0;
+    const recebidos = 12 + (h % 180);
+    const enviados = 3 + (h % 60);
+    const diasPrimeiro = 200 + (h % 900); // ~7 meses a ~3 anos atrás
+    const diasUltimo = h % 20; // até ~3 semanas atrás
+    const agora = Date.now();
+    const iso = (dias: number) =>
+      new Date(agora - dias * 86_400_000).toISOString();
+    return {
+      recebidos,
+      enviados,
+      primeiro: iso(diasPrimeiro),
+      ultimo: iso(diasUltimo),
+    };
+  }
+  return invoke<InsightsRemetente>("cr_insights_remetente", { endereco });
 }
 
 /**

@@ -530,6 +530,22 @@ async fn cr_contar(
         .map_err(|e| e.to_string())?
 }
 
+/// Control room: insights do remetente (#94) — recebidos/enviados + data do 1º e
+/// do último e-mail deste endereço. Ver o custo de chamadas em
+/// `graph::cr_insights_remetente`.
+#[tauri::command]
+async fn cr_insights_remetente(
+    state: State<'_, Store>,
+    endereco: String,
+) -> Result<graph::InsightsRemetente, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_insights_remetente(&store, &endereco)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Control room: esvazia uma pasta (Lixeira / Lixo Eletrônico), apagando cada
 /// mensagem. Retorna a contagem do que saiu.
 #[tauri::command]
@@ -832,6 +848,7 @@ pub fn run() {
             cr_buscar,
             cr_filtrar,
             cr_contar,
+            cr_insights_remetente,
             cr_esvaziar_pasta,
             cr_marcar_pasta_lida,
             cr_criar_subpasta,
