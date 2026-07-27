@@ -398,9 +398,20 @@ const pt = {
     filtroToMe: "Para mim",
     filtroMentions: "Me mencionam",
     filtroInvites: "Convites de agenda",
-    // Rótulos do componente reui Filters (#31): o operador único do campo
-    // "Filtro" e o texto quando nenhum valor foi escolhido ainda.
+    // Rótulos do filter-builder reui (#31): campos combináveis com E (AND).
+    filtroDe: "De",
+    filtroDePlaceholder: "Remetente...",
+    filtroStatus: "Status",
+    filtroLidos: "Lidos",
+    filtroSim: "Sim",
+    filtroNao: "Não",
+    filtroEscopo: "Escopo",
+    filtroBuscarCampo: "Buscar campo...",
+    // Operadores expostos nos chips.
     filtroOperadorIs: "é",
+    filtroOpNaoE: "não é",
+    filtroOpContem: "contém",
+    filtroOpNaoContem: "não contém",
     filtroSelecione: "Selecione...",
     // Detalhe do evento
     organizador: "Organizador",
@@ -838,7 +849,18 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     filtroToMe: "To me",
     filtroMentions: "Mentions me",
     filtroInvites: "Calendar invites",
+    filtroDe: "From",
+    filtroDePlaceholder: "Sender...",
+    filtroStatus: "Status",
+    filtroLidos: "Read",
+    filtroSim: "Yes",
+    filtroNao: "No",
+    filtroEscopo: "Scope",
+    filtroBuscarCampo: "Search field...",
     filtroOperadorIs: "is",
+    filtroOpNaoE: "is not",
+    filtroOpContem: "contains",
+    filtroOpNaoContem: "doesn't contain",
     filtroSelecione: "Select...",
     // Detalhe do evento
     organizador: "Organizer",

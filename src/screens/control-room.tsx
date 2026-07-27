@@ -4,6 +4,8 @@ import {
   Filters,
   type Filter,
   type FilterFieldConfig,
+  type FilterOperator,
+  type FilterOption,
 } from "@/components/reui/filters";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
@@ -1410,18 +1412,51 @@ function FolderSidebar({
 // Filtro único da lista (dropdown estilo Outlook, #31). Os 4 primeiros são
 // client-side (aplicados sobre a lista já carregada, como as antigas abas); os
 // 3 últimos exigem o servidor (cr_filtrar) e são buscados pelo pai.
-type FiltroLista =
-  | "all"
-  | "unread"
-  | "flagged"
-  | "files"
-  | "tome"
-  | "mentions"
-  | "invites";
+// Escopos que EXIGEM o servidor (não dá só na lista carregada) — resolvidos por
+// `api.crFiltrar`. Modelados como o campo `scope` do filter-builder reui (#31).
+type FiltroServidor = "tome" | "mentions" | "invites";
 
-/** true para os filtros que precisam ir ao Graph (não dá só no carregado). */
-function ehFiltroGraph(f: FiltroLista): boolean {
-  return f === "tome" || f === "mentions" || f === "invites";
+/**
+ * Deriva o escopo de servidor ativo (1 por vez) da lista de filtros do builder.
+ * O componente reui é um filter-builder multi-campo; só o campo `scope` vai ao
+ * Graph. Se houver mais de um chip `scope` (allowMultiple), o primeiro manda —
+ * os client-side (De/Status/Sinalizado/Anexos) combinam por cima com E (AND).
+ */
+function escopoDeFiltros(filtros: Filter<string>[]): FiltroServidor | null {
+  const v = filtros.find((f) => f.field === "scope")?.values[0];
+  return v === "tome" || v === "mentions" || v === "invites" ? v : null;
+}
+
+/**
+ * Aplica os filtros client-side (De, Status, Sinalizado, Anexos) sobre um item,
+ * combinados com E (AND). O campo `scope` é resolvido no servidor, então aqui é
+ * ignorado. Honra os operadores is/is_not (selects) e contains/not_contains
+ * (texto De).
+ */
+function passaFiltrosClient(m: EmailItem, filtros: Filter<string>[]): boolean {
+  for (const f of filtros) {
+    const v = f.values[0];
+    if (f.field === "from") {
+      const termo = String(v ?? "").trim().toLowerCase();
+      if (!termo) continue;
+      const contem = `${m.de} ${m.deEmail}`.toLowerCase().includes(termo);
+      if (f.operator === "not_contains" ? contem : !contem) return false;
+    } else if (f.field === "status") {
+      if (v == null) continue;
+      const bate = v === "unread" ? !m.lido : m.lido;
+      if (f.operator === "is_not" ? bate : !bate) return false;
+    } else if (f.field === "flagged") {
+      if (v == null) continue;
+      const bate = v === "yes" ? m.sinalizado : !m.sinalizado;
+      if (f.operator === "is_not" ? bate : !bate) return false;
+    } else if (f.field === "files") {
+      if (v == null) continue;
+      const bate = v === "yes" ? m.temAnexos : !m.temAnexos;
+      if (f.operator === "is_not" ? bate : !bate) return false;
+    }
+    // `scope` → servidor (crFiltrar), ignorado no client-side.
+  }
+  return true;
 }
 
 // Quando a mensagem aberta é marcada como lida (#95). Espelha as três opções do
@@ -1675,8 +1710,8 @@ function MessageList({
   naoLidosPasta,
   contFlagged,
   contAnexos,
-  filtro,
-  onFiltro,
+  filtros,
+  onFiltros,
   filtrosOcultos,
   busca,
   setBusca,
@@ -1715,9 +1750,9 @@ function MessageList({
   naoLidosPasta: number;
   contFlagged: number | null;
   contAnexos: number | null;
-  filtro: FiltroLista;
-  onFiltro: (f: FiltroLista) => void;
-  filtrosOcultos: Set<FiltroLista>;
+  filtros: Filter<string>[];
+  onFiltros: (fs: Filter<string>[]) => void;
+  filtrosOcultos: Set<string>;
   busca: string;
   setBusca: (v: string) => void;
   ordenar: api.OrdenarMensagens;
@@ -1731,7 +1766,8 @@ function MessageList({
   idioma: string;
 }) {
   const listaRef = useRef<HTMLDivElement>(null);
-  const filtroGraph = ehFiltroGraph(filtro);
+  const filtroServidor = escopoDeFiltros(filtros);
+  const filtroGraph = filtroServidor !== null;
 
   // ESC limpa só a busca de texto (o filtro é global/persistido, controlado
   // pelo pai — não é resetado aqui).
@@ -1753,13 +1789,8 @@ function MessageList({
   // mais nada aqui.
   const filtrada = useMemo(() => {
     if (!mensagens) return [];
-    return mensagens.filter((m) => {
-      if (filtro === "unread" && m.lido) return false;
-      if (filtro === "flagged" && !m.sinalizado) return false;
-      if (filtro === "files" && !m.temAnexos) return false;
-      return true;
-    });
-  }, [mensagens, filtro]);
+    return mensagens.filter((m) => passaFiltrosClient(m, filtros));
+  }, [mensagens, filtros]);
 
   // Agrupamento por período + grupo Flagged no topo (#30). Só quando ordenado
   // por DATA e fora de busca/filtro-Graph (período segue a ordem; em busca e nos
@@ -1847,7 +1878,7 @@ function MessageList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtrada, AGRUPAR, colapsados, t, rotuloDePeriodo]);
 
-  const filtrando = busca.trim() !== "" || filtro !== "all";
+  const filtrando = busca.trim() !== "" || filtros.length > 0;
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
   // carrega a próxima (progressivo) até aparecer resultado ou acabar.
   useEffect(() => {
@@ -1890,58 +1921,91 @@ function MessageList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [faixaVisivel, linhas, pedirFotos]);
 
-  const comEstrela = mensagens?.filter((m) => m.sinalizado).length ?? 0;
-  const comAnexo = mensagens?.filter((m) => m.temAnexos).length ?? 0;
-  // Opções do filtro da lista (#31). Os 4 primeiros são client-side (com
-  // contador real da pasta); os 3 Graph não têm contador. mentions/invites
-  // somem quando o tenant não suporta (D6 — `filtrosOcultos`).
-  const filtroOpcoes = (
-    [
-    { id: "all", label: t.controlRoom.abaTodos, icon: <Inbox className="size-4" /> },
-    // não lidos = total REAL da pasta (não só os carregados na lista)
-    { id: "unread", label: t.controlRoom.abaNaoLidos, icon: <Mail className="size-4" />, n: naoLidosPasta },
-    // Flagged/Files = total REAL da pasta (fallback pro carregado enquanto carrega)
-    { id: "flagged", label: t.controlRoom.abaSinalizados, icon: <Flag className="size-4" />, n: contFlagged ?? comEstrela },
-    { id: "files", label: t.controlRoom.abaAnexos, icon: <Paperclip className="size-4" />, n: contAnexos ?? comAnexo },
-    { id: "tome", label: t.controlRoom.filtroToMe, icon: <User className="size-4" /> },
-    { id: "mentions", label: t.controlRoom.filtroMentions, icon: <AtSign className="size-4" /> },
-    { id: "invites", label: t.controlRoom.filtroInvites, icon: <CalendarCheck className="size-4" /> },
-    ] as { id: FiltroLista; label: string; icon: React.ReactNode; n?: number }[]
-  ).filter((o) => !filtrosOcultos.has(o.id));
-
-  // O @reui/filters (variante Radix) é um filter-builder: campo → operador →
-  // valor. Como o comportamento pedido é escolher UM filtro, modelamos um único
-  // campo `view` do tipo `select` com as 7 opções (single-select). O contador
-  // vai no rótulo da opção — o chip do componente não tem slot de badge.
-  const filtroCampos: FilterFieldConfig<FiltroLista>[] = [
-    {
-      key: "view",
-      label: t.controlRoom.filtroLabel,
-      icon: <ListFilter className="size-3.5" />,
-      type: "select",
-      // 7 opções: a busca dentro do submenu só atrapalharia.
-      searchable: false,
-      operators: [{ value: "is", label: t.controlRoom.filtroOperadorIs }],
-      options: filtroOpcoes.map((o) => ({
-        value: o.id,
-        label: o.n != null && o.n > 0 ? `${o.label} (${o.n})` : o.label,
-        icon: o.icon,
-      })),
-    },
+  // Campos do filter-builder reui (#31), combináveis com E (AND) via
+  // `allowMultiple`. Client-side (sobre a lista carregada): De, Status,
+  // Sinalizado, Anexos. Servidor (via `crFiltrar`): Escopo — Para mim / Me
+  // mencionam / Convites, 1 por vez. Nada de campo "view" único (que gerava o
+  // submenu "Filtro >" redundante que o PO reprovou): com vários campos reais o
+  // gatilho abre a LISTA de campos direto, como no exemplo da reui.
+  const OP_TEXTO: FilterOperator[] = [
+    { value: "contains", label: t.controlRoom.filtroOpContem },
+    { value: "not_contains", label: t.controlRoom.filtroOpNaoContem },
   ];
-  // "all" = sem filtro → nenhum chip, e o botão "Filtro" volta a aparecer
-  // (`allowMultiple={false}` esconde o botão enquanto houver filtro ativo).
-  // Id fixo pra não recriar o chip a cada render.
-  const filtrosAtivos: Filter<FiltroLista>[] =
-    filtro === "all"
-      ? []
-      : [{ id: "view", field: "view", operator: "is", values: [filtro] }];
+  const OP_SELECT: FilterOperator[] = [
+    { value: "is", label: t.controlRoom.filtroOperadorIs },
+    { value: "is_not", label: t.controlRoom.filtroOpNaoE },
+  ];
+  // D6: escopos que o tenant rejeitou (400) somem (`filtrosOcultos`).
+  const escopoOpcoes = (
+    [
+      { value: "tome", label: t.controlRoom.filtroToMe, icon: <User className="size-3.5" /> },
+      { value: "mentions", label: t.controlRoom.filtroMentions, icon: <AtSign className="size-3.5" /> },
+      { value: "invites", label: t.controlRoom.filtroInvites, icon: <CalendarCheck className="size-3.5" /> },
+    ] as FilterOption<string>[]
+  ).filter((o) => !filtrosOcultos.has(o.value as string));
 
-  // Single-select: o chip mais recente manda; lista vazia (X no chip) = "all".
-  function aoMudarFiltro(fs: Filter<FiltroLista>[]) {
-    const v = fs[fs.length - 1]?.values[0];
-    onFiltro(v != null && filtroOpcoes.some((o) => o.id === v) ? v : "all");
-  }
+  const filtroCampos: FilterFieldConfig<string>[] = [
+    {
+      key: "from",
+      label: t.controlRoom.filtroDe,
+      icon: <User className="size-3.5" />,
+      type: "text",
+      operators: OP_TEXTO,
+      defaultOperator: "contains",
+      placeholder: t.controlRoom.filtroDePlaceholder,
+    },
+    {
+      key: "status",
+      label: t.controlRoom.filtroStatus,
+      icon: <Mail className="size-3.5" />,
+      type: "select",
+      searchable: false,
+      operators: OP_SELECT,
+      options: [
+        { value: "unread", label: t.controlRoom.abaNaoLidos },
+        { value: "read", label: t.controlRoom.filtroLidos },
+      ],
+    },
+    {
+      key: "flagged",
+      label: t.controlRoom.abaSinalizados,
+      icon: <Flag className="size-3.5" />,
+      type: "select",
+      searchable: false,
+      operators: OP_SELECT,
+      options: [
+        { value: "yes", label: t.controlRoom.filtroSim },
+        { value: "no", label: t.controlRoom.filtroNao },
+      ],
+    },
+    {
+      key: "files",
+      label: t.controlRoom.abaAnexos,
+      icon: <Paperclip className="size-3.5" />,
+      type: "select",
+      searchable: false,
+      operators: OP_SELECT,
+      options: [
+        { value: "yes", label: t.controlRoom.filtroSim },
+        { value: "no", label: t.controlRoom.filtroNao },
+      ],
+    },
+    // Escopo só entra se houver ao menos uma opção não escondida (D6).
+    ...(escopoOpcoes.length > 0
+      ? [
+          {
+            key: "scope",
+            label: t.controlRoom.filtroEscopo,
+            icon: <ListFilter className="size-3.5" />,
+            type: "select" as const,
+            searchable: false,
+            // Escopo é resolvido no servidor; só "é" faz sentido.
+            operators: [{ value: "is", label: t.controlRoom.filtroOperadorIs }],
+            options: escopoOpcoes,
+          },
+        ]
+      : []),
+  ];
 
   // Teclado: ESC desfaz multi-seleção; Ctrl+A seleciona tudo (se já há ≥1);
   // ↑/↓ movem a seleção; Delete exclui.
@@ -2226,18 +2290,19 @@ function MessageList({
         <div className="flex items-center gap-1 px-3 pb-2">
           {/* Filtro da lista (#31) com o @reui/filters — variante RADIX,
               instalada do registry (`@reui/filters` em style `radix-nova`) e
-              usada literal. Um único campo `view` com as 7 opções: enquanto
-              não há filtro aparece o botão "Filtro"; escolhida uma opção, ela
-              vira o chip `Filtro · é · <opção>` com X pra voltar a "Todos". */}
-          <Filters<FiltroLista>
-            filters={filtrosAtivos}
+              usada literal, como FILTER-BUILDER multi-campo (o padrão do
+              exemplo da reui). O gatilho "Filtro" abre a lista de campos
+              direto (De, Status, Sinalizado, Anexos, Escopo); cada um vira um
+              chip `campo · operador · valor`, combináveis com E (`allowMultiple`).
+              `onChange` recebe o array completo → persistido no pai. */}
+          <Filters<string>
+            filters={filtros}
             fields={filtroCampos}
-            onChange={aoMudarFiltro}
+            onChange={onFiltros}
             size="sm"
-            allowMultiple={false}
-            showSearchInput={false}
             i18n={{
               addFilter: t.controlRoom.filtroLabel,
+              searchFields: t.controlRoom.filtroBuscarCampo,
               select: t.controlRoom.filtroSelecione,
             }}
           />
@@ -3340,13 +3405,21 @@ export function ControlRoomScreen({
   // global (D3) — sobrevive ao restart — mas resetado visualmente ao TROCAR de
   // pasta (efeito abaixo). Os 3 filtros Graph (tome/mentions/invites) buscam no
   // servidor via cr_filtrar; os 4 client-side são aplicados no MessageList.
-  const [filtro, setFiltro] = usePersistedState<FiltroLista>("bridge.filtroLista", "all");
-  const filtroGraph = ehFiltroGraph(filtro);
+  // Filtros do builder (#31), multi-condição (AND). Chave nova (`.v2`) porque o
+  // shape mudou de string única ("all"/…) para array de `Filter` — reusar a
+  // chave antiga quebraria o parse do valor persistido. Global + persistido;
+  // resetado na troca de pasta (D3).
+  const [filtros, setFiltros] = usePersistedState<Filter<string>[]>(
+    "bridge.filtrosLista.v2",
+    []
+  );
+  const filtroServidor = escopoDeFiltros(filtros);
+  const filtroGraph = filtroServidor !== null;
   const [resultadosFiltro, setResultadosFiltro] = useState<EmailItem[] | null>(null);
   const [temMaisFiltro, setTemMaisFiltro] = useState(false);
   const proximoFiltroRef = useRef<string | null>(null);
-  // D6: filtros Graph que o tenant rejeitou (400) — escondidos silenciosamente.
-  const [filtrosOcultos, setFiltrosOcultos] = useState<Set<FiltroLista>>(new Set());
+  // D6: escopos Graph que o tenant rejeitou (400) — escondidos silenciosamente.
+  const [filtrosOcultos, setFiltrosOcultos] = useState<Set<string>>(new Set());
   const proximoBuscaRef = useRef<string | null>(null);
   const carregandoMaisRef = useRef(false);
   // pasta atual (pra closures assíncronas que precisam do valor mais novo).
@@ -4011,7 +4084,7 @@ export function ControlRoomScreen({
   useEffect(() => {
     if (filtroPastaRef.current !== pastaSel) {
       filtroPastaRef.current = pastaSel;
-      setFiltro("all");
+      setFiltros([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastaSel]);
@@ -4028,8 +4101,9 @@ export function ControlRoomScreen({
     let vivo = true;
     setResultadosFiltro(null); // null = spinner
     proximoFiltroRef.current = null;
+    const escopo = filtroServidor;
     api
-      .crFiltrar(pastaSel, filtro)
+      .crFiltrar(pastaSel, escopo!)
       .then((res) => {
         if (!vivo) return;
         proximoFiltroRef.current = res.proximo;
@@ -4038,12 +4112,12 @@ export function ControlRoomScreen({
       })
       .catch((e) => {
         if (!vivo) return;
-        // D6: tenant sem suporte (HTTP 400) → esconde a opção e volta pra "all",
-        // silenciosamente. Outros erros só deixam a lista vazia.
+        // D6: tenant sem suporte (HTTP 400) → esconde a opção e remove o chip de
+        // escopo, silenciosamente. Outros erros só deixam a lista vazia.
         const msg = String(e);
-        if ((filtro === "mentions" || filtro === "invites") && msg.includes("400")) {
-          setFiltrosOcultos((s) => new Set(s).add(filtro));
-          setFiltro("all");
+        if ((escopo === "mentions" || escopo === "invites") && msg.includes("400")) {
+          setFiltrosOcultos((s) => new Set(s).add(escopo));
+          setFiltros((fs) => fs.filter((f) => f.field !== "scope"));
         }
         setResultadosFiltro([]);
         setTemMaisFiltro(false);
@@ -4052,7 +4126,7 @@ export function ControlRoomScreen({
       vivo = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtro, filtroGraph, pastaSel, recarga]);
+  }, [filtroServidor, filtroGraph, pastaSel, recarga]);
 
   // Paginação do filtro Graph via @odata.nextLink; dedup igual à busca.
   async function carregarMaisFiltro() {
@@ -4061,7 +4135,7 @@ export function ControlRoomScreen({
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
     try {
-      const res = await api.crFiltrar(pastaSel, filtro, proximo);
+      const res = await api.crFiltrar(pastaSel, filtroServidor!, proximo);
       proximoFiltroRef.current = res.proximo;
       setResultadosFiltro((prev) => juntar(prev ?? [], res.itens));
       setTemMaisFiltro(res.proximo !== null);
@@ -4207,8 +4281,8 @@ export function ControlRoomScreen({
               naoLidosPasta={pastaAtual?.naoLidos ?? 0}
               contFlagged={contFlagged}
               contAnexos={contAnexos}
-              filtro={filtro}
-              onFiltro={setFiltro}
+              filtros={filtros}
+              onFiltros={setFiltros}
               filtrosOcultos={filtrosOcultos}
               busca={busca}
               setBusca={setBusca}
