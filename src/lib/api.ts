@@ -331,7 +331,13 @@ export async function crEmailCorpo(id: string): Promise<EmailDetalhe> {
       para: ["Wagner Consani"],
       cc: ["Financeiro VOAZ", "Ana Silva"],
       recebido: new Date().toISOString(),
-      corpo: "<p>Oi Wagner,</p><p>Preciso da sua aprovação para seguir com o pedido de compra da PROH. Fico no aguardo.</p><p>Abraço,<br/>João</p>",
+      corpo: `<p>Oi Wagner,</p><p>Preciso da sua aprovação para seguir com o pedido de compra da PROH. Fico no aguardo.</p><p>Abraço,<br/>João</p>
+<div id="Signature"><p style="color:#666">Atenciosamente,<br>João Pereira<br>PROH — Suprimentos<br>+55 11 99999-0000</p></div>
+<div id="appendonsend"></div>
+<hr style="display:inline-block;width:98%" tabindex="-1">
+<div id="divRplyFwdMsg" dir="ltr"><b>De:</b> Wagner Consani &lt;wagner@galaxie.works&gt;<br><b>Enviada:</b> quinta-feira, 23 de julho de 2026 10:12<br><b>Para:</b> João Pereira<br><b>Assunto:</b> Aprovação pendente — compra PROH</div>
+<div><p>João, bom dia. Consegue me mandar o comparativo de preços dos três fornecedores antes de eu aprovar? Preciso anexar ao processo.</p><p>Além disso, confirma o prazo de entrega: o cronograma da obra depende do material chegar até dia 12.</p><p>Obrigado,<br>Wagner</p></div>
+<blockquote style="border-left:1px solid #ccc;padding-left:8px;margin-left:4px"><p>De: João Pereira<br>Enviada: quarta-feira, 22 de julho de 2026 16:40</p><p>Wagner, abri o pedido no sistema. Valor total de R$ 48.320,00, condição 30/60/90.</p><p>Qualquer coisa me chama.</p></blockquote>`,
       corpoTipo: "html",
       anexos: [],
       webLink: "https://outlook.office365.com/mock",

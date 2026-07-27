@@ -76,6 +76,7 @@ import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
 import { usePersistedState } from "@/lib/persist";
 import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
+import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
 import DOMPurify from "dompurify";
 import { cn, comLoginHint } from "@/lib/utils";
 import type {
@@ -184,6 +185,8 @@ function CorpoHtml({
   // escuro, injetamos o Dark Reader real (como o MailVault) no <head> do srcDoc:
   // ele roda no load (sem flash) e o MutationObserver dele pega conteúdo tardio.
   const escuro = useTemaEscuro();
+  const { t } = useIdioma();
+  const rotuloAparado = t.controlRoom.conteudoAparado;
 
   const doc = useMemo(() => {
     // overflow:hidden garante ZERO scrollbar interna do iframe — nós ajustamos
@@ -200,21 +203,29 @@ function CorpoHtml({
       // overflow-wrap:anywhere quebra strings longas (URLs/tokens sem espaço)
       // que, sozinhas, inflavam o scrollWidth.
       `font-size:14px;line-height:1.5;padding:6px;overflow-wrap:anywhere}` +
-      `img{max-width:100%;height:auto}a{color:#7c3aed}</style>`;
+      `img{max-width:100%;height:auto}a{color:#7c3aed}` +
+      // Botão "⋯" da dobra do citado/assinatura (#92) — CSS puro, sem script.
+      estiloDobra(escuro) +
+      `</style>`;
     const dr = escuro ? getDarkReaderInlineScripts() : "";
     // Sanitiza o HTML do e-mail (tira <script>, handlers on*, javascript: etc.)
     // ANTES de injetar. Como habilitamos allow-scripts pro Dark Reader rodar, um
     // e-mail malicioso poderia rodar script na nossa origem — o DOMPurify fecha
     // isso, mantendo tabelas/estilos/imagens do e-mail intactos.
     const corpoLimpo = DOMPurify.sanitize(corpo, { ADD_ATTR: ["target"] });
+    // Dobra o histórico citado/assinatura DEPOIS do sanitize (senão o <details>
+    // que criamos seria removido) e ANTES de virar srcDoc — o toggle é o
+    // <details> nativo, então funciona também no tema claro, onde o sandbox
+    // NÃO tem allow-scripts.
+    const corpoDobrado = dobrarCitado(corpoLimpo, rotuloAparado);
     return (
       `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">` +
       `<meta name="color-scheme" content="light">` +
       baseline +
       dr +
-      `</head><body>${corpoLimpo}</body></html>`
+      `</head><body>${corpoDobrado}</body></html>`
     );
-  }, [corpo, escuro]);
+  }, [corpo, escuro, rotuloAparado]);
 
   useEffect(() => {
     const iframe = ref.current;
@@ -256,6 +267,12 @@ function CorpoHtml({
       d?.querySelectorAll("img").forEach((img) => {
         if (!img.complete) img.addEventListener("load", ajustar, { once: true });
       });
+      // Dobra do citado/assinatura (#92): abrir/fechar o <details> muda a
+      // altura (e pode mudar a largura -> zoom). O `toggle` NÃO borbulha, por
+      // isso escutamos na fase de CAPTURA, no documento. Este listener é código
+      // NOSSO (realm do app), então roda mesmo com o sandbox sem allow-scripts
+      // — mesmo mecanismo já usado no clique dos links, logo abaixo.
+      d?.addEventListener("toggle", ajustar, true);
       // Links do e-mail: o `target=_blank` não navega no Tauri (nada acontecia
       // ao clicar). Interceptamos o clique e abrimos http(s) no Navigator (aba
       // própria); outros esquemas (mailto/tel) vão pro handler padrão do SO.
