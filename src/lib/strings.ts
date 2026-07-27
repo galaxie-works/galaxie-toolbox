@@ -390,6 +390,8 @@ const pt = {
     semContatos: "Nenhum contato encontrado.",
     buscandoContatos: "Buscando contatos...",
     removerDestinatario: "Remover {nome}",
+    // Menção @ no corpo (#106)
+    semDestinatariosMencao: "Adicione destinatários em Para/Cc/Cco para mencionar.",
     // Agenda / Up Next
     upNext: "A seguir",
     semEventos: "Nada na agenda neste dia.",
@@ -952,6 +954,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     semContatos: "No contacts found.",
     buscandoContatos: "Searching contacts...",
     removerDestinatario: "Remove {nome}",
+    // Mention @ in the body (#106)
+    semDestinatariosMencao: "Add recipients in To/Cc/Bcc to mention them.",
     // Agenda / Up Next
     upNext: "Up Next",
     semEventos: "Nothing on the agenda this day.",
