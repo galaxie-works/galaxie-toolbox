@@ -2487,9 +2487,15 @@ fn cargo_de(item: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Busca pessoas para o autocomplete do compositor. Combina o "relevant people"
-/// do usuario (/me/people) com um $search no diretorio (/users). Se um dos dois
-/// falhar, usa so o que veio do outro; erro so quando AMBOS falham. People.Read.
+/// Busca pessoas para o autocomplete do compositor. Combina os contatos PESSOAIS
+/// do usuario (/me/contacts) com um $search no diretorio do tenant (/users). Se um
+/// dos dois falhar, usa so o que veio do outro; erro so quando AMBOS falham.
+///
+/// "Seus contatos" = /me/contacts (contatos que o usuario salvou — e onde
+/// `cr_salvar_contatos` grava quem ele envia e-mail). "De sua organizacao" =
+/// diretorio /users. Antes usavamos /me/people ("relevant people"), que retorna
+/// sobretudo COLEGAS da organizacao — por isso o PO via gente do tenant sob "Seus
+/// contatos" (#40). Escopos: Contacts.Read + User.Read.All.
 pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String> {
     let q = query.trim();
     if q.is_empty() {
@@ -2502,9 +2508,9 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
     let mut resultados: Vec<Pessoa> = Vec::new();
     let mut algum_ok = false;
 
-    // 1) Pessoas relevantes do usuario (contatos, colegas com quem troca e-mail).
+    // 1) Contatos PESSOAIS do usuario (/me/contacts) — a agenda dele de verdade.
     let url = format!(
-        "{GRAPH}/me/people?$search=\"{enc}\"&$top=8&$select=displayName,scoredEmailAddresses,jobTitle"
+        "{GRAPH}/me/contacts?$search=\"{enc}\"&$top=8&$select=displayName,emailAddresses,jobTitle"
     );
     // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
     match graph_enviar("pessoas:people", GRAPH_TETO_ESPERA_S, || {
@@ -2516,7 +2522,7 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
                 if let Some(items) = v["value"].as_array() {
                     for it in items {
                         let nome = it["displayName"].as_str().unwrap_or("").to_string();
-                        let email = it["scoredEmailAddresses"][0]["address"]
+                        let email = it["emailAddresses"][0]["address"]
                             .as_str()
                             .unwrap_or("")
                             .to_string();
@@ -2530,8 +2536,8 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
                 }
             }
         }
-        Ok(resp) => log::warn!("[pessoas] /me/people retornou {}", resp.status()),
-        Err(e) => log::warn!("[pessoas] /me/people falhou: {e}"),
+        Ok(resp) => log::warn!("[pessoas] /me/contacts retornou {}", resp.status()),
+        Err(e) => log::warn!("[pessoas] /me/contacts falhou: {e}"),
     }
 
     // 2) Diretorio da organizacao. $search em /users exige ConsistencyLevel.
