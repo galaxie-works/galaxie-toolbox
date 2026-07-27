@@ -106,6 +106,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
 import { usePersistedState } from "@/lib/persist";
+import { useDebounce } from "@/hooks/use-debounce";
 import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
 import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
 import DOMPurify from "dompurify";
@@ -3566,6 +3567,14 @@ export function ControlRoomScreen({
   const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agendaVisivel", false);
   const [pastas, setPastas] = useState<PastaEmail[] | null>(null);
   const [pastaSel, setPastaSel] = useState("inbox");
+  // Coalescing da troca de pasta (#87): a SELEÇÃO (`pastaSel`) muda na hora — o
+  // sidebar já destaca a pasta clicada e o cabeçalho troca de nome —, mas as
+  // CARGAS de rede (mensagens + contadores) seguem `pastaCarga`, a versão
+  // debounced. Clicar 5 pastas em 1s NÃO dispara 5 cargas: só a pasta em que o
+  // usuário parou é buscada. Debounce curto (180ms) pra não pesar ao navegar
+  // rápido sem atrasar perceptivelmente uma troca isolada.
+  const DEBOUNCE_PASTA_MS = 180;
+  const pastaCarga = useDebounce(pastaSel, DEBOUNCE_PASTA_MS);
   const [mensagens, setMensagens] = useState<EmailItem[] | null>(null);
   const [msgSel, setMsgSel] = useState<string | null>(null);
   const [eventoSel, setEventoSel] = useState<string | null>(null);
@@ -3717,21 +3726,48 @@ export function ControlRoomScreen({
     [arvorePastas, pastaSel]
   );
 
-  // Contadores reais das abas Flagged/Files (na pasta inteira, via $count).
-  // Só refaz na TROCA de pasta / refresh manual — NÃO em cada recargaPastas
-  // (o polling do delete bumpava recargaPastas e os refetch em rajada resolviam
-  // fora de ordem, fazendo o count piscar 8↔15). Entre refetches, os ajustes
-  // otimistas (flag/excluir) mantêm o número certo.
+  // Contadores reais das abas Flagged/Files (na pasta inteira). Só refaz na
+  // TROCA de pasta / refresh manual — NÃO em cada recargaPastas (o polling do
+  // delete bumpava recargaPastas e os refetch em rajada resolviam fora de ordem,
+  // fazendo o count piscar 8↔15). Entre refetches, os ajustes otimistas
+  // (flag/excluir) mantêm o número certo.
+  //
+  // Zera na troca de pasta / refresh (mostra o skeleton), mas NÃO na troca de
+  // ORDENAÇÃO: reordenar recarrega a lista, não muda os contadores da pasta —
+  // zerar ali só faria piscar null→n à toa. Segue `pastaCarga` (debounced): na
+  // navegação rápida não pisca a cada clique, só na pasta final.
   useEffect(() => {
-    let vivo = true;
     setContFlagged(null);
     setContAnexos(null);
-    api.crContar(pastaSel, "flagged").then((n) => vivo && setContFlagged(n)).catch(() => {});
-    api.crContar(pastaSel, "anexos").then((n) => vivo && setContAnexos(n)).catch(() => {});
+  }, [pastaCarga, recarga]);
+
+  // #87 — foreground-first + $batch: os contadores das abas são FUNDO. Só
+  // disparam DEPOIS que a lista visível carrega (`mensagens !== null`), pra carga
+  // inicial gastar o pool primeiro na pasta que o usuário vê. `crContadores` junta
+  // Flagged + Files num único `$batch` do Graph (1 request em vez de 2 `$count`).
+  // O `contadoresKeyRef` evita refazer a chamada quando o foreground recicla por
+  // OUTRA razão (troca de ordenação recarrega a lista, mas os contadores da pasta
+  // não mudam) — só (re)busca quando a pasta ou o refresh (recarga) mudam.
+  const foregroundPronto = mensagens !== null;
+  const contadoresKeyRef = useRef<string>("");
+  useEffect(() => {
+    if (!foregroundPronto) return; // espera a lista (foreground) antes do fundo
+    const chave = `${pastaCarga}|${recarga}`;
+    if (contadoresKeyRef.current === chave) return; // já buscado p/ esta pasta
+    contadoresKeyRef.current = chave;
+    let vivo = true;
+    api
+      .crContadores(pastaCarga)
+      .then((c) => {
+        if (!vivo) return;
+        setContFlagged(c.flagged);
+        setContAnexos(c.anexos);
+      })
+      .catch(() => {});
     return () => {
       vivo = false;
     };
-  }, [pastaSel, recarga]);
+  }, [pastaCarga, recarga, foregroundPronto]);
 
   // Detecção central de e-mails novos na Inbox: compara o topo da lista com o
   // último visto e dispara o toast rico (c-sonner-9). Chamada tanto pelo poll
@@ -4201,7 +4237,7 @@ export function ControlRoomScreen({
     carregadosRef.current = 0;
     deletadasRef.current = new Set();
     api
-      .crFolderMensagens(pastaSel, 0, ordenar, ordemDesc)
+      .crFolderMensagens(pastaCarga, 0, ordenar, ordemDesc)
       .then((ms) => {
         if (!vivo) return;
         carregadosRef.current = ms.length;
@@ -4217,7 +4253,7 @@ export function ControlRoomScreen({
         // data-asc), a 1ª página não contém o mais novo, o baseline ficaria
         // baixo e o poll seguinte dispararia toast espúrio (#54). Nesses casos
         // o poll (que SEMPRE busca date-desc) mantém o baseline sozinho. #43
-        if (pastaSel === "inbox" && ordenar === "data" && ordemDesc) notificarNovos(ms);
+        if (pastaCarga === "inbox" && ordenar === "data" && ordemDesc) notificarNovos(ms);
       })
       .catch(() => vivo && setMensagens([]));
     return () => {
@@ -4226,8 +4262,9 @@ export function ControlRoomScreen({
     // notificarNovos é estável (useCallback [idioma,t]); fora das deps de
     // propósito pra não recarregar a lista ao trocar idioma. ordenar/ordemDesc
     // ENTRAM: trocar a ordenação re-busca a lista já ordenada pelo Graph (#32).
+    // pastaCarga (debounced) no lugar de pastaSel: coalesce a troca rápida (#87).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastaSel, recarga, ordenar, ordemDesc]);
+  }, [pastaCarga, recarga, ordenar, ordemDesc]);
 
   // Pré-carga: busca a próxima página do servidor pela âncora (skip = já
   // buscado, não o tamanho da lista) e concatena deduplicando. Serve tanto pro
@@ -4238,7 +4275,7 @@ export function ControlRoomScreen({
     setCarregandoMais(true);
     try {
       const pagina = await api.crFolderMensagens(
-        pastaSel,
+        pastaCarga,
         carregadosRef.current,
         ordenar,
         ordemDesc

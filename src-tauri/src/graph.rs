@@ -2879,6 +2879,96 @@ pub fn cr_contar(store: &TokenStore, folder_id: &str, filtro: &str) -> Result<u6
         .map_err(|e| format!("resposta do /$count não é um número ('{corpo}'): {e}"))
 }
 
+/// Os dois contadores por-pasta que a UI mostra nas abas (Sinalizados / Com
+/// anexos), buscados juntos.
+#[derive(serde::Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Contadores {
+    pub flagged: u64,
+    pub anexos: u64,
+}
+
+/// Conta, em UMA chamada `$batch`, os dois contadores por-pasta que a UI exibe
+/// nas abas: Sinalizados (flagged) e Com anexos (files). Substitui as DUAS
+/// chamadas `/$count` separadas (`cr_contar` ×2) que a carga inicial disparava em
+/// paralelo — parte da rajada de 429 que o #64/#87 ataca. 2 requests → 1.
+///
+/// O contador de NÃO LIDOS de propósito NÃO entra aqui: ele já chega coalescido
+/// (uma request para TODAS as pastas) em `cr_mail_folders` e carrega os ajustes
+/// otimistas do front (marcar lido/excluir). Recontá-lo por pasta aqui seria
+/// redundante e reintroduziria a divergência/piscar que o front evita.
+///
+/// Cada sub-requisição é um GET `/$count` com `$filter` (exige
+/// `ConsistencyLevel: eventual`, setado por sub-requisição). O `$batch` inteiro
+/// passa pelo `graph_enviar` (pool + Retry-After + jitter, #64): o 429 costuma
+/// vir no ENVELOPE e é re-tentado ali. Se ainda assim uma SUB-resposta falhar, o
+/// contador daquela aba cai no fallback 0 (degradação graciosa aceita pelo AC —
+/// a lista nunca fica vazia por causa de um contador). Mail.Read.
+pub fn cr_contadores(store: &TokenStore, folder_id: &str) -> Result<Contadores, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // O `id` de cada sub-requisição casa a resposta de volta (o Graph não garante
+    // a ordem das sub-respostas). Mesmas expressões OData do `cr_contar`.
+    let filtros: [(&str, &str); 2] = [
+        ("flagged", "flag/flagStatus eq 'flagged'"),
+        ("anexos", "hasAttachments eq true"),
+    ];
+    let requests: Vec<serde_json::Value> = filtros
+        .iter()
+        .map(|(id, odata)| {
+            serde_json::json!({
+                "id": id,
+                "method": "GET",
+                "url": format!(
+                    "/me/mailFolders/{folder_id}/messages/$count?$filter={}",
+                    urlencoding::encode(odata)
+                ),
+                "headers": { "ConsistencyLevel": "eventual" },
+            })
+        })
+        .collect();
+    let body = serde_json::json!({ "requests": requests });
+    let url = format!("{GRAPH}/$batch");
+
+    let resp = graph_enviar("mail:contadores", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao contar: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/$batch (contadores) retornou {}", resp.status()));
+    }
+
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(contadores_de_batch(&v))
+}
+
+/// Extrai `Contadores` do JSON de resposta do `$batch` — lógica PURA (sem rede),
+/// para ser exercitada em teste. Casa cada sub-resposta pelo `id` (o Graph não
+/// garante a ordem), aceita o corpo do `/$count` como número JSON (42) OU string
+/// ("42"), e trata qualquer sub-resposta que não seja 200 como 0 (degradação
+/// graciosa: um contador que falhou não zera a lista nem estoura a chamada toda).
+fn contadores_de_batch(v: &serde_json::Value) -> Contadores {
+    let mut out = Contadores::default();
+    if let Some(items) = v["responses"].as_array() {
+        for it in items {
+            if it["status"].as_u64().unwrap_or(0) != 200 {
+                continue; // sub-falha → mantém 0 (degradação graciosa)
+            }
+            let n = it["body"]
+                .as_u64()
+                .or_else(|| it["body"].as_str().and_then(|s| s.trim().parse().ok()))
+                .unwrap_or(0);
+            match it["id"].as_str().unwrap_or("") {
+                "flagged" => out.flagged = n,
+                "anexos" => out.anexos = n,
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
 // ---------------------------------------------------------------------------
 // Testes do throttling (#64) — evidência de QA.
 //
@@ -3312,6 +3402,56 @@ mod testes_throttling {
         assert!(min >= 2000 && max <= 4000, "esperado 2000..4000ms, veio {min}..{max}ms");
         println!("[QA #64] sem Retry-After (tentativa 2): {min}..{max}ms - nunca 0ms");
         assert!(min > 0, "nunca pode ser 0ms (re-tentativa imediata re-sincroniza a rajada)");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Testes do $batch dos contadores (#87) — prova de que 1 request devolve os
+// dois contadores certos, casando por id (ordem não garantida), aceitando corpo
+// número OU string, e degradando pra 0 numa sub-resposta que falhou.
+//
+// Rodar: cargo test --lib graph::testes_contadores
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod testes_contadores {
+    use super::*;
+
+    #[test]
+    fn casa_por_id_fora_de_ordem_e_aceita_numero_ou_string() {
+        // Sub-respostas propositalmente FORA de ordem (anexos antes de flagged) e
+        // com corpos de tipos diferentes: número JSON e string — os dois válidos.
+        let v = serde_json::json!({
+            "responses": [
+                { "id": "anexos",  "status": 200, "body": "42" },
+                { "id": "flagged", "status": 200, "body": 7 }
+            ]
+        });
+        let c = contadores_de_batch(&v);
+        assert_eq!(c.flagged, 7, "flagged casou pelo id, não pela posição");
+        assert_eq!(c.anexos, 42, "anexos aceitou o corpo em string");
+    }
+
+    #[test]
+    fn sub_resposta_com_erro_degrada_para_zero() {
+        // flagged OK; anexos tomou 429 (raro, mas possível numa sub-resposta): o
+        // contador que falhou vira 0 em vez de derrubar a chamada inteira (AC:
+        // "degradação graciosa dos contadores é aceitável").
+        let v = serde_json::json!({
+            "responses": [
+                { "id": "flagged", "status": 200, "body": 3 },
+                { "id": "anexos",  "status": 429, "body": { "error": {} } }
+            ]
+        });
+        let c = contadores_de_batch(&v);
+        assert_eq!(c.flagged, 3);
+        assert_eq!(c.anexos, 0, "sub-falha não pode virar lixo — cai em 0");
+    }
+
+    #[test]
+    fn respostas_ausentes_viram_zero() {
+        let c = contadores_de_batch(&serde_json::json!({}));
+        assert_eq!(c.flagged, 0);
+        assert_eq!(c.anexos, 0);
     }
 }
 
