@@ -2260,12 +2260,13 @@ pub fn cr_marcar_email(store: &TokenStore, id: &str, sinalizado: bool) -> Result
     let patch = serde_json::json!({ "flag": { "flagStatus": status } });
 
     let url = format!("{GRAPH}/me/messages/{id}");
-    let resp = client
-        .patch(&url)
-        .bearer_auth(&token)
-        .json(&patch)
-        .send()
-        .map_err(|e| format!("falha ao sinalizar o e-mail: {e}"))?;
+    // Sob o pool + retry central (#64): Retry-After + jitter. Escrita idempotente:
+    // grava um flagStatus FIXO ("flagged"/"notFlagged"), e o retry do pool só
+    // dispara em 429 (rejeitado antes de aplicar) — reenviar deixa o mesmo estado.
+    let resp = graph_enviar("mail:sinalizar", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&patch).send()
+    })
+    .map_err(|e| format!("falha ao sinalizar o e-mail: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("PATCH /me/messages retornou {}", resp.status()));
     }
@@ -2505,7 +2506,10 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
     let url = format!(
         "{GRAPH}/me/people?$search=\"{enc}\"&$top=8&$select=displayName,scoredEmailAddresses,jobTitle"
     );
-    match client.get(&url).bearer_auth(&token).send() {
+    // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
+    match graph_enviar("pessoas:people", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    }) {
         Ok(resp) if resp.status().is_success() => {
             algum_ok = true;
             if let Ok(v) = resp.json::<serde_json::Value>() {
@@ -2534,12 +2538,14 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
     let url = format!(
         "{GRAPH}/users?$search=\"displayName:{enc}\"&$top=8&$select=displayName,mail,userPrincipalName,jobTitle"
     );
-    match client
-        .get(&url)
-        .bearer_auth(&token)
-        .header("ConsistencyLevel", "eventual")
-        .send()
-    {
+    // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
+    match graph_enviar("pessoas:diretorio", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+    }) {
         Ok(resp) if resp.status().is_success() => {
             algum_ok = true;
             if let Ok(v) = resp.json::<serde_json::Value>() {
@@ -2631,12 +2637,19 @@ pub fn cr_enviar_novo(
         "saveToSentItems": true
     });
 
-    let resp = client
-        .post(format!("{GRAPH}/me/sendMail"))
-        .bearer_auth(&token)
-        .json(&body)
-        .send()
-        .map_err(|e| format!("falha ao enviar o e-mail: {e}"))?;
+    // Sob o pool + retry central (#64): concorrência + Retry-After + jitter.
+    // ⚠️ sendMail NÃO é idempotente, mas o retry aqui é SEGURO porque
+    // `graph_enviar` só re-tenta em 429 — e um 429 é rejeição ANTES de processar
+    // (a mensagem não chegou a ser enviada), então reenviar não duplica o envio.
+    // Erro de transporte/timeout (envio AMBÍGUO, que pode ter aplicado) NÃO é
+    // re-tentado: `graph_enviar` propaga o erro do reqwest na hora. 5xx também não
+    // re-tenta (devolve a resposta e o chamador vira erro). Ou seja: cega
+    // reemissão de um sendMail já potencialmente aplicado nunca acontece.
+    let url = format!("{GRAPH}/me/sendMail");
+    let resp = graph_enviar("mail:enviar", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao enviar o e-mail: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("envio retornou {}", resp.status()));
     }
@@ -2664,7 +2677,10 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
             "{GRAPH}/me/contacts?$filter={}&$top=1",
             urlencoding::encode(&filtro)
         );
-        let existe = match client.get(&url).bearer_auth(&token).send() {
+        // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
+        let existe = match graph_enviar("contatos:existe", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        }) {
             Ok(resp) if resp.status().is_success() => resp
                 .json::<serde_json::Value>()
                 .ok()
@@ -2689,12 +2705,15 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
             "givenName": nome,
             "emailAddresses": [{ "address": email, "name": p.nome.trim() }]
         });
-        match client
-            .post(format!("{GRAPH}/me/contacts"))
-            .bearer_auth(&token)
-            .json(&body)
-            .send()
-        {
+        // Sob o pool + retry central (#64): Retry-After + jitter. ⚠️ Criar contato
+        // NÃO é idempotente, mas é seguro aqui: (a) só criamos DEPOIS de o filtro
+        // acima não achar duplicado, e (b) o retry do pool só dispara em 429
+        // (rejeitado antes de criar) — reenviar não gera contato em dobro. Erro de
+        // transporte/timeout e 5xx não re-tentam (propaga/retorna ao chamador).
+        let criar_url = format!("{GRAPH}/me/contacts");
+        match graph_enviar("contatos:criar", GRAPH_TETO_ESPERA_S, || {
+            client.post(&criar_url).bearer_auth(&token).json(&body).send()
+        }) {
             Ok(resp) if resp.status().is_success() => criados += 1,
             Ok(resp) => log::warn!("[contatos] criar '{email}' retornou {}", resp.status()),
             Err(e) => log::warn!("[contatos] criar '{email}' falhou: {e}"),
@@ -2713,11 +2732,11 @@ pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmai
         "{GRAPH}/me/mailFolders/{folder_id}/childFolders\
          ?$select=id,displayName,unreadItemCount,totalItemCount,childFolderCount&$top=50"
     );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .map_err(|e| format!("falha ao ler as subpastas: {e}"))?;
+    // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
+    let resp = graph_enviar("mail:subpastas", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler as subpastas: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!("/me/mailFolders/childFolders retornou {}", resp.status()));
     }
@@ -3379,6 +3398,27 @@ mod testes_throttling {
         });
         assert_eq!(r.unwrap().status_u16(), 200);
         assert_eq!(tentativas, 1);
+        assert_eq!(vagas_livres(), GRAPH_MAX_CONCORRENTES);
+    }
+
+    /// SEGURANÇA DAS ESCRITAS (#97): o pool só re-tenta em 429. Um 5xx (ou
+    /// qualquer status != 429) é devolvido ao chamador SEM re-tentar. É essa
+    /// propriedade que torna seguro envolver operações NÃO-idempotentes
+    /// (`cr_enviar_novo`/sendMail, `cr_salvar_contatos`/criar contato) no
+    /// `graph_enviar`: só o 429 — rejeição ANTES de aplicar — dispara reenvio;
+    /// um 5xx ambíguo (que PODE ter aplicado) nunca é reemitido cegamente.
+    #[test]
+    fn erro_5xx_nao_re_tenta() {
+        let _t = trava_pool();
+        for status in [500u16, 502, 503, 400, 404] {
+            let mut tentativas = 0u8;
+            let r: Result<RespostaFake, ()> = executar_com_pool("qa-5xx", 5, || {
+                tentativas += 1;
+                Ok(RespostaFake { status, retry_after: None })
+            });
+            assert_eq!(r.unwrap().status_u16(), status);
+            assert_eq!(tentativas, 1, "status {status} NAO devia ter re-tentado");
+        }
         assert_eq!(vagas_livres(), GRAPH_MAX_CONCORRENTES);
     }
 
