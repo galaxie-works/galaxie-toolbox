@@ -407,6 +407,10 @@ const pt = {
     filtroNao: "Não",
     filtroEscopo: "Escopo",
     filtroBuscarCampo: "Buscar campo...",
+    filtroLimpar: "Limpar",
+    // Grupos de campos do builder (espelham "Basic"/"Select" do exemplo reui).
+    filtroGrupoBasico: "Básico",
+    filtroGrupoSelecao: "Seleção",
     // Operadores expostos nos chips.
     filtroOperadorIs: "é",
     filtroOpNaoE: "não é",
@@ -918,6 +922,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     filtroNao: "No",
     filtroEscopo: "Scope",
     filtroBuscarCampo: "Search field...",
+    filtroLimpar: "Clear",
+    filtroGrupoBasico: "Basic",
+    filtroGrupoSelecao: "Select",
     filtroOperadorIs: "is",
     filtroOpNaoE: "is not",
     filtroOpContem: "contains",
