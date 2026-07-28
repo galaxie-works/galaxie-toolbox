@@ -26,6 +26,7 @@ import type { SettingsItemId } from "@/store/settings-ui-slice";
 import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
+import { ThemeSettings } from "@/components/theme-settings";
 import { TemplatesEmail } from "@/components/templates-email";
 
 /**
@@ -90,7 +91,12 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             subtitle: "Set a background for your workspace.",
             node: <BackgroundSettings />,
           },
-          { key: "themes", title: "Themes", subtitle: "Switch between light, dark and more.", pending: 120 },
+          {
+            key: "themes",
+            title: "Themes",
+            subtitle: "Switch between light, dark and more.",
+            node: <ThemeSettings />,
+          },
           { key: "colors", title: "Colors", subtitle: "Pick the accent colors of the app.", pending: 121 },
           { key: "lock-screen", title: "Lock screen", subtitle: "Protect the app with a PIN.", pending: 122 },
         ],

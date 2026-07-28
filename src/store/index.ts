@@ -24,6 +24,14 @@ import {
 } from "./personalization-slice";
 import type { OrdenarMensagens } from "@/lib/api";
 import {
+  aplicarModoTema,
+  aplicarTemaVisual,
+  MODOS_TEMA,
+  TEMAS_VISUAIS,
+  type ModoTema,
+  type TemaVisual,
+} from "@/lib/tema";
+import {
   PREF_PADRAO,
   type PreferenciasNotificacao,
 } from "@/lib/sons-notificacao";
@@ -91,6 +99,34 @@ function gravarChave(chave: string, valor: unknown): void {
   }
 }
 
+function lerTexto<T extends string>(
+  chave: string,
+  permitidos: readonly T[]
+): T | undefined {
+  try {
+    const bruto = localStorage.getItem(chave);
+    if (bruto === null) return undefined;
+    let valor = bruto;
+    try {
+      const parsed = JSON.parse(bruto);
+      if (typeof parsed === "string") valor = parsed;
+    } catch {
+      // O formato legado de `galaxie-theme` é texto cru.
+    }
+    return permitidos.includes(valor as T) ? (valor as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function gravarTexto(chave: string, valor: string): void {
+  try {
+    localStorage.setItem(chave, valor);
+  } catch {
+    /* localStorage cheio/indisponível: só não persiste */
+  }
+}
+
 /** Todas as chaves reais no localStorage (pro removeItem limpar tudo). */
 const TODAS_CHAVES = [
   ...Object.values(UI_KEYS),
@@ -148,6 +184,22 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       PERSONALIZATION_KEYS.fundoEstrelado
     );
     if (fundoEstrelado !== undefined) state.fundoEstrelado = fundoEstrelado;
+    const modoTema = lerTexto<ModoTema>(
+      PERSONALIZATION_KEYS.modoTema,
+      MODOS_TEMA
+    );
+    if (modoTema !== undefined) {
+      state.modoTema = modoTema;
+      aplicarModoTema(modoTema);
+    }
+    const temaVisual = lerTexto<TemaVisual>(
+      PERSONALIZATION_KEYS.temaVisual,
+      TEMAS_VISUAIS
+    );
+    if (temaVisual !== undefined) {
+      state.temaVisual = temaVisual;
+      aplicarTemaVisual(temaVisual);
+    }
     return { state: state as AppPersistido, version: 0 };
   },
   setItem: (_name, value: StorageValue<AppPersistido>): void => {
@@ -171,6 +223,8 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     );
     gravarChave(PERSONALIZATION_KEYS.notificacoes, s.notificacoes);
     gravarChave(PERSONALIZATION_KEYS.fundoEstrelado, s.fundoEstrelado);
+    gravarTexto(PERSONALIZATION_KEYS.modoTema, s.modoTema);
+    gravarTexto(PERSONALIZATION_KEYS.temaVisual, s.temaVisual);
   },
   removeItem: (): void => {
     for (const chave of TODAS_CHAVES) {
@@ -214,6 +268,8 @@ export const useAppStore = create<AppStore>()(
         settingsFramesAbertos: s.settingsFramesAbertos,
         notificacoes: s.notificacoes,
         fundoEstrelado: s.fundoEstrelado,
+        modoTema: s.modoTema,
+        temaVisual: s.temaVisual,
       }),
     }
   )
