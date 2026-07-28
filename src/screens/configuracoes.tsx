@@ -32,6 +32,14 @@ import {
 } from "@/components/theme-settings";
 import { TemplatesEmail } from "@/components/templates-email";
 import { ColorSettings } from "@/components/color-settings";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { NodesIllustration } from "@/components/examples/c-empty-19";
 
 /**
  * Um frame colapsável = UMA sub-opção configurável do item do menu (c-frame-5
@@ -58,6 +66,11 @@ interface SettingsItem {
   frames?: SettingsFrame[];
   /** Subitens aninhados no sidebar (ex.: Galaxie Apps é agrupador do Bridge). */
   children?: SettingsItem[];
+  /**
+   * Empty state próprio (c-empty-19 literal). Quando presente, o item NÃO
+   * renderiza o header de contexto nem o placeholder — só este empty.
+   */
+  emptyState?: ReactNode;
 }
 
 interface SettingsSection {
@@ -74,6 +87,22 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
         label: "Accounts",
         description: "Manage the accounts connected to GALAXIE Toolbox.",
         icon: UserRound,
+        // c-empty-19 literal (radix-nova), sem botões: só header + ilustração.
+        emptyState: (
+          <div className="flex items-center justify-center p-4">
+            <Empty className="py-12">
+              <EmptyHeader>
+                <EmptyMedia>
+                  <NodesIllustration />
+                </EmptyMedia>
+                <EmptyTitle>Accounts</EmptyTitle>
+                <EmptyDescription>
+                  Multiple accounts are coming soon.
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </div>
+        ),
       },
       {
         id: "personalization",
@@ -338,30 +367,37 @@ export function ConfiguracoesScreen() {
         <SettingsNavigation selected={selectedItem} onSelect={setSelectedItem} />
 
         {/* Área de contexto PLANA (sem card/borda): título+descrição uma vez e,
-            abaixo, um frame colapsável por sub-opção. */}
+            abaixo, um frame colapsável por sub-opção. Itens com empty state
+            próprio (ex.: Accounts) renderizam SÓ o empty, sem header. */}
         <section aria-labelledby="settings-context-title" className="min-w-0 flex-1 overflow-y-auto pr-1">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5 rounded-md bg-secondary p-2 text-secondary-foreground">
-              <CurrentIcon className="size-4" aria-hidden="true" />
-            </div>
-            <div>
-              <h2 id="settings-context-title" className="text-lg font-semibold tracking-tight">
-                {current.label}
-              </h2>
-              <p className="mt-1 text-sm text-muted-foreground">{current.description}</p>
-            </div>
-          </div>
-
-          {frames.length > 0 ? (
-            <div className="mt-6 space-y-3">
-              {frames.map((frame) => (
-                <OptionFrame key={frame.key} owner={current.id} frame={frame} />
-              ))}
-            </div>
+          {current.emptyState ? (
+            current.emptyState
           ) : (
-            <p className="mt-6 text-sm text-muted-foreground">
-              No configurable options here yet.
-            </p>
+            <>
+              <div className="flex items-start gap-3">
+                <div className="mt-0.5 rounded-md bg-secondary p-2 text-secondary-foreground">
+                  <CurrentIcon className="size-4" aria-hidden="true" />
+                </div>
+                <div>
+                  <h2 id="settings-context-title" className="text-lg font-semibold tracking-tight">
+                    {current.label}
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">{current.description}</p>
+                </div>
+              </div>
+
+              {frames.length > 0 ? (
+                <div className="mt-6 space-y-3">
+                  {frames.map((frame) => (
+                    <OptionFrame key={frame.key} owner={current.id} frame={frame} />
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-6 text-sm text-muted-foreground">
+                  No configurable options here yet.
+                </p>
+              )}
+            </>
           )}
         </section>
       </div>
