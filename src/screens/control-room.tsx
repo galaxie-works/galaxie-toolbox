@@ -4629,6 +4629,13 @@ export function ControlRoomScreen({
   // `bridge.caixasCompartilhadas` preservada; seletor assina só este campo.
   const caixasCompartilhadas = useAppStore((s) => s.caixasCompartilhadas);
   const setCaixasCompartilhadas = useAppStore((s) => s.setCaixasCompartilhadas);
+  // Cache de sessão por pasta (#108): restaurar mensagens+paginação ao voltar
+  // pra uma pasta em vez de refetch. Ações são estáveis (Zustand); a leitura do
+  // cache é feita via getState() dentro do efeito pra NÃO re-disparar a carga a
+  // cada escrita no cache (não entra nas deps do efeito).
+  const setCachePasta = useAppStore((s) => s.setCachePasta);
+  const atualizarCachePasta = useAppStore((s) => s.atualizarCachePasta);
+  const limparCachePasta = useAppStore((s) => s.limparCachePasta);
   // Caixa ativa reseta pra própria (/me) a cada sessão — a lista é que persiste.
   const [caixaAtiva, setCaixaAtiva] = useState<string>(CAIXA_PROPRIA);
   const [adicionarCaixaAberto, setAdicionarCaixaAberto] = useState(false);
@@ -4743,6 +4750,28 @@ export function ControlRoomScreen({
   // Âncora de paginação: nº já buscado do servidor (skip). NÃO é mensagens.length
   // — a lista encolhe ao excluir, mas o skip do Graph continua avançando.
   const carregadosRef = useRef(0);
+  // Refs espelhando o estado atual pra montar a chave de cache (#108) mesmo
+  // dentro de closures assíncronas (poll, carregarMais) sem capturar valor velho.
+  const caixaAtivaRef = useRef(caixaAtiva);
+  caixaAtivaRef.current = caixaAtiva;
+  const ordenarRef = useRef(ordenar);
+  ordenarRef.current = ordenar;
+  const ordemDescRef = useRef(ordemDesc);
+  ordemDescRef.current = ordemDesc;
+  // Espelho de `mensagens` pro carregarMais montar a lista concatenada a gravar
+  // no cache sem depender de uma closure de valor antigo.
+  const mensagensRef = useRef(mensagens);
+  mensagensRef.current = mensagens;
+  // Chave do cache de sessão da pasta (#108). Escopada por caixa ativa (#111) +
+  // ordenação (#32) pra que caixa compartilhada e troca de sort não colidam.
+  const chaveCache = useCallback(
+    (pasta: string) =>
+      `${caixaAtivaRef.current}|${pasta}|${ordenarRef.current}|${ordemDescRef.current}`,
+    []
+  );
+  // Detecta se o efeito de carga foi disparado por refresh (recarga mudou) —
+  // nesse caso invalida o cache e refaz o fetch em vez de restaurar (#108).
+  const recargaAnteriorRef = useRef(recarga);
   // Ids excluídos de forma otimista: filtrados de qualquer fetch/append até o
   // Graph processar (evita a msg deletada "voltar" ao paginar/backfill).
   const deletadasRef = useRef<Set<string>>(new Set());
@@ -4866,8 +4895,10 @@ export function ControlRoomScreen({
   // aparecia" ao dar refresh depois de receber um e-mail (#43).
   const ultimoVistoRef = useRef<string | null>(null);
   const notificarNovos = useCallback(
-    (ms: EmailItem[]) => {
-      if (ms.length === 0) return;
+    // Retorna quantos e-mails novos detectou (0 no baseline) — o poll usa isso
+    // pra invalidar o cache da inbox só quando de fato chegou algo (#108).
+    (ms: EmailItem[]): number => {
+      if (ms.length === 0) return 0;
       // Baseline = o MAIOR recebido da lista, não ms[0]: com a inbox ordenável
       // (#32) o topo pode não ser o mais recente (ordem ≠ data / ascendente),
       // o que geraria toast espúrio/ausente no poll seguinte (#54).
@@ -4877,7 +4908,7 @@ export function ControlRoomScreen({
       );
       const anterior = ultimoVistoRef.current;
       ultimoVistoRef.current = maxRecebido;
-      if (anterior === null) return; // baseline: não avisa no 1º carregamento
+      if (anterior === null) return 0; // baseline: não avisa no 1º carregamento
       const novos = ms.filter((m) => m.recebido > anterior && !m.lido);
       // #48: toca o som configurado para "E-mails recebidos" uma vez por lote
       // (nada se o usuário escolheu "Não tocar nada").
@@ -4896,6 +4927,7 @@ export function ControlRoomScreen({
           },
         });
       }
+      return novos.length;
     },
     // idioma/t só mudam ao trocar idioma; setters são estáveis.
     [idioma, t]
@@ -4910,7 +4942,12 @@ export function ControlRoomScreen({
     const iv = setInterval(async () => {
       try {
         const msgs = await api.crFolderMensagens("inbox");
-        if (vivo) notificarNovos(msgs);
+        if (!vivo) return;
+        const novos = notificarNovos(msgs);
+        // Chegou e-mail novo enquanto o usuário estava parado: invalida o cache
+        // da inbox pra que ao voltar pra ela a lista seja rebuscada (não sirva
+        // uma versão sem os novos) — #108.
+        if (novos > 0) limparCachePasta(chaveCache("inbox"));
       } catch {
         /* silencioso: é só o aviso de novos e-mails */
       }
@@ -4919,7 +4956,7 @@ export function ControlRoomScreen({
       vivo = false;
       clearInterval(iv);
     };
-  }, [notificarNovos]);
+  }, [notificarNovos, limparCachePasta, chaveCache]);
 
   // Recarrega o que a mutação de uma PASTA invalidou: as contagens do sidebar
   // sempre; a LISTA só quando a pasta mexida é a que está aberta (senão a lista
@@ -5063,11 +5100,22 @@ export function ControlRoomScreen({
     setMensagens((prev) => prev?.map(fn) ?? prev);
     setResultadosBusca((prev) => prev?.map(fn) ?? prev);
     setResultadosFiltro((prev) => prev?.map(fn) ?? prev);
+    // Espelha no cache da pasta atual (#108): flag/lido não "voltam" ao retornar.
+    atualizarCachePasta(chaveCache(pastaCarga), (e) => ({
+      ...e,
+      mensagens: e.mensagens.map(fn),
+    }));
   };
   const removerNasListas = (ids: Set<string>) => {
     setMensagens((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
     setResultadosBusca((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
     setResultadosFiltro((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
+    // Espelha a remoção no cache (#108): o item excluído/movido não reaparece ao
+    // voltar. `carregados` (skip do Graph) é preservado de propósito.
+    atualizarCachePasta(chaveCache(pastaCarga), (e) => ({
+      ...e,
+      mensagens: e.mensagens.filter((m) => !ids.has(m.id)),
+    }));
   };
 
   // Marca lido/não-lido (otimista, nos dois sentidos): ajusta o ponto de
@@ -5264,6 +5312,9 @@ export function ControlRoomScreen({
     //    excluir usa) pra o backfill/paginação não trazer as mensagens de volta.
     ids.forEach((id) => deletadasRef.current.add(id));
     removerNasListas(idsSet);
+    // Invalida o cache do DESTINO (#108): a lista de lá agora está desatualizada
+    // (ganhou estes itens) — força rebusca na próxima visita em vez de servir stale.
+    limparCachePasta(chaveCache(destino));
     if (anexosFora > 0) ajustarContAnexos(-anexosFora);
     if (flaggedFora > 0) ajustarContFlagged(-flaggedFora);
     if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
@@ -5320,15 +5371,46 @@ export function ControlRoomScreen({
 
   // mensagens da pasta (1ª página); auto-seleciona a primeira e semeia o
   // baseline do polling quando é a inbox.
+  //
+  // #108: cache de sessão por pasta. Ao VOLTAR pra uma pasta já carregada
+  // (troca de pasta, sem refresh), RESTAURA mensagens + paginação do cache SEM
+  // refetch — preserva as páginas roladas e não repete requests ao Graph. Um
+  // refresh (recarga muda) invalida o cache e refaz o fetch (dados frescos).
   useEffect(() => {
     let vivo = true;
+    const chave = chaveCache(pastaCarga);
+    // Refresh manual/ressincronização mudou `recarga`: invalida e refaz o fetch.
+    const refreshForcado = recargaAnteriorRef.current !== recarga;
+    recargaAnteriorRef.current = recarga;
+    const store = useAppStore.getState();
+    if (refreshForcado) store.limparCachePasta(chave);
+    const cacheEntry = refreshForcado ? undefined : store.cachePastas[chave];
+
+    // Comum às duas vias: troca de pasta zera seleção e busca.
+    setSelecionados(new Set());
+    setBusca("");
+    carregandoMaisRef.current = false;
+    deletadasRef.current = new Set();
+
+    // VIA RESTAURAÇÃO: cache tem a pasta → repõe sem null-flash e sem rede.
+    if (cacheEntry) {
+      carregadosRef.current = cacheEntry.carregados;
+      setMensagens(cacheEntry.mensagens);
+      setTemMais(cacheEntry.temMais);
+      setMsgSel((cur) =>
+        cur && cacheEntry.mensagens.some((m) => m.id === cur)
+          ? cur
+          : (cacheEntry.mensagens[0]?.id ?? null)
+      );
+      return () => {
+        vivo = false;
+      };
+    }
+
+    // VIA FETCH: cache vazio (1ª visita ou invalidado) → busca página 0 e semeia.
     setMensagens(null);
     setTemMais(false);
-    setSelecionados(new Set());
-    setBusca(""); // troca de pasta zera a busca
-    carregandoMaisRef.current = false;
     carregadosRef.current = 0;
-    deletadasRef.current = new Set();
     api
       .crFolderMensagens(pastaCarga, 0, ordenar, ordemDesc)
       .then((ms) => {
@@ -5339,7 +5421,10 @@ export function ControlRoomScreen({
         // clicar "Responder" num toast já selecionou a msg antes do fetch);
         // senão pega a primeira.
         setMsgSel((cur) => (cur && ms.some((m) => m.id === cur) ? cur : (ms[0]?.id ?? null)));
-        setTemMais(ms.length === PAGINA);
+        const tem = ms.length === PAGINA;
+        setTemMais(tem);
+        // Semeia o cache da pasta com a 1ª página (#108).
+        setCachePasta(chave, { mensagens: ms, carregados: ms.length, temMais: tem });
         // Inbox: detecta e avisa e-mails novos (também no refresh manual). SÓ
         // quando a lista está em DATA-DESC — aí `ms` está com o mais novo no
         // topo e o baseline (max recebido) é confiável. Em outra ordem (ex.:
@@ -5374,8 +5459,17 @@ export function ControlRoomScreen({
         ordemDesc
       );
       carregadosRef.current += pagina.length; // avança pelo offset do servidor
-      setMensagens((prev) => juntar(prev ?? [], pagina));
-      setTemMais(pagina.length === PAGINA);
+      const proximo = juntar(mensagensRef.current ?? [], pagina);
+      const tem = pagina.length === PAGINA;
+      setMensagens(proximo);
+      setTemMais(tem);
+      // Persiste a página no cache da pasta (#108): ao voltar, a lista rolada
+      // volta inteira sem refetch. Usa a chave da pasta que ESTÁ carregada.
+      setCachePasta(chaveCache(pastaCarga), {
+        mensagens: proximo,
+        carregados: carregadosRef.current,
+        temMais: tem,
+      });
     } catch {
       /* silencioso */
     } finally {
