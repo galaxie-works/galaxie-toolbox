@@ -3,6 +3,7 @@ mod browser;
 mod config;
 mod estado;
 mod graph;
+mod lock_screen;
 mod system;
 
 use std::sync::Arc;
@@ -73,7 +74,34 @@ async fn logout(state: State<'_, Store>) -> Result<(), String> {
     *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = None;
     auth::limpar_refresh();
     estado::limpar_identidade();
+    lock_screen::resetar()?;
     Ok(())
+}
+
+#[tauri::command]
+async fn lock_status() -> Result<lock_screen::LockStatus, String> {
+    Ok(lock_screen::status())
+}
+
+#[tauri::command]
+async fn lock_set_pin(pin: String, current_pin: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || lock_screen::definir(&pin, current_pin.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn lock_disable_pin(pin: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || lock_screen::desabilitar(&pin))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn lock_verify_pin(pin: String) -> Result<lock_screen::PinResult, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(lock_screen::verificar(&pin)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Identidade em cache (foto/iniciais) pra pintar a tela de carregamento
@@ -867,6 +895,10 @@ pub fn run() {
             restore_session,
             detect_tenant,
             cached_identity,
+            lock_status,
+            lock_set_pin,
+            lock_disable_pin,
+            lock_verify_pin,
             list_sites,
             site_details,
             onedrive_folders,
