@@ -1,15 +1,14 @@
 import {
-  AppWindow,
   ChevronRight,
-  Mail,
   MonitorCog,
   Palette,
   Settings,
-  Sparkles,
   UserRound,
-  type LucideIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
+import { BridgeIcon } from "@/components/ui/icons/marca-anim";
+import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
+import { GalaxieSymbol } from "@/components/brand";
 import {
   Collapsible,
   CollapsibleContent,
@@ -49,7 +48,7 @@ interface SettingsItem {
   id: SettingsItemId;
   label: string;
   description: string;
-  icon: LucideIcon;
+  icon: ComponentType<{ className?: string }>;
   /** Sub-opções configuráveis (frames). Item sem frames = só título/descrição. */
   frames?: SettingsFrame[];
   /** Subitens aninhados no sidebar (ex.: Galaxie Apps é agrupador do Bridge). */
@@ -114,14 +113,14 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
         id: "galaxie-apps",
         label: "Galaxie Apps",
         description: "Configure the apps created by Galaxie.",
-        icon: Sparkles,
+        icon: GalaxieSymbol,
         // Agrupador: a configuração real vive no subitem Bridge.
         children: [
           {
             id: "bridge",
             label: "Bridge",
             description: "Configure the Bridge email client.",
-            icon: Mail,
+            icon: BridgeIcon,
             frames: [
               {
                 key: "email-templates",
@@ -143,7 +142,7 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
         id: "microsoft-365-copilot",
         label: "Microsoft 365 Copilot",
         description: "Manage Microsoft 365 Copilot integrations.",
-        icon: AppWindow,
+        icon: CopilotIcon,
       },
       {
         id: "windows",
@@ -207,7 +206,7 @@ function SettingsNavigation({
   return (
     <aside
       aria-label="Settings navigation"
-      className="w-full shrink-0 rounded-xl border bg-card p-2 md:w-64"
+      className="w-full shrink-0 overflow-y-auto rounded-xl border bg-card p-2 md:h-full md:w-64"
     >
       {SETTINGS_SECTIONS.map((section) => (
         <Collapsible key={section.label} defaultOpen className="group/settings-section">
@@ -298,7 +297,7 @@ export function ConfiguracoesScreen() {
   const frames = current.frames ?? [];
 
   return (
-    <div className="flex min-h-[34rem] flex-1 flex-col gap-4">
+    <div className="flex h-full flex-col gap-4">
       {/* Mesmo hero do Bridge: símbolo + título + subtítulo. */}
       <div className="flex shrink-0 items-center gap-3">
         <div className="flex size-11 items-center justify-center rounded-lg bg-secondary text-secondary-foreground">
@@ -317,7 +316,7 @@ export function ConfiguracoesScreen() {
 
         {/* Área de contexto PLANA (sem card/borda): título+descrição uma vez e,
             abaixo, um frame colapsável por sub-opção. */}
-        <section aria-labelledby="settings-context-title" className="min-w-0 flex-1">
+        <section aria-labelledby="settings-context-title" className="min-w-0 flex-1 overflow-y-auto pr-1">
           <div className="flex items-start gap-3">
             <div className="mt-0.5 rounded-md bg-secondary p-2 text-secondary-foreground">
               <CurrentIcon className="size-4" aria-hidden="true" />
