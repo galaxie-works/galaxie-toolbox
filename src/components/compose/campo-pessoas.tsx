@@ -52,6 +52,13 @@ export interface CampoPessoasProps {
   valor: string[];
   onChange: (v: string[]) => void;
   placeholder?: string;
+  /**
+   * Reporta os destinatários escolhidos como `Pessoa` (nome/e-mail/foto), não só
+   * os e-mails de `valor`. Usado pelo compose para alimentar o autocomplete de
+   * menção (@) no corpo com avatar + nome (#106). Dispara sempre que a lista de
+   * escolhidos muda.
+   */
+  onPessoas?: (pessoas: Pessoa[]) => void;
 }
 
 /** Grupo no formato que o Base UI espera em `items` (precisa da chave `items`). */
@@ -83,6 +90,7 @@ export function CampoPessoas({
   valor,
   onChange,
   placeholder,
+  onPessoas,
 }: CampoPessoasProps) {
   const { t } = useIdioma();
   const textos = t.controlRoom;
@@ -162,6 +170,13 @@ export function CampoPessoas({
       ),
     [valor, detalhes]
   );
+
+  // Espelha os escolhidos (com nome/foto) para o compose alimentar a menção @
+  // no corpo (#106). `selecionados` é memoizado por [valor, detalhes], então só
+  // dispara quando a lista realmente muda.
+  useEffect(() => {
+    onPessoas?.(selecionados);
+  }, [selecionados, onPessoas]);
 
   // Seções do popup: o endereço digitado primeiro (é o que o Enter/seta pega),
   // depois "Seus contatos" e "De sua organização". Seção vazia não aparece.

@@ -1,0 +1,293 @@
+import { create } from "zustand";
+import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
+
+import { createUiSlice, UI_KEYS, type UiPersistido, type UiSlice } from "./ui-slice";
+import { createListSlice, LIST_KEYS, type ListPersistido, type ListSlice } from "./list-slice";
+import {
+  createMailboxSlice,
+  MAILBOX_KEYS,
+  type MailboxPersistido,
+  type MailboxSlice,
+} from "./mailbox-slice";
+import {
+  createSettingsUiSlice,
+  SETTINGS_UI_KEYS,
+  type SettingsItemId,
+  type SettingsUiPersistido,
+  type SettingsUiSlice,
+} from "./settings-ui-slice";
+import {
+  createPersonalizationSlice,
+  PERSONALIZATION_KEYS,
+  type PersonalizationPersistido,
+  type PersonalizationSlice,
+} from "./personalization-slice";
+import type { OrdenarMensagens } from "@/lib/api";
+import {
+  aplicarModoTema,
+  aplicarTemaVisual,
+  MODOS_TEMA,
+  TEMAS_VISUAIS,
+  type ModoTema,
+  type TemaVisual,
+} from "@/lib/tema";
+import {
+  PREF_PADRAO,
+  type PreferenciasNotificacao,
+} from "@/lib/sons-notificacao";
+import type { MarcarLidoModo } from "./ui-slice";
+import {
+  aplicarCorDestaque,
+  corHexValida,
+} from "@/lib/cor-destaque";
+
+/**
+ * ============================================================================
+ *  STORE ÚNICO DO APP — Zustand + slices (épico #125)
+ * ============================================================================
+ *
+ * UM store pro app inteiro. Novos slices são compostos aqui — nunca criar outro
+ * `create()` nem guardar preferência em hook local.
+ *
+ * PADRÃO DE SLICES:
+ *   1. Cada domínio vira `*-slice.ts` exportando a interface + um
+ *      `createXSlice: StateCreator<AppStore, [["zustand/persist", unknown]], [], XSlice>`
+ *      (tipado contra o store COMBINADO) + as `X_KEYS` legadas + o `XPersistido`.
+ *   2. `AppStore` é a INTERSEÇÃO dos slices.
+ *   3. `create()` combina os creators com os mesmos args.
+ *   4. LEITURAS SEMPRE POR SELETOR — `useAppStore(s => s.zoom)`.
+ *
+ * PERSISTÊNCIA (preservando as chaves do usuário):
+ *   Um `PersistStorage` CUSTOM (`legacyStorage`) mapeia cada campo persistido pra
+ *   a MESMA chave/formato do `usePersistedState` (as `*_KEYS` de cada slice) — a
+ *   nav da Settings ganha `SETTINGS_KEY`. Sem blob novo → reabrir não reseta nada.
+ *   Novo campo persistido: registre a chave no slice e some no getItem/setItem/
+ *   removeItem/partialize aqui.
+ *
+ * COEXISTÊNCIA: estado ainda-não-migrado segue no `usePersistedState`/`useState`
+ * do control-room (ex.: filtros da lista). Nada quebra.
+ * ============================================================================
+ */
+
+/** Tipo do store combinado. Cresce por interseção conforme novos slices entram. */
+export type AppStore =
+  & UiSlice
+  & ListSlice
+  & MailboxSlice
+  & SettingsUiSlice
+  & PersonalizationSlice;
+
+/** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
+type AppPersistido = UiPersistido &
+  ListPersistido &
+  MailboxPersistido &
+  SettingsUiPersistido &
+  PersonalizationPersistido;
+
+// --- storage custom: mapeia o blob persistido pras chaves reais 1:1 -----------
+
+function lerChave<T>(chave: string): T | undefined {
+  try {
+    const bruto = localStorage.getItem(chave);
+    return bruto !== null ? (JSON.parse(bruto) as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function gravarChave(chave: string, valor: unknown): void {
+  try {
+    localStorage.setItem(chave, JSON.stringify(valor));
+  } catch {
+    /* localStorage cheio/indisponível: só não persiste (igual ao usePersistedState) */
+  }
+}
+
+function lerTexto<T extends string>(
+  chave: string,
+  permitidos: readonly T[]
+): T | undefined {
+  try {
+    const bruto = localStorage.getItem(chave);
+    if (bruto === null) return undefined;
+    let valor = bruto;
+    try {
+      const parsed = JSON.parse(bruto);
+      if (typeof parsed === "string") valor = parsed;
+    } catch {
+      // O formato legado de `galaxie-theme` é texto cru.
+    }
+    return permitidos.includes(valor as T) ? (valor as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function gravarTexto(chave: string, valor: string): void {
+  try {
+    localStorage.setItem(chave, valor);
+  } catch {
+    /* localStorage cheio/indisponível: só não persiste */
+  }
+}
+
+/** Todas as chaves reais no localStorage (pro removeItem limpar tudo). */
+const TODAS_CHAVES = [
+  ...Object.values(UI_KEYS),
+  ...Object.values(LIST_KEYS),
+  ...Object.values(MAILBOX_KEYS),
+  ...Object.values(SETTINGS_UI_KEYS),
+  ...Object.values(PERSONALIZATION_KEYS),
+];
+
+/**
+ * `PersistStorage` que NÃO usa uma chave única: lê/grava cada campo na sua chave
+ * legada, no mesmo formato do `usePersistedState`. Campos ausentes são omitidos →
+ * o `merge` do Zustand mantém o default do slice. Síncrono → o store hidrata no
+ * load do módulo (1ª renderização já vê os valores salvos, sem flash).
+ */
+const legacyStorage: PersistStorage<AppPersistido> = {
+  getItem: (): StorageValue<AppPersistido> | null => {
+    const state: Partial<AppPersistido> = {};
+    // UI
+    const zoom = lerChave<number>(UI_KEYS.zoom);
+    if (zoom !== undefined) state.zoom = zoom;
+    const grupos = lerChave<Record<string, string[]>>(UI_KEYS.gruposColapsados);
+    if (grupos !== undefined) state.gruposColapsados = grupos;
+    const sidebar = lerChave<boolean>(UI_KEYS.sidebarAberta);
+    if (sidebar !== undefined) state.sidebarAberta = sidebar;
+    const agenda = lerChave<boolean>(UI_KEYS.agendaAberta);
+    if (agenda !== undefined) state.agendaAberta = agenda;
+    const modo = lerChave<MarcarLidoModo>(UI_KEYS.marcarLidoModo);
+    if (modo !== undefined) state.marcarLidoModo = modo;
+    const atraso = lerChave<number>(UI_KEYS.marcarLidoAtraso);
+    if (atraso !== undefined) state.marcarLidoAtraso = atraso;
+    // Lista
+    const ordenar = lerChave<OrdenarMensagens>(LIST_KEYS.ordenar);
+    if (ordenar !== undefined) state.ordenar = ordenar;
+    const ordemDesc = lerChave<boolean>(LIST_KEYS.ordemDesc);
+    if (ordemDesc !== undefined) state.ordemDesc = ordemDesc;
+    const filtros = lerChave<ListPersistido["filtros"]>(LIST_KEYS.filtros);
+    if (filtros !== undefined) state.filtros = filtros;
+    // Mailbox
+    const caixas = lerChave<string[]>(MAILBOX_KEYS.caixasCompartilhadas);
+    if (caixas !== undefined) state.caixasCompartilhadas = caixas;
+    // Settings
+    const item = lerChave<SettingsItemId>(SETTINGS_UI_KEYS.selectedSettingsItem);
+    if (item !== undefined) state.selectedSettingsItem = item;
+    const frames = lerChave<Record<string, boolean>>(
+      SETTINGS_UI_KEYS.settingsFramesAbertos
+    );
+    if (frames !== undefined) state.settingsFramesAbertos = frames;
+    // Personalization
+    const notificacoes = lerChave<PreferenciasNotificacao>(
+      PERSONALIZATION_KEYS.notificacoes
+    );
+    if (notificacoes !== undefined) {
+      state.notificacoes = { ...PREF_PADRAO, ...notificacoes };
+    }
+    const fundoEstrelado = lerChave<boolean>(
+      PERSONALIZATION_KEYS.fundoEstrelado
+    );
+    if (fundoEstrelado !== undefined) state.fundoEstrelado = fundoEstrelado;
+    const modoTema = lerTexto<ModoTema>(
+      PERSONALIZATION_KEYS.modoTema,
+      MODOS_TEMA
+    );
+    if (modoTema !== undefined) {
+      state.modoTema = modoTema;
+      aplicarModoTema(modoTema);
+    }
+    const temaVisual = lerTexto<TemaVisual>(
+      PERSONALIZATION_KEYS.temaVisual,
+      TEMAS_VISUAIS
+    );
+    if (temaVisual !== undefined) {
+      state.temaVisual = temaVisual;
+      aplicarTemaVisual(temaVisual);
+    }
+    const corDestaque = lerChave<string>(
+      PERSONALIZATION_KEYS.corDestaque
+    );
+    if (corHexValida(corDestaque)) {
+      state.corDestaque = corDestaque.toLowerCase();
+      aplicarCorDestaque(state.corDestaque);
+    }
+    return { state: state as AppPersistido, version: 0 };
+  },
+  setItem: (_name, value: StorageValue<AppPersistido>): void => {
+    const s = value.state;
+    gravarChave(UI_KEYS.zoom, s.zoom);
+    gravarChave(UI_KEYS.gruposColapsados, s.gruposColapsados);
+    gravarChave(UI_KEYS.sidebarAberta, s.sidebarAberta);
+    gravarChave(UI_KEYS.agendaAberta, s.agendaAberta);
+    gravarChave(UI_KEYS.marcarLidoModo, s.marcarLidoModo);
+    gravarChave(UI_KEYS.marcarLidoAtraso, s.marcarLidoAtraso);
+    gravarChave(LIST_KEYS.ordenar, s.ordenar);
+    gravarChave(LIST_KEYS.ordemDesc, s.ordemDesc);
+    gravarChave(LIST_KEYS.filtros, s.filtros);
+    gravarChave(MAILBOX_KEYS.caixasCompartilhadas, s.caixasCompartilhadas);
+    gravarChave(
+      SETTINGS_UI_KEYS.selectedSettingsItem,
+      s.selectedSettingsItem
+    );
+    gravarChave(
+      SETTINGS_UI_KEYS.settingsFramesAbertos,
+      s.settingsFramesAbertos
+    );
+    gravarChave(PERSONALIZATION_KEYS.notificacoes, s.notificacoes);
+    gravarChave(PERSONALIZATION_KEYS.fundoEstrelado, s.fundoEstrelado);
+    gravarTexto(PERSONALIZATION_KEYS.modoTema, s.modoTema);
+    gravarTexto(PERSONALIZATION_KEYS.temaVisual, s.temaVisual);
+    gravarChave(PERSONALIZATION_KEYS.corDestaque, s.corDestaque);
+  },
+  removeItem: (): void => {
+    for (const chave of TODAS_CHAVES) {
+      try {
+        localStorage.removeItem(chave);
+      } catch {
+        /* ignora */
+      }
+    }
+  },
+};
+
+/**
+ * Store único do app. Novos slices devem ser compostos aqui, sem criar outro
+ * `create()` ou armazenar preferências em hooks locais.
+ */
+export const useAppStore = create<AppStore>()(
+  persist(
+    (...a) => ({
+      ...createUiSlice(...a),
+      ...createListSlice(...a),
+      ...createMailboxSlice(...a),
+      ...createSettingsUiSlice(...a),
+      ...createPersonalizationSlice(...a),
+    }),
+    {
+      name: "galaxie-toolbox.store",
+      storage: legacyStorage,
+      version: 0,
+      partialize: (s): AppPersistido => ({
+        zoom: s.zoom,
+        gruposColapsados: s.gruposColapsados,
+        sidebarAberta: s.sidebarAberta,
+        agendaAberta: s.agendaAberta,
+        marcarLidoModo: s.marcarLidoModo,
+        marcarLidoAtraso: s.marcarLidoAtraso,
+        ordenar: s.ordenar,
+        ordemDesc: s.ordemDesc,
+        filtros: s.filtros,
+        caixasCompartilhadas: s.caixasCompartilhadas,
+        selectedSettingsItem: s.selectedSettingsItem,
+        settingsFramesAbertos: s.settingsFramesAbertos,
+        notificacoes: s.notificacoes,
+        fundoEstrelado: s.fundoEstrelado,
+        modoTema: s.modoTema,
+        temaVisual: s.temaVisual,
+        corDestaque: s.corDestaque,
+      }),
+    }
+  )
+);

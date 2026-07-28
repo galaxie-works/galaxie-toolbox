@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.13.0"
+version = "0.14.0"
 description = "GALAXIE Toolbox"
 authors = ["Galaxie Works"]
 license = ""
@@ -36,6 +36,7 @@ tauri-plugin-window-state = "2.4.1"
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+argon2 = "0.5"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

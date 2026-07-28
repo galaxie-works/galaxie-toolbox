@@ -7,6 +7,13 @@ import {
   type FilterOperator,
   type FilterOption,
 } from "@/components/reui/filters";
+import {
+  DateSelector,
+  formatDateValue,
+  DEFAULT_DATE_SELECTOR_I18N,
+  type DateSelectorValue,
+  type DateSelectorI18nConfig,
+} from "@/components/reui/date-selector";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import {
@@ -36,6 +43,15 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Popover,
   PopoverContent,
@@ -79,17 +95,18 @@ import {
 } from "@/components/ui/alert-dialog";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
 import {
   Tooltip,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
@@ -112,7 +129,8 @@ import { useFotos, configurarDominioFotos } from "@/lib/fotos";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
-import { usePersistedState } from "@/lib/persist";
+import { useAppStore } from "@/store";
+import { tocarSomEscopo } from "@/lib/sons-notificacao";
 import { useDebounce } from "@/hooks/use-debounce";
 import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
 import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
@@ -161,8 +179,10 @@ import {
   Forward,
   Inbox,
   Mail,
+  Mailbox,
   MailOpen,
   MapPin,
+  Plus,
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
@@ -271,7 +291,10 @@ function CorpoHtml({
   // GLOBAL e persistido (não por-mensagem): a preferência sobrevive a fechar/
   // reabrir o app e a trocar de mensagem e voltar (decisão da issue #76 — o
   // leitor tem UM nível de zoom, como o zoom de página de um navegador).
-  const [fator, setFator] = usePersistedState("bridge.leitorZoom", 1);
+  // Zoom migrado pro ui slice do store (#126). Seletor evita re-render amplo;
+  // a chave localStorage `bridge.leitorZoom` é preservada pelo persist.
+  const fator = useAppStore((s) => s.zoom);
+  const setFator = useAppStore((s) => s.setZoom);
   // Ref pro fator (lido dentro dos listeners do iframe sem re-bindar) e ref pra
   // função de reaplicar o zoom (chamada pelo efeito que reage à mudança de fator).
   const fatorRef = useRef(fator);
@@ -1094,6 +1117,225 @@ function DialogNomePasta({
   );
 }
 
+// ===========================================================================
+// Caixas compartilhadas (#111) — seletor + dialog "Adicionar caixa…"
+// ===========================================================================
+
+/** Valor da própria caixa (/me), o padrão do seletor. */
+const CAIXA_PROPRIA = "me";
+/** Sentinela do item "Adicionar caixa…": nunca vira caixa ativa — só abre o
+ *  dialog (o Select do Radix precisa de um `value` não-vazio no item). */
+const CAIXA_ADICIONAR = "__adicionar__";
+
+/**
+ * Seletor de caixa no TOPO do sidebar do Bridge (#111). "Minha caixa" (/me) é o
+ * padrão; abaixo, as caixas compartilhadas adicionadas; por fim "Adicionar
+ * caixa…". Selecionar troca a caixa ativa; escolher "Adicionar…" abre o dialog.
+ *
+ * Nesta issue selecionar uma caixa compartilhada só TROCA o estado de caixa
+ * ativa e a sinaliza (o próprio trigger mostra qual está ativa) — a listagem do
+ * conteúdo dela é a #112. Colapsado, vira um ícone que abre o dialog direto.
+ */
+function SeletorCaixa({
+  caixas,
+  ativa,
+  onSelecionar,
+  onAdicionar,
+  colapsada,
+  t,
+}: {
+  caixas: string[];
+  ativa: string;
+  onSelecionar: (v: string) => void;
+  onAdicionar: () => void;
+  colapsada: boolean;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  if (colapsada) {
+    return (
+      <Button
+        size="icon"
+        variant="ghost"
+        onClick={onAdicionar}
+        aria-label={t.controlRoom.caixaAdicionarItem}
+        title={ativa === CAIXA_PROPRIA ? t.controlRoom.caixaMinha : ativa}
+        className={cn(ativa !== CAIXA_PROPRIA && "text-primary")}
+      >
+        <Mailbox />
+      </Button>
+    );
+  }
+  return (
+    <Select
+      value={ativa}
+      onValueChange={(v) => {
+        if (v === CAIXA_ADICIONAR) onAdicionar();
+        else onSelecionar(v);
+      }}
+    >
+      <SelectTrigger className="w-full" aria-label={t.controlRoom.caixaSeletor}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          <SelectItem value={CAIXA_PROPRIA}>
+            <span className="flex items-center gap-2">
+              <Inbox className="size-4 shrink-0 text-muted-foreground" />
+              <span className="truncate">{t.controlRoom.caixaMinha}</span>
+            </span>
+          </SelectItem>
+          {caixas.map((c) => (
+            <SelectItem key={c} value={c}>
+              <span className="flex items-center gap-2">
+                <Mailbox className="size-4 shrink-0 text-muted-foreground" />
+                <span className="truncate">{c}</span>
+              </span>
+            </SelectItem>
+          ))}
+        </SelectGroup>
+        <SelectSeparator />
+        <SelectItem value={CAIXA_ADICIONAR}>
+          <span className="flex items-center gap-2 text-muted-foreground">
+            <Plus className="size-4 shrink-0" />
+            <span>{t.controlRoom.caixaAdicionarItem}</span>
+          </span>
+        </SelectItem>
+      </SelectContent>
+    </Select>
+  );
+}
+
+/**
+ * Dialog "Adicionar caixa compartilhada" (#111). Valida o endereço na hora via
+ * `api.crValidarCaixa` (GET /users/{addr}/mailFolders/inbox no backend): 200
+ * adiciona; 403 → "você não tem acesso a essa caixa"; 404 → "endereço não
+ * encontrado"; precisa_relogin → "faça login novamente" (escopo Mail.Read.Shared
+ * novo na SCOPES, ainda fora do token da sessão atual).
+ */
+function DialogAdicionarCaixa({
+  existentes,
+  avisoRelogin,
+  onAdicionada,
+  onFechar,
+  t,
+}: {
+  existentes: string[];
+  /** Token atual sem Mail.Read.Shared: mostra o aviso de relogin já ao abrir. */
+  avisoRelogin: boolean;
+  onAdicionada: (endereco: string) => void;
+  onFechar: () => void;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  const [endereco, setEndereco] = useState("");
+  const [validando, setValidando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const limpo = endereco.trim().toLowerCase();
+  // Validação de forma no cliente (o backend revalida): reduz idas ao Graph.
+  const pareceEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(limpo);
+
+  async function confirmar() {
+    if (!pareceEmail) {
+      setErro(t.controlRoom.caixaEnderecoInvalido);
+      return;
+    }
+    if (existentes.includes(limpo)) {
+      setErro(t.controlRoom.caixaJaAdicionada);
+      return;
+    }
+    setValidando(true);
+    setErro(null);
+    try {
+      const r = await api.crValidarCaixa(limpo);
+      if (r.status === "ok") {
+        onAdicionada(r.endereco);
+        toast.success(preencher(t.controlRoom.caixaAdicionada, { addr: r.endereco }));
+        onFechar();
+      } else if (r.status === "sem_acesso") {
+        setErro(t.controlRoom.caixaSemAcesso);
+      } else if (r.status === "nao_encontrado") {
+        setErro(t.controlRoom.caixaNaoEncontrada);
+      } else {
+        setErro(t.controlRoom.caixaRelogin);
+      }
+    } catch {
+      setErro(t.controlRoom.caixaErro);
+    } finally {
+      setValidando(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open
+      onOpenChange={(aberto) => {
+        if (!aberto && !validando) onFechar();
+      }}
+    >
+      <DialogContent className="max-w-sm!">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!validando) confirmar();
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>{t.controlRoom.caixaDialogTitulo}</DialogTitle>
+            <DialogDescription>{t.controlRoom.caixaDialogDesc}</DialogDescription>
+          </DialogHeader>
+          {avisoRelogin ? (
+            <Alert variant="warning" className="mt-2">
+              <TriangleAlert />
+              <AlertDescription>{t.controlRoom.caixaRelogin}</AlertDescription>
+            </Alert>
+          ) : null}
+          <div className="grid gap-2 py-4">
+            <Label htmlFor="caixa-endereco">{t.controlRoom.caixaEnderecoRotulo}</Label>
+            <Input
+              id="caixa-endereco"
+              type="email"
+              autoFocus
+              value={endereco}
+              onChange={(e) => {
+                setEndereco(e.target.value);
+                setErro(null);
+              }}
+              placeholder={t.controlRoom.caixaEnderecoPlaceholder}
+              disabled={validando}
+              aria-invalid={erro !== null}
+              aria-describedby={erro ? "caixa-endereco-erro" : undefined}
+            />
+            {erro !== null ? (
+              <p id="caixa-endereco-erro" className="text-sm text-destructive">
+                {erro}
+              </p>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onFechar}
+              disabled={validando}
+            >
+              {t.controlRoom.cancelar}
+            </Button>
+            <Button type="submit" disabled={!pareceEmail || validando}>
+              {validando ? (
+                <>
+                  <Spinner className="size-4" /> {t.controlRoom.caixaValidando}
+                </>
+              ) : (
+                t.controlRoom.caixaAdicionarConfirmar
+              )}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function FolderSidebar({
   pastas,
   subpastas,
@@ -1111,6 +1353,10 @@ function FolderSidebar({
   onRenomearPasta,
   onExcluirPasta,
   onMoverPasta,
+  caixas,
+  caixaAtiva,
+  onSelecionarCaixa,
+  onAbrirAdicionarCaixa,
   colapsada,
   agendaAberta,
   onToggleAgenda,
@@ -1138,6 +1384,12 @@ function FolderSidebar({
     rotuloDestino: string,
     paiId?: string
   ) => void;
+  /** Caixas compartilhadas adicionadas (#111), por endereço. */
+  caixas: string[];
+  /** Caixa ativa: CAIXA_PROPRIA (/me) ou um endereço de `caixas`. */
+  caixaAtiva: string;
+  onSelecionarCaixa: (v: string) => void;
+  onAbrirAdicionarCaixa: () => void;
   colapsada: boolean;
   agendaAberta: boolean;
   onToggleAgenda: () => void;
@@ -1380,6 +1632,17 @@ function FolderSidebar({
         colapsada ? "w-16 items-center" : "w-52"
       )}
     >
+      {/* Seletor de caixa (#111): TOPO do sidebar. Minha caixa (/me) é o padrão;
+          caixas compartilhadas adicionadas + "Adicionar caixa…" abaixo. */}
+      <SeletorCaixa
+        caixas={caixas}
+        ativa={caixaAtiva}
+        onSelecionar={onSelecionarCaixa}
+        onAdicionar={onAbrirAdicionarCaixa}
+        colapsada={colapsada}
+        t={t}
+      />
+
       {colapsada ? (
         <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
           <PenSquare />
@@ -1619,10 +1882,290 @@ function passaFiltrosClient(m: EmailItem, filtros: Filter<string>[]): boolean {
       if (v == null) continue;
       const bate = v === "yes" ? m.temAnexos : !m.temAnexos;
       if (f.operator === "is_not" ? bate : !bate) return false;
+    } else if (f.field === "data") {
+      // Intervalo de datas (#110): o valor é um DateSelectorValue serializado
+      // (ISO) em values[0]. Reidrata, resolve o intervalo concreto e testa
+      // `início ≤ recebido ≤ fim`. Seleção incompleta = sem restrição (passa).
+      const dv = desserializarDataFiltro(v as string | undefined);
+      if (!dv) continue;
+      const range = resolveIntervaloData(dv);
+      if (!range) continue;
+      const quando = new Date(comZ(m.recebido)).getTime();
+      if (Number.isNaN(quando)) return false;
+      if (range.ini !== null && quando < range.ini) return false;
+      if (range.fim !== null && quando > range.fim) return false;
     }
     // `scope` → servidor (crFiltrar), ignorado no client-side.
   }
   return true;
+}
+
+// --- Filtro de intervalo de datas (#110) -----------------------------------
+// O DateSelector (reui) guarda a seleção num `DateSelectorValue` que contém
+// Dates (não sobrevivem a JSON cru) e campos de período (mês/trimestre/ano). O
+// filter-builder reui trabalha com `Filter<string>` e o localStorage serializa
+// o array inteiro. Guardamos o valor como JSON com as datas em ISO em
+// `values[0]` e reidratamos as Dates ao ler — mesmo shape `bridge.filtrosLista.v2`
+// do #31.
+function serializarDataFiltro(v: DateSelectorValue): string {
+  return JSON.stringify(v, (_k, val) =>
+    val instanceof Date ? val.toISOString() : val,
+  );
+}
+
+function desserializarDataFiltro(
+  s: string | undefined,
+): DateSelectorValue | undefined {
+  if (!s) return undefined;
+  try {
+    const raw = JSON.parse(s) as DateSelectorValue;
+    return {
+      ...raw,
+      startDate: raw.startDate ? new Date(raw.startDate) : undefined,
+      endDate: raw.endDate ? new Date(raw.endDate) : undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+const inicioDoDia = (d: Date) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+const fimDoDia = (d: Date) =>
+  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
+const inicioDoMes = (ano: number, mes: number) =>
+  new Date(ano, mes, 1, 0, 0, 0, 0).getTime();
+// `new Date(ano, mes+1, 0)` = último dia do mês `mes` (0-indexado).
+const fimDoMes = (ano: number, mes: number) =>
+  new Date(ano, mes + 1, 0, 23, 59, 59, 999).getTime();
+
+// Meses (0-indexados) que abrem/fecham cada período de um dado tipo/valor.
+// month: value é o próprio mês; quarter: 0→jan..; half-year: 0→jan/1→jul; year.
+function mesesDoPeriodo(
+  period: DateSelectorValue["period"],
+  value: number,
+): { mesIni: number; mesFim: number } {
+  switch (period) {
+    case "quarter":
+      return { mesIni: value * 3, mesFim: value * 3 + 2 };
+    case "half-year":
+      return { mesIni: value * 6, mesFim: value * 6 + 5 };
+    case "year":
+      return { mesIni: 0, mesFim: 11 };
+    default: // "month"
+      return { mesIni: value, mesFim: value };
+  }
+}
+
+// Faixa-base [s, e] (epoch ms) coberta pela seleção, ignorando o operador. Os
+// campos preenchidos espelham `formatDateValue`: day → startDate/endDate;
+// month/quarter/half-year/year → year+unidade OU rangeStart/rangeEnd.
+function faixaBaseData(v: DateSelectorValue): { s: number; e: number } | null {
+  if (v.period === "day") {
+    if (v.startDate && v.endDate) {
+      return { s: inicioDoDia(v.startDate), e: fimDoDia(v.endDate) };
+    }
+    if (v.startDate) {
+      return { s: inicioDoDia(v.startDate), e: fimDoDia(v.startDate) };
+    }
+    return null;
+  }
+  // Períodos calendáricos (mês/trimestre/semestre/ano).
+  const unidade =
+    v.period === "month"
+      ? v.month
+      : v.period === "quarter"
+        ? v.quarter
+        : v.period === "half-year"
+          ? v.halfYear
+          : 0; // "year" não usa unidade
+  if (v.rangeStart && v.rangeEnd) {
+    const ini = mesesDoPeriodo(v.period, v.rangeStart.value);
+    const fim = mesesDoPeriodo(v.period, v.rangeEnd.value);
+    return {
+      s: inicioDoMes(v.rangeStart.year, ini.mesIni),
+      e: fimDoMes(v.rangeEnd.year, fim.mesFim),
+    };
+  }
+  if (v.year !== undefined && (v.period === "year" || unidade !== undefined)) {
+    const { mesIni, mesFim } = mesesDoPeriodo(v.period, unidade ?? 0);
+    return { s: inicioDoMes(v.year, mesIni), e: fimDoMes(v.year, mesFim) };
+  }
+  return null;
+}
+
+/**
+ * Resolve o `DateSelectorValue` num intervalo concreto [ini, fim] (epoch ms,
+ * inclusivo; `null` = ilimitado daquele lado), honrando o operador da seleção:
+ * `is`/`between` = a faixa em si; `before` = tudo antes dela; `after` = tudo
+ * depois. Retorna `null` quando a seleção está incompleta (o filtro não
+ * restringe nada).
+ */
+function resolveIntervaloData(
+  v: DateSelectorValue,
+): { ini: number | null; fim: number | null } | null {
+  const base = faixaBaseData(v);
+  if (!base) return null;
+  switch (v.operator) {
+    case "before":
+      return { ini: null, fim: base.s - 1 };
+    case "after":
+      return { ini: base.e + 1, fim: null };
+    default: // "is" | "between"
+      return { ini: base.s, fim: base.e };
+  }
+}
+
+// i18n em português do DateSelector (o registry vem só em inglês). Trimestres
+// (Q1–Q4) e semestres (H1–H2) ficam como no padrão — são notação de negócio
+// usada também em BR e batem com o parser de linguagem natural do input.
+const DATE_SELECTOR_I18N_PT: Partial<DateSelectorI18nConfig> = {
+  selectDate: "Selecionar data",
+  apply: "Aplicar",
+  cancel: "Cancelar",
+  clear: "Limpar",
+  today: "Hoje",
+  filterTypes: { is: "é", before: "antes", after: "depois", between: "entre" },
+  periodTypes: {
+    day: "Dia",
+    month: "Mês",
+    quarter: "Trimestre",
+    halfYear: "Semestre",
+    year: "Ano",
+  },
+  months: [
+    "Janeiro",
+    "Fevereiro",
+    "Março",
+    "Abril",
+    "Maio",
+    "Junho",
+    "Julho",
+    "Agosto",
+    "Setembro",
+    "Outubro",
+    "Novembro",
+    "Dezembro",
+  ],
+  monthsShort: [
+    "Jan",
+    "Fev",
+    "Mar",
+    "Abr",
+    "Mai",
+    "Jun",
+    "Jul",
+    "Ago",
+    "Set",
+    "Out",
+    "Nov",
+    "Dez",
+  ],
+  quarters: ["Q1", "Q2", "Q3", "Q4"],
+  halfYears: ["H1", "H2"],
+  weekdays: [
+    "Domingo",
+    "Segunda",
+    "Terça",
+    "Quarta",
+    "Quinta",
+    "Sexta",
+    "Sábado",
+  ],
+  weekdaysShort: ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"],
+  placeholder: "Selecionar data...",
+  rangePlaceholder: "Selecionar intervalo...",
+};
+
+/**
+ * Campo "Data" do filter-builder reui (#110) como o `type: "custom"` do exemplo
+ * `c-filters-6` do PO: um Dialog (modal) com o `DateSelector` literal do
+ * registry. O valor vive serializado em `values[0]`; ao Aplicar, chama o
+ * `onChange` do reui com a string ISO. O gatilho do chip mostra o intervalo
+ * legível (ex.: "01/05/2025 - 10/05/2025") via `formatDateValue`.
+ */
+function SeletorDataFiltro({
+  values,
+  onChange,
+  t,
+  idioma,
+}: {
+  values: string[];
+  onChange: (values: string[]) => void;
+  t: ReturnType<typeof useIdioma>["t"];
+  idioma: string;
+}) {
+  const atual = desserializarDataFiltro(values?.[0]);
+  const [aberto, setAberto] = useState(false);
+  // `valorInicial` alimenta o DateSelector como valor de partida (semente),
+  // ESTÁVEL enquanto o modal fica aberto. `rascunho` acumula o que o
+  // DateSelector emite. NÃO realimentamos `rascunho` como `value`: o
+  // DateSelector reidrata o estado interno a partir de `value` (efeito próprio)
+  // e, se `value` mudasse a cada clique, ele zeraria a seleção do dia (o clique
+  // no calendário nunca "grudava"). Semente estável + rascunho separado quebra
+  // esse laço.
+  const [valorInicial, setValorInicial] = useState<DateSelectorValue | undefined>(
+    atual,
+  );
+  const [rascunho, setRascunho] = useState<DateSelectorValue | undefined>(atual);
+
+  const ehPt = idioma === "pt-BR";
+  const dsI18n = ehPt ? DATE_SELECTOR_I18N_PT : undefined;
+  const fmt = ehPt ? "dd/MM/yyyy" : "MM/dd/yyyy";
+  const rotulo = atual
+    ? formatDateValue(
+        atual,
+        ehPt ? { ...DEFAULT_DATE_SELECTOR_I18N, ...DATE_SELECTOR_I18N_PT } : undefined,
+        fmt,
+      )
+    : "";
+  const texto = rotulo || t.controlRoom.filtroDataSelecione;
+
+  // Ao abrir, semeia a partida e o rascunho com o valor persistido.
+  useEffect(() => {
+    if (aberto) {
+      const v = desserializarDataFiltro(values?.[0]);
+      setValorInicial(v);
+      setRascunho(v);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aberto]);
+
+  const aplicar = () => {
+    // Só persiste um intervalo REALMENTE resolvível (senão o chip fica vazio).
+    const resolvivel = rascunho && resolveIntervaloData(rascunho) !== null;
+    onChange(resolvivel ? [serializarDataFiltro(rascunho!)] : []);
+    setAberto(false);
+  };
+
+  return (
+    <Dialog open={aberto} onOpenChange={setAberto}>
+      <DialogTrigger className="outline-hidden">{texto}</DialogTrigger>
+      <DialogContent className="sm:max-w-lg" showCloseButton={false}>
+        <DialogHeader>
+          <DialogTitle>{t.controlRoom.filtroDataTitulo}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {t.controlRoom.filtroDataDescricao}
+          </DialogDescription>
+        </DialogHeader>
+        <DateSelector
+          value={valorInicial}
+          onChange={setRascunho}
+          showInput
+          label={t.controlRoom.filtroData}
+          inputHint={t.controlRoom.filtroDataDica}
+          i18n={dsI18n}
+          dayDateFormat={fmt}
+        />
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="outline">{t.controlRoom.cancelar}</Button>
+          </DialogClose>
+          <Button onClick={aplicar}>{t.controlRoom.filtroAplicar}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 // Quando a mensagem aberta é marcada como lida (#95). Espelha as três opções do
@@ -1986,10 +2529,10 @@ function MessageList({
   // encontra nada pra abrir o menu de contexto — a causa do "não há menu de
   // contexto em Deleted e Junk" (#86). Guardar por pasta mantém o estado do
   // usuário sem vazar de uma pasta pra outra.
-  const [colapsadosMapa, setColapsadosMapa] = usePersistedState<Record<string, string[]>>(
-    "bridge.gruposColapsados.v2",
-    {}
-  );
+  // Colapsos migrados pro ui slice (#126). Chave `bridge.gruposColapsados.v2`
+  // preservada pelo persist; seletor assina só este campo.
+  const colapsadosMapa = useAppStore((s) => s.gruposColapsados);
+  const setColapsadosMapa = useAppStore((s) => s.setGruposColapsados);
   const colapsadosArr = useMemo(
     () => colapsadosMapa[pastaId] ?? [],
     [colapsadosMapa, pastaId]
@@ -2146,6 +2689,29 @@ function MessageList({
     {
       group: t.controlRoom.filtroGrupoSelecao,
       fields: [
+        // Intervalo de datas (#110): campo `type: "custom"` com o DateSelector
+        // do registry num modal (padrão do exemplo `c-filters-6` do PO). O
+        // range é aplicado client-side (`passaFiltrosClient`) e combina por E
+        // (AND) com os demais. Único operador ("é") — o modo real (é/antes/
+        // depois/entre) mora no próprio DateSelectorValue.
+        {
+          key: "data",
+          label: t.controlRoom.filtroData,
+          icon: <CalendarDays className="size-3.5" />,
+          type: "custom",
+          operators: [
+            { value: "is", label: t.controlRoom.filtroOperadorIs },
+          ],
+          defaultOperator: "is",
+          customRenderer: ({ values, onChange }) => (
+            <SeletorDataFiltro
+              values={values}
+              onChange={onChange}
+              t={t}
+              idioma={idioma}
+            />
+          ),
+        },
         {
           key: "status",
           label: t.controlRoom.filtroStatus,
@@ -3238,26 +3804,33 @@ function BadgeAutenticacao({
     },
   }[nivel];
   const est = (v: string | null) => (v ?? "—");
+  // Tooltip canônico (#98): SEM TooltipProvider local — o provider único do app
+  // (delay/animação/seta padronizados) vive em src/main.tsx. Texto humano é o
+  // principal; a linha crua SPF/DKIM/DMARC fica discreta e secundária, e só
+  // aparece quando há dados (evita a "sopa" de traços no nível indisponível).
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="inline-flex cursor-default">
-            <Badge variant={cfg.variant} size="sm" className="shrink-0 gap-1">
-              <cfg.Icone />
-              {cfg.rotulo}
-            </Badge>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>{cfg.dica}</p>
-          <p className="mt-1 font-mono text-[0.65rem] opacity-80">
-            SPF: {est(resultado.spf)} · DKIM: {est(resultado.dkim)} · DMARC:{" "}
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex cursor-default">
+          <Badge variant={cfg.variant} size="sm" className="shrink-0 gap-1">
+            <cfg.Icone />
+            {cfg.rotulo}
+          </Badge>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-xs">
+        <p>{cfg.dica}</p>
+        {nivel !== "indisponivel" && (
+          <p className="mt-1.5 font-mono text-[0.65rem] opacity-70">
+            <span className="mr-1 font-sans opacity-80">
+              {t.controlRoom.segAutDetalhesTecnicos}:
+            </span>
+            SPF {est(resultado.spf)} · DKIM {est(resultado.dkim)} · DMARC{" "}
             {est(resultado.dmarc)}
           </p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+        )}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -4045,7 +4618,45 @@ export function ControlRoomScreen({
   // de pastas do Bridge (a Agenda pertence ao Bridge, não ao app principal).
   // Nasce FECHADA (chave nova, reseta persistidos antigos) pra fazer menos
   // requisições no startup — só carrega quando o usuário abre (#50).
-  const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agendaVisivel", false);
+  // Agenda migrada pro ui slice (#125). Chave `bridge.agendaVisivel` preservada.
+  const agendaAberta = useAppStore((s) => s.agendaAberta);
+  const setAgendaAberta = useAppStore((s) => s.setAgendaAberta);
+  // Caixas compartilhadas (#111): lista de endereços adicionados (persistida) +
+  // qual está ativa. Adicionar/validar/persistir/selecionar é o escopo desta
+  // issue; a LISTAGEM do conteúdo de uma caixa compartilhada é a #112 (por isso
+  // a caixa ativa por ora só troca o estado e mostra um placeholder "em breve").
+  // Caixas compartilhadas migradas pro mailbox slice (#125). Chave
+  // `bridge.caixasCompartilhadas` preservada; seletor assina só este campo.
+  const caixasCompartilhadas = useAppStore((s) => s.caixasCompartilhadas);
+  const setCaixasCompartilhadas = useAppStore((s) => s.setCaixasCompartilhadas);
+  // Cache de sessão por pasta (#108): restaurar mensagens+paginação ao voltar
+  // pra uma pasta em vez de refetch. Ações são estáveis (Zustand); a leitura do
+  // cache é feita via getState() dentro do efeito pra NÃO re-disparar a carga a
+  // cada escrita no cache (não entra nas deps do efeito).
+  const setCachePasta = useAppStore((s) => s.setCachePasta);
+  const atualizarCachePasta = useAppStore((s) => s.atualizarCachePasta);
+  const limparCachePasta = useAppStore((s) => s.limparCachePasta);
+  // Caixa ativa reseta pra própria (/me) a cada sessão — a lista é que persiste.
+  const [caixaAtiva, setCaixaAtiva] = useState<string>(CAIXA_PROPRIA);
+  const [adicionarCaixaAberto, setAdicionarCaixaAberto] = useState(false);
+  // O token atual traz Mail.Read.Shared? Falso ⇒ sinaliza relogin (escopo novo
+  // na SCOPES; sem consent admin — já concedido, ver AGENTS.md §1.1).
+  const [sharedEscopoOk, setSharedEscopoOk] = useState(true);
+  useEffect(() => {
+    let vivo = true;
+    api
+      .crMailSharedDisponivel()
+      .then((ok) => {
+        if (vivo) setSharedEscopoOk(ok);
+      })
+      .catch(() => {
+        /* falha ao checar escopo: não trava a UI, assume ok */
+      });
+    return () => {
+      vivo = false;
+    };
+  }, []);
+  const caixaCompartilhadaAtiva = caixaAtiva !== CAIXA_PROPRIA;
   const [pastas, setPastas] = useState<PastaEmail[] | null>(null);
   const [pastaSel, setPastaSel] = useState("inbox");
   // Coalescing da troca de pasta (#87): a SELEÇÃO (`pastaSel`) muda na hora — o
@@ -4064,13 +4675,16 @@ export function ControlRoomScreen({
   // (ações como excluir/responder não devem zerar o lazy load nem o scroll).
   const [recargaPastas, setRecargaPastas] = useState(0);
   // Colapsos persistem (o app guarda o estado que o usuário deixa).
-  const [sidebarAberta, setSidebarAberta] = usePersistedState("bridge.sidebar", true);
+  // Sidebar migrada pro ui slice (#126). Chave `bridge.sidebar` preservada.
+  const sidebarAberta = useAppStore((s) => s.sidebarAberta);
+  const setSidebarAberta = useAppStore((s) => s.setSidebarAberta);
   // Ordenação da lista (persistida): campo + direção → $orderby no Graph (#32).
-  const [ordenar, setOrdenar] = usePersistedState<api.OrdenarMensagens>(
-    "bridge.ordenar",
-    "data"
-  );
-  const [ordemDesc, setOrdemDesc] = usePersistedState("bridge.ordemDesc", true);
+  // Ordenação migrada pro list slice (#125). Chaves `bridge.ordenar` /
+  // `bridge.ordemDesc` preservadas; validação de campo fora-de-escopo no efeito abaixo.
+  const ordenar = useAppStore((s) => s.ordenar);
+  const setOrdenar = useAppStore((s) => s.setOrdenar);
+  const ordemDesc = useAppStore((s) => s.ordemDesc);
+  const setOrdemDesc = useAppStore((s) => s.setOrdemDesc);
   // Migração: sorts removidos do escopo (tamanho/importancia/flag — #60) que
   // ficaram no localStorage voltam pra "data", evitando estado inconsistente.
   useEffect(() => {
@@ -4079,14 +4693,13 @@ export function ControlRoomScreen({
   }, []);
   // Preferência de "marcar como lido" (#95), persistida: o app sempre guarda o
   // estado que o usuário deixa. Default = "imediato" (comportamento histórico).
-  const [marcarLidoModo, setMarcarLidoModo] = usePersistedState<MarcarLidoModo>(
-    "bridge.marcarLidoModo",
-    "imediato"
-  );
-  const [marcarLidoAtraso, setMarcarLidoAtraso] = usePersistedState<number>(
-    "bridge.marcarLidoAtraso",
-    MARCAR_LIDO_ATRASO_PADRAO
-  );
+  // Marcar-lido (#95) migrado pro ui slice (#126). Chaves `bridge.marcarLidoModo`
+  // e `bridge.marcarLidoAtraso` preservadas; validação de valores fora-da-faixa
+  // segue no efeito abaixo (localStorage é editável por fora).
+  const marcarLidoModo = useAppStore((s) => s.marcarLidoModo);
+  const setMarcarLidoModo = useAppStore((s) => s.setMarcarLidoModo);
+  const marcarLidoAtraso = useAppStore((s) => s.marcarLidoAtraso);
+  const setMarcarLidoAtraso = useAppStore((s) => s.setMarcarLidoAtraso);
   // localStorage é editável por fora (e pode ter sobra de versões antigas):
   // valor inválido volta ao padrão em vez de virar um timer NaN/eterno.
   useEffect(() => {
@@ -4117,17 +4730,18 @@ export function ControlRoomScreen({
   // shape mudou de string única ("all"/…) para array de `Filter` — reusar a
   // chave antiga quebraria o parse do valor persistido. Global + persistido;
   // resetado na troca de pasta (D3).
-  const [filtros, setFiltros] = usePersistedState<Filter<string>[]>(
-    "bridge.filtrosLista.v2",
-    []
-  );
+  // Filtros migrados pro list slice (#125). Chave `bridge.filtrosLista.v2`
+  // preservada; reset na troca de pasta segue no efeito abaixo.
+  const filtros = useAppStore((s) => s.filtros);
+  const setFiltros = useAppStore((s) => s.setFiltros);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
   const [resultadosFiltro, setResultadosFiltro] = useState<EmailItem[] | null>(null);
   const [temMaisFiltro, setTemMaisFiltro] = useState(false);
   const proximoFiltroRef = useRef<string | null>(null);
-  // D6: escopos Graph que o tenant rejeitou (400) — escondidos silenciosamente.
-  const [filtrosOcultos, setFiltrosOcultos] = useState<Set<string>>(new Set());
+  // #109: mantido sempre vazio (o D6 de esconder escopo no 400 foi removido — o
+  // filtro agora só mostra o empty state). A prop segue no filho por compat.
+  const [filtrosOcultos] = useState<Set<string>>(new Set());
   const proximoBuscaRef = useRef<string | null>(null);
   const carregandoMaisRef = useRef(false);
   // pasta atual (pra closures assíncronas que precisam do valor mais novo).
@@ -4136,6 +4750,28 @@ export function ControlRoomScreen({
   // Âncora de paginação: nº já buscado do servidor (skip). NÃO é mensagens.length
   // — a lista encolhe ao excluir, mas o skip do Graph continua avançando.
   const carregadosRef = useRef(0);
+  // Refs espelhando o estado atual pra montar a chave de cache (#108) mesmo
+  // dentro de closures assíncronas (poll, carregarMais) sem capturar valor velho.
+  const caixaAtivaRef = useRef(caixaAtiva);
+  caixaAtivaRef.current = caixaAtiva;
+  const ordenarRef = useRef(ordenar);
+  ordenarRef.current = ordenar;
+  const ordemDescRef = useRef(ordemDesc);
+  ordemDescRef.current = ordemDesc;
+  // Espelho de `mensagens` pro carregarMais montar a lista concatenada a gravar
+  // no cache sem depender de uma closure de valor antigo.
+  const mensagensRef = useRef(mensagens);
+  mensagensRef.current = mensagens;
+  // Chave do cache de sessão da pasta (#108). Escopada por caixa ativa (#111) +
+  // ordenação (#32) pra que caixa compartilhada e troca de sort não colidam.
+  const chaveCache = useCallback(
+    (pasta: string) =>
+      `${caixaAtivaRef.current}|${pasta}|${ordenarRef.current}|${ordemDescRef.current}`,
+    []
+  );
+  // Detecta se o efeito de carga foi disparado por refresh (recarga mudou) —
+  // nesse caso invalida o cache e refaz o fetch em vez de restaurar (#108).
+  const recargaAnteriorRef = useRef(recarga);
   // Ids excluídos de forma otimista: filtrados de qualquer fetch/append até o
   // Graph processar (evita a msg deletada "voltar" ao paginar/backfill).
   const deletadasRef = useRef<Set<string>>(new Set());
@@ -4259,8 +4895,10 @@ export function ControlRoomScreen({
   // aparecia" ao dar refresh depois de receber um e-mail (#43).
   const ultimoVistoRef = useRef<string | null>(null);
   const notificarNovos = useCallback(
-    (ms: EmailItem[]) => {
-      if (ms.length === 0) return;
+    // Retorna quantos e-mails novos detectou (0 no baseline) — o poll usa isso
+    // pra invalidar o cache da inbox só quando de fato chegou algo (#108).
+    (ms: EmailItem[]): number => {
+      if (ms.length === 0) return 0;
       // Baseline = o MAIOR recebido da lista, não ms[0]: com a inbox ordenável
       // (#32) o topo pode não ser o mais recente (ordem ≠ data / ascendente),
       // o que geraria toast espúrio/ausente no poll seguinte (#54).
@@ -4270,8 +4908,11 @@ export function ControlRoomScreen({
       );
       const anterior = ultimoVistoRef.current;
       ultimoVistoRef.current = maxRecebido;
-      if (anterior === null) return; // baseline: não avisa no 1º carregamento
+      if (anterior === null) return 0; // baseline: não avisa no 1º carregamento
       const novos = ms.filter((m) => m.recebido > anterior && !m.lido);
+      // #48: toca o som configurado para "E-mails recebidos" uma vez por lote
+      // (nada se o usuário escolheu "Não tocar nada").
+      if (novos.length > 0) tocarSomEscopo("emailRecebido");
       for (const m of novos.slice(0, 3)) {
         toastMensagem({
           nome: m.de,
@@ -4286,6 +4927,7 @@ export function ControlRoomScreen({
           },
         });
       }
+      return novos.length;
     },
     // idioma/t só mudam ao trocar idioma; setters são estáveis.
     [idioma, t]
@@ -4300,7 +4942,12 @@ export function ControlRoomScreen({
     const iv = setInterval(async () => {
       try {
         const msgs = await api.crFolderMensagens("inbox");
-        if (vivo) notificarNovos(msgs);
+        if (!vivo) return;
+        const novos = notificarNovos(msgs);
+        // Chegou e-mail novo enquanto o usuário estava parado: invalida o cache
+        // da inbox pra que ao voltar pra ela a lista seja rebuscada (não sirva
+        // uma versão sem os novos) — #108.
+        if (novos > 0) limparCachePasta(chaveCache("inbox"));
       } catch {
         /* silencioso: é só o aviso de novos e-mails */
       }
@@ -4309,7 +4956,7 @@ export function ControlRoomScreen({
       vivo = false;
       clearInterval(iv);
     };
-  }, [notificarNovos]);
+  }, [notificarNovos, limparCachePasta, chaveCache]);
 
   // Recarrega o que a mutação de uma PASTA invalidou: as contagens do sidebar
   // sempre; a LISTA só quando a pasta mexida é a que está aberta (senão a lista
@@ -4453,11 +5100,22 @@ export function ControlRoomScreen({
     setMensagens((prev) => prev?.map(fn) ?? prev);
     setResultadosBusca((prev) => prev?.map(fn) ?? prev);
     setResultadosFiltro((prev) => prev?.map(fn) ?? prev);
+    // Espelha no cache da pasta atual (#108): flag/lido não "voltam" ao retornar.
+    atualizarCachePasta(chaveCache(pastaCarga), (e) => ({
+      ...e,
+      mensagens: e.mensagens.map(fn),
+    }));
   };
   const removerNasListas = (ids: Set<string>) => {
     setMensagens((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
     setResultadosBusca((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
     setResultadosFiltro((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
+    // Espelha a remoção no cache (#108): o item excluído/movido não reaparece ao
+    // voltar. `carregados` (skip do Graph) é preservado de propósito.
+    atualizarCachePasta(chaveCache(pastaCarga), (e) => ({
+      ...e,
+      mensagens: e.mensagens.filter((m) => !ids.has(m.id)),
+    }));
   };
 
   // Marca lido/não-lido (otimista, nos dois sentidos): ajusta o ponto de
@@ -4654,6 +5312,9 @@ export function ControlRoomScreen({
     //    excluir usa) pra o backfill/paginação não trazer as mensagens de volta.
     ids.forEach((id) => deletadasRef.current.add(id));
     removerNasListas(idsSet);
+    // Invalida o cache do DESTINO (#108): a lista de lá agora está desatualizada
+    // (ganhou estes itens) — força rebusca na próxima visita em vez de servir stale.
+    limparCachePasta(chaveCache(destino));
     if (anexosFora > 0) ajustarContAnexos(-anexosFora);
     if (flaggedFora > 0) ajustarContFlagged(-flaggedFora);
     if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
@@ -4710,15 +5371,46 @@ export function ControlRoomScreen({
 
   // mensagens da pasta (1ª página); auto-seleciona a primeira e semeia o
   // baseline do polling quando é a inbox.
+  //
+  // #108: cache de sessão por pasta. Ao VOLTAR pra uma pasta já carregada
+  // (troca de pasta, sem refresh), RESTAURA mensagens + paginação do cache SEM
+  // refetch — preserva as páginas roladas e não repete requests ao Graph. Um
+  // refresh (recarga muda) invalida o cache e refaz o fetch (dados frescos).
   useEffect(() => {
     let vivo = true;
+    const chave = chaveCache(pastaCarga);
+    // Refresh manual/ressincronização mudou `recarga`: invalida e refaz o fetch.
+    const refreshForcado = recargaAnteriorRef.current !== recarga;
+    recargaAnteriorRef.current = recarga;
+    const store = useAppStore.getState();
+    if (refreshForcado) store.limparCachePasta(chave);
+    const cacheEntry = refreshForcado ? undefined : store.cachePastas[chave];
+
+    // Comum às duas vias: troca de pasta zera seleção e busca.
+    setSelecionados(new Set());
+    setBusca("");
+    carregandoMaisRef.current = false;
+    deletadasRef.current = new Set();
+
+    // VIA RESTAURAÇÃO: cache tem a pasta → repõe sem null-flash e sem rede.
+    if (cacheEntry) {
+      carregadosRef.current = cacheEntry.carregados;
+      setMensagens(cacheEntry.mensagens);
+      setTemMais(cacheEntry.temMais);
+      setMsgSel((cur) =>
+        cur && cacheEntry.mensagens.some((m) => m.id === cur)
+          ? cur
+          : (cacheEntry.mensagens[0]?.id ?? null)
+      );
+      return () => {
+        vivo = false;
+      };
+    }
+
+    // VIA FETCH: cache vazio (1ª visita ou invalidado) → busca página 0 e semeia.
     setMensagens(null);
     setTemMais(false);
-    setSelecionados(new Set());
-    setBusca(""); // troca de pasta zera a busca
-    carregandoMaisRef.current = false;
     carregadosRef.current = 0;
-    deletadasRef.current = new Set();
     api
       .crFolderMensagens(pastaCarga, 0, ordenar, ordemDesc)
       .then((ms) => {
@@ -4729,7 +5421,10 @@ export function ControlRoomScreen({
         // clicar "Responder" num toast já selecionou a msg antes do fetch);
         // senão pega a primeira.
         setMsgSel((cur) => (cur && ms.some((m) => m.id === cur) ? cur : (ms[0]?.id ?? null)));
-        setTemMais(ms.length === PAGINA);
+        const tem = ms.length === PAGINA;
+        setTemMais(tem);
+        // Semeia o cache da pasta com a 1ª página (#108).
+        setCachePasta(chave, { mensagens: ms, carregados: ms.length, temMais: tem });
         // Inbox: detecta e avisa e-mails novos (também no refresh manual). SÓ
         // quando a lista está em DATA-DESC — aí `ms` está com o mais novo no
         // topo e o baseline (max recebido) é confiável. Em outra ordem (ex.:
@@ -4764,8 +5459,17 @@ export function ControlRoomScreen({
         ordemDesc
       );
       carregadosRef.current += pagina.length; // avança pelo offset do servidor
-      setMensagens((prev) => juntar(prev ?? [], pagina));
-      setTemMais(pagina.length === PAGINA);
+      const proximo = juntar(mensagensRef.current ?? [], pagina);
+      const tem = pagina.length === PAGINA;
+      setMensagens(proximo);
+      setTemMais(tem);
+      // Persiste a página no cache da pasta (#108): ao voltar, a lista rolada
+      // volta inteira sem refetch. Usa a chave da pasta que ESTÁ carregada.
+      setCachePasta(chaveCache(pastaCarga), {
+        mensagens: proximo,
+        carregados: carregadosRef.current,
+        temMais: tem,
+      });
     } catch {
       /* silencioso */
     } finally {
@@ -4846,15 +5550,13 @@ export function ControlRoomScreen({
         setResultadosFiltro(res.itens.filter((m) => !deletadasRef.current.has(m.id)));
         setTemMaisFiltro(res.proximo !== null);
       })
-      .catch((e) => {
+      .catch(() => {
         if (!vivo) return;
-        // D6: tenant sem suporte (HTTP 400) → esconde a opção e remove o chip de
-        // escopo, silenciosamente. Outros erros só deixam a lista vazia.
-        const msg = String(e);
-        if ((escopo === "mentions" || escopo === "invites") && msg.includes("400")) {
-          setFiltrosOcultos((s) => new Set(s).add(escopo));
-          setFiltros((fs) => fs.filter((f) => f.field !== "scope"));
-        }
+        // #109: qualquer falha do filtro de escopo (inclusive o 400 de tenant sem
+        // suporte a mentions/invites) agora apenas mostra o EMPTY STATE padrão,
+        // mantendo o chip. Antes o D6 removia o chip e escondia a opção — o
+        // usuário via o filtro "sumir" e a lista piscar (decisão do PO: filtrar e
+        // apresentar o empty state, não fazer o filtro desaparecer).
         setResultadosFiltro([]);
         setTemMaisFiltro(false);
       });
@@ -4977,14 +5679,36 @@ export function ControlRoomScreen({
           onRenomearPasta={renomearPasta}
           onExcluirPasta={excluirPasta}
           onMoverPasta={moverPasta}
+          caixas={caixasCompartilhadas}
+          caixaAtiva={caixaAtiva}
+          onSelecionarCaixa={setCaixaAtiva}
+          onAbrirAdicionarCaixa={() => setAdicionarCaixaAberto(true)}
           colapsada={!sidebarAberta}
           agendaAberta={agendaAberta}
           onToggleAgenda={() => setAgendaAberta((v) => !v)}
           t={t}
         />
 
-        {/* Lista e detalhe compartilham o espaço, com splitter arrastável.
-            autoSaveId persiste a proporção que o usuário deixa. */}
+        {/* Caixa compartilhada ativa (#111): a LISTAGEM do conteúdo é a #112 —
+            aqui só sinalizamos qual caixa está ativa (o seletor no sidebar) e
+            mostramos um placeholder "em breve". A caixa /me segue intacta. */}
+        {caixaCompartilhadaAtiva ? (
+          <div className="flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-xl border bg-card">
+            <Empty className="py-10">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Mailbox />
+                </EmptyMedia>
+                <EmptyTitle>{caixaAtiva}</EmptyTitle>
+                <EmptyDescription>
+                  {t.controlRoom.caixaCompartilhadaDesc}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </div>
+        ) : (
+        /* Lista e detalhe compartilham o espaço, com splitter arrastável.
+            autoSaveId persiste a proporção que o usuário deixa. */
         <ResizablePanelGroup
           autoSaveId="bridge.layout"
           direction="horizontal"
@@ -5067,6 +5791,7 @@ export function ControlRoomScreen({
             )}
           </ResizablePanel>
         </ResizablePanelGroup>
+        )}
 
         {/* Card da Agenda no MESMO lugar de sempre (lado direito). Agora quem
             controla a visibilidade é o item do sidebar esquerdo (#50): visível =
@@ -5078,6 +5803,26 @@ export function ControlRoomScreen({
 
       <EventoDialog id={eventoSel} userEmail={user.email} onClose={() => setEventoSel(null)} />
       <NovaMensagemModal aberto={novaAberta} onClose={() => setNovaAberta(false)} t={t} />
+
+      {/* Dialog "Adicionar caixa compartilhada" (#111). Montado só quando abre
+          (com `key`) pra nascer limpo. Se o token não traz Mail.Read.Shared,
+          sinaliza relogin já ao abrir — sem travar (o backend também revalida). */}
+      {adicionarCaixaAberto && (
+        <DialogAdicionarCaixa
+          key="adicionar-caixa"
+          existentes={caixasCompartilhadas}
+          avisoRelogin={!sharedEscopoOk}
+          onAdicionada={(addr) => {
+            setCaixasCompartilhadas((atual) =>
+              atual.includes(addr) ? atual : [...atual, addr]
+            );
+            setCaixaAtiva(addr);
+            if (!sharedEscopoOk) toast.warning(t.controlRoom.caixaRelogin);
+          }}
+          onFechar={() => setAdicionarCaixaAberto(false)}
+          t={t}
+        />
+      )}
     </div>
   );
 }

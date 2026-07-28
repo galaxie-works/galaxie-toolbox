@@ -11,7 +11,11 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <IdiomaProvider>
-      {/* TooltipProvider é exigido pelos botões de toolbar do Plate (compose). */}
+      {/*
+        TooltipProvider ÚNICO do app (#98). Todos os tooltips (toolbar do
+        compose, sidebar principal, telas) usam este provider — delay alinhado
+        em 300ms. Não montar outro provider em subárvores.
+      */}
       <TooltipProvider delayDuration={300}>
         <App />
       </TooltipProvider>

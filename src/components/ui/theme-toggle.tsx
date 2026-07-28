@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
 import AnimatedToggle from "@/components/smoothui/animated-toggle";
 import { useIdioma } from "@/lib/idioma";
-import { aplicarTema, temaEscuro } from "@/lib/tema";
+import { useTemaEscuro } from "@/lib/tema";
+import { useAppStore } from "@/store";
 
 const SunIcon = () => (
   <svg
@@ -44,29 +44,13 @@ const MoonIcon = () => (
 /** Alterna claro/escuro. Ligado = tema escuro. A escolha fica salva. */
 export function ThemeToggle() {
   const { t } = useIdioma();
-  const [dark, setDark] = useState(temaEscuro);
-
-  useEffect(() => {
-    aplicarTema(dark);
-
-    // A barra de titulo e desenhada pelo Windows, nao pelo WebView: sem avisar
-    // a janela, ela fica clara com o app escuro. setTheme liga o modo escuro
-    // imersivo do Windows, e a moldura acompanha o tema escolhido.
-    if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
-      import("@tauri-apps/api/window")
-        .then(({ getCurrentWindow }) =>
-          getCurrentWindow().setTheme(dark ? "dark" : "light")
-        )
-        .catch(() => {
-          // versao sem a API ou permissao ausente: fica a moldura padrao
-        });
-    }
-  }, [dark]);
+  const dark = useTemaEscuro();
+  const setModoTema = useAppStore((state) => state.setModoTema);
 
   return (
     <AnimatedToggle
       checked={dark}
-      onChange={setDark}
+      onChange={(escuro) => setModoTema(escuro ? "dark" : "light")}
       label={t.tema.alternar}
       icons={{ on: <MoonIcon />, off: <SunIcon /> }}
       size="lg"

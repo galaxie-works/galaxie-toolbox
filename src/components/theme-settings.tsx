@@ -1,0 +1,178 @@
+import { MonitorCog, Moon, Sun, type LucideIcon } from "lucide-react";
+
+import { FramePanel } from "@/components/reui/frame";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  MODOS_TEMA,
+  TEMAS_VISUAIS,
+  type ModoTema,
+  type TemaVisual,
+} from "@/lib/tema";
+import { useAppStore } from "@/store";
+
+interface MoodOption {
+  value: TemaVisual;
+  label: string;
+  color: string;
+}
+
+interface StyleOption {
+  value: ModoTema;
+  label: string;
+  icon: LucideIcon;
+}
+
+const MOODS: MoodOption[] = [
+  {
+    value: "galaxie",
+    label: "Galaxie",
+    color: "oklch(0.518 0.253 323.949)",
+  },
+  {
+    value: "claude-plus",
+    label: "Claude",
+    color: "oklch(0.6171 0.1375 39.0427)",
+  },
+  {
+    value: "melancholik-mint",
+    label: "Mint",
+    color: "oklch(0.7193 0.0439 196.2166)",
+  },
+  {
+    value: "zen-inspired",
+    label: "Zen",
+    color: "oklch(0.852 0.0205 100.6306)",
+  },
+  {
+    value: "sunny-sprout",
+    label: "Spring",
+    color: "oklch(0.8274 0.0903 112.4121)",
+  },
+  {
+    value: "nordic-moss",
+    label: "Nordic moss",
+    color: "oklch(0.6411 0.0666 130.1256)",
+  },
+  {
+    value: "fallout",
+    label: "Fallout",
+    color: "oklch(0.5930 0.1524 52.0222)",
+  },
+];
+
+const STYLES: StyleOption[] = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: MonitorCog },
+];
+
+function modoValido(valor: string): valor is ModoTema {
+  return MODOS_TEMA.includes(valor as ModoTema);
+}
+
+function temaValido(valor: string): valor is TemaVisual {
+  return TEMAS_VISUAIS.includes(valor as TemaVisual);
+}
+
+/**
+ * Stacked card do Mood (paleta visual) — vive dentro do frame "Appearance"
+ * junto do Style (padrão c-frame-3: FramePanels empilhados num frame só, igual
+ * ao Sound & notifications). Label + descrição à esquerda; o select à direita.
+ * Select = ReUI c-select-17 (bullet colorido), persistido no useAppStore.
+ */
+export function MoodSettings() {
+  const temaVisual = useAppStore((state) => state.temaVisual);
+  const setTemaVisual = useAppStore((state) => state.setTemaVisual);
+
+  return (
+    <FramePanel>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Mood</h3>
+          <p className="text-sm text-muted-foreground">
+            Set the atmosphere and color palette for your workspace.
+          </p>
+        </div>
+        <Select
+          value={temaVisual}
+          onValueChange={(valor) => {
+            if (temaValido(valor)) setTemaVisual(valor);
+          }}
+        >
+          <SelectTrigger aria-label="Mood" className="w-56 shrink-0">
+            <SelectValue placeholder="Select a mood" />
+          </SelectTrigger>
+          <SelectContent position="popper" align="end">
+            <SelectGroup>
+              {MOODS.map((mood) => (
+                <SelectItem key={mood.value} value={mood.value}>
+                  <span className="flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className="size-1.5 rounded-full"
+                      style={{ backgroundColor: mood.color }}
+                    />
+                    <span>{mood.label}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+    </FramePanel>
+  );
+}
+
+/**
+ * Stacked card do Style (light/dark/system) — segundo card do frame "Appearance".
+ * Label + descrição à esquerda; o select à direita.
+ * Select = ReUI c-select-2 (ícone + caption), persistido no useAppStore.
+ */
+export function StyleSettings() {
+  const modoTema = useAppStore((state) => state.modoTema);
+  const setModoTema = useAppStore((state) => state.setModoTema);
+
+  return (
+    <FramePanel>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Style</h3>
+          <p className="text-sm text-muted-foreground">
+            Choose light, dark, or match your operating system.
+          </p>
+        </div>
+        <Select
+          value={modoTema}
+          onValueChange={(valor) => {
+            if (modoValido(valor)) setModoTema(valor);
+          }}
+        >
+          <SelectTrigger aria-label="Style" className="w-56 shrink-0">
+            <SelectValue placeholder="Select a style" />
+          </SelectTrigger>
+          <SelectContent position="popper" align="end">
+            <SelectGroup>
+              {STYLES.map((style) => {
+                const Icon = style.icon;
+                return (
+                  <SelectItem key={style.value} value={style.value}>
+                    <Icon className="text-muted-foreground size-4" />
+                    {style.label}
+                  </SelectItem>
+                );
+              })}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+    </FramePanel>
+  );
+}

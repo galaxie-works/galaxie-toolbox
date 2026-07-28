@@ -370,6 +370,12 @@ export default function App() {
               onNavegar={abrirUrlLivre}
             />
           </div>
+        ) : tela === "configuracoes" ? (
+          /* Fora do ScrollArea: altura cheia, sidebar 100% e a área de contexto
+             rola por dentro — mesmo padrão do Bridge. */
+          <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
+            <ConfiguracoesScreen />
+          </div>
         ) : tela === "control-room" ? null : (
         /* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
             design system em vez da nativa do sistema.
@@ -440,7 +446,6 @@ export default function App() {
             />
           )}
           {tela === "caminhos-longos" && <CaminhosLongosScreen />}
-          {tela === "configuracoes" && <ConfiguracoesScreen />}
           </main>
         </ScrollArea>
         )}

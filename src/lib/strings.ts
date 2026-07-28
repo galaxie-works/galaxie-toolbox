@@ -152,6 +152,22 @@ const pt = {
     descricao: "Preferências do aplicativo e da sua conta.",
   },
 
+  notificacoes: {
+    titulo: "Notificações",
+    subtitulo: "Escolha um som para cada tipo de aviso do Bridge.",
+    emailTitulo: "E-mails recebidos",
+    emailDescricao:
+      "Toca uma vez quando chegam novos e-mails na sua Caixa de entrada.",
+    mensagemTitulo: "Mensagens recebidas",
+    mensagemDescricao: "Toca quando você recebe uma nova mensagem de chat.",
+    sincronizacaoTitulo: "Problemas de sincronização",
+    sincronizacaoDescricao:
+      "Toca quando o Bridge encontra um erro ao sincronizar com o Microsoft 365.",
+    semSom: "Não tocar nada",
+    sonsDisponiveis: "Sons disponíveis",
+    preview: "Preview",
+  },
+
   templates: {
     titulo: "Templates de e-mail",
     descricao:
@@ -374,6 +390,8 @@ const pt = {
     semContatos: "Nenhum contato encontrado.",
     buscandoContatos: "Buscando contatos...",
     removerDestinatario: "Remover {nome}",
+    // Menção @ no corpo (#106)
+    semDestinatariosMencao: "Adicione destinatários em Para/Cc/Cco para mencionar.",
     // Agenda / Up Next
     upNext: "A seguir",
     semEventos: "Nada na agenda neste dia.",
@@ -417,6 +435,14 @@ const pt = {
     filtroOpContem: "contém",
     filtroOpNaoContem: "não contém",
     filtroSelecione: "Selecione...",
+    // Filtro de intervalo de datas (#110): campo "Data" com DateSelector no modal.
+    filtroData: "Data",
+    filtroDataSelecione: "Selecionar data",
+    filtroDataTitulo: "Filtrar por data",
+    filtroDataDescricao:
+      "Escolha um período para filtrar as mensagens por data.",
+    filtroDataDica: "Ex.: 2025, Q4, 05/10/2025",
+    filtroAplicar: "Aplicar",
     // Detalhe do evento
     organizador: "Organizador",
     local: "Local",
@@ -473,13 +499,17 @@ const pt = {
     segAutParcial: "Parcial",
     segAutFalhou: "Falha de autenticação",
     segAutIndisponivel: "Sem dados",
-    segAutTooltipAutenticado: "Remetente autenticado (SPF/DKIM/DMARC).",
-    segAutTooltipParcial: "Autenticação parcial — confirme o remetente.",
-    segAutTooltipFalhou: "Falha na autenticação — possível remetente forjado.",
-    segAutTooltipIndisponivel: "Não foi possível verificar a autenticação.",
+    segAutTooltipAutenticado:
+      "Remetente verificado — este e-mail passou nas checagens de autenticação (SPF, DKIM e DMARC).",
+    segAutTooltipParcial:
+      "Autenticação parcial — parte das checagens não passou. Confira o remetente antes de confiar.",
+    segAutTooltipFalhou:
+      "Falha de autenticação — este e-mail pode não ser de quem diz ser. Cuidado com links e anexos.",
+    segAutTooltipIndisponivel: "Sem dados de autenticação para este e-mail.",
+    segAutDetalhesTecnicos: "Detalhes técnicos",
     segReplyToTitulo: "As respostas vão para outro endereço",
     segReplyToDescricao:
-      "Responder envia para {enderecos}, diferente do remetente ({de}). Tática comum de phishing.",
+      "Ao responder, sua mensagem vai para {enderecos}, e não para o remetente ({de}). Isso é comum em phishing — confirme antes de responder.",
     // Compose / envio
     responderTodos: "Responder a todos",
     paraPlaceholder: "Para (separe por vírgula)",
@@ -503,6 +533,25 @@ const pt = {
     insightsUltimo: "Último contato",
     insightsFrequencia: "Frequência",
     insightsPorMes: "~{n}/mês",
+    // Caixas compartilhadas (#111)
+    caixaMinha: "Minha caixa",
+    caixaSeletor: "Caixa ativa",
+    caixaAdicionarItem: "Adicionar caixa…",
+    caixaDialogTitulo: "Adicionar caixa compartilhada",
+    caixaDialogDesc: "Digite o endereço da caixa compartilhada que você quer acessar.",
+    caixaEnderecoRotulo: "Endereço de e-mail",
+    caixaEnderecoPlaceholder: "Ex.: financeiro@empresa.com",
+    caixaEnderecoInvalido: "Digite um endereço de e-mail válido.",
+    caixaJaAdicionada: "Essa caixa já está no seletor.",
+    caixaValidando: "Validando acesso…",
+    caixaAdicionarConfirmar: "Adicionar",
+    caixaAdicionada: "Caixa {addr} adicionada.",
+    caixaSemAcesso: "Você não tem acesso a essa caixa.",
+    caixaNaoEncontrada: "Endereço não encontrado.",
+    caixaErro: "Não consegui validar a caixa.",
+    caixaRelogin: "Faça login novamente para acessar caixas compartilhadas.",
+    caixaCompartilhadaTitulo: "Caixa compartilhada",
+    caixaCompartilhadaDesc: "A leitura das mensagens desta caixa chega em breve.",
   },
   emBreveControlRoom: {
     descricao: "O painel de controle da Galaxie — sua visão geral. Em breve.",
@@ -666,6 +715,21 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
 
   configuracoes: {
     descricao: "App and account preferences.",
+  },
+
+  notificacoes: {
+    titulo: "Notifications",
+    subtitulo: "Pick a sound for each kind of Bridge alert.",
+    emailTitulo: "Received emails",
+    emailDescricao: "Plays once when new emails arrive in your Inbox.",
+    mensagemTitulo: "Received messages",
+    mensagemDescricao: "Plays when you get a new chat message.",
+    sincronizacaoTitulo: "Sync problems",
+    sincronizacaoDescricao:
+      "Plays when Bridge hits an error syncing with Microsoft 365.",
+    semSom: "Do not play a thing",
+    sonsDisponiveis: "Available sounds",
+    preview: "Preview",
   },
 
   templates: {
@@ -890,6 +954,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     semContatos: "No contacts found.",
     buscandoContatos: "Searching contacts...",
     removerDestinatario: "Remove {nome}",
+    // Mention @ in the body (#106)
+    semDestinatariosMencao: "Add recipients in To/Cc/Bcc to mention them.",
     // Agenda / Up Next
     upNext: "Up Next",
     semEventos: "Nothing on the agenda this day.",
@@ -930,6 +996,13 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     filtroOpContem: "contains",
     filtroOpNaoContem: "doesn't contain",
     filtroSelecione: "Select...",
+    // Date range filter (#110): "Date" field with DateSelector in a modal.
+    filtroData: "Date",
+    filtroDataSelecione: "Select a date",
+    filtroDataTitulo: "Filter by date",
+    filtroDataDescricao: "Choose a period to filter messages by date.",
+    filtroDataDica: "Try: 2025, Q4, 05/10/2025",
+    filtroAplicar: "Apply",
     // Detalhe do evento
     organizador: "Organizer",
     local: "Location",
@@ -985,13 +1058,17 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     segAutParcial: "Partial",
     segAutFalhou: "Authentication failed",
     segAutIndisponivel: "No data",
-    segAutTooltipAutenticado: "Sender authenticated (SPF/DKIM/DMARC).",
-    segAutTooltipParcial: "Partial authentication — verify the sender.",
-    segAutTooltipFalhou: "Authentication failed — sender may be spoofed.",
-    segAutTooltipIndisponivel: "Could not verify authentication.",
+    segAutTooltipAutenticado:
+      "Verified sender — this email passed the authentication checks (SPF, DKIM and DMARC).",
+    segAutTooltipParcial:
+      "Partial authentication — some checks didn't pass. Verify the sender before trusting it.",
+    segAutTooltipFalhou:
+      "Authentication failed — this email may not be from who it claims to be. Be careful with links and attachments.",
+    segAutTooltipIndisponivel: "No authentication data for this email.",
+    segAutDetalhesTecnicos: "Technical details",
     segReplyToTitulo: "Replies go to a different address",
     segReplyToDescricao:
-      "Replying sends to {enderecos}, different from the sender ({de}). Common phishing tactic.",
+      "When you reply, your message goes to {enderecos}, not to the sender ({de}). This is common in phishing — confirm before replying.",
     // Compose / envio
     responderTodos: "Reply all",
     paraPlaceholder: "To (comma-separated)",
@@ -1015,6 +1092,25 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     insightsUltimo: "Last contact",
     insightsFrequencia: "Frequency",
     insightsPorMes: "~{n}/mo",
+    // Shared mailboxes (#111)
+    caixaMinha: "My mailbox",
+    caixaSeletor: "Active mailbox",
+    caixaAdicionarItem: "Add mailbox…",
+    caixaDialogTitulo: "Add shared mailbox",
+    caixaDialogDesc: "Enter the address of the shared mailbox you want to access.",
+    caixaEnderecoRotulo: "Email address",
+    caixaEnderecoPlaceholder: "e.g. finance@company.com",
+    caixaEnderecoInvalido: "Enter a valid email address.",
+    caixaJaAdicionada: "That mailbox is already in the selector.",
+    caixaValidando: "Validating access…",
+    caixaAdicionarConfirmar: "Add",
+    caixaAdicionada: "Mailbox {addr} added.",
+    caixaSemAcesso: "You don't have access to that mailbox.",
+    caixaNaoEncontrada: "Address not found.",
+    caixaErro: "Couldn't validate the mailbox.",
+    caixaRelogin: "Sign in again to access shared mailboxes.",
+    caixaCompartilhadaTitulo: "Shared mailbox",
+    caixaCompartilhadaDesc: "Reading messages from this mailbox is coming soon.",
   },
   emBreveControlRoom: {
     descricao: "The Galaxie control panel — your overview. Coming soon.",
