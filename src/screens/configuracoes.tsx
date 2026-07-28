@@ -1,6 +1,7 @@
 import {
   AppWindow,
   ChevronRight,
+  Mail,
   MonitorCog,
   Palette,
   Settings,
@@ -8,6 +9,7 @@ import {
   UserRound,
   type LucideIcon,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import {
   Collapsible,
   CollapsibleContent,
@@ -20,19 +22,35 @@ import {
   FramePanel,
   FrameTitle,
 } from "@/components/reui/frame";
-import {
-  useAppStore,
-} from "@/store";
+import { useAppStore } from "@/store";
 import type { SettingsItemId } from "@/store/settings-ui-slice";
 import { cn } from "@/lib/utils";
 import { NotificacoesSettings } from "@/components/notificacoes-settings";
 import { TemplatesEmail } from "@/components/templates-email";
+
+/**
+ * Um frame colapsável = UMA sub-opção configurável do item do menu (c-frame-5
+ * literal). `node` é o conteúdo real (interino) quando já existe; senão o frame
+ * fica com um placeholder até a história filha entregar.
+ */
+interface SettingsFrame {
+  key: string;
+  title: string;
+  /** Conteúdo real; ausente = placeholder até a filha (#pending) assumir. */
+  node?: ReactNode;
+  /** Nº da issue filha que entrega/reestiliza esta sub-opção (placeholder). */
+  pending?: number;
+}
 
 interface SettingsItem {
   id: SettingsItemId;
   label: string;
   description: string;
   icon: LucideIcon;
+  /** Sub-opções configuráveis (frames). Item sem frames = só título/descrição. */
+  frames?: SettingsFrame[];
+  /** Subitens aninhados no sidebar (ex.: Galaxie Apps é agrupador do Bridge). */
+  children?: SettingsItem[];
 }
 
 interface SettingsSection {
@@ -55,12 +73,22 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
         label: "Personalization",
         description: "Make GALAXIE Toolbox feel like your workspace.",
         icon: Palette,
+        frames: [
+          // Interino (AC5): o Sound & notifications (#48) fica DENTRO desta
+          // sub-opção; #119 realoca/reestiliza depois.
+          { key: "sound-notifications", title: "Sound & notifications", node: <NotificacoesSettings /> },
+          { key: "background", title: "Background", pending: 119 },
+          { key: "themes", title: "Themes", pending: 120 },
+          { key: "colors", title: "Colors", pending: 121 },
+          { key: "lock-screen", title: "Lock screen", pending: 122 },
+        ],
       },
       {
         id: "system",
         label: "System",
         description: "Choose how GALAXIE Toolbox works with your device.",
         icon: MonitorCog,
+        frames: [{ key: "startup", title: "Startup", pending: 123 }],
       },
     ],
   },
@@ -72,6 +100,20 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
         label: "Galaxie Apps",
         description: "Configure the apps created by Galaxie.",
         icon: Sparkles,
+        // Agrupador: a configuração real vive no subitem Bridge.
+        children: [
+          {
+            id: "bridge",
+            label: "Bridge",
+            description: "Configure the Bridge email client.",
+            icon: Mail,
+            frames: [
+              // Interino (AC5): a CRUD de Email templates (#93) fica DENTRO desta
+              // sub-opção; #124 assume/reestiliza depois.
+              { key: "email-templates", title: "Email templates", node: <TemplatesEmail /> },
+            ],
+          },
+        ],
       },
       {
         id: "microsoft-365-copilot",
@@ -89,9 +131,47 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
   },
 ];
 
-const SETTINGS_BY_ID = new Map(
-  SETTINGS_SECTIONS.flatMap((section) => section.items).map((item) => [item.id, item])
-);
+/** Achata itens + subitens (children) num mapa id → item, pra lookup do contexto. */
+const SETTINGS_BY_ID = new Map<SettingsItemId, SettingsItem>();
+for (const section of SETTINGS_SECTIONS) {
+  for (const item of section.items) {
+    SETTINGS_BY_ID.set(item.id, item);
+    for (const child of item.children ?? []) {
+      SETTINGS_BY_ID.set(child.id, child);
+    }
+  }
+}
+
+function NavButton({
+  item,
+  active,
+  nested,
+  onSelect,
+}: {
+  item: SettingsItem;
+  active: boolean;
+  nested?: boolean;
+  onSelect: (item: SettingsItemId) => void;
+}) {
+  const Icon = item.icon;
+  return (
+    <button
+      type="button"
+      aria-current={active ? "page" : undefined}
+      onClick={() => onSelect(item.id)}
+      className={cn(
+        "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
+        nested && "pl-8",
+        active
+          ? "bg-secondary font-medium text-secondary-foreground"
+          : "hover:bg-accent/50"
+      )}
+    >
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate">{item.label}</span>
+    </button>
+  );
+}
 
 function SettingsNavigation({
   selected,
@@ -112,28 +192,20 @@ function SettingsNavigation({
             <ChevronRight className="size-4 transition-transform duration-200 group-data-[state=open]/settings-section:rotate-90" />
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-1 pb-2">
-            {section.items.map((item) => {
-              const Icon = item.icon;
-              const active = selected === item.id;
-
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  aria-current={active ? "page" : undefined}
-                  onClick={() => onSelect(item.id)}
-                  className={cn(
-                    "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
-                    active
-                      ? "bg-secondary font-medium text-secondary-foreground"
-                      : "hover:bg-accent/50"
-                  )}
-                >
-                  <Icon className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                </button>
-              );
-            })}
+            {section.items.map((item) => (
+              <div key={item.id} className="space-y-1">
+                <NavButton item={item} active={selected === item.id} onSelect={onSelect} />
+                {item.children?.map((child) => (
+                  <NavButton
+                    key={child.id}
+                    item={child}
+                    nested
+                    active={selected === child.id}
+                    onSelect={onSelect}
+                  />
+                ))}
+              </div>
+            ))}
           </CollapsibleContent>
         </Collapsible>
       ))}
@@ -141,12 +213,40 @@ function SettingsNavigation({
   );
 }
 
-/** Base da #118; os painéis de preferências reais são entregues nas filhas. */
+/** Uma sub-opção configurável — c-frame-5 literal, fechado por padrão. */
+function OptionFrame({ frame }: { frame: SettingsFrame }) {
+  return (
+    <Frame className="w-full" stacked>
+      <Collapsible className="group/collapsible">
+        <CollapsibleTrigger className="w-full">
+          <FrameHeader className="flex grow flex-row items-center justify-between gap-2">
+            <FrameTitle>{frame.title}</FrameTitle>
+            <ChevronRight className="size-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+          </FrameHeader>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <FramePanel>
+            {frame.node ?? (
+              <FrameDescription>
+                {frame.pending
+                  ? `Delivered in a follow-up (#${frame.pending}).`
+                  : "Configuration controls for this option will appear here."}
+              </FrameDescription>
+            )}
+          </FramePanel>
+        </CollapsibleContent>
+      </Collapsible>
+    </Frame>
+  );
+}
+
+/** Base da #118; os painéis reais das sub-opções vêm nas filhas #119–#124. */
 export function ConfiguracoesScreen() {
   const selectedItem = useAppStore((state) => state.selectedSettingsItem);
   const setSelectedItem = useAppStore((state) => state.setSelectedSettingsItem);
   const current = SETTINGS_BY_ID.get(selectedItem) ?? SETTINGS_SECTIONS[0].items[0];
   const CurrentIcon = current.icon;
+  const frames = current.frames ?? [];
 
   return (
     <div className="flex min-h-[34rem] flex-1 flex-col gap-4">
@@ -166,10 +266,9 @@ export function ConfiguracoesScreen() {
       <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
         <SettingsNavigation selected={selectedItem} onSelect={setSelectedItem} />
 
-        <section
-          aria-labelledby="settings-context-title"
-          className="min-w-0 flex-1 rounded-xl border bg-card p-4"
-        >
+        {/* Área de contexto PLANA (sem card/borda): título+descrição uma vez e,
+            abaixo, os frames colapsáveis de cada sub-opção. */}
+        <section aria-labelledby="settings-context-title" className="min-w-0 flex-1">
           <div className="flex items-start gap-3">
             <div className="mt-0.5 rounded-md bg-secondary p-2 text-secondary-foreground">
               <CurrentIcon className="size-4" aria-hidden="true" />
@@ -182,35 +281,17 @@ export function ConfiguracoesScreen() {
             </div>
           </div>
 
-          {/* @reui/c-frame-5 literal: os conteúdos reais entram nas filhas. */}
-          <Frame className="mt-6 w-full" stacked>
-            <Collapsible defaultOpen className="group/collapsible">
-              <CollapsibleTrigger className="w-full">
-                <FrameHeader className="flex grow flex-row items-center justify-between gap-2">
-                  <FrameTitle>{current.label}</FrameTitle>
-                  <ChevronRight className="size-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
-                </FrameHeader>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <FramePanel>
-                  {selectedItem === "personalization" ? (
-                    // Interino p/ AC5: #119 vai realocar/reestilizar Sound & notifications;
-                    // aqui só preservamos o acesso vivo enquanto a filha não chega.
-                    <NotificacoesSettings />
-                  ) : selectedItem === "galaxie-apps" ? (
-                    // Interino p/ AC5: #124 realoca os Email templates (#93) pra Bridge;
-                    // acesso preservado até a filha assumir.
-                    <TemplatesEmail />
-                  ) : (
-                    <FrameDescription>
-                      Configuration controls for this area will appear here as their Settings
-                      sections are delivered.
-                    </FrameDescription>
-                  )}
-                </FramePanel>
-              </CollapsibleContent>
-            </Collapsible>
-          </Frame>
+          {frames.length > 0 ? (
+            <div className="mt-6 space-y-3">
+              {frames.map((frame) => (
+                <OptionFrame key={frame.key} frame={frame} />
+              ))}
+            </div>
+          ) : (
+            <p className="mt-6 text-sm text-muted-foreground">
+              No configurable options here yet.
+            </p>
+          )}
         </section>
       </div>
     </div>

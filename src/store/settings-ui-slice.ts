@@ -7,6 +7,7 @@ export const SETTINGS_ITEM_IDS = [
   "personalization",
   "system",
   "galaxie-apps",
+  "bridge",
   "microsoft-365-copilot",
   "windows",
 ] as const;
