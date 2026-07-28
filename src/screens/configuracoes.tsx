@@ -30,7 +30,10 @@ import {
   MoodSettings,
   StyleSettings,
 } from "@/components/theme-settings";
-import { TemplatesEmail } from "@/components/templates-email";
+import {
+  SignaturesPanel,
+  EmailTemplatesPanel,
+} from "@/components/bridge-settings";
 import { ColorSettings } from "@/components/color-settings";
 import {
   Empty,
@@ -175,15 +178,17 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             icon: BridgeIcon,
             frames: [
               {
-                key: "email-templates",
-                title: "Email templates",
-                subtitle: "Reusable message templates for Bridge.",
-                // Interino (AC5): a CRUD do #93 vai DIRETO aqui (modo bare, sem
-                // card/título próprios); #124 assume/reestiliza depois.
+                key: "signature-templates",
+                title: "Signature & Templates",
+                subtitle:
+                  "Manage your Bridge signatures and reusable email templates.",
+                // Frame with stacked cards (c-frame-3 dentro do c-frame-5): dois
+                // FramePanels empilhados num frame só (igual ao Appearance).
                 node: (
-                  <FramePanel>
-                    <TemplatesEmail bare />
-                  </FramePanel>
+                  <>
+                    <SignaturesPanel />
+                    <EmailTemplatesPanel />
+                  </>
                 ),
               },
             ],
