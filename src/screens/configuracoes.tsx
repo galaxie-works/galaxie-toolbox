@@ -5,7 +5,7 @@ import {
   Settings,
   UserRound,
 } from "lucide-react";
-import type { ComponentType, ReactNode } from "react";
+import { Fragment, type ComponentType, type ReactNode } from "react";
 import { BridgeIcon } from "@/components/ui/icons/marca-anim";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
 import { GalaxieSymbol } from "@/components/brand";
@@ -26,7 +26,10 @@ import type { SettingsItemId } from "@/store/settings-ui-slice";
 import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
-import { ThemeSettings } from "@/components/theme-settings";
+import {
+  MoodSettings,
+  StyleSettings,
+} from "@/components/theme-settings";
 import { TemplatesEmail } from "@/components/templates-email";
 
 /**
@@ -37,6 +40,8 @@ import { TemplatesEmail } from "@/components/templates-email";
  */
 interface SettingsFrame {
   key: string;
+  /** Rótulo visual opcional que abre um grupo de cards no stack. */
+  groupTitle?: string;
   title: string;
   subtitle: string;
   /** Conteúdo real (já vem em FramePanels); ausente = placeholder até a filha. */
@@ -92,10 +97,17 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             node: <BackgroundSettings />,
           },
           {
-            key: "themes",
-            title: "Themes",
-            subtitle: "Switch between light, dark and more.",
-            node: <ThemeSettings />,
+            key: "mood",
+            groupTitle: "Appearance",
+            title: "Mood",
+            subtitle: "Set the atmosphere and color palette for your workspace.",
+            node: <MoodSettings />,
+          },
+          {
+            key: "style",
+            title: "Style",
+            subtitle: "Choose light, dark, or match your operating system.",
+            node: <StyleSettings />,
           },
           { key: "colors", title: "Colors", subtitle: "Pick the accent colors of the app.", pending: 121 },
           { key: "lock-screen", title: "Lock screen", subtitle: "Protect the app with a PIN.", pending: 122 },
@@ -338,11 +350,14 @@ export function ConfiguracoesScreen() {
           {frames.length > 0 ? (
             <div className="mt-6 space-y-3">
               {frames.map((frame) => (
-                <OptionFrame
-                  key={frame.key}
-                  owner={current.id}
-                  frame={frame}
-                />
+                <Fragment key={frame.key}>
+                  {frame.groupTitle ? (
+                    <h3 className="px-1 pt-2 text-sm font-semibold">
+                      {frame.groupTitle}
+                    </h3>
+                  ) : null}
+                  <OptionFrame owner={current.id} frame={frame} />
+                </Fragment>
               ))}
             </div>
           ) : (

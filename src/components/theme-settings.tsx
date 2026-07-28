@@ -1,16 +1,15 @@
-import { MonitorCog, Moon, Sun } from "lucide-react";
+import { MonitorCog, Moon, Sun, type LucideIcon } from "lucide-react";
 
 import { FramePanel } from "@/components/reui/frame";
+import { Field } from "@/components/ui/field";
 import {
-  FieldDescription,
-  FieldGroup,
-  FieldLegend,
-  FieldSet,
-} from "@/components/ui/field";
-import {
-  ToggleGroup,
-  ToggleGroupItem,
-} from "@/components/ui/toggle-group";
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   MODOS_TEMA,
   TEMAS_VISUAIS,
@@ -19,25 +18,51 @@ import {
 } from "@/lib/tema";
 import { useAppStore } from "@/store";
 
-const ROTULOS_MODO: Record<ModoTema, string> = {
-  light: "Light",
-  dark: "Dark",
-  system: "System",
-};
+interface MoodOption {
+  value: TemaVisual;
+  label: string;
+  color: string;
+}
 
-const ICONES_MODO = {
-  light: Sun,
-  dark: Moon,
-  system: MonitorCog,
-} satisfies Record<ModoTema, typeof Sun>;
+interface StyleOption {
+  value: ModoTema;
+  label: string;
+  icon: LucideIcon;
+}
 
-const ROTULOS_TEMA: Record<TemaVisual, string> = {
-  galaxie: "Galaxie",
-  "claude-plus": "Claude +",
-  "melancholik-mint": "Melancholik mint",
-  "zen-inspired": "Zen Inspired Theme",
-  "sunny-sprout": "Sunny Sprout",
-};
+const MOODS: MoodOption[] = [
+  {
+    value: "galaxie",
+    label: "Galaxie",
+    color: "oklch(0.518 0.253 323.949)",
+  },
+  {
+    value: "claude-plus",
+    label: "Claude",
+    color: "oklch(0.6171 0.1375 39.0427)",
+  },
+  {
+    value: "melancholik-mint",
+    label: "Mint",
+    color: "oklch(0.7193 0.0439 196.2166)",
+  },
+  {
+    value: "zen-inspired",
+    label: "Zen",
+    color: "oklch(0.852 0.0205 100.6306)",
+  },
+  {
+    value: "sunny-sprout",
+    label: "Spring",
+    color: "oklch(0.8274 0.0903 112.4121)",
+  },
+];
+
+const STYLES: StyleOption[] = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: MonitorCog },
+];
 
 function modoValido(valor: string): valor is ModoTema {
   return MODOS_TEMA.includes(valor as ModoTema);
@@ -47,74 +72,83 @@ function temaValido(valor: string): valor is TemaVisual {
   return TEMAS_VISUAIS.includes(valor as TemaVisual);
 }
 
-export function ThemeSettings() {
-  const modoTema = useAppStore((state) => state.modoTema);
+/**
+ * ReUI c-select-17: select com bullet colorido, adaptado literalmente para
+ * selecionar o mood visual persistido no useAppStore.
+ */
+export function MoodSettings() {
   const temaVisual = useAppStore((state) => state.temaVisual);
-  const setModoTema = useAppStore((state) => state.setModoTema);
   const setTemaVisual = useAppStore((state) => state.setTemaVisual);
 
   return (
     <FramePanel>
-      <FieldGroup>
-        <FieldSet>
-          <FieldLegend>Color mode</FieldLegend>
-          <FieldDescription>
-            Use a light or dark appearance, or follow your operating system.
-          </FieldDescription>
-          <ToggleGroup
-            type="single"
-            value={modoTema}
-            variant="outline"
-            spacing={2}
-            aria-label="Color mode"
-            onValueChange={(valor) => {
-              if (modoValido(valor)) setModoTema(valor);
-            }}
-          >
-            {MODOS_TEMA.map((modo) => {
-              const Icon = ICONES_MODO[modo];
-              return (
-                <ToggleGroupItem
-                  key={modo}
-                  value={modo}
-                  aria-label={ROTULOS_MODO[modo]}
-                >
-                  <Icon data-icon="inline-start" />
-                  {ROTULOS_MODO[modo]}
-                </ToggleGroupItem>
-              );
-            })}
-          </ToggleGroup>
-        </FieldSet>
+      <Field className="ml-auto max-w-xs">
+        <Select
+          value={temaVisual}
+          onValueChange={(valor) => {
+            if (temaValido(valor)) setTemaVisual(valor);
+          }}
+        >
+          <SelectTrigger aria-label="Mood" className="min-w-48">
+            <SelectValue placeholder="Select a mood" />
+          </SelectTrigger>
+          <SelectContent position="popper" align="end">
+            <SelectGroup>
+              {MOODS.map((mood) => (
+                <SelectItem key={mood.value} value={mood.value}>
+                  <span className="flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className="size-1.5 rounded-full"
+                      style={{ backgroundColor: mood.color }}
+                    />
+                    <span>{mood.label}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Field>
+    </FramePanel>
+  );
+}
 
-        <FieldSet>
-          <FieldLegend>Theme</FieldLegend>
-          <FieldDescription>
-            Choose the GALAXIE Toolbox palette and visual style.
-          </FieldDescription>
-          <ToggleGroup
-            type="single"
-            value={temaVisual}
-            variant="outline"
-            spacing={2}
-            aria-label="Theme"
-            className="flex-wrap"
-            onValueChange={(valor) => {
-              if (temaValido(valor)) setTemaVisual(valor);
-            }}
-          >
-            {TEMAS_VISUAIS.map((tema) => (
-              <ToggleGroupItem
-                key={tema}
-                value={tema}
-                aria-label={ROTULOS_TEMA[tema]}
-              >
-                {ROTULOS_TEMA[tema]}
-              </ToggleGroupItem>
-            ))}
-          </ToggleGroup>
-        </FieldSet>
-      </FieldGroup>
+/**
+ * ReUI c-select-2: select com ícone e caption, adaptado literalmente para o
+ * modo light/dark/system persistido no useAppStore.
+ */
+export function StyleSettings() {
+  const modoTema = useAppStore((state) => state.modoTema);
+  const setModoTema = useAppStore((state) => state.setModoTema);
+
+  return (
+    <FramePanel>
+      <Field className="ml-auto max-w-xs">
+        <Select
+          value={modoTema}
+          onValueChange={(valor) => {
+            if (modoValido(valor)) setModoTema(valor);
+          }}
+        >
+          <SelectTrigger aria-label="Style" className="min-w-48">
+            <SelectValue placeholder="Select a style" />
+          </SelectTrigger>
+          <SelectContent position="popper" align="end">
+            <SelectGroup>
+              {STYLES.map((style) => {
+                const Icon = style.icon;
+                return (
+                  <SelectItem key={style.value} value={style.value}>
+                    <Icon className="text-muted-foreground size-4" />
+                    {style.label}
+                  </SelectItem>
+                );
+              })}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Field>
     </FramePanel>
   );
 }
