@@ -5,7 +5,7 @@ import {
   Settings,
   UserRound,
 } from "lucide-react";
-import { Fragment, type ComponentType, type ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { BridgeIcon } from "@/components/ui/icons/marca-anim";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
 import { GalaxieSymbol } from "@/components/brand";
@@ -41,8 +41,6 @@ import { ColorSettings } from "@/components/color-settings";
  */
 interface SettingsFrame {
   key: string;
-  /** Rótulo visual opcional que abre um grupo de cards no stack. */
-  groupTitle?: string;
   title: string;
   subtitle: string;
   /** Conteúdo real (já vem em FramePanels); ausente = placeholder até a filha. */
@@ -98,17 +96,18 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             node: <BackgroundSettings />,
           },
           {
-            key: "mood",
-            groupTitle: "Appearance",
-            title: "Mood",
-            subtitle: "Set the atmosphere and color palette for your workspace.",
-            node: <MoodSettings />,
-          },
-          {
-            key: "style",
-            title: "Style",
-            subtitle: "Choose light, dark, or match your operating system.",
-            node: <StyleSettings />,
+            key: "appearance",
+            title: "Appearance",
+            subtitle: "Set the mood and light or dark style of the app.",
+            // Frame with stacked cards (c-frame-3 dentro do c-frame-5): Mood e
+            // Style são dois FramePanels empilhados NUM frame só, igual ao
+            // Sound & notifications. Cada card já traz label+descrição + select.
+            node: (
+              <>
+                <MoodSettings />
+                <StyleSettings />
+              </>
+            ),
           },
           {
             key: "colors",
@@ -356,14 +355,7 @@ export function ConfiguracoesScreen() {
           {frames.length > 0 ? (
             <div className="mt-6 space-y-3">
               {frames.map((frame) => (
-                <Fragment key={frame.key}>
-                  {frame.groupTitle ? (
-                    <h3 className="px-1 pt-2 text-sm font-semibold">
-                      {frame.groupTitle}
-                    </h3>
-                  ) : null}
-                  <OptionFrame owner={current.id} frame={frame} />
-                </Fragment>
+                <OptionFrame key={frame.key} owner={current.id} frame={frame} />
               ))}
             </div>
           ) : (
