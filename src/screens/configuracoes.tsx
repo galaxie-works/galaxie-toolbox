@@ -25,18 +25,20 @@ import {
 import { useAppStore } from "@/store";
 import type { SettingsItemId } from "@/store/settings-ui-slice";
 import { cn } from "@/lib/utils";
-import { NotificacoesSettings } from "@/components/notificacoes-settings";
+import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { TemplatesEmail } from "@/components/templates-email";
 
 /**
  * Um frame colapsável = UMA sub-opção configurável do item do menu (c-frame-5
- * literal). `node` é o conteúdo real (interino) quando já existe; senão o frame
- * fica com um placeholder até a história filha entregar.
+ * literal): título + subtítulo no header e, dentro, os controles direto — SEM
+ * frame-dentro-de-frame. `node` é o conteúdo real (interino) quando já existe;
+ * senão fica um placeholder até a história filha entregar.
  */
 interface SettingsFrame {
   key: string;
   title: string;
-  /** Conteúdo real; ausente = placeholder até a filha (#pending) assumir. */
+  subtitle: string;
+  /** Conteúdo real (já vem em FramePanels); ausente = placeholder até a filha. */
   node?: ReactNode;
   /** Nº da issue filha que entrega/reestiliza esta sub-opção (placeholder). */
   pending?: number;
@@ -74,13 +76,18 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
         description: "Make GALAXIE Toolbox feel like your workspace.",
         icon: Palette,
         frames: [
-          // Interino (AC5): o Sound & notifications (#48) fica DENTRO desta
-          // sub-opção; #119 realoca/reestiliza depois.
-          { key: "sound-notifications", title: "Sound & notifications", node: <NotificacoesSettings /> },
-          { key: "background", title: "Background", pending: 119 },
-          { key: "themes", title: "Themes", pending: 120 },
-          { key: "colors", title: "Colors", pending: 121 },
-          { key: "lock-screen", title: "Lock screen", pending: 122 },
+          {
+            key: "sound-notifications",
+            title: "Sound & notifications",
+            subtitle: "Choose which events play a sound.",
+            // Interino (AC5): os controles do #48 vão DIRETO aqui (sem moldura
+            // própria); #119 realoca/reestiliza depois.
+            node: <NotificacoesPanels />,
+          },
+          { key: "background", title: "Background", subtitle: "Set a background for your workspace.", pending: 119 },
+          { key: "themes", title: "Themes", subtitle: "Switch between light, dark and more.", pending: 120 },
+          { key: "colors", title: "Colors", subtitle: "Pick the accent colors of the app.", pending: 121 },
+          { key: "lock-screen", title: "Lock screen", subtitle: "Protect the app with a PIN.", pending: 122 },
         ],
       },
       {
@@ -88,7 +95,9 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
         label: "System",
         description: "Choose how GALAXIE Toolbox works with your device.",
         icon: MonitorCog,
-        frames: [{ key: "startup", title: "Startup", pending: 123 }],
+        frames: [
+          { key: "startup", title: "Startup", subtitle: "Choose what runs when the app starts.", pending: 123 },
+        ],
       },
     ],
   },
@@ -108,9 +117,18 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             description: "Configure the Bridge email client.",
             icon: Mail,
             frames: [
-              // Interino (AC5): a CRUD de Email templates (#93) fica DENTRO desta
-              // sub-opção; #124 assume/reestiliza depois.
-              { key: "email-templates", title: "Email templates", node: <TemplatesEmail /> },
+              {
+                key: "email-templates",
+                title: "Email templates",
+                subtitle: "Reusable message templates for Bridge.",
+                // Interino (AC5): a CRUD do #93 vai DIRETO aqui (modo bare, sem
+                // card/título próprios); #124 assume/reestiliza depois.
+                node: (
+                  <FramePanel>
+                    <TemplatesEmail bare />
+                  </FramePanel>
+                ),
+              },
             ],
           },
         ],
@@ -213,27 +231,34 @@ function SettingsNavigation({
   );
 }
 
-/** Uma sub-opção configurável — c-frame-5 literal, fechado por padrão. */
+/**
+ * Uma sub-opção configurável = UM frame (c-frame-5 literal), fechado por padrão:
+ * header com título + subtítulo; conteúdo (controles) direto dentro, sem outra
+ * moldura.
+ */
 function OptionFrame({ frame }: { frame: SettingsFrame }) {
   return (
     <Frame className="w-full" stacked>
       <Collapsible className="group/collapsible">
-        <CollapsibleTrigger className="w-full">
+        <CollapsibleTrigger className="w-full text-left">
           <FrameHeader className="flex grow flex-row items-center justify-between gap-2">
-            <FrameTitle>{frame.title}</FrameTitle>
-            <ChevronRight className="size-4 text-muted-foreground transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+            <div className="min-w-0">
+              <FrameTitle>{frame.title}</FrameTitle>
+              <FrameDescription>{frame.subtitle}</FrameDescription>
+            </div>
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
           </FrameHeader>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <FramePanel>
-            {frame.node ?? (
+          {frame.node ?? (
+            <FramePanel>
               <FrameDescription>
                 {frame.pending
                   ? `Delivered in a follow-up (#${frame.pending}).`
                   : "Configuration controls for this option will appear here."}
               </FrameDescription>
-            )}
-          </FramePanel>
+            </FramePanel>
+          )}
         </CollapsibleContent>
       </Collapsible>
     </Frame>
@@ -267,7 +292,7 @@ export function ConfiguracoesScreen() {
         <SettingsNavigation selected={selectedItem} onSelect={setSelectedItem} />
 
         {/* Área de contexto PLANA (sem card/borda): título+descrição uma vez e,
-            abaixo, os frames colapsáveis de cada sub-opção. */}
+            abaixo, um frame colapsável por sub-opção. */}
         <section aria-labelledby="settings-context-title" className="min-w-0 flex-1">
           <div className="flex items-start gap-3">
             <div className="mt-0.5 rounded-md bg-secondary p-2 text-secondary-foreground">

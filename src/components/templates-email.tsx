@@ -118,7 +118,7 @@ interface Edicao {
  * CRUD dos templates de e-mail (Configurações). Tudo local, em localStorage,
  * no mesmo espírito da assinatura — não há backend envolvido.
  */
-export function TemplatesEmail() {
+export function TemplatesEmail({ bare = false }: { bare?: boolean } = {}) {
   const { t } = useIdioma();
   const [templates, setTemplates] = useTemplates();
   const [edicao, setEdicao] = useState<Edicao | null>(null);
@@ -157,15 +157,23 @@ export function TemplatesEmail() {
     toast.success(t.templates.excluido);
   }
 
-  return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold">{t.templates.titulo}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {t.templates.descricao}
-          </p>
-        </div>
+  const corpo = (
+    <>
+      <div
+        className={
+          bare
+            ? "flex items-start justify-end gap-4"
+            : "flex items-start justify-between gap-4"
+        }
+      >
+        {!bare && (
+          <div>
+            <h2 className="text-lg font-semibold">{t.templates.titulo}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {t.templates.descricao}
+            </p>
+          </div>
+        )}
         <Button onClick={abrirNovo}>
           <PlusIcon /> {t.templates.novo}
         </Button>
@@ -288,6 +296,12 @@ export function TemplatesEmail() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </>
+  );
+
+  return bare ? (
+    corpo
+  ) : (
+    <div className="rounded-xl border border-border bg-card p-6">{corpo}</div>
   );
 }

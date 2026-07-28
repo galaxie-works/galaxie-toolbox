@@ -48,7 +48,13 @@ import {
  * (reui `c-button-group-7`, variante Radix `asChild`) alinhado à direita.
  * A preferência persiste em localStorage sob `bridge.notificacoes`.
  */
-export function NotificacoesSettings() {
+/**
+ * Painéis das notificações (E-mails recebidos / Mensagens recebidas / Problemas
+ * de sincronização), SEM a moldura `Frame` — para embutir direto dentro de um
+ * frame de sub-opção da Settings (ex.: "Sound & notifications") sem virar
+ * frame-dentro-de-frame. Cada painel é um `FramePanel` stacked.
+ */
+export function NotificacoesPanels() {
   const { t } = useIdioma();
   const [prefs, setPrefs] = usePersistedState<PreferenciasNotificacao>(
     CHAVE_NOTIFICACOES,
@@ -80,30 +86,39 @@ export function NotificacoesSettings() {
 
   return (
     <TooltipProvider>
-      <Frame className="w-full" stacked>
-        <FrameHeader>
-          <FrameTitle>{n.titulo}</FrameTitle>
-          <FrameDescription>{n.subtitulo}</FrameDescription>
-        </FrameHeader>
-        {escopos.map((e) => (
-          <FramePanel key={e.chave}>
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold">{e.titulo}</h3>
-                <p className="text-sm text-muted-foreground">{e.descricao}</p>
-              </div>
-              <SeletorSom
-                valor={prefs[e.chave]}
-                onChange={(v) => definir(e.chave, v)}
-                rotuloSemSom={n.semSom}
-                rotuloSons={n.sonsDisponiveis}
-                rotuloPreview={n.preview}
-              />
+      {escopos.map((e) => (
+        <FramePanel key={e.chave}>
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold">{e.titulo}</h3>
+              <p className="text-sm text-muted-foreground">{e.descricao}</p>
             </div>
-          </FramePanel>
-        ))}
-      </Frame>
+            <SeletorSom
+              valor={prefs[e.chave]}
+              onChange={(v) => definir(e.chave, v)}
+              rotuloSemSom={n.semSom}
+              rotuloSons={n.sonsDisponiveis}
+              rotuloPreview={n.preview}
+            />
+          </div>
+        </FramePanel>
+      ))}
     </TooltipProvider>
+  );
+}
+
+/** Settings > Notificações (#48) — versão standalone, com a moldura própria. */
+export function NotificacoesSettings() {
+  const { t } = useIdioma();
+  const n = t.notificacoes;
+  return (
+    <Frame className="w-full" stacked>
+      <FrameHeader>
+        <FrameTitle>{n.titulo}</FrameTitle>
+        <FrameDescription>{n.subtitulo}</FrameDescription>
+      </FrameHeader>
+      <NotificacoesPanels />
+    </Frame>
   );
 }
 
