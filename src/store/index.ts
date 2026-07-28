@@ -127,6 +127,8 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (ordenar !== undefined) state.ordenar = ordenar;
     const ordemDesc = lerChave<boolean>(LIST_KEYS.ordemDesc);
     if (ordemDesc !== undefined) state.ordemDesc = ordemDesc;
+    const filtros = lerChave<ListPersistido["filtros"]>(LIST_KEYS.filtros);
+    if (filtros !== undefined) state.filtros = filtros;
     // Mailbox
     const caixas = lerChave<string[]>(MAILBOX_KEYS.caixasCompartilhadas);
     if (caixas !== undefined) state.caixasCompartilhadas = caixas;
@@ -160,6 +162,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(UI_KEYS.marcarLidoAtraso, s.marcarLidoAtraso);
     gravarChave(LIST_KEYS.ordenar, s.ordenar);
     gravarChave(LIST_KEYS.ordemDesc, s.ordemDesc);
+    gravarChave(LIST_KEYS.filtros, s.filtros);
     gravarChave(MAILBOX_KEYS.caixasCompartilhadas, s.caixasCompartilhadas);
     gravarChave(
       SETTINGS_UI_KEYS.selectedSettingsItem,
@@ -209,6 +212,7 @@ export const useAppStore = create<AppStore>()(
         marcarLidoAtraso: s.marcarLidoAtraso,
         ordenar: s.ordenar,
         ordemDesc: s.ordemDesc,
+        filtros: s.filtros,
         caixasCompartilhadas: s.caixasCompartilhadas,
         selectedSettingsItem: s.selectedSettingsItem,
         settingsFramesAbertos: s.settingsFramesAbertos,

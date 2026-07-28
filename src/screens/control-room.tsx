@@ -129,7 +129,6 @@ import { useFotos, configurarDominioFotos } from "@/lib/fotos";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
-import { usePersistedState } from "@/lib/persist";
 import { useAppStore } from "@/store";
 import { tocarSomEscopo } from "@/lib/sons-notificacao";
 import { useDebounce } from "@/hooks/use-debounce";
@@ -4724,10 +4723,10 @@ export function ControlRoomScreen({
   // shape mudou de string única ("all"/…) para array de `Filter` — reusar a
   // chave antiga quebraria o parse do valor persistido. Global + persistido;
   // resetado na troca de pasta (D3).
-  const [filtros, setFiltros] = usePersistedState<Filter<string>[]>(
-    "bridge.filtrosLista.v2",
-    []
-  );
+  // Filtros migrados pro list slice (#125). Chave `bridge.filtrosLista.v2`
+  // preservada; reset na troca de pasta segue no efeito abaixo.
+  const filtros = useAppStore((s) => s.filtros);
+  const setFiltros = useAppStore((s) => s.setFiltros);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
   const [resultadosFiltro, setResultadosFiltro] = useState<EmailItem[] | null>(null);
