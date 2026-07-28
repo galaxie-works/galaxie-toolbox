@@ -55,6 +55,16 @@ const MOODS: MoodOption[] = [
     label: "Spring",
     color: "oklch(0.8274 0.0903 112.4121)",
   },
+  {
+    value: "nordic-moss",
+    label: "Nordic moss",
+    color: "oklch(0.6411 0.0666 130.1256)",
+  },
+  {
+    value: "fallout",
+    label: "Fallout",
+    color: "oklch(0.5930 0.1524 52.0222)",
+  },
 ];
 
 const STYLES: StyleOption[] = [

@@ -20,6 +20,8 @@ export const TEMAS_VISUAIS = [
   "melancholik-mint",
   "zen-inspired",
   "sunny-sprout",
+  "nordic-moss",
+  "fallout",
 ] as const;
 export type TemaVisual = (typeof TEMAS_VISUAIS)[number];
 
