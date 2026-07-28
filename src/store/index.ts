@@ -22,6 +22,14 @@ import {
   type PersonalizationPersistido,
   type PersonalizationSlice,
 } from "./personalization-slice";
+import {
+  createBridgeSlice,
+  BRIDGE_KEYS,
+  type Assinatura,
+  type BridgePersistido,
+  type BridgeSlice,
+} from "./bridge-slice";
+import { lerTemplates } from "@/lib/templates";
 import type { OrdenarMensagens } from "@/lib/api";
 import {
   aplicarModoTema,
@@ -75,14 +83,16 @@ export type AppStore =
   & ListSlice
   & MailboxSlice
   & SettingsUiSlice
-  & PersonalizationSlice;
+  & PersonalizationSlice
+  & BridgeSlice;
 
 /** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
 type AppPersistido = UiPersistido &
   ListPersistido &
   MailboxPersistido &
   SettingsUiPersistido &
-  PersonalizationPersistido;
+  PersonalizationPersistido &
+  BridgePersistido;
 
 // --- storage custom: mapeia o blob persistido pras chaves reais 1:1 -----------
 
@@ -131,6 +141,32 @@ function gravarTexto(chave: string, valor: string): void {
   }
 }
 
+/** Lê a assinatura única legada (`bridge.assinatura`, texto cru) para migração. */
+function lerAssinaturaLegada(): string | null {
+  try {
+    const v = localStorage.getItem("bridge.assinatura");
+    return v && v.trim() ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Texto multi-linha → HTML (uma linha por parágrafo), casando o Plate. */
+function textoParaHtml(texto: string): string {
+  return texto
+    .split(/\r?\n/)
+    .map((linha) => `<p>${escaparHtml(linha) || "<br>"}</p>`)
+    .join("");
+}
+
+/** Escapa os caracteres perigosos do HTML na migração da assinatura. */
+function escaparHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 /** Todas as chaves reais no localStorage (pro removeItem limpar tudo). */
 const TODAS_CHAVES = [
   ...Object.values(UI_KEYS),
@@ -138,6 +174,9 @@ const TODAS_CHAVES = [
   ...Object.values(MAILBOX_KEYS),
   ...Object.values(SETTINGS_UI_KEYS),
   ...Object.values(PERSONALIZATION_KEYS),
+  ...Object.values(BRIDGE_KEYS),
+  // Chave legada da assinatura única (pré-#135): limpa no reset junto do resto.
+  "bridge.assinatura",
 ];
 
 /**
@@ -213,6 +252,28 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       state.corDestaque = corDestaque.toLowerCase();
       aplicarCorDestaque(state.corDestaque);
     }
+    // Bridge (#135): assinaturas + padrão + templates.
+    const assinaturas = lerChave<Assinatura[]>(BRIDGE_KEYS.assinaturas);
+    if (Array.isArray(assinaturas)) {
+      state.assinaturas = assinaturas;
+    } else {
+      // Migração da assinatura única legada (`bridge.assinatura`, texto cru):
+      // vira uma assinatura padrão com o corpo em HTML (uma linha por <p>).
+      const antiga = lerAssinaturaLegada();
+      if (antiga) {
+        const migrada: Assinatura = {
+          id: "sig-legada",
+          nome: "Minha assinatura",
+          corpo: textoParaHtml(antiga),
+        };
+        state.assinaturas = [migrada];
+        state.assinaturaPadraoId = migrada.id;
+      }
+    }
+    const padraoId = lerChave<string | null>(BRIDGE_KEYS.assinaturaPadraoId);
+    if (padraoId !== undefined) state.assinaturaPadraoId = padraoId;
+    const templates = lerTemplates();
+    if (templates.length > 0) state.templates = templates;
     return { state: state as AppPersistido, version: 0 };
   },
   setItem: (_name, value: StorageValue<AppPersistido>): void => {
@@ -240,6 +301,9 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarTexto(PERSONALIZATION_KEYS.modoTema, s.modoTema);
     gravarTexto(PERSONALIZATION_KEYS.temaVisual, s.temaVisual);
     gravarChave(PERSONALIZATION_KEYS.corDestaque, s.corDestaque);
+    gravarChave(BRIDGE_KEYS.assinaturas, s.assinaturas);
+    gravarChave(BRIDGE_KEYS.assinaturaPadraoId, s.assinaturaPadraoId);
+    gravarChave(BRIDGE_KEYS.templates, s.templates);
   },
   removeItem: (): void => {
     for (const chave of TODAS_CHAVES) {
@@ -264,6 +328,7 @@ export const useAppStore = create<AppStore>()(
       ...createMailboxSlice(...a),
       ...createSettingsUiSlice(...a),
       ...createPersonalizationSlice(...a),
+      ...createBridgeSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",
@@ -287,6 +352,9 @@ export const useAppStore = create<AppStore>()(
         modoTema: s.modoTema,
         temaVisual: s.temaVisual,
         corDestaque: s.corDestaque,
+        assinaturas: s.assinaturas,
+        assinaturaPadraoId: s.assinaturaPadraoId,
+        templates: s.templates,
       }),
     }
   )
