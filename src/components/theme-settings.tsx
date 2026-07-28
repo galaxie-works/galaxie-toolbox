@@ -1,7 +1,6 @@
 import { MonitorCog, Moon, Sun, type LucideIcon } from "lucide-react";
 
 import { FramePanel } from "@/components/reui/frame";
-import { Field } from "@/components/ui/field";
 import {
   Select,
   SelectContent,
@@ -73,8 +72,10 @@ function temaValido(valor: string): valor is TemaVisual {
 }
 
 /**
- * ReUI c-select-17: select com bullet colorido, adaptado literalmente para
- * selecionar o mood visual persistido no useAppStore.
+ * Stacked card do Mood (paleta visual) — vive dentro do frame "Appearance"
+ * junto do Style (padrão c-frame-3: FramePanels empilhados num frame só, igual
+ * ao Sound & notifications). Label + descrição à esquerda; o select à direita.
+ * Select = ReUI c-select-17 (bullet colorido), persistido no useAppStore.
  */
 export function MoodSettings() {
   const temaVisual = useAppStore((state) => state.temaVisual);
@@ -82,14 +83,20 @@ export function MoodSettings() {
 
   return (
     <FramePanel>
-      <Field className="ml-auto max-w-xs">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Mood</h3>
+          <p className="text-sm text-muted-foreground">
+            Set the atmosphere and color palette for your workspace.
+          </p>
+        </div>
         <Select
           value={temaVisual}
           onValueChange={(valor) => {
             if (temaValido(valor)) setTemaVisual(valor);
           }}
         >
-          <SelectTrigger aria-label="Mood" className="min-w-48">
+          <SelectTrigger aria-label="Mood" className="w-56 shrink-0">
             <SelectValue placeholder="Select a mood" />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
@@ -109,14 +116,15 @@ export function MoodSettings() {
             </SelectGroup>
           </SelectContent>
         </Select>
-      </Field>
+      </div>
     </FramePanel>
   );
 }
 
 /**
- * ReUI c-select-2: select com ícone e caption, adaptado literalmente para o
- * modo light/dark/system persistido no useAppStore.
+ * Stacked card do Style (light/dark/system) — segundo card do frame "Appearance".
+ * Label + descrição à esquerda; o select à direita.
+ * Select = ReUI c-select-2 (ícone + caption), persistido no useAppStore.
  */
 export function StyleSettings() {
   const modoTema = useAppStore((state) => state.modoTema);
@@ -124,14 +132,20 @@ export function StyleSettings() {
 
   return (
     <FramePanel>
-      <Field className="ml-auto max-w-xs">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Style</h3>
+          <p className="text-sm text-muted-foreground">
+            Choose light, dark, or match your operating system.
+          </p>
+        </div>
         <Select
           value={modoTema}
           onValueChange={(valor) => {
             if (modoValido(valor)) setModoTema(valor);
           }}
         >
-          <SelectTrigger aria-label="Style" className="min-w-48">
+          <SelectTrigger aria-label="Style" className="w-56 shrink-0">
             <SelectValue placeholder="Select a style" />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
@@ -148,7 +162,7 @@ export function StyleSettings() {
             </SelectGroup>
           </SelectContent>
         </Select>
-      </Field>
+      </div>
     </FramePanel>
   );
 }
