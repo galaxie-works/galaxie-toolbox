@@ -130,6 +130,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
 import { usePersistedState } from "@/lib/persist";
+import { useAppStore } from "@/store";
 import { tocarSomEscopo } from "@/lib/sons-notificacao";
 import { useDebounce } from "@/hooks/use-debounce";
 import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
@@ -291,7 +292,10 @@ function CorpoHtml({
   // GLOBAL e persistido (não por-mensagem): a preferência sobrevive a fechar/
   // reabrir o app e a trocar de mensagem e voltar (decisão da issue #76 — o
   // leitor tem UM nível de zoom, como o zoom de página de um navegador).
-  const [fator, setFator] = usePersistedState("bridge.leitorZoom", 1);
+  // Zoom migrado pro ui slice do store (#126). Seletor evita re-render amplo;
+  // a chave localStorage `bridge.leitorZoom` é preservada pelo persist.
+  const fator = useAppStore((s) => s.zoom);
+  const setFator = useAppStore((s) => s.setZoom);
   // Ref pro fator (lido dentro dos listeners do iframe sem re-bindar) e ref pra
   // função de reaplicar o zoom (chamada pelo efeito que reage à mudança de fator).
   const fatorRef = useRef(fator);
@@ -2526,10 +2530,10 @@ function MessageList({
   // encontra nada pra abrir o menu de contexto — a causa do "não há menu de
   // contexto em Deleted e Junk" (#86). Guardar por pasta mantém o estado do
   // usuário sem vazar de uma pasta pra outra.
-  const [colapsadosMapa, setColapsadosMapa] = usePersistedState<Record<string, string[]>>(
-    "bridge.gruposColapsados.v2",
-    {}
-  );
+  // Colapsos migrados pro ui slice (#126). Chave `bridge.gruposColapsados.v2`
+  // preservada pelo persist; seletor assina só este campo.
+  const colapsadosMapa = useAppStore((s) => s.gruposColapsados);
+  const setColapsadosMapa = useAppStore((s) => s.setGruposColapsados);
   const colapsadosArr = useMemo(
     () => colapsadosMapa[pastaId] ?? [],
     [colapsadosMapa, pastaId]
@@ -4663,7 +4667,9 @@ export function ControlRoomScreen({
   // (ações como excluir/responder não devem zerar o lazy load nem o scroll).
   const [recargaPastas, setRecargaPastas] = useState(0);
   // Colapsos persistem (o app guarda o estado que o usuário deixa).
-  const [sidebarAberta, setSidebarAberta] = usePersistedState("bridge.sidebar", true);
+  // Sidebar migrada pro ui slice (#126). Chave `bridge.sidebar` preservada.
+  const sidebarAberta = useAppStore((s) => s.sidebarAberta);
+  const setSidebarAberta = useAppStore((s) => s.setSidebarAberta);
   // Ordenação da lista (persistida): campo + direção → $orderby no Graph (#32).
   const [ordenar, setOrdenar] = usePersistedState<api.OrdenarMensagens>(
     "bridge.ordenar",
@@ -4678,14 +4684,13 @@ export function ControlRoomScreen({
   }, []);
   // Preferência de "marcar como lido" (#95), persistida: o app sempre guarda o
   // estado que o usuário deixa. Default = "imediato" (comportamento histórico).
-  const [marcarLidoModo, setMarcarLidoModo] = usePersistedState<MarcarLidoModo>(
-    "bridge.marcarLidoModo",
-    "imediato"
-  );
-  const [marcarLidoAtraso, setMarcarLidoAtraso] = usePersistedState<number>(
-    "bridge.marcarLidoAtraso",
-    MARCAR_LIDO_ATRASO_PADRAO
-  );
+  // Marcar-lido (#95) migrado pro ui slice (#126). Chaves `bridge.marcarLidoModo`
+  // e `bridge.marcarLidoAtraso` preservadas; validação de valores fora-da-faixa
+  // segue no efeito abaixo (localStorage é editável por fora).
+  const marcarLidoModo = useAppStore((s) => s.marcarLidoModo);
+  const setMarcarLidoModo = useAppStore((s) => s.setMarcarLidoModo);
+  const marcarLidoAtraso = useAppStore((s) => s.marcarLidoAtraso);
+  const setMarcarLidoAtraso = useAppStore((s) => s.setMarcarLidoAtraso);
   // localStorage é editável por fora (e pode ter sobra de versões antigas):
   // valor inválido volta ao padrão em vez de virar um timer NaN/eterno.
   useEffect(() => {

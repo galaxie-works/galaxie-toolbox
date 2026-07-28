@@ -1,5 +1,7 @@
 import type { StateCreator } from "zustand";
 
+import type { AppStore } from "./index";
+
 export const SETTINGS_ITEM_IDS = [
   "accounts",
   "personalization",
@@ -21,8 +23,8 @@ export interface SettingsUiSlice {
  * este slice só mantém qual área a pessoa deixou aberta.
  */
 export const createSettingsUiSlice: StateCreator<
-  SettingsUiSlice,
-  [],
+  AppStore,
+  [["zustand/persist", unknown]],
   [],
   SettingsUiSlice
 > = (set) => ({
