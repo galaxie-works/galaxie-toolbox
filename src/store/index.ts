@@ -11,10 +11,22 @@ import {
 } from "./mailbox-slice";
 import {
   createSettingsUiSlice,
+  SETTINGS_UI_KEYS,
   type SettingsItemId,
+  type SettingsUiPersistido,
   type SettingsUiSlice,
 } from "./settings-ui-slice";
+import {
+  createPersonalizationSlice,
+  PERSONALIZATION_KEYS,
+  type PersonalizationPersistido,
+  type PersonalizationSlice,
+} from "./personalization-slice";
 import type { OrdenarMensagens } from "@/lib/api";
+import {
+  PREF_PADRAO,
+  type PreferenciasNotificacao,
+} from "@/lib/sons-notificacao";
 import type { MarcarLidoModo } from "./ui-slice";
 
 /**
@@ -46,16 +58,19 @@ import type { MarcarLidoModo } from "./ui-slice";
  */
 
 /** Tipo do store combinado. Cresce por interseção conforme novos slices entram. */
-export type AppStore = UiSlice & ListSlice & MailboxSlice & SettingsUiSlice;
-
-/** Chave própria da nav da Settings (#118). Não é `bridge.*` porque não é do Bridge. */
-const SETTINGS_KEY = "galaxie-toolbox.settingsItem";
+export type AppStore =
+  & UiSlice
+  & ListSlice
+  & MailboxSlice
+  & SettingsUiSlice
+  & PersonalizationSlice;
 
 /** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
 type AppPersistido = UiPersistido &
   ListPersistido &
   MailboxPersistido &
-  Pick<SettingsUiSlice, "selectedSettingsItem">;
+  SettingsUiPersistido &
+  PersonalizationPersistido;
 
 // --- storage custom: mapeia o blob persistido pras chaves reais 1:1 -----------
 
@@ -81,7 +96,8 @@ const TODAS_CHAVES = [
   ...Object.values(UI_KEYS),
   ...Object.values(LIST_KEYS),
   ...Object.values(MAILBOX_KEYS),
-  SETTINGS_KEY,
+  ...Object.values(SETTINGS_UI_KEYS),
+  ...Object.values(PERSONALIZATION_KEYS),
 ];
 
 /**
@@ -115,8 +131,23 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     const caixas = lerChave<string[]>(MAILBOX_KEYS.caixasCompartilhadas);
     if (caixas !== undefined) state.caixasCompartilhadas = caixas;
     // Settings
-    const item = lerChave<SettingsItemId>(SETTINGS_KEY);
+    const item = lerChave<SettingsItemId>(SETTINGS_UI_KEYS.selectedSettingsItem);
     if (item !== undefined) state.selectedSettingsItem = item;
+    const frames = lerChave<Record<string, boolean>>(
+      SETTINGS_UI_KEYS.settingsFramesAbertos
+    );
+    if (frames !== undefined) state.settingsFramesAbertos = frames;
+    // Personalization
+    const notificacoes = lerChave<PreferenciasNotificacao>(
+      PERSONALIZATION_KEYS.notificacoes
+    );
+    if (notificacoes !== undefined) {
+      state.notificacoes = { ...PREF_PADRAO, ...notificacoes };
+    }
+    const fundoEstrelado = lerChave<boolean>(
+      PERSONALIZATION_KEYS.fundoEstrelado
+    );
+    if (fundoEstrelado !== undefined) state.fundoEstrelado = fundoEstrelado;
     return { state: state as AppPersistido, version: 0 };
   },
   setItem: (_name, value: StorageValue<AppPersistido>): void => {
@@ -130,7 +161,16 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(LIST_KEYS.ordenar, s.ordenar);
     gravarChave(LIST_KEYS.ordemDesc, s.ordemDesc);
     gravarChave(MAILBOX_KEYS.caixasCompartilhadas, s.caixasCompartilhadas);
-    gravarChave(SETTINGS_KEY, s.selectedSettingsItem);
+    gravarChave(
+      SETTINGS_UI_KEYS.selectedSettingsItem,
+      s.selectedSettingsItem
+    );
+    gravarChave(
+      SETTINGS_UI_KEYS.settingsFramesAbertos,
+      s.settingsFramesAbertos
+    );
+    gravarChave(PERSONALIZATION_KEYS.notificacoes, s.notificacoes);
+    gravarChave(PERSONALIZATION_KEYS.fundoEstrelado, s.fundoEstrelado);
   },
   removeItem: (): void => {
     for (const chave of TODAS_CHAVES) {
@@ -154,6 +194,7 @@ export const useAppStore = create<AppStore>()(
       ...createListSlice(...a),
       ...createMailboxSlice(...a),
       ...createSettingsUiSlice(...a),
+      ...createPersonalizationSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",
@@ -170,6 +211,9 @@ export const useAppStore = create<AppStore>()(
         ordemDesc: s.ordemDesc,
         caixasCompartilhadas: s.caixasCompartilhadas,
         selectedSettingsItem: s.selectedSettingsItem,
+        settingsFramesAbertos: s.settingsFramesAbertos,
+        notificacoes: s.notificacoes,
+        fundoEstrelado: s.fundoEstrelado,
       }),
     }
   )

@@ -26,6 +26,7 @@ import { useAppStore } from "@/store";
 import type { SettingsItemId } from "@/store/settings-ui-slice";
 import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
+import { BackgroundSettings } from "@/components/background-settings";
 import { TemplatesEmail } from "@/components/templates-email";
 
 /**
@@ -84,7 +85,12 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             // própria); #119 realoca/reestiliza depois.
             node: <NotificacoesPanels />,
           },
-          { key: "background", title: "Background", subtitle: "Set a background for your workspace.", pending: 119 },
+          {
+            key: "background",
+            title: "Background",
+            subtitle: "Set a background for your workspace.",
+            node: <BackgroundSettings />,
+          },
           { key: "themes", title: "Themes", subtitle: "Switch between light, dark and more.", pending: 120 },
           { key: "colors", title: "Colors", subtitle: "Pick the accent colors of the app.", pending: 121 },
           { key: "lock-screen", title: "Lock screen", subtitle: "Protect the app with a PIN.", pending: 122 },
@@ -236,10 +242,28 @@ function SettingsNavigation({
  * header com título + subtítulo; conteúdo (controles) direto dentro, sem outra
  * moldura.
  */
-function OptionFrame({ frame }: { frame: SettingsFrame }) {
+function OptionFrame({
+  owner,
+  frame,
+}: {
+  owner: SettingsItemId;
+  frame: SettingsFrame;
+}) {
+  const frameId = `${owner}:${frame.key}`;
+  const aberto = useAppStore(
+    (state) => state.settingsFramesAbertos[frameId] ?? false
+  );
+  const setSettingsFrameAberto = useAppStore(
+    (state) => state.setSettingsFrameAberto
+  );
+
   return (
     <Frame className="w-full" stacked>
-      <Collapsible className="group/collapsible">
+      <Collapsible
+        open={aberto}
+        onOpenChange={(open) => setSettingsFrameAberto(frameId, open)}
+        className="group/collapsible"
+      >
         <CollapsibleTrigger className="w-full text-left">
           <FrameHeader className="flex grow flex-row items-center justify-between gap-2">
             <div className="min-w-0">
@@ -309,7 +333,11 @@ export function ConfiguracoesScreen() {
           {frames.length > 0 ? (
             <div className="mt-6 space-y-3">
               {frames.map((frame) => (
-                <OptionFrame key={frame.key} frame={frame} />
+                <OptionFrame
+                  key={frame.key}
+                  owner={current.id}
+                  frame={frame}
+                />
               ))}
             </div>
           ) : (

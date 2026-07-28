@@ -28,17 +28,14 @@ import { AudioLinesIcon } from "@/components/ui/audio-lines";
 import { PlayIcon } from "@/components/ui/play";
 
 import { useIdioma } from "@/lib/idioma";
-import { usePersistedState } from "@/lib/persist";
 import {
-  CHAVE_NOTIFICACOES,
-  PREF_PADRAO,
   SONS,
   VALOR_SEM_SOM,
   somPorId,
   tocarSom,
   type EscopoNotificacao,
-  type PreferenciasNotificacao,
 } from "@/lib/sons-notificacao";
+import { useAppStore } from "@/store";
 
 /**
  * Settings > Notificações (#48).
@@ -56,9 +53,9 @@ import {
  */
 export function NotificacoesPanels() {
   const { t } = useIdioma();
-  const [prefs, setPrefs] = usePersistedState<PreferenciasNotificacao>(
-    CHAVE_NOTIFICACOES,
-    PREF_PADRAO
+  const prefs = useAppStore((state) => state.notificacoes);
+  const setSomNotificacao = useAppStore(
+    (state) => state.setSomNotificacao
   );
 
   const n = t.notificacoes;
@@ -82,7 +79,7 @@ export function NotificacoesPanels() {
   ];
 
   const definir = (chave: EscopoNotificacao, valor: string) =>
-    setPrefs((atual) => ({ ...atual, [chave]: valor }));
+    setSomNotificacao(chave, valor);
 
   return (
     <TooltipProvider>
