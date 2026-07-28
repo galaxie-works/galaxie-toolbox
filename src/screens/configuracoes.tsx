@@ -31,6 +31,7 @@ import {
   StyleSettings,
 } from "@/components/theme-settings";
 import { TemplatesEmail } from "@/components/templates-email";
+import { ColorSettings } from "@/components/color-settings";
 
 /**
  * Um frame colapsável = UMA sub-opção configurável do item do menu (c-frame-5
@@ -109,7 +110,12 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             subtitle: "Choose light, dark, or match your operating system.",
             node: <StyleSettings />,
           },
-          { key: "colors", title: "Colors", subtitle: "Pick the accent colors of the app.", pending: 121 },
+          {
+            key: "colors",
+            title: "Colors",
+            subtitle: "Choose an accessible accent color for the interface.",
+            node: <ColorSettings />,
+          },
           { key: "lock-screen", title: "Lock screen", subtitle: "Protect the app with a PIN.", pending: 122 },
         ],
       },

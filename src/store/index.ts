@@ -36,6 +36,10 @@ import {
   type PreferenciasNotificacao,
 } from "@/lib/sons-notificacao";
 import type { MarcarLidoModo } from "./ui-slice";
+import {
+  aplicarCorDestaque,
+  corHexValida,
+} from "@/lib/cor-destaque";
 
 /**
  * ============================================================================
@@ -202,6 +206,13 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       state.temaVisual = temaVisual;
       aplicarTemaVisual(temaVisual);
     }
+    const corDestaque = lerChave<string>(
+      PERSONALIZATION_KEYS.corDestaque
+    );
+    if (corHexValida(corDestaque)) {
+      state.corDestaque = corDestaque.toLowerCase();
+      aplicarCorDestaque(state.corDestaque);
+    }
     return { state: state as AppPersistido, version: 0 };
   },
   setItem: (_name, value: StorageValue<AppPersistido>): void => {
@@ -228,6 +239,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(PERSONALIZATION_KEYS.fundoEstrelado, s.fundoEstrelado);
     gravarTexto(PERSONALIZATION_KEYS.modoTema, s.modoTema);
     gravarTexto(PERSONALIZATION_KEYS.temaVisual, s.temaVisual);
+    gravarChave(PERSONALIZATION_KEYS.corDestaque, s.corDestaque);
   },
   removeItem: (): void => {
     for (const chave of TODAS_CHAVES) {
@@ -274,6 +286,7 @@ export const useAppStore = create<AppStore>()(
         fundoEstrelado: s.fundoEstrelado,
         modoTema: s.modoTema,
         temaVisual: s.temaVisual,
+        corDestaque: s.corDestaque,
       }),
     }
   )

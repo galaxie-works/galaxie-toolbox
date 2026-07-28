@@ -16,6 +16,12 @@ import {
   type ModoTema,
   type TemaVisual,
 } from "@/lib/tema";
+import {
+  aplicarCorDestaque,
+  CHAVE_COR_DESTAQUE,
+  corDestaqueSalva,
+  corHexValida,
+} from "@/lib/cor-destaque";
 import type { AppStore } from "./index";
 
 /**
@@ -33,11 +39,15 @@ export interface PersonalizationSlice {
   modoTema: ModoTema;
   /** Paleta/estilo visual independente do modo claro/escuro. */
   temaVisual: TemaVisual;
+  /** Override hexadecimal dos tokens semânticos de destaque; null = mood. */
+  corDestaque: string | null;
 
   setSomNotificacao: (escopo: EscopoNotificacao, somId: string) => void;
   setFundoEstrelado: (ativo: boolean) => void;
   setModoTema: (modo: ModoTema) => void;
   setTemaVisual: (tema: TemaVisual) => void;
+  setCorDestaque: (cor: string) => void;
+  resetCorDestaque: () => void;
 }
 
 export const PERSONALIZATION_KEYS = {
@@ -45,11 +55,16 @@ export const PERSONALIZATION_KEYS = {
   fundoEstrelado: "galaxie-toolbox.background.stars",
   modoTema: CHAVE_MODO_TEMA,
   temaVisual: CHAVE_TEMA_VISUAL,
+  corDestaque: CHAVE_COR_DESTAQUE,
 } as const;
 
 export type PersonalizationPersistido = Pick<
   PersonalizationSlice,
-  "notificacoes" | "fundoEstrelado" | "modoTema" | "temaVisual"
+  | "notificacoes"
+  | "fundoEstrelado"
+  | "modoTema"
+  | "temaVisual"
+  | "corDestaque"
 >;
 
 export const createPersonalizationSlice: StateCreator<
@@ -62,6 +77,7 @@ export const createPersonalizationSlice: StateCreator<
   fundoEstrelado: true,
   modoTema: modoTemaSalvo(),
   temaVisual: temaVisualSalvo(),
+  corDestaque: corDestaqueSalva(),
 
   setSomNotificacao: (escopo, somId) =>
     set((state) => ({
@@ -75,5 +91,15 @@ export const createPersonalizationSlice: StateCreator<
   setTemaVisual: (tema) => {
     aplicarTemaVisual(tema);
     set({ temaVisual: tema });
+  },
+  setCorDestaque: (cor) => {
+    if (!corHexValida(cor)) return;
+    const normalizada = cor.toLowerCase();
+    aplicarCorDestaque(normalizada);
+    set({ corDestaque: normalizada });
+  },
+  resetCorDestaque: () => {
+    aplicarCorDestaque(null);
+    set({ corDestaque: null });
   },
 });
