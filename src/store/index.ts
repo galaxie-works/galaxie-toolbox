@@ -2,11 +2,20 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { createUiSlice, UI_KEYS, type UiPersistido, type UiSlice } from "./ui-slice";
+import { createListSlice, LIST_KEYS, type ListPersistido, type ListSlice } from "./list-slice";
+import {
+  createMailboxSlice,
+  MAILBOX_KEYS,
+  type MailboxPersistido,
+  type MailboxSlice,
+} from "./mailbox-slice";
 import {
   createSettingsUiSlice,
   type SettingsItemId,
   type SettingsUiSlice,
 } from "./settings-ui-slice";
+import type { OrdenarMensagens } from "@/lib/api";
+import type { MarcarLidoModo } from "./ui-slice";
 
 /**
  * ============================================================================
@@ -19,34 +28,34 @@ import {
  * PADRÃO DE SLICES:
  *   1. Cada domínio vira `*-slice.ts` exportando a interface + um
  *      `createXSlice: StateCreator<AppStore, [["zustand/persist", unknown]], [], XSlice>`
- *      (tipado contra o store COMBINADO, então `set`/`get` enxergam tudo).
+ *      (tipado contra o store COMBINADO) + as `X_KEYS` legadas + o `XPersistido`.
  *   2. `AppStore` é a INTERSEÇÃO dos slices.
- *   3. `create()` combina os creators com os mesmos args:
- *      `(...a) => ({ ...createUiSlice(...a), ...createSettingsUiSlice(...a) })`.
- *   4. LEITURAS SEMPRE POR SELETOR — `useAppStore(s => s.zoom)` — pra assinar só
- *      o pedaço usado. Ações (`setX`) são estáveis.
+ *   3. `create()` combina os creators com os mesmos args.
+ *   4. LEITURAS SEMPRE POR SELETOR — `useAppStore(s => s.zoom)`.
  *
  * PERSISTÊNCIA (preservando as chaves do usuário):
- *   O `persist` guarda só o que for `partialize`. Em vez de um blob único numa
- *   chave nova (que resetaria o estado salvo), um `PersistStorage` CUSTOM
- *   (`legacyStorage`) mapeia cada campo persistido pra a MESMA chave/formato que
- *   o `usePersistedState` usava (`UI_KEYS`) — a nav da Settings ganha sua chave
- *   própria (`SETTINGS_KEY`). Assim o estado antigo continua válido sem migração.
- *   Novo campo persistido: registre a chave + no getItem/setItem/removeItem.
+ *   Um `PersistStorage` CUSTOM (`legacyStorage`) mapeia cada campo persistido pra
+ *   a MESMA chave/formato do `usePersistedState` (as `*_KEYS` de cada slice) — a
+ *   nav da Settings ganha `SETTINGS_KEY`. Sem blob novo → reabrir não reseta nada.
+ *   Novo campo persistido: registre a chave no slice e some no getItem/setItem/
+ *   removeItem/partialize aqui.
  *
- * COEXISTÊNCIA: durante a migração incremental, o estado ainda-não-migrado segue
- * no `usePersistedState`/`useState` do control-room. Nada quebra.
+ * COEXISTÊNCIA: estado ainda-não-migrado segue no `usePersistedState`/`useState`
+ * do control-room (ex.: filtros da lista). Nada quebra.
  * ============================================================================
  */
 
 /** Tipo do store combinado. Cresce por interseção conforme novos slices entram. */
-export type AppStore = UiSlice & SettingsUiSlice;
+export type AppStore = UiSlice & ListSlice & MailboxSlice & SettingsUiSlice;
 
 /** Chave própria da nav da Settings (#118). Não é `bridge.*` porque não é do Bridge. */
 const SETTINGS_KEY = "galaxie-toolbox.settingsItem";
 
-/** O que o `persist` guarda: UI (chaves legadas) + a nav da Settings. */
-type AppPersistido = UiPersistido & Pick<SettingsUiSlice, "selectedSettingsItem">;
+/** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
+type AppPersistido = UiPersistido &
+  ListPersistido &
+  MailboxPersistido &
+  Pick<SettingsUiSlice, "selectedSettingsItem">;
 
 // --- storage custom: mapeia o blob persistido pras chaves reais 1:1 -----------
 
@@ -67,26 +76,45 @@ function gravarChave(chave: string, valor: unknown): void {
   }
 }
 
+/** Todas as chaves reais no localStorage (pro removeItem limpar tudo). */
+const TODAS_CHAVES = [
+  ...Object.values(UI_KEYS),
+  ...Object.values(LIST_KEYS),
+  ...Object.values(MAILBOX_KEYS),
+  SETTINGS_KEY,
+];
+
 /**
  * `PersistStorage` que NÃO usa uma chave única: lê/grava cada campo na sua chave
- * (as legadas `UI_KEYS` do #126 + `SETTINGS_KEY`), no mesmo formato do
- * `usePersistedState`. Campos ausentes são omitidos → o `merge` do Zustand
- * mantém o default do slice (sem "resetar" nada). Síncrono, então o store já
- * hidrata no load do módulo — a 1ª renderização já vê os valores salvos.
+ * legada, no mesmo formato do `usePersistedState`. Campos ausentes são omitidos →
+ * o `merge` do Zustand mantém o default do slice. Síncrono → o store hidrata no
+ * load do módulo (1ª renderização já vê os valores salvos, sem flash).
  */
 const legacyStorage: PersistStorage<AppPersistido> = {
   getItem: (): StorageValue<AppPersistido> | null => {
     const state: Partial<AppPersistido> = {};
+    // UI
     const zoom = lerChave<number>(UI_KEYS.zoom);
     if (zoom !== undefined) state.zoom = zoom;
     const grupos = lerChave<Record<string, string[]>>(UI_KEYS.gruposColapsados);
     if (grupos !== undefined) state.gruposColapsados = grupos;
     const sidebar = lerChave<boolean>(UI_KEYS.sidebarAberta);
     if (sidebar !== undefined) state.sidebarAberta = sidebar;
-    const modo = lerChave<AppPersistido["marcarLidoModo"]>(UI_KEYS.marcarLidoModo);
+    const agenda = lerChave<boolean>(UI_KEYS.agendaAberta);
+    if (agenda !== undefined) state.agendaAberta = agenda;
+    const modo = lerChave<MarcarLidoModo>(UI_KEYS.marcarLidoModo);
     if (modo !== undefined) state.marcarLidoModo = modo;
     const atraso = lerChave<number>(UI_KEYS.marcarLidoAtraso);
     if (atraso !== undefined) state.marcarLidoAtraso = atraso;
+    // Lista
+    const ordenar = lerChave<OrdenarMensagens>(LIST_KEYS.ordenar);
+    if (ordenar !== undefined) state.ordenar = ordenar;
+    const ordemDesc = lerChave<boolean>(LIST_KEYS.ordemDesc);
+    if (ordemDesc !== undefined) state.ordemDesc = ordemDesc;
+    // Mailbox
+    const caixas = lerChave<string[]>(MAILBOX_KEYS.caixasCompartilhadas);
+    if (caixas !== undefined) state.caixasCompartilhadas = caixas;
+    // Settings
     const item = lerChave<SettingsItemId>(SETTINGS_KEY);
     if (item !== undefined) state.selectedSettingsItem = item;
     return { state: state as AppPersistido, version: 0 };
@@ -96,12 +124,16 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(UI_KEYS.zoom, s.zoom);
     gravarChave(UI_KEYS.gruposColapsados, s.gruposColapsados);
     gravarChave(UI_KEYS.sidebarAberta, s.sidebarAberta);
+    gravarChave(UI_KEYS.agendaAberta, s.agendaAberta);
     gravarChave(UI_KEYS.marcarLidoModo, s.marcarLidoModo);
     gravarChave(UI_KEYS.marcarLidoAtraso, s.marcarLidoAtraso);
+    gravarChave(LIST_KEYS.ordenar, s.ordenar);
+    gravarChave(LIST_KEYS.ordemDesc, s.ordemDesc);
+    gravarChave(MAILBOX_KEYS.caixasCompartilhadas, s.caixasCompartilhadas);
     gravarChave(SETTINGS_KEY, s.selectedSettingsItem);
   },
   removeItem: (): void => {
-    for (const chave of [...Object.values(UI_KEYS), SETTINGS_KEY]) {
+    for (const chave of TODAS_CHAVES) {
       try {
         localStorage.removeItem(chave);
       } catch {
@@ -119,11 +151,11 @@ export const useAppStore = create<AppStore>()(
   persist(
     (...a) => ({
       ...createUiSlice(...a),
+      ...createListSlice(...a),
+      ...createMailboxSlice(...a),
       ...createSettingsUiSlice(...a),
     }),
     {
-      // Id lógico do persist; as chaves REAIS no localStorage são as de `UI_KEYS`
-      // + `SETTINGS_KEY` (o `legacyStorage` ignora este nome — não cria a chave).
       name: "galaxie-toolbox.store",
       storage: legacyStorage,
       version: 0,
@@ -131,8 +163,12 @@ export const useAppStore = create<AppStore>()(
         zoom: s.zoom,
         gruposColapsados: s.gruposColapsados,
         sidebarAberta: s.sidebarAberta,
+        agendaAberta: s.agendaAberta,
         marcarLidoModo: s.marcarLidoModo,
         marcarLidoAtraso: s.marcarLidoAtraso,
+        ordenar: s.ordenar,
+        ordemDesc: s.ordemDesc,
+        caixasCompartilhadas: s.caixasCompartilhadas,
         selectedSettingsItem: s.selectedSettingsItem,
       }),
     }

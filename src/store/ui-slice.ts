@@ -1,29 +1,19 @@
 import type { StateCreator } from "zustand";
 
 import type { AppStore } from "./index";
+import { resolver, type Updater } from "./updater";
 
 /**
- * Slice de UI / preferências do Bridge — épico #125 (piloto #126).
+ * Slice de UI / preferências do Bridge — épico #125.
  *
- * Guarda o estado que o usuário "deixa" no app (colapsos, zoom, sidebar,
- * marcar-lido). Tudo aqui é PERSISTIDO em localStorage pelo `persist`
- * middleware do store (ver `index.ts`) mantendo as MESMAS chaves que o antigo
+ * Guarda o estado que o usuário "deixa" no app (colapsos, zoom, sidebar, agenda,
+ * marcar-lido). Tudo aqui é PERSISTIDO em localStorage pelo `persist` middleware
+ * do store (ver `index.ts`) mantendo as MESMAS chaves que o antigo
  * `usePersistedState` usava — reabrir o app não reseta nada do usuário.
- *
- * É o MOLDE dos próximos slices (mailbox/selection/filters/reader/agenda) e
- * convive no MESMO store da nav da Settings (#117/#118). Ao estender: some
- * campos + ações aqui (ou crie um novo slice no mesmo padrão) e, se for estado
- * persistido, registre a chave em `UI_KEYS` + `partialize` + `legacyStorage`.
  */
 
 /** Modo de "marcar como lido" (#95). */
 export type MarcarLidoModo = "imediato" | "atraso" | "manual";
-
-/** Atualização estilo React `setState`: valor novo OU `(prev) => novo`. */
-type Updater<T> = T | ((prev: T) => T);
-function resolver<T>(atual: T, upd: Updater<T>): T {
-  return typeof upd === "function" ? (upd as (p: T) => T)(atual) : upd;
-}
 
 export interface UiSlice {
   /** Zoom manual do leitor (#76). 1 = auto-fit puro. Persistido em `bridge.leitorZoom`. */
@@ -32,6 +22,8 @@ export interface UiSlice {
   gruposColapsados: Record<string, string[]>;
   /** Sidebar de pastas aberta/fechada. Persistido em `bridge.sidebar`. */
   sidebarAberta: boolean;
+  /** Card da Agenda aberto/fechado (#50). Persistido em `bridge.agendaVisivel`. */
+  agendaAberta: boolean;
   /** Quando marcar a mensagem como lida (#95). Persistido em `bridge.marcarLidoModo`. */
   marcarLidoModo: MarcarLidoModo;
   /** Atraso (s) do modo "atraso" (#95). Persistido em `bridge.marcarLidoAtraso`. */
@@ -42,6 +34,7 @@ export interface UiSlice {
   setGruposColapsados: (v: Updater<Record<string, string[]>>) => void;
   setSidebarAberta: (v: Updater<boolean>) => void;
   toggleSidebar: () => void;
+  setAgendaAberta: (v: Updater<boolean>) => void;
   setMarcarLidoModo: (m: MarcarLidoModo) => void;
   setMarcarLidoAtraso: (n: number) => void;
 }
@@ -55,6 +48,7 @@ export const UI_KEYS = {
   zoom: "bridge.leitorZoom",
   gruposColapsados: "bridge.gruposColapsados.v2",
   sidebarAberta: "bridge.sidebar",
+  agendaAberta: "bridge.agendaVisivel",
   marcarLidoModo: "bridge.marcarLidoModo",
   marcarLidoAtraso: "bridge.marcarLidoAtraso",
 } as const;
@@ -62,7 +56,12 @@ export const UI_KEYS = {
 /** Campos persistidos do slice (o que o `partialize` guarda). */
 export type UiPersistido = Pick<
   UiSlice,
-  "zoom" | "gruposColapsados" | "sidebarAberta" | "marcarLidoModo" | "marcarLidoAtraso"
+  | "zoom"
+  | "gruposColapsados"
+  | "sidebarAberta"
+  | "agendaAberta"
+  | "marcarLidoModo"
+  | "marcarLidoAtraso"
 >;
 
 /**
@@ -79,6 +78,7 @@ export const createUiSlice: StateCreator<
   zoom: 1,
   gruposColapsados: {},
   sidebarAberta: true,
+  agendaAberta: false,
   marcarLidoModo: "imediato",
   marcarLidoAtraso: 2,
 
@@ -87,6 +87,7 @@ export const createUiSlice: StateCreator<
     set((s) => ({ gruposColapsados: resolver(s.gruposColapsados, v) })),
   setSidebarAberta: (v) => set((s) => ({ sidebarAberta: resolver(s.sidebarAberta, v) })),
   toggleSidebar: () => set((s) => ({ sidebarAberta: !s.sidebarAberta })),
+  setAgendaAberta: (v) => set((s) => ({ agendaAberta: resolver(s.agendaAberta, v) })),
   setMarcarLidoModo: (m) => set({ marcarLidoModo: m }),
   setMarcarLidoAtraso: (n) => set({ marcarLidoAtraso: n }),
 });

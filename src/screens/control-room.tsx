@@ -4619,15 +4619,17 @@ export function ControlRoomScreen({
   // de pastas do Bridge (a Agenda pertence ao Bridge, não ao app principal).
   // Nasce FECHADA (chave nova, reseta persistidos antigos) pra fazer menos
   // requisições no startup — só carrega quando o usuário abre (#50).
-  const [agendaAberta, setAgendaAberta] = usePersistedState("bridge.agendaVisivel", false);
+  // Agenda migrada pro ui slice (#125). Chave `bridge.agendaVisivel` preservada.
+  const agendaAberta = useAppStore((s) => s.agendaAberta);
+  const setAgendaAberta = useAppStore((s) => s.setAgendaAberta);
   // Caixas compartilhadas (#111): lista de endereços adicionados (persistida) +
   // qual está ativa. Adicionar/validar/persistir/selecionar é o escopo desta
   // issue; a LISTAGEM do conteúdo de uma caixa compartilhada é a #112 (por isso
   // a caixa ativa por ora só troca o estado e mostra um placeholder "em breve").
-  const [caixasCompartilhadas, setCaixasCompartilhadas] = usePersistedState<string[]>(
-    "bridge.caixasCompartilhadas",
-    []
-  );
+  // Caixas compartilhadas migradas pro mailbox slice (#125). Chave
+  // `bridge.caixasCompartilhadas` preservada; seletor assina só este campo.
+  const caixasCompartilhadas = useAppStore((s) => s.caixasCompartilhadas);
+  const setCaixasCompartilhadas = useAppStore((s) => s.setCaixasCompartilhadas);
   // Caixa ativa reseta pra própria (/me) a cada sessão — a lista é que persiste.
   const [caixaAtiva, setCaixaAtiva] = useState<string>(CAIXA_PROPRIA);
   const [adicionarCaixaAberto, setAdicionarCaixaAberto] = useState(false);
@@ -4671,11 +4673,12 @@ export function ControlRoomScreen({
   const sidebarAberta = useAppStore((s) => s.sidebarAberta);
   const setSidebarAberta = useAppStore((s) => s.setSidebarAberta);
   // Ordenação da lista (persistida): campo + direção → $orderby no Graph (#32).
-  const [ordenar, setOrdenar] = usePersistedState<api.OrdenarMensagens>(
-    "bridge.ordenar",
-    "data"
-  );
-  const [ordemDesc, setOrdemDesc] = usePersistedState("bridge.ordemDesc", true);
+  // Ordenação migrada pro list slice (#125). Chaves `bridge.ordenar` /
+  // `bridge.ordemDesc` preservadas; validação de campo fora-de-escopo no efeito abaixo.
+  const ordenar = useAppStore((s) => s.ordenar);
+  const setOrdenar = useAppStore((s) => s.setOrdenar);
+  const ordemDesc = useAppStore((s) => s.ordemDesc);
+  const setOrdemDesc = useAppStore((s) => s.setOrdemDesc);
   // Migração: sorts removidos do escopo (tamanho/importancia/flag — #60) que
   // ficaram no localStorage voltam pra "data", evitando estado inconsistente.
   useEffect(() => {
