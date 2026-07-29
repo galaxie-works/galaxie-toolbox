@@ -13,6 +13,29 @@ export const CHAVE_TEMA_VISUAL = "galaxie-toolbox.theme";
 export const CHAVE_ALTO_CONTRASTE = "galaxie-toolbox.altoContraste";
 
 /**
+ * Cor `--background` resolvida do tema atual, persistida para o script inline de
+ * boot do `index.html` pintar o fundo certo no próximo boot/F5 (#217) — matando
+ * o flash branco E o vazamento do navy do splash. É lida antes do React montar.
+ */
+export const CHAVE_COR_FUNDO = "galaxie-toolbox.bootBg";
+
+/**
+ * Lê o `--background` já resolvido do <html> (após aplicar Mood/modo/contraste) e
+ * grava no localStorage. Idempotente: pode ser chamada a cada mudança de tema.
+ */
+export function persistirCorFundoBoot() {
+  if (typeof document === "undefined") return;
+  try {
+    const cor = getComputedStyle(document.documentElement)
+      .getPropertyValue("--background")
+      .trim();
+    if (cor) localStorage.setItem(CHAVE_COR_FUNDO, cor);
+  } catch {
+    // Sem DOM/localStorage disponível: o script inline cai no fallback neutro.
+  }
+}
+
+/**
  * `data-theme` do preset de alto contraste (#136). NÃO é uma opção de Mood: mora
  * só no `theme-presets.css` e sobrepõe o Mood quan­do o Accessibility está ligado.
  */
@@ -85,10 +108,12 @@ export function aplicarModoTema(modo: ModoTema) {
   const escuro = temaEscuro(modo);
   document.documentElement.classList.toggle("dark", escuro);
   sincronizarTemaJanela(escuro);
+  persistirCorFundoBoot();
 }
 
 export function aplicarTemaVisual(tema: TemaVisual) {
   document.documentElement.dataset.theme = tema;
+  persistirCorFundoBoot();
 }
 
 export function altoContrasteSalvo(): boolean {
@@ -117,6 +142,7 @@ export function aplicarAltoContraste(
   document.documentElement.dataset.theme = ativo
     ? TEMA_ALTO_CONTRASTE
     : temaBase;
+  persistirCorFundoBoot();
 }
 
 /** Vale a partir do import, sem esperar componente nenhum. */

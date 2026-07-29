@@ -24,12 +24,12 @@
         "fullscreen": false,
         "decorations": false,
         "shadow": true,
-        "backgroundColor": "#171A30",
+        "backgroundColor": "#09090B",
         "dragDropEnabled": false
       },
       {
         "label": "splashscreen",
-        "url": "index.html",
+        "url": "index.html?splash=1",
         "width": 400,
         "height": 400,
         "center": true,

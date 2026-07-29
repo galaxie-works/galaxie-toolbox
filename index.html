@@ -5,15 +5,53 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GALAXIE</title>
-    <!-- #164: fundo #171A30 imediato — evita o flash branco da webview antes do React montar (splash e main compartilham este HTML). -->
     <style>
       html,
       body {
         margin: 0;
         height: 100%;
-        background-color: #171a30;
       }
     </style>
+    <!--
+      #217: fundo de boot escopado (antes do React montar; splash e main
+      compartilham este HTML). A splash (url `index.html?splash=1`) pinta o
+      #171A30 do #164; a main pinta o `--background` do tema PERSISTIDO por
+      `src/lib/tema.ts` (chave `galaxie-toolbox.bootBg`) — matando o flash branco
+      E o vazamento do navy do splash. Fallback: resolve claro/escuro do galaxie
+      (tema padrao) igual ao tema.ts. Sem hardcode de #171A30 na main.
+    -->
+    <script>
+      (function () {
+        var raiz = document.documentElement;
+        if (location.search.indexOf("splash") !== -1) {
+          raiz.style.backgroundColor = "#171A30";
+          return;
+        }
+        function cru(chave) {
+          try {
+            var v = localStorage.getItem(chave);
+            if (v && v.charAt(0) === '"') {
+              try { v = JSON.parse(v); } catch (e) {}
+            }
+            return v;
+          } catch (e) {
+            return null;
+          }
+        }
+        var bg = cru("galaxie-toolbox.bootBg");
+        if (!bg) {
+          var modo = cru("galaxie-theme");
+          var escuro =
+            modo === "dark" ||
+            (modo !== "light" &&
+              (window.matchMedia
+                ? window.matchMedia("(prefers-color-scheme: dark)").matches
+                : true));
+          bg = escuro ? "#09090B" : "#FFFFFF";
+        }
+        raiz.style.backgroundColor = bg;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
