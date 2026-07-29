@@ -286,9 +286,12 @@ async fn cr_inbox_dia(
 async fn cr_email_corpo(
     state: State<'_, Store>,
     id: String,
+    mailbox: Option<String>,
 ) -> Result<graph::EmailDetalhe, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_email_corpo(&store, &id))
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_email_corpo(&store, &id, mailbox.as_deref())
+    })
         .await
         .map_err(|e| e.to_string())?
 }
@@ -299,9 +302,12 @@ async fn cr_email_corpo(
 async fn cr_email_seguranca(
     state: State<'_, Store>,
     id: String,
+    mailbox: Option<String>,
 ) -> Result<graph::SegurancaEmail, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_email_seguranca(&store, &id))
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_email_seguranca(&store, &id, mailbox.as_deref())
+    })
         .await
         .map_err(|e| e.to_string())?
 }
@@ -393,18 +399,26 @@ async fn cr_salvar_contatos(
 async fn cr_subpastas(
     state: State<'_, Store>,
     folder_id: String,
+    mailbox: Option<String>,
 ) -> Result<Vec<graph::PastaEmail>, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_subpastas(&store, &folder_id))
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_subpastas(&store, &folder_id, mailbox.as_deref())
+    })
         .await
         .map_err(|e| e.to_string())?
 }
 
 /// Control room: pastas de e-mail padrão (com contagens).
 #[tauri::command]
-async fn cr_mail_folders(state: State<'_, Store>) -> Result<Vec<graph::PastaEmail>, String> {
+async fn cr_mail_folders(
+    state: State<'_, Store>,
+    mailbox: Option<String>,
+) -> Result<Vec<graph::PastaEmail>, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_mail_folders(&store))
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_mail_folders(&store, mailbox.as_deref())
+    })
         .await
         .map_err(|e| e.to_string())?
 }
@@ -442,10 +456,18 @@ async fn cr_folder_mensagens(
     skip: u32,
     ordenar: String,
     descendente: bool,
+    mailbox: Option<String>,
 ) -> Result<Vec<graph::EmailItem>, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_folder_mensagens(&store, &folder_id, skip, &ordenar, descendente)
+        graph::cr_folder_mensagens(
+            &store,
+            &folder_id,
+            skip,
+            &ordenar,
+            descendente,
+            mailbox.as_deref(),
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -556,10 +578,11 @@ async fn cr_buscar(
     folder_id: String,
     termo: String,
     next_link: Option<String>,
+    mailbox: Option<String>,
 ) -> Result<graph::BuscaPagina, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_buscar(&store, &folder_id, &termo, next_link)
+        graph::cr_buscar(&store, &folder_id, &termo, next_link, mailbox.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -573,10 +596,11 @@ async fn cr_filtrar(
     folder_id: String,
     filtro: String,
     next_link: Option<String>,
+    mailbox: Option<String>,
 ) -> Result<graph::BuscaPagina, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_filtrar(&store, &folder_id, &filtro, next_link)
+        graph::cr_filtrar(&store, &folder_id, &filtro, next_link, mailbox.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -589,9 +613,12 @@ async fn cr_contar(
     state: State<'_, Store>,
     folder_id: String,
     filtro: String,
+    mailbox: Option<String>,
 ) -> Result<u64, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_contar(&store, &folder_id, &filtro))
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_contar(&store, &folder_id, &filtro, mailbox.as_deref())
+    })
         .await
         .map_err(|e| e.to_string())?
 }
@@ -602,9 +629,12 @@ async fn cr_contar(
 async fn cr_contadores(
     state: State<'_, Store>,
     folder_id: String,
+    mailbox: Option<String>,
 ) -> Result<graph::Contadores, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_contadores(&store, &folder_id))
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_contadores(&store, &folder_id, mailbox.as_deref())
+    })
         .await
         .map_err(|e| e.to_string())?
 }
@@ -702,10 +732,16 @@ async fn cr_baixar_anexo(
     state: State<'_, Store>,
     message_id: String,
     attachment_id: String,
+    mailbox: Option<String>,
 ) -> Result<String, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_baixar_anexo(&store, &message_id, &attachment_id)
+        graph::cr_baixar_anexo(
+            &store,
+            &message_id,
+            &attachment_id,
+            mailbox.as_deref(),
+        )
     })
     .await
     .map_err(|e| e.to_string())?

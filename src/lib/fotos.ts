@@ -11,7 +11,8 @@
 //  - Coleta em lote: os chamadores pedem as fotos das linhas VISÍVEIS; um
 //    debounce de ~150ms junta tudo e dispara 1 request por até 20 fotos
 //    (`crFotosContatos` → `$batch` do Graph).
-//  - Chave = e-mail em minúsculas.
+//  - Chave = caixa ativa + e-mail em minúsculas. A mesma pessoa pode aparecer
+//    em várias caixas sem que cache/fila de uma seleção vaze para outra (#112).
 //
 // Não é um componente React: é um store-módulo com assinatura (subscribe) para
 // os componentes re-renderizarem quando fotos novas chegam (hook `useFotos`).
@@ -37,8 +38,18 @@ const pendentes = new Set<string>(); // aguardando o próximo lote
 const emVoo = new Set<string>(); // já num request em andamento
 const ouvintes = new Set<() => void>();
 let dominio: string | null = null;
+let escopo = "me";
 let timer: ReturnType<typeof setTimeout> | null = null;
 let hidratado = false;
+
+function chaveFoto(email: string): string {
+  return `${escopo}|${email.toLowerCase()}`;
+}
+
+function emailDaChave(chave: string): string {
+  const separador = chave.indexOf("|");
+  return separador >= 0 ? chave.slice(separador + 1) : chave;
+}
 
 /** Carrega o cache do localStorage na primeira leitura, podando o que expirou. */
 function hidratar(): void {
@@ -49,8 +60,11 @@ function hidratar(): void {
     if (!bruto) return;
     const obj = JSON.parse(bruto) as Record<string, Entrada>;
     const agora = Date.now();
-    for (const [email, e] of Object.entries(obj)) {
-      if (e && typeof e.exp === "number" && e.exp > agora) memoria.set(email, e);
+    for (const [chave, e] of Object.entries(obj)) {
+      if (e && typeof e.exp === "number" && e.exp > agora) {
+        // Cache anterior à #112 era chaveado só por e-mail: pertence à /me.
+        memoria.set(chave.includes("|") ? chave : `me|${chave}`, e);
+      }
     }
   } catch {
     // cache corrompido/indisponível: começa vazio.
@@ -81,9 +95,9 @@ function persistir(): void {
 }
 
 /** Insere/atualiza uma entrada movendo-a para o fim (recência aproximada). */
-function guardar(email: string, foto: string | null): void {
-  memoria.delete(email);
-  memoria.set(email, { foto, exp: Date.now() + (foto ? TTL_POS : TTL_NEG) });
+function guardar(chave: string, foto: string | null): void {
+  memoria.delete(chave);
+  memoria.set(chave, { foto, exp: Date.now() + (foto ? TTL_POS : TTL_NEG) });
 }
 
 function notificar(): void {
@@ -100,6 +114,15 @@ export function configurarDominioFotos(email: string | null | undefined): void {
   dominio = email?.split("@")[1]?.toLowerCase() || null;
 }
 
+/** Troca o namespace do cache para a caixa ativa. Não apaga outros namespaces:
+ * voltar à caixa anterior restaura suas fotos sem novo request. */
+export function configurarEscopoFotos(mailbox: string | null | undefined): void {
+  const proximo = mailbox?.trim().toLowerCase() || "me";
+  if (proximo === escopo) return;
+  escopo = proximo;
+  notificar();
+}
+
 /** Foto em cache de um e-mail: data URI (tem foto), `null` (sabidamente sem
  *  foto) ou `undefined` (ainda não resolvido). Não dispara request. */
 export function getFoto(
@@ -107,7 +130,7 @@ export function getFoto(
 ): string | null | undefined {
   if (!email) return undefined;
   hidratar();
-  const k = email.toLowerCase();
+  const k = chaveFoto(email);
   const e = memoria.get(k);
   if (!e) return undefined;
   if (e.exp <= Date.now()) {
@@ -126,10 +149,11 @@ export function pedirFotos(emails: (string | null | undefined)[]): void {
     if (!raw) continue;
     const email = raw.toLowerCase();
     if (!interno(email)) continue;
-    if (pendentes.has(email) || emVoo.has(email)) continue;
-    const e = memoria.get(email);
+    const chave = chaveFoto(email);
+    if (pendentes.has(chave) || emVoo.has(chave)) continue;
+    const e = memoria.get(chave);
     if (e && e.exp > agora) continue; // já resolvido e válido
-    pendentes.add(email);
+    pendentes.add(chave);
     algo = true;
   }
   if (algo) agendarFlush();
@@ -143,16 +167,18 @@ function agendarFlush(): void {
 async function flush(): Promise<void> {
   timer = null;
   if (pendentes.size === 0) return;
-  const lote = [...pendentes].slice(0, LOTE);
-  for (const e of lote) {
-    pendentes.delete(e);
-    emVoo.add(e);
+  const chaves = [...pendentes].slice(0, LOTE);
+  for (const chave of chaves) {
+    pendentes.delete(chave);
+    emVoo.add(chave);
   }
   try {
-    const mapa = await crFotosContatos(lote);
-    for (const email of lote) {
+    const emails = [...new Set(chaves.map(emailDaChave))];
+    const mapa = await crFotosContatos(emails);
+    for (const chave of chaves) {
+      const email = emailDaChave(chave);
       // Ausente no retorno = trata como sem foto.
-      guardar(email, email in mapa ? mapa[email] : null);
+      guardar(chave, email in mapa ? mapa[email] : null);
     }
     persistir();
     notificar();
@@ -160,7 +186,7 @@ async function flush(): Promise<void> {
     // Falha (403 sem re-consent, offline, 429 estourado): NÃO cacheia — tenta de
     // novo numa próxima coleta. Enquanto isso, a UI mostra as iniciais.
   } finally {
-    for (const e of lote) emVoo.delete(e);
+    for (const chave of chaves) emVoo.delete(chave);
     if (pendentes.size > 0) agendarFlush(); // sobrou fila → próximo lote
   }
 }

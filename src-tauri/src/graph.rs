@@ -1309,21 +1309,25 @@ fn nomes_recipients(v: &serde_json::Value) -> Vec<String> {
 }
 
 /// Corpo completo de um e-mail + destinatarios e anexos. Mail.Read.
-pub fn cr_email_corpo(store: &TokenStore, id: &str) -> Result<EmailDetalhe, String> {
+pub fn cr_email_corpo(
+    store: &TokenStore,
+    id: &str,
+    mailbox: Option<&str>,
+) -> Result<EmailDetalhe, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
-        "{GRAPH}/me/messages/{id}\
+        "{GRAPH}/{prefix}/messages/{id}\
          ?$select=subject,from,toRecipients,ccRecipients,receivedDateTime,body,hasAttachments,webLink"
     );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .map_err(|e| format!("falha ao ler o e-mail: {e}"))?;
+    let resp = graph_enviar("mail:corpo", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler o e-mail: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("/me/messages retornou {}", resp.status()));
+        return Err(format!("/{prefix}/messages retornou {}", resp.status()));
     }
     let it: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
 
@@ -1333,8 +1337,12 @@ pub fn cr_email_corpo(store: &TokenStore, id: &str) -> Result<EmailDetalhe, Stri
     // Anexos so quando houver (poupa uma chamada).
     let mut anexos = Vec::new();
     if it["hasAttachments"].as_bool().unwrap_or(false) {
-        let au = format!("{GRAPH}/me/messages/{id}/attachments?$select=id,name,size");
-        if let Ok(r) = client.get(&au).bearer_auth(&token).send() {
+        let au = format!(
+            "{GRAPH}/{prefix}/messages/{id}/attachments?$select=id,name,size"
+        );
+        if let Ok(r) = graph_enviar("mail:anexos", GRAPH_TETO_ESPERA_S, || {
+            client.get(&au).bearer_auth(&token).send()
+        }) {
             if r.status().is_success() {
                 if let Ok(va) = r.json::<serde_json::Value>() {
                     if let Some(arr) = va["value"].as_array() {
@@ -1412,17 +1420,27 @@ fn recipients_nomeados(v: &serde_json::Value) -> Vec<RemetenteNomeado> {
 /// `internetMessageHeaders` vem só quando explicitamente selecionado e requer
 /// apenas `Mail.Read` (já concedido; ver AGENTS.md §1.1). Passa pelo pool
 /// `graph_enviar` (#64) como as demais chamadas.
-pub fn cr_email_seguranca(store: &TokenStore, id: &str) -> Result<SegurancaEmail, String> {
+pub fn cr_email_seguranca(
+    store: &TokenStore,
+    id: &str,
+    mailbox: Option<&str>,
+) -> Result<SegurancaEmail, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
-    let url = format!("{GRAPH}/me/messages/{id}?$select=replyTo,internetMessageHeaders");
+    let url = format!(
+        "{GRAPH}/{prefix}/messages/{id}?$select=replyTo,internetMessageHeaders"
+    );
     let resp = graph_enviar("mail:seguranca", GRAPH_TETO_ESPERA_S, || {
         client.get(&url).bearer_auth(&token).send()
     })
     .map_err(|e| format!("falha ao ler cabeçalhos do e-mail: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("/me/messages (segurança) retornou {}", resp.status()));
+        return Err(format!(
+            "/{prefix}/messages (segurança) retornou {}",
+            resp.status()
+        ));
     }
     let it: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
 
@@ -1464,20 +1482,26 @@ pub fn cr_baixar_anexo(
     store: &TokenStore,
     message_id: &str,
     attachment_id: &str,
+    mailbox: Option<&str>,
 ) -> Result<String, String> {
     use base64::{engine::general_purpose, Engine as _};
 
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
-    let url = format!("{GRAPH}/me/messages/{message_id}/attachments/{attachment_id}");
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .map_err(|e| format!("falha ao baixar o anexo: {e}"))?;
+    let url = format!(
+        "{GRAPH}/{prefix}/messages/{message_id}/attachments/{attachment_id}"
+    );
+    let resp = graph_enviar("mail:baixar-anexo", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao baixar o anexo: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("/me/messages/attachments retornou {}", resp.status()));
+        return Err(format!(
+            "/{prefix}/messages/attachments retornou {}",
+            resp.status()
+        ));
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
 
@@ -1768,12 +1792,50 @@ pub struct PastaEmail {
     pub total: u64,
     /// nº de subpastas — o front só mostra o chevron de expandir quando > 0.
     pub filhos: u64,
+    /// A pasta existe, mas o token não tem acesso a ela nesta caixa. O front
+    /// mantém a árvore utilizável e mostra o aviso de acesso parcial (#112).
+    pub acesso_negado: bool,
 }
 
-/// Pastas de e-mail padrão do usuário, com contagens. Mail.Read.
-pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
+/// Prefixo do recurso de e-mail no Graph. `None`/`"me"` preserva o caminho
+/// pessoal; um endereço vira `/users/{addr}` com o mesmo encode já usado pelas
+/// fotos e pela validação de caixas compartilhadas.
+fn mailbox_prefix(mailbox: Option<&str>) -> String {
+    match mailbox.map(str::trim).filter(|m| !m.is_empty() && *m != "me") {
+        Some(addr) => format!("users/{}", urlencoding::encode(addr)),
+        None => "me".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod testes_mailbox_prefix {
+    use super::mailbox_prefix;
+
+    #[test]
+    fn preserva_me_como_default() {
+        assert_eq!(mailbox_prefix(None), "me");
+        assert_eq!(mailbox_prefix(Some("")), "me");
+        assert_eq!(mailbox_prefix(Some("me")), "me");
+    }
+
+    #[test]
+    fn endereca_e_codifica_caixa_compartilhada() {
+        assert_eq!(
+            mailbox_prefix(Some(" Financeiro+SP@Empresa.com ")),
+            "users/Financeiro%2BSP%40Empresa.com"
+        );
+    }
+}
+
+/// Pastas de e-mail padrão da caixa ativa, com contagens. Mail.Read /
+/// Mail.Read.Shared.
+pub fn cr_mail_folders(
+    store: &TokenStore,
+    mailbox: Option<&str>,
+) -> Result<Vec<PastaEmail>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     // Pastas well-known (o id textual funciona direto no Graph).
     let alvos = [
@@ -1792,13 +1854,14 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
         let mut total = 0;
         let mut filhos = 0;
         let mut nome = id.to_string();
+        let mut acesso_negado = false;
         // $expand=childFolders (não $select=childFolderCount): o childFolderCount
         // conta subpastas OCULTAS de sistema (ex.: em Deleted), fazendo aparecer
         // um chevron que expande pra nada. O $expand — como o /childFolders da
         // busca ao expandir — só traz as VISÍVEIS, então `filhos` bate com o que
         // o usuário vê. $top=1 basta pra saber se há ≥1 (chevron sim/não). (#62)
         let url = format!(
-            "{GRAPH}/me/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount&$expand=childFolders($select=id;$top=1)"
+            "{GRAPH}/{prefix}/mailFolders/{id}?$select=displayName,unreadItemCount,totalItemCount&$expand=childFolders($select=id;$top=1)"
         );
         // Sob o pool + retry central (#64): respeita Retry-After e usa jitter. Sem
         // isso o Inbox aparecia sem contagem de não lidos quando o Graph limitava.
@@ -1815,6 +1878,7 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
                 }
             }
             Ok(resp) => {
+                acesso_negado = resp.status().as_u16() == 403;
                 log::warn!("[mail] pasta '{id}' retornou {}", resp.status());
             }
             Err(e) => {
@@ -1828,6 +1892,7 @@ pub fn cr_mail_folders(store: &TokenStore) -> Result<Vec<PastaEmail>, String> {
             nao_lidos,
             total,
             filhos,
+            acesso_negado,
         });
     }
     Ok(pastas)
@@ -1991,16 +2056,18 @@ pub fn cr_folder_mensagens(
     skip: u32,
     ordenar: &str,
     descendente: bool,
+    mailbox: Option<&str>,
 ) -> Result<Vec<EmailItem>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
     let campo = campo_ordenacao(folder_id, ordenar);
     let dir = if descendente { "desc" } else { "asc" };
     // Página de 50, com $skip para o lazy load (rolar até o fim carrega mais).
     let base = format!(
-        "{GRAPH}/me/mailFolders/{folder_id}/messages\
+        "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages\
          ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
          &$top=50&$skip={skip}"
     );
@@ -2028,7 +2095,10 @@ pub fn cr_folder_mensagens(
             orderby = padrao.clone();
             continue;
         }
-        return Err(format!("/me/mailFolders/{folder_id}/messages retornou {}", r.status()));
+        return Err(format!(
+            "/{prefix}/mailFolders/{folder_id}/messages retornou {}",
+            r.status()
+        ));
     };
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let mut itens = Vec::new();
@@ -2067,9 +2137,11 @@ pub fn cr_buscar(
     folder_id: &str,
     termo: &str,
     next_link: Option<String>,
+    mailbox: Option<&str>,
 ) -> Result<BuscaPagina, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
     // Continuação: se veio um nextLink, ele já traz $search+$top+skiptoken —
@@ -2084,7 +2156,7 @@ pub fn cr_buscar(
             let enc = urlencoding::encode(termo_limpo.trim());
             // Sem $orderby: o Graph rejeita orderby combinado com $search.
             format!(
-                "{GRAPH}/me/mailFolders/{folder_id}/messages\
+                "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages\
                  ?$search=\"{enc}\"\
                  &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
                  &$top=50"
@@ -2102,7 +2174,7 @@ pub fn cr_buscar(
     .map_err(|e| format!("falha na busca: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!(
-            "busca em /me/mailFolders/{folder_id}/messages retornou {}",
+            "busca em /{prefix}/mailFolders/{folder_id}/messages retornou {}",
             resp.status()
         ));
     }
@@ -2156,9 +2228,11 @@ pub fn cr_filtrar(
     folder_id: &str,
     filtro: &str,
     next_link: Option<String>,
+    mailbox: Option<&str>,
 ) -> Result<BuscaPagina, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
     // Campos idênticos aos de cr_buscar/cr_folder_mensagens: a lista fica igual
@@ -2171,26 +2245,32 @@ pub fn cr_filtrar(
         Some(link) => link,
         None => match filtro {
             "tome" => {
-                let email = meu_endereco(&client, &token)
-                    .ok_or_else(|| "não foi possível resolver o endereço do usuário".to_string())?;
+                let email = mailbox
+                    .map(str::trim)
+                    .filter(|m| !m.is_empty() && *m != "me")
+                    .map(str::to_string)
+                    .or_else(|| meu_endereco(&client, &token))
+                    .ok_or_else(|| {
+                        "não foi possível resolver o endereço da caixa ativa".to_string()
+                    })?;
                 // KQL: restringe à linha To (D5). Aspas do $search fazem parte da
                 // sintaxe; o valor vai percent-encodado.
                 let kql = format!("to:{email}");
                 let enc = urlencoding::encode(&kql);
                 format!(
-                    "{GRAPH}/me/mailFolders/{folder_id}/messages\
+                    "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages\
                      ?$search=\"{enc}\"&$select={SELECT}&$top=50"
                 )
             }
             "mentions" => {
                 let flt = urlencoding::encode("mentionsPreview/isMentioned eq true");
                 format!(
-                    "{GRAPH}/me/mailFolders/{folder_id}/messages\
+                    "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages\
                      ?$filter={flt}&$select={SELECT}&$top=50"
                 )
             }
             "invites" => format!(
-                "{GRAPH}/me/mailFolders/{folder_id}/messages/microsoft.graph.eventMessage\
+                "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages/microsoft.graph.eventMessage\
                  ?$select={SELECT}&$top=50"
             ),
             outro => return Err(format!("filtro de servidor desconhecido: '{outro}'")),
@@ -2817,12 +2897,17 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
 
 /// Subpastas de uma pasta de e-mail. O id do filho serve direto no endpoint de
 /// mensagens, entao o caminho existente de carga funciona sem mudanca. Mail.Read.
-pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmail>, String> {
+pub fn cr_subpastas(
+    store: &TokenStore,
+    folder_id: &str,
+    mailbox: Option<&str>,
+) -> Result<Vec<PastaEmail>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
-        "{GRAPH}/me/mailFolders/{folder_id}/childFolders\
+        "{GRAPH}/{prefix}/mailFolders/{folder_id}/childFolders\
          ?$select=id,displayName,unreadItemCount,totalItemCount,childFolderCount&$top=50"
     );
     // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
@@ -2831,7 +2916,13 @@ pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmai
     })
     .map_err(|e| format!("falha ao ler as subpastas: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("/me/mailFolders/childFolders retornou {}", resp.status()));
+        if resp.status().as_u16() == 403 {
+            return Err("acesso parcial: sem permissão para abrir esta pasta".to_string());
+        }
+        return Err(format!(
+            "/{prefix}/mailFolders/childFolders retornou {}",
+            resp.status()
+        ));
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let mut pastas = Vec::new();
@@ -2844,6 +2935,7 @@ pub fn cr_subpastas(store: &TokenStore, folder_id: &str) -> Result<Vec<PastaEmai
                 nao_lidos: it["unreadItemCount"].as_u64().unwrap_or(0),
                 total: it["totalItemCount"].as_u64().unwrap_or(0),
                 filhos: it["childFolderCount"].as_u64().unwrap_or(0),
+                acesso_negado: false,
             });
         }
     }
@@ -2875,6 +2967,7 @@ fn pasta_de_json(v: &serde_json::Value) -> PastaEmail {
         nao_lidos: v["unreadItemCount"].as_u64().unwrap_or(0),
         total: v["totalItemCount"].as_u64().unwrap_or(0),
         filhos: v["childFolderCount"].as_u64().unwrap_or(0),
+        acesso_negado: false,
     }
 }
 
@@ -3039,9 +3132,15 @@ pub fn cr_excluir_pasta(store: &TokenStore, id: &str) -> Result<bool, String> {
 /// Qualquer outro valor é rejeitado com erro (em vez de contar tudo em
 /// silêncio, o que enganaria a UI): assim um filtro digitado errado aparece
 /// como falha em vez de virar um total sem sentido.
-pub fn cr_contar(store: &TokenStore, folder_id: &str, filtro: &str) -> Result<u64, String> {
+pub fn cr_contar(
+    store: &TokenStore,
+    folder_id: &str,
+    filtro: &str,
+    mailbox: Option<&str>,
+) -> Result<u64, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     // Mapeia o filtro lógico para a expressão OData. Desconhecido → erro.
     let odata = match filtro {
@@ -3052,7 +3151,7 @@ pub fn cr_contar(store: &TokenStore, folder_id: &str, filtro: &str) -> Result<u6
 
     // O $filter vai percent-encodado; o /$count devolve o total como texto puro.
     let url = format!(
-        "{GRAPH}/me/mailFolders/{folder_id}/messages/$count?$filter={}",
+        "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages/$count?$filter={}",
         urlencoding::encode(odata)
     );
 
@@ -3069,7 +3168,7 @@ pub fn cr_contar(store: &TokenStore, folder_id: &str, filtro: &str) -> Result<u6
     .map_err(|e| format!("falha ao contar: {e}"))?;
     if !resp.status().is_success() {
         return Err(format!(
-            "/me/mailFolders/{folder_id}/messages/$count retornou {}",
+            "/{prefix}/mailFolders/{folder_id}/messages/$count retornou {}",
             resp.status()
         ));
     }
@@ -3105,9 +3204,14 @@ pub struct Contadores {
 /// vir no ENVELOPE e é re-tentado ali. Se ainda assim uma SUB-resposta falhar, o
 /// contador daquela aba cai no fallback 0 (degradação graciosa aceita pelo AC —
 /// a lista nunca fica vazia por causa de um contador). Mail.Read.
-pub fn cr_contadores(store: &TokenStore, folder_id: &str) -> Result<Contadores, String> {
+pub fn cr_contadores(
+    store: &TokenStore,
+    folder_id: &str,
+    mailbox: Option<&str>,
+) -> Result<Contadores, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     // O `id` de cada sub-requisição casa a resposta de volta (o Graph não garante
     // a ordem das sub-respostas). Mesmas expressões OData do `cr_contar`.
@@ -3122,7 +3226,7 @@ pub fn cr_contadores(store: &TokenStore, folder_id: &str) -> Result<Contadores, 
                 "id": id,
                 "method": "GET",
                 "url": format!(
-                    "/me/mailFolders/{folder_id}/messages/$count?$filter={}",
+                    "/{prefix}/mailFolders/{folder_id}/messages/$count?$filter={}",
                     urlencoding::encode(odata)
                 ),
                 "headers": { "ConsistencyLevel": "eventual" },

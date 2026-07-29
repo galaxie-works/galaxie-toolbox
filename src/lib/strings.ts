@@ -581,7 +581,10 @@ const pt = {
     caixaErro: "Não consegui validar a caixa.",
     caixaRelogin: "Faça login novamente para acessar caixas compartilhadas.",
     caixaCompartilhadaTitulo: "Caixa compartilhada",
-    caixaCompartilhadaDesc: "A leitura das mensagens desta caixa chega em breve.",
+    caixaCompartilhadaDesc: "Esta caixa está disponível em modo somente leitura.",
+    caixaSomenteLeitura: "Somente leitura — disponível na caixa pessoal",
+    caixaAcessoParcial:
+      "Acesso parcial — você não tem permissão para abrir esta pasta.",
   },
   emBreveControlRoom: {
     descricao: "O painel de controle da Galaxie — sua visão geral. Em breve.",
@@ -1170,7 +1173,10 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     caixaErro: "Couldn't validate the mailbox.",
     caixaRelogin: "Sign in again to access shared mailboxes.",
     caixaCompartilhadaTitulo: "Shared mailbox",
-    caixaCompartilhadaDesc: "Reading messages from this mailbox is coming soon.",
+    caixaCompartilhadaDesc: "This mailbox is available in read-only mode.",
+    caixaSomenteLeitura: "Read-only — available in your personal mailbox",
+    caixaAcessoParcial:
+      "Partial access — you don't have permission to open this folder.",
   },
   emBreveControlRoom: {
     descricao: "The Galaxie control panel — your overview. Coming soon.",

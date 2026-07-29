@@ -188,6 +188,8 @@ export interface PastaEmail {
   naoLidos: number;
   total: number;
   filhos: number; // nº de subpastas — chevron de expandir só aparece quando > 0
+  /** 403 apenas nesta pasta de uma caixa compartilhada; a árvore segue utilizável. */
+  acessoNegado?: boolean;
 }
 
 /**
