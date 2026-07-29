@@ -17,6 +17,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 import {
   ToolbarButton,
@@ -41,23 +46,33 @@ export function BulletedListToolbarButton() {
 
   return (
     <ToolbarSplitButton pressed={open}>
-      <ToolbarSplitButtonPrimary
-        aria-label="Bulleted list"
-        className="data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
-        onClick={() => {
-          toggleList(editor, {
-            listStyleType: ListStyleType.Disc,
-          });
-        }}
-        data-state={pressed ? 'on' : 'off'}
-      >
-        <List className="size-4" />
-      </ToolbarSplitButtonPrimary>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <ToolbarSplitButtonPrimary
+            aria-label="Bulleted list"
+            className="data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+            onClick={() => {
+              toggleList(editor, {
+                listStyleType: ListStyleType.Disc,
+              });
+            }}
+            data-state={pressed ? 'on' : 'off'}
+          >
+            <List className="size-4" />
+          </ToolbarSplitButtonPrimary>
+        </TooltipTrigger>
+        <TooltipContent>Bulleted list</TooltipContent>
+      </Tooltip>
 
       <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
-        <DropdownMenuTrigger asChild>
-          <ToolbarSplitButtonSecondary aria-label="Bulleted list options" />
-        </DropdownMenuTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <ToolbarSplitButtonSecondary aria-label="Bulleted list options" />
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>Bulleted list options</TooltipContent>
+        </Tooltip>
 
         <DropdownMenuContent align="start" alignOffset={-32}>
           <DropdownMenuGroup>
@@ -122,23 +137,33 @@ export function NumberedListToolbarButton() {
 
   return (
     <ToolbarSplitButton pressed={open}>
-      <ToolbarSplitButtonPrimary
-        aria-label="Numbered list"
-        className="data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
-        onClick={() =>
-          toggleList(editor, {
-            listStyleType: ListStyleType.Decimal,
-          })
-        }
-        data-state={pressed ? 'on' : 'off'}
-      >
-        <ListOrdered className="size-4" />
-      </ToolbarSplitButtonPrimary>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <ToolbarSplitButtonPrimary
+            aria-label="Numbered list"
+            className="data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+            onClick={() =>
+              toggleList(editor, {
+                listStyleType: ListStyleType.Decimal,
+              })
+            }
+            data-state={pressed ? 'on' : 'off'}
+          >
+            <ListOrdered className="size-4" />
+          </ToolbarSplitButtonPrimary>
+        </TooltipTrigger>
+        <TooltipContent>Numbered list</TooltipContent>
+      </Tooltip>
 
       <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
-        <DropdownMenuTrigger asChild>
-          <ToolbarSplitButtonSecondary aria-label="Numbered list options" />
-        </DropdownMenuTrigger>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <ToolbarSplitButtonSecondary aria-label="Numbered list options" />
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>Numbered list options</TooltipContent>
+        </Tooltip>
 
         <DropdownMenuContent align="start" alignOffset={-32}>
           <DropdownMenuGroup>
