@@ -26,7 +26,13 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarRail,
+  useSidebar,
 } from "@/components/animate-ui/components/radix/sidebar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ClienteMark } from "@/components/brand";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -56,6 +62,10 @@ export function AppSidebar({
 }) {
   const isMobile = useIsMobile();
   const { t } = useIdioma();
+  const { state } = useSidebar();
+  // Tooltip só faz sentido na sidebar colapsada (icon-only) e fora do mobile —
+  // mesma regra do SidebarMenuButton dos itens de navegação (#98).
+  const colapsada = state === "collapsed" && !isMobile;
 
   return (
     <Sidebar collapsible="icon">
@@ -63,7 +73,10 @@ export function AppSidebar({
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg">
+            <SidebarMenuButton
+              size="lg"
+              tooltip={user.organizacao ?? t.nav.organizacao}
+            >
               <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                 <ClienteMark className="size-4" />
               </div>
@@ -134,28 +147,39 @@ export function AppSidebar({
         <SidebarMenu>
           <SidebarMenuItem>
             <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuButton
-                  size="lg"
-                  className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-                >
-                  <Avatar className="h-8 w-8 rounded-lg">
-                    {user.photo && (
-                      <AvatarImage src={user.photo} alt={user.displayName} />
-                    )}
-                    <AvatarFallback className="rounded-lg">
-                      {user.initials}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="grid flex-1 text-left text-sm leading-tight">
-                    <span className="truncate font-semibold">
-                      {user.displayName}
-                    </span>
-                    <span className="truncate text-xs">{user.email}</span>
-                  </div>
-                  <ChevronsUpDown className="ml-auto size-4" />
-                </SidebarMenuButton>
-              </DropdownMenuTrigger>
+              {/* Tooltip > DropdownMenu: os dois gatilhos com asChild no mesmo
+                  botão. Só aparece na sidebar colapsada, onde sobra só o avatar. */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <SidebarMenuButton
+                      size="lg"
+                      className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                    >
+                      <Avatar className="h-8 w-8 rounded-lg">
+                        {user.photo && (
+                          <AvatarImage src={user.photo} alt={user.displayName} />
+                        )}
+                        <AvatarFallback className="rounded-lg">
+                          {user.initials}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="grid flex-1 text-left text-sm leading-tight">
+                        <span className="truncate font-semibold">
+                          {user.displayName}
+                        </span>
+                        <span className="truncate text-xs">{user.email}</span>
+                      </div>
+                      <ChevronsUpDown className="ml-auto size-4" />
+                    </SidebarMenuButton>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                {colapsada && (
+                  <TooltipContent side="right" align="center">
+                    {user.displayName}
+                  </TooltipContent>
+                )}
+              </Tooltip>
               <DropdownMenuContent
                 className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
                 side={isMobile ? "bottom" : "right"}

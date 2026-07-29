@@ -255,6 +255,16 @@ const pt = {
     navegar: "Traçar rota",
     irPara: "Ir para {nome}",
     pesquisar: "Pesquisar “{q}” na web",
+    novaAba: "Nova aba",
+    fecharAba: "Fechar aba",
+  },
+
+  // Controles de janela (barra-janela.tsx). Só existem dentro do Tauri.
+  janela: {
+    minimizar: "Minimizar",
+    maximizar: "Maximizar",
+    restaurar: "Restaurar",
+    fechar: "Fechar",
   },
 
   atualizacao: {
@@ -839,6 +849,16 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     navegar: "Set a course",
     irPara: "Go to {nome}",
     pesquisar: "Search the web for “{q}”",
+    novaAba: "New tab",
+    fecharAba: "Close tab",
+  },
+
+  // Window controls (barra-janela.tsx). Only exist inside Tauri.
+  janela: {
+    minimizar: "Minimize",
+    maximizar: "Maximize",
+    restaurar: "Restore",
+    fechar: "Close",
   },
 
   atualizacao: {
