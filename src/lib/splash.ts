@@ -3,23 +3,32 @@
  *
  * A janela `splashscreen` (círculo #171A30) abre visível já no launch; a janela
  * `main` nasce oculta (`visible:false`) e só aparece quando o boot da `App`
- * termina. Este módulo é importado SÓ pela árvore da main window (o `main.tsx`
- * desvia a splash para o `SplashScreen`), então `getCurrentWindow()` aqui é
- * sempre a `main`.
+ * termina E a animação tocou até o fim uma vez.
  *
- * O acesso ao `@tauri-apps/api/window` é por import dinâmico — mesmo padrão do
+ * `revelarAppEFecharSplash` é chamado SÓ pela árvore da main window (o `main.tsx`
+ * desvia a splash para o `SplashScreen`), então `getCurrentWindow()` ali é sempre
+ * a `main`. Já `EVENTO_VIDEO_SPLASH` é compartilhado pelas DUAS janelas: a splash
+ * emite quando o vídeo termina; a main escuta para liberar o gate de revelação.
+ *
+ * O acesso ao `@tauri-apps/api/*` é por import dinâmico — mesmo padrão do
  * `barra-janela.tsx`/`tema.ts` — para não puxar a API do Tauri para o chunk
  * crítico do boot.
  */
 
-/** Marco de início do boot, capturado no import (antes do React montar). */
-export const INICIO_BOOT = Date.now();
+/**
+ * Evento Tauri (broadcast) que a janela `splashscreen` emite quando o vídeo de
+ * abertura termina de tocar uma vez (ou falha/estoura o fallback de tempo). A
+ * `main` escuta e marca `videoPronto`, um dos gates da revelação. Nome com
+ * prefixo para não colidir com eventos de plugin.
+ */
+export const EVENTO_VIDEO_SPLASH = "splash://video-terminou";
 
 /**
- * Tempo mínimo que a animação fica visível, para não ser um flash quando o boot
- * é instantâneo. Nunca ATRASA um boot lento: revela em `max(bootPronto, mínimo)`.
+ * Longstop de segurança da revelação (#164). MAIOR que a duração do vídeo
+ * (~10s) + folga, para nunca cortar a animação no meio: se o boot travar OU o
+ * sinal de fim-de-vídeo se perder, a main aparece assim mesmo depois deste teto.
  */
-export const MIN_SPLASH_MS = 1200;
+export const LONGSTOP_SPLASH_MS = 20_000;
 
 let revelado = false;
 
