@@ -944,6 +944,16 @@ async fn long_paths_status() -> Result<bool, String> {
     Ok(system::long_paths_enabled())
 }
 
+/// Recebe uma linha de erro do front-end (ErrorBoundary raiz e captadores
+/// globais — #148) e a grava no MESMO log do backend (`tauri-plugin-log`), com o
+/// alvo `app_lib`. Assim um crash de render (a "tela branca") deixa rastro no
+/// console de dev (`[app_lib] [frontend] ...`) e no arquivo de log, em vez de
+/// sumir sem deixar pista. É `sync` de propósito: só formata e loga, sem I/O.
+#[tauri::command]
+fn log_frontend_error(msg: String) {
+    log::error!("[frontend] {msg}");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1062,6 +1072,7 @@ pub fn run() {
             browser::browser_esconder_todas,
             enable_long_paths,
             long_paths_status,
+            log_frontend_error,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
