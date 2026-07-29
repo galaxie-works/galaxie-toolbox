@@ -108,6 +108,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { shortcutAccessibleLabel } from "@/components/ui/shortcut";
+import type { ShortcutDefinition } from "@/components/ui/shortcut";
+import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -2358,6 +2361,16 @@ function ItensMenuEmail({
   );
 }
 
+// Atalhos reais das ações icon-only da lista (#101). Alimentam ao mesmo tempo
+// o `aria-label` (via shortcutAccessibleLabel) e a dica do ShortcutTooltip (Kbd
+// platform-correto). Ctrl+A/Esc já são tratados no handler de teclas da lista
+// (mod+a → selecionarTudo; Escape → limparSelecao); S/Delete idem (onFlag /
+// onExcluir da mensagem ativa).
+const ATALHO_SELECIONAR_TUDO: ShortcutDefinition = { key: "A", primary: true };
+const ATALHO_LIMPAR_SELECAO: ShortcutDefinition = { key: "Esc" };
+const ATALHO_SINALIZAR: ShortcutDefinition = { key: "S" };
+const ATALHO_EXCLUIR: ShortcutDefinition = { key: "Delete" };
+
 function MessageList({
   titulo,
   mensagens,
@@ -3107,14 +3120,21 @@ function MessageList({
   return (
     <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
       <div className="flex items-center gap-2 px-3 py-3">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onToggleSidebar}
-          aria-label={t.nav.alternarMenu}
-        >
-          {sidebarAberta ? <PanelLeftClose /> : <PanelLeftOpen />}
-        </Button>
+        {/* Toggle do painel de pastas (#101): tooltip canônico simples (sem
+            atalho), mesmo padrão do #100 na sidebar. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onToggleSidebar}
+              aria-label={t.nav.alternarMenu}
+            >
+              {sidebarAberta ? <PanelLeftClose /> : <PanelLeftOpen />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t.nav.alternarMenu}</TooltipContent>
+        </Tooltip>
         <h2 className="text-sm font-semibold">{titulo}</h2>
         {mensagens && (
           <Badge variant="secondary" size="sm">
@@ -3128,13 +3148,21 @@ function MessageList({
             </Button>
           )}
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="gap-1.5" aria-label={t.controlRoom.ordenarPor}>
-                <ArrowDownUp className="size-3.5" />
-                <span className="hidden text-xs sm:inline">{rotuloOrdena[ordenar]}</span>
-                <ChevronDown className="size-3" />
-              </Button>
-            </DropdownMenuTrigger>
+            {/* Ordenação (#101): sem atalho → Tooltip canônico. Tooltip >
+                DropdownMenuTrigger, os dois com asChild no mesmo botão, igual
+                ao split "Escrever no Outlook" do #100. */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="gap-1.5" aria-label={t.controlRoom.ordenarPor}>
+                    <ArrowDownUp className="size-3.5" />
+                    <span className="hidden text-xs sm:inline">{rotuloOrdena[ordenar]}</span>
+                    <ChevronDown className="size-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t.controlRoom.ordenarPor}</TooltipContent>
+            </Tooltip>
             <DropdownMenuContent align="end" className="w-44">
               <DropdownMenuLabel>{t.controlRoom.ordenarPor}</DropdownMenuLabel>
               <DropdownMenuRadioGroup
@@ -3173,11 +3201,18 @@ function MessageList({
               "modo + atraso" em dois controles: sem UI condicional, sem estado
               escondido, e o RadioGroup do Radix já dá role/aria + setas. */}
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={t.controlRoom.prefLeitura}>
-                <SlidersHorizontal />
-              </Button>
-            </DropdownMenuTrigger>
+            {/* Preferências de leitura (#101): sem atalho → Tooltip canônico,
+                mesmo aninhamento Tooltip > DropdownMenuTrigger da ordenação. */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" aria-label={t.controlRoom.prefLeitura}>
+                    <SlidersHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t.controlRoom.prefLeitura}</TooltipContent>
+            </Tooltip>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>{t.controlRoom.prefMarcarLidoTitulo}</DropdownMenuLabel>
               <DropdownMenuRadioGroup
@@ -3212,9 +3247,15 @@ function MessageList({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label={t.controlRoom.atualizar}>
-            <RefreshCw />
-          </Button>
+          {/* Atualizar (#101): sem atalho → Tooltip canônico. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label={t.controlRoom.atualizar}>
+                <RefreshCw />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t.controlRoom.atualizar}</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -3238,19 +3279,32 @@ function MessageList({
 
       {selecionados.size > 0 ? (
         <div className="flex items-center gap-2 px-3 pb-2">
-          <input
-            type="checkbox"
-            checked={todosSel}
-            onChange={(e) =>
-              e.target.checked ? selecionarTudo(idsFiltrados) : limparSelecao()
-            }
-            className="size-3.5 accent-primary"
-            aria-label={
-              todosSel
-                ? t.controlRoom.limparSelecao
-                : t.controlRoom.selecionarTudo
-            }
-          />
+          {/* Selecionar tudo (#101): atalho Ctrl+A → ShortcutTooltip com Kbd.
+              O nome acessível era ERRADO — trocava pra "Limpar seleção" quando
+              tudo estava marcado; num master checkbox o estado já é comunicado
+              pelo próprio role, então o nome fica FIXO em "Selecionar tudo". */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <input
+                type="checkbox"
+                checked={todosSel}
+                onChange={(e) =>
+                  e.target.checked ? selecionarTudo(idsFiltrados) : limparSelecao()
+                }
+                className="size-3.5 accent-primary"
+                aria-label={shortcutAccessibleLabel(
+                  t.controlRoom.selecionarTudo,
+                  ATALHO_SELECIONAR_TUDO
+                )}
+              />
+            </TooltipTrigger>
+            <TooltipContent>
+              <ShortcutTooltip
+                label={t.controlRoom.selecionarTudo}
+                shortcut={ATALHO_SELECIONAR_TUDO}
+              />
+            </TooltipContent>
+          </Tooltip>
           <span className="text-xs font-medium">
             {preencher(t.controlRoom.nSelecionados, { n: selecionados.size })}
           </span>
@@ -3262,14 +3316,28 @@ function MessageList({
             rotuloProcessando={t.controlRoom.excluindo}
             rotuloConcluido={t.controlRoom.excluidos}
           />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={limparSelecao}
-            aria-label={t.controlRoom.limparSelecao}
-          >
-            <X />
-          </Button>
+          {/* Limpar seleção (#101): atalho Esc → ShortcutTooltip com Kbd. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={limparSelecao}
+                aria-label={shortcutAccessibleLabel(
+                  t.controlRoom.limparSelecao,
+                  ATALHO_LIMPAR_SELECAO
+                )}
+              >
+                <X />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <ShortcutTooltip
+                label={t.controlRoom.limparSelecao}
+                shortcut={ATALHO_LIMPAR_SELECAO}
+              />
+            </TooltipContent>
+          </Tooltip>
         </div>
       ) : (
         <div className="flex items-start gap-2.5 px-3 pb-2">
@@ -3602,27 +3670,57 @@ function MessageList({
                                 className="absolute top-1/2 right-0 hidden -translate-y-1/2 items-center gap-0.5 group-hover/row:flex"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <button
-                                  type="button"
-                                  onClick={() => onFlag(m.id, !m.sinalizado)}
-                                  className="grid size-6 place-items-center rounded bg-accent hover:bg-background"
-                                  aria-label={t.controlRoom.sinalizar}
-                                >
-                                  <Flag
-                                    className={cn(
-                                      "size-3.5",
-                                      m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
-                                    )}
-                                  />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => onExcluir([m.id])}
-                                  className="grid size-6 place-items-center rounded bg-accent text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                                  aria-label={t.controlRoom.excluir}
-                                >
-                                  <Trash2 className="size-3.5" />
-                                </button>
+                                {/* Sinalizar da linha (#101): atalho S →
+                                    ShortcutTooltip com Kbd. */}
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      onClick={() => onFlag(m.id, !m.sinalizado)}
+                                      className="grid size-6 place-items-center rounded bg-accent hover:bg-background"
+                                      aria-label={shortcutAccessibleLabel(
+                                        t.controlRoom.sinalizar,
+                                        ATALHO_SINALIZAR
+                                      )}
+                                    >
+                                      <Flag
+                                        className={cn(
+                                          "size-3.5",
+                                          m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
+                                        )}
+                                      />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <ShortcutTooltip
+                                      label={t.controlRoom.sinalizar}
+                                      shortcut={ATALHO_SINALIZAR}
+                                    />
+                                  </TooltipContent>
+                                </Tooltip>
+                                {/* Excluir da linha (#101): atalho Delete →
+                                    ShortcutTooltip com Kbd. */}
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      onClick={() => onExcluir([m.id])}
+                                      className="grid size-6 place-items-center rounded bg-accent text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                      aria-label={shortcutAccessibleLabel(
+                                        t.controlRoom.excluir,
+                                        ATALHO_EXCLUIR
+                                      )}
+                                    >
+                                      <Trash2 className="size-3.5" />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <ShortcutTooltip
+                                      label={t.controlRoom.excluir}
+                                      shortcut={ATALHO_EXCLUIR}
+                                    />
+                                  </TooltipContent>
+                                </Tooltip>
                               </div>
                             )}
                           </div>
