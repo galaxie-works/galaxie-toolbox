@@ -90,6 +90,7 @@ dependencies = [
  "tiny_http",
  "urlencoding",
  "winapi",
+ "windows",
  "winreg 0.52.0",
 ]
 

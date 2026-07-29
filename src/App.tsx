@@ -45,6 +45,11 @@ import { limparFotos } from "@/lib/fotos";
 import { useIdioma } from "@/lib/idioma";
 import { cn, comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
+import {
+  EVENTO_VIDEO_SPLASH,
+  LONGSTOP_SPLASH_MS,
+  revelarAppEFecharSplash,
+} from "@/lib/splash";
 
 /**
  * Todo o app de verdade. Fica ABAIXO do ErrorBoundary (ver `App`): é esta árvore
@@ -65,6 +70,9 @@ function AppInner() {
   const [lockCheck, setLockCheck] = useState(0);
   const [cache, setCache] = useState<Identidade | null>(null);
   const [tela, setTela] = useState<Tela>("control-room");
+  // Splash (#164): a animação tocou até o fim uma vez? Um dos dois gates da
+  // revelação (o outro é `bootPronto`).
+  const [videoPronto, setVideoPronto] = useState(false);
   // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
   const [abas, setAbas] = useState<AbaBrowser[]>([]);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
@@ -116,6 +124,54 @@ function AppInner() {
       vivo = false;
     };
   }, [lockState]);
+
+  // --- Splash de boot (#164) ---------------------------------------------
+  // Dois gates para revelar a main: o app só aparece depois que a animação
+  // tocou inteira (`videoPronto`) E o boot terminou (`bootPronto`) — o que vier
+  // por último.
+  //
+  // "bootPronto" = já dá para mostrar uma tela de verdade na main window: o
+  // bloqueio (#122), o login ou o app. Enquanto sonda o PIN (`checking`) ou
+  // restaura a sessão (`restoring`), a main segue oculta e vê-se só o splash.
+  const bootPronto =
+    lockState === "locked" ||
+    lockState === "error" ||
+    (lockState === "unlocked" && !restoring);
+
+  // "videoPronto" vem da OUTRA janela (a `splashscreen`), que emite
+  // EVENTO_VIDEO_SPLASH quando o vídeo termina. Fora do Tauri (dev no browser)
+  // não há splash nem evento: libera o gate para não bloquear o render.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+      setVideoPronto(true);
+      return;
+    }
+    let vivo = true;
+    let desescutar: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        const off = await listen(EVENTO_VIDEO_SPLASH, () => setVideoPronto(true));
+        if (vivo) desescutar = off;
+        else off();
+      } catch {
+        // Sem API de evento: libera o gate (o longstop também cobre) para não
+        // deixar a main presa atrás do splash.
+        setVideoPronto(true);
+      }
+    })();
+    return () => {
+      vivo = false;
+      desescutar?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    // Revela quando OS DOIS estiverem prontos — o que vier por último. Sem
+    // mínimo artificial: a própria animação (que roda inteira) é o piso.
+    if (!bootPronto || !videoPronto) return;
+    void revelarAppEFecharSplash();
+  }, [bootPronto, videoPronto]);
 
   async function handleLogin(email: string) {
     setLoginLoading(true);
@@ -539,6 +595,13 @@ function AppInner() {
 export default function App() {
   useEffect(() => {
     registrarHandlersGlobais();
+    // Longstop do splash (#164): mesmo que o boot trave, ou o sinal de fim-de-
+    // vídeo se perca, ou a árvore estoure de um jeito que os efeitos de gate não
+    // rodem, a main window aparece (e a splash fecha) depois deste teto.
+    // LONGSTOP_SPLASH_MS (20s) é MAIOR que a duração do vídeo (~10s) + folga,
+    // para nunca cortar a animação no meio. revelarAppEFecharSplash é idempotente.
+    const id = setTimeout(() => void revelarAppEFecharSplash(), LONGSTOP_SPLASH_MS);
+    return () => clearTimeout(id);
   }, []);
 
   return (

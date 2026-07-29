@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "GALAXIE",
         "width": 800,
         "height": 600,
@@ -23,7 +24,24 @@
         "fullscreen": false,
         "decorations": false,
         "shadow": true,
+        "backgroundColor": "#171A30",
         "dragDropEnabled": false
+      },
+      {
+        "label": "splashscreen",
+        "url": "index.html",
+        "width": 400,
+        "height": 400,
+        "center": true,
+        "visible": true,
+        "transparent": false,
+        "backgroundColor": "#171A30",
+        "decorations": false,
+        "resizable": false,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false
       }
     ],
     "security": {
