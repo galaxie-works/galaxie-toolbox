@@ -1,8 +1,8 @@
 import type { StateCreator } from "zustand";
 
-import type { EmailItem } from "@/lib/types";
+import type { EmailItem, PastaEmail } from "@/lib/types";
 import type { AppStore } from "./index";
-import { resolver, type Updater } from "./updater";
+import { resolver, type Updater } from "./updater.ts";
 
 /**
  * Entrada do cache em memória de uma pasta (#108): a lista já carregada +
@@ -18,14 +18,29 @@ export interface CachePastaEntry {
 
 /**
  * Slice da(s) caixa(s) de correio — épico #125.
- * Hoje: lista de caixas compartilhadas adicionadas (#111), persistida. A caixa
- * ATIVA reseta pra própria (/me) a cada sessão, então não fica no store persistido.
+ *
+ * Só a lista de caixas compartilhadas é persistida. Caixa ativa, raízes,
+ * contadores, subpastas e refresh são estado de sessão (#155), assim como o
+ * cache por pasta.
  */
 export interface MailboxSlice {
   /** Endereços de caixas compartilhadas adicionadas. Persistido em `bridge.caixasCompartilhadas`. */
   caixasCompartilhadas: string[];
-
   setCaixasCompartilhadas: (v: Updater<string[]>) => void;
+
+  /** Caixa ativa da sessão (`me` ou endereço compartilhado). */
+  caixaAtiva: string;
+  /** Pastas raiz com os contadores retornados pelo Graph; `null` = carregando. */
+  pastas: PastaEmail[] | null;
+  /** Cache sob demanda de childFolders, compartilhado pelo sidebar e pelo mover. */
+  subpastas: Record<string, PastaEmail[]>;
+  /** Invalidação independente dos contadores/raízes do sidebar. */
+  recargaPastas: number;
+
+  setCaixaAtiva: (caixa: string) => void;
+  setPastas: (v: Updater<PastaEmail[] | null>) => void;
+  setSubpastas: (v: Updater<Record<string, PastaEmail[]>>) => void;
+  setRecargaPastas: (v: Updater<number>) => void;
 
   /**
    * Cache de SESSÃO por pasta (#108) — NÃO persistido (arrays de mensagens são
@@ -64,6 +79,18 @@ export const createMailboxSlice: StateCreator<
 
   setCaixasCompartilhadas: (v) =>
     set((s) => ({ caixasCompartilhadas: resolver(s.caixasCompartilhadas, v) })),
+
+  caixaAtiva: "me",
+  pastas: null,
+  subpastas: {},
+  recargaPastas: 0,
+
+  setCaixaAtiva: (caixaAtiva) => set({ caixaAtiva }),
+  setPastas: (v) => set((s) => ({ pastas: resolver(s.pastas, v) })),
+  setSubpastas: (v) =>
+    set((s) => ({ subpastas: resolver(s.subpastas, v) })),
+  setRecargaPastas: (v) =>
+    set((s) => ({ recargaPastas: resolver(s.recargaPastas, v) })),
 
   // Cache de sessão (#108): default vazio, nunca vai pro partialize.
   cachePastas: {},
