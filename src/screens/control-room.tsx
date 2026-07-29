@@ -126,6 +126,10 @@ import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
 import {
+  montarConversasEmail,
+  type ConversaEmail,
+} from "@/lib/conversas-email";
+import {
   useFotos,
   configurarDominioFotos,
   configurarEscopoFotos,
@@ -214,6 +218,7 @@ import {
 import {
   forwardRef,
   useCallback,
+  useDeferredValue,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -2331,7 +2336,8 @@ const MARCAR_LIDO_ATRASO_PADRAO = 2;
 // react-virtual (#30).
 type LinhaLista =
   | { tipo: "grupo"; chave: string; rotulo: string; n: number }
-  | { tipo: "msg"; m: EmailItem };
+  | { tipo: "thread"; chave: string; m: EmailItem; n: number }
+  | { tipo: "msg"; m: EmailItem; threadFilha?: boolean };
 
 /** Bucket de período estilo Outlook (#30): Hoje / Ontem / <mês do ano
  *  corrente> / <ano anterior> / Older. Ex.: em jul/2026 → Hoje, Ontem, Julho,
@@ -2667,6 +2673,16 @@ function MessageList({
     if (!mensagens) return [];
     return mensagens.filter((m) => passaFiltrosClient(m, filtros));
   }, [mensagens, filtros]);
+  // O build das conversas pode atravessar centenas de mensagens carregadas.
+  // `useDeferredValue` mantém busca/filtros responsivos e o useMemo só remonta
+  // a estrutura quando o conjunto visível estabiliza (#29 / MailVault).
+  const agruparConversas = useAppStore((s) => s.agruparConversas);
+  const filtradaDiferida = useDeferredValue(filtrada);
+  const conversas = useMemo<ConversaEmail[]>(
+    () =>
+      agruparConversas ? montarConversasEmail(filtradaDiferida) : [],
+    [agruparConversas, filtradaDiferida]
+  );
 
   // Agrupamento por período + grupo Flagged no topo (#30). Só quando ordenado
   // por DATA e fora de busca/filtro-Graph (período segue a ordem; em busca e nos
@@ -2691,12 +2707,38 @@ function MessageList({
     [colapsadosMapa, pastaId]
   );
   const colapsados = useMemo(() => new Set(colapsadosArr), [colapsadosArr]);
+  // Conversas começam recolhidas; só as explicitamente abertas ficam salvas
+  // por pasta, seguindo a persistência já usada pelos grupos de período.
+  const threadsExpandidasMapa = useAppStore((s) => s.threadsExpandidas);
+  const setThreadsExpandidasMapa = useAppStore(
+    (s) => s.setThreadsExpandidas
+  );
+  const threadsExpandidasArr = useMemo(
+    () => threadsExpandidasMapa[pastaId] ?? [],
+    [threadsExpandidasMapa, pastaId]
+  );
+  const threadsExpandidas = useMemo(
+    () => new Set(threadsExpandidasArr),
+    [threadsExpandidasArr]
+  );
   // Quantas linhas de MENSAGEM o último auto-preenchimento (#82) já tinha visto.
   // null = auto-preenchimento liberado (o usuário mexeu no colapso / rolou).
   const autoPreencheuRef = useRef<number | null>(null);
   const alternarColapso = (chave: string) => {
     autoPreencheuRef.current = null; // abrir/fechar grupo libera o auto-preenchimento
     setColapsadosMapa((mapa) => {
+      const atual = mapa[pastaId] ?? [];
+      return {
+        ...mapa,
+        [pastaId]: atual.includes(chave)
+          ? atual.filter((c) => c !== chave)
+          : [...atual, chave],
+      };
+    });
+  };
+  const alternarThread = (chave: string) => {
+    autoPreencheuRef.current = null;
+    setThreadsExpandidasMapa((mapa) => {
       const atual = mapa[pastaId] ?? [];
       return {
         ...mapa,
@@ -2729,30 +2771,118 @@ function MessageList({
   // linhas virtuais sem quebrar o react-virtual. Flagged são puxados pro topo
   // (não duplicam nos períodos). Grupo colapsado = só o header.
   const linhas = useMemo<LinhaLista[]>(() => {
-    if (!AGRUPAR) return filtrada.map((m) => ({ tipo: "msg", m }) as LinhaLista);
+    // Toggle OFF mantém literalmente o flattening anterior, sem passar pela
+    // camada de conversas (decisão de opt-in do PO).
+    if (!agruparConversas) {
+      if (!AGRUPAR) {
+        return filtrada.map((m) => ({ tipo: "msg", m }) as LinhaLista);
+      }
+      const out: LinhaLista[] = [];
+      const agora = new Date();
+      const flagged = filtrada.filter((m) => m.sinalizado);
+      const resto = filtrada.filter((m) => !m.sinalizado);
+      if (flagged.length > 0) {
+        out.push({
+          tipo: "grupo",
+          chave: "flagged",
+          rotulo: t.controlRoom.grupoFlagged,
+          n: flagged.length,
+        });
+        if (!colapsados.has("flagged")) {
+          for (const m of flagged) out.push({ tipo: "msg", m });
+        }
+      }
+      let atual: string | null = null;
+      let header: Extract<LinhaLista, { tipo: "grupo" }> | null = null;
+      for (const m of resto) {
+        const chave = periodoChave(m.recebido, agora);
+        if (chave !== atual) {
+          atual = chave;
+          header = {
+            tipo: "grupo",
+            chave,
+            rotulo: rotuloDePeriodo(chave),
+            n: 0,
+          };
+          out.push(header);
+        }
+        if (header) header.n++;
+        if (!colapsados.has(chave)) out.push({ tipo: "msg", m });
+      }
+      return out;
+    }
+
     const out: LinhaLista[] = [];
     const agora = new Date();
-    const flagged = filtrada.filter((m) => m.sinalizado);
-    const resto = filtrada.filter((m) => !m.sinalizado);
+    const adicionarConversa = (conversa: ConversaEmail) => {
+      if (conversa.quantidade === 1) {
+        out.push({ tipo: "msg", m: conversa.principal });
+        return;
+      }
+      out.push({
+        tipo: "thread",
+        chave: conversa.chave,
+        m: conversa.principal,
+        n: conversa.quantidade,
+      });
+      if (threadsExpandidas.has(conversa.chave)) {
+        for (const m of conversa.anteriores) {
+          out.push({ tipo: "msg", m, threadFilha: true });
+        }
+      }
+    };
+
+    if (!AGRUPAR) {
+      for (const conversa of conversas) adicionarConversa(conversa);
+      return out;
+    }
+
+    // A conversa é unidade indivisível: qualquer membro sinalizado leva o fio
+    // inteiro ao grupo Flagged; ele não reaparece nos períodos.
+    const flagged = conversas.filter((c) => c.sinalizada);
+    const resto = conversas.filter((c) => !c.sinalizada);
     if (flagged.length > 0) {
-      out.push({ tipo: "grupo", chave: "flagged", rotulo: t.controlRoom.grupoFlagged, n: flagged.length });
-      if (!colapsados.has("flagged")) for (const m of flagged) out.push({ tipo: "msg", m });
+      out.push({
+        tipo: "grupo",
+        chave: "flagged",
+        rotulo: t.controlRoom.grupoFlagged,
+        n: flagged.reduce((n, c) => n + c.quantidade, 0),
+      });
+      if (!colapsados.has("flagged")) {
+        for (const conversa of flagged) adicionarConversa(conversa);
+      }
     }
     let atual: string | null = null;
     let header: Extract<LinhaLista, { tipo: "grupo" }> | null = null;
-    for (const m of resto) {
-      const chave = periodoChave(m.recebido, agora);
+    for (const conversa of resto) {
+      const chave = periodoChave(conversa.principal.recebido, agora);
       if (chave !== atual) {
         atual = chave;
         header = { tipo: "grupo", chave, rotulo: rotuloDePeriodo(chave), n: 0 };
         out.push(header);
       }
-      if (header) header.n++;
-      if (!colapsados.has(chave)) out.push({ tipo: "msg", m });
+      if (header) header.n += conversa.quantidade;
+      if (!colapsados.has(chave)) adicionarConversa(conversa);
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtrada, AGRUPAR, colapsados, t, rotuloDePeriodo]);
+  }, [
+    filtrada,
+    conversas,
+    agruparConversas,
+    AGRUPAR,
+    colapsados,
+    threadsExpandidas,
+    t,
+    rotuloDePeriodo,
+  ]);
+  // Navegação por teclado segue estritamente as linhas de mensagem que estão
+  // visíveis. Isso evita selecionar um membro recolhido de uma conversa (ou de
+  // um grupo de período recolhido) e tentar rolar até uma linha inexistente.
+  const mensagensNavegaveis = useMemo(
+    () => linhas.flatMap((linha) => (linha.tipo === "grupo" ? [] : [linha.m])),
+    [linhas]
+  );
 
   const filtrando = busca.trim() !== "" || filtros.length > 0;
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
@@ -2773,7 +2903,10 @@ function MessageList({
     overscan: 8,
     getItemKey: (i) => {
       const l = linhas[i];
-      return l ? (l.tipo === "grupo" ? `g:${l.chave}` : l.m.id) : i;
+      if (!l) return i;
+      if (l.tipo === "grupo") return `g:${l.chave}`;
+      if (l.tipo === "thread") return `t:${l.chave}`;
+      return l.m.id;
     },
   });
 
@@ -2791,7 +2924,7 @@ function MessageList({
     const emails: string[] = [];
     for (const vr of itensVirtuais) {
       const l = linhas[vr.index];
-      if (l && l.tipo === "msg" && l.m.deEmail) emails.push(l.m.deEmail);
+      if (l && l.tipo !== "grupo" && l.m.deEmail) emails.push(l.m.deEmail);
     }
     if (emails.length) pedirFotos(emails);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2924,14 +3057,16 @@ function MessageList({
 
   // Move a seleção ativa (↑/↓ e j/k) e rola o virtualizer até ela.
   const irPara = (idx: number) => {
-    const alvo = filtrada[idx];
+    const alvo = mensagensNavegaveis[idx];
     if (!alvo) return;
     onSel(alvo.id);
     ancoraRef.current = alvo.id;
     // Com a lista virtualizada, o item pode não estar no DOM — usa o
     // scrollToIndex do virtualizer. O índice é o da lista PLANA (linhas),
     // que difere de `filtrada` quando há headers de grupo (#30).
-    const vi = linhas.findIndex((l) => l.tipo === "msg" && l.m.id === alvo.id);
+    const vi = linhas.findIndex(
+      (l) => l.tipo !== "grupo" && l.m.id === alvo.id
+    );
     if (vi >= 0) virtualizer.scrollToIndex(vi);
   };
 
@@ -2997,8 +3132,8 @@ function MessageList({
       return;
     }
 
-    if (filtrada.length === 0) return;
-    const idxAtivo = filtrada.findIndex((m) => m.id === sel);
+    if (mensagensNavegaveis.length === 0) return;
+    const idxAtivo = mensagensNavegaveis.findIndex((m) => m.id === sel);
 
     // Navegação: ↑/↓ e j/k (MailVault).
     const desce = e.key === "ArrowDown" || e.key === "j";
@@ -3009,15 +3144,18 @@ function MessageList({
         idxAtivo === -1
           ? 0
           : desce
-            ? Math.min(filtrada.length - 1, idxAtivo + 1)
+            ? Math.min(mensagensNavegaveis.length - 1, idxAtivo + 1)
             : Math.max(0, idxAtivo - 1);
       irPara(prox);
       return;
     }
 
     // Ações que dependem de UMA mensagem ativa (ou da seleção, no excluir).
-    const ativoId = sel ?? (idxAtivo >= 0 ? filtrada[idxAtivo].id : null);
-    const msgAtiva = ativoId ? filtrada.find((m) => m.id === ativoId) : undefined;
+    const ativoId =
+      sel ?? (idxAtivo >= 0 ? mensagensNavegaveis[idxAtivo].id : null);
+    const msgAtiva = ativoId
+      ? mensagensNavegaveis.find((m) => m.id === ativoId)
+      : undefined;
 
     // Delete exclui a seleção (se houver) ou a ativa.
     if (e.key === "Delete") {
@@ -3124,7 +3262,7 @@ function MessageList({
   // um grupo libera de novo (`autoPreencheuRef = null`), então "grupo colapsado
   // não trava a carga" continua valendo.
   const linhasMsg = useMemo(
-    () => linhas.reduce((n, l) => n + (l.tipo === "msg" ? 1 : 0), 0),
+    () => linhas.reduce((n, l) => n + (l.tipo !== "grupo" ? 1 : 0), 0),
     [linhas]
   );
   useEffect(() => {
@@ -3141,7 +3279,14 @@ function MessageList({
     autoPreencheuRef.current = linhasMsg;
     onCarregarMais();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linhas.length, linhasMsg, temMais, carregandoMais, colapsadosArr]);
+  }, [
+    linhas.length,
+    linhasMsg,
+    temMais,
+    carregandoMais,
+    colapsadosArr,
+    threadsExpandidasArr,
+  ]);
 
   // #82: colapsar grupos ENCOLHE muito a lista virtual (de milhares de px para
   // ~10 linhas de header). Se o scroll estava além do novo fim, o browser prende
@@ -3156,14 +3301,14 @@ function MessageList({
     const max = Math.max(0, virtualizer.getTotalSize() - el.clientHeight);
     if (el.scrollTop > max) virtualizer.scrollToOffset(max);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linhas.length, colapsadosArr]);
+  }, [linhas.length, colapsadosArr, threadsExpandidasArr]);
 
   const idsFiltrados = filtrada.map((m) => m.id);
   // Ordem de EXIBIÇÃO das mensagens (respeita agrupamento/Flagged-no-topo e
   // ignora headers e grupos colapsados): é o que o Shift+clique usa como
   // "itens compreendidos entre" — o intervalo segue o que o usuário vê (#28).
   const idsExibidos = useMemo(
-    () => linhas.flatMap((l) => (l.tipo === "msg" ? [l.m.id] : [])),
+    () => linhas.flatMap((l) => (l.tipo !== "grupo" ? [l.m.id] : [])),
     [linhas]
   );
   const todosSel = idsFiltrados.length > 0 && idsFiltrados.every((id) => selecionados.has(id));
@@ -3515,7 +3660,10 @@ function MessageList({
                     </div>
                   );
                 }
+                const thread = linha.tipo === "thread" ? linha : null;
                 const m = linha.m;
+                const threadExpandida =
+                  thread !== null && threadsExpandidas.has(thread.chave);
                 const ativo = m.id === sel;
                 const marcado = selecionados.has(m.id);
                 // Foto do remetente interno (#39); ausente → iniciais.
@@ -3555,9 +3703,48 @@ function MessageList({
                       className={cn(
                         "group/row cursor-pointer flex-nowrap gap-2.5 px-2 py-2.5",
                         ativo ? "bg-accent" : "hover:bg-accent/50",
-                        !m.lido && !ativo && "bg-primary/[0.03]"
+                        !m.lido && !ativo && "bg-primary/[0.03]",
+                        linha.tipo === "msg" &&
+                          linha.threadFilha &&
+                          "border-l-2 border-l-primary/20 pl-5"
                       )}
                     >
+                      {/* A conversa é uma unidade virtual plana: o trigger do
+                          Collapsible abre/fecha as linhas anteriores sem
+                          desmontar conteúdo dentro da linha (mesma adaptação
+                          do c-collapsible-6 usada nos headers de período). */}
+                      {agruparConversas &&
+                        (thread ? (
+                          <Collapsible
+                            open={threadExpandida}
+                            onOpenChange={() => alternarThread(thread.chave)}
+                            className="self-start pt-1"
+                          >
+                            <CollapsibleTrigger asChild>
+                              <button
+                                type="button"
+                                className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                                aria-label={
+                                  threadExpandida
+                                    ? t.controlRoom.recolherConversa
+                                    : t.controlRoom.expandirConversa
+                                }
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <ChevronRight
+                                  aria-hidden="true"
+                                  className="size-3.5 transition-transform in-data-[state=open]:rotate-90"
+                                />
+                              </button>
+                            </CollapsibleTrigger>
+                          </Collapsible>
+                        ) : (
+                          <span
+                            aria-hidden="true"
+                            className="size-6 shrink-0 self-start"
+                          />
+                        ))}
+
                       {/* checkbox — aparece no hover ou quando marcado */}
                       <label
                         className={cn(
@@ -3605,6 +3792,19 @@ function MessageList({
                                 !haSelecao && "group-hover/row:hidden"
                               )}
                             />
+                          )}
+                          {thread && (
+                            <Badge
+                              variant="secondary"
+                              size="sm"
+                              className="shrink-0"
+                              title={preencher(
+                                t.controlRoom.nMensagensConversa,
+                                { n: thread.n }
+                              )}
+                            >
+                              {thread.n}
+                            </Badge>
                           )}
                           {/* Slot de largura fixa pra data/ações: a data fica
                               `invisible` no hover (mantém o espaço) e as ações

@@ -20,7 +20,12 @@ import { ButtonGroup } from "@/components/ui/button-group";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Field } from "@/components/ui/field";
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldLabel,
+} from "@/components/ui/field";
 import {
   Item,
   ItemContent,
@@ -113,6 +118,38 @@ function normalizarCorpo(html: string): string {
   const texto = (tmp.textContent ?? "").replace(/[\s\u200B\uFEFF]+/g, "");
   if (!temMidia && texto.length === 0) return "";
   return tmp.innerHTML;
+}
+
+/**
+ * Opção da #29 no mesmo padrão canônico de preferências booleanas do app
+ * (`BackgroundSettings`): Field horizontal, label/description e Switch à
+ * direita. Default ON vem da decisão final do PO na #133.
+ */
+export function ConversationViewPanel() {
+  const agruparConversas = useAppStore((state) => state.agruparConversas);
+  const setAgruparConversas = useAppStore(
+    (state) => state.setAgruparConversas
+  );
+
+  return (
+    <FramePanel>
+      <Field orientation="horizontal">
+        <FieldContent>
+          <FieldLabel htmlFor="bridge-conversation-view">
+            Group messages by conversation
+          </FieldLabel>
+          <FieldDescription>
+            Keep related emails together in expandable threads.
+          </FieldDescription>
+        </FieldContent>
+        <Switch
+          id="bridge-conversation-view"
+          checked={agruparConversas}
+          onCheckedChange={setAgruparConversas}
+        />
+      </Field>
+    </FramePanel>
+  );
 }
 
 /**

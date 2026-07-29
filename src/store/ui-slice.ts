@@ -20,6 +20,8 @@ export interface UiSlice {
   zoom: number;
   /** Colapsos de grupos POR PASTA (#86). Persistido em `bridge.gruposColapsados.v2`. */
   gruposColapsados: Record<string, string[]>;
+  /** Conversas expandidas POR PASTA (#29). Desconhecidas começam recolhidas. */
+  threadsExpandidas: Record<string, string[]>;
   /** Sidebar de pastas aberta/fechada. Persistido em `bridge.sidebar`. */
   sidebarAberta: boolean;
   /** Card da Agenda aberto/fechado (#50). Persistido em `bridge.agendaVisivel`. */
@@ -32,6 +34,7 @@ export interface UiSlice {
   /** Aceita valor OU updater (mantém a semântica dos antigos `setState`). */
   setZoom: (v: Updater<number>) => void;
   setGruposColapsados: (v: Updater<Record<string, string[]>>) => void;
+  setThreadsExpandidas: (v: Updater<Record<string, string[]>>) => void;
   setSidebarAberta: (v: Updater<boolean>) => void;
   toggleSidebar: () => void;
   setAgendaAberta: (v: Updater<boolean>) => void;
@@ -47,6 +50,7 @@ export interface UiSlice {
 export const UI_KEYS = {
   zoom: "bridge.leitorZoom",
   gruposColapsados: "bridge.gruposColapsados.v2",
+  threadsExpandidas: "bridge.threadsExpandidas.v1",
   sidebarAberta: "bridge.sidebar",
   agendaAberta: "bridge.agendaVisivel",
   marcarLidoModo: "bridge.marcarLidoModo",
@@ -58,6 +62,7 @@ export type UiPersistido = Pick<
   UiSlice,
   | "zoom"
   | "gruposColapsados"
+  | "threadsExpandidas"
   | "sidebarAberta"
   | "agendaAberta"
   | "marcarLidoModo"
@@ -77,6 +82,7 @@ export const createUiSlice: StateCreator<
 > = (set) => ({
   zoom: 1,
   gruposColapsados: {},
+  threadsExpandidas: {},
   sidebarAberta: true,
   agendaAberta: false,
   marcarLidoModo: "imediato",
@@ -85,6 +91,8 @@ export const createUiSlice: StateCreator<
   setZoom: (v) => set((s) => ({ zoom: resolver(s.zoom, v) })),
   setGruposColapsados: (v) =>
     set((s) => ({ gruposColapsados: resolver(s.gruposColapsados, v) })),
+  setThreadsExpandidas: (v) =>
+    set((s) => ({ threadsExpandidas: resolver(s.threadsExpandidas, v) })),
   setSidebarAberta: (v) => set((s) => ({ sidebarAberta: resolver(s.sidebarAberta, v) })),
   toggleSidebar: () => set((s) => ({ sidebarAberta: !s.sidebarAberta })),
   setAgendaAberta: (v) => set((s) => ({ agendaAberta: resolver(s.agendaAberta, v) })),
