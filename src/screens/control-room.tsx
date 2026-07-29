@@ -154,13 +154,8 @@ import { cn, comLoginHint } from "@/lib/utils";
 import type {
   AnexoEmail,
   AppUser,
-  EmailDetalhe,
   EmailItem,
-  EventoAgenda,
-  EventoDetalhe,
-  InsightsRemetente,
   PastaEmail,
-  SegurancaEmail,
 } from "@/lib/types";
 import {
   analisarLink,
@@ -3773,46 +3768,14 @@ function InsightsRemetentePopover({
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
-  const [aberto, setAberto] = useState(false);
-  const [estado, setEstado] = useState<"idle" | "carregando" | "ok" | "erro">("idle");
-  const [dados, setDados] = useState<InsightsRemetente | null>(null);
-  const [tentativa, setTentativa] = useState(0);
-  // E-mail (+ tentativa) já solicitado — evita refetch a cada reabertura mas
-  // permite o "tentar de novo". NÃO metemos `estado` nas deps do efeito de
-  // busca: como o efeito seta `estado`, isso faria a limpeza cancelar a própria
-  // chamada em voo (ficava preso no skeleton).
-  const pedidoRef = useRef<string | null>(null);
-
-  // Troca de remetente → esquece o cache e fecha.
-  useEffect(() => {
-    pedidoRef.current = null;
-    setEstado("idle");
-    setDados(null);
-    setAberto(false);
-  }, [email]);
-
-  // Busca lazy: só quando o popover abre (ou o usuário pede "tentar de novo").
-  useEffect(() => {
-    if (!aberto || !email) return;
-    const chave = `${email}#${tentativa}`;
-    if (pedidoRef.current === chave) return; // já buscado neste e-mail/tentativa
-    pedidoRef.current = chave;
-    let vivo = true;
-    setEstado("carregando");
-    api
-      .crInsightsRemetente(email)
-      .then((d) => {
-        if (!vivo) return;
-        setDados(d);
-        setEstado("ok");
-      })
-      .catch(() => {
-        if (vivo) setEstado("erro");
-      });
-    return () => {
-      vivo = false;
-    };
-  }, [aberto, email, tentativa]);
+  const aberto = useAppStore((s) => s.insightsAberto);
+  const estado = useAppStore((s) => s.insightsEstado);
+  const dados = useAppStore((s) => s.insightsDados);
+  const abrirInsights = useAppStore((s) => s.abrirInsights);
+  const fecharInsights = useAppStore((s) => s.fecharInsights);
+  const tentarNovamenteInsights = useAppStore(
+    (s) => s.tentarNovamenteInsights,
+  );
 
   const rec = dados?.recebidos ?? 0;
   const env = dados?.enviados;
@@ -3824,12 +3787,8 @@ function InsightsRemetentePopover({
     <Popover
       open={aberto}
       onOpenChange={(o) => {
-        setAberto(o);
-        // Fechou no meio do carregamento → permite refazer ao reabrir.
-        if (!o && estado === "carregando") {
-          pedidoRef.current = null;
-          setEstado("idle");
-        }
+        if (o) void abrirInsights(email);
+        else fecharInsights();
       }}
     >
       <PopoverTrigger asChild>
@@ -3862,7 +3821,7 @@ function InsightsRemetentePopover({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setTentativa((n) => n + 1)}
+              onClick={() => void tentarNovamenteInsights(email)}
             >
               <RefreshCw /> {t.controlRoom.insightsTentar}
             </Button>
@@ -4033,11 +3992,14 @@ const MessageDetail = forwardRef<
   },
   ref
 ) {
-  const [det, setDet] = useState<EmailDetalhe | null>(null);
+  const det = useAppStore((s) => s.leitorDetalhe);
   // Segurança do leitor (#91): Reply-To + headers de autenticação. Best-effort,
   // carregado à parte do corpo pra não atrasar a leitura.
-  const [seg, setSeg] = useState<SegurancaEmail | null>(null);
-  const [modo, setModo] = useState<null | "responder" | "responderTodos" | "encaminhar">(null);
+  const seg = useAppStore((s) => s.leitorSeguranca);
+  const modo = useAppStore((s) => s.leitorModo);
+  const carregarLeitor = useAppStore((s) => s.carregarLeitor);
+  const limparLeitor = useAppStore((s) => s.limparLeitor);
+  const setModo = useAppStore((s) => s.setLeitorModo);
   const comporRef = useRef<ComporMensagemHandle>(null);
   const textosUndoSend = useMemo(
     () => ({
@@ -4067,29 +4029,16 @@ const MessageDetail = forwardRef<
       responderTodos: () => id && !envioBloqueado && setModo("responderTodos"),
       encaminhar: () => id && !envioBloqueado && setModo("encaminhar"),
     }),
-    [id, envioBloqueado]
+    [id, envioBloqueado, setModo]
   );
 
   useEffect(() => {
     if (!id) {
-      setDet(null);
-      setSeg(null);
+      limparLeitor();
       return;
     }
-    let vivo = true;
-    setDet(null);
-    setSeg(null);
-    setModo(null);
-    api.crEmailCorpo(id, mailbox).then((d) => vivo && setDet(d)).catch(() => {});
-    // Segurança (#91) em paralelo; falha silenciosa (badge some, sem quebrar).
-    api
-      .crEmailSeguranca(id, mailbox)
-      .then((s) => vivo && setSeg(s))
-      .catch(() => {});
-    return () => {
-      vivo = false;
-    };
-  }, [id, mailbox]);
+    void carregarLeitor({ id, mailbox });
+  }, [id, mailbox, carregarLeitor, limparLeitor]);
 
   // Deriva veredito de autenticação (SPF/DKIM/DMARC) e divergência de Reply-To
   // a partir dos headers brutos — lógica pura, testada em seguranca-leitor.ts.
@@ -4475,21 +4424,27 @@ const MessageDetail = forwardRef<
 // ===========================================================================
 
 function AgendaConteudo({
-  onEvento,
   t,
   idioma,
 }: {
-  onEvento: (id: string) => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
-  const [dia, setDia] = useState<Date>(() => new Date());
-  const [mesEventos, setMesEventos] = useState<EventoAgenda[] | null>(null);
+  const dia = useAppStore((s) => s.agendaDia);
+  const setDia = useAppStore((s) => s.setAgendaDia);
+  const mesEventos = useAppStore((s) => s.agendaEventosMes);
   // Erro de carga separado do "vazio": sem isso, uma falha do Graph
   // (403 de escopo, rede, etc.) virava um mês "sem eventos" idêntico ao real,
   // mascarando o problema (#21). `recargaAgenda` re-dispara o fetch no retry.
-  const [erroAgenda, setErroAgenda] = useState<string | null>(null);
-  const [recargaAgenda, setRecargaAgenda] = useState(0);
+  const erroAgenda = useAppStore((s) => s.agendaErro);
+  const recargaAgenda = useAppStore((s) => s.agendaRecarga);
+  const carregarMesAgenda = useAppStore((s) => s.carregarMesAgenda);
+  const recarregarAgenda = useAppStore((s) => s.recarregarAgenda);
+  const coresCat = useAppStore((s) => s.agendaCoresCategoria);
+  const carregarCoresAgenda = useAppStore((s) => s.carregarCoresAgenda);
+  const selecionarEventoAgenda = useAppStore(
+    (s) => s.selecionarEventoAgenda,
+  );
 
   const chaveDia = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 
@@ -4504,39 +4459,13 @@ function AgendaConteudo({
   }, [ano, mes]);
 
   useEffect(() => {
-    let vivo = true;
-    setMesEventos(null);
-    setErroAgenda(null);
-    api
-      .crAgenda(mesIni, mesFim)
-      .then((d) => {
-        if (vivo) setMesEventos(d);
-      })
-      .catch((e) => {
-        // Surface o erro real (ex.: "/me/calendarView retornou 403") em vez de
-        // fingir "sem eventos".
-        if (vivo) {
-          setErroAgenda(String(e));
-          setMesEventos([]);
-        }
-      });
-    return () => {
-      vivo = false;
-    };
-  }, [mesIni, mesFim, recargaAgenda]);
+    void carregarMesAgenda(mesIni, mesFim);
+  }, [mesIni, mesFim, recargaAgenda, carregarMesAgenda]);
 
   // Cores reais das categorias do Outlook (nome -> hex), carregadas uma vez.
-  const [coresCat, setCoresCat] = useState<Map<string, string>>(new Map());
   useEffect(() => {
-    let vivo = true;
-    api
-      .crCategorias()
-      .then((cs) => vivo && setCoresCat(new Map(cs.map((c) => [c.nome, c.cor]))))
-      .catch(() => {});
-    return () => {
-      vivo = false;
-    };
-  }, []);
+    void carregarCoresAgenda();
+  }, [carregarCoresAgenda]);
 
   const agenda = useMemo(() => {
     if (!mesEventos) return null;
@@ -4604,7 +4533,7 @@ function AgendaConteudo({
           {erroAgenda ? (
             <AgendaErro
               mensagem={erroAgenda}
-              onRetry={() => setRecargaAgenda((n) => n + 1)}
+              onRetry={recarregarAgenda}
               t={t}
             />
           ) : agenda === null ? (
@@ -4622,7 +4551,7 @@ function AgendaConteudo({
                   <button
                     key={ev.id}
                     type="button"
-                    onClick={() => onEvento(ev.id)}
+                    onClick={() => void selecionarEventoAgenda(ev.id)}
                     style={cor ? ({ "--barra": cor } as React.CSSProperties) : undefined}
                     className={cn(
                       "relative w-full rounded-md bg-muted p-2 pl-6 text-left text-sm transition-colors hover:bg-muted/70",
@@ -4652,32 +4581,13 @@ function AgendaConteudo({
 
 // --- modal de detalhe do evento --------------------------------------------
 
-function EventoDialog({
-  id,
-  userEmail,
-  onClose,
-}: {
-  id: string | null;
-  userEmail?: string | null;
-  onClose: () => void;
-}) {
+function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const { idioma, t } = useIdioma();
-  const [det, setDet] = useState<EventoDetalhe | null>(null);
+  const id = useAppStore((s) => s.agendaEventoId);
+  const det = useAppStore((s) => s.agendaEventoDetalhe);
+  const fecharEventoAgenda = useAppStore((s) => s.fecharEventoAgenda);
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
-
-  useEffect(() => {
-    if (!id) {
-      setDet(null);
-      return;
-    }
-    let vivo = true;
-    setDet(null);
-    api.crEventoCorpo(id).then((d) => vivo && setDet(d)).catch(() => {});
-    return () => {
-      vivo = false;
-    };
-  }, [id]);
 
   // Pede as fotos dos participantes quando o detalhe carrega.
   useEffect(() => {
@@ -4685,7 +4595,7 @@ function EventoDialog({
   }, [det, pedirFotos]);
 
   return (
-    <Sheet open={!!id} onOpenChange={(o) => !o && onClose()}>
+    <Sheet open={!!id} onOpenChange={(o) => !o && fecharEventoAgenda()}>
       <SheetContent side="right" className="flex w-[30%] flex-col gap-0 p-0 sm:max-w-[30vw]">
         {!det ? (
           <div className="flex flex-1 items-center justify-center py-10">
@@ -5023,7 +4933,6 @@ export function ControlRoomScreen({
   const selecionados = useAppStore((s) => s.selecionados);
   const limparSelecao = useAppStore((s) => s.limparSelecao);
   const removerDaSelecao = useAppStore((s) => s.removerDaSelecao);
-  const [eventoSel, setEventoSel] = useState<string | null>(null);
   const [recarga, setRecarga] = useState(0);
   // recargaPastas atualiza SÓ as contagens do sidebar, sem recarregar a lista
   // (ações como excluir/responder não devem zerar o lazy load nem o scroll).
@@ -6230,11 +6139,11 @@ export function ControlRoomScreen({
             controla a visibilidade é o item do sidebar esquerdo (#50): visível =
             renderiza; escondido = some e a lista+detalhe ocupam a largura toda. */}
         {agendaAberta && (
-          <AgendaConteudo onEvento={setEventoSel} t={t} idioma={idioma} />
+          <AgendaConteudo t={t} idioma={idioma} />
         )}
       </div>
 
-      <EventoDialog id={eventoSel} userEmail={user.email} onClose={() => setEventoSel(null)} />
+      <EventoDialog userEmail={user.email} />
       <NovaMensagemModal
         aberto={novaAberta}
         onClose={() => setNovaAberta(false)}
