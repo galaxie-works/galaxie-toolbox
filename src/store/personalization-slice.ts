@@ -7,8 +7,11 @@ import {
   type PreferenciasNotificacao,
 } from "@/lib/sons-notificacao";
 import {
+  aplicarAltoContraste,
   aplicarModoTema,
   aplicarTemaVisual,
+  altoContrasteSalvo,
+  CHAVE_ALTO_CONTRASTE,
   CHAVE_MODO_TEMA,
   CHAVE_TEMA_VISUAL,
   modoTemaSalvo,
@@ -16,12 +19,6 @@ import {
   type ModoTema,
   type TemaVisual,
 } from "@/lib/tema";
-import {
-  aplicarCorDestaque,
-  CHAVE_COR_DESTAQUE,
-  corDestaqueSalva,
-  corHexValida,
-} from "@/lib/cor-destaque";
 import type { AppStore } from "./index";
 
 /**
@@ -39,15 +36,14 @@ export interface PersonalizationSlice {
   modoTema: ModoTema;
   /** Paleta/estilo visual independente do modo claro/escuro. */
   temaVisual: TemaVisual;
-  /** Override hexadecimal dos tokens semânticos de destaque; null = mood. */
-  corDestaque: string | null;
+  /** Alto contraste (#136): sobrepõe o Mood com o preset `high-contrast`. */
+  altoContraste: boolean;
 
   setSomNotificacao: (escopo: EscopoNotificacao, somId: string) => void;
   setFundoEstrelado: (ativo: boolean) => void;
   setModoTema: (modo: ModoTema) => void;
   setTemaVisual: (tema: TemaVisual) => void;
-  setCorDestaque: (cor: string) => void;
-  resetCorDestaque: () => void;
+  setAltoContraste: (ativo: boolean) => void;
 }
 
 export const PERSONALIZATION_KEYS = {
@@ -55,7 +51,7 @@ export const PERSONALIZATION_KEYS = {
   fundoEstrelado: "galaxie-toolbox.background.stars",
   modoTema: CHAVE_MODO_TEMA,
   temaVisual: CHAVE_TEMA_VISUAL,
-  corDestaque: CHAVE_COR_DESTAQUE,
+  altoContraste: CHAVE_ALTO_CONTRASTE,
 } as const;
 
 export type PersonalizationPersistido = Pick<
@@ -64,7 +60,7 @@ export type PersonalizationPersistido = Pick<
   | "fundoEstrelado"
   | "modoTema"
   | "temaVisual"
-  | "corDestaque"
+  | "altoContraste"
 >;
 
 export const createPersonalizationSlice: StateCreator<
@@ -72,12 +68,12 @@ export const createPersonalizationSlice: StateCreator<
   [["zustand/persist", unknown]],
   [],
   PersonalizationSlice
-> = (set) => ({
+> = (set, get) => ({
   notificacoes: { ...PREF_PADRAO },
   fundoEstrelado: true,
   modoTema: modoTemaSalvo(),
   temaVisual: temaVisualSalvo(),
-  corDestaque: corDestaqueSalva(),
+  altoContraste: altoContrasteSalvo(),
 
   setSomNotificacao: (escopo, somId) =>
     set((state) => ({
@@ -92,14 +88,9 @@ export const createPersonalizationSlice: StateCreator<
     aplicarTemaVisual(tema);
     set({ temaVisual: tema });
   },
-  setCorDestaque: (cor) => {
-    if (!corHexValida(cor)) return;
-    const normalizada = cor.toLowerCase();
-    aplicarCorDestaque(normalizada);
-    set({ corDestaque: normalizada });
-  },
-  resetCorDestaque: () => {
-    aplicarCorDestaque(null);
-    set({ corDestaque: null });
+  setAltoContraste: (ativo) => {
+    // Ligado sobrepõe o Mood; desligado volta ao Mood atual.
+    aplicarAltoContraste(ativo, get().temaVisual);
+    set({ altoContraste: ativo });
   },
 });

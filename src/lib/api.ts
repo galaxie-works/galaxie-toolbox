@@ -39,6 +39,18 @@ const MOCK_USER: AppUser = {
   organizacao: "Voaz",
 };
 
+const MOCK_LOCK_PIN = "galaxie-mock-lock-pin";
+let mockLockFailures = 0;
+let mockLockBlockedUntil = 0;
+
+function mockPinSalvo(): string | null {
+  const salvo = localStorage.getItem(MOCK_LOCK_PIN);
+  if (salvo) return salvo;
+  return new URLSearchParams(window.location.search).get("mockLock") === "1"
+    ? "1234"
+    : null;
+}
+
 // Sem numeros de proposito: o backend real tambem nao os devolve na lista,
 // eles chegam depois pelo site_details. Assim o preview mostra os spinners.
 const MOCK_SITES: Site[] = [
@@ -90,7 +102,12 @@ export async function detectTenant(
 }
 
 export async function logout(): Promise<void> {
-  if (!inTauri()) return;
+  if (!inTauri()) {
+    localStorage.removeItem(MOCK_LOCK_PIN);
+    mockLockFailures = 0;
+    mockLockBlockedUntil = 0;
+    return;
+  }
   return invoke<void>("logout");
 }
 
@@ -109,6 +126,81 @@ export async function cachedIdentity(): Promise<Identidade | null> {
 export async function restoreSession(): Promise<AppUser | null> {
   if (!inTauri()) return null;
   return invoke<AppUser | null>("restore_session");
+}
+
+export interface LockStatus {
+  enabled: boolean;
+}
+
+export interface PinResult {
+  ok: boolean;
+  remainingAttempts: number;
+  retryAfterSeconds: number;
+}
+
+/** Consulta o gate local antes de restaurar qualquer conteúdo protegido. */
+export async function lockStatus(): Promise<LockStatus> {
+  if (!inTauri()) return { enabled: mockPinSalvo() !== null };
+  return invoke<LockStatus>("lock_status");
+}
+
+export async function lockSetPin(
+  pin: string,
+  currentPin?: string
+): Promise<void> {
+  if (!inTauri()) {
+    const atual = mockPinSalvo();
+    if (atual && atual !== currentPin) throw new Error("PIN atual incorreto.");
+    if (!/^\d{4,8}$/.test(pin)) {
+      throw new Error("O PIN deve conter de 4 a 8 dígitos.");
+    }
+    localStorage.setItem(MOCK_LOCK_PIN, pin);
+    mockLockFailures = 0;
+    mockLockBlockedUntil = 0;
+    return;
+  }
+  return invoke<void>("lock_set_pin", { pin, currentPin });
+}
+
+export async function lockDisablePin(pin: string): Promise<void> {
+  if (!inTauri()) {
+    if (mockPinSalvo() !== pin) throw new Error("PIN atual incorreto.");
+    localStorage.removeItem(MOCK_LOCK_PIN);
+    mockLockFailures = 0;
+    mockLockBlockedUntil = 0;
+    return;
+  }
+  return invoke<void>("lock_disable_pin", { pin });
+}
+
+export async function lockVerifyPin(pin: string): Promise<PinResult> {
+  if (!inTauri()) {
+    const agora = Date.now();
+    if (mockLockBlockedUntil > agora) {
+      return {
+        ok: false,
+        remainingAttempts: 0,
+        retryAfterSeconds: Math.max(
+          1,
+          Math.ceil((mockLockBlockedUntil - agora) / 1000)
+        ),
+      };
+    }
+    if (pin === mockPinSalvo()) {
+      mockLockFailures = 0;
+      mockLockBlockedUntil = 0;
+      return { ok: true, remainingAttempts: 5, retryAfterSeconds: 0 };
+    }
+    mockLockFailures += 1;
+    const remainingAttempts = Math.max(0, 5 - mockLockFailures);
+    if (remainingAttempts === 0) mockLockBlockedUntil = agora + 30_000;
+    return {
+      ok: false,
+      remainingAttempts,
+      retryAfterSeconds: remainingAttempts === 0 ? 30 : 0,
+    };
+  }
+  return invoke<PinResult>("lock_verify_pin", { pin });
 }
 
 export async function listSites(): Promise<Site[]> {

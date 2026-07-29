@@ -27,11 +27,14 @@ import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
 import {
+  AccessibilitySettings,
   MoodSettings,
   StyleSettings,
 } from "@/components/theme-settings";
-import { TemplatesEmail } from "@/components/templates-email";
-import { ColorSettings } from "@/components/color-settings";
+import {
+  SignaturesPanel,
+  EmailTemplatesPanel,
+} from "@/components/bridge-settings";
 import {
   Empty,
   EmptyDescription,
@@ -76,6 +79,22 @@ interface SettingsItem {
 interface SettingsSection {
   label: string;
   items: SettingsItem[];
+}
+
+/**
+ * Cards empilhados do frame "Appearance": Mood, Style e Accessibility (#136).
+ * Lê `altoContraste` do store para desabilitar o Mood quando o alto contraste
+ * está ligado (o preset high-contrast sobrepõe o Mood).
+ */
+function AppearancePanels() {
+  const altoContraste = useAppStore((state) => state.altoContraste);
+  return (
+    <>
+      <MoodSettings disabled={altoContraste} />
+      <StyleSettings />
+      <AccessibilitySettings />
+    </>
+  );
 }
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
@@ -128,21 +147,10 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             key: "appearance",
             title: "Appearance",
             subtitle: "Set the mood and light or dark style of the app.",
-            // Frame with stacked cards (c-frame-3 dentro do c-frame-5): Mood e
-            // Style são dois FramePanels empilhados NUM frame só, igual ao
-            // Sound & notifications. Cada card já traz label+descrição + select.
-            node: (
-              <>
-                <MoodSettings />
-                <StyleSettings />
-              </>
-            ),
-          },
-          {
-            key: "colors",
-            title: "Colors",
-            subtitle: "Choose an accessible accent color for the interface.",
-            node: <ColorSettings />,
+            // Frame with stacked cards (c-frame-3 dentro do c-frame-5): Mood,
+            // Style e Accessibility são FramePanels empilhados NUM frame só, igual
+            // ao Sound & notifications. Cada card traz label+descrição + controle.
+            node: <AppearancePanels />,
           },
           { key: "lock-screen", title: "Lock screen", subtitle: "Protect the app with a PIN.", pending: 122 },
         ],
@@ -175,15 +183,17 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             icon: BridgeIcon,
             frames: [
               {
-                key: "email-templates",
-                title: "Email templates",
-                subtitle: "Reusable message templates for Bridge.",
-                // Interino (AC5): a CRUD do #93 vai DIRETO aqui (modo bare, sem
-                // card/título próprios); #124 assume/reestiliza depois.
+                key: "signature-templates",
+                title: "Signature & Templates",
+                subtitle:
+                  "Manage your Bridge signatures and reusable email templates.",
+                // Frame with stacked cards (c-frame-3 dentro do c-frame-5): dois
+                // FramePanels empilhados num frame só (igual ao Appearance).
                 node: (
-                  <FramePanel>
-                    <TemplatesEmail bare />
-                  </FramePanel>
+                  <>
+                    <SignaturesPanel />
+                    <EmailTemplatesPanel />
+                  </>
                 ),
               },
             ],

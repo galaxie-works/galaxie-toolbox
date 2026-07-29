@@ -38,6 +38,26 @@ const pt = {
     preparando: "Preparando o seu universo...",
   },
 
+  lockScreen: {
+    titulo: "Aplicativo bloqueado",
+    descricao: "Digite o seu PIN para continuar.",
+    descricaoComNome: "Olá, {nome}. Digite o seu PIN para continuar.",
+    rotuloPin: "PIN",
+    placeholderPin: "4 a 8 dígitos",
+    ajuda: "O PIN é verificado somente neste dispositivo.",
+    desbloquear: "Desbloquear",
+    verificando: "Verificando...",
+    pinIncorreto: "PIN incorreto. {n} tentativa(s) restante(s).",
+    muitasTentativas: "Muitas tentativas incorretas.",
+    tenteEm: "Muitas tentativas incorretas. Tente novamente em {s}s.",
+    erroValidacao: "Não foi possível verificar o PIN. Tente novamente.",
+    recuperar: "Sair e entrar novamente",
+    erroRecuperacao: "Não foi possível encerrar a sessão. Tente novamente.",
+    statusIndisponivel:
+      "Não foi possível confirmar o estado do bloqueio. O conteúdo permanece protegido.",
+    tentarNovamente: "Tentar novamente",
+  },
+
   nav: {
     organizacao: "Organização",
     plataforma: "Plataforma",
@@ -235,6 +255,16 @@ const pt = {
     navegar: "Traçar rota",
     irPara: "Ir para {nome}",
     pesquisar: "Pesquisar “{q}” na web",
+    novaAba: "Nova aba",
+    fecharAba: "Fechar aba",
+  },
+
+  // Controles de janela (barra-janela.tsx). Só existem dentro do Tauri.
+  janela: {
+    minimizar: "Minimizar",
+    maximizar: "Maximizar",
+    restaurar: "Restaurar",
+    fechar: "Fechar",
   },
 
   atualizacao: {
@@ -606,6 +636,26 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     preparando: "Getting your universe ready...",
   },
 
+  lockScreen: {
+    titulo: "App locked",
+    descricao: "Enter your PIN to continue.",
+    descricaoComNome: "Hello, {nome}. Enter your PIN to continue.",
+    rotuloPin: "PIN",
+    placeholderPin: "4 to 8 digits",
+    ajuda: "Your PIN is verified only on this device.",
+    desbloquear: "Unlock",
+    verificando: "Checking...",
+    pinIncorreto: "Incorrect PIN. {n} attempt(s) remaining.",
+    muitasTentativas: "Too many incorrect attempts.",
+    tenteEm: "Too many incorrect attempts. Try again in {s}s.",
+    erroValidacao: "We couldn't verify the PIN. Try again.",
+    recuperar: "Sign out and sign in again",
+    erroRecuperacao: "We couldn't sign you out. Try again.",
+    statusIndisponivel:
+      "We couldn't confirm the lock status. Your content remains protected.",
+    tentarNovamente: "Try again",
+  },
+
   nav: {
     organizacao: "Organization",
     plataforma: "Platform",
@@ -799,6 +849,16 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     navegar: "Set a course",
     irPara: "Go to {nome}",
     pesquisar: "Search the web for “{q}”",
+    novaAba: "New tab",
+    fecharAba: "Close tab",
+  },
+
+  // Window controls (barra-janela.tsx). Only exist inside Tauri.
+  janela: {
+    minimizar: "Minimize",
+    maximizar: "Maximize",
+    restaurar: "Restore",
+    fechar: "Close",
   },
 
   atualizacao: {

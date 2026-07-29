@@ -1,4 +1,10 @@
 import { cn } from "@/lib/utils";
+import { useIdioma } from "@/lib/idioma";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useEffect, useState } from "react";
 
 const noTauri = () =>
@@ -39,21 +45,27 @@ function Botao({
   perigo?: boolean;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={rotulo}
-      title={rotulo}
-      onClick={onClick}
-      className={cn(
-        "inline-grid h-full w-[46px] cursor-pointer place-items-center text-foreground/80",
-        "transition-colors hover:text-foreground",
-        perigo
-          ? "hover:bg-[#c42b1c] hover:text-white"
-          : "hover:bg-foreground/10"
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          aria-label={rotulo}
+          onClick={onClick}
+          className={cn(
+            "inline-grid h-full w-[46px] cursor-pointer place-items-center text-foreground/80",
+            "transition-colors hover:text-foreground",
+            perigo
+              ? "hover:bg-[#c42b1c] hover:text-white"
+              : "hover:bg-foreground/10"
+          )}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      {/* side="bottom": os botões estão colados no topo da janela; um tooltip
+          "top" sairia para fora da tela. */}
+      <TooltipContent side="bottom">{rotulo}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -68,6 +80,7 @@ function Botao({
  * pessoa já tem esse alvo na memória muscular.
  */
 export function BarraJanela({ className }: { className?: string }) {
+  const { t } = useIdioma();
   const [maximizada, setMaximizada] = useState(false);
 
   useEffect(() => {
@@ -98,16 +111,16 @@ export function BarraJanela({ className }: { className?: string }) {
         className
       )}
     >
-      <Botao rotulo="Minimizar" onClick={async () => (await janela()).minimize()}>
+      <Botao rotulo={t.janela.minimizar} onClick={async () => (await janela()).minimize()}>
         <Minimizar />
       </Botao>
       <Botao
-        rotulo={maximizada ? "Restaurar" : "Maximizar"}
+        rotulo={maximizada ? t.janela.restaurar : t.janela.maximizar}
         onClick={async () => (await janela()).toggleMaximize()}
       >
         {maximizada ? <Restaurar /> : <Maximizar />}
       </Botao>
-      <Botao rotulo="Fechar" perigo onClick={async () => (await janela()).close()}>
+      <Botao rotulo={t.janela.fechar} perigo onClick={async () => (await janela()).close()}>
         <Fechar />
       </Botao>
     </div>

@@ -10,6 +10,11 @@ import {
 } from "@/components/reui/frame";
 import { Button } from "@/components/ui/button";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -157,11 +162,16 @@ function BibliotecaPanel({
       <div className="flex shrink-0 items-center gap-3">
         {conectado && (
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" aria-label={t.bibliotecas.abrir}>
-                <FolderOpenIcon size={16} />
-              </Button>
-            </DropdownMenuTrigger>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" aria-label={t.bibliotecas.abrir}>
+                    <FolderOpenIcon size={16} />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t.bibliotecas.abrir}</TooltipContent>
+            </Tooltip>
             <DropdownMenuContent align="end">
               <DropdownMenuItem onClick={() => onOpen(site)}>
                 {t.bibliotecas.abrirExplorer}

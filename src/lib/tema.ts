@@ -10,6 +10,13 @@ import { useSyncExternalStore } from "react";
 
 export const CHAVE_MODO_TEMA = "galaxie-theme";
 export const CHAVE_TEMA_VISUAL = "galaxie-toolbox.theme";
+export const CHAVE_ALTO_CONTRASTE = "galaxie-toolbox.altoContraste";
+
+/**
+ * `data-theme` do preset de alto contraste (#136). NÃO é uma opção de Mood: mora
+ * só no `theme-presets.css` e sobrepõe o Mood quan­do o Accessibility está ligado.
+ */
+export const TEMA_ALTO_CONTRASTE = "high-contrast";
 
 export const MODOS_TEMA = ["light", "dark", "system"] as const;
 export type ModoTema = (typeof MODOS_TEMA)[number];
@@ -84,9 +91,39 @@ export function aplicarTemaVisual(tema: TemaVisual) {
   document.documentElement.dataset.theme = tema;
 }
 
+export function altoContrasteSalvo(): boolean {
+  try {
+    const bruto = localStorage.getItem(CHAVE_ALTO_CONTRASTE);
+    if (bruto === null) return false;
+    try {
+      return JSON.parse(bruto) === true;
+    } catch {
+      return bruto === "true";
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Liga/desliga o alto contraste (#136). Ligado → `data-theme="high-contrast"`,
+ * sobrepondo o Mood. Desligado → volta ao Mood (`temaBase`). Usa o MESMO
+ * mecanismo do `aplicarTemaVisual` (o atributo `data-theme` no <html>).
+ */
+export function aplicarAltoContraste(
+  ativo: boolean,
+  temaBase: TemaVisual = temaVisualSalvo()
+) {
+  document.documentElement.dataset.theme = ativo
+    ? TEMA_ALTO_CONTRASTE
+    : temaBase;
+}
+
 /** Vale a partir do import, sem esperar componente nenhum. */
 aplicarTemaVisual(temaVisualSalvo());
 aplicarModoTema(modoTemaSalvo());
+// Alto contraste sobrepõe o Mood no boot (evita flash do Mood antes de hidratar).
+if (altoContrasteSalvo()) aplicarAltoContraste(true);
 
 /** No modo Sistema, acompanha mudanças do SO durante toda a sessão. */
 mediaEscura?.addEventListener("change", () => {

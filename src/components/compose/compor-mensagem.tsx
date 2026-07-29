@@ -56,7 +56,8 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { crCompartilharOneDrive, type AnexoEnvio } from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
-import { lerTemplates, type TemplateEmail } from "@/lib/templates";
+import { type TemplateEmail } from "@/lib/templates";
+import { useAppStore } from "@/store";
 
 import { CampoPessoas } from "./campo-pessoas";
 import { COMPOSE_KIT } from "./compose-kit";
@@ -99,19 +100,8 @@ export interface ComporMensagemProps {
   };
 }
 
-/** Chave do localStorage onde a assinatura fica guardada (editável em Settings). */
-const ASSINATURA_KEY = "bridge.assinatura";
-
-/** Assinatura salva pelo usuário; se vazia, um default simples. */
-function lerAssinatura(): string {
-  try {
-    const v = localStorage.getItem(ASSINATURA_KEY);
-    if (v && v.trim()) return v;
-  } catch {
-    // localStorage indisponível (modo privado etc.): usa o default.
-  }
-  return "--\nEnviado pelo GALAXIE Toolbox";
-}
+/** Assinatura simples usada quando não há assinatura padrão definida (#135). */
+const ASSINATURA_FALLBACK = "--\nEnviado pelo GALAXIE Toolbox";
 
 /** Converte bytes crus em base64 sem estourar a pilha em arquivos grandes. */
 function bytesParaB64(bytes: Uint8Array): string {
@@ -200,10 +190,9 @@ export const ComporMensagem = forwardRef<
 ) {
   const { t } = useIdioma();
   const [para, setPara] = useState<string[]>([]);
-  // Lida do localStorage a cada abertura do menu (e não em estado persistido):
-  // este compose fica montado junto do Bridge, então uma cópia guardada aqui
-  // ficaria velha assim que o usuário mexesse nos templates em Configurações.
-  const [templates, setTemplates] = useState<TemplateEmail[]>([]);
+  // Templates saem do store único (#135): fonte da verdade compartilhada com a
+  // Settings, sempre em dia sem cópia local que envelheceria.
+  const templates = useAppStore((s) => s.templates);
   const [cc, setCc] = useState<string[]>([]);
   const [cco, setCco] = useState<string[]>([]);
   // Destinatários como `Pessoa` (nome/foto), reportados pelos campos, para
@@ -322,9 +311,24 @@ export const ComporMensagem = forwardRef<
     editor.tf.insertNodes(nodes, { at: [editor.children.length] });
   }
 
-  /** Insere a assinatura (uma linha por parágrafo) ao final do corpo. */
+  /**
+   * Insere a assinatura padrão ao final do corpo. A padrão vive no store (#135)
+   * como HTML do próprio Plate — basta desserializar de volta, igual ao
+   * template. Sem padrão definida, cai numa assinatura simples em texto.
+   */
   function inserirAssinatura() {
-    const linhas = lerAssinatura().split(/\r?\n/);
+    const { assinaturas, assinaturaPadraoId } = useAppStore.getState();
+    const padrao = assinaturas.find((a) => a.id === assinaturaPadraoId);
+    if (padrao && padrao.corpo.trim()) {
+      const nodes = editor.api.html.deserialize({
+        element: padrao.corpo,
+      }) as TElement[];
+      if (nodes.length > 0) {
+        inserirNoFim(nodes);
+        return;
+      }
+    }
+    const linhas = ASSINATURA_FALLBACK.split(/\r?\n/);
     inserirNoFim(
       linhas.map((linha) => ({ type: "p", children: [{ text: linha }] }))
     );
@@ -497,10 +501,7 @@ export const ComporMensagem = forwardRef<
             <PenLineIcon />
           </ToolbarButton>
           {/* Templates: lista o que está salvo em Configurações e insere no fim. */}
-          <DropdownMenu
-            modal={false}
-            onOpenChange={(aberto) => aberto && setTemplates(lerTemplates())}
-          >
+          <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <ToolbarButton tooltip={t.templates.inserir} isDropdown>
                 <FileType2Icon />

@@ -1,5 +1,10 @@
 import { Badge } from "@/components/reui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -131,17 +136,22 @@ function CardUso({ uso }: { uso: UsoOneDrive | null }) {
 
       {/* Botao circular que abre/fecha, na base do card */}
       <div className="absolute -bottom-4 left-1/2 -translate-x-1/2">
-        <Button
-          variant="outline"
-          size="icon"
-          aria-label={t.meusArquivos.usoTitulo}
-          className="size-8 rounded-full bg-background shadow-sm hover:bg-background"
-          onClick={() => setAberto((v) => !v)}
-        >
-          <ChevronDown
-            className={cn("size-4 transition-transform duration-300", aberto && "rotate-180")}
-          />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label={t.meusArquivos.usoTitulo}
+              className="size-8 rounded-full bg-background shadow-sm hover:bg-background"
+              onClick={() => setAberto((v) => !v)}
+            >
+              <ChevronDown
+                className={cn("size-4 transition-transform duration-300", aberto && "rotate-180")}
+              />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t.meusArquivos.usoTitulo}</TooltipContent>
+        </Tooltip>
       </div>
     </Card>
   );
