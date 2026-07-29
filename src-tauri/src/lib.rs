@@ -509,11 +509,17 @@ async fn cr_encaminhar(
 
 /// Control room: exclui um e-mail (move para a Lixeira).
 #[tauri::command]
-async fn cr_excluir_email(state: State<'_, Store>, id: String) -> Result<(), String> {
+async fn cr_excluir_email(
+    state: State<'_, Store>,
+    id: String,
+    mailbox: Option<String>,
+) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_email(&store, &id))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_excluir_email(&store, &id, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: exclui vários e-mails em série (com retry no 429). Retorna os
@@ -523,11 +529,14 @@ async fn cr_excluir_emails(
     state: State<'_, Store>,
     ids: Vec<String>,
     permanente: bool,
+    mailbox: Option<String>,
 ) -> Result<Vec<String>, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_emails(&store, ids, permanente))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_excluir_emails(&store, ids, permanente, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: move vários e-mails para uma pasta (com retry no 429).
@@ -538,11 +547,14 @@ async fn cr_mover_emails(
     state: State<'_, Store>,
     ids: Vec<String>,
     destino: String,
+    mailbox: Option<String>,
 ) -> Result<Vec<String>, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_mover_emails(&store, ids, destino))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_mover_emails(&store, ids, destino, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: sinaliza ou remove a sinalizacao de um e-mail.
@@ -551,11 +563,14 @@ async fn cr_marcar_email(
     state: State<'_, Store>,
     id: String,
     sinalizado: bool,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_marcar_email(&store, &id, sinalizado))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_marcar_email(&store, &id, sinalizado, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: marca um e-mail como lido ou não lido (com retry no 429).
@@ -564,11 +579,14 @@ async fn cr_marcar_lido(
     state: State<'_, Store>,
     id: String,
     lido: bool,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_marcar_lido(&store, &id, lido))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_marcar_lido(&store, &id, lido, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: busca mensagens numa pasta pelo termo (busca no servidor).
@@ -658,21 +676,33 @@ async fn cr_insights_remetente(
 /// Control room: esvazia uma pasta (Lixeira / Lixo Eletrônico), apagando cada
 /// mensagem. Retorna a contagem do que saiu.
 #[tauri::command]
-async fn cr_esvaziar_pasta(state: State<'_, Store>, folder_id: String) -> Result<u64, String> {
+async fn cr_esvaziar_pasta(
+    state: State<'_, Store>,
+    folder_id: String,
+    mailbox: Option<String>,
+) -> Result<u64, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_esvaziar_pasta(&store, &folder_id))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_esvaziar_pasta(&store, &folder_id, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: marca como lidas todas as mensagens não lidas de uma pasta
 /// (#89). Retorna quantas foram marcadas.
 #[tauri::command]
-async fn cr_marcar_pasta_lida(state: State<'_, Store>, folder_id: String) -> Result<u64, String> {
+async fn cr_marcar_pasta_lida(
+    state: State<'_, Store>,
+    folder_id: String,
+    mailbox: Option<String>,
+) -> Result<u64, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_marcar_pasta_lida(&store, &folder_id))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_marcar_pasta_lida(&store, &folder_id, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: cria uma subpasta dentro de `pai_id` (#90). Retorna a pasta
@@ -682,11 +712,14 @@ async fn cr_criar_subpasta(
     state: State<'_, Store>,
     pai_id: String,
     nome: String,
+    mailbox: Option<String>,
 ) -> Result<graph::PastaEmail, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_criar_subpasta(&store, &pai_id, &nome))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_criar_subpasta(&store, &pai_id, &nome, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: renomeia uma pasta (#90). Retorna a pasta com o nome novo.
@@ -695,22 +728,31 @@ async fn cr_renomear_pasta(
     state: State<'_, Store>,
     id: String,
     nome: String,
+    mailbox: Option<String>,
 ) -> Result<graph::PastaEmail, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_renomear_pasta(&store, &id, &nome))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_renomear_pasta(&store, &id, &nome, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: exclui uma pasta (#90) — MOVE para a Lixeira (reversível,
 /// decisão do PO na #71/D3). `true` = foi pra lixeira; `false` = caiu no
 /// fallback DELETE (definitivo).
 #[tauri::command]
-async fn cr_excluir_pasta(state: State<'_, Store>, id: String) -> Result<bool, String> {
+async fn cr_excluir_pasta(
+    state: State<'_, Store>,
+    id: String,
+    mailbox: Option<String>,
+) -> Result<bool, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_pasta(&store, &id))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_excluir_pasta(&store, &id, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: move uma pasta para dentro de outra (#90).
@@ -719,11 +761,14 @@ async fn cr_mover_pasta(
     state: State<'_, Store>,
     id: String,
     novo_pai: String,
+    mailbox: Option<String>,
 ) -> Result<graph::PastaEmail, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_mover_pasta(&store, &id, &novo_pai))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_mover_pasta(&store, &id, &novo_pai, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: baixa um anexo para a pasta Downloads. Retorna o caminho.

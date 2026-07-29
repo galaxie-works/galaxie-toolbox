@@ -807,25 +807,30 @@ export async function crEncaminhar(
   return invoke<void>("cr_encaminhar", { id, corpo, para, anexos });
 }
 
-export async function crExcluirEmail(id: string): Promise<void> {
+export async function crExcluirEmail(id: string, mailbox?: string): Promise<void> {
   if (!inTauri()) {
     await sleep(300);
     return;
   }
-  return invoke<void>("cr_excluir_email", { id });
+  return invoke<void>("cr_excluir_email", { id, mailbox: mailboxArg(mailbox) });
 }
 
 /** Exclui vários e-mails em série (com retry no 429 no backend). Retorna os ids
  *  que foram realmente excluídos. */
 export async function crExcluirEmails(
   ids: string[],
-  permanente = false
+  permanente = false,
+  mailbox?: string
 ): Promise<string[]> {
   if (!inTauri()) {
     await sleep(300);
     return ids;
   }
-  return invoke<string[]>("cr_excluir_emails", { ids, permanente });
+  return invoke<string[]>("cr_excluir_emails", {
+    ids,
+    permanente,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** Move vários e-mails para uma pasta (#88), em série e com retry no 429 no
@@ -835,33 +840,51 @@ export async function crExcluirEmails(
  *  otimista com isso). */
 export async function crMoverEmails(
   ids: string[],
-  destino: string
+  destino: string,
+  mailbox?: string
 ): Promise<string[]> {
   if (!inTauri()) {
     await sleep(300);
     return ids;
   }
-  return invoke<string[]>("cr_mover_emails", { ids, destino });
+  return invoke<string[]>("cr_mover_emails", {
+    ids,
+    destino,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 export async function crMarcarEmail(
   id: string,
-  sinalizado: boolean
+  sinalizado: boolean,
+  mailbox?: string
 ): Promise<void> {
   if (!inTauri()) {
     await sleep(300);
     return;
   }
-  return invoke<void>("cr_marcar_email", { id, sinalizado });
+  return invoke<void>("cr_marcar_email", {
+    id,
+    sinalizado,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** Marca um e-mail como lido ou não lido (com retry no 429 no backend). */
-export async function crMarcarLido(id: string, lido: boolean): Promise<void> {
+export async function crMarcarLido(
+  id: string,
+  lido: boolean,
+  mailbox?: string
+): Promise<void> {
   if (!inTauri()) {
     await sleep(300);
     return;
   }
-  return invoke<void>("cr_marcar_lido", { id, lido });
+  return invoke<void>("cr_marcar_lido", {
+    id,
+    lido,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** Uma página de resultados de busca: os itens e a URL de continuação. */
@@ -1025,24 +1048,36 @@ export async function crInsightsRemetente(
  * mensagem, paginando até a pasta ficar vazia. `folderId` aceita o nome
  * well-known ("deleteditems"/"junkemail") ou o id real. Devolve quantas saíram.
  */
-export async function crEsvaziarPasta(folderId: string): Promise<number> {
+export async function crEsvaziarPasta(
+  folderId: string,
+  mailbox?: string
+): Promise<number> {
   if (!inTauri()) {
     await sleep(500);
     return 12;
   }
-  return invoke<number>("cr_esvaziar_pasta", { folderId });
+  return invoke<number>("cr_esvaziar_pasta", {
+    folderId,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /**
  * Marca como lidas TODAS as mensagens não lidas de uma pasta (#89). Devolve
  * quantas foram marcadas (0 = a pasta já estava toda lida).
  */
-export async function crMarcarPastaLida(folderId: string): Promise<number> {
+export async function crMarcarPastaLida(
+  folderId: string,
+  mailbox?: string
+): Promise<number> {
   if (!inTauri()) {
     await sleep(500);
     return 7;
   }
-  return invoke<number>("cr_marcar_pasta_lida", { folderId });
+  return invoke<number>("cr_marcar_pasta_lida", {
+    folderId,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 // --- CRUD de pastas (#90) ---------------------------------------------------
@@ -1057,7 +1092,8 @@ export async function crMarcarPastaLida(folderId: string): Promise<number> {
  */
 export async function crCriarSubpasta(
   paiId: string,
-  nome: string
+  nome: string,
+  mailbox?: string
 ): Promise<PastaEmail> {
   if (!inTauri()) {
     await sleep(400);
@@ -1070,19 +1106,28 @@ export async function crCriarSubpasta(
       filhos: 0,
     };
   }
-  return invoke<PastaEmail>("cr_criar_subpasta", { paiId, nome });
+  return invoke<PastaEmail>("cr_criar_subpasta", {
+    paiId,
+    nome,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** Renomeia uma pasta (#90). Devolve a pasta já com o nome novo. */
 export async function crRenomearPasta(
   id: string,
-  nome: string
+  nome: string,
+  mailbox?: string
 ): Promise<PastaEmail> {
   if (!inTauri()) {
     await sleep(400);
     return { id, tipo: "child", nome, naoLidos: 0, total: 0, filhos: 0 };
   }
-  return invoke<PastaEmail>("cr_renomear_pasta", { id, nome });
+  return invoke<PastaEmail>("cr_renomear_pasta", {
+    id,
+    nome,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /**
@@ -1092,24 +1137,35 @@ export async function crRenomearPasta(
  * não rolou e o backend caiu no fallback `DELETE` (aí sim definitivo) — a UI usa
  * isso pra escolher o texto do toast.
  */
-export async function crExcluirPasta(id: string): Promise<boolean> {
+export async function crExcluirPasta(
+  id: string,
+  mailbox?: string
+): Promise<boolean> {
   if (!inTauri()) {
     await sleep(400);
     return true;
   }
-  return invoke<boolean>("cr_excluir_pasta", { id });
+  return invoke<boolean>("cr_excluir_pasta", {
+    id,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** Move uma pasta (com conteúdo e subpastas) para dentro de `novoPai` (#90). */
 export async function crMoverPasta(
   id: string,
-  novoPai: string
+  novoPai: string,
+  mailbox?: string
 ): Promise<PastaEmail> {
   if (!inTauri()) {
     await sleep(400);
     return { id, tipo: "child", nome: "Pasta", naoLidos: 0, total: 0, filhos: 0 };
   }
-  return invoke<PastaEmail>("cr_mover_pasta", { id, novoPai });
+  return invoke<PastaEmail>("cr_mover_pasta", {
+    id,
+    novoPai,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** Baixa um anexo para a pasta Downloads e devolve o caminho absoluto. */

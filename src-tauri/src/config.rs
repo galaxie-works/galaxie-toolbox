@@ -33,7 +33,7 @@ pub const CLIENT_ID: &str = "214d735e-eb9b-4052-8851-578d3bd91627";
 /// sinaliza "faca login novamente" quando o token atual nao traz este escopo).
 pub const SCOPES: &str = "openid profile offline_access \
      User.Read User.Read.All Files.ReadWrite Sites.Read.All \
-     Calendars.Read Mail.ReadWrite Mail.Read.Shared Mail.Send Tasks.ReadWrite \
+     Calendars.Read Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send Tasks.ReadWrite \
      People.Read Contacts.ReadWrite";
 
 pub fn client_id() -> String {
