@@ -39,6 +39,7 @@ function personFromSuggestion(person: Pessoa): PeopleContact {
 
 /** Cache único e exclusivamente de sessão do módulo People (#166). */
 export interface PeopleSlice {
+  peopleTab: "contacts" | "organizations";
   peopleContacts: PeopleContact[];
   peopleSelectedId: string | null;
   peopleLoading: boolean;
@@ -62,6 +63,7 @@ export interface PeopleSlice {
   setPeopleFilters: (filters: Filter<string>[]) => void;
   setPeopleView: (view: "table" | "cards") => void;
   setPeopleColumnVisibility: (visibility: Record<string, boolean>) => void;
+  setPeopleTab: (tab: "contacts" | "organizations") => void;
   applyPeopleFields: (id: string, fields: PeopleEnrichField[]) => void;
   updatePeopleContact: (id: string, input: PeopleContactEdit) => Promise<void>;
 }
@@ -72,6 +74,7 @@ export const createPeopleSlice: StateCreator<
   [],
   PeopleSlice
 > = (set, get) => ({
+  peopleTab: "contacts",
   peopleContacts: [],
   peopleSelectedId: null,
   peopleLoading: false,
@@ -242,6 +245,7 @@ export const createPeopleSlice: StateCreator<
   setPeopleView: (peopleView) => set({ peopleView }),
   setPeopleColumnVisibility: (peopleColumnVisibility) =>
     set({ peopleColumnVisibility }),
+  setPeopleTab: (peopleTab) => set({ peopleTab }),
   applyPeopleFields: (id, fields) =>
     set((state) => ({
       peopleContacts: state.peopleContacts.map((contact) =>
