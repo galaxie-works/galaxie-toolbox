@@ -45,6 +45,11 @@ import { limparFotos } from "@/lib/fotos";
 import { useIdioma } from "@/lib/idioma";
 import { cn, comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
+import {
+  INICIO_BOOT,
+  MIN_SPLASH_MS,
+  revelarAppEFecharSplash,
+} from "@/lib/splash";
 
 /**
  * Todo o app de verdade. Fica ABAIXO do ErrorBoundary (ver `App`): é esta árvore
@@ -116,6 +121,25 @@ function AppInner() {
       vivo = false;
     };
   }, [lockState]);
+
+  // --- Splash de boot (#164) ---------------------------------------------
+  // "Pronto" = já dá para mostrar uma tela de verdade na main window: o bloqueio
+  // (#122), o login ou o app. Enquanto está sondando o PIN (`checking`) ou
+  // restaurando a sessão (`restoring`), a main segue oculta e o usuário vê só a
+  // janela circular do splash.
+  const bootPronto =
+    lockState === "locked" ||
+    lockState === "error" ||
+    (lockState === "unlocked" && !restoring);
+
+  useEffect(() => {
+    if (!bootPronto) return;
+    // Espera o restante do mínimo visível (~1.2s), mas nunca atrasa além disso um
+    // boot que já demorou: max(bootPronto, mínimo).
+    const restante = Math.max(0, MIN_SPLASH_MS - (Date.now() - INICIO_BOOT));
+    const id = setTimeout(() => void revelarAppEFecharSplash(), restante);
+    return () => clearTimeout(id);
+  }, [bootPronto]);
 
   async function handleLogin(email: string) {
     setLoginLoading(true);
@@ -539,6 +563,11 @@ function AppInner() {
 export default function App() {
   useEffect(() => {
     registrarHandlersGlobais();
+    // Longstop do splash (#164): mesmo que o boot trave ou a árvore estoure de um
+    // jeito que o efeito de boot-ready não rode, a main window aparece (e a
+    // splash fecha) depois deste teto. revelarAppEFecharSplash é idempotente.
+    const id = setTimeout(() => void revelarAppEFecharSplash(), 10_000);
+    return () => clearTimeout(id);
   }, []);
 
   return (
