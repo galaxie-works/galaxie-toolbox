@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getCoreRowModel,
   useReactTable,
@@ -82,6 +82,23 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
+import {
+  Toolbar,
+  ToolbarButton,
+  ToolbarSeparator,
+} from "@/components/ui/toolbar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -235,12 +252,8 @@ function PeoplePermissionEmpty() {
 
 function PeopleDetailSkeleton() {
   return (
-    <Frame className="h-full min-h-0 w-full" stacked>
-      <FrameHeader>
-        <Skeleton className="h-5 w-40" />
-        <Skeleton className="mt-1 h-4 w-64" />
-      </FrameHeader>
-      <FramePanel className="space-y-4">
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border bg-card">
+      <div className="border-b p-4">
         <div className="flex items-center gap-4">
           <Skeleton className="size-16 rounded-full" />
           <div className="space-y-2">
@@ -248,12 +261,14 @@ function PeopleDetailSkeleton() {
             <Skeleton className="h-4 w-32" />
           </div>
         </div>
-      </FramePanel>
-      <FramePanel className="space-y-2">
+      </div>
+      <div className="space-y-4 p-4">
         <Skeleton className="h-4 w-24" />
         <Skeleton className="h-9 w-full" />
-      </FramePanel>
-    </Frame>
+        <Skeleton className="h-4 w-24" />
+        <Skeleton className="h-9 w-full" />
+      </div>
+    </div>
   );
 }
 
@@ -263,12 +278,14 @@ function PeopleDetail({
   onBack,
   onCompose,
   autoEnrich,
+  stacked = false,
 }: {
   contact: PeopleContact;
   photo: string | null;
   onBack: () => void;
   onCompose: (email: string) => void;
   autoEnrich?: boolean;
+  stacked?: boolean;
 }) {
   const { idioma, t } = useIdioma();
   const applyPeopleFields = useAppStore((state) => state.applyPeopleFields);
@@ -295,6 +312,23 @@ function PeopleDetail({
   const [interactionsLoading, setInteractionsLoading] = useState(Boolean(primaryEmail));
   const [interactionsError, setInteractionsError] = useState(false);
   const sparse = !contact.jobTitle || !contact.company || contact.phones.length === 0;
+  const editLocked = !contact.contactId || writeAvailable !== true;
+  const openOutlook = () =>
+    window.open(
+      "https://outlook.office.com/people/",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  const copyEmail = () => {
+    if (!primaryEmail) return;
+    void copyText(primaryEmail).then((copied) => {
+      if (copied) toast.success(t.controlRoom.peopleEmailCopied);
+    });
+  };
+  const enterEdit = () => {
+    resetDraft();
+    setEditing(true);
+  };
 
   useEffect(() => {
     let active = true;
@@ -501,20 +535,60 @@ function PeopleDetail({
   };
 
   return (
-    <Frame className="h-full min-h-0 w-full overflow-auto" stacked>
-      <FrameHeader className="flex-row items-center justify-between gap-2">
-        <Button
-          className="min-[1400px]:invisible"
-          variant="ghost"
-          size="sm"
-          onClick={onBack}
-        >
-          <ArrowLeft />
-          {t.controlRoom.peopleVoltar}
-        </Button>
-        <div className="flex flex-wrap justify-end gap-2">
+    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border bg-card">
+      <div className="border-b bg-card px-4 py-3">
+        {stacked && (
+          <Button
+            className="-ml-2 mb-2"
+            variant="ghost"
+            size="sm"
+            onClick={onBack}
+          >
+            <ArrowLeft />
+            {t.controlRoom.peopleVoltar}
+          </Button>
+        )}
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+            <div className="flex shrink-0 flex-col items-center gap-1">
+              <Avatar className="size-16">
+                {(contact.photo || photo) && (
+                  <AvatarImage
+                    src={contact.photo || photo || undefined}
+                    alt={contact.name}
+                  />
+                )}
+                <AvatarFallback className="text-lg">
+                  {initials(contact.name)}
+                </AvatarFallback>
+              </Avatar>
+              {contact.photo && <SourceBadge source={contact.photoSource} />}
+            </div>
+            <div className="min-w-0 flex-1">
+              {editing ? (
+                <Input
+                  value={draft.name}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, name: event.target.value }))
+                  }
+                  aria-label={t.controlRoom.peopleNome}
+                />
+              ) : (
+                <h2 className="truncate text-xl font-semibold">{contact.name}</h2>
+              )}
+              <p className="truncate text-sm text-muted-foreground">
+                {[contact.jobTitle, contact.company].filter(Boolean).join(" · ") ||
+                  t.controlRoom.peopleSemDado}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-1">
+                <RelationshipBadges contact={contact} />
+                <SourceBadge source={contact.contactId ? "contacts" : "people"} />
+              </div>
+            </div>
+          </div>
+
           {editing ? (
-            <>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
               <Button
                 variant="outline"
                 onClick={() => {
@@ -532,255 +606,277 @@ function PeopleDetail({
                 {saving ? <Spinner /> : <Save />}
                 {saving ? t.controlRoom.peopleSaving : t.controlRoom.peopleSave}
               </Button>
-            </>
+            </div>
           ) : (
-            <>
-              <Button
-                variant="outline"
-                onClick={() => {
-                  resetDraft();
-                  setEditing(true);
-                }}
-                disabled={!contact.contactId || writeAvailable !== true}
-              >
-                <Pencil />
-                {t.controlRoom.peopleEdit}
-              </Button>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
               {primaryEmail && (
-                <Button onClick={() => void enrich()} disabled={enriching || applying}>
-                  {enriching ? <Spinner /> : <Sparkles />}
-                  {enriching
-                    ? t.controlRoom.peopleEnriching
-                    : t.controlRoom.peopleEnrich}
+                <Button onClick={() => onCompose(primaryEmail)}>
+                  <Mail />
+                  {t.controlRoom.peopleCompor}
                 </Button>
               )}
-            </>
-          )}
-        </div>
-      </FrameHeader>
-      <FramePanel>
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-          <div className="flex shrink-0 flex-col items-center gap-1">
-            <Avatar className="size-16">
-              {(contact.photo || photo) && (
-                <AvatarImage src={contact.photo || photo || undefined} alt={contact.name} />
-              )}
-              <AvatarFallback className="text-lg">{initials(contact.name)}</AvatarFallback>
-            </Avatar>
-            {contact.photo && <SourceBadge source={contact.photoSource} />}
-          </div>
-          <div className="min-w-0 flex-1">
-            {editing ? (
-              <Input
-                value={draft.name}
-                onChange={(event) =>
-                  setDraft((current) => ({ ...current, name: event.target.value }))
-                }
-                aria-label={t.controlRoom.peopleNome}
-              />
-            ) : (
-              <h2 className="truncate text-xl font-semibold">{contact.name}</h2>
-            )}
-            <p className="text-sm text-muted-foreground">
-              {[contact.jobTitle, contact.company].filter(Boolean).join(" · ") ||
-                t.controlRoom.peopleSemDado}
-            </p>
-            <div className="mt-2">
-              <div className="flex flex-wrap items-center gap-1">
-                <RelationshipBadges contact={contact} />
-                <SourceBadge source={contact.contactId ? "contacts" : "people"} />
-              </div>
-            </div>
-          </div>
-          {primaryEmail && (
-            <Button onClick={() => onCompose(primaryEmail)}>
-              <Mail />
-              {t.controlRoom.peopleCompor}
-            </Button>
-          )}
-        </div>
-      </FramePanel>
-
-      {!editing && (!contact.contactId || writeAvailable === false) && (
-        <FramePanel fit>
-          <Alert variant="warning">
-            <KeyRound />
-            <AlertTitle>{t.controlRoom.peopleEditUnavailable}</AlertTitle>
-            <AlertDescription>
-              {t.controlRoom.peopleEditUnavailableDesc}
-            </AlertDescription>
-          </Alert>
-        </FramePanel>
-      )}
-
-      {editError && (
-        <FramePanel fit>
-          <Alert variant="destructive">
-            <AlertTitle>{t.controlRoom.peopleEditError}</AlertTitle>
-            <AlertDescription>{editError}</AlertDescription>
-          </Alert>
-        </FramePanel>
-      )}
-
-      {sparse && !preview && !sessionOnlyApplied && (
-        <FramePanel fit>
-          <Alert variant="info">
-            <Sparkles />
-            <AlertTitle>{t.controlRoom.peopleEnrichPrompt}</AlertTitle>
-            <AlertDescription>{t.controlRoom.peopleEnrichPromptDesc}</AlertDescription>
-            <AlertAction>
-              <Button size="sm" onClick={() => void enrich()} disabled={enriching}>
-                {enriching ? <Spinner /> : <Sparkles />}
-                {enriching
-                  ? t.controlRoom.peopleEnriching
-                  : t.controlRoom.peopleEnrich}
-              </Button>
-            </AlertAction>
-          </Alert>
-        </FramePanel>
-      )}
-
-      {preview && (
-        <FramePanel className="space-y-4">
-          <div>
-            <h3 className="text-sm font-semibold">
-              {t.controlRoom.peopleEnrichPreview}
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              {t.controlRoom.peopleEnrichPreviewDesc}
-            </p>
-          </div>
-
-          {preview.failures.length > 0 && (
-            <Alert variant="warning">
-              <AlertTitle>{t.controlRoom.peopleEnrichSourceError}</AlertTitle>
-              <AlertDescription>{preview.failures.join(" · ")}</AlertDescription>
-            </Alert>
-          )}
-
-          {preview.fields.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {t.controlRoom.peopleEnrichNoChanges}
-            </p>
-          ) : (
-            <div className="divide-y rounded-lg border">
-              {preview.fields.map((field, index) => (
-                <label
-                  key={`${field.key}:${field.value}:${index}`}
-                  className="flex cursor-pointer items-start gap-3 px-3 py-2.5"
+              <Toolbar
+                aria-label={t.controlRoom.peopleRowActions}
+                className="gap-0.5"
+              >
+                {editLocked ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex" tabIndex={0}>
+                        <ToolbarButton
+                          variant="default"
+                          aria-label={t.controlRoom.peopleEdit}
+                          disabled
+                        >
+                          <Pencil />
+                        </ToolbarButton>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t.controlRoom.peopleEditUnavailableDesc}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <ToolbarButton
+                    variant="default"
+                    tooltip={t.controlRoom.peopleEdit}
+                    aria-label={t.controlRoom.peopleEdit}
+                    onClick={enterEdit}
+                  >
+                    <Pencil />
+                  </ToolbarButton>
+                )}
+                <ToolbarButton
+                  variant="default"
+                  tooltip={t.controlRoom.peopleEnrich}
+                  aria-label={t.controlRoom.peopleEnrich}
+                  onClick={() => void enrich()}
+                  disabled={!primaryEmail || enriching || applying}
                 >
-                  <Checkbox
-                    className="mt-0.5"
-                    checked={selectedFields.has(index)}
-                    onCheckedChange={(checked) =>
-                      setSelectedFields((current) => {
-                        const next = new Set(current);
-                        if (checked === true) next.add(index);
-                        else next.delete(index);
-                        return next;
-                      })
-                    }
-                    aria-label={`${fieldLabel(field)}: ${field.value}`}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-xs text-muted-foreground">
-                      {fieldLabel(field)}
-                    </span>
-                    {field.key === "photo" ? (
-                      <Avatar className="mt-1 size-10">
-                        <AvatarImage src={field.value} alt={contact.name} />
-                        <AvatarFallback>{initials(contact.name)}</AvatarFallback>
-                      </Avatar>
-                    ) : (
-                      <span className="block truncate text-sm">{field.value}</span>
-                    )}
-                  </span>
-                  <SourceBadge source={field.source} />
-                </label>
-              ))}
-            </div>
-          )}
-
-          {!preview.writeAvailable && preview.fields.length > 0 && (
-            <Alert variant="warning">
-              <KeyRound />
-              <AlertTitle>{t.controlRoom.peopleEnrichReadOnly}</AlertTitle>
-              <AlertDescription>
-                {t.controlRoom.peopleEnrichReadOnlyDesc}
-              </AlertDescription>
-              <AlertAction>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void copyFields(acceptedFields)}
-                  disabled={!acceptedFields.some((field) => field.key !== "photo")}
+                  {enriching ? <Spinner /> : <Sparkles />}
+                </ToolbarButton>
+                <ToolbarSeparator />
+                <ToolbarButton
+                  variant="default"
+                  tooltip={t.controlRoom.peopleCopyEmail}
+                  aria-label={t.controlRoom.peopleCopyEmail}
+                  onClick={copyEmail}
+                  disabled={!primaryEmail}
                 >
                   <Copy />
-                  {t.controlRoom.peopleEnrichCopy}
-                </Button>
-              </AlertAction>
-            </Alert>
+                </ToolbarButton>
+                <ToolbarButton
+                  variant="default"
+                  tooltip={t.controlRoom.abrirOutlook}
+                  aria-label={t.controlRoom.abrirOutlook}
+                  onClick={openOutlook}
+                >
+                  <ExternalLink />
+                </ToolbarButton>
+              </Toolbar>
+            </div>
           )}
+        </div>
+      </div>
 
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                setPreview(null);
-                setSelectedFields(new Set());
-              }}
-              disabled={applying}
-            >
-              {t.controlRoom.peopleEnrichCancel}
-            </Button>
-            {preview.fields.length > 0 && (
-              <Button
-                onClick={() => void apply()}
-                disabled={acceptedFields.length === 0 || applying}
-              >
-                {applying ? <Spinner /> : <Sparkles />}
-                {preview.writeAvailable
-                  ? t.controlRoom.peopleEnrichApply
-                  : t.controlRoom.peopleEnrichSessionApply}
-              </Button>
-            )}
-          </div>
-        </FramePanel>
-      )}
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="flex flex-col">
+          {(!editing && editLocked) ||
+          editError ||
+          (sparse && !preview && !sessionOnlyApplied) ||
+          preview ||
+          sessionOnlyApplied ||
+          enrichError ? (
+            <div className="space-y-3 border-b p-4">
+              {!editing && editLocked && (
+                <Alert variant="warning">
+                  <KeyRound />
+                  <AlertTitle>{t.controlRoom.peopleEditUnavailable}</AlertTitle>
+                  <AlertDescription>
+                    {t.controlRoom.peopleEditUnavailableDesc}
+                  </AlertDescription>
+                </Alert>
+              )}
 
-      {sessionOnlyApplied && (
-        <FramePanel fit>
-          <Alert variant="warning">
-            <KeyRound />
-            <AlertTitle>{t.controlRoom.peopleEnrichReadOnly}</AlertTitle>
-            <AlertDescription>
-              {t.controlRoom.peopleEnrichReadOnlyDesc}
-            </AlertDescription>
-            <AlertAction>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void copyFields(sessionOnlyFields)}
-                disabled={!sessionOnlyFields.some((field) => field.key !== "photo")}
-              >
-                <Copy />
-                {t.controlRoom.peopleEnrichCopy}
-              </Button>
-            </AlertAction>
-          </Alert>
-        </FramePanel>
-      )}
+              {editError && (
+                <Alert variant="destructive">
+                  <AlertTitle>{t.controlRoom.peopleEditError}</AlertTitle>
+                  <AlertDescription>{editError}</AlertDescription>
+                </Alert>
+              )}
 
-      {enrichError && (
-        <FramePanel fit>
-          <Alert variant="destructive">
-            <AlertTitle>{t.controlRoom.peopleEnrichError}</AlertTitle>
-            <AlertDescription>{enrichError}</AlertDescription>
-          </Alert>
-        </FramePanel>
-      )}
+              {sparse && !preview && !sessionOnlyApplied && (
+                <Alert variant="info">
+                  <Sparkles />
+                  <AlertTitle>{t.controlRoom.peopleEnrichPrompt}</AlertTitle>
+                  <AlertDescription>
+                    {t.controlRoom.peopleEnrichPromptDesc}
+                  </AlertDescription>
+                  <AlertAction>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => void enrich()}
+                      disabled={enriching}
+                    >
+                      {enriching ? <Spinner /> : <Sparkles />}
+                      {enriching
+                        ? t.controlRoom.peopleEnriching
+                        : t.controlRoom.peopleEnrich}
+                    </Button>
+                  </AlertAction>
+                </Alert>
+              )}
 
-      <FramePanel>
+              {preview && (
+                <div className="space-y-4 rounded-xl border bg-background p-4 shadow-xs">
+                  <div>
+                    <h3 className="text-sm font-semibold">
+                      {t.controlRoom.peopleEnrichPreview}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      {t.controlRoom.peopleEnrichPreviewDesc}
+                    </p>
+                  </div>
+
+                  {preview.failures.length > 0 && (
+                    <Alert variant="warning">
+                      <AlertTitle>{t.controlRoom.peopleEnrichSourceError}</AlertTitle>
+                      <AlertDescription>
+                        {preview.failures.join(" · ")}
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {preview.fields.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      {t.controlRoom.peopleEnrichNoChanges}
+                    </p>
+                  ) : (
+                    <div className="divide-y rounded-lg border">
+                      {preview.fields.map((field, index) => (
+                        <label
+                          key={`${field.key}:${field.value}:${index}`}
+                          className="flex cursor-pointer items-start gap-3 px-3 py-2.5"
+                        >
+                          <Checkbox
+                            className="mt-0.5"
+                            checked={selectedFields.has(index)}
+                            onCheckedChange={(checked) =>
+                              setSelectedFields((current) => {
+                                const next = new Set(current);
+                                if (checked === true) next.add(index);
+                                else next.delete(index);
+                                return next;
+                              })
+                            }
+                            aria-label={`${fieldLabel(field)}: ${field.value}`}
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-xs text-muted-foreground">
+                              {fieldLabel(field)}
+                            </span>
+                            {field.key === "photo" ? (
+                              <Avatar className="mt-1 size-10">
+                                <AvatarImage src={field.value} alt={contact.name} />
+                                <AvatarFallback>
+                                  {initials(contact.name)}
+                                </AvatarFallback>
+                              </Avatar>
+                            ) : (
+                              <span className="block truncate text-sm">
+                                {field.value}
+                              </span>
+                            )}
+                          </span>
+                          <SourceBadge source={field.source} />
+                        </label>
+                      ))}
+                    </div>
+                  )}
+
+                  {!preview.writeAvailable && preview.fields.length > 0 && (
+                    <Alert variant="warning">
+                      <KeyRound />
+                      <AlertTitle>{t.controlRoom.peopleEnrichReadOnly}</AlertTitle>
+                      <AlertDescription>
+                        {t.controlRoom.peopleEnrichReadOnlyDesc}
+                      </AlertDescription>
+                      <AlertAction>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void copyFields(acceptedFields)}
+                          disabled={
+                            !acceptedFields.some((field) => field.key !== "photo")
+                          }
+                        >
+                          <Copy />
+                          {t.controlRoom.peopleEnrichCopy}
+                        </Button>
+                      </AlertAction>
+                    </Alert>
+                  )}
+
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setPreview(null);
+                        setSelectedFields(new Set());
+                      }}
+                      disabled={applying}
+                    >
+                      {t.controlRoom.peopleEnrichCancel}
+                    </Button>
+                    {preview.fields.length > 0 && (
+                      <Button
+                        onClick={() => void apply()}
+                        disabled={acceptedFields.length === 0 || applying}
+                      >
+                        {applying ? <Spinner /> : <Sparkles />}
+                        {preview.writeAvailable
+                          ? t.controlRoom.peopleEnrichApply
+                          : t.controlRoom.peopleEnrichSessionApply}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {sessionOnlyApplied && (
+                <Alert variant="warning">
+                  <KeyRound />
+                  <AlertTitle>{t.controlRoom.peopleEnrichReadOnly}</AlertTitle>
+                  <AlertDescription>
+                    {t.controlRoom.peopleEnrichReadOnlyDesc}
+                  </AlertDescription>
+                  <AlertAction>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void copyFields(sessionOnlyFields)}
+                      disabled={
+                        !sessionOnlyFields.some((field) => field.key !== "photo")
+                      }
+                    >
+                      <Copy />
+                      {t.controlRoom.peopleEnrichCopy}
+                    </Button>
+                  </AlertAction>
+                </Alert>
+              )}
+
+              {enrichError && (
+                <Alert variant="destructive">
+                  <AlertTitle>{t.controlRoom.peopleEnrichError}</AlertTitle>
+                  <AlertDescription>{enrichError}</AlertDescription>
+                </Alert>
+              )}
+            </div>
+          ) : null}
+
+          <section className="p-4">
         <div className="mb-3 flex items-center gap-2">
           <Mail className="size-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">{t.controlRoom.peopleEmails}</h3>
@@ -828,9 +924,11 @@ function PeopleDetail({
             ),
           )}
         </div>
-      </FramePanel>
+          </section>
 
-      <FramePanel>
+          <Separator />
+
+          <section className="p-4">
         <div className="mb-3 flex items-center gap-2">
           <Phone className="size-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">{t.controlRoom.peopleTelefones}</h3>
@@ -882,9 +980,11 @@ function PeopleDetail({
         ) : (
           <p className="text-sm text-muted-foreground">{t.controlRoom.peopleSemDado}</p>
         )}
-      </FramePanel>
+          </section>
 
-      <FramePanel>
+          <Separator />
+
+          <section className="p-4">
         <div className="mb-3 flex items-center gap-2">
           <Building2 className="size-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">{t.controlRoom.peopleEmpresaCargo}</h3>
@@ -933,9 +1033,11 @@ function PeopleDetail({
             source={contact.managerSource}
           />
         </dl>
-      </FramePanel>
+          </section>
 
-      <FramePanel>
+          <Separator />
+
+          <section className="p-4">
         <div className="mb-4 flex items-center gap-2">
           <Mail className="size-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">
@@ -984,8 +1086,10 @@ function PeopleDetail({
             ))}
           </Timeline>
         )}
-      </FramePanel>
-    </Frame>
+          </section>
+        </div>
+      </ScrollArea>
+    </div>
   );
 }
 
@@ -1378,6 +1482,26 @@ export function PeopleView({
   } | null>(null);
   const [bulkContacts, setBulkContacts] = useState<PeopleContact[] | null>(null);
   const { getFoto, pedirFotos } = useFotos();
+  // Mede o MÓDULO (não a janela): a sidebar colapsa e o zoom mudam a largura do
+  // módulo, então um media query de viewport erra o alvo. Um ResizeObserver no
+  // container reflete a largura real disponível — a mesma base da container query.
+  const detailContainerRef = useRef<HTMLDivElement>(null);
+  const [moduleWidth, setModuleWidth] = useState(0);
+
+  useEffect(() => {
+    const el = detailContainerRef.current;
+    if (!el) return;
+    setModuleWidth(el.getBoundingClientRect().width);
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) setModuleWidth(entry.contentRect.width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  const wideSplit = moduleWidth >= 768;
+  const listMinSize = moduleWidth ? Math.min(50, (340 / moduleWidth) * 100) : 30;
+  const detailMinSize = moduleWidth ? Math.min(64, (420 / moduleWidth) * 100) : 40;
 
   useEffect(() => {
     if (!loaded && !loading) void loadPeople();
@@ -1771,13 +1895,13 @@ export function PeopleView({
         </Alert>
       )}
 
-      <div className="flex min-h-0 flex-1 gap-4">
-        <div
-          className={cn(
-            "min-h-0 min-w-0 flex-1 overflow-hidden rounded-xl border bg-card min-[1400px]:basis-[38%]",
-            selected && "max-[1399px]:hidden",
-          )}
-        >
+      <div
+        ref={detailContainerRef}
+        className="@container/people flex min-h-0 flex-1"
+      >
+        {(() => {
+          const listPane = (
+            <div className="h-full min-h-0 min-w-0 overflow-hidden rounded-xl border bg-card">
           {view === "table" ? (
             <DataGrid
               table={table}
@@ -1865,39 +1989,71 @@ export function PeopleView({
               }}
             />
           )}
-        </div>
+            </div>
+          );
 
-        <div
-          className={cn(
-            "min-h-0 min-w-0 flex-1 min-[1400px]:flex min-[1400px]:basis-[62%]",
-            selected ? "flex" : "hidden",
-          )}
-        >
-          {loading && !loaded ? (
-            <PeopleDetailSkeleton />
-          ) : selected ? (
-            <PeopleDetail
-              key={`${selected.id}:${enrichRequest?.id === selected.id ? enrichRequest.token : 0}`}
-              contact={selected}
-              photo={getFoto(selected.emails[0]?.address) ?? null}
-              onBack={() => selectPerson(null)}
-              onCompose={onCompose}
-              autoEnrich={enrichRequest?.id === selected.id}
-            />
-          ) : (
-            <Frame className="h-full w-full" stacked>
-              <FrameHeader>
-                <FrameTitle>{t.controlRoom.peopleSelecionar}</FrameTitle>
-                <FrameDescription>{t.controlRoom.peopleSelecionarDesc}</FrameDescription>
-              </FrameHeader>
-              <FramePanel className="flex items-center justify-center">
+          const detailPane =
+            loading && !loaded ? (
+              <PeopleDetailSkeleton />
+            ) : selected ? (
+              <PeopleDetail
+                key={`${selected.id}:${enrichRequest?.id === selected.id ? enrichRequest.token : 0}`}
+                contact={selected}
+                photo={getFoto(selected.emails[0]?.address) ?? null}
+                onBack={() => selectPerson(null)}
+                onCompose={onCompose}
+                autoEnrich={enrichRequest?.id === selected.id}
+                stacked={!wideSplit}
+              />
+            ) : (
+              <div className="flex h-full min-h-0 w-full flex-col items-center justify-center gap-3 rounded-xl border bg-card p-6 text-center">
                 <IconStack>
                   <Users className="size-5" />
                 </IconStack>
-              </FramePanel>
-            </Frame>
-          )}
-        </div>
+                <div>
+                  <p className="font-medium">{t.controlRoom.peopleSelecionar}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t.controlRoom.peopleSelecionarDesc}
+                  </p>
+                </div>
+              </div>
+            );
+
+          if (!wideSplit) {
+            return (
+              <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+                {selected ? detailPane : listPane}
+              </div>
+            );
+          }
+
+          return (
+            <ResizablePanelGroup
+              autoSaveId="people.detail.layout"
+              direction="horizontal"
+              className="min-h-0 flex-1"
+            >
+              <ResizablePanel
+                defaultSize={38}
+                minSize={listMinSize}
+                className="min-w-0 overflow-hidden"
+              >
+                {listPane}
+              </ResizablePanel>
+              <ResizableHandle
+                withHandle
+                className="mx-1.5 bg-transparent hover:bg-border"
+              />
+              <ResizablePanel
+                defaultSize={62}
+                minSize={detailMinSize}
+                className="min-w-0 overflow-hidden"
+              >
+                {detailPane}
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          );
+        })()}
       </div>
     </section>
   );
