@@ -9,6 +9,8 @@ import {
 } from "@tanstack/react-table";
 import {
   ArrowLeft,
+  ArrowDownLeft,
+  ArrowUpRight,
   Building2,
   Columns3,
   Copy,
@@ -19,12 +21,15 @@ import {
   List,
   ListFilter,
   Mail,
+  Pencil,
   MoreHorizontal,
   Phone,
   SearchX,
+  Save,
   Sparkles,
   Users,
 } from "lucide-react";
+import { isValidPhoneNumber } from "react-phone-number-input";
 import { toast } from "sonner";
 
 import {
@@ -62,9 +67,21 @@ import {
 } from "@/components/reui/frame";
 import { IconStack } from "@/components/reui/icon-stack";
 import { IconTile } from "@/components/reui/icon-tile";
+import { PhoneInput } from "@/components/reui/phone-input";
+import {
+  Timeline,
+  TimelineContent,
+  TimelineDate,
+  TimelineHeader,
+  TimelineIndicator,
+  TimelineItem,
+  TimelineSeparator,
+  TimelineTitle,
+} from "@/components/reui/timeline";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -88,10 +105,12 @@ import {
   type PeopleContact,
 } from "@/lib/people";
 import type {
+  PeopleContactEdit,
   PeopleEnrichField,
   PeopleEnrichFieldKey,
   PeopleEnrichPreview,
   PeopleEnrichSource,
+  PeopleInteraction,
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
@@ -251,8 +270,9 @@ function PeopleDetail({
   onCompose: (email: string) => void;
   autoEnrich?: boolean;
 }) {
-  const { t } = useIdioma();
+  const { idioma, t } = useIdioma();
   const applyPeopleFields = useAppStore((state) => state.applyPeopleFields);
+  const updatePeopleContact = useAppStore((state) => state.updatePeopleContact);
   const primaryEmail = contact.emails[0]?.address;
   const [enriching, setEnriching] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -261,7 +281,109 @@ function PeopleDetail({
   const [enrichError, setEnrichError] = useState<string | null>(null);
   const [sessionOnlyApplied, setSessionOnlyApplied] = useState(false);
   const [sessionOnlyFields, setSessionOnlyFields] = useState<PeopleEnrichField[]>([]);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [writeAvailable, setWriteAvailable] = useState<boolean | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [draft, setDraft] = useState<PeopleContactEdit>({
+    name: contact.name,
+    emails: contact.emails.map((email) => ({ ...email })),
+    phones: contact.phones.map((phone) => ({ ...phone })),
+    company: contact.company,
+  });
+  const [interactions, setInteractions] = useState<PeopleInteraction[]>([]);
+  const [interactionsLoading, setInteractionsLoading] = useState(Boolean(primaryEmail));
+  const [interactionsError, setInteractionsError] = useState(false);
   const sparse = !contact.jobTitle || !contact.company || contact.phones.length === 0;
+
+  useEffect(() => {
+    let active = true;
+    void api
+      .crPeopleWriteAvailable()
+      .then((available) => active && setWriteAvailable(available))
+      .catch(() => active && setWriteAvailable(false));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!primaryEmail) {
+      setInteractionsLoading(false);
+      return () => {
+        active = false;
+      };
+    }
+    setInteractionsLoading(true);
+    setInteractionsError(false);
+    void api
+      .crPeopleInteractions(primaryEmail)
+      .then((items) => {
+        if (active) setInteractions(items);
+      })
+      .catch(() => {
+        if (active) setInteractionsError(true);
+      })
+      .finally(() => {
+        if (active) setInteractionsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [primaryEmail]);
+
+  const resetDraft = () => {
+    setDraft({
+      name: contact.name,
+      emails: contact.emails.map((email) => ({ ...email })),
+      phones: contact.phones.map((phone) => ({ ...phone })),
+      company: contact.company,
+    });
+    setEditError(null);
+  };
+
+  const saveContact = async () => {
+    const emailValid = draft.emails.every((email) =>
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.address.trim()),
+    );
+    if (!emailValid) {
+      setEditError(t.controlRoom.peopleInvalidEmail);
+      return;
+    }
+    if (
+      draft.phones.some(
+        (phone) => phone.number.trim() && !isValidPhoneNumber(phone.number),
+      )
+    ) {
+      setEditError(t.controlRoom.peopleInvalidPhone);
+      return;
+    }
+    setSaving(true);
+    setEditError(null);
+    try {
+      await updatePeopleContact(contact.id, {
+        ...draft,
+        name: draft.name.trim(),
+        emails: draft.emails.map((email) => ({
+          ...email,
+          address: email.address.trim(),
+        })),
+        phones: draft.phones.map((phone) => ({
+          ...phone,
+          number: phone.number.trim(),
+        })),
+        company: draft.company?.trim() || null,
+      });
+      setEditing(false);
+      toast.success(t.controlRoom.peopleSave);
+    } catch {
+      resetDraft();
+      setEditError(t.controlRoom.peopleEditError);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const fieldLabel = (field: PeopleEnrichField): string => {
     const labels: Record<PeopleEnrichFieldKey, string> = {
@@ -390,14 +512,51 @@ function PeopleDetail({
           <ArrowLeft />
           {t.controlRoom.peopleVoltar}
         </Button>
-        {primaryEmail && (
-          <Button onClick={() => void enrich()} disabled={enriching || applying}>
-            {enriching ? <Spinner /> : <Sparkles />}
-            {enriching
-              ? t.controlRoom.peopleEnriching
-              : t.controlRoom.peopleEnrich}
-          </Button>
-        )}
+        <div className="flex flex-wrap justify-end gap-2">
+          {editing ? (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  resetDraft();
+                  setEditing(false);
+                }}
+                disabled={saving}
+              >
+                {t.controlRoom.peopleEnrichCancel}
+              </Button>
+              <Button
+                onClick={() => void saveContact()}
+                disabled={saving || !draft.name.trim()}
+              >
+                {saving ? <Spinner /> : <Save />}
+                {saving ? t.controlRoom.peopleSaving : t.controlRoom.peopleSave}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  resetDraft();
+                  setEditing(true);
+                }}
+                disabled={!contact.contactId || writeAvailable !== true}
+              >
+                <Pencil />
+                {t.controlRoom.peopleEdit}
+              </Button>
+              {primaryEmail && (
+                <Button onClick={() => void enrich()} disabled={enriching || applying}>
+                  {enriching ? <Spinner /> : <Sparkles />}
+                  {enriching
+                    ? t.controlRoom.peopleEnriching
+                    : t.controlRoom.peopleEnrich}
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </FrameHeader>
       <FramePanel>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
@@ -411,7 +570,17 @@ function PeopleDetail({
             {contact.photo && <SourceBadge source={contact.photoSource} />}
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-xl font-semibold">{contact.name}</h2>
+            {editing ? (
+              <Input
+                value={draft.name}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, name: event.target.value }))
+                }
+                aria-label={t.controlRoom.peopleNome}
+              />
+            ) : (
+              <h2 className="truncate text-xl font-semibold">{contact.name}</h2>
+            )}
             <p className="text-sm text-muted-foreground">
               {[contact.jobTitle, contact.company].filter(Boolean).join(" · ") ||
                 t.controlRoom.peopleSemDado}
@@ -431,6 +600,27 @@ function PeopleDetail({
           )}
         </div>
       </FramePanel>
+
+      {!editing && (!contact.contactId || writeAvailable === false) && (
+        <FramePanel fit>
+          <Alert variant="warning">
+            <KeyRound />
+            <AlertTitle>{t.controlRoom.peopleEditUnavailable}</AlertTitle>
+            <AlertDescription>
+              {t.controlRoom.peopleEditUnavailableDesc}
+            </AlertDescription>
+          </Alert>
+        </FramePanel>
+      )}
+
+      {editError && (
+        <FramePanel fit>
+          <Alert variant="destructive">
+            <AlertTitle>{t.controlRoom.peopleEditError}</AlertTitle>
+            <AlertDescription>{editError}</AlertDescription>
+          </Alert>
+        </FramePanel>
+      )}
 
       {sparse && !preview && !sessionOnlyApplied && (
         <FramePanel fit>
@@ -596,22 +786,47 @@ function PeopleDetail({
           <h3 className="text-sm font-semibold">{t.controlRoom.peopleEmails}</h3>
         </div>
         <div className="space-y-2">
-          {contact.emails.map((email) => (
-            <button
-              type="button"
-              key={email.address}
-              onClick={() => onCompose(email.address)}
-              className="flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left hover:bg-muted/40"
-            >
-              <span className="min-w-0 truncate text-sm">{email.address}</span>
-              <span className="flex shrink-0 items-center gap-1">
+          {(editing ? draft.emails : contact.emails).map((email, index) =>
+            editing ? (
+              <div
+                key={`${email.label || "email"}:${index}`}
+                className="flex items-center gap-2"
+              >
+                <Input
+                  value={email.address}
+                  onChange={(event) =>
+                    setDraft((current) => ({
+                      ...current,
+                      emails: current.emails.map((item, itemIndex) =>
+                        itemIndex === index
+                          ? { ...item, address: event.target.value }
+                          : item,
+                      ),
+                    }))
+                  }
+                  aria-label={`${t.controlRoom.peopleEmail} ${index + 1}`}
+                />
                 <Badge variant="outline" size="xs">
                   {email.label || t.controlRoom.peopleEmail}
                 </Badge>
-                <SourceBadge source={email.source} />
-              </span>
-            </button>
-          ))}
+              </div>
+            ) : (
+              <button
+                type="button"
+                key={email.address}
+                onClick={() => onCompose(email.address)}
+                className="flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left hover:bg-muted/40"
+              >
+                <span className="min-w-0 truncate text-sm">{email.address}</span>
+                <span className="flex shrink-0 items-center gap-1">
+                  <Badge variant="outline" size="xs">
+                    {email.label || t.controlRoom.peopleEmail}
+                  </Badge>
+                  <SourceBadge source={email.source} />
+                </span>
+              </button>
+            ),
+          )}
         </div>
       </FramePanel>
 
@@ -620,23 +835,49 @@ function PeopleDetail({
           <Phone className="size-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold">{t.controlRoom.peopleTelefones}</h3>
         </div>
-        {contact.phones.length > 0 ? (
+        {(editing ? draft.phones : contact.phones).length > 0 ? (
           <div className="space-y-2">
-            {contact.phones.map((phone) => (
-              <a
-                key={`${phone.label}:${phone.number}`}
-                href={`tel:${phone.number}`}
-                className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 hover:bg-muted/40"
-              >
-                <span className="text-sm">{phone.number}</span>
-                <span className="flex shrink-0 items-center gap-1">
+            {(editing ? draft.phones : contact.phones).map((phone, index) =>
+              editing ? (
+                <div
+                  key={`${phone.label}:${index}`}
+                  className="flex items-center gap-2"
+                >
+                  <PhoneInput
+                    className="min-w-0 flex-1"
+                    value={phone.number}
+                    onChange={(value) =>
+                      setDraft((current) => ({
+                        ...current,
+                        phones: current.phones.map((item, itemIndex) =>
+                          itemIndex === index
+                            ? { ...item, number: value || "" }
+                            : item,
+                        ),
+                      }))
+                    }
+                    aria-label={`${t.controlRoom.peopleTelefone} ${index + 1}`}
+                  />
                   <Badge variant="outline" size="xs">
                     {phone.label}
                   </Badge>
-                  <SourceBadge source={phone.source} />
-                </span>
-              </a>
-            ))}
+                </div>
+              ) : (
+                <a
+                  key={`${phone.label}:${phone.number}`}
+                  href={`tel:${phone.number}`}
+                  className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 hover:bg-muted/40"
+                >
+                  <span className="text-sm">{phone.number}</span>
+                  <span className="flex shrink-0 items-center gap-1">
+                    <Badge variant="outline" size="xs">
+                      {phone.label}
+                    </Badge>
+                    <SourceBadge source={phone.source} />
+                  </span>
+                </a>
+              ),
+            )}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">{t.controlRoom.peopleSemDado}</p>
@@ -649,11 +890,28 @@ function PeopleDetail({
           <h3 className="text-sm font-semibold">{t.controlRoom.peopleEmpresaCargo}</h3>
         </div>
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
-          <DetailValue
-            label={t.controlRoom.peopleEmpresa}
-            value={contact.company}
-            source={contact.companySource}
-          />
+          {editing ? (
+            <label className="space-y-1">
+              <span className="text-xs text-muted-foreground">
+                {t.controlRoom.peopleEmpresa}
+              </span>
+              <Input
+                value={draft.company || ""}
+                onChange={(event) =>
+                  setDraft((current) => ({
+                    ...current,
+                    company: event.target.value,
+                  }))
+                }
+              />
+            </label>
+          ) : (
+            <DetailValue
+              label={t.controlRoom.peopleEmpresa}
+              value={contact.company}
+              source={contact.companySource}
+            />
+          )}
           <DetailValue
             label={t.controlRoom.peopleCargo}
             value={contact.jobTitle}
@@ -675,6 +933,257 @@ function PeopleDetail({
             source={contact.managerSource}
           />
         </dl>
+      </FramePanel>
+
+      <FramePanel>
+        <div className="mb-4 flex items-center gap-2">
+          <Mail className="size-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">
+            {t.controlRoom.peopleInteractions}
+          </h3>
+        </div>
+        {interactionsLoading ? (
+          <div className="flex justify-center py-6">
+            <Spinner />
+          </div>
+        ) : interactionsError ? (
+          <p className="text-sm text-destructive">
+            {t.controlRoom.peopleInteractionsError}
+          </p>
+        ) : interactions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {t.controlRoom.peopleInteractionsEmpty}
+          </p>
+        ) : (
+          <Timeline defaultValue={interactions.length}>
+            {interactions.map((interaction, index) => (
+              <TimelineItem key={interaction.id} step={index + 1}>
+                <TimelineHeader>
+                  <TimelineDate dateTime={interaction.occurredAt}>
+                    {new Intl.DateTimeFormat(idioma, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    }).format(new Date(interaction.occurredAt))}
+                  </TimelineDate>
+                  <TimelineTitle>{interaction.subject}</TimelineTitle>
+                </TimelineHeader>
+                <TimelineIndicator className="flex items-center justify-center bg-background">
+                  {interaction.direction === "inbound" ? (
+                    <ArrowDownLeft className="size-2.5" />
+                  ) : (
+                    <ArrowUpRight className="size-2.5" />
+                  )}
+                </TimelineIndicator>
+                <TimelineSeparator />
+                <TimelineContent>
+                  {interaction.direction === "inbound"
+                    ? t.controlRoom.peopleInbound
+                    : t.controlRoom.peopleOutbound}
+                </TimelineContent>
+              </TimelineItem>
+            ))}
+          </Timeline>
+        )}
+      </FramePanel>
+    </Frame>
+  );
+}
+
+function BulkEnrichReview({
+  contacts,
+  onClose,
+}: {
+  contacts: PeopleContact[];
+  onClose: () => void;
+}) {
+  const { t } = useIdioma();
+  const applyPeopleFields = useAppStore((state) => state.applyPeopleFields);
+  const [index, setIndex] = useState(0);
+  const [preview, setPreview] = useState<PeopleEnrichPreview | null>(null);
+  const [selectedFields, setSelectedFields] = useState<Set<number>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [applying, setApplying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const contact = contacts[index];
+
+  const fieldLabel = (field: PeopleEnrichField): string => {
+    const labels: Record<PeopleEnrichFieldKey, string> = {
+      photo: t.controlRoom.peopleFieldPhoto,
+      email: t.controlRoom.peopleEmail,
+      businessPhone: t.controlRoom.peopleFieldBusinessPhone,
+      mobilePhone: t.controlRoom.peopleFieldMobilePhone,
+      jobTitle: t.controlRoom.peopleCargo,
+      companyName: t.controlRoom.peopleEmpresa,
+      department: t.controlRoom.peopleDepartment,
+      officeLocation: t.controlRoom.peopleOfficeLocation,
+      manager: t.controlRoom.peopleManager,
+    };
+    return labels[field.key];
+  };
+
+  useEffect(() => {
+    let active = true;
+    if (!contact) return;
+    setLoading(true);
+    setError(null);
+    setPreview(null);
+    void api
+      .crPeopleEnrichPreview(
+        contact.contactId ?? null,
+        contact.emails[0]?.address || "",
+      )
+      .then((result) => {
+        if (!active) return;
+        const enrichedValues = new Set(contact.enrichedValues ?? []);
+        const next = {
+          ...result,
+          fields: result.fields.filter(
+            (field) => !enrichedValues.has(peopleEnrichFieldIdentity(field)),
+          ),
+        };
+        setPreview(next);
+        setSelectedFields(new Set(next.fields.map((_, fieldIndex) => fieldIndex)));
+      })
+      .catch((nextError) => {
+        if (active) setError(String(nextError));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [contact]);
+
+  const next = () => {
+    if (index + 1 >= contacts.length) {
+      toast.success(t.controlRoom.peopleBulkDone);
+      onClose();
+      return;
+    }
+    setIndex((current) => current + 1);
+    setPreview(null);
+    setSelectedFields(new Set());
+  };
+
+  const apply = async (sessionOnly: boolean) => {
+    if (!contact || !preview) return;
+    const fields = preview.fields.filter((_, fieldIndex) =>
+      selectedFields.has(fieldIndex),
+    );
+    if (fields.length === 0) return;
+    setApplying(true);
+    setError(null);
+    try {
+      if (!sessionOnly && preview.writeAvailable && contact.contactId) {
+        const result = await api.crPeopleEnrichApply(contact.contactId, fields);
+        if (!result.saved) {
+          throw new Error(t.controlRoom.peopleEditUnavailableDesc);
+        }
+      }
+      applyPeopleFields(contact.id, fields);
+      next();
+    } catch (nextError) {
+      setError(String(nextError));
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  if (!contact) return null;
+  const selected = preview
+    ? preview.fields.filter((_, fieldIndex) => selectedFields.has(fieldIndex))
+    : [];
+
+  return (
+    <Frame stacked>
+      <FrameHeader className="flex-row items-center justify-between gap-3">
+        <div>
+          <FrameTitle>{t.controlRoom.peopleBulkTitle}</FrameTitle>
+          <FrameDescription>
+            {preencher(t.controlRoom.peopleBulkContact, {
+              atual: index + 1,
+              total: contacts.length,
+            })}
+            {" · "}
+            {contact.name}
+          </FrameDescription>
+        </div>
+        <Button variant="outline" onClick={onClose} disabled={applying}>
+          {t.controlRoom.peopleEnrichCancel}
+        </Button>
+      </FrameHeader>
+      <FramePanel className="space-y-4">
+        {loading ? (
+          <div className="flex justify-center py-6">
+            <Spinner />
+          </div>
+        ) : preview?.fields.length ? (
+          <div className="divide-y rounded-lg border">
+            {preview.fields.map((field, fieldIndex) => (
+              <label
+                key={`${field.key}:${field.value}:${fieldIndex}`}
+                className="flex cursor-pointer items-start gap-3 px-3 py-2.5"
+              >
+                <Checkbox
+                  className="mt-0.5"
+                  checked={selectedFields.has(fieldIndex)}
+                  onCheckedChange={(checked) =>
+                    setSelectedFields((current) => {
+                      const updated = new Set(current);
+                      if (checked === true) updated.add(fieldIndex);
+                      else updated.delete(fieldIndex);
+                      return updated;
+                    })
+                  }
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs text-muted-foreground">
+                    {fieldLabel(field)}
+                  </span>
+                  <span className="block truncate text-sm">{field.value}</span>
+                </span>
+                <SourceBadge source={field.source} />
+              </label>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {t.controlRoom.peopleEnrichNoChanges}
+          </p>
+        )}
+        {error && (
+          <Alert variant="destructive">
+            <AlertTitle>{t.controlRoom.peopleEnrichError}</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="outline" onClick={next} disabled={applying}>
+            {t.controlRoom.peopleBulkSkip}
+          </Button>
+          {preview && preview.fields.length > 0 && (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => void apply(true)}
+                disabled={applying || selected.length === 0}
+              >
+                {applying && <Spinner />}
+                {t.controlRoom.peopleEnrichSessionApply}
+              </Button>
+              {preview.writeAvailable && contact.contactId && (
+                <Button
+                  onClick={() => void apply(false)}
+                  disabled={applying || selected.length === 0}
+                >
+                  {applying ? <Spinner /> : <Sparkles />}
+                  {t.controlRoom.peopleEnrichApply}
+                </Button>
+              )}
+            </>
+          )}
+        </div>
       </FramePanel>
     </Frame>
   );
@@ -867,6 +1376,7 @@ export function PeopleView({
     id: string;
     token: number;
   } | null>(null);
+  const [bulkContacts, setBulkContacts] = useState<PeopleContact[] | null>(null);
   const { getFoto, pedirFotos } = useFotos();
 
   useEffect(() => {
@@ -1211,7 +1721,26 @@ export function PeopleView({
             {t.controlRoom.peopleClearFilters}
           </Button>
         )}
+        <Button
+          variant="outline"
+          disabled={contacts.every((contact) => contact.emails.length === 0)}
+          onClick={() =>
+            setBulkContacts(
+              contacts.filter((contact) => contact.emails[0]?.address),
+            )
+          }
+        >
+          <Sparkles />
+          {t.controlRoom.peopleEnrichAll}
+        </Button>
       </div>
+
+      {bulkContacts && (
+        <BulkEnrichReview
+          contacts={bulkContacts}
+          onClose={() => setBulkContacts(null)}
+        />
+      )}
 
       {missingScopes.length > 0 && (
         <Alert variant="warning">
