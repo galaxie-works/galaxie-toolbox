@@ -57,6 +57,11 @@ import {
 } from "@/components/ui/list-toolbar-button";
 import { LinkToolbarButton } from "@/components/ui/link-toolbar-button";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { crCompartilharOneDrive, type AnexoEnvio } from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
@@ -596,6 +601,7 @@ export const ComporMensagem = forwardRef<
           <LinkToolbarButton />
           <ToolbarButton
             tooltip="Inserir assinatura"
+            aria-label="Inserir assinatura"
             onClick={inserirAssinatura}
           >
             <PenLineIcon />
@@ -603,7 +609,11 @@ export const ComporMensagem = forwardRef<
           {/* Templates: lista o que está salvo em Configurações e insere no fim. */}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-              <ToolbarButton tooltip={t.templates.inserir} isDropdown>
+              <ToolbarButton
+                tooltip={t.templates.inserir}
+                aria-label={t.templates.inserir}
+                isDropdown
+              >
                 <FileType2Icon />
               </ToolbarButton>
             </DropdownMenuTrigger>
@@ -627,11 +637,16 @@ export const ComporMensagem = forwardRef<
               )}
             </DropdownMenuContent>
           </DropdownMenu>
-          <ToolbarButton tooltip="Anexar arquivo" onClick={anexarArquivo}>
+          <ToolbarButton
+            tooltip="Anexar arquivo"
+            aria-label="Anexar arquivo"
+            onClick={anexarArquivo}
+          >
             <PaperclipIcon />
           </ToolbarButton>
           <ToolbarButton
             tooltip="Compartilhar via OneDrive"
+            aria-label="Compartilhar via OneDrive"
             onClick={compartilharOneDrive}
             disabled={compartilhando}
           >
@@ -723,16 +738,23 @@ export const ComporMensagem = forwardRef<
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-4 lg:grid-cols-6">
                 {arquivos.map((fileItem) => (
                   <div key={fileItem.id} className="group/item relative">
-                    {/* Botão remover */}
-                    <Button
-                      onClick={() => removeFile(fileItem.id)}
-                      variant="outline"
-                      size="icon"
-                      aria-label={`Remover ${fileItem.file.name}`}
-                      className="absolute -end-2 -top-2 z-10 size-6 rounded-full opacity-0 transition-opacity group-hover/item:opacity-100 dark:bg-zinc-800 hover:dark:bg-zinc-700"
-                    >
-                      <XIcon className="size-3.5" />
-                    </Button>
+                    {/* Botão remover (#103): tooltip canônico; o nome acessível
+                        (aria-label com o arquivo) já existia — só faltava a dica
+                        visual. Mesmo texto nos dois, sem inventar cópia nova. */}
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          onClick={() => removeFile(fileItem.id)}
+                          variant="outline"
+                          size="icon"
+                          aria-label={`Remover ${fileItem.file.name}`}
+                          className="absolute -end-2 -top-2 z-10 size-6 rounded-full opacity-0 transition-opacity group-hover/item:opacity-100 dark:bg-zinc-800 hover:dark:bg-zinc-700"
+                        >
+                          <XIcon className="size-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>{`Remover ${fileItem.file.name}`}</TooltipContent>
+                    </Tooltip>
 
                     {/* Wrapper */}
                     <div className="bg-card rounded-lg relative overflow-hidden border transition-colors">
