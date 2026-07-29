@@ -364,6 +364,11 @@ const pt = {
     pastaMovida: "Pasta movida para {pasta}.",
     // Toasts
     enviadoDescricao: "Sua mensagem foi entregue.",
+    envioPendente: "Enviando em {n}s",
+    envioPendenteDescricao: "A mensagem está aguardando no Outbox.",
+    desfazerEnvio: "Desfazer",
+    envioCancelado: "Envio cancelado",
+    enviandoAgora: "Enviando mensagem…",
     flagAdicionada: "E-mail sinalizado",
     flagRemovida: "Sinalização removida",
     downloadTitulo: "Download concluído",
@@ -981,6 +986,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     pastaMovida: "Folder moved to {pasta}.",
     // Toasts
     enviadoDescricao: "Your message was delivered.",
+    envioPendente: "Sending in {n}s",
+    envioPendenteDescricao: "Your message is waiting in Outbox.",
+    desfazerEnvio: "Undo",
+    envioCancelado: "Send canceled",
+    enviandoAgora: "Sending message…",
     flagAdicionada: "Email flagged",
     flagRemovida: "Flag removed",
     downloadTitulo: "Download complete",

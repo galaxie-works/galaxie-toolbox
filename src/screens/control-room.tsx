@@ -140,6 +140,7 @@ import { useTemaEscuro } from "@/lib/tema";
 import { useAppStore } from "@/store";
 import { tocarSomEscopo } from "@/lib/sons-notificacao";
 import { useDebounce } from "@/hooks/use-debounce";
+import { useUndoSend } from "@/hooks/use-undo-send";
 import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
 import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
 import DOMPurify from "dompurify";
@@ -4248,8 +4249,23 @@ const MessageDetail = forwardRef<
   // carregado à parte do corpo pra não atrasar a leitura.
   const [seg, setSeg] = useState<SegurancaEmail | null>(null);
   const [modo, setModo] = useState<null | "responder" | "responderTodos" | "encaminhar">(null);
-  const [enviando, setEnviando] = useState(false);
   const comporRef = useRef<ComporMensagemHandle>(null);
+  const textosUndoSend = useMemo(
+    () => ({
+      tituloPendente: (segundos: number) =>
+        preencher(t.controlRoom.envioPendente, { n: segundos }),
+      descricaoPendente: t.controlRoom.envioPendenteDescricao,
+      rotuloDesfazer: t.controlRoom.desfazerEnvio,
+      envioCancelado: t.controlRoom.envioCancelado,
+      enviando: t.controlRoom.enviandoAgora,
+    }),
+    [t]
+  );
+  const {
+    agendar: agendarUndoSend,
+    estado: estadoUndoSend,
+    ocupado: envioOcupado,
+  } = useUndoSend(textosUndoSend);
   // Avatar do remetente interno (#39).
   const { getFoto, pedirFotos } = useFotos();
 
@@ -4327,8 +4343,8 @@ const MessageDetail = forwardRef<
   const abrirOutlook = () =>
     det?.webLink && api.abrirAppInterno("outlook", comLoginHint(det.webLink, userEmail), "Outlook");
 
-  async function enviar() {
-    if (!id || envioBloqueado) return;
+  function enviar() {
+    if (!id || envioBloqueado || envioOcupado) return;
     const c = comporRef.current;
     const html = c?.getHtml() ?? "";
     const texto = c?.getTexto()?.trim() ?? "";
@@ -4344,34 +4360,42 @@ const MessageDetail = forwardRef<
       toast.error(t.controlRoom.informeDestino);
       return;
     }
-    setEnviando(true);
-    try {
-      const anexos = c?.getAnexos() ?? [];
-      if (modo === "encaminhar") {
-        await api.crEncaminhar(id, html, destinos, anexos, mailbox);
-        // salva os destinatários nos Contatos (best-effort, silencioso)
-        api
-          .crSalvarContatos(destinos.map((e) => ({ nome: e, email: e })))
-          .catch(() => {});
-      } else {
-        await api.crResponder(
-          id,
-          html,
-          modo === "responderTodos",
-          anexos,
-          mailbox
+    const anexos = c?.getAnexos() ?? [];
+    const modoAgendado = modo;
+
+    agendarUndoSend({
+      enviar: async () => {
+        if (modoAgendado === "encaminhar") {
+          await api.crEncaminhar(id, html, destinos, anexos, mailbox);
+          // salva os destinatários nos Contatos (best-effort, silencioso)
+          api
+            .crSalvarContatos(destinos.map((e) => ({ nome: e, email: e })))
+            .catch(() => {});
+        } else {
+          await api.crResponder(
+            id,
+            html,
+            modoAgendado === "responderTodos",
+            anexos,
+            mailbox
+          );
+        }
+      },
+      onConcluido: () => {
+        toastIcone(
+          t.controlRoom.enviado,
+          t.controlRoom.enviadoDescricao,
+          "enviado"
         );
-      }
-      toastIcone(t.controlRoom.enviado, t.controlRoom.enviadoDescricao, "enviado");
-      setModo(null);
-      onMudou();
-    } catch (e) {
-      toast.error(t.controlRoom.erroEnvio, {
-        description: descricaoErroEnvio(e, mailbox, t),
-      });
-    } finally {
-      setEnviando(false);
-    }
+        setModo(null);
+        onMudou();
+      },
+      onErro: (erro) => {
+        toast.error(t.controlRoom.erroEnvio, {
+          description: descricaoErroEnvio(erro, mailbox, t),
+        });
+      },
+    });
   }
 
   const textosCompose = {
@@ -4578,9 +4602,13 @@ const MessageDetail = forwardRef<
       {/* Reply / Reply all / Forward num Sheet lateral (como o New Mail): não
           corta a toolbar do compose e deixa o e-mail original visível atrás. A
           citação do original vai no envio (fluxo do backend). */}
-      <Sheet open={modo !== null} onOpenChange={(o) => !o && setModo(null)}>
+      <Sheet
+        open={modo !== null}
+        onOpenChange={(o) => !o && !envioOcupado && setModo(null)}
+      >
         <SheetContent
           side="right"
+          showCloseButton={!envioOcupado}
           className="flex w-1/2 flex-col gap-0 p-0 sm:max-w-[50vw]"
         >
           <SheetHeader className="border-b px-4 py-3">
@@ -4597,7 +4625,14 @@ const MessageDetail = forwardRef<
               do editor (edRef), então o getHtml() sai só com a resposta e o
               backend segue anexando a citação limpa do Graph — sem duplicar. */}
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <div className="min-h-0 flex-[3] overflow-hidden">
+            <div
+              className={cn(
+                "min-h-0 flex-[3] overflow-hidden transition-opacity",
+                envioOcupado && "opacity-60"
+              )}
+              aria-busy={envioOcupado}
+              inert={envioOcupado ? true : undefined}
+            >
               {modo && (
                 <ComporMensagem
                   key={modo}
@@ -4621,12 +4656,22 @@ const MessageDetail = forwardRef<
             </div>
           </div>
           <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
-            <Button variant="ghost" onClick={() => setModo(null)} disabled={enviando}>
+            <Button
+              variant="ghost"
+              onClick={() => setModo(null)}
+              disabled={envioOcupado}
+            >
               {t.controlRoom.cancelar}
             </Button>
-            <Button onClick={enviar} disabled={enviando}>
-              {enviando ? <Spinner className="size-4" /> : <Send />}
-              {t.controlRoom.enviar}
+            <Button onClick={enviar} disabled={envioOcupado}>
+              {envioOcupado ? <Spinner className="size-4" /> : <Send />}
+              {estadoUndoSend.fase === "pendente"
+                ? preencher(t.controlRoom.envioPendente, {
+                    n: estadoUndoSend.segundosRestantes,
+                  })
+                : estadoUndoSend.fase === "enviando"
+                  ? t.controlRoom.enviandoAgora
+                  : t.controlRoom.enviar}
             </Button>
           </SheetFooter>
         </SheetContent>
@@ -4953,8 +4998,23 @@ function NovaMensagemModal({
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   const comporRef = useRef<ComporMensagemHandle>(null);
-  const [enviando, setEnviando] = useState(false);
   const [remetente, setRemetente] = useState(remetenteInicial);
+  const textosUndoSend = useMemo(
+    () => ({
+      tituloPendente: (segundos: number) =>
+        preencher(t.controlRoom.envioPendente, { n: segundos }),
+      descricaoPendente: t.controlRoom.envioPendenteDescricao,
+      rotuloDesfazer: t.controlRoom.desfazerEnvio,
+      envioCancelado: t.controlRoom.envioCancelado,
+      enviando: t.controlRoom.enviandoAgora,
+    }),
+    [t]
+  );
+  const {
+    agendar: agendarUndoSend,
+    estado: estadoUndoSend,
+    ocupado: envioOcupado,
+  } = useUndoSend(textosUndoSend);
 
   useEffect(() => {
     if (!aberto) return;
@@ -4975,69 +5035,107 @@ function NovaMensagemModal({
     mostrarCcCco: t.controlRoom.mostrarCcCco,
   };
 
-  async function enviar() {
+  function enviar() {
+    if (envioOcupado) return;
     const c = comporRef.current;
-    const para = c?.getPara() ?? [];
-    const cc = c?.getCc() ?? [];
-    const cco = c?.getCco() ?? [];
+    const para = [...(c?.getPara() ?? [])];
+    const cc = [...(c?.getCc() ?? [])];
+    const cco = [...(c?.getCco() ?? [])];
     if (para.length === 0) {
       toast.error(t.controlRoom.informeDestino);
       return;
     }
-    setEnviando(true);
-    try {
-      await api.crEnviarNovo(
-        para,
-        cc,
-        cco,
-        c?.getAssunto() ?? "",
-        c?.getHtml() ?? "",
-        c?.getAnexos() ?? [],
-        remetente
-      );
-      api
-        .crSalvarContatos([...para, ...cc, ...cco].map((e) => ({ nome: e, email: e })))
-        .catch(() => {});
-      toastIcone(t.controlRoom.enviado, t.controlRoom.enviadoDescricao, "enviado");
-      onClose();
-    } catch (e) {
-      toast.error(t.controlRoom.erroEnvio, {
-        description: descricaoErroEnvio(e, remetente, t),
-      });
-    } finally {
-      setEnviando(false);
-    }
+    const assunto = c?.getAssunto() ?? "";
+    const corpo = c?.getHtml() ?? "";
+    const anexos = c?.getAnexos() ?? [];
+    const remetenteAgendado = remetente;
+
+    agendarUndoSend({
+      enviar: async () => {
+        await api.crEnviarNovo(
+          para,
+          cc,
+          cco,
+          assunto,
+          corpo,
+          anexos,
+          remetenteAgendado
+        );
+        api
+          .crSalvarContatos(
+            [...para, ...cc, ...cco].map((e) => ({ nome: e, email: e }))
+          )
+          .catch(() => {});
+      },
+      onConcluido: () => {
+        toastIcone(
+          t.controlRoom.enviado,
+          t.controlRoom.enviadoDescricao,
+          "enviado"
+        );
+        onClose();
+      },
+      onErro: (erro) => {
+        toast.error(t.controlRoom.erroEnvio, {
+          description: descricaoErroEnvio(erro, remetenteAgendado, t),
+        });
+      },
+    });
   }
 
   // Sheet lateral (não modal-bloqueante) com ~50% da largura: assim dá pra
   // consultar/copiar de e-mails atrás enquanto compõe.
   return (
-    <Sheet open={aberto} onOpenChange={(o) => !o && onClose()}>
+    <Sheet
+      open={aberto}
+      onOpenChange={(o) => !o && !envioOcupado && onClose()}
+    >
       <SheetContent
         side="right"
+        showCloseButton={!envioOcupado}
         className="flex w-1/2 flex-col gap-0 p-0 sm:max-w-[50vw]"
       >
         <SheetHeader className="border-b px-4 py-3">
           <SheetTitle className="text-left">{t.controlRoom.novaMensagem}</SheetTitle>
         </SheetHeader>
-        <SeletorRemetente
-          caixas={caixas}
-          valor={remetente}
-          onChange={setRemetente}
-          emailPessoal={emailPessoal}
-          sharedDisponivel={sharedEnvioDisponivel}
-          t={t}
-        />
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <ComporMensagem key={String(aberto)} ref={comporRef} mostrarAssunto textos={textos} />
+        <div
+          className={cn(
+            "flex min-h-0 flex-1 flex-col transition-opacity",
+            envioOcupado && "opacity-60"
+          )}
+          aria-busy={envioOcupado}
+          inert={envioOcupado ? true : undefined}
+        >
+          <SeletorRemetente
+            caixas={caixas}
+            valor={remetente}
+            onChange={setRemetente}
+            emailPessoal={emailPessoal}
+            sharedDisponivel={sharedEnvioDisponivel}
+            t={t}
+          />
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <ComporMensagem
+              key={String(aberto)}
+              ref={comporRef}
+              mostrarAssunto
+              textos={textos}
+            />
+          </div>
         </div>
         <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
-          <Button variant="ghost" onClick={onClose} disabled={enviando}>
+          <Button variant="ghost" onClick={onClose} disabled={envioOcupado}>
             {t.controlRoom.cancelar}
           </Button>
-          <Button onClick={enviar} disabled={enviando}>
-            {enviando ? <Spinner className="size-4" /> : <Send />}
-            {t.controlRoom.enviar}
+          <Button onClick={enviar} disabled={envioOcupado}>
+            {envioOcupado ? <Spinner className="size-4" /> : <Send />}
+            {estadoUndoSend.fase === "pendente"
+              ? preencher(t.controlRoom.envioPendente, {
+                  n: estadoUndoSend.segundosRestantes,
+                })
+              : estadoUndoSend.fase === "enviando"
+                ? t.controlRoom.enviandoAgora
+                : t.controlRoom.enviar}
           </Button>
         </SheetFooter>
       </SheetContent>
