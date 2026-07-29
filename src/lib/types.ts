@@ -231,15 +231,28 @@ export interface Pessoa {
 
 /** Fonte original de um registro entregue pelo Graph ao módulo People. */
 export type PeopleSource = "contacts" | "people";
+export type PeopleEnrichSource = PeopleSource | "directory";
+export type PeopleEnrichFieldKey =
+  | "photo"
+  | "email"
+  | "businessPhone"
+  | "mobilePhone"
+  | "jobTitle"
+  | "companyName"
+  | "department"
+  | "officeLocation"
+  | "manager";
 
 export interface PeopleEmail {
   address: string;
   label?: string | null;
+  source?: PeopleEnrichSource;
 }
 
 export interface PeoplePhone {
   number: string;
   label: string;
+  source?: PeopleEnrichSource;
 }
 
 /** Registro ainda não deduplicado, exatamente como veio de uma das fontes. */
@@ -251,6 +264,9 @@ export interface PeopleRecord {
   phones: PeoplePhone[];
   jobTitle?: string | null;
   company?: string | null;
+  department?: string | null;
+  officeLocation?: string | null;
+  manager?: string | null;
   organization: boolean;
   /** Posição em `/me/people`; os dez primeiros são "Frequent". */
   peopleRank?: number | null;
@@ -261,4 +277,24 @@ export interface PeopleListResult {
   records: PeopleRecord[];
   missingScopes: string[];
   failures: string[];
+}
+
+/** Uma adição revisável sugerida pelo Enrich, ainda sem efeito no contato. */
+export interface PeopleEnrichField {
+  key: PeopleEnrichFieldKey;
+  value: string;
+  source: PeopleEnrichSource;
+  label?: string | null;
+}
+
+export interface PeopleEnrichPreview {
+  fields: PeopleEnrichField[];
+  failures: string[];
+  /** Reflete o escopo efetivamente presente no token atual e um contato gravável. */
+  writeAvailable: boolean;
+}
+
+export interface PeopleEnrichApplyResult {
+  saved: boolean;
+  writeAvailable: boolean;
 }

@@ -11,6 +11,9 @@ import type {
   PastaEmail,
   PastaOD,
   Pessoa,
+  PeopleEnrichApplyResult,
+  PeopleEnrichField,
+  PeopleEnrichPreview,
   PeopleListResult,
   Reuniao,
   SegurancaEmail,
@@ -717,6 +720,76 @@ export async function crPeopleList(): Promise<PeopleListResult> {
     };
   }
   return invoke<PeopleListResult>("cr_people_list");
+}
+
+/** Busca sugestões revisáveis para um contato sem alterar nada. */
+export async function crPeopleEnrichPreview(
+  contactId: string | null,
+  email: string,
+): Promise<PeopleEnrichPreview> {
+  if (!inTauri()) {
+    await sleep(650);
+    const readOnly = email.toLowerCase().includes("alan@");
+    return {
+      writeAvailable: Boolean(contactId) && !readOnly,
+      failures: [],
+      fields: readOnly
+        ? [
+            {
+              key: "jobTitle",
+              value: "Research Director",
+              source: "people",
+            },
+            {
+              key: "businessPhone",
+              value: "+44 20 7946 0123",
+              source: "directory",
+              label: "work",
+            },
+            {
+              key: "department",
+              value: "Cryptanalysis",
+              source: "directory",
+            },
+          ]
+        : [
+            {
+              key: "department",
+              value: "Product Research",
+              source: "directory",
+            },
+            {
+              key: "officeLocation",
+              value: "London / 2.14",
+              source: "directory",
+            },
+            {
+              key: "manager",
+              value: "Charles Babbage",
+              source: "directory",
+            },
+          ],
+    };
+  }
+  return invoke<PeopleEnrichPreview>("cr_people_enrich_preview", {
+    contactId,
+    email,
+  });
+}
+
+/** Confirma no Graph apenas os campos aceitos no preview. */
+export async function crPeopleEnrichApply(
+  contactId: string,
+  fields: PeopleEnrichField[],
+): Promise<PeopleEnrichApplyResult> {
+  if (!inTauri()) {
+    await sleep(550);
+    return { saved: true, writeAvailable: true };
+  }
+  return invoke<PeopleEnrichApplyResult>("cr_people_enrich_apply", {
+    contactId,
+    fields,
+  });
 }
 
 /**
