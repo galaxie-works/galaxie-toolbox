@@ -3568,31 +3568,45 @@ function MessageList({
                           desmontar conteúdo dentro da linha (mesma adaptação
                           do c-collapsible-6 usada nos headers de período). */}
                       {agruparConversas &&
-                        (thread ? (
-                          <Collapsible
-                            open={threadExpandida}
-                            onOpenChange={() => alternarThread(thread.chave)}
-                            className="self-start pt-1"
-                          >
-                            <CollapsibleTrigger asChild>
-                              <button
-                                type="button"
-                                className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-                                aria-label={
-                                  threadExpandida
-                                    ? t.controlRoom.recolherConversa
-                                    : t.controlRoom.expandirConversa
-                                }
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <ChevronRight
-                                  aria-hidden="true"
-                                  className="size-3.5 transition-transform in-data-[state=open]:rotate-90"
-                                />
-                              </button>
-                            </CollapsibleTrigger>
-                          </Collapsible>
-                        ) : (
+                        (thread ? (() => {
+                          // Nome e tooltip do expander comunicam o ESTADO
+                          // (expandir vs recolher) e a CONTAGEM de mensagens,
+                          // não só a conversa (#157) — a mesma string alimenta
+                          // `aria-label` e o tooltip canônico (mesmo padrão do
+                          // chevron da sidebar no #100). Sem atalho de teclado,
+                          // então Tooltip puro (não ShortcutTooltip).
+                          const rotuloThread = threadExpandida
+                            ? t.controlRoom.recolherConversa
+                            : preencher(t.controlRoom.expandirConversaContagem, {
+                                n: thread.n,
+                              });
+                          return (
+                            <Collapsible
+                              open={threadExpandida}
+                              onOpenChange={() => alternarThread(thread.chave)}
+                              className="self-start pt-1"
+                            >
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <CollapsibleTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                                      aria-label={rotuloThread}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <ChevronRight
+                                        aria-hidden="true"
+                                        className="size-3.5 transition-transform in-data-[state=open]:rotate-90"
+                                      />
+                                    </button>
+                                  </CollapsibleTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent>{rotuloThread}</TooltipContent>
+                              </Tooltip>
+                            </Collapsible>
+                          );
+                        })() : (
                           <span
                             aria-hidden="true"
                             className="size-6 shrink-0 self-start"
