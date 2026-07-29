@@ -26,6 +26,7 @@ import type { SettingsItemId } from "@/store/settings-ui-slice";
 import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
+import { LockScreenSettings } from "@/components/lock-screen-settings";
 import {
   AccessibilitySettings,
   MoodSettings,
@@ -152,7 +153,12 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             // ao Sound & notifications. Cada card traz label+descrição + controle.
             node: <AppearancePanels />,
           },
-          { key: "lock-screen", title: "Lock screen", subtitle: "Protect the app with a PIN.", pending: 122 },
+          {
+            key: "lock-screen",
+            title: "Lock screen",
+            subtitle: "Protect the app with a PIN.",
+            node: <LockScreenSettings />,
+          },
         ],
       },
       {
