@@ -1214,17 +1214,29 @@ function SeletorCaixa({
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   if (colapsada) {
+    // Colapsada, o rótulo textual some: o nome da caixa ativa passa a aparecer
+    // por tooltip canônico (#158) em vez do `title` nativo, mesma composição do
+    // sidebar colapsado (#100) — Tooltip > TooltipTrigger asChild > Button,
+    // TooltipContent side="right" align="center". A `aria-label` (ação "Adicionar
+    // caixa…", o clique abre o dialog) fica intacta.
+    const dica = ativa === CAIXA_PROPRIA ? t.controlRoom.caixaMinha : ativa;
     return (
-      <Button
-        size="icon"
-        variant="ghost"
-        onClick={onAdicionar}
-        aria-label={t.controlRoom.caixaAdicionarItem}
-        title={ativa === CAIXA_PROPRIA ? t.controlRoom.caixaMinha : ativa}
-        className={cn(ativa !== CAIXA_PROPRIA && "text-primary")}
-      >
-        <Mailbox />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onAdicionar}
+            aria-label={t.controlRoom.caixaAdicionarItem}
+            className={cn(ativa !== CAIXA_PROPRIA && "text-primary")}
+          >
+            <Mailbox />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right" align="center">
+          {dica}
+        </TooltipContent>
+      </Tooltip>
     );
   }
   return (
