@@ -33,7 +33,7 @@
         "height": 400,
         "center": true,
         "visible": true,
-        "transparent": true,
+        "transparent": false,
         "decorations": false,
         "resizable": false,
         "shadow": false,

@@ -41,11 +41,17 @@ argon2 = "0.5"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
-# Splash flutuante (#164): no Windows o `transparent:true` do Tauri sozinho nao
-# composita os cantos (renderiza quadrado). O window-vibrancy aplica o efeito de
-# janela (blur/acrylic) que faz os cantos fora do circulo ficarem realmente
-# transparentes (ve-se o desktop). So no Windows.
-window-vibrancy = "0.6"
+# Splash circular (#164): recorta a janela `splashscreen` num circulo via
+# SetWindowRgn (regiao eliptica do GDI). O OS clipa a janela — os cantos deixam
+# de existir, ve-se o desktop atras, sem transparencia/frost/quadrado. Versao
+# casada com a que o proprio tauri 2.11 ja resolve (0.61), pra nao duplicar o
+# crate na arvore; o `splash.hwnd()` do Tauri devolve exatamente este HWND.
+# CreateEllipticRgn + SetWindowRgn vivem em Win32::Graphics::Gdi; HWND em
+# Win32::Foundation. Nada de Win32_UI_WindowsAndMessaging aqui.
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+] }
 # DPAPI para cifrar a sessao em disco (o Cofre de Credenciais tem limite de
 # 2560 bytes por blob e o refresh token da Microsoft nao cabe).
 winapi = { version = "0.3", features = ["dpapi", "wincrypt", "minwindef", "winbase"] }

@@ -1044,26 +1044,55 @@ pub fn run() {
                 }
             }
 
-            // Splash flutuante (#164): no Windows o `transparent:true` do Tauri
-            // sozinho NAO composita os cantos — a janela renderiza um quadrado
-            // opaco. O window-vibrancy aplica um efeito de janela (blur) que faz
-            // os cantos FORA do circulo ficarem realmente transparentes: ve-se o
-            // desktop atras e o circulo (div #171A30 opaca com o video) fica
-            // flutuando. Sem `expect`/`unwrap` que derrube o app: se o efeito
-            // falhar (versao de Windows sem suporte, etc.), loga e segue — o
-            // splash apenas nao ganha a transparencia, o boot continua normal.
+            // Splash circular (#164) — recorte de REGIAO no nivel do OS.
+            //
+            // WINDOWS (implementado): a transparencia de janela do Tauri e
+            // NAO-confiavel no Windows (renderiza um quadrado opaco; o
+            // window-vibrancy so trocava o quadrado opaco por um quadrado
+            // frostado). A forma nativa e confiavel e recortar a janela num
+            // circulo com `SetWindowRgn(CreateEllipticRgn(...))`: o OS clipa a
+            // janela, os cantos deixam de existir e ve-se o desktop atras — sem
+            // transparencia, sem frost, sem quadrado. A regiao e em PIXELS
+            // FISICOS, entao o diametro e 400 * scale_factor. Sem panico: se o
+            // HWND/scale/recorte falhar, loga e segue (o boot nao pode cair pela
+            // estetica do splash; no pior caso ele fica quadrado).
+            //
+            // macOS (futuro — NAO implementado, so a nota): NAO usar SetWindowRgn
+            // (Win32-only). No macOS a transparencia de janela FUNCIONA: basta
+            // `transparent: true` na config + a div do circulo com
+            // `border-radius:50%` + body/#root transparentes — o macOS composita
+            // os cantos transparentes corretamente. Opcionalmente, via NSWindow:
+            // `isOpaque=false`, `backgroundColor=.clear` e
+            // `contentView.layer.cornerRadius = raio` + `masksToBounds=true`; ou
+            // `window-vibrancy::apply_vibrancy(NSVisualEffectMaterial::...)` para
+            // blur/vibrancy nativo.
             #[cfg(target_os = "windows")]
             {
+                use windows::Win32::Graphics::Gdi::{CreateEllipticRgn, SetWindowRgn};
+
                 if let Some(splash) = app.get_webview_window("splashscreen") {
-                    // Tint escuro leve (18,18,18, alpha 125) casado com o fundo
-                    // do splash; mantem os cantos discretos sem frost pesado.
-                    if let Err(e) =
-                        window_vibrancy::apply_blur(&splash, Some((18, 18, 18, 125)))
-                    {
-                        log::warn!(
-                            "splash #164: window-vibrancy apply_blur falhou ({e:?}); \
-                             os cantos podem nao ficar transparentes"
-                        );
+                    match (splash.hwnd(), splash.scale_factor()) {
+                        (Ok(hwnd), Ok(escala)) => {
+                            // 400 logico -> pixels fisicos (ex.: 600 em 150%).
+                            let d = (400.0 * escala).round() as i32;
+                            // SAFETY: HWND valido (janela recem-criada pelo Tauri);
+                            // a regiao passa a ser POSSE da janela apos SetWindowRgn
+                            // com sucesso, entao nao a deletamos aqui.
+                            let ok = unsafe {
+                                let rgn = CreateEllipticRgn(0, 0, d, d);
+                                SetWindowRgn(hwnd, Some(rgn), true)
+                            };
+                            if ok == 0 {
+                                log::warn!(
+                                    "splash #164: SetWindowRgn falhou; a janela do \
+                                     splash pode aparecer quadrada"
+                                );
+                            }
+                        }
+                        _ => log::warn!(
+                            "splash #164: sem HWND/scale_factor da janela splashscreen; \
+                             recorte circular ignorado"
+                        ),
                     }
                 }
             }
