@@ -149,6 +149,7 @@ interface EdicaoAssinatura {
   nome: string;
   corpo: string;
   padrao: boolean;
+  usarEmRespostas: boolean;
 }
 
 const ROTULO_SEM_PADRAO = "No default signature";
@@ -182,6 +183,7 @@ export function SignaturesPanel() {
       corpo: "",
       // Primeira assinatura já entra como padrão; as demais, opcionais.
       padrao: assinaturas.length === 0,
+      usarEmRespostas: false,
     });
   }
 
@@ -191,6 +193,7 @@ export function SignaturesPanel() {
       nome: a.nome,
       corpo: a.corpo,
       padrao: a.id === assinaturaPadraoId,
+      usarEmRespostas: a.usarEmRespostas,
     });
   }
 
@@ -200,9 +203,19 @@ export function SignaturesPanel() {
     if (!nome) return;
     const corpo = corpoRef.current?.innerHTML ?? "";
     if (edicao.id) {
-      atualizarAssinatura(edicao.id, { nome, corpo, padrao: edicao.padrao });
+      atualizarAssinatura(edicao.id, {
+        nome,
+        corpo,
+        padrao: edicao.padrao,
+        usarEmRespostas: edicao.usarEmRespostas,
+      });
     } else {
-      adicionarAssinatura({ nome, corpo, padrao: edicao.padrao });
+      adicionarAssinatura({
+        nome,
+        corpo,
+        padrao: edicao.padrao,
+        usarEmRespostas: edicao.usarEmRespostas,
+      });
     }
     setEdicao(null);
     toast.success("Signature saved");
@@ -354,6 +367,25 @@ export function SignaturesPanel() {
                   onCheckedChange={(checked) =>
                     setEdicao((atual) =>
                       atual ? { ...atual, padrao: checked } : atual
+                    )
+                  }
+                />
+              </div>
+
+              <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">
+                    Use for replies and forwardings
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Auto insert this signature in replies and forwardings.
+                  </p>
+                </div>
+                <Switch
+                  checked={edicao.usarEmRespostas}
+                  onCheckedChange={(checked) =>
+                    setEdicao((atual) =>
+                      atual ? { ...atual, usarEmRespostas: checked } : atual
                     )
                   }
                 />

@@ -17,6 +17,8 @@ export interface Assinatura {
   id: string;
   nome: string;
   corpo: string;
+  /** Insere esta assinatura automaticamente em respostas/encaminhamentos (#142). */
+  usarEmRespostas: boolean;
 }
 
 /** Dados editáveis de uma assinatura (sem id), como vêm da Sheet. */
@@ -25,6 +27,8 @@ export interface DadosAssinatura {
   corpo: string;
   /** Marca esta assinatura como a padrão (usada nos e-mails do Bridge). */
   padrao: boolean;
+  /** Auto insere esta assinatura em respostas/encaminhamentos (#142). */
+  usarEmRespostas: boolean;
 }
 
 /** Dados editáveis de um template (sem id), como vêm da Sheet. */
@@ -81,19 +85,24 @@ export const createBridgeSlice: StateCreator<
   assinaturaPadraoId: null,
   templates: [],
 
-  adicionarAssinatura: ({ nome, corpo, padrao }) =>
+  adicionarAssinatura: ({ nome, corpo, padrao, usarEmRespostas }) =>
     set((state) => {
-      const nova: Assinatura = { id: novoId("sig"), nome, corpo };
+      const nova: Assinatura = {
+        id: novoId("sig"),
+        nome,
+        corpo,
+        usarEmRespostas,
+      };
       return {
         assinaturas: [...state.assinaturas, nova],
         assinaturaPadraoId: padrao ? nova.id : state.assinaturaPadraoId,
       };
     }),
 
-  atualizarAssinatura: (id, { nome, corpo, padrao }) =>
+  atualizarAssinatura: (id, { nome, corpo, padrao, usarEmRespostas }) =>
     set((state) => ({
       assinaturas: state.assinaturas.map((a) =>
-        a.id === id ? { ...a, nome, corpo } : a
+        a.id === id ? { ...a, nome, corpo, usarEmRespostas } : a
       ),
       // Ligar o switch torna esta a padrão; desligar numa que era padrão volta
       // pra "Sem padrão". Mexer no switch de outra não afeta a padrão vigente.

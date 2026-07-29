@@ -253,7 +253,12 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     // Bridge (#135): assinaturas + padrão + templates.
     const assinaturas = lerChave<Assinatura[]>(BRIDGE_KEYS.assinaturas);
     if (Array.isArray(assinaturas)) {
-      state.assinaturas = assinaturas;
+      // Back-compat (#142): assinaturas salvas antes do campo não têm
+      // `usarEmRespostas` — normaliza pra `false` em vez de `undefined`.
+      state.assinaturas = assinaturas.map((a) => ({
+        ...a,
+        usarEmRespostas: a.usarEmRespostas ?? false,
+      }));
     } else {
       // Migração da assinatura única legada (`bridge.assinatura`, texto cru):
       // vira uma assinatura padrão com o corpo em HTML (uma linha por <p>).
@@ -263,6 +268,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
           id: "sig-legada",
           nome: "Minha assinatura",
           corpo: textoParaHtml(antiga),
+          usarEmRespostas: false,
         };
         state.assinaturas = [migrada];
         state.assinaturaPadraoId = migrada.id;
