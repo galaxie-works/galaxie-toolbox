@@ -3,6 +3,11 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Combobox,
   ComboboxChip,
   ComboboxChips,
@@ -290,23 +295,30 @@ export function CampoPessoas({
               <Fragment>
                 {escolhidos.map((p) => {
                   const foto = p.foto ?? getFoto(p.email);
+                  // Nome acessível já existente; agora também vira dica visual
+                  // (#103) via o Tooltip canônico. Mesmo texto nos dois.
+                  const rotuloRemover = preencher(textos.removerDestinatario, {
+                    nome: p.nome || p.email,
+                  });
                   return (
-                    <ComboboxChip
-                      key={p.email.toLowerCase()}
-                      aria-label={preencher(textos.removerDestinatario, {
-                        nome: p.nome || p.email,
-                      })}
-                      showRemove={true}
-                      className="bg-background rounded-full inline-flex h-auto items-center gap-1.5 border py-0.5 pl-2 shadow-xs **:data-[slot=combobox-chip-remove]:mr-0.5 **:data-[slot=combobox-chip-remove]:bg-transparent"
-                    >
-                      <Avatar className="size-4">
-                        {foto && <AvatarImage src={foto} alt="" />}
-                        <AvatarFallback className="text-[8px]">
-                          {iniciaisDe(p.nome, p.email)}
-                        </AvatarFallback>
-                      </Avatar>
-                      {p.nome || p.email}
-                    </ComboboxChip>
+                    <Tooltip key={p.email.toLowerCase()}>
+                      <TooltipTrigger asChild>
+                        <ComboboxChip
+                          aria-label={rotuloRemover}
+                          showRemove={true}
+                          className="bg-background rounded-full inline-flex h-auto items-center gap-1.5 border py-0.5 pl-2 shadow-xs **:data-[slot=combobox-chip-remove]:mr-0.5 **:data-[slot=combobox-chip-remove]:bg-transparent"
+                        >
+                          <Avatar className="size-4">
+                            {foto && <AvatarImage src={foto} alt="" />}
+                            <AvatarFallback className="text-[8px]">
+                              {iniciaisDe(p.nome, p.email)}
+                            </AvatarFallback>
+                          </Avatar>
+                          {p.nome || p.email}
+                        </ComboboxChip>
+                      </TooltipTrigger>
+                      <TooltipContent>{rotuloRemover}</TooltipContent>
+                    </Tooltip>
                   );
                 })}
                 <ComboboxChipsInput

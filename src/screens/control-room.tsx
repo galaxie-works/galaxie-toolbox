@@ -108,6 +108,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { shortcutAccessibleLabel } from "@/components/ui/shortcut";
+import type { ShortcutDefinition } from "@/components/ui/shortcut";
+import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -518,17 +521,23 @@ function CorpoHtml({
           <span className="text-xs font-medium tabular-nums text-muted-foreground">
             {Math.round(fator * 100)}%
           </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="rounded-full text-muted-foreground"
-            onClick={() => setFator(1)}
-            title={t.controlRoom.zoomResetar}
-            aria-label={t.controlRoom.zoomResetar}
-          >
-            <RotateCcw />
-          </Button>
+          {/* Restaurar zoom (#102): sem atalho dedicado no cluster, Tooltip
+              simples; o texto já traz o Ctrl+0. Substitui o `title` nativo. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="rounded-full text-muted-foreground"
+                onClick={() => setFator(1)}
+                aria-label={t.controlRoom.zoomResetar}
+              >
+                <RotateCcw />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t.controlRoom.zoomResetar}</TooltipContent>
+          </Tooltip>
         </div>
       )}
       <ModalLinkSeguro
@@ -1205,17 +1214,29 @@ function SeletorCaixa({
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   if (colapsada) {
+    // Colapsada, o rótulo textual some: o nome da caixa ativa passa a aparecer
+    // por tooltip canônico (#158) em vez do `title` nativo, mesma composição do
+    // sidebar colapsado (#100) — Tooltip > TooltipTrigger asChild > Button,
+    // TooltipContent side="right" align="center". A `aria-label` (ação "Adicionar
+    // caixa…", o clique abre o dialog) fica intacta.
+    const dica = ativa === CAIXA_PROPRIA ? t.controlRoom.caixaMinha : ativa;
     return (
-      <Button
-        size="icon"
-        variant="ghost"
-        onClick={onAdicionar}
-        aria-label={t.controlRoom.caixaAdicionarItem}
-        title={ativa === CAIXA_PROPRIA ? t.controlRoom.caixaMinha : ativa}
-        className={cn(ativa !== CAIXA_PROPRIA && "text-primary")}
-      >
-        <Mailbox />
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onAdicionar}
+            aria-label={t.controlRoom.caixaAdicionarItem}
+            className={cn(ativa !== CAIXA_PROPRIA && "text-primary")}
+          >
+            <Mailbox />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="right" align="center">
+          {dica}
+        </TooltipContent>
+      </Tooltip>
     );
   }
   return (
@@ -1509,13 +1530,10 @@ function FolderSidebar({
           onSel(p.id);
         }}
         aria-disabled={p.acessoNegado || undefined}
-        title={
-          p.acessoNegado
-            ? t.controlRoom.caixaAcessoParcial
-            : colapsada
-              ? rotulo
-              : undefined
-        }
+        aria-label={colapsada ? rotulo : undefined}
+        // Colapsada: o nome vem pelo tooltip canônico (#100), não mais por
+        // `title` nativo. `title` fica só para o aviso de acesso parcial.
+        title={p.acessoNegado ? t.controlRoom.caixaAcessoParcial : undefined}
         className={cn(
           "flex items-center rounded-md text-sm transition-colors",
           colapsada ? "relative size-9 justify-center" : "flex-1 gap-2.5 px-2.5 py-2",
@@ -1573,11 +1591,28 @@ function FolderSidebar({
     const proibidos = subarvoreIds(p.id, subpastas);
     const destinos = arvore.filter((d) => !proibidos.has(d.id));
 
-    const comMenu = (conteudo: React.ReactNode) => (
+    // `dica` (só na sidebar colapsada, #100): quando o rótulo textual está
+    // oculto, o nome da pasta aparece por tooltip canônico. Mesmo aninhamento de
+    // gatilhos do app-sidebar (Tooltip > TooltipTrigger asChild > MenuTrigger
+    // asChild > botão); sem `dica` a árvore é idêntica à de antes.
+    const comMenu = (conteudo: React.ReactNode, dica?: string) => (
       <ContextMenu>
-        <ContextMenuTrigger asChild disabled={semAcoes}>
-          {conteudo}
-        </ContextMenuTrigger>
+        {dica ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ContextMenuTrigger asChild disabled={semAcoes}>
+                {conteudo}
+              </ContextMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="right" align="center">
+              {dica}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <ContextMenuTrigger asChild disabled={semAcoes}>
+            {conteudo}
+          </ContextMenuTrigger>
+        )}
         <ContextMenuContent className="w-56">
           {marcarLidas && (
             <ContextMenuItem className="gap-2" onClick={() => onMarcarTodasLidas(p.id)}>
@@ -1666,26 +1701,46 @@ function FolderSidebar({
       </ContextMenu>
     );
 
-    if (colapsada) return <div key={p.id}>{comMenu(linhaBtn)}</div>;
+    if (colapsada) return <div key={p.id}>{comMenu(linhaBtn, rotulo)}</div>;
     return (
       <div key={p.id}>
         {comMenu(
           <div className={cn("flex items-center", ehFilho && "pl-5")}>
             {/* chevron só quando a pasta realmente tem subpastas (childFolderCount > 0) */}
             {p.filhos > 0 ? (
-              <button
-                type="button"
-                onClick={() => alternarExpandir(p.id)}
-                aria-label={rotulo}
-                className="grid size-5 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
-              >
-                <ChevronRight
-                  className={cn(
-                    "size-3.5 transition-transform",
-                    expandidas.has(p.id) && "rotate-90"
-                  )}
-                />
-              </button>
+              (() => {
+                // Nome e tooltip do chevron comunicam o ESTADO (expandir vs
+                // recolher), não só a pasta (#100) — a mesma string alimenta
+                // `aria-label` e o tooltip canônico.
+                const rotuloChevron = preencher(
+                  expandidas.has(p.id)
+                    ? t.controlRoom.recolherPasta
+                    : t.controlRoom.expandirPasta,
+                  { pasta: rotulo }
+                );
+                return (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => alternarExpandir(p.id)}
+                        aria-label={rotuloChevron}
+                        className="grid size-5 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
+                      >
+                        <ChevronRight
+                          className={cn(
+                            "size-3.5 transition-transform",
+                            expandidas.has(p.id) && "rotate-90"
+                          )}
+                        />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" align="center">
+                      {rotuloChevron}
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })()
             ) : (
               <span className="size-5 shrink-0" />
             )}
@@ -1722,20 +1777,34 @@ function FolderSidebar({
       ) : null}
 
       {colapsada ? (
-        <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
-          <PenSquare />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
+              <PenSquare />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right" align="center">
+            {t.controlRoom.novoEmail}
+          </TooltipContent>
+        </Tooltip>
       ) : (
         <ButtonGroup className="w-full">
           <Button className="flex-1" onClick={onNovo}>
             <PenSquare /> {t.controlRoom.novoEmail}
           </Button>
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="icon" aria-label={t.controlRoom.composeOutlook}>
-                <ChevronDown />
-              </Button>
-            </DropdownMenuTrigger>
+            {/* Tooltip > DropdownMenu: os dois gatilhos com asChild no mesmo
+                botão, igual ao app-sidebar (#100). */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon" aria-label={t.controlRoom.composeOutlook}>
+                    <ChevronDown />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t.controlRoom.composeOutlook}</TooltipContent>
+            </Tooltip>
             <DropdownMenuContent align="end" className="w-48">
               <DropdownMenuItem onClick={onComposeOutlook}>
                 {t.controlRoom.composeOutlook}
@@ -1783,20 +1852,31 @@ function FolderSidebar({
           Agenda pertence ao Bridge, não ao app principal (#50). Selecionado ⟺
           card da Agenda visível; nasce fechada (menos requisições no startup). */}
       <Separator className={cn("shrink-0", colapsada && "w-6")} />
-      <Button
-        variant={agendaAberta ? "secondary" : "ghost"}
-        onClick={onToggleAgenda}
-        title={t.controlRoom.agendaTitulo}
-        aria-label={t.controlRoom.agendaTitulo}
-        className={cn(
-          "shrink-0",
-          colapsada ? "size-9 justify-center p-0" : "w-full justify-start gap-2.5",
-          !agendaAberta && "text-muted-foreground"
+      {/* Colapsada: nome pelo tooltip canônico (#100). Só renderiza o
+          TooltipContent nesse estado — expandida, o rótulo textual já aparece,
+          mesma regra do app-sidebar. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant={agendaAberta ? "secondary" : "ghost"}
+            onClick={onToggleAgenda}
+            aria-label={t.controlRoom.agendaTitulo}
+            className={cn(
+              "shrink-0",
+              colapsada ? "size-9 justify-center p-0" : "w-full justify-start gap-2.5",
+              !agendaAberta && "text-muted-foreground"
+            )}
+          >
+            <CalendarDays className="size-4 shrink-0" />
+            {!colapsada && <span>{t.controlRoom.agendaTitulo}</span>}
+          </Button>
+        </TooltipTrigger>
+        {colapsada && (
+          <TooltipContent side="right" align="center">
+            {t.controlRoom.agendaTitulo}
+          </TooltipContent>
         )}
-      >
-        <CalendarDays className="size-4 shrink-0" />
-        {!colapsada && <span>{t.controlRoom.agendaTitulo}</span>}
-      </Button>
+      </Tooltip>
 
       {/* Confirmação do "Esvaziar pasta": destrutiva e não desfazível, então
           nunca dispara direto do menu de contexto (#89). */}
@@ -2298,6 +2378,19 @@ function ItensMenuEmail({
     </>
   );
 }
+
+// Atalhos reais das ações icon-only da lista (#101). Alimentam ao mesmo tempo
+// o `aria-label` (via shortcutAccessibleLabel) e a dica do ShortcutTooltip (Kbd
+// platform-correto). Ctrl+A/Esc já são tratados no handler de teclas da lista
+// (mod+a → selecionarTudo; Escape → limparSelecao); S/Delete idem (onFlag /
+// onExcluir da mensagem ativa).
+const ATALHO_SELECIONAR_TUDO: ShortcutDefinition = { key: "A", primary: true };
+const ATALHO_LIMPAR_SELECAO: ShortcutDefinition = { key: "Esc" };
+const ATALHO_SINALIZAR: ShortcutDefinition = { key: "S" };
+const ATALHO_EXCLUIR: ShortcutDefinition = { key: "Delete" };
+// Ler/não-ler do leitor (#102): atalho U. Alimenta aria-label + ShortcutTooltip
+// do botão que ALTERNA lido/não-lido na toolbar do leitor.
+const ATALHO_LER_NAO_LIDO: ShortcutDefinition = { key: "U" };
 
 function MessageList({
   titulo,
@@ -3048,14 +3141,21 @@ function MessageList({
   return (
     <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
       <div className="flex items-center gap-2 px-3 py-3">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          onClick={onToggleSidebar}
-          aria-label={t.nav.alternarMenu}
-        >
-          {sidebarAberta ? <PanelLeftClose /> : <PanelLeftOpen />}
-        </Button>
+        {/* Toggle do painel de pastas (#101): tooltip canônico simples (sem
+            atalho), mesmo padrão do #100 na sidebar. */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onToggleSidebar}
+              aria-label={t.nav.alternarMenu}
+            >
+              {sidebarAberta ? <PanelLeftClose /> : <PanelLeftOpen />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>{t.nav.alternarMenu}</TooltipContent>
+        </Tooltip>
         <h2 className="text-sm font-semibold">{titulo}</h2>
         {mensagens && (
           <Badge variant="secondary" size="sm">
@@ -3069,13 +3169,21 @@ function MessageList({
             </Button>
           )}
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="gap-1.5" aria-label={t.controlRoom.ordenarPor}>
-                <ArrowDownUp className="size-3.5" />
-                <span className="hidden text-xs sm:inline">{rotuloOrdena[ordenar]}</span>
-                <ChevronDown className="size-3" />
-              </Button>
-            </DropdownMenuTrigger>
+            {/* Ordenação (#101): sem atalho → Tooltip canônico. Tooltip >
+                DropdownMenuTrigger, os dois com asChild no mesmo botão, igual
+                ao split "Escrever no Outlook" do #100. */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="gap-1.5" aria-label={t.controlRoom.ordenarPor}>
+                    <ArrowDownUp className="size-3.5" />
+                    <span className="hidden text-xs sm:inline">{rotuloOrdena[ordenar]}</span>
+                    <ChevronDown className="size-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t.controlRoom.ordenarPor}</TooltipContent>
+            </Tooltip>
             <DropdownMenuContent align="end" className="w-44">
               <DropdownMenuLabel>{t.controlRoom.ordenarPor}</DropdownMenuLabel>
               <DropdownMenuRadioGroup
@@ -3114,11 +3222,18 @@ function MessageList({
               "modo + atraso" em dois controles: sem UI condicional, sem estado
               escondido, e o RadioGroup do Radix já dá role/aria + setas. */}
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon-sm" aria-label={t.controlRoom.prefLeitura}>
-                <SlidersHorizontal />
-              </Button>
-            </DropdownMenuTrigger>
+            {/* Preferências de leitura (#101): sem atalho → Tooltip canônico,
+                mesmo aninhamento Tooltip > DropdownMenuTrigger da ordenação. */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon-sm" aria-label={t.controlRoom.prefLeitura}>
+                    <SlidersHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t.controlRoom.prefLeitura}</TooltipContent>
+            </Tooltip>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>{t.controlRoom.prefMarcarLidoTitulo}</DropdownMenuLabel>
               <DropdownMenuRadioGroup
@@ -3153,9 +3268,15 @@ function MessageList({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label={t.controlRoom.atualizar}>
-            <RefreshCw />
-          </Button>
+          {/* Atualizar (#101): sem atalho → Tooltip canônico. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label={t.controlRoom.atualizar}>
+                <RefreshCw />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t.controlRoom.atualizar}</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -3179,15 +3300,32 @@ function MessageList({
 
       {selecionados.size > 0 ? (
         <div className="flex items-center gap-2 px-3 pb-2">
-          <input
-            type="checkbox"
-            checked={todosSel}
-            onChange={(e) =>
-              e.target.checked ? selecionarTudo(idsFiltrados) : limparSelecao()
-            }
-            className="size-3.5 accent-primary"
-            aria-label={t.controlRoom.limparSelecao}
-          />
+          {/* Selecionar tudo (#101): atalho Ctrl+A → ShortcutTooltip com Kbd.
+              O nome acessível era ERRADO — trocava pra "Limpar seleção" quando
+              tudo estava marcado; num master checkbox o estado já é comunicado
+              pelo próprio role, então o nome fica FIXO em "Selecionar tudo". */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <input
+                type="checkbox"
+                checked={todosSel}
+                onChange={(e) =>
+                  e.target.checked ? selecionarTudo(idsFiltrados) : limparSelecao()
+                }
+                className="size-3.5 accent-primary"
+                aria-label={shortcutAccessibleLabel(
+                  t.controlRoom.selecionarTudo,
+                  ATALHO_SELECIONAR_TUDO
+                )}
+              />
+            </TooltipTrigger>
+            <TooltipContent>
+              <ShortcutTooltip
+                label={t.controlRoom.selecionarTudo}
+                shortcut={ATALHO_SELECIONAR_TUDO}
+              />
+            </TooltipContent>
+          </Tooltip>
           <span className="text-xs font-medium">
             {preencher(t.controlRoom.nSelecionados, { n: selecionados.size })}
           </span>
@@ -3199,9 +3337,28 @@ function MessageList({
             rotuloProcessando={t.controlRoom.excluindo}
             rotuloConcluido={t.controlRoom.excluidos}
           />
-          <Button variant="ghost" size="icon-sm" onClick={limparSelecao}>
-            <X />
-          </Button>
+          {/* Limpar seleção (#101): atalho Esc → ShortcutTooltip com Kbd. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={limparSelecao}
+                aria-label={shortcutAccessibleLabel(
+                  t.controlRoom.limparSelecao,
+                  ATALHO_LIMPAR_SELECAO
+                )}
+              >
+                <X />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <ShortcutTooltip
+                label={t.controlRoom.limparSelecao}
+                shortcut={ATALHO_LIMPAR_SELECAO}
+              />
+            </TooltipContent>
+          </Tooltip>
         </div>
       ) : (
         <div className="flex items-start gap-2.5 px-3 pb-2">
@@ -3423,31 +3580,45 @@ function MessageList({
                           desmontar conteúdo dentro da linha (mesma adaptação
                           do c-collapsible-6 usada nos headers de período). */}
                       {agruparConversas &&
-                        (thread ? (
-                          <Collapsible
-                            open={threadExpandida}
-                            onOpenChange={() => alternarThread(thread.chave)}
-                            className="self-start pt-1"
-                          >
-                            <CollapsibleTrigger asChild>
-                              <button
-                                type="button"
-                                className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
-                                aria-label={
-                                  threadExpandida
-                                    ? t.controlRoom.recolherConversa
-                                    : t.controlRoom.expandirConversa
-                                }
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                <ChevronRight
-                                  aria-hidden="true"
-                                  className="size-3.5 transition-transform in-data-[state=open]:rotate-90"
-                                />
-                              </button>
-                            </CollapsibleTrigger>
-                          </Collapsible>
-                        ) : (
+                        (thread ? (() => {
+                          // Nome e tooltip do expander comunicam o ESTADO
+                          // (expandir vs recolher) e a CONTAGEM de mensagens,
+                          // não só a conversa (#157) — a mesma string alimenta
+                          // `aria-label` e o tooltip canônico (mesmo padrão do
+                          // chevron da sidebar no #100). Sem atalho de teclado,
+                          // então Tooltip puro (não ShortcutTooltip).
+                          const rotuloThread = threadExpandida
+                            ? t.controlRoom.recolherConversa
+                            : preencher(t.controlRoom.expandirConversaContagem, {
+                                n: thread.n,
+                              });
+                          return (
+                            <Collapsible
+                              open={threadExpandida}
+                              onOpenChange={() => alternarThread(thread.chave)}
+                              className="self-start pt-1"
+                            >
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <CollapsibleTrigger asChild>
+                                    <button
+                                      type="button"
+                                      className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                                      aria-label={rotuloThread}
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <ChevronRight
+                                        aria-hidden="true"
+                                        className="size-3.5 transition-transform in-data-[state=open]:rotate-90"
+                                      />
+                                    </button>
+                                  </CollapsibleTrigger>
+                                </TooltipTrigger>
+                                <TooltipContent>{rotuloThread}</TooltipContent>
+                              </Tooltip>
+                            </Collapsible>
+                          );
+                        })() : (
                           <span
                             aria-hidden="true"
                             className="size-6 shrink-0 self-start"
@@ -3534,27 +3705,57 @@ function MessageList({
                                 className="absolute top-1/2 right-0 hidden -translate-y-1/2 items-center gap-0.5 group-hover/row:flex"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <button
-                                  type="button"
-                                  onClick={() => onFlag(m.id, !m.sinalizado)}
-                                  className="grid size-6 place-items-center rounded bg-accent hover:bg-background"
-                                  aria-label={t.controlRoom.sinalizar}
-                                >
-                                  <Flag
-                                    className={cn(
-                                      "size-3.5",
-                                      m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
-                                    )}
-                                  />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => onExcluir([m.id])}
-                                  className="grid size-6 place-items-center rounded bg-accent text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                                  aria-label={t.controlRoom.excluir}
-                                >
-                                  <Trash2 className="size-3.5" />
-                                </button>
+                                {/* Sinalizar da linha (#101): atalho S →
+                                    ShortcutTooltip com Kbd. */}
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      onClick={() => onFlag(m.id, !m.sinalizado)}
+                                      className="grid size-6 place-items-center rounded bg-accent hover:bg-background"
+                                      aria-label={shortcutAccessibleLabel(
+                                        t.controlRoom.sinalizar,
+                                        ATALHO_SINALIZAR
+                                      )}
+                                    >
+                                      <Flag
+                                        className={cn(
+                                          "size-3.5",
+                                          m.sinalizado ? "fill-red-500 text-red-500" : "text-muted-foreground"
+                                        )}
+                                      />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <ShortcutTooltip
+                                      label={t.controlRoom.sinalizar}
+                                      shortcut={ATALHO_SINALIZAR}
+                                    />
+                                  </TooltipContent>
+                                </Tooltip>
+                                {/* Excluir da linha (#101): atalho Delete →
+                                    ShortcutTooltip com Kbd. */}
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <button
+                                      type="button"
+                                      onClick={() => onExcluir([m.id])}
+                                      className="grid size-6 place-items-center rounded bg-accent text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                      aria-label={shortcutAccessibleLabel(
+                                        t.controlRoom.excluir,
+                                        ATALHO_EXCLUIR
+                                      )}
+                                    >
+                                      <Trash2 className="size-3.5" />
+                                    </button>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <ShortcutTooltip
+                                      label={t.controlRoom.excluir}
+                                      shortcut={ATALHO_EXCLUIR}
+                                    />
+                                  </TooltipContent>
+                                </Tooltip>
                               </div>
                             )}
                           </div>
@@ -4105,17 +4306,24 @@ const MessageDetail = forwardRef<
           <p className="mb-2 text-xs font-medium">{t.controlRoom.anexosTitulo}</p>
           <div className="flex flex-wrap gap-2">
             {det.anexos.map((a, i) => (
-              <button
-                key={a.id || i}
-                type="button"
-                onClick={() => baixarAnexo(a)}
-                className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
-                title={t.controlRoom.abrirArquivo}
-              >
-                <Paperclip className="size-3.5 text-muted-foreground" />
-                <span className="max-w-40 truncate">{a.nome}</span>
-                <Download className="size-3.5 text-muted-foreground" />
-              </button>
+              // Anexo (#102): ação sem atalho → Tooltip simples com nome
+              // acessível explícito (o texto visível é o nome do arquivo).
+              // Substitui o `title` nativo.
+              <Tooltip key={a.id || i}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => baixarAnexo(a)}
+                    className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
+                    aria-label={`${t.controlRoom.abrirArquivo}: ${a.nome}`}
+                  >
+                    <Paperclip className="size-3.5 text-muted-foreground" />
+                    <span className="max-w-40 truncate">{a.nome}</span>
+                    <Download className="size-3.5 text-muted-foreground" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{t.controlRoom.abrirArquivo}</TooltipContent>
+              </Tooltip>
             ))}
           </div>
         </>
@@ -4167,39 +4375,94 @@ const MessageDetail = forwardRef<
           </Button>
         </DicaSomenteLeitura>
         <div className="ml-auto flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => id && onFlag(id, !sinalizado)}
-            aria-label={t.controlRoom.sinalizar}
-          >
-            <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
-          </Button>
+          {/* Sinalizar do leitor (#102): atalho S → ShortcutTooltip com Kbd. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => id && onFlag(id, !sinalizado)}
+                aria-label={shortcutAccessibleLabel(
+                  t.controlRoom.sinalizar,
+                  ATALHO_SINALIZAR
+                )}
+              >
+                <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <ShortcutTooltip
+                label={t.controlRoom.sinalizar}
+                shortcut={ATALHO_SINALIZAR}
+              />
+            </TooltipContent>
+          </Tooltip>
           {/* Botão de lido/não-lido: ALTERNA (#95). Antes era só "marcar como
               não lido" — o que bastava quando o app marcava lido sozinho ao
               abrir. Nos modos "após atraso"/"manual" a mensagem pode continuar
-              não-lida no leitor, então o botão precisa marcar LIDO também. */}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => id && onMarcarLido(id, !lido)}
-            aria-label={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
-            title={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
-          >
-            {lido ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => id && onExcluir([id])}
-            aria-label={t.controlRoom.excluir}
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-          >
-            <Trash2 />
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={abrirOutlook} aria-label={t.controlRoom.abrirOutlook}>
-            <ExternalLink />
-          </Button>
+              não-lida no leitor, então o botão precisa marcar LIDO também.
+              #102: atalho U → ShortcutTooltip; label acompanha o estado (o
+              texto muda entre marcar lido/não-lido). Substitui o `title`. */}
+          {(() => {
+            const rotuloLido = lido
+              ? t.controlRoom.marcarNaoLido
+              : t.controlRoom.marcarLido;
+            return (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => id && onMarcarLido(id, !lido)}
+                    aria-label={shortcutAccessibleLabel(
+                      rotuloLido,
+                      ATALHO_LER_NAO_LIDO
+                    )}
+                  >
+                    {lido ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <ShortcutTooltip
+                    label={rotuloLido}
+                    shortcut={ATALHO_LER_NAO_LIDO}
+                  />
+                </TooltipContent>
+              </Tooltip>
+            );
+          })()}
+          {/* Excluir do leitor (#102): atalho Delete → ShortcutTooltip com Kbd. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => id && onExcluir([id])}
+                aria-label={shortcutAccessibleLabel(
+                  t.controlRoom.excluir,
+                  ATALHO_EXCLUIR
+                )}
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <ShortcutTooltip
+                label={t.controlRoom.excluir}
+                shortcut={ATALHO_EXCLUIR}
+              />
+            </TooltipContent>
+          </Tooltip>
+          {/* Abrir no Outlook (#102): ação sem atalho → Tooltip simples. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" onClick={abrirOutlook} aria-label={t.controlRoom.abrirOutlook}>
+                <ExternalLink />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t.controlRoom.abrirOutlook}</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 

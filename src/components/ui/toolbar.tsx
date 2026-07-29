@@ -183,20 +183,26 @@ export const ToolbarButton = withTooltip(function ToolbarButton({
 });
 
 export function ToolbarSplitButton({
+  children,
   className,
+  pressed,
   ...props
-}: React.ComponentPropsWithoutRef<typeof ToolbarButton>) {
+}: React.ComponentPropsWithoutRef<'div'> & { pressed?: boolean }) {
   return (
-    <ToolbarButton
-      className={cn('group flex gap-0 px-0 hover:bg-transparent', className)}
+    <div
+      role="group"
+      data-pressed={pressed}
+      className={cn('group flex gap-0', className)}
       {...props}
-    />
+    >
+      {children}
+    </div>
   );
 }
 
 type ToolbarSplitButtonPrimaryProps = Omit<
-  React.ComponentPropsWithoutRef<typeof ToolbarToggleItem>,
-  'value'
+  React.ComponentPropsWithoutRef<'button'>,
+  'size'
 > &
   VariantProps<typeof toolbarButtonVariants>;
 
@@ -208,7 +214,8 @@ export function ToolbarSplitButtonPrimary({
   ...props
 }: ToolbarSplitButtonPrimaryProps) {
   return (
-    <span
+    <button
+      type="button"
       className={cn(
         toolbarButtonVariants({
           size,
@@ -221,7 +228,7 @@ export function ToolbarSplitButtonPrimary({
       {...props}
     >
       {children}
-    </span>
+    </button>
   );
 }
 
@@ -230,10 +237,11 @@ export function ToolbarSplitButtonSecondary({
   size,
   variant,
   ...props
-}: React.ComponentPropsWithoutRef<'span'> &
+}: Omit<React.ComponentPropsWithoutRef<'button'>, 'size'> &
   VariantProps<typeof dropdownArrowVariants>) {
   return (
-    <span
+    <button
+      type="button"
       className={cn(
         dropdownArrowVariants({
           size,
@@ -247,7 +255,7 @@ export function ToolbarSplitButtonSecondary({
       {...props}
     >
       <ChevronDown className="size-3.5 text-muted-foreground" data-icon />
-    </span>
+    </button>
   );
 }
 
@@ -314,7 +322,14 @@ function withTooltip<T extends React.ElementType>(Component: T) {
       setMounted(true);
     }, []);
 
-    const component = <Component {...(props as React.ComponentProps<T>)} />;
+    const componentProps = {
+      ...props,
+      ...(!props['aria-label'] &&
+      (typeof tooltip === 'string' || typeof tooltip === 'number')
+        ? { 'aria-label': String(tooltip) }
+        : {}),
+    } as React.ComponentProps<T>;
+    const component = <Component {...componentProps} />;
 
     if (tooltip && mounted) {
       return (
