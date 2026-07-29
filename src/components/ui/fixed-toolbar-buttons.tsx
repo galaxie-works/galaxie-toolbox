@@ -42,6 +42,7 @@ import { MarkToolbarButton } from './mark-toolbar-button';
 import { MediaToolbarButton } from './media-toolbar-button';
 import { ModeToolbarButton } from './mode-toolbar-button';
 import { MoreToolbarButton } from './more-toolbar-button';
+import { ShortcutMarkToolbarButton } from './shortcut-mark-toolbar-button';
 import { TableToolbarButton } from './table-toolbar-button';
 import { ToggleToolbarButton } from './toggle-toolbar-button';
 import { ToolbarGroup } from './toolbar';
@@ -80,31 +81,45 @@ export function FixedToolbarButtons() {
           </ToolbarGroup>
 
           <ToolbarGroup>
-            <MarkToolbarButton nodeType={KEYS.bold} tooltip="Bold (⌘+B)">
+            <ShortcutMarkToolbarButton
+              nodeType={KEYS.bold}
+              label="Bold"
+              shortcut={{ primary: true, key: 'B' }}
+            >
               <BoldIcon />
-            </MarkToolbarButton>
+            </ShortcutMarkToolbarButton>
 
-            <MarkToolbarButton nodeType={KEYS.italic} tooltip="Italic (⌘+I)">
+            <ShortcutMarkToolbarButton
+              nodeType={KEYS.italic}
+              label="Italic"
+              shortcut={{ primary: true, key: 'I' }}
+            >
               <ItalicIcon />
-            </MarkToolbarButton>
+            </ShortcutMarkToolbarButton>
 
-            <MarkToolbarButton
+            <ShortcutMarkToolbarButton
               nodeType={KEYS.underline}
-              tooltip="Underline (⌘+U)"
+              label="Underline"
+              shortcut={{ primary: true, key: 'U' }}
             >
               <UnderlineIcon />
-            </MarkToolbarButton>
+            </ShortcutMarkToolbarButton>
 
-            <MarkToolbarButton
+            <ShortcutMarkToolbarButton
               nodeType={KEYS.strikethrough}
-              tooltip="Strikethrough (⌘+⇧+M)"
+              label="Strikethrough"
+              shortcut={{ primary: true, shift: true, key: 'M' }}
             >
               <StrikethroughIcon />
-            </MarkToolbarButton>
+            </ShortcutMarkToolbarButton>
 
-            <MarkToolbarButton nodeType={KEYS.code} tooltip="Code (⌘+E)">
+            <ShortcutMarkToolbarButton
+              nodeType={KEYS.code}
+              label="Code"
+              shortcut={{ primary: true, key: 'E' }}
+            >
               <Code2Icon />
-            </MarkToolbarButton>
+            </ShortcutMarkToolbarButton>
 
             <FontColorToolbarButton nodeType={KEYS.color} tooltip="Text color">
               <BaselineIcon />

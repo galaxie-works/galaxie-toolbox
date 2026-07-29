@@ -216,7 +216,10 @@ export function ConfirmarBiblioteca({
                     {t.confirmar.naoPerguntar}
                   </FieldLabel>
                   <Tooltip>
-                    <TooltipTrigger className="text-muted-foreground">
+                    <TooltipTrigger
+                      className="text-muted-foreground"
+                      aria-label={t.confirmar.naoPerguntarAjudaRotulo}
+                    >
                       <HelpCircleIcon aria-hidden="true" className="size-3.5" />
                     </TooltipTrigger>
                     <TooltipContent side="top">

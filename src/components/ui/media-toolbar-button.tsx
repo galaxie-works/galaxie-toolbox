@@ -98,18 +98,20 @@ export function MediaToolbarButton({
   return (
     <>
       <ToolbarSplitButton
-        onClick={() => {
-          openFilePicker();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            setOpen(true);
-          }
-        }}
         pressed={open}
       >
-        <ToolbarSplitButtonPrimary>
+        <ToolbarSplitButtonPrimary
+          aria-label={currentConfig.title}
+          onClick={() => {
+            openFilePicker();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setOpen(true);
+            }
+          }}
+        >
           {currentConfig.icon}
         </ToolbarSplitButtonPrimary>
 
@@ -120,7 +122,9 @@ export function MediaToolbarButton({
           {...props}
         >
           <DropdownMenuTrigger asChild>
-            <ToolbarSplitButtonSecondary />
+            <ToolbarSplitButtonSecondary
+              aria-label={`${currentConfig.title} options`}
+            />
           </DropdownMenuTrigger>
 
           <DropdownMenuContent

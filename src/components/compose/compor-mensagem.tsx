@@ -50,7 +50,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
-import { MarkToolbarButton } from "@/components/ui/mark-toolbar-button";
+import { ShortcutMarkToolbarButton } from "@/components/ui/shortcut-mark-toolbar-button";
 import { ToolbarButton } from "@/components/ui/toolbar";
 import {
   BulletedListToolbarButton,
@@ -564,24 +564,34 @@ export const ComporMensagem = forwardRef<
       <MencionaveisProvider pessoas={mencionaveis}>
       <Plate editor={editor}>
         <FixedToolbar className="justify-start rounded-none border-b bg-background">
-          <MarkToolbarButton nodeType={KEYS.bold} tooltip="Negrito (⌘+B)">
+          <ShortcutMarkToolbarButton
+            nodeType={KEYS.bold}
+            label="Negrito"
+            shortcut={{ primary: true, key: "B" }}
+          >
             <BoldIcon />
-          </MarkToolbarButton>
-          <MarkToolbarButton nodeType={KEYS.italic} tooltip="Itálico (⌘+I)">
+          </ShortcutMarkToolbarButton>
+          <ShortcutMarkToolbarButton
+            nodeType={KEYS.italic}
+            label="Itálico"
+            shortcut={{ primary: true, key: "I" }}
+          >
             <ItalicIcon />
-          </MarkToolbarButton>
-          <MarkToolbarButton
+          </ShortcutMarkToolbarButton>
+          <ShortcutMarkToolbarButton
             nodeType={KEYS.underline}
-            tooltip="Sublinhado (⌘+U)"
+            label="Sublinhado"
+            shortcut={{ primary: true, key: "U" }}
           >
             <UnderlineIcon />
-          </MarkToolbarButton>
-          <MarkToolbarButton
+          </ShortcutMarkToolbarButton>
+          <ShortcutMarkToolbarButton
             nodeType={KEYS.strikethrough}
-            tooltip="Tachado (⌘+⇧+M)"
+            label="Tachado"
+            shortcut={{ primary: true, shift: true, key: "M" }}
           >
             <StrikethroughIcon />
-          </MarkToolbarButton>
+          </ShortcutMarkToolbarButton>
           <BulletedListToolbarButton />
           <LinkToolbarButton />
           <ToolbarButton

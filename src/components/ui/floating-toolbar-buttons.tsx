@@ -17,8 +17,8 @@ import { AIToolbarButton } from './ai-toolbar-button';
 import { CommentToolbarButton } from './comment-toolbar-button';
 import { InlineEquationToolbarButton } from './equation-toolbar-button';
 import { LinkToolbarButton } from './link-toolbar-button';
-import { MarkToolbarButton } from './mark-toolbar-button';
 import { MoreToolbarButton } from './more-toolbar-button';
+import { ShortcutMarkToolbarButton } from './shortcut-mark-toolbar-button';
 import { SuggestionToolbarButton } from './suggestion-toolbar-button';
 import { ToolbarGroup } from './toolbar';
 import { TurnIntoToolbarButton } from './turn-into-toolbar-button';
@@ -40,31 +40,45 @@ export function FloatingToolbarButtons() {
           <ToolbarGroup>
             <TurnIntoToolbarButton />
 
-            <MarkToolbarButton nodeType={KEYS.bold} tooltip="Bold (⌘+B)">
+            <ShortcutMarkToolbarButton
+              nodeType={KEYS.bold}
+              label="Bold"
+              shortcut={{ primary: true, key: 'B' }}
+            >
               <BoldIcon />
-            </MarkToolbarButton>
+            </ShortcutMarkToolbarButton>
 
-            <MarkToolbarButton nodeType={KEYS.italic} tooltip="Italic (⌘+I)">
+            <ShortcutMarkToolbarButton
+              nodeType={KEYS.italic}
+              label="Italic"
+              shortcut={{ primary: true, key: 'I' }}
+            >
               <ItalicIcon />
-            </MarkToolbarButton>
+            </ShortcutMarkToolbarButton>
 
-            <MarkToolbarButton
+            <ShortcutMarkToolbarButton
               nodeType={KEYS.underline}
-              tooltip="Underline (⌘+U)"
+              label="Underline"
+              shortcut={{ primary: true, key: 'U' }}
             >
               <UnderlineIcon />
-            </MarkToolbarButton>
+            </ShortcutMarkToolbarButton>
 
-            <MarkToolbarButton
+            <ShortcutMarkToolbarButton
               nodeType={KEYS.strikethrough}
-              tooltip="Strikethrough (⌘+⇧+M)"
+              label="Strikethrough"
+              shortcut={{ primary: true, shift: true, key: 'M' }}
             >
               <StrikethroughIcon />
-            </MarkToolbarButton>
+            </ShortcutMarkToolbarButton>
 
-            <MarkToolbarButton nodeType={KEYS.code} tooltip="Code (⌘+E)">
+            <ShortcutMarkToolbarButton
+              nodeType={KEYS.code}
+              label="Code"
+              shortcut={{ primary: true, key: 'E' }}
+            >
               <Code2Icon />
-            </MarkToolbarButton>
+            </ShortcutMarkToolbarButton>
 
             <InlineEquationToolbarButton />
 

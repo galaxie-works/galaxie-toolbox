@@ -42,6 +42,7 @@ export function BulletedListToolbarButton() {
   return (
     <ToolbarSplitButton pressed={open}>
       <ToolbarSplitButtonPrimary
+        aria-label="Bulleted list"
         className="data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
         onClick={() => {
           toggleList(editor, {
@@ -55,7 +56,7 @@ export function BulletedListToolbarButton() {
 
       <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
         <DropdownMenuTrigger asChild>
-          <ToolbarSplitButtonSecondary />
+          <ToolbarSplitButtonSecondary aria-label="Bulleted list options" />
         </DropdownMenuTrigger>
 
         <DropdownMenuContent align="start" alignOffset={-32}>
@@ -122,6 +123,7 @@ export function NumberedListToolbarButton() {
   return (
     <ToolbarSplitButton pressed={open}>
       <ToolbarSplitButtonPrimary
+        aria-label="Numbered list"
         className="data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
         onClick={() =>
           toggleList(editor, {
@@ -135,7 +137,7 @@ export function NumberedListToolbarButton() {
 
       <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
         <DropdownMenuTrigger asChild>
-          <ToolbarSplitButtonSecondary />
+          <ToolbarSplitButtonSecondary aria-label="Numbered list options" />
         </DropdownMenuTrigger>
 
         <DropdownMenuContent align="start" alignOffset={-32}>

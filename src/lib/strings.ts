@@ -136,6 +136,8 @@ const pt = {
     naoPerguntar: "Não pedir confirmação novamente",
     naoPerguntarAjuda:
       "Nas próximas vezes, a biblioteca conecta direto ao ligar a chave. Dá para reativar o aviso em Configurações.",
+    naoPerguntarAjudaRotulo:
+      "Mais informações sobre não pedir confirmação novamente",
     continuar: "Continuar",
     depois: "Deixar pra depois",
     remover: "Remover biblioteca",
@@ -375,6 +377,8 @@ const pt = {
     baixandoAnexo: "Baixando anexo...",
     abrirArquivo: "Abrir",
     abrirPasta: "Abrir pasta",
+    expandirPasta: "Expandir {pasta}",
+    recolherPasta: "Recolher {pasta}",
     dispensar: "Dispensar",
     novoEmailRecebido: "Novo e-mail",
     nSelecionados: "{n} selecionados",
@@ -408,6 +412,7 @@ const pt = {
     recolherConversa: "Recolher conversa",
     nMensagensConversa: "{n} mensagens nesta conversa",
     limparSelecao: "Limpar seleção",
+    selecionarTudo: "Selecionar tudo",
     selecionadosExcluidos: "{n} e-mails excluídos.",
     conversaSelecionada: "1 conversa selecionada",
     conversasSelecionadas: "{n} conversas selecionadas",
@@ -760,6 +765,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     naoPerguntar: "Don't ask for confirmation again",
     naoPerguntarAjuda:
       "Next time, the library connects straight away when you flip the switch. You can turn the warning back on in Settings.",
+    naoPerguntarAjudaRotulo:
+      "More information about not asking for confirmation again",
     continuar: "Continue",
     depois: "Maybe later",
     remover: "Remove library",
@@ -997,6 +1004,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     baixandoAnexo: "Downloading attachment...",
     abrirArquivo: "Open",
     abrirPasta: "Open folder",
+    expandirPasta: "Expand {pasta}",
+    recolherPasta: "Collapse {pasta}",
     dispensar: "Dismiss",
     novoEmailRecebido: "New email",
     nSelecionados: "{n} selected",
@@ -1030,6 +1039,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     recolherConversa: "Collapse conversation",
     nMensagensConversa: "{n} messages in this conversation",
     limparSelecao: "Clear selection",
+    selecionarTudo: "Select all",
     selecionadosExcluidos: "{n} emails deleted.",
     conversaSelecionada: "1 conversation selected",
     conversasSelecionadas: "{n} conversations selected",

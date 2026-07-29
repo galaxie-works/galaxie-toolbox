@@ -81,7 +81,7 @@ import {
 import { FramePanel } from "@/components/reui/frame";
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
-import { MarkToolbarButton } from "@/components/ui/mark-toolbar-button";
+import { ShortcutMarkToolbarButton } from "@/components/ui/shortcut-mark-toolbar-button";
 import { BulletedListToolbarButton } from "@/components/ui/list-toolbar-button";
 import { LinkToolbarButton } from "@/components/ui/link-toolbar-button";
 import { COMPOSE_KIT } from "@/components/compose/compose-kit";
@@ -214,21 +214,34 @@ function EditorCorpo({
   return (
     <Plate editor={editor}>
       <FixedToolbar className="justify-start rounded-none border-b bg-background">
-        <MarkToolbarButton nodeType={KEYS.bold} tooltip="Bold (⌘+B)">
+        <ShortcutMarkToolbarButton
+          nodeType={KEYS.bold}
+          label="Bold"
+          shortcut={{ primary: true, key: "B" }}
+        >
           <BoldIcon />
-        </MarkToolbarButton>
-        <MarkToolbarButton nodeType={KEYS.italic} tooltip="Italic (⌘+I)">
+        </ShortcutMarkToolbarButton>
+        <ShortcutMarkToolbarButton
+          nodeType={KEYS.italic}
+          label="Italic"
+          shortcut={{ primary: true, key: "I" }}
+        >
           <ItalicIcon />
-        </MarkToolbarButton>
-        <MarkToolbarButton nodeType={KEYS.underline} tooltip="Underline (⌘+U)">
+        </ShortcutMarkToolbarButton>
+        <ShortcutMarkToolbarButton
+          nodeType={KEYS.underline}
+          label="Underline"
+          shortcut={{ primary: true, key: "U" }}
+        >
           <UnderlineIcon />
-        </MarkToolbarButton>
-        <MarkToolbarButton
+        </ShortcutMarkToolbarButton>
+        <ShortcutMarkToolbarButton
           nodeType={KEYS.strikethrough}
-          tooltip="Strikethrough (⌘+⇧+M)"
+          label="Strikethrough"
+          shortcut={{ primary: true, shift: true, key: "M" }}
         >
           <StrikethroughIcon />
-        </MarkToolbarButton>
+        </ShortcutMarkToolbarButton>
         <BulletedListToolbarButton />
         <LinkToolbarButton />
       </FixedToolbar>

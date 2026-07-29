@@ -1509,6 +1509,7 @@ function FolderSidebar({
           onSel(p.id);
         }}
         aria-disabled={p.acessoNegado || undefined}
+        aria-label={colapsada ? rotulo : undefined}
         title={
           p.acessoNegado
             ? t.controlRoom.caixaAcessoParcial
@@ -1676,7 +1677,12 @@ function FolderSidebar({
               <button
                 type="button"
                 onClick={() => alternarExpandir(p.id)}
-                aria-label={rotulo}
+                aria-label={preencher(
+                  expandidas.has(p.id)
+                    ? t.controlRoom.recolherPasta
+                    : t.controlRoom.expandirPasta,
+                  { pasta: rotulo }
+                )}
                 className="grid size-5 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
               >
                 <ChevronRight
@@ -3186,7 +3192,11 @@ function MessageList({
               e.target.checked ? selecionarTudo(idsFiltrados) : limparSelecao()
             }
             className="size-3.5 accent-primary"
-            aria-label={t.controlRoom.limparSelecao}
+            aria-label={
+              todosSel
+                ? t.controlRoom.limparSelecao
+                : t.controlRoom.selecionarTudo
+            }
           />
           <span className="text-xs font-medium">
             {preencher(t.controlRoom.nSelecionados, { n: selecionados.size })}
@@ -3199,7 +3209,12 @@ function MessageList({
             rotuloProcessando={t.controlRoom.excluindo}
             rotuloConcluido={t.controlRoom.excluidos}
           />
-          <Button variant="ghost" size="icon-sm" onClick={limparSelecao}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={limparSelecao}
+            aria-label={t.controlRoom.limparSelecao}
+          >
             <X />
           </Button>
         </div>
