@@ -1510,13 +1510,9 @@ function FolderSidebar({
         }}
         aria-disabled={p.acessoNegado || undefined}
         aria-label={colapsada ? rotulo : undefined}
-        title={
-          p.acessoNegado
-            ? t.controlRoom.caixaAcessoParcial
-            : colapsada
-              ? rotulo
-              : undefined
-        }
+        // Colapsada: o nome vem pelo tooltip canônico (#100), não mais por
+        // `title` nativo. `title` fica só para o aviso de acesso parcial.
+        title={p.acessoNegado ? t.controlRoom.caixaAcessoParcial : undefined}
         className={cn(
           "flex items-center rounded-md text-sm transition-colors",
           colapsada ? "relative size-9 justify-center" : "flex-1 gap-2.5 px-2.5 py-2",
@@ -1574,11 +1570,28 @@ function FolderSidebar({
     const proibidos = subarvoreIds(p.id, subpastas);
     const destinos = arvore.filter((d) => !proibidos.has(d.id));
 
-    const comMenu = (conteudo: React.ReactNode) => (
+    // `dica` (só na sidebar colapsada, #100): quando o rótulo textual está
+    // oculto, o nome da pasta aparece por tooltip canônico. Mesmo aninhamento de
+    // gatilhos do app-sidebar (Tooltip > TooltipTrigger asChild > MenuTrigger
+    // asChild > botão); sem `dica` a árvore é idêntica à de antes.
+    const comMenu = (conteudo: React.ReactNode, dica?: string) => (
       <ContextMenu>
-        <ContextMenuTrigger asChild disabled={semAcoes}>
-          {conteudo}
-        </ContextMenuTrigger>
+        {dica ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <ContextMenuTrigger asChild disabled={semAcoes}>
+                {conteudo}
+              </ContextMenuTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="right" align="center">
+              {dica}
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <ContextMenuTrigger asChild disabled={semAcoes}>
+            {conteudo}
+          </ContextMenuTrigger>
+        )}
         <ContextMenuContent className="w-56">
           {marcarLidas && (
             <ContextMenuItem className="gap-2" onClick={() => onMarcarTodasLidas(p.id)}>
@@ -1667,31 +1680,46 @@ function FolderSidebar({
       </ContextMenu>
     );
 
-    if (colapsada) return <div key={p.id}>{comMenu(linhaBtn)}</div>;
+    if (colapsada) return <div key={p.id}>{comMenu(linhaBtn, rotulo)}</div>;
     return (
       <div key={p.id}>
         {comMenu(
           <div className={cn("flex items-center", ehFilho && "pl-5")}>
             {/* chevron só quando a pasta realmente tem subpastas (childFolderCount > 0) */}
             {p.filhos > 0 ? (
-              <button
-                type="button"
-                onClick={() => alternarExpandir(p.id)}
-                aria-label={preencher(
+              (() => {
+                // Nome e tooltip do chevron comunicam o ESTADO (expandir vs
+                // recolher), não só a pasta (#100) — a mesma string alimenta
+                // `aria-label` e o tooltip canônico.
+                const rotuloChevron = preencher(
                   expandidas.has(p.id)
                     ? t.controlRoom.recolherPasta
                     : t.controlRoom.expandirPasta,
                   { pasta: rotulo }
-                )}
-                className="grid size-5 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
-              >
-                <ChevronRight
-                  className={cn(
-                    "size-3.5 transition-transform",
-                    expandidas.has(p.id) && "rotate-90"
-                  )}
-                />
-              </button>
+                );
+                return (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => alternarExpandir(p.id)}
+                        aria-label={rotuloChevron}
+                        className="grid size-5 shrink-0 place-items-center text-muted-foreground hover:text-foreground"
+                      >
+                        <ChevronRight
+                          className={cn(
+                            "size-3.5 transition-transform",
+                            expandidas.has(p.id) && "rotate-90"
+                          )}
+                        />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" align="center">
+                      {rotuloChevron}
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })()
             ) : (
               <span className="size-5 shrink-0" />
             )}
@@ -1728,20 +1756,34 @@ function FolderSidebar({
       ) : null}
 
       {colapsada ? (
-        <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
-          <PenSquare />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
+              <PenSquare />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right" align="center">
+            {t.controlRoom.novoEmail}
+          </TooltipContent>
+        </Tooltip>
       ) : (
         <ButtonGroup className="w-full">
           <Button className="flex-1" onClick={onNovo}>
             <PenSquare /> {t.controlRoom.novoEmail}
           </Button>
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="icon" aria-label={t.controlRoom.composeOutlook}>
-                <ChevronDown />
-              </Button>
-            </DropdownMenuTrigger>
+            {/* Tooltip > DropdownMenu: os dois gatilhos com asChild no mesmo
+                botão, igual ao app-sidebar (#100). */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button size="icon" aria-label={t.controlRoom.composeOutlook}>
+                    <ChevronDown />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>{t.controlRoom.composeOutlook}</TooltipContent>
+            </Tooltip>
             <DropdownMenuContent align="end" className="w-48">
               <DropdownMenuItem onClick={onComposeOutlook}>
                 {t.controlRoom.composeOutlook}
@@ -1789,20 +1831,31 @@ function FolderSidebar({
           Agenda pertence ao Bridge, não ao app principal (#50). Selecionado ⟺
           card da Agenda visível; nasce fechada (menos requisições no startup). */}
       <Separator className={cn("shrink-0", colapsada && "w-6")} />
-      <Button
-        variant={agendaAberta ? "secondary" : "ghost"}
-        onClick={onToggleAgenda}
-        title={t.controlRoom.agendaTitulo}
-        aria-label={t.controlRoom.agendaTitulo}
-        className={cn(
-          "shrink-0",
-          colapsada ? "size-9 justify-center p-0" : "w-full justify-start gap-2.5",
-          !agendaAberta && "text-muted-foreground"
+      {/* Colapsada: nome pelo tooltip canônico (#100). Só renderiza o
+          TooltipContent nesse estado — expandida, o rótulo textual já aparece,
+          mesma regra do app-sidebar. */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant={agendaAberta ? "secondary" : "ghost"}
+            onClick={onToggleAgenda}
+            aria-label={t.controlRoom.agendaTitulo}
+            className={cn(
+              "shrink-0",
+              colapsada ? "size-9 justify-center p-0" : "w-full justify-start gap-2.5",
+              !agendaAberta && "text-muted-foreground"
+            )}
+          >
+            <CalendarDays className="size-4 shrink-0" />
+            {!colapsada && <span>{t.controlRoom.agendaTitulo}</span>}
+          </Button>
+        </TooltipTrigger>
+        {colapsada && (
+          <TooltipContent side="right" align="center">
+            {t.controlRoom.agendaTitulo}
+          </TooltipContent>
         )}
-      >
-        <CalendarDays className="size-4 shrink-0" />
-        {!colapsada && <span>{t.controlRoom.agendaTitulo}</span>}
-      </Button>
+      </Tooltip>
 
       {/* Confirmação do "Esvaziar pasta": destrutiva e não desfazível, então
           nunca dispara direto do menu de contexto (#89). */}
