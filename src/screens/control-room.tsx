@@ -155,8 +155,6 @@ import type {
   AnexoEmail,
   AppUser,
   EmailItem,
-  EventoAgenda,
-  EventoDetalhe,
   PastaEmail,
 } from "@/lib/types";
 import {
@@ -4426,21 +4424,27 @@ const MessageDetail = forwardRef<
 // ===========================================================================
 
 function AgendaConteudo({
-  onEvento,
   t,
   idioma,
 }: {
-  onEvento: (id: string) => void;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
-  const [dia, setDia] = useState<Date>(() => new Date());
-  const [mesEventos, setMesEventos] = useState<EventoAgenda[] | null>(null);
+  const dia = useAppStore((s) => s.agendaDia);
+  const setDia = useAppStore((s) => s.setAgendaDia);
+  const mesEventos = useAppStore((s) => s.agendaEventosMes);
   // Erro de carga separado do "vazio": sem isso, uma falha do Graph
   // (403 de escopo, rede, etc.) virava um mês "sem eventos" idêntico ao real,
   // mascarando o problema (#21). `recargaAgenda` re-dispara o fetch no retry.
-  const [erroAgenda, setErroAgenda] = useState<string | null>(null);
-  const [recargaAgenda, setRecargaAgenda] = useState(0);
+  const erroAgenda = useAppStore((s) => s.agendaErro);
+  const recargaAgenda = useAppStore((s) => s.agendaRecarga);
+  const carregarMesAgenda = useAppStore((s) => s.carregarMesAgenda);
+  const recarregarAgenda = useAppStore((s) => s.recarregarAgenda);
+  const coresCat = useAppStore((s) => s.agendaCoresCategoria);
+  const carregarCoresAgenda = useAppStore((s) => s.carregarCoresAgenda);
+  const selecionarEventoAgenda = useAppStore(
+    (s) => s.selecionarEventoAgenda,
+  );
 
   const chaveDia = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
 
@@ -4455,39 +4459,13 @@ function AgendaConteudo({
   }, [ano, mes]);
 
   useEffect(() => {
-    let vivo = true;
-    setMesEventos(null);
-    setErroAgenda(null);
-    api
-      .crAgenda(mesIni, mesFim)
-      .then((d) => {
-        if (vivo) setMesEventos(d);
-      })
-      .catch((e) => {
-        // Surface o erro real (ex.: "/me/calendarView retornou 403") em vez de
-        // fingir "sem eventos".
-        if (vivo) {
-          setErroAgenda(String(e));
-          setMesEventos([]);
-        }
-      });
-    return () => {
-      vivo = false;
-    };
-  }, [mesIni, mesFim, recargaAgenda]);
+    void carregarMesAgenda(mesIni, mesFim);
+  }, [mesIni, mesFim, recargaAgenda, carregarMesAgenda]);
 
   // Cores reais das categorias do Outlook (nome -> hex), carregadas uma vez.
-  const [coresCat, setCoresCat] = useState<Map<string, string>>(new Map());
   useEffect(() => {
-    let vivo = true;
-    api
-      .crCategorias()
-      .then((cs) => vivo && setCoresCat(new Map(cs.map((c) => [c.nome, c.cor]))))
-      .catch(() => {});
-    return () => {
-      vivo = false;
-    };
-  }, []);
+    void carregarCoresAgenda();
+  }, [carregarCoresAgenda]);
 
   const agenda = useMemo(() => {
     if (!mesEventos) return null;
@@ -4555,7 +4533,7 @@ function AgendaConteudo({
           {erroAgenda ? (
             <AgendaErro
               mensagem={erroAgenda}
-              onRetry={() => setRecargaAgenda((n) => n + 1)}
+              onRetry={recarregarAgenda}
               t={t}
             />
           ) : agenda === null ? (
@@ -4573,7 +4551,7 @@ function AgendaConteudo({
                   <button
                     key={ev.id}
                     type="button"
-                    onClick={() => onEvento(ev.id)}
+                    onClick={() => void selecionarEventoAgenda(ev.id)}
                     style={cor ? ({ "--barra": cor } as React.CSSProperties) : undefined}
                     className={cn(
                       "relative w-full rounded-md bg-muted p-2 pl-6 text-left text-sm transition-colors hover:bg-muted/70",
@@ -4603,32 +4581,13 @@ function AgendaConteudo({
 
 // --- modal de detalhe do evento --------------------------------------------
 
-function EventoDialog({
-  id,
-  userEmail,
-  onClose,
-}: {
-  id: string | null;
-  userEmail?: string | null;
-  onClose: () => void;
-}) {
+function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const { idioma, t } = useIdioma();
-  const [det, setDet] = useState<EventoDetalhe | null>(null);
+  const id = useAppStore((s) => s.agendaEventoId);
+  const det = useAppStore((s) => s.agendaEventoDetalhe);
+  const fecharEventoAgenda = useAppStore((s) => s.fecharEventoAgenda);
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
-
-  useEffect(() => {
-    if (!id) {
-      setDet(null);
-      return;
-    }
-    let vivo = true;
-    setDet(null);
-    api.crEventoCorpo(id).then((d) => vivo && setDet(d)).catch(() => {});
-    return () => {
-      vivo = false;
-    };
-  }, [id]);
 
   // Pede as fotos dos participantes quando o detalhe carrega.
   useEffect(() => {
@@ -4636,7 +4595,7 @@ function EventoDialog({
   }, [det, pedirFotos]);
 
   return (
-    <Sheet open={!!id} onOpenChange={(o) => !o && onClose()}>
+    <Sheet open={!!id} onOpenChange={(o) => !o && fecharEventoAgenda()}>
       <SheetContent side="right" className="flex w-[30%] flex-col gap-0 p-0 sm:max-w-[30vw]">
         {!det ? (
           <div className="flex flex-1 items-center justify-center py-10">
@@ -4974,7 +4933,6 @@ export function ControlRoomScreen({
   const selecionados = useAppStore((s) => s.selecionados);
   const limparSelecao = useAppStore((s) => s.limparSelecao);
   const removerDaSelecao = useAppStore((s) => s.removerDaSelecao);
-  const [eventoSel, setEventoSel] = useState<string | null>(null);
   const [recarga, setRecarga] = useState(0);
   // recargaPastas atualiza SÓ as contagens do sidebar, sem recarregar a lista
   // (ações como excluir/responder não devem zerar o lazy load nem o scroll).
@@ -6181,11 +6139,11 @@ export function ControlRoomScreen({
             controla a visibilidade é o item do sidebar esquerdo (#50): visível =
             renderiza; escondido = some e a lista+detalhe ocupam a largura toda. */}
         {agendaAberta && (
-          <AgendaConteudo onEvento={setEventoSel} t={t} idioma={idioma} />
+          <AgendaConteudo t={t} idioma={idioma} />
         )}
       </div>
 
-      <EventoDialog id={eventoSel} userEmail={user.email} onClose={() => setEventoSel(null)} />
+      <EventoDialog userEmail={user.email} />
       <NovaMensagemModal
         aberto={novaAberta}
         onClose={() => setNovaAberta(false)}

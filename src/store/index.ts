@@ -43,6 +43,10 @@ import {
   createReaderSlice,
   type ReaderSlice,
 } from "./reader-slice";
+import {
+  createAgendaSlice,
+  type AgendaSlice,
+} from "./agenda-slice";
 import { lerTemplates } from "@/lib/templates";
 import {
   aplicarAltoContraste,
@@ -97,7 +101,8 @@ export type AppStore =
   & PersonalizationSlice
   & BridgeSlice
   & SelectionSlice
-  & ReaderSlice;
+  & ReaderSlice
+  & AgendaSlice;
 
 /** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
 type AppPersistido = UiPersistido &
@@ -373,6 +378,8 @@ export const useAppStore = create<AppStore>()(
       ...createSelectionSlice(...a),
       // Conteúdo do leitor (#130) é estado de sessão, fora do partialize.
       ...createReaderSlice(...a),
+      // Dados/seleção da agenda (#131) são sessão, fora do partialize.
+      ...createAgendaSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",
