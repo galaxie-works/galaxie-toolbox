@@ -90,8 +90,8 @@ import type { MarcarLidoModo } from "./ui-slice";
  *   Novo campo persistido: registre a chave no slice e some no getItem/setItem/
  *   removeItem/partialize aqui.
  *
- * COEXISTÊNCIA: estado ainda-não-migrado segue no `usePersistedState`/`useState`
- * do control-room (ex.: filtros da lista). Nada quebra.
+ * ESTADO DE SESSÃO: seleção, leitor, agenda, compose e carga de mailbox/lista
+ * também vivem nas slices, mas ficam fora do `partialize`.
  * ============================================================================
  */
 

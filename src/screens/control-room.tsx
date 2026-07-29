@@ -4910,8 +4910,29 @@ export function ControlRoomScreen({
   const setCachePasta = useAppStore((s) => s.setCachePasta);
   const atualizarCachePasta = useAppStore((s) => s.atualizarCachePasta);
   const limparCachePasta = useAppStore((s) => s.limparCachePasta);
-  // Caixa ativa reseta pra própria (/me) a cada sessão — a lista é que persiste.
-  const [caixaAtiva, setCaixaAtiva] = useState<string>(CAIXA_PROPRIA);
+  // Carga de mailbox/lista (#155): estado de sessão nas slices canônicas. Só a
+  // lista de caixas compartilhadas persiste; os dados abaixo ficam fora do
+  // partialize e não duplicam fonte no root do control-room.
+  const caixaAtiva = useAppStore((s) => s.caixaAtiva);
+  const setCaixaAtiva = useAppStore((s) => s.setCaixaAtiva);
+  const pastas = useAppStore((s) => s.pastas);
+  const setPastas = useAppStore((s) => s.setPastas);
+  const subpastas = useAppStore((s) => s.subpastas);
+  const setSubpastas = useAppStore((s) => s.setSubpastas);
+  const recargaPastas = useAppStore((s) => s.recargaPastas);
+  const setRecargaPastas = useAppStore((s) => s.setRecargaPastas);
+  const pastaSel = useAppStore((s) => s.pastaSel);
+  const setPastaSel = useAppStore((s) => s.setPastaSel);
+  const mensagens = useAppStore((s) => s.mensagens);
+  const setMensagens = useAppStore((s) => s.setMensagens);
+  const caixaDados = useAppStore((s) => s.caixaDados);
+  const setCaixaDados = useAppStore((s) => s.setCaixaDados);
+  const recarga = useAppStore((s) => s.listaRecarga);
+  const setRecarga = useAppStore((s) => s.setListaRecarga);
+  const temMais = useAppStore((s) => s.temMais);
+  const setTemMais = useAppStore((s) => s.setTemMais);
+  const carregandoMais = useAppStore((s) => s.carregandoMais);
+  const setCarregandoMais = useAppStore((s) => s.setCarregandoMais);
   const [adicionarCaixaAberto, setAdicionarCaixaAberto] = useState(false);
   // O token atual traz Mail.Read.Shared? Falso ⇒ sinaliza relogin (escopo novo
   // na SCOPES; sem consent admin — já concedido, ver AGENTS.md §1.1).
@@ -4940,8 +4961,6 @@ export function ControlRoomScreen({
     };
   }, []);
   const caixaCompartilhadaAtiva = caixaAtiva !== CAIXA_PROPRIA;
-  const [pastas, setPastas] = useState<PastaEmail[] | null>(null);
-  const [pastaSel, setPastaSel] = useState("inbox");
   // Coalescing da troca de pasta (#87): a SELEÇÃO (`pastaSel`) muda na hora — o
   // sidebar já destaca a pasta clicada e o cabeçalho troca de nome —, mas as
   // CARGAS de rede (mensagens + contadores) seguem `pastaCarga`, a versão
@@ -4950,10 +4969,6 @@ export function ControlRoomScreen({
   // rápido sem atrasar perceptivelmente uma troca isolada.
   const DEBOUNCE_PASTA_MS = 180;
   const pastaCarga = useDebounce(pastaSel, DEBOUNCE_PASTA_MS);
-  const [mensagens, setMensagens] = useState<EmailItem[] | null>(null);
-  // Caixa à qual `mensagens` pertence. Na troca, o render novo nunca reutiliza
-  // nem por um frame a lista/detalhe da caixa anterior (#112).
-  const [caixaDados, setCaixaDados] = useState(CAIXA_PROPRIA);
   // Seleção/ativa/âncora migradas para o selection slice (#128). São estado de
   // sessão e permanecem fora da persistência.
   const msgSel = useAppStore((s) => s.msgSel);
@@ -4961,10 +4976,6 @@ export function ControlRoomScreen({
   const selecionados = useAppStore((s) => s.selecionados);
   const limparSelecao = useAppStore((s) => s.limparSelecao);
   const removerDaSelecao = useAppStore((s) => s.removerDaSelecao);
-  const [recarga, setRecarga] = useState(0);
-  // recargaPastas atualiza SÓ as contagens do sidebar, sem recarregar a lista
-  // (ações como excluir/responder não devem zerar o lazy load nem o scroll).
-  const [recargaPastas, setRecargaPastas] = useState(0);
   // Colapsos persistem (o app guarda o estado que o usuário deixa).
   // Sidebar migrada pro ui slice (#126). Chave `bridge.sidebar` preservada.
   const sidebarAberta = useAppStore((s) => s.sidebarAberta);
@@ -5014,8 +5025,6 @@ export function ControlRoomScreen({
       setMarcarLidoAtraso(MARCAR_LIDO_ATRASO_PADRAO);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  const [temMais, setTemMais] = useState(false);
-  const [carregandoMais, setCarregandoMais] = useState(false);
   const abrirCompose = useAppStore((s) => s.abrirCompose);
   // Handle do leitor para os atalhos r/a/f (#28) abrirem o Sheet de resposta.
   const detalheRef = useRef<MessageDetailHandle>(null);
@@ -5077,13 +5086,12 @@ export function ControlRoomScreen({
     return () => {
       vivo = false;
     };
-  }, [caixaAtiva, recarga, recargaPastas]);
+  }, [caixaAtiva, recarga, recargaPastas, setPastas]);
 
   // Cache de SUBPASTAS (childFolders), compartilhado pelo sidebar (expandir) e
   // pelo submenu "Mover para pasta…" (#88). Carrega sob demanda e memoriza; o
   // ref evita pedir duas vezes a mesma pasta (o sidebar e o submenu podem pedir
   // quase ao mesmo tempo).
-  const [subpastas, setSubpastas] = useState<Record<string, PastaEmail[]>>({});
   const subpastasPedidasRef = useRef<Set<string>>(new Set());
   const carregarSubpastas = useCallback(
     (id: string) => {
@@ -5104,7 +5112,7 @@ export function ControlRoomScreen({
           }
         });
     },
-    [caixaAtiva, t]
+    [caixaAtiva, setSubpastas, t]
   );
 
   // Trocar de caixa é uma fronteira de dados: nenhuma seleção, paginação,
@@ -5123,7 +5131,16 @@ export function ControlRoomScreen({
     carregadosRef.current = 0;
     deletadasRef.current.clear();
     ultimoVistoRef.current = null;
-  }, [caixaAtiva, limparConsultas, limparSelecao, setMsgSel]);
+  }, [
+    caixaAtiva,
+    limparConsultas,
+    limparSelecao,
+    setMensagens,
+    setMsgSel,
+    setPastaSel,
+    setSubpastas,
+    setTemMais,
+  ]);
 
   // O submenu "Mover para…" precisa da árvore INTEIRA (não só do que o usuário
   // expandiu no sidebar). Ao abrir pela primeira vez, `pedirArvore` liga e este
@@ -5202,7 +5219,7 @@ export function ControlRoomScreen({
       return novos.length;
     },
     // idioma/t só mudam ao trocar idioma; a ação do store também é estável.
-    [idioma, setMsgSel, t]
+    [idioma, setMsgSel, setPastaSel, t]
   );
 
   // Poll leve da Inbox a cada 15 min (pega e-mail novo enquanto o usuário está
@@ -5292,7 +5309,7 @@ export function ControlRoomScreen({
       }
       setRecargaPastas((x) => x + 1);
     },
-    [carregarSubpastas]
+    [carregarSubpastas, setRecargaPastas, setSubpastas]
   );
 
   async function criarSubpasta(paiId: string, nome: string) {
