@@ -5,7 +5,15 @@ import { LoginScreen } from "@/screens/login";
 import { SitesScreen } from "@/screens/sites";
 import { AppsScreen } from "@/screens/apps";
 import { ControlRoomScreen } from "@/screens/control-room";
-import { NavegadorScreen, type AbaBrowser } from "@/screens/navegador";
+import { NavegadorScreen } from "@/screens/navegador";
+import {
+  loadNavigatorMemorySettings,
+  loadPinnedNavigatorTabs,
+  orderPinnedFirst,
+  persistPinnedNavigatorTabs,
+  tabsToSleep,
+  type AbaBrowser,
+} from "@/lib/navigator-tabs";
 import * as browser from "@/lib/browser";
 import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
 import { ConfiguracoesScreen } from "@/screens/configuracoes";
@@ -74,8 +82,41 @@ function AppInner() {
   // revelação (o outro é `bootPronto`).
   const [videoPronto, setVideoPronto] = useState(false);
   // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
-  const [abas, setAbas] = useState<AbaBrowser[]>([]);
+  const [abas, setAbas] = useState<AbaBrowser[]>(loadPinnedNavigatorTabs);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
+  const [navigatorClock, setNavigatorClock] = useState(0);
+  const [navigatorMemorySettings] = useState(loadNavigatorMemorySettings);
+
+  useEffect(() => {
+    persistPinnedNavigatorTabs(abas);
+  }, [abas]);
+
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setNavigatorClock((current) => current + 1),
+      60_000,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const ids = tabsToSleep(
+      abas,
+      abaAtiva,
+      navigatorMemorySettings,
+      Date.now(),
+    );
+    if (ids.length === 0) return;
+    const selected = new Set(ids);
+    for (const id of ids) void browser.fechar(id);
+    setAbas((current) =>
+      current.map((tab) =>
+        selected.has(tab.id)
+          ? { ...tab, estado: "dormindo", reativando: false }
+          : tab,
+      ),
+    );
+  }, [abaAtiva, abas, navigatorClock, navigatorMemorySettings]);
 
   useEffect(() => {
     let vivo = true;
@@ -268,11 +309,35 @@ function AppInner() {
   /** Abre o app como ABA do navegador embutido e vai para a tela dele. */
   function abrirAppAqui(app: AppM365) {
     const url = comLoginHint(app.url, user?.email);
-    setAbas((prev) =>
-      prev.some((a) => a.id === app.id)
-        ? prev
-        : [...prev, { id: app.id, nome: app.nome, url }]
-    );
+    const now = Date.now();
+    setAbas((prev) => {
+      const existing = prev.find((tab) => tab.id === app.id);
+      const next = prev.map((tab) =>
+        tab.id === app.id
+          ? {
+              ...tab,
+              nome: app.nome,
+              url,
+              estado: "ativa" as const,
+              ultimoAcesso: now,
+              reativando: tab.estado === "dormindo",
+            }
+          : tab.estado === "dormindo"
+            ? tab
+            : { ...tab, estado: "fundo" as const },
+      );
+      if (existing) return orderPinnedFirst(next);
+      return orderPinnedFirst([
+        ...next,
+        {
+          id: app.id,
+          nome: app.nome,
+          url,
+          estado: "ativa",
+          ultimoAcesso: now,
+        },
+      ]);
+    });
     setAbaAtiva(app.id);
     setTela("navegador");
   }
@@ -280,21 +345,135 @@ function AppInner() {
   /** Abre uma URL/busca livre (da omnibox do Cruiser) como aba própria. */
   function abrirUrlLivre(url: string, nome: string) {
     const id = `web-${Date.now()}`;
-    setAbas((prev) => [...prev, { id, nome, url }]);
+    const now = Date.now();
+    setAbas((prev) =>
+      orderPinnedFirst([
+        ...prev.map((tab) =>
+          tab.estado === "dormindo"
+            ? tab
+            : { ...tab, estado: "fundo" as const },
+        ),
+        { id, nome, url, estado: "ativa", ultimoAcesso: now },
+      ]),
+    );
     setAbaAtiva(id);
     setTela("navegador");
   }
 
+  function trocarAba(id: string) {
+    const now = Date.now();
+    setAbas((prev) =>
+      prev.map((tab) =>
+        tab.id === id
+          ? {
+              ...tab,
+              estado: "ativa",
+              ultimoAcesso: now,
+              reativando: tab.estado === "dormindo",
+            }
+          : tab.estado === "dormindo"
+            ? tab
+            : { ...tab, estado: "fundo", reativando: false },
+      ),
+    );
+    setAbaAtiva(id);
+  }
+
+  function novaAba() {
+    setAbas((prev) =>
+      prev.map((tab) =>
+        tab.estado === "dormindo"
+          ? tab
+          : { ...tab, estado: "fundo", reativando: false },
+      ),
+    );
+    setAbaAtiva(null);
+  }
+
   function fecharAba(id: string) {
-    browser.fechar(id);
+    void browser.fechar(id);
     const resto = abas.filter((a) => a.id !== id);
     setAbas(resto);
     if (abaAtiva === id) {
-      const prox = resto[resto.length - 1];
-      setAbaAtiva(prox ? prox.id : null);
+      const prox = [...resto].sort(
+        (left, right) => right.ultimoAcesso - left.ultimoAcesso,
+      )[0];
+      if (prox) trocarAba(prox.id);
+      else setAbaAtiva(null);
       // Sem abas: permanece no Navigator com a aba em branco (Launcher), em vez
       // de chutar o usuário para a lista de Apps (#24).
     }
+  }
+
+  function dormirAba(id: string) {
+    const target = abas.find((tab) => tab.id === id);
+    if (
+      !target ||
+      target.id === abaAtiva ||
+      target.fixada ||
+      target.manterAcordada
+    ) {
+      return;
+    }
+    void browser.fechar(id);
+    setAbas((prev) =>
+      prev.map((tab) =>
+        tab.id === id
+          ? { ...tab, estado: "dormindo", reativando: false }
+          : tab,
+      ),
+    );
+  }
+
+  function dormirOutras(id: string) {
+    const ids = abas
+      .filter(
+        (tab) =>
+          tab.id !== id &&
+          tab.id !== abaAtiva &&
+          tab.estado === "fundo" &&
+          !tab.fixada &&
+          !tab.manterAcordada,
+      )
+      .map((tab) => tab.id);
+    if (ids.length === 0) return;
+    const selected = new Set(ids);
+    for (const tabId of ids) void browser.fechar(tabId);
+    setAbas((prev) =>
+      prev.map((tab) =>
+        selected.has(tab.id)
+          ? { ...tab, estado: "dormindo", reativando: false }
+          : tab,
+      ),
+    );
+  }
+
+  function alternarFixada(id: string) {
+    setAbas((prev) =>
+      orderPinnedFirst(
+        prev.map((tab) =>
+          tab.id === id ? { ...tab, fixada: !tab.fixada } : tab,
+        ),
+      ),
+    );
+  }
+
+  function alternarManterAcordada(id: string) {
+    setAbas((prev) =>
+      prev.map((tab) =>
+        tab.id === id
+          ? { ...tab, manterAcordada: !tab.manterAcordada }
+          : tab,
+      ),
+    );
+  }
+
+  function concluirReativacao(id: string) {
+    setAbas((prev) =>
+      prev.map((tab) =>
+        tab.id === id ? { ...tab, reativando: false } : tab,
+      ),
+    );
   }
 
   async function abrirUrl(url: string) {
@@ -497,10 +676,15 @@ function AppInner() {
             <NavegadorScreen
               abas={abas}
               ativa={abaAtiva}
-              onTrocar={setAbaAtiva}
+              onTrocar={trocarAba}
               onFechar={fecharAba}
+              onDormir={dormirAba}
+              onDormirOutras={dormirOutras}
+              onAlternarFixada={alternarFixada}
+              onAlternarManterAcordada={alternarManterAcordada}
+              onReativada={concluirReativacao}
               onAbrir={abrirAppAqui}
-              onNovaAba={() => setAbaAtiva(null)}
+              onNovaAba={novaAba}
               onNavegar={abrirUrlLivre}
             />
           </div>
