@@ -228,3 +228,37 @@ export interface Pessoa {
    *  Ausente/null = usa as iniciais (AvatarFallback). */
   foto?: string | null;
 }
+
+/** Fonte original de um registro entregue pelo Graph ao módulo People. */
+export type PeopleSource = "contacts" | "people";
+
+export interface PeopleEmail {
+  address: string;
+  label?: string | null;
+}
+
+export interface PeoplePhone {
+  number: string;
+  label: string;
+}
+
+/** Registro ainda não deduplicado, exatamente como veio de uma das fontes. */
+export interface PeopleRecord {
+  id: string;
+  source: PeopleSource;
+  name: string;
+  emails: PeopleEmail[];
+  phones: PeoplePhone[];
+  jobTitle?: string | null;
+  company?: string | null;
+  organization: boolean;
+  /** Posição em `/me/people`; os dez primeiros são "Frequent". */
+  peopleRank?: number | null;
+}
+
+/** Resultado parcial: uma fonte pode falhar sem apagar a outra. */
+export interface PeopleListResult {
+  records: PeopleRecord[];
+  missingScopes: string[];
+  failures: string[];
+}

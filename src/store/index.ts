@@ -52,6 +52,10 @@ import {
   createComposeSlice,
   type ComposeSlice,
 } from "./compose-slice";
+import {
+  createPeopleSlice,
+  type PeopleSlice,
+} from "./people-slice";
 import { lerTemplates } from "@/lib/templates";
 import {
   aplicarAltoContraste,
@@ -108,7 +112,8 @@ export type AppStore =
   & SelectionSlice
   & ReaderSlice
   & AgendaSlice
-  & ComposeSlice;
+  & ComposeSlice
+  & PeopleSlice;
 
 /** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
 type AppPersistido = UiPersistido &
@@ -395,6 +400,8 @@ export const useAppStore = create<AppStore>()(
       ...createAgendaSlice(...a),
       // Orquestração/rascunho do compose (#132) são sessão, fora do partialize.
       ...createComposeSlice(...a),
+      // Contatos, seleção e carga do People são sessão e uma única fonte/cache.
+      ...createPeopleSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",

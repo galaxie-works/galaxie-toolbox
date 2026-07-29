@@ -120,6 +120,7 @@ import {
   type ComporMensagemHandle,
 } from "@/components/compose/compor-mensagem";
 import { NovaMensagemModal } from "@/components/compose/nova-mensagem-modal";
+import { PeopleView } from "@/components/people/people-view";
 import * as AnimatedButton from "@/components/morphin/animated-border-button";
 import SuccessIcon from "@/components/ui/icons/success";
 import TrashIcon from "@/components/ui/icons/trash";
@@ -221,6 +222,7 @@ import {
   Trash2,
   TriangleAlert,
   User,
+  Users,
   Video,
   X,
 } from "lucide-react";
@@ -1435,6 +1437,8 @@ function FolderSidebar({
   colapsada,
   agendaAberta,
   onToggleAgenda,
+  peopleActive,
+  onSelectPeople,
   t,
 }: {
   pastas: PastaEmail[] | null;
@@ -1469,6 +1473,8 @@ function FolderSidebar({
   colapsada: boolean;
   agendaAberta: boolean;
   onToggleAgenda: () => void;
+  peopleActive: boolean;
+  onSelectPeople: () => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   // Pasta pendente de confirmação do "Esvaziar" — ação destrutiva nunca sai
@@ -1852,6 +1858,28 @@ function FolderSidebar({
           Agenda pertence ao Bridge, não ao app principal (#50). Selecionado ⟺
           card da Agenda visível; nasce fechada (menos requisições no startup). */}
       <Separator className={cn("shrink-0", colapsada && "w-6")} />
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant={peopleActive ? "secondary" : "ghost"}
+            onClick={onSelectPeople}
+            aria-label={t.controlRoom.peopleTitulo}
+            className={cn(
+              "shrink-0",
+              colapsada ? "size-9 justify-center p-0" : "w-full justify-start gap-2.5",
+              !peopleActive && "text-muted-foreground"
+            )}
+          >
+            <Users className="size-4 shrink-0" />
+            {!colapsada && <span>{t.controlRoom.peopleTitulo}</span>}
+          </Button>
+        </TooltipTrigger>
+        {colapsada && (
+          <TooltipContent side="right" align="center">
+            {t.controlRoom.peopleTitulo}
+          </TooltipContent>
+        )}
+      </Tooltip>
       {/* Colapsada: nome pelo tooltip canônico (#100). Só renderiza o
           TooltipContent nesse estado — expandida, o rótulo textual já aparece,
           mesma regra do app-sidebar. */}
@@ -4879,9 +4907,11 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
 export function ControlRoomScreen({
   user,
   onAbrirLink,
+  onGrantPeopleAccess,
 }: {
   user: AppUser;
   onAbrirLink: (url: string) => void;
+  onGrantPeopleAccess: () => void;
 }) {
   const { idioma, t } = useIdioma();
   // Fotos de contatos (#39): só buscamos avatar de remetente do MESMO domínio do
@@ -4896,6 +4926,8 @@ export function ControlRoomScreen({
   // Agenda migrada pro ui slice (#125). Chave `bridge.agendaVisivel` preservada.
   const agendaAberta = useAppStore((s) => s.agendaAberta);
   const setAgendaAberta = useAppStore((s) => s.setAgendaAberta);
+  const bridgeView = useAppStore((s) => s.bridgeView);
+  const setBridgeView = useAppStore((s) => s.setBridgeView);
   // Caixas compartilhadas (#111): lista de endereços adicionados (persistida) +
   // qual está ativa. A #112 usa este endereço em todas as leituras do Graph;
   // `me` continua sendo o default e a seleção ativa segue só nesta sessão.
@@ -5026,6 +5058,7 @@ export function ControlRoomScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const abrirCompose = useAppStore((s) => s.abrirCompose);
+  const setComposePara = useAppStore((s) => s.setComposePara);
   // Handle do leitor para os atalhos r/a/f (#28) abrirem o Sheet de resposta.
   const detalheRef = useRef<MessageDetailHandle>(null);
   const filtroServidor = escopoDeFiltros(filtros);
@@ -6005,7 +6038,10 @@ export function ControlRoomScreen({
           subpastas={subpastas}
           onCarregarSubpastas={carregarSubpastas}
           sel={pastaSel}
-          onSel={setPastaSel}
+          onSel={(id) => {
+            setBridgeView("mail");
+            setPastaSel(id);
+          }}
           onNovo={novoEmailModal}
           onComposeOutlook={composeOutlook}
           onMarcarTodasLidas={marcarPastaLida}
@@ -6019,22 +6055,39 @@ export function ControlRoomScreen({
           onMoverPasta={moverPasta}
           caixas={caixasCompartilhadas}
           caixaAtiva={caixaAtiva}
-          onSelecionarCaixa={setCaixaAtiva}
+          onSelecionarCaixa={(caixa) => {
+            setBridgeView("mail");
+            setCaixaAtiva(caixa);
+          }}
           onAbrirAdicionarCaixa={() => setAdicionarCaixaAberto(true)}
           caixaCompartilhada={caixaCompartilhadaAtiva}
           colapsada={!sidebarAberta}
           agendaAberta={agendaAberta}
-          onToggleAgenda={() => setAgendaAberta((v) => !v)}
+          onToggleAgenda={() => {
+            setBridgeView("mail");
+            setAgendaAberta((v) => !v);
+          }}
+          peopleActive={bridgeView === "people"}
+          onSelectPeople={() => setBridgeView("people")}
           t={t}
         />
 
         {/* Lista e detalhe compartilham o espaço, com splitter arrastável.
             autoSaveId persiste a proporção que o usuário deixa. */}
-        <ResizablePanelGroup
-          autoSaveId="bridge.layout"
-          direction="horizontal"
-          className="min-w-0 flex-1 overflow-hidden"
-        >
+        {bridgeView === "people" ? (
+          <PeopleView
+            onGrantAccess={onGrantPeopleAccess}
+            onCompose={(email) => {
+              abrirCompose("novo", caixaAtiva);
+              setComposePara([email]);
+            }}
+          />
+        ) : (
+          <ResizablePanelGroup
+            autoSaveId="bridge.layout"
+            direction="horizontal"
+            className="min-w-0 flex-1 overflow-hidden"
+          >
           <ResizablePanel defaultSize={38} minSize={24} maxSize={55} className="overflow-hidden">
             <MessageList
               titulo={tituloLista}
@@ -6100,12 +6153,13 @@ export function ControlRoomScreen({
               />
             )}
           </ResizablePanel>
-        </ResizablePanelGroup>
+          </ResizablePanelGroup>
+        )}
 
         {/* Card da Agenda no MESMO lugar de sempre (lado direito). Agora quem
             controla a visibilidade é o item do sidebar esquerdo (#50): visível =
             renderiza; escondido = some e a lista+detalhe ocupam a largura toda. */}
-        {agendaAberta && (
+        {bridgeView === "mail" && agendaAberta && (
           <AgendaConteudo t={t} idioma={idioma} />
         )}
       </div>
