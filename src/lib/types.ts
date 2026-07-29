@@ -300,3 +300,17 @@ export interface PeopleEnrichApplyResult {
   saved: boolean;
   writeAvailable: boolean;
 }
+
+export interface PeopleContactEdit {
+  name: string;
+  emails: PeopleEmail[];
+  phones: PeoplePhone[];
+  company?: string | null;
+}
+
+export interface PeopleInteraction {
+  id: string;
+  subject: string;
+  occurredAt: string;
+  direction: "inbound" | "outbound";
+}

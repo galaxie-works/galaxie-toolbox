@@ -2834,15 +2834,16 @@ pub struct Pessoa {
 }
 
 /// Endereco de e-mail normalizado para o modulo People (#166).
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeopleEmail {
     pub address: String,
+    #[serde(default)]
     pub label: Option<String>,
 }
 
 /// Telefone normalizado para o modulo People (#166).
-#[derive(Clone, serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeoplePhone {
     pub number: String,
@@ -3163,6 +3164,25 @@ pub struct PeopleEnrichApplyResult {
     pub write_available: bool,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleContactEdit {
+    pub name: String,
+    pub emails: Vec<PeopleEmail>,
+    pub phones: Vec<PeoplePhone>,
+    #[serde(default)]
+    pub company: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleInteraction {
+    pub id: String,
+    pub subject: String,
+    pub occurred_at: String,
+    pub direction: String,
+}
+
 fn token_tem_escopo(store: &TokenStore, alvo: &str) -> Result<bool, String> {
     let guard = store
         .inner
@@ -3170,6 +3190,10 @@ fn token_tem_escopo(store: &TokenStore, alvo: &str) -> Result<bool, String> {
         .map_err(|_| "estado de token corrompido".to_string())?;
     let atual = guard.as_ref().ok_or("nao autenticado")?;
     Ok(escopo_presente(&atual.scopes, alvo))
+}
+
+pub fn cr_people_write_available(store: &TokenStore) -> Result<bool, String> {
+    token_tem_escopo(store, "Contacts.ReadWrite")
 }
 
 fn valor_texto(item: &serde_json::Value, campo: &str) -> String {
@@ -3819,6 +3843,193 @@ pub fn cr_people_enrich_apply(
         saved: true,
         write_available: true,
     })
+}
+
+fn rotulo_telefone(label: &str) -> &'static str {
+    let label = label.trim().to_lowercase();
+    if matches!(label.as_str(), "mobile" | "cell" | "celular") {
+        "mobile"
+    } else if matches!(label.as_str(), "home" | "casa") {
+        "home"
+    } else {
+        "business"
+    }
+}
+
+/// Atualiza todos os valores editáveis do formulário em um único PATCH. A UI
+/// preserva quantidade e rótulos; o backend mantém essa mesma classificação ao
+/// projetar os telefones para os campos suportados por Microsoft Contacts.
+pub fn cr_people_contact_update(
+    store: &TokenStore,
+    contact_id: &str,
+    input: PeopleContactEdit,
+) -> Result<(), String> {
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Err("Contacts.ReadWrite is required to edit contacts.".to_string());
+    }
+    let contact_id = contact_id.trim();
+    let name = input.name.trim();
+    if contact_id.is_empty() || name.is_empty() || name.len() > 256 {
+        return Err("Invalid contact or display name.".to_string());
+    }
+    if input.company.as_deref().unwrap_or("").trim().len() > 256 {
+        return Err("Invalid company name.".to_string());
+    }
+    if input.emails.len() > 50
+        || input.emails.iter().any(|email| {
+            let address = email.address.trim();
+            address.is_empty()
+                || address.len() > 320
+                || !address.contains('@')
+                || email.label.as_deref().unwrap_or("").len() > 128
+        })
+    {
+        return Err("Invalid email address.".to_string());
+    }
+    if input.phones.len() > 50
+        || input.phones.iter().any(|phone| {
+            phone.number.trim().is_empty()
+                || phone.number.len() > 64
+                || phone.label.len() > 128
+        })
+    {
+        return Err("Invalid phone number.".to_string());
+    }
+
+    let mut business_phones = Vec::new();
+    let mut home_phones = Vec::new();
+    let mut mobile_phone: Option<String> = None;
+    for phone in input.phones {
+        let number = phone.number.trim().to_string();
+        match rotulo_telefone(&phone.label) {
+            "mobile" if mobile_phone.is_none() => mobile_phone = Some(number),
+            "home" => home_phones.push(number),
+            _ => business_phones.push(number),
+        }
+    }
+    let email_addresses: Vec<serde_json::Value> = input
+        .emails
+        .into_iter()
+        .map(|email| {
+            serde_json::json!({
+                "address": email.address.trim(),
+                "name": email.label.unwrap_or_default().trim()
+            })
+        })
+        .collect();
+    let company = input
+        .company
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let body = serde_json::json!({
+        "displayName": name,
+        "emailAddresses": email_addresses,
+        "businessPhones": business_phones,
+        "homePhones": home_phones,
+        "mobilePhone": mobile_phone,
+        "companyName": company,
+    });
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!(
+        "{GRAPH}/me/contacts/{}",
+        urlencoding::encode(contact_id)
+    );
+    let resp = graph_enviar("people:contact-update", GRAPH_TETO_ESPERA_S, || {
+        client
+            .patch(&url)
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+    })
+    .map_err(|error| format!("Failed to update contact: {error}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Contacts: Graph returned {}", resp.status()));
+    }
+    Ok(())
+}
+
+fn destinatario_tem_email(item: &serde_json::Value, email: &str) -> bool {
+    item["toRecipients"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|recipient| recipient["emailAddress"]["address"].as_str())
+        .any(|address| address.trim().eq_ignore_ascii_case(email))
+}
+
+/// Carrega, somente quando o detalhe abre, as mensagens recentes de/para o
+/// contato. Usa Mail.Read já concedido e não cria nenhum novo requisito de
+/// consentimento para o módulo People.
+pub fn cr_people_interactions(
+    store: &TokenStore,
+    email: &str,
+) -> Result<Vec<PeopleInteraction>, String> {
+    let email = email.trim();
+    if email.is_empty() || email.len() > 320 || !email.contains('@') {
+        return Err("Invalid email address.".to_string());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let search_expression = format!("from:{email} OR to:{email}");
+    let search = urlencoding::encode(&search_expression);
+    let url = format!(
+        "{GRAPH}/me/messages?$search=\"{search}\"\
+         &$select=id,subject,receivedDateTime,sentDateTime,from,toRecipients\
+         &$top=15"
+    );
+    let resp = graph_enviar("people:interactions", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+    })
+    .map_err(|error| format!("Failed to load interactions: {error}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Mail: Graph returned {}", resp.status()));
+    }
+    let value: serde_json::Value = resp.json().map_err(|error| error.to_string())?;
+    let mut interactions: Vec<PeopleInteraction> = value["value"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let from = item["from"]["emailAddress"]["address"]
+                .as_str()
+                .unwrap_or("");
+            let direction = if from.trim().eq_ignore_ascii_case(email) {
+                "inbound"
+            } else if destinatario_tem_email(item, email) {
+                "outbound"
+            } else {
+                return None;
+            };
+            let occurred_at = if direction == "outbound" {
+                item["sentDateTime"]
+                    .as_str()
+                    .or_else(|| item["receivedDateTime"].as_str())
+            } else {
+                item["receivedDateTime"]
+                    .as_str()
+                    .or_else(|| item["sentDateTime"].as_str())
+            }?;
+            Some(PeopleInteraction {
+                id: item["id"].as_str().unwrap_or(occurred_at).to_string(),
+                subject: item["subject"]
+                    .as_str()
+                    .filter(|subject| !subject.trim().is_empty())
+                    .unwrap_or("(no subject)")
+                    .to_string(),
+                occurred_at: occurred_at.to_string(),
+                direction: direction.to_string(),
+            })
+        })
+        .collect();
+    interactions.sort_by(|left, right| right.occurred_at.cmp(&left.occurred_at));
+    interactions.truncate(15);
+    Ok(interactions)
 }
 
 /// `jobTitle` do item do Graph, descartando string vazia/null (o Graph devolve

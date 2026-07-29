@@ -94,6 +94,7 @@
     "react-dnd-html5-backend": "^16.0.1",
     "react-dom": "^19.2.7",
     "react-lite-youtube-embed": "^3.6.0",
+    "react-phone-number-input": "^3.4.17",
     "react-player": "3.3.1",
     "react-resizable-panels": "^3.0.6",
     "react-textarea-autosize": "^8.5.9",

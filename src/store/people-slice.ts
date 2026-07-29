@@ -8,7 +8,11 @@ import {
   type PeopleContact,
 } from "@/lib/people";
 import type { Filter } from "@/components/reui/filters";
-import type { PeopleEnrichField, Pessoa } from "@/lib/types";
+import type {
+  PeopleContactEdit,
+  PeopleEnrichField,
+  Pessoa,
+} from "@/lib/types";
 import type { AppStore } from "./index";
 
 const resolveInFlight = new Map<string, Promise<PeopleContact | null>>();
@@ -59,6 +63,7 @@ export interface PeopleSlice {
   setPeopleView: (view: "table" | "cards") => void;
   setPeopleColumnVisibility: (visibility: Record<string, boolean>) => void;
   applyPeopleFields: (id: string, fields: PeopleEnrichField[]) => void;
+  updatePeopleContact: (id: string, input: PeopleContactEdit) => Promise<void>;
 }
 
 export const createPeopleSlice: StateCreator<
@@ -243,4 +248,49 @@ export const createPeopleSlice: StateCreator<
         contact.id === id ? applyPeopleEnrichment(contact, fields) : contact,
       ),
     })),
+  updatePeopleContact: async (id, input) => {
+    const current = get().peopleContacts.find((contact) => contact.id === id);
+    if (!current?.contactId) {
+      throw new Error("This person is not an editable Microsoft contact.");
+    }
+    const snapshot: PeopleContact = {
+      ...current,
+      emails: current.emails.map((email) => ({ ...email })),
+      phones: current.phones.map((phone) => ({ ...phone })),
+      sources: [...current.sources],
+      enrichedValues: current.enrichedValues
+        ? [...current.enrichedValues]
+        : undefined,
+    };
+    set((state) => ({
+      peopleContacts: state.peopleContacts.map((contact) =>
+        contact.id === id
+          ? {
+              ...contact,
+              name: input.name,
+              emails: input.emails.map((email) => ({
+                ...email,
+                source: email.source ?? "contacts",
+              })),
+              phones: input.phones.map((phone) => ({
+                ...phone,
+                source: phone.source ?? "contacts",
+              })),
+              company: input.company,
+              companySource: input.company ? "contacts" : undefined,
+            }
+          : contact,
+      ),
+    }));
+    try {
+      await api.crPeopleContactUpdate(current.contactId, input);
+    } catch (error) {
+      set((state) => ({
+        peopleContacts: state.peopleContacts.map((contact) =>
+          contact.id === id ? snapshot : contact,
+        ),
+      }));
+      throw error;
+    }
+  },
 });

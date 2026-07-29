@@ -449,6 +449,41 @@ async fn cr_salvar_contatos(
         .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn cr_people_write_available(state: State<'_, Store>) -> Result<bool, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_people_write_available(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cr_people_contact_update(
+    state: State<'_, Store>,
+    contact_id: String,
+    input: graph::PeopleContactEdit,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_contact_update(&store, &contact_id, input)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cr_people_interactions(
+    state: State<'_, Store>,
+    email: String,
+) -> Result<Vec<graph::PeopleInteraction>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_interactions(&store, &email)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Cliente de e-mail: subpastas de uma pasta (para a arvore de pastas).
 #[tauri::command]
 async fn cr_subpastas(
@@ -1173,6 +1208,9 @@ pub fn run() {
             cr_people_list,
             cr_people_enrich_preview,
             cr_people_enrich_apply,
+            cr_people_write_available,
+            cr_people_contact_update,
+            cr_people_interactions,
             cr_enviar_novo,
             cr_compartilhar_onedrive,
             cr_salvar_contatos,
