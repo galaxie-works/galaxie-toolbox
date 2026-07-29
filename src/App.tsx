@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { registrarHandlersGlobais } from "@/lib/log";
 import { LoginScreen } from "@/screens/login";
 import { SitesScreen } from "@/screens/sites";
 import { AppsScreen } from "@/screens/apps";
@@ -39,7 +41,12 @@ import { useIdioma } from "@/lib/idioma";
 import { cn, comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
 
-export default function App() {
+/**
+ * Todo o app de verdade. Fica ABAIXO do ErrorBoundary (ver `App`): é esta árvore
+ * que pode estourar num render, e o boundary a segura sem levar a tela toda pro
+ * branco.
+ */
+function AppInner() {
   const { idioma, t } = useIdioma();
   const [user, setUser] = useState<AppUser | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
@@ -501,5 +508,24 @@ export default function App() {
         )}
       </SidebarInset>
     </SidebarProvider>
+  );
+}
+
+/**
+ * Raiz do app (#148). O ErrorBoundary envolve TODA a árvore e fica FORA dela, de
+ * modo que qualquer crash de render (ex.: o editor Plate deserializando um corpo
+ * ruim — #144/#147) cai no fallback e é logado, em vez de desmontar pra uma tela
+ * branca silenciosa. Aqui também registramos, o mais cedo possível, os
+ * captadores globais de erro/rejeição não tratados — mesmo canal de log.
+ */
+export default function App() {
+  useEffect(() => {
+    registrarHandlersGlobais();
+  }, []);
+
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
   );
 }

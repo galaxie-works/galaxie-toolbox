@@ -623,6 +623,16 @@ const pt = {
   tema: {
     alternar: "Alternar tema claro e escuro",
   },
+
+  // Fallback do ErrorBoundary raiz (#148): mostrado quando um render estoura, no
+  // lugar da tela branca.
+  erro: {
+    titulo: "Algo deu errado",
+    descricao:
+      "O aplicativo encontrou um erro inesperado. Você pode recarregar para tentar novamente.",
+    recarregar: "Recarregar",
+    detalhes: "Detalhes técnicos",
+  },
 } as const;
 
 export type Dicionario = typeof pt;
@@ -1221,6 +1231,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
 
   tema: {
     alternar: "Toggle light and dark theme",
+  },
+
+  erro: {
+    titulo: "Something went wrong",
+    descricao:
+      "The app hit an unexpected error. You can reload to try again.",
+    recarregar: "Reload",
+    detalhes: "Technical details",
   },
 };
 
