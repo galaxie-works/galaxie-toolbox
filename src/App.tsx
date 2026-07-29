@@ -47,6 +47,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { TELAS, type Tela } from "@/lib/navegacao";
+import { useAppStore } from "@/store";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
 import { limparFotos } from "@/lib/fotos";
@@ -66,6 +67,7 @@ import {
  */
 function AppInner() {
   const { idioma, t } = useIdioma();
+  const bridgeView = useAppStore((state) => state.bridgeView);
   const [user, setUser] = useState<AppUser | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -560,6 +562,16 @@ function AppInner() {
   // --- Aplicativo ---------------------------------------------------------
   const info = TELAS[tela];
   const abaAtivaObj = abas.find((a) => a.id === abaAtiva);
+  const breadcrumbDetail =
+    tela === "navegador" && abaAtivaObj
+      ? abaAtivaObj.nome
+      : tela === "control-room"
+        ? {
+            mail: t.controlRoom.grupoMail,
+            people: t.controlRoom.peopleTitulo,
+            agenda: t.controlRoom.agendaTitulo,
+          }[bridgeView]
+        : null;
 
   return (
     /* O wrapper do sidebar e min-h-svh: cresce com o conteudo. Numa pagina web
@@ -610,9 +622,9 @@ function AppInner() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  {/* No Cruiser com aba aberta, o nome dela vem como 3o nivel,
-                      entao "Cruiser" deixa de ser a pagina final. */}
-                  {tela === "navegador" && abaAtivaObj ? (
+                  {/* Com detalhe ativo (aba do Navigator ou módulo do Bridge),
+                      a tela deixa de ser a página final e vira o 2º nível. */}
+                  {breadcrumbDetail ? (
                     <span className="text-muted-foreground">
                       {t.nav[info.titulo]}
                     </span>
@@ -620,12 +632,12 @@ function AppInner() {
                     <BreadcrumbPage>{t.nav[info.titulo]}</BreadcrumbPage>
                   )}
                 </BreadcrumbItem>
-                {tela === "navegador" && abaAtivaObj && (
+                {breadcrumbDetail && (
                   <>
                     <BreadcrumbSeparator />
                     <BreadcrumbItem>
                       <BreadcrumbPage className="max-w-40 truncate">
-                        {abaAtivaObj.nome}
+                        {breadcrumbDetail}
                       </BreadcrumbPage>
                     </BreadcrumbItem>
                   </>
