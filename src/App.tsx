@@ -10,6 +10,7 @@ import { ConfiguracoesScreen } from "@/screens/configuracoes";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Atualizacao } from "@/components/atualizacao";
+import { TelaBloqueio } from "@/components/tela-bloqueio";
 import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
 import { Estrelas } from "@/components/estrelas";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -46,6 +47,10 @@ export default function App() {
   const [loadingSites, setLoadingSites] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
+  const [lockState, setLockState] = useState<
+    "checking" | "locked" | "unlocked" | "error"
+  >("checking");
+  const [lockCheck, setLockCheck] = useState(0);
   const [cache, setCache] = useState<Identidade | null>(null);
   const [tela, setTela] = useState<Tela>("control-room");
   // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
@@ -57,6 +62,25 @@ export default function App() {
     (async () => {
       try {
         api.cachedIdentity().then((id) => vivo && setCache(id));
+        const status = await api.lockStatus();
+        if (vivo) setLockState(status.enabled ? "locked" : "unlocked");
+      } catch {
+        // Falha fechada: nenhum conteúdo protegido é restaurado enquanto não
+        // conseguirmos confirmar se existe um PIN.
+        if (vivo) setLockState("error");
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [lockCheck]);
+
+  useEffect(() => {
+    if (lockState !== "unlocked") return;
+    let vivo = true;
+    setRestoring(true);
+    (async () => {
+      try {
         const u = await api.restoreSession();
         if (!vivo) return;
         if (u) {
@@ -79,7 +103,7 @@ export default function App() {
     return () => {
       vivo = false;
     };
-  }, []);
+  }, [lockState]);
 
   async function handleLogin(email: string) {
     setLoginLoading(true);
@@ -223,8 +247,34 @@ export default function App() {
     setTela("onedrive");
   }
 
+  async function recuperarBloqueio() {
+    await api.logout();
+    limparFotos();
+    setUser(null);
+    setSites([]);
+    setError(null);
+    setCache(null);
+    setRestoring(true);
+    setLockState("unlocked");
+  }
+
+  if (lockState === "locked" || lockState === "error") {
+    return (
+      <TelaBloqueio
+        identidade={cache}
+        statusIndisponivel={lockState === "error"}
+        onDesbloquear={() => setLockState("unlocked")}
+        onRecuperar={recuperarBloqueio}
+        onTentarStatusNovamente={() => {
+          setLockState("checking");
+          setLockCheck((atual) => atual + 1);
+        }}
+      />
+    );
+  }
+
   // --- Retomando a sessao -------------------------------------------------
-  if (restoring) {
+  if (lockState === "checking" || restoring) {
     return (
       <div className="relative grid h-full place-items-center overflow-hidden">
         <FaixaArrasto />
