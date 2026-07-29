@@ -86,6 +86,36 @@ import type { TemplateEmail } from "@/lib/templates";
 const SHEET_33 = "flex w-[33%] flex-col gap-0 p-0 sm:max-w-[33vw]";
 
 /**
+ * Normaliza o HTML capturado do Plate via `innerHTML` (#144).
+ *
+ * Quando o editor está vazio, o `innerHTML` não é HTML de verdade: é a marcação
+ * interna do Slate no estado vazio — o span do placeholder (`data-slate-placeholder`)
+ * e os spans zero-width (`data-slate-zero-width`). Persistir isso e depois
+ * desserializar de volta no `usePlateEditor` gera uma árvore de nós inválida que
+ * quebra o render do Plate (erro `<Element>`), desmontando o app inteiro (tela
+ * branca; só o F5 recupera).
+ *
+ * Aqui removemos esses artefatos internos: se não sobra conteúdo real (texto ou
+ * mídia), devolvemos "" (vazio seguro, que o editor abre como `<p></p>`); caso
+ * contrário, devolvemos o HTML já limpo desses resquícios, deixando o corpo
+ * robusto para reabrir na edição mesmo se veio parcialmente sujo.
+ */
+function normalizarCorpo(html: string): string {
+  if (!html || !html.trim()) return "";
+  // Fora do browser (SSR/teste) não há DOM p/ inspecionar; devolve como veio.
+  if (typeof document === "undefined") return html;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  tmp
+    .querySelectorAll("[data-slate-placeholder], [data-slate-zero-width]")
+    .forEach((el) => el.remove());
+  const temMidia = tmp.querySelector("img, table, hr") !== null;
+  const texto = (tmp.textContent ?? "").replace(/[\s\u200B\uFEFF]+/g, "");
+  if (!temMidia && texto.length === 0) return "";
+  return tmp.innerHTML;
+}
+
+/**
  * Editor rico compartilhado (assinaturas e templates). Mesmo Plate do compose:
  * o HTML sai do próprio DOM editável (`innerHTML`), formato que o Graph espera.
  * O `usePlateEditor` memoriza o editor, então quem usa precisa de `key` por
@@ -102,7 +132,10 @@ function EditorCorpo({
 }) {
   const editor = usePlateEditor({
     plugins: COMPOSE_KIT,
-    value: valorInicial.trim() || "<p></p>",
+    // Guarda de compat (#144): corpos já salvos com a marcação vazia do Slate
+    // quebrariam o Plate ao reabrir. Normaliza antes de desserializar; vazio
+    // vira `<p></p>`, o que o editor abre em branco sem crashar.
+    value: normalizarCorpo(valorInicial) || "<p></p>",
   });
 
   return (
@@ -201,7 +234,9 @@ export function SignaturesPanel() {
     if (!edicao) return;
     const nome = edicao.nome.trim();
     if (!nome) return;
-    const corpo = corpoRef.current?.innerHTML ?? "";
+    // Normaliza o corpo (#144): editor vazio captura só a marcação interna do
+    // Slate; persistir isso derruba o app ao reabrir. Vazio → "".
+    const corpo = normalizarCorpo(corpoRef.current?.innerHTML ?? "");
     if (edicao.id) {
       atualizarAssinatura(edicao.id, {
         nome,
@@ -521,7 +556,8 @@ export function EmailTemplatesPanel() {
     const nome = edicao.nome.trim();
     if (!nome) return;
     const descricao = edicao.descricao.trim();
-    const corpo = corpoRef.current?.innerHTML ?? "";
+    // Mesmo tratamento das assinaturas (#144): normaliza o corpo vazio do Plate.
+    const corpo = normalizarCorpo(corpoRef.current?.innerHTML ?? "");
     if (edicao.id) {
       atualizarTemplate(edicao.id, { nome, descricao, corpo });
     } else {
