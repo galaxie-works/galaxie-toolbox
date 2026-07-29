@@ -277,6 +277,8 @@ export interface PeopleListResult {
   records: PeopleRecord[];
   missingScopes: string[];
   failures: string[];
+  /** Continuações opacas devolvidas pelo Graph para Contacts e People. */
+  nextLinks: string[];
 }
 
 /** Uma adição revisável sugerida pelo Enrich, ainda sem efeito no contato. */

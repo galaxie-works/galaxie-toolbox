@@ -2878,6 +2878,7 @@ pub struct PeopleListResult {
     pub records: Vec<PeopleRecord>,
     pub missing_scopes: Vec<String>,
     pub failures: Vec<String>,
+    pub next_links: Vec<String>,
 }
 
 fn texto_opcional(item: &serde_json::Value, campo: &str) -> Option<String> {
@@ -2987,116 +2988,150 @@ fn telefones_de_people(item: &serde_json::Value) -> Vec<PeoplePhone> {
 /// Lista inicial do People (#166): contatos explicitos + pessoas relevantes.
 /// Mantem as fontes separadas para o merge deterministico no front e preserva a
 /// ordem de relevancia de `/me/people` via `people_rank`.
-pub fn cr_people_list(store: &TokenStore) -> Result<PeopleListResult, String> {
+pub fn cr_people_list(
+    store: &TokenStore,
+    next_links: Vec<String>,
+) -> Result<PeopleListResult, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
     let mut result = PeopleListResult {
         records: Vec::new(),
         missing_scopes: Vec::new(),
         failures: Vec::new(),
+        next_links: Vec::new(),
     };
 
-    let contacts_url = format!(
-        "{GRAPH}/me/contacts?$top=250&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager"
-    );
-    match graph_enviar("people:contacts", GRAPH_TETO_ESPERA_S, || {
-        client.get(&contacts_url).bearer_auth(&token).send()
-    }) {
-        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
-            Ok(body) => {
-                if let Some(items) = body["value"].as_array() {
-                    result.records.extend(items.iter().filter_map(|item| {
-                        let emails = emails_de_contato(item);
-                        if emails.is_empty() {
-                            return None;
-                        }
-                        Some(PeopleRecord {
-                            id: item["id"].as_str().unwrap_or("").to_string(),
-                            source: "contacts".to_string(),
-                            name: item["displayName"].as_str().unwrap_or("").trim().to_string(),
-                            emails,
-                            phones: telefones_de_contato(item),
-                            job_title: texto_opcional(item, "jobTitle"),
-                            company: texto_opcional(item, "companyName"),
-                            department: texto_opcional(item, "department"),
-                            office_location: texto_opcional(item, "officeLocation"),
-                            manager: texto_opcional(item, "manager"),
-                            organization: false,
-                            people_rank: None,
-                        })
-                    }));
+    let requests: Vec<(&str, String)> = if next_links.is_empty() {
+        vec![
+            (
+                "contacts",
+                format!(
+                    "{GRAPH}/me/contacts?$top=100&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager"
+                ),
+            ),
+            (
+                "people",
+                format!(
+                    "{GRAPH}/me/people?$top=100&$select=id,displayName,scoredEmailAddresses,phones,companyName,jobTitle,personType,userPrincipalName"
+                ),
+            ),
+        ]
+    } else {
+        next_links
+            .into_iter()
+            .filter_map(|url| {
+                if !url.starts_with(&format!("{GRAPH}/me/")) {
+                    return None;
                 }
-            }
-            Err(error) => result
-                .failures
-                .push(format!("Contacts: resposta invalida ({error})")),
-        },
-        Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
-            result.missing_scopes.push("Contacts.Read".to_string());
-        }
-        Ok(resp) => result
-            .failures
-            .push(format!("Contacts: Graph retornou {}", resp.status())),
-        Err(error) => result
-            .failures
-            .push(format!("Contacts: falha de rede ({error})")),
-    }
+                if url.contains("/me/contacts?") {
+                    Some(("contacts", url))
+                } else if url.contains("/me/people?") {
+                    Some(("people", url))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
 
-    let people_url = format!(
-        "{GRAPH}/me/people?$top=250&$select=id,displayName,scoredEmailAddresses,phones,companyName,jobTitle,personType,userPrincipalName"
-    );
-    match graph_enviar("people:relevant", GRAPH_TETO_ESPERA_S, || {
-        client.get(&people_url).bearer_auth(&token).send()
-    }) {
-        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
-            Ok(body) => {
-                if let Some(items) = body["value"].as_array() {
-                    result.records.extend(items.iter().enumerate().filter_map(
-                        |(rank, item)| {
-                            let emails = emails_de_people(item);
-                            if emails.is_empty() {
-                                return None;
-                            }
-                            let person_type = &item["personType"];
-                            let organization = person_type["subclass"]
-                                .as_str()
-                                .or_else(|| person_type["class"].as_str())
-                                .is_some_and(|value| value.eq_ignore_ascii_case("OrganizationUser"));
-                            Some(PeopleRecord {
-                                id: item["id"].as_str().unwrap_or("").to_string(),
-                                source: "people".to_string(),
-                                name: item["displayName"]
-                                    .as_str()
-                                    .unwrap_or("")
-                                    .trim()
-                                    .to_string(),
-                                emails,
-                                phones: telefones_de_people(item),
-                                job_title: texto_opcional(item, "jobTitle"),
-                                company: texto_opcional(item, "companyName"),
-                                department: None,
-                                office_location: None,
-                                manager: None,
-                                organization,
-                                people_rank: Some(rank),
-                            })
-                        },
-                    ));
+    for (source, url) in requests {
+        let label = if source == "contacts" {
+            "Contacts"
+        } else {
+            "People"
+        };
+        match graph_enviar(
+            if source == "contacts" {
+                "people:contacts"
+            } else {
+                "people:relevant"
+            },
+            GRAPH_TETO_ESPERA_S,
+            || client.get(&url).bearer_auth(&token).send(),
+        ) {
+            Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+                Ok(body) => {
+                    if let Some(next_link) = body["@odata.nextLink"].as_str() {
+                        result.next_links.push(next_link.to_string());
+                    }
+                    if let Some(items) = body["value"].as_array() {
+                        if source == "contacts" {
+                            result.records.extend(items.iter().filter_map(|item| {
+                                let emails = emails_de_contato(item);
+                                if emails.is_empty() {
+                                    return None;
+                                }
+                                Some(PeopleRecord {
+                                    id: item["id"].as_str().unwrap_or("").to_string(),
+                                    source: "contacts".to_string(),
+                                    name: item["displayName"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .trim()
+                                        .to_string(),
+                                    emails,
+                                    phones: telefones_de_contato(item),
+                                    job_title: texto_opcional(item, "jobTitle"),
+                                    company: texto_opcional(item, "companyName"),
+                                    department: texto_opcional(item, "department"),
+                                    office_location: texto_opcional(item, "officeLocation"),
+                                    manager: texto_opcional(item, "manager"),
+                                    organization: false,
+                                    people_rank: None,
+                                })
+                            }));
+                        } else {
+                            let is_first_page = url.contains("/me/people?$top=");
+                            result.records.extend(items.iter().enumerate().filter_map(
+                                |(rank, item)| {
+                                    let emails = emails_de_people(item);
+                                    if emails.is_empty() {
+                                        return None;
+                                    }
+                                    let person_type = &item["personType"];
+                                    let organization = person_type["subclass"]
+                                        .as_str()
+                                        .or_else(|| person_type["class"].as_str())
+                                        .is_some_and(|value| {
+                                            value.eq_ignore_ascii_case("OrganizationUser")
+                                        });
+                                    Some(PeopleRecord {
+                                        id: item["id"].as_str().unwrap_or("").to_string(),
+                                        source: "people".to_string(),
+                                        name: item["displayName"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .trim()
+                                            .to_string(),
+                                        emails,
+                                        phones: telefones_de_people(item),
+                                        job_title: texto_opcional(item, "jobTitle"),
+                                        company: texto_opcional(item, "companyName"),
+                                        department: None,
+                                        office_location: None,
+                                        manager: None,
+                                        organization,
+                                        people_rank: is_first_page.then_some(rank),
+                                    })
+                                },
+                            ));
+                        }
+                    }
                 }
+                Err(error) => result
+                    .failures
+                    .push(format!("{label}: resposta invalida ({error})")),
+            },
+            Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
+                result.missing_scopes.push(format!("{label}.Read"));
             }
+            Ok(resp) => result
+                .failures
+                .push(format!("{label}: Graph retornou {}", resp.status())),
             Err(error) => result
                 .failures
-                .push(format!("People: resposta invalida ({error})")),
-        },
-        Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
-            result.missing_scopes.push("People.Read".to_string());
+                .push(format!("{label}: falha de rede ({error})")),
         }
-        Ok(resp) => result
-            .failures
-            .push(format!("People: Graph retornou {}", resp.status())),
-        Err(error) => result
-            .failures
-            .push(format!("People: falha de rede ({error})")),
     }
 
     Ok(result)
