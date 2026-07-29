@@ -26,6 +26,11 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbLink,
@@ -346,7 +351,20 @@ function AppInner() {
           {/* pr-[150px]: os tres controles de janela ocupam o canto superior
               direito e o tema ficaria embaixo deles. */}
           <div data-tauri-drag-region className="flex flex-1 items-center gap-2 px-4 pr-[150px]">
-            <SidebarTrigger className="-ml-1" />
+            {/* Tooltip canônico (#160). O aria-label localizado sobrepõe o
+                sr-only "Toggle Sidebar" fixo do primitivo compartilhado, sem
+                editá-lo. */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <SidebarTrigger
+                  className="-ml-1"
+                  aria-label={t.nav.alternarMenu}
+                />
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {t.nav.alternarMenu}
+              </TooltipContent>
+            </Tooltip>
             <Separator orientation="vertical" className="mr-2 h-4" />
             <Breadcrumb>
               <BreadcrumbList>

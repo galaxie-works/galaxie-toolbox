@@ -1,4 +1,9 @@
 import AnimatedToggle from "@/components/smoothui/animated-toggle";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
 import { useAppStore } from "@/store";
@@ -48,13 +53,24 @@ export function ThemeToggle() {
   const setModoTema = useAppStore((state) => state.setModoTema);
 
   return (
-    <AnimatedToggle
-      checked={dark}
-      onChange={(escuro) => setModoTema(escuro ? "dark" : "light")}
-      label={t.tema.alternar}
-      icons={{ on: <MoonIcon />, off: <SunIcon /> }}
-      size="lg"
-      variant="icon"
-    />
+    // Tooltip visual (#160). O AnimatedToggle (componente de referência do
+    // smoothui) não repassa refs/props arbitrárias ao botão interno, então o
+    // gatilho do Tooltip é um <span> em volta — o hover cobre o botão e o nome
+    // acessível continua no próprio botão via `label`/`aria-label`.
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <AnimatedToggle
+            checked={dark}
+            onChange={(escuro) => setModoTema(escuro ? "dark" : "light")}
+            label={t.tema.alternar}
+            icons={{ on: <MoonIcon />, off: <SunIcon /> }}
+            size="lg"
+            variant="icon"
+          />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{t.tema.alternar}</TooltipContent>
+    </Tooltip>
   );
 }

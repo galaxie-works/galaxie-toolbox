@@ -236,7 +236,13 @@ export function AppSidebar({
         </SidebarMenu>
       </SidebarFooter>
 
-      <SidebarRail />
+      {/* Rail é a faixa de redimensionar (tabIndex=-1, não focável): seu
+          "tooltip" é o title nativo. Localizamos aqui — aria-label + title
+          sobrepõem o "Toggle Sidebar" fixo em inglês do primitivo (#160). */}
+      <SidebarRail
+        aria-label={t.nav.alternarMenu}
+        title={t.nav.alternarMenu}
+      />
     </Sidebar>
   );
 }
