@@ -121,6 +121,7 @@ import {
 } from "@/components/compose/compor-mensagem";
 import { NovaMensagemModal } from "@/components/compose/nova-mensagem-modal";
 import { PeopleView } from "@/components/people/people-view";
+import { PersonHoverCard } from "@/components/people/person-hover-card";
 import * as AnimatedButton from "@/components/morphin/animated-border-button";
 import SuccessIcon from "@/components/ui/icons/success";
 import TrashIcon from "@/components/ui/icons/trash";
@@ -3942,17 +3943,19 @@ function InsightsRemetentePopover({
         else fecharInsights();
       }}
     >
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="group inline-flex items-center gap-1 rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={preencher(t.controlRoom.insightsAbrir, { nome })}
-          aria-haspopup="dialog"
-        >
-          <span className="underline-offset-2 group-hover:underline">{nome}</span>
-          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground opacity-50 transition-opacity group-hover:opacity-100" />
-        </button>
-      </PopoverTrigger>
+      <PersonHoverCard email={email} fallback={{ nome, email }}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className="group inline-flex items-center gap-1 rounded-sm text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={preencher(t.controlRoom.insightsAbrir, { nome })}
+            aria-haspopup="dialog"
+          >
+            <span className="underline-offset-2 group-hover:underline">{nome}</span>
+            <ChevronDown className="size-3.5 shrink-0 text-muted-foreground opacity-50 transition-opacity group-hover:opacity-100" />
+          </button>
+        </PopoverTrigger>
+      </PersonHoverCard>
       <PopoverContent align="start" className="w-80" aria-live="polite">
         <p className="mb-3 text-xs font-medium text-muted-foreground">
           {t.controlRoom.insightsTitulo}
