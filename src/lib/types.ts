@@ -134,6 +134,10 @@ export interface EventoDetalhe {
 
 export interface EmailItem {
   id: string;
+  /** Identificador da conversa no Microsoft Graph. Ausente em dados legados. */
+  conversationId?: string | null;
+  /** Posição binária Base64 da mensagem dentro da conversa no Graph. */
+  conversationIndex?: string | null;
   assunto: string;
   de: string;
   deEmail: string;
