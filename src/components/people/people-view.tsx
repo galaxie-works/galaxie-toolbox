@@ -114,6 +114,8 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { OrganizationsView } from "@/components/people/organizations-view";
 import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
 import { useIdioma, preencher } from "@/lib/idioma";
@@ -1473,6 +1475,8 @@ export function PeopleView({
   const setColumnVisibility = useAppStore(
     (state) => state.setPeopleColumnVisibility,
   );
+  const peopleTab = useAppStore((state) => state.peopleTab);
+  const setPeopleTab = useAppStore((state) => state.setPeopleTab);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [sort, setSort] = useState<"relevance" | "az">("relevance");
@@ -1723,11 +1727,33 @@ export function PeopleView({
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
       <div className="flex shrink-0 flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">{t.controlRoom.peopleTitulo}</h2>
-          <p className="text-sm text-muted-foreground">{t.controlRoom.peopleDescricao}</p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-4">
+          <div>
+            <h2 className="text-lg font-semibold">{t.controlRoom.peopleTitulo}</h2>
+            <p className="text-sm text-muted-foreground">
+              {peopleTab === "contacts"
+                ? t.controlRoom.peopleDescricao
+                : t.controlRoom.orgsDescricao}
+            </p>
+          </div>
+          <Tabs
+            value={peopleTab}
+            onValueChange={(value) =>
+              setPeopleTab(value as "contacts" | "organizations")
+            }
+          >
+            <TabsList>
+              <TabsTrigger value="contacts">
+                {t.controlRoom.peopleContactsTab}
+              </TabsTrigger>
+              <TabsTrigger value="organizations">
+                {t.controlRoom.peopleOrganizationsTab}
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row xl:max-w-4xl">
+        {peopleTab === "contacts" && (
+          <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row xl:max-w-4xl">
           <Autocomplete
             items={filtered}
             value={query}
@@ -1818,9 +1844,14 @@ export function PeopleView({
               <LayoutGrid />
             </Button>
           </div>
-        </div>
+          </div>
+        )}
       </div>
 
+      {peopleTab === "organizations" ? (
+        <OrganizationsView contacts={contacts} />
+      ) : (
+        <>
       <div className="flex shrink-0 flex-wrap items-start gap-2">
         <Filters<string>
           filters={filters}
@@ -2055,6 +2086,8 @@ export function PeopleView({
           );
         })()}
       </div>
+        </>
+      )}
     </section>
   );
 }
