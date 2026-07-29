@@ -750,10 +750,22 @@ export async function crFolderMensagens(
     ];
     const itens: EmailItem[] = nomes.map((n, i) => ({
       id: `${folderId}-${skip}-${i}`,
+      // Primeira página traz uma conversa realista de 3 mensagens para o QA
+      // visual do #29. Demais itens seguem como conversas individuais.
+      conversationId:
+        skip === 0 && i < 3
+          ? `${folderId}-conversation-planning`
+          : `${folderId}-${skip}-${i}`,
+      // Edm.Binary chega do Graph como Base64. Maior posição = mensagem mais
+      // recente; i=0 é a linha mais nova no mock.
+      conversationIndex:
+        skip === 0 && i < 3
+          ? ["AAM=", "AAI=", "AAE="][i]
+          : "AAE=",
       assunto: [
-        "Q4 Sprint planning, your input needed",
-        "Partnership proposal · ReUI integration",
-        "[keenthemes] Security advisory on rollup",
+        "Q4 Sprint planning — final agenda",
+        "Re: Q4 Sprint planning — design review",
+        "Re: Q4 Sprint planning — initial draft",
         "Payment received · $299 from Acme Corp",
         "Invoice #1024 · November services",
         "Deployment successful · reui.io/pro",
@@ -770,7 +782,9 @@ export async function crFolderMensagens(
         "Hey team, sharing the draft for review. Let me know your thoughts before we finalize...",
       lido: i > 2,
       temAnexos: i === 0 || i === 4,
-      sinalizado: i === 6,
+      // Uma resposta antiga da conversa principal está sinalizada: prova que o
+      // fio inteiro sobe para Flagged sem ser rachado entre grupos (#29).
+      sinalizado: i === 1 || i === 6,
     }));
     // Remetente UNIDIRECIONAL (#94): servidor/no-reply que só MANDA e-mail e nunca
     // é respondido. Abrir esta mensagem e clicar no nome prova que 1º/último
@@ -779,6 +793,8 @@ export async function crFolderMensagens(
     if (skip === 0) {
       itens.unshift({
         id: `${folderId}-${skip}-server`,
+        conversationId: `${folderId}-server`,
+        conversationIndex: "AAE=",
         assunto: "Relatório diário de backup — VOAZ",
         de: "VOAZ | SERVER",
         deEmail: "server@voaz.builders",

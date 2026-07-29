@@ -33,6 +33,7 @@ import {
   StyleSettings,
 } from "@/components/theme-settings";
 import {
+  ConversationViewPanel,
   SignaturesPanel,
   EmailTemplatesPanel,
 } from "@/components/bridge-settings";
@@ -188,6 +189,13 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             description: "Configure the Bridge email client.",
             icon: BridgeIcon,
             frames: [
+              {
+                key: "conversation-view",
+                title: "Conversation view",
+                subtitle:
+                  "Choose whether Bridge groups related messages into threads.",
+                node: <ConversationViewPanel />,
+              },
               {
                 key: "signature-templates",
                 title: "Signature & Templates",

@@ -1209,6 +1209,8 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
 #[serde(rename_all = "camelCase")]
 pub struct EmailItem {
     pub id: String,
+    pub conversation_id: Option<String>,
+    pub conversation_index: Option<String>,
     pub assunto: String,
     pub de: String,
     pub de_email: String,
@@ -1228,7 +1230,7 @@ pub fn cr_inbox_dia(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<E
     let url = format!(
         "{GRAPH}/me/mailFolders/inbox/messages\
          ?$filter=receivedDateTime ge {inicio} and receivedDateTime lt {fim}\
-         &$select=subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments,flag\
+         &$select=subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex\
          &$orderby=receivedDateTime desc&$top=50"
     );
     let resp = client
@@ -1251,6 +1253,8 @@ pub fn cr_inbox_dia(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<E
                 .to_string();
             itens.push(EmailItem {
                 id: it["id"].as_str().unwrap_or("").to_string(),
+                conversation_id: it["conversationId"].as_str().map(str::to_string),
+                conversation_index: it["conversationIndex"].as_str().map(str::to_string),
                 assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
                 iniciais: iniciais(&de),
                 de,
@@ -2071,6 +2075,8 @@ fn montar_email_item(it: &serde_json::Value, saida: bool) -> EmailItem {
     };
     EmailItem {
         id: it["id"].as_str().unwrap_or("").to_string(),
+        conversation_id: it["conversationId"].as_str().map(str::to_string),
+        conversation_index: it["conversationIndex"].as_str().map(str::to_string),
         assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
         iniciais: iniciais(&contraparte),
         de_email: contraparte_email.to_string(),
@@ -2080,6 +2086,67 @@ fn montar_email_item(it: &serde_json::Value, saida: bool) -> EmailItem {
         lido: it["isRead"].as_bool().unwrap_or(true),
         tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
         sinalizado: it["flag"]["flagStatus"].as_str() == Some("flagged"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Threaded email (#29): prova sem rede de que os dois campos do Graph chegam
+// ao contrato camelCase consumido pelo front.
+//
+// Rodar: cargo test --lib graph::testes_threaded_email
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod testes_threaded_email {
+    use super::*;
+
+    #[test]
+    fn mapeia_conversation_id_e_index_no_contrato_camel_case() {
+        let item = serde_json::json!({
+            "id": "msg-2",
+            "conversationId": "conv-1",
+            "conversationIndex": "AAI=",
+            "subject": "Re: Planejamento",
+            "from": {
+                "emailAddress": {
+                    "name": "Ana",
+                    "address": "ana@example.com"
+                }
+            },
+            "receivedDateTime": "2026-07-29T03:00:00Z",
+            "bodyPreview": "Segunda mensagem",
+            "isRead": false,
+            "hasAttachments": false,
+            "flag": { "flagStatus": "notFlagged" }
+        });
+
+        let email = montar_email_item(&item, false);
+        let serializado = serde_json::to_value(email).expect("EmailItem serializa");
+
+        assert_eq!(serializado["conversationId"], "conv-1");
+        assert_eq!(serializado["conversationIndex"], "AAI=");
+    }
+
+    #[test]
+    fn campos_de_conversa_ausentes_degradam_para_null() {
+        let item = serde_json::json!({
+            "id": "legado",
+            "subject": "Sem metadados",
+            "from": {
+                "emailAddress": {
+                    "name": "Legacy",
+                    "address": "legacy@example.com"
+                }
+            },
+            "receivedDateTime": "2026-07-29T02:00:00Z",
+            "bodyPreview": "",
+            "isRead": true,
+            "hasAttachments": false,
+            "flag": { "flagStatus": "notFlagged" }
+        });
+
+        let email = montar_email_item(&item, false);
+        assert!(email.conversation_id.is_none());
+        assert!(email.conversation_index.is_none());
     }
 }
 
@@ -2119,7 +2186,7 @@ pub fn cr_folder_mensagens(
     // Página de 50, com $skip para o lazy load (rolar até o fim carrega mais).
     let base = format!(
         "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages\
-         ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
+         ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex\
          &$top=50&$skip={skip}"
     );
     // Ordenação escolhida; se o Graph REJEITAR o $orderby (400 — ex.: alguns
@@ -2209,7 +2276,7 @@ pub fn cr_buscar(
             format!(
                 "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages\
                  ?$search=\"{enc}\"\
-                 &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag\
+                 &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex\
                  &$top=50"
             )
         }
@@ -2288,7 +2355,7 @@ pub fn cr_filtrar(
     let saida = matches!(folder_id, "sentitems" | "drafts");
     // Campos idênticos aos de cr_buscar/cr_folder_mensagens: a lista fica igual
     // nos três caminhos (montados por montar_email_item).
-    const SELECT: &str = "subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag";
+    const SELECT: &str = "subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex";
 
     // Continuação: o nextLink já traz filtro+select+top+skiptoken embutidos —
     // usa-se tal e qual. Só na 1ª página montamos a URL inicial por filtro.
