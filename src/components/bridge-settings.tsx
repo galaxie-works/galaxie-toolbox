@@ -91,6 +91,7 @@ import { BulletedListToolbarButton } from "@/components/ui/list-toolbar-button";
 import { LinkToolbarButton } from "@/components/ui/link-toolbar-button";
 import { COMPOSE_KIT } from "@/components/compose/compose-kit";
 import { useAppStore } from "@/store";
+import { UNDO_SEND_DELAYS_MS } from "@/store/bridge-slice";
 import type { Assinatura } from "@/store/bridge-slice";
 import type { TemplateEmail } from "@/lib/templates";
 
@@ -846,6 +847,58 @@ export function EmailTemplatesPanel() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </FramePanel>
+  );
+}
+
+// ===========================================================================
+// Card 3 — Undo send delay (#150)
+// ===========================================================================
+
+/** Rótulos das opções do atraso (segundos), na ordem de `UNDO_SEND_DELAYS_MS`. */
+const UNDO_SEND_LABELS: Record<number, string> = {
+  5_000: "5 seconds",
+  10_000: "10 seconds",
+  30_000: "30 seconds",
+};
+
+/**
+ * Stacked card do "Undo send" (#150). Mesmo padrão do Mood/Style: label +
+ * descrição à esquerda; select à direita. Escolhe por quanto tempo o envio fica
+ * cancelável no Outbox (5/10/30 s) — o valor alimenta o `atrasoMs` do
+ * `agendarEnvio`. Persistido no useAppStore (`bridge.undoSendDelay`).
+ */
+export function UndoSendPanel() {
+  const undoSendDelayMs = useAppStore((s) => s.undoSendDelayMs);
+  const setUndoSendDelay = useAppStore((s) => s.setUndoSendDelay);
+
+  return (
+    <FramePanel>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Undo send delay</h3>
+          <p className="text-sm text-muted-foreground">
+            How long a sent email waits before it leaves, so you can undo it.
+          </p>
+        </div>
+        <Select
+          value={String(undoSendDelayMs)}
+          onValueChange={(valor) => setUndoSendDelay(Number(valor))}
+        >
+          <SelectTrigger aria-label="Undo send delay" className="w-56 shrink-0">
+            <SelectValue placeholder="Select a delay" />
+          </SelectTrigger>
+          <SelectContent position="popper" align="end">
+            <SelectGroup>
+              {UNDO_SEND_DELAYS_MS.map((ms) => (
+                <SelectItem key={ms} value={String(ms)}>
+                  {UNDO_SEND_LABELS[ms]}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
     </FramePanel>
   );
 }

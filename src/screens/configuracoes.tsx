@@ -37,6 +37,7 @@ import {
   ConversationViewPanel,
   SignaturesPanel,
   EmailTemplatesPanel,
+  UndoSendPanel,
 } from "@/components/bridge-settings";
 import {
   Empty,
@@ -215,6 +216,13 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
                     <EmailTemplatesPanel />
                   </>
                 ),
+              },
+              {
+                key: "undo-send",
+                title: "Sending",
+                subtitle:
+                  "Set how long Bridge waits before a sent email leaves, so you can undo it.",
+                node: <UndoSendPanel />,
               },
             ],
           },

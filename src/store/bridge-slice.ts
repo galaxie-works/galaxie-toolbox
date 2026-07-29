@@ -6,7 +6,23 @@ import {
   TEMPLATES_KEY,
   type TemplateEmail,
 } from "@/lib/templates";
+import { UNDO_SEND_DELAY_MS } from "@/lib/outbox";
 import type { AppStore } from "./index";
+
+/**
+ * Atrasos permitidos do "desfazer envio" (#150), em ms. A #33 fixava 10 s; aqui
+ * o usuário escolhe 5/10/30 s em Settings > Galaxie Apps > Bridge, e o valor
+ * alimenta o `atrasoMs` do Outbox. `UNDO_SEND_DELAY_MS` (10 s) segue como padrão.
+ */
+export const UNDO_SEND_DELAYS_MS = [5_000, 10_000, 30_000] as const;
+export type UndoSendDelayMs = (typeof UNDO_SEND_DELAYS_MS)[number];
+
+/** Normaliza um valor cru para o conjunto permitido; fora dele volta pro padrão. */
+export function normalizarUndoSendDelay(valor: unknown): number {
+  return (UNDO_SEND_DELAYS_MS as readonly number[]).includes(valor as number)
+    ? (valor as number)
+    : UNDO_SEND_DELAY_MS;
+}
 
 /**
  * Assinatura de e-mail do Bridge (#135). `corpo` é o HTML gerado pelo mesmo
@@ -51,6 +67,8 @@ export interface BridgeSlice {
   assinaturaPadraoId: string | null;
   /** Templates de e-mail reutilizáveis. */
   templates: TemplateEmail[];
+  /** Janela do "desfazer envio" (#150), em ms — um de `UNDO_SEND_DELAYS_MS`. */
+  undoSendDelayMs: number;
 
   adicionarAssinatura: (dados: DadosAssinatura) => void;
   atualizarAssinatura: (id: string, dados: DadosAssinatura) => void;
@@ -61,6 +79,9 @@ export interface BridgeSlice {
   adicionarTemplate: (dados: DadosTemplate) => void;
   atualizarTemplate: (id: string, dados: DadosTemplate) => void;
   removerTemplate: (id: string) => void;
+
+  /** Troca a janela do desfazer envio; valor fora do permitido cai no padrão. */
+  setUndoSendDelay: (ms: number) => void;
 }
 
 export const BRIDGE_KEYS = {
@@ -68,11 +89,12 @@ export const BRIDGE_KEYS = {
   assinaturaPadraoId: "bridge.assinaturaPadrao",
   // Mesma chave legada dos templates — nada a migrar, só passa a ser dono o store.
   templates: TEMPLATES_KEY,
+  undoSendDelay: "bridge.undoSendDelay",
 } as const;
 
 export type BridgePersistido = Pick<
   BridgeSlice,
-  "assinaturas" | "assinaturaPadraoId" | "templates"
+  "assinaturas" | "assinaturaPadraoId" | "templates" | "undoSendDelayMs"
 >;
 
 export const createBridgeSlice: StateCreator<
@@ -84,6 +106,7 @@ export const createBridgeSlice: StateCreator<
   assinaturas: [],
   assinaturaPadraoId: null,
   templates: [],
+  undoSendDelayMs: UNDO_SEND_DELAY_MS,
 
   adicionarAssinatura: ({ nome, corpo, padrao, usarEmRespostas }) =>
     set((state) => {
@@ -142,4 +165,7 @@ export const createBridgeSlice: StateCreator<
     set((state) => ({
       templates: state.templates.filter((t) => t.id !== id),
     })),
+
+  setUndoSendDelay: (ms) =>
+    set({ undoSendDelayMs: normalizarUndoSendDelay(ms) }),
 });
