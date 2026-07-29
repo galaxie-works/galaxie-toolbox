@@ -12,8 +12,10 @@ import type {
   PastaOD,
   Pessoa,
   PeopleEnrichApplyResult,
+  PeopleContactEdit,
   PeopleEnrichField,
   PeopleEnrichPreview,
+  PeopleInteraction,
   PeopleListResult,
   Reuniao,
   SegurancaEmail,
@@ -811,6 +813,49 @@ export async function crPeopleEnrichApply(
     contactId,
     fields,
   });
+}
+
+/** Indica se o token atual permite alterar contatos do usuário. */
+export async function crPeopleWriteAvailable(): Promise<boolean> {
+  if (!inTauri()) return true;
+  return invoke<boolean>("cr_people_write_available");
+}
+
+/** Atualiza, em uma única operação, os campos editáveis de um contato. */
+export async function crPeopleContactUpdate(
+  contactId: string,
+  input: PeopleContactEdit,
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(550);
+    return;
+  }
+  return invoke<void>("cr_people_contact_update", { contactId, input });
+}
+
+/** Mensagens recentes diretamente relacionadas ao endereço selecionado. */
+export async function crPeopleInteractions(
+  email: string,
+): Promise<PeopleInteraction[]> {
+  if (!inTauri()) {
+    await sleep(450);
+    const now = Date.now();
+    return [
+      {
+        id: `mock-${email}-1`,
+        subject: "Project follow-up",
+        occurredAt: new Date(now - 36e5).toISOString(),
+        direction: "inbound",
+      },
+      {
+        id: `mock-${email}-2`,
+        subject: "Re: Project follow-up",
+        occurredAt: new Date(now - 864e5).toISOString(),
+        direction: "outbound",
+      },
+    ];
+  }
+  return invoke<PeopleInteraction[]>("cr_people_interactions", { email });
 }
 
 /**
