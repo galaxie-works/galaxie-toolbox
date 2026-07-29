@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
 import {
+  AccessibilitySettings,
   MoodSettings,
   StyleSettings,
 } from "@/components/theme-settings";
@@ -34,7 +35,6 @@ import {
   SignaturesPanel,
   EmailTemplatesPanel,
 } from "@/components/bridge-settings";
-import { ColorSettings } from "@/components/color-settings";
 import {
   Empty,
   EmptyDescription,
@@ -79,6 +79,22 @@ interface SettingsItem {
 interface SettingsSection {
   label: string;
   items: SettingsItem[];
+}
+
+/**
+ * Cards empilhados do frame "Appearance": Mood, Style e Accessibility (#136).
+ * Lê `altoContraste` do store para desabilitar o Mood quando o alto contraste
+ * está ligado (o preset high-contrast sobrepõe o Mood).
+ */
+function AppearancePanels() {
+  const altoContraste = useAppStore((state) => state.altoContraste);
+  return (
+    <>
+      <MoodSettings disabled={altoContraste} />
+      <StyleSettings />
+      <AccessibilitySettings />
+    </>
+  );
 }
 
 const SETTINGS_SECTIONS: SettingsSection[] = [
@@ -131,21 +147,10 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             key: "appearance",
             title: "Appearance",
             subtitle: "Set the mood and light or dark style of the app.",
-            // Frame with stacked cards (c-frame-3 dentro do c-frame-5): Mood e
-            // Style são dois FramePanels empilhados NUM frame só, igual ao
-            // Sound & notifications. Cada card já traz label+descrição + select.
-            node: (
-              <>
-                <MoodSettings />
-                <StyleSettings />
-              </>
-            ),
-          },
-          {
-            key: "colors",
-            title: "Colors",
-            subtitle: "Choose an accessible accent color for the interface.",
-            node: <ColorSettings />,
+            // Frame with stacked cards (c-frame-3 dentro do c-frame-5): Mood,
+            // Style e Accessibility são FramePanels empilhados NUM frame só, igual
+            // ao Sound & notifications. Cada card traz label+descrição + controle.
+            node: <AppearancePanels />,
           },
           { key: "lock-screen", title: "Lock screen", subtitle: "Protect the app with a PIN.", pending: 122 },
         ],

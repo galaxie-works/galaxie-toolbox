@@ -673,3 +673,124 @@ html.dark[data-theme="fallout"] {
   --shadow-2xl: 4px 4px 0px 0px hsl(48 100% 50% / 250.00);
 }
 
+/*
+ * High contrast — tweakcn cmmi8o8ic000904l12ucn8i9p (#136).
+ * NÃO é uma opção de Mood: o Accessibility (Settings > Appearance) liga/desliga
+ * o `data-theme="high-contrast"`, que sobrepõe o Mood selecionado.
+ */
+html[data-theme="high-contrast"] {
+  --background: oklch(0.9850 0 0);
+  --foreground: oklch(0.1200 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.1200 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.1200 0 0);
+  --primary: oklch(0.2050 0 0);
+  --primary-foreground: oklch(0.8800 0.0055 16.2560);
+  --secondary: oklch(0.9500 0 0);
+  --secondary-foreground: oklch(0.2050 0 0);
+  --muted: oklch(0.9500 0 0);
+  --muted-foreground: oklch(0.5560 0 0);
+  --accent: oklch(0.9500 0 0);
+  --accent-foreground: oklch(0.2050 0 0);
+  --destructive: oklch(0.5770 0.2450 27.3250);
+  --destructive-foreground: oklch(0.12 0 0);
+  --border: oklch(0.9000 0 0);
+  --input: oklch(0.9200 0 0);
+  --ring: oklch(0.8000 0 0);
+  --chart-1: oklch(0.6460 0.2220 41.1160);
+  --chart-2: oklch(0.6000 0.1180 184.7040);
+  --chart-3: oklch(0.3980 0.0700 227.3920);
+  --chart-4: oklch(0.8280 0.1890 84.4290);
+  --chart-5: oklch(0.7690 0.1880 70.0800);
+  --radius: 0.65rem;
+  --sidebar: oklch(0.9850 0 0);
+  --sidebar-foreground: oklch(0.1200 0 0);
+  --sidebar-primary: oklch(0.2050 0 0);
+  --sidebar-primary-foreground: oklch(0.9850 0 0);
+  --sidebar-accent: oklch(0.9500 0 0);
+  --sidebar-accent-foreground: oklch(0.2050 0 0);
+  --sidebar-border: oklch(0.9220 0 0);
+  --sidebar-ring: oklch(0.8000 0 0);
+  --font-sans: Geist, ui-sans-serif, sans-serif, system-ui;
+  --font-serif: Georgia, serif;
+  --font-mono: Geist Mono, ui-monospace, monospace;
+  --shadow-color: 0, 0, 0;
+  --shadow-opacity: 0.1;
+  --shadow-blur: 10px;
+  --shadow-spread: 0px;
+  --shadow-offset-x: 0px;
+  --shadow-offset-y: 4px;
+  --letter-spacing: -0.01em;
+  --spacing: 0.25rem;
+  --shadow-2xs: 0px 4px 10px 0px hsl(0, 0, 0 / 0.05);
+  --shadow-xs: 0px 4px 10px 0px hsl(0, 0, 0 / 0.05);
+  --shadow-sm: 0px 4px 10px 0px hsl(0, 0, 0 / 0.10), 0px 1px 2px -1px hsl(0, 0, 0 / 0.10);
+  --shadow: 0px 4px 10px 0px hsl(0, 0, 0 / 0.10), 0px 1px 2px -1px hsl(0, 0, 0 / 0.10);
+  --shadow-md: 0px 4px 10px 0px hsl(0, 0, 0 / 0.10), 0px 2px 4px -1px hsl(0, 0, 0 / 0.10);
+  --shadow-lg: 0px 4px 10px 0px hsl(0, 0, 0 / 0.10), 0px 4px 6px -1px hsl(0, 0, 0 / 0.10);
+  --shadow-xl: 0px 4px 10px 0px hsl(0, 0, 0 / 0.10), 0px 8px 10px -1px hsl(0, 0, 0 / 0.10);
+  --shadow-2xl: 0px 4px 10px 0px hsl(0, 0, 0 / 0.25);
+  --tracking-normal: -0.01em;
+  --tracking-tighter: calc(var(--tracking-normal) - 0.05em);
+  --tracking-tight: calc(var(--tracking-normal) - 0.025em);
+  --tracking-wide: calc(var(--tracking-normal) + 0.025em);
+  --tracking-wider: calc(var(--tracking-normal) + 0.05em);
+  --tracking-widest: calc(var(--tracking-normal) + 0.1em);
+}
+
+html.dark[data-theme="high-contrast"] {
+  --background: oklch(0.1000 0 0);
+  --foreground: oklch(0.9900 0 0);
+  --card: oklch(0.1600 0 0);
+  --card-foreground: oklch(0.9900 0 0);
+  --popover: oklch(0.1600 0 0);
+  --popover-foreground: oklch(0.9900 0 0);
+  --primary: oklch(0.9900 0 0);
+  --primary-foreground: oklch(0.1600 0 0);
+  --secondary: oklch(0.2500 0 0);
+  --secondary-foreground: oklch(0.9900 0 0);
+  --muted: oklch(0.2500 0 0);
+  --muted-foreground: oklch(0.7080 0 0);
+  --accent: oklch(0.2500 0 0);
+  --accent-foreground: oklch(0.9900 0 0);
+  --destructive: oklch(0.7040 0.1910 22.2160);
+  --destructive-foreground: oklch(0.9900 0 0);
+  --border: oklch(0.3092 0 0);
+  --input: oklch(1 0 0);
+  --ring: oklch(0.5560 0 0);
+  --chart-1: oklch(0.4880 0.2430 264.3760);
+  --chart-2: oklch(0.6960 0.1700 162.4800);
+  --chart-3: oklch(0.7690 0.1880 70.0800);
+  --chart-4: oklch(0.6270 0.2650 303.9000);
+  --chart-5: oklch(0.2050 0 0);
+  --radius: 0.65rem;
+  --sidebar: oklch(0.1000 0 0);
+  --sidebar-foreground: oklch(0.9900 0 0);
+  --sidebar-primary: oklch(0.9900 0 0);
+  --sidebar-primary-foreground: oklch(0.1600 0 0);
+  --sidebar-accent: oklch(0.2500 0 0);
+  --sidebar-accent-foreground: oklch(0.9900 0 0);
+  --sidebar-border: oklch(1 0 0);
+  --sidebar-ring: oklch(0.5560 0 0);
+  --font-sans: Geist, ui-sans-serif, sans-serif, system-ui;
+  --font-serif: Georgia, serif;
+  --font-mono: Geist Mono, ui-monospace, monospace;
+  --shadow-color: 0, 0, 0;
+  --shadow-opacity: 0.5;
+  --shadow-blur: 20px;
+  --shadow-spread: 0px;
+  --shadow-offset-x: 0px;
+  --shadow-offset-y: 10px;
+  --letter-spacing: -0.01em;
+  --spacing: 0.25rem;
+  --shadow-2xs: 0px 10px 20px 0px hsl(0, 0, 0 / 0.25);
+  --shadow-xs: 0px 10px 20px 0px hsl(0, 0, 0 / 0.25);
+  --shadow-sm: 0px 10px 20px 0px hsl(0, 0, 0 / 0.50), 0px 1px 2px -1px hsl(0, 0, 0 / 0.50);
+  --shadow: 0px 10px 20px 0px hsl(0, 0, 0 / 0.50), 0px 1px 2px -1px hsl(0, 0, 0 / 0.50);
+  --shadow-md: 0px 10px 20px 0px hsl(0, 0, 0 / 0.50), 0px 2px 4px -1px hsl(0, 0, 0 / 0.50);
+  --shadow-lg: 0px 10px 20px 0px hsl(0, 0, 0 / 0.50), 0px 4px 6px -1px hsl(0, 0, 0 / 0.50);
+  --shadow-xl: 0px 10px 20px 0px hsl(0, 0, 0 / 0.50), 0px 8px 10px -1px hsl(0, 0, 0 / 0.50);
+  --shadow-2xl: 0px 10px 20px 0px hsl(0, 0, 0 / 1.25);
+}
+
