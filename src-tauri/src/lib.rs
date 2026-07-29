@@ -990,21 +990,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         // Lembra tamanho e posicao da janela entre execucoes (salva ao fechar,
         // restaura ao abrir).
-        //
-        // Boot #164: TIRAMOS a flag VISIBLE. Por padrao o plugin salva/restaura a
-        // visibilidade e, como a `main` fica visivel em uso, ele a mostraria logo
-        // no launch da proxima vez — furando o splash. Sem VISIBLE, a `main`
-        // respeita o visible:false da config e so aparece quando o frontend
-        // revela. A `splashscreen` e transiente: fica fora do plugin (denylist).
-        .plugin(
-            tauri_plugin_window_state::Builder::default()
-                .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::all()
-                        & !tauri_plugin_window_state::StateFlags::VISIBLE,
-                )
-                .with_denylist(&["splashscreen"])
-                .build(),
-        )
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .manage(Arc::new(TokenStore::default()))
         .setup(|app| {
             if cfg!(debug_assertions) {
@@ -1017,14 +1003,9 @@ pub fn run() {
 
             // Primeira vez (sem estado salvo): abre com 50% da resolucao do
             // monitor, centralizado. Nas proximas, o plugin acima restaura o
-            // tamanho que o usuario deixou. A janela `main` nasce invisivel
-            // (visible:false na config) e e dimensionada aqui, ainda oculta.
-            //
-            // Boot #164: quem MOSTRA a `main` e o frontend, quando o boot termina
-            // (App.tsx -> revelarAppEFecharSplash), fechando junto a janela
-            // circular `splashscreen`. Por isso NAO chamamos win.show() aqui — do
-            // contrario a main apareceria por baixo do splash logo no launch. Ha
-            // um longstop no frontend que revela a main mesmo se o boot travar.
+            // tamanho que o usuario deixou. A janela nasce invisivel
+            // (visible:false na config) e so aparece aqui, ja no tamanho certo
+            // — sem flash de redimensionamento.
             if let Some(win) = app.get_webview_window("main") {
                 let ja_tem_estado = app
                     .path()
@@ -1042,6 +1023,7 @@ pub fn run() {
                         let _ = win.center();
                     }
                 }
+                let _ = win.show();
             }
             Ok(())
         })

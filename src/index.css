@@ -221,16 +221,6 @@
   #root {
     height: 100%;
   }
-  /* Janela splash (#164): a janela Tauri `splashscreen` é transparente para só o
-     círculo aparecer. Sem isto, o `bg-background` do tema pintaria o quadrado
-     400×400 inteiro e mataria a transparência. O `main.tsx` põe esta classe no
-     <html> antes do primeiro paint. */
-  html.janela-splash,
-  html.janela-splash body,
-  html.janela-splash #root {
-    background: transparent !important;
-    overflow: hidden;
-  }
   body {
     @apply bg-background text-foreground;
     /* Janela de app, nao pagina web: texto de interface nao se seleciona, como

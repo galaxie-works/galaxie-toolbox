@@ -3,8 +3,7 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main",
-    "splashscreen"
+    "main"
   ],
   "permissions": [
     "core:default",
@@ -14,7 +13,6 @@
     "core:window:allow-minimize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-is-maximized",
-    "core:window:allow-show",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
     "dialog:allow-open",
