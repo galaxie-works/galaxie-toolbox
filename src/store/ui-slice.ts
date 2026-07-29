@@ -14,6 +14,7 @@ import { resolver, type Updater } from "./updater";
 
 /** Modo de "marcar como lido" (#95). */
 export type MarcarLidoModo = "imediato" | "atraso" | "manual";
+export type BridgeView = "mail" | "people";
 
 export interface UiSlice {
   /** Zoom manual do leitor (#76). 1 = auto-fit puro. Persistido em `bridge.leitorZoom`. */
@@ -30,6 +31,8 @@ export interface UiSlice {
   marcarLidoModo: MarcarLidoModo;
   /** Atraso (s) do modo "atraso" (#95). Persistido em `bridge.marcarLidoAtraso`. */
   marcarLidoAtraso: number;
+  /** Destino primário do Bridge nesta sessão. People substitui os painéis de mail. */
+  bridgeView: BridgeView;
 
   /** Aceita valor OU updater (mantém a semântica dos antigos `setState`). */
   setZoom: (v: Updater<number>) => void;
@@ -40,6 +43,7 @@ export interface UiSlice {
   setAgendaAberta: (v: Updater<boolean>) => void;
   setMarcarLidoModo: (m: MarcarLidoModo) => void;
   setMarcarLidoAtraso: (n: number) => void;
+  setBridgeView: (view: BridgeView) => void;
 }
 
 /**
@@ -87,6 +91,7 @@ export const createUiSlice: StateCreator<
   agendaAberta: false,
   marcarLidoModo: "imediato",
   marcarLidoAtraso: 2,
+  bridgeView: "mail",
 
   setZoom: (v) => set((s) => ({ zoom: resolver(s.zoom, v) })),
   setGruposColapsados: (v) =>
@@ -98,4 +103,5 @@ export const createUiSlice: StateCreator<
   setAgendaAberta: (v) => set((s) => ({ agendaAberta: resolver(s.agendaAberta, v) })),
   setMarcarLidoModo: (m) => set({ marcarLidoModo: m }),
   setMarcarLidoAtraso: (n) => set({ marcarLidoAtraso: n }),
+  setBridgeView: (bridgeView) => set({ bridgeView }),
 });

@@ -11,6 +11,7 @@ import type {
   PastaEmail,
   PastaOD,
   Pessoa,
+  PeopleListResult,
   Reuniao,
   SegurancaEmail,
   Site,
@@ -658,6 +659,64 @@ export async function crPessoas(query: string): Promise<Pessoa[]> {
     );
   }
   return invoke<Pessoa[]>("cr_pessoas", { query });
+}
+
+/** Dados iniciais do módulo People, mantendo falhas e permissões por fonte. */
+export async function crPeopleList(): Promise<PeopleListResult> {
+  if (!inTauri()) {
+    await sleep(450);
+    return {
+      missingScopes: [],
+      failures: [],
+      records: [
+        {
+          id: "contact-ada",
+          source: "contacts",
+          name: "Ada Lovelace",
+          emails: [{ address: "ada@example.com", label: "work" }],
+          phones: [{ number: "+44 20 7946 0958", label: "work" }],
+          jobTitle: "Product Architect",
+          company: "Analytical Engines",
+          organization: false,
+          peopleRank: null,
+        },
+        {
+          id: "people-ada",
+          source: "people",
+          name: "Ada Lovelace",
+          emails: [{ address: "ada@example.com" }],
+          phones: [],
+          jobTitle: "Product Architect",
+          company: "Analytical Engines",
+          organization: true,
+          peopleRank: 0,
+        },
+        {
+          id: "people-grace",
+          source: "people",
+          name: "Grace Hopper",
+          emails: [{ address: "grace@example.com" }],
+          phones: [{ number: "+1 212 555 0102", label: "mobile" }],
+          jobTitle: "Engineering Lead",
+          company: "Compiler Labs",
+          organization: true,
+          peopleRank: 1,
+        },
+        {
+          id: "contact-alan",
+          source: "contacts",
+          name: "Alan Turing",
+          emails: [{ address: "alan@example.net", label: "work" }],
+          phones: [],
+          jobTitle: null,
+          company: "Bletchley Research",
+          organization: false,
+          peopleRank: null,
+        },
+      ],
+    };
+  }
+  return invoke<PeopleListResult>("cr_people_list");
 }
 
 /**

@@ -348,6 +348,17 @@ async fn cr_pessoas(
         .map_err(|e| e.to_string())?
 }
 
+/// People: contatos explicitos + pessoas relevantes, com falhas por fonte.
+#[tauri::command]
+async fn cr_people_list(
+    state: State<'_, Store>,
+) -> Result<graph::PeopleListResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_people_list(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Compositor: envia um e-mail novo (do zero). Mail.Send.
 #[tauri::command]
 async fn cr_enviar_novo(
@@ -1126,6 +1137,7 @@ pub fn run() {
             cr_categorias,
             cr_fotos_contatos,
             cr_pessoas,
+            cr_people_list,
             cr_enviar_novo,
             cr_compartilhar_onedrive,
             cr_salvar_contatos,

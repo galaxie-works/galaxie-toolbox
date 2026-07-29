@@ -2833,6 +2833,266 @@ pub struct Pessoa {
     pub origem: Option<String>,
 }
 
+/// Endereco de e-mail normalizado para o modulo People (#166).
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleEmail {
+    pub address: String,
+    pub label: Option<String>,
+}
+
+/// Telefone normalizado para o modulo People (#166).
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeoplePhone {
+    pub number: String,
+    pub label: String,
+}
+
+/// Registro cru de uma das duas fontes do Graph. O merge/dedupe por e-mail
+/// acontece no front, onde este mesmo modelo alimenta a lista e o resolver
+/// compartilhado dos futuros pontos de entrada do People.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleRecord {
+    pub id: String,
+    pub source: String,
+    pub name: String,
+    pub emails: Vec<PeopleEmail>,
+    pub phones: Vec<PeoplePhone>,
+    pub job_title: Option<String>,
+    pub company: Option<String>,
+    pub organization: bool,
+    pub people_rank: Option<usize>,
+}
+
+/// Resultado estruturado: uma fonte pode falhar sem esconder os dados da outra.
+/// 401/403 viram escopos ausentes para a UI oferecer o fluxo de consentimento
+/// existente de forma explicita; demais falhas continuam visiveis e retentaveis.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleListResult {
+    pub records: Vec<PeopleRecord>,
+    pub missing_scopes: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+fn texto_opcional(item: &serde_json::Value, campo: &str) -> Option<String> {
+    item[campo]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn emails_de_contato(item: &serde_json::Value) -> Vec<PeopleEmail> {
+    item["emailAddresses"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|email| {
+            let address = email["address"].as_str()?.trim();
+            if address.is_empty() {
+                return None;
+            }
+            Some(PeopleEmail {
+                address: address.to_string(),
+                label: texto_opcional(email, "name"),
+            })
+        })
+        .collect()
+}
+
+fn telefones_de_contato(item: &serde_json::Value) -> Vec<PeoplePhone> {
+    let mut phones = Vec::new();
+    let mut push_many = |campo: &str, label: &str| {
+        if let Some(values) = item[campo].as_array() {
+            for value in values {
+                if let Some(number) = value.as_str().map(str::trim).filter(|v| !v.is_empty()) {
+                    phones.push(PeoplePhone {
+                        number: number.to_string(),
+                        label: label.to_string(),
+                    });
+                }
+            }
+        }
+    };
+    push_many("businessPhones", "work");
+    push_many("homePhones", "home");
+    if let Some(number) = item["mobilePhone"]
+        .as_str()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        phones.push(PeoplePhone {
+            number: number.to_string(),
+            label: "mobile".to_string(),
+        });
+    }
+    phones
+}
+
+fn emails_de_people(item: &serde_json::Value) -> Vec<PeopleEmail> {
+    let mut emails: Vec<PeopleEmail> = item["scoredEmailAddresses"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|email| {
+            let address = email["address"].as_str()?.trim();
+            if address.is_empty() {
+                return None;
+            }
+            Some(PeopleEmail {
+                address: address.to_string(),
+                label: None,
+            })
+        })
+        .collect();
+    if emails.is_empty() {
+        if let Some(address) = item["userPrincipalName"]
+            .as_str()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            emails.push(PeopleEmail {
+                address: address.to_string(),
+                label: None,
+            });
+        }
+    }
+    emails
+}
+
+fn telefones_de_people(item: &serde_json::Value) -> Vec<PeoplePhone> {
+    item["phones"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|phone| {
+            let number = phone["number"].as_str()?.trim();
+            if number.is_empty() {
+                return None;
+            }
+            Some(PeoplePhone {
+                number: number.to_string(),
+                label: phone["type"].as_str().unwrap_or("other").to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Lista inicial do People (#166): contatos explicitos + pessoas relevantes.
+/// Mantem as fontes separadas para o merge deterministico no front e preserva a
+/// ordem de relevancia de `/me/people` via `people_rank`.
+pub fn cr_people_list(store: &TokenStore) -> Result<PeopleListResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut result = PeopleListResult {
+        records: Vec::new(),
+        missing_scopes: Vec::new(),
+        failures: Vec::new(),
+    };
+
+    let contacts_url = format!(
+        "{GRAPH}/me/contacts?$top=250&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle"
+    );
+    match graph_enviar("people:contacts", GRAPH_TETO_ESPERA_S, || {
+        client.get(&contacts_url).bearer_auth(&token).send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => {
+                if let Some(items) = body["value"].as_array() {
+                    result.records.extend(items.iter().filter_map(|item| {
+                        let emails = emails_de_contato(item);
+                        if emails.is_empty() {
+                            return None;
+                        }
+                        Some(PeopleRecord {
+                            id: item["id"].as_str().unwrap_or("").to_string(),
+                            source: "contacts".to_string(),
+                            name: item["displayName"].as_str().unwrap_or("").trim().to_string(),
+                            emails,
+                            phones: telefones_de_contato(item),
+                            job_title: texto_opcional(item, "jobTitle"),
+                            company: texto_opcional(item, "companyName"),
+                            organization: false,
+                            people_rank: None,
+                        })
+                    }));
+                }
+            }
+            Err(error) => result
+                .failures
+                .push(format!("Contacts: resposta invalida ({error})")),
+        },
+        Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
+            result.missing_scopes.push("Contacts.Read".to_string());
+        }
+        Ok(resp) => result
+            .failures
+            .push(format!("Contacts: Graph retornou {}", resp.status())),
+        Err(error) => result
+            .failures
+            .push(format!("Contacts: falha de rede ({error})")),
+    }
+
+    let people_url = format!(
+        "{GRAPH}/me/people?$top=250&$select=id,displayName,scoredEmailAddresses,phones,companyName,jobTitle,personType,userPrincipalName"
+    );
+    match graph_enviar("people:relevant", GRAPH_TETO_ESPERA_S, || {
+        client.get(&people_url).bearer_auth(&token).send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => {
+                if let Some(items) = body["value"].as_array() {
+                    result.records.extend(items.iter().enumerate().filter_map(
+                        |(rank, item)| {
+                            let emails = emails_de_people(item);
+                            if emails.is_empty() {
+                                return None;
+                            }
+                            let person_type = &item["personType"];
+                            let organization = person_type["subclass"]
+                                .as_str()
+                                .or_else(|| person_type["class"].as_str())
+                                .is_some_and(|value| value.eq_ignore_ascii_case("OrganizationUser"));
+                            Some(PeopleRecord {
+                                id: item["id"].as_str().unwrap_or("").to_string(),
+                                source: "people".to_string(),
+                                name: item["displayName"]
+                                    .as_str()
+                                    .unwrap_or("")
+                                    .trim()
+                                    .to_string(),
+                                emails,
+                                phones: telefones_de_people(item),
+                                job_title: texto_opcional(item, "jobTitle"),
+                                company: texto_opcional(item, "companyName"),
+                                organization,
+                                people_rank: Some(rank),
+                            })
+                        },
+                    ));
+                }
+            }
+            Err(error) => result
+                .failures
+                .push(format!("People: resposta invalida ({error})")),
+        },
+        Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
+            result.missing_scopes.push("People.Read".to_string());
+        }
+        Ok(resp) => result
+            .failures
+            .push(format!("People: Graph retornou {}", resp.status())),
+        Err(error) => result
+            .failures
+            .push(format!("People: falha de rede ({error})")),
+    }
+
+    Ok(result)
+}
+
 /// `jobTitle` do item do Graph, descartando string vazia/null (o Graph devolve
 /// `null` para quem nao tem cargo preenchido no diretorio).
 fn cargo_de(item: &serde_json::Value) -> Option<String> {
