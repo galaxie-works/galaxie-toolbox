@@ -125,7 +125,11 @@ import { TextMorph } from "torph/react";
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
-import { useFotos, configurarDominioFotos } from "@/lib/fotos";
+import {
+  useFotos,
+  configurarDominioFotos,
+  configurarEscopoFotos,
+} from "@/lib/fotos";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
@@ -726,6 +730,7 @@ function BotaoExcluir({
   rotuloConcluido,
   size = "small",
   className,
+  disabled = false,
 }: {
   onExcluir: () => void | Promise<void>;
   onConcluir?: () => void;
@@ -734,6 +739,7 @@ function BotaoExcluir({
   rotuloConcluido: string;
   size?: "medium" | "small" | "xsmall";
   className?: string;
+  disabled?: boolean;
 }) {
   const [estado, setEstado] = useState<"parado" | "processando" | "sucesso">("parado");
 
@@ -744,7 +750,7 @@ function BotaoExcluir({
   }, [estado, onConcluir]);
 
   async function run() {
-    if (estado !== "parado") return;
+    if (disabled || estado !== "parado") return;
     setEstado("processando");
     try {
       // Duração mínima pra a animação (borda tracejada) ser visível mesmo quando
@@ -768,7 +774,7 @@ function BotaoExcluir({
       animateBorder={estado === "processando"}
       showAnimatedBorder={estado === "processando"}
       animatedBorderStyle={estado === "processando" ? "dashed" : "solid"}
-      disabled={estado !== "parado"}
+      disabled={disabled || estado !== "parado"}
       className={cn(
         estado === "sucesso"
           ? "dark:border-green-500/40 dark:bg-green-950/40 dark:text-green-300 dark:hover:bg-green-950/60 dark:hover:text-green-200"
@@ -802,16 +808,43 @@ function BotaoExcluir({
   );
 }
 
+/** Tooltip canônico (c-tooltip-4) para controles desabilitados em uma shared
+ * mailbox. O `span` recebe o hover/foco porque botão nativo disabled não recebe
+ * eventos; o componente Tooltip continua literal, sem provider local. */
+function DicaSomenteLeitura({
+  ativo,
+  texto,
+  children,
+}: {
+  ativo: boolean;
+  texto: string;
+  children: React.ReactNode;
+}) {
+  if (!ativo) return <>{children}</>;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex" tabIndex={0}>
+          {children}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{texto}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /** Contexto exibido no painel de detalhe quando há multi-seleção (c-empty-15). */
 function MultiSelecaoContexto({
   n,
   onExcluir,
   onLimpar,
+  somenteLeitura,
   t,
 }: {
   n: number;
   onExcluir: () => void | Promise<void>;
   onLimpar: () => void;
+  somenteLeitura: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   return (
@@ -834,14 +867,20 @@ function MultiSelecaoContexto({
             <Button variant="outline" onClick={onLimpar}>
               {t.controlRoom.limparSelecao}
             </Button>
-            <BotaoExcluir
-              size="medium"
-              onExcluir={onExcluir}
-              onConcluir={onLimpar}
-              rotulo={t.controlRoom.excluirSelecionados}
-              rotuloProcessando={t.controlRoom.excluindo}
-              rotuloConcluido={t.controlRoom.excluidos}
-            />
+            <DicaSomenteLeitura
+              ativo={somenteLeitura}
+              texto={t.controlRoom.caixaSomenteLeitura}
+            >
+              <BotaoExcluir
+                size="medium"
+                onExcluir={onExcluir}
+                onConcluir={onLimpar}
+                rotulo={t.controlRoom.excluirSelecionados}
+                rotuloProcessando={t.controlRoom.excluindo}
+                rotuloConcluido={t.controlRoom.excluidos}
+                disabled={somenteLeitura}
+              />
+            </DicaSomenteLeitura>
           </div>
         </EmptyContent>
       </Empty>
@@ -1357,6 +1396,7 @@ function FolderSidebar({
   caixaAtiva,
   onSelecionarCaixa,
   onAbrirAdicionarCaixa,
+  somenteLeitura,
   colapsada,
   agendaAberta,
   onToggleAgenda,
@@ -1390,6 +1430,7 @@ function FolderSidebar({
   caixaAtiva: string;
   onSelecionarCaixa: (v: string) => void;
   onAbrirAdicionarCaixa: () => void;
+  somenteLeitura: boolean;
   colapsada: boolean;
   agendaAberta: boolean;
   onToggleAgenda: () => void;
@@ -1446,12 +1487,28 @@ function FolderSidebar({
     const linhaBtn = (
       <button
         type="button"
-        onClick={() => onSel(p.id)}
-        title={colapsada ? rotulo : undefined}
+        onClick={() => {
+          if (p.acessoNegado) {
+            toast.warning(t.controlRoom.caixaAcessoParcial);
+            return;
+          }
+          onSel(p.id);
+        }}
+        aria-disabled={p.acessoNegado || undefined}
+        title={
+          p.acessoNegado
+            ? t.controlRoom.caixaAcessoParcial
+            : somenteLeitura
+              ? t.controlRoom.caixaSomenteLeitura
+              : colapsada
+                ? rotulo
+                : undefined
+        }
         className={cn(
           "flex items-center rounded-md text-sm transition-colors",
           colapsada ? "relative size-9 justify-center" : "flex-1 gap-2.5 px-2.5 py-2",
-          ativo ? "bg-secondary font-medium text-secondary-foreground" : "hover:bg-accent/50"
+          ativo ? "bg-secondary font-medium text-secondary-foreground" : "hover:bg-accent/50",
+          p.acessoNegado && "cursor-not-allowed opacity-50"
         )}
       >
         {colapsada ? (
@@ -1473,6 +1530,9 @@ function FolderSidebar({
           <>
             <Ico className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate text-left">{rotulo}</span>
+            {p.acessoNegado && (
+              <TriangleAlert className="size-3.5 shrink-0 text-warning" />
+            )}
             {contagem > 0 && (
               <span className="shrink-0 text-xs text-muted-foreground">{contagem}</span>
             )}
@@ -1490,7 +1550,10 @@ function FolderSidebar({
     // SÓ em custom — em well-known essas ações nem aparecem (decisão do PO).
     const criarSub = podeCriarSubpasta(p.tipo);
     const custom = ehPastaCustom(p.tipo);
-    const semAcoes = !marcarLidas && !esvaziar && !criarSub && !custom;
+    const semAcoes =
+      somenteLeitura ||
+      Boolean(p.acessoNegado) ||
+      (!marcarLidas && !esvaziar && !criarSub && !custom);
 
     // Irmãs da pasta (para barrar nome duplicado antes de ir ao Graph): as
     // filhas do pai. Nas raízes, as próprias raízes.
@@ -1642,6 +1705,11 @@ function FolderSidebar({
         colapsada={colapsada}
         t={t}
       />
+      {somenteLeitura && !colapsada ? (
+        <p className="px-1 text-xs text-muted-foreground">
+          {t.controlRoom.caixaCompartilhadaDesc}
+        </p>
+      ) : null}
 
       {colapsada ? (
         <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
@@ -2230,6 +2298,7 @@ function SubmenuMover({
   rotulo,
   onAbrir,
   onMover,
+  disabled = false,
   t,
 }: {
   alvos: string[];
@@ -2239,6 +2308,7 @@ function SubmenuMover({
   rotulo?: string;
   onAbrir: () => void;
   onMover: (ids: string[], destino: string, rotulo: string) => void;
+  disabled?: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   const [busca, setBusca] = useState("");
@@ -2258,7 +2328,11 @@ function SubmenuMover({
         else setBusca("");
       }}
     >
-      <ContextMenuSubTrigger className="gap-2">
+      <ContextMenuSubTrigger
+        className="gap-2"
+        disabled={disabled}
+        title={disabled ? t.controlRoom.caixaSomenteLeitura : undefined}
+      >
         <FolderInput />
         {rotulo ?? t.controlRoom.moverPara}
       </ContextMenuSubTrigger>
@@ -2328,6 +2402,7 @@ function ItensMenuEmail({
   onAbrirMover,
   onMover,
   setSelecionados,
+  somenteLeitura,
   t,
 }: {
   alvos: string[];
@@ -2342,12 +2417,15 @@ function ItensMenuEmail({
   onAbrirMover: () => void;
   onMover: (ids: string[], destino: string, rotulo: string) => void;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
+  somenteLeitura: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   return (
     <>
       <ContextMenuItem
         className="gap-2"
+        disabled={somenteLeitura}
+        title={somenteLeitura ? t.controlRoom.caixaSomenteLeitura : undefined}
         onClick={() => alvos.forEach((id) => onMarcarLido(id, !lido))}
       >
         {lido ? <Mail /> : <MailOpen />}
@@ -2355,6 +2433,8 @@ function ItensMenuEmail({
       </ContextMenuItem>
       <ContextMenuItem
         className="gap-2"
+        disabled={somenteLeitura}
+        title={somenteLeitura ? t.controlRoom.caixaSomenteLeitura : undefined}
         onClick={() => alvos.forEach((id) => onFlag(id, !sinalizado))}
       >
         {sinalizado ? <FlagOff /> : <Flag />}
@@ -2368,12 +2448,15 @@ function ItensMenuEmail({
         carregando={pastasCarregando}
         onAbrir={onAbrirMover}
         onMover={onMover}
+        disabled={somenteLeitura}
         t={t}
       />
       <ContextMenuSeparator />
       <ContextMenuItem
         variant="destructive"
         className="gap-2"
+        disabled={somenteLeitura}
+        title={somenteLeitura ? t.controlRoom.caixaSomenteLeitura : undefined}
         onClick={() => {
           onExcluir(alvos);
           // Tira da seleção o que foi excluído — senão a barra "N selected"
@@ -2396,6 +2479,7 @@ function ItensMenuEmail({
 function MessageList({
   titulo,
   mensagens,
+  erroLeitura,
   sel,
   onSel,
   onRefresh,
@@ -2435,11 +2519,13 @@ function MessageList({
   onResponderTodos,
   onEncaminhar,
   onCompor,
+  somenteLeitura,
   t,
   idioma,
 }: {
   titulo: string;
   mensagens: EmailItem[] | null;
+  erroLeitura?: string;
   sel: string | null;
   onSel: (id: string) => void;
   onRefresh: () => void;
@@ -2481,6 +2567,7 @@ function MessageList({
   onResponderTodos: () => void;
   onEncaminhar: () => void;
   onCompor: () => void;
+  somenteLeitura: boolean;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
@@ -2868,6 +2955,7 @@ function MessageList({
 
     // Delete exclui a seleção (se houver) ou a ativa.
     if (e.key === "Delete") {
+      if (somenteLeitura) return;
       const alvos = selecionados.size > 0 ? [...selecionados] : ativoId ? [ativoId] : [];
       if (alvos.length > 0) {
         e.preventDefault();
@@ -2884,14 +2972,17 @@ function MessageList({
     if (ehModPrincipal(e) || e.altKey || e.shiftKey) return;
     switch (e.key.toLowerCase()) {
       case "r": // responder
+        if (somenteLeitura) return;
         e.preventDefault();
         onResponder();
         return;
       case "a": // responder a todos
+        if (somenteLeitura) return;
         e.preventDefault();
         onResponderTodos();
         return;
       case "f": // encaminhar
+        if (somenteLeitura) return;
         e.preventDefault();
         onEncaminhar();
         return;
@@ -2903,12 +2994,14 @@ function MessageList({
         }
         return;
       case "u": // alterna lido/não-lido
+        if (somenteLeitura) return;
         if (msgAtiva) {
           e.preventDefault();
           onMarcarLido(msgAtiva.id, !msgAtiva.lido);
         }
         return;
       case "s": // alterna sinalizado
+        if (somenteLeitura) return;
         if (msgAtiva) {
           e.preventDefault();
           onFlag(msgAtiva.id, !msgAtiva.sinalizado);
@@ -3054,9 +3147,19 @@ function MessageList({
         )}
         <div className="ml-auto flex items-center gap-1">
           {pastaTipo === "deleteditems" && (mensagens?.length ?? 0) > 0 && (
-            <Button variant="ghost" size="sm" onClick={onEsvaziar}>
-              <Trash2 /> {t.controlRoom.esvaziarLixeira}
-            </Button>
+            <DicaSomenteLeitura
+              ativo={somenteLeitura}
+              texto={t.controlRoom.caixaSomenteLeitura}
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onEsvaziar}
+                disabled={somenteLeitura}
+              >
+                <Trash2 /> {t.controlRoom.esvaziarLixeira}
+              </Button>
+            </DicaSomenteLeitura>
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -3181,14 +3284,20 @@ function MessageList({
           <span className="text-xs font-medium">
             {preencher(t.controlRoom.nSelecionados, { n: selecionados.size })}
           </span>
-          <BotaoExcluir
-            className="ml-auto"
-            onExcluir={() => onExcluir([...selecionados])}
-            onConcluir={() => setSelecionados(new Set())}
-            rotulo={t.controlRoom.excluirSelecionados}
-            rotuloProcessando={t.controlRoom.excluindo}
-            rotuloConcluido={t.controlRoom.excluidos}
-          />
+          <DicaSomenteLeitura
+            ativo={somenteLeitura}
+            texto={t.controlRoom.caixaSomenteLeitura}
+          >
+            <BotaoExcluir
+              className="ml-auto"
+              onExcluir={() => onExcluir([...selecionados])}
+              onConcluir={() => setSelecionados(new Set())}
+              rotulo={t.controlRoom.excluirSelecionados}
+              rotuloProcessando={t.controlRoom.excluindo}
+              rotuloConcluido={t.controlRoom.excluidos}
+              disabled={somenteLeitura}
+            />
+          </DicaSomenteLeitura>
           <Button variant="ghost" size="icon-sm" onClick={() => setSelecionados(new Set())}>
             <X />
           </Button>
@@ -3241,6 +3350,16 @@ function MessageList({
         <div className="flex flex-1 items-center justify-center">
           <Spinner className="size-5 text-muted-foreground" />
         </div>
+      ) : erroLeitura ? (
+        <Empty className="flex-1 py-10">
+          <EmptyHeader>
+            <EmptyMedia>
+              <ShieldAlert />
+            </EmptyMedia>
+            <EmptyTitle>{t.controlRoom.caixaCompartilhadaTitulo}</EmptyTitle>
+            <EmptyDescription>{erroLeitura}</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       ) : filtrada.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
           {carregandoMais ? (
@@ -3462,6 +3581,12 @@ function MessageList({
                                 <button
                                   type="button"
                                   onClick={() => onFlag(m.id, !m.sinalizado)}
+                                  disabled={somenteLeitura}
+                                  title={
+                                    somenteLeitura
+                                      ? t.controlRoom.caixaSomenteLeitura
+                                      : undefined
+                                  }
                                   className="grid size-6 place-items-center rounded bg-accent hover:bg-background"
                                   aria-label={t.controlRoom.sinalizar}
                                 >
@@ -3475,6 +3600,12 @@ function MessageList({
                                 <button
                                   type="button"
                                   onClick={() => onExcluir([m.id])}
+                                  disabled={somenteLeitura}
+                                  title={
+                                    somenteLeitura
+                                      ? t.controlRoom.caixaSomenteLeitura
+                                      : undefined
+                                  }
                                   className="grid size-6 place-items-center rounded bg-accent text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                                   aria-label={t.controlRoom.excluir}
                                 >
@@ -3508,6 +3639,7 @@ function MessageList({
                           onAbrirMover={onAbrirMover}
                           onMover={onMover}
                           setSelecionados={setSelecionados}
+                          somenteLeitura={somenteLeitura}
                           t={t}
                         />
                       </ContextMenuContent>
@@ -3538,6 +3670,7 @@ function MessageList({
               onAbrirMover={onAbrirMover}
               onMover={onMover}
               setSelecionados={setSelecionados}
+              somenteLeitura={somenteLeitura}
               t={t}
             />
           </ContextMenuContent>
@@ -3847,6 +3980,8 @@ const MessageDetail = forwardRef<
   {
     id: string | null;
     userEmail?: string | null;
+    mailbox: string;
+    somenteLeitura: boolean;
     sinalizado: boolean;
     lido: boolean;
     onFlag: (id: string, novo: boolean) => void;
@@ -3861,6 +3996,8 @@ const MessageDetail = forwardRef<
   {
     id,
     userEmail,
+    mailbox,
+    somenteLeitura,
     sinalizado,
     lido,
     onFlag,
@@ -3888,11 +4025,11 @@ const MessageDetail = forwardRef<
   useImperativeHandle(
     ref,
     () => ({
-      responder: () => id && setModo("responder"),
-      responderTodos: () => id && setModo("responderTodos"),
-      encaminhar: () => id && setModo("encaminhar"),
+      responder: () => id && !somenteLeitura && setModo("responder"),
+      responderTodos: () => id && !somenteLeitura && setModo("responderTodos"),
+      encaminhar: () => id && !somenteLeitura && setModo("encaminhar"),
     }),
-    [id]
+    [id, somenteLeitura]
   );
 
   useEffect(() => {
@@ -3905,13 +4042,16 @@ const MessageDetail = forwardRef<
     setDet(null);
     setSeg(null);
     setModo(null);
-    api.crEmailCorpo(id).then((d) => vivo && setDet(d)).catch(() => {});
+    api.crEmailCorpo(id, mailbox).then((d) => vivo && setDet(d)).catch(() => {});
     // Segurança (#91) em paralelo; falha silenciosa (badge some, sem quebrar).
-    api.crEmailSeguranca(id).then((s) => vivo && setSeg(s)).catch(() => {});
+    api
+      .crEmailSeguranca(id, mailbox)
+      .then((s) => vivo && setSeg(s))
+      .catch(() => {});
     return () => {
       vivo = false;
     };
-  }, [id]);
+  }, [id, mailbox]);
 
   // Deriva veredito de autenticação (SPF/DKIM/DMARC) e divergência de Reply-To
   // a partir dos headers brutos — lógica pura, testada em seguranca-leitor.ts.
@@ -3933,7 +4073,7 @@ const MessageDetail = forwardRef<
   async function baixarAnexo(anexo: AnexoEmail) {
     if (!id) return;
     try {
-      const caminho = await api.crBaixarAnexo(id, anexo.id);
+      const caminho = await api.crBaixarAnexo(id, anexo.id, mailbox);
       toastDownload({
         titulo: t.controlRoom.downloadTitulo,
         arquivo: anexo.nome,
@@ -3955,7 +4095,7 @@ const MessageDetail = forwardRef<
     det?.webLink && api.abrirAppInterno("outlook", comLoginHint(det.webLink, userEmail), "Outlook");
 
   async function enviar() {
-    if (!id) return;
+    if (!id || somenteLeitura) return;
     const c = comporRef.current;
     const html = c?.getHtml() ?? "";
     const texto = c?.getTexto()?.trim() ?? "";
@@ -4053,46 +4193,94 @@ const MessageDetail = forwardRef<
     <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
       {/* Toolbar */}
       <div className="flex items-center gap-1 border-b px-3 py-2">
-        <Button variant="ghost" size="sm" onClick={() => setModo("responder")}>
-          <Reply /> {t.controlRoom.responder}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => setModo("responderTodos")}>
-          <ReplyAll /> {t.controlRoom.responderTodos}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => setModo("encaminhar")}>
-          <Forward /> {t.controlRoom.encaminhar}
-        </Button>
-        <div className="ml-auto flex items-center gap-1">
+        <DicaSomenteLeitura
+          ativo={somenteLeitura}
+          texto={t.controlRoom.caixaSomenteLeitura}
+        >
           <Button
             variant="ghost"
-            size="icon-sm"
-            onClick={() => id && onFlag(id, !sinalizado)}
-            aria-label={t.controlRoom.sinalizar}
+            size="sm"
+            onClick={() => setModo("responder")}
+            disabled={somenteLeitura}
           >
-            <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
+            <Reply /> {t.controlRoom.responder}
           </Button>
+        </DicaSomenteLeitura>
+        <DicaSomenteLeitura
+          ativo={somenteLeitura}
+          texto={t.controlRoom.caixaSomenteLeitura}
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setModo("responderTodos")}
+            disabled={somenteLeitura}
+          >
+            <ReplyAll /> {t.controlRoom.responderTodos}
+          </Button>
+        </DicaSomenteLeitura>
+        <DicaSomenteLeitura
+          ativo={somenteLeitura}
+          texto={t.controlRoom.caixaSomenteLeitura}
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setModo("encaminhar")}
+            disabled={somenteLeitura}
+          >
+            <Forward /> {t.controlRoom.encaminhar}
+          </Button>
+        </DicaSomenteLeitura>
+        <div className="ml-auto flex items-center gap-1">
+          <DicaSomenteLeitura
+            ativo={somenteLeitura}
+            texto={t.controlRoom.caixaSomenteLeitura}
+          >
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => id && onFlag(id, !sinalizado)}
+              aria-label={t.controlRoom.sinalizar}
+              disabled={somenteLeitura}
+            >
+              <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
+            </Button>
+          </DicaSomenteLeitura>
           {/* Botão de lido/não-lido: ALTERNA (#95). Antes era só "marcar como
               não lido" — o que bastava quando o app marcava lido sozinho ao
               abrir. Nos modos "após atraso"/"manual" a mensagem pode continuar
               não-lida no leitor, então o botão precisa marcar LIDO também. */}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => id && onMarcarLido(id, !lido)}
-            aria-label={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
-            title={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
+          <DicaSomenteLeitura
+            ativo={somenteLeitura}
+            texto={t.controlRoom.caixaSomenteLeitura}
           >
-            {lido ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => id && onExcluir([id])}
-            aria-label={t.controlRoom.excluir}
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => id && onMarcarLido(id, !lido)}
+              aria-label={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
+              title={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
+              disabled={somenteLeitura}
+            >
+              {lido ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
+            </Button>
+          </DicaSomenteLeitura>
+          <DicaSomenteLeitura
+            ativo={somenteLeitura}
+            texto={t.controlRoom.caixaSomenteLeitura}
           >
-            <Trash2 />
-          </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => id && onExcluir([id])}
+              aria-label={t.controlRoom.excluir}
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={somenteLeitura}
+            >
+              <Trash2 />
+            </Button>
+          </DicaSomenteLeitura>
           <Button variant="ghost" size="icon-sm" onClick={abrirOutlook} aria-label={t.controlRoom.abrirOutlook}>
             <ExternalLink />
           </Button>
@@ -4622,9 +4810,8 @@ export function ControlRoomScreen({
   const agendaAberta = useAppStore((s) => s.agendaAberta);
   const setAgendaAberta = useAppStore((s) => s.setAgendaAberta);
   // Caixas compartilhadas (#111): lista de endereços adicionados (persistida) +
-  // qual está ativa. Adicionar/validar/persistir/selecionar é o escopo desta
-  // issue; a LISTAGEM do conteúdo de uma caixa compartilhada é a #112 (por isso
-  // a caixa ativa por ora só troca o estado e mostra um placeholder "em breve").
+  // qual está ativa. A #112 usa este endereço em todas as leituras do Graph;
+  // `me` continua sendo o default e a seleção ativa segue só nesta sessão.
   // Caixas compartilhadas migradas pro mailbox slice (#125). Chave
   // `bridge.caixasCompartilhadas` preservada; seletor assina só este campo.
   const caixasCompartilhadas = useAppStore((s) => s.caixasCompartilhadas);
@@ -4668,6 +4855,9 @@ export function ControlRoomScreen({
   const DEBOUNCE_PASTA_MS = 180;
   const pastaCarga = useDebounce(pastaSel, DEBOUNCE_PASTA_MS);
   const [mensagens, setMensagens] = useState<EmailItem[] | null>(null);
+  // Caixa à qual `mensagens` pertence. Na troca, o render novo nunca reutiliza
+  // nem por um frame a lista/detalhe da caixa anterior (#112).
+  const [caixaDados, setCaixaDados] = useState(CAIXA_PROPRIA);
   const [msgSel, setMsgSel] = useState<string | null>(null);
   const [eventoSel, setEventoSel] = useState<string | null>(null);
   const [recarga, setRecarga] = useState(0);
@@ -4765,8 +4955,8 @@ export function ControlRoomScreen({
   // Chave do cache de sessão da pasta (#108). Escopada por caixa ativa (#111) +
   // ordenação (#32) pra que caixa compartilhada e troca de sort não colidam.
   const chaveCache = useCallback(
-    (pasta: string) =>
-      `${caixaAtivaRef.current}|${pasta}|${ordenarRef.current}|${ordemDescRef.current}`,
+    (pasta: string, caixa = caixaAtivaRef.current) =>
+      `${caixa}|${pasta}|${ordenarRef.current}|${ordemDescRef.current}`,
     []
   );
   // Detecta se o efeito de carga foi disparado por refresh (recarga mudou) —
@@ -4791,11 +4981,15 @@ export function ControlRoomScreen({
   // pastas (recarrega as contagens junto com as ações e no refresh manual)
   useEffect(() => {
     let vivo = true;
-    api.crMailFolders().then((p) => vivo && setPastas(p)).catch(() => vivo && setPastas([]));
+    setPastas(null);
+    api
+      .crMailFolders(caixaAtiva)
+      .then((p) => vivo && setPastas(p))
+      .catch(() => vivo && setPastas([]));
     return () => {
       vivo = false;
     };
-  }, [recarga, recargaPastas]);
+  }, [caixaAtiva, recarga, recargaPastas]);
 
   // Cache de SUBPASTAS (childFolders), compartilhado pelo sidebar (expandir) e
   // pelo submenu "Mover para pasta…" (#88). Carrega sob demanda e memoriza; o
@@ -4803,14 +4997,51 @@ export function ControlRoomScreen({
   // quase ao mesmo tempo).
   const [subpastas, setSubpastas] = useState<Record<string, PastaEmail[]>>({});
   const subpastasPedidasRef = useRef<Set<string>>(new Set());
-  const carregarSubpastas = useCallback((id: string) => {
-    if (subpastasPedidasRef.current.has(id)) return;
-    subpastasPedidasRef.current.add(id);
-    api
-      .crSubpastas(id)
-      .then((cs) => setSubpastas((f) => ({ ...f, [id]: cs })))
-      .catch(() => setSubpastas((f) => ({ ...f, [id]: [] })));
-  }, []);
+  const carregarSubpastas = useCallback(
+    (id: string) => {
+      if (subpastasPedidasRef.current.has(id)) return;
+      subpastasPedidasRef.current.add(id);
+      const caixaPedido = caixaAtiva;
+      api
+        .crSubpastas(id, caixaAtiva)
+        .then((cs) => {
+          if (caixaAtivaRef.current !== caixaPedido) return;
+          setSubpastas((f) => ({ ...f, [id]: cs }));
+        })
+        .catch((e) => {
+          if (caixaAtivaRef.current !== caixaPedido) return;
+          setSubpastas((f) => ({ ...f, [id]: [] }));
+          if (String(e).toLowerCase().includes("acesso parcial")) {
+            toast.warning(t.controlRoom.caixaAcessoParcial);
+          }
+        });
+    },
+    [caixaAtiva, t]
+  );
+
+  // Trocar de caixa é uma fronteira de dados: nenhuma seleção, paginação,
+  // subpasta, busca ou cache de foto da caixa anterior pode aparecer na nova.
+  useEffect(() => {
+    configurarEscopoFotos(caixaAtiva);
+    setSubpastas({});
+    subpastasPedidasRef.current.clear();
+    setPedirArvore(false);
+    setPastaSel("inbox");
+    setMensagens(null);
+    setMsgSel(null);
+    setSelecionados(new Set());
+    setBusca("");
+    setResultadosBusca(null);
+    setResultadosFiltro(null);
+    setTemMais(false);
+    setTemMaisBusca(false);
+    setTemMaisFiltro(false);
+    proximoBuscaRef.current = null;
+    proximoFiltroRef.current = null;
+    carregadosRef.current = 0;
+    deletadasRef.current.clear();
+    ultimoVistoRef.current = null;
+  }, [caixaAtiva]);
 
   // O submenu "Mover para…" precisa da árvore INTEIRA (não só do que o usuário
   // expandiu no sidebar). Ao abrir pela primeira vez, `pedirArvore` liga e este
@@ -4844,6 +5075,8 @@ export function ControlRoomScreen({
     () => arvorePastas.filter((p) => p.id !== pastaSel),
     [arvorePastas, pastaSel]
   );
+  const pastaCargaAcessoNegado =
+    pastas?.some((p) => p.id === pastaCarga && p.acessoNegado) ?? false;
 
   // Contadores reais das abas Flagged/Files (na pasta inteira). Só refaz na
   // TROCA de pasta / refresh manual — NÃO em cada recargaPastas (o polling do
@@ -4871,12 +5104,13 @@ export function ControlRoomScreen({
   const contadoresKeyRef = useRef<string>("");
   useEffect(() => {
     if (!foregroundPronto) return; // espera a lista (foreground) antes do fundo
-    const chave = `${pastaCarga}|${recarga}`;
+    if (caixaDados !== caixaAtiva || pastaCarga !== pastaSel || pastaCargaAcessoNegado) return;
+    const chave = `${caixaAtiva}|${pastaCarga}|${recarga}`;
     if (contadoresKeyRef.current === chave) return; // já buscado p/ esta pasta
     contadoresKeyRef.current = chave;
     let vivo = true;
     api
-      .crContadores(pastaCarga)
+      .crContadores(pastaCarga, caixaAtiva)
       .then((c) => {
         if (!vivo) return;
         setContFlagged(c.flagged);
@@ -4886,7 +5120,15 @@ export function ControlRoomScreen({
     return () => {
       vivo = false;
     };
-  }, [pastaCarga, recarga, foregroundPronto]);
+  }, [
+    caixaAtiva,
+    caixaDados,
+    pastaCarga,
+    pastaSel,
+    pastaCargaAcessoNegado,
+    recarga,
+    foregroundPronto,
+  ]);
 
   // Detecção central de e-mails novos na Inbox: compara o topo da lista com o
   // último visto e dispara o toast rico (c-sonner-9). Chamada tanto pelo poll
@@ -4941,13 +5183,13 @@ export function ControlRoomScreen({
     const INTERVALO = 15 * 60 * 1000;
     const iv = setInterval(async () => {
       try {
-        const msgs = await api.crFolderMensagens("inbox");
+        const msgs = await api.crFolderMensagens("inbox", 0, "data", true, "me");
         if (!vivo) return;
         const novos = notificarNovos(msgs);
         // Chegou e-mail novo enquanto o usuário estava parado: invalida o cache
         // da inbox pra que ao voltar pra ela a lista seja rebuscada (não sirva
         // uma versão sem os novos) — #108.
-        if (novos > 0) limparCachePasta(chaveCache("inbox"));
+        if (novos > 0) limparCachePasta(chaveCache("inbox", "me"));
       } catch {
         /* silencioso: é só o aviso de novos e-mails */
       }
@@ -4970,6 +5212,10 @@ export function ControlRoomScreen({
   // cabeçalho da lista e pelo menu de contexto da pasta (#89) — este último já
   // passou pelo AlertDialog de confirmação.
   async function esvaziarPasta(folderId: string) {
+    if (caixaCompartilhadaAtiva) {
+      toast.warning(t.controlRoom.caixaSomenteLeitura);
+      return;
+    }
     const aviso = toast.loading(t.controlRoom.esvaziandoPasta);
     try {
       const n = await api.crEsvaziarPasta(folderId);
@@ -4983,6 +5229,10 @@ export function ControlRoomScreen({
   // Marca como lidas todas as não lidas de uma pasta (#89). Pode demorar (loop
   // de PATCH no Graph), então mostra toast de progresso.
   async function marcarPastaLida(folderId: string) {
+    if (caixaCompartilhadaAtiva) {
+      toast.warning(t.controlRoom.caixaSomenteLeitura);
+      return;
+    }
     const aviso = toast.loading(t.controlRoom.marcandoTodasLidas);
     try {
       const n = await api.crMarcarPastaLida(folderId);
@@ -5018,6 +5268,10 @@ export function ControlRoomScreen({
   );
 
   async function criarSubpasta(paiId: string, nome: string) {
+    if (caixaCompartilhadaAtiva) {
+      toast.warning(t.controlRoom.caixaSomenteLeitura);
+      return;
+    }
     const aviso = toast.loading(t.controlRoom.criandoSubpasta);
     try {
       const nova = await api.crCriarSubpasta(paiId, nome);
@@ -5031,6 +5285,10 @@ export function ControlRoomScreen({
   }
 
   async function renomearPasta(id: string, nome: string, paiId?: string) {
+    if (caixaCompartilhadaAtiva) {
+      toast.warning(t.controlRoom.caixaSomenteLeitura);
+      return;
+    }
     const aviso = toast.loading(t.controlRoom.renomeandoPasta);
     try {
       const nova = await api.crRenomearPasta(id, nome);
@@ -5044,6 +5302,10 @@ export function ControlRoomScreen({
   }
 
   async function excluirPasta(id: string, rotulo: string, paiId?: string) {
+    if (caixaCompartilhadaAtiva) {
+      toast.warning(t.controlRoom.caixaSomenteLeitura);
+      return;
+    }
     const aviso = toast.loading(t.controlRoom.excluindoPasta);
     try {
       // `true` = foi pra Lixeira (reversível, o caminho normal); `false` = o
@@ -5075,6 +5337,10 @@ export function ControlRoomScreen({
     rotuloDestino: string,
     paiId?: string
   ) {
+    if (caixaCompartilhadaAtiva) {
+      toast.warning(t.controlRoom.caixaSomenteLeitura);
+      return;
+    }
     const aviso = toast.loading(t.controlRoom.movendoPasta);
     try {
       const nova = await api.crMoverPasta(id, destino);
@@ -5122,6 +5388,7 @@ export function ControlRoomScreen({
   // não-lido e a contagem da pasta na hora; PATCH isRead em background com
   // rollback. Usado pelo auto-mark ao abrir e pela ação manual de "não-lido".
   function acaoMarcarLido(id: string, lido: boolean) {
+    if (caixaCompartilhadaAtiva) return;
     const m =
       mensagens?.find((x) => x.id === id) ??
       resultadosBusca?.find((x) => x.id === id) ??
@@ -5163,7 +5430,7 @@ export function ControlRoomScreen({
   //                passar por cima de várias mensagens não marca nenhuma;
   //  - "manual":   não marca nada — só a ação explícita de marcar lido marca.
   useEffect(() => {
-    if (!msgSel || marcarLidoModo === "manual") return;
+    if (caixaCompartilhadaAtiva || !msgSel || marcarLidoModo === "manual") return;
     if (marcarLidoModo === "imediato") {
       marcarLidoRef.current(msgSel, true);
       return;
@@ -5173,7 +5440,7 @@ export function ControlRoomScreen({
       Math.max(1, marcarLidoAtraso) * 1000
     );
     return () => window.clearTimeout(timer);
-  }, [msgSel, marcarLidoModo, marcarLidoAtraso]);
+  }, [caixaCompartilhadaAtiva, msgSel, marcarLidoModo, marcarLidoAtraso]);
 
   // Ajustes otimistas dos contadores reais das abas (Flagged/Files), pra não
   // ficarem estagnados enquanto o $count do servidor não reflete ainda
@@ -5184,6 +5451,10 @@ export function ControlRoomScreen({
     setContAnexos((c) => (c === null ? c : Math.max(0, c + d)));
 
   async function acaoFlag(id: string, novo: boolean) {
+    if (caixaCompartilhadaAtiva) {
+      toast.warning(t.controlRoom.caixaSomenteLeitura);
+      return;
+    }
     // otimista: pinta o item já (nas duas listas) e mexe no count da aba
     mutarNasListas((m) => (m.id === id ? { ...m, sinalizado: novo } : m));
     ajustarContFlagged(novo ? 1 : -1);
@@ -5203,6 +5474,10 @@ export function ControlRoomScreen({
   }
 
   async function acaoExcluir(ids: string[]) {
+    if (caixaCompartilhadaAtiva) {
+      toast.warning(t.controlRoom.caixaSomenteLeitura);
+      return;
+    }
     if (ids.length === 0) return;
     const idsSet = new Set(ids);
     // Fonte = lista atualmente visível (pasta ou resultados de busca), pra
@@ -5294,6 +5569,10 @@ export function ControlRoomScreen({
    * recarrega a pasta pra ressincronizar (o item volta se não saiu).
    */
   async function acaoMover(ids: string[], destino: string, rotuloDestino: string) {
+    if (caixaCompartilhadaAtiva) {
+      toast.warning(t.controlRoom.caixaSomenteLeitura);
+      return;
+    }
     if (ids.length === 0 || !destino || destino === pastaSel) return;
     const idsSet = new Set(ids);
     // Fonte = lista visível (pasta, busca ou filtro Graph), como no excluir.
@@ -5377,6 +5656,7 @@ export function ControlRoomScreen({
   // refetch — preserva as páginas roladas e não repete requests ao Graph. Um
   // refresh (recarga muda) invalida o cache e refaz o fetch (dados frescos).
   useEffect(() => {
+    if (pastaCarga !== pastaSel) return;
     let vivo = true;
     const chave = chaveCache(pastaCarga);
     // Refresh manual/ressincronização mudou `recarga`: invalida e refaz o fetch.
@@ -5392,10 +5672,24 @@ export function ControlRoomScreen({
     carregandoMaisRef.current = false;
     deletadasRef.current = new Set();
 
+    // A pasta continua visível no sidebar para explicar o acesso parcial, mas
+    // não insistimos em novos requests que o Graph já informou que serão 403.
+    if (pastaCargaAcessoNegado) {
+      carregadosRef.current = 0;
+      setMensagens([]);
+      setCaixaDados(caixaAtiva);
+      setTemMais(false);
+      setMsgSel(null);
+      return () => {
+        vivo = false;
+      };
+    }
+
     // VIA RESTAURAÇÃO: cache tem a pasta → repõe sem null-flash e sem rede.
     if (cacheEntry) {
       carregadosRef.current = cacheEntry.carregados;
       setMensagens(cacheEntry.mensagens);
+      setCaixaDados(caixaAtiva);
       setTemMais(cacheEntry.temMais);
       setMsgSel((cur) =>
         cur && cacheEntry.mensagens.some((m) => m.id === cur)
@@ -5412,11 +5706,12 @@ export function ControlRoomScreen({
     setTemMais(false);
     carregadosRef.current = 0;
     api
-      .crFolderMensagens(pastaCarga, 0, ordenar, ordemDesc)
+      .crFolderMensagens(pastaCarga, 0, ordenar, ordemDesc, caixaAtiva)
       .then((ms) => {
         if (!vivo) return;
         carregadosRef.current = ms.length;
         setMensagens(ms);
+        setCaixaDados(caixaAtiva);
         // mantém a mensagem já selecionada se ela existir na lista nova (ex.:
         // clicar "Responder" num toast já selecionou a msg antes do fetch);
         // senão pega a primeira.
@@ -5433,7 +5728,11 @@ export function ControlRoomScreen({
         // o poll (que SEMPRE busca date-desc) mantém o baseline sozinho. #43
         if (pastaCarga === "inbox" && ordenar === "data" && ordemDesc) notificarNovos(ms);
       })
-      .catch(() => vivo && setMensagens([]));
+      .catch(() => {
+        if (!vivo) return;
+        setMensagens([]);
+        setCaixaDados(caixaAtiva);
+      });
     return () => {
       vivo = false;
     };
@@ -5442,7 +5741,15 @@ export function ControlRoomScreen({
     // ENTRAM: trocar a ordenação re-busca a lista já ordenada pelo Graph (#32).
     // pastaCarga (debounced) no lugar de pastaSel: coalesce a troca rápida (#87).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastaCarga, recarga, ordenar, ordemDesc]);
+  }, [
+    caixaAtiva,
+    pastaCarga,
+    pastaSel,
+    pastaCargaAcessoNegado,
+    recarga,
+    ordenar,
+    ordemDesc,
+  ]);
 
   // Pré-carga: busca a próxima página do servidor pela âncora (skip = já
   // buscado, não o tamanho da lista) e concatena deduplicando. Serve tanto pro
@@ -5451,13 +5758,16 @@ export function ControlRoomScreen({
     if (carregandoMaisRef.current || !temMais) return;
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
+    const caixaPedido = caixaAtiva;
     try {
       const pagina = await api.crFolderMensagens(
         pastaCarga,
         carregadosRef.current,
         ordenar,
-        ordemDesc
+        ordemDesc,
+        caixaAtiva
       );
+      if (caixaAtivaRef.current !== caixaPedido) return;
       carregadosRef.current += pagina.length; // avança pelo offset do servidor
       const proximo = juntar(mensagensRef.current ?? [], pagina);
       const tem = pagina.length === PAGINA;
@@ -5492,9 +5802,10 @@ export function ControlRoomScreen({
   const buscaAtiva = busca.trim() !== "";
   useEffect(() => {
     const termo = busca.trim();
+    let vivo = true;
     // Com um filtro Graph ativo NÃO fazemos $search no servidor: o texto é
     // aplicado client-side por cima do resultado do filtro (D2).
-    if (!termo || filtroGraph) {
+    if (!termo || filtroGraph || pastaCargaAcessoNegado) {
       setResultadosBusca(null);
       setTemMaisBusca(false);
       return;
@@ -5503,19 +5814,24 @@ export function ControlRoomScreen({
       setResultadosBusca(null); // null = mostra o spinner de carregando
       proximoBuscaRef.current = null;
       api
-        .crBuscar(pastaSel, termo)
+        .crBuscar(pastaSel, termo, null, caixaAtiva)
         .then((res) => {
+          if (!vivo) return;
           proximoBuscaRef.current = res.proximo;
           setResultadosBusca(res.itens.filter((m) => !deletadasRef.current.has(m.id)));
           setTemMaisBusca(res.proximo !== null);
         })
         .catch(() => {
+          if (!vivo) return;
           setResultadosBusca([]);
           setTemMaisBusca(false);
         });
     }, 300);
-    return () => clearTimeout(id);
-  }, [busca, pastaSel, filtroGraph]);
+    return () => {
+      vivo = false;
+      clearTimeout(id);
+    };
+  }, [busca, caixaAtiva, pastaSel, filtroGraph, pastaCargaAcessoNegado]);
 
   // Reset visual do filtro ao TROCAR de pasta (#31 / D3): um filtro Graph da
   // Inbox não faz sentido carregar pra Enviados. Só reseta em troca REAL — no
@@ -5532,7 +5848,7 @@ export function ControlRoomScreen({
   // Filtros que EXIGEM o servidor (tome/mentions/invites): busca via cr_filtrar
   // e pagina pela continuação (nextLink), igual à busca. Fora deles, limpa.
   useEffect(() => {
-    if (!filtroGraph) {
+    if (!filtroGraph || pastaCargaAcessoNegado) {
       setResultadosFiltro(null);
       setTemMaisFiltro(false);
       proximoFiltroRef.current = null;
@@ -5543,7 +5859,7 @@ export function ControlRoomScreen({
     proximoFiltroRef.current = null;
     const escopo = filtroServidor;
     api
-      .crFiltrar(pastaSel, escopo!)
+      .crFiltrar(pastaSel, escopo!, null, caixaAtiva)
       .then((res) => {
         if (!vivo) return;
         proximoFiltroRef.current = res.proximo;
@@ -5564,16 +5880,30 @@ export function ControlRoomScreen({
       vivo = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtroServidor, filtroGraph, pastaSel, recarga]);
+  }, [
+    caixaAtiva,
+    filtroServidor,
+    filtroGraph,
+    pastaSel,
+    pastaCargaAcessoNegado,
+    recarga,
+  ]);
 
   // Paginação do filtro Graph via @odata.nextLink; dedup igual à busca.
   async function carregarMaisFiltro() {
     const proximo = proximoFiltroRef.current;
-    if (carregandoMaisRef.current || !filtroGraph || !proximo) return;
+    if (carregandoMaisRef.current || !filtroGraph || !proximo || pastaCargaAcessoNegado) return;
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
+    const caixaPedido = caixaAtiva;
     try {
-      const res = await api.crFiltrar(pastaSel, filtroServidor!, proximo);
+      const res = await api.crFiltrar(
+        pastaSel,
+        filtroServidor!,
+        proximo,
+        caixaAtiva
+      );
+      if (caixaAtivaRef.current !== caixaPedido) return;
       proximoFiltroRef.current = res.proximo;
       setResultadosFiltro((prev) => juntar(prev ?? [], res.itens));
       setTemMaisFiltro(res.proximo !== null);
@@ -5590,11 +5920,13 @@ export function ControlRoomScreen({
   async function carregarMaisBusca() {
     const termo = busca.trim();
     const proximo = proximoBuscaRef.current;
-    if (carregandoMaisRef.current || !termo || !proximo) return;
+    if (carregandoMaisRef.current || !termo || !proximo || pastaCargaAcessoNegado) return;
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
+    const caixaPedido = caixaAtiva;
     try {
-      const res = await api.crBuscar(pastaSel, termo, proximo);
+      const res = await api.crBuscar(pastaSel, termo, proximo, caixaAtiva);
+      if (caixaAtivaRef.current !== caixaPedido) return;
       proximoBuscaRef.current = res.proximo;
       setResultadosBusca((prev) => juntar(prev ?? [], res.itens));
       setTemMaisBusca(res.proximo !== null);
@@ -5622,6 +5954,8 @@ export function ControlRoomScreen({
     }
     return buscaAtiva ? resultadosBusca : mensagens;
   }, [filtroGraph, resultadosFiltro, textoBuscaLower, buscaAtiva, resultadosBusca, mensagens]);
+  const dadosDaCaixaAtiva = caixaDados === caixaAtiva;
+  const fonteListaAtiva = dadosDaCaixaAtiva ? fonteLista : null;
   const onCarregarMaisLista = filtroGraph
     ? carregarMaisFiltro
     : buscaAtiva
@@ -5632,7 +5966,8 @@ export function ControlRoomScreen({
   const pastaAtual = pastas?.find((p) => p.id === pastaSel);
   const tituloLista = pastaAtual ? rotuloPasta(pastaAtual.tipo, pastaAtual.nome, t) : "";
   const msgAtual =
-    fonteLista?.find((m) => m.id === msgSel) ?? mensagens?.find((m) => m.id === msgSel);
+    fonteListaAtiva?.find((m) => m.id === msgSel) ??
+    (dadosDaCaixaAtiva ? mensagens?.find((m) => m.id === msgSel) : undefined);
 
   // "Compose in Outlook" — comportamento atual (abre o Outlook interno).
   const composeOutlook = () =>
@@ -5683,32 +6018,15 @@ export function ControlRoomScreen({
           caixaAtiva={caixaAtiva}
           onSelecionarCaixa={setCaixaAtiva}
           onAbrirAdicionarCaixa={() => setAdicionarCaixaAberto(true)}
+          somenteLeitura={caixaCompartilhadaAtiva}
           colapsada={!sidebarAberta}
           agendaAberta={agendaAberta}
           onToggleAgenda={() => setAgendaAberta((v) => !v)}
           t={t}
         />
 
-        {/* Caixa compartilhada ativa (#111): a LISTAGEM do conteúdo é a #112 —
-            aqui só sinalizamos qual caixa está ativa (o seletor no sidebar) e
-            mostramos um placeholder "em breve". A caixa /me segue intacta. */}
-        {caixaCompartilhadaAtiva ? (
-          <div className="flex min-w-0 flex-1 items-center justify-center overflow-hidden rounded-xl border bg-card">
-            <Empty className="py-10">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <Mailbox />
-                </EmptyMedia>
-                <EmptyTitle>{caixaAtiva}</EmptyTitle>
-                <EmptyDescription>
-                  {t.controlRoom.caixaCompartilhadaDesc}
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          </div>
-        ) : (
-        /* Lista e detalhe compartilham o espaço, com splitter arrastável.
-            autoSaveId persiste a proporção que o usuário deixa. */
+        {/* Lista e detalhe compartilham o espaço, com splitter arrastável.
+            autoSaveId persiste a proporção que o usuário deixa. */}
         <ResizablePanelGroup
           autoSaveId="bridge.layout"
           direction="horizontal"
@@ -5717,7 +6035,10 @@ export function ControlRoomScreen({
           <ResizablePanel defaultSize={38} minSize={24} maxSize={55} className="overflow-hidden">
             <MessageList
               titulo={tituloLista}
-              mensagens={fonteLista}
+              mensagens={fonteListaAtiva}
+              erroLeitura={
+                pastaAtual?.acessoNegado ? t.controlRoom.caixaAcessoParcial : undefined
+              }
               sel={msgSel}
               onSel={setMsgSel}
               onRefresh={() => setRecarga((n) => n + 1)}
@@ -5760,24 +6081,28 @@ export function ControlRoomScreen({
               onResponderTodos={() => detalheRef.current?.responderTodos()}
               onEncaminhar={() => detalheRef.current?.encaminhar()}
               onCompor={() => setNovaAberta(true)}
+              somenteLeitura={caixaCompartilhadaAtiva}
               t={t}
               idioma={idioma}
             />
           </ResizablePanel>
           <ResizableHandle withHandle className="mx-1.5 bg-transparent hover:bg-border" />
           <ResizablePanel defaultSize={62} minSize={35} className="overflow-hidden">
-            {selecionados.size > 0 ? (
+            {dadosDaCaixaAtiva && selecionados.size > 0 ? (
               <MultiSelecaoContexto
                 n={selecionados.size}
                 onExcluir={() => acaoExcluir([...selecionados])}
                 onLimpar={() => setSelecionados(new Set())}
+                somenteLeitura={caixaCompartilhadaAtiva}
                 t={t}
               />
             ) : (
               <MessageDetail
                 ref={detalheRef}
-                id={msgSel}
+                id={dadosDaCaixaAtiva ? msgSel : null}
                 userEmail={user.email}
+                mailbox={caixaAtiva}
+                somenteLeitura={caixaCompartilhadaAtiva}
                 sinalizado={msgAtual?.sinalizado ?? false}
                 lido={msgAtual?.lido ?? false}
                 onFlag={acaoFlag}
@@ -5791,7 +6116,6 @@ export function ControlRoomScreen({
             )}
           </ResizablePanel>
         </ResizablePanelGroup>
-        )}
 
         {/* Card da Agenda no MESMO lugar de sempre (lado direito). Agora quem
             controla a visibilidade é o item do sidebar esquerdo (#50): visível =

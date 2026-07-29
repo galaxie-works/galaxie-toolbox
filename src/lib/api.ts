@@ -415,7 +415,15 @@ export async function crInboxDia(inicio: string, fim: string): Promise<EmailItem
   return invoke<EmailItem[]>("cr_inbox_dia", { inicio, fim });
 }
 
-export async function crEmailCorpo(id: string): Promise<EmailDetalhe> {
+function mailboxArg(mailbox?: string): string | null {
+  const valor = mailbox?.trim();
+  return valor && valor !== "me" ? valor.toLowerCase() : null;
+}
+
+export async function crEmailCorpo(
+  id: string,
+  mailbox?: string
+): Promise<EmailDetalhe> {
   if (!inTauri()) {
     await sleep(300);
     // Remetente UNIDIRECIONAL (#94): servidor/no-reply. Casa com a mensagem
@@ -456,11 +464,11 @@ export async function crEmailCorpo(id: string): Promise<EmailDetalhe> {
       recebido: new Date().toISOString(),
       corpo,
       corpoTipo: "html",
-      anexos: [],
+      anexos: [{ id: "mock-proposta", nome: "proposta.pdf", tamanho: 245_760 }],
       webLink: "https://outlook.office365.com/mock",
     };
   }
-  return invoke<EmailDetalhe>("cr_email_corpo", { id });
+  return invoke<EmailDetalhe>("cr_email_corpo", { id, mailbox: mailboxArg(mailbox) });
 }
 
 /**
@@ -469,7 +477,10 @@ export async function crEmailCorpo(id: string): Promise<EmailDetalhe> {
  * do id (ex.: "inbox-0-2" → índice 2): 0 = autenticado (verde), 1 = parcial
  * (amarelo) + Reply-To divergente, 2 = falha (vermelho) + Reply-To divergente.
  */
-export async function crEmailSeguranca(id: string): Promise<SegurancaEmail> {
+export async function crEmailSeguranca(
+  id: string,
+  mailbox?: string
+): Promise<SegurancaEmail> {
   if (!inTauri()) {
     await sleep(200);
     const ultimoNum = id.match(/(\d+)(?!.*\d)/);
@@ -501,7 +512,10 @@ export async function crEmailSeguranca(id: string): Promise<SegurancaEmail> {
       receivedSpf: [],
     };
   }
-  return invoke<SegurancaEmail>("cr_email_seguranca", { id });
+  return invoke<SegurancaEmail>("cr_email_seguranca", {
+    id,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 const MOCK_PASTAS: PastaEmail[] = [
@@ -513,12 +527,12 @@ const MOCK_PASTAS: PastaEmail[] = [
   { id: "deleteditems", tipo: "deleteditems", nome: "Itens excluídos", naoLidos: 0, total: 34, filhos: 0 },
 ];
 
-export async function crMailFolders(): Promise<PastaEmail[]> {
+export async function crMailFolders(mailbox?: string): Promise<PastaEmail[]> {
   if (!inTauri()) {
     await sleep(300);
     return MOCK_PASTAS.map((p) => ({ ...p }));
   }
-  return invoke<PastaEmail[]>("cr_mail_folders");
+  return invoke<PastaEmail[]>("cr_mail_folders", { mailbox: mailboxArg(mailbox) });
 }
 
 // --- Caixas compartilhadas (#111) — adicionar caixa por endereço ----------
@@ -568,14 +582,20 @@ export async function crMailSharedDisponivel(): Promise<boolean> {
 }
 
 /** Subpastas de uma pasta de e-mail (para a árvore de pastas). */
-export async function crSubpastas(folderId: string): Promise<PastaEmail[]> {
+export async function crSubpastas(
+  folderId: string,
+  mailbox?: string
+): Promise<PastaEmail[]> {
   if (!inTauri()) {
     await sleep(300);
     return [
       { id: `${folderId}-sub1`, tipo: "child", nome: "Clientes", naoLidos: 2, total: 40, filhos: 0 },
     ];
   }
-  return invoke<PastaEmail[]>("cr_subpastas", { folderId });
+  return invoke<PastaEmail[]>("cr_subpastas", {
+    folderId,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 // --- Compositor de e-mail (pessoas, envio novo, contatos) -----------------
@@ -689,7 +709,8 @@ export async function crFolderMensagens(
   folderId: string,
   skip = 0,
   ordenar: OrdenarMensagens = "data",
-  descendente = true
+  descendente = true,
+  mailbox?: string
 ): Promise<EmailItem[]> {
   if (!inTauri()) {
     await sleep(400);
@@ -756,6 +777,7 @@ export async function crFolderMensagens(
     skip,
     ordenar,
     descendente,
+    mailbox: mailboxArg(mailbox),
   });
 }
 
@@ -860,13 +882,19 @@ export interface BuscaPagina {
 export async function crBuscar(
   folderId: string,
   termo: string,
-  nextLink?: string | null
+  nextLink?: string | null,
+  mailbox?: string
 ): Promise<BuscaPagina> {
   if (!inTauri()) {
     await sleep(400);
     return { itens: [], proximo: null };
   }
-  return invoke<BuscaPagina>("cr_buscar", { folderId, termo, nextLink });
+  return invoke<BuscaPagina>("cr_buscar", {
+    folderId,
+    termo,
+    nextLink,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /**
@@ -881,25 +909,39 @@ export async function crBuscar(
 export async function crFiltrar(
   folderId: string,
   filtro: string,
-  nextLink?: string | null
+  nextLink?: string | null,
+  mailbox?: string
 ): Promise<BuscaPagina> {
   if (!inTauri()) {
     await sleep(400);
     return { itens: [], proximo: null };
   }
-  return invoke<BuscaPagina>("cr_filtrar", { folderId, filtro, nextLink });
+  return invoke<BuscaPagina>("cr_filtrar", {
+    folderId,
+    filtro,
+    nextLink,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /**
  * Conta na pasta inteira as mensagens que batem com um filtro ("flagged" |
  * "anexos"), via endpoint /$count do Graph. Fora do Tauri (mock) devolve 0.
  */
-export async function crContar(folderId: string, filtro: string): Promise<number> {
+export async function crContar(
+  folderId: string,
+  filtro: string,
+  mailbox?: string
+): Promise<number> {
   if (!inTauri()) {
     await sleep(200);
     return 0;
   }
-  return invoke<number>("cr_contar", { folderId, filtro });
+  return invoke<number>("cr_contar", {
+    folderId,
+    filtro,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** Os dois contadores por-pasta das abas (Sinalizados / Com anexos). */
@@ -916,12 +958,18 @@ export interface Contadores {
  * vem coalescido (1 request pra todas as pastas) em `crMailFolders` e carrega os
  * ajustes otimistas. Fora do Tauri (mock) devolve zeros.
  */
-export async function crContadores(folderId: string): Promise<Contadores> {
+export async function crContadores(
+  folderId: string,
+  mailbox?: string
+): Promise<Contadores> {
   if (!inTauri()) {
     await sleep(200);
     return { flagged: 0, anexos: 0 };
   }
-  return invoke<Contadores>("cr_contadores", { folderId });
+  return invoke<Contadores>("cr_contadores", {
+    folderId,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /**
@@ -1067,13 +1115,18 @@ export async function crMoverPasta(
 /** Baixa um anexo para a pasta Downloads e devolve o caminho absoluto. */
 export async function crBaixarAnexo(
   messageId: string,
-  attachmentId: string
+  attachmentId: string,
+  mailbox?: string
 ): Promise<string> {
   if (!inTauri()) {
     await sleep(600);
     return "C:/Users/voce/Downloads/exemplo.pdf";
   }
-  return invoke<string>("cr_baixar_anexo", { messageId, attachmentId });
+  return invoke<string>("cr_baixar_anexo", {
+    messageId,
+    attachmentId,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** Abre um arquivo local com o aplicativo padrao. */
