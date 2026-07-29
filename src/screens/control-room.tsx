@@ -521,17 +521,23 @@ function CorpoHtml({
           <span className="text-xs font-medium tabular-nums text-muted-foreground">
             {Math.round(fator * 100)}%
           </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            className="rounded-full text-muted-foreground"
-            onClick={() => setFator(1)}
-            title={t.controlRoom.zoomResetar}
-            aria-label={t.controlRoom.zoomResetar}
-          >
-            <RotateCcw />
-          </Button>
+          {/* Restaurar zoom (#102): sem atalho dedicado no cluster, Tooltip
+              simples; o texto já traz o Ctrl+0. Substitui o `title` nativo. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                className="rounded-full text-muted-foreground"
+                onClick={() => setFator(1)}
+                aria-label={t.controlRoom.zoomResetar}
+              >
+                <RotateCcw />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t.controlRoom.zoomResetar}</TooltipContent>
+          </Tooltip>
         </div>
       )}
       <ModalLinkSeguro
@@ -2370,6 +2376,9 @@ const ATALHO_SELECIONAR_TUDO: ShortcutDefinition = { key: "A", primary: true };
 const ATALHO_LIMPAR_SELECAO: ShortcutDefinition = { key: "Esc" };
 const ATALHO_SINALIZAR: ShortcutDefinition = { key: "S" };
 const ATALHO_EXCLUIR: ShortcutDefinition = { key: "Delete" };
+// Ler/não-ler do leitor (#102): atalho U. Alimenta aria-label + ShortcutTooltip
+// do botão que ALTERNA lido/não-lido na toolbar do leitor.
+const ATALHO_LER_NAO_LIDO: ShortcutDefinition = { key: "U" };
 
 function MessageList({
   titulo,
@@ -4271,17 +4280,24 @@ const MessageDetail = forwardRef<
           <p className="mb-2 text-xs font-medium">{t.controlRoom.anexosTitulo}</p>
           <div className="flex flex-wrap gap-2">
             {det.anexos.map((a, i) => (
-              <button
-                key={a.id || i}
-                type="button"
-                onClick={() => baixarAnexo(a)}
-                className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
-                title={t.controlRoom.abrirArquivo}
-              >
-                <Paperclip className="size-3.5 text-muted-foreground" />
-                <span className="max-w-40 truncate">{a.nome}</span>
-                <Download className="size-3.5 text-muted-foreground" />
-              </button>
+              // Anexo (#102): ação sem atalho → Tooltip simples com nome
+              // acessível explícito (o texto visível é o nome do arquivo).
+              // Substitui o `title` nativo.
+              <Tooltip key={a.id || i}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    onClick={() => baixarAnexo(a)}
+                    className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
+                    aria-label={`${t.controlRoom.abrirArquivo}: ${a.nome}`}
+                  >
+                    <Paperclip className="size-3.5 text-muted-foreground" />
+                    <span className="max-w-40 truncate">{a.nome}</span>
+                    <Download className="size-3.5 text-muted-foreground" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>{t.controlRoom.abrirArquivo}</TooltipContent>
+              </Tooltip>
             ))}
           </div>
         </>
@@ -4333,39 +4349,94 @@ const MessageDetail = forwardRef<
           </Button>
         </DicaSomenteLeitura>
         <div className="ml-auto flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => id && onFlag(id, !sinalizado)}
-            aria-label={t.controlRoom.sinalizar}
-          >
-            <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
-          </Button>
+          {/* Sinalizar do leitor (#102): atalho S → ShortcutTooltip com Kbd. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => id && onFlag(id, !sinalizado)}
+                aria-label={shortcutAccessibleLabel(
+                  t.controlRoom.sinalizar,
+                  ATALHO_SINALIZAR
+                )}
+              >
+                <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <ShortcutTooltip
+                label={t.controlRoom.sinalizar}
+                shortcut={ATALHO_SINALIZAR}
+              />
+            </TooltipContent>
+          </Tooltip>
           {/* Botão de lido/não-lido: ALTERNA (#95). Antes era só "marcar como
               não lido" — o que bastava quando o app marcava lido sozinho ao
               abrir. Nos modos "após atraso"/"manual" a mensagem pode continuar
-              não-lida no leitor, então o botão precisa marcar LIDO também. */}
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => id && onMarcarLido(id, !lido)}
-            aria-label={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
-            title={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
-          >
-            {lido ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => id && onExcluir([id])}
-            aria-label={t.controlRoom.excluir}
-            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-          >
-            <Trash2 />
-          </Button>
-          <Button variant="ghost" size="icon-sm" onClick={abrirOutlook} aria-label={t.controlRoom.abrirOutlook}>
-            <ExternalLink />
-          </Button>
+              não-lida no leitor, então o botão precisa marcar LIDO também.
+              #102: atalho U → ShortcutTooltip; label acompanha o estado (o
+              texto muda entre marcar lido/não-lido). Substitui o `title`. */}
+          {(() => {
+            const rotuloLido = lido
+              ? t.controlRoom.marcarNaoLido
+              : t.controlRoom.marcarLido;
+            return (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => id && onMarcarLido(id, !lido)}
+                    aria-label={shortcutAccessibleLabel(
+                      rotuloLido,
+                      ATALHO_LER_NAO_LIDO
+                    )}
+                  >
+                    {lido ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <ShortcutTooltip
+                    label={rotuloLido}
+                    shortcut={ATALHO_LER_NAO_LIDO}
+                  />
+                </TooltipContent>
+              </Tooltip>
+            );
+          })()}
+          {/* Excluir do leitor (#102): atalho Delete → ShortcutTooltip com Kbd. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => id && onExcluir([id])}
+                aria-label={shortcutAccessibleLabel(
+                  t.controlRoom.excluir,
+                  ATALHO_EXCLUIR
+                )}
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <ShortcutTooltip
+                label={t.controlRoom.excluir}
+                shortcut={ATALHO_EXCLUIR}
+              />
+            </TooltipContent>
+          </Tooltip>
+          {/* Abrir no Outlook (#102): ação sem atalho → Tooltip simples. */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon-sm" onClick={abrirOutlook} aria-label={t.controlRoom.abrirOutlook}>
+                <ExternalLink />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t.controlRoom.abrirOutlook}</TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
