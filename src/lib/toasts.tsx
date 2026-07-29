@@ -5,6 +5,7 @@ import {
   FlagOffIcon,
   DownloadIcon,
   FileIcon,
+  Undo2Icon,
 } from "lucide-react"
 import type { ReactNode } from "react"
 
@@ -41,6 +42,57 @@ export function toastIcone(
     description: descricao,
     icon: icones[tipo],
   })
+}
+
+/**
+ * Countdown do Outbox (#33), copiando a estrutura canônica do c-sonner-10:
+ * card customizado, progresso atualizado pelo mesmo toast id e ação explícita.
+ */
+export function toastDesfazerEnvio(opts: {
+  id?: string | number
+  titulo: string
+  descricao: string
+  progresso: number
+  rotuloDesfazer: string
+  onDesfazer: () => void
+}): string | number {
+  // O Sonner diferencia "id ausente" de `id: undefined`: na primeira chamada,
+  // omitir a chave permite que ele gere o id que as atualizações seguintes
+  // reutilizam. Passar `undefined` deixava o toast inicial órfão.
+  const configuracao =
+    opts.id === undefined
+      ? { duration: Infinity }
+      : { id: opts.id, duration: Infinity }
+
+  return toast.custom(
+    () => (
+      <div className="bg-popover text-popover-foreground border-border flex w-[356px] flex-col gap-3 rounded-md border p-4 shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="bg-muted flex size-8 shrink-0 items-center justify-center rounded-md">
+            <SendIcon className="size-4" aria-hidden="true" />
+          </div>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <p className="text-sm font-medium">{opts.titulo}</p>
+            <p className="text-muted-foreground text-xs">{opts.descricao}</p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="shrink-0"
+            onClick={opts.onDesfazer}
+          >
+            <Undo2Icon aria-hidden="true" />
+            {opts.rotuloDesfazer}
+          </Button>
+        </div>
+        <Progress
+          value={opts.progresso}
+          className="**:data-[slot=progress-indicator]:bg-primary **:data-[slot=progress-track]:h-1.5"
+        />
+      </div>
+    ),
+    configuracao
+  )
 }
 
 /**
