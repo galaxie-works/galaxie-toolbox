@@ -147,6 +147,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
 import { useAppStore } from "@/store";
+import type { BridgeView } from "@/store/ui-slice";
 import {
   desserializarDataFiltro,
   escopoDeFiltros,
@@ -1436,10 +1437,8 @@ function FolderSidebar({
   onAbrirAdicionarCaixa,
   caixaCompartilhada,
   colapsada,
-  agendaAberta,
-  onToggleAgenda,
-  peopleActive,
-  onSelectPeople,
+  bridgeView,
+  onSelectModule,
   t,
 }: {
   pastas: PastaEmail[] | null;
@@ -1472,10 +1471,8 @@ function FolderSidebar({
   onAbrirAdicionarCaixa: () => void;
   caixaCompartilhada: boolean;
   colapsada: boolean;
-  agendaAberta: boolean;
-  onToggleAgenda: () => void;
-  peopleActive: boolean;
-  onSelectPeople: () => void;
+  bridgeView: BridgeView;
+  onSelectModule: (view: BridgeView) => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   // Pasta pendente de confirmação do "Esvaziar" — ação destrutiva nunca sai
@@ -1497,6 +1494,44 @@ function FolderSidebar({
   >(null);
   const mail = (pastas ?? []).filter((p) => GRUPO_MAIL.includes(p.tipo));
   const outras = (pastas ?? []).filter((p) => !GRUPO_MAIL.includes(p.tipo));
+  const Modulo = ({
+    view,
+    rotulo,
+    icon: Icon,
+  }: {
+    view: BridgeView;
+    rotulo: string;
+    icon: typeof Mailbox;
+  }) => {
+    const ativo = bridgeView === view;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant={ativo ? "secondary" : "ghost"}
+            onClick={() => onSelectModule(view)}
+            aria-label={rotulo}
+            aria-current={ativo ? "page" : undefined}
+            className={cn(
+              "shrink-0",
+              colapsada ? "size-9 justify-center p-0" : "w-full justify-start gap-2.5",
+              ativo
+                ? "bg-secondary font-medium text-secondary-foreground"
+                : "text-muted-foreground hover:bg-accent/50"
+            )}
+          >
+            <Icon className="size-4 shrink-0" />
+            {!colapsada && <span>{rotulo}</span>}
+          </Button>
+        </TooltipTrigger>
+        {colapsada && (
+          <TooltipContent side="right" align="center">
+            {rotulo}
+          </TooltipContent>
+        )}
+      </Tooltip>
+    );
+  };
 
   // Subpastas (childFolders): carregadas sob demanda ao expandir. O CACHE mora
   // no pai (#88) porque o submenu "Mover para pasta…" precisa da mesma árvore —
@@ -1767,145 +1802,113 @@ function FolderSidebar({
         colapsada ? "w-16 items-center" : "w-52"
       )}
     >
-      {/* Seletor de caixa (#111): TOPO do sidebar. Minha caixa (/me) é o padrão;
-          caixas compartilhadas adicionadas + "Adicionar caixa…" abaixo. */}
-      <SeletorCaixa
-        caixas={caixas}
-        ativa={caixaAtiva}
-        onSelecionar={onSelecionarCaixa}
-        onAdicionar={onAbrirAdicionarCaixa}
-        colapsada={colapsada}
-        t={t}
-      />
-      {caixaCompartilhada && !colapsada ? (
-        <p className="px-1 text-xs text-muted-foreground">
-          {t.controlRoom.caixaCompartilhadaDesc}
-        </p>
-      ) : null}
+      <nav
+        aria-label="Bridge"
+        className={cn("flex w-full flex-col gap-0.5", colapsada && "items-center")}
+      >
+        <Modulo view="mail" rotulo={t.controlRoom.mailboxTitulo} icon={Mailbox} />
+        <Modulo view="people" rotulo={t.controlRoom.peopleTitulo} icon={Users} />
+        <Modulo view="agenda" rotulo={t.controlRoom.agendaTitulo} icon={CalendarDays} />
+      </nav>
+      <Separator className={cn("shrink-0", colapsada && "w-6")} />
 
-      {colapsada ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
-              <PenSquare />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right" align="center">
-            {t.controlRoom.novoEmail}
-          </TooltipContent>
-        </Tooltip>
-      ) : (
-        <ButtonGroup className="w-full">
-          <Button className="flex-1" onClick={onNovo}>
-            <PenSquare /> {t.controlRoom.novoEmail}
-          </Button>
-          <DropdownMenu>
-            {/* Tooltip > DropdownMenu: os dois gatilhos com asChild no mesmo
-                botão, igual ao app-sidebar (#100). */}
+      {bridgeView === "mail" ? (
+        <>
+          {/* Seletor de caixa (#111): contexto do módulo Mailbox. Minha caixa
+              (/me) é o padrão; caixas compartilhadas ficam abaixo. */}
+          <SeletorCaixa
+            caixas={caixas}
+            ativa={caixaAtiva}
+            onSelecionar={onSelecionarCaixa}
+            onAdicionar={onAbrirAdicionarCaixa}
+            colapsada={colapsada}
+            t={t}
+          />
+          {caixaCompartilhada && !colapsada ? (
+            <p className="px-1 text-xs text-muted-foreground">
+              {t.controlRoom.caixaCompartilhadaDesc}
+            </p>
+          ) : null}
+
+          {colapsada ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button size="icon" aria-label={t.controlRoom.composeOutlook}>
-                    <ChevronDown />
-                  </Button>
-                </DropdownMenuTrigger>
+                <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
+                  <PenSquare />
+                </Button>
               </TooltipTrigger>
-              <TooltipContent>{t.controlRoom.composeOutlook}</TooltipContent>
+              <TooltipContent side="right" align="center">
+                {t.controlRoom.novoEmail}
+              </TooltipContent>
             </Tooltip>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuItem onClick={onComposeOutlook}>
-                {t.controlRoom.composeOutlook}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </ButtonGroup>
-      )}
+          ) : (
+            <ButtonGroup className="w-full">
+              <Button className="flex-1" onClick={onNovo}>
+                <PenSquare /> {t.controlRoom.novoEmail}
+              </Button>
+              <DropdownMenu>
+                {/* Tooltip > DropdownMenu: os dois gatilhos com asChild no mesmo
+                    botão, igual ao app-sidebar (#100). */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="icon" aria-label={t.controlRoom.composeOutlook}>
+                        <ChevronDown />
+                      </Button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>{t.controlRoom.composeOutlook}</TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={onComposeOutlook}>
+                    {t.controlRoom.composeOutlook}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </ButtonGroup>
+          )}
 
-      {!pastas ? (
-        <div className="flex justify-center py-6">
-          <Spinner className="size-4 text-muted-foreground" />
-        </div>
-      ) : (
-        <ScrollArea className="min-h-0 w-full flex-1">
-          <div className={cn(colapsada ? "flex flex-col items-center gap-0.5" : "pr-2")}>
-            {!colapsada && (
-              <p className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">
-                {t.controlRoom.grupoMail}
-              </p>
-            )}
-            <div className={cn("flex flex-col gap-0.5", colapsada && "items-center")}>
-              {mail.map((p) => Linha(p))}
+          {!pastas ? (
+            <div className="flex justify-center py-6">
+              <Spinner className="size-4 text-muted-foreground" />
             </div>
-
-            {outras.length > 0 && (
-              <>
-                {colapsada ? (
-                  <Separator className="my-1.5 w-6" />
-                ) : (
-                  <p className="px-2.5 pt-4 pb-1 text-xs font-medium text-muted-foreground">
-                    {t.controlRoom.grupoOutras}
+          ) : (
+            <ScrollArea className="min-h-0 w-full flex-1">
+              <div
+                className={cn(colapsada ? "flex flex-col items-center gap-0.5" : "pr-2")}
+              >
+                {!colapsada && (
+                  <p className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">
+                    {t.controlRoom.grupoMail}
                   </p>
                 )}
                 <div className={cn("flex flex-col gap-0.5", colapsada && "items-center")}>
-                  {outras.map((p) => Linha(p))}
+                  {mail.map((p) => Linha(p))}
                 </div>
-              </>
-            )}
-          </div>
-        </ScrollArea>
-      )}
 
-      {/* Agenda — ancorada no RODAPÉ do sidebar do BRIDGE (separador acima). A
-          Agenda pertence ao Bridge, não ao app principal (#50). Selecionado ⟺
-          card da Agenda visível; nasce fechada (menos requisições no startup). */}
-      <Separator className={cn("shrink-0", colapsada && "w-6")} />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant={peopleActive ? "secondary" : "ghost"}
-            onClick={onSelectPeople}
-            aria-label={t.controlRoom.peopleTitulo}
-            className={cn(
-              "shrink-0",
-              colapsada ? "size-9 justify-center p-0" : "w-full justify-start gap-2.5",
-              !peopleActive && "text-muted-foreground"
-            )}
-          >
-            <Users className="size-4 shrink-0" />
-            {!colapsada && <span>{t.controlRoom.peopleTitulo}</span>}
-          </Button>
-        </TooltipTrigger>
-        {colapsada && (
-          <TooltipContent side="right" align="center">
-            {t.controlRoom.peopleTitulo}
-          </TooltipContent>
-        )}
-      </Tooltip>
-      {/* Colapsada: nome pelo tooltip canônico (#100). Só renderiza o
-          TooltipContent nesse estado — expandida, o rótulo textual já aparece,
-          mesma regra do app-sidebar. */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant={agendaAberta ? "secondary" : "ghost"}
-            onClick={onToggleAgenda}
-            aria-label={t.controlRoom.agendaTitulo}
-            className={cn(
-              "shrink-0",
-              colapsada ? "size-9 justify-center p-0" : "w-full justify-start gap-2.5",
-              !agendaAberta && "text-muted-foreground"
-            )}
-          >
-            <CalendarDays className="size-4 shrink-0" />
-            {!colapsada && <span>{t.controlRoom.agendaTitulo}</span>}
-          </Button>
-        </TooltipTrigger>
-        {colapsada && (
-          <TooltipContent side="right" align="center">
-            {t.controlRoom.agendaTitulo}
-          </TooltipContent>
-        )}
-      </Tooltip>
+                {outras.length > 0 && (
+                  <>
+                    {colapsada ? (
+                      <Separator className="my-1.5 w-6" />
+                    ) : (
+                      <p className="px-2.5 pt-4 pb-1 text-xs font-medium text-muted-foreground">
+                        {t.controlRoom.grupoOutras}
+                      </p>
+                    )}
+                    <div
+                      className={cn("flex flex-col gap-0.5", colapsada && "items-center")}
+                    >
+                      {outras.map((p) => Linha(p))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </ScrollArea>
+          )}
+        </>
+      ) : (
+        <div className="flex-1" />
+      )}
 
       {/* Confirmação do "Esvaziar pasta": destrutiva e não desfazível, então
           nunca dispara direto do menu de contexto (#89). */}
@@ -4722,8 +4725,8 @@ function AgendaConteudo({
   });
 
   return (
-    <Card className="flex h-full w-80 shrink-0 flex-col gap-0 overflow-hidden py-4">
-      {/* Só o título — o toggle de visibilidade agora é o item do sidebar (#50). */}
+    <Card className="flex h-full min-w-0 flex-1 flex-col gap-0 overflow-hidden py-4">
+      {/* O módulo peer ocupa toda a área de conteúdo do Bridge (#204). */}
       <div className="flex items-center gap-2 px-4 pb-3">
         <CalendarDays className="size-4 text-muted-foreground" />
         <span className="text-sm font-semibold">{t.controlRoom.agendaTitulo}</span>
@@ -4736,7 +4739,7 @@ function AgendaConteudo({
           onMonthChange={setDia}
           onSelect={(d) => d && setDia(d)}
           showOutsideDays
-          className="w-full bg-transparent p-0"
+          className="w-full max-w-72 bg-transparent p-0"
           formatters={{
             formatWeekdayName: (d) =>
               d.toLocaleDateString(idioma, { weekday: "short" }).slice(0, 3),
@@ -4922,13 +4925,6 @@ export function ControlRoomScreen({
   useEffect(() => {
     configurarDominioFotos(user.email);
   }, [user.email]);
-  // Visibilidade do card da Agenda — controlada pelo item no RODAPÉ do sidebar
-  // de pastas do Bridge (a Agenda pertence ao Bridge, não ao app principal).
-  // Nasce FECHADA (chave nova, reseta persistidos antigos) pra fazer menos
-  // requisições no startup — só carrega quando o usuário abre (#50).
-  // Agenda migrada pro ui slice (#125). Chave `bridge.agendaVisivel` preservada.
-  const agendaAberta = useAppStore((s) => s.agendaAberta);
-  const setAgendaAberta = useAppStore((s) => s.setAgendaAberta);
   const bridgeView = useAppStore((s) => s.bridgeView);
   const setBridgeView = useAppStore((s) => s.setBridgeView);
   // Caixas compartilhadas (#111): lista de endereços adicionados (persistida) +
@@ -6034,7 +6030,7 @@ export function ControlRoomScreen({
         </div>
       </div>
 
-      {/* 4 painéis: sidebar (colapsável) · [lista ⇔ detalhe] · agenda */}
+      {/* Sidebar de módulos + conteúdo do módulo ativo. */}
       <div className="flex min-h-0 flex-1 gap-4">
         <FolderSidebar
           pastas={pastas}
@@ -6065,13 +6061,8 @@ export function ControlRoomScreen({
           onAbrirAdicionarCaixa={() => setAdicionarCaixaAberto(true)}
           caixaCompartilhada={caixaCompartilhadaAtiva}
           colapsada={!sidebarAberta}
-          agendaAberta={agendaAberta}
-          onToggleAgenda={() => {
-            setBridgeView("mail");
-            setAgendaAberta((v) => !v);
-          }}
-          peopleActive={bridgeView === "people"}
-          onSelectPeople={() => setBridgeView("people")}
+          bridgeView={bridgeView}
+          onSelectModule={setBridgeView}
           t={t}
         />
 
@@ -6085,6 +6076,8 @@ export function ControlRoomScreen({
               setComposePara([email]);
             }}
           />
+        ) : bridgeView === "agenda" ? (
+          <AgendaConteudo t={t} idioma={idioma} />
         ) : (
           <ResizablePanelGroup
             autoSaveId="bridge.layout"
@@ -6159,12 +6152,6 @@ export function ControlRoomScreen({
           </ResizablePanelGroup>
         )}
 
-        {/* Card da Agenda no MESMO lugar de sempre (lado direito). Agora quem
-            controla a visibilidade é o item do sidebar esquerdo (#50): visível =
-            renderiza; escondido = some e a lista+detalhe ocupam a largura toda. */}
-        {bridgeView === "mail" && agendaAberta && (
-          <AgendaConteudo t={t} idioma={idioma} />
-        )}
       </div>
 
       <EventoDialog userEmail={user.email} />

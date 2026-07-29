@@ -6,7 +6,7 @@ import { resolver, type Updater } from "./updater";
 /**
  * Slice de UI / preferências do Bridge — épico #125.
  *
- * Guarda o estado que o usuário "deixa" no app (colapsos, zoom, sidebar, agenda,
+ * Guarda o estado que o usuário "deixa" no app (colapsos, zoom, sidebar,
  * marcar-lido). Tudo aqui é PERSISTIDO em localStorage pelo `persist` middleware
  * do store (ver `index.ts`) mantendo as MESMAS chaves que o antigo
  * `usePersistedState` usava — reabrir o app não reseta nada do usuário.
@@ -14,7 +14,7 @@ import { resolver, type Updater } from "./updater";
 
 /** Modo de "marcar como lido" (#95). */
 export type MarcarLidoModo = "imediato" | "atraso" | "manual";
-export type BridgeView = "mail" | "people";
+export type BridgeView = "mail" | "people" | "agenda";
 
 export interface UiSlice {
   /** Zoom manual do leitor (#76). 1 = auto-fit puro. Persistido em `bridge.leitorZoom`. */
@@ -25,13 +25,11 @@ export interface UiSlice {
   threadsExpandidas: Record<string, string[]>;
   /** Sidebar de pastas aberta/fechada. Persistido em `bridge.sidebar`. */
   sidebarAberta: boolean;
-  /** Card da Agenda aberto/fechado (#50). Persistido em `bridge.agendaVisivel`. */
-  agendaAberta: boolean;
   /** Quando marcar a mensagem como lida (#95). Persistido em `bridge.marcarLidoModo`. */
   marcarLidoModo: MarcarLidoModo;
   /** Atraso (s) do modo "atraso" (#95). Persistido em `bridge.marcarLidoAtraso`. */
   marcarLidoAtraso: number;
-  /** Destino primário do Bridge nesta sessão. People substitui os painéis de mail. */
+  /** Módulo primário do Bridge nesta sessão. People/Agenda substituem os painéis de mail. */
   bridgeView: BridgeView;
 
   /** Aceita valor OU updater (mantém a semântica dos antigos `setState`). */
@@ -40,7 +38,6 @@ export interface UiSlice {
   setThreadsExpandidas: (v: Updater<Record<string, string[]>>) => void;
   setSidebarAberta: (v: Updater<boolean>) => void;
   toggleSidebar: () => void;
-  setAgendaAberta: (v: Updater<boolean>) => void;
   setMarcarLidoModo: (m: MarcarLidoModo) => void;
   setMarcarLidoAtraso: (n: number) => void;
   setBridgeView: (view: BridgeView) => void;
@@ -56,7 +53,6 @@ export const UI_KEYS = {
   gruposColapsados: "bridge.gruposColapsados.v2",
   threadsExpandidas: "bridge.threadsExpandidas.v1",
   sidebarAberta: "bridge.sidebar",
-  agendaAberta: "bridge.agendaVisivel",
   marcarLidoModo: "bridge.marcarLidoModo",
   marcarLidoAtraso: "bridge.marcarLidoAtraso",
 } as const;
@@ -68,7 +64,6 @@ export type UiPersistido = Pick<
   | "gruposColapsados"
   | "threadsExpandidas"
   | "sidebarAberta"
-  | "agendaAberta"
   | "marcarLidoModo"
   | "marcarLidoAtraso"
 >;
@@ -88,7 +83,6 @@ export const createUiSlice: StateCreator<
   gruposColapsados: {},
   threadsExpandidas: {},
   sidebarAberta: true,
-  agendaAberta: false,
   marcarLidoModo: "imediato",
   marcarLidoAtraso: 2,
   bridgeView: "mail",
@@ -100,7 +94,6 @@ export const createUiSlice: StateCreator<
     set((s) => ({ threadsExpandidas: resolver(s.threadsExpandidas, v) })),
   setSidebarAberta: (v) => set((s) => ({ sidebarAberta: resolver(s.sidebarAberta, v) })),
   toggleSidebar: () => set((s) => ({ sidebarAberta: !s.sidebarAberta })),
-  setAgendaAberta: (v) => set((s) => ({ agendaAberta: resolver(s.agendaAberta, v) })),
   setMarcarLidoModo: (m) => set({ marcarLidoModo: m }),
   setMarcarLidoAtraso: (n) => set({ marcarLidoAtraso: n }),
   setBridgeView: (bridgeView) => set({ bridgeView }),
