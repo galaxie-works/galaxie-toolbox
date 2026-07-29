@@ -581,6 +581,18 @@ export async function crMailSharedDisponivel(): Promise<boolean> {
   return invoke<boolean>("cr_mail_shared_disponivel");
 }
 
+/**
+ * O token atual traz Mail.Send.Shared (#114)? Mantido separado da checagem de
+ * leitura/escrita para o app pedir relogin só no fluxo de envio compartilhado.
+ */
+export async function crMailSendSharedDisponivel(): Promise<boolean> {
+  if (!inTauri()) {
+    await sleep(150);
+    return true;
+  }
+  return invoke<boolean>("cr_mail_send_shared_disponivel");
+}
+
 /** Subpastas de uma pasta de e-mail (para a árvore de pastas). */
 export async function crSubpastas(
   folderId: string,
@@ -666,13 +678,22 @@ export async function crEnviarNovo(
   cco: string[],
   assunto: string,
   corpo: string,
-  anexos: AnexoEnvio[] = []
+  anexos: AnexoEnvio[] = [],
+  mailbox?: string
 ): Promise<void> {
   if (!inTauri()) {
     await sleep(700);
     return;
   }
-  return invoke<void>("cr_enviar_novo", { para, cc, cco, assunto, corpo, anexos });
+  return invoke<void>("cr_enviar_novo", {
+    para,
+    cc,
+    cco,
+    assunto,
+    corpo,
+    anexos,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /**
@@ -785,26 +806,40 @@ export async function crResponder(
   id: string,
   corpo: string,
   todos: boolean,
-  anexos: AnexoEnvio[] = []
+  anexos: AnexoEnvio[] = [],
+  mailbox?: string
 ): Promise<void> {
   if (!inTauri()) {
     await sleep(700);
     return;
   }
-  return invoke<void>("cr_responder", { id, corpo, todos, anexos });
+  return invoke<void>("cr_responder", {
+    id,
+    corpo,
+    todos,
+    anexos,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 export async function crEncaminhar(
   id: string,
   corpo: string,
   para: string[],
-  anexos: AnexoEnvio[] = []
+  anexos: AnexoEnvio[] = [],
+  mailbox?: string
 ): Promise<void> {
   if (!inTauri()) {
     await sleep(700);
     return;
   }
-  return invoke<void>("cr_encaminhar", { id, corpo, para, anexos });
+  return invoke<void>("cr_encaminhar", {
+    id,
+    corpo,
+    para,
+    anexos,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 export async function crExcluirEmail(id: string, mailbox?: string): Promise<void> {

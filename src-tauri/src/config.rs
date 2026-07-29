@@ -25,15 +25,13 @@ pub const CLIENT_ID: &str = "214d735e-eb9b-4052-8851-578d3bd91627";
 /// pelo PO no registro. E escopo NOVO no pedido, entao sessoes logadas antes
 /// dele so ganham a permissao ao re-logar (ate la, foto = 403 -> so iniciais).
 ///
-/// Mail.Read.Shared (caixas compartilhadas, #111): tambem JA GRANTED por admin
-/// consent do tenant (ver AGENTS.md 1.1) — adiciona-lo aqui NAO dispara prompt
-/// de consent novo. Como e escopo NOVO no pedido, quem logou antes desta versao
-/// so ganha o acesso as caixas compartilhadas ao RE-LOGAR (ate la, a validacao
-/// de uma caixa por endereco vem 403 mesmo tendo acesso — por isso o app
-/// sinaliza "faca login novamente" quando o token atual nao traz este escopo).
+/// Mail.Read.Shared / Mail.ReadWrite.Shared / Mail.Send.Shared (caixas
+/// compartilhadas, #111-#114): JA GRANTED por admin consent do tenant (ver
+/// AGENTS.md 1.1). Como sao escopos novos no pedido, sessoes anteriores precisam
+/// RE-LOGAR para ler, gerir e enviar usando uma caixa compartilhada.
 pub const SCOPES: &str = "openid profile offline_access \
      User.Read User.Read.All Files.ReadWrite Sites.Read.All \
-     Calendars.Read Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send Tasks.ReadWrite \
+     Calendars.Read Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Tasks.ReadWrite \
      People.Read Contacts.ReadWrite";
 
 pub fn client_id() -> String {

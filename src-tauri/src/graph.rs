@@ -1601,12 +1601,14 @@ fn compor_e_enviar(
     corpo_html: &str,
     para: &[String],
     anexos: &[AnexoUp],
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     // 1) rascunho a partir da mensagem original
-    let url = format!("{GRAPH}/me/messages/{id}/{acao}");
+    let url = format!("{GRAPH}/{prefix}/messages/{id}/{acao}");
     let resp = client
         .post(&url)
         .bearer_auth(&token)
@@ -1614,7 +1616,7 @@ fn compor_e_enviar(
         .send()
         .map_err(|e| format!("falha ao criar o rascunho: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("{acao} retornou {}", resp.status()));
+        return Err(erro_envio(&prefix, acao, resp.status()));
     }
     let rascunho: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let draft_id = rascunho["id"].as_str().ok_or("rascunho sem id")?.to_string();
@@ -1634,7 +1636,7 @@ fn compor_e_enviar(
             .collect();
         patch["toRecipients"] = serde_json::Value::Array(dest);
     }
-    let url = format!("{GRAPH}/me/messages/{draft_id}");
+    let url = format!("{GRAPH}/{prefix}/messages/{draft_id}");
     let resp = client
         .patch(&url)
         .bearer_auth(&token)
@@ -1642,7 +1644,7 @@ fn compor_e_enviar(
         .send()
         .map_err(|e| format!("falha ao preencher o rascunho: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("PATCH do rascunho retornou {}", resp.status()));
+        return Err(erro_envio(&prefix, "PATCH do rascunho", resp.status()));
     }
 
     // 2.5) anexa os arquivos no rascunho (POST /attachments), um por vez.
@@ -1650,7 +1652,7 @@ fn compor_e_enviar(
         if a.conteudo_b64.trim().is_empty() {
             continue;
         }
-        let url = format!("{GRAPH}/me/messages/{draft_id}/attachments");
+        let url = format!("{GRAPH}/{prefix}/messages/{draft_id}/attachments");
         let resp = client
             .post(&url)
             .bearer_auth(&token)
@@ -1658,16 +1660,16 @@ fn compor_e_enviar(
             .send()
             .map_err(|e| format!("falha ao anexar '{}': {e}", a.nome))?;
         if !resp.status().is_success() {
-            return Err(format!(
-                "anexar '{}' retornou {}",
-                a.nome,
-                resp.status()
+            return Err(erro_envio(
+                &prefix,
+                &format!("anexar '{}'", a.nome),
+                resp.status(),
             ));
         }
     }
 
     // 3) envia
-    let url = format!("{GRAPH}/me/messages/{draft_id}/send");
+    let url = format!("{GRAPH}/{prefix}/messages/{draft_id}/send");
     let resp = client
         .post(&url)
         .bearer_auth(&token)
@@ -1675,7 +1677,7 @@ fn compor_e_enviar(
         .send()
         .map_err(|e| format!("falha ao enviar: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("envio retornou {}", resp.status()));
+        return Err(erro_envio(&prefix, "envio", resp.status()));
     }
     Ok(())
 }
@@ -1687,9 +1689,10 @@ pub fn cr_responder(
     corpo_html: &str,
     todos: bool,
     anexos: Vec<AnexoUp>,
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     let acao = if todos { "createReplyAll" } else { "createReply" };
-    compor_e_enviar(store, id, acao, corpo_html, &[], &anexos)
+    compor_e_enviar(store, id, acao, corpo_html, &[], &anexos, mailbox)
 }
 
 /// Encaminha um e-mail para os destinatários informados.
@@ -1699,11 +1702,20 @@ pub fn cr_encaminhar(
     corpo_html: &str,
     para: Vec<String>,
     anexos: Vec<AnexoUp>,
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     if para.iter().all(|e| e.trim().is_empty()) {
         return Err("informe ao menos um destinatário".into());
     }
-    compor_e_enviar(store, id, "createForward", corpo_html, &para, &anexos)
+    compor_e_enviar(
+        store,
+        id,
+        "createForward",
+        corpo_html,
+        &para,
+        &anexos,
+        mailbox,
+    )
 }
 
 /// Sobe um arquivo para a pasta "Bridge Anexos" no OneDrive do usuário e cria um
@@ -1809,7 +1821,7 @@ fn mailbox_prefix(mailbox: Option<&str>) -> String {
 
 #[cfg(test)]
 mod testes_mailbox_prefix {
-    use super::{erro_escrita, mailbox_prefix};
+    use super::{erro_envio, erro_escrita, mailbox_prefix};
 
     #[test]
     fn preserva_me_como_default() {
@@ -1836,6 +1848,17 @@ mod testes_mailbox_prefix {
         assert!(erro.contains("sem permissão de escrita"));
         assert!(erro.contains("(403)"));
         assert!(erro.contains("users/financeiro%40empresa.com"));
+    }
+
+    #[test]
+    fn envio_403_expoe_erro_claro_da_caixa_ativa() {
+        let erro = erro_envio(
+            "users/financeiro%40empresa.com",
+            "envio",
+            reqwest::StatusCode::FORBIDDEN,
+        );
+        assert!(erro.contains("sem permissão para enviar"));
+        assert!(erro.contains("(403)"));
     }
 }
 
@@ -1947,6 +1970,19 @@ pub fn mail_shared_disponivel(store: &TokenStore) -> Result<bool, String> {
         escopo_presente(&atual.scopes, "Mail.Read.Shared")
             && escopo_presente(&atual.scopes, "Mail.ReadWrite.Shared"),
     )
+}
+
+/// Verdadeiro se o token ATUAL foi emitido com Mail.Send.Shared (#114).
+/// Mantido separado da checagem de leitura/escrita para não bloquear acesso à
+/// caixa quando só o novo escopo de envio ainda exige relogin.
+pub fn mail_send_shared_disponivel(store: &TokenStore) -> Result<bool, String> {
+    access_token(store)?;
+    let guard = store
+        .inner
+        .lock()
+        .map_err(|_| "estado de token corrompido".to_string())?;
+    let atual = guard.as_ref().ok_or("nao autenticado")?;
+    Ok(escopo_presente(&atual.scopes, "Mail.Send.Shared"))
 }
 
 /// Checa se um escopo (case-insensitive) está na string `scope` do OAuth (lista
@@ -2360,6 +2396,18 @@ fn erro_escrita(
 ) -> String {
     if status.as_u16() == 403 {
         format!("sem permissão de escrita na caixa ativa (403): {operacao} em /{prefix}")
+    } else {
+        format!("{operacao} em /{prefix} retornou {status}")
+    }
+}
+
+fn erro_envio(
+    prefix: &str,
+    operacao: &str,
+    status: reqwest::StatusCode,
+) -> String {
+    if prefix != "me" && status == reqwest::StatusCode::FORBIDDEN {
+        format!("sem permissão para enviar usando a caixa ativa (403): {operacao}")
     } else {
         format!("{operacao} em /{prefix} retornou {status}")
     }
@@ -2848,9 +2896,11 @@ pub fn cr_enviar_novo(
     assunto: &str,
     corpo_html: &str,
     anexos: Vec<AnexoUp>,
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     // Mapeia cada e-mail para o formato do Graph, descartando os vazios.
     let recipients = |lista: &[String]| -> Vec<serde_json::Value> {
@@ -2892,13 +2942,13 @@ pub fn cr_enviar_novo(
     // re-tentado: `graph_enviar` propaga o erro do reqwest na hora. 5xx também não
     // re-tenta (devolve a resposta e o chamador vira erro). Ou seja: cega
     // reemissão de um sendMail já potencialmente aplicado nunca acontece.
-    let url = format!("{GRAPH}/me/sendMail");
+    let url = format!("{GRAPH}/{prefix}/sendMail");
     let resp = graph_enviar("mail:enviar", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(&token).json(&body).send()
     })
     .map_err(|e| format!("falha ao enviar o e-mail: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("envio retornou {}", resp.status()));
+        return Err(erro_envio(&prefix, "envio", resp.status()));
     }
     Ok(())
 }

@@ -357,10 +357,20 @@ async fn cr_enviar_novo(
     assunto: String,
     corpo: String,
     anexos: Vec<graph::AnexoUp>,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_enviar_novo(&store, para, cc, cco, &assunto, &corpo, anexos)
+        graph::cr_enviar_novo(
+            &store,
+            para,
+            cc,
+            cco,
+            &assunto,
+            &corpo,
+            anexos,
+            mailbox.as_deref(),
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -448,6 +458,17 @@ async fn cr_mail_shared_disponivel(state: State<'_, Store>) -> Result<bool, Stri
         .map_err(|e| e.to_string())?
 }
 
+/// Bridge / caixas compartilhadas (#114): o token atual traz Mail.Send.Shared?
+/// Mantido separado dos escopos de leitura/escrita para orientar o relogin sem
+/// bloquear o conteúdo já disponível da caixa.
+#[tauri::command]
+async fn cr_mail_send_shared_disponivel(state: State<'_, Store>) -> Result<bool, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::mail_send_shared_disponivel(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: mensagens de uma pasta.
 #[tauri::command]
 async fn cr_folder_mensagens(
@@ -481,10 +502,11 @@ async fn cr_responder(
     corpo: String,
     todos: bool,
     anexos: Vec<graph::AnexoUp>,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_responder(&store, &id, &corpo, todos, anexos)
+        graph::cr_responder(&store, &id, &corpo, todos, anexos, mailbox.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -498,10 +520,11 @@ async fn cr_encaminhar(
     corpo: String,
     para: Vec<String>,
     anexos: Vec<graph::AnexoUp>,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_encaminhar(&store, &id, &corpo, para, anexos)
+        graph::cr_encaminhar(&store, &id, &corpo, para, anexos, mailbox.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1004,6 +1027,7 @@ pub fn run() {
             cr_mail_folders,
             cr_validar_caixa,
             cr_mail_shared_disponivel,
+            cr_mail_send_shared_disponivel,
             cr_folder_mensagens,
             cr_responder,
             cr_encaminhar,

@@ -843,6 +843,17 @@ function descricaoErroEscrita(
     : detalhe;
 }
 
+function descricaoErroEnvio(
+  erro: unknown,
+  mailbox: string,
+  t: ReturnType<typeof useIdioma>["t"]
+) {
+  const detalhe = String(erro);
+  return mailbox !== CAIXA_PROPRIA && /\b403\b|sem permissão|permission/i.test(detalhe)
+    ? t.controlRoom.caixaSemPermissaoEnvio
+    : detalhe;
+}
+
 /** Contexto exibido no painel de detalhe quando há multi-seleção (c-empty-15). */
 function MultiSelecaoContexto({
   n,
@@ -1243,6 +1254,72 @@ function SeletorCaixa({
         </SelectItem>
       </SelectContent>
     </Select>
+  );
+}
+
+/** Seletor canônico de remetente do compose (#114). Reusa o mesmo Select e a
+ * mesma representação visual do seletor de caixa do sidebar; o Graph decide
+ * Send As vs Send on Behalf conforme a permissão configurada no Exchange. */
+function SeletorRemetente({
+  caixas,
+  valor,
+  onChange,
+  emailPessoal,
+  sharedDisponivel,
+  t,
+}: {
+  caixas: string[];
+  valor: string;
+  onChange: (v: string) => void;
+  emailPessoal?: string | null;
+  sharedDisponivel: boolean;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  return (
+    <div className="border-b px-3 py-2">
+      <div className="flex items-center gap-3">
+        <span className="w-16 shrink-0 text-xs text-muted-foreground">
+          {t.controlRoom.enviarDe}
+        </span>
+        <Select value={valor} onValueChange={onChange}>
+          <SelectTrigger className="h-9 min-w-0 flex-1" aria-label={t.controlRoom.enviarDe}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            <SelectGroup>
+              <SelectItem value={CAIXA_PROPRIA}>
+                <span className="flex items-center gap-2">
+                  <Inbox className="size-4 shrink-0 text-muted-foreground" />
+                  <span>{t.controlRoom.caixaMinha}</span>
+                  {emailPessoal && (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {emailPessoal}
+                    </span>
+                  )}
+                </span>
+              </SelectItem>
+              {caixas.map((caixa) => (
+                <SelectItem
+                  key={caixa}
+                  value={caixa}
+                  disabled={!sharedDisponivel}
+                >
+                  <span className="flex items-center gap-2">
+                    <Mailbox className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{caixa}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+      {!sharedDisponivel && caixas.length > 0 && (
+        <p className="mt-1 pl-19 text-xs text-muted-foreground">
+          {t.controlRoom.caixaEnvioRelogin}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -4071,19 +4148,27 @@ const MessageDetail = forwardRef<
     try {
       const anexos = c?.getAnexos() ?? [];
       if (modo === "encaminhar") {
-        await api.crEncaminhar(id, html, destinos, anexos);
+        await api.crEncaminhar(id, html, destinos, anexos, mailbox);
         // salva os destinatários nos Contatos (best-effort, silencioso)
         api
           .crSalvarContatos(destinos.map((e) => ({ nome: e, email: e })))
           .catch(() => {});
       } else {
-        await api.crResponder(id, html, modo === "responderTodos", anexos);
+        await api.crResponder(
+          id,
+          html,
+          modo === "responderTodos",
+          anexos,
+          mailbox
+        );
       }
       toastIcone(t.controlRoom.enviado, t.controlRoom.enviadoDescricao, "enviado");
       setModo(null);
       onMudou();
     } catch (e) {
-      toast.error(t.controlRoom.erroEnvio, { description: String(e) });
+      toast.error(t.controlRoom.erroEnvio, {
+        description: descricaoErroEnvio(e, mailbox, t),
+      });
     } finally {
       setEnviando(false);
     }
@@ -4151,7 +4236,7 @@ const MessageDetail = forwardRef<
       <div className="flex items-center gap-1 border-b px-3 py-2">
         <DicaSomenteLeitura
           ativo={envioBloqueado}
-          texto={t.controlRoom.caixaSomenteLeitura}
+          texto={t.controlRoom.caixaEnvioRelogin}
         >
           <Button
             variant="ghost"
@@ -4164,7 +4249,7 @@ const MessageDetail = forwardRef<
         </DicaSomenteLeitura>
         <DicaSomenteLeitura
           ativo={envioBloqueado}
-          texto={t.controlRoom.caixaSomenteLeitura}
+          texto={t.controlRoom.caixaEnvioRelogin}
         >
           <Button
             variant="ghost"
@@ -4177,7 +4262,7 @@ const MessageDetail = forwardRef<
         </DicaSomenteLeitura>
         <DicaSomenteLeitura
           ativo={envioBloqueado}
-          texto={t.controlRoom.caixaSomenteLeitura}
+          texto={t.controlRoom.caixaEnvioRelogin}
         >
           <Button
             variant="ghost"
@@ -4653,14 +4738,33 @@ function EventoDialog({
 function NovaMensagemModal({
   aberto,
   onClose,
+  caixas,
+  remetenteInicial,
+  emailPessoal,
+  sharedEnvioDisponivel,
   t,
 }: {
   aberto: boolean;
   onClose: () => void;
+  caixas: string[];
+  remetenteInicial: string;
+  emailPessoal?: string | null;
+  sharedEnvioDisponivel: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   const comporRef = useRef<ComporMensagemHandle>(null);
   const [enviando, setEnviando] = useState(false);
+  const [remetente, setRemetente] = useState(remetenteInicial);
+
+  useEffect(() => {
+    if (!aberto) return;
+    setRemetente(
+      remetenteInicial === CAIXA_PROPRIA || sharedEnvioDisponivel
+        ? remetenteInicial
+        : CAIXA_PROPRIA
+    );
+  }, [aberto, remetenteInicial, sharedEnvioDisponivel]);
+
   const textos = {
     para: t.controlRoom.para,
     cc: t.controlRoom.ccLabel,
@@ -4682,14 +4786,24 @@ function NovaMensagemModal({
     }
     setEnviando(true);
     try {
-      await api.crEnviarNovo(para, cc, cco, c?.getAssunto() ?? "", c?.getHtml() ?? "", c?.getAnexos() ?? []);
+      await api.crEnviarNovo(
+        para,
+        cc,
+        cco,
+        c?.getAssunto() ?? "",
+        c?.getHtml() ?? "",
+        c?.getAnexos() ?? [],
+        remetente
+      );
       api
         .crSalvarContatos([...para, ...cc, ...cco].map((e) => ({ nome: e, email: e })))
         .catch(() => {});
       toastIcone(t.controlRoom.enviado, t.controlRoom.enviadoDescricao, "enviado");
       onClose();
     } catch (e) {
-      toast.error(t.controlRoom.erroEnvio, { description: String(e) });
+      toast.error(t.controlRoom.erroEnvio, {
+        description: descricaoErroEnvio(e, remetente, t),
+      });
     } finally {
       setEnviando(false);
     }
@@ -4706,6 +4820,14 @@ function NovaMensagemModal({
         <SheetHeader className="border-b px-4 py-3">
           <SheetTitle className="text-left">{t.controlRoom.novaMensagem}</SheetTitle>
         </SheetHeader>
+        <SeletorRemetente
+          caixas={caixas}
+          valor={remetente}
+          onChange={setRemetente}
+          emailPessoal={emailPessoal}
+          sharedDisponivel={sharedEnvioDisponivel}
+          t={t}
+        />
         <div className="min-h-0 flex-1 overflow-hidden">
           <ComporMensagem key={String(aberto)} ref={comporRef} mostrarAssunto textos={textos} />
         </div>
@@ -4767,6 +4889,7 @@ export function ControlRoomScreen({
   // O token atual traz Mail.Read.Shared? Falso ⇒ sinaliza relogin (escopo novo
   // na SCOPES; sem consent admin — já concedido, ver AGENTS.md §1.1).
   const [sharedEscopoOk, setSharedEscopoOk] = useState(true);
+  const [sharedEnvioEscopoOk, setSharedEnvioEscopoOk] = useState(false);
   useEffect(() => {
     let vivo = true;
     api
@@ -4775,7 +4898,15 @@ export function ControlRoomScreen({
         if (vivo) setSharedEscopoOk(ok);
       })
       .catch(() => {
-        /* falha ao checar escopo: não trava a UI, assume ok */
+        /* falha ao checar leitura/escrita: não trava a UI, assume ok */
+      });
+    api
+      .crMailSendSharedDisponivel()
+      .then((ok) => {
+        if (vivo) setSharedEnvioEscopoOk(ok);
+      })
+      .catch(() => {
+        /* envio compartilhado permanece bloqueado sem confirmação do escopo */
       });
     return () => {
       vivo = false;
@@ -6013,7 +6144,7 @@ export function ControlRoomScreen({
               onResponderTodos={() => detalheRef.current?.responderTodos()}
               onEncaminhar={() => detalheRef.current?.encaminhar()}
               onCompor={() => setNovaAberta(true)}
-              envioBloqueado={caixaCompartilhadaAtiva}
+              envioBloqueado={caixaCompartilhadaAtiva && !sharedEnvioEscopoOk}
               t={t}
               idioma={idioma}
             />
@@ -6033,7 +6164,7 @@ export function ControlRoomScreen({
                 id={dadosDaCaixaAtiva ? msgSel : null}
                 userEmail={user.email}
                 mailbox={caixaAtiva}
-                envioBloqueado={caixaCompartilhadaAtiva}
+                envioBloqueado={caixaCompartilhadaAtiva && !sharedEnvioEscopoOk}
                 sinalizado={msgAtual?.sinalizado ?? false}
                 lido={msgAtual?.lido ?? false}
                 onFlag={acaoFlag}
@@ -6057,7 +6188,15 @@ export function ControlRoomScreen({
       </div>
 
       <EventoDialog id={eventoSel} userEmail={user.email} onClose={() => setEventoSel(null)} />
-      <NovaMensagemModal aberto={novaAberta} onClose={() => setNovaAberta(false)} t={t} />
+      <NovaMensagemModal
+        aberto={novaAberta}
+        onClose={() => setNovaAberta(false)}
+        caixas={caixasCompartilhadas}
+        remetenteInicial={caixaAtiva}
+        emailPessoal={user.email}
+        sharedEnvioDisponivel={sharedEnvioEscopoOk}
+        t={t}
+      />
 
       {/* Dialog "Adicionar caixa compartilhada" (#111). Montado só quando abre
           (com `key`) pra nascer limpo. Se o token não traz Mail.Read.Shared,

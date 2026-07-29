@@ -545,6 +545,7 @@ const pt = {
     paraPlaceholder: "Para (separe por vírgula)",
     responderPlaceholder: "Escreva sua resposta...",
     encaminharPlaceholder: "Escreva uma mensagem...",
+    enviarDe: "Enviar de",
     enviar: "Enviar",
     cancelar: "Cancelar",
     enviado: "E-mail enviado.",
@@ -585,6 +586,10 @@ const pt = {
     caixaSomenteLeitura: "Somente leitura — disponível na caixa pessoal",
     caixaSemPermissaoEscrita:
       "Você não tem permissão para alterar esta caixa compartilhada.",
+    caixaSemPermissaoEnvio:
+      "Você não tem permissão para enviar usando esta caixa compartilhada.",
+    caixaEnvioRelogin:
+      "Faça login novamente para enviar usando caixas compartilhadas.",
     caixaAcessoParcial:
       "Acesso parcial — você não tem permissão para abrir esta pasta.",
   },
@@ -1139,6 +1144,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     paraPlaceholder: "To (comma-separated)",
     responderPlaceholder: "Write your reply...",
     encaminharPlaceholder: "Write a message...",
+    enviarDe: "Send from",
     enviar: "Send",
     cancelar: "Cancel",
     enviado: "Email sent.",
@@ -1179,6 +1185,10 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     caixaSomenteLeitura: "Read-only — available in your personal mailbox",
     caixaSemPermissaoEscrita:
       "You don't have permission to modify this shared mailbox.",
+    caixaSemPermissaoEnvio:
+      "You don't have permission to send using this shared mailbox.",
+    caixaEnvioRelogin:
+      "Sign in again to send using shared mailboxes.",
     caixaAcessoParcial:
       "Partial access — you don't have permission to open this folder.",
   },
