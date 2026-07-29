@@ -348,6 +348,50 @@ async fn cr_pessoas(
         .map_err(|e| e.to_string())?
 }
 
+/// People: contatos explicitos + pessoas relevantes, com falhas por fonte.
+#[tauri::command]
+async fn cr_people_list(
+    state: State<'_, Store>,
+    next_links: Option<Vec<String>>,
+) -> Result<graph::PeopleListResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_list(&store, next_links.unwrap_or_default())
+    })
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// People Enrich: monta o preview sem alterar o contato.
+#[tauri::command]
+async fn cr_people_enrich_preview(
+    state: State<'_, Store>,
+    contact_id: Option<String>,
+    email: String,
+) -> Result<graph::PeopleEnrichPreview, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_enrich_preview(&store, contact_id.as_deref(), &email)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// People Enrich: persiste somente os campos confirmados e somente com escopo.
+#[tauri::command]
+async fn cr_people_enrich_apply(
+    state: State<'_, Store>,
+    contact_id: String,
+    fields: Vec<graph::PeopleEnrichField>,
+) -> Result<graph::PeopleEnrichApplyResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_enrich_apply(&store, &contact_id, fields)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Compositor: envia um e-mail novo (do zero). Mail.Send.
 #[tauri::command]
 async fn cr_enviar_novo(
@@ -1126,6 +1170,9 @@ pub fn run() {
             cr_categorias,
             cr_fotos_contatos,
             cr_pessoas,
+            cr_people_list,
+            cr_people_enrich_preview,
+            cr_people_enrich_apply,
             cr_enviar_novo,
             cr_compartilhar_onedrive,
             cr_salvar_contatos,

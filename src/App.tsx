@@ -477,6 +477,9 @@ function AppInner() {
         >
           <ControlRoomScreen
             user={user}
+            onGrantPeopleAccess={() => {
+              void handleLogin(user.email);
+            }}
             onAbrirLink={(url) => {
               let nome = url;
               try {

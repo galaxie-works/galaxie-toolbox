@@ -11,6 +11,10 @@ import type {
   PastaEmail,
   PastaOD,
   Pessoa,
+  PeopleEnrichApplyResult,
+  PeopleEnrichField,
+  PeopleEnrichPreview,
+  PeopleListResult,
   Reuniao,
   SegurancaEmail,
   Site,
@@ -658,6 +662,155 @@ export async function crPessoas(query: string): Promise<Pessoa[]> {
     );
   }
   return invoke<Pessoa[]>("cr_pessoas", { query });
+}
+
+/** Dados iniciais do módulo People, mantendo falhas e permissões por fonte. */
+export async function crPeopleList(nextLinks: string[] = []): Promise<PeopleListResult> {
+  if (!inTauri()) {
+    await sleep(450);
+    if (nextLinks.length > 0) {
+      return {
+        missingScopes: [],
+        failures: [],
+        nextLinks: [],
+        records: Array.from({ length: 80 }, (_, index) => ({
+          id: `contact-page-2-${index}`,
+          source: "contacts" as const,
+          name: `Contact ${String(index + 5).padStart(3, "0")}`,
+          emails: [{ address: `contact${index + 5}@example.com`, label: "work" }],
+          phones: index % 3 === 0
+            ? [{ number: `+1 555 01${String(index).padStart(2, "0")}`, label: "work" }]
+            : [],
+          jobTitle: index % 2 === 0 ? "Specialist" : null,
+          company: index % 2 === 0 ? "Compiler Labs" : "Analytical Engines",
+          organization: index % 2 === 0,
+          peopleRank: null,
+        })),
+      };
+    }
+    return {
+      missingScopes: [],
+      failures: [],
+      nextLinks: ["mock:contacts:2"],
+      records: [
+        {
+          id: "contact-ada",
+          source: "contacts",
+          name: "Ada Lovelace",
+          emails: [{ address: "ada@example.com", label: "work" }],
+          phones: [{ number: "+44 20 7946 0958", label: "work" }],
+          jobTitle: "Product Architect",
+          company: "Analytical Engines",
+          organization: false,
+          peopleRank: null,
+        },
+        {
+          id: "people-ada",
+          source: "people",
+          name: "Ada Lovelace",
+          emails: [{ address: "ada@example.com" }],
+          phones: [],
+          jobTitle: "Product Architect",
+          company: "Analytical Engines",
+          organization: true,
+          peopleRank: 0,
+        },
+        {
+          id: "people-grace",
+          source: "people",
+          name: "Grace Hopper",
+          emails: [{ address: "grace@example.com" }],
+          phones: [{ number: "+1 212 555 0102", label: "mobile" }],
+          jobTitle: "Engineering Lead",
+          company: "Compiler Labs",
+          organization: true,
+          peopleRank: 1,
+        },
+        {
+          id: "contact-alan",
+          source: "contacts",
+          name: "Alan Turing",
+          emails: [{ address: "alan@example.net", label: "work" }],
+          phones: [],
+          jobTitle: null,
+          company: "Bletchley Research",
+          organization: false,
+          peopleRank: null,
+        },
+      ],
+    };
+  }
+  return invoke<PeopleListResult>("cr_people_list", { nextLinks });
+}
+
+/** Busca sugestões revisáveis para um contato sem alterar nada. */
+export async function crPeopleEnrichPreview(
+  contactId: string | null,
+  email: string,
+): Promise<PeopleEnrichPreview> {
+  if (!inTauri()) {
+    await sleep(650);
+    const readOnly = email.toLowerCase().includes("alan@");
+    return {
+      writeAvailable: Boolean(contactId) && !readOnly,
+      failures: [],
+      fields: readOnly
+        ? [
+            {
+              key: "jobTitle",
+              value: "Research Director",
+              source: "people",
+            },
+            {
+              key: "businessPhone",
+              value: "+44 20 7946 0123",
+              source: "directory",
+              label: "work",
+            },
+            {
+              key: "department",
+              value: "Cryptanalysis",
+              source: "directory",
+            },
+          ]
+        : [
+            {
+              key: "department",
+              value: "Product Research",
+              source: "directory",
+            },
+            {
+              key: "officeLocation",
+              value: "London / 2.14",
+              source: "directory",
+            },
+            {
+              key: "manager",
+              value: "Charles Babbage",
+              source: "directory",
+            },
+          ],
+    };
+  }
+  return invoke<PeopleEnrichPreview>("cr_people_enrich_preview", {
+    contactId,
+    email,
+  });
+}
+
+/** Confirma no Graph apenas os campos aceitos no preview. */
+export async function crPeopleEnrichApply(
+  contactId: string,
+  fields: PeopleEnrichField[],
+): Promise<PeopleEnrichApplyResult> {
+  if (!inTauri()) {
+    await sleep(550);
+    return { saved: true, writeAvailable: true };
+  }
+  return invoke<PeopleEnrichApplyResult>("cr_people_enrich_apply", {
+    contactId,
+    fields,
+  });
 }
 
 /**
