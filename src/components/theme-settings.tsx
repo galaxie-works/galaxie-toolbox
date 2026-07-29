@@ -1,6 +1,7 @@
 import { MonitorCog, Moon, Sun, type LucideIcon } from "lucide-react";
 
 import { FramePanel } from "@/components/reui/frame";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -86,8 +87,11 @@ function temaValido(valor: string): valor is TemaVisual {
  * junto do Style (padrão c-frame-3: FramePanels empilhados num frame só, igual
  * ao Sound & notifications). Label + descrição à esquerda; o select à direita.
  * Select = ReUI c-select-17 (bullet colorido), persistido no useAppStore.
+ *
+ * `disabled` desliga o select quando o alto contraste (#136) está ligado — o
+ * preset high-contrast sobrepõe o Mood, então escolher paleta não faz efeito.
  */
-export function MoodSettings() {
+export function MoodSettings({ disabled = false }: { disabled?: boolean }) {
   const temaVisual = useAppStore((state) => state.temaVisual);
   const setTemaVisual = useAppStore((state) => state.setTemaVisual);
 
@@ -102,6 +106,7 @@ export function MoodSettings() {
         </div>
         <Select
           value={temaVisual}
+          disabled={disabled}
           onValueChange={(valor) => {
             if (temaValido(valor)) setTemaVisual(valor);
           }}
@@ -172,6 +177,36 @@ export function StyleSettings() {
             </SelectGroup>
           </SelectContent>
         </Select>
+      </div>
+    </FramePanel>
+  );
+}
+
+/**
+ * Stacked card do Accessibility (#136) — terceiro card do frame "Appearance",
+ * no mesmo padrão do Mood/Style. Label + descrição à esquerda; um Switch
+ * (`@/components/ui/switch`, default OFF) à direita. Ligado aplica o preset de
+ * alto contraste (sobrepondo o Mood) e persiste no useAppStore.
+ */
+export function AccessibilitySettings() {
+  const altoContraste = useAppStore((state) => state.altoContraste);
+  const setAltoContraste = useAppStore((state) => state.setAltoContraste);
+
+  return (
+    <FramePanel>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Accessibility</h3>
+          <p className="text-sm text-muted-foreground">
+            Turn on a high contrast theme for better readability.
+          </p>
+        </div>
+        <Switch
+          aria-label="High contrast"
+          checked={altoContraste}
+          onCheckedChange={setAltoContraste}
+          className="shrink-0"
+        />
       </div>
     </FramePanel>
   );

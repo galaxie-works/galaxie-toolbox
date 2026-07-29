@@ -32,6 +32,7 @@ import {
 import { lerTemplates } from "@/lib/templates";
 import type { OrdenarMensagens } from "@/lib/api";
 import {
+  aplicarAltoContraste,
   aplicarModoTema,
   aplicarTemaVisual,
   MODOS_TEMA,
@@ -44,10 +45,6 @@ import {
   type PreferenciasNotificacao,
 } from "@/lib/sons-notificacao";
 import type { MarcarLidoModo } from "./ui-slice";
-import {
-  aplicarCorDestaque,
-  corHexValida,
-} from "@/lib/cor-destaque";
 
 /**
  * ============================================================================
@@ -245,12 +242,13 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       state.temaVisual = temaVisual;
       aplicarTemaVisual(temaVisual);
     }
-    const corDestaque = lerChave<string>(
-      PERSONALIZATION_KEYS.corDestaque
+    // Aplicado DEPOIS do temaVisual para sobrepor o Mood quando ligado.
+    const altoContraste = lerChave<boolean>(
+      PERSONALIZATION_KEYS.altoContraste
     );
-    if (corHexValida(corDestaque)) {
-      state.corDestaque = corDestaque.toLowerCase();
-      aplicarCorDestaque(state.corDestaque);
+    if (altoContraste !== undefined) {
+      state.altoContraste = altoContraste;
+      aplicarAltoContraste(altoContraste, state.temaVisual);
     }
     // Bridge (#135): assinaturas + padrão + templates.
     const assinaturas = lerChave<Assinatura[]>(BRIDGE_KEYS.assinaturas);
@@ -300,7 +298,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(PERSONALIZATION_KEYS.fundoEstrelado, s.fundoEstrelado);
     gravarTexto(PERSONALIZATION_KEYS.modoTema, s.modoTema);
     gravarTexto(PERSONALIZATION_KEYS.temaVisual, s.temaVisual);
-    gravarChave(PERSONALIZATION_KEYS.corDestaque, s.corDestaque);
+    gravarChave(PERSONALIZATION_KEYS.altoContraste, s.altoContraste);
     gravarChave(BRIDGE_KEYS.assinaturas, s.assinaturas);
     gravarChave(BRIDGE_KEYS.assinaturaPadraoId, s.assinaturaPadraoId);
     gravarChave(BRIDGE_KEYS.templates, s.templates);
@@ -351,7 +349,7 @@ export const useAppStore = create<AppStore>()(
         fundoEstrelado: s.fundoEstrelado,
         modoTema: s.modoTema,
         temaVisual: s.temaVisual,
-        corDestaque: s.corDestaque,
+        altoContraste: s.altoContraste,
         assinaturas: s.assinaturas,
         assinaturaPadraoId: s.assinaturaPadraoId,
         templates: s.templates,
