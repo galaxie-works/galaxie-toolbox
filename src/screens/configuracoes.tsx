@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
 import { LockScreenSettings } from "@/components/lock-screen-settings";
+import { StartupSettings } from "@/components/startup-settings";
 import {
   AccessibilitySettings,
   MoodSettings,
@@ -168,7 +169,12 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
         description: "Choose how GALAXIE Toolbox works with your device.",
         icon: MonitorCog,
         frames: [
-          { key: "startup", title: "Startup", subtitle: "Choose what runs when the app starts.", pending: 123 },
+          {
+            key: "startup",
+            title: "Startup",
+            subtitle: "Choose what runs when the app starts.",
+            node: <StartupSettings />,
+          },
         ],
       },
     ],

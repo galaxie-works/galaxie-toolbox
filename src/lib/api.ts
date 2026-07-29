@@ -1316,3 +1316,23 @@ export async function enableLongPaths(): Promise<string> {
   if (!inTauri()) return "already";
   return invoke<string>("enable_long_paths");
 }
+
+// --- Launch on startup (#123) --------------------------------------------
+// Autostart do SO via tauri-plugin-autostart (comandos Rust finos). Fora do
+// Tauri (mock) guarda o estado em memoria, so pra visualizar o toggle na UI.
+let mockAutostart = false;
+
+/** O app esta configurado para iniciar junto com o sistema? */
+export async function autostartEnabled(): Promise<boolean> {
+  if (!inTauri()) return mockAutostart;
+  return invoke<boolean>("autostart_status");
+}
+
+/** Liga/desliga o autostart do SO. */
+export async function setAutostartEnabled(enabled: boolean): Promise<void> {
+  if (!inTauri()) {
+    mockAutostart = enabled;
+    return;
+  }
+  return invoke<void>("autostart_set", { enabled });
+}

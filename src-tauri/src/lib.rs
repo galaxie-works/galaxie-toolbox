@@ -8,6 +8,7 @@ mod system;
 
 use std::sync::Arc;
 use tauri::{Manager, State};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use auth::{Account, TokenStore};
 
@@ -954,11 +955,35 @@ fn log_frontend_error(msg: String) {
     log::error!("[frontend] {msg}");
 }
 
+/// Startup (#123): o app esta configurado para iniciar junto com o sistema?
+/// Le do autostart do SO via tauri-plugin-autostart (registro no Windows).
+#[tauri::command]
+async fn autostart_status(app: tauri::AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// Startup (#123): liga/desliga o autostart do SO (tauri-plugin-autostart).
+#[tauri::command]
+async fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    let manager = app.autolaunch();
+    if enabled {
+        manager.enable().map_err(|e| e.to_string())
+    } else {
+        manager.disable().map_err(|e| e.to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // Iniciar com o sistema (#123): autostart do SO via LaunchAgent no macOS
+        // e registro Run no Windows. Ligado/desligado pelos comandos autostart_*.
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            None,
+        ))
         // Anexos e "compartilhar via OneDrive": seletor de arquivo (dialog) e
         // leitura dos bytes (fs), ambos chamados pelo front (compor-mensagem).
         .plugin(tauri_plugin_dialog::init())
@@ -1073,6 +1098,8 @@ pub fn run() {
             enable_long_paths,
             long_paths_status,
             log_frontend_error,
+            autostart_status,
+            autostart_set,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
