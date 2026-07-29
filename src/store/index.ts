@@ -4,6 +4,12 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { createUiSlice, UI_KEYS, type UiPersistido, type UiSlice } from "./ui-slice";
 import { createListSlice, LIST_KEYS, type ListPersistido, type ListSlice } from "./list-slice";
 import {
+  createFiltersSlice,
+  FILTERS_KEYS,
+  type FiltersPersistido,
+  type FiltersSlice,
+} from "./filters-slice";
+import {
   createMailboxSlice,
   MAILBOX_KEYS,
   type MailboxPersistido,
@@ -34,7 +40,6 @@ import {
   type SelectionSlice,
 } from "./selection-slice";
 import { lerTemplates } from "@/lib/templates";
-import type { OrdenarMensagens } from "@/lib/api";
 import {
   aplicarAltoContraste,
   aplicarModoTema,
@@ -82,6 +87,7 @@ import type { MarcarLidoModo } from "./ui-slice";
 export type AppStore =
   & UiSlice
   & ListSlice
+  & FiltersSlice
   & MailboxSlice
   & SettingsUiSlice
   & PersonalizationSlice
@@ -91,6 +97,7 @@ export type AppStore =
 /** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
 type AppPersistido = UiPersistido &
   ListPersistido &
+  FiltersPersistido &
   MailboxPersistido &
   SettingsUiPersistido &
   PersonalizationPersistido &
@@ -173,6 +180,7 @@ function escaparHtml(s: string): string {
 const TODAS_CHAVES = [
   ...Object.values(UI_KEYS),
   ...Object.values(LIST_KEYS),
+  ...Object.values(FILTERS_KEYS),
   ...Object.values(MAILBOX_KEYS),
   ...Object.values(SETTINGS_UI_KEYS),
   ...Object.values(PERSONALIZATION_KEYS),
@@ -203,13 +211,18 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (modo !== undefined) state.marcarLidoModo = modo;
     const atraso = lerChave<number>(UI_KEYS.marcarLidoAtraso);
     if (atraso !== undefined) state.marcarLidoAtraso = atraso;
-    // Lista
-    const ordenar = lerChave<OrdenarMensagens>(LIST_KEYS.ordenar);
+    // Filtros / busca / ordenação (#129)
+    const ordenar = lerChave<FiltersPersistido["ordenar"]>(
+      FILTERS_KEYS.ordenar
+    );
     if (ordenar !== undefined) state.ordenar = ordenar;
-    const ordemDesc = lerChave<boolean>(LIST_KEYS.ordemDesc);
+    const ordemDesc = lerChave<boolean>(FILTERS_KEYS.ordemDesc);
     if (ordemDesc !== undefined) state.ordemDesc = ordemDesc;
-    const filtros = lerChave<ListPersistido["filtros"]>(LIST_KEYS.filtros);
+    const filtros = lerChave<FiltersPersistido["filtros"]>(
+      FILTERS_KEYS.filtros
+    );
     if (filtros !== undefined) state.filtros = filtros;
+    // Lista
     const agruparConversas = lerChave<boolean>(LIST_KEYS.agruparConversas);
     if (agruparConversas !== undefined) {
       state.agruparConversas = agruparConversas;
@@ -303,9 +316,9 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(UI_KEYS.agendaAberta, s.agendaAberta);
     gravarChave(UI_KEYS.marcarLidoModo, s.marcarLidoModo);
     gravarChave(UI_KEYS.marcarLidoAtraso, s.marcarLidoAtraso);
-    gravarChave(LIST_KEYS.ordenar, s.ordenar);
-    gravarChave(LIST_KEYS.ordemDesc, s.ordemDesc);
-    gravarChave(LIST_KEYS.filtros, s.filtros);
+    gravarChave(FILTERS_KEYS.ordenar, s.ordenar);
+    gravarChave(FILTERS_KEYS.ordemDesc, s.ordemDesc);
+    gravarChave(FILTERS_KEYS.filtros, s.filtros);
     gravarChave(LIST_KEYS.agruparConversas, s.agruparConversas);
     gravarChave(UI_KEYS.threadsExpandidas, s.threadsExpandidas);
     gravarChave(MAILBOX_KEYS.caixasCompartilhadas, s.caixasCompartilhadas);
@@ -346,6 +359,7 @@ export const useAppStore = create<AppStore>()(
     (...a) => ({
       ...createUiSlice(...a),
       ...createListSlice(...a),
+      ...createFiltersSlice(...a),
       ...createMailboxSlice(...a),
       ...createSettingsUiSlice(...a),
       ...createPersonalizationSlice(...a),

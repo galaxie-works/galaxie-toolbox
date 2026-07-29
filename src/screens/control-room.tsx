@@ -2,7 +2,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/reui/badge";
 import {
   Filters,
-  type Filter,
   type FilterFieldConfig,
   type FilterOperator,
   type FilterOption,
@@ -138,6 +137,13 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTemaEscuro } from "@/lib/tema";
 import { useAppStore } from "@/store";
+import {
+  desserializarDataFiltro,
+  escopoDeFiltros,
+  passaFiltrosClient,
+  resolveIntervaloData,
+  serializarDataFiltro,
+} from "@/store/filters-slice";
 import { tocarSomEscopo } from "@/lib/sons-notificacao";
 import { useDebounce } from "@/hooks/use-debounce";
 import { useUndoSend } from "@/hooks/use-undo-send";
@@ -1987,183 +1993,9 @@ function FolderSidebar({
 // Painel 2 — lista de mensagens
 // ===========================================================================
 
-// Filtro único da lista (dropdown estilo Outlook, #31). Os 4 primeiros são
-// client-side (aplicados sobre a lista já carregada, como as antigas abas); os
-// 3 últimos exigem o servidor (cr_filtrar) e são buscados pelo pai.
-// Escopos que EXIGEM o servidor (não dá só na lista carregada) — resolvidos por
-// `api.crFiltrar`. Modelados como o campo `scope` do filter-builder reui (#31).
-type FiltroServidor = "tome" | "mentions" | "invites";
-
-/**
- * Deriva o escopo de servidor ativo (1 por vez) da lista de filtros do builder.
- * O componente reui é um filter-builder multi-campo; só o campo `scope` vai ao
- * Graph. Se houver mais de um chip `scope` (allowMultiple), o primeiro manda —
- * os client-side (De/Status/Sinalizado/Anexos) combinam por cima com E (AND).
- */
-function escopoDeFiltros(filtros: Filter<string>[]): FiltroServidor | null {
-  const v = filtros.find((f) => f.field === "scope")?.values[0];
-  return v === "tome" || v === "mentions" || v === "invites" ? v : null;
-}
-
-/**
- * Aplica os filtros client-side (De, Status, Sinalizado, Anexos) sobre um item,
- * combinados com E (AND). O campo `scope` é resolvido no servidor, então aqui é
- * ignorado. Honra os operadores is/is_not (selects) e contains/not_contains
- * (texto De).
- */
-function passaFiltrosClient(m: EmailItem, filtros: Filter<string>[]): boolean {
-  for (const f of filtros) {
-    const v = f.values[0];
-    if (f.field === "from") {
-      const termo = String(v ?? "").trim().toLowerCase();
-      if (!termo) continue;
-      const contem = `${m.de} ${m.deEmail}`.toLowerCase().includes(termo);
-      if (f.operator === "not_contains" ? contem : !contem) return false;
-    } else if (f.field === "status") {
-      if (v == null) continue;
-      const bate = v === "unread" ? !m.lido : m.lido;
-      if (f.operator === "is_not" ? bate : !bate) return false;
-    } else if (f.field === "flagged") {
-      if (v == null) continue;
-      const bate = v === "yes" ? m.sinalizado : !m.sinalizado;
-      if (f.operator === "is_not" ? bate : !bate) return false;
-    } else if (f.field === "files") {
-      if (v == null) continue;
-      const bate = v === "yes" ? m.temAnexos : !m.temAnexos;
-      if (f.operator === "is_not" ? bate : !bate) return false;
-    } else if (f.field === "data") {
-      // Intervalo de datas (#110): o valor é um DateSelectorValue serializado
-      // (ISO) em values[0]. Reidrata, resolve o intervalo concreto e testa
-      // `início ≤ recebido ≤ fim`. Seleção incompleta = sem restrição (passa).
-      const dv = desserializarDataFiltro(v as string | undefined);
-      if (!dv) continue;
-      const range = resolveIntervaloData(dv);
-      if (!range) continue;
-      const quando = new Date(comZ(m.recebido)).getTime();
-      if (Number.isNaN(quando)) return false;
-      if (range.ini !== null && quando < range.ini) return false;
-      if (range.fim !== null && quando > range.fim) return false;
-    }
-    // `scope` → servidor (crFiltrar), ignorado no client-side.
-  }
-  return true;
-}
-
 // --- Filtro de intervalo de datas (#110) -----------------------------------
-// O DateSelector (reui) guarda a seleção num `DateSelectorValue` que contém
-// Dates (não sobrevivem a JSON cru) e campos de período (mês/trimestre/ano). O
-// filter-builder reui trabalha com `Filter<string>` e o localStorage serializa
-// o array inteiro. Guardamos o valor como JSON com as datas em ISO em
-// `values[0]` e reidratamos as Dates ao ler — mesmo shape `bridge.filtrosLista.v2`
-// do #31.
-function serializarDataFiltro(v: DateSelectorValue): string {
-  return JSON.stringify(v, (_k, val) =>
-    val instanceof Date ? val.toISOString() : val,
-  );
-}
-
-function desserializarDataFiltro(
-  s: string | undefined,
-): DateSelectorValue | undefined {
-  if (!s) return undefined;
-  try {
-    const raw = JSON.parse(s) as DateSelectorValue;
-    return {
-      ...raw,
-      startDate: raw.startDate ? new Date(raw.startDate) : undefined,
-      endDate: raw.endDate ? new Date(raw.endDate) : undefined,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-const inicioDoDia = (d: Date) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
-const fimDoDia = (d: Date) =>
-  new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999).getTime();
-const inicioDoMes = (ano: number, mes: number) =>
-  new Date(ano, mes, 1, 0, 0, 0, 0).getTime();
-// `new Date(ano, mes+1, 0)` = último dia do mês `mes` (0-indexado).
-const fimDoMes = (ano: number, mes: number) =>
-  new Date(ano, mes + 1, 0, 23, 59, 59, 999).getTime();
-
-// Meses (0-indexados) que abrem/fecham cada período de um dado tipo/valor.
-// month: value é o próprio mês; quarter: 0→jan..; half-year: 0→jan/1→jul; year.
-function mesesDoPeriodo(
-  period: DateSelectorValue["period"],
-  value: number,
-): { mesIni: number; mesFim: number } {
-  switch (period) {
-    case "quarter":
-      return { mesIni: value * 3, mesFim: value * 3 + 2 };
-    case "half-year":
-      return { mesIni: value * 6, mesFim: value * 6 + 5 };
-    case "year":
-      return { mesIni: 0, mesFim: 11 };
-    default: // "month"
-      return { mesIni: value, mesFim: value };
-  }
-}
-
-// Faixa-base [s, e] (epoch ms) coberta pela seleção, ignorando o operador. Os
-// campos preenchidos espelham `formatDateValue`: day → startDate/endDate;
-// month/quarter/half-year/year → year+unidade OU rangeStart/rangeEnd.
-function faixaBaseData(v: DateSelectorValue): { s: number; e: number } | null {
-  if (v.period === "day") {
-    if (v.startDate && v.endDate) {
-      return { s: inicioDoDia(v.startDate), e: fimDoDia(v.endDate) };
-    }
-    if (v.startDate) {
-      return { s: inicioDoDia(v.startDate), e: fimDoDia(v.startDate) };
-    }
-    return null;
-  }
-  // Períodos calendáricos (mês/trimestre/semestre/ano).
-  const unidade =
-    v.period === "month"
-      ? v.month
-      : v.period === "quarter"
-        ? v.quarter
-        : v.period === "half-year"
-          ? v.halfYear
-          : 0; // "year" não usa unidade
-  if (v.rangeStart && v.rangeEnd) {
-    const ini = mesesDoPeriodo(v.period, v.rangeStart.value);
-    const fim = mesesDoPeriodo(v.period, v.rangeEnd.value);
-    return {
-      s: inicioDoMes(v.rangeStart.year, ini.mesIni),
-      e: fimDoMes(v.rangeEnd.year, fim.mesFim),
-    };
-  }
-  if (v.year !== undefined && (v.period === "year" || unidade !== undefined)) {
-    const { mesIni, mesFim } = mesesDoPeriodo(v.period, unidade ?? 0);
-    return { s: inicioDoMes(v.year, mesIni), e: fimDoMes(v.year, mesFim) };
-  }
-  return null;
-}
-
-/**
- * Resolve o `DateSelectorValue` num intervalo concreto [ini, fim] (epoch ms,
- * inclusivo; `null` = ilimitado daquele lado), honrando o operador da seleção:
- * `is`/`between` = a faixa em si; `before` = tudo antes dela; `after` = tudo
- * depois. Retorna `null` quando a seleção está incompleta (o filtro não
- * restringe nada).
- */
-function resolveIntervaloData(
-  v: DateSelectorValue,
-): { ini: number | null; fim: number | null } | null {
-  const base = faixaBaseData(v);
-  if (!base) return null;
-  switch (v.operator) {
-    case "before":
-      return { ini: null, fim: base.s - 1 };
-    case "after":
-      return { ini: base.e + 1, fim: null };
-    default: // "is" | "between"
-      return { ini: base.s, fim: base.e };
-  }
-}
+// Serialização, resolução do intervalo e predicado client-side agora vivem no
+// filters slice (#129); a UI abaixo mantém somente o registry DateSelector.
 
 // i18n em português do DateSelector (o registry vem só em inglês). Trimestres
 // (Q1–Q4) e semestres (H1–H2) ficam como no padrão — são notação de negócio
@@ -2567,14 +2399,7 @@ function MessageList({
   naoLidosPasta,
   contFlagged,
   contAnexos,
-  filtros,
-  onFiltros,
   filtrosOcultos,
-  busca,
-  setBusca,
-  ordenar,
-  ordemDesc,
-  onOrdenar,
   marcarLidoModo,
   marcarLidoAtraso,
   onMarcarLidoModo,
@@ -2609,14 +2434,7 @@ function MessageList({
   naoLidosPasta: number;
   contFlagged: number | null;
   contAnexos: number | null;
-  filtros: Filter<string>[];
-  onFiltros: (fs: Filter<string>[]) => void;
   filtrosOcultos: Set<string>;
-  busca: string;
-  setBusca: (v: string) => void;
-  ordenar: api.OrdenarMensagens;
-  ordemDesc: boolean;
-  onOrdenar: (ordenar: api.OrdenarMensagens, descendente: boolean) => void;
   marcarLidoModo: MarcarLidoModo;
   marcarLidoAtraso: number;
   onMarcarLidoModo: (m: MarcarLidoModo) => void;
@@ -2641,6 +2459,14 @@ function MessageList({
   const limparSelecao = useAppStore((s) => s.limparSelecao);
   const selecionarTudo = useAppStore((s) => s.selecionarTudo);
   const selecionarRange = useAppStore((s) => s.selecionarRange);
+  const filtros = useAppStore((s) => s.filtros);
+  const setFiltros = useAppStore((s) => s.setFiltros);
+  const busca = useAppStore((s) => s.busca);
+  const setBusca = useAppStore((s) => s.setBusca);
+  const ordenar = useAppStore((s) => s.ordenar);
+  const setOrdenar = useAppStore((s) => s.setOrdenar);
+  const ordemDesc = useAppStore((s) => s.ordemDesc);
+  const setOrdemDesc = useAppStore((s) => s.setOrdemDesc);
   const [ajudaAberta, setAjudaAberta] = useState(false);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
@@ -3337,7 +3163,7 @@ function MessageList({
               <DropdownMenuLabel>{t.controlRoom.ordenarPor}</DropdownMenuLabel>
               <DropdownMenuRadioGroup
                 value={ordenar}
-                onValueChange={(v) => onOrdenar(v as api.OrdenarMensagens, ordemDesc)}
+                onValueChange={(v) => setOrdenar(v as api.OrdenarMensagens)}
               >
                 {(["data", "remetente", "assunto"] as const).map((o) => (
                   <DropdownMenuRadioItem key={o} value={o}>
@@ -3348,7 +3174,7 @@ function MessageList({
               <DropdownMenuSeparator />
               <DropdownMenuRadioGroup
                 value={ordemDesc ? "desc" : "asc"}
-                onValueChange={(v) => onOrdenar(ordenar, v === "desc")}
+                onValueChange={(v) => setOrdemDesc(v === "desc")}
               >
                 <DropdownMenuRadioItem value="desc">
                   {t.controlRoom.ordemDecrescente}
@@ -3477,7 +3303,7 @@ function MessageList({
           <Filters<string>
             filters={filtros}
             fields={filtroCampos}
-            onChange={onFiltros}
+            onChange={setFiltros}
             enableShortcut
             shortcutKey="f"
             shortcutLabel="F"
@@ -3494,7 +3320,7 @@ function MessageList({
             }}
           />
           {filtros.length > 0 && (
-            <Button variant="outline" onClick={() => onFiltros([])}>
+            <Button variant="outline" onClick={() => setFiltros([])}>
               <FunnelX />
               {t.controlRoom.filtroLimpar}
             </Button>
@@ -5206,13 +5032,28 @@ export function ControlRoomScreen({
   // Sidebar migrada pro ui slice (#126). Chave `bridge.sidebar` preservada.
   const sidebarAberta = useAppStore((s) => s.sidebarAberta);
   const setSidebarAberta = useAppStore((s) => s.setSidebarAberta);
-  // Ordenação da lista (persistida): campo + direção → $orderby no Graph (#32).
-  // Ordenação migrada pro list slice (#125). Chaves `bridge.ordenar` /
-  // `bridge.ordemDesc` preservadas; validação de campo fora-de-escopo no efeito abaixo.
+  // Filters slice (#129): ordenação/filtros persistem nas chaves legadas; busca,
+  // resultados e cursores são somente de sessão.
   const ordenar = useAppStore((s) => s.ordenar);
   const setOrdenar = useAppStore((s) => s.setOrdenar);
   const ordemDesc = useAppStore((s) => s.ordemDesc);
-  const setOrdemDesc = useAppStore((s) => s.setOrdemDesc);
+  const filtros = useAppStore((s) => s.filtros);
+  const setFiltros = useAppStore((s) => s.setFiltros);
+  const busca = useAppStore((s) => s.busca);
+  const setBusca = useAppStore((s) => s.setBusca);
+  const resultadosBusca = useAppStore((s) => s.resultadosBusca);
+  const temMaisBusca = useAppStore((s) => s.temMaisBusca);
+  const resultadosFiltro = useAppStore((s) => s.resultadosFiltro);
+  const temMaisFiltro = useAppStore((s) => s.temMaisFiltro);
+  const cancelarBusca = useAppStore((s) => s.cancelarBusca);
+  const cancelarFiltroGraph = useAppStore((s) => s.cancelarFiltroGraph);
+  const limparConsultas = useAppStore((s) => s.limparConsultas);
+  const buscarMensagens = useAppStore((s) => s.buscarMensagens);
+  const filtrarMensagens = useAppStore((s) => s.filtrarMensagens);
+  const carregarMaisBuscaStore = useAppStore((s) => s.carregarMaisBusca);
+  const carregarMaisFiltroStore = useAppStore((s) => s.carregarMaisFiltro);
+  const mutarResultados = useAppStore((s) => s.mutarResultados);
+  const removerDosResultados = useAppStore((s) => s.removerDosResultados);
   // Migração: sorts removidos do escopo (tamanho/importancia/flag — #60) que
   // ficaram no localStorage voltam pra "data", evitando estado inconsistente.
   useEffect(() => {
@@ -5241,35 +5082,14 @@ export function ControlRoomScreen({
   const [novaAberta, setNovaAberta] = useState(false);
   // Handle do leitor para os atalhos r/a/f (#28) abrirem o Sheet de resposta.
   const detalheRef = useRef<MessageDetailHandle>(null);
-  // Busca server-side ($search do Graph): resultados vêm do servidor (inclui
-  // corpo), não do filtro local sobre o carregado.
-  const [busca, setBusca] = useState("");
-  const [resultadosBusca, setResultadosBusca] = useState<EmailItem[] | null>(null);
-  const [temMaisBusca, setTemMaisBusca] = useState(false);
   // Contadores REAIS da pasta (não só o carregado) pras abas Flagged/Files.
   const [contFlagged, setContFlagged] = useState<number | null>(null);
   const [contAnexos, setContAnexos] = useState<number | null>(null);
-  // Filtro da lista (#31): dropdown Outlook-like, single-select. Persistido
-  // global (D3) — sobrevive ao restart — mas resetado visualmente ao TROCAR de
-  // pasta (efeito abaixo). Os 3 filtros Graph (tome/mentions/invites) buscam no
-  // servidor via cr_filtrar; os 4 client-side são aplicados no MessageList.
-  // Filtros do builder (#31), multi-condição (AND). Chave nova (`.v2`) porque o
-  // shape mudou de string única ("all"/…) para array de `Filter` — reusar a
-  // chave antiga quebraria o parse do valor persistido. Global + persistido;
-  // resetado na troca de pasta (D3).
-  // Filtros migrados pro list slice (#125). Chave `bridge.filtrosLista.v2`
-  // preservada; reset na troca de pasta segue no efeito abaixo.
-  const filtros = useAppStore((s) => s.filtros);
-  const setFiltros = useAppStore((s) => s.setFiltros);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
-  const [resultadosFiltro, setResultadosFiltro] = useState<EmailItem[] | null>(null);
-  const [temMaisFiltro, setTemMaisFiltro] = useState(false);
-  const proximoFiltroRef = useRef<string | null>(null);
   // #109: mantido sempre vazio (o D6 de esconder escopo no 400 foi removido — o
   // filtro agora só mostra o empty state). A prop segue no filho por compat.
   const [filtrosOcultos] = useState<Set<string>>(new Set());
-  const proximoBuscaRef = useRef<string | null>(null);
   const carregandoMaisRef = useRef(false);
   // pasta atual (pra closures assíncronas que precisam do valor mais novo).
   const pastaSelRef = useRef(pastaSel);
@@ -5367,18 +5187,12 @@ export function ControlRoomScreen({
     setMensagens(null);
     setMsgSel(null);
     limparSelecao();
-    setBusca("");
-    setResultadosBusca(null);
-    setResultadosFiltro(null);
+    limparConsultas();
     setTemMais(false);
-    setTemMaisBusca(false);
-    setTemMaisFiltro(false);
-    proximoBuscaRef.current = null;
-    proximoFiltroRef.current = null;
     carregadosRef.current = 0;
     deletadasRef.current.clear();
     ultimoVistoRef.current = null;
-  }, [caixaAtiva, limparSelecao, setMsgSel]);
+  }, [caixaAtiva, limparConsultas, limparSelecao, setMsgSel]);
 
   // O submenu "Mover para…" precisa da árvore INTEIRA (não só do que o usuário
   // expandiu no sidebar). Ao abrir pela primeira vez, `pedirArvore` liga e este
@@ -5695,8 +5509,7 @@ export function ControlRoomScreen({
   // não refletia na tela (QA #1).
   const mutarNasListas = (fn: (m: EmailItem) => EmailItem) => {
     setMensagens((prev) => prev?.map(fn) ?? prev);
-    setResultadosBusca((prev) => prev?.map(fn) ?? prev);
-    setResultadosFiltro((prev) => prev?.map(fn) ?? prev);
+    mutarResultados(fn);
     // Espelha no cache da pasta atual (#108): flag/lido não "voltam" ao retornar.
     atualizarCachePasta(chaveCache(pastaCarga), (e) => ({
       ...e,
@@ -5705,8 +5518,7 @@ export function ControlRoomScreen({
   };
   const removerNasListas = (ids: Set<string>) => {
     setMensagens((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
-    setResultadosBusca((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
-    setResultadosFiltro((prev) => prev?.filter((m) => !ids.has(m.id)) ?? prev);
+    removerDosResultados(ids);
     // Espelha a remoção no cache (#108): o item excluído/movido não reaparece ao
     // voltar. `carregados` (skip do Graph) é preservado de propósito.
     atualizarCachePasta(chaveCache(pastaCarga), (e) => ({
@@ -6134,36 +5946,33 @@ export function ControlRoomScreen({
   const buscaAtiva = busca.trim() !== "";
   useEffect(() => {
     const termo = busca.trim();
-    let vivo = true;
     // Com um filtro Graph ativo NÃO fazemos $search no servidor: o texto é
     // aplicado client-side por cima do resultado do filtro (D2).
     if (!termo || filtroGraph || pastaCargaAcessoNegado) {
-      setResultadosBusca(null);
-      setTemMaisBusca(false);
+      cancelarBusca();
       return;
     }
     const id = setTimeout(() => {
-      setResultadosBusca(null); // null = mostra o spinner de carregando
-      proximoBuscaRef.current = null;
-      api
-        .crBuscar(pastaSel, termo, null, caixaAtiva)
-        .then((res) => {
-          if (!vivo) return;
-          proximoBuscaRef.current = res.proximo;
-          setResultadosBusca(res.itens.filter((m) => !deletadasRef.current.has(m.id)));
-          setTemMaisBusca(res.proximo !== null);
-        })
-        .catch(() => {
-          if (!vivo) return;
-          setResultadosBusca([]);
-          setTemMaisBusca(false);
-        });
+      void buscarMensagens({
+        pastaId: pastaSel,
+        termo,
+        caixa: caixaAtiva,
+        ignorarIds: deletadasRef.current,
+      });
     }, 300);
     return () => {
-      vivo = false;
       clearTimeout(id);
+      cancelarBusca();
     };
-  }, [busca, caixaAtiva, pastaSel, filtroGraph, pastaCargaAcessoNegado]);
+  }, [
+    busca,
+    buscarMensagens,
+    caixaAtiva,
+    cancelarBusca,
+    filtroGraph,
+    pastaCargaAcessoNegado,
+    pastaSel,
+  ]);
 
   // Reset visual do filtro ao TROCAR de pasta (#31 / D3): um filtro Graph da
   // Inbox não faz sentido carregar pra Enviados. Só reseta em troca REAL — no
@@ -6178,44 +5987,24 @@ export function ControlRoomScreen({
   }, [pastaSel]);
 
   // Filtros que EXIGEM o servidor (tome/mentions/invites): busca via cr_filtrar
-  // e pagina pela continuação (nextLink), igual à busca. Fora deles, limpa.
+  // e pagina pela continuação no filters slice. Fora deles, invalida a consulta.
   useEffect(() => {
-    if (!filtroGraph || pastaCargaAcessoNegado) {
-      setResultadosFiltro(null);
-      setTemMaisFiltro(false);
-      proximoFiltroRef.current = null;
+    if (!filtroServidor || pastaCargaAcessoNegado) {
+      cancelarFiltroGraph();
       return;
     }
-    let vivo = true;
-    setResultadosFiltro(null); // null = spinner
-    proximoFiltroRef.current = null;
-    const escopo = filtroServidor;
-    api
-      .crFiltrar(pastaSel, escopo!, null, caixaAtiva)
-      .then((res) => {
-        if (!vivo) return;
-        proximoFiltroRef.current = res.proximo;
-        setResultadosFiltro(res.itens.filter((m) => !deletadasRef.current.has(m.id)));
-        setTemMaisFiltro(res.proximo !== null);
-      })
-      .catch(() => {
-        if (!vivo) return;
-        // #109: qualquer falha do filtro de escopo (inclusive o 400 de tenant sem
-        // suporte a mentions/invites) agora apenas mostra o EMPTY STATE padrão,
-        // mantendo o chip. Antes o D6 removia o chip e escondia a opção — o
-        // usuário via o filtro "sumir" e a lista piscar (decisão do PO: filtrar e
-        // apresentar o empty state, não fazer o filtro desaparecer).
-        setResultadosFiltro([]);
-        setTemMaisFiltro(false);
-      });
-    return () => {
-      vivo = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void filtrarMensagens({
+      pastaId: pastaSel,
+      escopo: filtroServidor,
+      caixa: caixaAtiva,
+      ignorarIds: deletadasRef.current,
+    });
+    return cancelarFiltroGraph;
   }, [
     caixaAtiva,
+    cancelarFiltroGraph,
+    filtrarMensagens,
     filtroServidor,
-    filtroGraph,
     pastaSel,
     pastaCargaAcessoNegado,
     recarga,
@@ -6223,24 +6012,23 @@ export function ControlRoomScreen({
 
   // Paginação do filtro Graph via @odata.nextLink; dedup igual à busca.
   async function carregarMaisFiltro() {
-    const proximo = proximoFiltroRef.current;
-    if (carregandoMaisRef.current || !filtroGraph || !proximo || pastaCargaAcessoNegado) return;
+    if (
+      carregandoMaisRef.current ||
+      !filtroServidor ||
+      !temMaisFiltro ||
+      pastaCargaAcessoNegado
+    ) {
+      return;
+    }
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
-    const caixaPedido = caixaAtiva;
     try {
-      const res = await api.crFiltrar(
-        pastaSel,
-        filtroServidor!,
-        proximo,
-        caixaAtiva
-      );
-      if (caixaAtivaRef.current !== caixaPedido) return;
-      proximoFiltroRef.current = res.proximo;
-      setResultadosFiltro((prev) => juntar(prev ?? [], res.itens));
-      setTemMaisFiltro(res.proximo !== null);
-    } catch {
-      /* silencioso */
+      await carregarMaisFiltroStore({
+        pastaId: pastaSel,
+        escopo: filtroServidor,
+        caixa: caixaAtiva,
+        ignorarIds: deletadasRef.current,
+      });
     } finally {
       carregandoMaisRef.current = false;
       setCarregandoMais(false);
@@ -6251,19 +6039,23 @@ export function ControlRoomScreen({
   // $skip com $search); dedup igual à pasta.
   async function carregarMaisBusca() {
     const termo = busca.trim();
-    const proximo = proximoBuscaRef.current;
-    if (carregandoMaisRef.current || !termo || !proximo || pastaCargaAcessoNegado) return;
+    if (
+      carregandoMaisRef.current ||
+      !termo ||
+      !temMaisBusca ||
+      pastaCargaAcessoNegado
+    ) {
+      return;
+    }
     carregandoMaisRef.current = true;
     setCarregandoMais(true);
-    const caixaPedido = caixaAtiva;
     try {
-      const res = await api.crBuscar(pastaSel, termo, proximo, caixaAtiva);
-      if (caixaAtivaRef.current !== caixaPedido) return;
-      proximoBuscaRef.current = res.proximo;
-      setResultadosBusca((prev) => juntar(prev ?? [], res.itens));
-      setTemMaisBusca(res.proximo !== null);
-    } catch {
-      /* silencioso */
+      await carregarMaisBuscaStore({
+        pastaId: pastaSel,
+        termo,
+        caixa: caixaAtiva,
+        ignorarIds: deletadasRef.current,
+      });
     } finally {
       carregandoMaisRef.current = false;
       setCarregandoMais(false);
@@ -6390,17 +6182,7 @@ export function ControlRoomScreen({
               naoLidosPasta={pastaAtual?.naoLidos ?? 0}
               contFlagged={contFlagged}
               contAnexos={contAnexos}
-              filtros={filtros}
-              onFiltros={setFiltros}
               filtrosOcultos={filtrosOcultos}
-              busca={busca}
-              setBusca={setBusca}
-              ordenar={ordenar}
-              ordemDesc={ordemDesc}
-              onOrdenar={(o, desc) => {
-                setOrdenar(o);
-                setOrdemDesc(desc);
-              }}
               marcarLidoModo={marcarLidoModo}
               marcarLidoAtraso={marcarLidoAtraso}
               onMarcarLidoModo={setMarcarLidoModo}
