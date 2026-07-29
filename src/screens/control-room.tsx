@@ -4638,6 +4638,7 @@ const MessageDetail = forwardRef<
                   key={modo}
                   ref={comporRef}
                   mostrarDestinatarios={modo === "encaminhar"}
+                  contextoAssinatura="resposta"
                   textos={textosCompose}
                 />
               )}
@@ -5119,6 +5120,7 @@ function NovaMensagemModal({
               key={String(aberto)}
               ref={comporRef}
               mostrarAssunto
+              contextoAssinatura="novo"
               textos={textos}
             />
           </div>

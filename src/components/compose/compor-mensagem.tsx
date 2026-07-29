@@ -7,8 +7,12 @@ import {
   useRef,
   useState,
 } from "react";
-import { KEYS, type TElement } from "platejs";
-import { Plate, usePlateEditor } from "platejs/react";
+import { KEYS, type Descendant, type TElement, type Value } from "platejs";
+import {
+  Plate,
+  usePlateEditor,
+  type PlateEditor,
+} from "platejs/react";
 import {
   BoldIcon,
   FileArchiveIcon,
@@ -89,6 +93,11 @@ export interface ComporMensagemProps {
   /** Some com os campos Para/Cc/Cco (ex.: responder, onde o Graph define). */
   mostrarDestinatarios?: boolean;
   assuntoInicial?: string;
+  /**
+   * Define quando a assinatura padrão entra no valor inicial (#141).
+   * Em respostas/encaminhamentos, a própria assinatura precisa autorizar o uso.
+   */
+  contextoAssinatura?: "novo" | "resposta";
   textos: {
     para: string;
     cc: string;
@@ -102,6 +111,63 @@ export interface ComporMensagemProps {
 
 /** Assinatura simples usada quando não há assinatura padrão definida (#135). */
 const ASSINATURA_FALLBACK = "--\nEnviado pelo GALAXIE Toolbox";
+
+/**
+ * Mesmo saneamento usado pelo editor de assinaturas/templates (#147): remove
+ * artefatos internos do Slate antes de desserializar o HTML salvo.
+ */
+function normalizarCorpoPlate(html: string): string {
+  if (!html || !html.trim()) return "";
+  if (typeof document === "undefined") return html;
+  const tmp = document.createElement("div");
+  tmp.innerHTML = html;
+  tmp
+    .querySelectorAll("[data-slate-placeholder], [data-slate-zero-width]")
+    .forEach((el) => el.remove());
+  const temMidia = tmp.querySelector("img, table, hr") !== null;
+  const texto = (tmp.textContent ?? "").replace(/[\s\u200B\uFEFF]+/g, "");
+  if (!temMidia && texto.length === 0) return "";
+  return tmp.innerHTML;
+}
+
+/**
+ * Desserializa o HTML persistido e garante que o topo do Value contenha apenas
+ * blocos válidos. É a mesma proteção estrutural do #147 contra texto/inline
+ * solto, que derrubava o Plate com tela branca.
+ */
+function desserializarBlocosPlate(
+  editor: PlateEditor,
+  htmlPersistido: string
+): Value {
+  const html = normalizarCorpoPlate(htmlPersistido);
+  if (!html) return [];
+  const nodes = editor.api.html.deserialize({ element: html }) as Descendant[];
+  return nodes.map((no): TElement => {
+    const ehBloco =
+      "children" in no && Array.isArray(no.children) && !editor.api.isInline(no);
+    return ehBloco ? (no as TElement) : { type: KEYS.p, children: [no] };
+  });
+}
+
+/**
+ * Corpo inicial sempre começa com um parágrafo editável. Quando aplicável, a
+ * assinatura vem depois dele, portanto o usuário digita acima e ela é inserida
+ * exatamente uma vez na criação do editor.
+ */
+function valorInicialCompose(
+  editor: PlateEditor,
+  assinaturaHtml: string | null
+): Value {
+  const paragrafoVazio: TElement = {
+    type: KEYS.p,
+    children: [{ text: "" }],
+  };
+  if (!assinaturaHtml) return [paragrafoVazio];
+  const assinatura = desserializarBlocosPlate(editor, assinaturaHtml);
+  return assinatura.length > 0
+    ? [paragrafoVazio, ...assinatura]
+    : [paragrafoVazio];
+}
 
 /** Converte bytes crus em base64 sem estourar a pilha em arquivos grandes. */
 function bytesParaB64(bytes: Uint8Array): string {
@@ -185,7 +251,13 @@ export const ComporMensagem = forwardRef<
   ComporMensagemHandle,
   ComporMensagemProps
 >(function ComporMensagem(
-  { mostrarAssunto = false, mostrarDestinatarios = true, assuntoInicial = "", textos },
+  {
+    mostrarAssunto = false,
+    mostrarDestinatarios = true,
+    assuntoInicial = "",
+    contextoAssinatura = "novo",
+    textos,
+  },
   ref
 ) {
   const { t } = useIdioma();
@@ -193,6 +265,14 @@ export const ComporMensagem = forwardRef<
   // Templates saem do store único (#135): fonte da verdade compartilhada com a
   // Settings, sempre em dia sem cópia local que envelheceria.
   const templates = useAppStore((s) => s.templates);
+  const assinaturaPadrao = useAppStore((s) =>
+    s.assinaturas.find((assinatura) => assinatura.id === s.assinaturaPadraoId)
+  );
+  const assinaturaInicial =
+    assinaturaPadrao &&
+    (contextoAssinatura === "novo" || assinaturaPadrao.usarEmRespostas)
+      ? assinaturaPadrao.corpo
+      : null;
   const [cc, setCc] = useState<string[]>([]);
   const [cco, setCco] = useState<string[]>([]);
   // Destinatários como `Pessoa` (nome/foto), reportados pelos campos, para
@@ -292,7 +372,7 @@ export const ComporMensagem = forwardRef<
 
   const editor = usePlateEditor({
     plugins: [...COMPOSE_KIT, ...MENCAO_KIT],
-    value: [{ type: "p", children: [{ text: "" }] }],
+    value: (editor) => valorInicialCompose(editor, assinaturaInicial),
   });
   const edRef = useRef<HTMLDivElement>(null);
 
@@ -320,9 +400,7 @@ export const ComporMensagem = forwardRef<
     const { assinaturas, assinaturaPadraoId } = useAppStore.getState();
     const padrao = assinaturas.find((a) => a.id === assinaturaPadraoId);
     if (padrao && padrao.corpo.trim()) {
-      const nodes = editor.api.html.deserialize({
-        element: padrao.corpo,
-      }) as TElement[];
+      const nodes = desserializarBlocosPlate(editor, padrao.corpo);
       if (nodes.length > 0) {
         inserirNoFim(nodes);
         return;
