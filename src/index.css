@@ -221,6 +221,19 @@
   #root {
     height: 100%;
   }
+  /* Janela splash (#164): a janela Tauri `splashscreen` é OPACA
+     (transparent:false). Quem faz o círculo é o `SetWindowRgn` no Rust, que
+     recorta a janela numa região elíptica no nível do OS — os cantos deixam de
+     existir e some o desktop atrás, sem transparência. Aqui só pintamos
+     <html>/<body>/#root de #171A30 para preencher o círculo com a cor do splash
+     (casada com o fundo do vídeo). O `main.tsx` põe esta classe no <html> antes
+     do primeiro paint. */
+  html.janela-splash,
+  html.janela-splash body,
+  html.janela-splash #root {
+    background: #171a30 !important;
+    overflow: hidden;
+  }
   body {
     @apply bg-background text-foreground;
     /* Janela de app, nao pagina web: texto de interface nao se seleciona, como

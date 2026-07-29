@@ -7,6 +7,7 @@ import {
   type ProgressoEnvioPendente,
 } from "@/lib/outbox"
 import { toastDesfazerEnvio } from "@/lib/toasts"
+import { useAppStore } from "@/store"
 
 export type EstadoUndoSend =
   | { fase: "ocioso"; segundosRestantes: 0 }
@@ -37,6 +38,9 @@ export function useUndoSend(textos: TextosUndoSend) {
     fase: "ocioso",
     segundosRestantes: 0,
   })
+  // Atraso configurável (#150): 5/10/30 s escolhidos em Settings > Bridge. Sem
+  // valor salvo o slice devolve o padrão de 10 s (mantém o comportamento da #33).
+  const atrasoMs = useAppStore((s) => s.undoSendDelayMs)
   const agendamentoRef = useRef<AgendamentoEnvio | null>(null)
   const toastIdRef = useRef<string | number | null>(null)
 
@@ -70,6 +74,7 @@ export function useUndoSend(textos: TextosUndoSend) {
 
       const agendamento = agendarEnvio({
         enviar: tarefa.enviar,
+        atrasoMs,
         onContagem: atualizarToast,
         onDisparando: () => {
           setEstado({ fase: "enviando", segundosRestantes: 0 })
@@ -100,7 +105,7 @@ export function useUndoSend(textos: TextosUndoSend) {
       agendamentoRef.current = agendamento
       return true
     },
-    [desfazer, dispensarToast, textos]
+    [atrasoMs, desfazer, dispensarToast, textos]
   )
 
   useEffect(

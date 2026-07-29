@@ -31,6 +31,7 @@ import {
 import {
   createBridgeSlice,
   BRIDGE_KEYS,
+  normalizarUndoSendDelay,
   type Assinatura,
   type BridgePersistido,
   type BridgeSlice,
@@ -321,6 +322,12 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (padraoId !== undefined) state.assinaturaPadraoId = padraoId;
     const templates = lerTemplates();
     if (templates.length > 0) state.templates = templates;
+    // Atraso do desfazer envio (#150): normaliza pro conjunto permitido; ausente
+    // ou inválido → o merge do Zustand mantém o padrão (10 s) do slice.
+    const undoDelay = lerChave<number>(BRIDGE_KEYS.undoSendDelay);
+    if (undoDelay !== undefined) {
+      state.undoSendDelayMs = normalizarUndoSendDelay(undoDelay);
+    }
     return { state: state as AppPersistido, version: 0 };
   },
   setItem: (_name, value: StorageValue<AppPersistido>): void => {
@@ -353,6 +360,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(BRIDGE_KEYS.assinaturas, s.assinaturas);
     gravarChave(BRIDGE_KEYS.assinaturaPadraoId, s.assinaturaPadraoId);
     gravarChave(BRIDGE_KEYS.templates, s.templates);
+    gravarChave(BRIDGE_KEYS.undoSendDelay, s.undoSendDelayMs);
   },
   removeItem: (): void => {
     for (const chave of TODAS_CHAVES) {
@@ -415,6 +423,7 @@ export const useAppStore = create<AppStore>()(
         assinaturas: s.assinaturas,
         assinaturaPadraoId: s.assinaturaPadraoId,
         templates: s.templates,
+        undoSendDelayMs: s.undoSendDelayMs,
       }),
     }
   )
