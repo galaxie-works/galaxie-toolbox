@@ -87,6 +87,7 @@ export function SplashScreen() {
           autoPlay
           muted
           playsInline
+          preload="auto"
           onEnded={sinalizarFim}
           onError={sinalizarFim}
           onLoadedMetadata={(e) => {

@@ -5,6 +5,15 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>GALAXIE</title>
+    <!-- #164: fundo #171A30 imediato — evita o flash branco da webview antes do React montar (splash e main compartilham este HTML). -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background-color: #171a30;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

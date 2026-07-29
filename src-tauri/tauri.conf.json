@@ -24,6 +24,7 @@
         "fullscreen": false,
         "decorations": false,
         "shadow": true,
+        "backgroundColor": "#171A30",
         "dragDropEnabled": false
       },
       {
@@ -34,6 +35,7 @@
         "center": true,
         "visible": true,
         "transparent": false,
+        "backgroundColor": "#171A30",
         "decorations": false,
         "resizable": false,
         "shadow": false,
