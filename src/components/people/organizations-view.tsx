@@ -5,11 +5,19 @@ import {
   ExternalLink,
   Pencil,
   Plus,
-  Search,
   UserMinus,
   Users,
 } from "lucide-react";
 
+import {
+  Autocomplete,
+  AutocompleteCollection,
+  AutocompleteContent,
+  AutocompleteEmpty,
+  AutocompleteInput,
+  AutocompleteItem,
+  AutocompleteList,
+} from "@/components/reui/autocomplete";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -257,15 +265,20 @@ function AssignContactsDialog({
           </DialogTitle>
           <DialogDescription>{t.controlRoom.orgsDescricao}</DialogDescription>
         </DialogHeader>
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="pl-9"
+        <Autocomplete
+          items={filtered}
+          value={query}
+          onValueChange={setQuery}
+          open={false}
+          itemToStringValue={(item: unknown) => (item as PeopleContact).name}
+          filter={null}
+        >
+          <AutocompleteInput
             placeholder={t.controlRoom.orgsBuscarContatos}
+            aria-label={t.controlRoom.orgsBuscarContatos}
+            showClear
           />
-        </div>
+        </Autocomplete>
         <ScrollArea className="max-h-80 rounded-lg border">
           <div className="divide-y">
             {filtered.map((contact) => {
@@ -330,6 +343,7 @@ export function OrganizationsView({ contacts }: { contacts: PeopleContact[] }) {
   const selectPerson = useAppStore((state) => state.selectPerson);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<PeopleOrg | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
@@ -384,6 +398,7 @@ export function OrganizationsView({ contacts }: { contacts: PeopleContact[] }) {
                 <button
                   key={organization.id}
                   type="button"
+                  aria-current={active ? "true" : undefined}
                   onClick={() => selectOrganization(organization.id)}
                   className={cn(
                     "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/50",
@@ -576,15 +591,56 @@ export function OrganizationsView({ contacts }: { contacts: PeopleContact[] }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute top-2.5 left-3 size-4 text-muted-foreground" />
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="pl-9"
+        <Autocomplete
+          items={filtered}
+          value={query}
+          onValueChange={setQuery}
+          open={searchOpen}
+          onOpenChange={setSearchOpen}
+          itemToStringValue={(item: unknown) => (item as PeopleOrg).name}
+          filter={null}
+        >
+          <AutocompleteInput
             placeholder={t.controlRoom.orgsBuscar}
+            aria-label={t.controlRoom.orgsBuscar}
+            showClear
           />
-        </div>
+          {searchOpen && (
+            <AutocompleteContent>
+              {filtered.length === 0 ? (
+                <AutocompleteEmpty>{t.controlRoom.peopleSemResultado}</AutocompleteEmpty>
+              ) : (
+                <AutocompleteList>
+                  <AutocompleteCollection>
+                    {(organization: PeopleOrg) => (
+                      <AutocompleteItem
+                        key={organization.id}
+                        value={organization}
+                        onClick={() => selectOrganization(organization.id)}
+                      >
+                        <Avatar size="sm">
+                          <AvatarFallback>
+                            {initials(organization.name) || (
+                              <Building2 className="size-4" />
+                            )}
+                          </AvatarFallback>
+                        </Avatar>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">
+                            {organization.name}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {organization.domains.join(" · ")}
+                          </span>
+                        </span>
+                      </AutocompleteItem>
+                    )}
+                  </AutocompleteCollection>
+                </AutocompleteList>
+              )}
+            </AutocompleteContent>
+          )}
+        </Autocomplete>
         <Button
           onClick={() => {
             setEditing(null);
