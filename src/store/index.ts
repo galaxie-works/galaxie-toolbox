@@ -56,6 +56,10 @@ import {
   createPeopleSlice,
   type PeopleSlice,
 } from "./people-slice";
+import {
+  createOrganizationsSlice,
+  type OrganizationsSlice,
+} from "./organizations-slice";
 import { lerTemplates } from "@/lib/templates";
 import {
   aplicarAltoContraste,
@@ -113,7 +117,8 @@ export type AppStore =
   & ReaderSlice
   & AgendaSlice
   & ComposeSlice
-  & PeopleSlice;
+  & PeopleSlice
+  & OrganizationsSlice;
 
 /** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
 type AppPersistido = UiPersistido &
@@ -399,6 +404,8 @@ export const useAppStore = create<AppStore>()(
       ...createComposeSlice(...a),
       // Contatos, seleção e carga do People são sessão e uma única fonte/cache.
       ...createPeopleSlice(...a),
+      // Organizações do People são app-owned e session-only no MVP (#205).
+      ...createOrganizationsSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",
