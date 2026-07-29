@@ -226,8 +226,6 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (grupos !== undefined) state.gruposColapsados = grupos;
     const sidebar = lerChave<boolean>(UI_KEYS.sidebarAberta);
     if (sidebar !== undefined) state.sidebarAberta = sidebar;
-    const agenda = lerChave<boolean>(UI_KEYS.agendaAberta);
-    if (agenda !== undefined) state.agendaAberta = agenda;
     const modo = lerChave<MarcarLidoModo>(UI_KEYS.marcarLidoModo);
     if (modo !== undefined) state.marcarLidoModo = modo;
     const atraso = lerChave<number>(UI_KEYS.marcarLidoAtraso);
@@ -340,7 +338,6 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(UI_KEYS.zoom, s.zoom);
     gravarChave(UI_KEYS.gruposColapsados, s.gruposColapsados);
     gravarChave(UI_KEYS.sidebarAberta, s.sidebarAberta);
-    gravarChave(UI_KEYS.agendaAberta, s.agendaAberta);
     gravarChave(UI_KEYS.marcarLidoModo, s.marcarLidoModo);
     gravarChave(UI_KEYS.marcarLidoAtraso, s.marcarLidoAtraso);
     gravarChave(FILTERS_KEYS.ordenar, s.ordenar);
@@ -412,7 +409,6 @@ export const useAppStore = create<AppStore>()(
         gruposColapsados: s.gruposColapsados,
         threadsExpandidas: s.threadsExpandidas,
         sidebarAberta: s.sidebarAberta,
-        agendaAberta: s.agendaAberta,
         marcarLidoModo: s.marcarLidoModo,
         marcarLidoAtraso: s.marcarLidoAtraso,
         ordenar: s.ordenar,
