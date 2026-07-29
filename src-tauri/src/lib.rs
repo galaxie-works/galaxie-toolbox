@@ -352,9 +352,12 @@ async fn cr_pessoas(
 #[tauri::command]
 async fn cr_people_list(
     state: State<'_, Store>,
+    next_links: Option<Vec<String>>,
 ) -> Result<graph::PeopleListResult, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_people_list(&store))
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_list(&store, next_links.unwrap_or_default())
+    })
         .await
         .map_err(|e| e.to_string())?
 }

@@ -4,7 +4,6 @@ import type {
   PeopleEnrichSource,
   PeoplePhone,
   PeopleRecord,
-  PeopleSource,
 } from "./types";
 
 /** Contato canônico compartilhado pela lista, detalhe e futuros resolvers. */
@@ -32,7 +31,7 @@ export interface PeopleContact {
   organization: boolean;
   frequent: boolean;
   peopleRank?: number | null;
-  sources: PeopleSource[];
+  sources: PeopleEnrichSource[];
 }
 
 function keyEmail(value: string): string {
@@ -203,9 +202,11 @@ export function applyPeopleEnrichment(
     emails: [...contact.emails],
     phones: [...contact.phones],
     enrichedValues,
+    sources: [...contact.sources],
   };
 
   for (const field of fields) {
+    if (!next.sources.includes(field.source)) next.sources.push(field.source);
     const identity = peopleEnrichFieldIdentity(field);
     if (!enrichedValues.includes(identity)) {
       enrichedValues.push(identity);

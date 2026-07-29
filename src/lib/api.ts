@@ -665,12 +665,33 @@ export async function crPessoas(query: string): Promise<Pessoa[]> {
 }
 
 /** Dados iniciais do módulo People, mantendo falhas e permissões por fonte. */
-export async function crPeopleList(): Promise<PeopleListResult> {
+export async function crPeopleList(nextLinks: string[] = []): Promise<PeopleListResult> {
   if (!inTauri()) {
     await sleep(450);
+    if (nextLinks.length > 0) {
+      return {
+        missingScopes: [],
+        failures: [],
+        nextLinks: [],
+        records: Array.from({ length: 80 }, (_, index) => ({
+          id: `contact-page-2-${index}`,
+          source: "contacts" as const,
+          name: `Contact ${String(index + 5).padStart(3, "0")}`,
+          emails: [{ address: `contact${index + 5}@example.com`, label: "work" }],
+          phones: index % 3 === 0
+            ? [{ number: `+1 555 01${String(index).padStart(2, "0")}`, label: "work" }]
+            : [],
+          jobTitle: index % 2 === 0 ? "Specialist" : null,
+          company: index % 2 === 0 ? "Compiler Labs" : "Analytical Engines",
+          organization: index % 2 === 0,
+          peopleRank: null,
+        })),
+      };
+    }
     return {
       missingScopes: [],
       failures: [],
+      nextLinks: ["mock:contacts:2"],
       records: [
         {
           id: "contact-ada",
@@ -719,7 +740,7 @@ export async function crPeopleList(): Promise<PeopleListResult> {
       ],
     };
   }
-  return invoke<PeopleListResult>("cr_people_list");
+  return invoke<PeopleListResult>("cr_people_list", { nextLinks });
 }
 
 /** Busca sugestões revisáveis para um contato sem alterar nada. */

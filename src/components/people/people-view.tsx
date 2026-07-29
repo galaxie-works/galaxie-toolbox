@@ -1,13 +1,25 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { getCoreRowModel, useReactTable, type ColumnDef } from "@tanstack/react-table";
+import {
+  getCoreRowModel,
+  useReactTable,
+  type ColumnDef,
+  type VisibilityState,
+} from "@tanstack/react-table";
 import {
   ArrowLeft,
   Building2,
+  Columns3,
   Copy,
+  ExternalLink,
+  FunnelX,
   KeyRound,
+  LayoutGrid,
+  List,
+  ListFilter,
   Mail,
+  MoreHorizontal,
   Phone,
   SearchX,
   Sparkles,
@@ -32,7 +44,15 @@ import {
 } from "@/components/reui/alert";
 import { Badge } from "@/components/reui/badge";
 import { DataGrid, DataGridContainer } from "@/components/reui/data-grid/data-grid";
-import { DataGridTable } from "@/components/reui/data-grid/data-grid-table";
+import { DataGridColumnVisibility } from "@/components/reui/data-grid/data-grid-column-visibility";
+import { DataGridTableVirtual } from "@/components/reui/data-grid/data-grid-table-virtual";
+import {
+  Filters,
+  type Filter,
+  type FilterFieldConfig,
+  type FilterOperator,
+  type FilterOption,
+} from "@/components/reui/filters";
 import {
   Frame,
   FrameDescription,
@@ -45,6 +65,12 @@ import { IconTile } from "@/components/reui/icon-tile";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -146,28 +172,30 @@ function DetailValue({
 
 function PeopleEmpty({
   search,
+  filtered,
   onClear,
 }: {
   search: boolean;
+  filtered: boolean;
   onClear: () => void;
 }) {
   const { t } = useIdioma();
   return (
     <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
       <IconStack className="mb-2">
-        {search ? <SearchX className="size-5" /> : <Users className="size-5" />}
+        {search || filtered ? <SearchX className="size-5" /> : <Users className="size-5" />}
       </IconStack>
       <p className="font-medium">
-        {search ? t.controlRoom.peopleSemResultado : t.controlRoom.peopleVazio}
+        {search || filtered ? t.controlRoom.peopleSemResultado : t.controlRoom.peopleVazio}
       </p>
-      {!search && (
+      {!search && !filtered && (
         <p className="mt-1 max-w-sm text-sm text-muted-foreground">
           {t.controlRoom.peopleVazioDesc}
         </p>
       )}
-      {search && (
+      {(search || filtered) && (
         <Button className="mt-3" variant="outline" size="sm" onClick={onClear}>
-          {t.controlRoom.peopleLimparBusca}
+          {filtered ? t.controlRoom.peopleClearFilters : t.controlRoom.peopleLimparBusca}
         </Button>
       )}
     </div>
@@ -215,11 +243,13 @@ function PeopleDetail({
   photo,
   onBack,
   onCompose,
+  autoEnrich,
 }: {
   contact: PeopleContact;
   photo: string | null;
   onBack: () => void;
   onCompose: (email: string) => void;
+  autoEnrich?: boolean;
 }) {
   const { t } = useIdioma();
   const applyPeopleFields = useAppStore((state) => state.applyPeopleFields);
@@ -279,6 +309,12 @@ function PeopleDetail({
       setEnriching(false);
     }
   };
+
+  useEffect(() => {
+    if (autoEnrich) void enrich();
+    // `key` do detalhe muda a cada ação Enrich; roda exatamente uma vez no mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const apply = async () => {
     if (!preview || acceptedFields.length === 0) return;
@@ -644,6 +680,159 @@ function PeopleDetail({
   );
 }
 
+async function copyText(value: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    const input = document.createElement("textarea");
+    input.value = value;
+    input.setAttribute("readonly", "");
+    input.style.position = "fixed";
+    input.style.opacity = "0";
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand("copy");
+    input.remove();
+    return copied;
+  }
+}
+
+function PeopleRowActions({
+  contact,
+  onCompose,
+  onEnrich,
+}: {
+  contact: PeopleContact;
+  onCompose: (email: string) => void;
+  onEnrich: () => void;
+}) {
+  const { t } = useIdioma();
+  const email = contact.emails[0]?.address;
+  const stop = (event: React.SyntheticEvent) => event.stopPropagation();
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild onClick={stop}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={t.controlRoom.peopleRowActions}
+          className="opacity-70 group-hover:opacity-100 focus:opacity-100"
+        >
+          <MoreHorizontal />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" onClick={stop}>
+        <DropdownMenuItem disabled={!email} onClick={() => email && onCompose(email)}>
+          <Mail />
+          {t.controlRoom.peopleCompor}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={!email}
+          onClick={() => {
+            if (!email) return;
+            void copyText(email).then((copied) => {
+              if (copied) toast.success(t.controlRoom.peopleEmailCopied);
+            });
+          }}
+        >
+          <Copy />
+          {t.controlRoom.peopleCopyEmail}
+        </DropdownMenuItem>
+        <DropdownMenuItem disabled={!email} onClick={onEnrich}>
+          <Sparkles />
+          {t.controlRoom.peopleEnrich}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onClick={() =>
+            window.open(
+              "https://outlook.office.com/people/",
+              "_blank",
+              "noopener,noreferrer",
+            )
+          }
+        >
+          <ExternalLink />
+          {t.controlRoom.abrirOutlook}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function PeopleCard({
+  contact,
+  selected,
+  photo,
+  onSelect,
+  onCompose,
+  onEnrich,
+}: {
+  contact: PeopleContact;
+  selected: boolean;
+  photo: string | null;
+  onSelect: () => void;
+  onCompose: (email: string) => void;
+  onEnrich: () => void;
+}) {
+  const { t } = useIdioma();
+  return (
+    <Frame
+      className={cn(
+        "group cursor-pointer transition-colors hover:border-primary/40",
+        selected && "border-primary ring-1 ring-primary/20",
+      )}
+      stacked
+      role="button"
+      tabIndex={0}
+      aria-pressed={selected}
+      onClick={onSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect();
+        }
+      }}
+    >
+      <FrameHeader className="flex-row items-start gap-3">
+        <Avatar className="size-11">
+          {photo && <AvatarImage src={photo} alt={contact.name} />}
+          <AvatarFallback>{initials(contact.name)}</AvatarFallback>
+        </Avatar>
+        <div className="min-w-0 flex-1">
+          <FrameTitle className="truncate">{contact.name}</FrameTitle>
+          <FrameDescription className="truncate">
+            {[contact.jobTitle, contact.company].filter(Boolean).join(" · ") ||
+              t.controlRoom.peopleSemDado}
+          </FrameDescription>
+        </div>
+        <PeopleRowActions
+          contact={contact}
+          onCompose={onCompose}
+          onEnrich={onEnrich}
+        />
+      </FrameHeader>
+      <FramePanel className="space-y-3">
+        <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+          <Mail className="size-4 shrink-0" />
+          <span className="truncate">
+            {contact.emails[0]?.address || t.controlRoom.peopleSemDado}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <RelationshipBadges contact={contact} compact />
+          <span className="flex flex-wrap justify-end gap-1">
+            {contact.sources.map((source) => (
+              <SourceBadge key={source} source={source} />
+            ))}
+          </span>
+        </div>
+      </FramePanel>
+    </Frame>
+  );
+}
+
 export function PeopleView({
   onGrantAccess,
   onCompose,
@@ -659,10 +848,25 @@ export function PeopleView({
   const loaded = useAppStore((state) => state.peopleLoaded);
   const error = useAppStore((state) => state.peopleError);
   const missingScopes = useAppStore((state) => state.peopleMissingScopes);
+  const nextLinks = useAppStore((state) => state.peopleNextLinks);
+  const fetchingMore = useAppStore((state) => state.peopleFetchingMore);
+  const filters = useAppStore((state) => state.peopleFilters);
+  const view = useAppStore((state) => state.peopleView);
+  const columnVisibility = useAppStore((state) => state.peopleColumnVisibility);
   const loadPeople = useAppStore((state) => state.loadPeople);
+  const loadMorePeople = useAppStore((state) => state.loadMorePeople);
+  const setFilters = useAppStore((state) => state.setPeopleFilters);
+  const setView = useAppStore((state) => state.setPeopleView);
+  const setColumnVisibility = useAppStore(
+    (state) => state.setPeopleColumnVisibility,
+  );
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [sort, setSort] = useState<"relevance" | "az">("relevance");
+  const [enrichRequest, setEnrichRequest] = useState<{
+    id: string;
+    token: number;
+  } | null>(null);
   const { getFoto, pedirFotos } = useFotos();
 
   useEffect(() => {
@@ -673,10 +877,71 @@ export function PeopleView({
     pedirFotos(contacts.map((contact) => contact.emails[0]?.address));
   }, [contacts, pedirFotos]);
 
+  const filterFields = useMemo<FilterFieldConfig<string>[]>(() => {
+    const operators: FilterOperator[] = [
+      { value: "is", label: t.controlRoom.filtroOperadorIs },
+      { value: "is_not", label: t.controlRoom.filtroOpNaoE },
+    ];
+    const companyOptions: FilterOption<string>[] = Array.from(
+      new Set(contacts.map((contact) => contact.company).filter(Boolean)),
+    )
+      .sort((a, b) => String(a).localeCompare(String(b)))
+      .map((company) => ({ value: String(company), label: String(company) }));
+    return [
+      {
+        key: "company",
+        label: t.controlRoom.peopleEmpresa,
+        icon: <Building2 className="size-3.5" />,
+        type: "select",
+        searchable: true,
+        operators,
+        options: companyOptions,
+      },
+      {
+        key: "relationship",
+        label: t.controlRoom.peopleRelationship,
+        icon: <Users className="size-3.5" />,
+        type: "select",
+        searchable: false,
+        operators,
+        options: [
+          { value: "org", label: t.controlRoom.peopleOrg },
+          { value: "external", label: t.controlRoom.peopleExterno },
+        ],
+      },
+      {
+        key: "phone",
+        label: t.controlRoom.peopleHasPhone,
+        icon: <Phone className="size-3.5" />,
+        type: "select",
+        searchable: false,
+        operators,
+        options: [
+          { value: "yes", label: t.controlRoom.peopleYes },
+          { value: "no", label: t.controlRoom.peopleNo },
+        ],
+      },
+      {
+        key: "source",
+        label: t.controlRoom.peopleSource,
+        icon: <Sparkles className="size-3.5" />,
+        type: "select",
+        searchable: false,
+        operators,
+        options: [
+          { value: "contacts", label: t.controlRoom.peopleSourceContacts },
+          { value: "people", label: t.controlRoom.peopleSourcePeople },
+          { value: "directory", label: t.controlRoom.peopleSourceDirectory },
+        ],
+      },
+    ];
+  }, [contacts, t]);
+
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = useMemo(() => {
-    const next = normalizedQuery
-      ? contacts.filter((contact) =>
+    const next = contacts.filter((contact) => {
+      const matchesQuery =
+        !normalizedQuery ||
           [
             contact.name,
             contact.company,
@@ -686,22 +951,37 @@ export function PeopleView({
             .filter(Boolean)
             .some((value) =>
               String(value).toLocaleLowerCase().includes(normalizedQuery),
-            ),
-        )
-      : [...contacts];
+            );
+      if (!matchesQuery) return false;
+      return filters.every((filter: Filter<string>) => {
+        const values = new Set(filter.values);
+        let matches = true;
+        if (filter.field === "company") {
+          matches = Boolean(contact.company && values.has(contact.company));
+        } else if (filter.field === "relationship") {
+          matches = values.has(contact.organization ? "org" : "external");
+        } else if (filter.field === "phone") {
+          matches = values.has(contact.phones.length > 0 ? "yes" : "no");
+        } else if (filter.field === "source") {
+          matches = contact.sources.some((source) => values.has(source));
+        }
+        return filter.operator === "is_not" ? !matches : matches;
+      });
+    });
     if (sort === "az") {
       next.sort((a, b) =>
         a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
       );
     }
     return next;
-  }, [contacts, normalizedQuery, sort]);
+  }, [contacts, filters, normalizedQuery, sort]);
 
   const selected = contacts.find((contact) => contact.id === selectedId) ?? null;
 
   const columns = useMemo<ColumnDef<PeopleContact>[]>(
     () => [
       {
+        id: "name",
         accessorKey: "name",
         header: t.controlRoom.peopleNome,
         meta: { skeleton: <Skeleton className="h-8 w-44" /> },
@@ -719,18 +999,71 @@ export function PeopleView({
                   <span className="truncate font-medium">{contact.name}</span>
                   <RelationshipBadges contact={contact} compact />
                 </div>
-                <div className="truncate text-xs text-muted-foreground">
-                  {[contact.company || contact.jobTitle, contact.emails[0]?.address]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </div>
               </div>
             </div>
           );
         },
       },
+      {
+        id: "company",
+        accessorKey: "company",
+        header: t.controlRoom.peopleEmpresa,
+        cell: ({ row }) => row.original.company || t.controlRoom.peopleSemDado,
+      },
+      {
+        id: "title",
+        accessorKey: "jobTitle",
+        header: t.controlRoom.peopleCargo,
+        cell: ({ row }) => row.original.jobTitle || t.controlRoom.peopleSemDado,
+      },
+      {
+        id: "email",
+        accessorFn: (contact) => contact.emails[0]?.address || "",
+        header: t.controlRoom.peopleEmail,
+        cell: ({ row }) => (
+          <span className="block max-w-52 truncate">
+            {row.original.emails[0]?.address || t.controlRoom.peopleSemDado}
+          </span>
+        ),
+      },
+      {
+        id: "phone",
+        accessorFn: (contact) => contact.phones[0]?.number || "",
+        header: t.controlRoom.peopleTelefone,
+        cell: ({ row }) =>
+          row.original.phones[0]?.number || t.controlRoom.peopleSemDado,
+      },
+      {
+        id: "source",
+        header: t.controlRoom.peopleSource,
+        cell: ({ row }) => (
+          <span className="flex flex-wrap gap-1">
+            {row.original.sources.map((source) => (
+              <SourceBadge key={source} source={source} />
+            ))}
+          </span>
+        ),
+      },
+      {
+        id: "actions",
+        header: "",
+        enableHiding: false,
+        cell: ({ row }) => (
+          <PeopleRowActions
+            contact={row.original}
+            onCompose={onCompose}
+            onEnrich={() => {
+              selectPerson(row.original.id);
+              setEnrichRequest({
+                id: row.original.id,
+                token: Date.now(),
+              });
+            }}
+          />
+        ),
+      },
     ],
-    [getFoto, t],
+    [getFoto, onCompose, selectPerson, t],
   );
 
   const table = useReactTable({
@@ -739,8 +1072,17 @@ export function PeopleView({
     getCoreRowModel: getCoreRowModel(),
     getRowId: (row) => row.id,
     enableRowSelection: true,
+    enableMultiRowSelection: false,
+    onColumnVisibilityChange: (updater) => {
+      const next =
+        typeof updater === "function"
+          ? updater(columnVisibility as VisibilityState)
+          : updater;
+      setColumnVisibility(next);
+    },
     state: {
       rowSelection: selectedId ? { [selectedId]: true } : {},
+      columnVisibility,
     },
   });
 
@@ -751,7 +1093,7 @@ export function PeopleView({
           <h2 className="text-lg font-semibold">{t.controlRoom.peopleTitulo}</h2>
           <p className="text-sm text-muted-foreground">{t.controlRoom.peopleDescricao}</p>
         </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row xl:max-w-2xl">
+        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row xl:max-w-4xl">
           <Autocomplete
             items={filtered}
             value={query}
@@ -811,7 +1153,64 @@ export function PeopleView({
               <SelectItem value="az">{t.controlRoom.peopleAZ}</SelectItem>
             </SelectContent>
           </Select>
+          {view === "table" && (
+            <DataGridColumnVisibility
+              table={table}
+              trigger={
+                <Button variant="outline" aria-label={t.controlRoom.peopleColumns}>
+                  <Columns3 />
+                  <span className="hidden 2xl:inline">{t.controlRoom.peopleColumns}</span>
+                </Button>
+              }
+            />
+          )}
+          <div className="flex rounded-md border p-0.5">
+            <Button
+              variant={view === "table" ? "secondary" : "ghost"}
+              size="icon-sm"
+              aria-label={t.controlRoom.peopleTableView}
+              aria-pressed={view === "table"}
+              onClick={() => setView("table")}
+            >
+              <List />
+            </Button>
+            <Button
+              variant={view === "cards" ? "secondary" : "ghost"}
+              size="icon-sm"
+              aria-label={t.controlRoom.peopleCardsView}
+              aria-pressed={view === "cards"}
+              onClick={() => setView("cards")}
+            >
+              <LayoutGrid />
+            </Button>
+          </div>
         </div>
+      </div>
+
+      <div className="flex shrink-0 flex-wrap items-start gap-2">
+        <Filters<string>
+          filters={filters}
+          fields={filterFields}
+          onChange={setFilters}
+          allowMultiple
+          trigger={
+            <Button variant="outline">
+              <ListFilter />
+              {t.controlRoom.peopleFilters}
+            </Button>
+          }
+          i18n={{
+            addFilter: t.controlRoom.peopleFilters,
+            searchFields: t.controlRoom.filtroBuscarCampo,
+            select: t.controlRoom.filtroSelecione,
+          }}
+        />
+        {filters.length > 0 && (
+          <Button variant="outline" onClick={() => setFilters([])}>
+            <FunnelX />
+            {t.controlRoom.peopleClearFilters}
+          </Button>
+        )}
       </div>
 
       {missingScopes.length > 0 && (
@@ -850,33 +1249,93 @@ export function PeopleView({
             selected && "max-[1399px]:hidden",
           )}
         >
-          <DataGrid
-            table={table}
-            recordCount={filtered.length}
-            isLoading={loading && !loaded}
-            loadingMode="skeleton"
-            emptyMessage={
-              missingScopes.length > 0 ? (
-                <PeoplePermissionEmpty />
-              ) : (
-                <PeopleEmpty
-                  search={Boolean(normalizedQuery)}
-                  onClear={() => setQuery("")}
+          {view === "table" ? (
+            <DataGrid
+              table={table}
+              recordCount={filtered.length}
+              isLoading={loading && !loaded}
+              loadingMode="skeleton"
+              emptyMessage={
+                missingScopes.length > 0 ? (
+                  <PeoplePermissionEmpty />
+                ) : (
+                  <PeopleEmpty
+                    search={Boolean(normalizedQuery)}
+                    filtered={filters.length > 0}
+                    onClear={() => {
+                      setQuery("");
+                      setFilters([]);
+                    }}
+                  />
+                )
+              }
+              onRowClick={(contact) => selectPerson(contact.id)}
+              tableLayout={{
+                dense: true,
+                rowBorder: true,
+                headerSticky: true,
+                columnsVisibility: true,
+                width: "auto",
+              }}
+            >
+              <DataGridContainer className="h-full overflow-auto">
+                <DataGridTableVirtual
+                  onFetchMore={() => void loadMorePeople()}
+                  isFetchingMore={fetchingMore}
+                  hasMore={nextLinks.length > 0}
+                  fetchMoreOffset={8}
+                  estimateSize={48}
+                  overscan={8}
                 />
-              )
-            }
-            onRowClick={(contact) => selectPerson(contact.id)}
-            tableLayout={{
-              dense: true,
-              rowBorder: true,
-              headerSticky: true,
-              width: "auto",
-            }}
-          >
-            <DataGridContainer className="h-full overflow-auto">
-              <DataGridTable />
-            </DataGridContainer>
-          </DataGrid>
+              </DataGridContainer>
+            </DataGrid>
+          ) : filtered.length > 0 ? (
+            <div className="h-full overflow-auto p-3">
+              <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
+                {filtered.map((contact) => (
+                  <PeopleCard
+                    key={contact.id}
+                    contact={contact}
+                    selected={contact.id === selectedId}
+                    photo={
+                      contact.photo ||
+                      getFoto(contact.emails[0]?.address) ||
+                      null
+                    }
+                    onSelect={() => selectPerson(contact.id)}
+                    onCompose={onCompose}
+                    onEnrich={() => {
+                      selectPerson(contact.id);
+                      setEnrichRequest({ id: contact.id, token: Date.now() });
+                    }}
+                  />
+                ))}
+              </div>
+              {nextLinks.length > 0 && (
+                <div className="flex justify-center py-4">
+                  <Button
+                    variant="outline"
+                    disabled={fetchingMore}
+                    onClick={() => void loadMorePeople()}
+                  >
+                    {fetchingMore && <Spinner />}
+                    {t.controlRoom.peopleLoadMore}
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : missingScopes.length > 0 ? (
+            <PeoplePermissionEmpty />
+          ) : (
+            <PeopleEmpty
+              search={Boolean(normalizedQuery)}
+              filtered={filters.length > 0}
+              onClear={() => {
+                setQuery("");
+                setFilters([]);
+              }}
+            />
+          )}
         </div>
 
         <div
@@ -889,11 +1348,12 @@ export function PeopleView({
             <PeopleDetailSkeleton />
           ) : selected ? (
             <PeopleDetail
-              key={selected.id}
+              key={`${selected.id}:${enrichRequest?.id === selected.id ? enrichRequest.token : 0}`}
               contact={selected}
               photo={getFoto(selected.emails[0]?.address) ?? null}
               onBack={() => selectPerson(null)}
               onCompose={onCompose}
+              autoEnrich={enrichRequest?.id === selected.id}
             />
           ) : (
             <Frame className="h-full w-full" stacked>
