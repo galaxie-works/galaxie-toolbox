@@ -1601,12 +1601,14 @@ fn compor_e_enviar(
     corpo_html: &str,
     para: &[String],
     anexos: &[AnexoUp],
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     // 1) rascunho a partir da mensagem original
-    let url = format!("{GRAPH}/me/messages/{id}/{acao}");
+    let url = format!("{GRAPH}/{prefix}/messages/{id}/{acao}");
     let resp = client
         .post(&url)
         .bearer_auth(&token)
@@ -1614,7 +1616,7 @@ fn compor_e_enviar(
         .send()
         .map_err(|e| format!("falha ao criar o rascunho: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("{acao} retornou {}", resp.status()));
+        return Err(erro_envio(&prefix, acao, resp.status()));
     }
     let rascunho: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let draft_id = rascunho["id"].as_str().ok_or("rascunho sem id")?.to_string();
@@ -1634,7 +1636,7 @@ fn compor_e_enviar(
             .collect();
         patch["toRecipients"] = serde_json::Value::Array(dest);
     }
-    let url = format!("{GRAPH}/me/messages/{draft_id}");
+    let url = format!("{GRAPH}/{prefix}/messages/{draft_id}");
     let resp = client
         .patch(&url)
         .bearer_auth(&token)
@@ -1642,7 +1644,7 @@ fn compor_e_enviar(
         .send()
         .map_err(|e| format!("falha ao preencher o rascunho: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("PATCH do rascunho retornou {}", resp.status()));
+        return Err(erro_envio(&prefix, "PATCH do rascunho", resp.status()));
     }
 
     // 2.5) anexa os arquivos no rascunho (POST /attachments), um por vez.
@@ -1650,7 +1652,7 @@ fn compor_e_enviar(
         if a.conteudo_b64.trim().is_empty() {
             continue;
         }
-        let url = format!("{GRAPH}/me/messages/{draft_id}/attachments");
+        let url = format!("{GRAPH}/{prefix}/messages/{draft_id}/attachments");
         let resp = client
             .post(&url)
             .bearer_auth(&token)
@@ -1658,16 +1660,16 @@ fn compor_e_enviar(
             .send()
             .map_err(|e| format!("falha ao anexar '{}': {e}", a.nome))?;
         if !resp.status().is_success() {
-            return Err(format!(
-                "anexar '{}' retornou {}",
-                a.nome,
-                resp.status()
+            return Err(erro_envio(
+                &prefix,
+                &format!("anexar '{}'", a.nome),
+                resp.status(),
             ));
         }
     }
 
     // 3) envia
-    let url = format!("{GRAPH}/me/messages/{draft_id}/send");
+    let url = format!("{GRAPH}/{prefix}/messages/{draft_id}/send");
     let resp = client
         .post(&url)
         .bearer_auth(&token)
@@ -1675,7 +1677,7 @@ fn compor_e_enviar(
         .send()
         .map_err(|e| format!("falha ao enviar: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("envio retornou {}", resp.status()));
+        return Err(erro_envio(&prefix, "envio", resp.status()));
     }
     Ok(())
 }
@@ -1687,9 +1689,10 @@ pub fn cr_responder(
     corpo_html: &str,
     todos: bool,
     anexos: Vec<AnexoUp>,
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     let acao = if todos { "createReplyAll" } else { "createReply" };
-    compor_e_enviar(store, id, acao, corpo_html, &[], &anexos)
+    compor_e_enviar(store, id, acao, corpo_html, &[], &anexos, mailbox)
 }
 
 /// Encaminha um e-mail para os destinatários informados.
@@ -1699,11 +1702,20 @@ pub fn cr_encaminhar(
     corpo_html: &str,
     para: Vec<String>,
     anexos: Vec<AnexoUp>,
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     if para.iter().all(|e| e.trim().is_empty()) {
         return Err("informe ao menos um destinatário".into());
     }
-    compor_e_enviar(store, id, "createForward", corpo_html, &para, &anexos)
+    compor_e_enviar(
+        store,
+        id,
+        "createForward",
+        corpo_html,
+        &para,
+        &anexos,
+        mailbox,
+    )
 }
 
 /// Sobe um arquivo para a pasta "Bridge Anexos" no OneDrive do usuário e cria um
@@ -1809,7 +1821,7 @@ fn mailbox_prefix(mailbox: Option<&str>) -> String {
 
 #[cfg(test)]
 mod testes_mailbox_prefix {
-    use super::mailbox_prefix;
+    use super::{erro_envio, erro_escrita, mailbox_prefix};
 
     #[test]
     fn preserva_me_como_default() {
@@ -1824,6 +1836,29 @@ mod testes_mailbox_prefix {
             mailbox_prefix(Some(" Financeiro+SP@Empresa.com ")),
             "users/Financeiro%2BSP%40Empresa.com"
         );
+    }
+
+    #[test]
+    fn escrita_403_expoe_erro_claro_da_caixa_ativa() {
+        let erro = erro_escrita(
+            "users/financeiro%40empresa.com",
+            "mover mensagem",
+            reqwest::StatusCode::FORBIDDEN,
+        );
+        assert!(erro.contains("sem permissão de escrita"));
+        assert!(erro.contains("(403)"));
+        assert!(erro.contains("users/financeiro%40empresa.com"));
+    }
+
+    #[test]
+    fn envio_403_expoe_erro_claro_da_caixa_ativa() {
+        let erro = erro_envio(
+            "users/financeiro%40empresa.com",
+            "envio",
+            reqwest::StatusCode::FORBIDDEN,
+        );
+        assert!(erro.contains("sem permissão para enviar"));
+        assert!(erro.contains("(403)"));
     }
 }
 
@@ -1918,9 +1953,9 @@ pub struct ValidacaoCaixa {
     pub status: String,
 }
 
-/// Verdadeiro se o token ATUAL foi emitido com o escopo Mail.Read.Shared. Usado
-/// pra distinguir 403-por-falta-de-escopo (pede relogin) de 403-por-falta-de-
-/// acesso-à-caixa, e pra sinalizar relogin já ao abrir o seletor (#111, AC5).
+/// Verdadeiro se o token ATUAL foi emitido com os escopos de leitura e escrita
+/// compartilhadas. Assim uma sessão anterior à #113 pede relogin antes de
+/// oferecer mutações que inevitavelmente retornariam 403.
 pub fn mail_shared_disponivel(store: &TokenStore) -> Result<bool, String> {
     // Renova se necessário (o refresh reusa a MESMA `config::SCOPES`, então um
     // token renovado já reflete o escopo novo sem novo login interativo — desde
@@ -1931,7 +1966,23 @@ pub fn mail_shared_disponivel(store: &TokenStore) -> Result<bool, String> {
         .lock()
         .map_err(|_| "estado de token corrompido".to_string())?;
     let atual = guard.as_ref().ok_or("nao autenticado")?;
-    Ok(escopo_presente(&atual.scopes, "Mail.Read.Shared"))
+    Ok(
+        escopo_presente(&atual.scopes, "Mail.Read.Shared")
+            && escopo_presente(&atual.scopes, "Mail.ReadWrite.Shared"),
+    )
+}
+
+/// Verdadeiro se o token ATUAL foi emitido com Mail.Send.Shared (#114).
+/// Mantido separado da checagem de leitura/escrita para não bloquear acesso à
+/// caixa quando só o novo escopo de envio ainda exige relogin.
+pub fn mail_send_shared_disponivel(store: &TokenStore) -> Result<bool, String> {
+    access_token(store)?;
+    let guard = store
+        .inner
+        .lock()
+        .map_err(|_| "estado de token corrompido".to_string())?;
+    let atual = guard.as_ref().ok_or("nao autenticado")?;
+    Ok(escopo_presente(&atual.scopes, "Mail.Send.Shared"))
 }
 
 /// Checa se um escopo (case-insensitive) está na string `scope` do OAuth (lista
@@ -2322,9 +2373,10 @@ pub fn cr_filtrar(
 fn deletar_msg(
     client: &reqwest::blocking::Client,
     token: &str,
+    prefix: &str,
     id: &str,
 ) -> Result<(), String> {
-    let url = format!("{GRAPH}/me/messages/{id}");
+    let url = format!("{GRAPH}/{prefix}/messages/{id}");
     // Sob o pool + retry central (#64): Retry-After + jitter. 404 = idempotente.
     let resp = graph_enviar("mail:excluir", GRAPH_TETO_ESPERA_S, || {
         client.delete(&url).bearer_auth(token).send()
@@ -2333,19 +2385,49 @@ fn deletar_msg(
     if resp.status().is_success() || resp.status().as_u16() == 404 {
         Ok(())
     } else {
-        Err(format!("DELETE /me/messages retornou {}", resp.status()))
+        Err(erro_escrita(prefix, "excluir mensagem", resp.status()))
     }
 }
 
+fn erro_escrita(
+    prefix: &str,
+    operacao: &str,
+    status: reqwest::StatusCode,
+) -> String {
+    if status.as_u16() == 403 {
+        format!("sem permissão de escrita na caixa ativa (403): {operacao} em /{prefix}")
+    } else {
+        format!("{operacao} em /{prefix} retornou {status}")
+    }
+}
+
+fn erro_envio(
+    prefix: &str,
+    operacao: &str,
+    status: reqwest::StatusCode,
+) -> String {
+    if prefix != "me" && status == reqwest::StatusCode::FORBIDDEN {
+        format!("sem permissão para enviar usando a caixa ativa (403): {operacao}")
+    } else {
+        format!("{operacao} em /{prefix} retornou {status}")
+    }
+}
+
+fn eh_erro_permissao(erro: &str) -> bool {
+    erro.contains("(403)") || erro.contains(" 403") || erro.contains("403 ")
+}
+
 /// Move uma mensagem para uma pasta (well-known como "deleteditems" ou id).
-/// 404 conta como sucesso (idempotente). Retry no 429. Mail.ReadWrite.
+/// 404 conta como sucesso (idempotente). Retry no 429. Mail.ReadWrite ou
+/// Mail.ReadWrite.Shared, conforme `prefix`.
 fn mover_msg(
     client: &reqwest::blocking::Client,
     token: &str,
+    prefix: &str,
     id: &str,
     destino: &str,
 ) -> Result<(), String> {
-    let url = format!("{GRAPH}/me/messages/{id}/move");
+    let url = format!("{GRAPH}/{prefix}/messages/{id}/move");
     let body = serde_json::json!({ "destinationId": destino });
     // Sob o pool + retry central (#64): Retry-After + jitter. 404 = idempotente.
     let resp = graph_enviar("mail:mover", GRAPH_TETO_ESPERA_S, || {
@@ -2355,15 +2437,20 @@ fn mover_msg(
     if resp.status().is_success() || resp.status().as_u16() == 404 {
         Ok(())
     } else {
-        Err(format!("POST /me/messages/move retornou {}", resp.status()))
+        Err(erro_escrita(prefix, "mover mensagem", resp.status()))
     }
 }
 
 /// Exclui um e-mail (move para a Lixeira; recuperável). Mail.ReadWrite.
-pub fn cr_excluir_email(store: &TokenStore, id: &str) -> Result<(), String> {
+pub fn cr_excluir_email(
+    store: &TokenStore,
+    id: &str,
+    mailbox: Option<&str>,
+) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    mover_msg(&client, &token, id, "deleteditems")
+    let prefix = mailbox_prefix(mailbox);
+    mover_msg(&client, &token, &prefix, id, "deleteditems")
 }
 
 /// Exclui vários e-mails em série (evita a rajada concorrente que leva o Graph a
@@ -2375,18 +2462,21 @@ pub fn cr_excluir_emails(
     store: &TokenStore,
     ids: Vec<String>,
     permanente: bool,
+    mailbox: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
     let mut ok = Vec::with_capacity(ids.len());
     for id in &ids {
         let r = if permanente {
-            deletar_msg(&client, &token, id)
+            deletar_msg(&client, &token, &prefix, id)
         } else {
-            mover_msg(&client, &token, id, "deleteditems")
+            mover_msg(&client, &token, &prefix, id, "deleteditems")
         };
         match r {
             Ok(()) => ok.push(id.clone()),
+            Err(e) if eh_erro_permissao(&e) => return Err(e),
             Err(e) => log::warn!("[mail] excluir '{id}' falhou: {e}"),
         }
     }
@@ -2405,13 +2495,16 @@ pub fn cr_mover_emails(
     store: &TokenStore,
     ids: Vec<String>,
     destino: String,
+    mailbox: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
     let mut ok = Vec::with_capacity(ids.len());
     for id in &ids {
-        match mover_msg(&client, &token, id, &destino) {
+        match mover_msg(&client, &token, &prefix, id, &destino) {
             Ok(()) => ok.push(id.clone()),
+            Err(e) if eh_erro_permissao(&e) => return Err(e),
             Err(e) => log::warn!("[mail] mover '{id}' para '{destino}' falhou: {e}"),
         }
     }
@@ -2419,14 +2512,20 @@ pub fn cr_mover_emails(
 }
 
 /// Sinaliza ou remove a sinalização de um e-mail. Mail.ReadWrite.
-pub fn cr_marcar_email(store: &TokenStore, id: &str, sinalizado: bool) -> Result<(), String> {
+pub fn cr_marcar_email(
+    store: &TokenStore,
+    id: &str,
+    sinalizado: bool,
+    mailbox: Option<&str>,
+) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     let status = if sinalizado { "flagged" } else { "notFlagged" };
     let patch = serde_json::json!({ "flag": { "flagStatus": status } });
 
-    let url = format!("{GRAPH}/me/messages/{id}");
+    let url = format!("{GRAPH}/{prefix}/messages/{id}");
     // Sob o pool + retry central (#64): Retry-After + jitter. Escrita idempotente:
     // grava um flagStatus FIXO ("flagged"/"notFlagged"), e o retry do pool só
     // dispara em 429 (rejeitado antes de aplicar) — reenviar deixa o mesmo estado.
@@ -2435,19 +2534,25 @@ pub fn cr_marcar_email(store: &TokenStore, id: &str, sinalizado: bool) -> Result
     })
     .map_err(|e| format!("falha ao sinalizar o e-mail: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("PATCH /me/messages retornou {}", resp.status()));
+        return Err(erro_escrita(&prefix, "sinalizar mensagem", resp.status()));
     }
     Ok(())
 }
 
 /// Marca um e-mail como lido ou não lido (PATCH isRead). Retry no 429
 /// respeitando Retry-After, até 3 tentativas. Mail.ReadWrite.
-pub fn cr_marcar_lido(store: &TokenStore, id: &str, lido: bool) -> Result<(), String> {
+pub fn cr_marcar_lido(
+    store: &TokenStore,
+    id: &str,
+    lido: bool,
+    mailbox: Option<&str>,
+) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     let patch = serde_json::json!({ "isRead": lido });
-    let url = format!("{GRAPH}/me/messages/{id}");
+    let url = format!("{GRAPH}/{prefix}/messages/{id}");
     // Sob o pool + retry central (#64): Retry-After + jitter.
     let resp = graph_enviar("mail:marcar-lido", GRAPH_TETO_ESPERA_S, || {
         client.patch(&url).bearer_auth(&token).json(&patch).send()
@@ -2456,7 +2561,7 @@ pub fn cr_marcar_lido(store: &TokenStore, id: &str, lido: bool) -> Result<(), St
     if resp.status().is_success() {
         Ok(())
     } else {
-        Err(format!("PATCH /me/messages retornou {}", resp.status()))
+        Err(erro_escrita(&prefix, "marcar mensagem como lida", resp.status()))
     }
 }
 
@@ -2472,24 +2577,27 @@ const CR_PASTA_LIMITE: u64 = 1000;
 ///
 /// Não usa `$skip`: cada volta relê a PRIMEIRA página, porque os itens da volta
 /// anterior já saíram da pasta — paginar por offset puliria mensagens.
-pub fn cr_esvaziar_pasta(store: &TokenStore, folder_id: &str) -> Result<u64, String> {
+pub fn cr_esvaziar_pasta(
+    store: &TokenStore,
+    folder_id: &str,
+    mailbox: Option<&str>,
+) -> Result<u64, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     let mut apagados: u64 = 0;
 
     loop {
-        let url = format!("{GRAPH}/me/mailFolders/{folder_id}/messages?$select=id&$top=50");
+        let url =
+            format!("{GRAPH}/{prefix}/mailFolders/{folder_id}/messages?$select=id&$top=50");
         // Sob o pool + retry central (#64): Retry-After + jitter.
         let resp = graph_enviar("mail:esvaziar", GRAPH_TETO_ESPERA_S, || {
             client.get(&url).bearer_auth(&token).send()
         })
         .map_err(|e| format!("falha ao ler a pasta: {e}"))?;
         if !resp.status().is_success() {
-            return Err(format!(
-                "/me/mailFolders/{folder_id}/messages retornou {}",
-                resp.status()
-            ));
+            return Err(erro_escrita(&prefix, "ler pasta para esvaziar", resp.status()));
         }
         let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
         let ids: Vec<String> = v["value"]
@@ -2510,7 +2618,7 @@ pub fn cr_esvaziar_pasta(store: &TokenStore, folder_id: &str) -> Result<u64, Str
         // era o 404 num item da lixeira que abortava o "Empty trash" inteiro.
         let mut progrediu = false;
         for id in ids {
-            match deletar_msg(&client, &token, &id) {
+            match deletar_msg(&client, &token, &prefix, &id) {
                 Ok(()) => {
                     apagados += 1;
                     progrediu = true;
@@ -2521,6 +2629,7 @@ pub fn cr_esvaziar_pasta(store: &TokenStore, folder_id: &str) -> Result<u64, Str
                         return Ok(apagados);
                     }
                 }
+                Err(e) if eh_erro_permissao(&e) => return Err(e),
                 Err(e) => log::warn!("[mail] esvaziar '{folder_id}': '{id}' falhou: {e}"),
             }
         }
@@ -2542,9 +2651,14 @@ pub fn cr_esvaziar_pasta(store: &TokenStore, folder_id: &str) -> Result<u64, Str
 ///
 /// Mesma estratégia de paginação do `cr_esvaziar_pasta`: relê sempre a primeira
 /// página, porque o item marcado sai do filtro `isRead eq false`.
-pub fn cr_marcar_pasta_lida(store: &TokenStore, folder_id: &str) -> Result<u64, String> {
+pub fn cr_marcar_pasta_lida(
+    store: &TokenStore,
+    folder_id: &str,
+    mailbox: Option<&str>,
+) -> Result<u64, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     let filtro = urlencoding::encode("isRead eq false");
     let patch = serde_json::json!({ "isRead": true });
@@ -2552,7 +2666,7 @@ pub fn cr_marcar_pasta_lida(store: &TokenStore, folder_id: &str) -> Result<u64, 
 
     loop {
         let url = format!(
-            "{GRAPH}/me/mailFolders/{folder_id}/messages?$filter={filtro}&$select=id&$top=50"
+            "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages?$filter={filtro}&$select=id&$top=50"
         );
         // Sob o pool + retry central (#64): Retry-After + jitter.
         let resp = graph_enviar("mail:marcar-pasta-lida", GRAPH_TETO_ESPERA_S, || {
@@ -2560,9 +2674,10 @@ pub fn cr_marcar_pasta_lida(store: &TokenStore, folder_id: &str) -> Result<u64, 
         })
         .map_err(|e| format!("falha ao ler a pasta: {e}"))?;
         if !resp.status().is_success() {
-            return Err(format!(
-                "/me/mailFolders/{folder_id}/messages retornou {}",
-                resp.status()
+            return Err(erro_escrita(
+                &prefix,
+                "ler pasta para marcar como lida",
+                resp.status(),
             ));
         }
         let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
@@ -2582,7 +2697,7 @@ pub fn cr_marcar_pasta_lida(store: &TokenStore, folder_id: &str) -> Result<u64, 
 
         let mut progrediu = false;
         for id in &ids {
-            let msg_url = format!("{GRAPH}/me/messages/{id}");
+            let msg_url = format!("{GRAPH}/{prefix}/messages/{id}");
             let r = graph_enviar("mail:marcar-pasta-lida", GRAPH_TETO_ESPERA_S, || {
                 client.patch(&msg_url).bearer_auth(&token).json(&patch).send()
             });
@@ -2600,6 +2715,13 @@ pub fn cr_marcar_pasta_lida(store: &TokenStore, folder_id: &str) -> Result<u64, 
                         );
                         return Ok(marcadas);
                     }
+                }
+                Ok(resp) if resp.status().as_u16() == 403 => {
+                    return Err(erro_escrita(
+                        &prefix,
+                        "marcar pasta como lida",
+                        resp.status(),
+                    ));
                 }
                 Ok(resp) => log::warn!(
                     "[mail] marcar lidas '{folder_id}': '{id}' retornou {}",
@@ -2774,9 +2896,11 @@ pub fn cr_enviar_novo(
     assunto: &str,
     corpo_html: &str,
     anexos: Vec<AnexoUp>,
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
     // Mapeia cada e-mail para o formato do Graph, descartando os vazios.
     let recipients = |lista: &[String]| -> Vec<serde_json::Value> {
@@ -2818,13 +2942,13 @@ pub fn cr_enviar_novo(
     // re-tentado: `graph_enviar` propaga o erro do reqwest na hora. 5xx também não
     // re-tenta (devolve a resposta e o chamador vira erro). Ou seja: cega
     // reemissão de um sendMail já potencialmente aplicado nunca acontece.
-    let url = format!("{GRAPH}/me/sendMail");
+    let url = format!("{GRAPH}/{prefix}/sendMail");
     let resp = graph_enviar("mail:enviar", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(&token).json(&body).send()
     })
     .map_err(|e| format!("falha ao enviar o e-mail: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("envio retornou {}", resp.status()));
+        return Err(erro_envio(&prefix, "envio", resp.status()));
     }
     Ok(())
 }
@@ -2984,6 +3108,7 @@ pub fn cr_criar_subpasta(
     store: &TokenStore,
     pai_id: &str,
     nome: &str,
+    mailbox: Option<&str>,
 ) -> Result<PastaEmail, String> {
     let nome = nome.trim();
     if nome.is_empty() {
@@ -2991,8 +3116,9 @@ pub fn cr_criar_subpasta(
     }
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
-    let url = format!("{GRAPH}/me/mailFolders/{pai_id}/childFolders");
+    let url = format!("{GRAPH}/{prefix}/mailFolders/{pai_id}/childFolders");
     let body = serde_json::json!({ "displayName": nome });
     // Sob o pool + retry central (#64): Retry-After + jitter.
     let resp = graph_enviar("mail:criar-subpasta", GRAPH_TETO_ESPERA_S, || {
@@ -3001,9 +3127,7 @@ pub fn cr_criar_subpasta(
     .map_err(|e| format!("falha ao criar a subpasta: {e}"))?;
     if !resp.status().is_success() {
         let st = resp.status();
-        return Err(format!(
-            "POST /me/mailFolders/{pai_id}/childFolders retornou {st}"
-        ));
+        return Err(erro_escrita(&prefix, "criar subpasta", st));
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     Ok(pasta_de_json(&v))
@@ -3015,6 +3139,7 @@ pub fn cr_renomear_pasta(
     store: &TokenStore,
     id: &str,
     nome: &str,
+    mailbox: Option<&str>,
 ) -> Result<PastaEmail, String> {
     let nome = nome.trim();
     if nome.is_empty() {
@@ -3022,8 +3147,9 @@ pub fn cr_renomear_pasta(
     }
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
-    let url = format!("{GRAPH}/me/mailFolders/{id}");
+    let url = format!("{GRAPH}/{prefix}/mailFolders/{id}");
     let body = serde_json::json!({ "displayName": nome });
     // Sob o pool + retry central (#64): Retry-After + jitter.
     let resp = graph_enviar("mail:renomear-pasta", GRAPH_TETO_ESPERA_S, || {
@@ -3031,7 +3157,7 @@ pub fn cr_renomear_pasta(
     })
     .map_err(|e| format!("falha ao renomear a pasta: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("PATCH /me/mailFolders retornou {}", resp.status()));
+        return Err(erro_escrita(&prefix, "renomear pasta", resp.status()));
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     Ok(pasta_de_json(&v))
@@ -3047,10 +3173,11 @@ pub fn cr_renomear_pasta(
 fn mover_pasta_graph(
     client: &reqwest::blocking::Client,
     token: &str,
+    prefix: &str,
     id: &str,
     destino: &str,
 ) -> Result<serde_json::Value, String> {
-    let url = format!("{GRAPH}/me/mailFolders/{id}/move");
+    let url = format!("{GRAPH}/{prefix}/mailFolders/{id}/move");
     let body = serde_json::json!({ "destinationId": destino });
     // Sob o pool + retry central (#64): Retry-After + jitter.
     let resp = graph_enviar("mail:mover-pasta", GRAPH_TETO_ESPERA_S, || {
@@ -3059,7 +3186,7 @@ fn mover_pasta_graph(
     .map_err(|e| format!("falha ao mover a pasta: {e}"))?;
     let st = resp.status();
     if !st.is_success() {
-        return Err(format!("POST /me/mailFolders/{id}/move retornou {st}"));
+        return Err(erro_escrita(prefix, "mover pasta", st));
     }
     resp.json::<serde_json::Value>().map_err(|e| e.to_string())
 }
@@ -3071,10 +3198,12 @@ pub fn cr_mover_pasta(
     store: &TokenStore,
     id: &str,
     novo_pai: &str,
+    mailbox: Option<&str>,
 ) -> Result<PastaEmail, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    let v = mover_pasta_graph(&client, &token, id, novo_pai)?;
+    let prefix = mailbox_prefix(mailbox);
+    let v = mover_pasta_graph(&client, &token, &prefix, id, novo_pai)?;
     Ok(pasta_de_json(&v))
 }
 
@@ -3092,17 +3221,23 @@ pub fn cr_mover_pasta(
 /// Retorna `true` quando foi para a lixeira e `false` quando caiu no DELETE —
 /// o front usa isso para escolher o texto do toast (reversível vs definitivo).
 /// Mail.ReadWrite.
-pub fn cr_excluir_pasta(store: &TokenStore, id: &str) -> Result<bool, String> {
+pub fn cr_excluir_pasta(
+    store: &TokenStore,
+    id: &str,
+    mailbox: Option<&str>,
+) -> Result<bool, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
 
-    match mover_pasta_graph(&client, &token, id, "deleteditems") {
+    match mover_pasta_graph(&client, &token, &prefix, id, "deleteditems") {
         Ok(_) => Ok(true),
+        Err(e) if eh_erro_permissao(&e) => Err(e),
         Err(e) => {
             log::warn!(
                 "[mail] excluir pasta '{id}': move p/ lixeira falhou ({e}); tentando DELETE"
             );
-            let url = format!("{GRAPH}/me/mailFolders/{id}");
+            let url = format!("{GRAPH}/{prefix}/mailFolders/{id}");
             // Sob o pool + retry central (#64): Retry-After + jitter.
             let resp = graph_enviar("mail:excluir-pasta", GRAPH_TETO_ESPERA_S, || {
                 client.delete(&url).bearer_auth(&token).send()
@@ -3112,10 +3247,8 @@ pub fn cr_excluir_pasta(store: &TokenStore, id: &str) -> Result<bool, String> {
             if resp.status().is_success() || resp.status().as_u16() == 404 {
                 Ok(false)
             } else {
-                Err(format!(
-                    "DELETE /me/mailFolders retornou {} (move p/ lixeira antes: {e})",
-                    resp.status()
-                ))
+                let erro_delete = erro_escrita(&prefix, "excluir pasta", resp.status());
+                Err(format!("{erro_delete} (move p/ lixeira antes: {e})"))
             }
         }
     }

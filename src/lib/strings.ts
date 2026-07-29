@@ -545,6 +545,7 @@ const pt = {
     paraPlaceholder: "Para (separe por vírgula)",
     responderPlaceholder: "Escreva sua resposta...",
     encaminharPlaceholder: "Escreva uma mensagem...",
+    enviarDe: "Enviar de",
     enviar: "Enviar",
     cancelar: "Cancelar",
     enviado: "E-mail enviado.",
@@ -581,8 +582,14 @@ const pt = {
     caixaErro: "Não consegui validar a caixa.",
     caixaRelogin: "Faça login novamente para acessar caixas compartilhadas.",
     caixaCompartilhadaTitulo: "Caixa compartilhada",
-    caixaCompartilhadaDesc: "Esta caixa está disponível em modo somente leitura.",
+    caixaCompartilhadaDesc: "Leitura e gerenciamento de mensagens habilitados.",
     caixaSomenteLeitura: "Somente leitura — disponível na caixa pessoal",
+    caixaSemPermissaoEscrita:
+      "Você não tem permissão para alterar esta caixa compartilhada.",
+    caixaSemPermissaoEnvio:
+      "Você não tem permissão para enviar usando esta caixa compartilhada.",
+    caixaEnvioRelogin:
+      "Faça login novamente para enviar usando caixas compartilhadas.",
     caixaAcessoParcial:
       "Acesso parcial — você não tem permissão para abrir esta pasta.",
   },
@@ -1137,6 +1144,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     paraPlaceholder: "To (comma-separated)",
     responderPlaceholder: "Write your reply...",
     encaminharPlaceholder: "Write a message...",
+    enviarDe: "Send from",
     enviar: "Send",
     cancelar: "Cancel",
     enviado: "Email sent.",
@@ -1173,8 +1181,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     caixaErro: "Couldn't validate the mailbox.",
     caixaRelogin: "Sign in again to access shared mailboxes.",
     caixaCompartilhadaTitulo: "Shared mailbox",
-    caixaCompartilhadaDesc: "This mailbox is available in read-only mode.",
+    caixaCompartilhadaDesc: "Message reading and management are enabled.",
     caixaSomenteLeitura: "Read-only — available in your personal mailbox",
+    caixaSemPermissaoEscrita:
+      "You don't have permission to modify this shared mailbox.",
+    caixaSemPermissaoEnvio:
+      "You don't have permission to send using this shared mailbox.",
+    caixaEnvioRelogin:
+      "Sign in again to send using shared mailboxes.",
     caixaAcessoParcial:
       "Partial access — you don't have permission to open this folder.",
   },

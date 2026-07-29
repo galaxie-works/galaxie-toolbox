@@ -833,18 +833,37 @@ function DicaSomenteLeitura({
   );
 }
 
+function descricaoErroEscrita(
+  erro: unknown,
+  t: ReturnType<typeof useIdioma>["t"]
+) {
+  const detalhe = String(erro);
+  return /\b403\b|sem permissão|permission/i.test(detalhe)
+    ? t.controlRoom.caixaSemPermissaoEscrita
+    : detalhe;
+}
+
+function descricaoErroEnvio(
+  erro: unknown,
+  mailbox: string,
+  t: ReturnType<typeof useIdioma>["t"]
+) {
+  const detalhe = String(erro);
+  return mailbox !== CAIXA_PROPRIA && /\b403\b|sem permissão|permission/i.test(detalhe)
+    ? t.controlRoom.caixaSemPermissaoEnvio
+    : detalhe;
+}
+
 /** Contexto exibido no painel de detalhe quando há multi-seleção (c-empty-15). */
 function MultiSelecaoContexto({
   n,
   onExcluir,
   onLimpar,
-  somenteLeitura,
   t,
 }: {
   n: number;
   onExcluir: () => void | Promise<void>;
   onLimpar: () => void;
-  somenteLeitura: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   return (
@@ -867,20 +886,14 @@ function MultiSelecaoContexto({
             <Button variant="outline" onClick={onLimpar}>
               {t.controlRoom.limparSelecao}
             </Button>
-            <DicaSomenteLeitura
-              ativo={somenteLeitura}
-              texto={t.controlRoom.caixaSomenteLeitura}
-            >
-              <BotaoExcluir
-                size="medium"
-                onExcluir={onExcluir}
-                onConcluir={onLimpar}
-                rotulo={t.controlRoom.excluirSelecionados}
-                rotuloProcessando={t.controlRoom.excluindo}
-                rotuloConcluido={t.controlRoom.excluidos}
-                disabled={somenteLeitura}
-              />
-            </DicaSomenteLeitura>
+            <BotaoExcluir
+              size="medium"
+              onExcluir={onExcluir}
+              onConcluir={onLimpar}
+              rotulo={t.controlRoom.excluirSelecionados}
+              rotuloProcessando={t.controlRoom.excluindo}
+              rotuloConcluido={t.controlRoom.excluidos}
+            />
           </div>
         </EmptyContent>
       </Empty>
@@ -1244,6 +1257,72 @@ function SeletorCaixa({
   );
 }
 
+/** Seletor canônico de remetente do compose (#114). Reusa o mesmo Select e a
+ * mesma representação visual do seletor de caixa do sidebar; o Graph decide
+ * Send As vs Send on Behalf conforme a permissão configurada no Exchange. */
+function SeletorRemetente({
+  caixas,
+  valor,
+  onChange,
+  emailPessoal,
+  sharedDisponivel,
+  t,
+}: {
+  caixas: string[];
+  valor: string;
+  onChange: (v: string) => void;
+  emailPessoal?: string | null;
+  sharedDisponivel: boolean;
+  t: ReturnType<typeof useIdioma>["t"];
+}) {
+  return (
+    <div className="border-b px-3 py-2">
+      <div className="flex items-center gap-3">
+        <span className="w-16 shrink-0 text-xs text-muted-foreground">
+          {t.controlRoom.enviarDe}
+        </span>
+        <Select value={valor} onValueChange={onChange}>
+          <SelectTrigger className="h-9 min-w-0 flex-1" aria-label={t.controlRoom.enviarDe}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper">
+            <SelectGroup>
+              <SelectItem value={CAIXA_PROPRIA}>
+                <span className="flex items-center gap-2">
+                  <Inbox className="size-4 shrink-0 text-muted-foreground" />
+                  <span>{t.controlRoom.caixaMinha}</span>
+                  {emailPessoal && (
+                    <span className="truncate text-xs text-muted-foreground">
+                      {emailPessoal}
+                    </span>
+                  )}
+                </span>
+              </SelectItem>
+              {caixas.map((caixa) => (
+                <SelectItem
+                  key={caixa}
+                  value={caixa}
+                  disabled={!sharedDisponivel}
+                >
+                  <span className="flex items-center gap-2">
+                    <Mailbox className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{caixa}</span>
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+      {!sharedDisponivel && caixas.length > 0 && (
+        <p className="mt-1 pl-19 text-xs text-muted-foreground">
+          {t.controlRoom.caixaEnvioRelogin}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /**
  * Dialog "Adicionar caixa compartilhada" (#111). Valida o endereço na hora via
  * `api.crValidarCaixa` (GET /users/{addr}/mailFolders/inbox no backend): 200
@@ -1396,7 +1475,7 @@ function FolderSidebar({
   caixaAtiva,
   onSelecionarCaixa,
   onAbrirAdicionarCaixa,
-  somenteLeitura,
+  caixaCompartilhada,
   colapsada,
   agendaAberta,
   onToggleAgenda,
@@ -1430,7 +1509,7 @@ function FolderSidebar({
   caixaAtiva: string;
   onSelecionarCaixa: (v: string) => void;
   onAbrirAdicionarCaixa: () => void;
-  somenteLeitura: boolean;
+  caixaCompartilhada: boolean;
   colapsada: boolean;
   agendaAberta: boolean;
   onToggleAgenda: () => void;
@@ -1498,11 +1577,9 @@ function FolderSidebar({
         title={
           p.acessoNegado
             ? t.controlRoom.caixaAcessoParcial
-            : somenteLeitura
-              ? t.controlRoom.caixaSomenteLeitura
-              : colapsada
-                ? rotulo
-                : undefined
+            : colapsada
+              ? rotulo
+              : undefined
         }
         className={cn(
           "flex items-center rounded-md text-sm transition-colors",
@@ -1551,9 +1628,7 @@ function FolderSidebar({
     const criarSub = podeCriarSubpasta(p.tipo);
     const custom = ehPastaCustom(p.tipo);
     const semAcoes =
-      somenteLeitura ||
-      Boolean(p.acessoNegado) ||
-      (!marcarLidas && !esvaziar && !criarSub && !custom);
+      Boolean(p.acessoNegado) || (!marcarLidas && !esvaziar && !criarSub && !custom);
 
     // Irmãs da pasta (para barrar nome duplicado antes de ir ao Graph): as
     // filhas do pai. Nas raízes, as próprias raízes.
@@ -1705,7 +1780,7 @@ function FolderSidebar({
         colapsada={colapsada}
         t={t}
       />
-      {somenteLeitura && !colapsada ? (
+      {caixaCompartilhada && !colapsada ? (
         <p className="px-1 text-xs text-muted-foreground">
           {t.controlRoom.caixaCompartilhadaDesc}
         </p>
@@ -2402,7 +2477,6 @@ function ItensMenuEmail({
   onAbrirMover,
   onMover,
   setSelecionados,
-  somenteLeitura,
   t,
 }: {
   alvos: string[];
@@ -2417,15 +2491,12 @@ function ItensMenuEmail({
   onAbrirMover: () => void;
   onMover: (ids: string[], destino: string, rotulo: string) => void;
   setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
-  somenteLeitura: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   return (
     <>
       <ContextMenuItem
         className="gap-2"
-        disabled={somenteLeitura}
-        title={somenteLeitura ? t.controlRoom.caixaSomenteLeitura : undefined}
         onClick={() => alvos.forEach((id) => onMarcarLido(id, !lido))}
       >
         {lido ? <Mail /> : <MailOpen />}
@@ -2433,8 +2504,6 @@ function ItensMenuEmail({
       </ContextMenuItem>
       <ContextMenuItem
         className="gap-2"
-        disabled={somenteLeitura}
-        title={somenteLeitura ? t.controlRoom.caixaSomenteLeitura : undefined}
         onClick={() => alvos.forEach((id) => onFlag(id, !sinalizado))}
       >
         {sinalizado ? <FlagOff /> : <Flag />}
@@ -2448,15 +2517,12 @@ function ItensMenuEmail({
         carregando={pastasCarregando}
         onAbrir={onAbrirMover}
         onMover={onMover}
-        disabled={somenteLeitura}
         t={t}
       />
       <ContextMenuSeparator />
       <ContextMenuItem
         variant="destructive"
         className="gap-2"
-        disabled={somenteLeitura}
-        title={somenteLeitura ? t.controlRoom.caixaSomenteLeitura : undefined}
         onClick={() => {
           onExcluir(alvos);
           // Tira da seleção o que foi excluído — senão a barra "N selected"
@@ -2519,7 +2585,7 @@ function MessageList({
   onResponderTodos,
   onEncaminhar,
   onCompor,
-  somenteLeitura,
+  envioBloqueado,
   t,
   idioma,
 }: {
@@ -2567,7 +2633,7 @@ function MessageList({
   onResponderTodos: () => void;
   onEncaminhar: () => void;
   onCompor: () => void;
-  somenteLeitura: boolean;
+  envioBloqueado: boolean;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
@@ -2955,7 +3021,6 @@ function MessageList({
 
     // Delete exclui a seleção (se houver) ou a ativa.
     if (e.key === "Delete") {
-      if (somenteLeitura) return;
       const alvos = selecionados.size > 0 ? [...selecionados] : ativoId ? [ativoId] : [];
       if (alvos.length > 0) {
         e.preventDefault();
@@ -2972,17 +3037,17 @@ function MessageList({
     if (ehModPrincipal(e) || e.altKey || e.shiftKey) return;
     switch (e.key.toLowerCase()) {
       case "r": // responder
-        if (somenteLeitura) return;
+        if (envioBloqueado) return;
         e.preventDefault();
         onResponder();
         return;
       case "a": // responder a todos
-        if (somenteLeitura) return;
+        if (envioBloqueado) return;
         e.preventDefault();
         onResponderTodos();
         return;
       case "f": // encaminhar
-        if (somenteLeitura) return;
+        if (envioBloqueado) return;
         e.preventDefault();
         onEncaminhar();
         return;
@@ -2994,14 +3059,12 @@ function MessageList({
         }
         return;
       case "u": // alterna lido/não-lido
-        if (somenteLeitura) return;
         if (msgAtiva) {
           e.preventDefault();
           onMarcarLido(msgAtiva.id, !msgAtiva.lido);
         }
         return;
       case "s": // alterna sinalizado
-        if (somenteLeitura) return;
         if (msgAtiva) {
           e.preventDefault();
           onFlag(msgAtiva.id, !msgAtiva.sinalizado);
@@ -3147,19 +3210,9 @@ function MessageList({
         )}
         <div className="ml-auto flex items-center gap-1">
           {pastaTipo === "deleteditems" && (mensagens?.length ?? 0) > 0 && (
-            <DicaSomenteLeitura
-              ativo={somenteLeitura}
-              texto={t.controlRoom.caixaSomenteLeitura}
-            >
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onEsvaziar}
-                disabled={somenteLeitura}
-              >
-                <Trash2 /> {t.controlRoom.esvaziarLixeira}
-              </Button>
-            </DicaSomenteLeitura>
+            <Button variant="ghost" size="sm" onClick={onEsvaziar}>
+              <Trash2 /> {t.controlRoom.esvaziarLixeira}
+            </Button>
           )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -3284,20 +3337,14 @@ function MessageList({
           <span className="text-xs font-medium">
             {preencher(t.controlRoom.nSelecionados, { n: selecionados.size })}
           </span>
-          <DicaSomenteLeitura
-            ativo={somenteLeitura}
-            texto={t.controlRoom.caixaSomenteLeitura}
-          >
-            <BotaoExcluir
-              className="ml-auto"
-              onExcluir={() => onExcluir([...selecionados])}
-              onConcluir={() => setSelecionados(new Set())}
-              rotulo={t.controlRoom.excluirSelecionados}
-              rotuloProcessando={t.controlRoom.excluindo}
-              rotuloConcluido={t.controlRoom.excluidos}
-              disabled={somenteLeitura}
-            />
-          </DicaSomenteLeitura>
+          <BotaoExcluir
+            className="ml-auto"
+            onExcluir={() => onExcluir([...selecionados])}
+            onConcluir={() => setSelecionados(new Set())}
+            rotulo={t.controlRoom.excluirSelecionados}
+            rotuloProcessando={t.controlRoom.excluindo}
+            rotuloConcluido={t.controlRoom.excluidos}
+          />
           <Button variant="ghost" size="icon-sm" onClick={() => setSelecionados(new Set())}>
             <X />
           </Button>
@@ -3581,12 +3628,6 @@ function MessageList({
                                 <button
                                   type="button"
                                   onClick={() => onFlag(m.id, !m.sinalizado)}
-                                  disabled={somenteLeitura}
-                                  title={
-                                    somenteLeitura
-                                      ? t.controlRoom.caixaSomenteLeitura
-                                      : undefined
-                                  }
                                   className="grid size-6 place-items-center rounded bg-accent hover:bg-background"
                                   aria-label={t.controlRoom.sinalizar}
                                 >
@@ -3600,12 +3641,6 @@ function MessageList({
                                 <button
                                   type="button"
                                   onClick={() => onExcluir([m.id])}
-                                  disabled={somenteLeitura}
-                                  title={
-                                    somenteLeitura
-                                      ? t.controlRoom.caixaSomenteLeitura
-                                      : undefined
-                                  }
                                   className="grid size-6 place-items-center rounded bg-accent text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                                   aria-label={t.controlRoom.excluir}
                                 >
@@ -3639,7 +3674,6 @@ function MessageList({
                           onAbrirMover={onAbrirMover}
                           onMover={onMover}
                           setSelecionados={setSelecionados}
-                          somenteLeitura={somenteLeitura}
                           t={t}
                         />
                       </ContextMenuContent>
@@ -3670,7 +3704,6 @@ function MessageList({
               onAbrirMover={onAbrirMover}
               onMover={onMover}
               setSelecionados={setSelecionados}
-              somenteLeitura={somenteLeitura}
               t={t}
             />
           </ContextMenuContent>
@@ -3981,7 +4014,7 @@ const MessageDetail = forwardRef<
     id: string | null;
     userEmail?: string | null;
     mailbox: string;
-    somenteLeitura: boolean;
+    envioBloqueado: boolean;
     sinalizado: boolean;
     lido: boolean;
     onFlag: (id: string, novo: boolean) => void;
@@ -3997,7 +4030,7 @@ const MessageDetail = forwardRef<
     id,
     userEmail,
     mailbox,
-    somenteLeitura,
+    envioBloqueado,
     sinalizado,
     lido,
     onFlag,
@@ -4025,11 +4058,11 @@ const MessageDetail = forwardRef<
   useImperativeHandle(
     ref,
     () => ({
-      responder: () => id && !somenteLeitura && setModo("responder"),
-      responderTodos: () => id && !somenteLeitura && setModo("responderTodos"),
-      encaminhar: () => id && !somenteLeitura && setModo("encaminhar"),
+      responder: () => id && !envioBloqueado && setModo("responder"),
+      responderTodos: () => id && !envioBloqueado && setModo("responderTodos"),
+      encaminhar: () => id && !envioBloqueado && setModo("encaminhar"),
     }),
-    [id, somenteLeitura]
+    [id, envioBloqueado]
   );
 
   useEffect(() => {
@@ -4095,7 +4128,7 @@ const MessageDetail = forwardRef<
     det?.webLink && api.abrirAppInterno("outlook", comLoginHint(det.webLink, userEmail), "Outlook");
 
   async function enviar() {
-    if (!id || somenteLeitura) return;
+    if (!id || envioBloqueado) return;
     const c = comporRef.current;
     const html = c?.getHtml() ?? "";
     const texto = c?.getTexto()?.trim() ?? "";
@@ -4115,19 +4148,27 @@ const MessageDetail = forwardRef<
     try {
       const anexos = c?.getAnexos() ?? [];
       if (modo === "encaminhar") {
-        await api.crEncaminhar(id, html, destinos, anexos);
+        await api.crEncaminhar(id, html, destinos, anexos, mailbox);
         // salva os destinatários nos Contatos (best-effort, silencioso)
         api
           .crSalvarContatos(destinos.map((e) => ({ nome: e, email: e })))
           .catch(() => {});
       } else {
-        await api.crResponder(id, html, modo === "responderTodos", anexos);
+        await api.crResponder(
+          id,
+          html,
+          modo === "responderTodos",
+          anexos,
+          mailbox
+        );
       }
       toastIcone(t.controlRoom.enviado, t.controlRoom.enviadoDescricao, "enviado");
       setModo(null);
       onMudou();
     } catch (e) {
-      toast.error(t.controlRoom.erroEnvio, { description: String(e) });
+      toast.error(t.controlRoom.erroEnvio, {
+        description: descricaoErroEnvio(e, mailbox, t),
+      });
     } finally {
       setEnviando(false);
     }
@@ -4194,93 +4235,75 @@ const MessageDetail = forwardRef<
       {/* Toolbar */}
       <div className="flex items-center gap-1 border-b px-3 py-2">
         <DicaSomenteLeitura
-          ativo={somenteLeitura}
-          texto={t.controlRoom.caixaSomenteLeitura}
+          ativo={envioBloqueado}
+          texto={t.controlRoom.caixaEnvioRelogin}
         >
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setModo("responder")}
-            disabled={somenteLeitura}
+            disabled={envioBloqueado}
           >
             <Reply /> {t.controlRoom.responder}
           </Button>
         </DicaSomenteLeitura>
         <DicaSomenteLeitura
-          ativo={somenteLeitura}
-          texto={t.controlRoom.caixaSomenteLeitura}
+          ativo={envioBloqueado}
+          texto={t.controlRoom.caixaEnvioRelogin}
         >
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setModo("responderTodos")}
-            disabled={somenteLeitura}
+            disabled={envioBloqueado}
           >
             <ReplyAll /> {t.controlRoom.responderTodos}
           </Button>
         </DicaSomenteLeitura>
         <DicaSomenteLeitura
-          ativo={somenteLeitura}
-          texto={t.controlRoom.caixaSomenteLeitura}
+          ativo={envioBloqueado}
+          texto={t.controlRoom.caixaEnvioRelogin}
         >
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setModo("encaminhar")}
-            disabled={somenteLeitura}
+            disabled={envioBloqueado}
           >
             <Forward /> {t.controlRoom.encaminhar}
           </Button>
         </DicaSomenteLeitura>
         <div className="ml-auto flex items-center gap-1">
-          <DicaSomenteLeitura
-            ativo={somenteLeitura}
-            texto={t.controlRoom.caixaSomenteLeitura}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => id && onFlag(id, !sinalizado)}
+            aria-label={t.controlRoom.sinalizar}
           >
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => id && onFlag(id, !sinalizado)}
-              aria-label={t.controlRoom.sinalizar}
-              disabled={somenteLeitura}
-            >
-              <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
-            </Button>
-          </DicaSomenteLeitura>
+            <Flag className={cn("size-4", sinalizado && "fill-red-500 text-red-500")} />
+          </Button>
           {/* Botão de lido/não-lido: ALTERNA (#95). Antes era só "marcar como
               não lido" — o que bastava quando o app marcava lido sozinho ao
               abrir. Nos modos "após atraso"/"manual" a mensagem pode continuar
               não-lida no leitor, então o botão precisa marcar LIDO também. */}
-          <DicaSomenteLeitura
-            ativo={somenteLeitura}
-            texto={t.controlRoom.caixaSomenteLeitura}
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => id && onMarcarLido(id, !lido)}
+            aria-label={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
+            title={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
           >
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => id && onMarcarLido(id, !lido)}
-              aria-label={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
-              title={lido ? t.controlRoom.marcarNaoLido : t.controlRoom.marcarLido}
-              disabled={somenteLeitura}
-            >
-              {lido ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
-            </Button>
-          </DicaSomenteLeitura>
-          <DicaSomenteLeitura
-            ativo={somenteLeitura}
-            texto={t.controlRoom.caixaSomenteLeitura}
+            {lido ? <Mail className="size-4" /> : <MailOpen className="size-4" />}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => id && onExcluir([id])}
+            aria-label={t.controlRoom.excluir}
+            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
           >
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => id && onExcluir([id])}
-              aria-label={t.controlRoom.excluir}
-              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-              disabled={somenteLeitura}
-            >
-              <Trash2 />
-            </Button>
-          </DicaSomenteLeitura>
+            <Trash2 />
+          </Button>
           <Button variant="ghost" size="icon-sm" onClick={abrirOutlook} aria-label={t.controlRoom.abrirOutlook}>
             <ExternalLink />
           </Button>
@@ -4715,14 +4738,33 @@ function EventoDialog({
 function NovaMensagemModal({
   aberto,
   onClose,
+  caixas,
+  remetenteInicial,
+  emailPessoal,
+  sharedEnvioDisponivel,
   t,
 }: {
   aberto: boolean;
   onClose: () => void;
+  caixas: string[];
+  remetenteInicial: string;
+  emailPessoal?: string | null;
+  sharedEnvioDisponivel: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   const comporRef = useRef<ComporMensagemHandle>(null);
   const [enviando, setEnviando] = useState(false);
+  const [remetente, setRemetente] = useState(remetenteInicial);
+
+  useEffect(() => {
+    if (!aberto) return;
+    setRemetente(
+      remetenteInicial === CAIXA_PROPRIA || sharedEnvioDisponivel
+        ? remetenteInicial
+        : CAIXA_PROPRIA
+    );
+  }, [aberto, remetenteInicial, sharedEnvioDisponivel]);
+
   const textos = {
     para: t.controlRoom.para,
     cc: t.controlRoom.ccLabel,
@@ -4744,14 +4786,24 @@ function NovaMensagemModal({
     }
     setEnviando(true);
     try {
-      await api.crEnviarNovo(para, cc, cco, c?.getAssunto() ?? "", c?.getHtml() ?? "", c?.getAnexos() ?? []);
+      await api.crEnviarNovo(
+        para,
+        cc,
+        cco,
+        c?.getAssunto() ?? "",
+        c?.getHtml() ?? "",
+        c?.getAnexos() ?? [],
+        remetente
+      );
       api
         .crSalvarContatos([...para, ...cc, ...cco].map((e) => ({ nome: e, email: e })))
         .catch(() => {});
       toastIcone(t.controlRoom.enviado, t.controlRoom.enviadoDescricao, "enviado");
       onClose();
     } catch (e) {
-      toast.error(t.controlRoom.erroEnvio, { description: String(e) });
+      toast.error(t.controlRoom.erroEnvio, {
+        description: descricaoErroEnvio(e, remetente, t),
+      });
     } finally {
       setEnviando(false);
     }
@@ -4768,6 +4820,14 @@ function NovaMensagemModal({
         <SheetHeader className="border-b px-4 py-3">
           <SheetTitle className="text-left">{t.controlRoom.novaMensagem}</SheetTitle>
         </SheetHeader>
+        <SeletorRemetente
+          caixas={caixas}
+          valor={remetente}
+          onChange={setRemetente}
+          emailPessoal={emailPessoal}
+          sharedDisponivel={sharedEnvioDisponivel}
+          t={t}
+        />
         <div className="min-h-0 flex-1 overflow-hidden">
           <ComporMensagem key={String(aberto)} ref={comporRef} mostrarAssunto textos={textos} />
         </div>
@@ -4829,6 +4889,7 @@ export function ControlRoomScreen({
   // O token atual traz Mail.Read.Shared? Falso ⇒ sinaliza relogin (escopo novo
   // na SCOPES; sem consent admin — já concedido, ver AGENTS.md §1.1).
   const [sharedEscopoOk, setSharedEscopoOk] = useState(true);
+  const [sharedEnvioEscopoOk, setSharedEnvioEscopoOk] = useState(false);
   useEffect(() => {
     let vivo = true;
     api
@@ -4837,7 +4898,15 @@ export function ControlRoomScreen({
         if (vivo) setSharedEscopoOk(ok);
       })
       .catch(() => {
-        /* falha ao checar escopo: não trava a UI, assume ok */
+        /* falha ao checar leitura/escrita: não trava a UI, assume ok */
+      });
+    api
+      .crMailSendSharedDisponivel()
+      .then((ok) => {
+        if (vivo) setSharedEnvioEscopoOk(ok);
+      })
+      .catch(() => {
+        /* envio compartilhado permanece bloqueado sem confirmação do escopo */
       });
     return () => {
       vivo = false;
@@ -5212,35 +5281,33 @@ export function ControlRoomScreen({
   // cabeçalho da lista e pelo menu de contexto da pasta (#89) — este último já
   // passou pelo AlertDialog de confirmação.
   async function esvaziarPasta(folderId: string) {
-    if (caixaCompartilhadaAtiva) {
-      toast.warning(t.controlRoom.caixaSomenteLeitura);
-      return;
-    }
     const aviso = toast.loading(t.controlRoom.esvaziandoPasta);
     try {
-      const n = await api.crEsvaziarPasta(folderId);
+      const n = await api.crEsvaziarPasta(folderId, caixaAtiva);
       toast.success(preencher(t.controlRoom.pastaEsvaziada, { n }), { id: aviso });
       recarregarAposPasta(folderId);
     } catch (e) {
-      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+      toast.error(t.controlRoom.erroAcao, {
+        id: aviso,
+        description: descricaoErroEscrita(e, t),
+      });
     }
   }
 
   // Marca como lidas todas as não lidas de uma pasta (#89). Pode demorar (loop
   // de PATCH no Graph), então mostra toast de progresso.
   async function marcarPastaLida(folderId: string) {
-    if (caixaCompartilhadaAtiva) {
-      toast.warning(t.controlRoom.caixaSomenteLeitura);
-      return;
-    }
     const aviso = toast.loading(t.controlRoom.marcandoTodasLidas);
     try {
-      const n = await api.crMarcarPastaLida(folderId);
+      const n = await api.crMarcarPastaLida(folderId, caixaAtiva);
       if (n === 0) toast.info(t.controlRoom.nenhumaNaoLida, { id: aviso });
       else toast.success(preencher(t.controlRoom.todasMarcadasLidas, { n }), { id: aviso });
       recarregarAposPasta(folderId);
     } catch (e) {
-      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+      toast.error(t.controlRoom.erroAcao, {
+        id: aviso,
+        description: descricaoErroEscrita(e, t),
+      });
     }
   }
 
@@ -5268,49 +5335,43 @@ export function ControlRoomScreen({
   );
 
   async function criarSubpasta(paiId: string, nome: string) {
-    if (caixaCompartilhadaAtiva) {
-      toast.warning(t.controlRoom.caixaSomenteLeitura);
-      return;
-    }
     const aviso = toast.loading(t.controlRoom.criandoSubpasta);
     try {
-      const nova = await api.crCriarSubpasta(paiId, nome);
+      const nova = await api.crCriarSubpasta(paiId, nome, caixaAtiva);
       toast.success(preencher(t.controlRoom.subpastaCriada, { pasta: nova.nome }), {
         id: aviso,
       });
       recarregarSubpastas(paiId);
     } catch (e) {
-      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+      toast.error(t.controlRoom.erroAcao, {
+        id: aviso,
+        description: descricaoErroEscrita(e, t),
+      });
     }
   }
 
   async function renomearPasta(id: string, nome: string, paiId?: string) {
-    if (caixaCompartilhadaAtiva) {
-      toast.warning(t.controlRoom.caixaSomenteLeitura);
-      return;
-    }
     const aviso = toast.loading(t.controlRoom.renomeandoPasta);
     try {
-      const nova = await api.crRenomearPasta(id, nome);
+      const nova = await api.crRenomearPasta(id, nome, caixaAtiva);
       toast.success(preencher(t.controlRoom.pastaRenomeada, { pasta: nova.nome }), {
         id: aviso,
       });
       recarregarSubpastas(paiId);
     } catch (e) {
-      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+      toast.error(t.controlRoom.erroAcao, {
+        id: aviso,
+        description: descricaoErroEscrita(e, t),
+      });
     }
   }
 
   async function excluirPasta(id: string, rotulo: string, paiId?: string) {
-    if (caixaCompartilhadaAtiva) {
-      toast.warning(t.controlRoom.caixaSomenteLeitura);
-      return;
-    }
     const aviso = toast.loading(t.controlRoom.excluindoPasta);
     try {
       // `true` = foi pra Lixeira (reversível, o caminho normal); `false` = o
       // backend teve que cair no DELETE definitivo. O toast diz qual foi.
-      const paraLixeira = await api.crExcluirPasta(id);
+      const paraLixeira = await api.crExcluirPasta(id, caixaAtiva);
       toast.success(
         preencher(
           paraLixeira
@@ -5327,7 +5388,10 @@ export function ControlRoomScreen({
       // pasta fantasma com a lista vazia.
       if (pastaSelRef.current === id) setPastaSel("inbox");
     } catch (e) {
-      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+      toast.error(t.controlRoom.erroAcao, {
+        id: aviso,
+        description: descricaoErroEscrita(e, t),
+      });
     }
   }
 
@@ -5337,13 +5401,9 @@ export function ControlRoomScreen({
     rotuloDestino: string,
     paiId?: string
   ) {
-    if (caixaCompartilhadaAtiva) {
-      toast.warning(t.controlRoom.caixaSomenteLeitura);
-      return;
-    }
     const aviso = toast.loading(t.controlRoom.movendoPasta);
     try {
-      const nova = await api.crMoverPasta(id, destino);
+      const nova = await api.crMoverPasta(id, destino, caixaAtiva);
       toast.success(preencher(t.controlRoom.pastaMovida, { pasta: rotuloDestino }), {
         id: aviso,
       });
@@ -5352,7 +5412,10 @@ export function ControlRoomScreen({
       // seguir com o id antigo deixaria a lista quebrada.
       if (pastaSelRef.current === id) setPastaSel(nova.id);
     } catch (e) {
-      toast.error(t.controlRoom.erroAcao, { id: aviso, description: String(e) });
+      toast.error(t.controlRoom.erroAcao, {
+        id: aviso,
+        description: descricaoErroEscrita(e, t),
+      });
     }
   }
 
@@ -5388,7 +5451,6 @@ export function ControlRoomScreen({
   // não-lido e a contagem da pasta na hora; PATCH isRead em background com
   // rollback. Usado pelo auto-mark ao abrir e pela ação manual de "não-lido".
   function acaoMarcarLido(id: string, lido: boolean) {
-    if (caixaCompartilhadaAtiva) return;
     const m =
       mensagens?.find((x) => x.id === id) ??
       resultadosBusca?.find((x) => x.id === id) ??
@@ -5401,13 +5463,16 @@ export function ControlRoomScreen({
         p.id === pastaSel ? { ...p, naoLidos: Math.max(0, p.naoLidos + delta) } : p
       ) ?? prev
     );
-    api.crMarcarLido(id, lido).catch(() => {
+    api.crMarcarLido(id, lido, caixaAtiva).catch((e) => {
       mutarNasListas((x) => (x.id === id ? { ...x, lido: !lido } : x));
       setPastas((prev) =>
         prev?.map((p) =>
           p.id === pastaSel ? { ...p, naoLidos: Math.max(0, p.naoLidos - delta) } : p
         ) ?? prev
       );
+      toast.error(t.controlRoom.erroAcao, {
+        description: descricaoErroEscrita(e, t),
+      });
     });
   }
 
@@ -5430,7 +5495,7 @@ export function ControlRoomScreen({
   //                passar por cima de várias mensagens não marca nenhuma;
   //  - "manual":   não marca nada — só a ação explícita de marcar lido marca.
   useEffect(() => {
-    if (caixaCompartilhadaAtiva || !msgSel || marcarLidoModo === "manual") return;
+    if (!msgSel || marcarLidoModo === "manual") return;
     if (marcarLidoModo === "imediato") {
       marcarLidoRef.current(msgSel, true);
       return;
@@ -5440,7 +5505,7 @@ export function ControlRoomScreen({
       Math.max(1, marcarLidoAtraso) * 1000
     );
     return () => window.clearTimeout(timer);
-  }, [caixaCompartilhadaAtiva, msgSel, marcarLidoModo, marcarLidoAtraso]);
+  }, [msgSel, marcarLidoModo, marcarLidoAtraso]);
 
   // Ajustes otimistas dos contadores reais das abas (Flagged/Files), pra não
   // ficarem estagnados enquanto o $count do servidor não reflete ainda
@@ -5451,15 +5516,11 @@ export function ControlRoomScreen({
     setContAnexos((c) => (c === null ? c : Math.max(0, c + d)));
 
   async function acaoFlag(id: string, novo: boolean) {
-    if (caixaCompartilhadaAtiva) {
-      toast.warning(t.controlRoom.caixaSomenteLeitura);
-      return;
-    }
     // otimista: pinta o item já (nas duas listas) e mexe no count da aba
     mutarNasListas((m) => (m.id === id ? { ...m, sinalizado: novo } : m));
     ajustarContFlagged(novo ? 1 : -1);
     try {
-      await api.crMarcarEmail(id, novo);
+      await api.crMarcarEmail(id, novo, caixaAtiva);
       toastIcone(
         novo ? t.controlRoom.flagAdicionada : t.controlRoom.flagRemovida,
         "",
@@ -5469,15 +5530,13 @@ export function ControlRoomScreen({
       // desfaz
       mutarNasListas((m) => (m.id === id ? { ...m, sinalizado: !novo } : m));
       ajustarContFlagged(novo ? -1 : 1);
-      toast.error(t.controlRoom.erroAcao, { description: String(e) });
+      toast.error(t.controlRoom.erroAcao, {
+        description: descricaoErroEscrita(e, t),
+      });
     }
   }
 
   async function acaoExcluir(ids: string[]) {
-    if (caixaCompartilhadaAtiva) {
-      toast.warning(t.controlRoom.caixaSomenteLeitura);
-      return;
-    }
     if (ids.length === 0) return;
     const idsSet = new Set(ids);
     // Fonte = lista atualmente visível (pasta ou resultados de busca), pra
@@ -5541,10 +5600,12 @@ export function ControlRoomScreen({
         if (pastaSelRef.current === "deleteditems") setRecarga((x) => x + 1);
       }, 2500);
       let ok: string[] = [];
+      let erro: unknown = null;
       try {
         // Dentro da própria Lixeira = exclusão definitiva; senão move pra Lixeira.
-        ok = await api.crExcluirEmails(ids, pastaSel === "deleteditems");
-      } catch {
+        ok = await api.crExcluirEmails(ids, pastaSel === "deleteditems", caixaAtiva);
+      } catch (e) {
+        erro = e;
         ok = [];
       } finally {
         clearInterval(pulso);
@@ -5552,7 +5613,9 @@ export function ControlRoomScreen({
       const falharam = ids.filter((id) => !ok.includes(id));
       if (falharam.length > 0) {
         falharam.forEach((id) => deletadasRef.current.delete(id));
-        toast.error(t.controlRoom.erroAcao);
+        toast.error(t.controlRoom.erroAcao, {
+          description: erro ? descricaoErroEscrita(erro, t) : undefined,
+        });
         setRecarga((n) => n + 1); // ressincroniza lista + contagens do zero
       } else {
         setRecargaPastas((x) => x + 1); // reconcilia contagens reais
@@ -5569,10 +5632,6 @@ export function ControlRoomScreen({
    * recarrega a pasta pra ressincronizar (o item volta se não saiu).
    */
   async function acaoMover(ids: string[], destino: string, rotuloDestino: string) {
-    if (caixaCompartilhadaAtiva) {
-      toast.warning(t.controlRoom.caixaSomenteLeitura);
-      return;
-    }
     if (ids.length === 0 || !destino || destino === pastaSel) return;
     const idsSet = new Set(ids);
     // Fonte = lista visível (pasta, busca ou filtro Graph), como no excluir.
@@ -5633,15 +5692,19 @@ export function ControlRoomScreen({
 
     // 4) Move de verdade em background + reconcile.
     let ok: string[] = [];
+    let erro: unknown = null;
     try {
-      ok = await api.crMoverEmails(ids, destino);
-    } catch {
+      ok = await api.crMoverEmails(ids, destino, caixaAtiva);
+    } catch (e) {
+      erro = e;
       ok = [];
     }
     const falharam = ids.filter((id) => !ok.includes(id));
     if (falharam.length > 0) {
       falharam.forEach((id) => deletadasRef.current.delete(id));
-      toast.error(t.controlRoom.erroAcao);
+      toast.error(t.controlRoom.erroAcao, {
+        description: erro ? descricaoErroEscrita(erro, t) : undefined,
+      });
       setRecarga((n) => n + 1); // ressincroniza lista + contagens do zero
     } else {
       setRecargaPastas((x) => x + 1); // reconcilia as contagens reais
@@ -6018,7 +6081,7 @@ export function ControlRoomScreen({
           caixaAtiva={caixaAtiva}
           onSelecionarCaixa={setCaixaAtiva}
           onAbrirAdicionarCaixa={() => setAdicionarCaixaAberto(true)}
-          somenteLeitura={caixaCompartilhadaAtiva}
+          caixaCompartilhada={caixaCompartilhadaAtiva}
           colapsada={!sidebarAberta}
           agendaAberta={agendaAberta}
           onToggleAgenda={() => setAgendaAberta((v) => !v)}
@@ -6081,7 +6144,7 @@ export function ControlRoomScreen({
               onResponderTodos={() => detalheRef.current?.responderTodos()}
               onEncaminhar={() => detalheRef.current?.encaminhar()}
               onCompor={() => setNovaAberta(true)}
-              somenteLeitura={caixaCompartilhadaAtiva}
+              envioBloqueado={caixaCompartilhadaAtiva && !sharedEnvioEscopoOk}
               t={t}
               idioma={idioma}
             />
@@ -6093,7 +6156,6 @@ export function ControlRoomScreen({
                 n={selecionados.size}
                 onExcluir={() => acaoExcluir([...selecionados])}
                 onLimpar={() => setSelecionados(new Set())}
-                somenteLeitura={caixaCompartilhadaAtiva}
                 t={t}
               />
             ) : (
@@ -6102,7 +6164,7 @@ export function ControlRoomScreen({
                 id={dadosDaCaixaAtiva ? msgSel : null}
                 userEmail={user.email}
                 mailbox={caixaAtiva}
-                somenteLeitura={caixaCompartilhadaAtiva}
+                envioBloqueado={caixaCompartilhadaAtiva && !sharedEnvioEscopoOk}
                 sinalizado={msgAtual?.sinalizado ?? false}
                 lido={msgAtual?.lido ?? false}
                 onFlag={acaoFlag}
@@ -6126,7 +6188,15 @@ export function ControlRoomScreen({
       </div>
 
       <EventoDialog id={eventoSel} userEmail={user.email} onClose={() => setEventoSel(null)} />
-      <NovaMensagemModal aberto={novaAberta} onClose={() => setNovaAberta(false)} t={t} />
+      <NovaMensagemModal
+        aberto={novaAberta}
+        onClose={() => setNovaAberta(false)}
+        caixas={caixasCompartilhadas}
+        remetenteInicial={caixaAtiva}
+        emailPessoal={user.email}
+        sharedEnvioDisponivel={sharedEnvioEscopoOk}
+        t={t}
+      />
 
       {/* Dialog "Adicionar caixa compartilhada" (#111). Montado só quando abre
           (com `key`) pra nascer limpo. Se o token não traz Mail.Read.Shared,
