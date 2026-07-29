@@ -1,7 +1,7 @@
 # Microsoft Graph — escopos delegados concedidos (app GALAXIE Toolbox)
 
 Fonte: Entra ID → app registration → API permissions, **admin consent concedido para "Galaxie Works Ltd"**.
-Atualizado: **2026-07-29 — 77 escopos** (53 → 63 → 75 → **77**; última rodada: **Application.Read.All + ServicePrincipalEndpoint.Read.All** — apps/SPs do tenant → melhora a tela **Apps (M365 Copilot > Apps)**. Antes: Online Meetings, Directory/RoleManagement, Calendars).
+Atualizado: **2026-07-29 — 84 escopos** (53 → 63 → 75 → 77 → **84**; última rodada: **MultiTenantOrganization.*** + bloco **OrgSettings-*** (Apps&Services, Forms, M365Install, To Do RW) — settings org-wide/admin. Antes: Application/ServicePrincipal, Online Meetings, Directory/RoleManagement, Calendars).
 Tipo: todos **Delegated** (o app é public client + PKCE, sem secret). "Admin?" = exige consentimento de admin.
 
 > ⚠️ Adicionar escopo no Entra **não basta**: o app só recebe o token com o escopo se ele estiver na lista pedida em `config.rs`/auth e o usuário **relogar** (refresh com escopo novo). Muitos recursos exigem reconsentimento/novo login.
@@ -72,10 +72,18 @@ Tipo: todos **Delegated** (o app é public client + PKCE, sem secret). "Admin?" 
 | UserNotification.ReadWrite.CreatedByApp | Não |
 | Analytics.Read | Não |
 
-## Aplicações / Service Principals do tenant  ⭐ NOVO
+## Aplicações / Service Principals do tenant
 | Escopo | Admin? |
 |---|---|
 | Application.Read.All · ServicePrincipalEndpoint.Read.All | **Sim** |
+
+## Org settings / Multi-tenant (admin)  ⭐ NOVO
+| Escopo | Admin? |
+|---|---|
+| MultiTenantOrganization.Read.All | **Sim** |
+| MultiTenantOrganization.ReadBasic.All | Não |
+| OrgSettings-AppsAndServices.Read.All · OrgSettings-Forms.Read.All · OrgSettings-Microsoft365Install.Read.All | **Sim** |
+| OrgSettings-Todo.Read.All · OrgSettings-Todo.ReadWrite.All | **Sim** |
 
 ## Admin / Relatórios / Auditoria
 | Escopo | Admin? |
@@ -91,4 +99,5 @@ Tipo: todos **Delegated** (o app é public client + PKCE, sem secret). "Admin?" 
   - `Chat.Read/ReadWrite`, `ChatMessage.*`, `TeamsActivity.Read` → IA lê/age em chats.
 - **People #167 (Enrich):** `User.Read.All` + `ProfilePhoto.Read.All` → enrich por diretório (`/users/{id}`) e foto agora plenamente cobertos.
 - **File previews #178:** `Files.ReadWrite` (já) → rota "Graph convert-to-PDF" confirmada.
-- **Tela Apps (M365 Copilot > Apps):** `Application.Read.All` + `ServicePrincipalEndpoint.Read.All` → listar os **apps/service principals reais do tenant** da org (o que está de fato disponível/publicado), em vez do catálogo estático de `lib/apps.ts`. Abre uma melhoria concreta pra Apps ficar tenant-aware.
+- **Tela Apps (M365 Copilot > Apps):** `Application.Read.All` + `ServicePrincipalEndpoint.Read.All` (+ `OrgSettings-Microsoft365Install.Read.All`) → listar os **apps/service principals reais do tenant** da org (o que está de fato disponível/publicado), em vez do catálogo estático de `lib/apps.ts`. Abre uma melhoria concreta pra Apps ficar tenant-aware.
+- **Astro #180 / admin da org:** `MultiTenantOrganization.*` + `OrgSettings-*` → base pra um **painel de admin/governança da org** (settings de Apps&Services, Forms, To Do org-wide, instalação M365) e pro contexto multi-tenant do modelo de créditos. `OrgSettings-Todo.ReadWrite.All` permite configurar To Do org-wide (relevante pro Atoms/To-Dos).
