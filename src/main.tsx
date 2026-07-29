@@ -31,10 +31,10 @@ function ehJanelaSplash(): boolean {
 const raiz = createRoot(document.getElementById('root')!)
 
 if (ehJanelaSplash()) {
-  // Sem depender de transparência (no Windows não é confiável): pinta
-  // <html>/<body>/#root de #171A30 para a janela 400×400 inteira ser #171A30. O
-  // círculo (também #171A30) funde os cantos no fundo, então vê-se só o círculo
-  // do vídeo — sem quadrado visível.
+  // Janela transparente (círculo flutuante): <html>/<body>/#root precisam ser
+  // vazados para só o círculo aparecer — senão o `bg-background` do tema pinta o
+  // quadrado 400×400 inteiro e mata a transparência. No Windows quem faz os
+  // cantos realmente transparentes é o window-vibrancy (Rust, no setup).
   document.documentElement.classList.add('janela-splash')
   raiz.render(<SplashScreen />)
 } else {

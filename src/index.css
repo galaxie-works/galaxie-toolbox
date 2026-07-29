@@ -221,16 +221,17 @@
   #root {
     height: 100%;
   }
-  /* Janela splash (#164): a janela Tauri `splashscreen` é opaca (transparent:false
-     — no Windows a transparência não é confiável). Pintamos <html>/<body>/#root
-     de #171A30 para a janela 400×400 inteira ser #171A30; o círculo (também
-     #171A30) funde os cantos no fundo. Sem isto, o `bg-background` do tema
-     pintaria o quadrado com outra cor e a emenda apareceria. O `main.tsx` põe
-     esta classe no <html> antes do primeiro paint. */
+  /* Janela splash (#164): a janela Tauri `splashscreen` é TRANSPARENTE — só o
+     círculo flutuante aparece (os cantos deixam ver o desktop, via
+     window-vibrancy no Rust). Por isso <html>/<body>/#root precisam ser
+     vazados: sem isto o `bg-background` do tema pintaria o quadrado 400×400
+     inteiro e mataria a transparência. SÓ a div do círculo (splash-screen.tsx)
+     tem `background:#171A30`. O `main.tsx` põe esta classe no <html> antes do
+     primeiro paint. */
   html.janela-splash,
   html.janela-splash body,
   html.janela-splash #root {
-    background: #171a30 !important;
+    background: transparent !important;
     overflow: hidden;
   }
   body {

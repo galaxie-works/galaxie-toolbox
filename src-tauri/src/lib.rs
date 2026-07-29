@@ -1043,6 +1043,30 @@ pub fn run() {
                     }
                 }
             }
+
+            // Splash flutuante (#164): no Windows o `transparent:true` do Tauri
+            // sozinho NAO composita os cantos — a janela renderiza um quadrado
+            // opaco. O window-vibrancy aplica um efeito de janela (blur) que faz
+            // os cantos FORA do circulo ficarem realmente transparentes: ve-se o
+            // desktop atras e o circulo (div #171A30 opaca com o video) fica
+            // flutuando. Sem `expect`/`unwrap` que derrube o app: se o efeito
+            // falhar (versao de Windows sem suporte, etc.), loga e segue — o
+            // splash apenas nao ganha a transparencia, o boot continua normal.
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(splash) = app.get_webview_window("splashscreen") {
+                    // Tint escuro leve (18,18,18, alpha 125) casado com o fundo
+                    // do splash; mantem os cantos discretos sem frost pesado.
+                    if let Err(e) =
+                        window_vibrancy::apply_blur(&splash, Some((18, 18, 18, 125)))
+                    {
+                        log::warn!(
+                            "splash #164: window-vibrancy apply_blur falhou ({e:?}); \
+                             os cantos podem nao ficar transparentes"
+                        );
+                    }
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

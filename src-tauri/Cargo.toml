@@ -41,6 +41,11 @@ argon2 = "0.5"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+# Splash flutuante (#164): no Windows o `transparent:true` do Tauri sozinho nao
+# composita os cantos (renderiza quadrado). O window-vibrancy aplica o efeito de
+# janela (blur/acrylic) que faz os cantos fora do circulo ficarem realmente
+# transparentes (ve-se o desktop). So no Windows.
+window-vibrancy = "0.6"
 # DPAPI para cifrar a sessao em disco (o Cofre de Credenciais tem limite de
 # 2560 bytes por blob e o refresh token da Microsoft nao cabe).
 winapi = { version = "0.3", features = ["dpapi", "wincrypt", "minwindef", "winbase"] }
