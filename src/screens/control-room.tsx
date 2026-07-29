@@ -116,6 +116,7 @@ import {
   ComporMensagem,
   type ComporMensagemHandle,
 } from "@/components/compose/compor-mensagem";
+import { NovaMensagemModal } from "@/components/compose/nova-mensagem-modal";
 import * as AnimatedButton from "@/components/morphin/animated-border-button";
 import SuccessIcon from "@/components/ui/icons/success";
 import TrashIcon from "@/components/ui/icons/trash";
@@ -124,6 +125,10 @@ import { TextMorph } from "torph/react";
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
+import {
+  CAIXA_PROPRIA,
+  descricaoErroEnvio,
+} from "@/lib/bridge-compose";
 import {
   montarConversasEmail,
   type ConversaEmail,
@@ -210,7 +215,6 @@ import {
   ShieldCheck,
   ShieldX,
   SlidersHorizontal,
-  Star,
   Trash2,
   TriangleAlert,
   User,
@@ -229,6 +233,9 @@ import {
 } from "react";
 import { useAtalhos, isTypingTarget, ehModPrincipal } from "@/hooks/use-atalhos";
 import { AtalhosAjuda } from "@/components/atalhos-ajuda";
+
+/** #109 removeu o esconder-escopo em 400; a coleção canônica permanece vazia. */
+const FILTROS_OCULTOS = new Set<string>();
 
 // --- helpers de data/horário ------------------------------------------------
 
@@ -850,17 +857,6 @@ function descricaoErroEscrita(
     : detalhe;
 }
 
-function descricaoErroEnvio(
-  erro: unknown,
-  mailbox: string,
-  t: ReturnType<typeof useIdioma>["t"]
-) {
-  const detalhe = String(erro);
-  return mailbox !== CAIXA_PROPRIA && /\b403\b|sem permissão|permission/i.test(detalhe)
-    ? t.controlRoom.caixaSemPermissaoEnvio
-    : detalhe;
-}
-
 /** Contexto exibido no painel de detalhe quando há multi-seleção (c-empty-15). */
 function MultiSelecaoContexto({
   n,
@@ -1180,8 +1176,6 @@ function DialogNomePasta({
 // Caixas compartilhadas (#111) — seletor + dialog "Adicionar caixa…"
 // ===========================================================================
 
-/** Valor da própria caixa (/me), o padrão do seletor. */
-const CAIXA_PROPRIA = "me";
 /** Sentinela do item "Adicionar caixa…": nunca vira caixa ativa — só abre o
  *  dialog (o Select do Radix precisa de um `value` não-vazio no item). */
 const CAIXA_ADICIONAR = "__adicionar__";
@@ -1261,72 +1255,6 @@ function SeletorCaixa({
         </SelectItem>
       </SelectContent>
     </Select>
-  );
-}
-
-/** Seletor canônico de remetente do compose (#114). Reusa o mesmo Select e a
- * mesma representação visual do seletor de caixa do sidebar; o Graph decide
- * Send As vs Send on Behalf conforme a permissão configurada no Exchange. */
-function SeletorRemetente({
-  caixas,
-  valor,
-  onChange,
-  emailPessoal,
-  sharedDisponivel,
-  t,
-}: {
-  caixas: string[];
-  valor: string;
-  onChange: (v: string) => void;
-  emailPessoal?: string | null;
-  sharedDisponivel: boolean;
-  t: ReturnType<typeof useIdioma>["t"];
-}) {
-  return (
-    <div className="border-b px-3 py-2">
-      <div className="flex items-center gap-3">
-        <span className="w-16 shrink-0 text-xs text-muted-foreground">
-          {t.controlRoom.enviarDe}
-        </span>
-        <Select value={valor} onValueChange={onChange}>
-          <SelectTrigger className="h-9 min-w-0 flex-1" aria-label={t.controlRoom.enviarDe}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent position="popper">
-            <SelectGroup>
-              <SelectItem value={CAIXA_PROPRIA}>
-                <span className="flex items-center gap-2">
-                  <Inbox className="size-4 shrink-0 text-muted-foreground" />
-                  <span>{t.controlRoom.caixaMinha}</span>
-                  {emailPessoal && (
-                    <span className="truncate text-xs text-muted-foreground">
-                      {emailPessoal}
-                    </span>
-                  )}
-                </span>
-              </SelectItem>
-              {caixas.map((caixa) => (
-                <SelectItem
-                  key={caixa}
-                  value={caixa}
-                  disabled={!sharedDisponivel}
-                >
-                  <span className="flex items-center gap-2">
-                    <Mailbox className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{caixa}</span>
-                  </span>
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </div>
-      {!sharedDisponivel && caixas.length > 0 && (
-        <p className="mt-1 pl-19 text-xs text-muted-foreground">
-          {t.controlRoom.caixaEnvioRelogin}
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -2391,9 +2319,6 @@ function MessageList({
   pastasCarregando,
   onAbrirMover,
   onMover,
-  naoLidosPasta,
-  contFlagged,
-  contAnexos,
   filtrosOcultos,
   marcarLidoModo,
   marcarLidoAtraso,
@@ -2426,9 +2351,6 @@ function MessageList({
   pastasCarregando: boolean;
   onAbrirMover: () => void;
   onMover: (ids: string[], destino: string, rotulo: string) => void;
-  naoLidosPasta: number;
-  contFlagged: number | null;
-  contAnexos: number | null;
   filtrosOcultos: Set<string>;
   marcarLidoModo: MarcarLidoModo;
   marcarLidoAtraso: number;
@@ -3996,10 +3918,13 @@ const MessageDetail = forwardRef<
   // Segurança do leitor (#91): Reply-To + headers de autenticação. Best-effort,
   // carregado à parte do corpo pra não atrasar a leitura.
   const seg = useAppStore((s) => s.leitorSeguranca);
-  const modo = useAppStore((s) => s.leitorModo);
+  const composeModo = useAppStore((s) => s.composeModo);
+  const modo = composeModo === "novo" ? null : composeModo;
+  const composeGeracao = useAppStore((s) => s.composeGeracao);
+  const abrirCompose = useAppStore((s) => s.abrirCompose);
+  const fecharCompose = useAppStore((s) => s.fecharCompose);
   const carregarLeitor = useAppStore((s) => s.carregarLeitor);
   const limparLeitor = useAppStore((s) => s.limparLeitor);
-  const setModo = useAppStore((s) => s.setLeitorModo);
   const comporRef = useRef<ComporMensagemHandle>(null);
   const textosUndoSend = useMemo(
     () => ({
@@ -4021,24 +3946,30 @@ const MessageDetail = forwardRef<
   const { getFoto, pedirFotos } = useFotos();
 
   // Atalhos r/a/f: só fazem sentido com uma mensagem aberta (`id`). Abrir o
-  // Sheet reusa exatamente o mesmo `setModo` dos botões da toolbar.
+  // Sheet reusa exatamente a mesma ação do compose-slice usada pela toolbar.
   useImperativeHandle(
     ref,
     () => ({
-      responder: () => id && !envioBloqueado && setModo("responder"),
-      responderTodos: () => id && !envioBloqueado && setModo("responderTodos"),
-      encaminhar: () => id && !envioBloqueado && setModo("encaminhar"),
+      responder: () =>
+        id && !envioBloqueado && abrirCompose("responder", mailbox),
+      responderTodos: () =>
+        id && !envioBloqueado && abrirCompose("responderTodos", mailbox),
+      encaminhar: () =>
+        id && !envioBloqueado && abrirCompose("encaminhar", mailbox),
     }),
-    [id, envioBloqueado, setModo]
+    [id, envioBloqueado, mailbox, abrirCompose]
   );
 
   useEffect(() => {
+    // Trocar/fechar a mensagem invalida qualquer rascunho de resposta ligado
+    // ao leitor anterior, preservando o reset que antes vivia no reader-slice.
+    fecharCompose();
     if (!id) {
       limparLeitor();
       return;
     }
     void carregarLeitor({ id, mailbox });
-  }, [id, mailbox, carregarLeitor, limparLeitor]);
+  }, [id, mailbox, carregarLeitor, limparLeitor, fecharCompose]);
 
   // Deriva veredito de autenticação (SPF/DKIM/DMARC) e divergência de Reply-To
   // a partir dos headers brutos — lógica pura, testada em seguranca-leitor.ts.
@@ -4125,7 +4056,7 @@ const MessageDetail = forwardRef<
           t.controlRoom.enviadoDescricao,
           "enviado"
         );
-        setModo(null);
+        fecharCompose();
         onMudou();
       },
       onErro: (erro) => {
@@ -4203,7 +4134,7 @@ const MessageDetail = forwardRef<
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setModo("responder")}
+            onClick={() => abrirCompose("responder", mailbox)}
             disabled={envioBloqueado}
           >
             <Reply /> {t.controlRoom.responder}
@@ -4216,7 +4147,7 @@ const MessageDetail = forwardRef<
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setModo("responderTodos")}
+            onClick={() => abrirCompose("responderTodos", mailbox)}
             disabled={envioBloqueado}
           >
             <ReplyAll /> {t.controlRoom.responderTodos}
@@ -4229,7 +4160,7 @@ const MessageDetail = forwardRef<
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setModo("encaminhar")}
+            onClick={() => abrirCompose("encaminhar", mailbox)}
             disabled={envioBloqueado}
           >
             <Forward /> {t.controlRoom.encaminhar}
@@ -4342,7 +4273,7 @@ const MessageDetail = forwardRef<
           citação do original vai no envio (fluxo do backend). */}
       <Sheet
         open={modo !== null}
-        onOpenChange={(o) => !o && !envioOcupado && setModo(null)}
+        onOpenChange={(o) => !o && !envioOcupado && fecharCompose()}
       >
         <SheetContent
           side="right"
@@ -4373,7 +4304,7 @@ const MessageDetail = forwardRef<
             >
               {modo && (
                 <ComporMensagem
-                  key={modo}
+                  key={composeGeracao}
                   ref={comporRef}
                   mostrarDestinatarios={modo === "encaminhar"}
                   contextoAssinatura="resposta"
@@ -4397,7 +4328,7 @@ const MessageDetail = forwardRef<
           <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
             <Button
               variant="ghost"
-              onClick={() => setModo(null)}
+              onClick={fecharCompose}
               disabled={envioOcupado}
             >
               {t.controlRoom.cancelar}
@@ -4678,172 +4609,6 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   );
 }
 
-// --- modal "Nova mensagem" -------------------------------------------------
-
-function NovaMensagemModal({
-  aberto,
-  onClose,
-  caixas,
-  remetenteInicial,
-  emailPessoal,
-  sharedEnvioDisponivel,
-  t,
-}: {
-  aberto: boolean;
-  onClose: () => void;
-  caixas: string[];
-  remetenteInicial: string;
-  emailPessoal?: string | null;
-  sharedEnvioDisponivel: boolean;
-  t: ReturnType<typeof useIdioma>["t"];
-}) {
-  const comporRef = useRef<ComporMensagemHandle>(null);
-  const [remetente, setRemetente] = useState(remetenteInicial);
-  const textosUndoSend = useMemo(
-    () => ({
-      tituloPendente: (segundos: number) =>
-        preencher(t.controlRoom.envioPendente, { n: segundos }),
-      descricaoPendente: t.controlRoom.envioPendenteDescricao,
-      rotuloDesfazer: t.controlRoom.desfazerEnvio,
-      envioCancelado: t.controlRoom.envioCancelado,
-      enviando: t.controlRoom.enviandoAgora,
-    }),
-    [t]
-  );
-  const {
-    agendar: agendarUndoSend,
-    estado: estadoUndoSend,
-    ocupado: envioOcupado,
-  } = useUndoSend(textosUndoSend);
-
-  useEffect(() => {
-    if (!aberto) return;
-    setRemetente(
-      remetenteInicial === CAIXA_PROPRIA || sharedEnvioDisponivel
-        ? remetenteInicial
-        : CAIXA_PROPRIA
-    );
-  }, [aberto, remetenteInicial, sharedEnvioDisponivel]);
-
-  const textos = {
-    para: t.controlRoom.para,
-    cc: t.controlRoom.ccLabel,
-    cco: t.controlRoom.ccoLabel,
-    assunto: t.controlRoom.assunto,
-    assuntoPlaceholder: t.controlRoom.assuntoPlaceholder,
-    corpoPlaceholder: t.controlRoom.corpoPlaceholder,
-    mostrarCcCco: t.controlRoom.mostrarCcCco,
-  };
-
-  function enviar() {
-    if (envioOcupado) return;
-    const c = comporRef.current;
-    const para = [...(c?.getPara() ?? [])];
-    const cc = [...(c?.getCc() ?? [])];
-    const cco = [...(c?.getCco() ?? [])];
-    if (para.length === 0) {
-      toast.error(t.controlRoom.informeDestino);
-      return;
-    }
-    const assunto = c?.getAssunto() ?? "";
-    const corpo = c?.getHtml() ?? "";
-    const anexos = c?.getAnexos() ?? [];
-    const remetenteAgendado = remetente;
-
-    agendarUndoSend({
-      enviar: async () => {
-        await api.crEnviarNovo(
-          para,
-          cc,
-          cco,
-          assunto,
-          corpo,
-          anexos,
-          remetenteAgendado
-        );
-        api
-          .crSalvarContatos(
-            [...para, ...cc, ...cco].map((e) => ({ nome: e, email: e }))
-          )
-          .catch(() => {});
-      },
-      onConcluido: () => {
-        toastIcone(
-          t.controlRoom.enviado,
-          t.controlRoom.enviadoDescricao,
-          "enviado"
-        );
-        onClose();
-      },
-      onErro: (erro) => {
-        toast.error(t.controlRoom.erroEnvio, {
-          description: descricaoErroEnvio(erro, remetenteAgendado, t),
-        });
-      },
-    });
-  }
-
-  // Sheet lateral (não modal-bloqueante) com ~50% da largura: assim dá pra
-  // consultar/copiar de e-mails atrás enquanto compõe.
-  return (
-    <Sheet
-      open={aberto}
-      onOpenChange={(o) => !o && !envioOcupado && onClose()}
-    >
-      <SheetContent
-        side="right"
-        showCloseButton={!envioOcupado}
-        className="flex w-1/2 flex-col gap-0 p-0 sm:max-w-[50vw]"
-      >
-        <SheetHeader className="border-b px-4 py-3">
-          <SheetTitle className="text-left">{t.controlRoom.novaMensagem}</SheetTitle>
-        </SheetHeader>
-        <div
-          className={cn(
-            "flex min-h-0 flex-1 flex-col transition-opacity",
-            envioOcupado && "opacity-60"
-          )}
-          aria-busy={envioOcupado}
-          inert={envioOcupado ? true : undefined}
-        >
-          <SeletorRemetente
-            caixas={caixas}
-            valor={remetente}
-            onChange={setRemetente}
-            emailPessoal={emailPessoal}
-            sharedDisponivel={sharedEnvioDisponivel}
-            t={t}
-          />
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <ComporMensagem
-              key={String(aberto)}
-              ref={comporRef}
-              mostrarAssunto
-              contextoAssinatura="novo"
-              textos={textos}
-            />
-          </div>
-        </div>
-        <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
-          <Button variant="ghost" onClick={onClose} disabled={envioOcupado}>
-            {t.controlRoom.cancelar}
-          </Button>
-          <Button onClick={enviar} disabled={envioOcupado}>
-            {envioOcupado ? <Spinner className="size-4" /> : <Send />}
-            {estadoUndoSend.fase === "pendente"
-              ? preencher(t.controlRoom.envioPendente, {
-                  n: estadoUndoSend.segundosRestantes,
-                })
-              : estadoUndoSend.fase === "enviando"
-                ? t.controlRoom.enviandoAgora
-                : t.controlRoom.enviar}
-          </Button>
-        </SheetFooter>
-      </SheetContent>
-    </Sheet>
-  );
-}
-
 // ===========================================================================
 // Tela
 // ===========================================================================
@@ -4988,17 +4753,11 @@ export function ControlRoomScreen({
   }, []);
   const [temMais, setTemMais] = useState(false);
   const [carregandoMais, setCarregandoMais] = useState(false);
-  const [novaAberta, setNovaAberta] = useState(false);
+  const abrirCompose = useAppStore((s) => s.abrirCompose);
   // Handle do leitor para os atalhos r/a/f (#28) abrirem o Sheet de resposta.
   const detalheRef = useRef<MessageDetailHandle>(null);
-  // Contadores REAIS da pasta (não só o carregado) pras abas Flagged/Files.
-  const [contFlagged, setContFlagged] = useState<number | null>(null);
-  const [contAnexos, setContAnexos] = useState<number | null>(null);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
-  // #109: mantido sempre vazio (o D6 de esconder escopo no 400 foi removido — o
-  // filtro agora só mostra o empty state). A prop segue no filho por compat.
-  const [filtrosOcultos] = useState<Set<string>>(new Set());
   const carregandoMaisRef = useRef(false);
   // pasta atual (pra closures assíncronas que precisam do valor mais novo).
   const pastaSelRef = useRef(pastaSel);
@@ -5137,58 +4896,6 @@ export function ControlRoomScreen({
   );
   const pastaCargaAcessoNegado =
     pastas?.some((p) => p.id === pastaCarga && p.acessoNegado) ?? false;
-
-  // Contadores reais das abas Flagged/Files (na pasta inteira). Só refaz na
-  // TROCA de pasta / refresh manual — NÃO em cada recargaPastas (o polling do
-  // delete bumpava recargaPastas e os refetch em rajada resolviam fora de ordem,
-  // fazendo o count piscar 8↔15). Entre refetches, os ajustes otimistas
-  // (flag/excluir) mantêm o número certo.
-  //
-  // Zera na troca de pasta / refresh (mostra o skeleton), mas NÃO na troca de
-  // ORDENAÇÃO: reordenar recarrega a lista, não muda os contadores da pasta —
-  // zerar ali só faria piscar null→n à toa. Segue `pastaCarga` (debounced): na
-  // navegação rápida não pisca a cada clique, só na pasta final.
-  useEffect(() => {
-    setContFlagged(null);
-    setContAnexos(null);
-  }, [pastaCarga, recarga]);
-
-  // #87 — foreground-first + $batch: os contadores das abas são FUNDO. Só
-  // disparam DEPOIS que a lista visível carrega (`mensagens !== null`), pra carga
-  // inicial gastar o pool primeiro na pasta que o usuário vê. `crContadores` junta
-  // Flagged + Files num único `$batch` do Graph (1 request em vez de 2 `$count`).
-  // O `contadoresKeyRef` evita refazer a chamada quando o foreground recicla por
-  // OUTRA razão (troca de ordenação recarrega a lista, mas os contadores da pasta
-  // não mudam) — só (re)busca quando a pasta ou o refresh (recarga) mudam.
-  const foregroundPronto = mensagens !== null;
-  const contadoresKeyRef = useRef<string>("");
-  useEffect(() => {
-    if (!foregroundPronto) return; // espera a lista (foreground) antes do fundo
-    if (caixaDados !== caixaAtiva || pastaCarga !== pastaSel || pastaCargaAcessoNegado) return;
-    const chave = `${caixaAtiva}|${pastaCarga}|${recarga}`;
-    if (contadoresKeyRef.current === chave) return; // já buscado p/ esta pasta
-    contadoresKeyRef.current = chave;
-    let vivo = true;
-    api
-      .crContadores(pastaCarga, caixaAtiva)
-      .then((c) => {
-        if (!vivo) return;
-        setContFlagged(c.flagged);
-        setContAnexos(c.anexos);
-      })
-      .catch(() => {});
-    return () => {
-      vivo = false;
-    };
-  }, [
-    caixaAtiva,
-    caixaDados,
-    pastaCarga,
-    pastaSel,
-    pastaCargaAcessoNegado,
-    recarga,
-    foregroundPronto,
-  ]);
 
   // Detecção central de e-mails novos na Inbox: compara o topo da lista com o
   // último visto e dispara o toast rico (c-sonner-9). Chamada tanto pelo poll
@@ -5496,18 +5203,9 @@ export function ControlRoomScreen({
     return () => window.clearTimeout(timer);
   }, [msgSel, marcarLidoModo, marcarLidoAtraso]);
 
-  // Ajustes otimistas dos contadores reais das abas (Flagged/Files), pra não
-  // ficarem estagnados enquanto o $count do servidor não reflete ainda
-  // (QA #4 flag; QA #14 excluir e-mail com anexo).
-  const ajustarContFlagged = (d: number) =>
-    setContFlagged((c) => (c === null ? c : Math.max(0, c + d)));
-  const ajustarContAnexos = (d: number) =>
-    setContAnexos((c) => (c === null ? c : Math.max(0, c + d)));
-
   async function acaoFlag(id: string, novo: boolean) {
-    // otimista: pinta o item já (nas duas listas) e mexe no count da aba
+    // otimista: pinta o item já nas duas listas.
     mutarNasListas((m) => (m.id === id ? { ...m, sinalizado: novo } : m));
-    ajustarContFlagged(novo ? 1 : -1);
     try {
       await api.crMarcarEmail(id, novo, caixaAtiva);
       toastIcone(
@@ -5518,7 +5216,6 @@ export function ControlRoomScreen({
     } catch (e) {
       // desfaz
       mutarNasListas((m) => (m.id === id ? { ...m, sinalizado: !novo } : m));
-      ajustarContFlagged(novo ? -1 : 1);
       toast.error(t.controlRoom.erroAcao, {
         description: descricaoErroEscrita(e, t),
       });
@@ -5538,14 +5235,11 @@ export function ControlRoomScreen({
           : mensagens) ?? [];
     const removidas = fonte.filter((m) => idsSet.has(m.id));
     const naoLidosFora = removidas.filter((m) => !m.lido).length;
-    const anexosFora = removidas.filter((m) => m.temAnexos).length;
 
     // 1) OTIMISTA: tira da tela na hora (das duas listas) + marca como
     //    "deletada" (pro backfill não trazê-las de volta) + toast imediato.
     ids.forEach((id) => deletadasRef.current.add(id));
     removerNasListas(idsSet);
-    // count real da aba Files reflete na hora (QA #14: senão piscava no refetch)
-    if (anexosFora > 0) ajustarContAnexos(-anexosFora);
     if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
     // NÃO limpamos a seleção aqui: o BotaoExcluir precisa ficar montado pra
     // completar a animação (processando → sucesso) e só então limpa via
@@ -5632,8 +5326,6 @@ export function ControlRoomScreen({
           : mensagens) ?? [];
     const movidas = fonte.filter((m) => idsSet.has(m.id));
     const naoLidosFora = movidas.filter((m) => !m.lido).length;
-    const anexosFora = movidas.filter((m) => m.temAnexos).length;
-    const flaggedFora = movidas.filter((m) => m.sinalizado).length;
 
     // 1) OTIMISTA: tira da tela e marca como "saiu daqui" (mesmo registro que o
     //    excluir usa) pra o backfill/paginação não trazer as mensagens de volta.
@@ -5642,8 +5334,6 @@ export function ControlRoomScreen({
     // Invalida o cache do DESTINO (#108): a lista de lá agora está desatualizada
     // (ganhou estes itens) — força rebusca na próxima visita em vez de servir stale.
     limparCachePasta(chaveCache(destino));
-    if (anexosFora > 0) ajustarContAnexos(-anexosFora);
-    if (flaggedFora > 0) ajustarContFlagged(-flaggedFora);
     removerDaSelecao(ids);
 
     // 2) Contadores do sidebar: origem −N, destino +N (só se o destino for uma
@@ -6010,7 +5700,7 @@ export function ControlRoomScreen({
       "Outlook"
     );
   // "New mail" — abre o nosso composer em modal.
-  const novoEmailModal = () => setNovaAberta(true);
+  const novoEmailModal = () => abrirCompose("novo", caixaAtiva);
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -6088,10 +5778,7 @@ export function ControlRoomScreen({
               pastasCarregando={arvorePendentes.length > 0}
               onAbrirMover={() => setPedirArvore(true)}
               onMover={acaoMover}
-              naoLidosPasta={pastaAtual?.naoLidos ?? 0}
-              contFlagged={contFlagged}
-              contAnexos={contAnexos}
-              filtrosOcultos={filtrosOcultos}
+              filtrosOcultos={FILTROS_OCULTOS}
               marcarLidoModo={marcarLidoModo}
               marcarLidoAtraso={marcarLidoAtraso}
               onMarcarLidoModo={setMarcarLidoModo}
@@ -6099,7 +5786,7 @@ export function ControlRoomScreen({
               onResponder={() => detalheRef.current?.responder()}
               onResponderTodos={() => detalheRef.current?.responderTodos()}
               onEncaminhar={() => detalheRef.current?.encaminhar()}
-              onCompor={() => setNovaAberta(true)}
+              onCompor={novoEmailModal}
               envioBloqueado={caixaCompartilhadaAtiva && !sharedEnvioEscopoOk}
               t={t}
               idioma={idioma}
@@ -6145,13 +5832,9 @@ export function ControlRoomScreen({
 
       <EventoDialog userEmail={user.email} />
       <NovaMensagemModal
-        aberto={novaAberta}
-        onClose={() => setNovaAberta(false)}
         caixas={caixasCompartilhadas}
-        remetenteInicial={caixaAtiva}
         emailPessoal={user.email}
         sharedEnvioDisponivel={sharedEnvioEscopoOk}
-        t={t}
       />
 
       {/* Dialog "Adicionar caixa compartilhada" (#111). Montado só quando abre
