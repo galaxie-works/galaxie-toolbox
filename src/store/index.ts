@@ -39,6 +39,10 @@ import {
   createSelectionSlice,
   type SelectionSlice,
 } from "./selection-slice";
+import {
+  createReaderSlice,
+  type ReaderSlice,
+} from "./reader-slice";
 import { lerTemplates } from "@/lib/templates";
 import {
   aplicarAltoContraste,
@@ -92,7 +96,8 @@ export type AppStore =
   & SettingsUiSlice
   & PersonalizationSlice
   & BridgeSlice
-  & SelectionSlice;
+  & SelectionSlice
+  & ReaderSlice;
 
 /** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
 type AppPersistido = UiPersistido &
@@ -366,6 +371,8 @@ export const useAppStore = create<AppStore>()(
       ...createBridgeSlice(...a),
       // Seleção do Bridge (#128) é estado de sessão, fora do partialize.
       ...createSelectionSlice(...a),
+      // Conteúdo do leitor (#130) é estado de sessão, fora do partialize.
+      ...createReaderSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",

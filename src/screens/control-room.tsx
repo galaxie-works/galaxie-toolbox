@@ -154,13 +154,10 @@ import { cn, comLoginHint } from "@/lib/utils";
 import type {
   AnexoEmail,
   AppUser,
-  EmailDetalhe,
   EmailItem,
   EventoAgenda,
   EventoDetalhe,
-  InsightsRemetente,
   PastaEmail,
-  SegurancaEmail,
 } from "@/lib/types";
 import {
   analisarLink,
@@ -3773,46 +3770,14 @@ function InsightsRemetentePopover({
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
 }) {
-  const [aberto, setAberto] = useState(false);
-  const [estado, setEstado] = useState<"idle" | "carregando" | "ok" | "erro">("idle");
-  const [dados, setDados] = useState<InsightsRemetente | null>(null);
-  const [tentativa, setTentativa] = useState(0);
-  // E-mail (+ tentativa) já solicitado — evita refetch a cada reabertura mas
-  // permite o "tentar de novo". NÃO metemos `estado` nas deps do efeito de
-  // busca: como o efeito seta `estado`, isso faria a limpeza cancelar a própria
-  // chamada em voo (ficava preso no skeleton).
-  const pedidoRef = useRef<string | null>(null);
-
-  // Troca de remetente → esquece o cache e fecha.
-  useEffect(() => {
-    pedidoRef.current = null;
-    setEstado("idle");
-    setDados(null);
-    setAberto(false);
-  }, [email]);
-
-  // Busca lazy: só quando o popover abre (ou o usuário pede "tentar de novo").
-  useEffect(() => {
-    if (!aberto || !email) return;
-    const chave = `${email}#${tentativa}`;
-    if (pedidoRef.current === chave) return; // já buscado neste e-mail/tentativa
-    pedidoRef.current = chave;
-    let vivo = true;
-    setEstado("carregando");
-    api
-      .crInsightsRemetente(email)
-      .then((d) => {
-        if (!vivo) return;
-        setDados(d);
-        setEstado("ok");
-      })
-      .catch(() => {
-        if (vivo) setEstado("erro");
-      });
-    return () => {
-      vivo = false;
-    };
-  }, [aberto, email, tentativa]);
+  const aberto = useAppStore((s) => s.insightsAberto);
+  const estado = useAppStore((s) => s.insightsEstado);
+  const dados = useAppStore((s) => s.insightsDados);
+  const abrirInsights = useAppStore((s) => s.abrirInsights);
+  const fecharInsights = useAppStore((s) => s.fecharInsights);
+  const tentarNovamenteInsights = useAppStore(
+    (s) => s.tentarNovamenteInsights,
+  );
 
   const rec = dados?.recebidos ?? 0;
   const env = dados?.enviados;
@@ -3824,12 +3789,8 @@ function InsightsRemetentePopover({
     <Popover
       open={aberto}
       onOpenChange={(o) => {
-        setAberto(o);
-        // Fechou no meio do carregamento → permite refazer ao reabrir.
-        if (!o && estado === "carregando") {
-          pedidoRef.current = null;
-          setEstado("idle");
-        }
+        if (o) void abrirInsights(email);
+        else fecharInsights();
       }}
     >
       <PopoverTrigger asChild>
@@ -3862,7 +3823,7 @@ function InsightsRemetentePopover({
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setTentativa((n) => n + 1)}
+              onClick={() => void tentarNovamenteInsights(email)}
             >
               <RefreshCw /> {t.controlRoom.insightsTentar}
             </Button>
@@ -4033,11 +3994,14 @@ const MessageDetail = forwardRef<
   },
   ref
 ) {
-  const [det, setDet] = useState<EmailDetalhe | null>(null);
+  const det = useAppStore((s) => s.leitorDetalhe);
   // Segurança do leitor (#91): Reply-To + headers de autenticação. Best-effort,
   // carregado à parte do corpo pra não atrasar a leitura.
-  const [seg, setSeg] = useState<SegurancaEmail | null>(null);
-  const [modo, setModo] = useState<null | "responder" | "responderTodos" | "encaminhar">(null);
+  const seg = useAppStore((s) => s.leitorSeguranca);
+  const modo = useAppStore((s) => s.leitorModo);
+  const carregarLeitor = useAppStore((s) => s.carregarLeitor);
+  const limparLeitor = useAppStore((s) => s.limparLeitor);
+  const setModo = useAppStore((s) => s.setLeitorModo);
   const comporRef = useRef<ComporMensagemHandle>(null);
   const textosUndoSend = useMemo(
     () => ({
@@ -4067,29 +4031,16 @@ const MessageDetail = forwardRef<
       responderTodos: () => id && !envioBloqueado && setModo("responderTodos"),
       encaminhar: () => id && !envioBloqueado && setModo("encaminhar"),
     }),
-    [id, envioBloqueado]
+    [id, envioBloqueado, setModo]
   );
 
   useEffect(() => {
     if (!id) {
-      setDet(null);
-      setSeg(null);
+      limparLeitor();
       return;
     }
-    let vivo = true;
-    setDet(null);
-    setSeg(null);
-    setModo(null);
-    api.crEmailCorpo(id, mailbox).then((d) => vivo && setDet(d)).catch(() => {});
-    // Segurança (#91) em paralelo; falha silenciosa (badge some, sem quebrar).
-    api
-      .crEmailSeguranca(id, mailbox)
-      .then((s) => vivo && setSeg(s))
-      .catch(() => {});
-    return () => {
-      vivo = false;
-    };
-  }, [id, mailbox]);
+    void carregarLeitor({ id, mailbox });
+  }, [id, mailbox, carregarLeitor, limparLeitor]);
 
   // Deriva veredito de autenticação (SPF/DKIM/DMARC) e divergência de Reply-To
   // a partir dos headers brutos — lógica pura, testada em seguranca-leitor.ts.
