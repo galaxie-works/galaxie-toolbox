@@ -92,7 +92,6 @@ export interface ComporMensagemProps {
   mostrarAssunto?: boolean;
   /** Some com os campos Para/Cc/Cco (ex.: responder, onde o Graph define). */
   mostrarDestinatarios?: boolean;
-  assuntoInicial?: string;
   /**
    * Define quando a assinatura padrão entra no valor inicial (#141).
    * Em respostas/encaminhamentos, a própria assinatura precisa autorizar o uso.
@@ -254,14 +253,23 @@ export const ComporMensagem = forwardRef<
   {
     mostrarAssunto = false,
     mostrarDestinatarios = true,
-    assuntoInicial = "",
     contextoAssinatura = "novo",
     textos,
   },
   ref
 ) {
   const { t } = useIdioma();
-  const [para, setPara] = useState<string[]>([]);
+  // Valores de domínio do rascunho pertencem ao compose-slice (#132). O Plate
+  // e a mecânica visual do uploader continuam locais, conforme o contrato.
+  const para = useAppStore((s) => s.composePara);
+  const setPara = useAppStore((s) => s.setComposePara);
+  const cc = useAppStore((s) => s.composeCc);
+  const setCc = useAppStore((s) => s.setComposeCc);
+  const cco = useAppStore((s) => s.composeCco);
+  const setCco = useAppStore((s) => s.setComposeCco);
+  const assunto = useAppStore((s) => s.composeAssunto);
+  const setAssunto = useAppStore((s) => s.setComposeAssunto);
+  const setComposeAnexos = useAppStore((s) => s.setComposeAnexos);
   // Templates saem do store único (#135): fonte da verdade compartilhada com a
   // Settings, sempre em dia sem cópia local que envelheceria.
   const templates = useAppStore((s) => s.templates);
@@ -273,14 +281,11 @@ export const ComporMensagem = forwardRef<
     (contextoAssinatura === "novo" || assinaturaPadrao.usarEmRespostas)
       ? assinaturaPadrao.corpo
       : null;
-  const [cc, setCc] = useState<string[]>([]);
-  const [cco, setCco] = useState<string[]>([]);
   // Destinatários como `Pessoa` (nome/foto), reportados pelos campos, para
   // alimentar o autocomplete de menção @ no corpo (#106).
   const [pessoasPara, setPessoasPara] = useState<Pessoa[]>([]);
   const [pessoasCc, setPessoasCc] = useState<Pessoa[]>([]);
   const [pessoasCco, setPessoasCco] = useState<Pessoa[]>([]);
-  const [assunto, setAssunto] = useState(assuntoInicial);
   const [mostrarCcCco, setMostrarCcCco] = useState(false);
   const [compartilhando, setCompartilhando] = useState(false);
 
@@ -340,13 +345,20 @@ export const ComporMensagem = forwardRef<
   // cache por id. Todo arquivo já convertido entra assim que sua renderização
   // ocorre — nunca omitido por leitura de ref defasada — e remover/limpar some
   // do envio na hora, porque some de `arquivos`.
-  const anexos = useMemo(
-    () =>
-      arquivos
-        .map((f) => anexosCacheRef.current.get(f.id))
-        .filter((a): a is AnexoEnvio => Boolean(a)),
-    [arquivos, cacheVersao]
-  );
+  const anexos = useMemo(() => {
+    // A versão invalida a projeção quando a conversão base64 termina; os bytes
+    // vivem no ref para não duplicar arquivos grandes no estado do uploader.
+    void cacheVersao;
+    return arquivos
+      .map((f) => anexosCacheRef.current.get(f.id))
+      .filter((a): a is AnexoEnvio => Boolean(a));
+  }, [arquivos, cacheVersao]);
+
+  // A lista pronta para envio é domínio do rascunho; drag/drop, previews,
+  // erros e o cache base64 continuam internos ao uploader.
+  useEffect(() => {
+    setComposeAnexos(anexos);
+  }, [anexos, setComposeAnexos]);
 
   // Poda o cache de arquivos removidos (remover/limpar) para não vazar memória.
   useEffect(() => {
@@ -383,7 +395,7 @@ export const ComporMensagem = forwardRef<
     getAssunto: () => assunto,
     getHtml: () => edRef.current?.innerHTML ?? "",
     getTexto: () => edRef.current?.textContent ?? "",
-    getAnexos: () => anexos,
+    getAnexos: () => useAppStore.getState().composeAnexos,
   }));
 
   /** Insere blocos novos no fim do corpo (assinatura, link etc.). */

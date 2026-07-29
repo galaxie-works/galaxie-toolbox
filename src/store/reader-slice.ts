@@ -12,12 +12,6 @@ import type {
 } from "../lib/types.ts";
 import type { AppStore } from "./index";
 
-export type LeitorModo =
-  | "responder"
-  | "responderTodos"
-  | "encaminhar"
-  | null;
-
 export type InsightsEstado = "idle" | "carregando" | "ok" | "erro";
 
 export interface LeitorAlvo {
@@ -45,7 +39,6 @@ export interface ReaderSlice {
   leitorAlvo: LeitorAlvo | null;
   leitorDetalhe: EmailDetalhe | null;
   leitorSeguranca: SegurancaEmail | null;
-  leitorModo: LeitorModo;
   leitorGeracao: number;
 
   insightsAberto: boolean;
@@ -57,7 +50,6 @@ export interface ReaderSlice {
 
   carregarLeitor: (alvo: LeitorAlvo) => Promise<void>;
   limparLeitor: () => void;
-  setLeitorModo: (modo: LeitorModo) => void;
   abrirInsights: (email: string) => Promise<void>;
   fecharInsights: () => void;
   tentarNovamenteInsights: (email: string) => Promise<void>;
@@ -124,7 +116,6 @@ export function criarReaderSlice(
       leitorAlvo: null,
       leitorDetalhe: null,
       leitorSeguranca: null,
-      leitorModo: null,
       leitorGeracao: 0,
 
       ...insightsLimpos,
@@ -136,7 +127,6 @@ export function criarReaderSlice(
           leitorAlvo: alvo,
           leitorDetalhe: null,
           leitorSeguranca: null,
-          leitorModo: null,
           leitorGeracao: geracao,
           ...insightsLimpos,
           insightsGeracao: state.insightsGeracao + 1,
@@ -178,14 +168,10 @@ export function criarReaderSlice(
           leitorAlvo: null,
           leitorDetalhe: null,
           leitorSeguranca: null,
-          leitorModo: null,
           leitorGeracao: state.leitorGeracao + 1,
           ...insightsLimpos,
           insightsGeracao: state.insightsGeracao + 1,
         })),
-
-      setLeitorModo: (modo) => set({ leitorModo: modo }),
-
       abrirInsights: async (email) => {
         const atual = get();
         if (

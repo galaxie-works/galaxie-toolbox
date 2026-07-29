@@ -82,15 +82,12 @@ test("fast message switch ignores stale body and security responses", async () =
   });
 
   const primeira = store.carregarLeitor({ id: "m-1", mailbox: "me" });
-  store.setLeitorModo("responder");
   const segunda = store.carregarLeitor({ id: "m-2", mailbox: "shared@example.com" });
 
   assert.deepEqual(store.leitorAlvo, {
     id: "m-2",
     mailbox: "shared@example.com",
   });
-  assert.equal(store.leitorModo, null);
-
   corpos.get("m-1")!.resolve(detalhe("antiga"));
   segurancas.get("m-1")!.resolve(seguranca("spf=fail"));
   await primeira;
@@ -118,7 +115,6 @@ test("clear invalidates in-flight reader data and resets reader-owned state", as
   });
 
   const carregamento = store.carregarLeitor({ id: "m-1", mailbox: "me" });
-  store.setLeitorModo("encaminhar");
   store.limparLeitor();
   corpo.resolve(detalhe("não deve entrar"));
   segurancaPendente.resolve(seguranca("spf=pass"));
@@ -128,7 +124,6 @@ test("clear invalidates in-flight reader data and resets reader-owned state", as
   assert.equal(store.leitorAlvo, null);
   assert.equal(store.leitorDetalhe, null);
   assert.equal(store.leitorSeguranca, null);
-  assert.equal(store.leitorModo, null);
 });
 
 test("sender insights are lazy, retryable, and stale-safe after close", async () => {
