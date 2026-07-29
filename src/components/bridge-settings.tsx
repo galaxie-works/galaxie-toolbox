@@ -1,6 +1,8 @@
 import { useRef, useState } from "react";
 import { KEYS } from "platejs";
+import type { Descendant, TElement, Value } from "platejs";
 import { Plate, usePlateEditor } from "platejs/react";
+import type { PlateEditor } from "platejs/react";
 import {
   BoldIcon,
   ChevronDownIcon,
@@ -116,6 +118,31 @@ function normalizarCorpo(html: string): string {
 }
 
 /**
+ * Constrói o Value inicial do editor a partir do `corpo` salvo (#147).
+ *
+ * O `corpo` é o `innerHTML` do próprio Plate (marcação interna do Slate), então
+ * ao desserializar os `<div>` de bloco do Slate não viram parágrafo e o conteúdo
+ * colapsa em nós de texto/inline soltos no topo do documento. Um Value do Slate
+ * exige blocos no topo — nó de texto solto no nível de bloco não tem `children`
+ * e quebra o render do Plate (`Array.from(node.children)`), derrubando o app.
+ *
+ * Desserializamos pelo mesmo caminho robusto do compose e depois garantimos
+ * blocos válidos: todo nó de texto/inline solto no topo é embrulhado num
+ * parágrafo (preservando o texto e as marcas); blocos já válidos passam intactos.
+ * Documento vazio vira um único parágrafo em branco.
+ */
+function normalizarValorEditor(editor: PlateEditor, valorInicial: string): Value {
+  const html = normalizarCorpo(valorInicial) || "<p></p>";
+  const nodes = editor.api.html.deserialize({ element: html }) as Descendant[];
+  const blocos: Value = nodes.map((no): TElement => {
+    const ehBloco =
+      "children" in no && Array.isArray(no.children) && !editor.api.isInline(no);
+    return ehBloco ? (no as TElement) : { type: KEYS.p, children: [no] };
+  });
+  return blocos.length > 0 ? blocos : [{ type: KEYS.p, children: [{ text: "" }] }];
+}
+
+/**
  * Editor rico compartilhado (assinaturas e templates). Mesmo Plate do compose:
  * o HTML sai do próprio DOM editável (`innerHTML`), formato que o Graph espera.
  * O `usePlateEditor` memoriza o editor, então quem usa precisa de `key` por
@@ -132,10 +159,19 @@ function EditorCorpo({
 }) {
   const editor = usePlateEditor({
     plugins: COMPOSE_KIT,
-    // Guarda de compat (#144): corpos já salvos com a marcação vazia do Slate
-    // quebrariam o Plate ao reabrir. Normaliza antes de desserializar; vazio
-    // vira `<p></p>`, o que o editor abre em branco sem crashar.
-    value: normalizarCorpo(valorInicial) || "<p></p>",
+    // #147: o `corpo` salvo é o `innerHTML` do próprio Plate — a marcação
+    // interna do Slate (`<div data-slate-node>` + spans `data-slate-*`), não
+    // HTML limpo. O desserializador do Plate só reconhece tags semânticas
+    // (`<p>`, `<strong>`…): os `<div>` de bloco do Slate não viram parágrafo,
+    // então o corpo colapsa em nós de texto soltos no topo (sem `type`/
+    // `children`). Renderizar esses "blocos" quebra o Plate em
+    // `Array.from(node.children)` e derruba o app (tela branca; só o F5
+    // recupera). O guard do #144 (`normalizarCorpo`) não cobria isso: com texto
+    // real ele devolve o HTML sujo intacto, então valia só p/ corpo vazio.
+    // Aqui desserializamos e depois garantimos blocos válidos: todo nó de texto/
+    // inline solto no topo entra num parágrafo. `<p></p>` do vazio abre em
+    // branco; parágrafos limpos passam direto.
+    value: (editor) => normalizarValorEditor(editor, valorInicial),
   });
 
   return (
