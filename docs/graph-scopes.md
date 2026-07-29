@@ -1,7 +1,7 @@
 # Microsoft Graph — escopos delegados concedidos (app GALAXIE Toolbox)
 
 Fonte: Entra ID → app registration → API permissions, **admin consent concedido para "Galaxie Works Ltd"**.
-Atualizado: **2026-07-29 — 84 escopos** (53 → 63 → 75 → 77 → **84**; última rodada: **MultiTenantOrganization.*** + bloco **OrgSettings-*** (Apps&Services, Forms, M365Install, To Do RW) — settings org-wide/admin. Antes: Application/ServicePrincipal, Online Meetings, Directory/RoleManagement, Calendars).
+Atualizado: **2026-07-29 — 87 escopos** (53 → 63 → 75 → 77 → 84 → **87**; última rodada: **Contacts.ReadWrite** + Contacts.Read.Shared + Contacts.ReadWrite.Shared → **destrava edição/enrich-write de contato no People** (resolve o ""Editing unavailable"" — precisa relogin). Antes: MultiTenantOrganization/OrgSettings, Application/ServicePrincipal, Online Meetings, Directory/RoleManagement, Calendars).
 Tipo: todos **Delegated** (o app é public client + PKCE, sem secret). "Admin?" = exige consentimento de admin.
 
 > ⚠️ Adicionar escopo no Entra **não basta**: o app só recebe o token com o escopo se ele estiver na lista pedida em `config.rs`/auth e o usuário **relogar** (refresh com escopo novo). Muitos recursos exigem reconsentimento/novo login.
@@ -45,7 +45,8 @@ Tipo: todos **Delegated** (o app é public client + PKCE, sem secret). "Admin?" 
 ## Contatos / Pessoas / Diretório
 | Escopo | Admin? |
 |---|---|
-| Contacts.Read | Não |
+| Contacts.Read · **Contacts.ReadWrite** | Não |
+| Contacts.Read.Shared · Contacts.ReadWrite.Shared | Não |
 | User.Read · profile · email | Não |
 | User.ReadBasic.All | Não |
 | User.Read.All | **Sim** |
