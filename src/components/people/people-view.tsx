@@ -103,6 +103,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -123,6 +125,10 @@ import {
   peopleEnrichFieldIdentity,
   type PeopleContact,
 } from "@/lib/people";
+import {
+  contactDomain,
+  resolveOrganization,
+} from "@/lib/organizations";
 import type {
   PeopleContactEdit,
   PeopleEnrichField,
@@ -292,7 +298,17 @@ function PeopleDetail({
   const { idioma, t } = useIdioma();
   const applyPeopleFields = useAppStore((state) => state.applyPeopleFields);
   const updatePeopleContact = useAppStore((state) => state.updatePeopleContact);
+  const organizations = useAppStore((state) => state.organizations);
+  const selectOrganization = useAppStore((state) => state.selectOrganization);
+  const setPeopleTab = useAppStore((state) => state.setPeopleTab);
+  const addContactToOrganization = useAppStore(
+    (state) => state.addContactToOrganization,
+  );
   const primaryEmail = contact.emails[0]?.address;
+  const resolvedOrganization = resolveOrganization(
+    organizations,
+    contactDomain(contact),
+  );
   const [enriching, setEnriching] = useState(false);
   const [applying, setApplying] = useState(false);
   const [preview, setPreview] = useState<PeopleEnrichPreview | null>(null);
@@ -675,6 +691,52 @@ function PeopleDetail({
                 >
                   <ExternalLink />
                 </ToolbarButton>
+                <DropdownMenu>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuTrigger asChild>
+                        <ToolbarButton
+                          variant="default"
+                          aria-label={t.controlRoom.orgsAtribuirContato}
+                        >
+                          <MoreHorizontal />
+                        </ToolbarButton>
+                      </DropdownMenuTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t.controlRoom.orgsAtribuirContato}
+                    </TooltipContent>
+                  </Tooltip>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuLabel>
+                      {t.controlRoom.orgsAtribuirContato}
+                    </DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {organizations.length === 0 ? (
+                      <DropdownMenuItem disabled>
+                        {t.controlRoom.orgsSemOrganizacoes}
+                      </DropdownMenuItem>
+                    ) : (
+                      organizations.map((organization) => (
+                        <DropdownMenuItem
+                          key={organization.id}
+                          onClick={() => {
+                            addContactToOrganization(
+                              organization.id,
+                              contact.id,
+                              useAppStore.getState().peopleContacts,
+                            );
+                            selectOrganization(organization.id);
+                            setPeopleTab("organizations");
+                          }}
+                        >
+                          <Building2 />
+                          {organization.name}
+                        </DropdownMenuItem>
+                      ))
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </Toolbar>
             </div>
           )}
@@ -1035,6 +1097,18 @@ function PeopleDetail({
             source={contact.managerSource}
           />
         </dl>
+        {!editing && resolvedOrganization && (
+          <button
+            type="button"
+            className="mt-3"
+            onClick={() => {
+              selectOrganization(resolvedOrganization.id);
+              setPeopleTab("organizations");
+            }}
+          >
+            <Badge variant="secondary">{resolvedOrganization.name}</Badge>
+          </button>
+        )}
           </section>
 
           <Separator />
