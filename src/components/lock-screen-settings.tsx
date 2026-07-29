@@ -27,9 +27,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { FramePanel } from "@/components/reui/frame";
 
-/** PIN numérico de 4 a 6 dígitos — mesma faixa aceita pelo backend do #122. */
-const PIN_REGEX = /^\d{4,6}$/;
-const sanitizarPin = (v: string) => v.replace(/\D/g, "").slice(0, 6);
+/** PIN numérico de 4 a 8 dígitos — mesma faixa da tela de unlock (#122). */
+const PIN_REGEX = /^\d{4,8}$/;
+const sanitizarPin = (v: string) => v.replace(/\D/g, "").slice(0, 8);
 
 /** Campo de PIN reutilizado pelos diálogos (numérico, mascarado). */
 function PinField({
@@ -59,7 +59,7 @@ function PinField({
         autoFocus={autoFocus}
         pattern="[0-9]*"
         minLength={4}
-        maxLength={6}
+        maxLength={8}
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(sanitizarPin(e.target.value))}
@@ -134,7 +134,7 @@ export function LockScreenSettings() {
     if (salvando || modo === null) return;
 
     if (!PIN_REGEX.test(pinNovo)) {
-      setErro("The PIN must be 4 to 6 digits.");
+      setErro("The PIN must be 4 to 8 digits.");
       return;
     }
     if (pinNovo !== pinConfirmar) {
@@ -171,7 +171,7 @@ export function LockScreenSettings() {
     e.preventDefault();
     if (salvando) return;
     if (!PIN_REGEX.test(pinAtual)) {
-      setErro("The PIN must be 4 to 6 digits.");
+      setErro("The PIN must be 4 to 8 digits.");
       return;
     }
     setSalvando(true);
@@ -238,7 +238,7 @@ export function LockScreenSettings() {
               <DialogDescription>
                 {modo === "change"
                   ? "Enter your current PIN and choose a new one."
-                  : "Choose a PIN of 4 to 6 digits to protect the app."}
+                  : "Choose a PIN of 4 to 8 digits to protect the app."}
               </DialogDescription>
             </DialogHeader>
 
