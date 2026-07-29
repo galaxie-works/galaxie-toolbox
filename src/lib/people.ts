@@ -1,5 +1,7 @@
 import type {
   PeopleEmail,
+  PeopleEnrichField,
+  PeopleEnrichSource,
   PeoplePhone,
   PeopleRecord,
   PeopleSource,
@@ -8,11 +10,25 @@ import type {
 /** Contato canônico compartilhado pela lista, detalhe e futuros resolvers. */
 export interface PeopleContact {
   id: string;
+  contactId?: string | null;
+  peopleId?: string | null;
   name: string;
   emails: PeopleEmail[];
   phones: PeoplePhone[];
   jobTitle?: string | null;
+  jobTitleSource?: PeopleEnrichSource;
   company?: string | null;
+  companySource?: PeopleEnrichSource;
+  department?: string | null;
+  departmentSource?: PeopleEnrichSource;
+  officeLocation?: string | null;
+  officeLocationSource?: PeopleEnrichSource;
+  manager?: string | null;
+  managerSource?: PeopleEnrichSource;
+  photo?: string | null;
+  photoSource?: PeopleEnrichSource;
+  /** Campos já confirmados nesta sessão, para não reapresentar o mesmo diff. */
+  enrichedValues?: string[];
   organization: boolean;
   frequent: boolean;
   peopleRank?: number | null;
@@ -44,13 +60,28 @@ function uniquePhones(values: PeoplePhone[]): PeoplePhone[] {
 }
 
 function fromRecord(record: PeopleRecord): PeopleContact {
+  const source = record.source;
   return {
     id: `${record.source}:${record.id}`,
+    contactId: source === "contacts" ? record.id : null,
+    peopleId: source === "people" ? record.id : null,
     name: record.name || record.emails[0]?.address || "Unknown",
-    emails: uniqueEmails(record.emails),
-    phones: uniquePhones(record.phones),
+    emails: uniqueEmails(
+      record.emails.map((email) => ({ ...email, source: email.source ?? source })),
+    ),
+    phones: uniquePhones(
+      record.phones.map((phone) => ({ ...phone, source: phone.source ?? source })),
+    ),
     jobTitle: record.jobTitle,
+    jobTitleSource: record.jobTitle ? source : undefined,
     company: record.company,
+    companySource: record.company ? source : undefined,
+    department: record.department,
+    departmentSource: record.department ? source : undefined,
+    officeLocation: record.officeLocation,
+    officeLocationSource: record.officeLocation ? source : undefined,
+    manager: record.manager,
+    managerSource: record.manager ? source : undefined,
     organization: record.organization,
     frequent:
       record.source === "people" &&
@@ -82,8 +113,26 @@ export function mergePeopleRecords(records: PeopleRecord[]): PeopleContact[] {
       existing.emails = uniqueEmails([...existing.emails, ...contact.emails]);
       existing.phones = uniquePhones([...existing.phones, ...contact.phones]);
       existing.name ||= contact.name;
-      existing.jobTitle ||= contact.jobTitle;
-      existing.company ||= contact.company;
+      if (!existing.jobTitle && contact.jobTitle) {
+        existing.jobTitle = contact.jobTitle;
+        existing.jobTitleSource = contact.jobTitleSource;
+      }
+      if (!existing.company && contact.company) {
+        existing.company = contact.company;
+        existing.companySource = contact.companySource;
+      }
+      if (!existing.department && contact.department) {
+        existing.department = contact.department;
+        existing.departmentSource = contact.departmentSource;
+      }
+      if (!existing.officeLocation && contact.officeLocation) {
+        existing.officeLocation = contact.officeLocation;
+        existing.officeLocationSource = contact.officeLocationSource;
+      }
+      if (!existing.manager && contact.manager) {
+        existing.manager = contact.manager;
+        existing.managerSource = contact.managerSource;
+      }
       for (const email of existing.emails) byEmail.set(keyEmail(email.address), existing);
       continue;
     }
@@ -103,8 +152,15 @@ export function mergePeopleRecords(records: PeopleRecord[]): PeopleContact[] {
 
     existing.emails = uniqueEmails([...existing.emails, ...person.emails]);
     existing.phones = uniquePhones([...existing.phones, ...person.phones]);
-    existing.jobTitle ||= person.jobTitle;
-    existing.company ||= person.company;
+    existing.peopleId ||= person.peopleId;
+    if (!existing.jobTitle && person.jobTitle) {
+      existing.jobTitle = person.jobTitle;
+      existing.jobTitleSource = person.jobTitleSource;
+    }
+    if (!existing.company && person.company) {
+      existing.company = person.company;
+      existing.companySource = person.companySource;
+    }
     existing.organization ||= person.organization;
     existing.frequent ||= person.frequent;
     existing.peopleRank =
@@ -134,4 +190,79 @@ export function resolvePerson(
   return contacts.find((contact) =>
     contact.emails.some((item) => keyEmail(item.address) === key),
   );
+}
+
+/** Aplica localmente apenas os campos confirmados no preview do Enrich. */
+export function applyPeopleEnrichment(
+  contact: PeopleContact,
+  fields: PeopleEnrichField[],
+): PeopleContact {
+  const enrichedValues = [...(contact.enrichedValues ?? [])];
+  const next: PeopleContact = {
+    ...contact,
+    emails: [...contact.emails],
+    phones: [...contact.phones],
+    enrichedValues,
+  };
+
+  for (const field of fields) {
+    const identity = peopleEnrichFieldIdentity(field);
+    if (!enrichedValues.includes(identity)) {
+      enrichedValues.push(identity);
+    }
+    switch (field.key) {
+      case "email":
+        next.emails = uniqueEmails([
+          ...next.emails,
+          {
+            address: field.value,
+            label: field.label,
+            source: field.source,
+          },
+        ]);
+        break;
+      case "photo":
+        next.photo = field.value;
+        next.photoSource = field.source;
+        break;
+      case "businessPhone":
+      case "mobilePhone":
+        next.phones = uniquePhones([
+          ...next.phones,
+          {
+            number: field.value,
+            label: field.key === "mobilePhone" ? "mobile" : field.label || "work",
+            source: field.source,
+          },
+        ]);
+        break;
+      case "jobTitle":
+        next.jobTitle = field.value;
+        next.jobTitleSource = field.source;
+        break;
+      case "companyName":
+        next.company = field.value;
+        next.companySource = field.source;
+        break;
+      case "department":
+        next.department = field.value;
+        next.departmentSource = field.source;
+        break;
+      case "officeLocation":
+        next.officeLocation = field.value;
+        next.officeLocationSource = field.source;
+        break;
+      case "manager":
+        next.manager = field.value;
+        next.managerSource = field.source;
+        break;
+    }
+  }
+
+  return next;
+}
+
+export function peopleEnrichFieldIdentity(field: PeopleEnrichField): string {
+  if (field.key === "photo") return `photo:${field.source}`;
+  return `${field.key}:${field.value.trim().toLocaleLowerCase()}`;
 }

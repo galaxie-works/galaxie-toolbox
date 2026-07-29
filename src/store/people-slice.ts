@@ -1,7 +1,12 @@
 import type { StateCreator } from "zustand";
 
 import * as api from "@/lib/api";
-import { mergePeopleRecords, type PeopleContact } from "@/lib/people";
+import {
+  applyPeopleEnrichment,
+  mergePeopleRecords,
+  type PeopleContact,
+} from "@/lib/people";
+import type { PeopleEnrichField } from "@/lib/types";
 import type { AppStore } from "./index";
 
 /** Cache único e exclusivamente de sessão do módulo People (#166). */
@@ -16,6 +21,7 @@ export interface PeopleSlice {
 
   loadPeople: () => Promise<void>;
   selectPerson: (id: string | null) => void;
+  applyPeopleFields: (id: string, fields: PeopleEnrichField[]) => void;
 }
 
 export const createPeopleSlice: StateCreator<
@@ -66,4 +72,10 @@ export const createPeopleSlice: StateCreator<
   },
 
   selectPerson: (peopleSelectedId) => set({ peopleSelectedId }),
+  applyPeopleFields: (id, fields) =>
+    set((state) => ({
+      peopleContacts: state.peopleContacts.map((contact) =>
+        contact.id === id ? applyPeopleEnrichment(contact, fields) : contact,
+      ),
+    })),
 });

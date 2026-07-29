@@ -2862,6 +2862,9 @@ pub struct PeopleRecord {
     pub phones: Vec<PeoplePhone>,
     pub job_title: Option<String>,
     pub company: Option<String>,
+    pub department: Option<String>,
+    pub office_location: Option<String>,
+    pub manager: Option<String>,
     pub organization: bool,
     pub people_rank: Option<usize>,
 }
@@ -2994,7 +2997,7 @@ pub fn cr_people_list(store: &TokenStore) -> Result<PeopleListResult, String> {
     };
 
     let contacts_url = format!(
-        "{GRAPH}/me/contacts?$top=250&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle"
+        "{GRAPH}/me/contacts?$top=250&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager"
     );
     match graph_enviar("people:contacts", GRAPH_TETO_ESPERA_S, || {
         client.get(&contacts_url).bearer_auth(&token).send()
@@ -3015,6 +3018,9 @@ pub fn cr_people_list(store: &TokenStore) -> Result<PeopleListResult, String> {
                             phones: telefones_de_contato(item),
                             job_title: texto_opcional(item, "jobTitle"),
                             company: texto_opcional(item, "companyName"),
+                            department: texto_opcional(item, "department"),
+                            office_location: texto_opcional(item, "officeLocation"),
+                            manager: texto_opcional(item, "manager"),
                             organization: false,
                             people_rank: None,
                         })
@@ -3068,6 +3074,9 @@ pub fn cr_people_list(store: &TokenStore) -> Result<PeopleListResult, String> {
                                 phones: telefones_de_people(item),
                                 job_title: texto_opcional(item, "jobTitle"),
                                 company: texto_opcional(item, "companyName"),
+                                department: None,
+                                office_location: None,
+                                manager: None,
                                 organization,
                                 people_rank: Some(rank),
                             })
@@ -3091,6 +3100,690 @@ pub fn cr_people_list(store: &TokenStore) -> Result<PeopleListResult, String> {
     }
 
     Ok(result)
+}
+
+/// Campo individual e revisavel sugerido pelo Enrich (#167).
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleEnrichField {
+    pub key: String,
+    pub value: String,
+    pub source: String,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleEnrichPreview {
+    pub fields: Vec<PeopleEnrichField>,
+    pub failures: Vec<String>,
+    pub write_available: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleEnrichApplyResult {
+    pub saved: bool,
+    pub write_available: bool,
+}
+
+fn token_tem_escopo(store: &TokenStore, alvo: &str) -> Result<bool, String> {
+    let guard = store
+        .inner
+        .lock()
+        .map_err(|_| "estado de token corrompido".to_string())?;
+    let atual = guard.as_ref().ok_or("nao autenticado")?;
+    Ok(escopo_presente(&atual.scopes, alvo))
+}
+
+fn valor_texto(item: &serde_json::Value, campo: &str) -> String {
+    item[campo].as_str().unwrap_or("").trim().to_string()
+}
+
+fn campo_ja_proposto(fields: &[PeopleEnrichField], key: &str) -> bool {
+    fields.iter().any(|field| field.key == key)
+}
+
+fn adicionar_scalar(
+    fields: &mut Vec<PeopleEnrichField>,
+    contato: &serde_json::Value,
+    key: &str,
+    valor: Option<String>,
+    source: &str,
+) {
+    if !valor_texto(contato, key).is_empty() || campo_ja_proposto(fields, key) {
+        return;
+    }
+    if let Some(value) = valor.filter(|value| !value.trim().is_empty()) {
+        fields.push(PeopleEnrichField {
+            key: key.to_string(),
+            value,
+            source: source.to_string(),
+            label: None,
+        });
+    }
+}
+
+fn normalizar_telefone(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_digit() || *ch == '+')
+        .collect()
+}
+
+fn emails_existentes(contato: &serde_json::Value) -> std::collections::HashSet<String> {
+    contato["emailAddresses"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|email| email["address"].as_str())
+        .map(|email| email.trim().to_lowercase())
+        .filter(|email| !email.is_empty())
+        .collect()
+}
+
+fn telefones_existentes(contato: &serde_json::Value) -> std::collections::HashSet<String> {
+    let mut telefones = std::collections::HashSet::new();
+    for campo in ["businessPhones", "homePhones"] {
+        for value in contato[campo].as_array().into_iter().flatten() {
+            if let Some(number) = value.as_str() {
+                telefones.insert(normalizar_telefone(number));
+            }
+        }
+    }
+    if let Some(number) = contato["mobilePhone"].as_str() {
+        telefones.insert(normalizar_telefone(number));
+    }
+    telefones
+}
+
+fn adicionar_email(
+    fields: &mut Vec<PeopleEnrichField>,
+    existentes: &mut std::collections::HashSet<String>,
+    address: &str,
+    source: &str,
+    label: Option<String>,
+) {
+    let key = address.trim().to_lowercase();
+    if key.is_empty() || !existentes.insert(key) {
+        return;
+    }
+    fields.push(PeopleEnrichField {
+        key: "email".to_string(),
+        value: address.trim().to_string(),
+        source: source.to_string(),
+        label,
+    });
+}
+
+fn adicionar_telefone(
+    fields: &mut Vec<PeopleEnrichField>,
+    existentes: &mut std::collections::HashSet<String>,
+    number: &str,
+    phone_type: &str,
+    source: &str,
+) {
+    let normalized = normalizar_telefone(number);
+    if normalized.is_empty() || !existentes.insert(normalized) {
+        return;
+    }
+    let mobile = phone_type.to_lowercase().contains("mobile");
+    fields.push(PeopleEnrichField {
+        key: if mobile {
+            "mobilePhone".to_string()
+        } else {
+            "businessPhone".to_string()
+        },
+        value: number.trim().to_string(),
+        source: source.to_string(),
+        label: Some(if mobile { "mobile" } else { "work" }.to_string()),
+    });
+}
+
+fn buscar_foto_data_uri(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    url: &str,
+    operacao: &'static str,
+) -> Result<Option<String>, String> {
+    use base64::{engine::general_purpose, Engine as _};
+
+    let resp = graph_enviar(operacao, GRAPH_TETO_ESPERA_S, || {
+        client.get(url).bearer_auth(token).send()
+    })
+    .map_err(|error| format!("falha de rede ({error})"))?;
+    if resp.status().as_u16() == 404 {
+        return Ok(None);
+    }
+    if !resp.status().is_success() {
+        return Err(format!("Graph retornou {}", resp.status()));
+    }
+    let content_type = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| value.starts_with("image/"))
+        .unwrap_or("image/jpeg")
+        .to_string();
+    let bytes = resp.bytes().map_err(|error| error.to_string())?;
+    Ok(Some(format!(
+        "data:{content_type};base64,{}",
+        general_purpose::STANDARD.encode(bytes)
+    )))
+}
+
+fn pessoa_por_email<'a>(
+    items: &'a [serde_json::Value],
+    email_alvo: &str,
+) -> Option<&'a serde_json::Value> {
+    items.iter().find(|item| {
+        item["userPrincipalName"]
+            .as_str()
+            .is_some_and(|value| value.eq_ignore_ascii_case(email_alvo))
+            || item["scoredEmailAddresses"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|email| email["address"].as_str())
+                .any(|value| value.eq_ignore_ascii_case(email_alvo))
+    })
+}
+
+/// Busca fontes do Enrich sem alterar o contato. People tem prioridade e o
+/// diretorio apenas preenche o que continuou vazio. Falhas sao por fonte.
+pub fn cr_people_enrich_preview(
+    store: &TokenStore,
+    contact_id: Option<&str>,
+    email: &str,
+) -> Result<PeopleEnrichPreview, String> {
+    let email = email.trim();
+    if email.is_empty() {
+        return Err("e-mail do contato ausente".into());
+    }
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut failures = Vec::new();
+    let mut contato = serde_json::json!({});
+
+    if let Some(id) = contact_id.filter(|id| !id.trim().is_empty()) {
+        let url = format!(
+            "{GRAPH}/me/contacts/{}?$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager",
+            urlencoding::encode(id.trim())
+        );
+        match graph_enviar("people:enrich-contact", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        }) {
+            Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+                Ok(body) => contato = body,
+                Err(error) => failures.push(format!("Contacts: resposta invalida ({error})")),
+            },
+            Ok(resp) => failures.push(format!("Contacts: Graph retornou {}", resp.status())),
+            Err(error) => failures.push(format!("Contacts: falha de rede ({error})")),
+        }
+    }
+
+    let mut fields = Vec::new();
+    let mut existing_emails = emails_existentes(&contato);
+    let mut existing_phones = telefones_existentes(&contato);
+    let mut pessoa_match: Option<serde_json::Value> = None;
+
+    let people_url = format!(
+        "{GRAPH}/me/people?$top=250&$select=id,displayName,scoredEmailAddresses,phones,companyName,jobTitle,personType,userPrincipalName"
+    );
+    match graph_enviar("people:enrich-people", GRAPH_TETO_ESPERA_S, || {
+        client.get(&people_url).bearer_auth(&token).send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => {
+                if let Some(items) = body["value"].as_array() {
+                    if let Some(person) = pessoa_por_email(items, email) {
+                        adicionar_scalar(
+                            &mut fields,
+                            &contato,
+                            "jobTitle",
+                            texto_opcional(person, "jobTitle"),
+                            "people",
+                        );
+                        adicionar_scalar(
+                            &mut fields,
+                            &contato,
+                            "companyName",
+                            texto_opcional(person, "companyName"),
+                            "people",
+                        );
+                        for address in person["scoredEmailAddresses"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                        {
+                            if let Some(value) = address["address"].as_str() {
+                                adicionar_email(
+                                    &mut fields,
+                                    &mut existing_emails,
+                                    value,
+                                    "people",
+                                    None,
+                                );
+                            }
+                        }
+                        for phone in person["phones"].as_array().into_iter().flatten() {
+                            if let Some(number) = phone["number"].as_str() {
+                                adicionar_telefone(
+                                    &mut fields,
+                                    &mut existing_phones,
+                                    number,
+                                    phone["type"].as_str().unwrap_or("work"),
+                                    "people",
+                                );
+                            }
+                        }
+                        pessoa_match = Some(person.clone());
+                    }
+                }
+            }
+            Err(error) => failures.push(format!("People: resposta invalida ({error})")),
+        },
+        Ok(resp) => failures.push(format!("People: Graph retornou {}", resp.status())),
+        Err(error) => failures.push(format!("People: falha de rede ({error})")),
+    }
+
+    let organization = pessoa_match.as_ref().is_some_and(|person| {
+        let person_type = &person["personType"];
+        person_type["subclass"]
+            .as_str()
+            .or_else(|| person_type["class"].as_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("OrganizationUser"))
+    });
+
+    let mut directory_user_id: Option<String> = None;
+    if organization {
+        let identifier = pessoa_match
+            .as_ref()
+            .and_then(|person| person["userPrincipalName"].as_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(email);
+        let user_url = format!(
+            "{GRAPH}/users/{}?$select=id,displayName,mail,userPrincipalName,jobTitle,companyName,department,officeLocation,mobilePhone,businessPhones",
+            urlencoding::encode(identifier)
+        );
+        match graph_enviar("people:enrich-directory", GRAPH_TETO_ESPERA_S, || {
+            client.get(&user_url).bearer_auth(&token).send()
+        }) {
+            Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+                Ok(user) => {
+                    adicionar_scalar(
+                        &mut fields,
+                        &contato,
+                        "jobTitle",
+                        texto_opcional(&user, "jobTitle"),
+                        "directory",
+                    );
+                    adicionar_scalar(
+                        &mut fields,
+                        &contato,
+                        "companyName",
+                        texto_opcional(&user, "companyName"),
+                        "directory",
+                    );
+                    adicionar_scalar(
+                        &mut fields,
+                        &contato,
+                        "department",
+                        texto_opcional(&user, "department"),
+                        "directory",
+                    );
+                    adicionar_scalar(
+                        &mut fields,
+                        &contato,
+                        "officeLocation",
+                        texto_opcional(&user, "officeLocation"),
+                        "directory",
+                    );
+                    if let Some(address) = user["mail"]
+                        .as_str()
+                        .filter(|value| !value.trim().is_empty())
+                        .or_else(|| user["userPrincipalName"].as_str())
+                    {
+                        adicionar_email(
+                            &mut fields,
+                            &mut existing_emails,
+                            address,
+                            "directory",
+                            None,
+                        );
+                    }
+                    for phone in user["businessPhones"].as_array().into_iter().flatten() {
+                        if let Some(number) = phone.as_str() {
+                            adicionar_telefone(
+                                &mut fields,
+                                &mut existing_phones,
+                                number,
+                                "work",
+                                "directory",
+                            );
+                        }
+                    }
+                    if let Some(number) = user["mobilePhone"].as_str() {
+                        adicionar_telefone(
+                            &mut fields,
+                            &mut existing_phones,
+                            number,
+                            "mobile",
+                            "directory",
+                        );
+                    }
+
+                    let user_id = user["id"]
+                        .as_str()
+                        .filter(|value| !value.trim().is_empty())
+                        .unwrap_or(identifier);
+                    directory_user_id = Some(user_id.to_string());
+                    let manager_url = format!(
+                        "{GRAPH}/users/{}/manager?$select=id,displayName,mail,userPrincipalName",
+                        urlencoding::encode(user_id)
+                    );
+                    match graph_enviar("people:enrich-manager", GRAPH_TETO_ESPERA_S, || {
+                        client.get(&manager_url).bearer_auth(&token).send()
+                    }) {
+                        Ok(resp) if resp.status().is_success() => {
+                            if let Ok(manager) = resp.json::<serde_json::Value>() {
+                                adicionar_scalar(
+                                    &mut fields,
+                                    &contato,
+                                    "manager",
+                                    texto_opcional(&manager, "displayName"),
+                                    "directory",
+                                );
+                            }
+                        }
+                        Ok(resp) if resp.status().as_u16() == 404 => {}
+                        Ok(resp) => failures
+                            .push(format!("Directory manager: Graph retornou {}", resp.status())),
+                        Err(error) => failures
+                            .push(format!("Directory manager: falha de rede ({error})")),
+                    }
+                }
+                Err(error) => failures.push(format!("Directory: resposta invalida ({error})")),
+            },
+            Ok(resp) if resp.status().as_u16() == 404 => {}
+            Ok(resp) => failures.push(format!("Directory: Graph retornou {}", resp.status())),
+            Err(error) => failures.push(format!("Directory: falha de rede ({error})")),
+        }
+    }
+
+    // Foto e a terceira fonte: primeiro o proprio contato, depois o usuario do
+    // diretorio. Ela entra no mesmo preview e continua sem qualquer mutacao.
+    let mut photo_found = false;
+    if let Some(id) = contact_id.filter(|id| !id.trim().is_empty()) {
+        let photo_url = format!(
+            "{GRAPH}/me/contacts/{}/photo/$value",
+            urlencoding::encode(id.trim())
+        );
+        match buscar_foto_data_uri(
+            &client,
+            &token,
+            &photo_url,
+            "people:enrich-contact-photo",
+        ) {
+            Ok(Some(value)) => {
+                photo_found = true;
+                fields.push(PeopleEnrichField {
+                    key: "photo".to_string(),
+                    value,
+                    source: "contacts".to_string(),
+                    label: None,
+                });
+            }
+            Ok(None) => {}
+            Err(error) => failures.push(format!("Contacts photo: {error}")),
+        }
+    }
+    if !photo_found {
+        if let Some(user_id) = directory_user_id {
+            let photo_url = format!(
+                "{GRAPH}/users/{}/photo/$value",
+                urlencoding::encode(&user_id)
+            );
+            match buscar_foto_data_uri(
+                &client,
+                &token,
+                &photo_url,
+                "people:enrich-directory-photo",
+            ) {
+                Ok(Some(value)) => fields.push(PeopleEnrichField {
+                    key: "photo".to_string(),
+                    value,
+                    source: "directory".to_string(),
+                    label: None,
+                }),
+                Ok(None) => {}
+                Err(error) => failures.push(format!("Directory photo: {error}")),
+            }
+        }
+    }
+
+    let write_available =
+        contact_id.is_some() && token_tem_escopo(store, "Contacts.ReadWrite")?;
+    Ok(PeopleEnrichPreview {
+        fields,
+        failures,
+        write_available,
+    })
+}
+
+fn campo_patch_valido(key: &str) -> bool {
+    matches!(
+        key,
+        "photo"
+            | "email"
+            | "businessPhone"
+            | "mobilePhone"
+            | "jobTitle"
+            | "companyName"
+            | "department"
+            | "officeLocation"
+            | "manager"
+    )
+}
+
+/// Persiste somente os campos explicitamente aceitos. O escopo e conferido no
+/// token antes de qualquer GET/PATCH; sem ele o comando retorna read-only e nao
+/// tenta escrita nem consentimento.
+pub fn cr_people_enrich_apply(
+    store: &TokenStore,
+    contact_id: &str,
+    fields: Vec<PeopleEnrichField>,
+) -> Result<PeopleEnrichApplyResult, String> {
+    let token = access_token(store)?;
+    let write_available = token_tem_escopo(store, "Contacts.ReadWrite")?;
+    if !write_available || contact_id.trim().is_empty() {
+        return Ok(PeopleEnrichApplyResult {
+            saved: false,
+            write_available: false,
+        });
+    }
+
+    let fields: Vec<PeopleEnrichField> = fields
+        .into_iter()
+        .filter(|field| {
+            campo_patch_valido(&field.key)
+                && !field.value.trim().is_empty()
+                && if field.key == "photo" {
+                    field.value.len() <= 5_000_000
+                } else {
+                    field.value.len() <= 512
+                }
+        })
+        .collect();
+    if fields.is_empty() {
+        return Ok(PeopleEnrichApplyResult {
+            saved: true,
+            write_available: true,
+        });
+    }
+
+    let client = reqwest::blocking::Client::new();
+    let contact_url = format!(
+        "{GRAPH}/me/contacts/{}",
+        urlencoding::encode(contact_id.trim())
+    );
+    let get_url = format!(
+        "{contact_url}?$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone"
+    );
+    let resp = graph_enviar("people:enrich-current", GRAPH_TETO_ESPERA_S, || {
+        client.get(&get_url).bearer_auth(&token).send()
+    })
+    .map_err(|error| format!("falha ao reler o contato: {error}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Contacts: Graph retornou {}", resp.status()));
+    }
+    let current: serde_json::Value = resp.json().map_err(|error| error.to_string())?;
+    let mut body = serde_json::Map::new();
+    if let Some(display_name) = current["displayName"].as_str() {
+        body.insert(
+            "displayName".to_string(),
+            serde_json::Value::String(display_name.to_string()),
+        );
+    }
+
+    let mut email_addresses = current["emailAddresses"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut known_emails: std::collections::HashSet<String> = email_addresses
+        .iter()
+        .filter_map(|item| item["address"].as_str())
+        .map(|value| value.trim().to_lowercase())
+        .collect();
+    let mut business_phones: Vec<String> = current["businessPhones"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.as_str().map(str::to_string))
+        .collect();
+    let mut known_phones: std::collections::HashSet<String> = business_phones
+        .iter()
+        .map(|value| normalizar_telefone(value))
+        .collect();
+    let mut changed_emails = false;
+    let mut changed_business_phones = false;
+    let mut accepted = 0usize;
+    let mut photo_to_write: Option<String> = None;
+
+    for field in fields {
+        let value = field.value.trim();
+        match field.key.as_str() {
+            "photo" => {
+                if !field.source.eq_ignore_ascii_case("contacts") {
+                    photo_to_write = Some(value.to_string());
+                }
+            }
+            "email" => {
+                let normalized = value.to_lowercase();
+                if known_emails.insert(normalized) {
+                    email_addresses.push(serde_json::json!({
+                        "address": value,
+                        "name": field.label.unwrap_or_default()
+                    }));
+                    changed_emails = true;
+                    accepted += 1;
+                }
+            }
+            "businessPhone" => {
+                if known_phones.insert(normalizar_telefone(value)) {
+                    business_phones.push(value.to_string());
+                    changed_business_phones = true;
+                    accepted += 1;
+                }
+            }
+            "mobilePhone" => {
+                body.insert(
+                    "mobilePhone".to_string(),
+                    serde_json::Value::String(value.to_string()),
+                );
+                accepted += 1;
+            }
+            "jobTitle"
+            | "companyName"
+            | "department"
+            | "officeLocation"
+            | "manager" => {
+                body.insert(
+                    field.key,
+                    serde_json::Value::String(value.to_string()),
+                );
+                accepted += 1;
+            }
+            _ => {}
+        }
+    }
+    if changed_emails {
+        body.insert(
+            "emailAddresses".to_string(),
+            serde_json::Value::Array(email_addresses),
+        );
+    }
+    if changed_business_phones {
+        body.insert(
+            "businessPhones".to_string(),
+            serde_json::json!(business_phones),
+        );
+    }
+    if accepted == 0 && photo_to_write.is_none() {
+        return Ok(PeopleEnrichApplyResult {
+            saved: true,
+            write_available: true,
+        });
+    }
+
+    if accepted > 0 {
+        let resp = graph_enviar("people:enrich-apply", GRAPH_TETO_ESPERA_S, || {
+            client
+                .patch(&contact_url)
+                .bearer_auth(&token)
+                .json(&body)
+                .send()
+        })
+        .map_err(|error| format!("falha ao salvar o contato: {error}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("Contacts: Graph retornou {}", resp.status()));
+        }
+    }
+
+    if let Some(photo) = photo_to_write {
+        use base64::{engine::general_purpose, Engine as _};
+        let (meta, encoded) = photo
+            .split_once(',')
+            .ok_or("formato de foto invalido")?;
+        let content_type = meta
+            .strip_prefix("data:")
+            .and_then(|value| value.strip_suffix(";base64"))
+            .filter(|value| value.starts_with("image/"))
+            .ok_or("tipo de foto invalido")?;
+        let bytes = general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|_| "foto base64 invalida")?;
+        let photo_url = format!("{contact_url}/photo/$value");
+        let resp = graph_enviar("people:enrich-apply-photo", GRAPH_TETO_ESPERA_S, || {
+            client
+                .patch(&photo_url)
+                .bearer_auth(&token)
+                .header(reqwest::header::CONTENT_TYPE, content_type)
+                .body(bytes.clone())
+                .send()
+        })
+        .map_err(|error| format!("falha ao salvar a foto: {error}"))?;
+        if !resp.status().is_success() {
+            return Err(format!("Contacts photo: Graph retornou {}", resp.status()));
+        }
+    }
+
+    Ok(PeopleEnrichApplyResult {
+        saved: true,
+        write_available: true,
+    })
 }
 
 /// `jobTitle` do item do Graph, descartando string vazia/null (o Graph devolve
