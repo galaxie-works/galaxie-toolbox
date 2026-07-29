@@ -2483,7 +2483,6 @@ function ItensMenuEmail({
   pastasCarregando,
   onAbrirMover,
   onMover,
-  setSelecionados,
   t,
 }: {
   alvos: string[];
@@ -2497,9 +2496,9 @@ function ItensMenuEmail({
   pastasCarregando: boolean;
   onAbrirMover: () => void;
   onMover: (ids: string[], destino: string, rotulo: string) => void;
-  setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
+  const removerDaSelecao = useAppStore((s) => s.removerDaSelecao);
   return (
     <>
       <ContextMenuItem
@@ -2535,11 +2534,7 @@ function ItensMenuEmail({
           // Tira da seleção o que foi excluído — senão a barra "N selected"
           // fica fantasma após excluir pelo menu de contexto (o atalho Delete
           // já limpava; o menu não) (rejeição do #86 pelo PO).
-          setSelecionados((s) => {
-            const n = new Set(s);
-            alvos.forEach((id) => n.delete(id));
-            return n;
-          });
+          removerDaSelecao(alvos);
         }}
       >
         <Trash2 />
@@ -2553,8 +2548,6 @@ function MessageList({
   titulo,
   mensagens,
   erroLeitura,
-  sel,
-  onSel,
   onRefresh,
   sidebarAberta,
   onToggleSidebar,
@@ -2571,8 +2564,6 @@ function MessageList({
   pastasCarregando,
   onAbrirMover,
   onMover,
-  selecionados,
-  setSelecionados,
   naoLidosPasta,
   contFlagged,
   contAnexos,
@@ -2599,8 +2590,6 @@ function MessageList({
   titulo: string;
   mensagens: EmailItem[] | null;
   erroLeitura?: string;
-  sel: string | null;
-  onSel: (id: string) => void;
   onRefresh: () => void;
   sidebarAberta: boolean;
   onToggleSidebar: () => void;
@@ -2617,8 +2606,6 @@ function MessageList({
   pastasCarregando: boolean;
   onAbrirMover: () => void;
   onMover: (ids: string[], destino: string, rotulo: string) => void;
-  selecionados: Set<string>;
-  setSelecionados: React.Dispatch<React.SetStateAction<Set<string>>>;
   naoLidosPasta: number;
   contFlagged: number | null;
   contAnexos: number | null;
@@ -2645,9 +2632,15 @@ function MessageList({
   idioma: string;
 }) {
   const listaRef = useRef<HTMLDivElement>(null);
-  // Busca (para o atalho "/" focar) e âncora do intervalo de Shift+clique (#28).
+  // Busca para o atalho "/" focar. Seleção/ativa/âncora vivem no slice (#128).
   const buscaRef = useRef<HTMLInputElement>(null);
-  const ancoraRef = useRef<string | null>(null);
+  const selecionados = useAppStore((s) => s.selecionados);
+  const msgSel = useAppStore((s) => s.msgSel);
+  const selecionarMensagem = useAppStore((s) => s.selecionarMensagem);
+  const alternarSelecionado = useAppStore((s) => s.alternarSelecionado);
+  const limparSelecao = useAppStore((s) => s.limparSelecao);
+  const selecionarTudo = useAppStore((s) => s.selecionarTudo);
+  const selecionarRange = useAppStore((s) => s.selecionarRange);
   const [ajudaAberta, setAjudaAberta] = useState(false);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
@@ -2657,14 +2650,6 @@ function MessageList({
   const limparBusca = () => {
     setBusca("");
   };
-
-  const alternarSel = (id: string) =>
-    setSelecionados((s) => {
-      const n = new Set(s);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
 
   // A busca por TEXTO e os filtros Graph são resolvidos pelo pai (que passa os
   // resultados como `mensagens`); aqui só aplicamos os filtros CLIENT-side
@@ -3060,8 +3045,7 @@ function MessageList({
   const irPara = (idx: number) => {
     const alvo = mensagensNavegaveis[idx];
     if (!alvo) return;
-    onSel(alvo.id);
-    ancoraRef.current = alvo.id;
+    selecionarMensagem(alvo.id);
     // Com a lista virtualizada, o item pode não estar no DOM — usa o
     // scrollToIndex do virtualizer. O índice é o da lista PLANA (linhas),
     // que difere de `filtrada` quando há headers de grupo (#30).
@@ -3087,7 +3071,7 @@ function MessageList({
       if (digitando) return;
       if (idsFiltrados.length === 0) return;
       e.preventDefault();
-      setSelecionados(new Set(idsFiltrados));
+      selecionarTudo(idsFiltrados);
       return;
     }
 
@@ -3108,8 +3092,7 @@ function MessageList({
       }
       if (selecionados.size > 0) {
         e.preventDefault();
-        setSelecionados(new Set());
-        ancoraRef.current = null;
+        limparSelecao();
         return;
       }
       if (busca) {
@@ -3134,7 +3117,7 @@ function MessageList({
     }
 
     if (mensagensNavegaveis.length === 0) return;
-    const idxAtivo = mensagensNavegaveis.findIndex((m) => m.id === sel);
+    const idxAtivo = mensagensNavegaveis.findIndex((m) => m.id === msgSel);
 
     // Navegação: ↑/↓ e j/k (MailVault).
     const desce = e.key === "ArrowDown" || e.key === "j";
@@ -3153,7 +3136,7 @@ function MessageList({
 
     // Ações que dependem de UMA mensagem ativa (ou da seleção, no excluir).
     const ativoId =
-      sel ?? (idxAtivo >= 0 ? mensagensNavegaveis[idxAtivo].id : null);
+      msgSel ?? (idxAtivo >= 0 ? mensagensNavegaveis[idxAtivo].id : null);
     const msgAtiva = ativoId
       ? mensagensNavegaveis.find((m) => m.id === ativoId)
       : undefined;
@@ -3166,8 +3149,7 @@ function MessageList({
         onExcluir(alvos);
         // acaoExcluir não limpa mais a seleção (pro BotaoExcluir animar antes de
         // desmontar); no atalho, limpamos aqui.
-        setSelecionados(new Set());
-        ancoraRef.current = null;
+        limparSelecao();
       }
       return;
     }
@@ -3193,8 +3175,7 @@ function MessageList({
       case "x": // marcar/desmarcar a mensagem ativa
         if (ativoId) {
           e.preventDefault();
-          alternarSel(ativoId);
-          ancoraRef.current = ativoId;
+          alternarSelecionado(ativoId);
         }
         return;
       case "u": // alterna lido/não-lido
@@ -3217,32 +3198,16 @@ function MessageList({
   // o item clicado (sobre a ordem de exibição `idsFiltrados`, ignorando headers
   // de grupo); Ctrl/⌘+clique alterna; clique simples abre e vira a nova âncora.
   const aoClicarLinha = (e: React.MouseEvent, id: string) => {
-    if (e.shiftKey) {
-      const ancora = ancoraRef.current;
-      if (ancora && ancora !== id) {
-        const i = idsExibidos.indexOf(ancora);
-        const j = idsExibidos.indexOf(id);
-        if (i >= 0 && j >= 0) {
-          e.preventDefault();
-          const [lo, hi] = i < j ? [i, j] : [j, i];
-          const faixa = idsExibidos.slice(lo, hi + 1);
-          setSelecionados((s) => {
-            const n = new Set(s);
-            for (const x of faixa) n.add(x);
-            return n;
-          });
-          return;
-        }
-      }
-      // Sem âncora válida → comporta como clique simples (fixa a âncora).
-    }
-    if (e.ctrlKey || e.metaKey) {
-      alternarSel(id);
-      ancoraRef.current = id;
+    if (e.shiftKey && selecionarRange(idsExibidos, id)) {
+      e.preventDefault();
       return;
     }
-    onSel(id);
-    ancoraRef.current = id;
+    if (e.ctrlKey || e.metaKey) {
+      alternarSelecionado(id);
+      return;
+    }
+    // Shift sem âncora válida também cai aqui: abre e fixa a nova âncora.
+    selecionarMensagem(id);
   };
 
   // #82: com agrupamento (#30) + grupos colapsados, a lista pode ficar mais
@@ -3460,7 +3425,7 @@ function MessageList({
             onChange={(e) => setBusca(e.target.value)}
             onKeyDown={(e) => {
               if (e.key !== "Escape") return;
-              if (selecionados.size > 0) setSelecionados(new Set());
+              if (selecionados.size > 0) limparSelecao();
               else limparBusca();
             }}
             placeholder={t.controlRoom.buscarEmail}
@@ -3475,7 +3440,7 @@ function MessageList({
             type="checkbox"
             checked={todosSel}
             onChange={(e) =>
-              setSelecionados(e.target.checked ? new Set(idsFiltrados) : new Set())
+              e.target.checked ? selecionarTudo(idsFiltrados) : limparSelecao()
             }
             className="size-3.5 accent-primary"
             aria-label={t.controlRoom.limparSelecao}
@@ -3486,12 +3451,12 @@ function MessageList({
           <BotaoExcluir
             className="ml-auto"
             onExcluir={() => onExcluir([...selecionados])}
-            onConcluir={() => setSelecionados(new Set())}
+            onConcluir={limparSelecao}
             rotulo={t.controlRoom.excluirSelecionados}
             rotuloProcessando={t.controlRoom.excluindo}
             rotuloConcluido={t.controlRoom.excluidos}
           />
-          <Button variant="ghost" size="icon-sm" onClick={() => setSelecionados(new Set())}>
+          <Button variant="ghost" size="icon-sm" onClick={limparSelecao}>
             <X />
           </Button>
         </div>
@@ -3665,7 +3630,7 @@ function MessageList({
                 const m = linha.m;
                 const threadExpandida =
                   thread !== null && threadsExpandidas.has(thread.chave);
-                const ativo = m.id === sel;
+                const ativo = m.id === msgSel;
                 const marcado = selecionados.has(m.id);
                 // Foto do remetente interno (#39); ausente → iniciais.
                 const foto = m.foto ?? getFoto(m.deEmail);
@@ -3757,7 +3722,7 @@ function MessageList({
                         <input
                           type="checkbox"
                           checked={marcado}
-                          onChange={() => alternarSel(m.id)}
+                          onChange={() => alternarSelecionado(m.id)}
                           className="size-3.5 accent-primary"
                           aria-label={m.assunto}
                         />
@@ -3874,7 +3839,6 @@ function MessageList({
                           pastasCarregando={pastasCarregando}
                           onAbrirMover={onAbrirMover}
                           onMover={onMover}
-                          setSelecionados={setSelecionados}
                           t={t}
                         />
                       </ContextMenuContent>
@@ -3904,7 +3868,6 @@ function MessageList({
               pastasCarregando={pastasCarregando}
               onAbrirMover={onAbrirMover}
               onMover={onMover}
-              setSelecionados={setSelecionados}
               t={t}
             />
           </ContextMenuContent>
@@ -5227,7 +5190,13 @@ export function ControlRoomScreen({
   // Caixa à qual `mensagens` pertence. Na troca, o render novo nunca reutiliza
   // nem por um frame a lista/detalhe da caixa anterior (#112).
   const [caixaDados, setCaixaDados] = useState(CAIXA_PROPRIA);
-  const [msgSel, setMsgSel] = useState<string | null>(null);
+  // Seleção/ativa/âncora migradas para o selection slice (#128). São estado de
+  // sessão e permanecem fora da persistência.
+  const msgSel = useAppStore((s) => s.msgSel);
+  const setMsgSel = useAppStore((s) => s.setMensagemAtiva);
+  const selecionados = useAppStore((s) => s.selecionados);
+  const limparSelecao = useAppStore((s) => s.limparSelecao);
+  const removerDaSelecao = useAppStore((s) => s.removerDaSelecao);
   const [eventoSel, setEventoSel] = useState<string | null>(null);
   const [recarga, setRecarga] = useState(0);
   // recargaPastas atualiza SÓ as contagens do sidebar, sem recarregar a lista
@@ -5269,7 +5238,6 @@ export function ControlRoomScreen({
   }, []);
   const [temMais, setTemMais] = useState(false);
   const [carregandoMais, setCarregandoMais] = useState(false);
-  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [novaAberta, setNovaAberta] = useState(false);
   // Handle do leitor para os atalhos r/a/f (#28) abrirem o Sheet de resposta.
   const detalheRef = useRef<MessageDetailHandle>(null);
@@ -5398,7 +5366,7 @@ export function ControlRoomScreen({
     setPastaSel("inbox");
     setMensagens(null);
     setMsgSel(null);
-    setSelecionados(new Set());
+    limparSelecao();
     setBusca("");
     setResultadosBusca(null);
     setResultadosFiltro(null);
@@ -5410,7 +5378,7 @@ export function ControlRoomScreen({
     carregadosRef.current = 0;
     deletadasRef.current.clear();
     ultimoVistoRef.current = null;
-  }, [caixaAtiva]);
+  }, [caixaAtiva, limparSelecao, setMsgSel]);
 
   // O submenu "Mover para…" precisa da árvore INTEIRA (não só do que o usuário
   // expandiu no sidebar). Ao abrir pela primeira vez, `pedirArvore` liga e este
@@ -5540,8 +5508,8 @@ export function ControlRoomScreen({
       }
       return novos.length;
     },
-    // idioma/t só mudam ao trocar idioma; setters são estáveis.
-    [idioma, t]
+    // idioma/t só mudam ao trocar idioma; a ação do store também é estável.
+    [idioma, setMsgSel, t]
   );
 
   // Poll leve da Inbox a cada 15 min (pega e-mail novo enquanto o usuário está
@@ -5955,12 +5923,7 @@ export function ControlRoomScreen({
     limparCachePasta(chaveCache(destino));
     if (anexosFora > 0) ajustarContAnexos(-anexosFora);
     if (flaggedFora > 0) ajustarContFlagged(-flaggedFora);
-    if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
-    setSelecionados((s) => {
-      const n = new Set(s);
-      ids.forEach((id) => n.delete(id));
-      return n;
-    });
+    removerDaSelecao(ids);
 
     // 2) Contadores do sidebar: origem −N, destino +N (só se o destino for uma
     //    pasta do sidebar — subpasta não aparece lá e não tem o que ajustar).
@@ -6030,7 +5993,7 @@ export function ControlRoomScreen({
     const cacheEntry = refreshForcado ? undefined : store.cachePastas[chave];
 
     // Comum às duas vias: troca de pasta zera seleção e busca.
-    setSelecionados(new Set());
+    limparSelecao();
     setBusca("");
     carregandoMaisRef.current = false;
     deletadasRef.current = new Set();
@@ -6054,9 +6017,10 @@ export function ControlRoomScreen({
       setMensagens(cacheEntry.mensagens);
       setCaixaDados(caixaAtiva);
       setTemMais(cacheEntry.temMais);
-      setMsgSel((cur) =>
-        cur && cacheEntry.mensagens.some((m) => m.id === cur)
-          ? cur
+      const ativa = store.msgSel;
+      store.setMensagemAtiva(
+        ativa && cacheEntry.mensagens.some((m) => m.id === ativa)
+          ? ativa
           : (cacheEntry.mensagens[0]?.id ?? null)
       );
       return () => {
@@ -6078,7 +6042,12 @@ export function ControlRoomScreen({
         // mantém a mensagem já selecionada se ela existir na lista nova (ex.:
         // clicar "Responder" num toast já selecionou a msg antes do fetch);
         // senão pega a primeira.
-        setMsgSel((cur) => (cur && ms.some((m) => m.id === cur) ? cur : (ms[0]?.id ?? null)));
+        const selecao = useAppStore.getState();
+        selecao.setMensagemAtiva(
+          selecao.msgSel && ms.some((m) => m.id === selecao.msgSel)
+            ? selecao.msgSel
+            : (ms[0]?.id ?? null)
+        );
         const tem = ms.length === PAGINA;
         setTemMais(tem);
         // Semeia o cache da pasta com a 1ª página (#108).
@@ -6402,8 +6371,6 @@ export function ControlRoomScreen({
               erroLeitura={
                 pastaAtual?.acessoNegado ? t.controlRoom.caixaAcessoParcial : undefined
               }
-              sel={msgSel}
-              onSel={setMsgSel}
               onRefresh={() => setRecarga((n) => n + 1)}
               sidebarAberta={sidebarAberta}
               onToggleSidebar={() => setSidebarAberta((v) => !v)}
@@ -6420,8 +6387,6 @@ export function ControlRoomScreen({
               pastasCarregando={arvorePendentes.length > 0}
               onAbrirMover={() => setPedirArvore(true)}
               onMover={acaoMover}
-              selecionados={selecionados}
-              setSelecionados={setSelecionados}
               naoLidosPasta={pastaAtual?.naoLidos ?? 0}
               contFlagged={contFlagged}
               contAnexos={contAnexos}
@@ -6455,7 +6420,7 @@ export function ControlRoomScreen({
               <MultiSelecaoContexto
                 n={selecionados.size}
                 onExcluir={() => acaoExcluir([...selecionados])}
-                onLimpar={() => setSelecionados(new Set())}
+                onLimpar={limparSelecao}
                 t={t}
               />
             ) : (

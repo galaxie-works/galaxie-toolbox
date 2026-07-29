@@ -29,6 +29,10 @@ import {
   type BridgePersistido,
   type BridgeSlice,
 } from "./bridge-slice";
+import {
+  createSelectionSlice,
+  type SelectionSlice,
+} from "./selection-slice";
 import { lerTemplates } from "@/lib/templates";
 import type { OrdenarMensagens } from "@/lib/api";
 import {
@@ -81,7 +85,8 @@ export type AppStore =
   & MailboxSlice
   & SettingsUiSlice
   & PersonalizationSlice
-  & BridgeSlice;
+  & BridgeSlice
+  & SelectionSlice;
 
 /** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
 type AppPersistido = UiPersistido &
@@ -345,6 +350,8 @@ export const useAppStore = create<AppStore>()(
       ...createSettingsUiSlice(...a),
       ...createPersonalizationSlice(...a),
       ...createBridgeSlice(...a),
+      // Seleção do Bridge (#128) é estado de sessão, fora do partialize.
+      ...createSelectionSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",
