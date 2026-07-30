@@ -2,6 +2,8 @@ import type { StateCreator } from "zustand";
 
 import {
   crAgenda,
+  crAgendaCalendario,
+  crCalendarios,
   crCategorias,
   crCriarCategoria,
   crCriarEvento,
@@ -10,6 +12,7 @@ import {
   crExcluirEvento,
 } from "../lib/api.ts";
 import type {
+  Calendario,
   CategoriaCor,
   EventoAgenda,
   EventoDetalhe,
@@ -26,16 +29,27 @@ export const AGENDA_VIEWS: readonly AgendaViewTipo[] = [
   "agenda",
 ];
 
-/** Chave real no localStorage da preferência de view (persistida). */
-export const AGENDA_KEYS = { agendaView: "agenda.view" } as const;
+/** Chaves reais no localStorage das preferências persistidas da agenda. */
+export const AGENDA_KEYS = {
+  agendaView: "agenda.view",
+  // Seleção de calendários (#233): array de ids, ou `null` (não inicializado).
+  agendaCalendariosSel: "agenda.calendarios.selecao",
+} as const;
 
-/** O que a agenda persiste entre sessões: só a preferência de view. */
+/** O que a agenda persiste entre sessões: view + seleção de calendários. */
 export interface AgendaPersistido {
   agendaView: AgendaViewTipo;
+  agendaCalendariosSelecionados: string[] | null;
 }
 
 interface AgendaApi {
   carregarEventos: (inicio: string, fim: string) => Promise<EventoAgenda[]>;
+  carregarEventosCalendario: (
+    calendarioId: string,
+    inicio: string,
+    fim: string,
+  ) => Promise<EventoAgenda[]>;
+  listarCalendarios: () => Promise<Calendario[]>;
   carregarCategorias: () => Promise<CategoriaCor[]>;
   criarCategoria: (nome: string, preset: string) => Promise<CategoriaCor>;
   carregarEvento: (id: string) => Promise<EventoDetalhe>;
@@ -53,6 +67,12 @@ export interface AgendaSlice {
   agendaCoresCategoria: Map<string, string>;
   agendaGeracao: number;
 
+  // Calendários do usuário (#233): lista + seleção ativa (persistida). `null` na
+  // seleção = ainda não inicializada (usa o padrão até os calendários carregarem).
+  agendaCalendarios: Calendario[] | null;
+  agendaCalendariosErro: string | null;
+  agendaCalendariosSelecionados: string[] | null;
+
   agendaEventoId: string | null;
   agendaEventoDetalhe: EventoDetalhe | null;
   agendaEventoGeracao: number;
@@ -66,6 +86,10 @@ export interface AgendaSlice {
   setAgendaDia: (dia: Date) => void;
   setAgendaView: (view: AgendaViewTipo) => void;
   carregarMesAgenda: (inicio: string, fim: string) => Promise<void>;
+  // Lista os calendários (#233) e, na 1ª vez, seleciona o padrão.
+  carregarCalendarios: () => Promise<void>;
+  // Liga/desliga um calendário na seleção e re-busca os eventos.
+  alternarCalendario: (id: string) => void;
   recarregarAgenda: () => void;
   carregarCoresAgenda: () => Promise<void>;
   // Cria uma categoria mestra e a injeta no mapa de cores (#211). Devolve o
@@ -85,6 +109,8 @@ export interface AgendaSlice {
 
 const agendaApi: AgendaApi = {
   carregarEventos: crAgenda,
+  carregarEventosCalendario: crAgendaCalendario,
+  listarCalendarios: crCalendarios,
   carregarCategorias: crCategorias,
   criarCategoria: crCriarCategoria,
   carregarEvento: crEventoCorpo,
@@ -151,6 +177,10 @@ export function criarAgendaSlice(
     agendaCoresCategoria: new Map(),
     agendaGeracao: 0,
 
+    agendaCalendarios: null,
+    agendaCalendariosErro: null,
+    agendaCalendariosSelecionados: null,
+
     agendaEventoId: null,
     agendaEventoDetalhe: null,
     agendaEventoGeracao: 0,
@@ -172,7 +202,33 @@ export function criarAgendaSlice(
         agendaGeracao: geracao,
       });
       try {
-        const eventos = await api.carregarEventos(inicio, fim);
+        const sel = get().agendaCalendariosSelecionados;
+        const cals = get().agendaCalendarios ?? [];
+        let eventos: EventoAgenda[];
+        if (sel === null || cals.length === 0) {
+          // Ainda não inicializado (ou lista vazia): calendário padrão (#211).
+          eventos = await api.carregarEventos(inicio, fim);
+        } else {
+          const alvos = cals.filter((c) => sel.includes(c.id));
+          if (alvos.length === 0) {
+            // Usuário desmarcou tudo → nada a exibir (estado vazio).
+            eventos = [];
+          } else {
+            // Merge dos eventos de cada calendário, marcando cada evento com o
+            // id e a cor do seu calendário de origem (#233).
+            const listas = await Promise.all(
+              alvos.map(async (c) => {
+                const evs = await api.carregarEventosCalendario(c.id, inicio, fim);
+                return evs.map((e) => ({
+                  ...e,
+                  calendarioId: c.id,
+                  corCalendario: c.cor,
+                }));
+              }),
+            );
+            eventos = listas.flat();
+          }
+        }
         if (get().agendaGeracao === geracao) {
           set({ agendaEventosMes: eventos });
         }
@@ -184,6 +240,34 @@ export function criarAgendaSlice(
           });
         }
       }
+    },
+
+    carregarCalendarios: async () => {
+      set({ agendaCalendariosErro: null });
+      try {
+        const cals = await api.listarCalendarios();
+        set({ agendaCalendarios: cals });
+        // 1ª carga: sem seleção persistida, começa no calendário padrão.
+        if (get().agendaCalendariosSelecionados === null) {
+          const padrao = cals.find((c) => c.isDefaultCalendar) ?? cals[0];
+          if (padrao) set({ agendaCalendariosSelecionados: [padrao.id] });
+        }
+        // Re-busca para refletir a seleção (agora por calendário, com cores).
+        get().recarregarAgenda();
+      } catch (erro) {
+        set({ agendaCalendarios: [], agendaCalendariosErro: String(erro) });
+      }
+    },
+
+    alternarCalendario: (id) => {
+      set((s) => {
+        const atual = s.agendaCalendariosSelecionados ?? [];
+        const prox = atual.includes(id)
+          ? atual.filter((x) => x !== id)
+          : [...atual, id];
+        return { agendaCalendariosSelecionados: prox };
+      });
+      get().recarregarAgenda();
     },
 
     recarregarAgenda: () =>
@@ -263,6 +347,15 @@ export function criarAgendaSlice(
     criarEvento: async (input) => {
       const tempId = `temp-${Date.now()}`;
       const otimista = eventoDeInput(tempId, input);
+      // Marca o evento otimista com a cor do calendário-alvo (#233) para casar
+      // com o merge multi-calendário na hora de renderizar.
+      const calAlvo = input.calendarioId
+        ? (get().agendaCalendarios ?? []).find((c) => c.id === input.calendarioId)
+        : undefined;
+      if (calAlvo) {
+        otimista.calendarioId = calAlvo.id;
+        otimista.corCalendario = calAlvo.cor;
+      }
       const antes = get().agendaEventosMes ?? [];
       set({ agendaEventosMes: [...antes, otimista] });
       try {

@@ -282,6 +282,33 @@ async fn cr_agenda(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda: lista os calendários do usuário (#233). Calendars.Read.
+#[tauri::command]
+async fn cr_calendarios(
+    state: State<'_, Store>,
+) -> Result<Vec<graph::Calendario>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_calendarios(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Agenda: eventos de um calendário específico no intervalo (#233). Calendars.Read.
+#[tauri::command]
+async fn cr_agenda_calendario(
+    state: State<'_, Store>,
+    calendario_id: String,
+    inicio: String,
+    fim: String,
+) -> Result<Vec<graph::EventoAgenda>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_agenda_calendario(&store, &calendario_id, &inicio, &fim)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Control room: detalhe completo de um evento (corpo + convidados).
 #[tauri::command]
 async fn cr_evento_corpo(
@@ -1275,6 +1302,8 @@ pub fn run() {
             cr_email,
             cr_tarefas,
             cr_agenda,
+            cr_calendarios,
+            cr_agenda_calendario,
             cr_evento_corpo,
             cr_inbox_dia,
             cr_email_corpo,

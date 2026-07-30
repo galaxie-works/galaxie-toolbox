@@ -1,6 +1,7 @@
 import type {
   AppUser,
   CaixaEntrada,
+  Calendario,
   CategoriaCor,
   EmailDetalhe,
   EmailItem,
@@ -390,6 +391,32 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
     ];
   }
   return invoke<EventoAgenda[]>("cr_agenda", { inicio, fim });
+}
+
+/** Lista os calendários do usuário (#233) — /me/calendars. */
+export async function crCalendarios(): Promise<Calendario[]> {
+  if (!inTauri()) {
+    await sleep(300);
+    return [
+      { id: "cal-default", nome: "Calendário", cor: "#0078D4", isDefaultCalendar: true, canEdit: true },
+      { id: "cal-aniversarios", nome: "Aniversários", cor: "#E3008C", isDefaultCalendar: false, canEdit: false },
+      { id: "cal-feriados", nome: "Feriados", cor: "#498205", isDefaultCalendar: false, canEdit: false },
+    ];
+  }
+  return invoke<Calendario[]>("cr_calendarios");
+}
+
+/** Eventos de um calendário específico no intervalo (#233). */
+export async function crAgendaCalendario(
+  calendarioId: string,
+  inicio: string,
+  fim: string,
+): Promise<EventoAgenda[]> {
+  if (!inTauri()) {
+    // Reaproveita o mock do calendário padrão para simular a carga por id.
+    return crAgenda(inicio, fim);
+  }
+  return invoke<EventoAgenda[]>("cr_agenda_calendario", { calendarioId, inicio, fim });
 }
 
 export async function crCategorias(): Promise<CategoriaCor[]> {
