@@ -3615,6 +3615,7 @@ pub fn cr_people_enrich_preview(
     store: &TokenStore,
     contact_id: Option<&str>,
     email: &str,
+    directory_user: bool,
 ) -> Result<PeopleEnrichPreview, String> {
     let email = email.trim();
     if email.is_empty() {
@@ -3648,81 +3649,88 @@ pub fn cr_people_enrich_preview(
     let mut existing_phones = telefones_existentes(&contato);
     let mut pessoa_match: Option<serde_json::Value> = None;
 
-    let people_url = format!(
-        "{GRAPH}/me/people?$top=250&$select=id,displayName,scoredEmailAddresses,phones,companyName,jobTitle,personType,userPrincipalName"
-    );
-    match graph_enviar("people:enrich-people", GRAPH_TETO_ESPERA_S, || {
-        client.get(&people_url).bearer_auth(&token).send()
-    }) {
-        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
-            Ok(body) => {
-                if let Some(items) = body["value"].as_array() {
-                    if let Some(person) = pessoa_por_email(items, email) {
-                        adicionar_scalar(
-                            &mut fields,
-                            &contato,
-                            "jobTitle",
-                            texto_opcional(person, "jobTitle"),
-                            "people",
-                        );
-                        adicionar_scalar(
-                            &mut fields,
-                            &contato,
-                            "companyName",
-                            texto_opcional(person, "companyName"),
-                            "people",
-                        );
-                        for address in person["scoredEmailAddresses"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                        {
-                            if let Some(value) = address["address"].as_str() {
-                                adicionar_email(
-                                    &mut fields,
-                                    &mut existing_emails,
-                                    value,
-                                    "people",
-                                    None,
-                                );
+    if !directory_user {
+        let people_url = format!(
+            "{GRAPH}/me/people?$top=250&$select=id,displayName,scoredEmailAddresses,phones,companyName,jobTitle,personType,userPrincipalName"
+        );
+        match graph_enviar("people:enrich-people", GRAPH_TETO_ESPERA_S, || {
+            client.get(&people_url).bearer_auth(&token).send()
+        }) {
+            Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+                Ok(body) => {
+                    if let Some(items) = body["value"].as_array() {
+                        if let Some(person) = pessoa_por_email(items, email) {
+                            adicionar_scalar(
+                                &mut fields,
+                                &contato,
+                                "jobTitle",
+                                texto_opcional(person, "jobTitle"),
+                                "people",
+                            );
+                            adicionar_scalar(
+                                &mut fields,
+                                &contato,
+                                "companyName",
+                                texto_opcional(person, "companyName"),
+                                "people",
+                            );
+                            for address in person["scoredEmailAddresses"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                            {
+                                if let Some(value) = address["address"].as_str() {
+                                    adicionar_email(
+                                        &mut fields,
+                                        &mut existing_emails,
+                                        value,
+                                        "people",
+                                        None,
+                                    );
+                                }
                             }
-                        }
-                        for phone in person["phones"].as_array().into_iter().flatten() {
-                            if let Some(number) = phone["number"].as_str() {
-                                adicionar_telefone(
-                                    &mut fields,
-                                    &mut existing_phones,
-                                    number,
-                                    phone["type"].as_str().unwrap_or("work"),
-                                    "people",
-                                );
+                            for phone in person["phones"].as_array().into_iter().flatten() {
+                                if let Some(number) = phone["number"].as_str() {
+                                    adicionar_telefone(
+                                        &mut fields,
+                                        &mut existing_phones,
+                                        number,
+                                        phone["type"].as_str().unwrap_or("work"),
+                                        "people",
+                                    );
+                                }
                             }
+                            pessoa_match = Some(person.clone());
                         }
-                        pessoa_match = Some(person.clone());
                     }
                 }
-            }
-            Err(error) => failures.push(format!("People: resposta invalida ({error})")),
-        },
-        Ok(resp) => failures.push(format!("People: Graph retornou {}", resp.status())),
-        Err(error) => failures.push(format!("People: falha de rede ({error})")),
+                Err(error) => failures.push(format!("People: resposta invalida ({error})")),
+            },
+            Ok(resp) => failures.push(format!("People: Graph retornou {}", resp.status())),
+            Err(error) => failures.push(format!("People: falha de rede ({error})")),
+        }
     }
 
-    let organization = pessoa_match.as_ref().is_some_and(|person| {
-        let person_type = &person["personType"];
-        person_type["subclass"]
-            .as_str()
-            .or_else(|| person_type["class"].as_str())
-            .is_some_and(|value| value.eq_ignore_ascii_case("OrganizationUser"))
-    });
+    let organization = directory_user
+        || pessoa_match.as_ref().is_some_and(|person| {
+            let person_type = &person["personType"];
+            person_type["subclass"]
+                .as_str()
+                .or_else(|| person_type["class"].as_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("OrganizationUser"))
+        });
 
     let mut directory_user_id: Option<String> = None;
     if organization {
-        let identifier = pessoa_match
-            .as_ref()
-            .and_then(|person| person["userPrincipalName"].as_str())
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(email);
+        let identifier = if directory_user {
+            email
+        } else {
+            pessoa_match
+                .as_ref()
+                .and_then(|person| person["userPrincipalName"].as_str())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(email)
+        };
         let user_url = format!(
             "{GRAPH}/users/{}?$select=id,displayName,mail,userPrincipalName,jobTitle,companyName,department,officeLocation,mobilePhone,businessPhones",
             urlencoding::encode(identifier)
@@ -3859,7 +3867,7 @@ pub fn cr_people_enrich_preview(
             Err(error) => failures.push(format!("Contacts photo: {error}")),
         }
     }
-    if !photo_found {
+    if !directory_user && !photo_found {
         if let Some(user_id) = directory_user_id {
             let photo_url = format!(
                 "{GRAPH}/users/{}/photo/$value",

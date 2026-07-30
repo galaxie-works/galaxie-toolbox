@@ -729,7 +729,9 @@ const pt = {
       "Não foi possível editar este contato agora.",
     peopleEditDirectoryTitle: "Este não é um contato salvo",
     peopleEditDirectoryDesc:
-      "Esta pessoa aparece no diretório da sua organização, mas ainda não está salva nos seus contatos. Por isso, não é possível editá-la aqui.",
+      "Esta pessoa ainda não está salva nos seus contatos. Por isso, não é possível editá-la aqui.",
+    peopleEditDirectoryTooltip:
+      "As informações de usuários da sua organização só podem ser alteradas por um administrador.",
     peopleEditError: "Não foi possível salvar. Os valores anteriores foram restaurados.",
     peopleInvalidEmail: "Revise os endereços de e-mail.",
     peopleInvalidPhone: "Revise os números de telefone.",
@@ -1658,7 +1660,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
       "This contact cannot be edited right now.",
     peopleEditDirectoryTitle: "This is not a saved contact",
     peopleEditDirectoryDesc:
-      "This person appears in your organization's directory but is not saved in your contacts yet, so they cannot be edited here.",
+      "This person is not saved in your contacts yet, so they cannot be edited here.",
+    peopleEditDirectoryTooltip:
+      "Information about users in your organization can only be changed by an administrator.",
     peopleEditError: "The contact could not be saved. Previous values were restored.",
     peopleInvalidEmail: "Review the email addresses.",
     peopleInvalidPhone: "Review the phone numbers.",

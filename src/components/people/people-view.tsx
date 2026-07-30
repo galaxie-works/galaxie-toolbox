@@ -348,6 +348,9 @@ function PeopleDetail({
 }) {
   const { idioma, t } = useIdioma();
   const applyPeopleFields = useAppStore((state) => state.applyPeopleFields);
+  const autoEnrichDirectoryContact = useAppStore(
+    (state) => state.autoEnrichDirectoryContact,
+  );
   const updatePeopleContact = useAppStore((state) => state.updatePeopleContact);
   const organizations = useAppStore((state) => state.organizations);
   const selectOrganization = useAppStore((state) => state.selectOrganization);
@@ -381,16 +384,21 @@ function PeopleDetail({
   const [interactions, setInteractions] = useState<PeopleInteraction[]>([]);
   const [interactionsLoading, setInteractionsLoading] = useState(Boolean(primaryEmail));
   const [interactionsError, setInteractionsError] = useState(false);
+  const directoryUser = !contact.contactId && contact.organization;
   const sparse = !contact.jobTitle || !contact.company || contact.phones.length === 0;
   const editUnavailableReason = !contact.contactId
-    ? "directory"
+    ? directoryUser
+      ? "directory"
+      : "unsaved"
     : writeAvailable === false
       ? "permission"
       : null;
   const editLocked = !contact.contactId || writeAvailable !== true;
   const editUnavailableDescription =
     editUnavailableReason === "directory"
-      ? t.controlRoom.peopleEditDirectoryDesc
+      ? t.controlRoom.peopleEditDirectoryTooltip
+      : editUnavailableReason === "unsaved"
+        ? t.controlRoom.peopleEditDirectoryDesc
       : editUnavailableReason === "permission"
         ? t.reauth.descricao
         : t.controlRoom.peopleEditUnavailable;
@@ -548,7 +556,23 @@ function PeopleDetail({
   };
 
   useEffect(() => {
-    if (autoEnrich) void enrich();
+    let active = true;
+    if (directoryUser) {
+      setEnriching(true);
+      setEnrichError(null);
+      void autoEnrichDirectoryContact(contact.id)
+        .catch((error) => {
+          if (active) setEnrichError(String(error));
+        })
+        .finally(() => {
+          if (active) setEnriching(false);
+        });
+    } else if (autoEnrich) {
+      void enrich();
+    }
+    return () => {
+      active = false;
+    };
     // `key` do detalhe muda a cada ação Enrich; roda exatamente uma vez no mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -730,15 +754,17 @@ function PeopleDetail({
                     <Pencil />
                   </ToolbarButton>
                 )}
-                <ToolbarButton
-                  variant="default"
-                  tooltip={t.controlRoom.peopleEnrich}
-                  aria-label={t.controlRoom.peopleEnrich}
-                  onClick={() => void enrich()}
-                  disabled={!primaryEmail || enriching || applying}
-                >
-                  {enriching ? <Spinner /> : <Sparkles />}
-                </ToolbarButton>
+                {!directoryUser && (
+                  <ToolbarButton
+                    variant="default"
+                    tooltip={t.controlRoom.peopleEnrich}
+                    aria-label={t.controlRoom.peopleEnrich}
+                    onClick={() => void enrich()}
+                    disabled={!primaryEmail || enriching || applying}
+                  >
+                    {enriching ? <Spinner /> : <Sparkles />}
+                  </ToolbarButton>
+                )}
                 <ToolbarSeparator />
                 <ToolbarButton
                   variant="default"
@@ -811,14 +837,18 @@ function PeopleDetail({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col">
-          {(!editing && editUnavailableReason) ||
+          {(!editing &&
+            editUnavailableReason &&
+            editUnavailableReason !== "directory") ||
           editError ||
-          (sparse && !preview && !sessionOnlyApplied) ||
+          (sparse && !directoryUser && !preview && !sessionOnlyApplied) ||
           preview ||
           sessionOnlyApplied ||
           enrichError ? (
             <div className="space-y-3 border-b p-4">
-              {!editing && editUnavailableReason && (
+              {!editing &&
+                editUnavailableReason &&
+                editUnavailableReason !== "directory" && (
                 <Alert variant="warning">
                   {editUnavailableReason === "permission" ? (
                     <KeyRound />
@@ -826,9 +856,9 @@ function PeopleDetail({
                     <Users />
                   )}
                   <AlertTitle>
-                    {editUnavailableReason === "directory"
-                      ? t.controlRoom.peopleEditDirectoryTitle
-                      : t.reauth.titulo}
+                    {editUnavailableReason === "permission"
+                      ? t.reauth.titulo
+                      : t.controlRoom.peopleEditDirectoryTitle}
                   </AlertTitle>
                   <AlertDescription>
                     {editUnavailableDescription}
@@ -850,7 +880,7 @@ function PeopleDetail({
                 </Alert>
               )}
 
-              {sparse && !preview && !sessionOnlyApplied && (
+              {sparse && !directoryUser && !preview && !sessionOnlyApplied && (
                 <Alert variant="info">
                   <Sparkles />
                   <AlertTitle>{t.controlRoom.peopleEnrichPrompt}</AlertTitle>

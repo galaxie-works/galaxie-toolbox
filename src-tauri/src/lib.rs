@@ -472,10 +472,16 @@ async fn cr_people_enrich_preview(
     state: State<'_, Store>,
     contact_id: Option<String>,
     email: String,
+    directory_user: Option<bool>,
 ) -> Result<graph::PeopleEnrichPreview, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_people_enrich_preview(&store, contact_id.as_deref(), &email)
+        graph::cr_people_enrich_preview(
+            &store,
+            contact_id.as_deref(),
+            &email,
+            directory_user.unwrap_or(false),
+        )
     })
     .await
     .map_err(|e| e.to_string())?

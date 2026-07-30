@@ -11,11 +11,24 @@ import type { Filter } from "@/components/reui/filters";
 import type {
   PeopleContactEdit,
   PeopleEnrichField,
+  PeopleEnrichFieldKey,
+  PeopleEnrichPreview,
   Pessoa,
 } from "@/lib/types";
 import type { AppStore } from "./index";
 
 const resolveInFlight = new Map<string, Promise<PeopleContact | null>>();
+const directoryEnrichInFlight = new Map<
+  string,
+  Promise<PeopleEnrichPreview>
+>();
+const DIRECTORY_AUTO_ENRICH_FIELDS = new Set<PeopleEnrichFieldKey>([
+  "companyName",
+  "department",
+  "jobTitle",
+  "officeLocation",
+  "manager",
+]);
 
 function personFromSuggestion(person: Pessoa): PeopleContact {
   const email = person.email.trim();
@@ -53,6 +66,7 @@ export interface PeopleSlice {
   peopleView: "table" | "cards";
   peopleColumnVisibility: Record<string, boolean>;
   peopleRequestGeneration: number;
+  peopleDirectoryEnrichedEmails: string[];
 
   loadPeople: () => Promise<void>;
   loadMorePeople: () => Promise<void>;
@@ -67,6 +81,7 @@ export interface PeopleSlice {
   setPeopleTab: (tab: "contacts" | "organizations") => void;
   setPeopleSearchQuery: (query: string) => void;
   applyPeopleFields: (id: string, fields: PeopleEnrichField[]) => void;
+  autoEnrichDirectoryContact: (id: string) => Promise<void>;
   updatePeopleContact: (id: string, input: PeopleContactEdit) => Promise<void>;
 }
 
@@ -98,6 +113,7 @@ export const createPeopleSlice: StateCreator<
     actions: true,
   },
   peopleRequestGeneration: 0,
+  peopleDirectoryEnrichedEmails: [],
 
   loadPeople: async () => {
     const generation = get().peopleRequestGeneration + 1;
@@ -129,6 +145,7 @@ export const createPeopleSlice: StateCreator<
         peopleMissingScopes: result.missingScopes,
         peopleNextLinks: result.nextLinks,
         peopleError: result.failures.length > 0 ? result.failures.join(" · ") : null,
+        peopleDirectoryEnrichedEmails: [],
       });
     } catch (error) {
       if (get().peopleRequestGeneration !== generation) return;
@@ -256,6 +273,62 @@ export const createPeopleSlice: StateCreator<
         contact.id === id ? applyPeopleEnrichment(contact, fields) : contact,
       ),
     })),
+  autoEnrichDirectoryContact: async (id) => {
+    const contact = get().peopleContacts.find((candidate) => candidate.id === id);
+    const email = contact?.emails[0]?.address.trim();
+    const normalizedEmail = email?.toLowerCase() ?? "";
+    if (
+      !contact ||
+      contact.contactId ||
+      !contact.organization ||
+      !email ||
+      get().peopleDirectoryEnrichedEmails.includes(normalizedEmail)
+    ) {
+      return;
+    }
+
+    let request = directoryEnrichInFlight.get(normalizedEmail);
+    if (!request) {
+      request = api
+        .crPeopleEnrichPreview(null, email, true)
+        .finally(() => directoryEnrichInFlight.delete(normalizedEmail));
+      directoryEnrichInFlight.set(normalizedEmail, request);
+    }
+
+    const result = await request;
+    const fields = result.fields.filter((field) =>
+      DIRECTORY_AUTO_ENRICH_FIELDS.has(field.key),
+    );
+    const successful = result.failures.length === 0;
+    set((state) => {
+      const originalStillExists = state.peopleContacts.some(
+        (candidate) => candidate.id === id,
+      );
+      return {
+        peopleContacts:
+          fields.length > 0
+            ? state.peopleContacts.map((candidate) =>
+                candidate.id === id
+                  ? applyPeopleEnrichment(candidate, fields)
+                  : candidate,
+              )
+            : state.peopleContacts,
+        peopleDirectoryEnrichedEmails:
+          successful && originalStillExists
+            ? Array.from(
+                new Set([
+                  ...state.peopleDirectoryEnrichedEmails,
+                  normalizedEmail,
+                ]),
+              )
+            : state.peopleDirectoryEnrichedEmails,
+      };
+    });
+
+    if (fields.length === 0 && result.failures.length > 0) {
+      throw new Error(result.failures.join(" · "));
+    }
+  },
   updatePeopleContact: async (id, input) => {
     const current = get().peopleContacts.find((contact) => contact.id === id);
     if (!current?.contactId) {

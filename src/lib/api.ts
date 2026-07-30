@@ -844,6 +844,7 @@ export async function crPeopleList(nextLinks: string[] = []): Promise<PeopleList
 export async function crPeopleEnrichPreview(
   contactId: string | null,
   email: string,
+  directoryUser = false,
 ): Promise<PeopleEnrichPreview> {
   if (!inTauri()) {
     await sleep(650);
@@ -892,6 +893,7 @@ export async function crPeopleEnrichPreview(
   return invoke<PeopleEnrichPreview>("cr_people_enrich_preview", {
     contactId,
     email,
+    directoryUser,
   });
 }
 
