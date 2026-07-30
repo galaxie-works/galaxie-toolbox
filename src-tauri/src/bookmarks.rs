@@ -38,14 +38,30 @@ pub struct BrowserBookmarks {
     pub roots: Vec<BookmarkNode>,
 }
 
+/// Resultado da importacao automatica: o que deu pra ler + diagnostico honesto.
+/// `bloqueados` distingue "navegador presente mas leitura NEGADA" (tipico de
+/// antivirus/EDR corporativo protegendo a pasta de perfil) de "nao instalado" ou
+/// "sem favoritos" — o front decide a mensagem e oferece import por arquivo HTML.
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportarResultado {
+    /// Navegadores lidos com sucesso (com favoritos).
+    pub navegadores: Vec<BrowserBookmarks>,
+    /// Navegadores cujo diretorio `User Data` existe (instalado).
+    pub detectados: Vec<String>,
+    /// Detectados mas com o `Bookmarks` ilegivel (acesso negado / bloqueio de
+    /// seguranca). NAO forcamos a leitura — respeitamos a protecao anti-roubo.
+    pub bloqueados: Vec<String>,
+}
+
 #[cfg(windows)]
-pub fn importar() -> Vec<BrowserBookmarks> {
+pub fn importar() -> ImportarResultado {
     use std::path::PathBuf;
 
-    let mut saida = Vec::new();
+    let mut res = ImportarResultado::default();
     let local: PathBuf = match std::env::var_os("LOCALAPPDATA") {
         Some(v) => PathBuf::from(v),
-        None => return saida,
+        None => return res,
     };
 
     let alvos = [
@@ -55,23 +71,36 @@ pub fn importar() -> Vec<BrowserBookmarks> {
 
     for (navegador, user_data) in alvos {
         if !user_data.is_dir() {
-            continue; // navegador nao instalado / sem perfil
+            continue; // navegador nao instalado
         }
+        res.detectados.push(navegador.to_string());
+        let mut bloqueado = false;
         for perfil in perfis_com_bookmarks(&user_data) {
             // SO o arquivo `Bookmarks`. Jamais `Login Data` ou vizinhos.
             let arquivo = user_data.join(&perfil).join("Bookmarks");
-            match ler_arquivo_bookmarks(&arquivo) {
-                Some(roots) if !roots.is_empty() => saida.push(BrowserBookmarks {
-                    navegador: navegador.to_string(),
-                    perfil,
-                    roots,
-                }),
-                _ => {}
+            match std::fs::read_to_string(&arquivo) {
+                Ok(bruto) => {
+                    if let Some(roots) = parse_bookmarks(&bruto) {
+                        if !roots.is_empty() {
+                            res.navegadores.push(BrowserBookmarks {
+                                navegador: navegador.to_string(),
+                                perfil,
+                                roots,
+                            });
+                        }
+                    }
+                }
+                // Arquivo listado (existe) mas nao leu → acesso bloqueado
+                // (EDR/antivirus). Sinaliza para o front oferecer import por HTML.
+                Err(_) => bloqueado = true,
             }
+        }
+        if bloqueado {
+            res.bloqueados.push(navegador.to_string());
         }
     }
 
-    saida
+    res
 }
 
 /// Lista as pastas de perfil que tem um arquivo `Bookmarks`, com "Default"
@@ -106,13 +135,13 @@ fn perfis_com_bookmarks(user_data: &std::path::Path) -> Vec<String> {
     perfis
 }
 
-/// Le e converte um arquivo `Bookmarks`. Devolve as pastas de topo
-/// (bookmark_bar, other, synced) que tiverem conteudo. Erro de I/O ou JSON
-/// invalido → `None` (a entrada simplesmente nao aparece).
+/// Converte o JSON de um arquivo `Bookmarks` nas pastas de topo (bookmark_bar,
+/// other, synced) que tiverem conteudo. JSON invalido → `None`. A LEITURA do
+/// arquivo fica no `importar`, para distinguir "nao leu" (bloqueio) de "sem
+/// favoritos".
 #[cfg(windows)]
-fn ler_arquivo_bookmarks(arquivo: &std::path::Path) -> Option<Vec<BookmarkNode>> {
-    let bruto = std::fs::read_to_string(arquivo).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&bruto).ok()?;
+fn parse_bookmarks(bruto: &str) -> Option<Vec<BookmarkNode>> {
+    let json: serde_json::Value = serde_json::from_str(bruto).ok()?;
     let roots = json.get("roots")?.as_object()?;
 
     let mut contador: usize = 0;
@@ -188,6 +217,6 @@ fn converter(v: &serde_json::Value, contador: &mut usize) -> Option<BookmarkNode
 
 // --- Stub para plataformas nao-Windows (dev/CI) ---
 #[cfg(not(windows))]
-pub fn importar() -> Vec<BrowserBookmarks> {
-    Vec::new()
+pub fn importar() -> ImportarResultado {
+    ImportarResultado::default()
 }
