@@ -222,7 +222,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldX,
-  SlidersHorizontal,
   Trash2,
   TriangleAlert,
   User,
@@ -2471,10 +2470,6 @@ function MessageList({
   onAbrirMover,
   onMover,
   filtrosOcultos,
-  marcarLidoModo,
-  marcarLidoAtraso,
-  onMarcarLidoModo,
-  onMarcarLidoAtraso,
   onResponder,
   onResponderTodos,
   onEncaminhar,
@@ -2501,10 +2496,6 @@ function MessageList({
   onAbrirMover: () => void;
   onMover: (ids: string[], destino: string, rotulo: string) => void;
   filtrosOcultos: Set<string>;
-  marcarLidoModo: MarcarLidoModo;
-  marcarLidoAtraso: number;
-  onMarcarLidoModo: (m: MarcarLidoModo) => void;
-  onMarcarLidoAtraso: (s: number) => void;
   // Atalhos de teclado (#28): ações que vivem no LEITOR (reply/forward via
   // handle imperativo) e no PAI (compor). MessageList só dispara a tecla.
   onResponder: () => void;
@@ -3298,64 +3289,9 @@ function MessageList({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          {/* Preferências de LEITURA (#95): quando a mensagem aberta vira lida.
-              Mora aqui, no cluster de preferências do cabeçalho da lista, pelo
-              mesmo motivo da ordenação: é chrome permanente (a toolbar do leitor
-              só existe com mensagem aberta) e evita um segundo lugar de
-              preferências no Bridge. Mesmo padrão visual do menu vizinho
-              (Label + RadioGroup); trigger só-ícone como o refresh, e NÃO a
-              engrenagem `Settings` — essa já significa "tela Configurações" do
-              Toolbox no sidebar.
-              As opções são uma escala única (ao abrir → 2s → 5s → 10s) em vez de
-              "modo + atraso" em dois controles: sem UI condicional, sem estado
-              escondido, e o RadioGroup do Radix já dá role/aria + setas. */}
-          <DropdownMenu>
-            {/* Preferências de leitura (#101): sem atalho → Tooltip canônico,
-                mesmo aninhamento Tooltip > DropdownMenuTrigger da ordenação. */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label={t.controlRoom.prefLeitura}>
-                    <SlidersHorizontal />
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent>{t.controlRoom.prefLeitura}</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>{t.controlRoom.prefMarcarLidoTitulo}</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={
-                  marcarLidoModo === "atraso"
-                    ? `atraso:${marcarLidoAtraso}`
-                    : marcarLidoModo
-                }
-                onValueChange={(v) => {
-                  if (v.startsWith("atraso:")) {
-                    onMarcarLidoAtraso(Number(v.slice("atraso:".length)));
-                    onMarcarLidoModo("atraso");
-                  } else {
-                    onMarcarLidoModo(v as MarcarLidoModo);
-                  }
-                }}
-              >
-                <DropdownMenuRadioItem value="imediato">
-                  {t.controlRoom.prefMarcarLidoImediato}
-                </DropdownMenuRadioItem>
-                {MARCAR_LIDO_ATRASOS.map((s) => (
-                  <DropdownMenuRadioItem key={s} value={`atraso:${s}`}>
-                    {preencher(t.controlRoom.prefMarcarLidoAtraso, { n: s })}
-                  </DropdownMenuRadioItem>
-                ))}
-                {/* "Manualmente" não é um ponto da escala de tempo: é desligar
-                    o automatismo. Daí o separador. */}
-                <DropdownMenuSeparator />
-                <DropdownMenuRadioItem value="manual">
-                  {t.controlRoom.prefMarcarLidoManual}
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* As preferências de LEITURA (marcar como lido) migraram pra
+              Settings > Bridge > Reading (#227): a UI do e-mail deixa de ter
+              esse controle solto. */}
           {/* Atualizar (#101): sem atalho → Tooltip canônico. */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -5138,12 +5074,15 @@ export function ControlRoomScreen({
     [idioma, setMsgSel, setPastaSel, t]
   );
 
-  // Poll leve da Inbox a cada 15 min (pega e-mail novo enquanto o usuário está
-  // parado). No mount NÃO chamamos — o efeito de mensagens já busca a inbox e
+  // Poll leve da Inbox (pega e-mail novo enquanto o usuário está parado). O
+  // intervalo é configurável em Settings > Bridge > Sync (#227); padrão 15 min
+  // (comportamento histórico). Mudar a preferência remonta o efeito com o novo
+  // intervalo. No mount NÃO chamamos — o efeito de mensagens já busca a inbox e
   // semeia o baseline; um fetch duplo aqui competia e o Graph estrangulava (429).
+  const syncIntervalMinutes = useAppStore((s) => s.syncIntervalMinutes);
   useEffect(() => {
     let vivo = true;
-    const INTERVALO = 15 * 60 * 1000;
+    const INTERVALO = Math.max(1, syncIntervalMinutes) * 60 * 1000;
     const iv = setInterval(async () => {
       try {
         const msgs = await api.crFolderMensagens("inbox", 0, "data", true, "me");
@@ -5161,7 +5100,7 @@ export function ControlRoomScreen({
       vivo = false;
       clearInterval(iv);
     };
-  }, [notificarNovos, limparCachePasta, chaveCache]);
+  }, [syncIntervalMinutes, notificarNovos, limparCachePasta, chaveCache]);
 
   // Recarrega o que a mutação de uma PASTA invalidou: as contagens do sidebar
   // sempre; a LISTA só quando a pasta mexida é a que está aberta (senão a lista
@@ -6008,10 +5947,6 @@ export function ControlRoomScreen({
               onAbrirMover={() => setPedirArvore(true)}
               onMover={acaoMover}
               filtrosOcultos={FILTROS_OCULTOS}
-              marcarLidoModo={marcarLidoModo}
-              marcarLidoAtraso={marcarLidoAtraso}
-              onMarcarLidoModo={setMarcarLidoModo}
-              onMarcarLidoAtraso={setMarcarLidoAtraso}
               onResponder={() => detalheRef.current?.responder()}
               onResponderTodos={() => detalheRef.current?.responderTodos()}
               onEncaminhar={() => detalheRef.current?.encaminhar()}
