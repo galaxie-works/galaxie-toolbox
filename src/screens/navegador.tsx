@@ -41,6 +41,13 @@ import {
   persistFavoritos,
   type Favorito,
 } from "@/lib/navigator-bookmarks";
+import {
+  buscarHistorico,
+  maisAcessados,
+  type HistoryEntry,
+  type MaisAcessado,
+  type PeriodoLimpeza,
+} from "@/lib/navigator-history";
 import { Badge } from "@/components/reui/badge";
 import {
   Sortable,
@@ -82,11 +89,13 @@ import {
   Coffee,
   Command as CommandIcon,
   Compass,
+  EyeOff,
   FolderMinus,
   FolderPlus,
   Globe,
   GripHorizontal,
   GripVertical,
+  History,
   Loader2,
   Moon,
   Pencil,
@@ -140,6 +149,7 @@ type AcoesPaleta = {
   abas: AbaBrowser[];
   ativa: string | null;
   favoritos: Favorito[];
+  historico: HistoryEntry[];
   onAbrir: (app: AppM365) => void;
   onNavegar: (url: string, nome: string) => void;
   onTrocar: (id: string) => void;
@@ -148,6 +158,12 @@ type AcoesPaleta = {
   onAlternarFixada: (id: string) => void;
   onDormir: (id: string) => void;
 };
+
+/** Mapeia uma url visitada de volta ao app M365 do catalogo (a url gravada pode
+ *  carregar `?login_hint=…` colado no fim da url canonica do app). */
+function appPorUrl(url: string): AppM365 | undefined {
+  return APPS.find((a) => url.startsWith(a.url));
+}
 
 type ModoPaleta = "omni" | "acoes" | "abas" | "historico";
 
@@ -173,6 +189,7 @@ function ConteudoPaleta({
   abas,
   ativa,
   favoritos,
+  historico,
   className,
   autoFocus,
   onExecutou,
@@ -192,9 +209,16 @@ function ConteudoPaleta({
   const [q, setQ] = useState("");
   const { modo, termo } = lerPrefixo(q);
 
-  const maisUsados = MAIS_USADOS.map((id) => APPS.find((a) => a.id === id)).filter(
-    (a): a is AppM365 => a != null
-  );
+  // "Mais acessados" REAL: contagem derivada do historico (spec §8.3). Sem
+  // historico ainda (instalacao nova), cai na lista M365 curada — sem regressao.
+  const topAcessados = maisAcessados(historico, 9);
+  const maisUsadosFallback = MAIS_USADOS.map((id) =>
+    APPS.find((a) => a.id === id),
+  ).filter((a): a is AppM365 => a != null);
+  // Grupo `#`: historico filtrado pelo termo, ja ordenado por recencia. Fatiado
+  // para nao renderizar milhares de itens no cmdk.
+  const historicoLista =
+    modo === "historico" ? buscarHistorico(historico, termo).slice(0, 50) : [];
   const alfabetica = (a: AppM365, b: AppM365) => a.nome.localeCompare(b.nome);
 
   // Roda a ação e, no overlay, fecha a paleta em seguida.
@@ -360,15 +384,35 @@ function ConteudoPaleta({
 
         {mostrarApps && (
           <>
-            <CommandGroup heading={t.apps.maisUsados}>
-              {maisUsados.map((app) => (
-                <ItemApp
-                  key={app.id}
-                  app={app}
-                  idioma={idioma}
-                  onAbrir={(a) => executar(() => onAbrir(a))}
-                />
-              ))}
+            <CommandGroup
+              heading={
+                topAcessados.length > 0
+                  ? t.navegador.grupoMaisAcessados
+                  : t.apps.maisUsados
+              }
+            >
+              {topAcessados.length > 0
+                ? topAcessados.map((item) => (
+                    <ItemMaisAcessado
+                      key={item.url}
+                      item={item}
+                      idioma={idioma}
+                      onSelecionar={() => {
+                        const app = appPorUrl(item.url);
+                        executar(() =>
+                          app ? onAbrir(app) : onNavegar(item.url, item.nome),
+                        );
+                      }}
+                    />
+                  ))
+                : maisUsadosFallback.map((app) => (
+                    <ItemApp
+                      key={app.id}
+                      app={app}
+                      idioma={idioma}
+                      onAbrir={(a) => executar(() => onAbrir(a))}
+                    />
+                  ))}
             </CommandGroup>
             <CommandSeparator />
 
@@ -390,17 +434,25 @@ function ConteudoPaleta({
           </>
         )}
 
-        {/* Histórico: grupo já desenhado; a fonte de dados chega na Story 5. */}
-        {modo === "historico" && (
-          <div className="p-1">
-            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-              {t.navegador.grupoHistorico}
+        {/* Histórico (`#`): visitas reais, ordenadas por recência (Story 5). */}
+        {modo === "historico" &&
+          (historicoLista.length > 0 ? (
+            <CommandGroup heading={t.navegador.grupoHistorico}>
+              {historicoLista.map((entrada) => (
+                <ItemHistorico
+                  key={entrada.id}
+                  entrada={entrada}
+                  onSelecionar={() =>
+                    executar(() => onNavegar(entrada.url, entrada.nome))
+                  }
+                />
+              ))}
+            </CommandGroup>
+          ) : (
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              {t.navegador.historicoVazio}
             </div>
-            <div className="py-5 text-center text-sm text-muted-foreground">
-              {t.navegador.historicoEmBreve}
-            </div>
-          </div>
-        )}
+          ))}
       </CommandList>
     </Command>
   );
@@ -483,6 +535,73 @@ function ItemApp({
   );
 }
 
+/** Um "mais acessado" (contagem real): ícone do app quando a url casa com o
+ *  catálogo, senão um globo; mostra a contagem de acessos à direita. */
+function ItemMaisAcessado({
+  item,
+  idioma,
+  onSelecionar,
+}: {
+  item: MaisAcessado;
+  idioma: "pt-BR" | "en";
+  onSelecionar: () => void;
+}) {
+  const app = appPorUrl(item.url);
+  return (
+    <CommandItem
+      value={`${item.nome} ${item.url}`}
+      onSelect={onSelecionar}
+      className="gap-2.5"
+    >
+      {app ? (
+        <img src={urlIcone(app)} alt="" className="size-5 shrink-0" draggable={false} />
+      ) : (
+        <Globe className="size-5 shrink-0 text-muted-foreground" />
+      )}
+      <span className="min-w-0 flex-1 truncate font-medium">
+        {app ? app.nome : item.nome}
+      </span>
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {app ? app.resumo[idioma] : new URL(item.url).hostname.replace(/^www\./, "")}
+      </span>
+    </CommandItem>
+  );
+}
+
+/** Uma entrada do histórico na paleta (`#`): globo/ícone, título e host. */
+function ItemHistorico({
+  entrada,
+  onSelecionar,
+}: {
+  entrada: HistoryEntry;
+  onSelecionar: () => void;
+}) {
+  const app = appPorUrl(entrada.url);
+  let host = entrada.url;
+  try {
+    host = new URL(entrada.url).hostname.replace(/^www\./, "");
+  } catch {
+    // url estranha: deixa a string crua
+  }
+  return (
+    <CommandItem
+      value={`${entrada.nome} ${entrada.url} ${entrada.id}`}
+      onSelect={onSelecionar}
+      className="gap-2.5"
+    >
+      {app ? (
+        <img src={urlIcone(app)} alt="" className="size-4 shrink-0" draggable={false} />
+      ) : (
+        <History className="size-4 shrink-0 text-muted-foreground" />
+      )}
+      <span className="min-w-0 flex-1 truncate font-medium">{entrada.nome}</span>
+      <span className="shrink-0 truncate text-xs text-muted-foreground">
+        {host}
+      </span>
+    </CommandItem>
+  );
+}
+
 /** Uma aba aberta/dormindo na paleta (`@`): ícone do app, nome e estado. */
 function ItemAba({
   aba,
@@ -543,6 +662,10 @@ export function NavegadorScreen({
   onAbrir,
   onNovaAba,
   onNavegar,
+  historico,
+  onLimparHistorico,
+  modoPrivado,
+  onAlternarModoPrivado,
 }: {
   abas: AbaBrowser[];
   ativa: string | null;
@@ -557,6 +680,10 @@ export function NavegadorScreen({
   onAbrir: (app: AppM365) => void;
   onNovaAba: () => void;
   onNavegar: (url: string, nome: string) => void;
+  historico: HistoryEntry[];
+  onLimparHistorico: (periodo: PeriodoLimpeza) => void;
+  modoPrivado: boolean;
+  onAlternarModoPrivado: () => void;
 }) {
   const { t } = useIdioma();
   const area = useRef<HTMLDivElement>(null);
@@ -564,6 +691,7 @@ export function NavegadorScreen({
   const sleepingCount = abas.filter((tab) => tab.estado === "dormindo").length;
   // Estado efêmero de UI (só quem lê é este componente): não pertence ao store.
   const [paletaAberta, setPaletaAberta] = useState(false);
+  const [historicoAberto, setHistoricoAberto] = useState(false);
 
   // --- Grupos de aba (Story 3) ---------------------------------------------
   // Grupos vivem aqui + localStorage, DESACOPLADOS do estado de abas do App (que
@@ -686,12 +814,15 @@ export function NavegadorScreen({
     const app = porId(aba.id);
     const ativaAba = aba.id === ativa;
     const dormindo = aba.estado === "dormindo";
+    const privada = Boolean(aba.privada);
     const grupoAtual = aba.fixada ? undefined : membership[aba.id];
     const tabLabel = dormindo
       ? preencher(t.navegador.dormindoClique, { nome: aba.nome })
-      : aba.fixada
-        ? preencher(t.navegador.fixadaNome, { nome: aba.nome })
-        : aba.nome;
+      : privada
+        ? preencher(t.navegador.abaPrivada, { nome: aba.nome })
+        : aba.fixada
+          ? preencher(t.navegador.fixadaNome, { nome: aba.nome })
+          : aba.nome;
     return (
       <SortableItem
         key={aba.id}
@@ -719,10 +850,13 @@ export function NavegadorScreen({
                   ? "border-border bg-background font-medium"
                   : "border-transparent text-muted-foreground hover:bg-accent/50",
                 dormindo && "opacity-60",
+                privada && "text-info",
               )}
             >
               {dormindo ? (
                 <Moon className="size-4 shrink-0" aria-hidden="true" />
+              ) : privada ? (
+                <EyeOff className="size-4 shrink-0 text-info" aria-hidden="true" />
               ) : app ? (
                 <img
                   src={urlIcone(app)}
@@ -1064,6 +1198,46 @@ export function NavegadorScreen({
             {preencher(t.navegador.dormindoTotal, { n: sleepingCount })}
           </Badge>
         )}
+        {modoPrivado && (
+          <Badge variant="info-light" className="my-2 shrink-0">
+            <EyeOff />
+            {t.navegador.modoPrivadoAtivo}
+          </Badge>
+        )}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={t.navegador.historicoTitulo}
+              onClick={() => setHistoricoAberto(true)}
+              className={cn(
+                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
+                "hover:bg-accent hover:text-foreground"
+              )}
+            >
+              <History className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{t.navegador.historicoTitulo}</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={t.navegador.modoPrivado}
+              aria-pressed={modoPrivado}
+              onClick={onAlternarModoPrivado}
+              className={cn(
+                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
+                "hover:bg-accent hover:text-foreground",
+                modoPrivado && "bg-info/15 text-info hover:text-info"
+              )}
+            >
+              <EyeOff className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>{t.navegador.modoPrivado}</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -1116,6 +1290,7 @@ export function NavegadorScreen({
             abas={abas}
             ativa={ativa}
             favoritos={favoritos}
+            historico={historico}
             onAbrir={onAbrir}
             onNavegar={onNavegar}
             onTrocar={onTrocar}
@@ -1145,6 +1320,7 @@ export function NavegadorScreen({
         abas={abas}
         ativa={ativa}
         favoritos={favoritos}
+        historico={historico}
         onAbrir={onAbrir}
         onNavegar={onNavegar}
         onTrocar={onTrocar}
@@ -1152,6 +1328,15 @@ export function NavegadorScreen({
         onNovaAba={onNovaAba}
         onAlternarFixada={onAlternarFixada}
         onDormir={onDormir}
+      />
+
+      {/* Histórico: view pesquisável + limpar por período (Story 5). */}
+      <DialogHistorico
+        aberto={historicoAberto}
+        onFechar={() => setHistoricoAberto(false)}
+        historico={historico}
+        onNavegar={onNavegar}
+        onLimpar={onLimparHistorico}
       />
 
       {/* Diálogo de edição de grupo (nome + cor + excluir). */}
@@ -1283,6 +1468,149 @@ function DialogEditarGrupo({
             </DialogClose>
             <Button type="button" onClick={salvar}>
               {t.navegador.grupoSalvar}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * View de histórico (Story 5): busca pesquisável + lista por recência + limpar
+ * por período. A query é estado local do input; navegar/limpar sobem por props.
+ */
+function DialogHistorico({
+  aberto,
+  onFechar,
+  historico,
+  onNavegar,
+  onLimpar,
+}: {
+  aberto: boolean;
+  onFechar: () => void;
+  historico: HistoryEntry[];
+  onNavegar: (url: string, nome: string) => void;
+  onLimpar: (periodo: PeriodoLimpeza) => void;
+}) {
+  const { idioma, t } = useIdioma();
+  const [q, setQ] = useState("");
+  const lista = useMemo(() => buscarHistorico(historico, q), [historico, q]);
+  const fmt = useMemo(
+    () =>
+      new Intl.DateTimeFormat(idioma === "en" ? "en-US" : "pt-BR", {
+        dateStyle: "short",
+        timeStyle: "short",
+      }),
+    [idioma],
+  );
+
+  const abrir = (entrada: HistoryEntry) => {
+    onNavegar(entrada.url, entrada.nome);
+    onFechar();
+  };
+
+  return (
+    <Dialog open={aberto} onOpenChange={(a) => !a && onFechar()}>
+      <DialogContent className="sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>{t.navegador.historicoTitulo}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {t.navegador.paletaBuscar}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={q}
+              onChange={(event) => setQ(event.target.value)}
+              placeholder={t.navegador.historicoBuscar}
+              className="pl-8"
+              autoFocus
+            />
+          </div>
+          <div className="scrollbar-fina max-h-[360px] min-h-[120px] overflow-y-auto rounded-md border border-border">
+            {lista.length === 0 ? (
+              <div className="grid h-[120px] place-items-center px-4 text-center text-sm text-muted-foreground">
+                {t.navegador.historicoVazio}
+              </div>
+            ) : (
+              <ul className="divide-y divide-border">
+                {lista.map((entrada) => {
+                  const app = appPorUrl(entrada.url);
+                  let host = entrada.url;
+                  try {
+                    host = new URL(entrada.url).hostname.replace(/^www\./, "");
+                  } catch {
+                    // url estranha: deixa a string crua
+                  }
+                  return (
+                    <li key={entrada.id}>
+                      <button
+                        type="button"
+                        onClick={() => abrir(entrada)}
+                        className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none hover:bg-accent focus-visible:bg-accent"
+                      >
+                        {app ? (
+                          <img
+                            src={urlIcone(app)}
+                            alt=""
+                            className="size-4 shrink-0"
+                            draggable={false}
+                          />
+                        ) : (
+                          <History className="size-4 shrink-0 text-muted-foreground" />
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-medium">
+                            {entrada.nome}
+                          </span>
+                          <span className="block truncate text-xs text-muted-foreground">
+                            {host}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {fmt.format(entrada.ts)}
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+        <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground">
+            {t.navegador.limparHistorico}
+          </span>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onLimpar("ultima-hora")}
+            >
+              {t.navegador.limparUltimaHora}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => onLimpar("hoje")}
+            >
+              {t.navegador.limparHoje}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="gap-1.5 text-destructive hover:text-destructive"
+              onClick={() => onLimpar("tudo")}
+            >
+              <Trash2 className="size-4" />
+              {t.navegador.limparTudo}
             </Button>
           </div>
         </DialogFooter>
