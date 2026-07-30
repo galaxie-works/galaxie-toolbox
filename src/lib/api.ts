@@ -1,11 +1,13 @@
 import type {
   AppUser,
   CaixaEntrada,
+  Calendario,
   CategoriaCor,
   EmailDetalhe,
   EmailItem,
   EventoAgenda,
   EventoDetalhe,
+  EventoInput,
   Identidade,
   InsightsRemetente,
   PastaEmail,
@@ -120,6 +122,25 @@ export async function logout(): Promise<void> {
 export async function currentAccount(): Promise<AppUser | null> {
   if (!inTauri()) return null;
   return invoke<AppUser | null>("current_account");
+}
+
+export interface RequiredScopesStatus {
+  missingScopes: string[];
+}
+
+/** Escopos Graph pedidos pela versão atual mas ausentes no token da sessão. */
+export async function requiredScopesStatus(): Promise<RequiredScopesStatus> {
+  if (!inTauri()) {
+    const raw = new URLSearchParams(window.location.search).get(
+      "mockMissingScopes",
+    );
+    return {
+      missingScopes: raw
+        ? raw.split(",").map((scope) => scope.trim()).filter(Boolean)
+        : [],
+    };
+  }
+  return invoke<RequiredScopesStatus>("required_scopes_status");
 }
 
 /** Identidade em cache (foto/iniciais) - instantanea, sem rede. */
@@ -372,6 +393,32 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
   return invoke<EventoAgenda[]>("cr_agenda", { inicio, fim });
 }
 
+/** Lista os calendários do usuário (#233) — /me/calendars. */
+export async function crCalendarios(): Promise<Calendario[]> {
+  if (!inTauri()) {
+    await sleep(300);
+    return [
+      { id: "cal-default", nome: "Calendário", cor: "#0078D4", isDefaultCalendar: true, canEdit: true },
+      { id: "cal-aniversarios", nome: "Aniversários", cor: "#E3008C", isDefaultCalendar: false, canEdit: false },
+      { id: "cal-feriados", nome: "Feriados", cor: "#498205", isDefaultCalendar: false, canEdit: false },
+    ];
+  }
+  return invoke<Calendario[]>("cr_calendarios");
+}
+
+/** Eventos de um calendário específico no intervalo (#233). */
+export async function crAgendaCalendario(
+  calendarioId: string,
+  inicio: string,
+  fim: string,
+): Promise<EventoAgenda[]> {
+  if (!inTauri()) {
+    // Reaproveita o mock do calendário padrão para simular a carga por id.
+    return crAgenda(inicio, fim);
+  }
+  return invoke<EventoAgenda[]>("cr_agenda_calendario", { calendarioId, inicio, fim });
+}
+
 export async function crCategorias(): Promise<CategoriaCor[]> {
   if (!inTauri()) {
     await sleep(200);
@@ -382,6 +429,27 @@ export async function crCategorias(): Promise<CategoriaCor[]> {
     ];
   }
   return invoke<CategoriaCor[]>("cr_categorias");
+}
+
+/** Cria uma categoria mestra (#211). `preset` = nome do preset de cor do
+ *  Outlook ("preset0".."preset24"). Devolve a categoria criada com o hex. */
+export async function crCriarCategoria(
+  nome: string,
+  preset: string,
+): Promise<CategoriaCor> {
+  if (!inTauri()) {
+    await sleep(200);
+    const HEX: Record<string, string> = {
+      preset0: "#D13438",
+      preset4: "#498205",
+      preset7: "#0078D4",
+      preset8: "#8764B8",
+      preset1: "#FF8C00",
+      preset5: "#00B7C3",
+    };
+    return { nome, cor: HEX[preset] ?? "#8A8886" };
+  }
+  return invoke<CategoriaCor>("cr_criar_categoria", { nome, preset });
 }
 
 export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
@@ -402,6 +470,33 @@ export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
     };
   }
   return invoke<EventoDetalhe>("cr_evento_corpo", { id });
+}
+
+/** Cria um evento no calendário (#211). Devolve o id do evento criado. */
+export async function crCriarEvento(input: EventoInput): Promise<string> {
+  if (!inTauri()) {
+    await sleep(300);
+    return `mock-${Date.now()}`;
+  }
+  return invoke<string>("cr_criar_evento", { input });
+}
+
+/** Edita um evento existente (#211). */
+export async function crEditarEvento(id: string, input: EventoInput): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  await invoke("cr_editar_evento", { id, input });
+}
+
+/** Exclui um evento (#211). */
+export async function crExcluirEvento(id: string): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  await invoke("cr_excluir_evento", { id });
 }
 
 export async function crInboxDia(inicio: string, fim: string): Promise<EmailItem[]> {
@@ -749,6 +844,7 @@ export async function crPeopleList(nextLinks: string[] = []): Promise<PeopleList
 export async function crPeopleEnrichPreview(
   contactId: string | null,
   email: string,
+  directoryUser = false,
 ): Promise<PeopleEnrichPreview> {
   if (!inTauri()) {
     await sleep(650);
@@ -797,6 +893,7 @@ export async function crPeopleEnrichPreview(
   return invoke<PeopleEnrichPreview>("cr_people_enrich_preview", {
     contactId,
     email,
+    directoryUser,
   });
 }
 
@@ -817,7 +914,12 @@ export async function crPeopleEnrichApply(
 
 /** Indica se o token atual permite alterar contatos do usuário. */
 export async function crPeopleWriteAvailable(): Promise<boolean> {
-  if (!inTauri()) return true;
+  if (!inTauri()) {
+    const { missingScopes } = await requiredScopesStatus();
+    return !missingScopes.some(
+      (scope) => scope.toLocaleLowerCase() === "contacts.readwrite",
+    );
+  }
   return invoke<boolean>("cr_people_write_available");
 }
 
@@ -1513,6 +1615,114 @@ export async function longPathsStatus(): Promise<boolean> {
 export async function enableLongPaths(): Promise<string> {
   if (!inTauri()) return "already";
   return invoke<string>("enable_long_paths");
+}
+
+// --- Favoritos do Navigator (#176) ----------------------------------------
+// Importa favoritos do Chrome/Edge lendo SOMENTE o arquivo `Bookmarks` (JSON)
+// via Rust `std::fs` — nunca `Login Data`/senhas. O comando devolve a arvore
+// por navegador+perfil; o front mostra em `tree`, o usuario seleciona e aplica.
+
+/** Um no da arvore importada: pasta (sem `url`, com `filhos`) ou link. */
+export interface BookmarkNode {
+  id: string;
+  nome: string;
+  url?: string;
+  filhos: BookmarkNode[];
+}
+
+/** Favoritos de um perfil de um navegador. */
+export interface BrowserBookmarks {
+  navegador: "chrome" | "edge" | string;
+  perfil: string;
+  roots: BookmarkNode[];
+}
+
+/**
+ * Resultado da importação automática com diagnóstico honesto (#176): distingue
+ * "lido", "detectado mas bloqueado" (antivírus/EDR protegendo a pasta de perfil)
+ * e "não instalado" — o front decide a mensagem e oferece import por arquivo HTML.
+ */
+export interface ImportarFavoritosResultado {
+  navegadores: BrowserBookmarks[];
+  /** Navegadores instalados (User Data existe): "chrome" | "edge". */
+  detectados: string[];
+  /** Detectados mas com o Bookmarks ilegível (acesso bloqueado). */
+  bloqueados: string[];
+}
+
+const MOCK_BOOKMARKS: BrowserBookmarks[] = [
+  {
+    navegador: "chrome",
+    perfil: "Default",
+    roots: [
+      {
+        id: "bm-bar",
+        nome: "Barra de favoritos",
+        filhos: [
+          { id: "bm-gh", nome: "GitHub", url: "https://github.com", filhos: [] },
+          {
+            id: "bm-work",
+            nome: "Trabalho",
+            filhos: [
+              { id: "bm-o365", nome: "Microsoft 365", url: "https://www.office.com", filhos: [] },
+              { id: "bm-sp", nome: "SharePoint", url: "https://voazeng.sharepoint.com", filhos: [] },
+            ],
+          },
+        ],
+      },
+      {
+        id: "bm-other",
+        nome: "Outros favoritos",
+        filhos: [
+          { id: "bm-yt", nome: "YouTube", url: "https://www.youtube.com", filhos: [] },
+        ],
+      },
+    ],
+  },
+  {
+    navegador: "edge",
+    perfil: "Default",
+    roots: [
+      {
+        id: "bm-e-bar",
+        nome: "Barra de favoritos",
+        filhos: [
+          { id: "bm-bing", nome: "Bing", url: "https://www.bing.com", filhos: [] },
+        ],
+      },
+    ],
+  },
+];
+
+/**
+ * Importa favoritos do Chrome/Edge (#176). Leitura pura em Rust `std::fs` do
+ * arquivo `Bookmarks`; jamais toca em `Login Data`/senhas. Fora do Tauri (mock)
+ * devolve uma arvore de exemplo para o QA visual.
+ */
+export async function importBrowserBookmarks(): Promise<ImportarFavoritosResultado> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      navegadores: MOCK_BOOKMARKS.map((b) => ({ ...b })),
+      detectados: ["chrome", "edge"],
+      bloqueados: [],
+    };
+  }
+  return invoke<ImportarFavoritosResultado>("import_browser_bookmarks");
+}
+
+/**
+ * Favicon do PRÓPRIO domínio de uma URL (#276). O fetch HTTP acontece no Rust
+ * (sem CORS, e só no site pedido — nunca serviço de terceiros, por privacidade).
+ * Devolve um data URI pronto pra `<img src>`, ou `null`. Fora do Tauri: `null`.
+ */
+export async function fetchFavicon(url: string): Promise<string | null> {
+  if (!inTauri()) return null;
+  try {
+    return (await invoke<string | null>("fetch_favicon", { url })) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // --- Launch on startup (#123) --------------------------------------------

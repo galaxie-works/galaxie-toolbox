@@ -10,12 +10,24 @@ import {
 import type { Filter } from "@/components/reui/filters";
 import type {
   PeopleContactEdit,
-  PeopleEnrichField,
+  PeopleEnrichFieldKey,
+  PeopleEnrichPreview,
   Pessoa,
 } from "@/lib/types";
 import type { AppStore } from "./index";
 
 const resolveInFlight = new Map<string, Promise<PeopleContact | null>>();
+const directoryEnrichInFlight = new Map<
+  string,
+  Promise<PeopleEnrichPreview>
+>();
+const DIRECTORY_AUTO_ENRICH_FIELDS = new Set<PeopleEnrichFieldKey>([
+  "companyName",
+  "department",
+  "jobTitle",
+  "officeLocation",
+  "manager",
+]);
 
 function personFromSuggestion(person: Pessoa): PeopleContact {
   const email = person.email.trim();
@@ -39,6 +51,8 @@ function personFromSuggestion(person: Pessoa): PeopleContact {
 
 /** Cache único e exclusivamente de sessão do módulo People (#166). */
 export interface PeopleSlice {
+  peopleTab: "contacts" | "organizations";
+  peopleSearchQuery: string;
   peopleContacts: PeopleContact[];
   peopleSelectedId: string | null;
   peopleLoading: boolean;
@@ -51,6 +65,7 @@ export interface PeopleSlice {
   peopleView: "table" | "cards";
   peopleColumnVisibility: Record<string, boolean>;
   peopleRequestGeneration: number;
+  peopleDirectoryEnrichedEmails: string[];
 
   loadPeople: () => Promise<void>;
   loadMorePeople: () => Promise<void>;
@@ -62,7 +77,12 @@ export interface PeopleSlice {
   setPeopleFilters: (filters: Filter<string>[]) => void;
   setPeopleView: (view: "table" | "cards") => void;
   setPeopleColumnVisibility: (visibility: Record<string, boolean>) => void;
-  applyPeopleFields: (id: string, fields: PeopleEnrichField[]) => void;
+  setPeopleTab: (tab: "contacts" | "organizations") => void;
+  setPeopleSearchQuery: (query: string) => void;
+  autoEnrichDirectoryContact: (
+    id: string,
+    sameOrganization: boolean,
+  ) => Promise<void>;
   updatePeopleContact: (id: string, input: PeopleContactEdit) => Promise<void>;
 }
 
@@ -72,6 +92,8 @@ export const createPeopleSlice: StateCreator<
   [],
   PeopleSlice
 > = (set, get) => ({
+  peopleTab: "contacts",
+  peopleSearchQuery: "",
   peopleContacts: [],
   peopleSelectedId: null,
   peopleLoading: false,
@@ -84,14 +106,15 @@ export const createPeopleSlice: StateCreator<
   peopleView: "table",
   peopleColumnVisibility: {
     name: true,
-    company: true,
-    title: true,
+    company: false,
+    title: false,
     email: true,
-    phone: true,
-    source: true,
+    phone: false,
+    source: false,
     actions: true,
   },
   peopleRequestGeneration: 0,
+  peopleDirectoryEnrichedEmails: [],
 
   loadPeople: async () => {
     const generation = get().peopleRequestGeneration + 1;
@@ -123,6 +146,7 @@ export const createPeopleSlice: StateCreator<
         peopleMissingScopes: result.missingScopes,
         peopleNextLinks: result.nextLinks,
         peopleError: result.failures.length > 0 ? result.failures.join(" · ") : null,
+        peopleDirectoryEnrichedEmails: [],
       });
     } catch (error) {
       if (get().peopleRequestGeneration !== generation) return;
@@ -242,12 +266,63 @@ export const createPeopleSlice: StateCreator<
   setPeopleView: (peopleView) => set({ peopleView }),
   setPeopleColumnVisibility: (peopleColumnVisibility) =>
     set({ peopleColumnVisibility }),
-  applyPeopleFields: (id, fields) =>
-    set((state) => ({
-      peopleContacts: state.peopleContacts.map((contact) =>
-        contact.id === id ? applyPeopleEnrichment(contact, fields) : contact,
-      ),
-    })),
+  setPeopleTab: (peopleTab) => set({ peopleTab }),
+  setPeopleSearchQuery: (peopleSearchQuery) => set({ peopleSearchQuery }),
+  autoEnrichDirectoryContact: async (id, sameOrganization) => {
+    const contact = get().peopleContacts.find((candidate) => candidate.id === id);
+    const email = contact?.emails[0]?.address.trim();
+    const normalizedEmail = email?.toLowerCase() ?? "";
+    if (
+      !contact ||
+      !sameOrganization ||
+      !email ||
+      get().peopleDirectoryEnrichedEmails.includes(normalizedEmail)
+    ) {
+      return;
+    }
+
+    let request = directoryEnrichInFlight.get(normalizedEmail);
+    if (!request) {
+      request = api
+        .crPeopleEnrichPreview(contact.contactId ?? null, email, true)
+        .finally(() => directoryEnrichInFlight.delete(normalizedEmail));
+      directoryEnrichInFlight.set(normalizedEmail, request);
+    }
+
+    const result = await request;
+    const fields = result.fields.filter((field) =>
+      DIRECTORY_AUTO_ENRICH_FIELDS.has(field.key),
+    );
+    const successful = result.failures.length === 0;
+    set((state) => {
+      const originalStillExists = state.peopleContacts.some(
+        (candidate) => candidate.id === id,
+      );
+      return {
+        peopleContacts:
+          fields.length > 0
+            ? state.peopleContacts.map((candidate) =>
+                candidate.id === id
+                  ? applyPeopleEnrichment(candidate, fields)
+                  : candidate,
+              )
+            : state.peopleContacts,
+        peopleDirectoryEnrichedEmails:
+          successful && originalStillExists
+            ? Array.from(
+                new Set([
+                  ...state.peopleDirectoryEnrichedEmails,
+                  normalizedEmail,
+                ]),
+              )
+            : state.peopleDirectoryEnrichedEmails,
+      };
+    });
+
+    if (fields.length === 0 && result.failures.length > 0) {
+      throw new Error(result.failures.join(" · "));
+    }
+  },
   updatePeopleContact: async (id, input) => {
     const current = get().peopleContacts.find((contact) => contact.id === id);
     if (!current?.contactId) {

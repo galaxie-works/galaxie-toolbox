@@ -139,6 +139,7 @@ export interface DataGridProps<TData extends object> {
   recordCount: number
   children?: ReactNode
   onRowClick?: (row: TData) => void
+  activeRowId?: string | null
   isLoading?: boolean
   loadingMode?: "skeleton" | "spinner"
   loadingMessage?: ReactNode | string

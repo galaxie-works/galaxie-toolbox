@@ -11,6 +11,9 @@ export interface AbaBrowser {
   fixada?: boolean;
   manterAcordada?: boolean;
   reativando?: boolean;
+  /** Aba privada (Story 5): navegacao nao entra no historico e o chip ganha
+   *  tratamento visual distinto. Privadas nunca sao pinadas/persistidas. */
+  privada?: boolean;
 }
 
 export interface NavigatorMemorySettings {
@@ -161,4 +164,242 @@ export function tabsToSleep(
     liveAfterIdle -= 1;
   }
   return [...selected];
+}
+
+// --- Grupos de aba (Story 3) -------------------------------------------------
+//
+// Grupos são entidades nomeadas + coloridas (semente dos Workspaces M365, spec
+// §5.3). Ficam DESACOPLADOS do `AbaBrowser`: a definição do grupo vive na sua
+// própria lista e a filiação numa tabela `abaId → grupoId`. Isso mantém o
+// estado de abas do `App.tsx` intocado — a strip só precisa de UM handler novo
+// (reordenar). A cor sai de TOKENS de tema (contraste claro/escuro já tratado),
+// nunca de hex; a etiqueta do grupo é sempre o NOME + um pontinho colorido, para
+// não depender só da cor (a11y, spec §10).
+
+/** Cores de grupo mapeadas a tokens do tema (não usar hex). */
+export const NAVIGATOR_GROUP_COLORS = {
+  rosa: { dot: "bg-primary", borda: "border-primary/40", faixa: "bg-primary/10" },
+  violeta: { dot: "bg-info", borda: "border-info/40", faixa: "bg-info/10" },
+  verde: { dot: "bg-success", borda: "border-success/40", faixa: "bg-success/10" },
+  ambar: { dot: "bg-warning", borda: "border-warning/40", faixa: "bg-warning/10" },
+  vermelho: {
+    dot: "bg-destructive",
+    borda: "border-destructive/40",
+    faixa: "bg-destructive/10",
+  },
+} as const;
+
+export type NavigatorGroupColor = keyof typeof NAVIGATOR_GROUP_COLORS;
+
+/** Ordem de oferta das cores no seletor + rodízio na criação de grupos. */
+export const NAVIGATOR_GROUP_COLOR_ORDER: NavigatorGroupColor[] = [
+  "rosa",
+  "violeta",
+  "verde",
+  "ambar",
+  "vermelho",
+];
+
+export interface NavigatorGroup {
+  id: string;
+  nome: string;
+  cor: NavigatorGroupColor;
+  /** Recolhido esconde os chips do grupo (só o header fica) — muda a altura da
+   *  strip e o `ResizeObserver` reposiciona as webviews de graça (spec §5.3). */
+  recolhido: boolean;
+}
+
+/** Filiação abaId → grupoId (grupos são desacoplados do AbaBrowser). */
+export type NavigatorMembership = Record<string, string>;
+
+export const NAVIGATOR_GROUPS_KEY = "galaxie.navigator.groups.v1";
+export const NAVIGATOR_MEMBERSHIP_KEY = "galaxie.navigator.tab-groups.v1";
+
+function isGroupColor(value: unknown): value is NavigatorGroupColor {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(NAVIGATOR_GROUP_COLORS, value)
+  );
+}
+
+function isGroup(value: unknown): value is NavigatorGroup {
+  if (!value || typeof value !== "object") return false;
+  const g = value as Partial<NavigatorGroup>;
+  return (
+    typeof g.id === "string" && typeof g.nome === "string" && isGroupColor(g.cor)
+  );
+}
+
+/** Definições de grupo persistem entre sessões (base pros Workspaces). */
+export function loadNavigatorGroups(): NavigatorGroup[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(NAVIGATOR_GROUPS_KEY) || "[]",
+    ) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(isGroup).map((g) => ({
+      id: g.id,
+      nome: g.nome,
+      cor: g.cor,
+      recolhido: Boolean(g.recolhido),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export function persistNavigatorGroups(groups: NavigatorGroup[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(NAVIGATOR_GROUPS_KEY, JSON.stringify(groups));
+  } catch {
+    // best-effort (storage indisponível/quota cheia).
+  }
+}
+
+export function loadNavigatorMembership(): NavigatorMembership {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(NAVIGATOR_MEMBERSHIP_KEY) || "{}",
+    ) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const out: NavigatorMembership = {};
+    for (const [abaId, grupoId] of Object.entries(
+      parsed as Record<string, unknown>,
+    )) {
+      if (typeof grupoId === "string") out[abaId] = grupoId;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function persistNavigatorMembership(
+  membership: NavigatorMembership,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(NAVIGATOR_MEMBERSHIP_KEY, JSON.stringify(membership));
+  } catch {
+    // best-effort.
+  }
+}
+
+/** Descarta filiações órfãs (aba fechada ou grupo inexistente) — mantém o mapa
+ *  enxuto sem crescer sem limite entre sessões. */
+export function podarMembership(
+  membership: NavigatorMembership,
+  abas: AbaBrowser[],
+  groups: NavigatorGroup[],
+): NavigatorMembership {
+  const abasVivas = new Set(abas.map((a) => a.id));
+  const gruposVivos = new Set(groups.map((g) => g.id));
+  const out: NavigatorMembership = {};
+  for (const [abaId, grupoId] of Object.entries(membership)) {
+    if (abasVivas.has(abaId) && gruposVivos.has(grupoId)) out[abaId] = grupoId;
+  }
+  return out;
+}
+
+export interface NavigatorLane {
+  tipo: "pins" | "grupo" | "soltas";
+  grupo?: NavigatorGroup;
+  abas: AbaBrowser[];
+}
+
+/**
+ * Fatia a strip em lanes na ordem visual: pins (compactos, nunca agrupados) →
+ * cada grupo com membros (na ordem de `groups`) → abas soltas. A ordem DENTRO de
+ * cada lane vem da posição da aba no array `abas` (fonte única de ordem). Grupos
+ * sem membros não viram lane, mas a definição segue viva (menu + persistência).
+ */
+export function montarLanes(
+  abas: AbaBrowser[],
+  groups: NavigatorGroup[],
+  membership: NavigatorMembership,
+): NavigatorLane[] {
+  const lanes: NavigatorLane[] = [];
+  const pins = abas.filter((a) => a.fixada);
+  if (pins.length > 0) lanes.push({ tipo: "pins", abas: pins });
+
+  const grupoDaAba = (a: AbaBrowser): string | undefined =>
+    a.fixada ? undefined : membership[a.id];
+
+  for (const grupo of groups) {
+    const membros = abas.filter((a) => grupoDaAba(a) === grupo.id);
+    if (membros.length > 0) lanes.push({ tipo: "grupo", grupo, abas: membros });
+  }
+
+  const gruposVivos = new Set(groups.map((g) => g.id));
+  const soltas = abas.filter((a) => {
+    if (a.fixada) return false;
+    const g = membership[a.id];
+    return !g || !gruposVivos.has(g);
+  });
+  if (soltas.length > 0) lanes.push({ tipo: "soltas", abas: soltas });
+
+  return lanes;
+}
+
+/**
+ * Aplica a nova ordem de UMA lane sobre a lista completa de ids, preservando a
+ * posição das abas de fora da lane. Reorder é ordem de chip pura — as webviews
+ * compartilham um mesmo rect, então isto não custa nada na camada nativa.
+ */
+export function reordenarLane(
+  idsAtuais: string[],
+  laneNovaOrdem: string[],
+): string[] {
+  const laneSet = new Set(laneNovaOrdem);
+  let i = 0;
+  return idsAtuais.map((id) => (laneSet.has(id) ? laneNovaOrdem[i++] : id));
+}
+
+// --- Favicons (Story 4b / #276) ----------------------------------------------
+// O favicon de cada site (buscado no Rust, do próprio domínio) é cacheado por
+// ORIGEM (scheme://host) em localStorage. Abas de apps M365 já têm ícone próprio
+// (urlIcone) — o cache cobre as abas web livres, que antes caíam no globo.
+
+export const NAVIGATOR_FAVICON_CACHE_KEY = "galaxie.navigator.favicons.v1";
+
+/** Origem `scheme://host` de uma URL http(s); outros esquemas → null. */
+export function origemDaUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return null;
+  }
+}
+
+export function loadFaviconCache(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(NAVIGATOR_FAVICON_CACHE_KEY) || "{}",
+    ) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [origem, uri] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof uri === "string" && uri.startsWith("data:")) out[origem] = uri;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function persistFaviconCache(cache: Record<string, string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(NAVIGATOR_FAVICON_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // best-effort: data URIs podem estourar a quota; sem cache o globo cobre.
+  }
 }

@@ -1002,32 +1002,10 @@ pub struct EventoAgenda {
     pub categorias: Vec<String>,
 }
 
-/// Eventos do dia escolhido (limites em ISO UTC). Calendars.Read.
-pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
-    let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-
-    let url = format!(
-        "{GRAPH}/me/calendarView?startDateTime={inicio}&endDateTime={fim}\
-         &$select=id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories\
-         &$orderby=start/dateTime&$top=100"
-    );
-    // Sob o pool + retry central (#64): respeita Retry-After e usa jitter. O
-    // calendarView era a única chamada sem retry — um 429 transitório derrubava
-    // a agenda até um F5 no app inteiro (#41).
-    let resp = graph_enviar("agenda", GRAPH_TETO_ESPERA_S, || {
-        client
-            .get(&url)
-            .bearer_auth(&token)
-            .header("Prefer", "outlook.timezone=\"UTC\"")
-            .send()
-    })
-    .map_err(|e| format!("falha no calendario: {e}"))?;
-    let st = resp.status();
-    if !st.is_success() {
-        return Err(format!("/me/calendarView retornou {st}"));
-    }
-    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+/// Parseia a resposta de um `calendarView` (lista `value[]`) em EventoAgenda.
+/// Compartilhado entre /me/calendarView (padrão) e
+/// /me/calendars/{id}/calendarView (por calendário — #233).
+fn parse_eventos(v: &serde_json::Value) -> Vec<EventoAgenda> {
     let mut eventos = Vec::new();
     if let Some(items) = v["value"].as_array() {
         for it in items {
@@ -1066,7 +1044,124 @@ pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<Even
             });
         }
     }
-    Ok(eventos)
+    eventos
+}
+
+/// Busca + parseia um calendarView a partir de uma URL já montada. Fica sob o
+/// mesmo pool + retry central (#64) — respeita Retry-After e usa jitter. O
+/// calendarView era a única chamada sem retry, e um 429 transitório derrubava a
+/// agenda até um F5 no app inteiro (#41).
+fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgenda>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let resp = graph_enviar("agenda", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(url)
+            .bearer_auth(&token)
+            .header("Prefer", "outlook.timezone=\"UTC\"")
+            .send()
+    })
+    .map_err(|e| format!("falha no calendario: {e}"))?;
+    let st = resp.status();
+    if !st.is_success() {
+        return Err(format!("calendarView retornou {st}"));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(parse_eventos(&v))
+}
+
+const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories";
+
+/// Eventos do calendário padrão no intervalo (limites em ISO UTC). Calendars.Read.
+pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
+    let url = format!(
+        "{GRAPH}/me/calendarView?startDateTime={inicio}&endDateTime={fim}\
+         &$select={AGENDA_SELECT}&$orderby=start/dateTime&$top=100"
+    );
+    buscar_calendar_view(store, &url)
+}
+
+/// Eventos de um calendário específico no intervalo (#233). Mesmo parse/pool do
+/// calendário padrão, mas via /me/calendars/{id}/calendarView. Calendars.Read.
+pub fn cr_agenda_calendario(
+    store: &TokenStore,
+    calendario_id: &str,
+    inicio: &str,
+    fim: &str,
+) -> Result<Vec<EventoAgenda>, String> {
+    let url = format!(
+        "{GRAPH}/me/calendars/{calendario_id}/calendarView?startDateTime={inicio}&endDateTime={fim}\
+         &$select={AGENDA_SELECT}&$orderby=start/dateTime&$top=100"
+    );
+    buscar_calendar_view(store, &url)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Calendario {
+    pub id: String,
+    pub nome: String,
+    pub cor: String, // hex (#RRGGBB)
+    pub is_default_calendar: bool,
+    pub can_edit: bool,
+}
+
+/// Mapeia o enum de cor de calendário do Graph (CalendarColor) para um hex.
+/// Usado quando o calendário não tem `hexColor` custom preenchido.
+fn cor_calendario_para_hex(cor: &str) -> &'static str {
+    match cor {
+        "lightBlue" => "#0078D4",
+        "lightGreen" => "#498205",
+        "lightOrange" => "#FF8C00",
+        "lightGray" => "#8A8886",
+        "lightYellow" => "#EAA300",
+        "lightTeal" => "#00B7C3",
+        "lightPink" => "#E3008C",
+        "lightBrown" => "#7A4B00",
+        "lightRed" => "#D13438",
+        // "auto", "maxColor" ou desconhecido: azul padrão do Outlook.
+        _ => "#0078D4",
+    }
+}
+
+/// Lista os calendários do usuário (GET /me/calendars). Calendars.Read. Fica sob
+/// o mesmo pool + retry central (#64) das demais chamadas.
+pub fn cr_calendarios(store: &TokenStore) -> Result<Vec<Calendario>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/calendars?$select=id,name,color,hexColor,isDefaultCalendar,canEdit&$top=100"
+    );
+    let resp = graph_enviar("calendarios", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao listar os calendarios: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/calendars retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut calendarios = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            // hexColor vem preenchido quando o calendário tem cor custom; senão
+            // caímos no enum `color` (CalendarColor) mapeado para hex.
+            let hex = it["hexColor"].as_str().unwrap_or("");
+            let cor = if hex.starts_with('#') && hex.len() >= 4 {
+                hex.to_string()
+            } else {
+                cor_calendario_para_hex(it["color"].as_str().unwrap_or("auto")).to_string()
+            };
+            calendarios.push(Calendario {
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                nome: it["name"].as_str().unwrap_or("(sem nome)").to_string(),
+                cor,
+                is_default_calendar: it["isDefaultCalendar"].as_bool().unwrap_or(false),
+                can_edit: it["canEdit"].as_bool().unwrap_or(false),
+            });
+        }
+    }
+    Ok(calendarios)
 }
 
 #[derive(serde::Serialize)]
@@ -1139,6 +1234,39 @@ pub fn cr_categorias(store: &TokenStore) -> Result<Vec<CategoriaCor>, String> {
     Ok(categorias)
 }
 
+/// Cria uma categoria mestra (POST /me/outlook/masterCategories). `preset` é o
+/// nome do preset de cor do Outlook ("preset0".."preset24"); devolve a categoria
+/// criada já com o hex resolvido. Exige MailboxSettings.ReadWrite (#211).
+pub fn cr_criar_categoria(
+    store: &TokenStore,
+    nome: &str,
+    preset: &str,
+) -> Result<CategoriaCor, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/outlook/masterCategories");
+    let body = serde_json::json!({ "displayName": nome, "color": preset });
+    let resp = graph_enviar("categorias:criar", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao criar a categoria: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita(
+            "me/outlook/masterCategories",
+            "criar categoria",
+            resp.status(),
+        ));
+    }
+    let it: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let nome_final = it["displayName"].as_str().unwrap_or(nome).to_string();
+    let preset_final = it["color"].as_str().unwrap_or(preset);
+    Ok(CategoriaCor {
+        nome: nome_final,
+        cor: preset_para_hex(preset_final).to_string(),
+    })
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventoDetalhe {
@@ -1203,6 +1331,138 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
         participantes,
         web_link: it["webLink"].as_str().unwrap_or("").to_string(),
     })
+}
+
+// ----------------------------------------------------------------------------
+// Escrita de eventos (Agenda — #211): criar / editar / excluir.
+// Escopo: Calendars.ReadWrite. Sob o mesmo pool + retry central (#64) das
+// demais chamadas, respeitando Retry-After e jitter.
+// ----------------------------------------------------------------------------
+
+/// Um convidado do evento (#211): endereço + nome de exibição. Vira um
+/// `attendees[]` no payload do Graph.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Convidado {
+    pub email: String,
+    pub nome: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventoInput {
+    pub assunto: String,
+    pub inicio: String, // hora-de-parede local, sem Z
+    pub fim: String,
+    pub dia_inteiro: bool,
+    pub local: String,
+    pub corpo: String,
+    pub categorias: Vec<String>,
+    pub time_zone: String, // IANA (ex. "America/Sao_Paulo")
+    /// Convidados do evento (#211). Vazio = sem convidados.
+    #[serde(default)]
+    pub convidados: Vec<Convidado>,
+    /// Reunião do Teams (#211): liga isOnlineMeeting + provider teamsForBusiness.
+    #[serde(default)]
+    pub reuniao_teams: bool,
+    /// Calendário-alvo do evento (#233). Vazio/ausente = calendário padrão
+    /// (/me/events). Presente = /me/calendars/{id}/events.
+    #[serde(default)]
+    pub calendario_id: Option<String>,
+}
+
+/// Monta o corpo JSON de um evento para POST/PATCH em /me/events. Mandamos a
+/// hora-de-parede local + o `timeZone` IANA do usuário — o Graph resolve o
+/// instante, o que também satisfaz a exigência de meia-noite no fuso para
+/// eventos de dia inteiro. O Z é removido por garantia (dateTime não leva zona).
+fn evento_json(input: &EventoInput) -> serde_json::Value {
+    let ini = input.inicio.trim_end_matches('Z');
+    let fim = input.fim.trim_end_matches('Z');
+    // Convidados -> attendees[] no formato do Graph (ignora e-mail vazio).
+    let attendees: Vec<serde_json::Value> = input
+        .convidados
+        .iter()
+        .filter(|c| !c.email.trim().is_empty())
+        .map(|c| {
+            serde_json::json!({
+                "emailAddress": { "address": c.email, "name": c.nome },
+                "type": "required",
+            })
+        })
+        .collect();
+    let mut obj = serde_json::json!({
+        "subject": input.assunto,
+        "isAllDay": input.dia_inteiro,
+        "start": { "dateTime": ini, "timeZone": input.time_zone },
+        "end": { "dateTime": fim, "timeZone": input.time_zone },
+        "location": { "displayName": input.local },
+        "body": { "contentType": "text", "content": input.corpo },
+        "categories": input.categorias,
+        "attendees": attendees,
+        "isOnlineMeeting": input.reuniao_teams,
+    });
+    // onlineMeetingProvider só é válido quando isOnlineMeeting é true; ao ligar,
+    // o Graph gera o link do Teams no evento.
+    if input.reuniao_teams {
+        obj["onlineMeetingProvider"] = serde_json::json!("teamsForBusiness");
+    }
+    obj
+}
+
+/// Cria um evento no calendário do usuário (POST /me/events). Devolve o id do
+/// evento criado para o front trocar o id otimista pelo real. Calendars.ReadWrite.
+pub fn cr_criar_evento(store: &TokenStore, input: EventoInput) -> Result<String, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    // Calendário-alvo (#233): com id, cria em /me/calendars/{id}/events; sem id,
+    // mantém o padrão (/me/events) — sem regressão do #211.
+    let url = match input.calendario_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(cal) => format!("{GRAPH}/me/calendars/{cal}/events"),
+        None => format!("{GRAPH}/me/events"),
+    };
+    let body = evento_json(&input);
+    let resp = graph_enviar("agenda:criar", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao criar o evento: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita("me/events", "criar evento", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(v["id"].as_str().unwrap_or("").to_string())
+}
+
+/// Edita um evento existente (PATCH /me/events/{id}). Calendars.ReadWrite.
+pub fn cr_editar_evento(store: &TokenStore, id: &str, input: EventoInput) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events/{id}");
+    let body = evento_json(&input);
+    let resp = graph_enviar("agenda:editar", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao editar o evento: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita("me/events", "editar evento", resp.status()));
+    }
+    Ok(())
+}
+
+/// Exclui um evento (DELETE /me/events/{id}). 404 conta como sucesso
+/// (idempotente — já foi removido). Calendars.ReadWrite.
+pub fn cr_excluir_evento(store: &TokenStore, id: &str) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events/{id}");
+    let resp = graph_enviar("agenda:excluir", GRAPH_TETO_ESPERA_S, || {
+        client.delete(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao excluir o evento: {e}"))?;
+    if resp.status().is_success() || resp.status().as_u16() == 404 {
+        Ok(())
+    } else {
+        Err(erro_escrita("me/events", "excluir evento", resp.status()))
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -2986,6 +3246,45 @@ fn telefones_de_people(item: &serde_json::Value) -> Vec<PeoplePhone> {
         .collect()
 }
 
+/// `/me/people` mistura pessoas e objetos mail-enabled. `personType.class` é o
+/// sinal canônico do Graph para excluir Teams, listas de distribuição e sites
+/// SharePoint respaldados por Microsoft 365 Groups da lista de pessoas (#281).
+fn eh_grupo_de_people(item: &serde_json::Value) -> bool {
+    item["personType"]["class"]
+        .as_str()
+        .is_some_and(|class| class.eq_ignore_ascii_case("Group"))
+}
+
+#[cfg(test)]
+mod testes_people_person_type {
+    use super::eh_grupo_de_people;
+
+    #[test]
+    fn exclui_group_independente_de_caixa_e_subclasse() {
+        for class in ["Group", "group", "GROUP"] {
+            let item = serde_json::json!({
+                "personType": {
+                    "class": class,
+                    "subclass": "OrganizationUser"
+                }
+            });
+            assert!(eh_grupo_de_people(&item));
+        }
+    }
+
+    #[test]
+    fn preserva_pessoa_e_registro_sem_person_type() {
+        let pessoa = serde_json::json!({
+            "personType": {
+                "class": "Person",
+                "subclass": "OrganizationUser"
+            }
+        });
+        assert!(!eh_grupo_de_people(&pessoa));
+        assert!(!eh_grupo_de_people(&serde_json::json!({})));
+    }
+}
+
 /// Lista inicial do People (#166): contatos explicitos + pessoas relevantes.
 /// Mantem as fontes separadas para o merge deterministico no front e preserva a
 /// ordem de relevancia de `/me/people` via `people_rank`.
@@ -3085,6 +3384,9 @@ pub fn cr_people_list(
                             let is_first_page = url.contains("/me/people?$top=");
                             result.records.extend(items.iter().enumerate().filter_map(
                                 |(rank, item)| {
+                                    if eh_grupo_de_people(item) {
+                                        return None;
+                                    }
                                     let emails = emails_de_people(item);
                                     if emails.is_empty() {
                                         return None;
@@ -3355,6 +3657,7 @@ pub fn cr_people_enrich_preview(
     store: &TokenStore,
     contact_id: Option<&str>,
     email: &str,
+    directory_user: bool,
 ) -> Result<PeopleEnrichPreview, String> {
     let email = email.trim();
     if email.is_empty() {
@@ -3388,81 +3691,88 @@ pub fn cr_people_enrich_preview(
     let mut existing_phones = telefones_existentes(&contato);
     let mut pessoa_match: Option<serde_json::Value> = None;
 
-    let people_url = format!(
-        "{GRAPH}/me/people?$top=250&$select=id,displayName,scoredEmailAddresses,phones,companyName,jobTitle,personType,userPrincipalName"
-    );
-    match graph_enviar("people:enrich-people", GRAPH_TETO_ESPERA_S, || {
-        client.get(&people_url).bearer_auth(&token).send()
-    }) {
-        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
-            Ok(body) => {
-                if let Some(items) = body["value"].as_array() {
-                    if let Some(person) = pessoa_por_email(items, email) {
-                        adicionar_scalar(
-                            &mut fields,
-                            &contato,
-                            "jobTitle",
-                            texto_opcional(person, "jobTitle"),
-                            "people",
-                        );
-                        adicionar_scalar(
-                            &mut fields,
-                            &contato,
-                            "companyName",
-                            texto_opcional(person, "companyName"),
-                            "people",
-                        );
-                        for address in person["scoredEmailAddresses"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                        {
-                            if let Some(value) = address["address"].as_str() {
-                                adicionar_email(
-                                    &mut fields,
-                                    &mut existing_emails,
-                                    value,
-                                    "people",
-                                    None,
-                                );
+    if !directory_user {
+        let people_url = format!(
+            "{GRAPH}/me/people?$top=250&$select=id,displayName,scoredEmailAddresses,phones,companyName,jobTitle,personType,userPrincipalName"
+        );
+        match graph_enviar("people:enrich-people", GRAPH_TETO_ESPERA_S, || {
+            client.get(&people_url).bearer_auth(&token).send()
+        }) {
+            Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+                Ok(body) => {
+                    if let Some(items) = body["value"].as_array() {
+                        if let Some(person) = pessoa_por_email(items, email) {
+                            adicionar_scalar(
+                                &mut fields,
+                                &contato,
+                                "jobTitle",
+                                texto_opcional(person, "jobTitle"),
+                                "people",
+                            );
+                            adicionar_scalar(
+                                &mut fields,
+                                &contato,
+                                "companyName",
+                                texto_opcional(person, "companyName"),
+                                "people",
+                            );
+                            for address in person["scoredEmailAddresses"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                            {
+                                if let Some(value) = address["address"].as_str() {
+                                    adicionar_email(
+                                        &mut fields,
+                                        &mut existing_emails,
+                                        value,
+                                        "people",
+                                        None,
+                                    );
+                                }
                             }
-                        }
-                        for phone in person["phones"].as_array().into_iter().flatten() {
-                            if let Some(number) = phone["number"].as_str() {
-                                adicionar_telefone(
-                                    &mut fields,
-                                    &mut existing_phones,
-                                    number,
-                                    phone["type"].as_str().unwrap_or("work"),
-                                    "people",
-                                );
+                            for phone in person["phones"].as_array().into_iter().flatten() {
+                                if let Some(number) = phone["number"].as_str() {
+                                    adicionar_telefone(
+                                        &mut fields,
+                                        &mut existing_phones,
+                                        number,
+                                        phone["type"].as_str().unwrap_or("work"),
+                                        "people",
+                                    );
+                                }
                             }
+                            pessoa_match = Some(person.clone());
                         }
-                        pessoa_match = Some(person.clone());
                     }
                 }
-            }
-            Err(error) => failures.push(format!("People: resposta invalida ({error})")),
-        },
-        Ok(resp) => failures.push(format!("People: Graph retornou {}", resp.status())),
-        Err(error) => failures.push(format!("People: falha de rede ({error})")),
+                Err(error) => failures.push(format!("People: resposta invalida ({error})")),
+            },
+            Ok(resp) => failures.push(format!("People: Graph retornou {}", resp.status())),
+            Err(error) => failures.push(format!("People: falha de rede ({error})")),
+        }
     }
 
-    let organization = pessoa_match.as_ref().is_some_and(|person| {
-        let person_type = &person["personType"];
-        person_type["subclass"]
-            .as_str()
-            .or_else(|| person_type["class"].as_str())
-            .is_some_and(|value| value.eq_ignore_ascii_case("OrganizationUser"))
-    });
+    let organization = directory_user
+        || pessoa_match.as_ref().is_some_and(|person| {
+            let person_type = &person["personType"];
+            person_type["subclass"]
+                .as_str()
+                .or_else(|| person_type["class"].as_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case("OrganizationUser"))
+        });
 
     let mut directory_user_id: Option<String> = None;
     if organization {
-        let identifier = pessoa_match
-            .as_ref()
-            .and_then(|person| person["userPrincipalName"].as_str())
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or(email);
+        let identifier = if directory_user {
+            email
+        } else {
+            pessoa_match
+                .as_ref()
+                .and_then(|person| person["userPrincipalName"].as_str())
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(email)
+        };
         let user_url = format!(
             "{GRAPH}/users/{}?$select=id,displayName,mail,userPrincipalName,jobTitle,companyName,department,officeLocation,mobilePhone,businessPhones",
             urlencoding::encode(identifier)
@@ -3599,7 +3909,7 @@ pub fn cr_people_enrich_preview(
             Err(error) => failures.push(format!("Contacts photo: {error}")),
         }
     }
-    if !photo_found {
+    if !directory_user && !photo_found {
         if let Some(user_id) = directory_user_id {
             let photo_url = format!(
                 "{GRAPH}/users/{}/photo/$value",

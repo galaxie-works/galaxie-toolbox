@@ -111,11 +111,54 @@ export interface EventoAgenda {
   totalParticipantes: number;
   temAnexos: boolean;
   categorias: string[];
+  /** Id do calendário de origem (#233). Marcado no front ao mesclar múltiplos
+   *  calendários; ausente quando vindo do calendário padrão (/me/calendarView). */
+  calendarioId?: string;
+  /** Cor (hex) do calendário de origem (#233), aplicada ao evento no merge. */
+  corCalendario?: string;
 }
 
 export interface CategoriaCor {
   nome: string;
   cor: string;
+}
+
+/** Um calendário do usuário (#233) — /me/calendars. */
+export interface Calendario {
+  id: string;
+  nome: string;
+  cor: string; // hex (#RRGGBB)
+  isDefaultCalendar: boolean;
+  canEdit: boolean;
+}
+
+/**
+ * Dados de escrita de um evento (criar/editar) — #211. `inicio`/`fim` são
+ * hora-de-parede local (ISO sem Z, ex. "2026-07-30T09:00:00"); `timeZone` é o
+ * IANA local. Assim o Graph interpreta o horário no fuso certo tanto para
+ * eventos com hora quanto para dia inteiro (que exige meia-noite no fuso).
+ */
+/** Convidado de um evento (#211): endereço + nome, vira um `attendees[]`. */
+export interface ConvidadoInput {
+  email: string;
+  nome: string;
+}
+
+export interface EventoInput {
+  assunto: string;
+  inicio: string; // hora local, sem Z
+  fim: string; // hora local, sem Z
+  diaInteiro: boolean;
+  local: string;
+  corpo: string;
+  categorias: string[];
+  timeZone: string; // IANA (ex. "America/Sao_Paulo")
+  /** Convidados (#211): cada um vira attendee `required` no payload Graph. */
+  convidados: ConvidadoInput[];
+  /** Reunião do Teams (#211): liga isOnlineMeeting + teamsForBusiness. */
+  reuniaoTeams: boolean;
+  /** Calendário-alvo (#233). Ausente/"" = calendário padrão (/me/events). */
+  calendarioId?: string;
 }
 
 export interface EventoDetalhe {

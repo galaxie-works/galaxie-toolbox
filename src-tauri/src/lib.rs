@@ -1,7 +1,9 @@
 mod auth;
+mod bookmarks;
 mod browser;
 mod config;
 mod estado;
+mod favicon;
 mod graph;
 mod lock_screen;
 mod system;
@@ -153,6 +155,31 @@ async fn current_account(state: State<'_, Store>) -> Result<Option<Account>, Str
     Ok(guard.as_ref().map(|t| t.account.clone()))
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RequiredScopesStatus {
+    missing_scopes: Vec<String>,
+}
+
+/// Compara o token atual com o pedido mínimo compilado nesta versão.
+///
+/// A detecção é proativa e não interpreta qualquer 403 como falta de escopo:
+/// um usuário sem acesso a um objeto isolado não recebe um falso pedido de
+/// reautenticação.
+#[tauri::command]
+async fn required_scopes_status(state: State<'_, Store>) -> Result<RequiredScopesStatus, String> {
+    let store = state.inner().clone();
+    let guard = store
+        .inner
+        .lock()
+        .map_err(|_| "estado de token corrompido".to_string())?;
+    let missing_scopes = guard
+        .as_ref()
+        .map(|tokens| auth::required_resource_scopes_missing(&tokens.scopes))
+        .unwrap_or_default();
+    Ok(RequiredScopesStatus { missing_scopes })
+}
+
 /// Sites do tenant que o usuario acessa, com status de conexao.
 #[tauri::command]
 async fn list_sites(state: State<'_, Store>) -> Result<Vec<graph::SiteDto>, String> {
@@ -257,6 +284,33 @@ async fn cr_agenda(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda: lista os calendários do usuário (#233). Calendars.Read.
+#[tauri::command]
+async fn cr_calendarios(
+    state: State<'_, Store>,
+) -> Result<Vec<graph::Calendario>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_calendarios(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Agenda: eventos de um calendário específico no intervalo (#233). Calendars.Read.
+#[tauri::command]
+async fn cr_agenda_calendario(
+    state: State<'_, Store>,
+    calendario_id: String,
+    inicio: String,
+    fim: String,
+) -> Result<Vec<graph::EventoAgenda>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_agenda_calendario(&store, &calendario_id, &inicio, &fim)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Control room: detalhe completo de um evento (corpo + convidados).
 #[tauri::command]
 async fn cr_evento_corpo(
@@ -324,6 +378,57 @@ async fn cr_categorias(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda: cria uma categoria mestra (#211). MailboxSettings.ReadWrite.
+#[tauri::command]
+async fn cr_criar_categoria(
+    state: State<'_, Store>,
+    nome: String,
+    preset: String,
+) -> Result<graph::CategoriaCor, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_criar_categoria(&store, &nome, &preset))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Agenda: cria um evento no calendário do usuário (#211). Calendars.ReadWrite.
+/// Devolve o id do evento criado (o front troca o id otimista pelo real).
+#[tauri::command]
+async fn cr_criar_evento(
+    state: State<'_, Store>,
+    input: graph::EventoInput,
+) -> Result<String, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_criar_evento(&store, input))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Agenda: edita um evento existente (#211). Calendars.ReadWrite.
+#[tauri::command]
+async fn cr_editar_evento(
+    state: State<'_, Store>,
+    id: String,
+    input: graph::EventoInput,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_editar_evento(&store, &id, input))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Agenda: exclui um evento (#211). Calendars.ReadWrite.
+#[tauri::command]
+async fn cr_excluir_evento(
+    state: State<'_, Store>,
+    id: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_evento(&store, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: fotos (avatar) de remetentes internos, em lote. User.Read.All.
 #[tauri::command]
 async fn cr_fotos_contatos(
@@ -368,10 +473,16 @@ async fn cr_people_enrich_preview(
     state: State<'_, Store>,
     contact_id: Option<String>,
     email: String,
+    directory_user: Option<bool>,
 ) -> Result<graph::PeopleEnrichPreview, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_people_enrich_preview(&store, contact_id.as_deref(), &email)
+        graph::cr_people_enrich_preview(
+            &store,
+            contact_id.as_deref(),
+            &email,
+            directory_user.unwrap_or(false),
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1034,6 +1145,26 @@ fn log_frontend_error(msg: String) {
     log::error!("[frontend] {msg}");
 }
 
+/// Navigator (#176): importa favoritos do Chrome/Edge lendo SOMENTE o arquivo
+/// `Bookmarks` (JSON) de cada perfil. Nunca le `Login Data`/credenciais. Devolve
+/// a arvore por navegador+perfil; ausencia degrada em lista vazia (sem panico).
+#[tauri::command]
+async fn import_browser_bookmarks() -> Result<bookmarks::ImportarResultado, String> {
+    tauri::async_runtime::spawn_blocking(bookmarks::importar)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Favicon do PROPRIO dominio de uma URL (#276). HTTP so no site pedido — jamais
+/// servico de terceiros (privacidade). Devolve data URI ou `None`. Cache por
+/// origem no modulo. Reutilizavel pelo Contacts (#289).
+#[tauri::command]
+async fn fetch_favicon(url: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || favicon::buscar(&url))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Startup (#123): o app esta configurado para iniciar junto com o sistema?
 /// Le do autostart do SO via tauri-plugin-autostart (registro no Windows).
 #[tauri::command]
@@ -1181,6 +1312,7 @@ pub fn run() {
             login,
             logout,
             current_account,
+            required_scopes_status,
             restore_session,
             detect_tenant,
             cached_identity,
@@ -1198,11 +1330,17 @@ pub fn run() {
             cr_email,
             cr_tarefas,
             cr_agenda,
+            cr_calendarios,
+            cr_agenda_calendario,
             cr_evento_corpo,
             cr_inbox_dia,
             cr_email_corpo,
             cr_email_seguranca,
             cr_categorias,
+            cr_criar_categoria,
+            cr_criar_evento,
+            cr_editar_evento,
+            cr_excluir_evento,
             cr_fotos_contatos,
             cr_pessoas,
             cr_people_list,
@@ -1254,6 +1392,8 @@ pub fn run() {
             enable_long_paths,
             long_paths_status,
             log_frontend_error,
+            import_browser_bookmarks,
+            fetch_favicon,
             autostart_status,
             autostart_set,
         ])

@@ -25,6 +25,23 @@ export function normalizarUndoSendDelay(valor: unknown): number {
 }
 
 /**
+ * Intervalos de sincronização (#227), em minutos: de quanto em quanto tempo o
+ * Bridge busca mensagens novas na Inbox. Antes fixo em 15 min no control-room;
+ * agora é config em Settings > Bridge > Sync. `15` segue como padrão (mantém o
+ * comportamento histórico).
+ */
+export const SYNC_INTERVALS_MINUTES = [5, 15, 30, 60] as const;
+export type SyncIntervalMinutes = (typeof SYNC_INTERVALS_MINUTES)[number];
+export const SYNC_INTERVAL_DEFAULT_MINUTES = 15;
+
+/** Normaliza um valor cru para o conjunto permitido; fora dele volta pro padrão. */
+export function normalizarSyncInterval(valor: unknown): number {
+  return (SYNC_INTERVALS_MINUTES as readonly number[]).includes(valor as number)
+    ? (valor as number)
+    : SYNC_INTERVAL_DEFAULT_MINUTES;
+}
+
+/**
  * Assinatura de e-mail do Bridge (#135). `corpo` é o HTML gerado pelo mesmo
  * Plate do compose — inserir no e-mail é só desserializar de volta, igual aos
  * templates.
@@ -69,6 +86,8 @@ export interface BridgeSlice {
   templates: TemplateEmail[];
   /** Janela do "desfazer envio" (#150), em ms — um de `UNDO_SEND_DELAYS_MS`. */
   undoSendDelayMs: number;
+  /** Intervalo de sincronização (#227), em minutos — um de `SYNC_INTERVALS_MINUTES`. */
+  syncIntervalMinutes: number;
 
   adicionarAssinatura: (dados: DadosAssinatura) => void;
   atualizarAssinatura: (id: string, dados: DadosAssinatura) => void;
@@ -82,6 +101,9 @@ export interface BridgeSlice {
 
   /** Troca a janela do desfazer envio; valor fora do permitido cai no padrão. */
   setUndoSendDelay: (ms: number) => void;
+
+  /** Troca o intervalo de sincronização; valor fora do permitido cai no padrão. */
+  setSyncInterval: (minutos: number) => void;
 }
 
 export const BRIDGE_KEYS = {
@@ -90,11 +112,16 @@ export const BRIDGE_KEYS = {
   // Mesma chave legada dos templates — nada a migrar, só passa a ser dono o store.
   templates: TEMPLATES_KEY,
   undoSendDelay: "bridge.undoSendDelay",
+  syncInterval: "bridge.syncInterval",
 } as const;
 
 export type BridgePersistido = Pick<
   BridgeSlice,
-  "assinaturas" | "assinaturaPadraoId" | "templates" | "undoSendDelayMs"
+  | "assinaturas"
+  | "assinaturaPadraoId"
+  | "templates"
+  | "undoSendDelayMs"
+  | "syncIntervalMinutes"
 >;
 
 export const createBridgeSlice: StateCreator<
@@ -107,6 +134,7 @@ export const createBridgeSlice: StateCreator<
   assinaturaPadraoId: null,
   templates: [],
   undoSendDelayMs: UNDO_SEND_DELAY_MS,
+  syncIntervalMinutes: SYNC_INTERVAL_DEFAULT_MINUTES,
 
   adicionarAssinatura: ({ nome, corpo, padrao, usarEmRespostas }) =>
     set((state) => {
@@ -168,4 +196,7 @@ export const createBridgeSlice: StateCreator<
 
   setUndoSendDelay: (ms) =>
     set({ undoSendDelayMs: normalizarUndoSendDelay(ms) }),
+
+  setSyncInterval: (minutos) =>
+    set({ syncIntervalMinutes: normalizarSyncInterval(minutos) }),
 });

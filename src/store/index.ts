@@ -32,6 +32,7 @@ import {
   createBridgeSlice,
   BRIDGE_KEYS,
   normalizarUndoSendDelay,
+  normalizarSyncInterval,
   type Assinatura,
   type BridgePersistido,
   type BridgeSlice,
@@ -46,7 +47,11 @@ import {
 } from "./reader-slice";
 import {
   createAgendaSlice,
+  AGENDA_KEYS,
+  AGENDA_VIEWS,
+  type AgendaPersistido,
   type AgendaSlice,
+  type AgendaViewTipo,
 } from "./agenda-slice";
 import {
   createComposeSlice,
@@ -56,6 +61,17 @@ import {
   createPeopleSlice,
   type PeopleSlice,
 } from "./people-slice";
+import {
+  createOrganizationsSlice,
+  ORGANIZATIONS_KEYS,
+  type OrganizationsPersistido,
+  type OrganizationsSlice,
+} from "./organizations-slice";
+import type { PeopleOrg } from "@/lib/organizations";
+import {
+  createAuthSlice,
+  type AuthSlice,
+} from "./auth-slice";
 import { lerTemplates } from "@/lib/templates";
 import {
   aplicarAltoContraste,
@@ -113,7 +129,9 @@ export type AppStore =
   & ReaderSlice
   & AgendaSlice
   & ComposeSlice
-  & PeopleSlice;
+  & PeopleSlice
+  & OrganizationsSlice
+  & AuthSlice;
 
 /** O que o `persist` guarda: UI + lista + mailbox (chaves legadas) + nav da Settings. */
 type AppPersistido = UiPersistido &
@@ -122,7 +140,9 @@ type AppPersistido = UiPersistido &
   MailboxPersistido &
   SettingsUiPersistido &
   PersonalizationPersistido &
-  BridgePersistido;
+  BridgePersistido &
+  AgendaPersistido &
+  OrganizationsPersistido;
 
 // --- storage custom: mapeia o blob persistido pras chaves reais 1:1 -----------
 
@@ -206,6 +226,8 @@ const TODAS_CHAVES = [
   ...Object.values(SETTINGS_UI_KEYS),
   ...Object.values(PERSONALIZATION_KEYS),
   ...Object.values(BRIDGE_KEYS),
+  ...Object.values(AGENDA_KEYS),
+  ...Object.values(ORGANIZATIONS_KEYS),
   // Chave legada da assinatura única (pré-#135): limpa no reset junto do resto.
   "bridge.assinatura",
 ];
@@ -331,6 +353,32 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (undoDelay !== undefined) {
       state.undoSendDelayMs = normalizarUndoSendDelay(undoDelay);
     }
+    // Intervalo de sincronização (#227): normaliza pro conjunto permitido; ausente
+    // ou inválido → o merge do Zustand mantém o padrão (15 min) do slice.
+    const syncInterval = lerChave<number>(BRIDGE_KEYS.syncInterval);
+    if (syncInterval !== undefined) {
+      state.syncIntervalMinutes = normalizarSyncInterval(syncInterval);
+    }
+    // Agenda (#211): preferência de view (mês/semana/dia/agenda).
+    const agendaView = lerTexto<AgendaViewTipo>(
+      AGENDA_KEYS.agendaView,
+      AGENDA_VIEWS
+    );
+    if (agendaView !== undefined) state.agendaView = agendaView;
+    // Agenda (#233): seleção de calendários (array de ids, ou null). Ausente →
+    // fica null (não inicializado), a slice escolhe o padrão ao carregar.
+    const agendaCalsSel = lerChave<string[] | null>(
+      AGENDA_KEYS.agendaCalendariosSel
+    );
+    if (agendaCalsSel !== undefined) {
+      state.agendaCalendariosSelecionados = agendaCalsSel;
+    }
+    // Organizações do People (#205): definições app-owned criadas pelo usuário.
+    // Ausente → o merge do Zustand mantém o default `[]` do slice.
+    const organizations = lerChave<PeopleOrg[]>(
+      ORGANIZATIONS_KEYS.organizations
+    );
+    if (Array.isArray(organizations)) state.organizations = organizations;
     return { state: state as AppPersistido, version: 0 };
   },
   setItem: (_name, value: StorageValue<AppPersistido>): void => {
@@ -363,6 +411,13 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(BRIDGE_KEYS.assinaturaPadraoId, s.assinaturaPadraoId);
     gravarChave(BRIDGE_KEYS.templates, s.templates);
     gravarChave(BRIDGE_KEYS.undoSendDelay, s.undoSendDelayMs);
+    gravarChave(BRIDGE_KEYS.syncInterval, s.syncIntervalMinutes);
+    gravarTexto(AGENDA_KEYS.agendaView, s.agendaView);
+    gravarChave(
+      AGENDA_KEYS.agendaCalendariosSel,
+      s.agendaCalendariosSelecionados
+    );
+    gravarChave(ORGANIZATIONS_KEYS.organizations, s.organizations);
   },
   removeItem: (): void => {
     for (const chave of TODAS_CHAVES) {
@@ -399,6 +454,11 @@ export const useAppStore = create<AppStore>()(
       ...createComposeSlice(...a),
       // Contatos, seleção e carga do People são sessão e uma única fonte/cache.
       ...createPeopleSlice(...a),
+      // Organizações do People são app-owned e persistidas localmente (#205).
+      // A portabilidade via M365 (companyName write-back) é o #288.
+      ...createOrganizationsSlice(...a),
+      // Escopos ausentes descrevem somente o token atual (#235): session-only.
+      ...createAuthSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",
@@ -427,6 +487,10 @@ export const useAppStore = create<AppStore>()(
         assinaturaPadraoId: s.assinaturaPadraoId,
         templates: s.templates,
         undoSendDelayMs: s.undoSendDelayMs,
+        syncIntervalMinutes: s.syncIntervalMinutes,
+        agendaView: s.agendaView,
+        agendaCalendariosSelecionados: s.agendaCalendariosSelecionados,
+        organizations: s.organizations,
       }),
     }
   )

@@ -1,4 +1,5 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { BridgeHeaderIcon } from "@/components/ui/icons/marca-anim";
 import { Badge } from "@/components/reui/badge";
 import {
   Filters,
@@ -15,6 +16,7 @@ import {
 } from "@/components/reui/date-selector";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
+import { Toolbar, ToolbarButton } from "@/components/ui/toolbar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -120,6 +122,7 @@ import {
   type ComporMensagemHandle,
 } from "@/components/compose/compor-mensagem";
 import { NovaMensagemModal } from "@/components/compose/nova-mensagem-modal";
+import { AgendaView } from "@/components/agenda/agenda-view";
 import { PeopleView } from "@/components/people/people-view";
 import { PersonHoverCard } from "@/components/people/person-hover-card";
 import * as AnimatedButton from "@/components/morphin/animated-border-button";
@@ -182,6 +185,7 @@ import {
   Archive,
   ArrowDownUp,
   AtSign,
+  Building2,
   CalendarCheck,
   CalendarClock,
   CalendarDays,
@@ -213,14 +217,12 @@ import {
   Reply,
   ReplyAll,
   RotateCcw,
-  Search,
   Send,
   Send as SendIcon,
   Shield,
   ShieldAlert,
   ShieldCheck,
   ShieldX,
-  SlidersHorizontal,
   Trash2,
   TriangleAlert,
   User,
@@ -1437,6 +1439,7 @@ function FolderSidebar({
   onAbrirAdicionarCaixa,
   caixaCompartilhada,
   colapsada,
+  onToggleSidebar,
   bridgeView,
   onSelectModule,
   t,
@@ -1471,10 +1474,13 @@ function FolderSidebar({
   onAbrirAdicionarCaixa: () => void;
   caixaCompartilhada: boolean;
   colapsada: boolean;
+  onToggleSidebar: () => void;
   bridgeView: BridgeView;
   onSelectModule: (view: BridgeView) => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
+  const peopleTab = useAppStore((state) => state.peopleTab);
+  const setPeopleTab = useAppStore((state) => state.setPeopleTab);
   // Pasta pendente de confirmação do "Esvaziar" — ação destrutiva nunca sai
   // direto do menu: passa pelo AlertDialog (DoD + padrão do app).
   const [aEsvaziar, setAEsvaziar] = useState<{ id: string; rotulo: string } | null>(
@@ -1802,14 +1808,28 @@ function FolderSidebar({
         colapsada ? "w-16 items-center" : "w-52"
       )}
     >
-      <nav
-        aria-label="Bridge"
-        className={cn("flex w-full flex-col gap-0.5", colapsada && "items-center")}
+      <div
+        className={cn(
+          "flex w-full shrink-0",
+          colapsada ? "justify-center" : "justify-start"
+        )}
       >
-        <Modulo view="mail" rotulo={t.controlRoom.mailboxTitulo} icon={Mailbox} />
-        <Modulo view="people" rotulo={t.controlRoom.peopleTitulo} icon={Users} />
-        <Modulo view="agenda" rotulo={t.controlRoom.agendaTitulo} icon={CalendarDays} />
-      </nav>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onToggleSidebar}
+              aria-label={t.nav.alternarMenu}
+            >
+              {colapsada ? <PanelLeftOpen /> : <PanelLeftClose />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right" align="center">
+            {t.nav.alternarMenu}
+          </TooltipContent>
+        </Tooltip>
+      </div>
       <Separator className={cn("shrink-0", colapsada && "w-6")} />
 
       {bridgeView === "mail" ? (
@@ -1906,9 +1926,75 @@ function FolderSidebar({
             </ScrollArea>
           )}
         </>
+      ) : bridgeView === "people" ? (
+        <ScrollArea className="min-h-0 w-full flex-1">
+          <nav
+            aria-label={t.controlRoom.peopleTitulo}
+            className={cn(
+              "flex w-full flex-col gap-0.5",
+              colapsada && "items-center"
+            )}
+          >
+            {(
+              [
+                {
+                  value: "contacts",
+                  label: t.controlRoom.peopleContactsTab,
+                  Icon: Users,
+                },
+                {
+                  value: "organizations",
+                  label: t.controlRoom.peopleOrganizationsTab,
+                  Icon: Building2,
+                },
+              ] as const
+            ).map(({ value, label, Icon }) => {
+              const ativo = peopleTab === value;
+              return (
+                <Tooltip key={value}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={ativo ? "secondary" : "ghost"}
+                      onClick={() => setPeopleTab(value)}
+                      aria-label={label}
+                      aria-current={ativo ? "page" : undefined}
+                      className={cn(
+                        "shrink-0",
+                        colapsada
+                          ? "size-9 justify-center p-0"
+                          : "w-full justify-start gap-2.5",
+                        ativo
+                          ? "bg-secondary font-medium text-secondary-foreground"
+                          : "text-muted-foreground hover:bg-accent/50"
+                      )}
+                    >
+                      <Icon className="size-4 shrink-0" />
+                      {!colapsada && <span>{label}</span>}
+                    </Button>
+                  </TooltipTrigger>
+                  {colapsada && (
+                    <TooltipContent side="right" align="center">
+                      {label}
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              );
+            })}
+          </nav>
+        </ScrollArea>
       ) : (
         <div className="flex-1" />
       )}
+
+      <Separator className={cn("shrink-0", colapsada && "w-6")} />
+      <nav
+        aria-label="Bridge"
+        className={cn("flex w-full flex-col gap-0.5", colapsada && "items-center")}
+      >
+        <Modulo view="mail" rotulo={t.controlRoom.mailboxTitulo} icon={Mailbox} />
+        <Modulo view="people" rotulo={t.controlRoom.peopleTitulo} icon={Users} />
+        <Modulo view="agenda" rotulo={t.controlRoom.agendaTitulo} icon={CalendarDays} />
+      </nav>
 
       {/* Confirmação do "Esvaziar pasta": destrutiva e não desfazível, então
           nunca dispara direto do menu de contexto (#89). */}
@@ -2429,8 +2515,6 @@ function MessageList({
   mensagens,
   erroLeitura,
   onRefresh,
-  sidebarAberta,
-  onToggleSidebar,
   pastaId,
   pastaTipo,
   onEsvaziar,
@@ -2445,10 +2529,6 @@ function MessageList({
   onAbrirMover,
   onMover,
   filtrosOcultos,
-  marcarLidoModo,
-  marcarLidoAtraso,
-  onMarcarLidoModo,
-  onMarcarLidoAtraso,
   onResponder,
   onResponderTodos,
   onEncaminhar,
@@ -2461,8 +2541,6 @@ function MessageList({
   mensagens: EmailItem[] | null;
   erroLeitura?: string;
   onRefresh: () => void;
-  sidebarAberta: boolean;
-  onToggleSidebar: () => void;
   pastaId: string;
   pastaTipo: string;
   onEsvaziar: () => void;
@@ -2477,10 +2555,6 @@ function MessageList({
   onAbrirMover: () => void;
   onMover: (ids: string[], destino: string, rotulo: string) => void;
   filtrosOcultos: Set<string>;
-  marcarLidoModo: MarcarLidoModo;
-  marcarLidoAtraso: number;
-  onMarcarLidoModo: (m: MarcarLidoModo) => void;
-  onMarcarLidoAtraso: (s: number) => void;
   // Atalhos de teclado (#28): ações que vivem no LEITOR (reply/forward via
   // handle imperativo) e no PAI (compor). MessageList só dispara a tecla.
   onResponder: () => void;
@@ -2492,8 +2566,6 @@ function MessageList({
   idioma: string;
 }) {
   const listaRef = useRef<HTMLDivElement>(null);
-  // Busca para o atalho "/" focar. Seleção/ativa/âncora vivem no slice (#128).
-  const buscaRef = useRef<HTMLInputElement>(null);
   const selecionados = useAppStore((s) => s.selecionados);
   const msgSel = useAppStore((s) => s.msgSel);
   const selecionarMensagem = useAppStore((s) => s.selecionarMensagem);
@@ -2738,6 +2810,15 @@ function MessageList({
     [linhas]
   );
 
+  // #230: a coluna do expander de conversa (`size-6`) só faz sentido quando a
+  // lista TEM conversas encadeadas. Reservá-la em toda linha (mesmo em pastas
+  // sem threads) criava uma faixa vazia à esquerda que comia largura útil. Só
+  // reservamos quando há ao menos uma thread — aí o alinhamento se mantém.
+  const haThreads = useMemo(
+    () => linhas.some((linha) => linha.tipo === "thread"),
+    [linhas]
+  );
+
   const filtrando = busca.trim() !== "" || filtros.length > 0;
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
   // carrega a próxima (progressivo) até aparecer resultado ou acabar.
@@ -2970,10 +3051,12 @@ function MessageList({
       return;
     }
 
-    // "/" foca a busca.
+    // "/" foca a busca universal no top bar (#226).
     if (e.key === "/") {
       e.preventDefault();
-      buscaRef.current?.focus();
+      document
+        .querySelector<HTMLInputElement>("[data-universal-search-input]")
+        ?.focus();
       return;
     }
 
@@ -3173,45 +3256,68 @@ function MessageList({
   return (
     <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
       <div className="flex items-center gap-2 px-3 py-3">
-        {/* Toggle do painel de pastas (#101): tooltip canônico simples (sem
-            atalho), mesmo padrão do #100 na sidebar. */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onToggleSidebar}
-              aria-label={t.nav.alternarMenu}
-            >
-              {sidebarAberta ? <PanelLeftClose /> : <PanelLeftOpen />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t.nav.alternarMenu}</TooltipContent>
-        </Tooltip>
         <h2 className="text-sm font-semibold">{titulo}</h2>
         {mensagens && (
           <Badge variant="secondary" size="sm">
             {mensagens.length}
           </Badge>
         )}
-        <div className="ml-auto flex items-center gap-1">
+        <Toolbar
+          className="ml-auto gap-1"
+          aria-label={t.controlRoom.mailboxTitulo}
+        >
           {pastaTipo === "deleteditems" && (mensagens?.length ?? 0) > 0 && (
             <Button variant="ghost" size="sm" onClick={onEsvaziar}>
               <Trash2 /> {t.controlRoom.esvaziarLixeira}
             </Button>
           )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Filters<string>
+                  filters={filtros}
+                  fields={filtroCampos}
+                  onChange={setFiltros}
+                  enableShortcut
+                  shortcutKey="f"
+                  shortcutLabel="F"
+                  trigger={
+                    <ToolbarButton
+                      aria-label={t.controlRoom.filtroLabel}
+                      pressed={filtros.length > 0}
+                    >
+                      <ListFilter />
+                    </ToolbarButton>
+                  }
+                  i18n={{
+                    addFilter: t.controlRoom.filtroLabel,
+                    searchFields: t.controlRoom.filtroBuscarCampo,
+                    select: t.controlRoom.filtroSelecione,
+                  }}
+                />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{t.controlRoom.filtroLabel}</TooltipContent>
+          </Tooltip>
+          {filtros.length > 0 && (
+            <ToolbarButton
+              tooltip={t.controlRoom.filtroLimpar}
+              onClick={() => setFiltros([])}
+            >
+              <FunnelX />
+            </ToolbarButton>
+          )}
           <DropdownMenu>
-            {/* Ordenação (#101): sem atalho → Tooltip canônico. Tooltip >
-                DropdownMenuTrigger, os dois com asChild no mesmo botão, igual
-                ao split "Escrever no Outlook" do #100. */}
+            {/* #226: sort é icon button com tooltip, igual ao People. */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="gap-1.5" aria-label={t.controlRoom.ordenarPor}>
-                    <ArrowDownUp className="size-3.5" />
-                    <span className="hidden text-xs sm:inline">{rotuloOrdena[ordenar]}</span>
-                    <ChevronDown className="size-3" />
-                  </Button>
+                  <ToolbarButton
+                    aria-label={t.controlRoom.ordenarPor}
+                    pressed={ordenar !== "data" || !ordemDesc}
+                  >
+                    <ArrowDownUp />
+                  </ToolbarButton>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
               <TooltipContent>{t.controlRoom.ordenarPor}</TooltipContent>
@@ -3242,64 +3348,9 @@ function MessageList({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
-          {/* Preferências de LEITURA (#95): quando a mensagem aberta vira lida.
-              Mora aqui, no cluster de preferências do cabeçalho da lista, pelo
-              mesmo motivo da ordenação: é chrome permanente (a toolbar do leitor
-              só existe com mensagem aberta) e evita um segundo lugar de
-              preferências no Bridge. Mesmo padrão visual do menu vizinho
-              (Label + RadioGroup); trigger só-ícone como o refresh, e NÃO a
-              engrenagem `Settings` — essa já significa "tela Configurações" do
-              Toolbox no sidebar.
-              As opções são uma escala única (ao abrir → 2s → 5s → 10s) em vez de
-              "modo + atraso" em dois controles: sem UI condicional, sem estado
-              escondido, e o RadioGroup do Radix já dá role/aria + setas. */}
-          <DropdownMenu>
-            {/* Preferências de leitura (#101): sem atalho → Tooltip canônico,
-                mesmo aninhamento Tooltip > DropdownMenuTrigger da ordenação. */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label={t.controlRoom.prefLeitura}>
-                    <SlidersHorizontal />
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent>{t.controlRoom.prefLeitura}</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>{t.controlRoom.prefMarcarLidoTitulo}</DropdownMenuLabel>
-              <DropdownMenuRadioGroup
-                value={
-                  marcarLidoModo === "atraso"
-                    ? `atraso:${marcarLidoAtraso}`
-                    : marcarLidoModo
-                }
-                onValueChange={(v) => {
-                  if (v.startsWith("atraso:")) {
-                    onMarcarLidoAtraso(Number(v.slice("atraso:".length)));
-                    onMarcarLidoModo("atraso");
-                  } else {
-                    onMarcarLidoModo(v as MarcarLidoModo);
-                  }
-                }}
-              >
-                <DropdownMenuRadioItem value="imediato">
-                  {t.controlRoom.prefMarcarLidoImediato}
-                </DropdownMenuRadioItem>
-                {MARCAR_LIDO_ATRASOS.map((s) => (
-                  <DropdownMenuRadioItem key={s} value={`atraso:${s}`}>
-                    {preencher(t.controlRoom.prefMarcarLidoAtraso, { n: s })}
-                  </DropdownMenuRadioItem>
-                ))}
-                {/* "Manualmente" não é um ponto da escala de tempo: é desligar
-                    o automatismo. Daí o separador. */}
-                <DropdownMenuSeparator />
-                <DropdownMenuRadioItem value="manual">
-                  {t.controlRoom.prefMarcarLidoManual}
-                </DropdownMenuRadioItem>
-              </DropdownMenuRadioGroup>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* As preferências de LEITURA (marcar como lido) migraram pra
+              Settings > Bridge > Reading (#227): a UI do e-mail deixa de ter
+              esse controle solto. */}
           {/* Atualizar (#101): sem atalho → Tooltip canônico. */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -3309,28 +3360,10 @@ function MessageList({
             </TooltipTrigger>
             <TooltipContent>{t.controlRoom.atualizar}</TooltipContent>
           </Tooltip>
-        </div>
+        </Toolbar>
       </div>
 
-      <div className="px-4 pb-2">
-        <div className="relative">
-          <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            ref={buscaRef}
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Escape") return;
-              if (selecionados.size > 0) limparSelecao();
-              else limparBusca();
-            }}
-            placeholder={t.controlRoom.buscarEmail}
-            className="h-8 w-full rounded-md border bg-transparent pr-2 pl-8 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          />
-        </div>
-      </div>
-
-      {selecionados.size > 0 ? (
+      {selecionados.size > 0 && (
         <div className="flex items-center gap-2 px-3 pb-2">
           {/* Selecionar tudo (#101): atalho Ctrl+A → ShortcutTooltip com Kbd.
               O nome acessível era ERRADO — trocava pra "Limpar seleção" quando
@@ -3391,46 +3424,6 @@ function MessageList({
               />
             </TooltipContent>
           </Tooltip>
-        </div>
-      ) : (
-        <div className="flex items-start gap-2.5 px-3 pb-2">
-          {/* Filtro da lista (#31) com o @reui/filters — variante RADIX,
-              instalada do registry (`@reui/filters` em style `radix-nova`) e
-              usada literal, como FILTER-BUILDER multi-campo. Montagem espelha o
-              exemplo canônico do reui (`Pattern()` do c-filters-5): trigger
-              `<Button variant="outline"><ListFilter/> Filtro>` com atalho "F",
-              campos agrupados (Básico/Seleção), e um botão "Limpar" separado
-              que aparece só quando há filtro ativo. O gatilho abre a lista de
-              campos direto (De, Status, Sinalizado, Anexos, Escopo); cada um
-              vira um chip `campo · operador · valor`, combináveis com E
-              (`allowMultiple`). Sem `size="sm"` → os inputs seguem o `h-9`
-              padrão do app (bug de altura do input de texto, reprovado antes).
-              `onChange` recebe o array completo → persistido no pai. */}
-          <Filters<string>
-            filters={filtros}
-            fields={filtroCampos}
-            onChange={setFiltros}
-            enableShortcut
-            shortcutKey="f"
-            shortcutLabel="F"
-            trigger={
-              <Button variant="outline">
-                <ListFilter />
-                {t.controlRoom.filtroLabel}
-              </Button>
-            }
-            i18n={{
-              addFilter: t.controlRoom.filtroLabel,
-              searchFields: t.controlRoom.filtroBuscarCampo,
-              select: t.controlRoom.filtroSelecione,
-            }}
-          />
-          {filtros.length > 0 && (
-            <Button variant="outline" onClick={() => setFiltros([])}>
-              <FunnelX />
-              {t.controlRoom.filtroLimpar}
-            </Button>
-          )}
         </div>
       )}
 
@@ -3611,7 +3604,7 @@ function MessageList({
                           Collapsible abre/fecha as linhas anteriores sem
                           desmontar conteúdo dentro da linha (mesma adaptação
                           do c-collapsible-6 usada nos headers de período). */}
-                      {agruparConversas &&
+                      {haThreads &&
                         (thread ? (() => {
                           // Nome e tooltip do expander comunicam o ESTADO
                           // (expandir vs recolher) e a CONTAGEM de mensagens,
@@ -3657,23 +3650,6 @@ function MessageList({
                           />
                         ))}
 
-                      {/* checkbox — aparece no hover ou quando marcado */}
-                      <label
-                        className={cn(
-                          "flex items-center self-start pt-1.5 transition-opacity",
-                          !marcado && !haSelecao && "opacity-0 group-hover/row:opacity-100"
-                        )}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={marcado}
-                          onChange={() => alternarSelecionado(m.id)}
-                          className="size-3.5 accent-primary"
-                          aria-label={m.assunto}
-                        />
-                      </label>
-
                       <ItemMedia className="relative self-start">
                         <Avatar>
                           {foto && <AvatarImage src={foto} alt="" />}
@@ -3682,6 +3658,28 @@ function MessageList({
                         {!m.lido && (
                           <span className="absolute -top-0.5 -left-0.5 size-2.5 rounded-full bg-primary ring-2 ring-background" />
                         )}
+                        {/* #230: o checkbox de seleção sobrepõe o avatar (padrão
+                            Outlook/Gmail) em vez de ocupar uma coluna própria à
+                            esquerda — que gerava a faixa vazia. Aparece no hover
+                            da linha ou quando há seleção; a seleção/atalhos não
+                            mudam (só o `onChange` continua disparando). */}
+                        <label
+                          className={cn(
+                            "absolute inset-0 grid cursor-pointer place-items-center rounded-full bg-background/85 transition-opacity",
+                            marcado || haSelecao
+                              ? "opacity-100"
+                              : "opacity-0 group-hover/row:opacity-100"
+                          )}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={marcado}
+                            onChange={() => alternarSelecionado(m.id)}
+                            className="size-4 accent-primary"
+                            aria-label={m.assunto}
+                          />
+                        </label>
                       </ItemMedia>
                       <ItemContent className="min-w-0 gap-0.5">
                         <div className="flex items-center gap-2">
@@ -4647,175 +4645,39 @@ const MessageDetail = forwardRef<
   );
 });
 
-// ===========================================================================
-// Painel 4 — calendário + agenda do dia (schedule-8)
-// ===========================================================================
-
-function AgendaConteudo({
-  t,
-  idioma,
-}: {
-  t: ReturnType<typeof useIdioma>["t"];
-  idioma: string;
-}) {
-  const dia = useAppStore((s) => s.agendaDia);
-  const setDia = useAppStore((s) => s.setAgendaDia);
-  const mesEventos = useAppStore((s) => s.agendaEventosMes);
-  // Erro de carga separado do "vazio": sem isso, uma falha do Graph
-  // (403 de escopo, rede, etc.) virava um mês "sem eventos" idêntico ao real,
-  // mascarando o problema (#21). `recargaAgenda` re-dispara o fetch no retry.
-  const erroAgenda = useAppStore((s) => s.agendaErro);
-  const recargaAgenda = useAppStore((s) => s.agendaRecarga);
-  const carregarMesAgenda = useAppStore((s) => s.carregarMesAgenda);
-  const recarregarAgenda = useAppStore((s) => s.recarregarAgenda);
-  const coresCat = useAppStore((s) => s.agendaCoresCategoria);
-  const carregarCoresAgenda = useAppStore((s) => s.carregarCoresAgenda);
-  const selecionarEventoAgenda = useAppStore(
-    (s) => s.selecionarEventoAgenda,
-  );
-
-  const chaveDia = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-
-  // Busca o MÊS inteiro (uma chamada) — alimenta os pontos do calendário; a
-  // lista do dia é derivada por filtro.
-  const ano = dia.getFullYear();
-  const mes = dia.getMonth();
-  const { mesIni, mesFim } = useMemo(() => {
-    const ini = new Date(ano, mes, 1, 0, 0, 0, 0);
-    const fim = new Date(ano, mes + 1, 1, 0, 0, 0, 0);
-    return { mesIni: ini.toISOString(), mesFim: fim.toISOString() };
-  }, [ano, mes]);
-
-  useEffect(() => {
-    void carregarMesAgenda(mesIni, mesFim);
-  }, [mesIni, mesFim, recargaAgenda, carregarMesAgenda]);
-
-  // Cores reais das categorias do Outlook (nome -> hex), carregadas uma vez.
-  useEffect(() => {
-    void carregarCoresAgenda();
-  }, [carregarCoresAgenda]);
-
-  const agenda = useMemo(() => {
-    if (!mesEventos) return null;
-    const k = chaveDia(dia);
-    return mesEventos.filter((ev) => {
-      const d = new Date(comZ(ev.inicio));
-      return !Number.isNaN(d.getTime()) && chaveDia(d) === k;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mesEventos, dia]);
-
-  // Dias que têm compromisso — pra marcar com um pontinho no calendário (o
-  // schedule-8 antigo mostrava; o c-calendar-22 não, e sem isso o usuário não
-  // acha os dias com evento e acha que "não carregou").
-  const diasComEvento = useMemo(() => {
-    const s = new Set<string>();
-    for (const ev of mesEventos ?? []) {
-      const d = new Date(comZ(ev.inicio));
-      if (!Number.isNaN(d.getTime())) s.add(chaveDia(d));
-    }
-    return s;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mesEventos]);
-
-  const rotuloDia = dia.toLocaleDateString(idioma, {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-
-  return (
-    <Card className="flex h-full min-w-0 flex-1 flex-col gap-0 overflow-hidden py-4">
-      {/* O módulo peer ocupa toda a área de conteúdo do Bridge (#204). */}
-      <div className="flex items-center gap-2 px-4 pb-3">
-        <CalendarDays className="size-4 text-muted-foreground" />
-        <span className="text-sm font-semibold">{t.controlRoom.agendaTitulo}</span>
-      </div>
-      <CardContent className="px-4">
-        <Calendar
-          mode="single"
-          selected={dia}
-          month={dia}
-          onMonthChange={setDia}
-          onSelect={(d) => d && setDia(d)}
-          showOutsideDays
-          className="w-full max-w-72 bg-transparent p-0"
-          formatters={{
-            formatWeekdayName: (d) =>
-              d.toLocaleDateString(idioma, { weekday: "short" }).slice(0, 3),
-          }}
-          modifiers={{ evento: (date: Date) => diasComEvento.has(chaveDia(date)) }}
-          modifiersClassNames={{
-            evento:
-              "relative after:pointer-events-none after:absolute after:bottom-1 after:left-1/2 after:size-1 after:-translate-x-1/2 after:rounded-full after:bg-primary",
-          }}
-          required
-        />
-      </CardContent>
-      <CardFooter className="flex min-h-0 flex-1 flex-col items-start gap-3 border-t px-4! pt-3! pb-0!">
-        <div className="flex w-full items-center justify-between px-1">
-          <div className="text-sm font-medium capitalize">{rotuloDia}</div>
-        </div>
-        {/* Eventos do dia — rola por dentro; empty state do dia inalterado. */}
-        <div className="min-h-0 w-full flex-1 overflow-y-auto scrollbar-fina">
-          {erroAgenda ? (
-            <AgendaErro
-              mensagem={erroAgenda}
-              onRetry={recarregarAgenda}
-              t={t}
-            />
-          ) : agenda === null ? (
-            <div className="flex justify-center py-8">
-              <Spinner className="size-5 text-muted-foreground" />
-            </div>
-          ) : agenda.length === 0 ? (
-            <AgendaVazia t={t} />
-          ) : (
-            <div className="flex w-full flex-col gap-2 pb-1">
-              {agenda.map((ev) => {
-                // Barra colorida = cor real da categoria do Outlook (se houver).
-                const cor = ev.categorias?.[0] ? coresCat.get(ev.categorias[0]) : undefined;
-                return (
-                  <button
-                    key={ev.id}
-                    type="button"
-                    onClick={() => void selecionarEventoAgenda(ev.id)}
-                    style={cor ? ({ "--barra": cor } as React.CSSProperties) : undefined}
-                    className={cn(
-                      "relative w-full rounded-md bg-muted p-2 pl-6 text-left text-sm transition-colors hover:bg-muted/70",
-                      "after:absolute after:inset-y-2 after:left-2 after:w-1 after:rounded-full",
-                      cor ? "after:bg-[var(--barra)]" : "after:bg-primary"
-                    )}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate font-medium">{ev.assunto}</span>
-                      {ev.online && <Video className="size-3 shrink-0 text-muted-foreground" />}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {ev.diaInteiro
-                        ? t.controlRoom.diaInteiro
-                        : faixaHora(ev.inicio, ev.fim, idioma)}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </CardFooter>
-    </Card>
-  );
-}
-
-// --- modal de detalhe do evento --------------------------------------------
 
 function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const { idioma, t } = useIdioma();
   const id = useAppStore((s) => s.agendaEventoId);
   const det = useAppStore((s) => s.agendaEventoDetalhe);
   const fecharEventoAgenda = useAppStore((s) => s.fecharEventoAgenda);
+  const abrirFormEditar = useAppStore((s) => s.abrirFormEditar);
+  const excluirEvento = useAppStore((s) => s.excluirEvento);
+  const eventosMes = useAppStore((s) => s.agendaEventosMes);
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
+
+  // Abre o formulário de edição com o evento clicado (vindo da lista do mês).
+  const editar = () => {
+    if (!id) return;
+    const ev = eventosMes?.find((e) => e.id === id);
+    if (ev) {
+      abrirFormEditar(ev);
+      fecharEventoAgenda();
+    }
+  };
+
+  // Exclui (otimista no store); fecha o Sheet e toasta o resultado.
+  const excluir = async () => {
+    if (!id) return;
+    fecharEventoAgenda();
+    try {
+      await excluirEvento(id);
+      toast.success(t.controlRoom.agendaExcluido);
+    } catch {
+      toast.error(t.controlRoom.agendaErroExcluir);
+    }
+  };
 
   // Pede as fotos dos participantes quando o detalhe carrega.
   useEffect(() => {
@@ -4884,18 +4746,35 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
                 </>
               )}
             </div>
-            <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
-              {det.online && det.joinUrl && (
-                <Button onClick={() => api.openUrl(det.joinUrl!)}>
-                  <Video /> {t.controlRoom.entrarReuniao}
-                </Button>
-              )}
+            <SheetFooter className="flex-row items-center gap-2 border-t px-4 py-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={editar}
+                disabled={!eventosMes?.some((e) => e.id === id)}
+              >
+                <Pencil /> {t.controlRoom.agendaEditar}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => void excluir()}
+              >
+                <Trash2 /> {t.controlRoom.agendaExcluir}
+              </Button>
+              <div className="grow" />
               {det.webLink && (
                 <Button
                   variant="outline"
                   onClick={() => api.openUrl(comLoginHint(det.webLink, userEmail))}
                 >
                   <ExternalLink /> {t.controlRoom.abrirOutlook}
+                </Button>
+              )}
+              {det.online && det.joinUrl && (
+                <Button onClick={() => api.openUrl(det.joinUrl!)}>
+                  <Video /> {t.controlRoom.entrarReuniao}
                 </Button>
               )}
             </SheetFooter>
@@ -4914,10 +4793,12 @@ export function ControlRoomScreen({
   user,
   onAbrirLink,
   onGrantPeopleAccess,
+  onReauthenticate,
 }: {
   user: AppUser;
   onAbrirLink: (url: string) => void;
   onGrantPeopleAccess: () => void;
+  onReauthenticate: () => void;
 }) {
   const { idioma, t } = useIdioma();
   // Fotos de contatos (#39): só buscamos avatar de remetente do MESMO domínio do
@@ -5105,8 +4986,6 @@ export function ControlRoomScreen({
     ];
   };
 
-  const primeiroNome = user.displayName.split(" ")[0];
-
   // pastas (recarrega as contagens junto com as ações e no refresh manual)
   useEffect(() => {
     let vivo = true;
@@ -5254,12 +5133,15 @@ export function ControlRoomScreen({
     [idioma, setMsgSel, setPastaSel, t]
   );
 
-  // Poll leve da Inbox a cada 15 min (pega e-mail novo enquanto o usuário está
-  // parado). No mount NÃO chamamos — o efeito de mensagens já busca a inbox e
+  // Poll leve da Inbox (pega e-mail novo enquanto o usuário está parado). O
+  // intervalo é configurável em Settings > Bridge > Sync (#227); padrão 15 min
+  // (comportamento histórico). Mudar a preferência remonta o efeito com o novo
+  // intervalo. No mount NÃO chamamos — o efeito de mensagens já busca a inbox e
   // semeia o baseline; um fetch duplo aqui competia e o Graph estrangulava (429).
+  const syncIntervalMinutes = useAppStore((s) => s.syncIntervalMinutes);
   useEffect(() => {
     let vivo = true;
-    const INTERVALO = 15 * 60 * 1000;
+    const INTERVALO = Math.max(1, syncIntervalMinutes) * 60 * 1000;
     const iv = setInterval(async () => {
       try {
         const msgs = await api.crFolderMensagens("inbox", 0, "data", true, "me");
@@ -5277,7 +5159,7 @@ export function ControlRoomScreen({
       vivo = false;
       clearInterval(iv);
     };
-  }, [notificarNovos, limparCachePasta, chaveCache]);
+  }, [syncIntervalMinutes, notificarNovos, limparCachePasta, chaveCache]);
 
   // Recarrega o que a mutação de uma PASTA invalidou: as contagens do sidebar
   // sempre; a LISTA só quando a pasta mexida é a que está aberta (senão a lista
@@ -6014,19 +5896,32 @@ export function ControlRoomScreen({
   // "New mail" — abre o nosso composer em modal.
   const novoEmailModal = () => abrirCompose("novo", caixaAtiva);
 
+  // #231: o header do conteúdo reflete o MÓDULO ativo (fonte da verdade =
+  // `bridgeView` no store), não mais uma saudação genérica. Título + subtítulo
+  // por módulo (i18n pt/en); nada de estado local.
+  const tituloModulo =
+    bridgeView === "people"
+      ? t.controlRoom.peopleTitulo
+      : bridgeView === "agenda"
+        ? t.controlRoom.agendaTitulo
+        : t.controlRoom.mailboxTitulo;
+  const subtituloModulo =
+    bridgeView === "people"
+      ? t.controlRoom.peopleSubtitulo
+      : bridgeView === "agenda"
+        ? t.controlRoom.agendaSubtitulo
+        : t.controlRoom.mailboxSubtitulo;
+
   return (
     <div className="flex h-full flex-col gap-4">
-      {/* Cabeçalho */}
+      {/* Cabeçalho — ícone animado do Bridge + título do módulo ativo (#231). */}
       <div className="flex shrink-0 items-center gap-3">
-        <Avatar className="size-11">
-          {user.photo && <AvatarImage src={user.photo} alt="" />}
-          <AvatarFallback>{user.initials}</AvatarFallback>
-        </Avatar>
+        <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+          <BridgeHeaderIcon className="size-6" />
+        </span>
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">
-            {preencher(t.controlRoom.saudacao, { nome: primeiroNome })}
-          </h1>
-          <p className="text-sm text-muted-foreground">{t.controlRoom.subtitulo}</p>
+          <h1 className="text-xl font-semibold tracking-tight">{tituloModulo}</h1>
+          <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
         </div>
       </div>
 
@@ -6061,8 +5956,12 @@ export function ControlRoomScreen({
           onAbrirAdicionarCaixa={() => setAdicionarCaixaAberto(true)}
           caixaCompartilhada={caixaCompartilhadaAtiva}
           colapsada={!sidebarAberta}
+          onToggleSidebar={() => setSidebarAberta((aberta) => !aberta)}
           bridgeView={bridgeView}
-          onSelectModule={setBridgeView}
+          onSelectModule={(view) => {
+            setBridgeView(view);
+            setSidebarAberta(view !== "agenda");
+          }}
           t={t}
         />
 
@@ -6070,14 +5969,16 @@ export function ControlRoomScreen({
             autoSaveId persiste a proporção que o usuário deixa. */}
         {bridgeView === "people" ? (
           <PeopleView
+            userEmail={user.email}
             onGrantAccess={onGrantPeopleAccess}
+            onReauthenticate={onReauthenticate}
             onCompose={(email) => {
               abrirCompose("novo", caixaAtiva);
               setComposePara([email]);
             }}
           />
         ) : bridgeView === "agenda" ? (
-          <AgendaConteudo t={t} idioma={idioma} />
+          <AgendaView />
         ) : (
           <ResizablePanelGroup
             autoSaveId="bridge.layout"
@@ -6092,8 +5993,6 @@ export function ControlRoomScreen({
                 pastaAtual?.acessoNegado ? t.controlRoom.caixaAcessoParcial : undefined
               }
               onRefresh={() => setRecarga((n) => n + 1)}
-              sidebarAberta={sidebarAberta}
-              onToggleSidebar={() => setSidebarAberta((v) => !v)}
               pastaId={pastaSel}
               pastaTipo={pastaAtual?.tipo ?? ""}
               onEsvaziar={() => esvaziarPasta(pastaSel)}
@@ -6108,10 +6007,6 @@ export function ControlRoomScreen({
               onAbrirMover={() => setPedirArvore(true)}
               onMover={acaoMover}
               filtrosOcultos={FILTROS_OCULTOS}
-              marcarLidoModo={marcarLidoModo}
-              marcarLidoAtraso={marcarLidoAtraso}
-              onMarcarLidoModo={setMarcarLidoModo}
-              onMarcarLidoAtraso={setMarcarLidoAtraso}
               onResponder={() => detalheRef.current?.responder()}
               onResponderTodos={() => detalheRef.current?.responderTodos()}
               onEncaminhar={() => detalheRef.current?.encaminhar()}

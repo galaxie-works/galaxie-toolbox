@@ -14,6 +14,14 @@ import {
   tabsToSleep,
   type AbaBrowser,
 } from "@/lib/navigator-tabs";
+import {
+  loadHistorico,
+  persistHistorico,
+  registrarVisita,
+  limparHistorico,
+  type HistoryEntry,
+  type PeriodoLimpeza,
+} from "@/lib/navigator-history";
 import * as browser from "@/lib/browser";
 import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
 import { ConfiguracoesScreen } from "@/screens/configuracoes";
@@ -24,7 +32,15 @@ import { TelaBloqueio } from "@/components/tela-bloqueio";
 import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
 import { Estrelas } from "@/components/estrelas";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { UniversalSearch } from "@/components/universal-search";
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/reui/alert";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import {
   SidebarInset,
@@ -47,6 +63,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { TELAS, type Tela } from "@/lib/navegacao";
+import { useAppStore } from "@/store";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
 import { limparFotos } from "@/lib/fotos";
@@ -58,6 +75,7 @@ import {
   LONGSTOP_SPLASH_MS,
   revelarAppEFecharSplash,
 } from "@/lib/splash";
+import { KeyRound } from "lucide-react";
 
 /**
  * Todo o app de verdade. Fica ABAIXO do ErrorBoundary (ver `App`): é esta árvore
@@ -66,6 +84,16 @@ import {
  */
 function AppInner() {
   const { idioma, t } = useIdioma();
+  const bridgeView = useAppStore((state) => state.bridgeView);
+  const reauthMissingScopes = useAppStore(
+    (state) => state.reauthMissingScopes,
+  );
+  const reauthDismissed = useAppStore((state) => state.reauthDismissed);
+  const setReauthMissingScopes = useAppStore(
+    (state) => state.setReauthMissingScopes,
+  );
+  const dismissReauth = useAppStore((state) => state.dismissReauth);
+  const clearReauth = useAppStore((state) => state.clearReauth);
   const [user, setUser] = useState<AppUser | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -86,10 +114,31 @@ function AppInner() {
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
   const [navigatorClock, setNavigatorClock] = useState(0);
   const [navigatorMemorySettings] = useState(loadNavigatorMemorySettings);
+  // Historico de navegacao (Story 5): capturado nos pontos onde o app commita
+  // uma URL num webview (abrir app / omnibox / favorito). Persistido em
+  // localStorage, igual aos pins/grupos/favoritos.
+  const [historico, setHistorico] = useState<HistoryEntry[]>(loadHistorico);
+  // Modo privado: enquanto ligado, novas abas nao gravam historico e ganham
+  // tratamento visual distinto (aba "privada").
+  const [modoPrivado, setModoPrivado] = useState(false);
 
   useEffect(() => {
     persistPinnedNavigatorTabs(abas);
   }, [abas]);
+
+  useEffect(() => {
+    persistHistorico(historico);
+  }, [historico]);
+
+  // Ponto unico de captura: so grava fora do modo privado e so http(s).
+  function registrarHistorico(url: string, nome: string) {
+    if (modoPrivado) return;
+    setHistorico((prev) => registrarVisita(prev, { url, nome }));
+  }
+
+  function limparHistoricoPeriodo(periodo: PeriodoLimpeza) {
+    setHistorico((prev) => limparHistorico(prev, periodo));
+  }
 
   useEffect(() => {
     const timer = window.setInterval(
@@ -146,6 +195,9 @@ function AppInner() {
         if (!vivo) return;
         if (u) {
           setUser(u);
+          const permissions = await api.requiredScopesStatus();
+          if (!vivo) return;
+          setReauthMissingScopes(permissions.missingScopes);
           setLoadingSites(true);
           const lista = await api.listSites();
           if (!vivo) return;
@@ -164,7 +216,7 @@ function AppInner() {
     return () => {
       vivo = false;
     };
-  }, [lockState]);
+  }, [lockState, setReauthMissingScopes]);
 
   // --- Splash de boot (#164) ---------------------------------------------
   // Dois gates para revelar a main: o app só aparece depois que a animação
@@ -223,6 +275,8 @@ function AppInner() {
       // cache pra não herdar negative-cache de sessão sem permissão.
       limparFotos();
       setUser(u);
+      const permissions = await api.requiredScopesStatus();
+      setReauthMissingScopes(permissions.missingScopes);
       setLoadingSites(true);
       const lista = await api.listSites();
       setSites(lista);
@@ -335,9 +389,11 @@ function AppInner() {
           url,
           estado: "ativa",
           ultimoAcesso: now,
+          privada: modoPrivado,
         },
       ]);
     });
+    registrarHistorico(url, app.nome);
     setAbaAtiva(app.id);
     setTela("navegador");
   }
@@ -353,9 +409,10 @@ function AppInner() {
             ? tab
             : { ...tab, estado: "fundo" as const },
         ),
-        { id, nome, url, estado: "ativa", ultimoAcesso: now },
+        { id, nome, url, estado: "ativa", ultimoAcesso: now, privada: modoPrivado },
       ]),
     );
+    registrarHistorico(url, nome);
     setAbaAtiva(id);
     setTela("navegador");
   }
@@ -403,6 +460,29 @@ function AppInner() {
       // Sem abas: permanece no Navigator com a aba em branco (Launcher), em vez
       // de chutar o usuário para a lista de Apps (#24).
     }
+  }
+
+  /** Fecha todas as abas menos a clicada (e as fixadas), deixando-a ativa (#275). */
+  function fecharOutras(id: string) {
+    const manter = new Set(
+      abas.filter((a) => a.id === id || a.fixada).map((a) => a.id),
+    );
+    for (const aba of abas) {
+      if (!manter.has(aba.id)) void browser.fechar(aba.id);
+    }
+    const now = Date.now();
+    setAbas((prev) =>
+      prev
+        .filter((a) => manter.has(a.id))
+        .map((a) =>
+          a.id === id
+            ? { ...a, estado: "ativa", ultimoAcesso: now, reativando: false }
+            : a.estado === "ativa"
+              ? { ...a, estado: "fundo" }
+              : a,
+        ),
+    );
+    setAbaAtiva(id);
   }
 
   function dormirAba(id: string) {
@@ -476,6 +556,26 @@ function AppInner() {
     );
   }
 
+  /**
+   * Reordena as abas conforme a ordem de ids vinda da strip (drag de grupo/lane,
+   * Story 3). Ordem de chip pura: não toca em `abaAtiva`/url, então nenhuma
+   * webview reposiciona (spec §5.1). Os grupos vivem desacoplados no
+   * `navegador.tsx`; aqui só aplicamos a permutação sobre `abas`.
+   */
+  function reordenarAbas(ids: string[]) {
+    setAbas((prev) => {
+      const porId = new Map(prev.map((tab) => [tab.id, tab]));
+      const reordenadas = ids
+        .map((id) => porId.get(id))
+        .filter((tab): tab is AbaBrowser => tab != null);
+      // Fallback: preserva qualquer aba ausente da lista (não deve ocorrer, mas
+      // evita perder abas se a strip mandar uma ordem parcial).
+      const enviadas = new Set(ids);
+      const faltantes = prev.filter((tab) => !enviadas.has(tab.id));
+      return [...reordenadas, ...faltantes];
+    });
+  }
+
   async function abrirUrl(url: string) {
     try {
       await api.openUrl(url);
@@ -488,6 +588,7 @@ function AppInner() {
   async function logout() {
     await api.logout();
     limparFotos(); // privacidade (#39): não deixa fotos no disco após sair
+    clearReauth();
     setUser(null);
     setSites([]);
     setError(null);
@@ -560,6 +661,16 @@ function AppInner() {
   // --- Aplicativo ---------------------------------------------------------
   const info = TELAS[tela];
   const abaAtivaObj = abas.find((a) => a.id === abaAtiva);
+  const breadcrumbDetail =
+    tela === "navegador" && abaAtivaObj
+      ? abaAtivaObj.nome
+      : tela === "control-room"
+        ? {
+            mail: t.controlRoom.grupoMail,
+            people: t.controlRoom.peopleTitulo,
+            agenda: t.controlRoom.agendaTitulo,
+          }[bridgeView]
+        : null;
 
   return (
     /* O wrapper do sidebar e min-h-svh: cresce com o conteudo. Numa pagina web
@@ -610,9 +721,9 @@ function AppInner() {
                 </BreadcrumbItem>
                 <BreadcrumbSeparator className="hidden md:block" />
                 <BreadcrumbItem>
-                  {/* No Cruiser com aba aberta, o nome dela vem como 3o nivel,
-                      entao "Cruiser" deixa de ser a pagina final. */}
-                  {tela === "navegador" && abaAtivaObj ? (
+                  {/* Com detalhe ativo (aba do Navigator ou módulo do Bridge),
+                      a tela deixa de ser a página final e vira o 2º nível. */}
+                  {breadcrumbDetail ? (
                     <span className="text-muted-foreground">
                       {t.nav[info.titulo]}
                     </span>
@@ -620,23 +731,48 @@ function AppInner() {
                     <BreadcrumbPage>{t.nav[info.titulo]}</BreadcrumbPage>
                   )}
                 </BreadcrumbItem>
-                {tela === "navegador" && abaAtivaObj && (
+                {breadcrumbDetail && (
                   <>
                     <BreadcrumbSeparator />
                     <BreadcrumbItem>
                       <BreadcrumbPage className="max-w-40 truncate">
-                        {abaAtivaObj.nome}
+                        {breadcrumbDetail}
                       </BreadcrumbPage>
                     </BreadcrumbItem>
                   </>
                 )}
               </BreadcrumbList>
             </Breadcrumb>
+            <div className="mx-auto min-w-24 flex-1 px-2 sm:max-w-sm lg:max-w-md">
+              <UniversalSearch
+                tela={tela}
+                screenLabel={t.nav[info.titulo]}
+                bridgeView={bridgeView}
+              />
+            </div>
             <div className="ml-auto">
               <ThemeToggle />
             </div>
           </div>
         </header>
+
+        {reauthMissingScopes.length > 0 && !reauthDismissed && (
+          <div className="relative z-20 px-4 pb-3">
+            <Alert variant="warning">
+              <KeyRound />
+              <AlertTitle>{t.reauth.titulo}</AlertTitle>
+              <AlertDescription>{t.reauth.descricao}</AlertDescription>
+              <AlertAction className="flex-wrap">
+                <Button variant="ghost" size="sm" onClick={dismissReauth}>
+                  {t.reauth.agoraNao}
+                </Button>
+                <Button size="sm" onClick={() => void logout()}>
+                  {t.reauth.entrarNovamente}
+                </Button>
+              </AlertAction>
+            </Alert>
+          </div>
+        )}
 
         {/* O navegador fica FORA do ScrollArea, em tela cheia e sem padding: o
             webview nativo ocupa toda a area medida, e quem rola e a propria
@@ -659,6 +795,9 @@ function AppInner() {
             onGrantPeopleAccess={() => {
               void handleLogin(user.email);
             }}
+            onReauthenticate={() => {
+              void logout();
+            }}
             onAbrirLink={(url) => {
               let nome = url;
               try {
@@ -678,14 +817,20 @@ function AppInner() {
               ativa={abaAtiva}
               onTrocar={trocarAba}
               onFechar={fecharAba}
+              onFecharOutras={fecharOutras}
               onDormir={dormirAba}
               onDormirOutras={dormirOutras}
               onAlternarFixada={alternarFixada}
               onAlternarManterAcordada={alternarManterAcordada}
               onReativada={concluirReativacao}
+              onReordenar={reordenarAbas}
               onAbrir={abrirAppAqui}
               onNovaAba={novaAba}
               onNavegar={abrirUrlLivre}
+              historico={historico}
+              onLimparHistorico={limparHistoricoPeriodo}
+              modoPrivado={modoPrivado}
+              onAlternarModoPrivado={() => setModoPrivado((v) => !v)}
             />
           </div>
         ) : tela === "configuracoes" ? (

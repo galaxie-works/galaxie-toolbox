@@ -58,6 +58,40 @@ export function BridgeIcon({ className }: { className?: string }) {
   return <IconeAnim Comp={ShipWheelIcon as unknown as AnimIcon} className={className} />;
 }
 
+/**
+ * Bridge para o HEADER do conteúdo (#231). Diferente do da sidebar: aqui não há
+ * linha `<a>/<button>` ancestral pra comandar o hover, então animamos na ENTRADA
+ * (mount) e no hover do PRÓPRIO ícone — usando o modo controlado do
+ * `ShipWheelIcon` (mesmo componente do registry, sem inventar UI).
+ */
+export function BridgeHeaderIcon({ className }: { className?: string }) {
+  const handle = useRef<AnimHandle>(null);
+
+  useEffect(() => {
+    handle.current?.startAnimation();
+    const t = window.setTimeout(() => handle.current?.stopAnimation(), 1200);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center justify-center [&_svg]:size-full",
+        "size-6",
+        className
+      )}
+      onMouseEnter={() => handle.current?.startAnimation()}
+      onMouseLeave={() => handle.current?.stopAnimation()}
+    >
+      <ShipWheelIcon
+        ref={handle}
+        className="flex size-full items-center justify-center"
+        size={24}
+      />
+    </span>
+  );
+}
+
 /** Navigator (navegador embutido) — nave (ship). */
 export function NavigatorIcon({ className }: { className?: string }) {
   return <IconeAnim Comp={ShipAnim as unknown as AnimIcon} className={className} />;
