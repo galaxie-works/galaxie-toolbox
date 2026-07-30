@@ -132,7 +132,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { OrganizationsView } from "@/components/people/organizations-view";
 import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
@@ -2406,21 +2405,41 @@ export function PeopleView({
   }
 
   const peopleNavigation = (
-    <Tabs
-      value={peopleTab}
-      onValueChange={(value) =>
-        setPeopleTab(value as "contacts" | "organizations")
-      }
+    <nav
+      aria-label={t.controlRoom.peopleTitulo}
+      className="inline-flex items-center gap-1 rounded-lg border bg-muted/40 p-1"
     >
-      <TabsList>
-        <TabsTrigger value="contacts">
-          {t.controlRoom.peopleContactsTab}
-        </TabsTrigger>
-        <TabsTrigger value="organizations">
-          {t.controlRoom.peopleOrganizationsTab}
-        </TabsTrigger>
-      </TabsList>
-    </Tabs>
+      {(
+        [
+          { value: "contacts", label: t.controlRoom.peopleContactsTab, Icon: Users },
+          {
+            value: "organizations",
+            label: t.controlRoom.peopleOrganizationsTab,
+            Icon: Building2,
+          },
+        ] as const
+      ).map(({ value, label, Icon }) => {
+        const ativo = peopleTab === value;
+        return (
+          <Button
+            key={value}
+            variant="ghost"
+            size="sm"
+            onClick={() => setPeopleTab(value)}
+            aria-current={ativo ? "page" : undefined}
+            className={cn(
+              "gap-1.5",
+              ativo
+                ? "bg-background font-medium text-foreground shadow-xs"
+                : "text-muted-foreground hover:bg-accent/50",
+            )}
+          >
+            <Icon />
+            {label}
+          </Button>
+        );
+      })}
+    </nav>
   );
   const sortMode =
     sorting.some((item) => item.id === "name") ? "az" : "relevance";

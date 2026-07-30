@@ -308,6 +308,11 @@ function EventoFormSheet() {
   const modo = useAppStore((s) => s.agendaFormModo);
   const evento = useAppStore((s) => s.agendaFormEvento);
   const presetInicio = useAppStore((s) => s.agendaFormInicio);
+  // Convidados completos do evento em edição (#240): buscados ao abrir o Sheet.
+  const convidadosFull = useAppStore((s) => s.agendaFormConvidados);
+  const convidadosCarregando = useAppStore(
+    (s) => s.agendaFormConvidadosCarregando,
+  );
   const fecharForm = useAppStore((s) => s.fecharForm);
   const criarEvento = useAppStore((s) => s.criarEvento);
   const editarEvento = useAppStore((s) => s.editarEvento);
@@ -359,11 +364,8 @@ function EventoFormSheet() {
       setDiaInteiro(evento.diaInteiro);
       setLocal(evento.local ?? "");
       setCategoria(evento.categorias?.[0] ?? SEM_CATEGORIA);
-      // Convidados/Teams a partir do evento (participantes vêm até 5 do resumo
-      // do mês — o attendee-list pode não estar completo ao editar).
-      const parts = evento.participantes ?? [];
-      setConvEmails(parts.map((p) => p.email).filter(Boolean));
-      setConvPessoas(parts.map((p) => ({ nome: p.nome, email: p.email })));
+      // Convidados são semeados por um efeito dedicado a partir da lista
+      // COMPLETA (#240) — ver abaixo; o resumo do mês trunca em 5.
       setReuniaoTeams(evento.online);
       // Editar não move o evento de calendário (#233): alvo fica neutro.
       setCalendarioAlvo("");
@@ -404,6 +406,19 @@ function EventoFormSheet() {
       setCalendarioAlvo(alvoDefault);
     }
   }, [aberto, modo, evento, presetInicio, calsEditaveis, selCalendarios]);
+
+  // Semeia os convidados do form de EDIÇÃO a partir da lista COMPLETA (#240). O
+  // resumo do mês trunca em 5 e o PATCH /me/events/{id} substitui a coleção de
+  // attendees; então o form precisa dos attendees completos antes de montar o
+  // patch. `convidadosFull` começa com o seed truncado (instantâneo) e é trocado
+  // pela lista completa assim que o detalhe chega; o salvar fica bloqueado até
+  // lá. Efeito à parte para não re-semear/limpar título e datas já digitados.
+  useEffect(() => {
+    if (!aberto || modo !== "editar") return;
+    const parts = convidadosFull ?? [];
+    setConvEmails(parts.map((p) => p.email).filter(Boolean));
+    setConvPessoas(parts.map((p) => ({ nome: p.nome, email: p.email })));
+  }, [aberto, modo, convidadosFull]);
 
   // Convidados no formato do Graph: nome resolvido pelo people-picker, senão o
   // próprio e-mail.
@@ -755,8 +770,16 @@ function EventoFormSheet() {
           <Button variant="outline" onClick={fecharForm} disabled={salvando}>
             {t.controlRoom.agendaFormCancelar}
           </Button>
-          <Button onClick={() => void salvar()} disabled={salvando}>
-            {salvando && <Spinner className="size-4" />}
+          {/* Ao editar, bloqueia o salvar enquanto os attendees completos ainda
+              não chegaram (#240): salvar com a lista truncada substituiria a
+              coleção e perderia os convidados além dos 5 do resumo do mês. */}
+          <Button
+            onClick={() => void salvar()}
+            disabled={salvando || (modo === "editar" && convidadosCarregando)}
+          >
+            {(salvando || (modo === "editar" && convidadosCarregando)) && (
+              <Spinner className="size-4" />
+            )}
             {modo === "editar"
               ? t.controlRoom.agendaFormSalvar
               : t.controlRoom.agendaFormCriar}
