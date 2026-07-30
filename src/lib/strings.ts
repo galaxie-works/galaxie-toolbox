@@ -280,6 +280,18 @@ const pt = {
     permitirDormir: "Permitir suspensão automática",
     colocarDormir: "Colocar para dormir",
     dormirOutras: "Suspender as outras",
+    paleta: "Paleta de comandos",
+    paletaTitulo: "Paleta de comandos",
+    paletaDescricao:
+      "Busque abas, aplicativos e ações, ou trace uma rota.",
+    paletaBuscar:
+      "Abas, apps, ações… ou trace uma rota  ( > ações · @ abas · # histórico )",
+    grupoAcoes: "Ações",
+    grupoAbas: "Abas abertas",
+    grupoHistorico: "Histórico",
+    historicoEmBreve: "O histórico chega em breve.",
+    abaAtual: "Atual",
+    dormindo: "Dormindo",
   },
 
   // Controles de janela (barra-janela.tsx). Só existem dentro do Tauri.
@@ -1107,6 +1119,17 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     permitirDormir: "Allow automatic sleeping",
     colocarDormir: "Put to sleep",
     dormirOutras: "Sleep other tabs",
+    paleta: "Command palette",
+    paletaTitulo: "Command palette",
+    paletaDescricao: "Search tabs, apps and actions, or set a course.",
+    paletaBuscar:
+      "Tabs, apps, actions… or set a course  ( > actions · @ tabs · # history )",
+    grupoAcoes: "Actions",
+    grupoAbas: "Open tabs",
+    grupoHistorico: "History",
+    historicoEmBreve: "History is coming soon.",
+    abaAtual: "Current",
+    dormindo: "Sleeping",
   },
 
   // Window controls (barra-janela.tsx). Only exist inside Tauri.
