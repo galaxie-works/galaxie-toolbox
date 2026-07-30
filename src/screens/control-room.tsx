@@ -15,6 +15,7 @@ import {
 } from "@/components/reui/date-selector";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
+import { Toolbar, ToolbarButton } from "@/components/ui/toolbar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -214,7 +215,6 @@ import {
   Reply,
   ReplyAll,
   RotateCcw,
-  Search,
   Send,
   Send as SendIcon,
   Shield,
@@ -2515,8 +2515,6 @@ function MessageList({
   idioma: string;
 }) {
   const listaRef = useRef<HTMLDivElement>(null);
-  // Busca para o atalho "/" focar. Seleção/ativa/âncora vivem no slice (#128).
-  const buscaRef = useRef<HTMLInputElement>(null);
   const selecionados = useAppStore((s) => s.selecionados);
   const msgSel = useAppStore((s) => s.msgSel);
   const selecionarMensagem = useAppStore((s) => s.selecionarMensagem);
@@ -2993,10 +2991,12 @@ function MessageList({
       return;
     }
 
-    // "/" foca a busca.
+    // "/" foca a busca universal no top bar (#226).
     if (e.key === "/") {
       e.preventDefault();
-      buscaRef.current?.focus();
+      document
+        .querySelector<HTMLInputElement>("[data-universal-search-input]")
+        ?.focus();
       return;
     }
 
@@ -3202,24 +3202,62 @@ function MessageList({
             {mensagens.length}
           </Badge>
         )}
-        <div className="ml-auto flex items-center gap-1">
+        <Toolbar
+          className="ml-auto gap-1"
+          aria-label={t.controlRoom.mailboxTitulo}
+        >
           {pastaTipo === "deleteditems" && (mensagens?.length ?? 0) > 0 && (
             <Button variant="ghost" size="sm" onClick={onEsvaziar}>
               <Trash2 /> {t.controlRoom.esvaziarLixeira}
             </Button>
           )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Filters<string>
+                  filters={filtros}
+                  fields={filtroCampos}
+                  onChange={setFiltros}
+                  enableShortcut
+                  shortcutKey="f"
+                  shortcutLabel="F"
+                  trigger={
+                    <ToolbarButton
+                      aria-label={t.controlRoom.filtroLabel}
+                      pressed={filtros.length > 0}
+                    >
+                      <ListFilter />
+                    </ToolbarButton>
+                  }
+                  i18n={{
+                    addFilter: t.controlRoom.filtroLabel,
+                    searchFields: t.controlRoom.filtroBuscarCampo,
+                    select: t.controlRoom.filtroSelecione,
+                  }}
+                />
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{t.controlRoom.filtroLabel}</TooltipContent>
+          </Tooltip>
+          {filtros.length > 0 && (
+            <ToolbarButton
+              tooltip={t.controlRoom.filtroLimpar}
+              onClick={() => setFiltros([])}
+            >
+              <FunnelX />
+            </ToolbarButton>
+          )}
           <DropdownMenu>
-            {/* Ordenação (#101): sem atalho → Tooltip canônico. Tooltip >
-                DropdownMenuTrigger, os dois com asChild no mesmo botão, igual
-                ao split "Escrever no Outlook" do #100. */}
+            {/* #226: sort é icon button com tooltip, igual ao People. */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm" className="gap-1.5" aria-label={t.controlRoom.ordenarPor}>
-                    <ArrowDownUp className="size-3.5" />
-                    <span className="hidden text-xs sm:inline">{rotuloOrdena[ordenar]}</span>
-                    <ChevronDown className="size-3" />
-                  </Button>
+                  <ToolbarButton
+                    aria-label={t.controlRoom.ordenarPor}
+                    pressed={ordenar !== "data" || !ordemDesc}
+                  >
+                    <ArrowDownUp />
+                  </ToolbarButton>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
               <TooltipContent>{t.controlRoom.ordenarPor}</TooltipContent>
@@ -3317,28 +3355,10 @@ function MessageList({
             </TooltipTrigger>
             <TooltipContent>{t.controlRoom.atualizar}</TooltipContent>
           </Tooltip>
-        </div>
+        </Toolbar>
       </div>
 
-      <div className="px-4 pb-2">
-        <div className="relative">
-          <Search className="absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            ref={buscaRef}
-            value={busca}
-            onChange={(e) => setBusca(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key !== "Escape") return;
-              if (selecionados.size > 0) limparSelecao();
-              else limparBusca();
-            }}
-            placeholder={t.controlRoom.buscarEmail}
-            className="h-8 w-full rounded-md border bg-transparent pr-2 pl-8 text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          />
-        </div>
-      </div>
-
-      {selecionados.size > 0 ? (
+      {selecionados.size > 0 && (
         <div className="flex items-center gap-2 px-3 pb-2">
           {/* Selecionar tudo (#101): atalho Ctrl+A → ShortcutTooltip com Kbd.
               O nome acessível era ERRADO — trocava pra "Limpar seleção" quando
@@ -3399,46 +3419,6 @@ function MessageList({
               />
             </TooltipContent>
           </Tooltip>
-        </div>
-      ) : (
-        <div className="flex items-start gap-2.5 px-3 pb-2">
-          {/* Filtro da lista (#31) com o @reui/filters — variante RADIX,
-              instalada do registry (`@reui/filters` em style `radix-nova`) e
-              usada literal, como FILTER-BUILDER multi-campo. Montagem espelha o
-              exemplo canônico do reui (`Pattern()` do c-filters-5): trigger
-              `<Button variant="outline"><ListFilter/> Filtro>` com atalho "F",
-              campos agrupados (Básico/Seleção), e um botão "Limpar" separado
-              que aparece só quando há filtro ativo. O gatilho abre a lista de
-              campos direto (De, Status, Sinalizado, Anexos, Escopo); cada um
-              vira um chip `campo · operador · valor`, combináveis com E
-              (`allowMultiple`). Sem `size="sm"` → os inputs seguem o `h-9`
-              padrão do app (bug de altura do input de texto, reprovado antes).
-              `onChange` recebe o array completo → persistido no pai. */}
-          <Filters<string>
-            filters={filtros}
-            fields={filtroCampos}
-            onChange={setFiltros}
-            enableShortcut
-            shortcutKey="f"
-            shortcutLabel="F"
-            trigger={
-              <Button variant="outline">
-                <ListFilter />
-                {t.controlRoom.filtroLabel}
-              </Button>
-            }
-            i18n={{
-              addFilter: t.controlRoom.filtroLabel,
-              searchFields: t.controlRoom.filtroBuscarCampo,
-              select: t.controlRoom.filtroSelecione,
-            }}
-          />
-          {filtros.length > 0 && (
-            <Button variant="outline" onClick={() => setFiltros([])}>
-              <FunnelX />
-              {t.controlRoom.filtroLimpar}
-            </Button>
-          )}
         </div>
       )}
 

@@ -56,6 +56,8 @@ export function UniversalSearch({
   const setPeopleSearchQuery = useAppStore(
     (state) => state.setPeopleSearchQuery,
   );
+  const mailSearchQuery = useAppStore((state) => state.busca);
+  const setMailSearchQuery = useAppStore((state) => state.setBusca);
   const selectPerson = useAppStore((state) => state.selectPerson);
   const selectOrganization = useAppStore(
     (state) => state.selectOrganization,
@@ -65,14 +67,20 @@ export function UniversalSearch({
   const { getFoto, pedirFotos } = useFotos();
 
   const isPeople = tela === "control-room" && bridgeView === "people";
+  const isMail = tela === "control-room" && bridgeView === "mail";
   const contextKey = `${tela}:${bridgeView}:${isPeople ? peopleTab : ""}`;
-  const query = isPeople ? peopleSearchQuery : genericQuery;
+  const query = isPeople
+    ? peopleSearchQuery
+    : isMail
+      ? mailSearchQuery
+      : genericQuery;
 
   useEffect(() => {
     setPeopleSearchQuery("");
+    setMailSearchQuery("");
     setGenericQuery("");
     setOpen(false);
-  }, [contextKey, setPeopleSearchQuery]);
+  }, [contextKey, setMailSearchQuery, setPeopleSearchQuery]);
 
   useEffect(() => {
     if (!isPeople || peopleTab !== "contacts") return;
@@ -131,7 +139,13 @@ export function UniversalSearch({
     <Autocomplete
       items={results}
       value={query}
-      onValueChange={isPeople ? setPeopleSearchQuery : setGenericQuery}
+      onValueChange={
+        isPeople
+          ? setPeopleSearchQuery
+          : isMail
+            ? setMailSearchQuery
+            : setGenericQuery
+      }
       open={isPeople && open}
       onOpenChange={setOpen}
       itemToStringValue={(item: unknown) => {
@@ -142,6 +156,7 @@ export function UniversalSearch({
     >
       <AutocompleteInput
         size="lg"
+        data-universal-search-input
         placeholder={placeholder}
         aria-label={placeholder}
         showClear
