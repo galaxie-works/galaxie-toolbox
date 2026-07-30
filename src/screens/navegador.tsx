@@ -100,6 +100,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import {
@@ -134,6 +140,7 @@ import {
   useOcultarWebviewEnquantoAberto,
 } from "@/lib/navigator-overlay";
 import { ShipIcon, type ShipIconHandle } from "@/components/ui/ship";
+import { PirataIcon } from "@/components/ui/icons/marca/pirata";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 
 /**
@@ -142,19 +149,32 @@ import SoftBlurIn from "@/components/smoothui/soft-blur-in";
  * animação de entrada (ícone: fade/scale via `logo-in`; textos: SoftBlurIn — o
  * mesmo reveal da tela de login/reconexão). Fica acima da omnibox.
  */
-function NavigatorHero({ titulo, subtitulo }: { titulo: string; subtitulo: string }) {
+function NavigatorHero({
+  titulo,
+  subtitulo,
+  privada,
+}: {
+  titulo: string;
+  subtitulo: string;
+  privada?: boolean;
+}) {
   const nave = useRef<ShipIconHandle>(null);
   // Anima no mount e mantém o balanço infinito (o <g> do barco tem repeat:Infinity).
   useEffect(() => {
-    nave.current?.startAnimation();
-  }, []);
+    if (!privada) nave.current?.startAnimation();
+  }, [privada]);
   return (
     <div className="flex flex-col items-center gap-2 text-center">
-      <ShipIcon
-        ref={nave}
-        size={40}
-        className="logo-in text-primary [&_svg]:size-10"
-      />
+      {privada ? (
+        // Aba privada (#273): o timão vira o PIRATA (Lottie recolorido primária).
+        <PirataIcon className="logo-in size-10" />
+      ) : (
+        <ShipIcon
+          ref={nave}
+          size={40}
+          className="logo-in text-primary [&_svg]:size-10"
+        />
+      )}
       <SoftBlurIn className="text-2xl font-semibold tracking-tight" delay={120} stagger={16}>
         {titulo}
       </SoftBlurIn>
@@ -497,11 +517,15 @@ function ConteudoPaleta({
  * Launcher do Cruiser — a paleta em repouso, na aba vazia. Reusa
  * `ConteudoPaleta` como card flutuante sobre o fundo estrelado.
  */
-function Launcher(props: AcoesPaleta) {
+function Launcher({ privada, ...props }: AcoesPaleta & { privada?: boolean }) {
   const { t } = useIdioma();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-7 p-6">
-      <NavigatorHero titulo={t.navegador.titulo} subtitulo={t.navegador.subtitulo} />
+      <NavigatorHero
+        titulo={t.navegador.titulo}
+        subtitulo={t.navegador.subtitulo}
+        privada={privada}
+      />
       <ConteudoPaleta
         {...props}
         autoFocus
@@ -698,6 +722,7 @@ export function NavegadorScreen({
   onReordenar,
   onAbrir,
   onNovaAba,
+  onNovaAbaPrivada,
   onReabrirFechada,
   onNavegar,
   historico,
@@ -719,6 +744,7 @@ export function NavegadorScreen({
   onReordenar: (ids: string[]) => void;
   onAbrir: (app: AppM365) => void;
   onNovaAba: () => void;
+  onNovaAbaPrivada: () => void;
   onReabrirFechada: () => void;
   onNavegar: (url: string, nome: string) => void;
   historico: HistoryEntry[];
@@ -953,7 +979,8 @@ export function NavegadorScreen({
                   ? "border-border bg-background font-medium"
                   : "border-transparent text-muted-foreground hover:bg-accent/50",
                 dormindo && "opacity-60",
-                privada && "text-info",
+                // Aba privada (#273): borda tracejada info, visualmente distinta.
+                privada && "border-info/60 border-dashed text-info",
               )}
             >
               {dormindo ? (
@@ -1191,6 +1218,12 @@ export function NavegadorScreen({
         onReabrirFechada();
         return;
       }
+      // Ctrl+Shift+N — nova aba privada (#273, padrão de navegador).
+      if (mod && e.shiftKey && tecla === "n") {
+        e.preventDefault();
+        onNovaAbaPrivada();
+        return;
+      }
       // Ctrl+W — fechar a aba atual.
       if (mod && tecla === "w") {
         e.preventDefault();
@@ -1226,6 +1259,7 @@ export function NavegadorScreen({
     focarComandoInline,
     focarOmnibox,
     onNovaAba,
+    onNovaAbaPrivada,
     onReabrirFechada,
     onFechar,
     onTrocar,
@@ -1437,24 +1471,6 @@ export function NavegadorScreen({
           <TooltipTrigger asChild>
             <button
               type="button"
-              aria-label={t.navegador.modoPrivado}
-              aria-pressed={modoPrivado}
-              onClick={onAlternarModoPrivado}
-              className={cn(
-                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
-                "hover:bg-accent hover:text-foreground",
-                modoPrivado && "bg-info/15 text-info hover:text-info"
-              )}
-            >
-              <EyeOff className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{t.navegador.modoPrivado}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
               aria-label={t.navegador.paleta}
               onClick={() =>
                 ativa === null ? focarComandoInline() : setPaletaAberta(true)
@@ -1469,12 +1485,12 @@ export function NavegadorScreen({
           </TooltipTrigger>
           <TooltipContent>{t.navegador.paleta}</TooltipContent>
         </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
+        {/* "+" com submenu (#273): Nova aba / Nova aba privada. */}
+        <DropdownMenu onOpenChange={registrarOverlayWebview}>
+          <DropdownMenuTrigger asChild>
             <button
               type="button"
               aria-label={t.navegador.novaAba}
-              onClick={onNovaAba}
               className={cn(
                 "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
                 "hover:bg-accent hover:text-foreground",
@@ -1483,9 +1499,18 @@ export function NavegadorScreen({
             >
               <Plus className="size-4" />
             </button>
-          </TooltipTrigger>
-          <TooltipContent>{t.navegador.novaAba}</TooltipContent>
-        </Tooltip>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem className="gap-2" onSelect={onNovaAba}>
+              <Plus className="size-4" />
+              {t.navegador.novaAba}
+            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" onSelect={onNovaAbaPrivada}>
+              <EyeOff className="size-4" />
+              {t.navegador.novaAbaPrivada}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {/* Barra de favoritos (#176): reabre rápido + gerencia (importar do
@@ -1506,6 +1531,7 @@ export function NavegadorScreen({
             ativa={ativa}
             favoritos={favoritos}
             historico={historico}
+            privada={modoPrivado}
             onAbrir={onAbrir}
             onNavegar={onNavegar}
             onTrocar={onTrocar}
