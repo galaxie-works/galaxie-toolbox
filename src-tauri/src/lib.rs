@@ -1,4 +1,5 @@
 mod auth;
+mod bookmarks;
 mod browser;
 mod config;
 mod estado;
@@ -1137,6 +1138,16 @@ fn log_frontend_error(msg: String) {
     log::error!("[frontend] {msg}");
 }
 
+/// Navigator (#176): importa favoritos do Chrome/Edge lendo SOMENTE o arquivo
+/// `Bookmarks` (JSON) de cada perfil. Nunca le `Login Data`/credenciais. Devolve
+/// a arvore por navegador+perfil; ausencia degrada em lista vazia (sem panico).
+#[tauri::command]
+async fn import_browser_bookmarks() -> Result<Vec<bookmarks::BrowserBookmarks>, String> {
+    tauri::async_runtime::spawn_blocking(bookmarks::importar)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Startup (#123): o app esta configurado para iniciar junto com o sistema?
 /// Le do autostart do SO via tauri-plugin-autostart (registro no Windows).
 #[tauri::command]
@@ -1364,6 +1375,7 @@ pub fn run() {
             enable_long_paths,
             long_paths_status,
             log_frontend_error,
+            import_browser_bookmarks,
             autostart_status,
             autostart_set,
         ])
