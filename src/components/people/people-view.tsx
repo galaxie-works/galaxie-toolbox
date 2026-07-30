@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   getCoreRowModel,
   getSortedRowModel,
@@ -1944,18 +1944,26 @@ export function PeopleView({
   const [bulkContacts, setBulkContacts] = useState<PeopleContact[] | null>(null);
   const [assignOrgOpen, setAssignOrgOpen] = useState(false);
   const { getFoto, pedirFotos } = useFotos();
-  // Mede o MÓDULO (não a janela): a sidebar colapsa e o zoom mudam a largura do
-  // módulo, então um media query de viewport erra o alvo. Um ResizeObserver no
-  // container reflete a largura real disponível — a mesma base da container query.
-  const detailContainerRef = useRef<HTMLDivElement>(null);
+  // Mede o shell estável do MÓDULO (não a aba nem a janela): Contacts e
+  // Organizations alternam o conteúdo interno, mas este elemento nunca desmonta.
+  // Assim o observer não fica preso num container removido ao trocar de aba.
+  const detailContainerRef = useRef<HTMLElement>(null);
   const [moduleWidth, setModuleWidth] = useState(0);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = detailContainerRef.current;
     if (!el) return;
-    setModuleWidth(el.getBoundingClientRect().width);
+
+    const updateWidth = (width: number) => {
+      // O Control Room permanece montado quando outra área está ativa. Não
+      // rebaixa um split válido para stacked só porque um ancestral ficou
+      // temporariamente `display:none`; o observer atualizará ao reaparecer.
+      if (width > 0) setModuleWidth(width);
+    };
+
+    updateWidth(el.getBoundingClientRect().width);
     const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) setModuleWidth(entry.contentRect.width);
+      for (const entry of entries) updateWidth(entry.contentRect.width);
     });
     observer.observe(el);
     return () => observer.disconnect();
@@ -2445,7 +2453,10 @@ export function PeopleView({
     sorting.some((item) => item.id === "name") ? "az" : "relevance";
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+    <section
+      ref={detailContainerRef}
+      className="@container/people flex min-h-0 min-w-0 flex-1 flex-col gap-3"
+    >
       <div className="shrink-0">
         <h2 className="text-lg font-semibold">{t.controlRoom.peopleTitulo}</h2>
         <p className="text-sm text-muted-foreground">
@@ -2505,10 +2516,7 @@ export function PeopleView({
         </Alert>
       )}
 
-      <div
-        ref={detailContainerRef}
-        className="@container/people flex min-h-0 flex-1"
-      >
+      <div className="flex min-h-0 flex-1">
         {(() => {
           const listPane = (
             <Frame
