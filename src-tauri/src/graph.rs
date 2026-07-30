@@ -1139,6 +1139,39 @@ pub fn cr_categorias(store: &TokenStore) -> Result<Vec<CategoriaCor>, String> {
     Ok(categorias)
 }
 
+/// Cria uma categoria mestra (POST /me/outlook/masterCategories). `preset` é o
+/// nome do preset de cor do Outlook ("preset0".."preset24"); devolve a categoria
+/// criada já com o hex resolvido. Exige MailboxSettings.ReadWrite (#211).
+pub fn cr_criar_categoria(
+    store: &TokenStore,
+    nome: &str,
+    preset: &str,
+) -> Result<CategoriaCor, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!("{GRAPH}/me/outlook/masterCategories");
+    let body = serde_json::json!({ "displayName": nome, "color": preset });
+    let resp = graph_enviar("categorias:criar", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao criar a categoria: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita(
+            "me/outlook/masterCategories",
+            "criar categoria",
+            resp.status(),
+        ));
+    }
+    let it: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let nome_final = it["displayName"].as_str().unwrap_or(nome).to_string();
+    let preset_final = it["color"].as_str().unwrap_or(preset);
+    Ok(CategoriaCor {
+        nome: nome_final,
+        cor: preset_para_hex(preset_final).to_string(),
+    })
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventoDetalhe {
@@ -1211,6 +1244,15 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
 // demais chamadas, respeitando Retry-After e jitter.
 // ----------------------------------------------------------------------------
 
+/// Um convidado do evento (#211): endereço + nome de exibição. Vira um
+/// `attendees[]` no payload do Graph.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Convidado {
+    pub email: String,
+    pub nome: String,
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventoInput {
@@ -1222,6 +1264,12 @@ pub struct EventoInput {
     pub corpo: String,
     pub categorias: Vec<String>,
     pub time_zone: String, // IANA (ex. "America/Sao_Paulo")
+    /// Convidados do evento (#211). Vazio = sem convidados.
+    #[serde(default)]
+    pub convidados: Vec<Convidado>,
+    /// Reunião do Teams (#211): liga isOnlineMeeting + provider teamsForBusiness.
+    #[serde(default)]
+    pub reuniao_teams: bool,
 }
 
 /// Monta o corpo JSON de um evento para POST/PATCH em /me/events. Mandamos a
@@ -1231,7 +1279,19 @@ pub struct EventoInput {
 fn evento_json(input: &EventoInput) -> serde_json::Value {
     let ini = input.inicio.trim_end_matches('Z');
     let fim = input.fim.trim_end_matches('Z');
-    serde_json::json!({
+    // Convidados -> attendees[] no formato do Graph (ignora e-mail vazio).
+    let attendees: Vec<serde_json::Value> = input
+        .convidados
+        .iter()
+        .filter(|c| !c.email.trim().is_empty())
+        .map(|c| {
+            serde_json::json!({
+                "emailAddress": { "address": c.email, "name": c.nome },
+                "type": "required",
+            })
+        })
+        .collect();
+    let mut obj = serde_json::json!({
         "subject": input.assunto,
         "isAllDay": input.dia_inteiro,
         "start": { "dateTime": ini, "timeZone": input.time_zone },
@@ -1239,7 +1299,15 @@ fn evento_json(input: &EventoInput) -> serde_json::Value {
         "location": { "displayName": input.local },
         "body": { "contentType": "text", "content": input.corpo },
         "categories": input.categorias,
-    })
+        "attendees": attendees,
+        "isOnlineMeeting": input.reuniao_teams,
+    });
+    // onlineMeetingProvider só é válido quando isOnlineMeeting é true; ao ligar,
+    // o Graph gera o link do Teams no evento.
+    if input.reuniao_teams {
+        obj["onlineMeetingProvider"] = serde_json::json!("teamsForBusiness");
+    }
+    obj
 }
 
 /// Cria um evento no calendário do usuário (POST /me/events). Devolve o id do

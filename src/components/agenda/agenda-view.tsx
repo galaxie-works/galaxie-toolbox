@@ -8,12 +8,13 @@ import { useEffect, useMemo, useState } from "react";
 import { enUS, ptBR } from "date-fns/locale";
 import type { Locale } from "date-fns";
 import { toast } from "sonner";
-import { CalendarClock, CalendarPlus, RefreshCw } from "lucide-react";
+import { CalendarClock, CalendarPlus, Check, Plus, RefreshCw, Video, X } from "lucide-react";
 
 import { useAppStore } from "@/store";
 import { useIdioma } from "@/lib/idioma";
 import type { Idioma } from "@/lib/strings";
-import type { EventoAgenda, EventoInput } from "@/lib/types";
+import type { ConvidadoInput, EventoInput, Pessoa } from "@/lib/types";
+import { CampoPessoas } from "@/components/compose/campo-pessoas";
 
 import { EventCalendar } from "@/components/reui/event-calendar/event-calendar";
 import { EventCalendarContent } from "@/components/reui/event-calendar/event-calendar-content";
@@ -31,12 +32,12 @@ import type {
 
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Sheet,
+  SheetContent,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -200,7 +201,16 @@ export function AgendaView() {
   };
 
   const aoClicarSlot = (slot: EventCalendarSlotInfo) => {
-    abrirFormCriar(slot.date.toISOString());
+    // Clicar numa célula vazia (mês/semana/dia) traz o início do slot. Uma data
+    // ausente/inválida chegava crua no toISOString e quebrava com
+    // "RangeError: Invalid time value" — validamos antes e, sem data válida,
+    // caímos no default seguro do form (próxima hora cheia).
+    const d = slot?.date;
+    const iso =
+      d instanceof Date && !Number.isNaN(d.getTime())
+        ? d.toISOString()
+        : undefined;
+    abrirFormCriar(iso);
   };
 
   if (erroAgenda) {
@@ -222,7 +232,7 @@ export function AgendaView() {
             </Button>
           </EmptyContent>
         </Empty>
-        <EventoFormDialog />
+        <EventoFormSheet />
       </div>
     );
   }
@@ -256,16 +266,29 @@ export function AgendaView() {
         </div>
         <EventCalendarContent />
       </EventCalendar>
-      <EventoFormDialog />
+      <EventoFormSheet />
     </div>
   );
 }
 
-// --- diálogo criar/editar (padrão do c-event-calendar-3) --------------------
+// --- Sheet criar/editar (mesma casca do detalhe de evento #34 / compose) -----
 
 const SEM_CATEGORIA = "__nenhuma__";
 
-function EventoFormDialog() {
+// Presets de cor do Outlook (subconjunto) para criar categoria. O `preset` é o
+// valor que o Graph aceita em masterCategories.color; o hex é só o swatch.
+const CORES_PRESET: { preset: string; hex: string }[] = [
+  { preset: "preset0", hex: "#D13438" },
+  { preset: "preset1", hex: "#FF8C00" },
+  { preset: "preset3", hex: "#EAA300" },
+  { preset: "preset4", hex: "#498205" },
+  { preset: "preset5", hex: "#00B7C3" },
+  { preset: "preset7", hex: "#0078D4" },
+  { preset: "preset8", hex: "#8764B8" },
+  { preset: "preset9", hex: "#C239B3" },
+];
+
+function EventoFormSheet() {
   const { t } = useIdioma();
   const aberto = useAppStore((s) => s.agendaFormAberto);
   const modo = useAppStore((s) => s.agendaFormModo);
@@ -274,6 +297,7 @@ function EventoFormDialog() {
   const fecharForm = useAppStore((s) => s.fecharForm);
   const criarEvento = useAppStore((s) => s.criarEvento);
   const editarEvento = useAppStore((s) => s.editarEvento);
+  const criarCategoria = useAppStore((s) => s.criarCategoria);
   const coresCat = useAppStore((s) => s.agendaCoresCategoria);
 
   const [titulo, setTitulo] = useState("");
@@ -284,18 +308,39 @@ function EventoFormDialog() {
   const [fimD, setFimD] = useState("");
   const [local, setLocal] = useState("");
   const [categoria, setCategoria] = useState<string>(SEM_CATEGORIA);
+  // Convidados: buffer local do Sheet (como os outros campos). `convEmails` é a
+  // lista canônica (do people-picker); `convPessoas` guarda nome/foto p/ montar
+  // os attendees do Graph.
+  const [convEmails, setConvEmails] = useState<string[]>([]);
+  const [convPessoas, setConvPessoas] = useState<Pessoa[]>([]);
+  const [reuniaoTeams, setReuniaoTeams] = useState(false);
   const [salvando, setSalvando] = useState(false);
+
+  // Criação inline de categoria.
+  const [criandoCat, setCriandoCat] = useState(false);
+  const [novaCatNome, setNovaCatNome] = useState("");
+  const [novaCatPreset, setNovaCatPreset] = useState(CORES_PRESET[0].preset);
+  const [criandoCatSalvando, setCriandoCatSalvando] = useState(false);
 
   const categorias = useMemo(() => [...coresCat.keys()], [coresCat]);
 
-  // Preenche o formulário sempre que o diálogo abre (por modo/evento/preset).
+  // Preenche o formulário sempre que o Sheet abre (por modo/evento/preset).
   useEffect(() => {
     if (!aberto) return;
+    setCriandoCat(false);
+    setNovaCatNome("");
+    setNovaCatPreset(CORES_PRESET[0].preset);
     if (modo === "editar" && evento) {
       setTitulo(evento.assunto);
       setDiaInteiro(evento.diaInteiro);
       setLocal(evento.local ?? "");
       setCategoria(evento.categorias?.[0] ?? SEM_CATEGORIA);
+      // Convidados/Teams a partir do evento (participantes vêm até 5 do resumo
+      // do mês — o attendee-list pode não estar completo ao editar).
+      const parts = evento.participantes ?? [];
+      setConvEmails(parts.map((p) => p.email).filter(Boolean));
+      setConvPessoas(parts.map((p) => ({ nome: p.nome, email: p.email })));
+      setReuniaoTeams(evento.online);
       if (evento.diaInteiro) {
         setInicioD(paraInputData(evento.inicio));
         // fim é exclusivo (dia seguinte); mostramos o último dia inclusivo
@@ -305,19 +350,34 @@ function EventoFormDialog() {
         setFimDT(paraInputLocal(evento.fim));
       }
     } else {
-      const base = presetInicio ? new Date(comZ(presetInicio)) : proximaHora();
+      // Preset do clique pode vir inválido/ausente — cai na próxima hora cheia.
+      const bruta = presetInicio ? new Date(comZ(presetInicio)) : proximaHora();
+      const base = Number.isNaN(bruta.getTime()) ? proximaHora() : bruta;
       const baseIso = base.toISOString();
       const maisUma = new Date(base.getTime() + 60 * 60000).toISOString();
       setTitulo("");
       setDiaInteiro(false);
       setLocal("");
       setCategoria(SEM_CATEGORIA);
+      setConvEmails([]);
+      setConvPessoas([]);
+      setReuniaoTeams(false);
       setInicioDT(paraInputLocal(baseIso));
       setFimDT(paraInputLocal(maisUma));
       setInicioD(paraInputData(baseIso));
       setFimD(paraInputData(baseIso));
     }
   }, [aberto, modo, evento, presetInicio]);
+
+  // Convidados no formato do Graph: nome resolvido pelo people-picker, senão o
+  // próprio e-mail.
+  const montarConvidados = (): ConvidadoInput[] =>
+    convEmails.map((email) => {
+      const p = convPessoas.find(
+        (x) => x.email.trim().toLowerCase() === email.trim().toLowerCase(),
+      );
+      return { email, nome: p?.nome ?? email };
+    });
 
   const montarInput = (): EventoInput | null => {
     const assunto = titulo.trim();
@@ -327,6 +387,7 @@ function EventoFormDialog() {
     }
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const cats = categoria !== SEM_CATEGORIA ? [categoria] : [];
+    const convidados = montarConvidados();
     if (diaInteiro) {
       if (!inicioD) return null;
       const fimBase = fimD && fimD >= inicioD ? fimD : inicioD;
@@ -339,6 +400,8 @@ function EventoFormDialog() {
         corpo: "",
         categorias: cats,
         timeZone,
+        convidados,
+        reuniaoTeams,
       };
     }
     if (!inicioDT) return null;
@@ -352,6 +415,8 @@ function EventoFormDialog() {
       corpo: "",
       categorias: cats,
       timeZone,
+      convidados,
+      reuniaoTeams,
     };
   };
 
@@ -375,18 +440,39 @@ function EventoFormDialog() {
     }
   };
 
+  // Cria a categoria via store (Graph) e já a seleciona no evento.
+  const salvarCategoria = async () => {
+    const nome = novaCatNome.trim();
+    if (!nome) return;
+    setCriandoCatSalvando(true);
+    try {
+      const criada = await criarCategoria(nome, novaCatPreset);
+      setCategoria(criada);
+      setCriandoCat(false);
+      setNovaCatNome("");
+      toast.success(t.controlRoom.agendaCategoriaCriada);
+    } catch {
+      toast.error(t.controlRoom.agendaCategoriaErro);
+    } finally {
+      setCriandoCatSalvando(false);
+    }
+  };
+
   return (
-    <Dialog open={aberto} onOpenChange={(o) => !o && fecharForm()}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>
+    <Sheet open={aberto} onOpenChange={(o) => !o && fecharForm()}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 p-0 sm:max-w-lg"
+      >
+        <SheetHeader className="border-b px-4 py-3">
+          <SheetTitle className="text-left">
             {modo === "editar"
               ? t.controlRoom.agendaFormEditarTitulo
               : t.controlRoom.agendaFormCriarTitulo}
-          </DialogTitle>
-        </DialogHeader>
+          </SheetTitle>
+        </SheetHeader>
 
-        <div className="flex flex-col gap-4 py-1">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto scrollbar-fina px-4 py-4">
           <Field>
             <FieldLabel htmlFor="agenda-titulo">
               {t.controlRoom.agendaFormTitulo}
@@ -454,6 +540,33 @@ function EventoFormDialog() {
             </Field>
           </div>
 
+          {/* Convidar pessoas — mesmo people-picker do compose (To/Cc). O
+              próprio CampoPessoas renderiza o rótulo "Convidados" à esquerda. */}
+          <Field>
+            <div className="rounded-md border px-0.5 py-0.5">
+              <CampoPessoas
+                rotulo={t.controlRoom.agendaFormConvidados}
+                valor={convEmails}
+                onChange={setConvEmails}
+                onPessoas={setConvPessoas}
+                placeholder={t.controlRoom.agendaFormConvidadosPlaceholder}
+              />
+            </div>
+          </Field>
+
+          {/* Reunião do Teams — liga isOnlineMeeting no payload Graph. */}
+          <Field orientation="horizontal" className="w-auto">
+            <Switch
+              id="agenda-teams"
+              checked={reuniaoTeams}
+              onCheckedChange={setReuniaoTeams}
+            />
+            <FieldLabel htmlFor="agenda-teams" className="flex items-center gap-1.5">
+              <Video className="size-4 text-muted-foreground" />
+              {t.controlRoom.agendaFormTeams}
+            </FieldLabel>
+          </Field>
+
           <Field>
             <FieldLabel htmlFor="agenda-local">
               {t.controlRoom.agendaFormLocal}
@@ -465,37 +578,108 @@ function EventoFormDialog() {
             />
           </Field>
 
-          {categorias.length > 0 && (
-            <Field>
+          <Field>
+            <div className="flex items-center justify-between">
               <FieldLabel htmlFor="agenda-categoria">
                 {t.controlRoom.agendaFormCategoria}
               </FieldLabel>
-              <Select value={categoria} onValueChange={setCategoria}>
-                <SelectTrigger id="agenda-categoria" className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={SEM_CATEGORIA}>
-                    {t.controlRoom.agendaFormSemCategoria}
+              {!criandoCat && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs"
+                  onClick={() => setCriandoCat(true)}
+                >
+                  <Plus className="size-3.5" />
+                  {t.controlRoom.agendaFormNovaCategoria}
+                </Button>
+              )}
+            </div>
+            <Select value={categoria} onValueChange={setCategoria}>
+              <SelectTrigger id="agenda-categoria" className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={SEM_CATEGORIA}>
+                  {t.controlRoom.agendaFormSemCategoria}
+                </SelectItem>
+                {categorias.map((nome) => (
+                  <SelectItem key={nome} value={nome}>
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="size-2.5 rounded-full"
+                        style={{ background: coresCat.get(nome) }}
+                      />
+                      {nome}
+                    </span>
                   </SelectItem>
-                  {categorias.map((nome) => (
-                    <SelectItem key={nome} value={nome}>
-                      <span className="flex items-center gap-2">
-                        <span
-                          className="size-2.5 rounded-full"
-                          style={{ background: coresCat.get(nome) }}
-                        />
-                        {nome}
-                      </span>
-                    </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {criandoCat && (
+              <div className="mt-1 flex flex-col gap-2 rounded-md border bg-muted/40 p-3">
+                <Input
+                  value={novaCatNome}
+                  onChange={(e) => setNovaCatNome(e.target.value)}
+                  placeholder={t.controlRoom.agendaFormNovaCategoriaNome}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void salvarCategoria();
+                    }
+                  }}
+                  autoFocus
+                />
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {CORES_PRESET.map((c) => (
+                    <button
+                      key={c.preset}
+                      type="button"
+                      aria-label={c.preset}
+                      onClick={() => setNovaCatPreset(c.preset)}
+                      className={
+                        "size-6 rounded-full ring-offset-2 ring-offset-background transition " +
+                        (novaCatPreset === c.preset
+                          ? "ring-2 ring-ring"
+                          : "hover:opacity-80")
+                      }
+                      style={{ background: c.hex }}
+                    />
                   ))}
-                </SelectContent>
-              </Select>
-            </Field>
-          )}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCriandoCat(false)}
+                    disabled={criandoCatSalvando}
+                  >
+                    <X className="size-4" />
+                    {t.controlRoom.agendaFormCancelar}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={() => void salvarCategoria()}
+                    disabled={criandoCatSalvando || !novaCatNome.trim()}
+                  >
+                    {criandoCatSalvando ? (
+                      <Spinner className="size-4" />
+                    ) : (
+                      <Check className="size-4" />
+                    )}
+                    {t.controlRoom.agendaFormCriarCategoria}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Field>
         </div>
 
-        <DialogFooter>
+        <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
           <Button variant="outline" onClick={fecharForm} disabled={salvando}>
             {t.controlRoom.agendaFormCancelar}
           </Button>
@@ -505,9 +689,9 @@ function EventoFormDialog() {
               ? t.controlRoom.agendaFormSalvar
               : t.controlRoom.agendaFormCriar}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
 

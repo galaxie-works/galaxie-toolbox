@@ -404,6 +404,27 @@ export async function crCategorias(): Promise<CategoriaCor[]> {
   return invoke<CategoriaCor[]>("cr_categorias");
 }
 
+/** Cria uma categoria mestra (#211). `preset` = nome do preset de cor do
+ *  Outlook ("preset0".."preset24"). Devolve a categoria criada com o hex. */
+export async function crCriarCategoria(
+  nome: string,
+  preset: string,
+): Promise<CategoriaCor> {
+  if (!inTauri()) {
+    await sleep(200);
+    const HEX: Record<string, string> = {
+      preset0: "#D13438",
+      preset4: "#498205",
+      preset7: "#0078D4",
+      preset8: "#8764B8",
+      preset1: "#FF8C00",
+      preset5: "#00B7C3",
+    };
+    return { nome, cor: HEX[preset] ?? "#8A8886" };
+  }
+  return invoke<CategoriaCor>("cr_criar_categoria", { nome, preset });
+}
+
 export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
   if (!inTauri()) {
     await sleep(300);
