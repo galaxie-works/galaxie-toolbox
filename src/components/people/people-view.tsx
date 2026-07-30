@@ -718,12 +718,6 @@ function PeopleDetail({
             </div>
           ) : (
             <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-              {primaryEmail && (
-                <Button onClick={() => onCompose(primaryEmail)}>
-                  <Mail />
-                  {t.controlRoom.peopleCompor}
-                </Button>
-              )}
               <Toolbar
                 aria-label={t.controlRoom.peopleRowActions}
                 className="gap-0.5"
@@ -831,6 +825,12 @@ function PeopleDetail({
                   </DropdownMenuContent>
                 </DropdownMenu>
               </Toolbar>
+              {primaryEmail && (
+                <Button onClick={() => onCompose(primaryEmail)}>
+                  <Mail />
+                  {t.controlRoom.peopleCompor}
+                </Button>
+              )}
             </div>
           )}
         </div>

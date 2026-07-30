@@ -510,10 +510,6 @@ export function OrganizationsView({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <Button onClick={() => setAssignOpen(true)}>
-              <Users />
-              {t.controlRoom.orgsAtribuir}
-            </Button>
             <Toolbar aria-label={t.controlRoom.orgsDetalhes}>
               <ToolbarButton
                 variant="default"
@@ -539,6 +535,10 @@ export function OrganizationsView({
                 <ExternalLink />
               </ToolbarButton>
             </Toolbar>
+            <Button onClick={() => setAssignOpen(true)}>
+              <Users />
+              {t.controlRoom.orgsAtribuir}
+            </Button>
           </div>
         </div>
       </div>

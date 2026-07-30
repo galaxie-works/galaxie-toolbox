@@ -4764,17 +4764,17 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
                 <Trash2 /> {t.controlRoom.agendaExcluir}
               </Button>
               <div className="grow" />
-              {det.online && det.joinUrl && (
-                <Button onClick={() => api.openUrl(det.joinUrl!)}>
-                  <Video /> {t.controlRoom.entrarReuniao}
-                </Button>
-              )}
               {det.webLink && (
                 <Button
                   variant="outline"
                   onClick={() => api.openUrl(comLoginHint(det.webLink, userEmail))}
                 >
                   <ExternalLink /> {t.controlRoom.abrirOutlook}
+                </Button>
+              )}
+              {det.online && det.joinUrl && (
+                <Button onClick={() => api.openUrl(det.joinUrl!)}>
+                  <Video /> {t.controlRoom.entrarReuniao}
                 </Button>
               )}
             </SheetFooter>
