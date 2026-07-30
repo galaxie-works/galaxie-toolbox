@@ -22,6 +22,11 @@ import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
 import { preencher, useIdioma } from "@/lib/idioma";
 import type { Pessoa } from "@/lib/types";
+import {
+  deveCommitarEnter,
+  emailValido,
+  mesmoEmail,
+} from "./campo-pessoas-logic";
 
 /**
  * Campo de destinatários (Para/Cc/Cco) com autocomplete rico (#40).
@@ -68,11 +73,6 @@ interface GrupoPessoas {
   items: Pessoa[];
 }
 
-/** Endereço "inteiro o bastante" para virar destinatário sem estar no diretório. */
-function emailValido(texto: string): boolean {
-  return /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(texto.trim());
-}
-
 /** Iniciais do avatar: do nome quando há nome de verdade, senão do e-mail. */
 function iniciaisDe(nome: string, email: string): string {
   const base = nome && !nome.includes("@") ? nome : email.split("@")[0];
@@ -80,10 +80,6 @@ function iniciaisDe(nome: string, email: string): string {
   if (partes.length === 0) return "?";
   if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
   return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
-}
-
-function mesmoEmail(a: string, b: string): boolean {
-  return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
 
 export function CampoPessoas({
@@ -250,9 +246,11 @@ export function CampoPessoas({
       }
       return;
     }
-    // Enter com um item destacado é do combobox (seleciona a sugestão); sem
-    // nada destacado, vale o endereço digitado.
-    if (e.key === "Enter" && !destacadoRef.current && emailValido(texto)) {
+    // Enter commita o endereço digitado (convidado externo fora do diretório) a
+    // menos que uma sugestão REAL de contato esteja destacada — aí o Enter é do
+    // combobox. Ver `deveCommitarEnter`: robusto contra o `destacadoRef` obsoleto
+    // que travava o commit e causava o loop do #268.
+    if (e.key === "Enter" && deveCommitarEnter(texto, destacadoRef.current, sugestoes)) {
       e.preventDefault();
       adicionarDigitado();
     }
