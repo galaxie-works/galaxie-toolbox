@@ -2084,9 +2084,18 @@ export function PeopleView({
         searchable: false,
         operators,
         options: [
-          { value: "contacts", label: t.controlRoom.peopleSourceContacts },
-          { value: "people", label: t.controlRoom.peopleSourcePeople },
-          { value: "directory", label: t.controlRoom.peopleSourceDirectory },
+          {
+            value: "contacts",
+            label: t.controlRoom.peopleFilterSourceContacts,
+          },
+          {
+            value: "people",
+            label: t.controlRoom.peopleFilterSourcePeople,
+          },
+          {
+            value: "directory",
+            label: t.controlRoom.peopleFilterSourceDirectory,
+          },
         ],
       },
     ];
