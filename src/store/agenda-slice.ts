@@ -3,6 +3,7 @@ import type { StateCreator } from "zustand";
 import {
   crAgenda,
   crCategorias,
+  crCriarCategoria,
   crCriarEvento,
   crEditarEvento,
   crEventoCorpo,
@@ -36,6 +37,7 @@ export interface AgendaPersistido {
 interface AgendaApi {
   carregarEventos: (inicio: string, fim: string) => Promise<EventoAgenda[]>;
   carregarCategorias: () => Promise<CategoriaCor[]>;
+  criarCategoria: (nome: string, preset: string) => Promise<CategoriaCor>;
   carregarEvento: (id: string) => Promise<EventoDetalhe>;
   criarEvento: (input: EventoInput) => Promise<string>;
   editarEvento: (id: string, input: EventoInput) => Promise<void>;
@@ -66,6 +68,9 @@ export interface AgendaSlice {
   carregarMesAgenda: (inicio: string, fim: string) => Promise<void>;
   recarregarAgenda: () => void;
   carregarCoresAgenda: () => Promise<void>;
+  // Cria uma categoria mestra e a injeta no mapa de cores (#211). Devolve o
+  // nome criado para o form já selecioná-la.
+  criarCategoria: (nome: string, preset: string) => Promise<string>;
   selecionarEventoAgenda: (id: string) => Promise<void>;
   fecharEventoAgenda: () => void;
 
@@ -81,6 +86,7 @@ export interface AgendaSlice {
 const agendaApi: AgendaApi = {
   carregarEventos: crAgenda,
   carregarCategorias: crCategorias,
+  criarCategoria: crCriarCategoria,
   carregarEvento: crEventoCorpo,
   criarEvento: crCriarEvento,
   editarEvento: crEditarEvento,
@@ -94,19 +100,34 @@ function localParaUtc(wall: string): string {
   return Number.isNaN(d.getTime()) ? wall : d.toISOString();
 }
 
+/** Iniciais a partir de nome/e-mail (fallback do avatar otimista). */
+function iniciaisDe(nome: string, email: string): string {
+  const base = nome && !nome.includes("@") ? nome : email.split("@")[0];
+  const partes = base.split(/[\s._-]+/).filter(Boolean);
+  if (partes.length === 0) return "?";
+  if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
+  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
+}
+
 /** Monta um EventoAgenda de exibição a partir dos dados do formulário. */
 function eventoDeInput(id: string, input: EventoInput): EventoAgenda {
+  const participantes = input.convidados.map((c) => ({
+    nome: c.nome || c.email,
+    email: c.email,
+    iniciais: iniciaisDe(c.nome, c.email),
+    foto: null,
+  }));
   return {
     id,
     assunto: input.assunto,
     inicio: localParaUtc(input.inicio),
     fim: localParaUtc(input.fim),
     local: input.local,
-    online: false,
+    online: input.reuniaoTeams,
     diaInteiro: input.diaInteiro,
-    categoria: "event",
-    participantes: [],
-    totalParticipantes: 0,
+    categoria: participantes.length > 0 ? "meeting" : "event",
+    participantes,
+    totalParticipantes: participantes.length,
     temAnexos: false,
     categorias: input.categorias,
   };
@@ -179,6 +200,16 @@ export function criarAgendaSlice(
       } catch {
         // Cores são best-effort; a UI mantém a barra com a cor primária.
       }
+    },
+
+    criarCategoria: async (nome, preset) => {
+      const criada = await api.criarCategoria(nome, preset);
+      set((s) => {
+        const mapa = new Map(s.agendaCoresCategoria);
+        mapa.set(criada.nome, criada.cor);
+        return { agendaCoresCategoria: mapa };
+      });
+      return criada.nome;
     },
 
     selecionarEventoAgenda: async (id) => {
