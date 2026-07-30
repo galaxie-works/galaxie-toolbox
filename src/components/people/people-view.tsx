@@ -33,15 +33,6 @@ import { isValidPhoneNumber } from "react-phone-number-input";
 import { toast } from "sonner";
 
 import {
-  Autocomplete,
-  AutocompleteCollection,
-  AutocompleteContent,
-  AutocompleteEmpty,
-  AutocompleteInput,
-  AutocompleteItem,
-  AutocompleteList,
-} from "@/components/reui/autocomplete";
-import {
   Alert,
   AlertAction,
   AlertDescription,
@@ -1551,8 +1542,10 @@ export function PeopleView({
   );
   const peopleTab = useAppStore((state) => state.peopleTab);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
+  const query = useAppStore((state) => state.peopleSearchQuery);
+  const setPeopleSearchQuery = useAppStore(
+    (state) => state.setPeopleSearchQuery,
+  );
   const [sort, setSort] = useState<"relevance" | "az">("relevance");
   const [enrichRequest, setEnrichRequest] = useState<{
     id: string;
@@ -1828,56 +1821,6 @@ export function PeopleView({
         </div>
         {peopleTab === "contacts" && (
           <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row xl:max-w-4xl">
-          <Autocomplete
-            items={filtered}
-            value={query}
-            onValueChange={setQuery}
-            open={open}
-            onOpenChange={setOpen}
-            itemToStringValue={(item: unknown) => (item as PeopleContact).name}
-            filter={null}
-          >
-            <AutocompleteInput
-              className="h-9"
-              placeholder={t.controlRoom.peopleBuscar}
-              aria-label={t.controlRoom.peopleBuscar}
-              showClear
-            />
-            {open && (
-              <AutocompleteContent>
-                {filtered.length === 0 ? (
-                  <AutocompleteEmpty>{t.controlRoom.peopleSemResultado}</AutocompleteEmpty>
-                ) : (
-                  <AutocompleteList>
-                    <AutocompleteCollection>
-                      {(contact: PeopleContact) => (
-                        <AutocompleteItem
-                          key={contact.id}
-                          value={contact}
-                          onClick={() => selectPerson(contact.id)}
-                        >
-                          <Avatar size="sm">
-                            {(contact.photo || getFoto(contact.emails[0]?.address)) && (
-                              <AvatarImage
-                                src={
-                                  contact.photo ||
-                                  getFoto(contact.emails[0]?.address) ||
-                                  undefined
-                                }
-                                alt={contact.name}
-                              />
-                            )}
-                            <AvatarFallback>{initials(contact.name)}</AvatarFallback>
-                          </Avatar>
-                          <span className="truncate">{contact.name}</span>
-                        </AutocompleteItem>
-                      )}
-                    </AutocompleteCollection>
-                  </AutocompleteList>
-                )}
-              </AutocompleteContent>
-            )}
-          </Autocomplete>
           <Select value={sort} onValueChange={(value) => setSort(value as typeof sort)}>
             <SelectTrigger className="w-full sm:w-44" aria-label={t.controlRoom.peopleOrdenar}>
               <SelectValue />
@@ -2021,7 +1964,7 @@ export function PeopleView({
                     search={Boolean(normalizedQuery)}
                     filtered={filters.length > 0}
                     onClear={() => {
-                      setQuery("");
+                      setPeopleSearchQuery("");
                       setFilters([]);
                     }}
                   />
@@ -2089,7 +2032,7 @@ export function PeopleView({
               search={Boolean(normalizedQuery)}
               filtered={filters.length > 0}
               onClear={() => {
-                setQuery("");
+                setPeopleSearchQuery("");
                 setFilters([]);
               }}
             />

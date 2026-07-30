@@ -11,12 +11,7 @@ import {
 
 import {
   Autocomplete,
-  AutocompleteCollection,
-  AutocompleteContent,
-  AutocompleteEmpty,
   AutocompleteInput,
-  AutocompleteItem,
-  AutocompleteList,
 } from "@/components/reui/autocomplete";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -342,8 +337,7 @@ export function OrganizationsView({ contacts }: { contacts: PeopleContact[] }) {
   );
   const selectPerson = useAppStore((state) => state.selectPerson);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
-  const [query, setQuery] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
+  const query = useAppStore((state) => state.peopleSearchQuery);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<PeopleOrg | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
@@ -590,57 +584,7 @@ export function OrganizationsView({ contacts }: { contacts: PeopleContact[] }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center">
-        <Autocomplete
-          items={filtered}
-          value={query}
-          onValueChange={setQuery}
-          open={searchOpen}
-          onOpenChange={setSearchOpen}
-          itemToStringValue={(item: unknown) => (item as PeopleOrg).name}
-          filter={null}
-        >
-          <AutocompleteInput
-            placeholder={t.controlRoom.orgsBuscar}
-            aria-label={t.controlRoom.orgsBuscar}
-            showClear
-          />
-          {searchOpen && (
-            <AutocompleteContent>
-              {filtered.length === 0 ? (
-                <AutocompleteEmpty>{t.controlRoom.peopleSemResultado}</AutocompleteEmpty>
-              ) : (
-                <AutocompleteList>
-                  <AutocompleteCollection>
-                    {(organization: PeopleOrg) => (
-                      <AutocompleteItem
-                        key={organization.id}
-                        value={organization}
-                        onClick={() => selectOrganization(organization.id)}
-                      >
-                        <Avatar size="sm">
-                          <AvatarFallback>
-                            {initials(organization.name) || (
-                              <Building2 className="size-4" />
-                            )}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate">
-                            {organization.name}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {organization.domains.join(" · ")}
-                          </span>
-                        </span>
-                      </AutocompleteItem>
-                    )}
-                  </AutocompleteCollection>
-                </AutocompleteList>
-              )}
-            </AutocompleteContent>
-          )}
-        </Autocomplete>
+      <div className="flex shrink-0 justify-end">
         <Button
           onClick={() => {
             setEditing(null);
