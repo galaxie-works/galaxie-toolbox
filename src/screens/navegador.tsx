@@ -727,6 +727,9 @@ export function NavegadorScreen({
   onNavegar,
   historico,
   onRestaurarAbas,
+  sessaoAnteriorQtd,
+  onRestaurarSessao,
+  onDispensarSessao,
   onLimparHistorico,
   modoPrivado,
   onAlternarModoPrivado,
@@ -749,6 +752,9 @@ export function NavegadorScreen({
   onNavegar: (url: string, nome: string) => void;
   historico: HistoryEntry[];
   onRestaurarAbas: (entradas: { url: string; nome: string }[]) => void;
+  sessaoAnteriorQtd: number;
+  onRestaurarSessao: () => void;
+  onDispensarSessao: () => void;
   onLimparHistorico: (periodo: PeriodoLimpeza) => void;
   modoPrivado: boolean;
   onAlternarModoPrivado: () => void;
@@ -1512,6 +1518,35 @@ export function NavegadorScreen({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      {/* Oferecer restaurar a sessão anterior (#274) — banner discreto, sem
+          restaurar automático; some ao restaurar ou dispensar. */}
+      {sessaoAnteriorQtd > 0 && (
+        <div className="flex items-center gap-2 border-b border-border bg-info/10 px-3 py-1.5 text-sm">
+          <RotateCcw className="size-4 shrink-0 text-info" />
+          <span className="min-w-0 flex-1 truncate text-info-foreground">
+            {preencher(t.navegador.sessaoAnterior, { n: sessaoAnteriorQtd })}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 shrink-0"
+            onClick={onRestaurarSessao}
+          >
+            {t.navegador.sessaoRestaurar}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 shrink-0 text-muted-foreground"
+            onClick={onDispensarSessao}
+          >
+            {t.navegador.sessaoDispensar}
+          </Button>
+        </div>
+      )}
 
       {/* Barra de favoritos (#176): reabre rápido + gerencia (importar do
           Chrome/Edge, adicionar da aba ativa, pastas, renomear, remover). */}
