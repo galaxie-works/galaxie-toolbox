@@ -3246,6 +3246,45 @@ fn telefones_de_people(item: &serde_json::Value) -> Vec<PeoplePhone> {
         .collect()
 }
 
+/// `/me/people` mistura pessoas e objetos mail-enabled. `personType.class` é o
+/// sinal canônico do Graph para excluir Teams, listas de distribuição e sites
+/// SharePoint respaldados por Microsoft 365 Groups da lista de pessoas (#281).
+fn eh_grupo_de_people(item: &serde_json::Value) -> bool {
+    item["personType"]["class"]
+        .as_str()
+        .is_some_and(|class| class.eq_ignore_ascii_case("Group"))
+}
+
+#[cfg(test)]
+mod testes_people_person_type {
+    use super::eh_grupo_de_people;
+
+    #[test]
+    fn exclui_group_independente_de_caixa_e_subclasse() {
+        for class in ["Group", "group", "GROUP"] {
+            let item = serde_json::json!({
+                "personType": {
+                    "class": class,
+                    "subclass": "OrganizationUser"
+                }
+            });
+            assert!(eh_grupo_de_people(&item));
+        }
+    }
+
+    #[test]
+    fn preserva_pessoa_e_registro_sem_person_type() {
+        let pessoa = serde_json::json!({
+            "personType": {
+                "class": "Person",
+                "subclass": "OrganizationUser"
+            }
+        });
+        assert!(!eh_grupo_de_people(&pessoa));
+        assert!(!eh_grupo_de_people(&serde_json::json!({})));
+    }
+}
+
 /// Lista inicial do People (#166): contatos explicitos + pessoas relevantes.
 /// Mantem as fontes separadas para o merge deterministico no front e preserva a
 /// ordem de relevancia de `/me/people` via `people_rank`.
@@ -3345,6 +3384,9 @@ pub fn cr_people_list(
                             let is_first_page = url.contains("/me/people?$top=");
                             result.records.extend(items.iter().enumerate().filter_map(
                                 |(rank, item)| {
+                                    if eh_grupo_de_people(item) {
+                                        return None;
+                                    }
                                     let emails = emails_de_people(item);
                                     if emails.is_empty() {
                                         return None;
