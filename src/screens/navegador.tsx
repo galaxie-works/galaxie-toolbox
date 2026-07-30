@@ -1122,19 +1122,39 @@ export function NavegadorScreen({
     return { x: b.x, y: b.y, w: b.width, h: b.height };
   }
 
+  // #174: na aba vazia o Launcher inline JÁ é o command. Em vez de abrir o
+  // overlay (que empilharia um segundo command opaco por cima), foca o input
+  // inline existente.
+  const focarComandoInline = useCallback(() => {
+    document
+      .querySelector<HTMLInputElement>('[data-slot="command-input"]')
+      ?.focus();
+  }, []);
+
   // Ctrl/Cmd+K abre/fecha a paleta de qualquer lugar do Navigator. (O DOM só
   // recebe a tecla quando o foco NÃO está dentro da webview nativa — por isso
   // existe também o botão na barra, que funciona mesmo com a página em foco.)
+  // Sem aba ativa (Launcher inline visível) só foca o command — não empilha.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
         e.preventDefault();
+        if (ativa === null) {
+          focarComandoInline();
+          return;
+        }
         setPaletaAberta((v) => !v);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [ativa, focarComandoInline]);
+
+  // #174: ao cair na aba vazia (Launcher inline cobre), zera o overlay pendente
+  // — senão ele reabriria sozinho ao voltar para uma aba viva.
+  useEffect(() => {
+    if (ativa === null) setPaletaAberta(false);
+  }, [ativa]);
 
   // Z-order (spec §4.2): a webview nativa do WebView2 pinta ACIMA do DOM. Com a
   // paleta aberta (ou sem aba ativa) escondemos a webview para o overlay
@@ -1355,7 +1375,9 @@ export function NavegadorScreen({
             <button
               type="button"
               aria-label={t.navegador.paleta}
-              onClick={() => setPaletaAberta(true)}
+              onClick={() =>
+                ativa === null ? focarComandoInline() : setPaletaAberta(true)
+              }
               className={cn(
                 "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
                 "hover:bg-accent hover:text-foreground"
@@ -1427,7 +1449,7 @@ export function NavegadorScreen({
 
       {/* Overlay global (Ctrl/Cmd+K) por cima da aba viva. */}
       <PaletaOverlay
-        aberta={paletaAberta}
+        aberta={paletaAberta && ativa !== null}
         onAberturaMudou={setPaletaAberta}
         abas={abas}
         ativa={ativa}
