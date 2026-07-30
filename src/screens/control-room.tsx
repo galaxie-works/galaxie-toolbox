@@ -4798,10 +4798,12 @@ export function ControlRoomScreen({
   user,
   onAbrirLink,
   onGrantPeopleAccess,
+  onReauthenticate,
 }: {
   user: AppUser;
   onAbrirLink: (url: string) => void;
   onGrantPeopleAccess: () => void;
+  onReauthenticate: () => void;
 }) {
   const { idioma, t } = useIdioma();
   // Fotos de contatos (#39): só buscamos avatar de remetente do MESMO domínio do
@@ -5970,6 +5972,7 @@ export function ControlRoomScreen({
         {bridgeView === "people" ? (
           <PeopleView
             onGrantAccess={onGrantPeopleAccess}
+            onReauthenticate={onReauthenticate}
             onCompose={(email) => {
               abrirCompose("novo", caixaAtiva);
               setComposePara([email]);
