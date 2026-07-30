@@ -672,6 +672,7 @@ export function NavegadorScreen({
   ativa,
   onTrocar,
   onFechar,
+  onFecharOutras,
   onDormir,
   onDormirOutras,
   onAlternarFixada,
@@ -690,6 +691,7 @@ export function NavegadorScreen({
   ativa: string | null;
   onTrocar: (id: string) => void;
   onFechar: (id: string) => void;
+  onFecharOutras: (id: string) => void;
   onDormir: (id: string) => void;
   onDormirOutras: (id: string) => void;
   onAlternarFixada: (id: string) => void;
@@ -720,6 +722,16 @@ export function NavegadorScreen({
   const registrarOverlayWebview = useCallback((aberto: boolean) => {
     setOverlaysWebview((n) => Math.max(0, n + (aberto ? 1 : -1)));
   }, []);
+
+  // #275 (regressão): os menus de contexto de aba/grupo escondem a webview. Antes
+  // isso ia por `onOpenChange` cru no contador — mas se o chip DESMONTASSE com o
+  // menu aberto (re-render por timer de sleeping/favicon), o decremento nunca
+  // vinha e a webview ficava presa escondida (tela PRETA). Aqui rastreamos UM
+  // menu aberto por vez (o Radix já só deixa um) por uma chave estável e, num
+  // efeito, LIMPAMOS a chave se o dono (aba/grupo) sumir — auto-cura, nunca trava.
+  const [menuAbertoId, setMenuAbertoId] = useState<string | null>(null);
+  const aoAbrirMenu = (chave: string) => (aberto: boolean) =>
+    setMenuAbertoId((atual) => (aberto ? chave : atual === chave ? null : atual));
 
   // --- Grupos de aba (Story 3) ---------------------------------------------
   // Grupos vivem aqui + localStorage, DESACOPLADOS do estado de abas do App (que
@@ -896,7 +908,10 @@ export function NavegadorScreen({
         value={aba.id}
         className="group/chip relative shrink-0"
       >
-        <ContextMenu onOpenChange={registrarOverlayWebview}>
+        <ContextMenu
+          open={menuAbertoId === `aba:${aba.id}`}
+          onOpenChange={aoAbrirMenu(`aba:${aba.id}`)}
+        >
           <ContextMenuTrigger asChild>
             <div
               role="tab"
@@ -1070,6 +1085,14 @@ export function NavegadorScreen({
               <X />
               {t.navegador.fecharAba}
             </ContextMenuItem>
+            <ContextMenuItem
+              className="gap-2"
+              disabled={abas.length <= 1}
+              onClick={() => onFecharOutras(aba.id)}
+            >
+              <X />
+              {t.navegador.fecharOutras}
+            </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
         <SortableItemHandle
@@ -1118,7 +1141,7 @@ export function NavegadorScreen({
   // aparecer; ao fechar, este mesmo efeito reroda e revela/reposiciona a aba
   // ativa atual — restaurando a página por baixo.
   useEffect(() => {
-    if (paletaAberta || overlaysWebview > 0 || !ativa) {
+    if (paletaAberta || overlaysWebview > 0 || menuAbertoId !== null || !ativa) {
       browser.esconderTodas();
       return;
     }
@@ -1134,7 +1157,18 @@ export function NavegadorScreen({
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview]);
+  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview, menuAbertoId]);
+
+  // Auto-cura do menu de contexto (#275): se o dono do menu aberto (aba/grupo)
+  // sumiu — chip desmontou com o menu aberto, sem disparar o fechamento — limpa a
+  // chave para a webview voltar a aparecer, em vez de ficar presa escondida.
+  useEffect(() => {
+    if (!menuAbertoId) return;
+    const existe = menuAbertoId.startsWith("aba:")
+      ? abas.some((a) => `aba:${a.id}` === menuAbertoId)
+      : lanes.some((l) => l.grupo && `grupo:${l.grupo.id}` === menuAbertoId);
+    if (!existe) setMenuAbertoId(null);
+  }, [abas, lanes, menuAbertoId]);
 
   useEffect(() => {
     const el = area.current;
@@ -1186,7 +1220,10 @@ export function NavegadorScreen({
                     cor.faixa,
                   )}
                 >
-                  <ContextMenu onOpenChange={registrarOverlayWebview}>
+                  <ContextMenu
+                    open={menuAbertoId === `grupo:${grupo.id}`}
+                    onOpenChange={aoAbrirMenu(`grupo:${grupo.id}`)}
+                  >
                     <ContextMenuTrigger asChild>
                       <button
                         type="button"

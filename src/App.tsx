@@ -462,6 +462,29 @@ function AppInner() {
     }
   }
 
+  /** Fecha todas as abas menos a clicada (e as fixadas), deixando-a ativa (#275). */
+  function fecharOutras(id: string) {
+    const manter = new Set(
+      abas.filter((a) => a.id === id || a.fixada).map((a) => a.id),
+    );
+    for (const aba of abas) {
+      if (!manter.has(aba.id)) void browser.fechar(aba.id);
+    }
+    const now = Date.now();
+    setAbas((prev) =>
+      prev
+        .filter((a) => manter.has(a.id))
+        .map((a) =>
+          a.id === id
+            ? { ...a, estado: "ativa", ultimoAcesso: now, reativando: false }
+            : a.estado === "ativa"
+              ? { ...a, estado: "fundo" }
+              : a,
+        ),
+    );
+    setAbaAtiva(id);
+  }
+
   function dormirAba(id: string) {
     const target = abas.find((tab) => tab.id === id);
     if (
@@ -794,6 +817,7 @@ function AppInner() {
               ativa={abaAtiva}
               onTrocar={trocarAba}
               onFechar={fecharAba}
+              onFecharOutras={fecharOutras}
               onDormir={dormirAba}
               onDormirOutras={dormirOutras}
               onAlternarFixada={alternarFixada}
