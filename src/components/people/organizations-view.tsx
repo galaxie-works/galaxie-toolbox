@@ -175,14 +175,14 @@ function OrganizationDialog({
               </Label>
               <Tooltip>
                 <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="rounded-full text-muted-foreground hover:text-foreground"
-                      aria-label={t.controlRoom.orgsDominiosTooltip}
-                    >
-                      <Info className="size-4" />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="rounded-full text-muted-foreground hover:text-foreground"
+                    aria-label={t.controlRoom.orgsDominiosTooltip}
+                  >
+                    <Info className="size-4" />
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-xs text-pretty">
