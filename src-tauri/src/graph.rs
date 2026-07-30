@@ -1205,6 +1205,94 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
     })
 }
 
+// ----------------------------------------------------------------------------
+// Escrita de eventos (Agenda — #211): criar / editar / excluir.
+// Escopo: Calendars.ReadWrite. Sob o mesmo pool + retry central (#64) das
+// demais chamadas, respeitando Retry-After e jitter.
+// ----------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EventoInput {
+    pub assunto: String,
+    pub inicio: String, // hora-de-parede local, sem Z
+    pub fim: String,
+    pub dia_inteiro: bool,
+    pub local: String,
+    pub corpo: String,
+    pub categorias: Vec<String>,
+    pub time_zone: String, // IANA (ex. "America/Sao_Paulo")
+}
+
+/// Monta o corpo JSON de um evento para POST/PATCH em /me/events. Mandamos a
+/// hora-de-parede local + o `timeZone` IANA do usuário — o Graph resolve o
+/// instante, o que também satisfaz a exigência de meia-noite no fuso para
+/// eventos de dia inteiro. O Z é removido por garantia (dateTime não leva zona).
+fn evento_json(input: &EventoInput) -> serde_json::Value {
+    let ini = input.inicio.trim_end_matches('Z');
+    let fim = input.fim.trim_end_matches('Z');
+    serde_json::json!({
+        "subject": input.assunto,
+        "isAllDay": input.dia_inteiro,
+        "start": { "dateTime": ini, "timeZone": input.time_zone },
+        "end": { "dateTime": fim, "timeZone": input.time_zone },
+        "location": { "displayName": input.local },
+        "body": { "contentType": "text", "content": input.corpo },
+        "categories": input.categorias,
+    })
+}
+
+/// Cria um evento no calendário do usuário (POST /me/events). Devolve o id do
+/// evento criado para o front trocar o id otimista pelo real. Calendars.ReadWrite.
+pub fn cr_criar_evento(store: &TokenStore, input: EventoInput) -> Result<String, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events");
+    let body = evento_json(&input);
+    let resp = graph_enviar("agenda:criar", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao criar o evento: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita("me/events", "criar evento", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(v["id"].as_str().unwrap_or("").to_string())
+}
+
+/// Edita um evento existente (PATCH /me/events/{id}). Calendars.ReadWrite.
+pub fn cr_editar_evento(store: &TokenStore, id: &str, input: EventoInput) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events/{id}");
+    let body = evento_json(&input);
+    let resp = graph_enviar("agenda:editar", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao editar o evento: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita("me/events", "editar evento", resp.status()));
+    }
+    Ok(())
+}
+
+/// Exclui um evento (DELETE /me/events/{id}). 404 conta como sucesso
+/// (idempotente — já foi removido). Calendars.ReadWrite.
+pub fn cr_excluir_evento(store: &TokenStore, id: &str) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events/{id}");
+    let resp = graph_enviar("agenda:excluir", GRAPH_TETO_ESPERA_S, || {
+        client.delete(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao excluir o evento: {e}"))?;
+    if resp.status().is_success() || resp.status().as_u16() == 404 {
+        Ok(())
+    } else {
+        Err(erro_escrita("me/events", "excluir evento", resp.status()))
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailItem {

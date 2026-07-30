@@ -120,6 +120,7 @@ import {
   type ComporMensagemHandle,
 } from "@/components/compose/compor-mensagem";
 import { NovaMensagemModal } from "@/components/compose/nova-mensagem-modal";
+import { AgendaView } from "@/components/agenda/agenda-view";
 import { PeopleView } from "@/components/people/people-view";
 import { PersonHoverCard } from "@/components/people/person-hover-card";
 import * as AnimatedButton from "@/components/morphin/animated-border-button";
@@ -4654,175 +4655,39 @@ const MessageDetail = forwardRef<
   );
 });
 
-// ===========================================================================
-// Painel 4 — calendário + agenda do dia (schedule-8)
-// ===========================================================================
-
-function AgendaConteudo({
-  t,
-  idioma,
-}: {
-  t: ReturnType<typeof useIdioma>["t"];
-  idioma: string;
-}) {
-  const dia = useAppStore((s) => s.agendaDia);
-  const setDia = useAppStore((s) => s.setAgendaDia);
-  const mesEventos = useAppStore((s) => s.agendaEventosMes);
-  // Erro de carga separado do "vazio": sem isso, uma falha do Graph
-  // (403 de escopo, rede, etc.) virava um mês "sem eventos" idêntico ao real,
-  // mascarando o problema (#21). `recargaAgenda` re-dispara o fetch no retry.
-  const erroAgenda = useAppStore((s) => s.agendaErro);
-  const recargaAgenda = useAppStore((s) => s.agendaRecarga);
-  const carregarMesAgenda = useAppStore((s) => s.carregarMesAgenda);
-  const recarregarAgenda = useAppStore((s) => s.recarregarAgenda);
-  const coresCat = useAppStore((s) => s.agendaCoresCategoria);
-  const carregarCoresAgenda = useAppStore((s) => s.carregarCoresAgenda);
-  const selecionarEventoAgenda = useAppStore(
-    (s) => s.selecionarEventoAgenda,
-  );
-
-  const chaveDia = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-
-  // Busca o MÊS inteiro (uma chamada) — alimenta os pontos do calendário; a
-  // lista do dia é derivada por filtro.
-  const ano = dia.getFullYear();
-  const mes = dia.getMonth();
-  const { mesIni, mesFim } = useMemo(() => {
-    const ini = new Date(ano, mes, 1, 0, 0, 0, 0);
-    const fim = new Date(ano, mes + 1, 1, 0, 0, 0, 0);
-    return { mesIni: ini.toISOString(), mesFim: fim.toISOString() };
-  }, [ano, mes]);
-
-  useEffect(() => {
-    void carregarMesAgenda(mesIni, mesFim);
-  }, [mesIni, mesFim, recargaAgenda, carregarMesAgenda]);
-
-  // Cores reais das categorias do Outlook (nome -> hex), carregadas uma vez.
-  useEffect(() => {
-    void carregarCoresAgenda();
-  }, [carregarCoresAgenda]);
-
-  const agenda = useMemo(() => {
-    if (!mesEventos) return null;
-    const k = chaveDia(dia);
-    return mesEventos.filter((ev) => {
-      const d = new Date(comZ(ev.inicio));
-      return !Number.isNaN(d.getTime()) && chaveDia(d) === k;
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mesEventos, dia]);
-
-  // Dias que têm compromisso — pra marcar com um pontinho no calendário (o
-  // schedule-8 antigo mostrava; o c-calendar-22 não, e sem isso o usuário não
-  // acha os dias com evento e acha que "não carregou").
-  const diasComEvento = useMemo(() => {
-    const s = new Set<string>();
-    for (const ev of mesEventos ?? []) {
-      const d = new Date(comZ(ev.inicio));
-      if (!Number.isNaN(d.getTime())) s.add(chaveDia(d));
-    }
-    return s;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mesEventos]);
-
-  const rotuloDia = dia.toLocaleDateString(idioma, {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-
-  return (
-    <Card className="flex h-full min-w-0 flex-1 flex-col gap-0 overflow-hidden py-4">
-      {/* O módulo peer ocupa toda a área de conteúdo do Bridge (#204). */}
-      <div className="flex items-center gap-2 px-4 pb-3">
-        <CalendarDays className="size-4 text-muted-foreground" />
-        <span className="text-sm font-semibold">{t.controlRoom.agendaTitulo}</span>
-      </div>
-      <CardContent className="px-4">
-        <Calendar
-          mode="single"
-          selected={dia}
-          month={dia}
-          onMonthChange={setDia}
-          onSelect={(d) => d && setDia(d)}
-          showOutsideDays
-          className="w-full max-w-72 bg-transparent p-0"
-          formatters={{
-            formatWeekdayName: (d) =>
-              d.toLocaleDateString(idioma, { weekday: "short" }).slice(0, 3),
-          }}
-          modifiers={{ evento: (date: Date) => diasComEvento.has(chaveDia(date)) }}
-          modifiersClassNames={{
-            evento:
-              "relative after:pointer-events-none after:absolute after:bottom-1 after:left-1/2 after:size-1 after:-translate-x-1/2 after:rounded-full after:bg-primary",
-          }}
-          required
-        />
-      </CardContent>
-      <CardFooter className="flex min-h-0 flex-1 flex-col items-start gap-3 border-t px-4! pt-3! pb-0!">
-        <div className="flex w-full items-center justify-between px-1">
-          <div className="text-sm font-medium capitalize">{rotuloDia}</div>
-        </div>
-        {/* Eventos do dia — rola por dentro; empty state do dia inalterado. */}
-        <div className="min-h-0 w-full flex-1 overflow-y-auto scrollbar-fina">
-          {erroAgenda ? (
-            <AgendaErro
-              mensagem={erroAgenda}
-              onRetry={recarregarAgenda}
-              t={t}
-            />
-          ) : agenda === null ? (
-            <div className="flex justify-center py-8">
-              <Spinner className="size-5 text-muted-foreground" />
-            </div>
-          ) : agenda.length === 0 ? (
-            <AgendaVazia t={t} />
-          ) : (
-            <div className="flex w-full flex-col gap-2 pb-1">
-              {agenda.map((ev) => {
-                // Barra colorida = cor real da categoria do Outlook (se houver).
-                const cor = ev.categorias?.[0] ? coresCat.get(ev.categorias[0]) : undefined;
-                return (
-                  <button
-                    key={ev.id}
-                    type="button"
-                    onClick={() => void selecionarEventoAgenda(ev.id)}
-                    style={cor ? ({ "--barra": cor } as React.CSSProperties) : undefined}
-                    className={cn(
-                      "relative w-full rounded-md bg-muted p-2 pl-6 text-left text-sm transition-colors hover:bg-muted/70",
-                      "after:absolute after:inset-y-2 after:left-2 after:w-1 after:rounded-full",
-                      cor ? "after:bg-[var(--barra)]" : "after:bg-primary"
-                    )}
-                  >
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate font-medium">{ev.assunto}</span>
-                      {ev.online && <Video className="size-3 shrink-0 text-muted-foreground" />}
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      {ev.diaInteiro
-                        ? t.controlRoom.diaInteiro
-                        : faixaHora(ev.inicio, ev.fim, idioma)}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </CardFooter>
-    </Card>
-  );
-}
-
-// --- modal de detalhe do evento --------------------------------------------
 
 function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const { idioma, t } = useIdioma();
   const id = useAppStore((s) => s.agendaEventoId);
   const det = useAppStore((s) => s.agendaEventoDetalhe);
   const fecharEventoAgenda = useAppStore((s) => s.fecharEventoAgenda);
+  const abrirFormEditar = useAppStore((s) => s.abrirFormEditar);
+  const excluirEvento = useAppStore((s) => s.excluirEvento);
+  const eventosMes = useAppStore((s) => s.agendaEventosMes);
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
+
+  // Abre o formulário de edição com o evento clicado (vindo da lista do mês).
+  const editar = () => {
+    if (!id) return;
+    const ev = eventosMes?.find((e) => e.id === id);
+    if (ev) {
+      abrirFormEditar(ev);
+      fecharEventoAgenda();
+    }
+  };
+
+  // Exclui (otimista no store); fecha o Sheet e toasta o resultado.
+  const excluir = async () => {
+    if (!id) return;
+    fecharEventoAgenda();
+    try {
+      await excluirEvento(id);
+      toast.success(t.controlRoom.agendaExcluido);
+    } catch {
+      toast.error(t.controlRoom.agendaErroExcluir);
+    }
+  };
 
   // Pede as fotos dos participantes quando o detalhe carrega.
   useEffect(() => {
@@ -4891,7 +4756,24 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
                 </>
               )}
             </div>
-            <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
+            <SheetFooter className="flex-row items-center gap-2 border-t px-4 py-3">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={editar}
+                disabled={!eventosMes?.some((e) => e.id === id)}
+              >
+                <Pencil /> {t.controlRoom.agendaEditar}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => void excluir()}
+              >
+                <Trash2 /> {t.controlRoom.agendaExcluir}
+              </Button>
+              <div className="grow" />
               {det.online && det.joinUrl && (
                 <Button onClick={() => api.openUrl(det.joinUrl!)}>
                   <Video /> {t.controlRoom.entrarReuniao}
@@ -6088,7 +5970,7 @@ export function ControlRoomScreen({
             }}
           />
         ) : bridgeView === "agenda" ? (
-          <AgendaConteudo t={t} idioma={idioma} />
+          <AgendaView />
         ) : (
           <ResizablePanelGroup
             autoSaveId="bridge.layout"

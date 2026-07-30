@@ -324,6 +324,44 @@ async fn cr_categorias(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda: cria um evento no calendário do usuário (#211). Calendars.ReadWrite.
+/// Devolve o id do evento criado (o front troca o id otimista pelo real).
+#[tauri::command]
+async fn cr_criar_evento(
+    state: State<'_, Store>,
+    input: graph::EventoInput,
+) -> Result<String, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_criar_evento(&store, input))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Agenda: edita um evento existente (#211). Calendars.ReadWrite.
+#[tauri::command]
+async fn cr_editar_evento(
+    state: State<'_, Store>,
+    id: String,
+    input: graph::EventoInput,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_editar_evento(&store, &id, input))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Agenda: exclui um evento (#211). Calendars.ReadWrite.
+#[tauri::command]
+async fn cr_excluir_evento(
+    state: State<'_, Store>,
+    id: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_evento(&store, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: fotos (avatar) de remetentes internos, em lote. User.Read.All.
 #[tauri::command]
 async fn cr_fotos_contatos(
@@ -1203,6 +1241,9 @@ pub fn run() {
             cr_email_corpo,
             cr_email_seguranca,
             cr_categorias,
+            cr_criar_evento,
+            cr_editar_evento,
+            cr_excluir_evento,
             cr_fotos_contatos,
             cr_pessoas,
             cr_people_list,

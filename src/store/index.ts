@@ -46,7 +46,11 @@ import {
 } from "./reader-slice";
 import {
   createAgendaSlice,
+  AGENDA_KEYS,
+  AGENDA_VIEWS,
+  type AgendaPersistido,
   type AgendaSlice,
+  type AgendaViewTipo,
 } from "./agenda-slice";
 import {
   createComposeSlice,
@@ -127,7 +131,8 @@ type AppPersistido = UiPersistido &
   MailboxPersistido &
   SettingsUiPersistido &
   PersonalizationPersistido &
-  BridgePersistido;
+  BridgePersistido &
+  AgendaPersistido;
 
 // --- storage custom: mapeia o blob persistido pras chaves reais 1:1 -----------
 
@@ -211,6 +216,7 @@ const TODAS_CHAVES = [
   ...Object.values(SETTINGS_UI_KEYS),
   ...Object.values(PERSONALIZATION_KEYS),
   ...Object.values(BRIDGE_KEYS),
+  ...Object.values(AGENDA_KEYS),
   // Chave legada da assinatura única (pré-#135): limpa no reset junto do resto.
   "bridge.assinatura",
 ];
@@ -336,6 +342,12 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (undoDelay !== undefined) {
       state.undoSendDelayMs = normalizarUndoSendDelay(undoDelay);
     }
+    // Agenda (#211): preferência de view (mês/semana/dia/agenda).
+    const agendaView = lerTexto<AgendaViewTipo>(
+      AGENDA_KEYS.agendaView,
+      AGENDA_VIEWS
+    );
+    if (agendaView !== undefined) state.agendaView = agendaView;
     return { state: state as AppPersistido, version: 0 };
   },
   setItem: (_name, value: StorageValue<AppPersistido>): void => {
@@ -368,6 +380,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(BRIDGE_KEYS.assinaturaPadraoId, s.assinaturaPadraoId);
     gravarChave(BRIDGE_KEYS.templates, s.templates);
     gravarChave(BRIDGE_KEYS.undoSendDelay, s.undoSendDelayMs);
+    gravarTexto(AGENDA_KEYS.agendaView, s.agendaView);
   },
   removeItem: (): void => {
     for (const chave of TODAS_CHAVES) {
@@ -434,6 +447,7 @@ export const useAppStore = create<AppStore>()(
         assinaturaPadraoId: s.assinaturaPadraoId,
         templates: s.templates,
         undoSendDelayMs: s.undoSendDelayMs,
+        agendaView: s.agendaView,
       }),
     }
   )

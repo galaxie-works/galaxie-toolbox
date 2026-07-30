@@ -118,6 +118,23 @@ export interface CategoriaCor {
   cor: string;
 }
 
+/**
+ * Dados de escrita de um evento (criar/editar) — #211. `inicio`/`fim` são
+ * hora-de-parede local (ISO sem Z, ex. "2026-07-30T09:00:00"); `timeZone` é o
+ * IANA local. Assim o Graph interpreta o horário no fuso certo tanto para
+ * eventos com hora quanto para dia inteiro (que exige meia-noite no fuso).
+ */
+export interface EventoInput {
+  assunto: string;
+  inicio: string; // hora local, sem Z
+  fim: string; // hora local, sem Z
+  diaInteiro: boolean;
+  local: string;
+  corpo: string;
+  categorias: string[];
+  timeZone: string; // IANA (ex. "America/Sao_Paulo")
+}
+
 export interface EventoDetalhe {
   assunto: string;
   inicio: string;

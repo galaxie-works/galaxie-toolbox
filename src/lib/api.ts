@@ -6,6 +6,7 @@ import type {
   EmailItem,
   EventoAgenda,
   EventoDetalhe,
+  EventoInput,
   Identidade,
   InsightsRemetente,
   PastaEmail,
@@ -402,6 +403,33 @@ export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
     };
   }
   return invoke<EventoDetalhe>("cr_evento_corpo", { id });
+}
+
+/** Cria um evento no calendário (#211). Devolve o id do evento criado. */
+export async function crCriarEvento(input: EventoInput): Promise<string> {
+  if (!inTauri()) {
+    await sleep(300);
+    return `mock-${Date.now()}`;
+  }
+  return invoke<string>("cr_criar_evento", { input });
+}
+
+/** Edita um evento existente (#211). */
+export async function crEditarEvento(id: string, input: EventoInput): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  await invoke("cr_editar_evento", { id, input });
+}
+
+/** Exclui um evento (#211). */
+export async function crExcluirEvento(id: string): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  await invoke("cr_excluir_evento", { id });
 }
 
 export async function crInboxDia(inicio: string, fim: string): Promise<EmailItem[]> {
