@@ -2473,15 +2473,6 @@ export function PeopleView({
       ref={detailContainerRef}
       className="@container/people flex min-h-0 min-w-0 flex-1 flex-col gap-3"
     >
-      <div className="shrink-0">
-        <h2 className="text-lg font-semibold">{t.controlRoom.peopleTitulo}</h2>
-        <p className="text-sm text-muted-foreground">
-          {peopleTab === "contacts"
-            ? t.controlRoom.peopleDescricao
-            : t.controlRoom.orgsDescricao}
-        </p>
-      </div>
-
       {peopleTab === "organizations" ? (
         <OrganizationsView contacts={contacts} navigation={peopleNavigation} />
       ) : (
