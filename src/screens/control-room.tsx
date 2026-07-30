@@ -1,4 +1,5 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { BridgeHeaderIcon } from "@/components/ui/icons/marca-anim";
 import { Badge } from "@/components/reui/badge";
 import {
   Filters,
@@ -2759,6 +2760,15 @@ function MessageList({
     [linhas]
   );
 
+  // #230: a coluna do expander de conversa (`size-6`) só faz sentido quando a
+  // lista TEM conversas encadeadas. Reservá-la em toda linha (mesmo em pastas
+  // sem threads) criava uma faixa vazia à esquerda que comia largura útil. Só
+  // reservamos quando há ao menos uma thread — aí o alinhamento se mantém.
+  const haThreads = useMemo(
+    () => linhas.some((linha) => linha.tipo === "thread"),
+    [linhas]
+  );
+
   const filtrando = busca.trim() !== "" || filtros.length > 0;
   // Busca/filtro só enxergam os carregados; se não achou nada e há mais páginas,
   // carrega a próxima (progressivo) até aparecer resultado ou acabar.
@@ -3599,7 +3609,7 @@ function MessageList({
                           Collapsible abre/fecha as linhas anteriores sem
                           desmontar conteúdo dentro da linha (mesma adaptação
                           do c-collapsible-6 usada nos headers de período). */}
-                      {agruparConversas &&
+                      {haThreads &&
                         (thread ? (() => {
                           // Nome e tooltip do expander comunicam o ESTADO
                           // (expandir vs recolher) e a CONTAGEM de mensagens,
@@ -3645,23 +3655,6 @@ function MessageList({
                           />
                         ))}
 
-                      {/* checkbox — aparece no hover ou quando marcado */}
-                      <label
-                        className={cn(
-                          "flex items-center self-start pt-1.5 transition-opacity",
-                          !marcado && !haSelecao && "opacity-0 group-hover/row:opacity-100"
-                        )}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={marcado}
-                          onChange={() => alternarSelecionado(m.id)}
-                          className="size-3.5 accent-primary"
-                          aria-label={m.assunto}
-                        />
-                      </label>
-
                       <ItemMedia className="relative self-start">
                         <Avatar>
                           {foto && <AvatarImage src={foto} alt="" />}
@@ -3670,6 +3663,28 @@ function MessageList({
                         {!m.lido && (
                           <span className="absolute -top-0.5 -left-0.5 size-2.5 rounded-full bg-primary ring-2 ring-background" />
                         )}
+                        {/* #230: o checkbox de seleção sobrepõe o avatar (padrão
+                            Outlook/Gmail) em vez de ocupar uma coluna própria à
+                            esquerda — que gerava a faixa vazia. Aparece no hover
+                            da linha ou quando há seleção; a seleção/atalhos não
+                            mudam (só o `onChange` continua disparando). */}
+                        <label
+                          className={cn(
+                            "absolute inset-0 grid cursor-pointer place-items-center rounded-full bg-background/85 transition-opacity",
+                            marcado || haSelecao
+                              ? "opacity-100"
+                              : "opacity-0 group-hover/row:opacity-100"
+                          )}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={marcado}
+                            onChange={() => alternarSelecionado(m.id)}
+                            className="size-4 accent-primary"
+                            aria-label={m.assunto}
+                          />
+                        </label>
                       </ItemMedia>
                       <ItemContent className="min-w-0 gap-0.5">
                         <div className="flex items-center gap-2">
@@ -4974,8 +4989,6 @@ export function ControlRoomScreen({
     ];
   };
 
-  const primeiroNome = user.displayName.split(" ")[0];
-
   // pastas (recarrega as contagens junto com as ações e no refresh manual)
   useEffect(() => {
     let vivo = true;
@@ -5883,19 +5896,32 @@ export function ControlRoomScreen({
   // "New mail" — abre o nosso composer em modal.
   const novoEmailModal = () => abrirCompose("novo", caixaAtiva);
 
+  // #231: o header do conteúdo reflete o MÓDULO ativo (fonte da verdade =
+  // `bridgeView` no store), não mais uma saudação genérica. Título + subtítulo
+  // por módulo (i18n pt/en); nada de estado local.
+  const tituloModulo =
+    bridgeView === "people"
+      ? t.controlRoom.peopleTitulo
+      : bridgeView === "agenda"
+        ? t.controlRoom.agendaTitulo
+        : t.controlRoom.mailboxTitulo;
+  const subtituloModulo =
+    bridgeView === "people"
+      ? t.controlRoom.peopleSubtitulo
+      : bridgeView === "agenda"
+        ? t.controlRoom.agendaSubtitulo
+        : t.controlRoom.mailboxSubtitulo;
+
   return (
     <div className="flex h-full flex-col gap-4">
-      {/* Cabeçalho */}
+      {/* Cabeçalho — ícone animado do Bridge + título do módulo ativo (#231). */}
       <div className="flex shrink-0 items-center gap-3">
-        <Avatar className="size-11">
-          {user.photo && <AvatarImage src={user.photo} alt="" />}
-          <AvatarFallback>{user.initials}</AvatarFallback>
-        </Avatar>
+        <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+          <BridgeHeaderIcon className="size-6" />
+        </span>
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">
-            {preencher(t.controlRoom.saudacao, { nome: primeiroNome })}
-          </h1>
-          <p className="text-sm text-muted-foreground">{t.controlRoom.subtitulo}</p>
+          <h1 className="text-xl font-semibold tracking-tight">{tituloModulo}</h1>
+          <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
         </div>
       </div>
 
