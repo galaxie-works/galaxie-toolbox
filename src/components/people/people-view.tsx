@@ -274,7 +274,7 @@ function PeopleEmpty({
 }) {
   const { t } = useIdioma();
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
+    <div className="flex h-full min-h-56 w-full flex-col items-center justify-center px-6 text-center">
       <IconStack className="mb-2">
         {search || filtered ? <SearchX className="size-5" /> : <Users className="size-5" />}
       </IconStack>
@@ -298,7 +298,7 @@ function PeopleEmpty({
 function PeoplePermissionEmpty() {
   const { t } = useIdioma();
   return (
-    <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
+    <div className="flex h-full min-h-56 w-full flex-col items-center justify-center px-6 text-center">
       <IconTile className="mb-3" variant="frame" size="lg">
         <KeyRound />
       </IconTile>
@@ -2092,10 +2092,7 @@ export function PeopleView({
             value: "people",
             label: t.controlRoom.peopleFilterSourcePeople,
           },
-          {
-            value: "directory",
-            label: t.controlRoom.peopleFilterSourceDirectory,
-          },
+          // #256 recoloca Directory quando /users for uma fonte real da lista.
         ],
       },
     ];
@@ -2669,7 +2666,20 @@ export function PeopleView({
                 </FramePanel>
               )}
               <FramePanel className="min-h-0 p-0">
-                {view === "table" ? (
+                {filtered.length === 0 && !(loading && !loaded) ? (
+                  missingScopes.length > 0 ? (
+                    <PeoplePermissionEmpty />
+                  ) : (
+                    <PeopleEmpty
+                      search={Boolean(normalizedQuery)}
+                      filtered={filters.length > 0}
+                      onClear={() => {
+                        setPeopleSearchQuery("");
+                        setFilters([]);
+                      }}
+                    />
+                  )
+                ) : view === "table" || (loading && !loaded) ? (
                   <DataGrid
                     table={table}
                     recordCount={filtered.length}
@@ -2745,7 +2755,7 @@ export function PeopleView({
                       </DataGridContainer>
                     </div>
                   </DataGrid>
-                ) : filtered.length > 0 ? (
+                ) : (
                   <div className="h-full overflow-auto p-3">
                     <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
                       {filtered.map((contact) => (
@@ -2788,17 +2798,6 @@ export function PeopleView({
                       </div>
                     )}
                   </div>
-                ) : missingScopes.length > 0 ? (
-                  <PeoplePermissionEmpty />
-                ) : (
-                  <PeopleEmpty
-                    search={Boolean(normalizedQuery)}
-                    filtered={filters.length > 0}
-                    onClear={() => {
-                      setPeopleSearchQuery("");
-                      setFilters([]);
-                    }}
-                  />
                 )}
               </FramePanel>
             </Frame>
