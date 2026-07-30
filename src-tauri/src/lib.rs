@@ -153,6 +153,31 @@ async fn current_account(state: State<'_, Store>) -> Result<Option<Account>, Str
     Ok(guard.as_ref().map(|t| t.account.clone()))
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RequiredScopesStatus {
+    missing_scopes: Vec<String>,
+}
+
+/// Compara o token atual com o pedido mínimo compilado nesta versão.
+///
+/// A detecção é proativa e não interpreta qualquer 403 como falta de escopo:
+/// um usuário sem acesso a um objeto isolado não recebe um falso pedido de
+/// reautenticação.
+#[tauri::command]
+async fn required_scopes_status(state: State<'_, Store>) -> Result<RequiredScopesStatus, String> {
+    let store = state.inner().clone();
+    let guard = store
+        .inner
+        .lock()
+        .map_err(|_| "estado de token corrompido".to_string())?;
+    let missing_scopes = guard
+        .as_ref()
+        .map(|tokens| auth::required_resource_scopes_missing(&tokens.scopes))
+        .unwrap_or_default();
+    Ok(RequiredScopesStatus { missing_scopes })
+}
+
 /// Sites do tenant que o usuario acessa, com status de conexao.
 #[tauri::command]
 async fn list_sites(state: State<'_, Store>) -> Result<Vec<graph::SiteDto>, String> {
@@ -1219,6 +1244,7 @@ pub fn run() {
             login,
             logout,
             current_account,
+            required_scopes_status,
             restore_session,
             detect_tenant,
             cached_identity,

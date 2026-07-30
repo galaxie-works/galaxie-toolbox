@@ -123,6 +123,25 @@ export async function currentAccount(): Promise<AppUser | null> {
   return invoke<AppUser | null>("current_account");
 }
 
+export interface RequiredScopesStatus {
+  missingScopes: string[];
+}
+
+/** Escopos Graph pedidos pela versão atual mas ausentes no token da sessão. */
+export async function requiredScopesStatus(): Promise<RequiredScopesStatus> {
+  if (!inTauri()) {
+    const raw = new URLSearchParams(window.location.search).get(
+      "mockMissingScopes",
+    );
+    return {
+      missingScopes: raw
+        ? raw.split(",").map((scope) => scope.trim()).filter(Boolean)
+        : [],
+    };
+  }
+  return invoke<RequiredScopesStatus>("required_scopes_status");
+}
+
 /** Identidade em cache (foto/iniciais) - instantanea, sem rede. */
 export async function cachedIdentity(): Promise<Identidade | null> {
   if (!inTauri()) return null;
