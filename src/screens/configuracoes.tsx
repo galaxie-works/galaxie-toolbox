@@ -35,9 +35,11 @@ import {
 } from "@/components/theme-settings";
 import {
   ConversationViewPanel,
+  ReadingPreferencesPanel,
   SignaturesPanel,
   EmailTemplatesPanel,
   UndoSendPanel,
+  SyncPreferencesPanel,
 } from "@/components/bridge-settings";
 import {
   Empty,
@@ -197,32 +199,40 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             icon: BridgeIcon,
             frames: [
               {
-                key: "conversation-view",
-                title: "Conversation view",
+                key: "reading",
+                title: "Reading",
                 subtitle:
-                  "Choose whether Bridge groups related messages into threads.",
-                node: <ConversationViewPanel />,
-              },
-              {
-                key: "signature-templates",
-                title: "Signature & Templates",
-                subtitle:
-                  "Manage your Bridge signatures and reusable email templates.",
-                // Frame with stacked cards (c-frame-3 dentro do c-frame-5): dois
-                // FramePanels empilhados num frame só (igual ao Appearance).
+                  "Choose how Bridge groups messages into threads and when it marks them as read.",
+                // Frame with stacked cards (c-frame-3 dentro do c-frame-5): os
+                // controles de leitura empilhados num frame só (igual ao
+                // Appearance). O "Mark as read" (#227) migrou da toolbar do leitor.
                 node: (
                   <>
-                    <SignaturesPanel />
-                    <EmailTemplatesPanel />
+                    <ConversationViewPanel />
+                    <ReadingPreferencesPanel />
                   </>
                 ),
               },
               {
-                key: "undo-send",
+                key: "sending",
                 title: "Sending",
                 subtitle:
-                  "Set how long Bridge waits before a sent email leaves, so you can undo it.",
-                node: <UndoSendPanel />,
+                  "Manage signatures, templates and how long Bridge waits before a sent email leaves.",
+                // Signature & Templates + Undo send, empilhados num frame só.
+                node: (
+                  <>
+                    <SignaturesPanel />
+                    <EmailTemplatesPanel />
+                    <UndoSendPanel />
+                  </>
+                ),
+              },
+              {
+                key: "sync",
+                title: "Sync",
+                subtitle:
+                  "Choose how often Bridge checks for new messages in the background.",
+                node: <SyncPreferencesPanel />,
               },
             ],
           },

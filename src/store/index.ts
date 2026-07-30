@@ -32,6 +32,7 @@ import {
   createBridgeSlice,
   BRIDGE_KEYS,
   normalizarUndoSendDelay,
+  normalizarSyncInterval,
   type Assinatura,
   type BridgePersistido,
   type BridgeSlice,
@@ -347,6 +348,12 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (undoDelay !== undefined) {
       state.undoSendDelayMs = normalizarUndoSendDelay(undoDelay);
     }
+    // Intervalo de sincronização (#227): normaliza pro conjunto permitido; ausente
+    // ou inválido → o merge do Zustand mantém o padrão (15 min) do slice.
+    const syncInterval = lerChave<number>(BRIDGE_KEYS.syncInterval);
+    if (syncInterval !== undefined) {
+      state.syncIntervalMinutes = normalizarSyncInterval(syncInterval);
+    }
     // Agenda (#211): preferência de view (mês/semana/dia/agenda).
     const agendaView = lerTexto<AgendaViewTipo>(
       AGENDA_KEYS.agendaView,
@@ -393,6 +400,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(BRIDGE_KEYS.assinaturaPadraoId, s.assinaturaPadraoId);
     gravarChave(BRIDGE_KEYS.templates, s.templates);
     gravarChave(BRIDGE_KEYS.undoSendDelay, s.undoSendDelayMs);
+    gravarChave(BRIDGE_KEYS.syncInterval, s.syncIntervalMinutes);
     gravarTexto(AGENDA_KEYS.agendaView, s.agendaView);
     gravarChave(
       AGENDA_KEYS.agendaCalendariosSel,
@@ -466,6 +474,7 @@ export const useAppStore = create<AppStore>()(
         assinaturaPadraoId: s.assinaturaPadraoId,
         templates: s.templates,
         undoSendDelayMs: s.undoSendDelayMs,
+        syncIntervalMinutes: s.syncIntervalMinutes,
         agendaView: s.agendaView,
         agendaCalendariosSelecionados: s.agendaCalendariosSelecionados,
       }),

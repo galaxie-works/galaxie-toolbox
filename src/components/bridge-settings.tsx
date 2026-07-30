@@ -91,8 +91,12 @@ import { BulletedListToolbarButton } from "@/components/ui/list-toolbar-button";
 import { LinkToolbarButton } from "@/components/ui/link-toolbar-button";
 import { COMPOSE_KIT } from "@/components/compose/compose-kit";
 import { useAppStore } from "@/store";
-import { UNDO_SEND_DELAYS_MS } from "@/store/bridge-slice";
+import {
+  UNDO_SEND_DELAYS_MS,
+  SYNC_INTERVALS_MINUTES,
+} from "@/store/bridge-slice";
 import type { Assinatura } from "@/store/bridge-slice";
+import type { MarcarLidoModo } from "@/store/ui-slice";
 import type { TemplateEmail } from "@/lib/templates";
 
 /** Largura ~33% da Sheet (padrão dos painéis laterais da Settings do #135). */
@@ -893,6 +897,127 @@ export function UndoSendPanel() {
               {UNDO_SEND_DELAYS_MS.map((ms) => (
                 <SelectItem key={ms} value={String(ms)}>
                   {UNDO_SEND_LABELS[ms]}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+    </FramePanel>
+  );
+}
+
+// ===========================================================================
+// Card — Mark as read (#227, migrado da toolbar do leitor)
+// ===========================================================================
+
+/** Atrasos (s) do modo "atraso" do marcar-lido — mesma escala do leitor (#95). */
+const MARCAR_LIDO_ATRASOS = [2, 5, 10] as const;
+
+/**
+ * Preferência de leitura "marcar como lido" (#227). Antes vivia num dropdown
+ * solto na toolbar da lista do control-room; migrada pra Settings > Bridge >
+ * Reading. Lê/escreve o MESMO estado do store (`marcarLidoModo`/`marcarLidoAtraso`),
+ * então o comportamento e os defaults ("imediato"/"Ao abrir") não mudam.
+ *
+ * Mesmo encoding do dropdown antigo: o modo "atraso" vira `atraso:<s>` no Select
+ * pra unir modo + atraso num controle único (sem UI condicional).
+ */
+export function ReadingPreferencesPanel() {
+  const marcarLidoModo = useAppStore((s) => s.marcarLidoModo);
+  const setMarcarLidoModo = useAppStore((s) => s.setMarcarLidoModo);
+  const marcarLidoAtraso = useAppStore((s) => s.marcarLidoAtraso);
+  const setMarcarLidoAtraso = useAppStore((s) => s.setMarcarLidoAtraso);
+
+  const valor =
+    marcarLidoModo === "atraso" ? `atraso:${marcarLidoAtraso}` : marcarLidoModo;
+
+  function aoMudar(v: string) {
+    if (v.startsWith("atraso:")) {
+      setMarcarLidoAtraso(Number(v.slice("atraso:".length)));
+      setMarcarLidoModo("atraso");
+    } else {
+      setMarcarLidoModo(v as MarcarLidoModo);
+    }
+  }
+
+  return (
+    <FramePanel>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Mark as read</h3>
+          <p className="text-sm text-muted-foreground">
+            Choose when an open message is marked as read.
+          </p>
+        </div>
+        <Select value={valor} onValueChange={aoMudar}>
+          <SelectTrigger aria-label="Mark as read" className="w-56 shrink-0">
+            <SelectValue placeholder="Select an option" />
+          </SelectTrigger>
+          <SelectContent position="popper" align="end">
+            <SelectGroup>
+              <SelectItem value="imediato">When opened</SelectItem>
+              {MARCAR_LIDO_ATRASOS.map((s) => (
+                <SelectItem key={s} value={`atraso:${s}`}>
+                  {`After ${s} seconds`}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+            <SelectSeparator />
+            <SelectItem value="manual">Manually only</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+    </FramePanel>
+  );
+}
+
+// ===========================================================================
+// Card — Sync interval (#227, NOVO)
+// ===========================================================================
+
+/** Rótulos das opções do intervalo de sincronização (minutos). */
+const SYNC_INTERVAL_LABELS: Record<number, string> = {
+  5: "Every 5 minutes",
+  15: "Every 15 minutes",
+  30: "Every 30 minutes",
+  60: "Every hour",
+};
+
+/**
+ * Preferência de sincronização (#227, NOVO): de quanto em quanto tempo o Bridge
+ * busca mensagens novas na Inbox. Antes fixo em 15 min no control-room; agora o
+ * usuário escolhe 5/15/30/60 min e o poll respeita o valor. Persistido no store
+ * (`bridge.syncInterval`); padrão 15 min mantém o comportamento histórico.
+ */
+export function SyncPreferencesPanel() {
+  const syncIntervalMinutes = useAppStore((s) => s.syncIntervalMinutes);
+  const setSyncInterval = useAppStore((s) => s.setSyncInterval);
+
+  return (
+    <FramePanel>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Check for new messages</h3>
+          <p className="text-sm text-muted-foreground">
+            How often Bridge looks for new messages in the background.
+          </p>
+        </div>
+        <Select
+          value={String(syncIntervalMinutes)}
+          onValueChange={(valor) => setSyncInterval(Number(valor))}
+        >
+          <SelectTrigger
+            aria-label="Check for new messages"
+            className="w-56 shrink-0"
+          >
+            <SelectValue placeholder="Select an interval" />
+          </SelectTrigger>
+          <SelectContent position="popper" align="end">
+            <SelectGroup>
+              {SYNC_INTERVALS_MINUTES.map((min) => (
+                <SelectItem key={min} value={String(min)}>
+                  {SYNC_INTERVAL_LABELS[min]}
                 </SelectItem>
               ))}
             </SelectGroup>
