@@ -17,6 +17,7 @@ import type {
   EventoAgenda,
   EventoDetalhe,
   EventoInput,
+  Participante,
 } from "../lib/types.ts";
 import type { AppStore } from "./index";
 
@@ -82,6 +83,15 @@ export interface AgendaSlice {
   agendaFormModo: "criar" | "editar";
   agendaFormEvento: EventoAgenda | null;
   agendaFormInicio: string | null; // preset ao criar clicando num dia/slot
+  // Convidados COMPLETOS do evento em edição (#240). O resumo do mês
+  // (`agendaFormEvento.participantes`) trunca em 5 e o PATCH substitui a coleção
+  // de attendees; então, ao abrir o Sheet de edição, buscamos os attendees
+  // completos (`carregarEvento`/cr_evento_corpo) e o form popula a partir daqui.
+  // `null` = criar / ainda sem seed. `agendaFormConvidadosCarregando` bloqueia o
+  // salvar até a lista completa chegar (senão o save perderia convidados >5).
+  agendaFormConvidados: Participante[] | null;
+  agendaFormConvidadosCarregando: boolean;
+  agendaFormGeracao: number;
 
   setAgendaDia: (dia: Date) => void;
   setAgendaView: (view: AgendaViewTipo) => void;
@@ -99,6 +109,7 @@ export interface AgendaSlice {
   fecharEventoAgenda: () => void;
 
   abrirFormCriar: (inicio?: string) => void;
+  // Abre o form de edição e dispara a busca dos attendees COMPLETOS (#240).
   abrirFormEditar: (ev: EventoAgenda) => void;
   fecharForm: () => void;
   // Escrita otimista + rollback (#211): a UI mostra o toast se a promise rejeitar.
@@ -189,6 +200,9 @@ export function criarAgendaSlice(
     agendaFormModo: "criar",
     agendaFormEvento: null,
     agendaFormInicio: null,
+    agendaFormConvidados: null,
+    agendaFormConvidadosCarregando: false,
+    agendaFormGeracao: 0,
 
     setAgendaDia: (dia) => set({ agendaDia: dia }),
 
@@ -325,20 +339,58 @@ export function criarAgendaSlice(
       })),
 
     abrirFormCriar: (inicio) =>
-      set({
+      set((s) => ({
         agendaFormAberto: true,
         agendaFormModo: "criar",
         agendaFormEvento: null,
         agendaFormInicio: inicio ?? null,
-      }),
+        // Criar não tem attendees pré-existentes; invalida qualquer busca de
+        // edição ainda em voo (#240).
+        agendaFormConvidados: null,
+        agendaFormConvidadosCarregando: false,
+        agendaFormGeracao: s.agendaFormGeracao + 1,
+      })),
 
-    abrirFormEditar: (ev) =>
+    // Ao editar, buscamos os attendees COMPLETOS antes de o form montar o PATCH
+    // (#240): `ev.participantes` vem do resumo do mês truncado em 5, e o PATCH
+    // /me/events/{id} substitui a coleção — sem a lista completa, editar um
+    // evento com >5 convidados perderia os demais. Fazemos um seed imediato com
+    // o que temos (até 5) e substituímos pela lista completa do detalhe
+    // (cr_evento_corpo, mesmo caminho do #34) assim que ela chega; o salvar fica
+    // bloqueado enquanto carrega. Guardado por geração (mesma técnica do #211).
+    abrirFormEditar: (ev) => {
+      const geracao = get().agendaFormGeracao + 1;
       set({
         agendaFormAberto: true,
         agendaFormModo: "editar",
         agendaFormEvento: ev,
         agendaFormInicio: null,
-      }),
+        agendaFormConvidados: ev.participantes,
+        agendaFormConvidadosCarregando: true,
+        agendaFormGeracao: geracao,
+      });
+      void (async () => {
+        try {
+          const detalhe = await api.carregarEvento(ev.id);
+          const atual = get();
+          if (
+            atual.agendaFormGeracao === geracao &&
+            atual.agendaFormEvento?.id === ev.id
+          ) {
+            set({
+              agendaFormConvidados: detalhe.participantes,
+              agendaFormConvidadosCarregando: false,
+            });
+          }
+        } catch {
+          // Detalhe é o mesmo GET do #34; se falhar, libera o salvar com o seed
+          // truncado (não travar a edição) — best-effort como o resto (#211).
+          if (get().agendaFormGeracao === geracao) {
+            set({ agendaFormConvidadosCarregando: false });
+          }
+        }
+      })();
+    },
 
     fecharForm: () => set({ agendaFormAberto: false }),
 
