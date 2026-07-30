@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ArrowLeft,
   Building2,
@@ -40,6 +46,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { IconStack } from "@/components/reui/icon-stack";
+import {
+  Frame,
+  FrameHeader,
+  FramePanel,
+} from "@/components/reui/frame";
 import { Toolbar, ToolbarButton } from "@/components/ui/toolbar";
 import { preencher, useIdioma } from "@/lib/idioma";
 import {
@@ -327,7 +338,13 @@ function AssignContactsDialog({
   );
 }
 
-export function OrganizationsView({ contacts }: { contacts: PeopleContact[] }) {
+export function OrganizationsView({
+  contacts,
+  navigation,
+}: {
+  contacts: PeopleContact[];
+  navigation: ReactNode;
+}) {
   const { t } = useIdioma();
   const organizations = useAppStore((state) => state.organizations);
   const selectedId = useAppStore((state) => state.organizationSelectedId);
@@ -369,8 +386,34 @@ export function OrganizationsView({ contacts }: { contacts: PeopleContact[] }) {
   const detailMin = width ? Math.min(64, (420 / width) * 100) : 40;
 
   const listPane = (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border bg-card">
-      <ScrollArea className="min-h-0 flex-1">
+    <Frame
+      className="h-full min-h-0 overflow-hidden"
+      stacked
+      dense
+    >
+      <FrameHeader className="shrink-0">{navigation}</FrameHeader>
+      <FramePanel
+        fit
+        className="flex min-h-11 shrink-0 items-center justify-between gap-2 px-2 py-1.5"
+      >
+        <Toolbar aria-label={t.controlRoom.peopleOrganizationsTab}>
+          <Button
+            size="sm"
+            onClick={() => {
+              setEditing(null);
+              setEditorOpen(true);
+            }}
+          >
+            <Plus />
+            {t.controlRoom.orgsNova}
+          </Button>
+        </Toolbar>
+        <span className="text-xs text-muted-foreground">
+          {filtered.length}
+        </span>
+      </FramePanel>
+      <FramePanel className="min-h-0 p-0">
+        <ScrollArea className="h-full min-h-0">
         {filtered.length === 0 ? (
           <div className="flex h-full min-h-72 flex-col items-center justify-center gap-3 p-6 text-center">
             <IconStack>
@@ -420,8 +463,9 @@ export function OrganizationsView({ contacts }: { contacts: PeopleContact[] }) {
             })}
           </div>
         )}
-      </ScrollArea>
-    </div>
+        </ScrollArea>
+      </FramePanel>
+    </Frame>
   );
 
   const detailPane = selected ? (
@@ -584,17 +628,6 @@ export function OrganizationsView({ contacts }: { contacts: PeopleContact[] }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="flex shrink-0 justify-end">
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setEditorOpen(true);
-          }}
-        >
-          <Plus />
-          {t.controlRoom.orgsNova}
-        </Button>
-      </div>
       <div ref={containerRef} className="@container/organizations flex min-h-0 flex-1">
         {!wide ? (
           <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
