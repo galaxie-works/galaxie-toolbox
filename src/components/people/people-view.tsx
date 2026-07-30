@@ -2135,15 +2135,17 @@ export function PeopleView({
                       width: "fixed",
                     }}
                   >
-                    <DataGridContainer className="h-full overflow-auto">
-                      <DataGridTableVirtual
-                        onFetchMore={() => void loadMorePeople()}
-                        isFetchingMore={fetchingMore}
-                        hasMore={nextLinks.length > 0}
-                        fetchMoreOffset={8}
-                        estimateSize={48}
-                        overscan={8}
-                      />
+                    <DataGridContainer className="h-full">
+                      <ScrollArea className="h-full">
+                        <DataGridTableVirtual
+                          onFetchMore={() => void loadMorePeople()}
+                          isFetchingMore={fetchingMore}
+                          hasMore={nextLinks.length > 0}
+                          fetchMoreOffset={8}
+                          estimateSize={48}
+                          overscan={8}
+                        />
+                      </ScrollArea>
                     </DataGridContainer>
                   </DataGrid>
                 ) : filtered.length > 0 ? (
