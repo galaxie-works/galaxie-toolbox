@@ -86,7 +86,6 @@ import {
 } from "@/components/reui/timeline";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Command,
   CommandEmpty,
@@ -137,10 +136,7 @@ import { OrganizationsView } from "@/components/people/organizations-view";
 import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
 import { useIdioma, preencher } from "@/lib/idioma";
-import {
-  peopleEnrichFieldIdentity,
-  type PeopleContact,
-} from "@/lib/people";
+import { type PeopleContact } from "@/lib/people";
 import {
   contactDomain,
   normalizeDomain,
@@ -151,9 +147,6 @@ import {
 } from "@/lib/organizations";
 import type {
   PeopleContactEdit,
-  PeopleEnrichField,
-  PeopleEnrichFieldKey,
-  PeopleEnrichPreview,
   PeopleEnrichSource,
   PeopleInteraction,
 } from "@/lib/types";
@@ -333,22 +326,21 @@ function PeopleDetailSkeleton() {
 function PeopleDetail({
   contact,
   photo,
+  userEmail,
   onBack,
   onCompose,
   onReauthenticate,
-  autoEnrich,
   stacked = false,
 }: {
   contact: PeopleContact;
   photo: string | null;
+  userEmail: string;
   onBack: () => void;
   onCompose: (email: string) => void;
   onReauthenticate: () => void;
-  autoEnrich?: boolean;
   stacked?: boolean;
 }) {
   const { idioma, t } = useIdioma();
-  const applyPeopleFields = useAppStore((state) => state.applyPeopleFields);
   const autoEnrichDirectoryContact = useAppStore(
     (state) => state.autoEnrichDirectoryContact,
   );
@@ -360,18 +352,16 @@ function PeopleDetail({
     (state) => state.addContactToOrganization,
   );
   const primaryEmail = contact.emails[0]?.address;
+  const userDomain = normalizeDomain(userEmail.split("@").at(-1) ?? "");
+  const sameOrganization =
+    contact.organization ||
+    Boolean(userDomain && contactDomain(contact) === userDomain);
   const resolvedOrganization = resolveOrganization(
     organizations,
     contactDomain(contact),
   );
   const organizationLabel = resolvedOrganization?.name ?? null;
-  const [enriching, setEnriching] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [preview, setPreview] = useState<PeopleEnrichPreview | null>(null);
-  const [selectedFields, setSelectedFields] = useState<Set<number>>(new Set());
   const [enrichError, setEnrichError] = useState<string | null>(null);
-  const [sessionOnlyApplied, setSessionOnlyApplied] = useState(false);
-  const [sessionOnlyFields, setSessionOnlyFields] = useState<PeopleEnrichField[]>([]);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [writeAvailable, setWriteAvailable] = useState<boolean | null>(null);
@@ -385,24 +375,23 @@ function PeopleDetail({
   const [interactions, setInteractions] = useState<PeopleInteraction[]>([]);
   const [interactionsLoading, setInteractionsLoading] = useState(Boolean(primaryEmail));
   const [interactionsError, setInteractionsError] = useState(false);
-  const directoryUser = !contact.contactId && contact.organization;
-  const sparse = !contact.jobTitle || !contact.company || contact.phones.length === 0;
-  const editUnavailableReason = !contact.contactId
-    ? directoryUser
-      ? "directory"
-      : "unsaved"
-    : writeAvailable === false
-      ? "permission"
-      : null;
-  const editLocked = !contact.contactId || writeAvailable !== true;
+  const editUnavailableReason = sameOrganization
+    ? "directory"
+    : !contact.contactId
+      ? "unsaved"
+      : writeAvailable === false
+        ? "permission"
+        : null;
+  const editLocked =
+    sameOrganization || !contact.contactId || writeAvailable !== true;
   const editUnavailableDescription =
     editUnavailableReason === "directory"
       ? t.controlRoom.peopleEditDirectoryTooltip
       : editUnavailableReason === "unsaved"
         ? t.controlRoom.peopleEditDirectoryDesc
-      : editUnavailableReason === "permission"
-        ? t.reauth.descricao
-        : t.controlRoom.peopleEditUnavailable;
+        : editUnavailableReason === "permission"
+          ? t.reauth.descricao
+          : t.controlRoom.peopleEditUnavailable;
   const openOutlook = () =>
     window.open(
       "https://outlook.office.com/people/",
@@ -509,136 +498,21 @@ function PeopleDetail({
     }
   };
 
-  const fieldLabel = (field: PeopleEnrichField): string => {
-    const labels: Record<PeopleEnrichFieldKey, string> = {
-      photo: t.controlRoom.peopleFieldPhoto,
-      email: t.controlRoom.peopleEmail,
-      businessPhone: t.controlRoom.peopleFieldBusinessPhone,
-      mobilePhone: t.controlRoom.peopleFieldMobilePhone,
-      jobTitle: t.controlRoom.peopleCargo,
-      companyName: t.controlRoom.peopleEmpresa,
-      department: t.controlRoom.peopleDepartment,
-      officeLocation: t.controlRoom.peopleOfficeLocation,
-      manager: t.controlRoom.peopleManager,
-    };
-    return labels[field.key];
-  };
-
-  const acceptedFields = preview
-    ? preview.fields.filter((_, index) => selectedFields.has(index))
-    : [];
-
-  const enrich = async () => {
-    if (!primaryEmail) return;
-    setEnriching(true);
-    setEnrichError(null);
-    setSessionOnlyApplied(false);
-    setSessionOnlyFields([]);
-    try {
-      const result = await api.crPeopleEnrichPreview(
-        contact.contactId ?? null,
-        primaryEmail,
-      );
-      const enrichedValues = new Set(contact.enrichedValues ?? []);
-      const next = {
-        ...result,
-        fields: result.fields.filter(
-          (field) => !enrichedValues.has(peopleEnrichFieldIdentity(field)),
-        ),
-      };
-      setPreview(next);
-      setSelectedFields(new Set(next.fields.map((_, index) => index)));
-    } catch (error) {
-      setPreview(null);
-      setEnrichError(String(error));
-    } finally {
-      setEnriching(false);
-    }
-  };
-
   useEffect(() => {
     let active = true;
-    if (directoryUser) {
-      setEnriching(true);
+    if (sameOrganization) {
       setEnrichError(null);
-      void autoEnrichDirectoryContact(contact.id)
+      void autoEnrichDirectoryContact(contact.id, true)
         .catch((error) => {
           if (active) setEnrichError(String(error));
-        })
-        .finally(() => {
-          if (active) setEnriching(false);
         });
-    } else if (autoEnrich) {
-      void enrich();
     }
     return () => {
       active = false;
     };
-    // `key` do detalhe muda a cada ação Enrich; roda exatamente uma vez no mount.
+    // Auto-enrich de entidades da organização roda uma vez ao abrir o detalhe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const apply = async () => {
-    if (!preview || acceptedFields.length === 0) return;
-    setApplying(true);
-    setEnrichError(null);
-    try {
-      if (preview.writeAvailable && contact.contactId) {
-        const result = await api.crPeopleEnrichApply(
-          contact.contactId,
-          acceptedFields,
-        );
-        if (!result.saved) {
-          applyPeopleFields(contact.id, acceptedFields);
-          setSessionOnlyApplied(true);
-          setSessionOnlyFields(acceptedFields);
-          toast.success(t.controlRoom.peopleEnrichSessionSaved);
-        } else {
-          applyPeopleFields(contact.id, acceptedFields);
-          toast.success(t.controlRoom.peopleEnrichSaved);
-        }
-      } else {
-        applyPeopleFields(contact.id, acceptedFields);
-        setSessionOnlyApplied(true);
-        setSessionOnlyFields(acceptedFields);
-        toast.success(t.controlRoom.peopleEnrichSessionSaved);
-      }
-      setPreview(null);
-      setSelectedFields(new Set());
-    } catch (error) {
-      setEnrichError(String(error));
-    } finally {
-      setApplying(false);
-    }
-  };
-
-  const copyFields = async (fields: PeopleEnrichField[]) => {
-    const text = fields
-      .filter((field) => field.key !== "photo")
-      .map((field) => `${fieldLabel(field)}: ${field.value}`)
-      .join("\n");
-    if (!text) return;
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        throw new Error("Clipboard API unavailable");
-      }
-      toast.success(t.controlRoom.peopleEnrichCopied);
-    } catch {
-      const input = document.createElement("textarea");
-      input.value = text;
-      input.setAttribute("readonly", "");
-      input.style.position = "fixed";
-      input.style.opacity = "0";
-      document.body.appendChild(input);
-      input.select();
-      const copied = document.execCommand("copy");
-      input.remove();
-      if (copied) toast.success(t.controlRoom.peopleEnrichCopied);
-      else setEnrichError(t.controlRoom.peopleEnrichError);
-    }
-  };
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-xl border bg-card">
@@ -749,17 +623,6 @@ function PeopleDetail({
                     <Pencil />
                   </ToolbarButton>
                 )}
-                {!directoryUser && (
-                  <ToolbarButton
-                    variant="default"
-                    tooltip={t.controlRoom.peopleEnrich}
-                    aria-label={t.controlRoom.peopleEnrich}
-                    onClick={() => void enrich()}
-                    disabled={!primaryEmail || enriching || applying}
-                  >
-                    {enriching ? <Spinner /> : <Sparkles />}
-                  </ToolbarButton>
-                )}
                 <ToolbarSeparator />
                 <ToolbarButton
                   variant="default"
@@ -842,9 +705,6 @@ function PeopleDetail({
             editUnavailableReason &&
             editUnavailableReason !== "directory") ||
           editError ||
-          (sparse && !directoryUser && !preview && !sessionOnlyApplied) ||
-          preview ||
-          sessionOnlyApplied ||
           enrichError ? (
             <div className="space-y-3 border-b p-4">
               {!editing &&
@@ -878,168 +738,6 @@ function PeopleDetail({
                 <Alert variant="destructive">
                   <AlertTitle>{t.controlRoom.peopleEditError}</AlertTitle>
                   <AlertDescription>{editError}</AlertDescription>
-                </Alert>
-              )}
-
-              {sparse && !directoryUser && !preview && !sessionOnlyApplied && (
-                <Alert variant="info">
-                  <Sparkles />
-                  <AlertTitle>{t.controlRoom.peopleEnrichPrompt}</AlertTitle>
-                  <AlertDescription>
-                    {t.controlRoom.peopleEnrichPromptDesc}
-                  </AlertDescription>
-                  <AlertAction>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => void enrich()}
-                      disabled={enriching}
-                    >
-                      {enriching ? <Spinner /> : <Sparkles />}
-                      {enriching
-                        ? t.controlRoom.peopleEnriching
-                        : t.controlRoom.peopleEnrich}
-                    </Button>
-                  </AlertAction>
-                </Alert>
-              )}
-
-              {preview && (
-                <div className="space-y-4 rounded-xl border bg-background p-4 shadow-xs">
-                  <div>
-                    <h3 className="text-sm font-semibold">
-                      {t.controlRoom.peopleEnrichPreview}
-                    </h3>
-                    <p className="text-sm text-muted-foreground">
-                      {t.controlRoom.peopleEnrichPreviewDesc}
-                    </p>
-                  </div>
-
-                  {preview.failures.length > 0 && (
-                    <Alert variant="warning">
-                      <AlertTitle>{t.controlRoom.peopleEnrichSourceError}</AlertTitle>
-                      <AlertDescription>
-                        {preview.failures.join(" · ")}
-                      </AlertDescription>
-                    </Alert>
-                  )}
-
-                  {preview.fields.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      {t.controlRoom.peopleEnrichNoChanges}
-                    </p>
-                  ) : (
-                    <div className="divide-y rounded-lg border">
-                      {preview.fields.map((field, index) => (
-                        <label
-                          key={`${field.key}:${field.value}:${index}`}
-                          className="flex cursor-pointer items-start gap-3 px-3 py-2.5"
-                        >
-                          <Checkbox
-                            className="mt-0.5"
-                            checked={selectedFields.has(index)}
-                            onCheckedChange={(checked) =>
-                              setSelectedFields((current) => {
-                                const next = new Set(current);
-                                if (checked === true) next.add(index);
-                                else next.delete(index);
-                                return next;
-                              })
-                            }
-                            aria-label={`${fieldLabel(field)}: ${field.value}`}
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-xs text-muted-foreground">
-                              {fieldLabel(field)}
-                            </span>
-                            {field.key === "photo" ? (
-                              <Avatar className="mt-1 size-10">
-                                <AvatarImage src={field.value} alt={contact.name} />
-                                <AvatarFallback>
-                                  {initials(contact.name)}
-                                </AvatarFallback>
-                              </Avatar>
-                            ) : (
-                              <span className="block truncate text-sm">
-                                {field.value}
-                              </span>
-                            )}
-                          </span>
-                          <SourceBadge source={field.source} />
-                        </label>
-                      ))}
-                    </div>
-                  )}
-
-                  {!preview.writeAvailable && preview.fields.length > 0 && (
-                    <Alert variant="warning">
-                      <KeyRound />
-                      <AlertTitle>{t.controlRoom.peopleEnrichReadOnly}</AlertTitle>
-                      <AlertDescription>
-                        {t.controlRoom.peopleEnrichReadOnlyDesc}
-                      </AlertDescription>
-                      <AlertAction>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => void copyFields(acceptedFields)}
-                          disabled={
-                            !acceptedFields.some((field) => field.key !== "photo")
-                          }
-                        >
-                          <Copy />
-                          {t.controlRoom.peopleEnrichCopy}
-                        </Button>
-                      </AlertAction>
-                    </Alert>
-                  )}
-
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        setPreview(null);
-                        setSelectedFields(new Set());
-                      }}
-                      disabled={applying}
-                    >
-                      {t.controlRoom.peopleEnrichCancel}
-                    </Button>
-                    {preview.fields.length > 0 && (
-                      <Button
-                        onClick={() => void apply()}
-                        disabled={acceptedFields.length === 0 || applying}
-                      >
-                        {applying ? <Spinner /> : <Sparkles />}
-                        {preview.writeAvailable
-                          ? t.controlRoom.peopleEnrichApply
-                          : t.controlRoom.peopleEnrichSessionApply}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {sessionOnlyApplied && (
-                <Alert variant="warning">
-                  <KeyRound />
-                  <AlertTitle>{t.controlRoom.peopleEnrichReadOnly}</AlertTitle>
-                  <AlertDescription>
-                    {t.controlRoom.peopleEnrichReadOnlyDesc}
-                  </AlertDescription>
-                  <AlertAction>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void copyFields(sessionOnlyFields)}
-                      disabled={
-                        !sessionOnlyFields.some((field) => field.key !== "photo")
-                      }
-                    >
-                      <Copy />
-                      {t.controlRoom.peopleEnrichCopy}
-                    </Button>
-                  </AlertAction>
                 </Alert>
               )}
 
@@ -1281,206 +979,6 @@ function PeopleDetail({
   );
 }
 
-function BulkEnrichReview({
-  contacts,
-  onClose,
-}: {
-  contacts: PeopleContact[];
-  onClose: () => void;
-}) {
-  const { t } = useIdioma();
-  const applyPeopleFields = useAppStore((state) => state.applyPeopleFields);
-  const [index, setIndex] = useState(0);
-  const [preview, setPreview] = useState<PeopleEnrichPreview | null>(null);
-  const [selectedFields, setSelectedFields] = useState<Set<number>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [applying, setApplying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const contact = contacts[index];
-
-  const fieldLabel = (field: PeopleEnrichField): string => {
-    const labels: Record<PeopleEnrichFieldKey, string> = {
-      photo: t.controlRoom.peopleFieldPhoto,
-      email: t.controlRoom.peopleEmail,
-      businessPhone: t.controlRoom.peopleFieldBusinessPhone,
-      mobilePhone: t.controlRoom.peopleFieldMobilePhone,
-      jobTitle: t.controlRoom.peopleCargo,
-      companyName: t.controlRoom.peopleEmpresa,
-      department: t.controlRoom.peopleDepartment,
-      officeLocation: t.controlRoom.peopleOfficeLocation,
-      manager: t.controlRoom.peopleManager,
-    };
-    return labels[field.key];
-  };
-
-  useEffect(() => {
-    let active = true;
-    if (!contact) return;
-    setLoading(true);
-    setError(null);
-    setPreview(null);
-    void api
-      .crPeopleEnrichPreview(
-        contact.contactId ?? null,
-        contact.emails[0]?.address || "",
-      )
-      .then((result) => {
-        if (!active) return;
-        const enrichedValues = new Set(contact.enrichedValues ?? []);
-        const next = {
-          ...result,
-          fields: result.fields.filter(
-            (field) => !enrichedValues.has(peopleEnrichFieldIdentity(field)),
-          ),
-        };
-        setPreview(next);
-        setSelectedFields(new Set(next.fields.map((_, fieldIndex) => fieldIndex)));
-      })
-      .catch((nextError) => {
-        if (active) setError(String(nextError));
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [contact]);
-
-  const next = () => {
-    if (index + 1 >= contacts.length) {
-      toast.success(t.controlRoom.peopleBulkDone);
-      onClose();
-      return;
-    }
-    setIndex((current) => current + 1);
-    setPreview(null);
-    setSelectedFields(new Set());
-  };
-
-  const apply = async (sessionOnly: boolean) => {
-    if (!contact || !preview) return;
-    const fields = preview.fields.filter((_, fieldIndex) =>
-      selectedFields.has(fieldIndex),
-    );
-    if (fields.length === 0) return;
-    setApplying(true);
-    setError(null);
-    try {
-      if (!sessionOnly && preview.writeAvailable && contact.contactId) {
-        const result = await api.crPeopleEnrichApply(contact.contactId, fields);
-        if (!result.saved) {
-          throw new Error(t.controlRoom.peopleEditUnavailableDesc);
-        }
-      }
-      applyPeopleFields(contact.id, fields);
-      next();
-    } catch (nextError) {
-      setError(String(nextError));
-    } finally {
-      setApplying(false);
-    }
-  };
-
-  if (!contact) return null;
-  const selected = preview
-    ? preview.fields.filter((_, fieldIndex) => selectedFields.has(fieldIndex))
-    : [];
-
-  return (
-    <Frame stacked>
-      <FrameHeader className="flex-row items-center justify-between gap-3">
-        <div>
-          <FrameTitle>{t.controlRoom.peopleBulkTitle}</FrameTitle>
-          <FrameDescription>
-            {preencher(t.controlRoom.peopleBulkContact, {
-              atual: index + 1,
-              total: contacts.length,
-            })}
-            {" · "}
-            {contact.name}
-          </FrameDescription>
-        </div>
-        <Button variant="outline" onClick={onClose} disabled={applying}>
-          {t.controlRoom.peopleEnrichCancel}
-        </Button>
-      </FrameHeader>
-      <FramePanel className="space-y-4">
-        {loading ? (
-          <div className="flex justify-center py-6">
-            <Spinner />
-          </div>
-        ) : preview?.fields.length ? (
-          <div className="divide-y rounded-lg border">
-            {preview.fields.map((field, fieldIndex) => (
-              <label
-                key={`${field.key}:${field.value}:${fieldIndex}`}
-                className="flex cursor-pointer items-start gap-3 px-3 py-2.5"
-              >
-                <Checkbox
-                  className="mt-0.5"
-                  checked={selectedFields.has(fieldIndex)}
-                  onCheckedChange={(checked) =>
-                    setSelectedFields((current) => {
-                      const updated = new Set(current);
-                      if (checked === true) updated.add(fieldIndex);
-                      else updated.delete(fieldIndex);
-                      return updated;
-                    })
-                  }
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block text-xs text-muted-foreground">
-                    {fieldLabel(field)}
-                  </span>
-                  <span className="block truncate text-sm">{field.value}</span>
-                </span>
-                <SourceBadge source={field.source} />
-              </label>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {t.controlRoom.peopleEnrichNoChanges}
-          </p>
-        )}
-        {error && (
-          <Alert variant="destructive">
-            <AlertTitle>{t.controlRoom.peopleEnrichError}</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button variant="outline" onClick={next} disabled={applying}>
-            {t.controlRoom.peopleBulkSkip}
-          </Button>
-          {preview && preview.fields.length > 0 && (
-            <>
-              <Button
-                variant="outline"
-                onClick={() => void apply(true)}
-                disabled={applying || selected.length === 0}
-              >
-                {applying && <Spinner />}
-                {t.controlRoom.peopleEnrichSessionApply}
-              </Button>
-              {preview.writeAvailable && contact.contactId && (
-                <Button
-                  onClick={() => void apply(false)}
-                  disabled={applying || selected.length === 0}
-                >
-                  {applying ? <Spinner /> : <Sparkles />}
-                  {t.controlRoom.peopleEnrichApply}
-                </Button>
-              )}
-            </>
-          )}
-        </div>
-      </FramePanel>
-    </Frame>
-  );
-}
-
 async function copyText(value: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(value);
@@ -1502,11 +1000,9 @@ async function copyText(value: string): Promise<boolean> {
 function PeopleRowActions({
   contact,
   onCompose,
-  onEnrich,
 }: {
   contact: PeopleContact;
   onCompose: (email: string) => void;
-  onEnrich: () => void;
 }) {
   const { t } = useIdioma();
   const email = contact.emails[0]?.address;
@@ -1541,10 +1037,6 @@ function PeopleRowActions({
           <Copy />
           {t.controlRoom.peopleCopyEmail}
         </DropdownMenuItem>
-        <DropdownMenuItem disabled={!email} onClick={onEnrich}>
-          <Sparkles />
-          {t.controlRoom.peopleEnrich}
-        </DropdownMenuItem>
         <DropdownMenuItem
           onClick={() =>
             window.open(
@@ -1569,7 +1061,6 @@ function PeopleCard({
   photo,
   onSelect,
   onCompose,
-  onEnrich,
 }: {
   contact: PeopleContact;
   organizationLabel?: string | null;
@@ -1577,7 +1068,6 @@ function PeopleCard({
   photo: string | null;
   onSelect: () => void;
   onCompose: (email: string) => void;
-  onEnrich: () => void;
 }) {
   const { t } = useIdioma();
   return (
@@ -1613,7 +1103,6 @@ function PeopleCard({
         <PeopleRowActions
           contact={contact}
           onCompose={onCompose}
-          onEnrich={onEnrich}
         />
       </FrameHeader>
       <FramePanel className="space-y-3">
@@ -1947,10 +1436,12 @@ function AssignToOrganizationDialog({
 }
 
 export function PeopleView({
+  userEmail,
   onGrantAccess,
   onCompose,
   onReauthenticate,
 }: {
+  userEmail: string;
   onGrantAccess: () => void;
   onCompose: (email: string) => void;
   onReauthenticate: () => void;
@@ -1996,11 +1487,6 @@ export function PeopleView({
   const [keyboardActiveId, setKeyboardActiveId] = useState<string | null>(null);
   const tableFocusRef = useRef<HTMLDivElement>(null);
   const selectionAnchorRef = useRef<string | null>(null);
-  const [enrichRequest, setEnrichRequest] = useState<{
-    id: string;
-    token: number;
-  } | null>(null);
-  const [bulkContacts, setBulkContacts] = useState<PeopleContact[] | null>(null);
   const [assignOrgOpen, setAssignOrgOpen] = useState(false);
   const { getFoto, pedirFotos } = useFotos();
   // Mede o shell estável do MÓDULO (não a aba nem a janela): Contacts e
@@ -2467,13 +1953,6 @@ export function PeopleView({
         <OrganizationsView contacts={contacts} />
       ) : (
         <>
-      {bulkContacts && (
-        <BulkEnrichReview
-          contacts={bulkContacts}
-          onClose={() => setBulkContacts(null)}
-        />
-      )}
-
       <AssignToOrganizationDialog
         open={assignOrgOpen}
         contacts={selectedContacts}
@@ -2596,26 +2075,6 @@ export function PeopleView({
                     }
                   >
                     {view === "table" ? <LayoutGrid /> : <List />}
-                  </ToolbarButton>
-                  <ToolbarButton
-                    tooltip={
-                      selectedContacts.length > 0
-                        ? t.controlRoom.peopleEnrichSelected
-                        : t.controlRoom.peopleEnrichAll
-                    }
-                    disabled={contacts.every(
-                      (contact) => contact.emails.length === 0,
-                    )}
-                    onClick={() =>
-                      setBulkContacts(
-                        (selectedContacts.length > 0
-                          ? selectedContacts
-                          : contacts
-                        ).filter((contact) => contact.emails[0]?.address),
-                      )
-                    }
-                  >
-                    <Sparkles />
                   </ToolbarButton>
                 </Toolbar>
               </FramePanel>
@@ -2756,13 +2215,6 @@ export function PeopleView({
                           }
                           onSelect={() => selectPerson(contact.id)}
                           onCompose={onCompose}
-                          onEnrich={() => {
-                            selectPerson(contact.id);
-                            setEnrichRequest({
-                              id: contact.id,
-                              token: Date.now(),
-                            });
-                          }}
                         />
                       ))}
                     </div>
@@ -2789,13 +2241,13 @@ export function PeopleView({
               <PeopleDetailSkeleton />
             ) : selected ? (
               <PeopleDetail
-                key={`${selected.id}:${enrichRequest?.id === selected.id ? enrichRequest.token : 0}`}
+                key={selected.id}
                 contact={selected}
                 photo={getFoto(selected.emails[0]?.address) ?? null}
+                userEmail={userEmail}
                 onBack={() => selectPerson(null)}
                 onCompose={onCompose}
                 onReauthenticate={onReauthenticate}
-                autoEnrich={enrichRequest?.id === selected.id}
                 stacked={!wideSplit}
               />
             ) : (

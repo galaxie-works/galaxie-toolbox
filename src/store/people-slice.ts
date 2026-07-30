@@ -10,7 +10,6 @@ import {
 import type { Filter } from "@/components/reui/filters";
 import type {
   PeopleContactEdit,
-  PeopleEnrichField,
   PeopleEnrichFieldKey,
   PeopleEnrichPreview,
   Pessoa,
@@ -80,8 +79,10 @@ export interface PeopleSlice {
   setPeopleColumnVisibility: (visibility: Record<string, boolean>) => void;
   setPeopleTab: (tab: "contacts" | "organizations") => void;
   setPeopleSearchQuery: (query: string) => void;
-  applyPeopleFields: (id: string, fields: PeopleEnrichField[]) => void;
-  autoEnrichDirectoryContact: (id: string) => Promise<void>;
+  autoEnrichDirectoryContact: (
+    id: string,
+    sameOrganization: boolean,
+  ) => Promise<void>;
   updatePeopleContact: (id: string, input: PeopleContactEdit) => Promise<void>;
 }
 
@@ -267,20 +268,13 @@ export const createPeopleSlice: StateCreator<
     set({ peopleColumnVisibility }),
   setPeopleTab: (peopleTab) => set({ peopleTab }),
   setPeopleSearchQuery: (peopleSearchQuery) => set({ peopleSearchQuery }),
-  applyPeopleFields: (id, fields) =>
-    set((state) => ({
-      peopleContacts: state.peopleContacts.map((contact) =>
-        contact.id === id ? applyPeopleEnrichment(contact, fields) : contact,
-      ),
-    })),
-  autoEnrichDirectoryContact: async (id) => {
+  autoEnrichDirectoryContact: async (id, sameOrganization) => {
     const contact = get().peopleContacts.find((candidate) => candidate.id === id);
     const email = contact?.emails[0]?.address.trim();
     const normalizedEmail = email?.toLowerCase() ?? "";
     if (
       !contact ||
-      contact.contactId ||
-      !contact.organization ||
+      !sameOrganization ||
       !email ||
       get().peopleDirectoryEnrichedEmails.includes(normalizedEmail)
     ) {
@@ -290,7 +284,7 @@ export const createPeopleSlice: StateCreator<
     let request = directoryEnrichInFlight.get(normalizedEmail);
     if (!request) {
       request = api
-        .crPeopleEnrichPreview(null, email, true)
+        .crPeopleEnrichPreview(contact.contactId ?? null, email, true)
         .finally(() => directoryEnrichInFlight.delete(normalizedEmail));
       directoryEnrichInFlight.set(normalizedEmail, request);
     }
