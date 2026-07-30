@@ -465,7 +465,7 @@ function AppInner() {
     setAbaAtiva(id);
   }
 
-  function novaAba() {
+  function abrirAbaVazia() {
     setAbas((prev) =>
       prev.map((tab) =>
         tab.estado === "dormindo"
@@ -474,6 +474,18 @@ function AppInner() {
       ),
     );
     setAbaAtiva(null);
+  }
+
+  // Nova aba normal sai do modo privado; nova aba privada entra (#273). O
+  // `modoPrivado` é herdado pela próxima navegação (`privada` da aba).
+  function novaAba() {
+    setModoPrivado(false);
+    abrirAbaVazia();
+  }
+
+  function novaAbaPrivada() {
+    setModoPrivado(true);
+    abrirAbaVazia();
   }
 
   function fecharAba(id: string) {
@@ -870,6 +882,7 @@ function AppInner() {
               onReordenar={reordenarAbas}
               onAbrir={abrirAppAqui}
               onNovaAba={novaAba}
+              onNovaAbaPrivada={novaAbaPrivada}
               onReabrirFechada={reabrirFechada}
               onNavegar={abrirUrlLivre}
               onRestaurarAbas={restaurarAbas}
