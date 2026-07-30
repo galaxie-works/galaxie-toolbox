@@ -5969,6 +5969,7 @@ export function ControlRoomScreen({
             autoSaveId persiste a proporção que o usuário deixa. */}
         {bridgeView === "people" ? (
           <PeopleView
+            userEmail={user.email}
             onGrantAccess={onGrantPeopleAccess}
             onReauthenticate={onReauthenticate}
             onCompose={(email) => {
