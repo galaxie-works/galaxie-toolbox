@@ -67,6 +67,10 @@ import {
 } from "@/components/ui/tooltip";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
+import {
+  useOcultarWebviewEnquantoAberto,
+  useRegistrarOverlayWebview,
+} from "@/lib/navigator-overlay";
 
 const ROTULO_NAVEGADOR: Record<string, string> = {
   chrome: "Chrome",
@@ -217,6 +221,8 @@ export function DialogImportarFavoritos({
   onAplicar: (favoritos: Favorito[]) => void;
 }) {
   const { t } = useIdioma();
+  // z-order (#275): esconde a webview enquanto o diálogo de import estiver aberto.
+  useOcultarWebviewEnquantoAberto(aberto);
   const [carregando, setCarregando] = useState(false);
   const [origens, setOrigens] = useState<BrowserBookmarks[]>([]);
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
@@ -483,6 +489,7 @@ export function BarraFavoritos({
   abaAtiva?: { url: string; nome: string };
 }) {
   const { t } = useIdioma();
+  const registrarOverlayWebview = useRegistrarOverlayWebview();
   const [importar, setImportar] = useState(false);
   const [renomeando, setRenomeando] = useState<Favorito | null>(null);
 
@@ -517,7 +524,7 @@ export function BarraFavoritos({
       aria-label={t.navegador.favoritosBarra}
     >
       {/* Menu de gerenciamento (estrela). */}
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={registrarOverlayWebview}>
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
@@ -564,11 +571,11 @@ export function BarraFavoritos({
       ) : (
         <div className="scrollbar-fina flex min-w-0 items-center gap-0.5 overflow-x-auto">
           {favoritos.map((fav) => (
-            <ContextMenu key={fav.id}>
+            <ContextMenu key={fav.id} onOpenChange={registrarOverlayWebview}>
               <ContextMenuTrigger asChild>
                 {fav.tipo === "pasta" ? (
                   <span className="shrink-0">
-                    <DropdownMenu>
+                    <DropdownMenu onOpenChange={registrarOverlayWebview}>
                       <DropdownMenuTrigger asChild>
                         <button
                           type="button"
@@ -684,6 +691,8 @@ function DialogRenomearFavorito({
   onRenomear: (id: string, nome: string) => void;
 }) {
   const { t } = useIdioma();
+  // z-order (#275): esconde a webview enquanto o diálogo de renomear estiver aberto.
+  useOcultarWebviewEnquantoAberto(favorito != null);
   const [nome, setNome] = useState("");
 
   useEffect(() => {

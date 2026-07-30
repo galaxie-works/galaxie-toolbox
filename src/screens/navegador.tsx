@@ -107,7 +107,11 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  OcultarWebviewContext,
+  useOcultarWebviewEnquantoAberto,
+} from "@/lib/navigator-overlay";
 import { ShipIcon, type ShipIconHandle } from "@/components/ui/ship";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 
@@ -693,6 +697,15 @@ export function NavegadorScreen({
   const [paletaAberta, setPaletaAberta] = useState(false);
   const [historicoAberto, setHistoricoAberto] = useState(false);
 
+  // Z-order (#275): conta os overlays DOM abertos SOBRE a webview (menus de
+  // contexto, dropdowns da barra, diálogos). Enquanto houver algum, a webview
+  // fica escondida para não cortar o overlay — mesmo padrão do #174 (paleta),
+  // agora generalizado via OcultarWebviewContext.
+  const [overlaysWebview, setOverlaysWebview] = useState(0);
+  const registrarOverlayWebview = useCallback((aberto: boolean) => {
+    setOverlaysWebview((n) => Math.max(0, n + (aberto ? 1 : -1)));
+  }, []);
+
   // --- Grupos de aba (Story 3) ---------------------------------------------
   // Grupos vivem aqui + localStorage, DESACOPLADOS do estado de abas do App (que
   // só ganhou o handler de reorder). A strip é fatiada em lanes: pins (compactos)
@@ -829,7 +842,7 @@ export function NavegadorScreen({
         value={aba.id}
         className="group/chip relative shrink-0"
       >
-        <ContextMenu>
+        <ContextMenu onOpenChange={registrarOverlayWebview}>
           <ContextMenuTrigger asChild>
             <div
               role="tab"
@@ -1044,7 +1057,7 @@ export function NavegadorScreen({
   // aparecer; ao fechar, este mesmo efeito reroda e revela/reposiciona a aba
   // ativa atual — restaurando a página por baixo.
   useEffect(() => {
-    if (paletaAberta || !ativa) {
+    if (paletaAberta || overlaysWebview > 0 || !ativa) {
       browser.esconderTodas();
       return;
     }
@@ -1060,7 +1073,7 @@ export function NavegadorScreen({
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ativa, activeTab?.url, paletaAberta]);
+  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview]);
 
   useEffect(() => {
     const el = area.current;
@@ -1085,6 +1098,7 @@ export function NavegadorScreen({
   }, []);
 
   return (
+    <OcultarWebviewContext.Provider value={registrarOverlayWebview}>
     <div className="flex h-full w-full flex-col">
       {/* Barra de abas: rola na horizontal; o "+" fica fora da rolagem. */}
       <div className="flex items-stretch border-b border-border">
@@ -1111,7 +1125,7 @@ export function NavegadorScreen({
                     cor.faixa,
                   )}
                 >
-                  <ContextMenu>
+                  <ContextMenu onOpenChange={registrarOverlayWebview}>
                     <ContextMenuTrigger asChild>
                       <button
                         type="button"
@@ -1348,6 +1362,7 @@ export function NavegadorScreen({
         onExcluir={excluirGrupo}
       />
     </div>
+    </OcultarWebviewContext.Provider>
   );
 }
 
@@ -1370,6 +1385,8 @@ function DialogEditarGrupo({
 }) {
   const { t } = useIdioma();
   const [nome, setNome] = useState("");
+  // z-order (#275): esconde a webview enquanto o diálogo estiver aberto.
+  useOcultarWebviewEnquantoAberto(grupo != null);
 
   // Sincroniza o input ao abrir/trocar de grupo.
   useEffect(() => {
@@ -1495,6 +1512,8 @@ function DialogHistorico({
 }) {
   const { idioma, t } = useIdioma();
   const [q, setQ] = useState("");
+  // z-order (#275): esconde a webview enquanto o histórico estiver aberto.
+  useOcultarWebviewEnquantoAberto(aberto);
   const lista = useMemo(() => buscarHistorico(historico, q), [historico, q]);
   const fmt = useMemo(
     () =>
