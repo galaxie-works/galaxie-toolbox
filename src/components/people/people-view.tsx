@@ -1969,7 +1969,6 @@ export function PeopleView({
     "title",
     "phone",
     "source",
-    "actions",
     "columns",
   ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -2280,26 +2279,6 @@ export function PeopleView({
         ),
       },
       {
-        id: "actions",
-        header: "",
-        enableHiding: false,
-        enableSorting: false,
-        enableResizing: false,
-        cell: ({ row }) => (
-          <PeopleRowActions
-            contact={row.original}
-            onCompose={onCompose}
-            onEnrich={() => {
-              selectPerson(row.original.id);
-              setEnrichRequest({
-                id: row.original.id,
-                token: Date.now(),
-              });
-            }}
-          />
-        ),
-      },
-      {
         id: "columns",
         header: () => (
           <PeopleColumnsHeader label={t.controlRoom.peopleColumns} />
@@ -2313,9 +2292,7 @@ export function PeopleView({
     ],
     [
       getFoto,
-      onCompose,
       organizationLabelsByDomain,
-      selectPerson,
       t,
     ],
   );
@@ -2568,11 +2545,17 @@ export function PeopleView({
               </FrameHeader>
               <FramePanel
                 fit
-                className="flex min-h-11 shrink-0 items-center justify-between gap-2 px-2 py-1.5"
+                className="flex shrink-0 items-center gap-2 px-3 py-3"
               >
+                <h2 className="text-sm font-semibold">
+                  {t.controlRoom.peopleContactsTab}
+                </h2>
+                <Badge variant="secondary" size="sm">
+                  {filtered.length}
+                </Badge>
                 <Toolbar
                   aria-label={t.controlRoom.peopleContactsTab}
-                  className="flex-wrap"
+                  className="ml-auto gap-1"
                 >
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -2610,7 +2593,6 @@ export function PeopleView({
                       <FunnelX />
                     </ToolbarButton>
                   )}
-                  <ToolbarSeparator />
                   <ToolbarButton
                     tooltip={t.controlRoom.peopleOrdenar}
                     pressed={sortMode === "az"}
@@ -2637,7 +2619,6 @@ export function PeopleView({
                   >
                     {view === "table" ? <LayoutGrid /> : <List />}
                   </ToolbarButton>
-                  <ToolbarSeparator />
                   <ToolbarButton
                     tooltip={
                       selectedContacts.length > 0
@@ -2659,9 +2640,6 @@ export function PeopleView({
                     <Sparkles />
                   </ToolbarButton>
                 </Toolbar>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {filtered.length}
-                </span>
               </FramePanel>
               {selectedContacts.length > 0 && (
                 <FramePanel
