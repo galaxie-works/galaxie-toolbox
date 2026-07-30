@@ -1977,7 +1977,6 @@ export function PeopleView({
     (state) => state.setPeopleColumnVisibility,
   );
   const peopleTab = useAppStore((state) => state.peopleTab);
-  const setPeopleTab = useAppStore((state) => state.setPeopleTab);
   const query = useAppStore((state) => state.peopleSearchQuery);
   const setPeopleSearchQuery = useAppStore(
     (state) => state.setPeopleSearchQuery,
@@ -2456,43 +2455,6 @@ export function PeopleView({
     }
   }
 
-  const peopleNavigation = (
-    <nav
-      aria-label={t.controlRoom.peopleTitulo}
-      className="inline-flex items-center gap-1 rounded-lg border bg-muted/40 p-1"
-    >
-      {(
-        [
-          { value: "contacts", label: t.controlRoom.peopleContactsTab, Icon: Users },
-          {
-            value: "organizations",
-            label: t.controlRoom.peopleOrganizationsTab,
-            Icon: Building2,
-          },
-        ] as const
-      ).map(({ value, label, Icon }) => {
-        const ativo = peopleTab === value;
-        return (
-          <Button
-            key={value}
-            variant="ghost"
-            size="sm"
-            onClick={() => setPeopleTab(value)}
-            aria-current={ativo ? "page" : undefined}
-            className={cn(
-              "gap-1.5",
-              ativo
-                ? "bg-background font-medium text-foreground shadow-xs"
-                : "text-muted-foreground hover:bg-accent/50",
-            )}
-          >
-            <Icon />
-            {label}
-          </Button>
-        );
-      })}
-    </nav>
-  );
   const sortMode =
     sorting.some((item) => item.id === "name") ? "az" : "relevance";
 
@@ -2502,7 +2464,7 @@ export function PeopleView({
       className="@container/people flex min-h-0 min-w-0 flex-1 flex-col gap-3"
     >
       {peopleTab === "organizations" ? (
-        <OrganizationsView contacts={contacts} navigation={peopleNavigation} />
+        <OrganizationsView contacts={contacts} />
       ) : (
         <>
       {bulkContacts && (
@@ -2559,9 +2521,6 @@ export function PeopleView({
               stacked
               dense
             >
-              <FrameHeader className="shrink-0">
-                {peopleNavigation}
-              </FrameHeader>
               <FramePanel
                 fit
                 className="flex shrink-0 items-center gap-2 px-3 py-3"

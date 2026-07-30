@@ -3,7 +3,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import {
   ArrowLeft,
@@ -49,7 +48,6 @@ import {
 import { IconStack } from "@/components/reui/icon-stack";
 import {
   Frame,
-  FrameHeader,
   FramePanel,
 } from "@/components/reui/frame";
 import { Toolbar, ToolbarButton } from "@/components/ui/toolbar";
@@ -358,10 +356,8 @@ function AssignContactsDialog({
 
 export function OrganizationsView({
   contacts,
-  navigation,
 }: {
   contacts: PeopleContact[];
-  navigation: ReactNode;
 }) {
   const { t } = useIdioma();
   const organizations = useAppStore((state) => state.organizations);
@@ -409,7 +405,6 @@ export function OrganizationsView({
       stacked
       dense
     >
-      <FrameHeader className="shrink-0">{navigation}</FrameHeader>
       <FramePanel
         fit
         className="flex min-h-11 shrink-0 items-center justify-between gap-2 px-2 py-1.5"

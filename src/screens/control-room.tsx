@@ -185,6 +185,7 @@ import {
   Archive,
   ArrowDownUp,
   AtSign,
+  Building2,
   CalendarCheck,
   CalendarClock,
   CalendarDays,
@@ -1478,6 +1479,8 @@ function FolderSidebar({
   onSelectModule: (view: BridgeView) => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
+  const peopleTab = useAppStore((state) => state.peopleTab);
+  const setPeopleTab = useAppStore((state) => state.setPeopleTab);
   // Pasta pendente de confirmação do "Esvaziar" — ação destrutiva nunca sai
   // direto do menu: passa pelo AlertDialog (DoD + padrão do app).
   const [aEsvaziar, setAEsvaziar] = useState<{ id: string; rotulo: string } | null>(
@@ -1923,6 +1926,62 @@ function FolderSidebar({
             </ScrollArea>
           )}
         </>
+      ) : bridgeView === "people" ? (
+        <ScrollArea className="min-h-0 w-full flex-1">
+          <nav
+            aria-label={t.controlRoom.peopleTitulo}
+            className={cn(
+              "flex w-full flex-col gap-0.5",
+              colapsada && "items-center"
+            )}
+          >
+            {(
+              [
+                {
+                  value: "contacts",
+                  label: t.controlRoom.peopleContactsTab,
+                  Icon: Users,
+                },
+                {
+                  value: "organizations",
+                  label: t.controlRoom.peopleOrganizationsTab,
+                  Icon: Building2,
+                },
+              ] as const
+            ).map(({ value, label, Icon }) => {
+              const ativo = peopleTab === value;
+              return (
+                <Tooltip key={value}>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={ativo ? "secondary" : "ghost"}
+                      onClick={() => setPeopleTab(value)}
+                      aria-label={label}
+                      aria-current={ativo ? "page" : undefined}
+                      className={cn(
+                        "shrink-0",
+                        colapsada
+                          ? "size-9 justify-center p-0"
+                          : "w-full justify-start gap-2.5",
+                        ativo
+                          ? "bg-secondary font-medium text-secondary-foreground"
+                          : "text-muted-foreground hover:bg-accent/50"
+                      )}
+                    >
+                      <Icon className="size-4 shrink-0" />
+                      {!colapsada && <span>{label}</span>}
+                    </Button>
+                  </TooltipTrigger>
+                  {colapsada && (
+                    <TooltipContent side="right" align="center">
+                      {label}
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              );
+            })}
+          </nav>
+        </ScrollArea>
       ) : (
         <div className="flex-1" />
       )}
@@ -5901,7 +5960,7 @@ export function ControlRoomScreen({
           bridgeView={bridgeView}
           onSelectModule={(view) => {
             setBridgeView(view);
-            setSidebarAberta(view === "mail");
+            setSidebarAberta(view !== "agenda");
           }}
           t={t}
         />
