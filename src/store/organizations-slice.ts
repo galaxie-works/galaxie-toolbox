@@ -13,6 +13,16 @@ function uniqueDomains(domains: string[]): string[] {
   return Array.from(new Set(domains.map(normalizeDomain).filter(Boolean)));
 }
 
+/** Chave legada da persistência das organizações (app-owned, #205 → persistido). */
+export const ORGANIZATIONS_KEYS = {
+  organizations: "people.organizations",
+} as const;
+
+/** O que a slice de organizações persiste: as definições criadas pelo usuário. */
+export interface OrganizationsPersistido {
+  organizations: PeopleOrg[];
+}
+
 export interface OrganizationsSlice {
   organizations: PeopleOrg[];
   organizationSelectedId: string | null;
