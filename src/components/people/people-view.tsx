@@ -314,6 +314,7 @@ function PeopleDetail({
   photo,
   onBack,
   onCompose,
+  onReauthenticate,
   autoEnrich,
   stacked = false,
 }: {
@@ -321,6 +322,7 @@ function PeopleDetail({
   photo: string | null;
   onBack: () => void;
   onCompose: (email: string) => void;
+  onReauthenticate: () => void;
   autoEnrich?: boolean;
   stacked?: boolean;
 }) {
@@ -360,7 +362,18 @@ function PeopleDetail({
   const [interactionsLoading, setInteractionsLoading] = useState(Boolean(primaryEmail));
   const [interactionsError, setInteractionsError] = useState(false);
   const sparse = !contact.jobTitle || !contact.company || contact.phones.length === 0;
+  const editUnavailableReason = !contact.contactId
+    ? "directory"
+    : writeAvailable === false
+      ? "permission"
+      : null;
   const editLocked = !contact.contactId || writeAvailable !== true;
+  const editUnavailableDescription =
+    editUnavailableReason === "directory"
+      ? t.controlRoom.peopleEditDirectoryDesc
+      : editUnavailableReason === "permission"
+        ? t.reauth.descricao
+        : t.controlRoom.peopleEditUnavailable;
   const openOutlook = () =>
     window.open(
       "https://outlook.office.com/people/",
@@ -684,7 +697,7 @@ function PeopleDetail({
                       </span>
                     </TooltipTrigger>
                     <TooltipContent>
-                      {t.controlRoom.peopleEditUnavailableDesc}
+                      {editUnavailableDescription}
                     </TooltipContent>
                   </Tooltip>
                 ) : (
@@ -778,20 +791,35 @@ function PeopleDetail({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col">
-          {(!editing && editLocked) ||
+          {(!editing && editUnavailableReason) ||
           editError ||
           (sparse && !preview && !sessionOnlyApplied) ||
           preview ||
           sessionOnlyApplied ||
           enrichError ? (
             <div className="space-y-3 border-b p-4">
-              {!editing && editLocked && (
+              {!editing && editUnavailableReason && (
                 <Alert variant="warning">
-                  <KeyRound />
-                  <AlertTitle>{t.controlRoom.peopleEditUnavailable}</AlertTitle>
+                  {editUnavailableReason === "permission" ? (
+                    <KeyRound />
+                  ) : (
+                    <Users />
+                  )}
+                  <AlertTitle>
+                    {editUnavailableReason === "directory"
+                      ? t.controlRoom.peopleEditDirectoryTitle
+                      : t.reauth.titulo}
+                  </AlertTitle>
                   <AlertDescription>
-                    {t.controlRoom.peopleEditUnavailableDesc}
+                    {editUnavailableDescription}
                   </AlertDescription>
+                  {editUnavailableReason === "permission" && (
+                    <AlertAction>
+                      <Button size="sm" onClick={onReauthenticate}>
+                        {t.reauth.entrarNovamente}
+                      </Button>
+                    </AlertAction>
+                  )}
                 </Alert>
               )}
 
@@ -1564,9 +1592,11 @@ function PeopleCard({
 export function PeopleView({
   onGrantAccess,
   onCompose,
+  onReauthenticate,
 }: {
   onGrantAccess: () => void;
   onCompose: (email: string) => void;
+  onReauthenticate: () => void;
 }) {
   const { t } = useIdioma();
   const contacts = useAppStore((state) => state.peopleContacts);
@@ -2405,6 +2435,7 @@ export function PeopleView({
                 photo={getFoto(selected.emails[0]?.address) ?? null}
                 onBack={() => selectPerson(null)}
                 onCompose={onCompose}
+                onReauthenticate={onReauthenticate}
                 autoEnrich={enrichRequest?.id === selected.id}
                 stacked={!wideSplit}
               />

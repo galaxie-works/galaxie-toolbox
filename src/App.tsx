@@ -740,6 +740,9 @@ function AppInner() {
             onGrantPeopleAccess={() => {
               void handleLogin(user.email);
             }}
+            onReauthenticate={() => {
+              void logout();
+            }}
             onAbrirLink={(url) => {
               let nome = url;
               try {

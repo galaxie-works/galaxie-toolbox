@@ -885,7 +885,12 @@ export async function crPeopleEnrichApply(
 
 /** Indica se o token atual permite alterar contatos do usuário. */
 export async function crPeopleWriteAvailable(): Promise<boolean> {
-  if (!inTauri()) return true;
+  if (!inTauri()) {
+    const { missingScopes } = await requiredScopesStatus();
+    return !missingScopes.some(
+      (scope) => scope.toLocaleLowerCase() === "contacts.readwrite",
+    );
+  }
   return invoke<boolean>("cr_people_write_available");
 }
 

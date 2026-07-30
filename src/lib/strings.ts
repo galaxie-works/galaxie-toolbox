@@ -662,7 +662,10 @@ const pt = {
     peopleSaving: "Salvando…",
     peopleEditUnavailable: "Edição indisponível",
     peopleEditUnavailableDesc:
-      "Este registro precisa existir em Contacts e o login atual precisa de Contacts.ReadWrite.",
+      "Não foi possível editar este contato agora.",
+    peopleEditDirectoryTitle: "Este não é um contato salvo",
+    peopleEditDirectoryDesc:
+      "Esta pessoa aparece no diretório da sua organização, mas ainda não está salva nos seus contatos. Por isso, não é possível editá-la aqui.",
     peopleEditError: "Não foi possível salvar. Os valores anteriores foram restaurados.",
     peopleInvalidEmail: "Revise os endereços de e-mail.",
     peopleInvalidPhone: "Revise os números de telefone.",
@@ -1524,7 +1527,10 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleSaving: "Saving…",
     peopleEditUnavailable: "Editing unavailable",
     peopleEditUnavailableDesc:
-      "This record must exist in Contacts and the current sign-in needs Contacts.ReadWrite.",
+      "This contact cannot be edited right now.",
+    peopleEditDirectoryTitle: "This is not a saved contact",
+    peopleEditDirectoryDesc:
+      "This person appears in your organization's directory but is not saved in your contacts yet, so they cannot be edited here.",
     peopleEditError: "The contact could not be saved. Previous values were restored.",
     peopleInvalidEmail: "Review the email addresses.",
     peopleInvalidPhone: "Review the phone numbers.",
