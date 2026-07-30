@@ -29,9 +29,17 @@ pub const CLIENT_ID: &str = "214d735e-eb9b-4052-8851-578d3bd91627";
 /// compartilhadas, #111-#114): JA GRANTED por admin consent do tenant (ver
 /// AGENTS.md 1.1). Como sao escopos novos no pedido, sessoes anteriores precisam
 /// RE-LOGAR para ler, gerir e enviar usando uma caixa compartilhada.
+// Calendars.ReadWrite (Agenda #211): cobre leitura E escrita de eventos —
+// substitui Calendars.Read (redundante). Sem ela, criar/editar/excluir evento
+// dava 403 ("Couldn't save/delete the event").
+//
+// MailboxSettings.ReadWrite (Agenda #211): criar categoria mestra
+// (POST /me/outlook/masterCategories) exige escrita de mailbox settings.
+// Admin consent JÁ concedido no tenant; é escopo novo no pedido, então sessões
+// logadas antes dele precisam RE-LOGAR para criar categorias.
 pub const SCOPES: &str = "openid profile offline_access \
      User.Read User.Read.All Files.ReadWrite Sites.Read.All \
-     Calendars.Read Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Tasks.ReadWrite \
+     Calendars.ReadWrite MailboxSettings.ReadWrite Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Tasks.ReadWrite \
      People.Read Contacts.ReadWrite";
 
 pub fn client_id() -> String {
