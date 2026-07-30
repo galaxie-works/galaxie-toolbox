@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   Building2,
   ExternalLink,
+  Info,
   Pencil,
   Plus,
   UserMinus,
@@ -170,7 +171,27 @@ function OrganizationDialog({
             />
           </div>
           <div className="grid gap-2">
-            <Label htmlFor="organization-domains">{t.controlRoom.orgsDominios}</Label>
+            <div className="flex items-center gap-1">
+              <Label htmlFor="organization-domains">
+                {t.controlRoom.orgsDominios}
+              </Label>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    className="rounded-full text-muted-foreground"
+                    aria-label={t.controlRoom.orgsDominiosTooltip}
+                  >
+                    <Info />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs text-pretty">
+                  {t.controlRoom.orgsDominiosTooltip}
+                </TooltipContent>
+              </Tooltip>
+            </div>
             <Input
               id="organization-domains"
               value={domains}
@@ -189,9 +210,6 @@ function OrganizationDialog({
                 <option key={domain} value={domain} />
               ))}
             </datalist>
-            <p className="text-xs text-muted-foreground">
-              {t.controlRoom.orgsDominiosAjuda}
-            </p>
           </div>
           <div className="grid gap-2">
             <Label htmlFor="organization-website">{t.controlRoom.orgsWebsite}</Label>

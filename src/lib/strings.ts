@@ -601,7 +601,9 @@ const pt = {
     orgsEditar: "Editar organização",
     orgsAbrirSite: "Abrir site",
     orgsDetalhes: "Detalhes",
-    orgsDominios: "Domínios (opcional)",
+    orgsDominios: "Domínios",
+    orgsDominiosTooltip:
+      "Opcional — Pessoas com os domínios indicados aqui serão adicionadas automaticamente a esta organização. Pressione Enter ou ; para informar mais de um domínio. Deixe em branco para não atrelar domínios a essa organização.",
     orgsWebsite: "Website",
     orgsNotas: "Notas",
     orgsSemDado: "Não informado",
@@ -1535,7 +1537,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     orgsEditar: "Edit organization",
     orgsAbrirSite: "Open website",
     orgsDetalhes: "Details",
-    orgsDominios: "Domains (optional)",
+    orgsDominios: "Domains",
+    orgsDominiosTooltip:
+      "Optional — People whose domains are listed here will be added to this organization automatically. Press Enter or ; to enter more than one domain. Leave this blank to avoid linking domains to this organization.",
     orgsWebsite: "Website",
     orgsNotas: "Notes",
     orgsSemDado: "Not provided",

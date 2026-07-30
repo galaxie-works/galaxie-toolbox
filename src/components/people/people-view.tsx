@@ -20,6 +20,7 @@ import {
   Copy,
   ExternalLink,
   FunnelX,
+  Info,
   KeyRound,
   LayoutGrid,
   List,
@@ -1845,18 +1846,39 @@ function AssignToOrganizationDialog({
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="bulk-org-domains">
-                {t.controlRoom.orgsDominios}
-              </Label>
+              <div className="flex items-center gap-1">
+                <Label htmlFor="bulk-org-domains">
+                  {t.controlRoom.orgsDominios}
+                </Label>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      className="rounded-full text-muted-foreground"
+                      aria-label={t.controlRoom.orgsDominiosTooltip}
+                    >
+                      <Info />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs text-pretty">
+                    {t.controlRoom.orgsDominiosTooltip}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
               <Input
                 id="bulk-org-domains"
                 value={domains}
                 onChange={(event) => setDomains(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    setDomains((current) => `${current.trim()}, `);
+                  }
+                }}
                 placeholder={t.controlRoom.orgsDominiosPlaceholder}
               />
-              <p className="text-xs text-muted-foreground">
-                {t.controlRoom.orgsDominiosAjuda}
-              </p>
             </div>
             {error && (
               <p className="text-sm text-destructive">
