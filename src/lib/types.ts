@@ -124,6 +124,12 @@ export interface CategoriaCor {
  * IANA local. Assim o Graph interpreta o horário no fuso certo tanto para
  * eventos com hora quanto para dia inteiro (que exige meia-noite no fuso).
  */
+/** Convidado de um evento (#211): endereço + nome, vira um `attendees[]`. */
+export interface ConvidadoInput {
+  email: string;
+  nome: string;
+}
+
 export interface EventoInput {
   assunto: string;
   inicio: string; // hora local, sem Z
@@ -133,6 +139,10 @@ export interface EventoInput {
   corpo: string;
   categorias: string[];
   timeZone: string; // IANA (ex. "America/Sao_Paulo")
+  /** Convidados (#211): cada um vira attendee `required` no payload Graph. */
+  convidados: ConvidadoInput[];
+  /** Reunião do Teams (#211): liga isOnlineMeeting + teamsForBusiness. */
+  reuniaoTeams: boolean;
 }
 
 export interface EventoDetalhe {

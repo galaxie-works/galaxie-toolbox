@@ -349,6 +349,19 @@ async fn cr_categorias(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda: cria uma categoria mestra (#211). MailboxSettings.ReadWrite.
+#[tauri::command]
+async fn cr_criar_categoria(
+    state: State<'_, Store>,
+    nome: String,
+    preset: String,
+) -> Result<graph::CategoriaCor, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_criar_categoria(&store, &nome, &preset))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Agenda: cria um evento no calendário do usuário (#211). Calendars.ReadWrite.
 /// Devolve o id do evento criado (o front troca o id otimista pelo real).
 #[tauri::command]
@@ -1267,6 +1280,7 @@ pub fn run() {
             cr_email_corpo,
             cr_email_seguranca,
             cr_categorias,
+            cr_criar_categoria,
             cr_criar_evento,
             cr_editar_evento,
             cr_excluir_evento,
