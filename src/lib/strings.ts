@@ -477,6 +477,10 @@ const pt = {
     diaInteiro: "Dia inteiro",
     mailboxTitulo: "Caixa de correio",
     agendaTitulo: "Agenda",
+    // Subtítulos do header do Bridge por módulo (#231)
+    mailboxSubtitulo: "Suas mensagens em um olhar.",
+    peopleSubtitulo: "Seus contatos do Microsoft 365.",
+    agendaSubtitulo: "Seus próximos compromissos.",
     // Agenda — calendário completo (#211)
     agendaNovoEvento: "Novo evento",
     agendaHoje: "Hoje",
@@ -1315,6 +1319,10 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     diaInteiro: "All day",
     mailboxTitulo: "Mailbox",
     agendaTitulo: "Agenda",
+    // Bridge header subtitles per module (#231)
+    mailboxSubtitulo: "Your messages at a glance.",
+    peopleSubtitulo: "Your Microsoft 365 contacts.",
+    agendaSubtitulo: "Your upcoming schedule.",
     // Agenda — full calendar (#211)
     agendaNovoEvento: "New event",
     agendaHoje: "Today",
