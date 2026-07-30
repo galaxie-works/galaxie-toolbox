@@ -21,6 +21,8 @@
     "@emoji-mart/data": "1.2.1",
     "@faker-js/faker": "^10.5.0",
     "@floating-ui/react": "^0.27.20",
+    "@headless-tree/core": "^1.7.0",
+    "@headless-tree/react": "^1.7.0",
     "@platejs/ai": "^53.3.0",
     "@platejs/basic-nodes": "^53.0.0",
     "@platejs/basic-styles": "^53.0.0",

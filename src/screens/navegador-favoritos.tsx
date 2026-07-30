@@ -74,138 +74,154 @@ import {
   useOcultarWebviewEnquantoAberto,
   useRegistrarOverlayWebview,
 } from "@/lib/navigator-overlay";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Tree, TreeItem, TreeItemLabel } from "@/components/reui/tree";
+import { hotkeysCoreFeature, syncDataLoaderFeature } from "@headless-tree/core";
+import { useTree } from "@headless-tree/react";
 
 const ROTULO_NAVEGADOR: Record<string, string> = {
   chrome: "Chrome",
   edge: "Edge",
 };
 
-/**
- * Caixa tri-state para a arvore de importacao. Reusa EXATAMENTE os tokens do
- * `Checkbox` do design system (border-input / border-primary bg-primary /
- * rounded-[4px] / anel de foco) — so troca o icone: check (tudo), minus
- * (parcial), vazio (nada). Nao inventa linguagem visual nova.
- */
-function TriCheckbox({
-  estado,
-  onToggle,
-  rotulo,
-}: {
-  estado: "on" | "off" | "partial";
-  onToggle: () => void;
-  rotulo: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={estado === "partial" ? "mixed" : estado === "on"}
-      aria-label={rotulo}
-      onClick={(event) => {
-        event.stopPropagation();
-        onToggle();
-      }}
-      className={cn(
-        "grid size-4 shrink-0 place-items-center rounded-[4px] border shadow-xs outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
-        estado === "off"
-          ? "border-input dark:bg-input/30"
-          : "border-primary bg-primary text-primary-foreground",
-      )}
-    >
-      {estado === "on" && <Check className="size-3" />}
-      {estado === "partial" && <Minus className="size-3" />}
-    </button>
-  );
+/** Dado de um item da árvore de importação para o headless-tree (@reui/tree). */
+interface ItemArvoreDado {
+  nome: string;
+  ehLink: boolean;
+  children: string[];
 }
 
-/** Um no (pasta/link) da arvore de importacao, recursivo. */
-function NoArvore({
-  origem,
-  no,
-  nivel,
-  expandidos,
-  onExpandir,
+const RAIZ_ARVORE = "__raiz__";
+
+/**
+ * Achata as origens (BrowserBookmarks) numa tabela de itens para o headless-tree:
+ * cada origem vira uma pasta de topo; cada nó vira um item (id = chaveNo).
+ * `linksPorId` guarda os links descendentes de cada item — base do tri-state e do
+ * toggle de pasta. Assim reusamos o @reui/tree do registry, sem árvore custom.
+ */
+function montarArvore(
+  origens: BrowserBookmarks[],
+  rotuloOrigem: (o: BrowserBookmarks) => string,
+): {
+  itens: Record<string, ItemArvoreDado>;
+  expandir: string[];
+  linksPorId: Record<string, string[]>;
+} {
+  const itens: Record<string, ItemArvoreDado> = {};
+  const linksPorId: Record<string, string[]> = {};
+  const expandir: string[] = [];
+  const raizes: string[] = [];
+
+  const visitar = (origem: BrowserBookmarks, no: BookmarkNode): string => {
+    const id = chaveNo(origem, no);
+    if (no.url) {
+      itens[id] = { nome: no.nome || no.url, ehLink: true, children: [] };
+      linksPorId[id] = [id];
+      return id;
+    }
+    const filhos = no.filhos.map((f) => visitar(origem, f));
+    itens[id] = { nome: no.nome || "—", ehLink: false, children: filhos };
+    linksPorId[id] = filhos.flatMap((fid) => linksPorId[fid] ?? []);
+    return id;
+  };
+
+  for (const origem of origens) {
+    const origemId = `origem:${origem.navegador}:${origem.perfil}`;
+    const rootIds = origem.roots.map((raiz) => visitar(origem, raiz));
+    itens[origemId] = {
+      nome: rotuloOrigem(origem),
+      ehLink: false,
+      children: rootIds,
+    };
+    linksPorId[origemId] = rootIds.flatMap((rid) => linksPorId[rid] ?? []);
+    raizes.push(origemId);
+    expandir.push(origemId);
+    for (const rid of rootIds) if (!itens[rid].ehLink) expandir.push(rid);
+  }
+
+  itens[RAIZ_ARVORE] = { nome: "", ehLink: false, children: raizes };
+  linksPorId[RAIZ_ARVORE] = raizes.flatMap((r) => linksPorId[r] ?? []);
+  return { itens, expandir, linksPorId };
+}
+
+/**
+ * Árvore de importação com o **@reui/tree** (headless-tree) — sem árvore custom
+ * (#176 rework). A seleção tri-state por pasta/item vive fora, num Set de chaves
+ * de link; a pasta reflete/alterna os links descendentes. A expansão é do próprio
+ * headless-tree. Remonta (via `key` no pai) quando as origens trocam.
+ */
+function ArvoreFavoritos({
+  origens,
   selecionados,
   onToggle,
 }: {
-  origem: BrowserBookmarks;
-  no: BookmarkNode;
-  nivel: number;
-  expandidos: Set<string>;
-  onExpandir: (chave: string) => void;
+  origens: BrowserBookmarks[];
   selecionados: Set<string>;
   onToggle: (chaves: string[], ligar: boolean) => void;
 }) {
-  const chave = chaveNo(origem, no);
-  const ehPasta = !no.url;
-  const aberta = expandidos.has(chave);
+  const { t } = useIdioma();
+  const { itens, expandir, linksPorId } = useMemo(
+    () =>
+      montarArvore(origens, (o) =>
+        preencher(t.navegador.importarPerfil, {
+          navegador: ROTULO_NAVEGADOR[o.navegador] ?? o.navegador,
+          perfil: o.perfil,
+        }),
+      ),
+    [origens, t],
+  );
 
-  const estado: "on" | "off" | "partial" = useMemo(() => {
-    if (!ehPasta) return selecionados.has(chave) ? "on" : "off";
-    const descendentes = linksDescendentes(origem, no);
-    if (descendentes.length === 0) return "off";
-    const marcados = descendentes.filter((d) => selecionados.has(d)).length;
-    if (marcados === 0) return "off";
-    if (marcados === descendentes.length) return "on";
-    return "partial";
-  }, [ehPasta, no, origem, selecionados, chave]);
-
-  const alternar = () => {
-    if (ehPasta) {
-      onToggle(linksDescendentes(origem, no), estado !== "on");
-    } else {
-      onToggle([chave], !selecionados.has(chave));
-    }
-  };
+  const tree = useTree<ItemArvoreDado>({
+    initialState: { expandedItems: expandir },
+    indent: 18,
+    rootItemId: RAIZ_ARVORE,
+    getItemName: (item) => item.getItemData().nome,
+    isItemFolder: (item) => !item.getItemData().ehLink,
+    dataLoader: {
+      getItem: (id) => itens[id],
+      getChildren: (id) => itens[id]?.children ?? [],
+    },
+    features: [syncDataLoaderFeature, hotkeysCoreFeature],
+  });
 
   return (
-    <li>
-      <div
-        className="flex items-center gap-1.5 rounded-md px-1.5 py-1 hover:bg-accent/60"
-        style={{ paddingLeft: `${nivel * 16 + 6}px` }}
-      >
-        {ehPasta ? (
-          <button
-            type="button"
-            onClick={() => onExpandir(chave)}
-            className="grid size-4 shrink-0 place-items-center rounded text-muted-foreground hover:text-foreground"
-          >
-            {aberta ? (
-              <ChevronDown className="size-3.5" />
-            ) : (
-              <ChevronRight className="size-3.5" />
-            )}
-          </button>
-        ) : (
-          <span className="size-4 shrink-0" />
-        )}
-        <TriCheckbox estado={estado} onToggle={alternar} rotulo={no.nome} />
-        {ehPasta ? (
-          <Folder className="size-4 shrink-0 text-muted-foreground" />
-        ) : (
-          <Globe className="size-4 shrink-0 text-muted-foreground" />
-        )}
-        <span className="min-w-0 flex-1 truncate text-sm" title={no.url || no.nome}>
-          {no.nome || no.url}
-        </span>
-      </div>
-      {ehPasta && aberta && no.filhos.length > 0 && (
-        <ul>
-          {no.filhos.map((filho) => (
-            <NoArvore
-              key={chaveNo(origem, filho)}
-              origem={origem}
-              no={filho}
-              nivel={nivel + 1}
-              expandidos={expandidos}
-              onExpandir={onExpandir}
-              selecionados={selecionados}
-              onToggle={onToggle}
-            />
-          ))}
-        </ul>
-      )}
-    </li>
+    <Tree indent={18} tree={tree} toggleIconType="chevron">
+      {tree.getItems().map((item) => {
+        const id = item.getId();
+        const dado = item.getItemData();
+        const links = linksPorId[id] ?? [];
+        const marcados = links.filter((l) => selecionados.has(l)).length;
+        const estado: boolean | "indeterminate" =
+          links.length > 0 && marcados === links.length
+            ? true
+            : marcados === 0
+              ? false
+              : "indeterminate";
+        return (
+          <TreeItem key={id} item={item} asChild>
+            <div>
+              <TreeItemLabel>
+                <span className="flex min-w-0 items-center gap-2">
+                  <Checkbox
+                    checked={estado}
+                    onCheckedChange={() => onToggle(links, estado !== true)}
+                    onClick={(event) => event.stopPropagation()}
+                    className="size-3.5 shrink-0"
+                    aria-label={dado.nome}
+                  />
+                  {dado.ehLink ? (
+                    <Globe className="size-4 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <Folder className="size-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="truncate">{dado.nome}</span>
+                </span>
+              </TreeItemLabel>
+            </div>
+          </TreeItem>
+        );
+      })}
+    </Tree>
   );
 }
 
@@ -228,7 +244,6 @@ export function DialogImportarFavoritos({
   useOcultarWebviewEnquantoAberto(aberto);
   const [carregando, setCarregando] = useState(false);
   const [origens, setOrigens] = useState<BrowserBookmarks[]>([]);
-  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   // Diagnóstico da import automática (#176): navegadores detectados vs. com o
   // acesso bloqueado (antivírus/EDR) — decide a mensagem honesta.
@@ -238,21 +253,16 @@ export function DialogImportarFavoritos({
   });
   const arquivoRef = useRef<HTMLInputElement>(null);
 
-  // Expande as pastas de topo e marca TODOS os links (o usuário veio importar —
-  // é mais rápido desmarcar). Reusado pela import automática e pela por arquivo.
+  // Marca TODOS os links (o usuário veio importar — é mais rápido desmarcar). A
+  // expansão inicial fica com o headless-tree (@reui/tree). Reusado pela import
+  // automática e pela por arquivo.
   const preSelecionarTudo = (dados: BrowserBookmarks[]) => {
-    const abrir = new Set<string>();
     const marcar = new Set<string>();
     for (const origem of dados) {
       for (const raiz of origem.roots) {
-        abrir.add(chaveNo(origem, raiz));
-        for (const filho of raiz.filhos) {
-          if (!filho.url) abrir.add(chaveNo(origem, filho));
-        }
         for (const chave of linksDescendentes(origem, raiz)) marcar.add(chave);
       }
     }
-    setExpandidos(abrir);
     setSelecionados(marcar);
   };
 
@@ -276,7 +286,6 @@ export function DialogImportarFavoritos({
     let vivo = true;
     setCarregando(true);
     setOrigens([]);
-    setExpandidos(new Set());
     setSelecionados(new Set());
     setDiag({ detectados: [], bloqueados: [] });
     importBrowserBookmarks()
@@ -318,15 +327,6 @@ export function DialogImportarFavoritos({
         if (ligar) proximo.add(chave);
         else proximo.delete(chave);
       }
-      return proximo;
-    });
-  };
-
-  const alternarExpandir = (chave: string) => {
-    setExpandidos((prev) => {
-      const proximo = new Set(prev);
-      if (proximo.has(chave)) proximo.delete(chave);
-      else proximo.add(chave);
       return proximo;
     });
   };
@@ -426,31 +426,15 @@ export function DialogImportarFavoritos({
                 </Button>
               </div>
             </div>
-            <div className="scrollbar-fina max-h-[46vh] overflow-y-auto rounded-md border border-border p-1">
-              {origens.map((origem) => (
-                <div key={`${origem.navegador}:${origem.perfil}`} className="mb-2 last:mb-0">
-                  <div className="px-2 py-1 text-xs font-medium text-muted-foreground">
-                    {preencher(t.navegador.importarPerfil, {
-                      navegador: ROTULO_NAVEGADOR[origem.navegador] ?? origem.navegador,
-                      perfil: origem.perfil,
-                    })}
-                  </div>
-                  <ul>
-                    {origem.roots.map((raiz) => (
-                      <NoArvore
-                        key={chaveNo(origem, raiz)}
-                        origem={origem}
-                        no={raiz}
-                        nivel={0}
-                        expandidos={expandidos}
-                        onExpandir={alternarExpandir}
-                        selecionados={selecionados}
-                        onToggle={alternarSelecao}
-                      />
-                    ))}
-                  </ul>
-                </div>
-              ))}
+            <div className="scrollbar-fina max-h-[46vh] overflow-y-auto rounded-md border border-border p-2">
+              <ArvoreFavoritos
+                key={origens
+                  .map((o) => `${o.navegador}:${o.perfil}`)
+                  .join("|")}
+                origens={origens}
+                selecionados={selecionados}
+                onToggle={alternarSelecao}
+              />
             </div>
           </>
         )}
