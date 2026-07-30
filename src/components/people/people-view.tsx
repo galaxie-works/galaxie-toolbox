@@ -3,16 +3,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getCoreRowModel,
+  getSortedRowModel,
   useReactTable,
   type ColumnDef,
+  type ColumnOrderState,
+  type RowSelectionState,
+  type SortingState,
   type VisibilityState,
 } from "@tanstack/react-table";
 import {
   ArrowLeft,
   ArrowDownLeft,
+  ArrowUpDown,
   ArrowUpRight,
   Building2,
-  Columns3,
   Copy,
   ExternalLink,
   FunnelX,
@@ -24,6 +28,7 @@ import {
   Pencil,
   MoreHorizontal,
   Phone,
+  Plus,
   SearchX,
   Save,
   Sparkles,
@@ -33,23 +38,23 @@ import { isValidPhoneNumber } from "react-phone-number-input";
 import { toast } from "sonner";
 
 import {
-  Autocomplete,
-  AutocompleteCollection,
-  AutocompleteContent,
-  AutocompleteEmpty,
-  AutocompleteInput,
-  AutocompleteItem,
-  AutocompleteList,
-} from "@/components/reui/autocomplete";
-import {
   Alert,
   AlertAction,
   AlertDescription,
   AlertTitle,
 } from "@/components/reui/alert";
 import { Badge } from "@/components/reui/badge";
-import { DataGrid, DataGridContainer } from "@/components/reui/data-grid/data-grid";
+import {
+  DataGrid,
+  DataGridContainer,
+  useDataGrid,
+} from "@/components/reui/data-grid/data-grid";
+import { DataGridColumnHeader } from "@/components/reui/data-grid/data-grid-column-header";
 import { DataGridColumnVisibility } from "@/components/reui/data-grid/data-grid-column-visibility";
+import {
+  DataGridTableRowSelect,
+  DataGridTableRowSelectAll,
+} from "@/components/reui/data-grid/data-grid-table";
 import { DataGridTableVirtual } from "@/components/reui/data-grid/data-grid-table-virtual";
 import {
   Filters,
@@ -107,13 +112,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -149,6 +147,32 @@ function initials(name: string): string {
       .join("")
       .slice(0, 2)
       .toUpperCase() || "?"
+  );
+}
+
+function PeopleColumnsHeader({ label }: { label: string }) {
+  const { table } = useDataGrid();
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex">
+          <DataGridColumnVisibility
+            table={table}
+            trigger={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={label}
+              >
+                <Plus />
+              </Button>
+            }
+          />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   );
 }
 
@@ -1551,9 +1575,23 @@ export function PeopleView({
   );
   const peopleTab = useAppStore((state) => state.peopleTab);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const [sort, setSort] = useState<"relevance" | "az">("relevance");
+  const query = useAppStore((state) => state.peopleSearchQuery);
+  const setPeopleSearchQuery = useAppStore(
+    (state) => state.setPeopleSearchQuery,
+  );
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const [columnOrder, setColumnOrder] = useState<ColumnOrderState>([
+    "select",
+    "name",
+    "email",
+    "company",
+    "title",
+    "phone",
+    "source",
+    "actions",
+    "columns",
+  ]);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [enrichRequest, setEnrichRequest] = useState<{
     id: string;
     token: number;
@@ -1680,23 +1718,43 @@ export function PeopleView({
         return filter.operator === "is_not" ? !matches : matches;
       });
     });
-    if (sort === "az") {
-      next.sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
-      );
-    }
     return next;
-  }, [contacts, filters, normalizedQuery, sort]);
+  }, [contacts, filters, normalizedQuery]);
+
+  const selectedContacts = useMemo(
+    () => filtered.filter((contact) => rowSelection[contact.id]),
+    [filtered, rowSelection],
+  );
 
   const selected = contacts.find((contact) => contact.id === selectedId) ?? null;
 
   const columns = useMemo<ColumnDef<PeopleContact>[]>(
     () => [
       {
+        id: "select",
+        header: () => <DataGridTableRowSelectAll />,
+        cell: ({ row }) => <DataGridTableRowSelect row={row} />,
+        enableSorting: false,
+        enableHiding: false,
+        enableResizing: false,
+        size: 36,
+      },
+      {
         id: "name",
         accessorKey: "name",
-        header: t.controlRoom.peopleNome,
-        meta: { skeleton: <Skeleton className="h-8 w-44" /> },
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            column={column}
+            title={t.controlRoom.peopleNome}
+          />
+        ),
+        enableSorting: true,
+        enableHiding: false,
+        minSize: 200,
+        meta: {
+          headerTitle: t.controlRoom.peopleNome,
+          skeleton: <Skeleton className="h-8 w-44" />,
+        },
         cell: ({ row }) => {
           const contact = row.original;
           const photo = contact.photo || getFoto(contact.emails[0]?.address);
@@ -1719,19 +1777,42 @@ export function PeopleView({
       {
         id: "company",
         accessorKey: "company",
-        header: t.controlRoom.peopleEmpresa,
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            column={column}
+            title={t.controlRoom.peopleEmpresa}
+          />
+        ),
+        enableSorting: true,
+        meta: { headerTitle: t.controlRoom.peopleEmpresa },
         cell: ({ row }) => row.original.company || t.controlRoom.peopleSemDado,
       },
       {
         id: "title",
         accessorKey: "jobTitle",
-        header: t.controlRoom.peopleCargo,
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            column={column}
+            title={t.controlRoom.peopleCargo}
+          />
+        ),
+        enableSorting: true,
+        meta: { headerTitle: t.controlRoom.peopleCargo },
         cell: ({ row }) => row.original.jobTitle || t.controlRoom.peopleSemDado,
       },
       {
         id: "email",
         accessorFn: (contact) => contact.emails[0]?.address || "",
-        header: t.controlRoom.peopleEmail,
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            column={column}
+            title={t.controlRoom.peopleEmail}
+          />
+        ),
+        enableSorting: true,
+        enableHiding: false,
+        minSize: 180,
+        meta: { headerTitle: t.controlRoom.peopleEmail },
         cell: ({ row }) => (
           <span className="block max-w-52 truncate">
             {row.original.emails[0]?.address || t.controlRoom.peopleSemDado}
@@ -1741,13 +1822,27 @@ export function PeopleView({
       {
         id: "phone",
         accessorFn: (contact) => contact.phones[0]?.number || "",
-        header: t.controlRoom.peopleTelefone,
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            column={column}
+            title={t.controlRoom.peopleTelefone}
+          />
+        ),
+        enableSorting: true,
+        meta: { headerTitle: t.controlRoom.peopleTelefone },
         cell: ({ row }) =>
           row.original.phones[0]?.number || t.controlRoom.peopleSemDado,
       },
       {
         id: "source",
-        header: t.controlRoom.peopleSource,
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            column={column}
+            title={t.controlRoom.peopleSource}
+          />
+        ),
+        enableSorting: false,
+        meta: { headerTitle: t.controlRoom.peopleSource },
         cell: ({ row }) => (
           <span className="flex flex-wrap gap-1">
             {row.original.sources.map((source) => (
@@ -1760,6 +1855,8 @@ export function PeopleView({
         id: "actions",
         header: "",
         enableHiding: false,
+        enableSorting: false,
+        enableResizing: false,
         cell: ({ row }) => (
           <PeopleRowActions
             contact={row.original}
@@ -1774,6 +1871,17 @@ export function PeopleView({
           />
         ),
       },
+      {
+        id: "columns",
+        header: () => (
+          <PeopleColumnsHeader label={t.controlRoom.peopleColumns} />
+        ),
+        cell: () => null,
+        enableHiding: false,
+        enableSorting: false,
+        enableResizing: false,
+        size: 36,
+      },
     ],
     [getFoto, onCompose, selectPerson, t],
   );
@@ -1782,9 +1890,13 @@ export function PeopleView({
     data: filtered,
     columns,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
     getRowId: (row) => row.id,
     enableRowSelection: true,
-    enableMultiRowSelection: false,
+    enableMultiRowSelection: true,
+    onRowSelectionChange: setRowSelection,
+    onSortingChange: setSorting,
+    onColumnOrderChange: setColumnOrder,
     onColumnVisibilityChange: (updater) => {
       const next =
         typeof updater === "function"
@@ -1793,177 +1905,48 @@ export function PeopleView({
       setColumnVisibility(next);
     },
     state: {
-      rowSelection: selectedId ? { [selectedId]: true } : {},
+      rowSelection,
+      sorting,
+      columnOrder,
       columnVisibility,
     },
   });
 
+  const peopleNavigation = (
+    <Tabs
+      value={peopleTab}
+      onValueChange={(value) =>
+        setPeopleTab(value as "contacts" | "organizations")
+      }
+    >
+      <TabsList>
+        <TabsTrigger value="contacts">
+          {t.controlRoom.peopleContactsTab}
+        </TabsTrigger>
+        <TabsTrigger value="organizations">
+          {t.controlRoom.peopleOrganizationsTab}
+        </TabsTrigger>
+      </TabsList>
+    </Tabs>
+  );
+  const sortMode =
+    sorting.some((item) => item.id === "name") ? "az" : "relevance";
+
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-      <div className="flex shrink-0 flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-4">
-          <div>
-            <h2 className="text-lg font-semibold">{t.controlRoom.peopleTitulo}</h2>
-            <p className="text-sm text-muted-foreground">
-              {peopleTab === "contacts"
-                ? t.controlRoom.peopleDescricao
-                : t.controlRoom.orgsDescricao}
-            </p>
-          </div>
-          <Tabs
-            value={peopleTab}
-            onValueChange={(value) =>
-              setPeopleTab(value as "contacts" | "organizations")
-            }
-          >
-            <TabsList>
-              <TabsTrigger value="contacts">
-                {t.controlRoom.peopleContactsTab}
-              </TabsTrigger>
-              <TabsTrigger value="organizations">
-                {t.controlRoom.peopleOrganizationsTab}
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-        {peopleTab === "contacts" && (
-          <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row xl:max-w-4xl">
-          <Autocomplete
-            items={filtered}
-            value={query}
-            onValueChange={setQuery}
-            open={open}
-            onOpenChange={setOpen}
-            itemToStringValue={(item: unknown) => (item as PeopleContact).name}
-            filter={null}
-          >
-            <AutocompleteInput
-              className="h-9"
-              placeholder={t.controlRoom.peopleBuscar}
-              aria-label={t.controlRoom.peopleBuscar}
-              showClear
-            />
-            {open && (
-              <AutocompleteContent>
-                {filtered.length === 0 ? (
-                  <AutocompleteEmpty>{t.controlRoom.peopleSemResultado}</AutocompleteEmpty>
-                ) : (
-                  <AutocompleteList>
-                    <AutocompleteCollection>
-                      {(contact: PeopleContact) => (
-                        <AutocompleteItem
-                          key={contact.id}
-                          value={contact}
-                          onClick={() => selectPerson(contact.id)}
-                        >
-                          <Avatar size="sm">
-                            {(contact.photo || getFoto(contact.emails[0]?.address)) && (
-                              <AvatarImage
-                                src={
-                                  contact.photo ||
-                                  getFoto(contact.emails[0]?.address) ||
-                                  undefined
-                                }
-                                alt={contact.name}
-                              />
-                            )}
-                            <AvatarFallback>{initials(contact.name)}</AvatarFallback>
-                          </Avatar>
-                          <span className="truncate">{contact.name}</span>
-                        </AutocompleteItem>
-                      )}
-                    </AutocompleteCollection>
-                  </AutocompleteList>
-                )}
-              </AutocompleteContent>
-            )}
-          </Autocomplete>
-          <Select value={sort} onValueChange={(value) => setSort(value as typeof sort)}>
-            <SelectTrigger className="w-full sm:w-44" aria-label={t.controlRoom.peopleOrdenar}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="relevance">{t.controlRoom.peopleRelevancia}</SelectItem>
-              <SelectItem value="az">{t.controlRoom.peopleAZ}</SelectItem>
-            </SelectContent>
-          </Select>
-          {view === "table" && (
-            <DataGridColumnVisibility
-              table={table}
-              trigger={
-                <Button variant="outline" aria-label={t.controlRoom.peopleColumns}>
-                  <Columns3 />
-                  <span className="hidden 2xl:inline">{t.controlRoom.peopleColumns}</span>
-                </Button>
-              }
-            />
-          )}
-          <div className="flex rounded-md border p-0.5">
-            <Button
-              variant={view === "table" ? "secondary" : "ghost"}
-              size="icon-sm"
-              aria-label={t.controlRoom.peopleTableView}
-              aria-pressed={view === "table"}
-              onClick={() => setView("table")}
-            >
-              <List />
-            </Button>
-            <Button
-              variant={view === "cards" ? "secondary" : "ghost"}
-              size="icon-sm"
-              aria-label={t.controlRoom.peopleCardsView}
-              aria-pressed={view === "cards"}
-              onClick={() => setView("cards")}
-            >
-              <LayoutGrid />
-            </Button>
-          </div>
-          </div>
-        )}
+      <div className="shrink-0">
+        <h2 className="text-lg font-semibold">{t.controlRoom.peopleTitulo}</h2>
+        <p className="text-sm text-muted-foreground">
+          {peopleTab === "contacts"
+            ? t.controlRoom.peopleDescricao
+            : t.controlRoom.orgsDescricao}
+        </p>
       </div>
 
       {peopleTab === "organizations" ? (
-        <OrganizationsView contacts={contacts} />
+        <OrganizationsView contacts={contacts} navigation={peopleNavigation} />
       ) : (
         <>
-      <div className="flex shrink-0 flex-wrap items-start gap-2">
-        <Filters<string>
-          filters={filters}
-          fields={filterFields}
-          onChange={setFilters}
-          allowMultiple
-          trigger={
-            <Button variant="outline">
-              <ListFilter />
-              {t.controlRoom.peopleFilters}
-            </Button>
-          }
-          i18n={{
-            addFilter: t.controlRoom.peopleFilters,
-            searchFields: t.controlRoom.filtroBuscarCampo,
-            select: t.controlRoom.filtroSelecione,
-          }}
-        />
-        {filters.length > 0 && (
-          <Button variant="outline" onClick={() => setFilters([])}>
-            <FunnelX />
-            {t.controlRoom.peopleClearFilters}
-          </Button>
-        )}
-        <Button
-          variant="outline"
-          disabled={contacts.every((contact) => contact.emails.length === 0)}
-          onClick={() =>
-            setBulkContacts(
-              contacts.filter((contact) => contact.emails[0]?.address),
-            )
-          }
-        >
-          <Sparkles />
-          {t.controlRoom.peopleEnrichAll}
-        </Button>
-      </div>
-
       {bulkContacts && (
         <BulkEnrichReview
           contacts={bulkContacts}
@@ -2006,95 +1989,217 @@ export function PeopleView({
       >
         {(() => {
           const listPane = (
-            <div className="h-full min-h-0 min-w-0 overflow-hidden rounded-xl border bg-card">
-          {view === "table" ? (
-            <DataGrid
-              table={table}
-              recordCount={filtered.length}
-              isLoading={loading && !loaded}
-              loadingMode="skeleton"
-              emptyMessage={
-                missingScopes.length > 0 ? (
+            <Frame
+              className="h-full min-h-0 min-w-0 overflow-hidden"
+              stacked
+              dense
+            >
+              <FrameHeader className="shrink-0">
+                {peopleNavigation}
+              </FrameHeader>
+              <FramePanel
+                fit
+                className="flex min-h-11 shrink-0 items-center justify-between gap-2 px-2 py-1.5"
+              >
+                <Toolbar
+                  aria-label={t.controlRoom.peopleContactsTab}
+                  className="flex-wrap"
+                >
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex">
+                        <Filters<string>
+                          filters={filters}
+                          fields={filterFields}
+                          onChange={setFilters}
+                          allowMultiple
+                          trigger={
+                            <ToolbarButton
+                              aria-label={t.controlRoom.peopleFilters}
+                              pressed={filters.length > 0}
+                            >
+                              <ListFilter />
+                            </ToolbarButton>
+                          }
+                          i18n={{
+                            addFilter: t.controlRoom.peopleFilters,
+                            searchFields: t.controlRoom.filtroBuscarCampo,
+                            select: t.controlRoom.filtroSelecione,
+                          }}
+                        />
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {t.controlRoom.peopleFilters}
+                    </TooltipContent>
+                  </Tooltip>
+                  {filters.length > 0 && (
+                    <ToolbarButton
+                      tooltip={t.controlRoom.peopleClearFilters}
+                      onClick={() => setFilters([])}
+                    >
+                      <FunnelX />
+                    </ToolbarButton>
+                  )}
+                  <ToolbarSeparator />
+                  <ToolbarButton
+                    tooltip={t.controlRoom.peopleOrdenar}
+                    pressed={sortMode === "az"}
+                    onClick={() =>
+                      setSorting(
+                        sortMode === "relevance"
+                          ? [{ id: "name", desc: false }]
+                          : [],
+                      )
+                    }
+                  >
+                    <ArrowUpDown />
+                  </ToolbarButton>
+                  <ToolbarButton
+                    tooltip={
+                      view === "table"
+                        ? t.controlRoom.peopleCardsView
+                        : t.controlRoom.peopleTableView
+                    }
+                    pressed={view === "cards"}
+                    onClick={() =>
+                      setView(view === "table" ? "cards" : "table")
+                    }
+                  >
+                    {view === "table" ? <LayoutGrid /> : <List />}
+                  </ToolbarButton>
+                  <ToolbarSeparator />
+                  <ToolbarButton
+                    tooltip={
+                      selectedContacts.length > 0
+                        ? t.controlRoom.peopleEnrichSelected
+                        : t.controlRoom.peopleEnrichAll
+                    }
+                    disabled={contacts.every(
+                      (contact) => contact.emails.length === 0,
+                    )}
+                    onClick={() =>
+                      setBulkContacts(
+                        (selectedContacts.length > 0
+                          ? selectedContacts
+                          : contacts
+                        ).filter((contact) => contact.emails[0]?.address),
+                      )
+                    }
+                  >
+                    <Sparkles />
+                  </ToolbarButton>
+                </Toolbar>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {filtered.length}
+                </span>
+              </FramePanel>
+              <FramePanel className="min-h-0 p-0">
+                {view === "table" ? (
+                  <DataGrid
+                    table={table}
+                    recordCount={filtered.length}
+                    isLoading={loading && !loaded}
+                    loadingMode="skeleton"
+                    emptyMessage={
+                      missingScopes.length > 0 ? (
+                        <PeoplePermissionEmpty />
+                      ) : (
+                        <PeopleEmpty
+                          search={Boolean(normalizedQuery)}
+                          filtered={filters.length > 0}
+                          onClear={() => {
+                            setPeopleSearchQuery("");
+                            setFilters([]);
+                          }}
+                        />
+                      )
+                    }
+                    onRowClick={(contact) => {
+                      selectPerson(contact.id);
+                      setRowSelection((current) => ({
+                        ...current,
+                        [contact.id]: true,
+                      }));
+                    }}
+                    tableLayout={{
+                      dense: true,
+                      stripped: true,
+                      rowBorder: false,
+                      headerBackground: true,
+                      headerSticky: true,
+                      columnsVisibility: true,
+                      columnsResizable: true,
+                      columnsResizeMode: "onChange",
+                      columnsMovable: true,
+                      width: "fixed",
+                    }}
+                  >
+                    <DataGridContainer className="h-full">
+                      <ScrollArea className="h-full">
+                        <DataGridTableVirtual
+                          onFetchMore={() => void loadMorePeople()}
+                          isFetchingMore={fetchingMore}
+                          hasMore={nextLinks.length > 0}
+                          fetchMoreOffset={8}
+                          estimateSize={48}
+                          overscan={8}
+                        />
+                      </ScrollArea>
+                    </DataGridContainer>
+                  </DataGrid>
+                ) : filtered.length > 0 ? (
+                  <div className="h-full overflow-auto p-3">
+                    <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
+                      {filtered.map((contact) => (
+                        <PeopleCard
+                          key={contact.id}
+                          contact={contact}
+                          selected={contact.id === selectedId}
+                          photo={
+                            contact.photo ||
+                            getFoto(contact.emails[0]?.address) ||
+                            null
+                          }
+                          onSelect={() => selectPerson(contact.id)}
+                          onCompose={onCompose}
+                          onEnrich={() => {
+                            selectPerson(contact.id);
+                            setEnrichRequest({
+                              id: contact.id,
+                              token: Date.now(),
+                            });
+                          }}
+                        />
+                      ))}
+                    </div>
+                    {nextLinks.length > 0 && (
+                      <div className="flex justify-center py-4">
+                        <Button
+                          variant="outline"
+                          disabled={fetchingMore}
+                          onClick={() => void loadMorePeople()}
+                        >
+                          {fetchingMore && <Spinner />}
+                          {t.controlRoom.peopleLoadMore}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                ) : missingScopes.length > 0 ? (
                   <PeoplePermissionEmpty />
                 ) : (
                   <PeopleEmpty
                     search={Boolean(normalizedQuery)}
                     filtered={filters.length > 0}
                     onClear={() => {
-                      setQuery("");
+                      setPeopleSearchQuery("");
                       setFilters([]);
                     }}
                   />
-                )
-              }
-              onRowClick={(contact) => selectPerson(contact.id)}
-              tableLayout={{
-                dense: true,
-                rowBorder: true,
-                headerSticky: true,
-                columnsVisibility: true,
-                width: "auto",
-              }}
-            >
-              <DataGridContainer className="h-full overflow-auto">
-                <DataGridTableVirtual
-                  onFetchMore={() => void loadMorePeople()}
-                  isFetchingMore={fetchingMore}
-                  hasMore={nextLinks.length > 0}
-                  fetchMoreOffset={8}
-                  estimateSize={48}
-                  overscan={8}
-                />
-              </DataGridContainer>
-            </DataGrid>
-          ) : filtered.length > 0 ? (
-            <div className="h-full overflow-auto p-3">
-              <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
-                {filtered.map((contact) => (
-                  <PeopleCard
-                    key={contact.id}
-                    contact={contact}
-                    selected={contact.id === selectedId}
-                    photo={
-                      contact.photo ||
-                      getFoto(contact.emails[0]?.address) ||
-                      null
-                    }
-                    onSelect={() => selectPerson(contact.id)}
-                    onCompose={onCompose}
-                    onEnrich={() => {
-                      selectPerson(contact.id);
-                      setEnrichRequest({ id: contact.id, token: Date.now() });
-                    }}
-                  />
-                ))}
-              </div>
-              {nextLinks.length > 0 && (
-                <div className="flex justify-center py-4">
-                  <Button
-                    variant="outline"
-                    disabled={fetchingMore}
-                    onClick={() => void loadMorePeople()}
-                  >
-                    {fetchingMore && <Spinner />}
-                    {t.controlRoom.peopleLoadMore}
-                  </Button>
-                </div>
-              )}
-            </div>
-          ) : missingScopes.length > 0 ? (
-            <PeoplePermissionEmpty />
-          ) : (
-            <PeopleEmpty
-              search={Boolean(normalizedQuery)}
-              filtered={filters.length > 0}
-              onClear={() => {
-                setQuery("");
-                setFilters([]);
-              }}
-            />
-          )}
-            </div>
+                )}
+              </FramePanel>
+            </Frame>
           );
 
           const detailPane =

@@ -25,6 +25,7 @@ import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
 import { Estrelas } from "@/components/estrelas";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
+import { UniversalSearch } from "@/components/universal-search";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import {
   SidebarInset,
@@ -644,6 +645,13 @@ function AppInner() {
                 )}
               </BreadcrumbList>
             </Breadcrumb>
+            <div className="mx-auto min-w-24 flex-1 px-2 sm:max-w-sm lg:max-w-md">
+              <UniversalSearch
+                tela={tela}
+                screenLabel={t.nav[info.titulo]}
+                bridgeView={bridgeView}
+              />
+            </div>
             <div className="ml-auto">
               <ThemeToggle />
             </div>

@@ -85,6 +85,7 @@ const pt = {
     sharepoint: "SharePoint",
     sair: "Sair",
     alternarMenu: "Alternar menu",
+    buscarEm: "Buscar em {nome}...",
   },
 
   abas: {
@@ -451,6 +452,7 @@ const pt = {
     // Agenda / Up Next
     upNext: "A seguir",
     semEventos: "Nada na agenda neste dia.",
+    agendaBuscar: "Buscar eventos...",
     online: "Online",
     diaInteiro: "Dia inteiro",
     mailboxTitulo: "Caixa de correio",
@@ -618,6 +620,7 @@ const pt = {
     peopleInbound: "Recebido",
     peopleOutbound: "Enviado",
     peopleEnrichAll: "Enriquecer todos",
+    peopleEnrichSelected: "Enriquecer selecionados",
     peopleBulkTitle: "Revisão de enriquecimento",
     peopleBulkContact: "Contato {atual} de {total}",
     peopleBulkSkip: "Pular",
@@ -895,6 +898,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     sharepoint: "SharePoint",
     sair: "Sign out",
     alternarMenu: "Toggle sidebar",
+    buscarEm: "Search in {nome}...",
   },
 
   abas: {
@@ -1259,6 +1263,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Agenda / Up Next
     upNext: "Up Next",
     semEventos: "Nothing on the agenda this day.",
+    agendaBuscar: "Search events...",
     online: "Online",
     diaInteiro: "All day",
     mailboxTitulo: "Mailbox",
@@ -1426,6 +1431,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleInbound: "Received",
     peopleOutbound: "Sent",
     peopleEnrichAll: "Enrich all",
+    peopleEnrichSelected: "Enrich selected",
     peopleBulkTitle: "Enrichment review",
     peopleBulkContact: "Contact {atual} of {total}",
     peopleBulkSkip: "Skip",
