@@ -17,6 +17,7 @@ import {
   type AppM365,
 } from "@/lib/apps";
 import * as browser from "@/lib/browser";
+import { fetchFavicon } from "@/lib/api";
 import {
   montarLanes,
   reordenarLane,
@@ -25,6 +26,9 @@ import {
   loadNavigatorMembership,
   persistNavigatorMembership,
   podarMembership,
+  origemDaUrl,
+  loadFaviconCache,
+  persistFaviconCache,
   NAVIGATOR_GROUP_COLORS,
   NAVIGATOR_GROUP_COLOR_ORDER,
   type AbaBrowser,
@@ -753,6 +757,44 @@ export function NavegadorScreen({
     [abas, grupos, membership],
   );
 
+  // --- Favicons das abas web (#276) ----------------------------------------
+  // Abas de apps M365 já têm ícone (urlIcone); para abas web livres, o Rust busca
+  // o favicon do PRÓPRIO domínio (sem terceiros) e cacheamos por origem.
+  const [favicons, setFavicons] = useState<Record<string, string>>(
+    loadFaviconCache,
+  );
+  const faviconTentados = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    persistFaviconCache(favicons);
+  }, [favicons]);
+
+  useEffect(() => {
+    let vivo = true;
+    for (const aba of abas) {
+      if (porId(aba.id)) continue; // app M365 já tem ícone próprio
+      if (aba.privada) continue; // aba privada não cacheia origem (privacidade)
+      const origem = origemDaUrl(aba.url);
+      if (!origem || favicons[origem] || faviconTentados.current.has(origem)) {
+        continue;
+      }
+      faviconTentados.current.add(origem);
+      void fetchFavicon(aba.url).then((uri) => {
+        if (vivo && uri) setFavicons((prev) => ({ ...prev, [origem]: uri }));
+      });
+    }
+    return () => {
+      vivo = false;
+    };
+  }, [abas, favicons]);
+
+  // Favicon de uma aba web: o salvo na própria aba, ou o cacheado por origem.
+  const faviconDaAba = (aba: AbaBrowser): string | undefined => {
+    if (aba.favicon) return aba.favicon;
+    const origem = origemDaUrl(aba.url);
+    return origem ? favicons[origem] : undefined;
+  };
+
   // Reordena UMA lane (drag) e sobe a ordem completa de ids ao App. Ordem de
   // chip pura: não toca ativa/url → nenhuma webview reposiciona.
   function reordenarLaneAbas(laneAbas: AbaBrowser[]) {
@@ -839,6 +881,7 @@ export function NavegadorScreen({
     const ativaAba = aba.id === ativa;
     const dormindo = aba.estado === "dormindo";
     const privada = Boolean(aba.privada);
+    const fav = !app && !privada ? faviconDaAba(aba) : undefined;
     const grupoAtual = aba.fixada ? undefined : membership[aba.id];
     const tabLabel = dormindo
       ? preencher(t.navegador.dormindoClique, { nome: aba.nome })
@@ -886,6 +929,13 @@ export function NavegadorScreen({
                   src={urlIcone(app)}
                   alt=""
                   className="size-4 shrink-0"
+                  draggable={false}
+                />
+              ) : fav ? (
+                <img
+                  src={fav}
+                  alt=""
+                  className="size-4 shrink-0 rounded-[3px]"
                   draggable={false}
                 />
               ) : (

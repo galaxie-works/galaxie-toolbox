@@ -3,6 +3,7 @@ mod bookmarks;
 mod browser;
 mod config;
 mod estado;
+mod favicon;
 mod graph;
 mod lock_screen;
 mod system;
@@ -1154,6 +1155,16 @@ async fn import_browser_bookmarks() -> Result<bookmarks::ImportarResultado, Stri
         .map_err(|e| e.to_string())
 }
 
+/// Favicon do PROPRIO dominio de uma URL (#276). HTTP so no site pedido — jamais
+/// servico de terceiros (privacidade). Devolve data URI ou `None`. Cache por
+/// origem no modulo. Reutilizavel pelo Contacts (#289).
+#[tauri::command]
+async fn fetch_favicon(url: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || favicon::buscar(&url))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Startup (#123): o app esta configurado para iniciar junto com o sistema?
 /// Le do autostart do SO via tauri-plugin-autostart (registro no Windows).
 #[tauri::command]
@@ -1382,6 +1393,7 @@ pub fn run() {
             long_paths_status,
             log_frontend_error,
             import_browser_bookmarks,
+            fetch_favicon,
             autostart_status,
             autostart_set,
         ])
