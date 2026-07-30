@@ -11,6 +11,9 @@ export interface AbaBrowser {
   fixada?: boolean;
   manterAcordada?: boolean;
   reativando?: boolean;
+  /** Aba privada (Story 5): navegacao nao entra no historico e o chip ganha
+   *  tratamento visual distinto. Privadas nunca sao pinadas/persistidas. */
+  privada?: boolean;
 }
 
 export interface NavigatorMemorySettings {

@@ -14,6 +14,14 @@ import {
   tabsToSleep,
   type AbaBrowser,
 } from "@/lib/navigator-tabs";
+import {
+  loadHistorico,
+  persistHistorico,
+  registrarVisita,
+  limparHistorico,
+  type HistoryEntry,
+  type PeriodoLimpeza,
+} from "@/lib/navigator-history";
 import * as browser from "@/lib/browser";
 import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
 import { ConfiguracoesScreen } from "@/screens/configuracoes";
@@ -106,10 +114,31 @@ function AppInner() {
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
   const [navigatorClock, setNavigatorClock] = useState(0);
   const [navigatorMemorySettings] = useState(loadNavigatorMemorySettings);
+  // Historico de navegacao (Story 5): capturado nos pontos onde o app commita
+  // uma URL num webview (abrir app / omnibox / favorito). Persistido em
+  // localStorage, igual aos pins/grupos/favoritos.
+  const [historico, setHistorico] = useState<HistoryEntry[]>(loadHistorico);
+  // Modo privado: enquanto ligado, novas abas nao gravam historico e ganham
+  // tratamento visual distinto (aba "privada").
+  const [modoPrivado, setModoPrivado] = useState(false);
 
   useEffect(() => {
     persistPinnedNavigatorTabs(abas);
   }, [abas]);
+
+  useEffect(() => {
+    persistHistorico(historico);
+  }, [historico]);
+
+  // Ponto unico de captura: so grava fora do modo privado e so http(s).
+  function registrarHistorico(url: string, nome: string) {
+    if (modoPrivado) return;
+    setHistorico((prev) => registrarVisita(prev, { url, nome }));
+  }
+
+  function limparHistoricoPeriodo(periodo: PeriodoLimpeza) {
+    setHistorico((prev) => limparHistorico(prev, periodo));
+  }
 
   useEffect(() => {
     const timer = window.setInterval(
@@ -360,9 +389,11 @@ function AppInner() {
           url,
           estado: "ativa",
           ultimoAcesso: now,
+          privada: modoPrivado,
         },
       ]);
     });
+    registrarHistorico(url, app.nome);
     setAbaAtiva(app.id);
     setTela("navegador");
   }
@@ -378,9 +409,10 @@ function AppInner() {
             ? tab
             : { ...tab, estado: "fundo" as const },
         ),
-        { id, nome, url, estado: "ativa", ultimoAcesso: now },
+        { id, nome, url, estado: "ativa", ultimoAcesso: now, privada: modoPrivado },
       ]),
     );
+    registrarHistorico(url, nome);
     setAbaAtiva(id);
     setTela("navegador");
   }
@@ -771,6 +803,10 @@ function AppInner() {
               onAbrir={abrirAppAqui}
               onNovaAba={novaAba}
               onNavegar={abrirUrlLivre}
+              historico={historico}
+              onLimparHistorico={limparHistoricoPeriodo}
+              modoPrivado={modoPrivado}
+              onAlternarModoPrivado={() => setModoPrivado((v) => !v)}
             />
           </div>
         ) : tela === "configuracoes" ? (
