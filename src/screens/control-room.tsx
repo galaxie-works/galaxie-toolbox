@@ -1437,6 +1437,7 @@ function FolderSidebar({
   onAbrirAdicionarCaixa,
   caixaCompartilhada,
   colapsada,
+  onToggleSidebar,
   bridgeView,
   onSelectModule,
   t,
@@ -1471,6 +1472,7 @@ function FolderSidebar({
   onAbrirAdicionarCaixa: () => void;
   caixaCompartilhada: boolean;
   colapsada: boolean;
+  onToggleSidebar: () => void;
   bridgeView: BridgeView;
   onSelectModule: (view: BridgeView) => void;
   t: ReturnType<typeof useIdioma>["t"];
@@ -1802,14 +1804,28 @@ function FolderSidebar({
         colapsada ? "w-16 items-center" : "w-52"
       )}
     >
-      <nav
-        aria-label="Bridge"
-        className={cn("flex w-full flex-col gap-0.5", colapsada && "items-center")}
+      <div
+        className={cn(
+          "flex w-full shrink-0",
+          colapsada ? "justify-center" : "justify-start"
+        )}
       >
-        <Modulo view="mail" rotulo={t.controlRoom.mailboxTitulo} icon={Mailbox} />
-        <Modulo view="people" rotulo={t.controlRoom.peopleTitulo} icon={Users} />
-        <Modulo view="agenda" rotulo={t.controlRoom.agendaTitulo} icon={CalendarDays} />
-      </nav>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onToggleSidebar}
+              aria-label={t.nav.alternarMenu}
+            >
+              {colapsada ? <PanelLeftOpen /> : <PanelLeftClose />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right" align="center">
+            {t.nav.alternarMenu}
+          </TooltipContent>
+        </Tooltip>
+      </div>
       <Separator className={cn("shrink-0", colapsada && "w-6")} />
 
       {bridgeView === "mail" ? (
@@ -1909,6 +1925,16 @@ function FolderSidebar({
       ) : (
         <div className="flex-1" />
       )}
+
+      <Separator className={cn("shrink-0", colapsada && "w-6")} />
+      <nav
+        aria-label="Bridge"
+        className={cn("flex w-full flex-col gap-0.5", colapsada && "items-center")}
+      >
+        <Modulo view="mail" rotulo={t.controlRoom.mailboxTitulo} icon={Mailbox} />
+        <Modulo view="people" rotulo={t.controlRoom.peopleTitulo} icon={Users} />
+        <Modulo view="agenda" rotulo={t.controlRoom.agendaTitulo} icon={CalendarDays} />
+      </nav>
 
       {/* Confirmação do "Esvaziar pasta": destrutiva e não desfazível, então
           nunca dispara direto do menu de contexto (#89). */}
@@ -2429,8 +2455,6 @@ function MessageList({
   mensagens,
   erroLeitura,
   onRefresh,
-  sidebarAberta,
-  onToggleSidebar,
   pastaId,
   pastaTipo,
   onEsvaziar,
@@ -2461,8 +2485,6 @@ function MessageList({
   mensagens: EmailItem[] | null;
   erroLeitura?: string;
   onRefresh: () => void;
-  sidebarAberta: boolean;
-  onToggleSidebar: () => void;
   pastaId: string;
   pastaTipo: string;
   onEsvaziar: () => void;
@@ -3173,21 +3195,6 @@ function MessageList({
   return (
     <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
       <div className="flex items-center gap-2 px-3 py-3">
-        {/* Toggle do painel de pastas (#101): tooltip canônico simples (sem
-            atalho), mesmo padrão do #100 na sidebar. */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={onToggleSidebar}
-              aria-label={t.nav.alternarMenu}
-            >
-              {sidebarAberta ? <PanelLeftClose /> : <PanelLeftOpen />}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{t.nav.alternarMenu}</TooltipContent>
-        </Tooltip>
         <h2 className="text-sm font-semibold">{titulo}</h2>
         {mensagens && (
           <Badge variant="secondary" size="sm">
@@ -6061,8 +6068,12 @@ export function ControlRoomScreen({
           onAbrirAdicionarCaixa={() => setAdicionarCaixaAberto(true)}
           caixaCompartilhada={caixaCompartilhadaAtiva}
           colapsada={!sidebarAberta}
+          onToggleSidebar={() => setSidebarAberta((aberta) => !aberta)}
           bridgeView={bridgeView}
-          onSelectModule={setBridgeView}
+          onSelectModule={(view) => {
+            setBridgeView(view);
+            setSidebarAberta(view === "mail");
+          }}
           t={t}
         />
 
@@ -6092,8 +6103,6 @@ export function ControlRoomScreen({
                 pastaAtual?.acessoNegado ? t.controlRoom.caixaAcessoParcial : undefined
               }
               onRefresh={() => setRecarga((n) => n + 1)}
-              sidebarAberta={sidebarAberta}
-              onToggleSidebar={() => setSidebarAberta((v) => !v)}
               pastaId={pastaSel}
               pastaTipo={pastaAtual?.tipo ?? ""}
               onEsvaziar={() => esvaziarPasta(pastaSel)}
