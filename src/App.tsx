@@ -417,6 +417,32 @@ function AppInner() {
     setTela("navegador");
   }
 
+  /** Restaura várias entradas de histórico como abas novas (#177). Ids únicos
+   *  (Date.now pode repetir num mesmo tick); a última vira ativa. */
+  function restaurarAbas(entradas: { url: string; nome: string }[]) {
+    if (entradas.length === 0) return;
+    const base = Date.now();
+    const novas: AbaBrowser[] = entradas.map((entrada, i) => ({
+      id: `web-${base}-${i}`,
+      nome: entrada.nome,
+      url: entrada.url,
+      estado: i === entradas.length - 1 ? "ativa" : "fundo",
+      ultimoAcesso: base + i,
+      privada: modoPrivado,
+    }));
+    setAbas((prev) =>
+      orderPinnedFirst([
+        ...prev.map((tab) =>
+          tab.estado === "dormindo" ? tab : { ...tab, estado: "fundo" as const },
+        ),
+        ...novas,
+      ]),
+    );
+    for (const entrada of entradas) registrarHistorico(entrada.url, entrada.nome);
+    setAbaAtiva(novas[novas.length - 1].id);
+    setTela("navegador");
+  }
+
   function trocarAba(id: string) {
     const now = Date.now();
     setAbas((prev) =>
@@ -827,6 +853,7 @@ function AppInner() {
               onAbrir={abrirAppAqui}
               onNovaAba={novaAba}
               onNavegar={abrirUrlLivre}
+              onRestaurarAbas={restaurarAbas}
               historico={historico}
               onLimparHistorico={limparHistoricoPeriodo}
               modoPrivado={modoPrivado}

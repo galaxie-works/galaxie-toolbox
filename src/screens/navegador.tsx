@@ -84,6 +84,22 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import {
@@ -106,6 +122,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  RotateCcw,
   Search,
   Star,
   Trash2,
@@ -683,6 +700,7 @@ export function NavegadorScreen({
   onNovaAba,
   onNavegar,
   historico,
+  onRestaurarAbas,
   onLimparHistorico,
   modoPrivado,
   onAlternarModoPrivado,
@@ -702,6 +720,7 @@ export function NavegadorScreen({
   onNovaAba: () => void;
   onNavegar: (url: string, nome: string) => void;
   historico: HistoryEntry[];
+  onRestaurarAbas: (entradas: { url: string; nome: string }[]) => void;
   onLimparHistorico: (periodo: PeriodoLimpeza) => void;
   modoPrivado: boolean;
   onAlternarModoPrivado: () => void;
@@ -1465,11 +1484,12 @@ export function NavegadorScreen({
       />
 
       {/* Histórico: view pesquisável + limpar por período (Story 5). */}
-      <DialogHistorico
+      <SheetHistorico
         aberto={historicoAberto}
         onFechar={() => setHistoricoAberto(false)}
         historico={historico}
         onNavegar={onNavegar}
+        onRestaurar={onRestaurarAbas}
         onLimpar={onLimparHistorico}
       />
 
@@ -1617,21 +1637,26 @@ function DialogEditarGrupo({
  * View de histórico (Story 5): busca pesquisável + lista por recência + limpar
  * por período. A query é estado local do input; navegar/limpar sobem por props.
  */
-function DialogHistorico({
+function SheetHistorico({
   aberto,
   onFechar,
   historico,
   onNavegar,
+  onRestaurar,
   onLimpar,
 }: {
   aberto: boolean;
   onFechar: () => void;
   historico: HistoryEntry[];
   onNavegar: (url: string, nome: string) => void;
+  onRestaurar: (entradas: { url: string; nome: string }[]) => void;
   onLimpar: (periodo: PeriodoLimpeza) => void;
 }) {
   const { idioma, t } = useIdioma();
   const [q, setQ] = useState("");
+  // #177: itens selecionáveis para restaurar abas + período de limpeza via Select.
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [periodo, setPeriodo] = useState<PeriodoLimpeza>("ultima-hora");
   // z-order (#275): esconde a webview enquanto o histórico estiver aberto.
   useOcultarWebviewEnquantoAberto(aberto);
   const lista = useMemo(() => buscarHistorico(historico, q), [historico, q]);
@@ -1644,21 +1669,47 @@ function DialogHistorico({
     [idioma],
   );
 
+  // Limpa a seleção sempre que o Sheet fecha.
+  useEffect(() => {
+    if (!aberto) setSelecionados(new Set());
+  }, [aberto]);
+
+  const alternar = (id: string) =>
+    setSelecionados((prev) => {
+      const proximo = new Set(prev);
+      if (proximo.has(id)) proximo.delete(id);
+      else proximo.add(id);
+      return proximo;
+    });
+
   const abrir = (entrada: HistoryEntry) => {
     onNavegar(entrada.url, entrada.nome);
     onFechar();
   };
 
+  const restaurar = () => {
+    const escolhidas = lista
+      .filter((e) => selecionados.has(e.id))
+      .map((e) => ({ url: e.url, nome: e.nome }));
+    if (escolhidas.length === 0) return;
+    onRestaurar(escolhidas);
+    onFechar();
+  };
+
   return (
-    <Dialog open={aberto} onOpenChange={(a) => !a && onFechar()}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>{t.navegador.historicoTitulo}</DialogTitle>
-          <DialogDescription className="sr-only">
-            {t.navegador.paletaBuscar}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-3">
+    <Sheet open={aberto} onOpenChange={(a) => !a && onFechar()}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
+      >
+        <SheetHeader className="border-b border-border">
+          <SheetTitle>{t.navegador.historicoTitulo}</SheetTitle>
+          <SheetDescription className="sr-only">
+            {t.navegador.historicoBuscar}
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="p-4 pb-2">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -1669,91 +1720,113 @@ function DialogHistorico({
               autoFocus
             />
           </div>
-          <div className="scrollbar-fina max-h-[360px] min-h-[120px] overflow-y-auto rounded-md border border-border">
-            {lista.length === 0 ? (
-              <div className="grid h-[120px] place-items-center px-4 text-center text-sm text-muted-foreground">
-                {t.navegador.historicoVazio}
-              </div>
-            ) : (
-              <ul className="divide-y divide-border">
-                {lista.map((entrada) => {
-                  const app = appPorUrl(entrada.url);
-                  let host = entrada.url;
-                  try {
-                    host = new URL(entrada.url).hostname.replace(/^www\./, "");
-                  } catch {
-                    // url estranha: deixa a string crua
-                  }
-                  return (
-                    <li key={entrada.id}>
-                      <button
-                        type="button"
-                        onClick={() => abrir(entrada)}
-                        className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none hover:bg-accent focus-visible:bg-accent"
-                      >
-                        {app ? (
-                          <img
-                            src={urlIcone(app)}
-                            alt=""
-                            className="size-4 shrink-0"
-                            draggable={false}
-                          />
-                        ) : (
-                          <History className="size-4 shrink-0 text-muted-foreground" />
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">
-                            {entrada.nome}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {host}
-                          </span>
-                        </span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {fmt.format(entrada.ts)}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
         </div>
-        <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <span className="text-xs text-muted-foreground">
-            {t.navegador.limparHistorico}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => onLimpar("ultima-hora")}
+
+        <div className="scrollbar-fina min-h-0 flex-1 overflow-y-auto">
+          {lista.length === 0 ? (
+            <div className="grid h-full place-items-center px-4 text-center text-sm text-muted-foreground">
+              {t.navegador.historicoVazio}
+            </div>
+          ) : (
+            <ul className="divide-y divide-border">
+              {lista.map((entrada) => {
+                const app = appPorUrl(entrada.url);
+                let host = entrada.url;
+                try {
+                  host = new URL(entrada.url).hostname.replace(/^www\./, "");
+                } catch {
+                  // url estranha: deixa a string crua
+                }
+                const marcada = selecionados.has(entrada.id);
+                return (
+                  <li
+                    key={entrada.id}
+                    className="flex items-center gap-2.5 px-3 py-2 hover:bg-accent/40"
+                  >
+                    <Checkbox
+                      checked={marcada}
+                      onCheckedChange={() => alternar(entrada.id)}
+                      aria-label={preencher(t.navegador.historicoSelecionar, {
+                        nome: entrada.nome,
+                      })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => abrir(entrada)}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none focus-visible:underline"
+                    >
+                      {app ? (
+                        <img
+                          src={urlIcone(app)}
+                          alt=""
+                          className="size-4 shrink-0"
+                          draggable={false}
+                        />
+                      ) : (
+                        <History className="size-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
+                          {entrada.nome}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {host}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {fmt.format(entrada.ts)}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <SheetFooter className="gap-3 border-t border-border">
+          <Button
+            type="button"
+            disabled={selecionados.size === 0}
+            onClick={restaurar}
+            className="gap-2"
+          >
+            <RotateCcw className="size-4" />
+            {selecionados.size > 0
+              ? preencher(t.navegador.historicoRestaurar, {
+                  n: selecionados.size,
+                })
+              : t.navegador.historicoRestaurarVazio}
+          </Button>
+          <div className="flex items-center gap-2">
+            <Select
+              value={periodo}
+              onValueChange={(v) => setPeriodo(v as PeriodoLimpeza)}
             >
-              {t.navegador.limparUltimaHora}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => onLimpar("hoje")}
-            >
-              {t.navegador.limparHoje}
-            </Button>
+              <SelectTrigger size="sm" className="flex-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ultima-hora">
+                  {t.navegador.limparUltimaHora}
+                </SelectItem>
+                <SelectItem value="hoje">{t.navegador.limparHoje}</SelectItem>
+                <SelectItem value="tudo">{t.navegador.limparTudo}</SelectItem>
+              </SelectContent>
+            </Select>
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="gap-1.5 text-destructive hover:text-destructive"
-              onClick={() => onLimpar("tudo")}
+              className="shrink-0 gap-1.5 text-destructive hover:text-destructive"
+              onClick={() => onLimpar(periodo)}
             >
               <Trash2 className="size-4" />
-              {t.navegador.limparTudo}
+              {t.navegador.limparHistorico}
             </Button>
           </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
