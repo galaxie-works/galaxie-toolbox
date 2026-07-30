@@ -1344,11 +1344,11 @@ function AssignToOrganizationDialog({
                     <Button
                       type="button"
                       variant="ghost"
-                      size="icon-xs"
-                      className="rounded-full text-muted-foreground"
+                      size="icon-sm"
+                      className="rounded-full text-muted-foreground hover:text-foreground"
                       aria-label={t.controlRoom.orgsDominiosTooltip}
                     >
-                      <Info />
+                      <Info className="size-4" />
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent className="max-w-xs text-pretty">
