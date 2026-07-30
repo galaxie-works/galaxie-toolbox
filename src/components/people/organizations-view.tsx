@@ -133,7 +133,7 @@ function OrganizationDialog({
       website,
       notes,
     };
-    if (!name.trim() || input.domains.length === 0) {
+    if (!name.trim()) {
       setError(true);
       return;
     }

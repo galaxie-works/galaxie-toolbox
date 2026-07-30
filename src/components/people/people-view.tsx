@@ -1648,6 +1648,7 @@ function AssignToOrganizationDialog({
   const [name, setName] = useState("");
   const [domains, setDomains] = useState("");
   const [error, setError] = useState(false);
+  const wasOpenRef = useRef(false);
 
   const selectedDomains = useMemo(
     () =>
@@ -1662,7 +1663,15 @@ function AssignToOrganizationDialog({
   );
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    // Inicializa somente na transição fechado → aberto. Criar uma organização
+    // atualiza o store e pode recriar `contacts`/`selectedDomains`; reiniciar
+    // aqui devolveria o fluxo de "preview" para a etapa "pick".
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
     setStep("pick");
     setQuery("");
     setTargetId(null);
@@ -1714,7 +1723,7 @@ function AssignToOrganizationDialog({
 
   const submitCreate = () => {
     const parsedDomains = splitDomains(domains);
-    if (!name.trim() || parsedDomains.length === 0) {
+    if (!name.trim()) {
       setError(true);
       return;
     }
