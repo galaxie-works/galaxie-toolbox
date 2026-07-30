@@ -1148,7 +1148,7 @@ fn log_frontend_error(msg: String) {
 /// `Bookmarks` (JSON) de cada perfil. Nunca le `Login Data`/credenciais. Devolve
 /// a arvore por navegador+perfil; ausencia degrada em lista vazia (sem panico).
 #[tauri::command]
-async fn import_browser_bookmarks() -> Result<Vec<bookmarks::BrowserBookmarks>, String> {
+async fn import_browser_bookmarks() -> Result<bookmarks::ImportarResultado, String> {
     tauri::async_runtime::spawn_blocking(bookmarks::importar)
         .await
         .map_err(|e| e.to_string())

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -11,8 +11,10 @@ import {
   Minus,
   Pencil,
   Plus,
+  ShieldAlert,
   Star,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -27,6 +29,7 @@ import {
   inserirFavorito,
   linksDescendentes,
   novoFavoritoId,
+  parseBookmarksHtml,
   removerFavorito,
   renomearFavorito,
   selecaoParaFavoritos,
@@ -227,6 +230,44 @@ export function DialogImportarFavoritos({
   const [origens, setOrigens] = useState<BrowserBookmarks[]>([]);
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  // Diagnóstico da import automática (#176): navegadores detectados vs. com o
+  // acesso bloqueado (antivírus/EDR) — decide a mensagem honesta.
+  const [diag, setDiag] = useState<{ detectados: string[]; bloqueados: string[] }>({
+    detectados: [],
+    bloqueados: [],
+  });
+  const arquivoRef = useRef<HTMLInputElement>(null);
+
+  // Expande as pastas de topo e marca TODOS os links (o usuário veio importar —
+  // é mais rápido desmarcar). Reusado pela import automática e pela por arquivo.
+  const preSelecionarTudo = (dados: BrowserBookmarks[]) => {
+    const abrir = new Set<string>();
+    const marcar = new Set<string>();
+    for (const origem of dados) {
+      for (const raiz of origem.roots) {
+        abrir.add(chaveNo(origem, raiz));
+        for (const filho of raiz.filhos) {
+          if (!filho.url) abrir.add(chaveNo(origem, filho));
+        }
+        for (const chave of linksDescendentes(origem, raiz)) marcar.add(chave);
+      }
+    }
+    setExpandidos(abrir);
+    setSelecionados(marcar);
+  };
+
+  // Import por arquivo HTML (export do próprio navegador): destrava mesmo com a
+  // pasta de perfil bloqueada, sem tocar nela. Só favoritos, nunca credenciais.
+  const carregarArquivo = async (evento: React.ChangeEvent<HTMLInputElement>) => {
+    const arquivo = evento.target.files?.[0];
+    evento.target.value = ""; // permite reimportar o mesmo arquivo
+    if (!arquivo) return;
+    const texto = await arquivo.text();
+    const origem = parseBookmarksHtml(texto, arquivo.name);
+    setDiag({ detectados: [], bloqueados: [] });
+    setOrigens([origem]);
+    preSelecionarTudo([origem]);
+  };
 
   // Carrega ao abrir; zera ao fechar. Por padrão expande as pastas de topo e
   // deixa TUDO marcado (o usuário veio importar — é mais rápido desmarcar).
@@ -237,23 +278,13 @@ export function DialogImportarFavoritos({
     setOrigens([]);
     setExpandidos(new Set());
     setSelecionados(new Set());
+    setDiag({ detectados: [], bloqueados: [] });
     importBrowserBookmarks()
-      .then((dados) => {
+      .then((res) => {
         if (!vivo) return;
-        setOrigens(dados);
-        const abrir = new Set<string>();
-        const marcar = new Set<string>();
-        for (const origem of dados) {
-          for (const raiz of origem.roots) {
-            abrir.add(chaveNo(origem, raiz));
-            for (const filho of raiz.filhos) {
-              if (!filho.url) abrir.add(chaveNo(origem, filho));
-            }
-            for (const chave of linksDescendentes(origem, raiz)) marcar.add(chave);
-          }
-        }
-        setExpandidos(abrir);
-        setSelecionados(marcar);
+        setOrigens(res.navegadores);
+        setDiag({ detectados: res.detectados, bloqueados: res.bloqueados });
+        preSelecionarTudo(res.navegadores);
       })
       .catch(() => {
         if (vivo) setOrigens([]);
@@ -324,15 +355,48 @@ export function DialogImportarFavoritos({
           <DialogDescription>{t.navegador.importarDescricao}</DialogDescription>
         </DialogHeader>
 
+        {/* Import por arquivo HTML (export do próprio navegador) — sempre
+            disponível, e o único caminho quando a pasta de perfil está bloqueada. */}
+        <input
+          ref={arquivoRef}
+          type="file"
+          accept=".html,.htm,text/html"
+          className="hidden"
+          onChange={carregarArquivo}
+        />
+
         {carregando ? (
           <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
             <Loader2 className="size-6 animate-spin opacity-60" />
             <span className="text-sm">{t.navegador.importarCarregando}</span>
           </div>
         ) : origens.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-12 text-center text-muted-foreground">
-            <Globe className="size-7 opacity-40" />
-            <span className="text-sm">{t.navegador.importarVazio}</span>
+          <div className="flex flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
+            {diag.bloqueados.length > 0 ? (
+              <ShieldAlert className="size-7 text-warning" />
+            ) : (
+              <Globe className="size-7 opacity-40" />
+            )}
+            <span className="max-w-xs text-sm">
+              {diag.bloqueados.length > 0
+                ? t.navegador.importarBloqueado
+                : diag.detectados.length > 0
+                  ? t.navegador.importarSemFavoritos
+                  : t.navegador.importarVazio}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => arquivoRef.current?.click()}
+            >
+              <Upload className="size-4" />
+              {t.navegador.importarArquivo}
+            </Button>
+            <span className="max-w-xs text-xs">
+              {t.navegador.importarArquivoDica}
+            </span>
           </div>
         ) : (
           <>
@@ -391,7 +455,18 @@ export function DialogImportarFavoritos({
           </>
         )}
 
-        <DialogFooter className="gap-2">
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="gap-2"
+            onClick={() => arquivoRef.current?.click()}
+          >
+            <Upload className="size-4" />
+            {t.navegador.importarArquivo}
+          </Button>
+          <div className="flex gap-2">
           <DialogClose asChild>
             <Button type="button" variant="outline">
               {t.navegador.favCancelar}
@@ -406,6 +481,7 @@ export function DialogImportarFavoritos({
               ? preencher(t.navegador.importarAplicar, { n: selecionados.size })
               : t.navegador.importarNada}
           </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

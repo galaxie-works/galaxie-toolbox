@@ -240,3 +240,58 @@ export function selecaoParaFavoritos(
   }
   return saida;
 }
+
+/**
+ * Import por ARQUIVO (#176): parseia o HTML de "Exportar favoritos" (formato
+ * Netscape, comum a Chrome/Edge/Firefox) na MESMA árvore da import automática.
+ * É o caminho universal e consentido — o usuário gera o export no próprio
+ * navegador, então destrava a feature mesmo quando o antivírus/EDR bloqueia a
+ * leitura direta da pasta de perfil, SEM burlar a proteção (o HTML só tem
+ * favoritos, nunca `Login Data`/senhas). Só entra link http(s).
+ */
+export function parseBookmarksHtml(
+  html: string,
+  nomeArquivo: string,
+): BrowserBookmarks {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  let contador = 0;
+
+  const parseDl = (dl: Element): BookmarkNode[] => {
+    const nos: BookmarkNode[] = [];
+    for (const dt of Array.from(dl.children)) {
+      if (dt.tagName !== "DT") continue;
+      const a = dt.querySelector(":scope > a");
+      const h3 = dt.querySelector(":scope > h3");
+      if (a) {
+        const url = a.getAttribute("href") ?? "";
+        if (/^https?:\/\//i.test(url)) {
+          nos.push({
+            id: `html-${contador++}`,
+            nome: (a.textContent ?? "").trim() || url,
+            url,
+            filhos: [],
+          });
+        }
+      } else if (h3) {
+        // O <DL> filho da pasta pode aninhar dentro do <DT> ou vir como irmão.
+        const irmao = dt.nextElementSibling;
+        const subDl =
+          dt.querySelector(":scope > dl") ??
+          (irmao && irmao.tagName === "DL" ? irmao : null);
+        nos.push({
+          id: `html-${contador++}`,
+          nome: (h3.textContent ?? "").trim() || "—",
+          filhos: subDl ? parseDl(subDl) : [],
+        });
+      }
+    }
+    return nos;
+  };
+
+  const topo = doc.querySelector("dl");
+  return {
+    navegador: "arquivo",
+    perfil: nomeArquivo,
+    roots: topo ? parseDl(topo) : [],
+  };
+}

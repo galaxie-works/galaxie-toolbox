@@ -342,6 +342,12 @@ const pt = {
     importarDescricao: "Escolha os favoritos do Chrome/Edge para trazer.",
     importarCarregando: "Procurando favoritos…",
     importarVazio: "Nenhum favorito encontrado. Chrome ou Edge não detectados.",
+    importarBloqueado:
+      "Não conseguimos ler os favoritos do Chrome/Edge — o acesso pode estar bloqueado pelo seu antivírus ou política de segurança. Importe por um arquivo exportado do navegador:",
+    importarSemFavoritos: "Nenhum favorito encontrado no Chrome/Edge.",
+    importarArquivo: "Importar de arquivo HTML…",
+    importarArquivoDica:
+      "No Chrome/Edge: Favoritos → Gerenciar favoritos → ⋯ → Exportar favoritos.",
     importarSelecionarTudo: "Selecionar tudo",
     importarLimpar: "Limpar",
     importarContagem: "{n} de {total} selecionados",
@@ -1278,6 +1284,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     importarDescricao: "Choose which Chrome/Edge favorites to bring in.",
     importarCarregando: "Looking for favorites…",
     importarVazio: "No favorites found. Chrome or Edge not detected.",
+    importarBloqueado:
+      "We couldn't read your Chrome/Edge favorites — access may be blocked by your antivirus or security policy. Import from a file exported by the browser instead:",
+    importarSemFavoritos: "No favorites found in Chrome/Edge.",
+    importarArquivo: "Import from HTML file…",
+    importarArquivoDica:
+      "In Chrome/Edge: Favorites → Manage favorites → ⋯ → Export favorites.",
     importarSelecionarTudo: "Select all",
     importarLimpar: "Clear",
     importarContagem: "{n} of {total} selected",

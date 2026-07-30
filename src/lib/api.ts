@@ -1637,6 +1637,19 @@ export interface BrowserBookmarks {
   roots: BookmarkNode[];
 }
 
+/**
+ * Resultado da importação automática com diagnóstico honesto (#176): distingue
+ * "lido", "detectado mas bloqueado" (antivírus/EDR protegendo a pasta de perfil)
+ * e "não instalado" — o front decide a mensagem e oferece import por arquivo HTML.
+ */
+export interface ImportarFavoritosResultado {
+  navegadores: BrowserBookmarks[];
+  /** Navegadores instalados (User Data existe): "chrome" | "edge". */
+  detectados: string[];
+  /** Detectados mas com o Bookmarks ilegível (acesso bloqueado). */
+  bloqueados: string[];
+}
+
 const MOCK_BOOKMARKS: BrowserBookmarks[] = [
   {
     navegador: "chrome",
@@ -1686,12 +1699,16 @@ const MOCK_BOOKMARKS: BrowserBookmarks[] = [
  * arquivo `Bookmarks`; jamais toca em `Login Data`/senhas. Fora do Tauri (mock)
  * devolve uma arvore de exemplo para o QA visual.
  */
-export async function importBrowserBookmarks(): Promise<BrowserBookmarks[]> {
+export async function importBrowserBookmarks(): Promise<ImportarFavoritosResultado> {
   if (!inTauri()) {
     await sleep(400);
-    return MOCK_BOOKMARKS.map((b) => ({ ...b }));
+    return {
+      navegadores: MOCK_BOOKMARKS.map((b) => ({ ...b })),
+      detectados: ["chrome", "edge"],
+      bloqueados: [],
+    };
   }
-  return invoke<BrowserBookmarks[]>("import_browser_bookmarks");
+  return invoke<ImportarFavoritosResultado>("import_browser_bookmarks");
 }
 
 // --- Launch on startup (#123) --------------------------------------------
