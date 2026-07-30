@@ -12,6 +12,10 @@ import {
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
 import { useIdioma } from "@/lib/idioma";
+import {
+  normalizeDomain,
+  resolveOrganization,
+} from "@/lib/organizations";
 import { resolvePerson } from "@/lib/people";
 import type { Pessoa } from "@/lib/types";
 import { useAppStore } from "@/store";
@@ -43,6 +47,7 @@ export function PersonHoverCard({
   const contact = useAppStore((state) =>
     resolvePerson(state.peopleContacts, email),
   );
+  const organizations = useAppStore((state) => state.organizations);
   const resolvePeoplePerson = useAppStore(
     (state) => state.resolvePeoplePerson,
   );
@@ -66,8 +71,10 @@ export function PersonHoverCard({
     .filter(Boolean)
     .join(" · ");
   const photo = contact?.photo ?? fallback?.foto;
-  const organization =
-    contact?.organization ?? fallback?.origem === "organizacao";
+  const emailDomain = normalizeDomain(primaryEmail.split("@").at(-1) ?? "");
+  const organizationLabel = emailDomain
+    ? resolveOrganization(organizations, emailDomain)?.name ?? null
+    : null;
   const frequent = contact?.frequent ?? fallback?.origem === "contatos";
 
   function compose() {
@@ -111,11 +118,11 @@ export function PersonHoverCard({
             </div>
             <p className="text-foreground truncate text-xs">{primaryEmail}</p>
             <span className="flex flex-wrap items-center gap-1">
-              <Badge variant="outline" size="xs">
-                {organization
-                  ? t.controlRoom.peopleOrg
-                  : t.controlRoom.peopleExterno}
-              </Badge>
+              {organizationLabel && (
+                <Badge variant="outline" size="xs">
+                  {organizationLabel}
+                </Badge>
+              )}
               {frequent && (
                 <Badge variant="secondary" size="xs">
                   {t.controlRoom.peopleFrequente}

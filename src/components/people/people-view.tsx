@@ -125,6 +125,7 @@ import {
 } from "@/lib/people";
 import {
   contactDomain,
+  normalizeDomain,
   resolveOrganization,
 } from "@/lib/organizations";
 import type {
@@ -178,17 +179,21 @@ function PeopleColumnsHeader({ label }: { label: string }) {
 
 function RelationshipBadges({
   contact,
+  organizationLabel,
   compact = false,
 }: {
   contact: PeopleContact;
+  organizationLabel?: string | null;
   compact?: boolean;
 }) {
   const { t } = useIdioma();
   return (
     <span className="flex flex-wrap items-center gap-1">
-      <Badge variant="outline" size={compact ? "xs" : "sm"}>
-        {contact.organization ? t.controlRoom.peopleOrg : t.controlRoom.peopleExterno}
-      </Badge>
+      {organizationLabel && (
+        <Badge variant="outline" size={compact ? "xs" : "sm"}>
+          {organizationLabel}
+        </Badge>
+      )}
       {contact.frequent && (
         <Badge variant="secondary" size={compact ? "xs" : "sm"}>
           {t.controlRoom.peopleFrequente}
@@ -333,6 +338,7 @@ function PeopleDetail({
     organizations,
     contactDomain(contact),
   );
+  const organizationLabel = resolvedOrganization?.name ?? null;
   const [enriching, setEnriching] = useState(false);
   const [applying, setApplying] = useState(false);
   const [preview, setPreview] = useState<PeopleEnrichPreview | null>(null);
@@ -623,7 +629,10 @@ function PeopleDetail({
                   t.controlRoom.peopleSemDado}
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-1">
-                <RelationshipBadges contact={contact} />
+                <RelationshipBadges
+                  contact={contact}
+                  organizationLabel={organizationLabel}
+                />
                 <SourceBadge source={contact.contactId ? "contacts" : "people"} />
               </div>
             </div>
@@ -1476,6 +1485,7 @@ function PeopleRowActions({
 
 function PeopleCard({
   contact,
+  organizationLabel,
   selected,
   photo,
   onSelect,
@@ -1483,6 +1493,7 @@ function PeopleCard({
   onEnrich,
 }: {
   contact: PeopleContact;
+  organizationLabel?: string | null;
   selected: boolean;
   photo: string | null;
   onSelect: () => void;
@@ -1534,7 +1545,11 @@ function PeopleCard({
           </span>
         </div>
         <div className="flex items-center justify-between gap-2">
-          <RelationshipBadges contact={contact} compact />
+          <RelationshipBadges
+            contact={contact}
+            organizationLabel={organizationLabel}
+            compact
+          />
           <span className="flex flex-wrap justify-end gap-1">
             {contact.sources.map((source) => (
               <SourceBadge key={source} source={source} />
@@ -1555,6 +1570,7 @@ export function PeopleView({
 }) {
   const { t } = useIdioma();
   const contacts = useAppStore((state) => state.peopleContacts);
+  const organizations = useAppStore((state) => state.organizations);
   const selectedId = useAppStore((state) => state.peopleSelectedId);
   const selectPerson = useAppStore((state) => state.selectPerson);
   const loading = useAppStore((state) => state.peopleLoading);
@@ -1592,6 +1608,9 @@ export function PeopleView({
     "columns",
   ]);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
+  const [keyboardActiveId, setKeyboardActiveId] = useState<string | null>(null);
+  const tableFocusRef = useRef<HTMLDivElement>(null);
+  const selectionAnchorRef = useRef<string | null>(null);
   const [enrichRequest, setEnrichRequest] = useState<{
     id: string;
     token: number;
@@ -1627,6 +1646,17 @@ export function PeopleView({
     pedirFotos(contacts.map((contact) => contact.emails[0]?.address));
   }, [contacts, pedirFotos]);
 
+  const organizationLabelsByDomain = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const organization of organizations) {
+      for (const candidate of organization.domains) {
+        const domain = normalizeDomain(candidate);
+        if (domain) labels.set(domain, organization.name);
+      }
+    }
+    return labels;
+  }, [organizations]);
+
   const filterFields = useMemo<FilterFieldConfig<string>[]>(() => {
     const operators: FilterOperator[] = [
       { value: "is", label: t.controlRoom.filtroOperadorIs },
@@ -1652,12 +1682,14 @@ export function PeopleView({
         label: t.controlRoom.peopleRelationship,
         icon: <Users className="size-3.5" />,
         type: "select",
-        searchable: false,
+        searchable: true,
         operators,
-        options: [
-          { value: "org", label: t.controlRoom.peopleOrg },
-          { value: "external", label: t.controlRoom.peopleExterno },
-        ],
+        options: organizations
+          .map((organization) => ({
+            value: organization.id,
+            label: organization.name,
+          }))
+          .sort((a, b) => a.label.localeCompare(b.label)),
       },
       {
         key: "phone",
@@ -1685,7 +1717,7 @@ export function PeopleView({
         ],
       },
     ];
-  }, [contacts, t]);
+  }, [contacts, organizations, t]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = useMemo(() => {
@@ -1709,7 +1741,11 @@ export function PeopleView({
         if (filter.field === "company") {
           matches = Boolean(contact.company && values.has(contact.company));
         } else if (filter.field === "relationship") {
-          matches = values.has(contact.organization ? "org" : "external");
+          const organization = resolveOrganization(
+            organizations,
+            contactDomain(contact),
+          );
+          matches = Boolean(organization && values.has(organization.id));
         } else if (filter.field === "phone") {
           matches = values.has(contact.phones.length > 0 ? "yes" : "no");
         } else if (filter.field === "source") {
@@ -1719,7 +1755,7 @@ export function PeopleView({
       });
     });
     return next;
-  }, [contacts, filters, normalizedQuery]);
+  }, [contacts, filters, normalizedQuery, organizations]);
 
   const selectedContacts = useMemo(
     () => filtered.filter((contact) => rowSelection[contact.id]),
@@ -1727,6 +1763,16 @@ export function PeopleView({
   );
 
   const selected = contacts.find((contact) => contact.id === selectedId) ?? null;
+
+  useEffect(() => {
+    if (
+      keyboardActiveId &&
+      !filtered.some((contact) => contact.id === keyboardActiveId)
+    ) {
+      setKeyboardActiveId(null);
+      selectionAnchorRef.current = null;
+    }
+  }, [filtered, keyboardActiveId]);
 
   const columns = useMemo<ColumnDef<PeopleContact>[]>(
     () => [
@@ -1767,7 +1813,15 @@ export function PeopleView({
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="truncate font-medium">{contact.name}</span>
-                  <RelationshipBadges contact={contact} compact />
+                  <RelationshipBadges
+                    contact={contact}
+                    organizationLabel={
+                      organizationLabelsByDomain.get(
+                        contactDomain(contact) ?? "",
+                      ) ?? null
+                    }
+                    compact
+                  />
                 </div>
               </div>
             </div>
@@ -1883,7 +1937,13 @@ export function PeopleView({
         size: 36,
       },
     ],
-    [getFoto, onCompose, selectPerson, t],
+    [
+      getFoto,
+      onCompose,
+      organizationLabelsByDomain,
+      selectPerson,
+      t,
+    ],
   );
 
   const table = useReactTable({
@@ -1911,6 +1971,111 @@ export function PeopleView({
       columnVisibility,
     },
   });
+
+  const activeRowIndex = keyboardActiveId
+    ? table.getRowModel().rows.findIndex((row) => row.id === keyboardActiveId)
+    : -1;
+  const tableRows = table.getRowModel().rows;
+
+  function handleTableKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget) return;
+
+    const handled = () => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    if (event.key === "Escape") {
+      handled();
+      setRowSelection({});
+      selectionAnchorRef.current = null;
+      return;
+    }
+
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      event.key.toLocaleLowerCase() === "a"
+    ) {
+      handled();
+      table.toggleAllPageRowsSelected(true);
+      if (!keyboardActiveId && tableRows[0]) {
+        setKeyboardActiveId(tableRows[0].id);
+      }
+      selectionAnchorRef.current =
+        keyboardActiveId ?? tableRows[0]?.id ?? null;
+      return;
+    }
+
+    if (tableRows.length === 0) return;
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      handled();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const currentIndex =
+        activeRowIndex >= 0
+          ? activeRowIndex
+          : direction > 0
+            ? -1
+            : tableRows.length;
+      const nextIndex = Math.max(
+        0,
+        Math.min(tableRows.length - 1, currentIndex + direction),
+      );
+      const nextRow = tableRows[nextIndex];
+      if (!nextRow) return;
+
+      if (event.shiftKey) {
+        const anchorId =
+          selectionAnchorRef.current ?? keyboardActiveId ?? nextRow.id;
+        const anchorIndex = tableRows.findIndex((row) => row.id === anchorId);
+        const rangeStart = Math.min(
+          anchorIndex >= 0 ? anchorIndex : nextIndex,
+          nextIndex,
+        );
+        const rangeEnd = Math.max(
+          anchorIndex >= 0 ? anchorIndex : nextIndex,
+          nextIndex,
+        );
+        setRowSelection((current) => {
+          const next = { ...current };
+          for (let index = rangeStart; index <= rangeEnd; index += 1) {
+            const row = tableRows[index];
+            if (row) next[row.id] = true;
+          }
+          return next;
+        });
+        selectionAnchorRef.current = anchorId;
+      } else {
+        selectionAnchorRef.current = nextRow.id;
+      }
+      setKeyboardActiveId(nextRow.id);
+      return;
+    }
+
+    if (event.key === " ") {
+      handled();
+      const activeRow =
+        (activeRowIndex >= 0 ? tableRows[activeRowIndex] : null) ?? tableRows[0];
+      if (!activeRow) return;
+      setKeyboardActiveId(activeRow.id);
+      selectionAnchorRef.current = activeRow.id;
+      setRowSelection((current) => ({
+        ...current,
+        [activeRow.id]: !current[activeRow.id],
+      }));
+      return;
+    }
+
+    if (event.key === "Enter") {
+      handled();
+      const activeRow =
+        (activeRowIndex >= 0 ? tableRows[activeRowIndex] : null) ?? tableRows[0];
+      if (activeRow) {
+        setKeyboardActiveId(activeRow.id);
+        selectPerson(activeRow.id);
+      }
+    }
+  }
 
   const peopleNavigation = (
     <Tabs
@@ -2099,6 +2264,7 @@ export function PeopleView({
                   <DataGrid
                     table={table}
                     recordCount={filtered.length}
+                    activeRowId={keyboardActiveId}
                     isLoading={loading && !loaded}
                     loadingMode="skeleton"
                     emptyMessage={
@@ -2116,11 +2282,10 @@ export function PeopleView({
                       )
                     }
                     onRowClick={(contact) => {
+                      tableFocusRef.current?.focus({ preventScroll: true });
+                      setKeyboardActiveId(contact.id);
                       selectPerson(contact.id);
-                      setRowSelection((current) => ({
-                        ...current,
-                        [contact.id]: true,
-                      }));
+                      selectionAnchorRef.current = contact.id;
                     }}
                     tableLayout={{
                       dense: true,
@@ -2135,18 +2300,41 @@ export function PeopleView({
                       width: "fixed",
                     }}
                   >
-                    <DataGridContainer className="h-full">
-                      <ScrollArea className="h-full">
-                        <DataGridTableVirtual
-                          onFetchMore={() => void loadMorePeople()}
-                          isFetchingMore={fetchingMore}
-                          hasMore={nextLinks.length > 0}
-                          fetchMoreOffset={8}
-                          estimateSize={48}
-                          overscan={8}
-                        />
-                      </ScrollArea>
-                    </DataGridContainer>
+                    <div
+                      ref={tableFocusRef}
+                      role="region"
+                      tabIndex={0}
+                      aria-label={t.controlRoom.peopleContactsTab}
+                      onKeyDown={handleTableKeyDown}
+                      onFocus={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (keyboardActiveId) return;
+                        const initialId =
+                          (selectedId &&
+                          tableRows.some((row) => row.id === selectedId)
+                            ? selectedId
+                            : tableRows[0]?.id) ?? null;
+                        setKeyboardActiveId(initialId);
+                        selectionAnchorRef.current = initialId;
+                      }}
+                      className="h-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
+                    >
+                      <DataGridContainer className="h-full">
+                        <ScrollArea className="h-full">
+                          <DataGridTableVirtual
+                            onFetchMore={() => void loadMorePeople()}
+                            isFetchingMore={fetchingMore}
+                            hasMore={nextLinks.length > 0}
+                            fetchMoreOffset={8}
+                            estimateSize={48}
+                            overscan={8}
+                            scrollToRowIndex={
+                              activeRowIndex >= 0 ? activeRowIndex : undefined
+                            }
+                          />
+                        </ScrollArea>
+                      </DataGridContainer>
+                    </div>
                   </DataGrid>
                 ) : filtered.length > 0 ? (
                   <div className="h-full overflow-auto p-3">
@@ -2155,6 +2343,11 @@ export function PeopleView({
                         <PeopleCard
                           key={contact.id}
                           contact={contact}
+                          organizationLabel={
+                            organizationLabelsByDomain.get(
+                              contactDomain(contact) ?? "",
+                            ) ?? null
+                          }
                           selected={contact.id === selectedId}
                           photo={
                             contact.photo ||

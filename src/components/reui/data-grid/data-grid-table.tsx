@@ -1240,8 +1240,10 @@ function DataGridTableBodyRow<TData>({
       }
       data-index={dataIndex}
       data-row-id={row.id}
+      data-active={props.activeRowId === row.id || undefined}
       data-row-pinned={isRowPinned || undefined}
       data-row-pinned-boundary={pinnedBoundary}
+      aria-current={props.activeRowId === row.id ? "true" : undefined}
       onClick={() => props.onRowClick && props.onRowClick(row.original)}
       className={cn(
         "hover:bg-muted/40 data-[state=selected]:bg-muted/50",
@@ -1268,6 +1270,7 @@ function DataGridTableBodyRow<TData>({
           "[&>td]:shadow-[0_2px_0_rgba(0,0,0,0.03)] dark:[&>td]:shadow-[0_2px_0_rgba(255,255,255,0.06)]",
         pinnedBoundary === "bottom" &&
           "[&>td]:shadow-[0_2px_0_rgba(0,0,0,0.03)] dark:[&>td]:shadow-[0_2px_0_rgba(255,255,255,0.06)]",
+        "data-[active=true]:bg-primary/5 data-[active=true]:shadow-[inset_2px_0_0_var(--primary)]",
         props.tableClassNames?.bodyRow
       )}
     >
