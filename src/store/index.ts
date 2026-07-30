@@ -63,8 +63,11 @@ import {
 } from "./people-slice";
 import {
   createOrganizationsSlice,
+  ORGANIZATIONS_KEYS,
+  type OrganizationsPersistido,
   type OrganizationsSlice,
 } from "./organizations-slice";
+import type { PeopleOrg } from "@/lib/organizations";
 import {
   createAuthSlice,
   type AuthSlice,
@@ -138,7 +141,8 @@ type AppPersistido = UiPersistido &
   SettingsUiPersistido &
   PersonalizationPersistido &
   BridgePersistido &
-  AgendaPersistido;
+  AgendaPersistido &
+  OrganizationsPersistido;
 
 // --- storage custom: mapeia o blob persistido pras chaves reais 1:1 -----------
 
@@ -223,6 +227,7 @@ const TODAS_CHAVES = [
   ...Object.values(PERSONALIZATION_KEYS),
   ...Object.values(BRIDGE_KEYS),
   ...Object.values(AGENDA_KEYS),
+  ...Object.values(ORGANIZATIONS_KEYS),
   // Chave legada da assinatura única (pré-#135): limpa no reset junto do resto.
   "bridge.assinatura",
 ];
@@ -368,6 +373,12 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (agendaCalsSel !== undefined) {
       state.agendaCalendariosSelecionados = agendaCalsSel;
     }
+    // Organizações do People (#205): definições app-owned criadas pelo usuário.
+    // Ausente → o merge do Zustand mantém o default `[]` do slice.
+    const organizations = lerChave<PeopleOrg[]>(
+      ORGANIZATIONS_KEYS.organizations
+    );
+    if (Array.isArray(organizations)) state.organizations = organizations;
     return { state: state as AppPersistido, version: 0 };
   },
   setItem: (_name, value: StorageValue<AppPersistido>): void => {
@@ -406,6 +417,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       AGENDA_KEYS.agendaCalendariosSel,
       s.agendaCalendariosSelecionados
     );
+    gravarChave(ORGANIZATIONS_KEYS.organizations, s.organizations);
   },
   removeItem: (): void => {
     for (const chave of TODAS_CHAVES) {
@@ -442,7 +454,8 @@ export const useAppStore = create<AppStore>()(
       ...createComposeSlice(...a),
       // Contatos, seleção e carga do People são sessão e uma única fonte/cache.
       ...createPeopleSlice(...a),
-      // Organizações do People são app-owned e session-only no MVP (#205).
+      // Organizações do People são app-owned e persistidas localmente (#205).
+      // A portabilidade via M365 (companyName write-back) é o #288.
       ...createOrganizationsSlice(...a),
       // Escopos ausentes descrevem somente o token atual (#235): session-only.
       ...createAuthSlice(...a),
@@ -477,6 +490,7 @@ export const useAppStore = create<AppStore>()(
         syncIntervalMinutes: s.syncIntervalMinutes,
         agendaView: s.agendaView,
         agendaCalendariosSelecionados: s.agendaCalendariosSelecionados,
+        organizations: s.organizations,
       }),
     }
   )
