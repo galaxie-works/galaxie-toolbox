@@ -15,6 +15,7 @@ import { useIdioma } from "@/lib/idioma";
 import type { Idioma } from "@/lib/strings";
 import type { ConvidadoInput, EventoInput, Pessoa } from "@/lib/types";
 import { CampoPessoas } from "@/components/compose/campo-pessoas";
+import { AgendaCalendarSelector } from "@/components/agenda/agenda-calendar-selector";
 
 import { EventCalendar } from "@/components/reui/event-calendar/event-calendar";
 import { EventCalendarContent } from "@/components/reui/event-calendar/event-calendar-content";
@@ -141,6 +142,7 @@ export function AgendaView() {
   const recarregarAgenda = useAppStore((s) => s.recarregarAgenda);
   const coresCat = useAppStore((s) => s.agendaCoresCategoria);
   const carregarCoresAgenda = useAppStore((s) => s.carregarCoresAgenda);
+  const carregarCalendarios = useAppStore((s) => s.carregarCalendarios);
   const selecionarEventoAgenda = useAppStore((s) => s.selecionarEventoAgenda);
   const abrirFormCriar = useAppStore((s) => s.abrirFormCriar);
 
@@ -148,6 +150,12 @@ export function AgendaView() {
   useEffect(() => {
     void carregarCoresAgenda();
   }, [carregarCoresAgenda]);
+
+  // Lista de calendários do usuário (#233), uma vez. Ao carregar, a slice
+  // inicializa a seleção (padrão) e re-busca os eventos com as cores.
+  useEffect(() => {
+    void carregarCalendarios();
+  }, [carregarCalendarios]);
 
   // Uma mudança de faixa visível (mês/semana/dia ou navegação) re-busca os
   // eventos daquele intervalo. `recargaAgenda` força o refetch no retry e após
@@ -180,7 +188,12 @@ export function AgendaView() {
         if (Number.isNaN(inicio.getTime()) || Number.isNaN(fim.getTime())) {
           return null;
         }
-        const cor = ev.categorias?.[0] ? coresCat.get(ev.categorias[0]) : undefined;
+        // Cor do calendário de origem (#233) tem prioridade; sem ela (calendário
+        // padrão), cai na cor da categoria do Outlook (#211).
+        const corCat = ev.categorias?.[0]
+          ? coresCat.get(ev.categorias[0])
+          : undefined;
+        const cor = ev.corCalendario ?? corCat;
         return {
           id: ev.id,
           title: ev.assunto,
@@ -258,7 +271,8 @@ export function AgendaView() {
       >
         <div className="flex min-w-0 items-center gap-1 border-b">
           <EventCalendarNav className="min-w-0 flex-1 border-b-0" />
-          <EventCalendarToolbar className="shrink-0 pr-2">
+          <EventCalendarToolbar className="shrink-0 gap-1.5 pr-2">
+            <AgendaCalendarSelector />
             <Button size="sm" onClick={() => abrirFormCriar()}>
               <CalendarPlus /> {t.controlRoom.agendaNovoEvento}
             </Button>
@@ -299,6 +313,8 @@ function EventoFormSheet() {
   const editarEvento = useAppStore((s) => s.editarEvento);
   const criarCategoria = useAppStore((s) => s.criarCategoria);
   const coresCat = useAppStore((s) => s.agendaCoresCategoria);
+  const calendarios = useAppStore((s) => s.agendaCalendarios);
+  const selCalendarios = useAppStore((s) => s.agendaCalendariosSelecionados);
 
   const [titulo, setTitulo] = useState("");
   const [diaInteiro, setDiaInteiro] = useState(false);
@@ -314,7 +330,15 @@ function EventoFormSheet() {
   const [convEmails, setConvEmails] = useState<string[]>([]);
   const [convPessoas, setConvPessoas] = useState<Pessoa[]>([]);
   const [reuniaoTeams, setReuniaoTeams] = useState(false);
+  const [calendarioAlvo, setCalendarioAlvo] = useState<string>("");
   const [salvando, setSalvando] = useState(false);
+
+  // Só dá pra criar em calendários editáveis (#233). Calendários somente-leitura
+  // (feriados, aniversários, compartilhados) ficam de fora do alvo de criação.
+  const calsEditaveis = useMemo(
+    () => (calendarios ?? []).filter((c) => c.canEdit),
+    [calendarios],
+  );
 
   // Criação inline de categoria.
   const [criandoCat, setCriandoCat] = useState(false);
@@ -341,6 +365,8 @@ function EventoFormSheet() {
       setConvEmails(parts.map((p) => p.email).filter(Boolean));
       setConvPessoas(parts.map((p) => ({ nome: p.nome, email: p.email })));
       setReuniaoTeams(evento.online);
+      // Editar não move o evento de calendário (#233): alvo fica neutro.
+      setCalendarioAlvo("");
       if (evento.diaInteiro) {
         setInicioD(paraInputData(evento.inicio));
         // fim é exclusivo (dia seguinte); mostramos o último dia inclusivo
@@ -366,8 +392,18 @@ function EventoFormSheet() {
       setFimDT(paraInputLocal(maisUma));
       setInicioD(paraInputData(baseIso));
       setFimD(paraInputData(baseIso));
+      // Calendário-alvo default (#233): se há exatamente um editável selecionado
+      // na navbar, usa ele; senão cai no calendário padrão do usuário.
+      const editaveisSel = calsEditaveis.filter((c) =>
+        (selCalendarios ?? []).includes(c.id),
+      );
+      const alvoDefault =
+        editaveisSel.length === 1
+          ? editaveisSel[0].id
+          : (calsEditaveis.find((c) => c.isDefaultCalendar)?.id ?? "");
+      setCalendarioAlvo(alvoDefault);
     }
-  }, [aberto, modo, evento, presetInicio]);
+  }, [aberto, modo, evento, presetInicio, calsEditaveis, selCalendarios]);
 
   // Convidados no formato do Graph: nome resolvido pelo people-picker, senão o
   // próprio e-mail.
@@ -388,6 +424,13 @@ function EventoFormSheet() {
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const cats = categoria !== SEM_CATEGORIA ? [categoria] : [];
     const convidados = montarConvidados();
+    // Calendário-alvo (#233): só ao criar e só quando for um calendário editável
+    // diferente do padrão — assim o caminho do padrão segue /me/events (#211).
+    const calObj = calsEditaveis.find((c) => c.id === calendarioAlvo);
+    const calendarioId =
+      modo === "criar" && calObj && !calObj.isDefaultCalendar
+        ? calObj.id
+        : undefined;
     if (diaInteiro) {
       if (!inicioD) return null;
       const fimBase = fimD && fimD >= inicioD ? fimD : inicioD;
@@ -402,6 +445,7 @@ function EventoFormSheet() {
         timeZone,
         convidados,
         reuniaoTeams,
+        calendarioId,
       };
     }
     if (!inicioDT) return null;
@@ -417,6 +461,7 @@ function EventoFormSheet() {
       timeZone,
       convidados,
       reuniaoTeams,
+      calendarioId,
     };
   };
 
@@ -577,6 +622,33 @@ function EventoFormSheet() {
               onChange={(e) => setLocal(e.target.value)}
             />
           </Field>
+
+          {/* Calendário-alvo (#233): só ao criar e havendo mais de um editável. */}
+          {modo === "criar" && calsEditaveis.length > 1 && (
+            <Field>
+              <FieldLabel htmlFor="agenda-calendario">
+                {t.controlRoom.agendaFormCalendario}
+              </FieldLabel>
+              <Select value={calendarioAlvo} onValueChange={setCalendarioAlvo}>
+                <SelectTrigger id="agenda-calendario" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {calsEditaveis.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="size-2.5 rounded-full"
+                          style={{ background: c.cor }}
+                        />
+                        {c.nome}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+          )}
 
           <Field>
             <div className="flex items-center justify-between">

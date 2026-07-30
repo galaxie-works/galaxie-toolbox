@@ -1002,32 +1002,10 @@ pub struct EventoAgenda {
     pub categorias: Vec<String>,
 }
 
-/// Eventos do dia escolhido (limites em ISO UTC). Calendars.Read.
-pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
-    let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-
-    let url = format!(
-        "{GRAPH}/me/calendarView?startDateTime={inicio}&endDateTime={fim}\
-         &$select=id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories\
-         &$orderby=start/dateTime&$top=100"
-    );
-    // Sob o pool + retry central (#64): respeita Retry-After e usa jitter. O
-    // calendarView era a única chamada sem retry — um 429 transitório derrubava
-    // a agenda até um F5 no app inteiro (#41).
-    let resp = graph_enviar("agenda", GRAPH_TETO_ESPERA_S, || {
-        client
-            .get(&url)
-            .bearer_auth(&token)
-            .header("Prefer", "outlook.timezone=\"UTC\"")
-            .send()
-    })
-    .map_err(|e| format!("falha no calendario: {e}"))?;
-    let st = resp.status();
-    if !st.is_success() {
-        return Err(format!("/me/calendarView retornou {st}"));
-    }
-    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+/// Parseia a resposta de um `calendarView` (lista `value[]`) em EventoAgenda.
+/// Compartilhado entre /me/calendarView (padrão) e
+/// /me/calendars/{id}/calendarView (por calendário — #233).
+fn parse_eventos(v: &serde_json::Value) -> Vec<EventoAgenda> {
     let mut eventos = Vec::new();
     if let Some(items) = v["value"].as_array() {
         for it in items {
@@ -1066,7 +1044,124 @@ pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<Even
             });
         }
     }
-    Ok(eventos)
+    eventos
+}
+
+/// Busca + parseia um calendarView a partir de uma URL já montada. Fica sob o
+/// mesmo pool + retry central (#64) — respeita Retry-After e usa jitter. O
+/// calendarView era a única chamada sem retry, e um 429 transitório derrubava a
+/// agenda até um F5 no app inteiro (#41).
+fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgenda>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let resp = graph_enviar("agenda", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(url)
+            .bearer_auth(&token)
+            .header("Prefer", "outlook.timezone=\"UTC\"")
+            .send()
+    })
+    .map_err(|e| format!("falha no calendario: {e}"))?;
+    let st = resp.status();
+    if !st.is_success() {
+        return Err(format!("calendarView retornou {st}"));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(parse_eventos(&v))
+}
+
+const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories";
+
+/// Eventos do calendário padrão no intervalo (limites em ISO UTC). Calendars.Read.
+pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
+    let url = format!(
+        "{GRAPH}/me/calendarView?startDateTime={inicio}&endDateTime={fim}\
+         &$select={AGENDA_SELECT}&$orderby=start/dateTime&$top=100"
+    );
+    buscar_calendar_view(store, &url)
+}
+
+/// Eventos de um calendário específico no intervalo (#233). Mesmo parse/pool do
+/// calendário padrão, mas via /me/calendars/{id}/calendarView. Calendars.Read.
+pub fn cr_agenda_calendario(
+    store: &TokenStore,
+    calendario_id: &str,
+    inicio: &str,
+    fim: &str,
+) -> Result<Vec<EventoAgenda>, String> {
+    let url = format!(
+        "{GRAPH}/me/calendars/{calendario_id}/calendarView?startDateTime={inicio}&endDateTime={fim}\
+         &$select={AGENDA_SELECT}&$orderby=start/dateTime&$top=100"
+    );
+    buscar_calendar_view(store, &url)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Calendario {
+    pub id: String,
+    pub nome: String,
+    pub cor: String, // hex (#RRGGBB)
+    pub is_default_calendar: bool,
+    pub can_edit: bool,
+}
+
+/// Mapeia o enum de cor de calendário do Graph (CalendarColor) para um hex.
+/// Usado quando o calendário não tem `hexColor` custom preenchido.
+fn cor_calendario_para_hex(cor: &str) -> &'static str {
+    match cor {
+        "lightBlue" => "#0078D4",
+        "lightGreen" => "#498205",
+        "lightOrange" => "#FF8C00",
+        "lightGray" => "#8A8886",
+        "lightYellow" => "#EAA300",
+        "lightTeal" => "#00B7C3",
+        "lightPink" => "#E3008C",
+        "lightBrown" => "#7A4B00",
+        "lightRed" => "#D13438",
+        // "auto", "maxColor" ou desconhecido: azul padrão do Outlook.
+        _ => "#0078D4",
+    }
+}
+
+/// Lista os calendários do usuário (GET /me/calendars). Calendars.Read. Fica sob
+/// o mesmo pool + retry central (#64) das demais chamadas.
+pub fn cr_calendarios(store: &TokenStore) -> Result<Vec<Calendario>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let url = format!(
+        "{GRAPH}/me/calendars?$select=id,name,color,hexColor,isDefaultCalendar,canEdit&$top=100"
+    );
+    let resp = graph_enviar("calendarios", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao listar os calendarios: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/me/calendars retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let mut calendarios = Vec::new();
+    if let Some(items) = v["value"].as_array() {
+        for it in items {
+            // hexColor vem preenchido quando o calendário tem cor custom; senão
+            // caímos no enum `color` (CalendarColor) mapeado para hex.
+            let hex = it["hexColor"].as_str().unwrap_or("");
+            let cor = if hex.starts_with('#') && hex.len() >= 4 {
+                hex.to_string()
+            } else {
+                cor_calendario_para_hex(it["color"].as_str().unwrap_or("auto")).to_string()
+            };
+            calendarios.push(Calendario {
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                nome: it["name"].as_str().unwrap_or("(sem nome)").to_string(),
+                cor,
+                is_default_calendar: it["isDefaultCalendar"].as_bool().unwrap_or(false),
+                can_edit: it["canEdit"].as_bool().unwrap_or(false),
+            });
+        }
+    }
+    Ok(calendarios)
 }
 
 #[derive(serde::Serialize)]
@@ -1270,6 +1365,10 @@ pub struct EventoInput {
     /// Reunião do Teams (#211): liga isOnlineMeeting + provider teamsForBusiness.
     #[serde(default)]
     pub reuniao_teams: bool,
+    /// Calendário-alvo do evento (#233). Vazio/ausente = calendário padrão
+    /// (/me/events). Presente = /me/calendars/{id}/events.
+    #[serde(default)]
+    pub calendario_id: Option<String>,
 }
 
 /// Monta o corpo JSON de um evento para POST/PATCH em /me/events. Mandamos a
@@ -1315,7 +1414,12 @@ fn evento_json(input: &EventoInput) -> serde_json::Value {
 pub fn cr_criar_evento(store: &TokenStore, input: EventoInput) -> Result<String, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events");
+    // Calendário-alvo (#233): com id, cria em /me/calendars/{id}/events; sem id,
+    // mantém o padrão (/me/events) — sem regressão do #211.
+    let url = match input.calendario_id.as_deref().filter(|s| !s.is_empty()) {
+        Some(cal) => format!("{GRAPH}/me/calendars/{cal}/events"),
+        None => format!("{GRAPH}/me/events"),
+    };
     let body = evento_json(&input);
     let resp = graph_enviar("agenda:criar", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(&token).json(&body).send()

@@ -111,11 +111,25 @@ export interface EventoAgenda {
   totalParticipantes: number;
   temAnexos: boolean;
   categorias: string[];
+  /** Id do calendário de origem (#233). Marcado no front ao mesclar múltiplos
+   *  calendários; ausente quando vindo do calendário padrão (/me/calendarView). */
+  calendarioId?: string;
+  /** Cor (hex) do calendário de origem (#233), aplicada ao evento no merge. */
+  corCalendario?: string;
 }
 
 export interface CategoriaCor {
   nome: string;
   cor: string;
+}
+
+/** Um calendário do usuário (#233) — /me/calendars. */
+export interface Calendario {
+  id: string;
+  nome: string;
+  cor: string; // hex (#RRGGBB)
+  isDefaultCalendar: boolean;
+  canEdit: boolean;
 }
 
 /**
@@ -143,6 +157,8 @@ export interface EventoInput {
   convidados: ConvidadoInput[];
   /** Reunião do Teams (#211): liga isOnlineMeeting + teamsForBusiness. */
   reuniaoTeams: boolean;
+  /** Calendário-alvo (#233). Ausente/"" = calendário padrão (/me/events). */
+  calendarioId?: string;
 }
 
 export interface EventoDetalhe {

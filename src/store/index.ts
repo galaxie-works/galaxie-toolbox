@@ -353,6 +353,14 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       AGENDA_VIEWS
     );
     if (agendaView !== undefined) state.agendaView = agendaView;
+    // Agenda (#233): seleção de calendários (array de ids, ou null). Ausente →
+    // fica null (não inicializado), a slice escolhe o padrão ao carregar.
+    const agendaCalsSel = lerChave<string[] | null>(
+      AGENDA_KEYS.agendaCalendariosSel
+    );
+    if (agendaCalsSel !== undefined) {
+      state.agendaCalendariosSelecionados = agendaCalsSel;
+    }
     return { state: state as AppPersistido, version: 0 };
   },
   setItem: (_name, value: StorageValue<AppPersistido>): void => {
@@ -386,6 +394,10 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(BRIDGE_KEYS.templates, s.templates);
     gravarChave(BRIDGE_KEYS.undoSendDelay, s.undoSendDelayMs);
     gravarTexto(AGENDA_KEYS.agendaView, s.agendaView);
+    gravarChave(
+      AGENDA_KEYS.agendaCalendariosSel,
+      s.agendaCalendariosSelecionados
+    );
   },
   removeItem: (): void => {
     for (const chave of TODAS_CHAVES) {
@@ -455,6 +467,7 @@ export const useAppStore = create<AppStore>()(
         templates: s.templates,
         undoSendDelayMs: s.undoSendDelayMs,
         agendaView: s.agendaView,
+        agendaCalendariosSelecionados: s.agendaCalendariosSelecionados,
       }),
     }
   )
