@@ -403,3 +403,53 @@ export function persistFaviconCache(cache: Record<string, string>): void {
     // best-effort: data URIs podem estourar a quota; sem cache o globo cobre.
   }
 }
+
+// --- Sessão anterior (#274) ---------------------------------------------------
+// Por #173, só as PINADAS sobrevivem ao restart; as normais somem. Aqui tiramos
+// um snapshot das abas abertas (só url/nome, na ordem, SEM pinadas — já voltam —
+// e SEM privadas, por privacidade) a cada mudança. No boot, o App captura o
+// snapshot da sessão ANTERIOR e oferece restaurar (sem restaurar automático).
+
+export const NAVIGATOR_LAST_SESSION_KEY = "galaxie.navigator.last-session.v1";
+
+export interface AbaSessao {
+  url: string;
+  nome: string;
+}
+
+export function loadLastSession(): AbaSessao[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(NAVIGATOR_LAST_SESSION_KEY) || "[]",
+    ) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (a): a is AbaSessao =>
+          !!a &&
+          typeof a === "object" &&
+          typeof (a as AbaSessao).url === "string" &&
+          (a as AbaSessao).url.startsWith("https://") &&
+          typeof (a as AbaSessao).nome === "string",
+      )
+      .map((a) => ({ url: a.url, nome: a.nome }));
+  } catch {
+    return [];
+  }
+}
+
+/** Salva o snapshot da sessão: abas normais (não pinadas, não privadas, https). */
+export function persistLastSession(tabs: AbaBrowser[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const snapshot: AbaSessao[] = tabs
+      .filter(
+        (t) => !t.fixada && !t.privada && t.url.startsWith("https://"),
+      )
+      .map((t) => ({ url: t.url, nome: t.nome }));
+    localStorage.setItem(NAVIGATOR_LAST_SESSION_KEY, JSON.stringify(snapshot));
+  } catch {
+    // best-effort.
+  }
+}

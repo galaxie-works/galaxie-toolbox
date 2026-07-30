@@ -9,8 +9,10 @@ import { NavegadorScreen } from "@/screens/navegador";
 import {
   loadNavigatorMemorySettings,
   loadPinnedNavigatorTabs,
+  loadLastSession,
   orderPinnedFirst,
   persistPinnedNavigatorTabs,
+  persistLastSession,
   tabsToSleep,
   type AbaBrowser,
 } from "@/lib/navigator-tabs";
@@ -124,9 +126,19 @@ function AppInner() {
   // Modo privado: enquanto ligado, novas abas nao gravam historico e ganham
   // tratamento visual distinto (aba "privada").
   const [modoPrivado, setModoPrivado] = useState(false);
+  // Sessão anterior (#274): capturado UMA vez no mount (antes do persist effect
+  // sobrescrever), pra oferecer restaurar. `dispensada` esconde o oferecimento.
+  const [sessaoAnterior] = useState(loadLastSession);
+  const [sessaoDispensada, setSessaoDispensada] = useState(false);
 
   useEffect(() => {
     persistPinnedNavigatorTabs(abas);
+  }, [abas]);
+
+  // Snapshot da sessão a cada mudança (não pinadas, não privadas). No próximo
+  // boot vira a "sessão anterior" a oferecer.
+  useEffect(() => {
+    persistLastSession(abas);
   }, [abas]);
 
   useEffect(() => {
@@ -444,6 +456,16 @@ function AppInner() {
     for (const entrada of entradas) registrarHistorico(entrada.url, entrada.nome);
     setAbaAtiva(novas[novas.length - 1].id);
     setTela("navegador");
+  }
+
+  /** Restaura as abas da sessão anterior (#274) e dispensa o oferecimento. */
+  function restaurarSessao() {
+    restaurarAbas(sessaoAnterior);
+    setSessaoDispensada(true);
+  }
+
+  function dispensarSessao() {
+    setSessaoDispensada(true);
   }
 
   function trocarAba(id: string) {
@@ -886,6 +908,9 @@ function AppInner() {
               onReabrirFechada={reabrirFechada}
               onNavegar={abrirUrlLivre}
               onRestaurarAbas={restaurarAbas}
+              sessaoAnteriorQtd={sessaoDispensada ? 0 : sessaoAnterior.length}
+              onRestaurarSessao={restaurarSessao}
+              onDispensarSessao={dispensarSessao}
               historico={historico}
               onLimparHistorico={limparHistoricoPeriodo}
               modoPrivado={modoPrivado}
