@@ -38,6 +38,14 @@ const pt = {
     preparando: "Preparando o seu universo...",
   },
 
+  reauth: {
+    titulo: "Atualização de acesso necessária",
+    descricao:
+      "As permissões do app foram atualizadas. Entre novamente para carregar os novos recursos.",
+    entrarNovamente: "Entrar novamente",
+    agoraNao: "Agora não",
+  },
+
   lockScreen: {
     titulo: "Aplicativo bloqueado",
     descricao: "Digite o seu PIN para continuar.",
@@ -859,6 +867,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
 
   carregando: {
     preparando: "Getting your universe ready...",
+  },
+
+  reauth: {
+    titulo: "Access update required",
+    descricao:
+      "The app permissions were updated. Sign in again to load the new features.",
+    entrarNovamente: "Sign in again",
+    agoraNao: "Not now",
   },
 
   lockScreen: {

@@ -24,8 +24,15 @@ import { TelaBloqueio } from "@/components/tela-bloqueio";
 import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
 import { Estrelas } from "@/components/estrelas";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { UniversalSearch } from "@/components/universal-search";
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/reui/alert";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import {
   SidebarInset,
@@ -60,6 +67,7 @@ import {
   LONGSTOP_SPLASH_MS,
   revelarAppEFecharSplash,
 } from "@/lib/splash";
+import { KeyRound } from "lucide-react";
 
 /**
  * Todo o app de verdade. Fica ABAIXO do ErrorBoundary (ver `App`): é esta árvore
@@ -69,6 +77,15 @@ import {
 function AppInner() {
   const { idioma, t } = useIdioma();
   const bridgeView = useAppStore((state) => state.bridgeView);
+  const reauthMissingScopes = useAppStore(
+    (state) => state.reauthMissingScopes,
+  );
+  const reauthDismissed = useAppStore((state) => state.reauthDismissed);
+  const setReauthMissingScopes = useAppStore(
+    (state) => state.setReauthMissingScopes,
+  );
+  const dismissReauth = useAppStore((state) => state.dismissReauth);
+  const clearReauth = useAppStore((state) => state.clearReauth);
   const [user, setUser] = useState<AppUser | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -149,6 +166,9 @@ function AppInner() {
         if (!vivo) return;
         if (u) {
           setUser(u);
+          const permissions = await api.requiredScopesStatus();
+          if (!vivo) return;
+          setReauthMissingScopes(permissions.missingScopes);
           setLoadingSites(true);
           const lista = await api.listSites();
           if (!vivo) return;
@@ -167,7 +187,7 @@ function AppInner() {
     return () => {
       vivo = false;
     };
-  }, [lockState]);
+  }, [lockState, setReauthMissingScopes]);
 
   // --- Splash de boot (#164) ---------------------------------------------
   // Dois gates para revelar a main: o app só aparece depois que a animação
@@ -226,6 +246,8 @@ function AppInner() {
       // cache pra não herdar negative-cache de sessão sem permissão.
       limparFotos();
       setUser(u);
+      const permissions = await api.requiredScopesStatus();
+      setReauthMissingScopes(permissions.missingScopes);
       setLoadingSites(true);
       const lista = await api.listSites();
       setSites(lista);
@@ -491,6 +513,7 @@ function AppInner() {
   async function logout() {
     await api.logout();
     limparFotos(); // privacidade (#39): não deixa fotos no disco após sair
+    clearReauth();
     setUser(null);
     setSites([]);
     setError(null);
@@ -657,6 +680,24 @@ function AppInner() {
             </div>
           </div>
         </header>
+
+        {reauthMissingScopes.length > 0 && !reauthDismissed && (
+          <div className="relative z-20 px-4 pb-3">
+            <Alert variant="warning">
+              <KeyRound />
+              <AlertTitle>{t.reauth.titulo}</AlertTitle>
+              <AlertDescription>{t.reauth.descricao}</AlertDescription>
+              <AlertAction className="flex-wrap">
+                <Button variant="ghost" size="sm" onClick={dismissReauth}>
+                  {t.reauth.agoraNao}
+                </Button>
+                <Button size="sm" onClick={() => void logout()}>
+                  {t.reauth.entrarNovamente}
+                </Button>
+              </AlertAction>
+            </Alert>
+          </div>
+        )}
 
         {/* O navegador fica FORA do ScrollArea, em tela cheia e sem padding: o
             webview nativo ocupa toda a area medida, e quem rola e a propria

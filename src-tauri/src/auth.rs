@@ -45,6 +45,34 @@ pub struct Tokens {
     pub scopes: String,
 }
 
+/// Escopos Graph pedidos pela versão atual mas ausentes no token em memória.
+///
+/// `openid`, `profile` e `offline_access` controlam autenticação/sessão e podem
+/// não aparecer no campo `scope` de um access token mesmo quando o login está
+/// correto. Compará-los como permissões de recurso falso-positivaria o aviso.
+pub fn required_resource_scopes_missing(actual_scopes: &str) -> Vec<String> {
+    let presentes = actual_scopes
+        .split_ascii_whitespace()
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>();
+
+    config::SCOPES
+        .split_ascii_whitespace()
+        .filter(|scope| {
+            !matches!(
+                scope.to_ascii_lowercase().as_str(),
+                "openid" | "profile" | "offline_access"
+            )
+        })
+        .filter(|scope| {
+            !presentes
+                .iter()
+                .any(|atual| atual.eq_ignore_ascii_case(scope))
+        })
+        .map(str::to_string)
+        .collect()
+}
+
 /// Resultado da deteccao de tenant a partir do e-mail.
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -606,4 +634,49 @@ fn html_page(idioma: &str, titulo: &str, msg: &str) -> String {
          <p style=\"color:#a1a1a1;font-size:15px;line-height:1.6;margin:0\">{msg}</p>\
          </div></body></html>"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::required_resource_scopes_missing;
+
+    #[test]
+    fn compara_escopos_de_recurso_sem_diferenciar_caixa() {
+        let atuais = crate::config::SCOPES
+            .split_ascii_whitespace()
+            .filter(|scope| !matches!(*scope, "openid" | "profile" | "offline_access"))
+            .map(str::to_ascii_uppercase)
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert!(required_resource_scopes_missing(&atuais).is_empty());
+    }
+
+    #[test]
+    fn devolve_apenas_o_escopo_graph_realmente_ausente() {
+        let atuais = crate::config::SCOPES
+            .split_ascii_whitespace()
+            .filter(|scope| *scope != "Contacts.ReadWrite")
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert_eq!(
+            required_resource_scopes_missing(&atuais),
+            vec!["Contacts.ReadWrite"]
+        );
+    }
+
+    #[test]
+    fn nao_exige_escopos_de_autenticacao_no_access_token() {
+        let atuais = crate::config::SCOPES
+            .split_ascii_whitespace()
+            .filter(|scope| !matches!(*scope, "openid" | "profile" | "offline_access"))
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        let ausentes = required_resource_scopes_missing(&atuais);
+        assert!(!ausentes
+            .iter()
+            .any(|scope| { matches!(scope.as_str(), "openid" | "profile" | "offline_access") }));
+    }
 }
