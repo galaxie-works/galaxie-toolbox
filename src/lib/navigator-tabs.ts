@@ -359,3 +359,47 @@ export function reordenarLane(
   let i = 0;
   return idsAtuais.map((id) => (laneSet.has(id) ? laneNovaOrdem[i++] : id));
 }
+
+// --- Favicons (Story 4b / #276) ----------------------------------------------
+// O favicon de cada site (buscado no Rust, do próprio domínio) é cacheado por
+// ORIGEM (scheme://host) em localStorage. Abas de apps M365 já têm ícone próprio
+// (urlIcone) — o cache cobre as abas web livres, que antes caíam no globo.
+
+export const NAVIGATOR_FAVICON_CACHE_KEY = "galaxie.navigator.favicons.v1";
+
+/** Origem `scheme://host` de uma URL http(s); outros esquemas → null. */
+export function origemDaUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return null;
+  }
+}
+
+export function loadFaviconCache(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(NAVIGATOR_FAVICON_CACHE_KEY) || "{}",
+    ) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [origem, uri] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof uri === "string" && uri.startsWith("data:")) out[origem] = uri;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+export function persistFaviconCache(cache: Record<string, string>): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(NAVIGATOR_FAVICON_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // best-effort: data URIs podem estourar a quota; sem cache o globo cobre.
+  }
+}

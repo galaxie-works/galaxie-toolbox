@@ -1711,6 +1711,20 @@ export async function importBrowserBookmarks(): Promise<ImportarFavoritosResulta
   return invoke<ImportarFavoritosResultado>("import_browser_bookmarks");
 }
 
+/**
+ * Favicon do PRÓPRIO domínio de uma URL (#276). O fetch HTTP acontece no Rust
+ * (sem CORS, e só no site pedido — nunca serviço de terceiros, por privacidade).
+ * Devolve um data URI pronto pra `<img src>`, ou `null`. Fora do Tauri: `null`.
+ */
+export async function fetchFavicon(url: string): Promise<string | null> {
+  if (!inTauri()) return null;
+  try {
+    return (await invoke<string | null>("fetch_favicon", { url })) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // --- Launch on startup (#123) --------------------------------------------
 // Autostart do SO via tauri-plugin-autostart (comandos Rust finos). Fora do
 // Tauri (mock) guarda o estado em memoria, so pra visualizar o toggle na UI.
