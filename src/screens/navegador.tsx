@@ -17,13 +17,35 @@ import {
   type AppM365,
 } from "@/lib/apps";
 import * as browser from "@/lib/browser";
-import type { AbaBrowser } from "@/lib/navigator-tabs";
+import {
+  montarLanes,
+  reordenarLane,
+  loadNavigatorGroups,
+  persistNavigatorGroups,
+  loadNavigatorMembership,
+  persistNavigatorMembership,
+  podarMembership,
+  NAVIGATOR_GROUP_COLORS,
+  NAVIGATOR_GROUP_COLOR_ORDER,
+  type AbaBrowser,
+  type NavigatorGroup,
+  type NavigatorGroupColor,
+  type NavigatorMembership,
+} from "@/lib/navigator-tabs";
 import { Badge } from "@/components/reui/badge";
+import {
+  Sortable,
+  SortableItem,
+  SortableItemHandle,
+} from "@/components/reui/sortable";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import {
@@ -33,28 +55,40 @@ import {
 } from "@/components/ui/tooltip";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import {
   BedDouble,
+  ChevronDown,
+  ChevronRight,
   Coffee,
   Command as CommandIcon,
   Compass,
+  FolderMinus,
+  FolderPlus,
   Globe,
+  GripHorizontal,
+  GripVertical,
   Loader2,
   Moon,
+  Pencil,
   Pin,
   PinOff,
   Plus,
   Search,
+  Trash2,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ShipIcon, type ShipIconHandle } from "@/components/ui/ship";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 
@@ -465,6 +499,7 @@ export function NavegadorScreen({
   onAlternarFixada,
   onAlternarManterAcordada,
   onReativada,
+  onReordenar,
   onAbrir,
   onNovaAba,
   onNavegar,
@@ -478,6 +513,7 @@ export function NavegadorScreen({
   onAlternarFixada: (id: string) => void;
   onAlternarManterAcordada: (id: string) => void;
   onReativada: (id: string) => void;
+  onReordenar: (ids: string[]) => void;
   onAbrir: (app: AppM365) => void;
   onNovaAba: () => void;
   onNavegar: (url: string, nome: string) => void;
@@ -488,6 +524,315 @@ export function NavegadorScreen({
   const sleepingCount = abas.filter((tab) => tab.estado === "dormindo").length;
   // Estado efêmero de UI (só quem lê é este componente): não pertence ao store.
   const [paletaAberta, setPaletaAberta] = useState(false);
+
+  // --- Grupos de aba (Story 3) ---------------------------------------------
+  // Grupos vivem aqui + localStorage, DESACOPLADOS do estado de abas do App (que
+  // só ganhou o handler de reorder). A strip é fatiada em lanes: pins (compactos)
+  // → grupos (recolhíveis) → soltas; cada lane é um Sortable horizontal.
+  const [grupos, setGrupos] = useState<NavigatorGroup[]>(loadNavigatorGroups);
+  const [membership, setMembership] = useState<NavigatorMembership>(
+    loadNavigatorMembership,
+  );
+  // Grupo em edição no diálogo (nome + cor + excluir), ou null.
+  const [grupoEditando, setGrupoEditando] = useState<string | null>(null);
+
+  useEffect(() => {
+    persistNavigatorGroups(grupos);
+  }, [grupos]);
+
+  // Persiste o mapa já podado (sem abas fechadas / grupos inexistentes) para não
+  // crescer sem limite entre sessões; o estado em memória segue cru (barato).
+  useEffect(() => {
+    persistNavigatorMembership(podarMembership(membership, abas, grupos));
+  }, [membership, abas, grupos]);
+
+  const lanes = useMemo(
+    () => montarLanes(abas, grupos, membership),
+    [abas, grupos, membership],
+  );
+
+  // Reordena UMA lane (drag) e sobe a ordem completa de ids ao App. Ordem de
+  // chip pura: não toca ativa/url → nenhuma webview reposiciona.
+  function reordenarLaneAbas(laneAbas: AbaBrowser[]) {
+    onReordenar(
+      reordenarLane(
+        abas.map((a) => a.id),
+        laneAbas.map((a) => a.id),
+      ),
+    );
+  }
+
+  function corProximoGrupo(): NavigatorGroupColor {
+    const usadas = new Set(grupos.map((g) => g.cor));
+    const livre = NAVIGATOR_GROUP_COLOR_ORDER.find((c) => !usadas.has(c));
+    return (
+      livre ??
+      NAVIGATOR_GROUP_COLOR_ORDER[
+        grupos.length % NAVIGATOR_GROUP_COLOR_ORDER.length
+      ]
+    );
+  }
+
+  function novoGrupoComAba(abaId: string) {
+    const id = `grupo-${Date.now()}`;
+    setGrupos((prev) => [
+      ...prev,
+      {
+        id,
+        nome: `${t.navegador.grupoNomePadrao} ${prev.length + 1}`,
+        cor: corProximoGrupo(),
+        recolhido: false,
+      },
+    ]);
+    setMembership((prev) => ({ ...prev, [abaId]: id }));
+  }
+
+  function adicionarAoGrupo(abaId: string, grupoId: string) {
+    setMembership((prev) => ({ ...prev, [abaId]: grupoId }));
+  }
+
+  function removerDoGrupo(abaId: string) {
+    setMembership((prev) => {
+      const proximo = { ...prev };
+      delete proximo[abaId];
+      return proximo;
+    });
+  }
+
+  function alternarRecolhido(grupoId: string) {
+    setGrupos((prev) =>
+      prev.map((g) => (g.id === grupoId ? { ...g, recolhido: !g.recolhido } : g)),
+    );
+  }
+
+  function renomearGrupo(grupoId: string, nome: string) {
+    setGrupos((prev) =>
+      prev.map((g) => (g.id === grupoId ? { ...g, nome } : g)),
+    );
+  }
+
+  function recolorirGrupo(grupoId: string, cor: NavigatorGroupColor) {
+    setGrupos((prev) =>
+      prev.map((g) => (g.id === grupoId ? { ...g, cor } : g)),
+    );
+  }
+
+  function excluirGrupo(grupoId: string) {
+    setGrupos((prev) => prev.filter((g) => g.id !== grupoId));
+    setMembership((prev) => {
+      const proximo: NavigatorMembership = {};
+      for (const [abaId, gid] of Object.entries(prev)) {
+        if (gid !== grupoId) proximo[abaId] = gid;
+      }
+      return proximo;
+    });
+    setGrupoEditando((atual) => (atual === grupoId ? null : atual));
+  }
+
+  /** Um chip de aba (grupo/solta/pin). Reorder por drag vem de um handle
+   *  dedicado (mouse), separado do corpo do chip que troca de aba (clique/teclado
+   *  intactos, sem conflito com o sensor de teclado do dnd). */
+  const renderChip = (aba: AbaBrowser, compact: boolean) => {
+    const app = porId(aba.id);
+    const ativaAba = aba.id === ativa;
+    const dormindo = aba.estado === "dormindo";
+    const grupoAtual = aba.fixada ? undefined : membership[aba.id];
+    const tabLabel = dormindo
+      ? preencher(t.navegador.dormindoClique, { nome: aba.nome })
+      : aba.fixada
+        ? preencher(t.navegador.fixadaNome, { nome: aba.nome })
+        : aba.nome;
+    return (
+      <SortableItem
+        key={aba.id}
+        value={aba.id}
+        className="group/chip relative shrink-0"
+      >
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              role="tab"
+              tabIndex={0}
+              aria-selected={ativaAba}
+              aria-label={tabLabel}
+              onClick={() => onTrocar(aba.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onTrocar(aba.id);
+                }
+              }}
+              className={cn(
+                "group flex cursor-pointer items-center gap-2 rounded-t-md border border-b-0 py-1.5 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                compact ? "w-10 justify-center px-2" : "w-40 px-3",
+                ativaAba
+                  ? "border-border bg-background font-medium"
+                  : "border-transparent text-muted-foreground hover:bg-accent/50",
+                dormindo && "opacity-60",
+              )}
+            >
+              {dormindo ? (
+                <Moon className="size-4 shrink-0" aria-hidden="true" />
+              ) : app ? (
+                <img
+                  src={urlIcone(app)}
+                  alt=""
+                  className="size-4 shrink-0"
+                  draggable={false}
+                />
+              ) : (
+                <Globe className="size-4 shrink-0 text-muted-foreground" />
+              )}
+              {compact ? (
+                <span className="sr-only">{tabLabel}</span>
+              ) : (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="min-w-0 flex-1 truncate">{aba.nome}</span>
+                    </TooltipTrigger>
+                    <TooltipContent>{tabLabel}</TooltipContent>
+                  </Tooltip>
+                  {aba.manterAcordada && (
+                    <Coffee
+                      className="size-3.5 shrink-0"
+                      aria-label={t.navegador.manterAcordadaAtivo}
+                    />
+                  )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        aria-label={t.navegador.fecharAba}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onFechar(aba.id);
+                        }}
+                        className="grid size-4 shrink-0 place-items-center rounded opacity-60 hover:bg-foreground/10 hover:opacity-100"
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t.navegador.fecharAba}</TooltipContent>
+                  </Tooltip>
+                </>
+              )}
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent className="w-56">
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => onAlternarFixada(aba.id)}
+            >
+              {aba.fixada ? <PinOff /> : <Pin />}
+              {aba.fixada ? t.navegador.desafixarAba : t.navegador.fixarAba}
+            </ContextMenuItem>
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => onAlternarManterAcordada(aba.id)}
+            >
+              <Coffee />
+              {aba.manterAcordada
+                ? t.navegador.permitirDormir
+                : t.navegador.manterAcordada}
+            </ContextMenuItem>
+            {!aba.fixada && (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuSub>
+                  <ContextMenuSubTrigger className="gap-2">
+                    <FolderPlus />
+                    {t.navegador.grupoAdicionarA}
+                  </ContextMenuSubTrigger>
+                  <ContextMenuSubContent className="w-52">
+                    {grupos.map((g) => (
+                      <ContextMenuItem
+                        key={g.id}
+                        className="gap-2"
+                        disabled={grupoAtual === g.id}
+                        onClick={() => adicionarAoGrupo(aba.id, g.id)}
+                      >
+                        <span
+                          className={cn(
+                            "size-2.5 shrink-0 rounded-full",
+                            NAVIGATOR_GROUP_COLORS[g.cor].dot,
+                          )}
+                        />
+                        <span className="truncate">{g.nome}</span>
+                      </ContextMenuItem>
+                    ))}
+                    {grupos.length > 0 && <ContextMenuSeparator />}
+                    <ContextMenuItem
+                      className="gap-2"
+                      onClick={() => novoGrupoComAba(aba.id)}
+                    >
+                      <Plus />
+                      {t.navegador.grupoNovo}
+                    </ContextMenuItem>
+                  </ContextMenuSubContent>
+                </ContextMenuSub>
+                {grupoAtual && (
+                  <ContextMenuItem
+                    className="gap-2"
+                    onClick={() => removerDoGrupo(aba.id)}
+                  >
+                    <FolderMinus />
+                    {t.navegador.grupoRemoverDe}
+                  </ContextMenuItem>
+                )}
+              </>
+            )}
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              className="gap-2"
+              disabled={
+                ativaAba ||
+                dormindo ||
+                Boolean(aba.fixada) ||
+                Boolean(aba.manterAcordada)
+              }
+              onClick={() => onDormir(aba.id)}
+            >
+              <Moon />
+              {t.navegador.colocarDormir}
+            </ContextMenuItem>
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => onDormirOutras(aba.id)}
+            >
+              <BedDouble />
+              {t.navegador.dormirOutras}
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              variant="destructive"
+              className="gap-2"
+              onClick={() => onFechar(aba.id)}
+            >
+              <X />
+              {t.navegador.fecharAba}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+        <SortableItemHandle
+          aria-label={t.navegador.grupoReordenar}
+          title={t.navegador.grupoReordenar}
+          className={cn(
+            "pointer-events-none absolute z-10 grid place-items-center text-muted-foreground opacity-0 transition-opacity group-hover/chip:pointer-events-auto group-hover/chip:opacity-70",
+            compact
+              ? "left-1/2 top-0.5 h-3 w-4 -translate-x-1/2"
+              : "bottom-0 left-0 top-0 w-3",
+          )}
+        >
+          {compact ? (
+            <GripHorizontal className="size-3" />
+          ) : (
+            <GripVertical className="size-3" />
+          )}
+        </SortableItemHandle>
+      </SortableItem>
+    );
+  };
 
   function medir(): browser.Retangulo | null {
     const el = area.current;
@@ -560,144 +905,106 @@ export function NavegadorScreen({
       {/* Barra de abas: rola na horizontal; o "+" fica fora da rolagem. */}
       <div className="flex items-stretch border-b border-border">
         <div
-          className="scrollbar-fina flex items-stretch gap-1 overflow-x-auto px-2 pt-2"
+          className="scrollbar-fina flex items-stretch gap-2 overflow-x-auto px-2 pt-2"
           role="tablist"
           aria-label={t.navegador.abas}
         >
-          {abas.map((aba) => {
-            const app = porId(aba.id);
-            const ativaAba = aba.id === ativa;
-            const dormindo = aba.estado === "dormindo";
-            const tabLabel = dormindo
-              ? preencher(t.navegador.dormindoClique, { nome: aba.nome })
-              : aba.fixada
-                ? preencher(t.navegador.fixadaNome, { nome: aba.nome })
-                : aba.nome;
-            return (
-              <ContextMenu key={aba.id}>
-                <ContextMenuTrigger asChild>
-                  <div
-                    role="tab"
-                    tabIndex={0}
-                    aria-selected={ativaAba}
-                    aria-label={tabLabel}
-                    onClick={() => onTrocar(aba.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        onTrocar(aba.id);
-                      }
-                    }}
-                    className={cn(
-                      "group flex shrink-0 cursor-pointer items-center gap-2 rounded-t-md border border-b-0 py-1.5 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                      aba.fixada ? "w-10 justify-center px-2" : "w-40 px-3",
-                      ativaAba
-                        ? "border-border bg-background font-medium"
-                        : "border-transparent text-muted-foreground hover:bg-accent/50",
-                      dormindo && "opacity-60",
-                    )}
-                  >
-                    {dormindo ? (
-                      <Moon className="size-4 shrink-0" aria-hidden="true" />
-                    ) : app ? (
-                      <img
-                        src={urlIcone(app)}
-                        alt=""
-                        className="size-4 shrink-0"
-                        draggable={false}
-                      />
-                    ) : (
-                      <Globe className="size-4 shrink-0 text-muted-foreground" />
-                    )}
-                    {aba.fixada ? (
-                      <span className="sr-only">{tabLabel}</span>
-                    ) : (
-                      <>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="min-w-0 flex-1 truncate">
-                              {aba.nome}
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent>{tabLabel}</TooltipContent>
-                        </Tooltip>
-                        {aba.manterAcordada && (
-                          <Coffee
-                            className="size-3.5 shrink-0"
-                            aria-label={t.navegador.manterAcordadaAtivo}
-                          />
+          {lanes.map((lane) => {
+            if (lane.tipo === "grupo" && lane.grupo) {
+              const grupo = lane.grupo;
+              const cor = NAVIGATOR_GROUP_COLORS[grupo.cor];
+              return (
+                <div
+                  key={grupo.id}
+                  role="group"
+                  aria-label={preencher(t.navegador.grupoAria, {
+                    nome: grupo.nome,
+                    n: lane.abas.length,
+                  })}
+                  className={cn(
+                    "flex items-stretch gap-1 rounded-t-md border-b-2 pr-1",
+                    cor.borda,
+                    cor.faixa,
+                  )}
+                >
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => alternarRecolhido(grupo.id)}
+                        aria-expanded={!grupo.recolhido}
+                        className="flex shrink-0 items-center gap-1.5 rounded-t-md px-2 py-1.5 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <span
+                          className={cn(
+                            "size-2.5 shrink-0 rounded-full",
+                            cor.dot,
+                          )}
+                        />
+                        <span className="max-w-28 truncate">{grupo.nome}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {lane.abas.length}
+                        </span>
+                        {grupo.recolhido ? (
+                          <ChevronRight className="size-3.5 shrink-0" />
+                        ) : (
+                          <ChevronDown className="size-3.5 shrink-0" />
                         )}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              aria-label={t.navegador.fecharAba}
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                onFechar(aba.id);
-                              }}
-                              className="grid size-4 shrink-0 place-items-center rounded opacity-60 hover:bg-foreground/10 hover:opacity-100"
-                            >
-                              <X className="size-3" />
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent>{t.navegador.fecharAba}</TooltipContent>
-                        </Tooltip>
-                      </>
-                    )}
-                  </div>
-                </ContextMenuTrigger>
-                <ContextMenuContent className="w-56">
-                  <ContextMenuItem
-                    className="gap-2"
-                    onClick={() => onAlternarFixada(aba.id)}
-                  >
-                    {aba.fixada ? <PinOff /> : <Pin />}
-                    {aba.fixada
-                      ? t.navegador.desafixarAba
-                      : t.navegador.fixarAba}
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    className="gap-2"
-                    onClick={() => onAlternarManterAcordada(aba.id)}
-                  >
-                    <Coffee />
-                    {aba.manterAcordada
-                      ? t.navegador.permitirDormir
-                      : t.navegador.manterAcordada}
-                  </ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    className="gap-2"
-                    disabled={
-                      ativaAba ||
-                      dormindo ||
-                      Boolean(aba.fixada) ||
-                      Boolean(aba.manterAcordada)
-                    }
-                    onClick={() => onDormir(aba.id)}
-                  >
-                    <Moon />
-                    {t.navegador.colocarDormir}
-                  </ContextMenuItem>
-                  <ContextMenuItem
-                    className="gap-2"
-                    onClick={() => onDormirOutras(aba.id)}
-                  >
-                    <BedDouble />
-                    {t.navegador.dormirOutras}
-                  </ContextMenuItem>
-                  <ContextMenuSeparator />
-                  <ContextMenuItem
-                    variant="destructive"
-                    className="gap-2"
-                    onClick={() => onFechar(aba.id)}
-                  >
-                    <X />
-                    {t.navegador.fecharAba}
-                  </ContextMenuItem>
-                </ContextMenuContent>
-              </ContextMenu>
+                      </button>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent className="w-52">
+                      <ContextMenuItem
+                        className="gap-2"
+                        onClick={() => alternarRecolhido(grupo.id)}
+                      >
+                        {grupo.recolhido ? <ChevronDown /> : <ChevronRight />}
+                        {grupo.recolhido
+                          ? t.navegador.grupoExpandir
+                          : t.navegador.grupoRecolher}
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        className="gap-2"
+                        onClick={() => setGrupoEditando(grupo.id)}
+                      >
+                        <Pencil />
+                        {t.navegador.grupoEditar}
+                      </ContextMenuItem>
+                      <ContextMenuSeparator />
+                      <ContextMenuItem
+                        variant="destructive"
+                        className="gap-2"
+                        onClick={() => excluirGrupo(grupo.id)}
+                      >
+                        <Trash2 />
+                        {t.navegador.grupoExcluir}
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
+                  {!grupo.recolhido && (
+                    <Sortable
+                      strategy="horizontal"
+                      value={lane.abas}
+                      onValueChange={reordenarLaneAbas}
+                      getItemValue={(a) => a.id}
+                      className="flex items-stretch gap-1"
+                    >
+                      {lane.abas.map((aba) => renderChip(aba, false))}
+                    </Sortable>
+                  )}
+                </div>
+              );
+            }
+            return (
+              <Sortable
+                key={lane.tipo}
+                strategy="horizontal"
+                value={lane.abas}
+                onValueChange={reordenarLaneAbas}
+                getItemValue={(a) => a.id}
+                className="flex items-stretch gap-1"
+              >
+                {lane.abas.map((aba) => renderChip(aba, lane.tipo === "pins"))}
+              </Sortable>
             );
           })}
         </div>
@@ -783,6 +1090,140 @@ export function NavegadorScreen({
         onAlternarFixada={onAlternarFixada}
         onDormir={onDormir}
       />
+
+      {/* Diálogo de edição de grupo (nome + cor + excluir). */}
+      <DialogEditarGrupo
+        grupo={grupos.find((g) => g.id === grupoEditando) ?? null}
+        onFechar={() => setGrupoEditando(null)}
+        onRenomear={renomearGrupo}
+        onRecolorir={recolorirGrupo}
+        onExcluir={excluirGrupo}
+      />
     </div>
+  );
+}
+
+/**
+ * Diálogo de edição de um grupo: renomear, recolorir (paleta de tokens) e
+ * excluir. O nome é estado local do input (efêmero); as ações sobem por props.
+ */
+function DialogEditarGrupo({
+  grupo,
+  onFechar,
+  onRenomear,
+  onRecolorir,
+  onExcluir,
+}: {
+  grupo: NavigatorGroup | null;
+  onFechar: () => void;
+  onRenomear: (id: string, nome: string) => void;
+  onRecolorir: (id: string, cor: NavigatorGroupColor) => void;
+  onExcluir: (id: string) => void;
+}) {
+  const { t } = useIdioma();
+  const [nome, setNome] = useState("");
+
+  // Sincroniza o input ao abrir/trocar de grupo.
+  useEffect(() => {
+    if (grupo) setNome(grupo.nome);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grupo?.id]);
+
+  const nomeCores: Record<NavigatorGroupColor, string> = {
+    rosa: t.navegador.corRosa,
+    violeta: t.navegador.corVioleta,
+    verde: t.navegador.corVerde,
+    ambar: t.navegador.corAmbar,
+    vermelho: t.navegador.corVermelho,
+  };
+
+  const salvar = () => {
+    if (!grupo) return;
+    const limpo = nome.trim();
+    if (limpo) onRenomear(grupo.id, limpo);
+    onFechar();
+  };
+
+  return (
+    <Dialog open={grupo != null} onOpenChange={(aberto) => !aberto && onFechar()}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{t.navegador.grupoEditar}</DialogTitle>
+          <DialogDescription className="sr-only">
+            {t.navegador.grupoEditar}
+          </DialogDescription>
+        </DialogHeader>
+        {grupo && (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="grupo-nome" className="text-sm font-medium">
+                {t.navegador.grupoNomeLabel}
+              </label>
+              <Input
+                id="grupo-nome"
+                value={nome}
+                onChange={(event) => setNome(event.target.value)}
+                placeholder={t.navegador.grupoNomePlaceholder}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    salvar();
+                  }
+                }}
+                autoFocus
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium">
+                {t.navegador.grupoCorLabel}
+              </span>
+              <div className="flex gap-2">
+                {NAVIGATOR_GROUP_COLOR_ORDER.map((cor) => {
+                  const selecionada = grupo.cor === cor;
+                  return (
+                    <button
+                      key={cor}
+                      type="button"
+                      aria-label={nomeCores[cor]}
+                      aria-pressed={selecionada}
+                      title={nomeCores[cor]}
+                      onClick={() => onRecolorir(grupo.id, cor)}
+                      className={cn(
+                        "size-7 rounded-full outline-none ring-offset-2 ring-offset-background transition focus-visible:ring-2 focus-visible:ring-ring",
+                        NAVIGATOR_GROUP_COLORS[cor].dot,
+                        selecionada
+                          ? "ring-2 ring-ring"
+                          : "opacity-70 hover:opacity-100",
+                      )}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button
+            type="button"
+            variant="ghost"
+            className="gap-2 text-destructive hover:text-destructive"
+            onClick={() => grupo && onExcluir(grupo.id)}
+          >
+            <Trash2 className="size-4" />
+            {t.navegador.grupoExcluir}
+          </Button>
+          <div className="flex gap-2">
+            <DialogClose asChild>
+              <Button type="button" variant="outline">
+                {t.navegador.grupoCancelar}
+              </Button>
+            </DialogClose>
+            <Button type="button" onClick={salvar}>
+              {t.navegador.grupoSalvar}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

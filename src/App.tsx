@@ -501,6 +501,26 @@ function AppInner() {
     );
   }
 
+  /**
+   * Reordena as abas conforme a ordem de ids vinda da strip (drag de grupo/lane,
+   * Story 3). Ordem de chip pura: não toca em `abaAtiva`/url, então nenhuma
+   * webview reposiciona (spec §5.1). Os grupos vivem desacoplados no
+   * `navegador.tsx`; aqui só aplicamos a permutação sobre `abas`.
+   */
+  function reordenarAbas(ids: string[]) {
+    setAbas((prev) => {
+      const porId = new Map(prev.map((tab) => [tab.id, tab]));
+      const reordenadas = ids
+        .map((id) => porId.get(id))
+        .filter((tab): tab is AbaBrowser => tab != null);
+      // Fallback: preserva qualquer aba ausente da lista (não deve ocorrer, mas
+      // evita perder abas se a strip mandar uma ordem parcial).
+      const enviadas = new Set(ids);
+      const faltantes = prev.filter((tab) => !enviadas.has(tab.id));
+      return [...reordenadas, ...faltantes];
+    });
+  }
+
   async function abrirUrl(url: string) {
     try {
       await api.openUrl(url);
@@ -744,6 +764,7 @@ function AppInner() {
               onAlternarFixada={alternarFixada}
               onAlternarManterAcordada={alternarManterAcordada}
               onReativada={concluirReativacao}
+              onReordenar={reordenarAbas}
               onAbrir={abrirAppAqui}
               onNovaAba={novaAba}
               onNavegar={abrirUrlLivre}
