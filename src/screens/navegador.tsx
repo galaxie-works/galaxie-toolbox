@@ -698,6 +698,7 @@ export function NavegadorScreen({
   onReordenar,
   onAbrir,
   onNovaAba,
+  onReabrirFechada,
   onNavegar,
   historico,
   onRestaurarAbas,
@@ -718,6 +719,7 @@ export function NavegadorScreen({
   onReordenar: (ids: string[]) => void;
   onAbrir: (app: AppM365) => void;
   onNovaAba: () => void;
+  onReabrirFechada: () => void;
   onNavegar: (url: string, nome: string) => void;
   historico: HistoryEntry[];
   onRestaurarAbas: (entradas: { url: string; nome: string }[]) => void;
@@ -1150,24 +1152,84 @@ export function NavegadorScreen({
       ?.focus();
   }, []);
 
-  // Ctrl/Cmd+K abre/fecha a paleta de qualquer lugar do Navigator. (O DOM só
-  // recebe a tecla quando o foco NÃO está dentro da webview nativa — por isso
-  // existe também o botão na barra, que funciona mesmo com a página em foco.)
-  // Sem aba ativa (Launcher inline visível) só foca o command — não empilha.
+  // Atalhos de navegador (#272, S1 — camada React). Funcionam quando o foco NÃO
+  // está dentro da webview nativa (o app chrome). Para valerem SEMPRE (webview em
+  // foco), falta o accelerator nativo em Rust (S2, follow-up). Ctrl+K é do #174.
+  const focarOmnibox = useCallback(() => {
+    if (ativa === null) focarComandoInline();
+    else setPaletaAberta(true);
+  }, [ativa, focarComandoInline]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod && !e.altKey) return;
+      const tecla = e.key.toLowerCase();
+
+      // Ctrl/Cmd+K — paleta (comportamento do #174).
+      if (mod && !e.shiftKey && tecla === "k") {
         e.preventDefault();
-        if (ativa === null) {
-          focarComandoInline();
-          return;
-        }
-        setPaletaAberta((v) => !v);
+        if (ativa === null) focarComandoInline();
+        else setPaletaAberta((v) => !v);
+        return;
+      }
+      // Ctrl+L / Alt+D — focar o command/omnibox.
+      if ((mod && tecla === "l") || (e.altKey && !mod && tecla === "d")) {
+        e.preventDefault();
+        focarOmnibox();
+        return;
+      }
+      // Ctrl+T — nova aba (foca o command, liga com #271).
+      if (mod && !e.shiftKey && tecla === "t") {
+        e.preventDefault();
+        onNovaAba();
+        return;
+      }
+      // Ctrl+Shift+T — reabrir a última aba fechada.
+      if (mod && e.shiftKey && tecla === "t") {
+        e.preventDefault();
+        onReabrirFechada();
+        return;
+      }
+      // Ctrl+W — fechar a aba atual.
+      if (mod && tecla === "w") {
+        e.preventDefault();
+        if (ativa) onFechar(ativa);
+        return;
+      }
+      // Ctrl+Tab / Ctrl+Shift+Tab — próxima / anterior aba.
+      if (mod && e.key === "Tab") {
+        e.preventDefault();
+        if (abas.length === 0) return;
+        const idx = abas.findIndex((a) => a.id === ativa);
+        const passo = e.shiftKey ? -1 : 1;
+        const base = idx === -1 ? (e.shiftKey ? 0 : -1) : idx;
+        const prox = abas[(base + passo + abas.length) % abas.length];
+        if (prox) onTrocar(prox.id);
+        return;
+      }
+      // Ctrl+1..8 → ir pra aba N; Ctrl+9 → última aba.
+      if (mod && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        if (abas.length === 0) return;
+        const n = Number(e.key);
+        const alvo = n === 9 ? abas[abas.length - 1] : abas[n - 1];
+        if (alvo) onTrocar(alvo.id);
+        return;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [ativa, focarComandoInline]);
+  }, [
+    abas,
+    ativa,
+    focarComandoInline,
+    focarOmnibox,
+    onNovaAba,
+    onReabrirFechada,
+    onFechar,
+    onTrocar,
+  ]);
 
   // #174: ao cair na aba vazia (Launcher inline cobre), zera o overlay pendente
   // — senão ele reabriria sozinho ao voltar para uma aba viva.

@@ -112,6 +112,9 @@ function AppInner() {
   // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
   const [abas, setAbas] = useState<AbaBrowser[]>(loadPinnedNavigatorTabs);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
+  // Pilha de abas fechadas recentemente (#272 · Ctrl+Shift+T). Só url/nome; teto
+  // de 25 pra não crescer sem limite.
+  const [fechadas, setFechadas] = useState<{ url: string; nome: string }[]>([]);
   const [navigatorClock, setNavigatorClock] = useState(0);
   const [navigatorMemorySettings] = useState(loadNavigatorMemorySettings);
   // Historico de navegacao (Story 5): capturado nos pontos onde o app commita
@@ -475,6 +478,13 @@ function AppInner() {
 
   function fecharAba(id: string) {
     void browser.fechar(id);
+    const alvo = abas.find((a) => a.id === id);
+    if (alvo) {
+      // Empilha pra reabrir com Ctrl+Shift+T (#272), teto de 25.
+      setFechadas((prev) =>
+        [{ url: alvo.url, nome: alvo.nome }, ...prev].slice(0, 25),
+      );
+    }
     const resto = abas.filter((a) => a.id !== id);
     setAbas(resto);
     if (abaAtiva === id) {
@@ -486,6 +496,14 @@ function AppInner() {
       // Sem abas: permanece no Navigator com a aba em branco (Launcher), em vez
       // de chutar o usuário para a lista de Apps (#24).
     }
+  }
+
+  /** Reabre a última aba fechada (#272 · Ctrl+Shift+T). */
+  function reabrirFechada() {
+    const ultima = fechadas[0];
+    if (!ultima) return;
+    setFechadas((prev) => prev.slice(1));
+    abrirUrlLivre(ultima.url, ultima.nome);
   }
 
   /** Fecha todas as abas menos a clicada (e as fixadas), deixando-a ativa (#275). */
@@ -852,6 +870,7 @@ function AppInner() {
               onReordenar={reordenarAbas}
               onAbrir={abrirAppAqui}
               onNovaAba={novaAba}
+              onReabrirFechada={reabrirFechada}
               onNavegar={abrirUrlLivre}
               onRestaurarAbas={restaurarAbas}
               historico={historico}
