@@ -209,6 +209,15 @@ function ConteudoPaleta({
   const [q, setQ] = useState("");
   const { modo, termo } = lerPrefixo(q);
 
+  // #271: quando a paleta pede foco (overlay Ctrl+K OU Launcher da aba vazia),
+  // foca o input ao montar. O `autoFocus` do overlay já vinha do Radix Dialog; o
+  // Launcher inline não focava — este ref garante o foco nos dois, robusto contra
+  // a flakiness do autoFocus HTML em remount.
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (autoFocus) inputRef.current?.focus();
+  }, [autoFocus]);
+
   // "Mais acessados" REAL: contagem derivada do historico (spec §8.3). Sem
   // historico ainda (instalacao nova), cai na lista M365 curada — sem regressao.
   const topAcessados = maisAcessados(historico, 9);
@@ -252,6 +261,7 @@ function ConteudoPaleta({
       }
     >
       <CommandInput
+        ref={inputRef}
         value={q}
         onValueChange={setQ}
         autoFocus={autoFocus}
@@ -469,6 +479,7 @@ function Launcher(props: AcoesPaleta) {
       <NavigatorHero titulo={t.navegador.titulo} subtitulo={t.navegador.subtitulo} />
       <ConteudoPaleta
         {...props}
+        autoFocus
         className="w-full max-w-lg overflow-hidden rounded-xl border border-border bg-popover shadow-2xl"
       />
     </div>
