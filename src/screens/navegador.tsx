@@ -32,6 +32,15 @@ import {
   type NavigatorGroupColor,
   type NavigatorMembership,
 } from "@/lib/navigator-tabs";
+import {
+  BarraFavoritos,
+  favoritosParaPalette,
+} from "@/screens/navegador-favoritos";
+import {
+  loadFavoritos,
+  persistFavoritos,
+  type Favorito,
+} from "@/lib/navigator-bookmarks";
 import { Badge } from "@/components/reui/badge";
 import {
   Sortable,
@@ -85,6 +94,7 @@ import {
   PinOff,
   Plus,
   Search,
+  Star,
   Trash2,
   X,
 } from "lucide-react";
@@ -129,6 +139,7 @@ function NavigatorHero({ titulo, subtitulo }: { titulo: string; subtitulo: strin
 type AcoesPaleta = {
   abas: AbaBrowser[];
   ativa: string | null;
+  favoritos: Favorito[];
   onAbrir: (app: AppM365) => void;
   onNavegar: (url: string, nome: string) => void;
   onTrocar: (id: string) => void;
@@ -161,6 +172,7 @@ function lerPrefixo(q: string): { modo: ModoPaleta; termo: string } {
 function ConteudoPaleta({
   abas,
   ativa,
+  favoritos,
   className,
   autoFocus,
   onExecutou,
@@ -200,8 +212,10 @@ function ConteudoPaleta({
     : "";
 
   const abaAtivaObj = abas.find((a) => a.id === ativa);
+  const favoritosLinks = favoritosParaPalette(favoritos);
   const mostrarAcoes = modo === "omni" || modo === "acoes";
   const mostrarAbas = (modo === "omni" || modo === "abas") && abas.length > 0;
+  const mostrarFavoritos = modo === "omni" && favoritosLinks.length > 0;
   const mostrarApps = modo === "omni";
 
   return (
@@ -312,6 +326,32 @@ function ConteudoPaleta({
                   ehAtiva={aba.id === ativa}
                   onSelecionar={() => executar(() => onTrocar(aba.id))}
                 />
+              ))}
+            </CommandGroup>
+            <CommandSeparator />
+          </>
+        )}
+
+        {mostrarFavoritos && (
+          <>
+            <CommandGroup heading={t.navegador.grupoFavoritos}>
+              {favoritosLinks.map((fav) => (
+                <CommandItem
+                  key={fav.id}
+                  value={`${fav.nome} ${fav.url} ${fav.caminho}`}
+                  onSelect={() => executar(() => onNavegar(fav.url, fav.nome))}
+                  className="gap-2.5"
+                >
+                  <Star className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate font-medium">
+                    {fav.nome}
+                  </span>
+                  {fav.caminho && (
+                    <span className="shrink-0 truncate text-xs text-muted-foreground">
+                      {fav.caminho}
+                    </span>
+                  )}
+                </CommandItem>
               ))}
             </CommandGroup>
             <CommandSeparator />
@@ -535,6 +575,16 @@ export function NavegadorScreen({
   );
   // Grupo em edição no diálogo (nome + cor + excluir), ou null.
   const [grupoEditando, setGrupoEditando] = useState<string | null>(null);
+
+  // --- Favoritos (Story 4 / #176) ------------------------------------------
+  // Favoritos vivem aqui + localStorage (mesmo padrão dos grupos), DESACOPLADOS
+  // das abas. A barra reabre rápido; a paleta os busca; o diálogo importa do
+  // Chrome/Edge. `onNavegar` (aba própria) já é a mesma ponte da omnibox.
+  const [favoritos, setFavoritos] = useState<Favorito[]>(loadFavoritos);
+
+  useEffect(() => {
+    persistFavoritos(favoritos);
+  }, [favoritos]);
 
   useEffect(() => {
     persistNavigatorGroups(grupos);
@@ -1049,11 +1099,23 @@ export function NavegadorScreen({
         </Tooltip>
       </div>
 
+      {/* Barra de favoritos (#176): reabre rápido + gerencia (importar do
+          Chrome/Edge, adicionar da aba ativa, pastas, renomear, remover). */}
+      <BarraFavoritos
+        favoritos={favoritos}
+        onMudar={setFavoritos}
+        onNavegar={onNavegar}
+        abaAtiva={
+          activeTab ? { url: activeTab.url, nome: activeTab.nome } : undefined
+        }
+      />
+
       {ativa === null ? (
         <div className="flex-1 overflow-hidden">
           <Launcher
             abas={abas}
             ativa={ativa}
+            favoritos={favoritos}
             onAbrir={onAbrir}
             onNavegar={onNavegar}
             onTrocar={onTrocar}
@@ -1082,6 +1144,7 @@ export function NavegadorScreen({
         onAberturaMudou={setPaletaAberta}
         abas={abas}
         ativa={ativa}
+        favoritos={favoritos}
         onAbrir={onAbrir}
         onNavegar={onNavegar}
         onTrocar={onTrocar}

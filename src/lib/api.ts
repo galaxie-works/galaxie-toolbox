@@ -1615,6 +1615,83 @@ export async function enableLongPaths(): Promise<string> {
   return invoke<string>("enable_long_paths");
 }
 
+// --- Favoritos do Navigator (#176) ----------------------------------------
+// Importa favoritos do Chrome/Edge lendo SOMENTE o arquivo `Bookmarks` (JSON)
+// via Rust `std::fs` — nunca `Login Data`/senhas. O comando devolve a arvore
+// por navegador+perfil; o front mostra em `tree`, o usuario seleciona e aplica.
+
+/** Um no da arvore importada: pasta (sem `url`, com `filhos`) ou link. */
+export interface BookmarkNode {
+  id: string;
+  nome: string;
+  url?: string;
+  filhos: BookmarkNode[];
+}
+
+/** Favoritos de um perfil de um navegador. */
+export interface BrowserBookmarks {
+  navegador: "chrome" | "edge" | string;
+  perfil: string;
+  roots: BookmarkNode[];
+}
+
+const MOCK_BOOKMARKS: BrowserBookmarks[] = [
+  {
+    navegador: "chrome",
+    perfil: "Default",
+    roots: [
+      {
+        id: "bm-bar",
+        nome: "Barra de favoritos",
+        filhos: [
+          { id: "bm-gh", nome: "GitHub", url: "https://github.com", filhos: [] },
+          {
+            id: "bm-work",
+            nome: "Trabalho",
+            filhos: [
+              { id: "bm-o365", nome: "Microsoft 365", url: "https://www.office.com", filhos: [] },
+              { id: "bm-sp", nome: "SharePoint", url: "https://voazeng.sharepoint.com", filhos: [] },
+            ],
+          },
+        ],
+      },
+      {
+        id: "bm-other",
+        nome: "Outros favoritos",
+        filhos: [
+          { id: "bm-yt", nome: "YouTube", url: "https://www.youtube.com", filhos: [] },
+        ],
+      },
+    ],
+  },
+  {
+    navegador: "edge",
+    perfil: "Default",
+    roots: [
+      {
+        id: "bm-e-bar",
+        nome: "Barra de favoritos",
+        filhos: [
+          { id: "bm-bing", nome: "Bing", url: "https://www.bing.com", filhos: [] },
+        ],
+      },
+    ],
+  },
+];
+
+/**
+ * Importa favoritos do Chrome/Edge (#176). Leitura pura em Rust `std::fs` do
+ * arquivo `Bookmarks`; jamais toca em `Login Data`/senhas. Fora do Tauri (mock)
+ * devolve uma arvore de exemplo para o QA visual.
+ */
+export async function importBrowserBookmarks(): Promise<BrowserBookmarks[]> {
+  if (!inTauri()) {
+    await sleep(400);
+    return MOCK_BOOKMARKS.map((b) => ({ ...b }));
+  }
+  return invoke<BrowserBookmarks[]>("import_browser_bookmarks");
+}
+
 // --- Launch on startup (#123) --------------------------------------------
 // Autostart do SO via tauri-plugin-autostart (comandos Rust finos). Fora do
 // Tauri (mock) guarda o estado em memoria, so pra visualizar o toggle na UI.
