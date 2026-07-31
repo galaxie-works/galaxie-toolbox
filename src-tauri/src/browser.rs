@@ -55,10 +55,17 @@ const SCRIPT_CAPTURA_SCROLL: &str = r#"(function(){
 })();"#;
 
 /// Restaura o scroll no load da pagina recriada (best-effort, spec §3.4).
-fn script_restaura_scroll(y: f64) -> String {
+///
+/// #351: o script roda a CADA documento criado (initialization_script). Sem
+/// guard, ao acordar a aba e depois navegar dentro dela, a pagina nova saltava
+/// pro scroll antigo. Guardamos por URL: so restaura quando o load e da PAGINA
+/// ORIGINAL recriada (o `url` que o `browser_abrir` carregou); navegacao
+/// subsequente (href diferente) nao re-rola.
+fn script_restaura_scroll(url: &str, y: f64) -> String {
+    let url_js = serde_json::to_string(url).unwrap_or_else(|_| "\"\"".to_string());
     format!(
-        "window.addEventListener('load',function(){{try{{window.scrollTo(0,{});}}catch(e){{}}}});",
-        y as i64
+        "window.addEventListener('load',function(){{try{{if(location.href==={}){{window.scrollTo(0,{});}}}}catch(e){{}}}});",
+        url_js, y as i64
     )
 }
 
@@ -147,7 +154,7 @@ pub async fn browser_abrir(
     let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(destino))
         .initialization_script(SCRIPT_CAPTURA_SCROLL);
     if let Some(scroll) = scroll_lembrado(&label) {
-        builder = builder.initialization_script(&script_restaura_scroll(scroll));
+        builder = builder.initialization_script(&script_restaura_scroll(&url, scroll));
     }
     let wv = win
         .add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(w, h))
