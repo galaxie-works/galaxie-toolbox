@@ -86,6 +86,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Sheet,
   SheetContent,
@@ -1945,7 +1946,8 @@ function SheetHistorico({
           </div>
         </div>
 
-        <div className="scrollbar-fina min-h-0 flex-1 overflow-y-auto">
+        {/* #311: scrollbar do padrão do app (ScrollArea reui), não a do OS. */}
+        <ScrollArea className="min-h-0 flex-1">
           {lista.length === 0 ? (
             <div className="grid h-full place-items-center px-4 text-center text-sm text-muted-foreground">
               {t.navegador.historicoVazio}
@@ -2005,7 +2007,7 @@ function SheetHistorico({
               })}
             </ul>
           )}
-        </div>
+        </ScrollArea>
 
         <SheetFooter className="gap-3 border-t border-border">
           <Button
