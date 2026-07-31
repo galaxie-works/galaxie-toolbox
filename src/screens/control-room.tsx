@@ -136,6 +136,7 @@ import { TextMorph } from "torph/react";
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
+import { podeGerenciarEvento } from "@/lib/agenda-permissions";
 import {
   CAIXA_PROPRIA,
   descricaoErroEnvio,
@@ -4876,7 +4877,8 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   // RSVP a convites (#287): só quando o usuário é CONVIDADO (não organiza) — o
   // organizador vê os status dos convidados, não RSVP. `respostaSolicitada`
   // false = convite informativo: mostramos o badge, sem as ações.
-  const ehConvite = !!det && !det.souOrganizador && det.resposta !== "organizer";
+  const podeGerenciar = podeGerenciarEvento(det);
+  const ehConvite = !!det && !podeGerenciar;
   const podeResponder = ehConvite && (det?.respostaSolicitada ?? true);
   const badge = det ? badgeResposta(det.resposta, det.souOrganizador, t) : null;
   const [comentarioRsvp, setComentarioRsvp] = useState("");
@@ -4901,14 +4903,14 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   // Cancelar evento (#260): só faz sentido pra quem ORGANIZA um evento COM
   // convidados — aí o cancelamento os notifica. Sem isso, resta só o Excluir
   // (silencioso). Confirmação em AlertDialog com comentário opcional.
-  const podeCancelar = !!det?.souOrganizador && (det?.participantes.length ?? 0) > 0;
+  const podeCancelar = podeGerenciar && (det?.participantes.length ?? 0) > 0;
   const [confirmarCancelar, setConfirmarCancelar] = useState(false);
   const [comentarioCancel, setComentarioCancel] = useState("");
   const [cancelando, setCancelando] = useState(false);
 
   // Abre o formulário de edição com o evento clicado (vindo da lista do mês).
   const editar = () => {
-    if (!id) return;
+    if (!id || !podeGerenciar) return;
     const ev = eventosMes?.find((e) => e.id === id);
     if (ev) {
       abrirFormEditar(ev);
@@ -4918,7 +4920,7 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
 
   // Exclui (otimista no store); fecha o Sheet e toasta o resultado.
   const excluir = async () => {
-    if (!id) return;
+    if (!id || !podeGerenciar) return;
     fecharEventoAgenda();
     try {
       await excluirEvento(id);
@@ -4931,7 +4933,7 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   // Cancela (#260): POST /events/{id}/cancel com comentário opcional — notifica
   // os convidados. Otimista no store; fecha confirmação + Sheet e toasta.
   const cancelar = async () => {
-    if (!id) return;
+    if (!id || !podeCancelar) return;
     const comentario = comentarioCancel.trim();
     setCancelando(true);
     try {
@@ -5106,22 +5108,26 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
               )}
             </div>
             <SheetFooter className="flex-row items-center gap-2 border-t px-4 py-3">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={editar}
-                disabled={!eventosMes?.some((e) => e.id === id)}
-              >
-                <Pencil /> {t.controlRoom.agendaEditar}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:text-destructive"
-                onClick={() => void excluir()}
-              >
-                <Trash2 /> {t.controlRoom.agendaExcluir}
-              </Button>
+              {podeGerenciar && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={editar}
+                    disabled={!eventosMes?.some((e) => e.id === id)}
+                  >
+                    <Pencil /> {t.controlRoom.agendaEditar}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => void excluir()}
+                  >
+                    <Trash2 /> {t.controlRoom.agendaExcluir}
+                  </Button>
+                </>
+              )}
               {podeCancelar && (
                 <Button
                   variant="ghost"

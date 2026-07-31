@@ -126,3 +126,27 @@ test("closing an event invalidates its in-flight detail and categories stay mapp
   assert.equal(store.agendaEventoId, null);
   assert.equal(store.agendaEventoDetalhe, null);
 });
+
+test("an invited attendee cannot open the organizer edit flow", () => {
+  let detalhesCarregados = 0;
+  const store = criarStore({
+    carregarEventos: async () => [],
+    carregarCategorias: async () => [],
+    carregarEvento: async () => {
+      detalhesCarregados += 1;
+      return detalhe("evento");
+    },
+  });
+  const convite: EventoAgenda = {
+    ...evento("convite"),
+    resposta: "notResponded",
+    souOrganizador: false,
+    respostaSolicitada: true,
+  };
+
+  store.abrirFormEditar(convite);
+
+  assert.equal(store.agendaFormAberto, false);
+  assert.equal(store.agendaFormEvento, null);
+  assert.equal(detalhesCarregados, 0);
+});

@@ -13,6 +13,7 @@ import {
   crExcluirEvento,
   crResponderEvento,
 } from "../lib/api.ts";
+import { podeGerenciarEvento } from "../lib/agenda-permissions.ts";
 import type {
   AcaoRsvp,
   Calendario,
@@ -394,6 +395,9 @@ export function criarAgendaSlice(
     // (cr_evento_corpo, mesmo caminho do #34) assim que ela chega; o salvar fica
     // bloqueado enquanto carrega. Guardado por geração (mesma técnica do #211).
     abrirFormEditar: (ev) => {
+      // Convidados só podem responder ao convite. Este guard mantém a regra do
+      // detalhe e do menu de contexto mesmo se outro caller tentar abrir o form.
+      if (!podeGerenciarEvento(ev)) return;
       const geracao = get().agendaFormGeracao + 1;
       set({
         agendaFormAberto: true,
