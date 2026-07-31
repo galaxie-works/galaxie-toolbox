@@ -89,6 +89,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tiny_http",
  "urlencoding",
+ "webview2-com",
  "winapi",
  "windows",
  "winreg 0.52.0",
