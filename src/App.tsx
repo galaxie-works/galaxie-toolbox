@@ -163,6 +163,13 @@ function AppInner() {
     return () => window.clearInterval(timer);
   }, []);
 
+  // #310: no boot, destrói webviews-filhas órfãs que sobrevivem a um reload do
+  // app inteiro (o ghost que pintava por cima da Mailbox). Pins voltam dormindo,
+  // recriados no clique — nada se perde.
+  useEffect(() => {
+    void browser.fecharTodas();
+  }, []);
+
   useEffect(() => {
     const ids = tabsToSleep(
       abas,

@@ -1195,6 +1195,16 @@ export function NavegadorScreen({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // F5 / Ctrl+R — recarrega a PÁGINA da aba (webview-filha), NÃO o app (#310).
+      // preventDefault mata o reload default do WebView2 do app (o bug "amador").
+      if (
+        e.key === "F5" ||
+        ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "r")
+      ) {
+        e.preventDefault();
+        if (ativa) void browser.recarregar(ativa);
+        return;
+      }
       const mod = e.metaKey || e.ctrlKey;
       if (!mod && !e.altKey) return;
       const tecla = e.key.toLowerCase();
