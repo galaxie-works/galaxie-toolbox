@@ -6,7 +6,7 @@ import {
   UserRound,
 } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
-import { BridgeIcon } from "@/components/ui/icons/marca-anim";
+import { BridgeIcon, NavigatorIcon } from "@/components/ui/icons/marca-anim";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
 import { GalaxieSymbol } from "@/components/brand";
 import {
@@ -26,6 +26,12 @@ import type { SettingsItemId } from "@/store/settings-ui-slice";
 import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
+import {
+  NavigatorFavoritosPanel,
+  NavigatorHistoryPanel,
+  NavigatorSearchPanel,
+  NavigatorTabsPanel,
+} from "@/components/navigator-settings";
 import { LockScreenSettings } from "@/components/lock-screen-settings";
 import { StartupSettings } from "@/components/startup-settings";
 import {
@@ -233,6 +239,41 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
                 subtitle:
                   "Choose how often Bridge checks for new messages in the background.",
                 node: <SyncPreferencesPanel />,
+              },
+            ],
+          },
+          {
+            id: "navigator",
+            label: "Navigator",
+            description: "Configure the Navigator browser.",
+            icon: NavigatorIcon,
+            frames: [
+              {
+                key: "search",
+                title: "Search",
+                subtitle:
+                  "Choose the default search engine used by the address bar.",
+                node: <NavigatorSearchPanel />,
+              },
+              {
+                key: "tabs",
+                title: "Tabs",
+                subtitle:
+                  "Sleeping tabs, idle timeout and how many tabs stay active.",
+                node: <NavigatorTabsPanel />,
+              },
+              {
+                key: "favorites",
+                title: "Favorites",
+                subtitle: "Show or hide the favorites bar under the tabs.",
+                node: <NavigatorFavoritosPanel />,
+              },
+              {
+                key: "history",
+                title: "History & privacy",
+                subtitle:
+                  "Save browsing history, set retention and clear it.",
+                node: <NavigatorHistoryPanel />,
               },
             ],
           },

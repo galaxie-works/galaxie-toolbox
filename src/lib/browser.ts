@@ -7,6 +7,8 @@
  * coincide com a origem da janela — então o rect do DOM já é o que o Rust quer.
  */
 
+import { urlDeBusca } from "@/lib/navigator-tabs";
+
 function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
@@ -56,6 +58,18 @@ export async function esconderTodas(): Promise<void> {
   return invoke("browser_esconder_todas");
 }
 
+/** Recarrega a página navegada NA aba (não o app) — F5/Ctrl+R do Navigator (#310). */
+export async function recarregar(id: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke("browser_recarregar", { id });
+}
+
+/** Destrói todas as webviews-filhas — cleanup no boot contra webview órfã (#310). */
+export async function fecharTodas(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke("browser_fechar_todas");
+}
+
 /**
  * Interpreta o que a pessoa digitou na barra do Cruiser: se parece endereço,
  * vira URL; senão, vira busca na web. `nome` é o rótulo curto para a aba.
@@ -81,7 +95,8 @@ export function interpretar(entrada: string): {
     return { url, nome, tipo: "url" };
   }
   return {
-    url: `https://www.bing.com/search?q=${encodeURIComponent(t)}`,
+    // Provedor de pesquisa configurável (#305) — antes fixo em Bing.
+    url: urlDeBusca(t),
     nome: t,
     tipo: "busca",
   };

@@ -136,3 +136,29 @@ pub async fn browser_esconder_todas(app: AppHandle) -> Result<(), String> {
     esconder_menos(&win, None);
     Ok(())
 }
+
+/// Recarrega a pagina navegada NA aba (webview-filha) — nao o app (#310). O F5/
+/// Ctrl+R do Navigator roteia pra ca em vez do reload default do WebView2 do app.
+#[tauri::command]
+pub async fn browser_recarregar(app: AppHandle, id: String) -> Result<(), String> {
+    let win = janela(&app)?;
+    if let Some(wv) = achar(&win, &rotulo(&id)) {
+        // eval no contexto da propria pagina: recarrega so a webview-filha.
+        wv.eval("location.reload()").map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// DESTROI todas as webviews-filhas do navegador (#310). Chamado no boot pra
+/// limpar webviews orfas que sobrevivem a um reload do app inteiro (o ghost que
+/// pintava por cima da Mailbox). Diferente de esconder: aqui fecha de vez.
+#[tauri::command]
+pub async fn browser_fechar_todas(app: AppHandle) -> Result<(), String> {
+    let win = janela(&app)?;
+    for wv in win.webviews() {
+        if wv.label().starts_with(PREFIXO) {
+            let _ = wv.close();
+        }
+    }
+    Ok(())
+}

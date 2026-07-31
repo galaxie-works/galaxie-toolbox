@@ -3,6 +3,8 @@
 Instruções operacionais para agentes (Claude e afins) que trabalham neste repositório.
 Escopo atual em foco: **Bridge** (cliente de e-mail dentro do app) + track paralelo de migração.
 
+> 📐 **[`Rules.md`](./Rules.md) é OBRIGATÓRIO** — regras de UI/UX, uso de componentes (não inventar UI), scrollbar/tema/persistência e **custo/eficiência do agente**. Leia antes de produzir UI ou entregar. Violou uma regra de lá → o PO reprova.
+
 ## 1. O app em uma frase
 Tauri 2 + React 19 + TypeScript + Tailwind v4. Fala com **Microsoft Graph delegado (`/me`)** — **não há IMAP**. Login sempre na página oficial da Microsoft; o app **nunca** vê a senha/MFA/token do usuário.
 
@@ -40,10 +42,22 @@ Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3
 
 Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pra PO Approved — isso é do usuário (PO), que também **ajusta a Sprint** se necessário.
 
+> ✅ **AO TERMINAR um item — protocolo OBRIGATÓRIO (regra do PO, 31/07/2026), nesta ordem:**
+> 1. **Comente na issue** a evidência (o que fez, arquivos, commit, ACs traçados, builds verdes).
+> 2. **Poste no #133** o progresso + declare se **vai pegar a próxima da fila** ou se está **livre pra próxima** (pra o Polaris saber o estado sem adivinhar — nada de agente idle silencioso).
+> 3. **Mova o card pra In review** (`gh project item-edit --id <itemId> --project-id PVT_kwHOD_4JN84BedaN --field-id PVTSSF_lAHOD_4JN84BedaNzhY3dus --single-select-option-id df73e18b`).
+>
+> Aí o **Polaris pega de In review** → integra + code-QA → **QA Approved**. Semântica do board: **In progress** = ainda codando · **In review** = entregue, com o Polaris · **QA Approved** = verificado, aguardando o PO. **Não deixe item entregue parado em In progress/Ready** — mova em tempo real.
+
 > 📌 **OBRIGATÓRIO ao mover pra QA Approved: postar a EVIDÊNCIA como comentário NA issue** (`gh issue comment N`). Mover o card sem comentar faz o PO abrir a issue, não ver prova, e reprovar com *"Faltam evidências e comentários relativos ao desenvolvimento"* (aconteceu com #31/#76/#94/#96 em 2026-07-27, com código certo). O comentário deve ter: **(1) Desenvolvimento** — o que foi feito, arquivos, decisões, commit hash; **(2) QA** — `tsc`/`cargo` verdes + passos da QA visual e resultado observado + cada AC (Given/When/Then) traçado; **(3) Pro PO validar em runtime** — comportamento dependente de Graph real que o mock não exercita. ⚠️ **Mock ≠ real:** para features de interação (scroll/teclado/hover/tooltip/dados reais), exercitar esses caminhos no mock e listar o que só o PO valida no app — a QA de mock do #40 passou mas o PO achou 5 bugs de interação no app real.
 
 > 🚀 **RELEASE de PO Approved é decisão do agente** (delegado pelo PO em 2026-07-26). Uma vez em **PO Approved**, o agente decide quando **mergear na `main`, cortar release** (bump de versão + tag + notas) e mover pra **Done - Released**, sem cobrar o PO. A autonomia começa em PO Approved (QA Approved→PO Approved continua sendo do PO). Não cortar release com código não-aprovado/rejeitado ainda na `feat` (ex.: rework com `Closes #N` já mergeado) — limpar/reworkar antes.
 
+> 💸 **Custo / eficiência — modelo atual de integração (NÃO queimar créditos):**
+> - Quem **ENTREGA** (Orion/Confucius/subagent) faz só: build local verde (`tsc` + `cargo` se tocar Rust + `vite`) + **evidência CONCISA** (o que mudou, arquivos, commit, ACs cobertos) → **PR pra `feat`** e **PARA**.
+> - A **integração + code-QA + o move pra QA Approved são do Polaris** (orquestrador). Neste projeto isso **substitui** o "agente dispara subagente QA" da tabela acima — o QA é **centralizado no Polaris**. O agente que entrega **NÃO** roda subagente de QA/review próprio nem re-revisa o código inteiro linha-a-linha (duplica o Polaris e queima o limite semanal).
+> - Subagente **só pra tarefa grande** (~150-400k tokens). Solo pro pequeno/mecânico. **Sem auditoria/review espontâneo**: achou algo fora do escopo → issue curta (finding) e segue. Detalhes em [`Rules.md`](./Rules.md) §11.
+>
 > ⚠️ **O QA valida a HISTÓRIA e os CRITÉRIOS DE ACEITE (Given/When/Then), não só code review.** Todo prompt de QA deve: ler a issue (`gh issue view N`), extrair história + cada AC, e para CADA AC traçar o caminho do código confirmando que o **Then** é satisfeito. Onde exigir runtime (login Graph), listar explicitamente os ACs que o PO precisa validar no app. `tsc`/`cargo` + code review são necessários mas **não suficientes**. Reprovar se algum AC não for atendido.
 >
 > ⚠️ **NÃO parafrasear os ACs no prompt do QA.** O prompt do orquestrador deve só dizer **qual issue ler** — o QA **puxa o corpo real** (`gh issue view N`), **cita verbatim** os ACs que encontrou lá (prova de que leu a fonte) e valida cada um. Se o QA não conseguiu ler o corpo (ex.: `gh` falhou), ele **REPROVA/avisa** — nunca valida de memória nem da paráfrase. (Erro pego pelo PO no #50, 2026-07-26: QA validou contra a paráfrase do orquestrador.)
@@ -93,7 +107,7 @@ Para **dúvidas de design** (padrão de componente, comportamento de interação
 - Cada feature que mereça commit, comita. `tsc` + `cargo check` verdes antes de PR.
 
 ## 5. Definition of Done
-`tsc -p tsconfig.app.json --noEmit` + `cargo check` verdes · tema **claro/escuro** ok · **sem regressão** em teclado/multi-seleção/virtualização · feedback/toast presente · escopo **mínimo** de permissão (re-consent sinalizado em escopo novo) · **componentes reui usados literalmente** (regra "não inventar UI": instalar do registry e usar como veio).
+`tsc -p tsconfig.app.json --noEmit` + `cargo check` verdes · tema **claro/escuro** ok · **sem regressão** em teclado/multi-seleção/virtualização · feedback/toast presente · escopo **mínimo** de permissão (re-consent sinalizado em escopo novo) · **componentes reui usados literalmente** (regra "não inventar UI": instalar do registry e usar como veio) · **conforme [`Rules.md`](./Rules.md)** (UI/UX + componentes + persistência + custo).
 
 ## 6. Segurança
 - `CLIENT_ID` `214d735e-eb9b-4052-8851-578d3bd91627` é **público por design** (public client + PKCE).

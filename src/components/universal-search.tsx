@@ -52,6 +52,12 @@ export function UniversalSearch({
   const peopleTab = useAppStore((state) => state.peopleTab);
   const contacts = useAppStore((state) => state.peopleContacts);
   const organizations = useAppStore((state) => state.organizations);
+  const selectedGroupId = useAppStore(
+    (state) => state.peopleSelectedGroupId,
+  );
+  const groupMembersById = useAppStore(
+    (state) => state.peopleGroupMembersById,
+  );
   const peopleSearchQuery = useAppStore((state) => state.peopleSearchQuery);
   const setPeopleSearchQuery = useAppStore(
     (state) => state.setPeopleSearchQuery,
@@ -83,9 +89,20 @@ export function UniversalSearch({
   }, [contextKey, setMailSearchQuery, setPeopleSearchQuery]);
 
   useEffect(() => {
-    if (!isPeople || peopleTab !== "contacts") return;
-    pedirFotos(contacts.map((contact) => contact.emails[0]?.address));
-  }, [contacts, isPeople, peopleTab, pedirFotos]);
+    if (!isPeople || peopleTab === "organizations") return;
+    const visibleContacts =
+      peopleTab === "groups" && selectedGroupId
+        ? (groupMembersById[selectedGroupId] ?? [])
+        : contacts;
+    pedirFotos(visibleContacts.map((contact) => contact.emails[0]?.address));
+  }, [
+    contacts,
+    groupMembersById,
+    isPeople,
+    peopleTab,
+    pedirFotos,
+    selectedGroupId,
+  ]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const results = useMemo<SearchResult[]>(() => {
@@ -102,7 +119,11 @@ export function UniversalSearch({
         .map((value) => ({ kind: "organization" as const, value }));
     }
 
-    return contacts
+    const searchableContacts =
+      peopleTab === "groups" && selectedGroupId
+        ? (groupMembersById[selectedGroupId] ?? [])
+        : contacts;
+    return searchableContacts
       .filter((contact) =>
         [
           contact.name,
@@ -118,10 +139,12 @@ export function UniversalSearch({
       .map((value) => ({ kind: "contact" as const, value }));
   }, [
     contacts,
+    groupMembersById,
     isPeople,
     normalizedQuery,
     organizations,
     peopleTab,
+    selectedGroupId,
   ]);
 
   const placeholder =

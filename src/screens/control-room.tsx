@@ -114,6 +114,7 @@ import { shortcutAccessibleLabel } from "@/components/ui/shortcut";
 import type { ShortcutDefinition } from "@/components/ui/shortcut";
 import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
@@ -189,6 +190,7 @@ import {
   CalendarCheck,
   CalendarClock,
   CalendarDays,
+  CalendarX2,
   ChevronDown,
   ListFilter,
   ChevronRight,
@@ -227,6 +229,7 @@ import {
   TriangleAlert,
   User,
   Users,
+  UsersRound,
   Video,
   X,
 } from "lucide-react";
@@ -1481,6 +1484,31 @@ function FolderSidebar({
 }) {
   const peopleTab = useAppStore((state) => state.peopleTab);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
+  const peopleGroups = useAppStore((state) => state.peopleGroups);
+  const peopleGroupsLoading = useAppStore(
+    (state) => state.peopleGroupsLoading,
+  );
+  const peopleGroupsLoaded = useAppStore((state) => state.peopleGroupsLoaded);
+  const peopleGroupsError = useAppStore((state) => state.peopleGroupsError);
+  const peopleSelectedGroupId = useAppStore(
+    (state) => state.peopleSelectedGroupId,
+  );
+  const loadPeopleGroups = useAppStore((state) => state.loadPeopleGroups);
+  const selectPeopleGroup = useAppStore((state) => state.selectPeopleGroup);
+  useEffect(() => {
+    if (
+      bridgeView === "people" &&
+      !peopleGroupsLoaded &&
+      !peopleGroupsLoading
+    ) {
+      void loadPeopleGroups();
+    }
+  }, [
+    bridgeView,
+    loadPeopleGroups,
+    peopleGroupsLoaded,
+    peopleGroupsLoading,
+  ]);
   // Pasta pendente de confirmação do "Esvaziar" — ação destrutiva nunca sai
   // direto do menu: passa pelo AlertDialog (DoD + padrão do app).
   const [aEsvaziar, setAEsvaziar] = useState<{ id: string; rotulo: string } | null>(
@@ -1928,59 +1956,138 @@ function FolderSidebar({
         </>
       ) : bridgeView === "people" ? (
         <ScrollArea className="min-h-0 w-full flex-1">
-          <nav
-            aria-label={t.controlRoom.peopleTitulo}
-            className={cn(
-              "flex w-full flex-col gap-0.5",
-              colapsada && "items-center"
-            )}
-          >
-            {(
-              [
-                {
-                  value: "contacts",
-                  label: t.controlRoom.peopleContactsTab,
-                  Icon: Users,
-                },
-                {
-                  value: "organizations",
-                  label: t.controlRoom.peopleOrganizationsTab,
-                  Icon: Building2,
-                },
-              ] as const
-            ).map(({ value, label, Icon }) => {
-              const ativo = peopleTab === value;
-              return (
-                <Tooltip key={value}>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant={ativo ? "secondary" : "ghost"}
-                      onClick={() => setPeopleTab(value)}
-                      aria-label={label}
-                      aria-current={ativo ? "page" : undefined}
-                      className={cn(
-                        "shrink-0",
-                        colapsada
-                          ? "size-9 justify-center p-0"
-                          : "w-full justify-start gap-2.5",
-                        ativo
-                          ? "bg-secondary font-medium text-secondary-foreground"
-                          : "text-muted-foreground hover:bg-accent/50"
-                      )}
-                    >
-                      <Icon className="size-4 shrink-0" />
-                      {!colapsada && <span>{label}</span>}
-                    </Button>
-                  </TooltipTrigger>
-                  {colapsada && (
-                    <TooltipContent side="right" align="center">
-                      {label}
-                    </TooltipContent>
-                  )}
-                </Tooltip>
-              );
-            })}
-          </nav>
+          <div className="flex w-full flex-col gap-3">
+            <nav
+              aria-label={t.controlRoom.peopleTitulo}
+              className={cn(
+                "flex w-full flex-col gap-0.5",
+                colapsada && "items-center"
+              )}
+            >
+              {(
+                [
+                  {
+                    value: "contacts",
+                    label: t.controlRoom.peopleContactsTab,
+                    Icon: Users,
+                  },
+                  {
+                    value: "organizations",
+                    label: t.controlRoom.peopleOrganizationsTab,
+                    Icon: Building2,
+                  },
+                ] as const
+              ).map(({ value, label, Icon }) => {
+                const ativo = peopleTab === value;
+                return (
+                  <Tooltip key={value}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={ativo ? "secondary" : "ghost"}
+                        onClick={() => setPeopleTab(value)}
+                        aria-label={label}
+                        aria-current={ativo ? "page" : undefined}
+                        className={cn(
+                          "shrink-0",
+                          colapsada
+                            ? "size-9 justify-center p-0"
+                            : "w-full justify-start gap-2.5",
+                          ativo
+                            ? "bg-secondary font-medium text-secondary-foreground"
+                            : "text-muted-foreground hover:bg-accent/50"
+                        )}
+                      >
+                        <Icon className="size-4 shrink-0" />
+                        {!colapsada && <span>{label}</span>}
+                      </Button>
+                    </TooltipTrigger>
+                    {colapsada && (
+                      <TooltipContent side="right" align="center">
+                        {label}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                );
+              })}
+            </nav>
+
+            <nav
+              aria-label={t.controlRoom.peopleGroupsSection}
+              className={cn(
+                "flex w-full flex-col gap-0.5",
+                colapsada && "items-center"
+              )}
+            >
+              {!colapsada && (
+                <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">
+                  {t.controlRoom.peopleGroupsSection}
+                </p>
+              )}
+              {peopleGroups.map((group) => {
+                const ativo =
+                  peopleTab === "groups" &&
+                  peopleSelectedGroupId === group.id;
+                const tooltip =
+                  group.memberCount == null
+                    ? group.name
+                    : `${group.name} (${group.memberCount})`;
+                return (
+                  <Tooltip key={group.id}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={ativo ? "secondary" : "ghost"}
+                        onClick={() => void selectPeopleGroup(group.id)}
+                        aria-label={tooltip}
+                        aria-current={ativo ? "page" : undefined}
+                        className={cn(
+                          "shrink-0",
+                          colapsada
+                            ? "size-9 justify-center p-0"
+                            : "w-full justify-start gap-2.5",
+                          ativo
+                            ? "bg-secondary font-medium text-secondary-foreground"
+                            : "text-muted-foreground hover:bg-accent/50"
+                        )}
+                      >
+                        <UsersRound className="size-4 shrink-0" />
+                        {!colapsada && (
+                          <>
+                            <span className="min-w-0 flex-1 truncate text-left">
+                              {group.name}
+                            </span>
+                            {group.memberCount != null && (
+                              <span className="shrink-0 text-xs tabular-nums">
+                                {group.memberCount}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    {colapsada && (
+                      <TooltipContent side="right" align="center">
+                        {tooltip}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                );
+              })}
+              {!colapsada && peopleGroupsLoading && (
+                <p className="px-2 py-1 text-xs text-muted-foreground">
+                  {t.controlRoom.peopleGroupsLoading}
+                </p>
+              )}
+              {!colapsada &&
+                peopleGroupsLoaded &&
+                peopleGroups.length === 0 && (
+                  <p className="px-2 py-1 text-xs text-muted-foreground">
+                    {peopleGroupsError
+                      ? t.controlRoom.peopleGroupsError
+                      : t.controlRoom.peopleGroupsEmpty}
+                  </p>
+                )}
+            </nav>
+          </div>
         </ScrollArea>
       ) : (
         <div className="flex-1" />
@@ -4653,9 +4760,18 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const fecharEventoAgenda = useAppStore((s) => s.fecharEventoAgenda);
   const abrirFormEditar = useAppStore((s) => s.abrirFormEditar);
   const excluirEvento = useAppStore((s) => s.excluirEvento);
+  const cancelarEvento = useAppStore((s) => s.cancelarEvento);
   const eventosMes = useAppStore((s) => s.agendaEventosMes);
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
+
+  // Cancelar evento (#260): só faz sentido pra quem ORGANIZA um evento COM
+  // convidados — aí o cancelamento os notifica. Sem isso, resta só o Excluir
+  // (silencioso). Confirmação em AlertDialog com comentário opcional.
+  const podeCancelar = !!det?.souOrganizador && (det?.participantes.length ?? 0) > 0;
+  const [confirmarCancelar, setConfirmarCancelar] = useState(false);
+  const [comentarioCancel, setComentarioCancel] = useState("");
+  const [cancelando, setCancelando] = useState(false);
 
   // Abre o formulário de edição com o evento clicado (vindo da lista do mês).
   const editar = () => {
@@ -4676,6 +4792,25 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
       toast.success(t.controlRoom.agendaExcluido);
     } catch {
       toast.error(t.controlRoom.agendaErroExcluir);
+    }
+  };
+
+  // Cancela (#260): POST /events/{id}/cancel com comentário opcional — notifica
+  // os convidados. Otimista no store; fecha confirmação + Sheet e toasta.
+  const cancelar = async () => {
+    if (!id) return;
+    const comentario = comentarioCancel.trim();
+    setCancelando(true);
+    try {
+      await cancelarEvento(id, comentario);
+      setConfirmarCancelar(false);
+      setComentarioCancel("");
+      fecharEventoAgenda();
+      toast.success(t.controlRoom.agendaCancelado);
+    } catch {
+      toast.error(t.controlRoom.agendaErroCancelar);
+    } finally {
+      setCancelando(false);
     }
   };
 
@@ -4763,6 +4898,16 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
               >
                 <Trash2 /> {t.controlRoom.agendaExcluir}
               </Button>
+              {podeCancelar && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setConfirmarCancelar(true)}
+                >
+                  <CalendarX2 /> {t.controlRoom.agendaCancelar}
+                </Button>
+              )}
               <div className="grow" />
               {det.webLink && (
                 <Button
@@ -4781,6 +4926,59 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
           </>
         )}
       </SheetContent>
+
+      {/* Confirmação do "Cancelar evento" (#260). Destrutiva → AlertDialog (mesmo
+          padrão do "Excluir pasta" #90), mas com campo de comentário opcional
+          que segue aos convidados junto do cancelamento. */}
+      <AlertDialog
+        open={confirmarCancelar}
+        onOpenChange={(aberto) => {
+          if (!aberto && !cancelando) {
+            setConfirmarCancelar(false);
+            setComentarioCancel("");
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-md!">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.controlRoom.agendaCancelarTitulo}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.agendaCancelarDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="agenda-cancelar-comentario">
+              {t.controlRoom.agendaCancelarComentario}
+            </Label>
+            <Textarea
+              id="agenda-cancelar-comentario"
+              value={comentarioCancel}
+              onChange={(e) => setComentarioCancel(e.target.value)}
+              placeholder={t.controlRoom.agendaCancelarComentarioPlaceholder}
+              rows={3}
+              disabled={cancelando}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancelando}>
+              {t.controlRoom.agendaCancelarVoltar}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={cancelando}
+              onClick={(e) => {
+                // Impede o fechamento automático do AlertDialog até a chamada
+                // resolver (mostramos o spinner enquanto o Graph notifica).
+                e.preventDefault();
+                void cancelar();
+              }}
+            >
+              {cancelando && <Spinner className="size-4" />}
+              {t.controlRoom.agendaCancelarConfirmar}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sheet>
   );
 }

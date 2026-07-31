@@ -1,7 +1,13 @@
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
-import { createUiSlice, UI_KEYS, type UiPersistido, type UiSlice } from "./ui-slice";
+import {
+  createUiSlice,
+  UI_KEYS,
+  type PeopleTab,
+  type UiPersistido,
+  type UiSlice,
+} from "./ui-slice";
 import { createListSlice, LIST_KEYS, type ListPersistido, type ListSlice } from "./list-slice";
 import {
   createFiltersSlice,
@@ -252,6 +258,12 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (modo !== undefined) state.marcarLidoModo = modo;
     const atraso = lerChave<number>(UI_KEYS.marcarLidoAtraso);
     if (atraso !== undefined) state.marcarLidoAtraso = atraso;
+    const peopleTab = lerTexto<PeopleTab>(UI_KEYS.peopleTab, [
+      "contacts",
+      "organizations",
+      "groups",
+    ]);
+    if (peopleTab !== undefined) state.peopleTab = peopleTab;
     // Filtros / busca / ordenação (#129)
     const ordenar = lerChave<FiltersPersistido["ordenar"]>(
       FILTERS_KEYS.ordenar
@@ -388,6 +400,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     gravarChave(UI_KEYS.sidebarAberta, s.sidebarAberta);
     gravarChave(UI_KEYS.marcarLidoModo, s.marcarLidoModo);
     gravarChave(UI_KEYS.marcarLidoAtraso, s.marcarLidoAtraso);
+    gravarTexto(UI_KEYS.peopleTab, s.peopleTab);
     gravarChave(FILTERS_KEYS.ordenar, s.ordenar);
     gravarChave(FILTERS_KEYS.ordemDesc, s.ordemDesc);
     gravarChave(FILTERS_KEYS.filtros, s.filtros);
@@ -471,6 +484,7 @@ export const useAppStore = create<AppStore>()(
         sidebarAberta: s.sidebarAberta,
         marcarLidoModo: s.marcarLidoModo,
         marcarLidoAtraso: s.marcarLidoAtraso,
+        peopleTab: s.peopleTab,
         ordenar: s.ordenar,
         ordemDesc: s.ordemDesc,
         filtros: s.filtros,

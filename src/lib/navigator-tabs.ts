@@ -17,11 +17,14 @@ export interface AbaBrowser {
 }
 
 export interface NavigatorMemorySettings {
+  /** Sleeping tabs ligado (#306). Off → nenhuma aba dorme automaticamente. */
+  ativo: boolean;
   idleMinutes: number;
   maxLive: number;
 }
 
 export const NAVIGATOR_MEMORY_DEFAULTS: NavigatorMemorySettings = {
+  ativo: true,
   idleMinutes: 30,
   maxLive: 5,
 };
@@ -48,6 +51,7 @@ export function loadNavigatorMemorySettings(): NavigatorMemorySettings {
       localStorage.getItem(NAVIGATOR_MEMORY_SETTINGS_KEY) || "null",
     ) as Partial<NavigatorMemorySettings> | null;
     return {
+      ativo: typeof parsed?.ativo === "boolean" ? parsed.ativo : NAVIGATOR_MEMORY_DEFAULTS.ativo,
       idleMinutes:
         typeof parsed?.idleMinutes === "number" &&
         Number.isFinite(parsed.idleMinutes) &&
@@ -63,6 +67,20 @@ export function loadNavigatorMemorySettings(): NavigatorMemorySettings {
     };
   } catch {
     return NAVIGATOR_MEMORY_DEFAULTS;
+  }
+}
+
+export function persistNavigatorMemorySettings(
+  settings: NavigatorMemorySettings,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(
+      NAVIGATOR_MEMORY_SETTINGS_KEY,
+      JSON.stringify(settings),
+    );
+  } catch {
+    // best-effort.
   }
 }
 
@@ -401,5 +419,177 @@ export function persistFaviconCache(cache: Record<string, string>): void {
     localStorage.setItem(NAVIGATOR_FAVICON_CACHE_KEY, JSON.stringify(cache));
   } catch {
     // best-effort: data URIs podem estourar a quota; sem cache o globo cobre.
+  }
+}
+
+// --- Sessão anterior (#274) ---------------------------------------------------
+// Por #173, só as PINADAS sobrevivem ao restart; as normais somem. Aqui tiramos
+// um snapshot das abas abertas (só url/nome, na ordem, SEM pinadas — já voltam —
+// e SEM privadas, por privacidade) a cada mudança. No boot, o App captura o
+// snapshot da sessão ANTERIOR e oferece restaurar (sem restaurar automático).
+
+export const NAVIGATOR_LAST_SESSION_KEY = "galaxie.navigator.last-session.v1";
+
+export interface AbaSessao {
+  url: string;
+  nome: string;
+}
+
+export function loadLastSession(): AbaSessao[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(NAVIGATOR_LAST_SESSION_KEY) || "[]",
+    ) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (a): a is AbaSessao =>
+          !!a &&
+          typeof a === "object" &&
+          typeof (a as AbaSessao).url === "string" &&
+          (a as AbaSessao).url.startsWith("https://") &&
+          typeof (a as AbaSessao).nome === "string",
+      )
+      .map((a) => ({ url: a.url, nome: a.nome }));
+  } catch {
+    return [];
+  }
+}
+
+/** Salva o snapshot da sessão: abas normais (não pinadas, não privadas, https). */
+export function persistLastSession(tabs: AbaBrowser[]): void {
+  if (typeof window === "undefined") return;
+  try {
+    const snapshot: AbaSessao[] = tabs
+      .filter(
+        (t) => !t.fixada && !t.privada && t.url.startsWith("https://"),
+      )
+      .map((t) => ({ url: t.url, nome: t.nome }));
+    localStorage.setItem(NAVIGATOR_LAST_SESSION_KEY, JSON.stringify(snapshot));
+  } catch {
+    // best-effort.
+  }
+}
+
+// --- Provedor de pesquisa (#305) ---------------------------------------------
+// Provedor padrão do omnibox. O `browser.interpretar` usa `urlDeBusca` no lugar
+// do Bing fixo (#174). "custom" usa uma URL com %s no lugar do termo.
+
+export type NavigatorSearchProvider = "bing" | "google" | "duckduckgo" | "custom";
+
+export interface NavigatorSearchSettings {
+  provider: NavigatorSearchProvider;
+  /** Só quando provider === "custom": URL com %s no lugar do termo. */
+  customUrl: string;
+}
+
+export const NAVIGATOR_SEARCH_DEFAULTS: NavigatorSearchSettings = {
+  provider: "bing",
+  customUrl: "",
+};
+
+export const NAVIGATOR_SEARCH_KEY = "galaxie.navigator.search-provider.v1";
+
+const SEARCH_URLS: Record<"bing" | "google" | "duckduckgo", string> = {
+  bing: "https://www.bing.com/search?q=%s",
+  google: "https://www.google.com/search?q=%s",
+  duckduckgo: "https://duckduckgo.com/?q=%s",
+};
+
+export function loadNavigatorSearch(): NavigatorSearchSettings {
+  if (typeof window === "undefined") return NAVIGATOR_SEARCH_DEFAULTS;
+  try {
+    const p = JSON.parse(
+      localStorage.getItem(NAVIGATOR_SEARCH_KEY) || "null",
+    ) as Partial<NavigatorSearchSettings> | null;
+    const valido =
+      p?.provider === "bing" ||
+      p?.provider === "google" ||
+      p?.provider === "duckduckgo" ||
+      p?.provider === "custom";
+    return {
+      provider: valido ? p!.provider! : "bing",
+      customUrl: typeof p?.customUrl === "string" ? p.customUrl : "",
+    };
+  } catch {
+    return NAVIGATOR_SEARCH_DEFAULTS;
+  }
+}
+
+export function persistNavigatorSearch(settings: NavigatorSearchSettings): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(NAVIGATOR_SEARCH_KEY, JSON.stringify(settings));
+  } catch {
+    // best-effort.
+  }
+}
+
+/** URL de busca pro termo, no provedor configurado. Custom precisa de %s; sem %s
+ *  (ou provedor inválido) cai no Bing. */
+export function urlDeBusca(termo: string): string {
+  const s = loadNavigatorSearch();
+  const q = encodeURIComponent(termo);
+  if (s.provider === "custom" && s.customUrl.includes("%s")) {
+    return s.customUrl.replace(/%s/g, q);
+  }
+  const base = s.provider === "custom" ? SEARCH_URLS.bing : SEARCH_URLS[s.provider];
+  return base.replace("%s", q);
+}
+
+// --- Prefs Favoritos + History/Privacy (#307) --------------------------------
+// Barra de favoritos on/off; salvar histórico on/off; retenção (dias, 0=sempre).
+// Persistido em localStorage (padrão legado). O Navigator/App leem no seu ponto
+// natural (mount da barra / call-time do registrarHistorico / poda no tick).
+
+export interface NavigatorPrefs {
+  mostrarBarraFav: boolean;
+  salvarHistorico: boolean;
+  /** Dias de retenção do histórico; 0 = manter sempre. */
+  retencaoDias: number;
+}
+
+export const NAVIGATOR_PREFS_DEFAULTS: NavigatorPrefs = {
+  mostrarBarraFav: true,
+  salvarHistorico: true,
+  retencaoDias: 0,
+};
+
+export const NAVIGATOR_PREFS_KEY = "galaxie.navigator.prefs.v1";
+
+export function loadNavigatorPrefs(): NavigatorPrefs {
+  if (typeof window === "undefined") return NAVIGATOR_PREFS_DEFAULTS;
+  try {
+    const p = JSON.parse(
+      localStorage.getItem(NAVIGATOR_PREFS_KEY) || "null",
+    ) as Partial<NavigatorPrefs> | null;
+    return {
+      mostrarBarraFav:
+        typeof p?.mostrarBarraFav === "boolean"
+          ? p.mostrarBarraFav
+          : NAVIGATOR_PREFS_DEFAULTS.mostrarBarraFav,
+      salvarHistorico:
+        typeof p?.salvarHistorico === "boolean"
+          ? p.salvarHistorico
+          : NAVIGATOR_PREFS_DEFAULTS.salvarHistorico,
+      retencaoDias:
+        typeof p?.retencaoDias === "number" &&
+        Number.isFinite(p.retencaoDias) &&
+        p.retencaoDias >= 0
+          ? p.retencaoDias
+          : NAVIGATOR_PREFS_DEFAULTS.retencaoDias,
+    };
+  } catch {
+    return NAVIGATOR_PREFS_DEFAULTS;
+  }
+}
+
+export function persistNavigatorPrefs(prefs: NavigatorPrefs): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(NAVIGATOR_PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // best-effort.
   }
 }

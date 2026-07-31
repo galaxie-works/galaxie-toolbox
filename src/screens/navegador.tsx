@@ -28,6 +28,7 @@ import {
   podarMembership,
   origemDaUrl,
   loadFaviconCache,
+  loadNavigatorPrefs,
   persistFaviconCache,
   NAVIGATOR_GROUP_COLORS,
   NAVIGATOR_GROUP_COLOR_ORDER,
@@ -84,6 +85,28 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import {
@@ -93,7 +116,6 @@ import {
   Coffee,
   Command as CommandIcon,
   Compass,
-  EyeOff,
   FolderMinus,
   FolderPlus,
   Globe,
@@ -106,6 +128,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  RotateCcw,
   Search,
   Star,
   Trash2,
@@ -117,6 +140,11 @@ import {
   useOcultarWebviewEnquantoAberto,
 } from "@/lib/navigator-overlay";
 import { ShipIcon, type ShipIconHandle } from "@/components/ui/ship";
+import { PirataIcon } from "@/components/ui/icons/marca/pirata";
+import { PirateSkullIcon } from "@/components/ui/icons/marca/pirate-skull";
+import { Kbd } from "@/components/ui/kbd";
+import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
+import { formatShortcut } from "@/components/ui/shortcut";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 
 /**
@@ -125,25 +153,49 @@ import SoftBlurIn from "@/components/smoothui/soft-blur-in";
  * animação de entrada (ícone: fade/scale via `logo-in`; textos: SoftBlurIn — o
  * mesmo reveal da tela de login/reconexão). Fica acima da omnibox.
  */
-function NavigatorHero({ titulo, subtitulo }: { titulo: string; subtitulo: string }) {
+function NavigatorHero({
+  titulo,
+  subtitulo,
+  privada,
+  rotuloPrivada,
+}: {
+  titulo: string;
+  subtitulo: string;
+  privada?: boolean;
+  rotuloPrivada?: string;
+}) {
   const nave = useRef<ShipIconHandle>(null);
   // Anima no mount e mantém o balanço infinito (o <g> do barco tem repeat:Infinity).
   useEffect(() => {
-    nave.current?.startAnimation();
-  }, []);
+    if (!privada) nave.current?.startAnimation();
+  }, [privada]);
   return (
     <div className="flex flex-col items-center gap-2 text-center">
-      <ShipIcon
-        ref={nave}
-        size={40}
-        className="logo-in text-primary [&_svg]:size-10"
-      />
+      {privada ? (
+        // Aba privada (#273): o timão vira o PIRATA (Lottie recolorido primária).
+        <PirataIcon className="logo-in size-10" />
+      ) : (
+        <ShipIcon
+          ref={nave}
+          size={40}
+          className="logo-in text-primary [&_svg]:size-10"
+        />
+      )}
       <SoftBlurIn className="text-2xl font-semibold tracking-tight" delay={120} stagger={16}>
         {titulo}
       </SoftBlurIn>
-      <SoftBlurIn className="text-[15px] text-muted-foreground" delay={300} stagger={14}>
-        {subtitulo}
-      </SoftBlurIn>
+      {privada ? (
+        // Aba privada (#323): badge no lugar do subtítulo "Time to set sail",
+        // combinando com a borda tracejada `border-info` da aba privada (#273).
+        <Badge variant="info-light" className="mt-0.5">
+          <PirateSkullIcon />
+          {rotuloPrivada}
+        </Badge>
+      ) : (
+        <SoftBlurIn className="text-[15px] text-muted-foreground" delay={300} stagger={14}>
+          {subtitulo}
+        </SoftBlurIn>
+      )}
     </div>
   );
 }
@@ -480,11 +532,16 @@ function ConteudoPaleta({
  * Launcher do Cruiser — a paleta em repouso, na aba vazia. Reusa
  * `ConteudoPaleta` como card flutuante sobre o fundo estrelado.
  */
-function Launcher(props: AcoesPaleta) {
+function Launcher({ privada, ...props }: AcoesPaleta & { privada?: boolean }) {
   const { t } = useIdioma();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-7 p-6">
-      <NavigatorHero titulo={t.navegador.titulo} subtitulo={t.navegador.subtitulo} />
+      <NavigatorHero
+        titulo={t.navegador.titulo}
+        subtitulo={t.navegador.subtitulo}
+        privada={privada}
+        rotuloPrivada={t.navegador.modoPrivadoAtivo}
+      />
       <ConteudoPaleta
         {...props}
         autoFocus
@@ -681,8 +738,14 @@ export function NavegadorScreen({
   onReordenar,
   onAbrir,
   onNovaAba,
+  onNovaAbaPrivada,
+  onReabrirFechada,
   onNavegar,
   historico,
+  onRestaurarAbas,
+  sessaoAnteriorQtd,
+  onRestaurarSessao,
+  onDispensarSessao,
   onLimparHistorico,
   modoPrivado,
   onAlternarModoPrivado,
@@ -700,8 +763,14 @@ export function NavegadorScreen({
   onReordenar: (ids: string[]) => void;
   onAbrir: (app: AppM365) => void;
   onNovaAba: () => void;
+  onNovaAbaPrivada: () => void;
+  onReabrirFechada: () => void;
   onNavegar: (url: string, nome: string) => void;
   historico: HistoryEntry[];
+  onRestaurarAbas: (entradas: { url: string; nome: string }[]) => void;
+  sessaoAnteriorQtd: number;
+  onRestaurarSessao: () => void;
+  onDispensarSessao: () => void;
   onLimparHistorico: (periodo: PeriodoLimpeza) => void;
   modoPrivado: boolean;
   onAlternarModoPrivado: () => void;
@@ -775,6 +844,9 @@ export function NavegadorScreen({
   const [favicons, setFavicons] = useState<Record<string, string>>(
     loadFaviconCache,
   );
+  // #307: visibilidade da barra de favoritos (Settings>Navigator>Favorites).
+  // Lida no mount; a tela remonta ao voltar do Settings, então reflete a pref.
+  const [mostrarBarraFav] = useState(() => loadNavigatorPrefs().mostrarBarraFav);
   const faviconTentados = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -932,13 +1004,14 @@ export function NavegadorScreen({
                   ? "border-border bg-background font-medium"
                   : "border-transparent text-muted-foreground hover:bg-accent/50",
                 dormindo && "opacity-60",
-                privada && "text-info",
+                // Aba privada (#273): borda tracejada info, visualmente distinta.
+                privada && "border-info/60 border-dashed text-info",
               )}
             >
               {dormindo ? (
                 <Moon className="size-4 shrink-0" aria-hidden="true" />
               ) : privada ? (
-                <EyeOff className="size-4 shrink-0 text-info" aria-hidden="true" />
+                <PirateSkullIcon className="size-4 shrink-0 text-info" />
               ) : app ? (
                 <img
                   src={urlIcone(app)}
@@ -986,7 +1059,12 @@ export function NavegadorScreen({
                         <X className="size-3" />
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>{t.navegador.fecharAba}</TooltipContent>
+                    <TooltipContent>
+                      <ShortcutTooltip
+                        label={t.navegador.fecharAba}
+                        shortcut={{ key: "W", primary: true }}
+                      />
+                    </TooltipContent>
                   </Tooltip>
                 </>
               )}
@@ -1122,19 +1200,116 @@ export function NavegadorScreen({
     return { x: b.x, y: b.y, w: b.width, h: b.height };
   }
 
-  // Ctrl/Cmd+K abre/fecha a paleta de qualquer lugar do Navigator. (O DOM só
-  // recebe a tecla quando o foco NÃO está dentro da webview nativa — por isso
-  // existe também o botão na barra, que funciona mesmo com a página em foco.)
+  // #174: na aba vazia o Launcher inline JÁ é o command. Em vez de abrir o
+  // overlay (que empilharia um segundo command opaco por cima), foca o input
+  // inline existente.
+  const focarComandoInline = useCallback(() => {
+    document
+      .querySelector<HTMLInputElement>('[data-slot="command-input"]')
+      ?.focus();
+  }, []);
+
+  // Atalhos de navegador (#272, S1 — camada React). Funcionam quando o foco NÃO
+  // está dentro da webview nativa (o app chrome). Para valerem SEMPRE (webview em
+  // foco), falta o accelerator nativo em Rust (S2, follow-up). Ctrl+K é do #174.
+  const focarOmnibox = useCallback(() => {
+    if (ativa === null) focarComandoInline();
+    else setPaletaAberta(true);
+  }, [ativa, focarComandoInline]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      // F5 / Ctrl+R — recarrega a PÁGINA da aba (webview-filha), NÃO o app (#310).
+      // preventDefault mata o reload default do WebView2 do app (o bug "amador").
+      if (
+        e.key === "F5" ||
+        ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "r")
+      ) {
         e.preventDefault();
-        setPaletaAberta((v) => !v);
+        if (ativa) void browser.recarregar(ativa);
+        return;
+      }
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod && !e.altKey) return;
+      const tecla = e.key.toLowerCase();
+
+      // Ctrl/Cmd+K — paleta (comportamento do #174).
+      if (mod && !e.shiftKey && tecla === "k") {
+        e.preventDefault();
+        if (ativa === null) focarComandoInline();
+        else setPaletaAberta((v) => !v);
+        return;
+      }
+      // Ctrl+L / Alt+D — focar o command/omnibox.
+      if ((mod && tecla === "l") || (e.altKey && !mod && tecla === "d")) {
+        e.preventDefault();
+        focarOmnibox();
+        return;
+      }
+      // Ctrl+T — nova aba (foca o command, liga com #271).
+      if (mod && !e.shiftKey && tecla === "t") {
+        e.preventDefault();
+        onNovaAba();
+        return;
+      }
+      // Ctrl+Shift+T — reabrir a última aba fechada.
+      if (mod && e.shiftKey && tecla === "t") {
+        e.preventDefault();
+        onReabrirFechada();
+        return;
+      }
+      // Ctrl+Shift+N — nova aba privada (#273, padrão de navegador).
+      if (mod && e.shiftKey && tecla === "n") {
+        e.preventDefault();
+        onNovaAbaPrivada();
+        return;
+      }
+      // Ctrl+W — fechar a aba atual.
+      if (mod && tecla === "w") {
+        e.preventDefault();
+        if (ativa) onFechar(ativa);
+        return;
+      }
+      // Ctrl+Tab / Ctrl+Shift+Tab — próxima / anterior aba.
+      if (mod && e.key === "Tab") {
+        e.preventDefault();
+        if (abas.length === 0) return;
+        const idx = abas.findIndex((a) => a.id === ativa);
+        const passo = e.shiftKey ? -1 : 1;
+        const base = idx === -1 ? (e.shiftKey ? 0 : -1) : idx;
+        const prox = abas[(base + passo + abas.length) % abas.length];
+        if (prox) onTrocar(prox.id);
+        return;
+      }
+      // Ctrl+1..8 → ir pra aba N; Ctrl+9 → última aba.
+      if (mod && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        if (abas.length === 0) return;
+        const n = Number(e.key);
+        const alvo = n === 9 ? abas[abas.length - 1] : abas[n - 1];
+        if (alvo) onTrocar(alvo.id);
+        return;
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [
+    abas,
+    ativa,
+    focarComandoInline,
+    focarOmnibox,
+    onNovaAba,
+    onNovaAbaPrivada,
+    onReabrirFechada,
+    onFechar,
+    onTrocar,
+  ]);
+
+  // #174: ao cair na aba vazia (Launcher inline cobre), zera o overlay pendente
+  // — senão ele reabriria sozinho ao voltar para uma aba viva.
+  useEffect(() => {
+    if (ativa === null) setPaletaAberta(false);
+  }, [ativa]);
 
   // Z-order (spec §4.2): a webview nativa do WebView2 pinta ACIMA do DOM. Com a
   // paleta aberta (ou sem aba ativa) escondemos a webview para o overlay
@@ -1198,7 +1373,7 @@ export function NavegadorScreen({
       {/* Barra de abas: rola na horizontal; o "+" fica fora da rolagem. */}
       <div className="flex items-stretch border-b border-border">
         <div
-          className="scrollbar-fina flex items-stretch gap-2 overflow-x-auto px-2 pt-2"
+          className="scrollbar-fina flex min-w-0 items-stretch gap-2 overflow-x-auto px-2 pt-2"
           role="tablist"
           aria-label={t.navegador.abas}
         >
@@ -1304,6 +1479,40 @@ export function NavegadorScreen({
             );
           })}
         </div>
+        {/* "+" logo após as abas (convenção de navegador); o spacer empurra os
+            ícones (history/command) pra direita, fora do caminho do "+" (#277). */}
+        <DropdownMenu onOpenChange={registrarOverlayWebview}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={t.navegador.novaAba}
+              className={cn(
+                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
+                "hover:bg-accent hover:text-foreground",
+                ativa === null && abas.length > 0 && "bg-accent text-foreground"
+              )}
+            >
+              <Plus className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem className="gap-2" onSelect={onNovaAba}>
+              <Plus className="size-4" />
+              {t.navegador.novaAba}
+              <Kbd className="ml-auto">
+                {formatShortcut({ key: "T", primary: true })}
+              </Kbd>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" onSelect={onNovaAbaPrivada}>
+              <PirateSkullIcon className="size-4" />
+              {t.navegador.novaAbaPrivada}
+              <Kbd className="ml-auto">
+                {formatShortcut({ key: "N", primary: true, shift: true })}
+              </Kbd>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <div className="flex-1" aria-hidden="true" />
         {sleepingCount > 0 && (
           <Badge variant="info-light" className="my-2 shrink-0">
             <Moon />
@@ -1312,7 +1521,7 @@ export function NavegadorScreen({
         )}
         {modoPrivado && (
           <Badge variant="info-light" className="my-2 shrink-0">
-            <EyeOff />
+            <PirateSkullIcon />
             {t.navegador.modoPrivadoAtivo}
           </Badge>
         )}
@@ -1336,26 +1545,10 @@ export function NavegadorScreen({
           <TooltipTrigger asChild>
             <button
               type="button"
-              aria-label={t.navegador.modoPrivado}
-              aria-pressed={modoPrivado}
-              onClick={onAlternarModoPrivado}
-              className={cn(
-                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
-                "hover:bg-accent hover:text-foreground",
-                modoPrivado && "bg-info/15 text-info hover:text-info"
-              )}
-            >
-              <EyeOff className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{t.navegador.modoPrivado}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
               aria-label={t.navegador.paleta}
-              onClick={() => setPaletaAberta(true)}
+              onClick={() =>
+                ativa === null ? focarComandoInline() : setPaletaAberta(true)
+              }
               className={cn(
                 "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
                 "hover:bg-accent hover:text-foreground"
@@ -1364,37 +1557,56 @@ export function NavegadorScreen({
               <CommandIcon className="size-4" />
             </button>
           </TooltipTrigger>
-          <TooltipContent>{t.navegador.paleta}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={t.navegador.novaAba}
-              onClick={onNovaAba}
-              className={cn(
-                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
-                "hover:bg-accent hover:text-foreground",
-                ativa === null && abas.length > 0 && "bg-accent text-foreground"
-              )}
-            >
-              <Plus className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{t.navegador.novaAba}</TooltipContent>
+          <TooltipContent>
+            <ShortcutTooltip
+              label={t.navegador.paleta}
+              shortcut={{ key: "K", primary: true }}
+            />
+          </TooltipContent>
         </Tooltip>
       </div>
 
-      {/* Barra de favoritos (#176): reabre rápido + gerencia (importar do
-          Chrome/Edge, adicionar da aba ativa, pastas, renomear, remover). */}
-      <BarraFavoritos
-        favoritos={favoritos}
-        onMudar={setFavoritos}
-        onNavegar={onNavegar}
-        abaAtiva={
-          activeTab ? { url: activeTab.url, nome: activeTab.nome } : undefined
-        }
-      />
+      {/* Oferecer restaurar a sessão anterior (#274) — banner discreto, sem
+          restaurar automático; some ao restaurar ou dispensar. */}
+      {sessaoAnteriorQtd > 0 && (
+        <div className="flex items-center gap-2 border-b border-border bg-info/10 px-3 py-1.5 text-sm">
+          <RotateCcw className="size-4 shrink-0 text-info" />
+          <span className="min-w-0 flex-1 truncate text-info-foreground">
+            {preencher(t.navegador.sessaoAnterior, { n: sessaoAnteriorQtd })}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 shrink-0"
+            onClick={onRestaurarSessao}
+          >
+            {t.navegador.sessaoRestaurar}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 shrink-0 text-muted-foreground"
+            onClick={onDispensarSessao}
+          >
+            {t.navegador.sessaoDispensar}
+          </Button>
+        </div>
+      )}
+
+      {/* Barra de favoritos (#176): reabre rápido + gerencia. Visibilidade
+          controlada no Settings>Navigator>Favorites (#307). */}
+      {mostrarBarraFav && (
+        <BarraFavoritos
+          favoritos={favoritos}
+          onMudar={setFavoritos}
+          onNavegar={onNavegar}
+          abaAtiva={
+            activeTab ? { url: activeTab.url, nome: activeTab.nome } : undefined
+          }
+        />
+      )}
 
       {ativa === null ? (
         <div className="flex-1 overflow-hidden">
@@ -1403,6 +1615,7 @@ export function NavegadorScreen({
             ativa={ativa}
             favoritos={favoritos}
             historico={historico}
+            privada={modoPrivado}
             onAbrir={onAbrir}
             onNavegar={onNavegar}
             onTrocar={onTrocar}
@@ -1427,7 +1640,7 @@ export function NavegadorScreen({
 
       {/* Overlay global (Ctrl/Cmd+K) por cima da aba viva. */}
       <PaletaOverlay
-        aberta={paletaAberta}
+        aberta={paletaAberta && ativa !== null}
         onAberturaMudou={setPaletaAberta}
         abas={abas}
         ativa={ativa}
@@ -1443,11 +1656,12 @@ export function NavegadorScreen({
       />
 
       {/* Histórico: view pesquisável + limpar por período (Story 5). */}
-      <DialogHistorico
+      <SheetHistorico
         aberto={historicoAberto}
         onFechar={() => setHistoricoAberto(false)}
         historico={historico}
         onNavegar={onNavegar}
+        onRestaurar={onRestaurarAbas}
         onLimpar={onLimparHistorico}
       />
 
@@ -1595,21 +1809,26 @@ function DialogEditarGrupo({
  * View de histórico (Story 5): busca pesquisável + lista por recência + limpar
  * por período. A query é estado local do input; navegar/limpar sobem por props.
  */
-function DialogHistorico({
+function SheetHistorico({
   aberto,
   onFechar,
   historico,
   onNavegar,
+  onRestaurar,
   onLimpar,
 }: {
   aberto: boolean;
   onFechar: () => void;
   historico: HistoryEntry[];
   onNavegar: (url: string, nome: string) => void;
+  onRestaurar: (entradas: { url: string; nome: string }[]) => void;
   onLimpar: (periodo: PeriodoLimpeza) => void;
 }) {
   const { idioma, t } = useIdioma();
   const [q, setQ] = useState("");
+  // #177: itens selecionáveis para restaurar abas + período de limpeza via Select.
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [periodo, setPeriodo] = useState<PeriodoLimpeza>("ultima-hora");
   // z-order (#275): esconde a webview enquanto o histórico estiver aberto.
   useOcultarWebviewEnquantoAberto(aberto);
   const lista = useMemo(() => buscarHistorico(historico, q), [historico, q]);
@@ -1622,21 +1841,47 @@ function DialogHistorico({
     [idioma],
   );
 
+  // Limpa a seleção sempre que o Sheet fecha.
+  useEffect(() => {
+    if (!aberto) setSelecionados(new Set());
+  }, [aberto]);
+
+  const alternar = (id: string) =>
+    setSelecionados((prev) => {
+      const proximo = new Set(prev);
+      if (proximo.has(id)) proximo.delete(id);
+      else proximo.add(id);
+      return proximo;
+    });
+
   const abrir = (entrada: HistoryEntry) => {
     onNavegar(entrada.url, entrada.nome);
     onFechar();
   };
 
+  const restaurar = () => {
+    const escolhidas = lista
+      .filter((e) => selecionados.has(e.id))
+      .map((e) => ({ url: e.url, nome: e.nome }));
+    if (escolhidas.length === 0) return;
+    onRestaurar(escolhidas);
+    onFechar();
+  };
+
   return (
-    <Dialog open={aberto} onOpenChange={(a) => !a && onFechar()}>
-      <DialogContent className="sm:max-w-xl">
-        <DialogHeader>
-          <DialogTitle>{t.navegador.historicoTitulo}</DialogTitle>
-          <DialogDescription className="sr-only">
-            {t.navegador.paletaBuscar}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex flex-col gap-3">
+    <Sheet open={aberto} onOpenChange={(a) => !a && onFechar()}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
+      >
+        <SheetHeader className="border-b border-border">
+          <SheetTitle>{t.navegador.historicoTitulo}</SheetTitle>
+          <SheetDescription className="sr-only">
+            {t.navegador.historicoBuscar}
+          </SheetDescription>
+        </SheetHeader>
+
+        <div className="p-4 pb-2">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -1647,91 +1892,113 @@ function DialogHistorico({
               autoFocus
             />
           </div>
-          <div className="scrollbar-fina max-h-[360px] min-h-[120px] overflow-y-auto rounded-md border border-border">
-            {lista.length === 0 ? (
-              <div className="grid h-[120px] place-items-center px-4 text-center text-sm text-muted-foreground">
-                {t.navegador.historicoVazio}
-              </div>
-            ) : (
-              <ul className="divide-y divide-border">
-                {lista.map((entrada) => {
-                  const app = appPorUrl(entrada.url);
-                  let host = entrada.url;
-                  try {
-                    host = new URL(entrada.url).hostname.replace(/^www\./, "");
-                  } catch {
-                    // url estranha: deixa a string crua
-                  }
-                  return (
-                    <li key={entrada.id}>
-                      <button
-                        type="button"
-                        onClick={() => abrir(entrada)}
-                        className="flex w-full items-center gap-3 px-3 py-2 text-left outline-none hover:bg-accent focus-visible:bg-accent"
-                      >
-                        {app ? (
-                          <img
-                            src={urlIcone(app)}
-                            alt=""
-                            className="size-4 shrink-0"
-                            draggable={false}
-                          />
-                        ) : (
-                          <History className="size-4 shrink-0 text-muted-foreground" />
-                        )}
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-sm font-medium">
-                            {entrada.nome}
-                          </span>
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {host}
-                          </span>
-                        </span>
-                        <span className="shrink-0 text-xs text-muted-foreground">
-                          {fmt.format(entrada.ts)}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
         </div>
-        <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <span className="text-xs text-muted-foreground">
-            {t.navegador.limparHistorico}
-          </span>
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => onLimpar("ultima-hora")}
+
+        <div className="scrollbar-fina min-h-0 flex-1 overflow-y-auto">
+          {lista.length === 0 ? (
+            <div className="grid h-full place-items-center px-4 text-center text-sm text-muted-foreground">
+              {t.navegador.historicoVazio}
+            </div>
+          ) : (
+            <ul className="divide-y divide-border">
+              {lista.map((entrada) => {
+                const app = appPorUrl(entrada.url);
+                let host = entrada.url;
+                try {
+                  host = new URL(entrada.url).hostname.replace(/^www\./, "");
+                } catch {
+                  // url estranha: deixa a string crua
+                }
+                const marcada = selecionados.has(entrada.id);
+                return (
+                  <li
+                    key={entrada.id}
+                    className="flex items-center gap-2.5 px-3 py-2 hover:bg-accent/40"
+                  >
+                    <Checkbox
+                      checked={marcada}
+                      onCheckedChange={() => alternar(entrada.id)}
+                      aria-label={preencher(t.navegador.historicoSelecionar, {
+                        nome: entrada.nome,
+                      })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => abrir(entrada)}
+                      className="flex min-w-0 flex-1 items-center gap-3 text-left outline-none focus-visible:underline"
+                    >
+                      {app ? (
+                        <img
+                          src={urlIcone(app)}
+                          alt=""
+                          className="size-4 shrink-0"
+                          draggable={false}
+                        />
+                      ) : (
+                        <History className="size-4 shrink-0 text-muted-foreground" />
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">
+                          {entrada.nome}
+                        </span>
+                        <span className="block truncate text-xs text-muted-foreground">
+                          {host}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {fmt.format(entrada.ts)}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <SheetFooter className="gap-3 border-t border-border">
+          <Button
+            type="button"
+            disabled={selecionados.size === 0}
+            onClick={restaurar}
+            className="gap-2"
+          >
+            <RotateCcw className="size-4" />
+            {selecionados.size > 0
+              ? preencher(t.navegador.historicoRestaurar, {
+                  n: selecionados.size,
+                })
+              : t.navegador.historicoRestaurarVazio}
+          </Button>
+          <div className="flex items-center gap-2">
+            <Select
+              value={periodo}
+              onValueChange={(v) => setPeriodo(v as PeriodoLimpeza)}
             >
-              {t.navegador.limparUltimaHora}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => onLimpar("hoje")}
-            >
-              {t.navegador.limparHoje}
-            </Button>
+              <SelectTrigger size="sm" className="flex-1">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ultima-hora">
+                  {t.navegador.limparUltimaHora}
+                </SelectItem>
+                <SelectItem value="hoje">{t.navegador.limparHoje}</SelectItem>
+                <SelectItem value="tudo">{t.navegador.limparTudo}</SelectItem>
+              </SelectContent>
+            </Select>
             <Button
               type="button"
               variant="ghost"
               size="sm"
-              className="gap-1.5 text-destructive hover:text-destructive"
-              onClick={() => onLimpar("tudo")}
+              className="shrink-0 gap-1.5 text-destructive hover:text-destructive"
+              onClick={() => onLimpar(periodo)}
             >
               <Trash2 className="size-4" />
-              {t.navegador.limparTudo}
+              {t.navegador.limparHistorico}
             </Button>
           </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }

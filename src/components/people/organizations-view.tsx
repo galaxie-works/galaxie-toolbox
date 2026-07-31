@@ -39,6 +39,14 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Tooltip,
@@ -80,7 +88,7 @@ function splitDomains(value: string): string[] {
     .filter(Boolean);
 }
 
-function OrganizationDialog({
+function OrganizationForm({
   open,
   organization,
   contacts,
@@ -146,100 +154,132 @@ function OrganizationDialog({
     onOpenChange(false);
   };
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
-            {organization
-              ? t.controlRoom.orgsEditarTitulo
-              : t.controlRoom.orgsCriarTitulo}
-          </DialogTitle>
-          <DialogDescription>{t.controlRoom.orgsDescricao}</DialogDescription>
-        </DialogHeader>
-        <div className="grid gap-4 py-2">
-          <div className="grid gap-2">
-            <Label htmlFor="organization-name">{t.controlRoom.orgsNome}</Label>
-            <Input
-              id="organization-name"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder={t.controlRoom.orgsNomePlaceholder}
-              autoFocus
-            />
-          </div>
-          <div className="grid gap-2">
-            <div className="flex items-center gap-1">
-              <Label htmlFor="organization-domains">
-                {t.controlRoom.orgsDominios}
-              </Label>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="rounded-full text-muted-foreground hover:text-foreground"
-                    aria-label={t.controlRoom.orgsDominiosTooltip}
-                  >
-                    <Info className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent className="max-w-xs text-pretty">
-                  {t.controlRoom.orgsDominiosTooltip}
-                </TooltipContent>
-              </Tooltip>
-            </div>
-            <Input
-              id="organization-domains"
-              value={domains}
-              onChange={(event) => setDomains(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  setDomains((current) => `${current.trim()}, `);
-                }
-              }}
-              list="organization-domain-suggestions"
-              placeholder={t.controlRoom.orgsDominiosPlaceholder}
-            />
-            <datalist id="organization-domain-suggestions">
-              {domainSuggestions.map((domain) => (
-                <option key={domain} value={domain} />
-              ))}
-            </datalist>
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="organization-website">{t.controlRoom.orgsWebsite}</Label>
-            <Input
-              id="organization-website"
-              value={website}
-              onChange={(event) => setWebsite(event.target.value)}
-              placeholder="https://"
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="organization-notes">{t.controlRoom.orgsNotas}</Label>
-            <Textarea
-              id="organization-notes"
-              value={notes}
-              onChange={(event) => setNotes(event.target.value)}
-            />
-          </div>
-          {error && (
-            <p className="text-sm text-destructive">{t.controlRoom.orgsErroCampos}</p>
-          )}
+  const form = (
+    <>
+      <div className="grid gap-2">
+        <Label htmlFor="organization-name">{t.controlRoom.orgsNome}</Label>
+        <Input
+          id="organization-name"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder={t.controlRoom.orgsNomePlaceholder}
+          autoFocus
+        />
+      </div>
+      <div className="grid gap-2">
+        <div className="flex items-center gap-1">
+          <Label htmlFor="organization-domains">
+            {t.controlRoom.orgsDominios}
+          </Label>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="rounded-full text-muted-foreground hover:text-foreground"
+                aria-label={t.controlRoom.orgsDominiosTooltip}
+              >
+                <Info className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs text-pretty">
+              {t.controlRoom.orgsDominiosTooltip}
+            </TooltipContent>
+          </Tooltip>
         </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t.controlRoom.orgsCancelar}
-          </Button>
-          <Button onClick={save}>
-            {organization ? t.controlRoom.orgsSalvar : t.controlRoom.orgsCriar}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        <Input
+          id="organization-domains"
+          value={domains}
+          onChange={(event) => setDomains(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              setDomains((current) => `${current.trim()}, `);
+            }
+          }}
+          list="organization-domain-suggestions"
+          placeholder={t.controlRoom.orgsDominiosPlaceholder}
+        />
+        <datalist id="organization-domain-suggestions">
+          {domainSuggestions.map((domain) => (
+            <option key={domain} value={domain} />
+          ))}
+        </datalist>
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="organization-website">{t.controlRoom.orgsWebsite}</Label>
+        <Input
+          id="organization-website"
+          value={website}
+          onChange={(event) => setWebsite(event.target.value)}
+          placeholder="https://"
+        />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor="organization-notes">{t.controlRoom.orgsNotas}</Label>
+        <Textarea
+          id="organization-notes"
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+        />
+      </div>
+      {error && (
+        <p className="text-sm text-destructive">
+          {t.controlRoom.orgsErroCampos}
+        </p>
+      )}
+    </>
+  );
+
+  const actions = (
+    <>
+      <Button variant="outline" onClick={() => onOpenChange(false)}>
+        {t.controlRoom.orgsCancelar}
+      </Button>
+      <Button onClick={save}>
+        {organization ? t.controlRoom.orgsSalvar : t.controlRoom.orgsCriar}
+      </Button>
+    </>
+  );
+
+  if (organization) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{t.controlRoom.orgsEditarTitulo}</DialogTitle>
+            <DialogDescription>{t.controlRoom.orgsDescricao}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">{form}</div>
+          <DialogFooter>{actions}</DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 p-0 sm:max-w-lg"
+      >
+        <SheetHeader className="border-b px-4 py-3">
+          <SheetTitle className="pr-6 text-left">
+            {t.controlRoom.orgsCriarTitulo}
+          </SheetTitle>
+          <SheetDescription className="text-left">
+            {t.controlRoom.orgsDescricao}
+          </SheetDescription>
+        </SheetHeader>
+        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto scrollbar-fina px-4 py-4">
+          {form}
+        </div>
+        <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
+          {actions}
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -674,7 +714,7 @@ export function OrganizationsView({
           </ResizablePanelGroup>
         )}
       </div>
-      <OrganizationDialog
+      <OrganizationForm
         open={editorOpen}
         organization={editing}
         contacts={contacts}

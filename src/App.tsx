@@ -8,9 +8,12 @@ import { ControlRoomScreen } from "@/screens/control-room";
 import { NavegadorScreen } from "@/screens/navegador";
 import {
   loadNavigatorMemorySettings,
+  loadNavigatorPrefs,
   loadPinnedNavigatorTabs,
+  loadLastSession,
   orderPinnedFirst,
   persistPinnedNavigatorTabs,
+  persistLastSession,
   tabsToSleep,
   type AbaBrowser,
 } from "@/lib/navigator-tabs";
@@ -112,8 +115,10 @@ function AppInner() {
   // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
   const [abas, setAbas] = useState<AbaBrowser[]>(loadPinnedNavigatorTabs);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
+  // Pilha de abas fechadas recentemente (#272 · Ctrl+Shift+T). Só url/nome; teto
+  // de 25 pra não crescer sem limite.
+  const [fechadas, setFechadas] = useState<{ url: string; nome: string }[]>([]);
   const [navigatorClock, setNavigatorClock] = useState(0);
-  const [navigatorMemorySettings] = useState(loadNavigatorMemorySettings);
   // Historico de navegacao (Story 5): capturado nos pontos onde o app commita
   // uma URL num webview (abrir app / omnibox / favorito). Persistido em
   // localStorage, igual aos pins/grupos/favoritos.
@@ -121,18 +126,48 @@ function AppInner() {
   // Modo privado: enquanto ligado, novas abas nao gravam historico e ganham
   // tratamento visual distinto (aba "privada").
   const [modoPrivado, setModoPrivado] = useState(false);
+  // Sessão anterior (#274): capturado UMA vez no mount (antes do persist effect
+  // sobrescrever), pra oferecer restaurar. `dispensada` esconde o oferecimento.
+  const [sessaoAnterior] = useState(loadLastSession);
+  const [sessaoDispensada, setSessaoDispensada] = useState(false);
 
   useEffect(() => {
     persistPinnedNavigatorTabs(abas);
+  }, [abas]);
+
+  // Snapshot da sessão a cada mudança (não pinadas, não privadas). No próximo
+  // boot vira a "sessão anterior" a oferecer.
+  useEffect(() => {
+    persistLastSession(abas);
   }, [abas]);
 
   useEffect(() => {
     persistHistorico(historico);
   }, [historico]);
 
-  // Ponto unico de captura: so grava fora do modo privado e so http(s).
+  // #307: poda o histórico pela retenção configurada (0 = sempre). Roda no tick
+  // do navigatorClock → aplica mudança de retenção e envelhecimento em ≤60s.
+  useEffect(() => {
+    const dias = loadNavigatorPrefs().retencaoDias;
+    if (dias <= 0) return;
+    const corte = Date.now() - dias * 86_400_000;
+    setHistorico((prev) => {
+      const podado = prev.filter((e) => e.ts >= corte);
+      return podado.length === prev.length ? prev : podado;
+    });
+  }, [navigatorClock]);
+
+  // #307: "Limpar histórico" no Settings dispara este evento; relemos do disco.
+  useEffect(() => {
+    const onLimpo = () => setHistorico(loadHistorico());
+    window.addEventListener("galaxie:historico-limpo", onLimpo);
+    return () => window.removeEventListener("galaxie:historico-limpo", onLimpo);
+  }, []);
+
+  // Ponto unico de captura: so grava fora do modo privado, com "salvar histórico"
+  // ligado (#307) e so http(s).
   function registrarHistorico(url: string, nome: string) {
-    if (modoPrivado) return;
+    if (modoPrivado || !loadNavigatorPrefs().salvarHistorico) return;
     setHistorico((prev) => registrarVisita(prev, { url, nome }));
   }
 
@@ -148,13 +183,19 @@ function AppInner() {
     return () => window.clearInterval(timer);
   }, []);
 
+  // #310: no boot, destrói webviews-filhas órfãs que sobrevivem a um reload do
+  // app inteiro (o ghost que pintava por cima da Mailbox). Pins voltam dormindo,
+  // recriados no clique — nada se perde.
   useEffect(() => {
-    const ids = tabsToSleep(
-      abas,
-      abaAtiva,
-      navigatorMemorySettings,
-      Date.now(),
-    );
+    void browser.fecharTodas();
+  }, []);
+
+  useEffect(() => {
+    // Lê fresh do localStorage (#306): o painel Settings>Navigator>Tabs altera as
+    // prefs e o eviction reage no próximo tick/interação. Off → nada dorme.
+    const settings = loadNavigatorMemorySettings();
+    if (!settings.ativo) return;
+    const ids = tabsToSleep(abas, abaAtiva, settings, Date.now());
     if (ids.length === 0) return;
     const selected = new Set(ids);
     for (const id of ids) void browser.fechar(id);
@@ -165,7 +206,7 @@ function AppInner() {
           : tab,
       ),
     );
-  }, [abaAtiva, abas, navigatorClock, navigatorMemorySettings]);
+  }, [abaAtiva, abas, navigatorClock]);
 
   useEffect(() => {
     let vivo = true;
@@ -417,6 +458,42 @@ function AppInner() {
     setTela("navegador");
   }
 
+  /** Restaura várias entradas de histórico como abas novas (#177). Ids únicos
+   *  (Date.now pode repetir num mesmo tick); a última vira ativa. */
+  function restaurarAbas(entradas: { url: string; nome: string }[]) {
+    if (entradas.length === 0) return;
+    const base = Date.now();
+    const novas: AbaBrowser[] = entradas.map((entrada, i) => ({
+      id: `web-${base}-${i}`,
+      nome: entrada.nome,
+      url: entrada.url,
+      estado: i === entradas.length - 1 ? "ativa" : "fundo",
+      ultimoAcesso: base + i,
+      privada: modoPrivado,
+    }));
+    setAbas((prev) =>
+      orderPinnedFirst([
+        ...prev.map((tab) =>
+          tab.estado === "dormindo" ? tab : { ...tab, estado: "fundo" as const },
+        ),
+        ...novas,
+      ]),
+    );
+    for (const entrada of entradas) registrarHistorico(entrada.url, entrada.nome);
+    setAbaAtiva(novas[novas.length - 1].id);
+    setTela("navegador");
+  }
+
+  /** Restaura as abas da sessão anterior (#274) e dispensa o oferecimento. */
+  function restaurarSessao() {
+    restaurarAbas(sessaoAnterior);
+    setSessaoDispensada(true);
+  }
+
+  function dispensarSessao() {
+    setSessaoDispensada(true);
+  }
+
   function trocarAba(id: string) {
     const now = Date.now();
     setAbas((prev) =>
@@ -436,7 +513,7 @@ function AppInner() {
     setAbaAtiva(id);
   }
 
-  function novaAba() {
+  function abrirAbaVazia() {
     setAbas((prev) =>
       prev.map((tab) =>
         tab.estado === "dormindo"
@@ -447,8 +524,27 @@ function AppInner() {
     setAbaAtiva(null);
   }
 
+  // Nova aba normal sai do modo privado; nova aba privada entra (#273). O
+  // `modoPrivado` é herdado pela próxima navegação (`privada` da aba).
+  function novaAba() {
+    setModoPrivado(false);
+    abrirAbaVazia();
+  }
+
+  function novaAbaPrivada() {
+    setModoPrivado(true);
+    abrirAbaVazia();
+  }
+
   function fecharAba(id: string) {
     void browser.fechar(id);
+    const alvo = abas.find((a) => a.id === id);
+    if (alvo) {
+      // Empilha pra reabrir com Ctrl+Shift+T (#272), teto de 25.
+      setFechadas((prev) =>
+        [{ url: alvo.url, nome: alvo.nome }, ...prev].slice(0, 25),
+      );
+    }
     const resto = abas.filter((a) => a.id !== id);
     setAbas(resto);
     if (abaAtiva === id) {
@@ -460,6 +556,14 @@ function AppInner() {
       // Sem abas: permanece no Navigator com a aba em branco (Launcher), em vez
       // de chutar o usuário para a lista de Apps (#24).
     }
+  }
+
+  /** Reabre a última aba fechada (#272 · Ctrl+Shift+T). */
+  function reabrirFechada() {
+    const ultima = fechadas[0];
+    if (!ultima) return;
+    setFechadas((prev) => prev.slice(1));
+    abrirUrlLivre(ultima.url, ultima.nome);
   }
 
   /** Fecha todas as abas menos a clicada (e as fixadas), deixando-a ativa (#275). */
@@ -826,7 +930,13 @@ function AppInner() {
               onReordenar={reordenarAbas}
               onAbrir={abrirAppAqui}
               onNovaAba={novaAba}
+              onNovaAbaPrivada={novaAbaPrivada}
+              onReabrirFechada={reabrirFechada}
               onNavegar={abrirUrlLivre}
+              onRestaurarAbas={restaurarAbas}
+              sessaoAnteriorQtd={sessaoDispensada ? 0 : sessaoAnterior.length}
+              onRestaurarSessao={restaurarSessao}
+              onDispensarSessao={dispensarSessao}
               historico={historico}
               onLimparHistorico={limparHistoricoPeriodo}
               modoPrivado={modoPrivado}

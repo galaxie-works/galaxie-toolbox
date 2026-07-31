@@ -429,6 +429,21 @@ async fn cr_excluir_evento(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda: cancela um evento organizado pelo usuário (#260), enviando o
+/// cancelamento aos convidados (POST /me/events/{id}/cancel). Distinto de
+/// excluir (silencioso). Calendars.ReadWrite.
+#[tauri::command]
+async fn cr_cancelar_evento(
+    state: State<'_, Store>,
+    id: String,
+    comentario: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_cancelar_evento(&store, &id, &comentario))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: fotos (avatar) de remetentes internos, em lote. User.Read.All.
 #[tauri::command]
 async fn cr_fotos_contatos(
@@ -465,6 +480,29 @@ async fn cr_people_list(
     })
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// People: grupos M365 diretos do usuário atual.
+#[tauri::command]
+async fn cr_grupos(state: State<'_, Store>) -> Result<graph::PeopleGroupsResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_grupos(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// People: membros usuários de um grupo M365, carregados sob demanda.
+#[tauri::command]
+async fn cr_grupo_membros(
+    state: State<'_, Store>,
+    group_id: String,
+) -> Result<graph::PeopleGroupMembersResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_grupo_membros(&store, &group_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// People Enrich: monta o preview sem alterar o contato.
@@ -1341,9 +1379,12 @@ pub fn run() {
             cr_criar_evento,
             cr_editar_evento,
             cr_excluir_evento,
+            cr_cancelar_evento,
             cr_fotos_contatos,
             cr_pessoas,
             cr_people_list,
+            cr_grupos,
+            cr_grupo_membros,
             cr_people_enrich_preview,
             cr_people_enrich_apply,
             cr_people_write_available,
@@ -1389,6 +1430,8 @@ pub fn run() {
             browser::browser_layout,
             browser::browser_fechar,
             browser::browser_esconder_todas,
+            browser::browser_recarregar,
+            browser::browser_fechar_todas,
             enable_long_paths,
             long_paths_status,
             log_frontend_error,

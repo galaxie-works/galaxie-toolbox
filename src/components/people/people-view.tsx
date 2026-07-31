@@ -17,6 +17,7 @@ import {
   ArrowUpDown,
   ArrowUpRight,
   Building2,
+  ChevronDown,
   Copy,
   ExternalLink,
   FunnelX,
@@ -95,14 +96,6 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -112,6 +105,14 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   Toolbar,
   ToolbarButton,
@@ -152,6 +153,8 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
+
+const EMPTY_CONTACTS: PeopleContact[] = [];
 
 function initials(name: string): string {
   return (
@@ -297,6 +300,27 @@ function PeoplePermissionEmpty() {
         <KeyRound />
       </IconTile>
       <p className="font-medium">{t.controlRoom.peopleSemPermissao}</p>
+    </div>
+  );
+}
+
+function PeopleGroupEmpty({ selected }: { selected: boolean }) {
+  const { t } = useIdioma();
+  return (
+    <div className="flex h-full min-h-56 w-full flex-col items-center justify-center px-6 text-center">
+      <IconStack className="mb-2">
+        <Users className="size-5" />
+      </IconStack>
+      <p className="font-medium">
+        {selected
+          ? t.controlRoom.peopleGroupEmpty
+          : t.controlRoom.peopleGroupSelect}
+      </p>
+      <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+        {selected
+          ? t.controlRoom.peopleGroupEmptyDesc
+          : t.controlRoom.peopleGroupSelectDesc}
+      </p>
     </div>
   );
 }
@@ -1143,7 +1167,7 @@ function splitDomains(value: string): string[] {
  * (existente ou nova). Aditivo: itera `addContactToOrganization` (idempotente),
  * nunca `assignOrganizationContacts` (que poda quem não foi selecionado).
  */
-function AssignToOrganizationDialog({
+function AssignToOrganizationSheet({
   open,
   contacts,
   onOpenChange,
@@ -1269,143 +1293,154 @@ function AssignToOrganizationDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
-            {preencher(t.controlRoom.bulkOrgTitulo, { n: contacts.length })}
-          </DialogTitle>
-          <DialogDescription>
-            {t.controlRoom.bulkOrgDescricao}
-          </DialogDescription>
-        </DialogHeader>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 p-0 sm:max-w-lg"
+      >
+        <SheetHeader className="border-b px-4 py-3">
+          <SheetTitle className="pr-6 text-left">
+            {step === "create"
+              ? t.controlRoom.orgsCriarTitulo
+              : preencher(t.controlRoom.bulkOrgTitulo, { n: contacts.length })}
+          </SheetTitle>
+          <SheetDescription className="text-left">
+            {step === "create"
+              ? t.controlRoom.orgsDescricao
+              : t.controlRoom.bulkOrgDescricao}
+          </SheetDescription>
+        </SheetHeader>
 
-        {step === "pick" && (
-          <Command className="rounded-lg border">
-            <CommandInput
-              placeholder={t.controlRoom.bulkOrgBuscar}
-              value={query}
-              onValueChange={setQuery}
-            />
-            <CommandList>
-              <CommandEmpty>{t.controlRoom.bulkOrgSemOrgs}</CommandEmpty>
-              {organizations.length > 0 && (
+        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina px-4 py-4">
+          {step === "pick" && (
+            <Command className="rounded-lg border">
+              <CommandInput
+                placeholder={t.controlRoom.bulkOrgBuscar}
+                value={query}
+                onValueChange={setQuery}
+              />
+              <CommandList>
+                <CommandEmpty>{t.controlRoom.bulkOrgSemOrgs}</CommandEmpty>
+                {organizations.length > 0 && (
+                  <CommandGroup>
+                    {organizations.map((organization) => (
+                      <CommandItem
+                        key={organization.id}
+                        value={`${organization.name} ${organization.domains.join(" ")}`}
+                        onSelect={() => {
+                          setTargetId(organization.id);
+                          setStep("preview");
+                        }}
+                      >
+                        <Building2 />
+                        <span className="min-w-0 flex-1 truncate">
+                          {organization.name}
+                        </span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {organization.domains.join(" · ")}
+                        </span>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )}
+                <CommandSeparator />
                 <CommandGroup>
-                  {organizations.map((organization) => (
-                    <CommandItem
-                      key={organization.id}
-                      value={`${organization.name} ${organization.domains.join(" ")}`}
-                      onSelect={() => {
-                        setTargetId(organization.id);
-                        setStep("preview");
-                      }}
-                    >
-                      <Building2 />
-                      <span className="min-w-0 flex-1 truncate">
-                        {organization.name}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {organization.domains.join(" · ")}
-                      </span>
-                    </CommandItem>
-                  ))}
+                  <CommandItem value="__create__" onSelect={goToCreate}>
+                    <Plus />
+                    {t.controlRoom.bulkOrgCriarNova}
+                  </CommandItem>
                 </CommandGroup>
-              )}
-              <CommandSeparator />
-              <CommandGroup>
-                <CommandItem value="__create__" onSelect={goToCreate}>
-                  <Plus />
-                  {t.controlRoom.bulkOrgCriarNova}
-                </CommandItem>
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        )}
+              </CommandList>
+            </Command>
+          )}
 
-        {step === "create" && (
-          <div className="grid gap-4 py-2">
-            <div className="grid gap-2">
-              <Label htmlFor="bulk-org-name">{t.controlRoom.orgsNome}</Label>
-              <Input
-                id="bulk-org-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder={t.controlRoom.orgsNomePlaceholder}
-                autoFocus
-              />
-            </div>
-            <div className="grid gap-2">
-              <div className="flex items-center gap-1">
-                <Label htmlFor="bulk-org-domains">
-                  {t.controlRoom.orgsDominios}
-                </Label>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="rounded-full text-muted-foreground hover:text-foreground"
-                      aria-label={t.controlRoom.orgsDominiosTooltip}
-                    >
-                      <Info className="size-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs text-pretty">
-                    {t.controlRoom.orgsDominiosTooltip}
-                  </TooltipContent>
-                </Tooltip>
+          {step === "create" && (
+            <div className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="bulk-org-name">{t.controlRoom.orgsNome}</Label>
+                <Input
+                  id="bulk-org-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder={t.controlRoom.orgsNomePlaceholder}
+                  autoFocus
+                />
               </div>
-              <Input
-                id="bulk-org-domains"
-                value={domains}
-                onChange={(event) => setDomains(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    setDomains((current) => `${current.trim()}, `);
-                  }
-                }}
-                placeholder={t.controlRoom.orgsDominiosPlaceholder}
-              />
+              <div className="grid gap-2">
+                <div className="flex items-center gap-1">
+                  <Label htmlFor="bulk-org-domains">
+                    {t.controlRoom.orgsDominios}
+                  </Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="rounded-full text-muted-foreground hover:text-foreground"
+                        aria-label={t.controlRoom.orgsDominiosTooltip}
+                      >
+                        <Info className="size-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs text-pretty">
+                      {t.controlRoom.orgsDominiosTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Input
+                  id="bulk-org-domains"
+                  value={domains}
+                  onChange={(event) => setDomains(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      setDomains((current) => `${current.trim()}, `);
+                    }
+                  }}
+                  placeholder={t.controlRoom.orgsDominiosPlaceholder}
+                />
+              </div>
+              {error && (
+                <p className="text-sm text-destructive">
+                  {t.controlRoom.orgsErroCampos}
+                </p>
+              )}
             </div>
-            {error && (
-              <p className="text-sm text-destructive">
-                {t.controlRoom.orgsErroCampos}
-              </p>
-            )}
-          </div>
-        )}
+          )}
 
-        {step === "preview" && preview && target && (
-          <div className="grid gap-3 py-2">
-            <p className="text-sm font-medium">
-              {preencher(t.controlRoom.bulkOrgPreviewAlvo, { nome: target.name })}
-            </p>
-            <ul className="grid gap-1.5 text-sm">
-              <li className="flex items-center gap-2">
-                <Badge variant="secondary">{preview.added}</Badge>
-                <span>{t.controlRoom.bulkOrgPreviewAdicionados}</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <Badge variant="outline">{preview.already}</Badge>
-                <span className="text-muted-foreground">
-                  {t.controlRoom.bulkOrgPreviewJaPertencem}
-                </span>
-              </li>
-              {preview.noEmail > 0 && (
+          {step === "preview" && preview && target && (
+            <div className="grid gap-3">
+              <p className="text-sm font-medium">
+                {preencher(t.controlRoom.bulkOrgPreviewAlvo, {
+                  nome: target.name,
+                })}
+              </p>
+              <ul className="grid gap-1.5 text-sm">
                 <li className="flex items-center gap-2">
-                  <Badge variant="outline">{preview.noEmail}</Badge>
+                  <Badge variant="secondary">{preview.added}</Badge>
+                  <span>{t.controlRoom.bulkOrgPreviewAdicionados}</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Badge variant="outline">{preview.already}</Badge>
                   <span className="text-muted-foreground">
-                    {t.controlRoom.bulkOrgPreviewSemEmail}
+                    {t.controlRoom.bulkOrgPreviewJaPertencem}
                   </span>
                 </li>
-              )}
-            </ul>
-          </div>
-        )}
+                {preview.noEmail > 0 && (
+                  <li className="flex items-center gap-2">
+                    <Badge variant="outline">{preview.noEmail}</Badge>
+                    <span className="text-muted-foreground">
+                      {t.controlRoom.bulkOrgPreviewSemEmail}
+                    </span>
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+        </div>
 
-        <DialogFooter>
+        <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
           {step === "pick" && (
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               {t.controlRoom.orgsCancelar}
@@ -1429,9 +1464,9 @@ function AssignToOrganizationDialog({
               <Button onClick={apply}>{t.controlRoom.bulkOrgConfirmar}</Button>
             </>
           )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -1468,6 +1503,20 @@ export function PeopleView({
     (state) => state.setPeopleColumnVisibility,
   );
   const peopleTab = useAppStore((state) => state.peopleTab);
+  const selectedGroupId = useAppStore(
+    (state) => state.peopleSelectedGroupId,
+  );
+  const groupMembersById = useAppStore(
+    (state) => state.peopleGroupMembersById,
+  );
+  const groupMembersLoadingId = useAppStore(
+    (state) => state.peopleGroupMembersLoadingId,
+  );
+  const groupMembersError = useAppStore(
+    (state) => state.peopleGroupMembersError,
+  );
+  const groups = useAppStore((state) => state.peopleGroups);
+  const selectPeopleGroup = useAppStore((state) => state.selectPeopleGroup);
   const query = useAppStore((state) => state.peopleSearchQuery);
   const setPeopleSearchQuery = useAppStore(
     (state) => state.setPeopleSearchQuery,
@@ -1494,6 +1543,17 @@ export function PeopleView({
   // Assim o observer não fica preso num container removido ao trocar de aba.
   const detailContainerRef = useRef<HTMLElement>(null);
   const [moduleWidth, setModuleWidth] = useState(0);
+  const groupMembers =
+    selectedGroupId == null
+      ? EMPTY_CONTACTS
+      : (groupMembersById[selectedGroupId] ?? EMPTY_CONTACTS);
+  const visibleContacts = peopleTab === "groups" ? groupMembers : contacts;
+  const activeGroup =
+    groups.find((group) => group.id === selectedGroupId) ?? null;
+  const groupMembersLoading =
+    peopleTab === "groups" &&
+    selectedGroupId != null &&
+    groupMembersLoadingId === selectedGroupId;
 
   useLayoutEffect(() => {
     const el = detailContainerRef.current;
@@ -1523,8 +1583,8 @@ export function PeopleView({
   }, [loadPeople, loaded, loading]);
 
   useEffect(() => {
-    pedirFotos(contacts.map((contact) => contact.emails[0]?.address));
-  }, [contacts, pedirFotos]);
+    pedirFotos(visibleContacts.map((contact) => contact.emails[0]?.address));
+  }, [pedirFotos, visibleContacts]);
 
   const organizationLabelsByDomain = useMemo(() => {
     const labels = new Map<string, string>();
@@ -1543,7 +1603,9 @@ export function PeopleView({
       { value: "is_not", label: t.controlRoom.filtroOpNaoE },
     ];
     const companyOptions: FilterOption<string>[] = Array.from(
-      new Set(contacts.map((contact) => contact.company).filter(Boolean)),
+      new Set(
+        visibleContacts.map((contact) => contact.company).filter(Boolean),
+      ),
     )
       .sort((a, b) => String(a).localeCompare(String(b)))
       .map((company) => ({ value: String(company), label: String(company) }));
@@ -1599,15 +1661,18 @@ export function PeopleView({
             value: "people",
             label: t.controlRoom.peopleFilterSourcePeople,
           },
-          // #256 recoloca Directory quando /users for uma fonte real da lista.
+          {
+            value: "directory",
+            label: t.controlRoom.peopleSourceDirectory,
+          },
         ],
       },
     ];
-  }, [contacts, organizations, t]);
+  }, [organizations, t, visibleContacts]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = useMemo(() => {
-    const next = contacts.filter((contact) => {
+    const next = visibleContacts.filter((contact) => {
       const matchesQuery =
         !normalizedQuery ||
           [
@@ -1641,14 +1706,15 @@ export function PeopleView({
       });
     });
     return next;
-  }, [contacts, filters, normalizedQuery, organizations]);
+  }, [filters, normalizedQuery, organizations, visibleContacts]);
 
   const selectedContacts = useMemo(
     () => filtered.filter((contact) => rowSelection[contact.id]),
     [filtered, rowSelection],
   );
 
-  const selected = contacts.find((contact) => contact.id === selectedId) ?? null;
+  const selected =
+    visibleContacts.find((contact) => contact.id === selectedId) ?? null;
 
   useEffect(() => {
     if (
@@ -1953,7 +2019,7 @@ export function PeopleView({
         <OrganizationsView contacts={contacts} />
       ) : (
         <>
-      <AssignToOrganizationDialog
+      <AssignToOrganizationSheet
         open={assignOrgOpen}
         contacts={selectedContacts}
         onOpenChange={setAssignOrgOpen}
@@ -1992,6 +2058,22 @@ export function PeopleView({
         </Alert>
       )}
 
+      {peopleTab === "groups" && groupMembersError && selectedGroupId && (
+        <Alert variant="destructive">
+          <AlertTitle>{t.controlRoom.peopleGroupsError}</AlertTitle>
+          <AlertDescription>{groupMembersError}</AlertDescription>
+          <AlertAction>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void selectPeopleGroup(selectedGroupId)}
+            >
+              {t.controlRoom.peopleTentarNovamente}
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
+
       <div className="flex min-h-0 flex-1">
         {(() => {
           const listPane = (
@@ -2005,7 +2087,9 @@ export function PeopleView({
                 className="flex shrink-0 items-center gap-2 px-3 py-3"
               >
                 <h2 className="text-sm font-semibold">
-                  {t.controlRoom.peopleContactsTab}
+                  {peopleTab === "groups"
+                    ? activeGroup?.name ?? t.controlRoom.peopleGroupsSection
+                    : t.controlRoom.peopleContactsTab}
                 </h2>
                 <Badge variant="secondary" size="sm">
                   {filtered.length}
@@ -2098,16 +2182,43 @@ export function PeopleView({
                     </Button>
                   </div>
                   <Toolbar aria-label={t.controlRoom.peopleBulkAcoes}>
-                    <Button size="sm" onClick={() => setAssignOrgOpen(true)}>
-                      <Building2 />
-                      {t.controlRoom.peopleBulkAtribuirOrg}
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="sm">
+                          {t.controlRoom.peopleBulkMaisOpcoes}
+                          <ChevronDown
+                            aria-hidden="true"
+                            className="size-3.5 opacity-60"
+                          />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-48">
+                        <DropdownMenuItem
+                          onSelect={() => setAssignOrgOpen(true)}
+                        >
+                          <Building2 />
+                          {t.controlRoom.peopleBulkAtribuirOrg}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem disabled>
+                          {t.controlRoom.peopleBulkMesclar}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem disabled>
+                          {t.controlRoom.peopleBulkEditarDetalhes}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </Toolbar>
                 </FramePanel>
               )}
               <FramePanel className="min-h-0 p-0">
-                {filtered.length === 0 && !(loading && !loaded) ? (
-                  missingScopes.length > 0 ? (
+                {filtered.length === 0 &&
+                !(loading && !loaded) &&
+                !groupMembersLoading ? (
+                  peopleTab === "groups" &&
+                  !normalizedQuery &&
+                  filters.length === 0 ? (
+                    <PeopleGroupEmpty selected={selectedGroupId != null} />
+                  ) : missingScopes.length > 0 ? (
                     <PeoplePermissionEmpty />
                   ) : (
                     <PeopleEmpty
@@ -2119,12 +2230,14 @@ export function PeopleView({
                       }}
                     />
                   )
-                ) : view === "table" || (loading && !loaded) ? (
+                ) : view === "table" ||
+                  (loading && !loaded) ||
+                  groupMembersLoading ? (
                   <DataGrid
                     table={table}
                     recordCount={filtered.length}
                     activeRowId={keyboardActiveId}
-                    isLoading={loading && !loaded}
+                    isLoading={(loading && !loaded) || groupMembersLoading}
                     loadingMode="skeleton"
                     emptyMessage={
                       missingScopes.length > 0 ? (
@@ -2181,9 +2294,19 @@ export function PeopleView({
                       <DataGridContainer className="h-full">
                         <ScrollArea className="h-full">
                           <DataGridTableVirtual
-                            onFetchMore={() => void loadMorePeople()}
-                            isFetchingMore={fetchingMore}
-                            hasMore={nextLinks.length > 0}
+                            onFetchMore={() => {
+                              if (peopleTab !== "groups") {
+                                void loadMorePeople();
+                              }
+                            }}
+                            isFetchingMore={
+                              peopleTab === "groups" ? false : fetchingMore
+                            }
+                            hasMore={
+                              peopleTab === "groups"
+                                ? false
+                                : nextLinks.length > 0
+                            }
                             fetchMoreOffset={8}
                             estimateSize={48}
                             overscan={8}
@@ -2218,7 +2341,7 @@ export function PeopleView({
                         />
                       ))}
                     </div>
-                    {nextLinks.length > 0 && (
+                    {peopleTab !== "groups" && nextLinks.length > 0 && (
                       <div className="flex justify-center py-4">
                         <Button
                           variant="outline"
@@ -2237,7 +2360,7 @@ export function PeopleView({
           );
 
           const detailPane =
-            loading && !loaded ? (
+            (loading && !loaded) || groupMembersLoading ? (
               <PeopleDetailSkeleton />
             ) : selected ? (
               <PeopleDetail
