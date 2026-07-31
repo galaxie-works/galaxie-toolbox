@@ -1339,7 +1339,7 @@ export function NavegadorScreen({
       {/* Barra de abas: rola na horizontal; o "+" fica fora da rolagem. */}
       <div className="flex items-stretch border-b border-border">
         <div
-          className="scrollbar-fina flex items-stretch gap-2 overflow-x-auto px-2 pt-2"
+          className="scrollbar-fina flex min-w-0 items-stretch gap-2 overflow-x-auto px-2 pt-2"
           role="tablist"
           aria-label={t.navegador.abas}
         >
@@ -1445,6 +1445,34 @@ export function NavegadorScreen({
             );
           })}
         </div>
+        {/* "+" logo após as abas (convenção de navegador); o spacer empurra os
+            ícones (history/command) pra direita, fora do caminho do "+" (#277). */}
+        <DropdownMenu onOpenChange={registrarOverlayWebview}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={t.navegador.novaAba}
+              className={cn(
+                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
+                "hover:bg-accent hover:text-foreground",
+                ativa === null && abas.length > 0 && "bg-accent text-foreground"
+              )}
+            >
+              <Plus className="size-4" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem className="gap-2" onSelect={onNovaAba}>
+              <Plus className="size-4" />
+              {t.navegador.novaAba}
+            </DropdownMenuItem>
+            <DropdownMenuItem className="gap-2" onSelect={onNovaAbaPrivada}>
+              <EyeOff className="size-4" />
+              {t.navegador.novaAbaPrivada}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <div className="flex-1" aria-hidden="true" />
         {sleepingCount > 0 && (
           <Badge variant="info-light" className="my-2 shrink-0">
             <Moon />
@@ -1491,32 +1519,6 @@ export function NavegadorScreen({
           </TooltipTrigger>
           <TooltipContent>{t.navegador.paleta}</TooltipContent>
         </Tooltip>
-        {/* "+" com submenu (#273): Nova aba / Nova aba privada. */}
-        <DropdownMenu onOpenChange={registrarOverlayWebview}>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              aria-label={t.navegador.novaAba}
-              className={cn(
-                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
-                "hover:bg-accent hover:text-foreground",
-                ativa === null && abas.length > 0 && "bg-accent text-foreground"
-              )}
-            >
-              <Plus className="size-4" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem className="gap-2" onSelect={onNovaAba}>
-              <Plus className="size-4" />
-              {t.navegador.novaAba}
-            </DropdownMenuItem>
-            <DropdownMenuItem className="gap-2" onSelect={onNovaAbaPrivada}>
-              <EyeOff className="size-4" />
-              {t.navegador.novaAbaPrivada}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
       </div>
 
       {/* Oferecer restaurar a sessão anterior (#274) — banner discreto, sem
