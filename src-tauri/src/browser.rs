@@ -54,6 +54,22 @@ const SCRIPT_CAPTURA_SCROLL: &str = r#"(function(){
   window.addEventListener('beforeunload',envia);
 })();"#;
 
+/// #311: injeta o scrollbar fino do app DENTRO da pagina navegada (senao a
+/// pagina usa o scrollbar default do WebView2, fora do padrao). Cores neutras
+/// com alpha (a pagina nao tem as CSS vars do app), boas em claro/escuro; casa
+/// com o `.scrollbar-fina` do chrome (8px, thumb arredondado, track transparente).
+/// Best-effort: se a pagina tiver regra propria mais especifica, ela vence.
+const SCRIPT_SCROLLBAR: &str = r#"(function(){try{
+  var css='::-webkit-scrollbar{width:8px;height:8px}'
+    +'::-webkit-scrollbar-thumb{background-color:rgba(128,128,128,.5);border-radius:9999px}'
+    +'::-webkit-scrollbar-thumb:hover{background-color:rgba(128,128,128,.75)}'
+    +'::-webkit-scrollbar-track{background:transparent}';
+  var s=document.createElement('style');
+  s.setAttribute('data-galaxie-scrollbar','1');
+  s.textContent=css;
+  (document.head||document.documentElement).appendChild(s);
+}catch(e){}})();"#;
+
 /// Restaura o scroll no load da pagina recriada (best-effort, spec §3.4).
 ///
 /// #351: o script roda a CADA documento criado (initialization_script). Sem
@@ -152,7 +168,9 @@ pub async fn browser_abrir(
     // #202: captura contínua do scrollY + restauração se a aba foi dormida antes
     // (o cache sobrevive ao destroy). Ambos os scripts rodam a cada navegação.
     let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(destino))
-        .initialization_script(SCRIPT_CAPTURA_SCROLL);
+        .initialization_script(SCRIPT_CAPTURA_SCROLL)
+        // #311: scrollbar da pagina no padrao do app.
+        .initialization_script(SCRIPT_SCROLLBAR);
     if let Some(scroll) = scroll_lembrado(&label) {
         builder = builder.initialization_script(&script_restaura_scroll(&url, scroll));
     }
