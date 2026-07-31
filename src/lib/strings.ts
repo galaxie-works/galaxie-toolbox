@@ -657,7 +657,10 @@ const pt = {
     peopleBulkSelecionados: "{n} selecionados",
     peopleBulkLimpar: "Limpar seleção",
     peopleBulkAcoes: "Ações em massa",
+    peopleBulkMaisOpcoes: "Mais opções",
     peopleBulkAtribuirOrg: "Atribuir a organização",
+    peopleBulkMesclar: "Mesclar",
+    peopleBulkEditarDetalhes: "Editar detalhes",
     bulkOrgTitulo: "Atribuir {n} contatos a uma organização",
     bulkOrgDescricao:
       "Escolha uma organização existente ou crie uma nova. A atribuição é aditiva e não remove ninguém.",
@@ -1619,7 +1622,10 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleBulkSelecionados: "{n} selected",
     peopleBulkLimpar: "Clear selection",
     peopleBulkAcoes: "Bulk actions",
+    peopleBulkMaisOpcoes: "More options",
     peopleBulkAtribuirOrg: "Assign to organization",
+    peopleBulkMesclar: "Merge",
+    peopleBulkEditarDetalhes: "Edit details",
     bulkOrgTitulo: "Assign {n} contacts to an organization",
     bulkOrgDescricao:
       "Pick an existing organization or create a new one. The assignment is additive and removes no one.",

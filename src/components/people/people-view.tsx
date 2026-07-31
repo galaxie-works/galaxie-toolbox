@@ -17,6 +17,7 @@ import {
   ArrowUpDown,
   ArrowUpRight,
   Building2,
+  ChevronDown,
   Copy,
   ExternalLink,
   FunnelX,
@@ -2098,10 +2099,31 @@ export function PeopleView({
                     </Button>
                   </div>
                   <Toolbar aria-label={t.controlRoom.peopleBulkAcoes}>
-                    <Button size="sm" onClick={() => setAssignOrgOpen(true)}>
-                      <Building2 />
-                      {t.controlRoom.peopleBulkAtribuirOrg}
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button size="sm">
+                          {t.controlRoom.peopleBulkMaisOpcoes}
+                          <ChevronDown
+                            aria-hidden="true"
+                            className="size-3.5 opacity-60"
+                          />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-48">
+                        <DropdownMenuItem
+                          onSelect={() => setAssignOrgOpen(true)}
+                        >
+                          <Building2 />
+                          {t.controlRoom.peopleBulkAtribuirOrg}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem disabled>
+                          {t.controlRoom.peopleBulkMesclar}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem disabled>
+                          {t.controlRoom.peopleBulkEditarDetalhes}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </Toolbar>
                 </FramePanel>
               )}
