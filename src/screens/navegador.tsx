@@ -1199,16 +1199,27 @@ export function NavegadorScreen({
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
-        {/* #318 S1: affordance clara de "fixada" — badge de pin no canto do chip
-            (as pinned tabs já ficam compactas/sem fechar na lane da esquerda, mas
-            o Wagner pediu o ícone de pin explícito). Acima do grip (z-20). */}
+        {/* #360: sem o pino estático por aba (o badge "Pinned" do grupo já
+            marca); no hover, um botão de DESAFIXAR com tooltip. */}
         {aba.fixada && (
-          <span
-            className="pointer-events-none absolute -bottom-0.5 -right-0.5 z-20 grid size-3.5 place-items-center rounded-full border border-background bg-primary text-primary-foreground"
-            aria-hidden="true"
-          >
-            <Pin className="size-2" />
-          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={t.navegador.desafixarAba}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAlternarFixada(aba.id);
+                }}
+                className="absolute -right-0.5 -bottom-0.5 z-20 grid size-4 place-items-center rounded-full border border-background bg-background text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover/chip:opacity-100"
+              >
+                <PinOff className="size-2.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {t.navegador.desafixarAba}
+            </TooltipContent>
+          </Tooltip>
         )}
         <SortableItemHandle
           aria-label={t.navegador.grupoReordenar}
@@ -1544,21 +1555,56 @@ export function NavegadorScreen({
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-0.5 px-2 pb-2">
             {pinadas.map((aba) => (
-              <button
+              <div
                 key={aba.id}
-                type="button"
-                onClick={() => onTrocar(aba.id)}
-                aria-current={aba.id === ativa}
                 className={cn(
-                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "group/pin flex items-center gap-1 rounded-md pr-1 text-sm",
                   aba.id === ativa
                     ? "bg-accent font-medium text-foreground"
                     : "text-muted-foreground hover:bg-accent/50",
                 )}
               >
-                {iconeDaAba(aba)}
-                <span className="min-w-0 flex-1 truncate">{aba.nome}</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onTrocar(aba.id)}
+                  aria-current={aba.id === ativa}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {iconeDaAba(aba)}
+                  <span className="min-w-0 flex-1 truncate">{aba.nome}</span>
+                </button>
+                {/* #360: unpin no hover + x pra fechar, com tooltip. */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={t.navegador.desafixarAba}
+                      onClick={() => onAlternarFixada(aba.id)}
+                      className="grid size-5 shrink-0 place-items-center rounded opacity-0 hover:bg-foreground/10 focus-visible:opacity-100 group-hover/pin:opacity-100"
+                    >
+                      <PinOff className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    {t.navegador.desafixarAba}
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={t.navegador.fecharAba}
+                      onClick={() => onFechar(aba.id)}
+                      className="grid size-5 shrink-0 place-items-center rounded opacity-0 hover:bg-foreground/10 focus-visible:opacity-100 group-hover/pin:opacity-100"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    {t.navegador.fecharAba}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
             ))}
           </div>
         </ScrollArea>
@@ -1665,16 +1711,24 @@ export function NavegadorScreen({
               );
             }
             return (
-              <Sortable
-                key={lane.tipo}
-                strategy="horizontal"
-                value={lane.abas}
-                onValueChange={reordenarLaneAbas}
-                getItemValue={(a) => a.id}
-                className="flex items-stretch gap-1"
-              >
-                {lane.abas.map((aba) => renderChip(aba, lane.tipo === "pins"))}
-              </Sortable>
+              <div key={lane.tipo} className="flex items-stretch gap-1">
+                {/* #360: badge do grupo "Pinned" (em vez do pino por aba). */}
+                {lane.tipo === "pins" && (
+                  <span className="my-1 flex shrink-0 items-center gap-1 self-center rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <Pin className="size-3" />
+                    {t.navegador.railPinsTitulo}
+                  </span>
+                )}
+                <Sortable
+                  strategy="horizontal"
+                  value={lane.abas}
+                  onValueChange={reordenarLaneAbas}
+                  getItemValue={(a) => a.id}
+                  className="flex items-stretch gap-1"
+                >
+                  {lane.abas.map((aba) => renderChip(aba, lane.tipo === "pins"))}
+                </Sortable>
+              </div>
             );
           })}
         </div>
