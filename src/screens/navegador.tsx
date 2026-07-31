@@ -115,7 +115,6 @@ import {
   Coffee,
   Command as CommandIcon,
   Compass,
-  EyeOff,
   FolderMinus,
   FolderPlus,
   Globe,
@@ -142,6 +141,9 @@ import {
 import { ShipIcon, type ShipIconHandle } from "@/components/ui/ship";
 import { PirataIcon } from "@/components/ui/icons/marca/pirata";
 import { PirateSkullIcon } from "@/components/ui/icons/marca/pirate-skull";
+import { Kbd } from "@/components/ui/kbd";
+import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
+import { formatShortcut } from "@/components/ui/shortcut";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 
 /**
@@ -154,10 +156,12 @@ function NavigatorHero({
   titulo,
   subtitulo,
   privada,
+  rotuloPrivada,
 }: {
   titulo: string;
   subtitulo: string;
   privada?: boolean;
+  rotuloPrivada?: string;
 }) {
   const nave = useRef<ShipIconHandle>(null);
   // Anima no mount e mantém o balanço infinito (o <g> do barco tem repeat:Infinity).
@@ -179,9 +183,18 @@ function NavigatorHero({
       <SoftBlurIn className="text-2xl font-semibold tracking-tight" delay={120} stagger={16}>
         {titulo}
       </SoftBlurIn>
-      <SoftBlurIn className="text-[15px] text-muted-foreground" delay={300} stagger={14}>
-        {subtitulo}
-      </SoftBlurIn>
+      {privada ? (
+        // Aba privada (#323): badge no lugar do subtítulo "Time to set sail",
+        // combinando com a borda tracejada `border-info` da aba privada (#273).
+        <Badge variant="info-light" className="mt-0.5">
+          <PirateSkullIcon />
+          {rotuloPrivada}
+        </Badge>
+      ) : (
+        <SoftBlurIn className="text-[15px] text-muted-foreground" delay={300} stagger={14}>
+          {subtitulo}
+        </SoftBlurIn>
+      )}
     </div>
   );
 }
@@ -526,6 +539,7 @@ function Launcher({ privada, ...props }: AcoesPaleta & { privada?: boolean }) {
         titulo={t.navegador.titulo}
         subtitulo={t.navegador.subtitulo}
         privada={privada}
+        rotuloPrivada={t.navegador.modoPrivadoAtivo}
       />
       <ConteudoPaleta
         {...props}
@@ -1041,7 +1055,12 @@ export function NavegadorScreen({
                         <X className="size-3" />
                       </button>
                     </TooltipTrigger>
-                    <TooltipContent>{t.navegador.fecharAba}</TooltipContent>
+                    <TooltipContent>
+                      <ShortcutTooltip
+                        label={t.navegador.fecharAba}
+                        shortcut={{ key: "W", primary: true }}
+                      />
+                    </TooltipContent>
                   </Tooltip>
                 </>
               )}
@@ -1476,10 +1495,16 @@ export function NavegadorScreen({
             <DropdownMenuItem className="gap-2" onSelect={onNovaAba}>
               <Plus className="size-4" />
               {t.navegador.novaAba}
+              <Kbd className="ml-auto">
+                {formatShortcut({ key: "T", primary: true })}
+              </Kbd>
             </DropdownMenuItem>
             <DropdownMenuItem className="gap-2" onSelect={onNovaAbaPrivada}>
-              <EyeOff className="size-4" />
+              <PirateSkullIcon className="size-4" />
               {t.navegador.novaAbaPrivada}
+              <Kbd className="ml-auto">
+                {formatShortcut({ key: "N", primary: true, shift: true })}
+              </Kbd>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -1492,7 +1517,7 @@ export function NavegadorScreen({
         )}
         {modoPrivado && (
           <Badge variant="info-light" className="my-2 shrink-0">
-            <EyeOff />
+            <PirateSkullIcon />
             {t.navegador.modoPrivadoAtivo}
           </Badge>
         )}
@@ -1528,7 +1553,12 @@ export function NavegadorScreen({
               <CommandIcon className="size-4" />
             </button>
           </TooltipTrigger>
-          <TooltipContent>{t.navegador.paleta}</TooltipContent>
+          <TooltipContent>
+            <ShortcutTooltip
+              label={t.navegador.paleta}
+              shortcut={{ key: "K", primary: true }}
+            />
+          </TooltipContent>
         </Tooltip>
       </div>
 
