@@ -26,7 +26,10 @@ import type { SettingsItemId } from "@/store/settings-ui-slice";
 import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
-import { NavigatorSearchPanel } from "@/components/navigator-settings";
+import {
+  NavigatorSearchPanel,
+  NavigatorTabsPanel,
+} from "@/components/navigator-settings";
 import { LockScreenSettings } from "@/components/lock-screen-settings";
 import { StartupSettings } from "@/components/startup-settings";
 import {
@@ -249,6 +252,13 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
                 subtitle:
                   "Choose the default search engine used by the address bar.",
                 node: <NavigatorSearchPanel />,
+              },
+              {
+                key: "tabs",
+                title: "Tabs",
+                subtitle:
+                  "Sleeping tabs, idle timeout and how many tabs stay active.",
+                node: <NavigatorTabsPanel />,
               },
             ],
           },
