@@ -203,6 +203,12 @@ export function UniversalSearch({
                         onClick={() => selectOrganization(organization.id)}
                       >
                         <Avatar size="sm">
+                          {organization.logo && (
+                            <AvatarImage
+                              src={organization.logo}
+                              alt={organization.name}
+                            />
+                          )}
                           <AvatarFallback>
                             {initials(organization.name)}
                           </AvatarFallback>

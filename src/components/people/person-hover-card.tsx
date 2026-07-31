@@ -1,7 +1,7 @@
 "use client";
 
-import type { ReactElement } from "react";
-import { Mail, Users } from "lucide-react";
+import { useEffect, type ReactElement } from "react";
+import { Building2, Mail, Users } from "lucide-react";
 
 import { Badge } from "@/components/reui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -48,6 +48,9 @@ export function PersonHoverCard({
     resolvePerson(state.peopleContacts, email),
   );
   const organizations = useAppStore((state) => state.organizations);
+  const loadOrganizationLogo = useAppStore(
+    (state) => state.loadOrganizationLogo,
+  );
   const resolvePeoplePerson = useAppStore(
     (state) => state.resolvePeoplePerson,
   );
@@ -72,10 +75,17 @@ export function PersonHoverCard({
     .join(" · ");
   const photo = contact?.photo ?? fallback?.foto;
   const emailDomain = normalizeDomain(primaryEmail.split("@").at(-1) ?? "");
-  const organizationLabel = emailDomain
-    ? resolveOrganization(organizations, emailDomain)?.name ?? null
+  const organization = emailDomain
+    ? resolveOrganization(organizations, emailDomain)
     : null;
+  const organizationLabel = organization?.name ?? null;
   const frequent = contact?.frequent ?? fallback?.origem === "contatos";
+
+  useEffect(() => {
+    if (organization && !organization.logo) {
+      void loadOrganizationLogo(organization.id);
+    }
+  }, [loadOrganizationLogo, organization]);
 
   function compose() {
     abrirCompose("novo", caixaAtiva);
@@ -120,6 +130,14 @@ export function PersonHoverCard({
             <span className="flex flex-wrap items-center gap-1">
               {organizationLabel && (
                 <Badge variant="outline" size="xs">
+                  <Avatar className="size-3">
+                    {organization?.logo && (
+                      <AvatarImage src={organization.logo} alt="" />
+                    )}
+                    <AvatarFallback>
+                      <Building2 className="size-2.5" />
+                    </AvatarFallback>
+                  </Avatar>
                   {organizationLabel}
                 </Badge>
               )}
