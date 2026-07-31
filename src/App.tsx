@@ -166,8 +166,16 @@ function AppInner() {
 
   // Ponto unico de captura: so grava fora do modo privado, com "salvar histórico"
   // ligado (#307) e so http(s).
-  function registrarHistorico(url: string, nome: string) {
-    if (modoPrivado || !loadNavigatorPrefs().salvarHistorico) return;
+  // `privadoOverride` (#340): ações originadas do histórico/sessão passam o
+  // contexto explícito (normal) em vez de herdar o `modoPrivado` ad-hoc da aba
+  // de origem — o setState de modoPrivado só valeria no próximo tick.
+  function registrarHistorico(
+    url: string,
+    nome: string,
+    privadoOverride?: boolean,
+  ) {
+    const privado = privadoOverride ?? modoPrivado;
+    if (privado || !loadNavigatorPrefs().salvarHistorico) return;
     setHistorico((prev) => registrarVisita(prev, { url, nome }));
   }
 
@@ -440,7 +448,8 @@ function AppInner() {
   }
 
   /** Abre uma URL/busca livre (da omnibox do Cruiser) como aba própria. */
-  function abrirUrlLivre(url: string, nome: string) {
+  function abrirUrlLivre(url: string, nome: string, privadoOverride?: boolean) {
+    const privado = privadoOverride ?? modoPrivado;
     const id = `web-${Date.now()}`;
     const now = Date.now();
     setAbas((prev) =>
@@ -450,10 +459,10 @@ function AppInner() {
             ? tab
             : { ...tab, estado: "fundo" as const },
         ),
-        { id, nome, url, estado: "ativa", ultimoAcesso: now, privada: modoPrivado },
+        { id, nome, url, estado: "ativa", ultimoAcesso: now, privada: privado },
       ]),
     );
-    registrarHistorico(url, nome);
+    registrarHistorico(url, nome, privado);
     setAbaAtiva(id);
     setTela("navegador");
   }
@@ -462,6 +471,11 @@ function AppInner() {
    *  (Date.now pode repetir num mesmo tick); a última vira ativa. */
   function restaurarAbas(entradas: { url: string; nome: string }[]) {
     if (entradas.length === 0) return;
+    // #340: restaurar do histórico/sessão SEMPRE abre em contexto NORMAL — nunca
+    // herda o modo privado ad-hoc da aba de onde a ação foi disparada. Privado
+    // não persiste histórico; restaurar em privado perderia o histórico dessas
+    // abas silenciosamente. Alinha o contexto global pras próximas navegações.
+    setModoPrivado(false);
     const base = Date.now();
     const novas: AbaBrowser[] = entradas.map((entrada, i) => ({
       id: `web-${base}-${i}`,
@@ -469,7 +483,7 @@ function AppInner() {
       url: entrada.url,
       estado: i === entradas.length - 1 ? "ativa" : "fundo",
       ultimoAcesso: base + i,
-      privada: modoPrivado,
+      privada: false,
     }));
     setAbas((prev) =>
       orderPinnedFirst([
@@ -479,7 +493,8 @@ function AppInner() {
         ...novas,
       ]),
     );
-    for (const entrada of entradas) registrarHistorico(entrada.url, entrada.nome);
+    for (const entrada of entradas)
+      registrarHistorico(entrada.url, entrada.nome, false);
     setAbaAtiva(novas[novas.length - 1].id);
     setTela("navegador");
   }
@@ -558,12 +573,15 @@ function AppInner() {
     }
   }
 
-  /** Reabre a última aba fechada (#272 · Ctrl+Shift+T). */
+  /** Reabre a última aba fechada (#272 · Ctrl+Shift+T). #340: reabrir também não
+   *  herda o privado ad-hoc — volta em contexto normal (senão perderia histórico
+   *  da aba reaberta pela mesma razão do restaurar). */
   function reabrirFechada() {
     const ultima = fechadas[0];
     if (!ultima) return;
     setFechadas((prev) => prev.slice(1));
-    abrirUrlLivre(ultima.url, ultima.nome);
+    setModoPrivado(false);
+    abrirUrlLivre(ultima.url, ultima.nome, false);
   }
 
   /** Fecha todas as abas menos a clicada (e as fixadas), deixando-a ativa (#275). */
