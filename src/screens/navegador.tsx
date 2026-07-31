@@ -803,6 +803,18 @@ export function NavegadorScreen({
   // expandido, a webview cede (esconde+snapshot, reusa o #275) pro sidebar ficar
   // visível/clicável; ao colapsar, revela de novo.
   const { state: sidebarState } = useSidebar();
+  // #358: overlays do APP SHELL (fora do Navigator) que abrem sobre a área da
+  // webview — ex.: o menu do usuário no AppSidebar — avisam por window-event
+  // pra a webview ceder. Contador auto-curável (clamp >= 0).
+  const [chromeOverlays, setChromeOverlays] = useState(0);
+  useEffect(() => {
+    const aoCeder = (e: Event) => {
+      const aberto = (e as CustomEvent<boolean>).detail;
+      setChromeOverlays((n) => Math.max(0, n + (aberto ? 1 : -1)));
+    };
+    window.addEventListener("galaxie:webview-ceder", aoCeder);
+    return () => window.removeEventListener("galaxie:webview-ceder", aoCeder);
+  }, []);
 
   // Z-order (#275): conta os overlays DOM abertos SOBRE a webview (menus de
   // contexto, dropdowns da barra, diálogos). Enquanto houver algum, a webview
@@ -1416,7 +1428,8 @@ export function NavegadorScreen({
       paletaAberta ||
       overlaysWebview > 0 ||
       menuAbertoId !== null ||
-      sidebarState === "expanded"; // #359: sidebar do app expandido cobre a webview
+      sidebarState === "expanded" || // #359: sidebar do app expandido cobre a webview
+      chromeOverlays > 0; // #358: menu do usuário (app shell) sobre a webview
     if (overlayAtivo || !ativa) {
       // #275 rework: ANTES de esconder, tira um snapshot da aba ativa e o mostra
       // como imagem sob o overlay (conteúdo congela, não some). Só uma vez por
@@ -1449,7 +1462,7 @@ export function NavegadorScreen({
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview, menuAbertoId, sidebarState, snapshotOverlay]);
+  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview, menuAbertoId, sidebarState, chromeOverlays, snapshotOverlay]);
 
   // Auto-cura do menu de contexto (#275): se o dono do menu aberto (aba/grupo)
   // sumiu — chip desmontou com o menu aberto, sem disparar o fechamento — limpa a

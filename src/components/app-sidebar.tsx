@@ -146,7 +146,17 @@ export function AppSidebar({
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <DropdownMenu>
+            <DropdownMenu
+              // #358: este menu abre à direita, SOBRE a área da webview do
+              // Navigator (que pinta acima do DOM). Avisa o Navigator pra a
+              // webview ceder (esconder+snapshot) enquanto o menu está aberto —
+              // fora do Navigator não faz nada.
+              onOpenChange={(aberto) =>
+                window.dispatchEvent(
+                  new CustomEvent("galaxie:webview-ceder", { detail: aberto }),
+                )
+              }
+            >
               {/* Tooltip > DropdownMenu: os dois gatilhos com asChild no mesmo
                   botão. Só aparece na sidebar colapsada, onde sobra só o avatar. */}
               <Tooltip>
