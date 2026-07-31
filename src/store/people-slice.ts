@@ -3,6 +3,7 @@ import type { StateCreator } from "zustand";
 import * as api from "@/lib/api";
 import {
   applyPeopleEnrichment,
+  mergePeopleGroupMembers,
   mergePeopleRecords,
   resolvePerson,
   type PeopleContact,
@@ -12,6 +13,7 @@ import type {
   PeopleContactEdit,
   PeopleEnrichFieldKey,
   PeopleEnrichPreview,
+  PeopleGroup,
   Pessoa,
 } from "@/lib/types";
 import type { AppStore } from "./index";
@@ -51,7 +53,6 @@ function personFromSuggestion(person: Pessoa): PeopleContact {
 
 /** Cache único e exclusivamente de sessão do módulo People (#166). */
 export interface PeopleSlice {
-  peopleTab: "contacts" | "organizations";
   peopleSearchQuery: string;
   peopleContacts: PeopleContact[];
   peopleSelectedId: string | null;
@@ -66,6 +67,14 @@ export interface PeopleSlice {
   peopleColumnVisibility: Record<string, boolean>;
   peopleRequestGeneration: number;
   peopleDirectoryEnrichedEmails: string[];
+  peopleGroups: PeopleGroup[];
+  peopleGroupsLoading: boolean;
+  peopleGroupsLoaded: boolean;
+  peopleGroupsError: string | null;
+  peopleSelectedGroupId: string | null;
+  peopleGroupMembersById: Record<string, PeopleContact[]>;
+  peopleGroupMembersLoadingId: string | null;
+  peopleGroupMembersError: string | null;
 
   loadPeople: () => Promise<void>;
   loadMorePeople: () => Promise<void>;
@@ -77,8 +86,9 @@ export interface PeopleSlice {
   setPeopleFilters: (filters: Filter<string>[]) => void;
   setPeopleView: (view: "table" | "cards") => void;
   setPeopleColumnVisibility: (visibility: Record<string, boolean>) => void;
-  setPeopleTab: (tab: "contacts" | "organizations") => void;
   setPeopleSearchQuery: (query: string) => void;
+  loadPeopleGroups: () => Promise<void>;
+  selectPeopleGroup: (groupId: string) => Promise<void>;
   autoEnrichDirectoryContact: (
     id: string,
     sameOrganization: boolean,
@@ -92,7 +102,6 @@ export const createPeopleSlice: StateCreator<
   [],
   PeopleSlice
 > = (set, get) => ({
-  peopleTab: "contacts",
   peopleSearchQuery: "",
   peopleContacts: [],
   peopleSelectedId: null,
@@ -115,6 +124,14 @@ export const createPeopleSlice: StateCreator<
   },
   peopleRequestGeneration: 0,
   peopleDirectoryEnrichedEmails: [],
+  peopleGroups: [],
+  peopleGroupsLoading: false,
+  peopleGroupsLoaded: false,
+  peopleGroupsError: null,
+  peopleSelectedGroupId: null,
+  peopleGroupMembersById: {},
+  peopleGroupMembersLoadingId: null,
+  peopleGroupMembersError: null,
 
   loadPeople: async () => {
     const generation = get().peopleRequestGeneration + 1;
@@ -266,8 +283,66 @@ export const createPeopleSlice: StateCreator<
   setPeopleView: (peopleView) => set({ peopleView }),
   setPeopleColumnVisibility: (peopleColumnVisibility) =>
     set({ peopleColumnVisibility }),
-  setPeopleTab: (peopleTab) => set({ peopleTab }),
   setPeopleSearchQuery: (peopleSearchQuery) => set({ peopleSearchQuery }),
+  loadPeopleGroups: async () => {
+    const { peopleGroupsLoading, peopleGroupsLoaded } = get();
+    if (peopleGroupsLoading || peopleGroupsLoaded) return;
+    set({ peopleGroupsLoading: true, peopleGroupsError: null });
+    try {
+      const result = await api.crPeopleGroups();
+      set({
+        peopleGroups: result.groups,
+        peopleGroupsLoading: false,
+        peopleGroupsLoaded: true,
+        peopleGroupsError:
+          [...result.failures, ...result.missingScopes].join(" · ") || null,
+      });
+    } catch (error) {
+      set({
+        peopleGroupsLoading: false,
+        peopleGroupsLoaded: true,
+        peopleGroupsError: String(error),
+      });
+    }
+  },
+  selectPeopleGroup: async (groupId) => {
+    get().setPeopleTab("groups");
+    get().selectPerson(null);
+    set({
+      peopleSelectedGroupId: groupId,
+      peopleGroupMembersError: null,
+    });
+    if (Object.hasOwn(get().peopleGroupMembersById, groupId)) return;
+
+    set({ peopleGroupMembersLoadingId: groupId });
+    try {
+      const result = await api.crPeopleGroupMembers(groupId);
+      const members = mergePeopleGroupMembers(
+        result.records,
+        get().peopleContacts,
+      );
+      set((state) => ({
+        peopleGroupMembersById: {
+          ...state.peopleGroupMembersById,
+          [groupId]: members,
+        },
+        peopleGroups: state.peopleGroups.map((group) =>
+          group.id === groupId
+            ? { ...group, memberCount: result.memberCount }
+            : group,
+        ),
+        peopleGroupMembersLoadingId:
+          state.peopleGroupMembersLoadingId === groupId
+            ? null
+            : state.peopleGroupMembersLoadingId,
+      }));
+    } catch (error) {
+      set({
+        peopleGroupMembersLoadingId: null,
+        peopleGroupMembersError: String(error),
+      });
+    }
+  },
   autoEnrichDirectoryContact: async (id, sameOrganization) => {
     const contact = get().peopleContacts.find((candidate) => candidate.id === id);
     const email = contact?.emails[0]?.address.trim();

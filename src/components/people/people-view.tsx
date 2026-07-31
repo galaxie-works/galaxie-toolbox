@@ -154,6 +154,8 @@ import type {
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
 
+const EMPTY_CONTACTS: PeopleContact[] = [];
+
 function initials(name: string): string {
   return (
     name
@@ -298,6 +300,27 @@ function PeoplePermissionEmpty() {
         <KeyRound />
       </IconTile>
       <p className="font-medium">{t.controlRoom.peopleSemPermissao}</p>
+    </div>
+  );
+}
+
+function PeopleGroupEmpty({ selected }: { selected: boolean }) {
+  const { t } = useIdioma();
+  return (
+    <div className="flex h-full min-h-56 w-full flex-col items-center justify-center px-6 text-center">
+      <IconStack className="mb-2">
+        <Users className="size-5" />
+      </IconStack>
+      <p className="font-medium">
+        {selected
+          ? t.controlRoom.peopleGroupEmpty
+          : t.controlRoom.peopleGroupSelect}
+      </p>
+      <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+        {selected
+          ? t.controlRoom.peopleGroupEmptyDesc
+          : t.controlRoom.peopleGroupSelectDesc}
+      </p>
     </div>
   );
 }
@@ -1480,6 +1503,20 @@ export function PeopleView({
     (state) => state.setPeopleColumnVisibility,
   );
   const peopleTab = useAppStore((state) => state.peopleTab);
+  const selectedGroupId = useAppStore(
+    (state) => state.peopleSelectedGroupId,
+  );
+  const groupMembersById = useAppStore(
+    (state) => state.peopleGroupMembersById,
+  );
+  const groupMembersLoadingId = useAppStore(
+    (state) => state.peopleGroupMembersLoadingId,
+  );
+  const groupMembersError = useAppStore(
+    (state) => state.peopleGroupMembersError,
+  );
+  const groups = useAppStore((state) => state.peopleGroups);
+  const selectPeopleGroup = useAppStore((state) => state.selectPeopleGroup);
   const query = useAppStore((state) => state.peopleSearchQuery);
   const setPeopleSearchQuery = useAppStore(
     (state) => state.setPeopleSearchQuery,
@@ -1506,6 +1543,17 @@ export function PeopleView({
   // Assim o observer não fica preso num container removido ao trocar de aba.
   const detailContainerRef = useRef<HTMLElement>(null);
   const [moduleWidth, setModuleWidth] = useState(0);
+  const groupMembers =
+    selectedGroupId == null
+      ? EMPTY_CONTACTS
+      : (groupMembersById[selectedGroupId] ?? EMPTY_CONTACTS);
+  const visibleContacts = peopleTab === "groups" ? groupMembers : contacts;
+  const activeGroup =
+    groups.find((group) => group.id === selectedGroupId) ?? null;
+  const groupMembersLoading =
+    peopleTab === "groups" &&
+    selectedGroupId != null &&
+    groupMembersLoadingId === selectedGroupId;
 
   useLayoutEffect(() => {
     const el = detailContainerRef.current;
@@ -1535,8 +1583,8 @@ export function PeopleView({
   }, [loadPeople, loaded, loading]);
 
   useEffect(() => {
-    pedirFotos(contacts.map((contact) => contact.emails[0]?.address));
-  }, [contacts, pedirFotos]);
+    pedirFotos(visibleContacts.map((contact) => contact.emails[0]?.address));
+  }, [pedirFotos, visibleContacts]);
 
   const organizationLabelsByDomain = useMemo(() => {
     const labels = new Map<string, string>();
@@ -1555,7 +1603,9 @@ export function PeopleView({
       { value: "is_not", label: t.controlRoom.filtroOpNaoE },
     ];
     const companyOptions: FilterOption<string>[] = Array.from(
-      new Set(contacts.map((contact) => contact.company).filter(Boolean)),
+      new Set(
+        visibleContacts.map((contact) => contact.company).filter(Boolean),
+      ),
     )
       .sort((a, b) => String(a).localeCompare(String(b)))
       .map((company) => ({ value: String(company), label: String(company) }));
@@ -1611,15 +1661,18 @@ export function PeopleView({
             value: "people",
             label: t.controlRoom.peopleFilterSourcePeople,
           },
-          // #256 recoloca Directory quando /users for uma fonte real da lista.
+          {
+            value: "directory",
+            label: t.controlRoom.peopleSourceDirectory,
+          },
         ],
       },
     ];
-  }, [contacts, organizations, t]);
+  }, [organizations, t, visibleContacts]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = useMemo(() => {
-    const next = contacts.filter((contact) => {
+    const next = visibleContacts.filter((contact) => {
       const matchesQuery =
         !normalizedQuery ||
           [
@@ -1653,14 +1706,15 @@ export function PeopleView({
       });
     });
     return next;
-  }, [contacts, filters, normalizedQuery, organizations]);
+  }, [filters, normalizedQuery, organizations, visibleContacts]);
 
   const selectedContacts = useMemo(
     () => filtered.filter((contact) => rowSelection[contact.id]),
     [filtered, rowSelection],
   );
 
-  const selected = contacts.find((contact) => contact.id === selectedId) ?? null;
+  const selected =
+    visibleContacts.find((contact) => contact.id === selectedId) ?? null;
 
   useEffect(() => {
     if (
@@ -2004,6 +2058,22 @@ export function PeopleView({
         </Alert>
       )}
 
+      {peopleTab === "groups" && groupMembersError && selectedGroupId && (
+        <Alert variant="destructive">
+          <AlertTitle>{t.controlRoom.peopleGroupsError}</AlertTitle>
+          <AlertDescription>{groupMembersError}</AlertDescription>
+          <AlertAction>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void selectPeopleGroup(selectedGroupId)}
+            >
+              {t.controlRoom.peopleTentarNovamente}
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
+
       <div className="flex min-h-0 flex-1">
         {(() => {
           const listPane = (
@@ -2017,7 +2087,9 @@ export function PeopleView({
                 className="flex shrink-0 items-center gap-2 px-3 py-3"
               >
                 <h2 className="text-sm font-semibold">
-                  {t.controlRoom.peopleContactsTab}
+                  {peopleTab === "groups"
+                    ? activeGroup?.name ?? t.controlRoom.peopleGroupsSection
+                    : t.controlRoom.peopleContactsTab}
                 </h2>
                 <Badge variant="secondary" size="sm">
                   {filtered.length}
@@ -2139,8 +2211,14 @@ export function PeopleView({
                 </FramePanel>
               )}
               <FramePanel className="min-h-0 p-0">
-                {filtered.length === 0 && !(loading && !loaded) ? (
-                  missingScopes.length > 0 ? (
+                {filtered.length === 0 &&
+                !(loading && !loaded) &&
+                !groupMembersLoading ? (
+                  peopleTab === "groups" &&
+                  !normalizedQuery &&
+                  filters.length === 0 ? (
+                    <PeopleGroupEmpty selected={selectedGroupId != null} />
+                  ) : missingScopes.length > 0 ? (
                     <PeoplePermissionEmpty />
                   ) : (
                     <PeopleEmpty
@@ -2152,12 +2230,14 @@ export function PeopleView({
                       }}
                     />
                   )
-                ) : view === "table" || (loading && !loaded) ? (
+                ) : view === "table" ||
+                  (loading && !loaded) ||
+                  groupMembersLoading ? (
                   <DataGrid
                     table={table}
                     recordCount={filtered.length}
                     activeRowId={keyboardActiveId}
-                    isLoading={loading && !loaded}
+                    isLoading={(loading && !loaded) || groupMembersLoading}
                     loadingMode="skeleton"
                     emptyMessage={
                       missingScopes.length > 0 ? (
@@ -2214,9 +2294,19 @@ export function PeopleView({
                       <DataGridContainer className="h-full">
                         <ScrollArea className="h-full">
                           <DataGridTableVirtual
-                            onFetchMore={() => void loadMorePeople()}
-                            isFetchingMore={fetchingMore}
-                            hasMore={nextLinks.length > 0}
+                            onFetchMore={() => {
+                              if (peopleTab !== "groups") {
+                                void loadMorePeople();
+                              }
+                            }}
+                            isFetchingMore={
+                              peopleTab === "groups" ? false : fetchingMore
+                            }
+                            hasMore={
+                              peopleTab === "groups"
+                                ? false
+                                : nextLinks.length > 0
+                            }
                             fetchMoreOffset={8}
                             estimateSize={48}
                             overscan={8}
@@ -2251,7 +2341,7 @@ export function PeopleView({
                         />
                       ))}
                     </div>
-                    {nextLinks.length > 0 && (
+                    {peopleTab !== "groups" && nextLinks.length > 0 && (
                       <div className="flex justify-center py-4">
                         <Button
                           variant="outline"
@@ -2270,7 +2360,7 @@ export function PeopleView({
           );
 
           const detailPane =
-            loading && !loaded ? (
+            (loading && !loaded) || groupMembersLoading ? (
               <PeopleDetailSkeleton />
             ) : selected ? (
               <PeopleDetail

@@ -276,8 +276,8 @@ export interface Pessoa {
 }
 
 /** Fonte original de um registro entregue pelo Graph ao módulo People. */
-export type PeopleSource = "contacts" | "people";
-export type PeopleEnrichSource = PeopleSource | "directory";
+export type PeopleSource = "contacts" | "people" | "directory";
+export type PeopleEnrichSource = PeopleSource;
 export type PeopleEnrichFieldKey =
   | "photo"
   | "email"
@@ -325,6 +325,25 @@ export interface PeopleListResult {
   failures: string[];
   /** Continuações opacas devolvidas pelo Graph para Contacts e People. */
   nextLinks: string[];
+}
+
+/** Grupo M365 ao qual o usuário atual pertence (#293). */
+export interface PeopleGroup {
+  id: string;
+  name: string;
+  /** Só existe depois que os membros desse grupo foram carregados. */
+  memberCount?: number | null;
+}
+
+export interface PeopleGroupsResult {
+  groups: PeopleGroup[];
+  missingScopes: string[];
+  failures: string[];
+}
+
+export interface PeopleGroupMembersResult {
+  records: PeopleRecord[];
+  memberCount: number;
 }
 
 /** Uma adição revisável sugerida pelo Enrich, ainda sem efeito no contato. */

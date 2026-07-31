@@ -15,6 +15,7 @@ import { resolver, type Updater } from "./updater";
 /** Modo de "marcar como lido" (#95). */
 export type MarcarLidoModo = "imediato" | "atraso" | "manual";
 export type BridgeView = "mail" | "people" | "agenda";
+export type PeopleTab = "contacts" | "organizations" | "groups";
 
 export interface UiSlice {
   /** Zoom manual do leitor (#76). 1 = auto-fit puro. Persistido em `bridge.leitorZoom`. */
@@ -31,6 +32,8 @@ export interface UiSlice {
   marcarLidoAtraso: number;
   /** Módulo primário do Bridge nesta sessão. People/Agenda substituem os painéis de mail. */
   bridgeView: BridgeView;
+  /** Visão ativa de Contacts. Persistida para reabrir o módulo no mesmo contexto. */
+  peopleTab: PeopleTab;
 
   /** Aceita valor OU updater (mantém a semântica dos antigos `setState`). */
   setZoom: (v: Updater<number>) => void;
@@ -41,6 +44,7 @@ export interface UiSlice {
   setMarcarLidoModo: (m: MarcarLidoModo) => void;
   setMarcarLidoAtraso: (n: number) => void;
   setBridgeView: (view: BridgeView) => void;
+  setPeopleTab: (tab: PeopleTab) => void;
 }
 
 /**
@@ -55,6 +59,7 @@ export const UI_KEYS = {
   sidebarAberta: "bridge.sidebar",
   marcarLidoModo: "bridge.marcarLidoModo",
   marcarLidoAtraso: "bridge.marcarLidoAtraso",
+  peopleTab: "bridge.peopleTab",
 } as const;
 
 /** Campos persistidos do slice (o que o `partialize` guarda). */
@@ -66,6 +71,7 @@ export type UiPersistido = Pick<
   | "sidebarAberta"
   | "marcarLidoModo"
   | "marcarLidoAtraso"
+  | "peopleTab"
 >;
 
 /**
@@ -86,6 +92,7 @@ export const createUiSlice: StateCreator<
   marcarLidoModo: "imediato",
   marcarLidoAtraso: 2,
   bridgeView: "mail",
+  peopleTab: "contacts",
 
   setZoom: (v) => set((s) => ({ zoom: resolver(s.zoom, v) })),
   setGruposColapsados: (v) =>
@@ -97,4 +104,5 @@ export const createUiSlice: StateCreator<
   setMarcarLidoModo: (m) => set({ marcarLidoModo: m }),
   setMarcarLidoAtraso: (n) => set({ marcarLidoAtraso: n }),
   setBridgeView: (bridgeView) => set({ bridgeView }),
+  setPeopleTab: (peopleTab) => set({ peopleTab }),
 });
