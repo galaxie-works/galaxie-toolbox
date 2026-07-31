@@ -14,6 +14,8 @@ import type {
   PastaEmail,
   PastaOD,
   Pessoa,
+  PeopleBulkDetailsChange,
+  PeopleBulkDetailsWriteResult,
   PeopleCompanyWriteResult,
   PeopleEnrichApplyResult,
   PeopleContactEdit,
@@ -1054,6 +1056,28 @@ export async function crPeopleCompanyWrite(
   return invoke<PeopleCompanyWriteResult>("cr_people_company_write", {
     contactIds,
     companyName,
+  });
+}
+
+/**
+ * Grava campos seguros em contatos pessoais editáveis. O backend aplica as
+ * mudanças via `$batch` e devolve sucesso/falha por contato para rollback.
+ */
+export async function crPeopleDetailsWrite(
+  contactIds: string[],
+  changes: PeopleBulkDetailsChange[],
+): Promise<PeopleBulkDetailsWriteResult> {
+  if (!inTauri()) {
+    await sleep(550);
+    return {
+      writeAvailable: true,
+      savedContactIds: [...new Set(contactIds)],
+      failedContactIds: [],
+    };
+  }
+  return invoke<PeopleBulkDetailsWriteResult>("cr_people_details_write", {
+    contactIds,
+    changes,
   });
 }
 

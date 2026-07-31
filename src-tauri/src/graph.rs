@@ -4570,6 +4570,81 @@ pub struct PeopleCompanyWriteResult {
     pub failed_contact_ids: Vec<String>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PeopleBulkDetailsField {
+    CompanyName,
+    Department,
+    OfficeLocation,
+}
+
+impl PeopleBulkDetailsField {
+    fn graph_key(self) -> &'static str {
+        match self {
+            Self::CompanyName => "companyName",
+            Self::Department => "department",
+            Self::OfficeLocation => "officeLocation",
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleBulkDetailsChange {
+    pub field: PeopleBulkDetailsField,
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub value: Option<String>,
+}
+
+fn deserialize_required_nullable_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <Option<String> as serde::Deserialize>::deserialize(deserializer)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleBulkDetailsWriteResult {
+    pub write_available: bool,
+    pub saved_contact_ids: Vec<String>,
+    pub failed_contact_ids: Vec<String>,
+}
+
+fn people_bulk_details_body(
+    changes: Vec<PeopleBulkDetailsChange>,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    if changes.is_empty() {
+        return Err("At least one details change is required.".to_string());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut body = serde_json::Map::new();
+    for change in changes {
+        if !seen.insert(change.field) {
+            return Err(format!(
+                "Duplicate bulk details field: {}.",
+                change.field.graph_key()
+            ));
+        }
+        let value = match change.value {
+            Some(value) => {
+                let value = value.trim();
+                if value.is_empty() || value.len() > 256 {
+                    return Err(format!(
+                        "Invalid value for bulk details field: {}.",
+                        change.field.graph_key()
+                    ));
+                }
+                serde_json::Value::String(value.to_string())
+            }
+            None => serde_json::Value::Null,
+        };
+        body.insert(change.field.graph_key().to_string(), value);
+    }
+    Ok(body)
+}
+
 /// Persiste a Organization escolhida explicitamente como `companyName`.
 /// O Graph limita JSON batches a 20 sub-requisições; cada envelope é casado
 /// pelo `id`, pois a ordem das respostas não é garantida.
@@ -4676,6 +4751,196 @@ pub fn cr_people_company_write(
         saved_contact_ids,
         failed_contact_ids,
     })
+}
+
+/// Aplica a mesma alteração de detalhes seguros a vários contatos pessoais.
+/// O Graph limita JSON batches a 20 sub-requisições; falhas de transporte ou
+/// sub-respostas não-2xx são isoladas nos IDs correspondentes.
+pub fn cr_people_details_write(
+    store: &TokenStore,
+    contact_ids: Vec<String>,
+    changes: Vec<PeopleBulkDetailsChange>,
+) -> Result<PeopleBulkDetailsWriteResult, String> {
+    let body = people_bulk_details_body(changes)?;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized_contact_ids = Vec::new();
+    for contact_id in contact_ids {
+        let contact_id = contact_id.trim();
+        if contact_id.is_empty() || contact_id.len() > 512 {
+            return Err("Invalid contact ID.".to_string());
+        }
+        if seen.insert(contact_id.to_string()) {
+            normalized_contact_ids.push(contact_id.to_string());
+        }
+    }
+
+    let write_available = token_tem_escopo(store, "Contacts.ReadWrite")?;
+    if normalized_contact_ids.is_empty() {
+        return Ok(PeopleBulkDetailsWriteResult {
+            write_available,
+            saved_contact_ids: Vec::new(),
+            failed_contact_ids: Vec::new(),
+        });
+    }
+    if !write_available {
+        return Ok(PeopleBulkDetailsWriteResult {
+            write_available: false,
+            saved_contact_ids: Vec::new(),
+            failed_contact_ids: normalized_contact_ids,
+        });
+    }
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let batch_url = format!("{GRAPH}/$batch");
+    let mut saved_contact_ids = Vec::new();
+    let mut failed_contact_ids = Vec::new();
+
+    for chunk in normalized_contact_ids.chunks(20) {
+        let requests: Vec<serde_json::Value> = chunk
+            .iter()
+            .enumerate()
+            .map(|(index, contact_id)| {
+                serde_json::json!({
+                    "id": index.to_string(),
+                    "method": "PATCH",
+                    "url": format!(
+                        "/me/contacts/{}",
+                        urlencoding::encode(contact_id)
+                    ),
+                    "headers": { "Content-Type": "application/json" },
+                    "body": body.clone(),
+                })
+            })
+            .collect();
+        let batch_body = serde_json::json!({ "requests": requests });
+        let response = match graph_enviar("people:details-write", GRAPH_TETO_ESPERA_S, || {
+            client
+                .post(&batch_url)
+                .bearer_auth(&token)
+                .json(&batch_body)
+                .send()
+        }) {
+            Ok(response) => response,
+            Err(_) => {
+                failed_contact_ids.extend(chunk.iter().cloned());
+                continue;
+            }
+        };
+        if !response.status().is_success() {
+            failed_contact_ids.extend(chunk.iter().cloned());
+            continue;
+        }
+
+        let value: serde_json::Value = match response.json() {
+            Ok(value) => value,
+            Err(_) => {
+                failed_contact_ids.extend(chunk.iter().cloned());
+                continue;
+            }
+        };
+        let mut successful_indexes = std::collections::HashSet::new();
+        for item in value["responses"].as_array().into_iter().flatten() {
+            let Some(index) = item["id"].as_str().and_then(|id| id.parse::<usize>().ok()) else {
+                continue;
+            };
+            let status = item["status"].as_u64().unwrap_or_default();
+            if index < chunk.len() && (200..300).contains(&status) {
+                successful_indexes.insert(index);
+            }
+        }
+        for (index, contact_id) in chunk.iter().enumerate() {
+            if successful_indexes.contains(&index) {
+                saved_contact_ids.push(contact_id.clone());
+            } else {
+                failed_contact_ids.push(contact_id.clone());
+            }
+        }
+    }
+
+    Ok(PeopleBulkDetailsWriteResult {
+        write_available: true,
+        saved_contact_ids,
+        failed_contact_ids,
+    })
+}
+
+#[cfg(test)]
+mod people_bulk_details_tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_values_and_represents_explicit_clear_as_null() {
+        let body = people_bulk_details_body(vec![
+            PeopleBulkDetailsChange {
+                field: PeopleBulkDetailsField::CompanyName,
+                value: Some("  Galaxie Works  ".to_string()),
+            },
+            PeopleBulkDetailsChange {
+                field: PeopleBulkDetailsField::Department,
+                value: None,
+            },
+        ])
+        .expect("valid changes");
+
+        assert_eq!(body["companyName"], serde_json::json!("Galaxie Works"));
+        assert_eq!(body["department"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn rejects_empty_duplicate_and_invalid_values() {
+        assert!(people_bulk_details_body(Vec::new()).is_err());
+        assert!(people_bulk_details_body(vec![
+            PeopleBulkDetailsChange {
+                field: PeopleBulkDetailsField::OfficeLocation,
+                value: Some("London".to_string()),
+            },
+            PeopleBulkDetailsChange {
+                field: PeopleBulkDetailsField::OfficeLocation,
+                value: None,
+            },
+        ])
+        .is_err());
+        assert!(people_bulk_details_body(vec![PeopleBulkDetailsChange {
+            field: PeopleBulkDetailsField::Department,
+            value: Some("   ".to_string()),
+        }])
+        .is_err());
+        assert!(people_bulk_details_body(vec![PeopleBulkDetailsChange {
+            field: PeopleBulkDetailsField::Department,
+            value: Some("x".repeat(257)),
+        }])
+        .is_err());
+    }
+
+    #[test]
+    fn serde_field_whitelist_is_exact() {
+        let valid: PeopleBulkDetailsChange = serde_json::from_value(serde_json::json!({
+            "field": "officeLocation",
+            "value": "London"
+        }))
+        .expect("whitelisted field");
+        assert_eq!(valid.field, PeopleBulkDetailsField::OfficeLocation);
+
+        let explicit_clear: PeopleBulkDetailsChange = serde_json::from_value(serde_json::json!({
+            "field": "department",
+            "value": null
+        }))
+        .expect("explicit null is a valid clear");
+        assert_eq!(explicit_clear.value, None);
+
+        let missing_value = serde_json::from_value::<PeopleBulkDetailsChange>(serde_json::json!({
+            "field": "department"
+        }));
+        assert!(missing_value.is_err());
+
+        let invalid = serde_json::from_value::<PeopleBulkDetailsChange>(serde_json::json!({
+            "field": "jobTitle",
+            "value": "Director"
+        }));
+        assert!(invalid.is_err());
+    }
 }
 
 fn destinatario_tem_email(item: &serde_json::Value, email: &str) -> bool {
