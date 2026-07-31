@@ -28,6 +28,7 @@ import {
   podarMembership,
   origemDaUrl,
   loadFaviconCache,
+  loadNavigatorPrefs,
   persistFaviconCache,
   NAVIGATOR_GROUP_COLORS,
   NAVIGATOR_GROUP_COLOR_ORDER,
@@ -828,6 +829,9 @@ export function NavegadorScreen({
   const [favicons, setFavicons] = useState<Record<string, string>>(
     loadFaviconCache,
   );
+  // #307: visibilidade da barra de favoritos (Settings>Navigator>Favorites).
+  // Lida no mount; a tela remonta ao voltar do Settings, então reflete a pref.
+  const [mostrarBarraFav] = useState(() => loadNavigatorPrefs().mostrarBarraFav);
   const faviconTentados = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -1550,16 +1554,18 @@ export function NavegadorScreen({
         </div>
       )}
 
-      {/* Barra de favoritos (#176): reabre rápido + gerencia (importar do
-          Chrome/Edge, adicionar da aba ativa, pastas, renomear, remover). */}
-      <BarraFavoritos
-        favoritos={favoritos}
-        onMudar={setFavoritos}
-        onNavegar={onNavegar}
-        abaAtiva={
-          activeTab ? { url: activeTab.url, nome: activeTab.nome } : undefined
-        }
-      />
+      {/* Barra de favoritos (#176): reabre rápido + gerencia. Visibilidade
+          controlada no Settings>Navigator>Favorites (#307). */}
+      {mostrarBarraFav && (
+        <BarraFavoritos
+          favoritos={favoritos}
+          onMudar={setFavoritos}
+          onNavegar={onNavegar}
+          abaAtiva={
+            activeTab ? { url: activeTab.url, nome: activeTab.nome } : undefined
+          }
+        />
+      )}
 
       {ativa === null ? (
         <div className="flex-1 overflow-hidden">

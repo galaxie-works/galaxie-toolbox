@@ -8,6 +8,7 @@ import { ControlRoomScreen } from "@/screens/control-room";
 import { NavegadorScreen } from "@/screens/navegador";
 import {
   loadNavigatorMemorySettings,
+  loadNavigatorPrefs,
   loadPinnedNavigatorTabs,
   loadLastSession,
   orderPinnedFirst,
@@ -144,9 +145,29 @@ function AppInner() {
     persistHistorico(historico);
   }, [historico]);
 
-  // Ponto unico de captura: so grava fora do modo privado e so http(s).
+  // #307: poda o histórico pela retenção configurada (0 = sempre). Roda no tick
+  // do navigatorClock → aplica mudança de retenção e envelhecimento em ≤60s.
+  useEffect(() => {
+    const dias = loadNavigatorPrefs().retencaoDias;
+    if (dias <= 0) return;
+    const corte = Date.now() - dias * 86_400_000;
+    setHistorico((prev) => {
+      const podado = prev.filter((e) => e.ts >= corte);
+      return podado.length === prev.length ? prev : podado;
+    });
+  }, [navigatorClock]);
+
+  // #307: "Limpar histórico" no Settings dispara este evento; relemos do disco.
+  useEffect(() => {
+    const onLimpo = () => setHistorico(loadHistorico());
+    window.addEventListener("galaxie:historico-limpo", onLimpo);
+    return () => window.removeEventListener("galaxie:historico-limpo", onLimpo);
+  }, []);
+
+  // Ponto unico de captura: so grava fora do modo privado, com "salvar histórico"
+  // ligado (#307) e so http(s).
   function registrarHistorico(url: string, nome: string) {
-    if (modoPrivado) return;
+    if (modoPrivado || !loadNavigatorPrefs().salvarHistorico) return;
     setHistorico((prev) => registrarVisita(prev, { url, nome }));
   }
 

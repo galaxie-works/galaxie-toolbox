@@ -27,6 +27,8 @@ import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
 import {
+  NavigatorFavoritosPanel,
+  NavigatorHistoryPanel,
   NavigatorSearchPanel,
   NavigatorTabsPanel,
 } from "@/components/navigator-settings";
@@ -259,6 +261,19 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
                 subtitle:
                   "Sleeping tabs, idle timeout and how many tabs stay active.",
                 node: <NavigatorTabsPanel />,
+              },
+              {
+                key: "favorites",
+                title: "Favorites",
+                subtitle: "Show or hide the favorites bar under the tabs.",
+                node: <NavigatorFavoritosPanel />,
+              },
+              {
+                key: "history",
+                title: "History & privacy",
+                subtitle:
+                  "Save browsing history, set retention and clear it.",
+                node: <NavigatorHistoryPanel />,
               },
             ],
           },

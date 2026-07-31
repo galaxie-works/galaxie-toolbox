@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { FramePanel } from "@/components/reui/frame";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -14,13 +15,17 @@ import {
 import { Switch } from "@/components/ui/switch";
 import {
   loadNavigatorMemorySettings,
+  loadNavigatorPrefs,
   loadNavigatorSearch,
   persistNavigatorMemorySettings,
+  persistNavigatorPrefs,
   persistNavigatorSearch,
   type NavigatorMemorySettings,
+  type NavigatorPrefs,
   type NavigatorSearchProvider,
   type NavigatorSearchSettings,
 } from "@/lib/navigator-tabs";
+import { persistHistorico } from "@/lib/navigator-history";
 
 /**
  * Settings > Galaxie Apps > Navigator — grupo **Search** (#305). Provedor de
@@ -171,6 +176,121 @@ export function NavigatorTabsPanel() {
             </SelectGroup>
           </SelectContent>
         </Select>
+      </div>
+    </FramePanel>
+  );
+}
+
+/**
+ * Settings > Galaxie Apps > Navigator — grupo **Favoritos** (#307). Visibilidade
+ * da barra de favoritos (liga #176). Persiste no localStorage (NavigatorPrefs).
+ */
+export function NavigatorFavoritosPanel() {
+  const [prefs, setPrefs] = useState<NavigatorPrefs>(loadNavigatorPrefs);
+  const atualizar = (patch: Partial<NavigatorPrefs>) =>
+    setPrefs((prev) => {
+      const proximo = { ...prev, ...patch };
+      persistNavigatorPrefs(proximo);
+      return proximo;
+    });
+
+  return (
+    <FramePanel>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Show favorites bar</h3>
+          <p className="text-sm text-muted-foreground">
+            Show the favorites bar under the tab strip for quick access.
+          </p>
+        </div>
+        <Switch
+          checked={prefs.mostrarBarraFav}
+          onCheckedChange={(valor) => atualizar({ mostrarBarraFav: valor })}
+          aria-label="Show favorites bar"
+        />
+      </div>
+    </FramePanel>
+  );
+}
+
+/**
+ * Settings > Galaxie Apps > Navigator — grupo **History & privacy** (#307, liga
+ * #177). Salvar histórico on/off + retenção + limpar tudo. Persiste no
+ * localStorage; "Clear all" dispara evento pro App reler o histórico do disco.
+ */
+export function NavigatorHistoryPanel() {
+  const [prefs, setPrefs] = useState<NavigatorPrefs>(loadNavigatorPrefs);
+  const atualizar = (patch: Partial<NavigatorPrefs>) =>
+    setPrefs((prev) => {
+      const proximo = { ...prev, ...patch };
+      persistNavigatorPrefs(proximo);
+      return proximo;
+    });
+
+  const limparTudo = () => {
+    persistHistorico([]);
+    window.dispatchEvent(new Event("galaxie:historico-limpo"));
+  };
+
+  return (
+    <FramePanel>
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Save browsing history</h3>
+          <p className="text-sm text-muted-foreground">
+            Record the pages you visit so you can search and reopen them. Private
+            tabs never record.
+          </p>
+        </div>
+        <Switch
+          checked={prefs.salvarHistorico}
+          onCheckedChange={(valor) => atualizar({ salvarHistorico: valor })}
+          aria-label="Save browsing history"
+        />
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-4 border-t border-border pt-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Keep history for</h3>
+          <p className="text-sm text-muted-foreground">
+            Automatically remove history older than this.
+          </p>
+        </div>
+        <Select
+          value={String(prefs.retencaoDias)}
+          onValueChange={(valor) => atualizar({ retencaoDias: Number(valor) })}
+          disabled={!prefs.salvarHistorico}
+        >
+          <SelectTrigger aria-label="Keep history for" className="w-44 shrink-0">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent position="popper" align="end">
+            <SelectGroup>
+              <SelectItem value="7">7 days</SelectItem>
+              <SelectItem value="30">30 days</SelectItem>
+              <SelectItem value="90">90 days</SelectItem>
+              <SelectItem value="0">Forever</SelectItem>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-4 border-t border-border pt-4">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Clear browsing history</h3>
+          <p className="text-sm text-muted-foreground">
+            Remove all recorded history from this device.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0 text-destructive hover:text-destructive"
+          onClick={limparTudo}
+        >
+          Clear all
+        </Button>
       </div>
     </FramePanel>
   );
