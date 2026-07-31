@@ -537,3 +537,59 @@ export function urlDeBusca(termo: string): string {
   const base = s.provider === "custom" ? SEARCH_URLS.bing : SEARCH_URLS[s.provider];
   return base.replace("%s", q);
 }
+
+// --- Prefs Favoritos + History/Privacy (#307) --------------------------------
+// Barra de favoritos on/off; salvar histórico on/off; retenção (dias, 0=sempre).
+// Persistido em localStorage (padrão legado). O Navigator/App leem no seu ponto
+// natural (mount da barra / call-time do registrarHistorico / poda no tick).
+
+export interface NavigatorPrefs {
+  mostrarBarraFav: boolean;
+  salvarHistorico: boolean;
+  /** Dias de retenção do histórico; 0 = manter sempre. */
+  retencaoDias: number;
+}
+
+export const NAVIGATOR_PREFS_DEFAULTS: NavigatorPrefs = {
+  mostrarBarraFav: true,
+  salvarHistorico: true,
+  retencaoDias: 0,
+};
+
+export const NAVIGATOR_PREFS_KEY = "galaxie.navigator.prefs.v1";
+
+export function loadNavigatorPrefs(): NavigatorPrefs {
+  if (typeof window === "undefined") return NAVIGATOR_PREFS_DEFAULTS;
+  try {
+    const p = JSON.parse(
+      localStorage.getItem(NAVIGATOR_PREFS_KEY) || "null",
+    ) as Partial<NavigatorPrefs> | null;
+    return {
+      mostrarBarraFav:
+        typeof p?.mostrarBarraFav === "boolean"
+          ? p.mostrarBarraFav
+          : NAVIGATOR_PREFS_DEFAULTS.mostrarBarraFav,
+      salvarHistorico:
+        typeof p?.salvarHistorico === "boolean"
+          ? p.salvarHistorico
+          : NAVIGATOR_PREFS_DEFAULTS.salvarHistorico,
+      retencaoDias:
+        typeof p?.retencaoDias === "number" &&
+        Number.isFinite(p.retencaoDias) &&
+        p.retencaoDias >= 0
+          ? p.retencaoDias
+          : NAVIGATOR_PREFS_DEFAULTS.retencaoDias,
+    };
+  } catch {
+    return NAVIGATOR_PREFS_DEFAULTS;
+  }
+}
+
+export function persistNavigatorPrefs(prefs: NavigatorPrefs): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(NAVIGATOR_PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // best-effort.
+  }
+}
