@@ -500,6 +500,28 @@ async fn cr_people_list(
         .map_err(|e| e.to_string())?
 }
 
+/// People: organização canônica do tenant atual.
+#[tauri::command]
+async fn cr_organizacao(
+    state: State<'_, Store>,
+) -> Result<graph::PeopleOrganizationResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_organizacao(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// People: snapshot paginado completo do diretório do tenant.
+#[tauri::command]
+async fn cr_people_directory(
+    state: State<'_, Store>,
+) -> Result<graph::PeopleDirectoryResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_people_directory(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// People: grupos M365 diretos do usuário atual.
 #[tauri::command]
 async fn cr_grupos(state: State<'_, Store>) -> Result<graph::PeopleGroupsResult, String> {
@@ -1430,6 +1452,8 @@ pub fn run() {
             cr_fotos_contatos,
             cr_pessoas,
             cr_people_list,
+            cr_organizacao,
+            cr_people_directory,
             cr_grupos,
             cr_grupo_membros,
             cr_people_enrich_preview,

@@ -22,9 +22,12 @@ import type {
   PeopleEnrichField,
   PeopleEnrichPreview,
   PeopleInteraction,
+  PeopleDirectoryResult,
   PeopleGroupMembersResult,
   PeopleGroupsResult,
   PeopleListResult,
+  PeopleOrganizationResult,
+  PeopleRecord,
   Reuniao,
   SegurancaEmail,
   Site,
@@ -778,6 +781,31 @@ const MOCK_PESSOAS: Pessoa[] = [
   { nome: "Gustavo Barata", email: "gustavo.barata@voaz.com.br", cargo: "Estagiário de Engenharia", origem: "organizacao" },
 ];
 
+const MOCK_DIRECTORY_RECORDS: PeopleRecord[] = [
+  {
+    id: "directory-ada",
+    source: "directory",
+    name: "Ada Lovelace",
+    emails: [{ address: "ada@example.com" }],
+    phones: [],
+    jobTitle: "Product Director",
+    company: "Analytical Engines",
+    organization: true,
+    peopleRank: null,
+  },
+  {
+    id: "directory-grace",
+    source: "directory",
+    name: "Grace Hopper",
+    emails: [{ address: "grace@example.com" }],
+    phones: [{ number: "+1 212 555 0102", label: "mobile" }],
+    jobTitle: "Engineering Lead",
+    company: "Compiler Labs",
+    organization: true,
+    peopleRank: null,
+  },
+];
+
 /**
  * Fotos (avatar) de remetentes internos, em lote (#39). Recebe e-mails e devolve
  * um mapa e-mail(minúsculo) → data URI | null (null = sem foto). Fora do Tauri
@@ -890,6 +918,39 @@ export async function crPeopleList(nextLinks: string[] = []): Promise<PeopleList
   return invoke<PeopleListResult>("cr_people_list", { nextLinks });
 }
 
+/** Organização canônica do tenant atual; não é uma organização criada no app. */
+export async function crPeopleOrganization(): Promise<PeopleOrganizationResult> {
+  if (!inTauri()) {
+    await sleep(250);
+    return {
+      organization: {
+        id: "organization-voaz",
+        name: MOCK_USER.organizacao ?? "Voaz",
+      },
+      missingScopes: [],
+      failures: [],
+    };
+  }
+  return invoke<PeopleOrganizationResult>("cr_organizacao");
+}
+
+/** Snapshot completo do diretório M365; a paginação é consumida no backend. */
+export async function crPeopleDirectory(): Promise<PeopleDirectoryResult> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      records: MOCK_DIRECTORY_RECORDS.map((record) => ({
+        ...record,
+        emails: record.emails.map((email) => ({ ...email })),
+        phones: record.phones.map((phone) => ({ ...phone })),
+      })),
+      missingScopes: [],
+      failures: [],
+    };
+  }
+  return invoke<PeopleDirectoryResult>("cr_people_directory");
+}
+
 /** Grupos M365 diretos do usuário atual (#293). */
 export async function crPeopleGroups(): Promise<PeopleGroupsResult> {
   if (!inTauri()) {
@@ -912,30 +973,11 @@ export async function crPeopleGroupMembers(
 ): Promise<PeopleGroupMembersResult> {
   if (!inTauri()) {
     await sleep(450);
-    const all = [
-      {
-        id: "directory-ada",
-        source: "directory" as const,
-        name: "Ada Lovelace",
-        emails: [{ address: "ada@example.com" }],
-        phones: [],
-        jobTitle: "Product Director",
-        company: "Analytical Engines",
-        organization: true,
-        peopleRank: null,
-      },
-      {
-        id: "directory-grace",
-        source: "directory" as const,
-        name: "Grace Hopper",
-        emails: [{ address: "grace@example.com" }],
-        phones: [{ number: "+1 212 555 0102", label: "mobile" }],
-        jobTitle: "Engineering Lead",
-        company: "Compiler Labs",
-        organization: true,
-        peopleRank: null,
-      },
-    ];
+    const all = MOCK_DIRECTORY_RECORDS.map((record) => ({
+      ...record,
+      emails: record.emails.map((email) => ({ ...email })),
+      phones: record.phones.map((phone) => ({ ...phone })),
+    }));
     const records = groupId === "group-leadership" ? all.slice(0, 1) : all;
     return { records, memberCount: records.length };
   }
