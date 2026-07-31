@@ -1173,6 +1173,17 @@ export function NavegadorScreen({
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
+        {/* #318 S1: affordance clara de "fixada" — badge de pin no canto do chip
+            (as pinned tabs já ficam compactas/sem fechar na lane da esquerda, mas
+            o Wagner pediu o ícone de pin explícito). Acima do grip (z-20). */}
+        {aba.fixada && (
+          <span
+            className="pointer-events-none absolute -bottom-0.5 -right-0.5 z-20 grid size-3.5 place-items-center rounded-full border border-background bg-primary text-primary-foreground"
+            aria-hidden="true"
+          >
+            <Pin className="size-2" />
+          </span>
+        )}
         <SortableItemHandle
           aria-label={t.navegador.grupoReordenar}
           title={t.navegador.grupoReordenar}
