@@ -1389,6 +1389,8 @@ pub fn run() {
             browser::browser_layout,
             browser::browser_fechar,
             browser::browser_esconder_todas,
+            browser::browser_recarregar,
+            browser::browser_fechar_todas,
             enable_long_paths,
             long_paths_status,
             log_frontend_error,

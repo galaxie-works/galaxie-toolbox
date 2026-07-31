@@ -141,6 +141,7 @@ import {
 } from "@/lib/navigator-overlay";
 import { ShipIcon, type ShipIconHandle } from "@/components/ui/ship";
 import { PirataIcon } from "@/components/ui/icons/marca/pirata";
+import { PirateSkullIcon } from "@/components/ui/icons/marca/pirate-skull";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 
 /**
@@ -992,7 +993,7 @@ export function NavegadorScreen({
               {dormindo ? (
                 <Moon className="size-4 shrink-0" aria-hidden="true" />
               ) : privada ? (
-                <EyeOff className="size-4 shrink-0 text-info" aria-hidden="true" />
+                <PirateSkullIcon className="size-4 shrink-0 text-info" />
               ) : app ? (
                 <img
                   src={urlIcone(app)}
@@ -1195,6 +1196,16 @@ export function NavegadorScreen({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // F5 / Ctrl+R — recarrega a PÁGINA da aba (webview-filha), NÃO o app (#310).
+      // preventDefault mata o reload default do WebView2 do app (o bug "amador").
+      if (
+        e.key === "F5" ||
+        ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "r")
+      ) {
+        e.preventDefault();
+        if (ativa) void browser.recarregar(ativa);
+        return;
+      }
       const mod = e.metaKey || e.ctrlKey;
       if (!mod && !e.altKey) return;
       const tecla = e.key.toLowerCase();
