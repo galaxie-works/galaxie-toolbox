@@ -276,7 +276,7 @@ function OrganizationForm({
             {t.controlRoom.orgsDescricao}
           </SheetDescription>
         </SheetHeader>
-        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto scrollbar-fina px-4 py-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto scrollbar-fina px-4 py-4">
           {form}
         </div>
         <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
