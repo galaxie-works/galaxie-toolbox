@@ -175,6 +175,7 @@ import type {
   AppUser,
   EmailItem,
   PastaEmail,
+  Participante,
   RespostaConvite,
 } from "@/lib/types";
 import {
@@ -245,6 +246,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useId,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -4861,6 +4863,47 @@ function badgeResposta(
   }
 }
 
+function EventoParticipantePill({
+  participante,
+  foto,
+  mostrarTooltip = true,
+}: {
+  participante: Participante;
+  foto?: string | null;
+  mostrarTooltip?: boolean;
+}) {
+  const nome = participante.nome.trim() || participante.email;
+  const email = participante.email.trim();
+  const rotuloCompleto =
+    email && email.toLocaleLowerCase() !== nome.toLocaleLowerCase()
+      ? `${nome} · ${email}`
+      : nome;
+
+  const pill = (
+    <span
+      tabIndex={mostrarTooltip ? 0 : undefined}
+      title={rotuloCompleto}
+      aria-label={mostrarTooltip ? rotuloCompleto : undefined}
+      className="inline-flex w-fit min-w-0 max-w-full items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+    >
+      <Avatar size="sm" className="shrink-0">
+        {foto && <AvatarImage src={foto} alt="" />}
+        <AvatarFallback>{participante.iniciais}</AvatarFallback>
+      </Avatar>
+      <span className="min-w-0 max-w-40 truncate text-xs">{nome}</span>
+    </span>
+  );
+
+  return mostrarTooltip ? (
+    <Tooltip>
+      <TooltipTrigger asChild>{pill}</TooltipTrigger>
+      <TooltipContent className="max-w-xs break-words">{rotuloCompleto}</TooltipContent>
+    </Tooltip>
+  ) : (
+    pill
+  );
+}
+
 function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const { idioma, t } = useIdioma();
   const id = useAppStore((s) => s.agendaEventoId);
@@ -4871,6 +4914,7 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const cancelarEvento = useAppStore((s) => s.cancelarEvento);
   const responderEvento = useAppStore((s) => s.responderEvento);
   const eventosMes = useAppStore((s) => s.agendaEventosMes);
+  const participantesPopoverTituloId = useId();
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
 
@@ -5003,23 +5047,51 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
               {det.participantes.length > 0 && (
                 <div>
                   <p className="mb-2 text-xs font-medium">{t.controlRoom.convidadosTitulo}</p>
-                  <div className="flex flex-wrap gap-2">
-                    {det.participantes.map((p) => {
-                      const foto = p.foto ?? getFoto(p.email);
-                      return (
-                        <div
+                  <div className="max-h-[8.5rem] overflow-hidden">
+                    <div className="flex flex-wrap gap-2">
+                      {det.participantes.slice(0, 3).map((p) => (
+                        <EventoParticipantePill
                           key={p.email || p.nome}
-                          className="flex items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1"
-                        >
-                          <Avatar size="sm">
-                            {foto && <AvatarImage src={foto} alt="" />}
-                            <AvatarFallback>{p.iniciais}</AvatarFallback>
-                          </Avatar>
-                          <span className="text-xs">{p.nome}</span>
-                        </div>
-                      );
-                    })}
+                          participante={p}
+                          foto={p.foto ?? getFoto(p.email)}
+                        />
+                      ))}
+                    </div>
                   </div>
+                  {det.participantes.length > 3 && (
+                    <Popover>
+                      <PopoverTrigger
+                        type="button"
+                        className="mt-1 cursor-pointer truncate rounded-sm px-1.5 py-1 text-start text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        {preencher(t.controlRoom.agendaMostrarTodosConvidados, {
+                          count: det.participantes.length,
+                        })}
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        aria-labelledby={participantesPopoverTituloId}
+                        className="w-80 gap-2 p-2"
+                      >
+                        <p
+                          id={participantesPopoverTituloId}
+                          className="px-1 text-xs font-medium"
+                        >
+                          {t.controlRoom.agendaTodosConvidados}
+                        </p>
+                        <div className="flex max-h-64 flex-wrap gap-2 overflow-y-auto p-1 scrollbar-fina">
+                          {det.participantes.map((p) => (
+                            <EventoParticipantePill
+                              key={p.email || p.nome}
+                              participante={p}
+                              foto={p.foto ?? getFoto(p.email)}
+                              mostrarTooltip={false}
+                            />
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
                 </div>
               )}
               {/* RSVP a convites (#287): Aceitar/Talvez/Recusar. Só para
