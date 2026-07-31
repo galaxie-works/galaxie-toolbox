@@ -29,6 +29,7 @@ import {
   origemDaUrl,
   loadFaviconCache,
   loadNavigatorPrefs,
+  persistNavigatorPrefs,
   persistFaviconCache,
   NAVIGATOR_GROUP_COLORS,
   NAVIGATOR_GROUP_COLOR_ORDER,
@@ -113,6 +114,7 @@ import { cn } from "@/lib/utils";
 import {
   BedDouble,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Coffee,
   Command as CommandIcon,
@@ -848,6 +850,19 @@ export function NavegadorScreen({
   // #307: visibilidade da barra de favoritos (Settings>Navigator>Favorites).
   // Lida no mount; a tela remonta ao voltar do Settings, então reflete a pref.
   const [mostrarBarraFav] = useState(() => loadNavigatorPrefs().mostrarBarraFav);
+  // #318 S2: rail lateral de pinned tabs; colapso persistido em NavigatorPrefs.
+  const [railColapsado, setRailColapsado] = useState(
+    () => loadNavigatorPrefs().railPinsColapsado,
+  );
+  const alternarRail = () =>
+    setRailColapsado((v) => {
+      const proximo = !v;
+      persistNavigatorPrefs({
+        ...loadNavigatorPrefs(),
+        railPinsColapsado: proximo,
+      });
+      return proximo;
+    });
   const faviconTentados = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -1419,6 +1434,110 @@ export function NavegadorScreen({
     };
   }, []);
 
+  // #318 S2: rail lateral colapsível das pinned tabs (semente de Workspaces).
+  // Só aparece quando há abas fixadas. Encolhe a área de conteúdo → o
+  // ResizeObserver da `area` reposiciona a webview automaticamente. Colapsado =
+  // só favicons; expandido = ícone + nome. Clicar foca a aba.
+  const renderPinRail = () => {
+    const pinadas = abas.filter((aba) => aba.fixada);
+    if (pinadas.length === 0) return null;
+
+    const iconeDaAba = (aba: AbaBrowser) => {
+      const app = porId(aba.id);
+      if (app)
+        return (
+          <img src={urlIcone(app)} alt="" className="size-4 shrink-0" draggable={false} />
+        );
+      const fav = !aba.privada ? faviconDaAba(aba) : undefined;
+      if (fav)
+        return (
+          <img src={fav} alt="" className="size-4 shrink-0 rounded-[3px]" draggable={false} />
+        );
+      return <Globe className="size-4 shrink-0 text-muted-foreground" />;
+    };
+
+    if (railColapsado) {
+      return (
+        <div className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-border bg-muted/30 py-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={alternarRail}
+                aria-label={t.navegador.railPinsExpandir}
+                className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <ChevronRight className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">{t.navegador.railPinsExpandir}</TooltipContent>
+          </Tooltip>
+          {pinadas.map((aba) => (
+            <Tooltip key={aba.id}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onTrocar(aba.id)}
+                  aria-label={aba.nome}
+                  aria-current={aba.id === ativa}
+                  className={cn(
+                    "grid size-8 place-items-center rounded-md",
+                    aba.id === ativa
+                      ? "bg-accent text-foreground"
+                      : "text-muted-foreground hover:bg-accent/50",
+                  )}
+                >
+                  {iconeDaAba(aba)}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{aba.nome}</TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex w-52 shrink-0 flex-col border-r border-border bg-muted/20">
+        <div className="flex items-center justify-between gap-2 px-3 py-2">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+            <Pin className="size-3.5" />
+            {t.navegador.railPinsTitulo}
+          </span>
+          <button
+            type="button"
+            onClick={alternarRail}
+            aria-label={t.navegador.railPinsColapsar}
+            className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+        </div>
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-0.5 px-2 pb-2">
+            {pinadas.map((aba) => (
+              <button
+                key={aba.id}
+                type="button"
+                onClick={() => onTrocar(aba.id)}
+                aria-current={aba.id === ativa}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  aba.id === ativa
+                    ? "bg-accent font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-accent/50",
+                )}
+              >
+                {iconeDaAba(aba)}
+                <span className="min-w-0 flex-1 truncate">{aba.nome}</span>
+              </button>
+            ))}
+          </div>
+        </ScrollArea>
+      </div>
+    );
+  };
+
   return (
     <OcultarWebviewContext.Provider value={registrarOverlayWebview}>
     <div className="flex h-full w-full flex-col">
@@ -1660,7 +1779,11 @@ export function NavegadorScreen({
         />
       )}
 
-      {ativa === null ? (
+      {/* #318 S2: rail das pinned tabs à esquerda + o conteúdo (Launcher/webview).
+          O rail encolhe a área; o ResizeObserver da `area` reposiciona a webview. */}
+      <div className="flex min-h-0 flex-1">
+        {renderPinRail()}
+        {ativa === null ? (
         <div className="flex-1 overflow-hidden">
           <Launcher
             abas={abas}
@@ -1688,7 +1811,8 @@ export function NavegadorScreen({
             </div>
           </div>
         </div>
-      )}
+        )}
+      </div>
 
       {/* Overlay global (Ctrl/Cmd+K) por cima da aba viva. */}
       <PaletaOverlay
