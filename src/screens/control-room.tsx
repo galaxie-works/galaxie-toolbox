@@ -125,6 +125,7 @@ import {
 } from "@/components/compose/compor-mensagem";
 import { NovaMensagemModal } from "@/components/compose/nova-mensagem-modal";
 import { AgendaView } from "@/components/agenda/agenda-view";
+import { AgendaCalendarSelector } from "@/components/agenda/agenda-calendar-selector";
 import { PeopleView } from "@/components/people/people-view";
 import { PersonHoverCard } from "@/components/people/person-hover-card";
 import * as AnimatedButton from "@/components/morphin/animated-border-button";
@@ -2095,7 +2096,9 @@ function FolderSidebar({
           </div>
         </ScrollArea>
       ) : (
-        <div className="flex-1" />
+        <ScrollArea className="min-h-0 w-full flex-1">
+          <AgendaCalendarSelector colapsada={colapsada} />
+        </ScrollArea>
       )}
 
       <Separator className={cn("shrink-0", colapsada && "w-6")} />
@@ -6305,7 +6308,6 @@ export function ControlRoomScreen({
           bridgeView={bridgeView}
           onSelectModule={(view) => {
             setBridgeView(view);
-            setSidebarAberta(view !== "agenda");
           }}
           t={t}
         />
