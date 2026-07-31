@@ -95,14 +95,6 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -112,6 +104,14 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   Toolbar,
   ToolbarButton,
@@ -1143,7 +1143,7 @@ function splitDomains(value: string): string[] {
  * (existente ou nova). Aditivo: itera `addContactToOrganization` (idempotente),
  * nunca `assignOrganizationContacts` (que poda quem não foi selecionado).
  */
-function AssignToOrganizationDialog({
+function AssignToOrganizationSheet({
   open,
   contacts,
   onOpenChange,
@@ -1269,143 +1269,154 @@ function AssignToOrganizationDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>
-            {preencher(t.controlRoom.bulkOrgTitulo, { n: contacts.length })}
-          </DialogTitle>
-          <DialogDescription>
-            {t.controlRoom.bulkOrgDescricao}
-          </DialogDescription>
-        </DialogHeader>
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 p-0 sm:max-w-lg"
+      >
+        <SheetHeader className="border-b px-4 py-3">
+          <SheetTitle className="pr-6 text-left">
+            {step === "create"
+              ? t.controlRoom.orgsCriarTitulo
+              : preencher(t.controlRoom.bulkOrgTitulo, { n: contacts.length })}
+          </SheetTitle>
+          <SheetDescription className="text-left">
+            {step === "create"
+              ? t.controlRoom.orgsDescricao
+              : t.controlRoom.bulkOrgDescricao}
+          </SheetDescription>
+        </SheetHeader>
 
-        {step === "pick" && (
-          <Command className="rounded-lg border">
-            <CommandInput
-              placeholder={t.controlRoom.bulkOrgBuscar}
-              value={query}
-              onValueChange={setQuery}
-            />
-            <CommandList>
-              <CommandEmpty>{t.controlRoom.bulkOrgSemOrgs}</CommandEmpty>
-              {organizations.length > 0 && (
+        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina px-4 py-4">
+          {step === "pick" && (
+            <Command className="rounded-lg border">
+              <CommandInput
+                placeholder={t.controlRoom.bulkOrgBuscar}
+                value={query}
+                onValueChange={setQuery}
+              />
+              <CommandList>
+                <CommandEmpty>{t.controlRoom.bulkOrgSemOrgs}</CommandEmpty>
+                {organizations.length > 0 && (
+                  <CommandGroup>
+                    {organizations.map((organization) => (
+                      <CommandItem
+                        key={organization.id}
+                        value={`${organization.name} ${organization.domains.join(" ")}`}
+                        onSelect={() => {
+                          setTargetId(organization.id);
+                          setStep("preview");
+                        }}
+                      >
+                        <Building2 />
+                        <span className="min-w-0 flex-1 truncate">
+                          {organization.name}
+                        </span>
+                        <span className="truncate text-xs text-muted-foreground">
+                          {organization.domains.join(" · ")}
+                        </span>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                )}
+                <CommandSeparator />
                 <CommandGroup>
-                  {organizations.map((organization) => (
-                    <CommandItem
-                      key={organization.id}
-                      value={`${organization.name} ${organization.domains.join(" ")}`}
-                      onSelect={() => {
-                        setTargetId(organization.id);
-                        setStep("preview");
-                      }}
-                    >
-                      <Building2 />
-                      <span className="min-w-0 flex-1 truncate">
-                        {organization.name}
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {organization.domains.join(" · ")}
-                      </span>
-                    </CommandItem>
-                  ))}
+                  <CommandItem value="__create__" onSelect={goToCreate}>
+                    <Plus />
+                    {t.controlRoom.bulkOrgCriarNova}
+                  </CommandItem>
                 </CommandGroup>
-              )}
-              <CommandSeparator />
-              <CommandGroup>
-                <CommandItem value="__create__" onSelect={goToCreate}>
-                  <Plus />
-                  {t.controlRoom.bulkOrgCriarNova}
-                </CommandItem>
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        )}
+              </CommandList>
+            </Command>
+          )}
 
-        {step === "create" && (
-          <div className="grid gap-4 py-2">
-            <div className="grid gap-2">
-              <Label htmlFor="bulk-org-name">{t.controlRoom.orgsNome}</Label>
-              <Input
-                id="bulk-org-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder={t.controlRoom.orgsNomePlaceholder}
-                autoFocus
-              />
-            </div>
-            <div className="grid gap-2">
-              <div className="flex items-center gap-1">
-                <Label htmlFor="bulk-org-domains">
-                  {t.controlRoom.orgsDominios}
-                </Label>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="rounded-full text-muted-foreground hover:text-foreground"
-                      aria-label={t.controlRoom.orgsDominiosTooltip}
-                    >
-                      <Info className="size-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs text-pretty">
-                    {t.controlRoom.orgsDominiosTooltip}
-                  </TooltipContent>
-                </Tooltip>
+          {step === "create" && (
+            <div className="grid gap-4">
+              <div className="grid gap-2">
+                <Label htmlFor="bulk-org-name">{t.controlRoom.orgsNome}</Label>
+                <Input
+                  id="bulk-org-name"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder={t.controlRoom.orgsNomePlaceholder}
+                  autoFocus
+                />
               </div>
-              <Input
-                id="bulk-org-domains"
-                value={domains}
-                onChange={(event) => setDomains(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    setDomains((current) => `${current.trim()}, `);
-                  }
-                }}
-                placeholder={t.controlRoom.orgsDominiosPlaceholder}
-              />
+              <div className="grid gap-2">
+                <div className="flex items-center gap-1">
+                  <Label htmlFor="bulk-org-domains">
+                    {t.controlRoom.orgsDominios}
+                  </Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="rounded-full text-muted-foreground hover:text-foreground"
+                        aria-label={t.controlRoom.orgsDominiosTooltip}
+                      >
+                        <Info className="size-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs text-pretty">
+                      {t.controlRoom.orgsDominiosTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+                <Input
+                  id="bulk-org-domains"
+                  value={domains}
+                  onChange={(event) => setDomains(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      setDomains((current) => `${current.trim()}, `);
+                    }
+                  }}
+                  placeholder={t.controlRoom.orgsDominiosPlaceholder}
+                />
+              </div>
+              {error && (
+                <p className="text-sm text-destructive">
+                  {t.controlRoom.orgsErroCampos}
+                </p>
+              )}
             </div>
-            {error && (
-              <p className="text-sm text-destructive">
-                {t.controlRoom.orgsErroCampos}
-              </p>
-            )}
-          </div>
-        )}
+          )}
 
-        {step === "preview" && preview && target && (
-          <div className="grid gap-3 py-2">
-            <p className="text-sm font-medium">
-              {preencher(t.controlRoom.bulkOrgPreviewAlvo, { nome: target.name })}
-            </p>
-            <ul className="grid gap-1.5 text-sm">
-              <li className="flex items-center gap-2">
-                <Badge variant="secondary">{preview.added}</Badge>
-                <span>{t.controlRoom.bulkOrgPreviewAdicionados}</span>
-              </li>
-              <li className="flex items-center gap-2">
-                <Badge variant="outline">{preview.already}</Badge>
-                <span className="text-muted-foreground">
-                  {t.controlRoom.bulkOrgPreviewJaPertencem}
-                </span>
-              </li>
-              {preview.noEmail > 0 && (
+          {step === "preview" && preview && target && (
+            <div className="grid gap-3">
+              <p className="text-sm font-medium">
+                {preencher(t.controlRoom.bulkOrgPreviewAlvo, {
+                  nome: target.name,
+                })}
+              </p>
+              <ul className="grid gap-1.5 text-sm">
                 <li className="flex items-center gap-2">
-                  <Badge variant="outline">{preview.noEmail}</Badge>
+                  <Badge variant="secondary">{preview.added}</Badge>
+                  <span>{t.controlRoom.bulkOrgPreviewAdicionados}</span>
+                </li>
+                <li className="flex items-center gap-2">
+                  <Badge variant="outline">{preview.already}</Badge>
                   <span className="text-muted-foreground">
-                    {t.controlRoom.bulkOrgPreviewSemEmail}
+                    {t.controlRoom.bulkOrgPreviewJaPertencem}
                   </span>
                 </li>
-              )}
-            </ul>
-          </div>
-        )}
+                {preview.noEmail > 0 && (
+                  <li className="flex items-center gap-2">
+                    <Badge variant="outline">{preview.noEmail}</Badge>
+                    <span className="text-muted-foreground">
+                      {t.controlRoom.bulkOrgPreviewSemEmail}
+                    </span>
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
+        </div>
 
-        <DialogFooter>
+        <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
           {step === "pick" && (
             <Button variant="outline" onClick={() => onOpenChange(false)}>
               {t.controlRoom.orgsCancelar}
@@ -1429,9 +1440,9 @@ function AssignToOrganizationDialog({
               <Button onClick={apply}>{t.controlRoom.bulkOrgConfirmar}</Button>
             </>
           )}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -1953,7 +1964,7 @@ export function PeopleView({
         <OrganizationsView contacts={contacts} />
       ) : (
         <>
-      <AssignToOrganizationDialog
+      <AssignToOrganizationSheet
         open={assignOrgOpen}
         contacts={selectedContacts}
         onOpenChange={setAssignOrgOpen}
