@@ -34,7 +34,6 @@ import type {
   Pessoa,
 } from "@/lib/types";
 import { CampoPessoas } from "@/components/compose/campo-pessoas";
-import { AgendaCalendarSelector } from "@/components/agenda/agenda-calendar-selector";
 
 import { EventCalendar } from "@/components/reui/event-calendar/event-calendar";
 import { EventCalendarContent } from "@/components/reui/event-calendar/event-calendar-content";
@@ -373,7 +372,6 @@ export function AgendaView() {
               <div className="flex min-w-0 items-center gap-1 border-b">
                 <EventCalendarNav className="min-w-0 flex-1 border-b-0" />
                 <EventCalendarToolbar className="shrink-0 gap-1.5 pr-2">
-                  <AgendaCalendarSelector />
                   <Button size="sm" onClick={() => abrirFormCriar()}>
                     <CalendarPlus /> {t.controlRoom.agendaNovoEvento}
                   </Button>
