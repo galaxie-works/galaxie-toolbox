@@ -44,6 +44,32 @@ fn achar(win: &tauri::Window, label: &str) -> Option<tauri::webview::Webview> {
     win.webviews().into_iter().find(|v| v.label() == label)
 }
 
+/// Revela uma webview EXISTENTE de forma que ela de fato REPINTE (#275/#324 S1).
+///
+/// O WebView2 filho pinta acima do DOM, entao qualquer overlay (menu de contexto,
+/// dropdown, paleta) so aparece se escondermos a webview antes — o front-end faz
+/// isso via `esconderTodas`. O problema do #275 e o CAMINHO DE VOLTA: ao fechar o
+/// overlay chamamos `show()`, mas o `put_IsVisible(true)` do WebView2 NAO recompoe
+/// a regiao se os bounds nao mudaram — sobra a "tela preta" (o repintar nao
+/// reverte). A cura confiavel e:
+///   1. `show()` primeiro (torna visivel);
+///   2. reaplicar os bounds DEPOIS do show (a transicao de visibilidade zera/estala
+///      os bounds do controller; reaplicar forca um novo layout);
+///   3. um "nudge" de 1px no tamanho e a volta ao tamanho real — garante que o
+///      WebView2 veja uma mudanca de bounds e recomponha, mesmo que o passo 2 tenha
+///      coincidido com os bounds antigos.
+/// Idempotente e barato; nao afeta a criacao (add_child ja pinta fresco).
+fn revelar(wv: &tauri::webview::Webview, x: f64, y: f64, w: f64, h: f64) {
+    let _ = wv.show();
+    let _ = wv.set_position(LogicalPosition::new(x, y));
+    let _ = wv.set_size(LogicalSize::new(w, h));
+    // Nudge de repaint: 1px a menos e de volta forca o compositor do WebView2.
+    let alt_nudge = (h - 1.0).max(1.0);
+    let _ = wv.set_size(LogicalSize::new(w, alt_nudge));
+    let _ = wv.set_size(LogicalSize::new(w, h));
+    let _ = wv.set_focus();
+}
+
 /// Abre uma aba nova (ou revela e reposiciona uma existente) e a deixa em foco.
 #[tauri::command]
 pub async fn browser_abrir(
@@ -62,10 +88,9 @@ pub async fn browser_abrir(
     let label = rotulo(&id);
 
     if let Some(wv) = achar(&win, &label) {
-        let _ = wv.set_position(LogicalPosition::new(x, y));
-        let _ = wv.set_size(LogicalSize::new(w, h));
-        let _ = wv.show();
-        let _ = wv.set_focus();
+        // Revela forcando repaint (#275/#324 S1) — mata a tela preta ao voltar
+        // de um overlay que escondeu a webview.
+        revelar(&wv, x, y, w, h);
         esconder_menos(&win, Some(&label));
         return Ok(());
     }
@@ -91,10 +116,7 @@ pub async fn browser_trocar(
     let win = janela(&app)?;
     let label = rotulo(&id);
     let wv = achar(&win, &label).ok_or_else(|| "aba nao existe".to_string())?;
-    let _ = wv.set_position(LogicalPosition::new(x, y));
-    let _ = wv.set_size(LogicalSize::new(w, h));
-    let _ = wv.show();
-    let _ = wv.set_focus();
+    revelar(&wv, x, y, w, h);
     esconder_menos(&win, Some(&label));
     Ok(())
 }
