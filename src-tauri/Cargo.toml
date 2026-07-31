@@ -51,7 +51,13 @@ winreg = "0.52"
 windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    # #272 S2: GetKeyState + VK_* pros modificadores no handler de accelerators.
+    "Win32_UI_Input_KeyboardAndMouse",
 ] }
+# #272 S2 (accelerators do Navigator): AcceleratorKeyPressed do WebView2. Versao
+# ja resolvida transitivamente pelo wry 2.11 (0.38.2) — dep direta so pra usar as
+# interfaces, sem duplicar crate na arvore (mesmo cuidado do `windows`).
+webview2-com = "0.38"
 # DPAPI para cifrar a sessao em disco (o Cofre de Credenciais tem limite de
 # 2560 bytes por blob e o refresh token da Microsoft nao cabe).
 winapi = { version = "0.3", features = ["dpapi", "wincrypt", "minwindef", "winbase"] }

@@ -1305,6 +1305,46 @@ export function NavegadorScreen({
     onTrocar,
   ]);
 
+  // #272 S2 (fecha #324): atalhos digitados com foco DENTRO da webview-filha são
+  // capturados por um accelerator nativo (Rust) e chegam como evento Tauri.
+  // Re-disparamos um keydown SINTÉTICO no window pra reusar EXATAMENTE o handler
+  // acima — zero duplicação da lógica de atalhos. No mock/web o import falha e
+  // cai no catch (a ponte nativa não existe).
+  useEffect(() => {
+    let vivo = true;
+    let desescutar: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        const off = await listen<{
+          key: string;
+          ctrl: boolean;
+          shift: boolean;
+          alt: boolean;
+        }>("navigator-atalho", (evento) => {
+          const { key, ctrl, shift, alt } = evento.payload;
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key,
+              ctrlKey: ctrl,
+              shiftKey: shift,
+              altKey: alt,
+              bubbles: true,
+            }),
+          );
+        });
+        if (vivo) desescutar = off;
+        else off();
+      } catch {
+        // Sem ponte nativa (mock/web): nada a escutar.
+      }
+    })();
+    return () => {
+      vivo = false;
+      desescutar?.();
+    };
+  }, []);
+
   // #174: ao cair na aba vazia (Launcher inline cobre), zera o overlay pendente
   // — senão ele reabriria sozinho ao voltar para uma aba viva.
   useEffect(() => {

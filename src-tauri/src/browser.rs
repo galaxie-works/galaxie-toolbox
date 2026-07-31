@@ -97,8 +97,11 @@ pub async fn browser_abrir(
 
     let destino = url.parse().map_err(|_| "url invalida".to_string())?;
     let builder = WebviewBuilder::new(&label, WebviewUrl::External(destino));
-    win.add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(w, h))
+    let wv = win
+        .add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(w, h))
         .map_err(|e| format!("falha ao criar a aba: {e}"))?;
+    // #272 S2: atalhos do Navigator com a página em foco (accelerators nativos).
+    instalar_accelerators(&app, &wv);
     esconder_menos(&win, Some(&label));
     Ok(())
 }
@@ -184,3 +187,142 @@ pub async fn browser_fechar_todas(app: AppHandle) -> Result<(), String> {
     }
     Ok(())
 }
+
+// ============================================================================
+// #272 S2 (fecha o épico #324) — accelerators nativos do Navigator.
+//
+// Quando o foco está DENTRO da webview-filha (a página navegada), o teclado NÃO
+// sobe pro React → os atalhos do Navigator (Ctrl+T/W, etc.) morrem. O handler
+// React (S1) só pega o teclado com o "chrome" do app em foco.
+//
+// O WebView2 expõe `add_AcceleratorKeyPressed`, que dispara pros atalhos
+// (Ctrl/Alt + tecla, F-keys) ANTES da página. Registramos nele: se for um atalho
+// do Navigator, emitimos um evento Tauri (`navigator-atalho`) com {key,ctrl,
+// shift,alt} e marcamos `Handled(true)`; o front re-dispara um KeyboardEvent
+// sintético que o MESMO handler do S1 processa (zero duplicação de lógica). O
+// resto (Ctrl+C/V/F, digitação) passa reto — nunca engolimos.
+//
+// Só Windows (WebView2). Em outras plataformas é no-op.
+// ============================================================================
+
+/// Nome do evento Tauri que carrega um atalho capturado na webview-filha.
+pub const EVENTO_ATALHO: &str = "navigator-atalho";
+
+/// Se `(vk, modificadores)` é um atalho do Navigator, devolve a `key` (string do
+/// KeyboardEvent) que o handler do S1 espera; senão `None` (deixa passar).
+/// VKs de letra/dígito == ASCII maiúsculo, então comparamos com `b'X'`.
+#[cfg(windows)]
+fn atalho_key(vk: u16, ctrl: bool, shift: bool, alt: bool) -> Option<String> {
+    const VK_TAB: u16 = 0x09;
+    const VK_F5: u16 = 0x74;
+    let eh = |c: u8| vk == c as u16;
+
+    // F5 sozinho — recarregar (#310).
+    if !ctrl && !shift && !alt && vk == VK_F5 {
+        return Some("F5".into());
+    }
+    // Alt+D — focar omnibox (sem Ctrl).
+    if alt && !ctrl && !shift && eh(b'D') {
+        return Some("d".into());
+    }
+    // Todo o resto exige Ctrl/Cmd e nunca Alt.
+    if !ctrl || alt {
+        return None;
+    }
+    if eh(b'K') && !shift {
+        return Some("k".into()); // paleta (#174)
+    }
+    if eh(b'L') && !shift {
+        return Some("l".into()); // focar omnibox
+    }
+    if eh(b'T') {
+        return Some("t".into()); // Ctrl+T nova aba / Ctrl+Shift+T reabrir
+    }
+    if eh(b'N') && shift {
+        return Some("n".into()); // Ctrl+Shift+N nova aba privada (#273)
+    }
+    if eh(b'W') {
+        return Some("w".into()); // fechar aba
+    }
+    if eh(b'R') && !shift {
+        return Some("r".into()); // recarregar (#310)
+    }
+    if vk == VK_TAB {
+        return Some("Tab".into()); // Ctrl+Tab / Ctrl+Shift+Tab ciclar
+    }
+    if !shift && (b'1' as u16..=b'9' as u16).contains(&vk) {
+        return Some(((vk as u8) as char).to_string()); // Ctrl+1..9 ir pra aba N
+    }
+    None
+}
+
+/// Payload do evento `navigator-atalho` — espelha os campos do KeyboardEvent que
+/// o handler do S1 lê.
+#[cfg(windows)]
+#[derive(Clone, serde::Serialize)]
+struct AtalhoPayload {
+    key: String,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+}
+
+/// Instala o handler de accelerators na webview-filha recém-criada. No-op fora do
+/// Windows. Best-effort: qualquer falha de COM só significa "atalho não funciona
+/// com a página em foco" (degrada pro comportamento pré-#272), nunca quebra a aba.
+#[cfg(windows)]
+pub fn instalar_accelerators(app: &AppHandle, wv: &tauri::webview::Webview) {
+    use tauri::Emitter;
+    use webview2_com::AcceleratorKeyPressedEventHandler;
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_KEY_EVENT_KIND, COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN,
+    };
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT,
+    };
+
+    let app = app.clone();
+    let _ = wv.with_webview(move |pw| {
+        let controller = pw.controller();
+        let handler = AcceleratorKeyPressedEventHandler::create(Box::new(
+            move |_controller, args| {
+                let args = match args {
+                    Some(a) => a,
+                    None => return Ok(()),
+                };
+                unsafe {
+                    let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
+                    args.KeyEventKind(&mut kind)?;
+                    if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN {
+                        return Ok(());
+                    }
+                    let mut vk_raw: u32 = 0;
+                    args.VirtualKey(&mut vk_raw)?;
+                    let vk = vk_raw as u16;
+                    let baixo = |k: windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY| {
+                        (GetKeyState(k.0 as i32) as u16 & 0x8000) != 0
+                    };
+                    let ctrl = baixo(VK_CONTROL);
+                    let shift = baixo(VK_SHIFT);
+                    let alt = baixo(VK_MENU);
+
+                    if let Some(key) = atalho_key(vk, ctrl, shift, alt) {
+                        let _ = app.emit(
+                            EVENTO_ATALHO,
+                            AtalhoPayload { key, ctrl, shift, alt },
+                        );
+                        args.SetHandled(true)?;
+                    }
+                }
+                Ok(())
+            },
+        ));
+        let mut token = Default::default();
+        unsafe {
+            let _ = controller.add_AcceleratorKeyPressed(&handler, &mut token);
+        }
+    });
+}
+
+#[cfg(not(windows))]
+pub fn instalar_accelerators(_app: &AppHandle, _wv: &tauri::webview::Webview) {}
