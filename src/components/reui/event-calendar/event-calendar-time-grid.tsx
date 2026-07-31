@@ -53,6 +53,7 @@ import { Slot } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { IconPlaceholder } from "@/app/(create)/components/icon-placeholder"
 
 /** Current time, refreshed on an interval and on tab focus. */
 function useNow(intervalMs = 30_000): Date {
@@ -896,6 +897,11 @@ function EventCalendarDayColumn({
   const boundsStartMin = startHour * 60
   const boundsEndMin = Math.min(endHour * 60, totalMinutes)
   const boundsMinutes = Math.max(60, boundsEndMin - boundsStartMin)
+  const isInteracting = useEventCalendarSelector<unknown, boolean>((state) =>
+    viewConfig.showDayAddButton
+      ? state.drag !== null || state.slotDraft !== null
+      : false
+  )
 
   // Minute window of a proposal intersecting THIS day, or null
   const windowFor = (start: Date, end: Date): [number, number] | null => {
@@ -985,21 +991,62 @@ function EventCalendarDayColumn({
     return clones
   }, [segments.timed, boundsStartMin, boundsEndMin])
 
-  const slotFromPointer = (e: React.MouseEvent): { date: Date; end: Date } => {
-    const rect = e.currentTarget.getBoundingClientRect()
+  const emptyVisibleSlots = useMemo(() => {
+    if (!viewConfig.showDayAddButton || isInteracting) return []
+
+    const slots: Array<{ start: number; end: number }> = []
+    for (let start = boundsStartMin; start < boundsEndMin; start += interval) {
+      const end = Math.min(start + interval, boundsEndMin)
+      const isOccupied = packedTimed.some((segment) => {
+        const segmentStart = Math.max(
+          segment.startMin ?? boundsStartMin,
+          boundsStartMin
+        )
+        const segmentEnd = Math.min(
+          segment.endMin ?? segmentStart,
+          boundsEndMin
+        )
+        return segmentStart < end && segmentEnd > start
+      })
+      if (!isOccupied) slots.push({ start, end })
+    }
+    return slots
+  }, [
+    boundsEndMin,
+    boundsStartMin,
+    interval,
+    isInteracting,
+    packedTimed,
+    viewConfig.showDayAddButton,
+  ])
+
+  const slotFromMinutes = (minutes: number): { date: Date; end: Date } => ({
+    // date-fns preserves TZDate subclasses. Slot callbacks are public Date
+    // values, so normalize them before consumers call native toISOString().
+    date: new Date(addMinutes(dayStart, minutes).getTime()),
+    end: new Date(
+      addMinutes(
+        dayStart,
+        Math.min(minutes + settings.slotDuration, boundsEndMin)
+      ).getTime()
+    ),
+  })
+
+  const slotFromPointer = (
+    clientY: number,
+    column: HTMLElement
+  ): { date: Date; end: Date } => {
+    const rect = column.getBoundingClientRect()
     const pxPerMinute = rect.height / boundsMinutes
     const minutes = snapMinutes(
-      boundsStartMin + (e.clientY - rect.top) / pxPerMinute,
+      boundsStartMin + (clientY - rect.top) / pxPerMinute,
       settings.snapDuration
     )
     const clamped = Math.min(
       Math.max(minutes, boundsStartMin),
       boundsEndMin - settings.slotDuration
     )
-    return {
-      date: addMinutes(dayStart, clamped),
-      end: addMinutes(dayStart, clamped + settings.slotDuration),
-    }
+    return slotFromMinutes(clamped)
   }
 
   return (
@@ -1039,7 +1086,7 @@ function EventCalendarDayColumn({
           wasRecentChipPress()
         )
           return
-        const slot = slotFromPointer(e)
+        const slot = slotFromPointer(e.clientY, e.currentTarget)
         settings.onSlotClick?.({ ...slot, allDay: false, view }, e)
       }}
     >
@@ -1053,6 +1100,72 @@ function EventCalendarDayColumn({
           })}
         </div>
       )}
+      {emptyVisibleSlots.map((slot) => (
+        <div
+          key={slot.start}
+          data-slot="event-calendar-time-slot"
+          className="group/ec-time-slot absolute inset-x-0"
+          style={minuteBlockStyle(slot.start, slot.end, boundsStartMin)}
+          onPointerDown={(e) => {
+            if (e.target === e.currentTarget) gestures.beginCreate(e, day, false)
+          }}
+          onClick={(e) => {
+            if (
+              e.target !== e.currentTarget ||
+              wasRecentDrag() ||
+              wasRecentChipPress()
+            )
+              return
+            const column = e.currentTarget.parentElement
+            if (!column) return
+            const selected = slotFromPointer(e.clientY, column)
+            settings.onSlotClick?.(
+              { ...selected, allDay: false, view },
+              e
+            )
+          }}
+        >
+          <button
+            type="button"
+            data-slot="event-calendar-day-add"
+            aria-label={`${settings.i18n.labels.addEvent}: ${format(
+              addMinutes(dayStart, slot.start),
+              settings.i18n.formats.dayAria,
+              { locale: settings.locale }
+            )}, ${format(
+              addMinutes(dayStart, slot.start),
+              settings.i18n.formats.timeGutterMinute,
+              { locale: settings.locale }
+            )}`}
+            className={cn(
+              "bg-primary text-primary-foreground absolute end-1 top-1 flex size-5 cursor-pointer items-center justify-center rounded-sm opacity-0 transition-opacity group-hover/ec-time-slot:opacity-100 focus-visible:opacity-100",
+              viewConfig.classNames?.dayAddButton
+            )}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              settings.onSlotClick?.(
+                {
+                  ...slotFromMinutes(slot.start),
+                  allDay: false,
+                  view,
+                },
+                e
+              )
+            }}
+          >
+            <IconPlaceholder
+              lucide="PlusIcon"
+              tabler="IconPlus"
+              hugeicons="PlusSignIcon"
+              phosphor="PlusIcon"
+              remixicon="RiAddLine"
+              className="size-3.5"
+              aria-hidden="true"
+            />
+          </button>
+        </div>
+      ))}
       {packedTimed.map((segment) => {
         const startMin = Math.max(segment.startMin ?? 0, boundsStartMin)
         const endMin = Math.min(segment.endMin ?? startMin, boundsEndMin)
