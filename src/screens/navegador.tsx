@@ -141,6 +141,7 @@ import {
 } from "@/lib/navigator-overlay";
 import { ShipIcon, type ShipIconHandle } from "@/components/ui/ship";
 import { PirataIcon } from "@/components/ui/icons/marca/pirata";
+import { PirateSkullIcon } from "@/components/ui/icons/marca/pirate-skull";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 
 /**
@@ -992,7 +993,7 @@ export function NavegadorScreen({
               {dormindo ? (
                 <Moon className="size-4 shrink-0" aria-hidden="true" />
               ) : privada ? (
-                <EyeOff className="size-4 shrink-0 text-info" aria-hidden="true" />
+                <PirateSkullIcon className="size-4 shrink-0 text-info" />
               ) : app ? (
                 <img
                   src={urlIcone(app)}
