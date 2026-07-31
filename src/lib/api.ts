@@ -1,4 +1,5 @@
 import type {
+  AcaoRsvp,
   AppUser,
   CaixaEntrada,
   Calendario,
@@ -375,6 +376,10 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
         totalParticipantes: 2,
         temAnexos: false,
         categorias: ["Crítico"],
+        // Evento próprio: organizador, sem RSVP (#287).
+        resposta: "organizer",
+        souOrganizador: true,
+        respostaSolicitada: false,
       },
       {
         id: "ev2",
@@ -389,6 +394,10 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
         totalParticipantes: 6,
         temAnexos: true,
         categorias: [],
+        // Convite pendente: aparece com semântica de "sem resposta" e RSVP (#287).
+        resposta: "notResponded",
+        souOrganizador: false,
+        respostaSolicitada: true,
       },
     ];
   }
@@ -465,7 +474,10 @@ export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
       online: true,
       joinUrl: "https://teams.microsoft.com/l/meetup-join/mock",
       organizador: "Wagner Consani",
-      souOrganizador: true,
+      souOrganizador: false,
+      // Convite pendente no mock (#287) para exibir o RSVP no dev do browser.
+      resposta: "notResponded",
+      respostaSolicitada: true,
       corpo: "<p>Pauta: revisar orçamento de compras do trimestre e alinhar próximos passos.</p>",
       corpoTipo: "html",
       participantes: MOCK_PARTS,
@@ -473,6 +485,27 @@ export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
     };
   }
   return invoke<EventoDetalhe>("cr_evento_corpo", { id });
+}
+
+/** Responde a um convite de reunião (#287): RSVP Aceitar/Talvez/Recusar via
+ *  POST /me/events/{id}/{accept|tentativelyAccept|decline}. `enviarResposta`
+ *  liga o aviso ao organizador; `comentario` opcional acompanha a resposta. */
+export async function crResponderEvento(
+  id: string,
+  resposta: AcaoRsvp,
+  enviarResposta: boolean,
+  comentario: string,
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  await invoke("cr_responder_evento", {
+    id,
+    resposta,
+    enviarResposta,
+    comentario,
+  });
 }
 
 /** Cria um evento no calendário (#211). Devolve o id do evento criado. */

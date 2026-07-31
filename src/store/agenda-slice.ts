@@ -11,14 +11,17 @@ import {
   crEditarEvento,
   crEventoCorpo,
   crExcluirEvento,
+  crResponderEvento,
 } from "../lib/api.ts";
 import type {
+  AcaoRsvp,
   Calendario,
   CategoriaCor,
   EventoAgenda,
   EventoDetalhe,
   EventoInput,
   Participante,
+  RespostaConvite,
 } from "../lib/types.ts";
 import type { AppStore } from "./index";
 
@@ -59,6 +62,12 @@ interface AgendaApi {
   editarEvento: (id: string, input: EventoInput) => Promise<void>;
   excluirEvento: (id: string) => Promise<void>;
   cancelarEvento: (id: string, comentario: string) => Promise<void>;
+  responderEvento: (
+    id: string,
+    resposta: AcaoRsvp,
+    enviarResposta: boolean,
+    comentario: string,
+  ) => Promise<void>;
 }
 
 export interface AgendaSlice {
@@ -120,6 +129,14 @@ export interface AgendaSlice {
   excluirEvento: (id: string) => Promise<void>;
   // Cancela (notifica os convidados), distinto de excluir (silencioso) (#260).
   cancelarEvento: (id: string, comentario: string) => Promise<void>;
+  // RSVP a um convite (#287): Aceitar/Talvez/Recusar. Otimista no detalhe + na
+  // lista do mês (rollback na falha); a UI toasta o resultado.
+  responderEvento: (
+    id: string,
+    resposta: AcaoRsvp,
+    enviarResposta: boolean,
+    comentario: string,
+  ) => Promise<void>;
 }
 
 const agendaApi: AgendaApi = {
@@ -133,6 +150,15 @@ const agendaApi: AgendaApi = {
   editarEvento: crEditarEvento,
   excluirEvento: crExcluirEvento,
   cancelarEvento: crCancelarEvento,
+  responderEvento: crResponderEvento,
+};
+
+/** Estado de `responseStatus` resultante de uma ação de RSVP (#287): usado no
+ *  update otimista do detalhe e da lista antes do refetch confirmar. */
+const RSVP_PARA_RESPOSTA: Record<AcaoRsvp, RespostaConvite> = {
+  accept: "accepted",
+  tentativelyAccept: "tentativelyAccepted",
+  decline: "declined",
 };
 
 /** Converte hora-de-parede local (sem Z) para ISO UTC, para o calendário
@@ -172,6 +198,10 @@ function eventoDeInput(id: string, input: EventoInput): EventoAgenda {
     totalParticipantes: participantes.length,
     temAnexos: false,
     categorias: input.categorias,
+    // Evento criado/editado pelo próprio usuário: organizador, sem RSVP (#287).
+    resposta: "organizer",
+    souOrganizador: true,
+    respostaSolicitada: false,
   };
 }
 
@@ -477,6 +507,34 @@ export function criarAgendaSlice(
         await api.cancelarEvento(id, comentario);
       } catch (erro) {
         set({ agendaEventosMes: antes });
+        throw erro;
+      }
+    },
+
+    // RSVP a um convite (#287): POST /events/{id}/{accept|tentativelyAccept|
+    // decline}. Otimista — reflete o novo `responseStatus` no detalhe aberto e
+    // no evento da lista do mês; restaura ambos na falha (mesmo padrão do
+    // cancelar/excluir). O refetch pós-escrita reconcilia com o servidor.
+    responderEvento: async (id, resposta, enviarResposta, comentario) => {
+      const novaResposta = RSVP_PARA_RESPOSTA[resposta];
+      const detalheAntes = get().agendaEventoDetalhe;
+      const eventosAntes = get().agendaEventosMes ?? [];
+      set((s) => ({
+        agendaEventoDetalhe:
+          s.agendaEventoDetalhe && s.agendaEventoId === id
+            ? { ...s.agendaEventoDetalhe, resposta: novaResposta }
+            : s.agendaEventoDetalhe,
+        agendaEventosMes: (s.agendaEventosMes ?? []).map((e) =>
+          e.id === id ? { ...e, resposta: novaResposta } : e,
+        ),
+      }));
+      try {
+        await api.responderEvento(id, resposta, enviarResposta, comentario);
+      } catch (erro) {
+        set({
+          agendaEventoDetalhe: detalheAntes,
+          agendaEventosMes: eventosAntes,
+        });
         throw erro;
       }
     },

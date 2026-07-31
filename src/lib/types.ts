@@ -98,6 +98,22 @@ export interface Participante {
   foto?: string | null;
 }
 
+/**
+ * Semântica de resposta a um convite (#287) — espelha `responseStatus.response`
+ * do Graph. `organizer` = evento próprio (sem RSVP); `notResponded`/`none` =
+ * pendente; `tentativelyAccepted` = talvez; `accepted`/`declined` = decididos.
+ */
+export type RespostaConvite =
+  | "none"
+  | "organizer"
+  | "tentativelyAccepted"
+  | "accepted"
+  | "declined"
+  | "notResponded";
+
+/** Ação de RSVP enviada ao backend (#287): mapeia 1:1 aos endpoints do Graph. */
+export type AcaoRsvp = "accept" | "tentativelyAccept" | "decline";
+
 export interface EventoAgenda {
   id: string;
   assunto: string;
@@ -111,6 +127,12 @@ export interface EventoAgenda {
   totalParticipantes: number;
   temAnexos: boolean;
   categorias: string[];
+  /** Semântica do convite (#287): estado da resposta do usuário ao evento. */
+  resposta: RespostaConvite;
+  /** True quando o usuário organiza o evento (Graph `isOrganizer`) — sem RSVP. */
+  souOrganizador: boolean;
+  /** Graph `responseRequested`: false = convite informativo (sem pedir RSVP). */
+  respostaSolicitada: boolean;
   /** Id do calendário de origem (#233). Marcado no front ao mesclar múltiplos
    *  calendários; ausente quando vindo do calendário padrão (/me/calendarView). */
   calendarioId?: string;
@@ -172,6 +194,11 @@ export interface EventoDetalhe {
   /** True quando o usuário ativo organiza o evento (Graph `isOrganizer`).
    *  Habilita a ação "Cancelar evento" (#260), que notifica os convidados. */
   souOrganizador: boolean;
+  /** Semântica do convite (#287): estado da resposta do usuário — habilita o
+   *  RSVP (Aceitar/Talvez/Recusar) e o badge de estado no detalhe. */
+  resposta: RespostaConvite;
+  /** Graph `responseRequested`: false = convite informativo (sem RSVP). */
+  respostaSolicitada: boolean;
   corpo: string;
   corpoTipo: "html" | "text";
   participantes: Participante[];

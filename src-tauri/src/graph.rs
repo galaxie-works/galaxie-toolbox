@@ -1000,6 +1000,15 @@ pub struct EventoAgenda {
     pub total_participantes: usize,
     pub tem_anexos: bool,
     pub categorias: Vec<String>,
+    /// Semântica do convite (#287): `responseStatus.response` do Graph —
+    /// `none` · `organizer` · `tentativelyAccepted` · `accepted` · `declined`
+    /// · `notResponded`. A UI usa isso para renderizar o estado (RSVP) e para
+    /// ocultar/riscar os recusados.
+    pub resposta: String,
+    /// True quando o usuário organiza o evento (Graph `isOrganizer`) — sem RSVP.
+    pub sou_organizador: bool,
+    /// Graph `responseRequested`: false = convite informativo (sem pedir RSVP).
+    pub resposta_solicitada: bool,
 }
 
 /// Parseia a resposta de um `calendarView` (lista `value[]`) em EventoAgenda.
@@ -1041,6 +1050,14 @@ fn parse_eventos(v: &serde_json::Value) -> Vec<EventoAgenda> {
                 total_participantes: total,
                 tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
                 categorias,
+                // Semântica do convite (#287). `isOrganizer` também vem como
+                // `response: "organizer"`, mas mantemos ambos para a UI decidir.
+                resposta: it["responseStatus"]["response"]
+                    .as_str()
+                    .unwrap_or("none")
+                    .to_string(),
+                sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
+                resposta_solicitada: it["responseRequested"].as_bool().unwrap_or(true),
             });
         }
     }
@@ -1070,7 +1087,7 @@ fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgend
     Ok(parse_eventos(&v))
 }
 
-const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories";
+const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,responseRequested";
 
 /// Eventos do calendário padrão no intervalo (limites em ISO UTC). Calendars.Read.
 pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
@@ -1280,6 +1297,11 @@ pub struct EventoDetalhe {
     /// True quando o usuário ativo organiza o evento (Graph `isOrganizer`).
     /// Habilita a ação "Cancelar evento" (#260), que notifica os convidados.
     pub sou_organizador: bool,
+    /// Semântica do convite (#287): `responseStatus.response` — habilita o RSVP
+    /// (Aceitar/Talvez/Recusar) e o badge de estado no detalhe.
+    pub resposta: String,
+    /// Graph `responseRequested`: false = convite informativo (sem RSVP).
+    pub resposta_solicitada: bool,
     pub corpo: String,
     pub corpo_tipo: String, // "html" | "text"
     pub participantes: Vec<Participante>,
@@ -1293,7 +1315,8 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
 
     let url = format!(
         "{GRAPH}/me/events/{id}?$select=subject,start,end,location,onlineMeeting,\
-         isOnlineMeeting,onlineMeetingUrl,organizer,isOrganizer,body,attendees,webLink"
+         isOnlineMeeting,onlineMeetingUrl,organizer,isOrganizer,responseStatus,\
+         responseRequested,body,attendees,webLink"
     );
     let resp = client
         .get(&url)
@@ -1330,6 +1353,11 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
         join_url,
         organizador: it["organizer"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
         sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
+        resposta: it["responseStatus"]["response"]
+            .as_str()
+            .unwrap_or("none")
+            .to_string(),
+        resposta_solicitada: it["responseRequested"].as_bool().unwrap_or(true),
         corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
         corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
         participantes,
@@ -1488,6 +1516,47 @@ pub fn cr_cancelar_evento(store: &TokenStore, id: &str, comentario: &str) -> Res
         Ok(())
     } else {
         Err(erro_escrita("me/events", "cancelar evento", resp.status()))
+    }
+}
+
+/// Responde a um convite de reunião (#287): RSVP via
+/// POST /me/events/{id}/{accept|tentativelyAccept|decline}, com
+/// `{ comment, sendResponse }`. `resposta` é a ação semântica vinda do front
+/// ("accept" · "tentativelyAccept" · "decline"); qualquer outro valor é erro.
+/// `enviar_resposta` liga/desliga o aviso ao organizador; `comentario` opcional
+/// acompanha a resposta. Só faz sentido para quem foi CONVIDADO — a UI restringe
+/// a ação (organizer não vê RSVP). Calendars.ReadWrite.
+pub fn cr_responder_evento(
+    store: &TokenStore,
+    id: &str,
+    resposta: &str,
+    enviar_resposta: bool,
+    comentario: &str,
+) -> Result<(), String> {
+    // Mapeia a ação semântica -> segmento do endpoint do Graph. Recusamos
+    // valores desconhecidos em vez de montar uma URL inválida.
+    let acao = match resposta {
+        "accept" | "accepted" | "aceitar" => "accept",
+        "tentativelyAccept" | "tentativelyAccepted" | "talvez" | "tentative" => "tentativelyAccept",
+        "decline" | "declined" | "recusar" => "decline",
+        outro => return Err(format!("resposta de convite inválida: {outro}")),
+    };
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events/{id}/{acao}");
+    let body = serde_json::json!({
+        "comment": comentario,
+        "sendResponse": enviar_resposta,
+    });
+    let resp = graph_enviar("agenda:responder", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao responder o convite: {e}"))?;
+    // 404 = evento já não existe (idempotente, como cancelar/excluir).
+    if resp.status().is_success() || resp.status().as_u16() == 404 {
+        Ok(())
+    } else {
+        Err(erro_escrita("me/events", "responder convite", resp.status()))
     }
 }
 
