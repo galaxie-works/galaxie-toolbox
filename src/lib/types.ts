@@ -393,6 +393,13 @@ export interface PeopleEnrichApplyResult {
   writeAvailable: boolean;
 }
 
+/** Resultado por contato do write-back Company ↔ Organization (#288). */
+export interface PeopleCompanyWriteResult {
+  writeAvailable: boolean;
+  savedContactIds: string[];
+  failedContactIds: string[];
+}
+
 export interface PeopleContactEdit {
   name: string;
   emails: PeopleEmail[];
