@@ -453,3 +453,69 @@ export function persistLastSession(tabs: AbaBrowser[]): void {
     // best-effort.
   }
 }
+
+// --- Provedor de pesquisa (#305) ---------------------------------------------
+// Provedor padrão do omnibox. O `browser.interpretar` usa `urlDeBusca` no lugar
+// do Bing fixo (#174). "custom" usa uma URL com %s no lugar do termo.
+
+export type NavigatorSearchProvider = "bing" | "google" | "duckduckgo" | "custom";
+
+export interface NavigatorSearchSettings {
+  provider: NavigatorSearchProvider;
+  /** Só quando provider === "custom": URL com %s no lugar do termo. */
+  customUrl: string;
+}
+
+export const NAVIGATOR_SEARCH_DEFAULTS: NavigatorSearchSettings = {
+  provider: "bing",
+  customUrl: "",
+};
+
+export const NAVIGATOR_SEARCH_KEY = "galaxie.navigator.search-provider.v1";
+
+const SEARCH_URLS: Record<"bing" | "google" | "duckduckgo", string> = {
+  bing: "https://www.bing.com/search?q=%s",
+  google: "https://www.google.com/search?q=%s",
+  duckduckgo: "https://duckduckgo.com/?q=%s",
+};
+
+export function loadNavigatorSearch(): NavigatorSearchSettings {
+  if (typeof window === "undefined") return NAVIGATOR_SEARCH_DEFAULTS;
+  try {
+    const p = JSON.parse(
+      localStorage.getItem(NAVIGATOR_SEARCH_KEY) || "null",
+    ) as Partial<NavigatorSearchSettings> | null;
+    const valido =
+      p?.provider === "bing" ||
+      p?.provider === "google" ||
+      p?.provider === "duckduckgo" ||
+      p?.provider === "custom";
+    return {
+      provider: valido ? p!.provider! : "bing",
+      customUrl: typeof p?.customUrl === "string" ? p.customUrl : "",
+    };
+  } catch {
+    return NAVIGATOR_SEARCH_DEFAULTS;
+  }
+}
+
+export function persistNavigatorSearch(settings: NavigatorSearchSettings): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(NAVIGATOR_SEARCH_KEY, JSON.stringify(settings));
+  } catch {
+    // best-effort.
+  }
+}
+
+/** URL de busca pro termo, no provedor configurado. Custom precisa de %s; sem %s
+ *  (ou provedor inválido) cai no Bing. */
+export function urlDeBusca(termo: string): string {
+  const s = loadNavigatorSearch();
+  const q = encodeURIComponent(termo);
+  if (s.provider === "custom" && s.customUrl.includes("%s")) {
+    return s.customUrl.replace(/%s/g, q);
+  }
+  const base = s.provider === "custom" ? SEARCH_URLS.bing : SEARCH_URLS[s.provider];
+  return base.replace("%s", q);
+}

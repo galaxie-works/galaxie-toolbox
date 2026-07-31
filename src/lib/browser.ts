@@ -7,6 +7,8 @@
  * coincide com a origem da janela — então o rect do DOM já é o que o Rust quer.
  */
 
+import { urlDeBusca } from "@/lib/navigator-tabs";
+
 function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
@@ -81,7 +83,8 @@ export function interpretar(entrada: string): {
     return { url, nome, tipo: "url" };
   }
   return {
-    url: `https://www.bing.com/search?q=${encodeURIComponent(t)}`,
+    // Provedor de pesquisa configurável (#305) — antes fixo em Bing.
+    url: urlDeBusca(t),
     nome: t,
     tipo: "busca",
   };
