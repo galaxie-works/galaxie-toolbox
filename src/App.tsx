@@ -124,8 +124,11 @@ function AppInner() {
   // localStorage, igual aos pins/grupos/favoritos.
   const [historico, setHistorico] = useState<HistoryEntry[]>(loadHistorico);
   // Modo privado: enquanto ligado, novas abas nao gravam historico e ganham
-  // tratamento visual distinto (aba "privada").
-  const [modoPrivado, setModoPrivado] = useState(false);
+  // tratamento visual distinto (aba "privada"). Nasce do "Private mode only"
+  // (#326): com a pref ligada, o app já abre em modo privado por padrão.
+  const [modoPrivado, setModoPrivado] = useState(
+    () => loadNavigatorPrefs().semprePrivado,
+  );
   // Sessão anterior (#274): capturado UMA vez no mount (antes do persist effect
   // sobrescrever), pra oferecer restaurar. `dispensada` esconde o oferecimento.
   const [sessaoAnterior] = useState(loadLastSession);
@@ -525,9 +528,10 @@ function AppInner() {
   }
 
   // Nova aba normal sai do modo privado; nova aba privada entra (#273). O
-  // `modoPrivado` é herdado pela próxima navegação (`privada` da aba).
+  // `modoPrivado` é herdado pela próxima navegação (`privada` da aba). Com
+  // "Private mode only" (#326) ligado, a aba "normal" também nasce privada.
   function novaAba() {
-    setModoPrivado(false);
+    setModoPrivado(loadNavigatorPrefs().semprePrivado);
     abrirAbaVazia();
   }
 

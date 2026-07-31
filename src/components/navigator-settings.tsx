@@ -236,6 +236,21 @@ export function NavigatorHistoryPanel() {
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
+          <h3 className="text-sm font-semibold">Private mode only</h3>
+          <p className="text-sm text-muted-foreground">
+            Always browse privately: every new tab opens in a private tab, and
+            nothing is saved to history.
+          </p>
+        </div>
+        <Switch
+          checked={prefs.semprePrivado}
+          onCheckedChange={(valor) => atualizar({ semprePrivado: valor })}
+          aria-label="Private mode only"
+        />
+      </div>
+
+      <div className="mt-4 flex items-center justify-between gap-4 border-t border-border pt-4">
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold">Save browsing history</h3>
           <p className="text-sm text-muted-foreground">
             Record the pages you visit so you can search and reopen them. Private

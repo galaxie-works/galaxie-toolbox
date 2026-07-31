@@ -548,12 +548,15 @@ export interface NavigatorPrefs {
   salvarHistorico: boolean;
   /** Dias de retenção do histórico; 0 = manter sempre. */
   retencaoDias: number;
+  /** "Private mode only" (#326): toda nova aba nasce privada por padrão. */
+  semprePrivado: boolean;
 }
 
 export const NAVIGATOR_PREFS_DEFAULTS: NavigatorPrefs = {
   mostrarBarraFav: true,
   salvarHistorico: true,
   retencaoDias: 0,
+  semprePrivado: false,
 };
 
 export const NAVIGATOR_PREFS_KEY = "galaxie.navigator.prefs.v1";
@@ -579,6 +582,10 @@ export function loadNavigatorPrefs(): NavigatorPrefs {
         p.retencaoDias >= 0
           ? p.retencaoDias
           : NAVIGATOR_PREFS_DEFAULTS.retencaoDias,
+      semprePrivado:
+        typeof p?.semprePrivado === "boolean"
+          ? p.semprePrivado
+          : NAVIGATOR_PREFS_DEFAULTS.semprePrivado,
     };
   } catch {
     return NAVIGATOR_PREFS_DEFAULTS;
