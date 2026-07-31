@@ -1,5 +1,6 @@
 import type { StateCreator } from "zustand";
 
+import { fetchFavicon } from "@/lib/api";
 import {
   contactDomain,
   normalizeDomain,
@@ -11,6 +12,67 @@ import type { AppStore } from "./index";
 
 function uniqueDomains(domains: string[]): string[] {
   return Array.from(new Set(domains.map(normalizeDomain).filter(Boolean)));
+}
+
+const organizationLogoRequests = new Map<string, Promise<string | null>>();
+const organizationLogos = new Map<string, string>();
+const organizationLogoRetryAt = new Map<string, number>();
+const ORGANIZATION_LOGO_RETRY_DELAY_MS = 60_000;
+
+function fetchOrganizationLogo(source: string): Promise<string | null> {
+  const key = source.toLowerCase();
+  const cached = organizationLogos.get(key);
+  if (cached) return Promise.resolve(cached);
+  const retryAt = organizationLogoRetryAt.get(key) ?? 0;
+  if (retryAt > Date.now()) return Promise.resolve(null);
+  organizationLogoRetryAt.delete(key);
+  const pending = organizationLogoRequests.get(key);
+  if (pending) return pending;
+  const request = fetchFavicon(source)
+    .then((logo) => {
+      if (logo) {
+        organizationLogos.set(key, logo);
+        organizationLogoRetryAt.delete(key);
+      } else {
+        organizationLogoRetryAt.set(
+          key,
+          Date.now() + ORGANIZATION_LOGO_RETRY_DELAY_MS,
+        );
+      }
+      return logo;
+    })
+    .finally(() => {
+      organizationLogoRequests.delete(key);
+    });
+  organizationLogoRequests.set(key, request);
+  return request;
+}
+
+function organizationLogoSources(organization: PeopleOrg): string[] {
+  const sources = [
+    organization.website?.trim(),
+    ...organization.domains.map((domain) => domain.trim()),
+  ]
+    .filter((candidate): candidate is string => Boolean(candidate))
+    .map((candidate) => {
+      if (/^https?:\/\//i.test(candidate)) {
+        try {
+          return new URL(candidate).origin;
+        } catch {
+          return null;
+        }
+      }
+      const domain = normalizeDomain(candidate);
+      return domain ? `https://${domain}` : null;
+    })
+    .filter((candidate): candidate is string => Boolean(candidate));
+  return Array.from(new Map(sources.map((source) => [source.toLowerCase(), source])).values());
+}
+
+function organizationLogoSourcesKey(organization: PeopleOrg): string {
+  return organizationLogoSources(organization)
+    .map((source) => source.toLowerCase())
+    .join("\n");
 }
 
 /** Chave legada da persistência das organizações (app-owned, #205 → persistido). */
@@ -28,6 +90,7 @@ export interface OrganizationsSlice {
   organizationSelectedId: string | null;
 
   selectOrganization: (id: string | null) => void;
+  loadOrganizationLogo: (id: string) => Promise<void>;
   createOrganization: (input: PeopleOrgInput) => PeopleOrg;
   updateOrganization: (id: string, input: PeopleOrgInput) => void;
   assignOrganizationContacts: (
@@ -52,11 +115,31 @@ export const createOrganizationsSlice: StateCreator<
   [["zustand/persist", unknown]],
   [],
   OrganizationsSlice
-> = (set) => ({
+> = (set, get) => ({
   organizations: [],
   organizationSelectedId: null,
 
   selectOrganization: (organizationSelectedId) => set({ organizationSelectedId }),
+  loadOrganizationLogo: async (id) => {
+    const organization = get().organizations.find((candidate) => candidate.id === id);
+    if (!organization) return;
+    const sources = organizationLogoSources(organization);
+    const sourcesKey = organizationLogoSourcesKey(organization);
+    if (sources.length === 0 || organization.logo) return;
+    for (const source of sources) {
+      const logo = await fetchOrganizationLogo(source);
+      if (!logo) continue;
+      set((state) => ({
+        organizations: state.organizations.map((candidate) =>
+          candidate.id === id &&
+          organizationLogoSourcesKey(candidate) === sourcesKey
+            ? { ...candidate, logo }
+            : candidate,
+        ),
+      }));
+      return;
+    }
+  },
   createOrganization: (input) => {
     const domains = uniqueDomains(input.domains);
     const now = Date.now();
@@ -80,23 +163,41 @@ export const createOrganizationsSlice: StateCreator<
       ],
       organizationSelectedId: id,
     }));
+    void get().loadOrganizationLogo(id);
     return organization;
   },
-  updateOrganization: (id, input) =>
+  updateOrganization: (id, input) => {
+    const previous = get().organizations.find((organization) => organization.id === id);
+    const previousSourcesKey = previous
+      ? organizationLogoSourcesKey(previous)
+      : "";
+    const domains = uniqueDomains(input.domains);
+    const website = input.website?.trim() || null;
     set((state) => ({
       organizations: state.organizations.map((organization) =>
         organization.id === id
           ? {
               ...organization,
               name: input.name.trim(),
-              domains: uniqueDomains(input.domains),
-              website: input.website?.trim() || null,
+              domains,
+              website,
               notes: input.notes?.trim() || null,
+              logo:
+                previousSourcesKey ===
+                organizationLogoSourcesKey({
+                  ...organization,
+                  domains,
+                  website,
+                })
+                  ? organization.logo
+                  : null,
               updatedAt: Date.now(),
             }
           : organization,
       ),
-    })),
+    }));
+    void get().loadOrganizationLogo(id);
+  },
   assignOrganizationContacts: (id, selectedIds, contacts) =>
     set((state) => ({
       organizations: state.organizations.map((organization) => {

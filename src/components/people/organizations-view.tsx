@@ -19,7 +19,11 @@ import {
   Autocomplete,
   AutocompleteInput,
 } from "@/components/reui/autocomplete";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -496,6 +500,12 @@ export function OrganizationsView({
                   )}
                 >
                   <Avatar>
+                    {organization.logo && (
+                      <AvatarImage
+                        src={organization.logo}
+                        alt={organization.name}
+                      />
+                    )}
                     <AvatarFallback>
                       {initials(organization.name) || <Building2 className="size-4" />}
                     </AvatarFallback>
@@ -538,6 +548,9 @@ export function OrganizationsView({
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
             <Avatar className="size-16">
+              {selected.logo && (
+                <AvatarImage src={selected.logo} alt={selected.name} />
+              )}
               <AvatarFallback className="text-lg">
                 {initials(selected.name) || <Building2 className="size-5" />}
               </AvatarFallback>

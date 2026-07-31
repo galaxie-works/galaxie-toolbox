@@ -198,10 +198,12 @@ function PeopleColumnsHeader({ label }: { label: string }) {
 function RelationshipBadges({
   contact,
   organizationLabel,
+  organizationLogo,
   compact = false,
 }: {
   contact: PeopleContact;
   organizationLabel?: string | null;
+  organizationLogo?: string | null;
   compact?: boolean;
 }) {
   const { t } = useIdioma();
@@ -209,6 +211,14 @@ function RelationshipBadges({
     <span className="flex flex-wrap items-center gap-1">
       {organizationLabel && (
         <Badge variant="outline" size={compact ? "xs" : "sm"}>
+          <Avatar className="size-3">
+            {organizationLogo && (
+              <AvatarImage src={organizationLogo} alt="" />
+            )}
+            <AvatarFallback>
+              <Building2 className="size-2.5" />
+            </AvatarFallback>
+          </Avatar>
           {organizationLabel}
         </Badge>
       )}
@@ -614,6 +624,7 @@ function PeopleDetail({
                 <RelationshipBadges
                   contact={contact}
                   organizationLabel={organizationLabel}
+                  organizationLogo={resolvedOrganization?.logo}
                 />
                 <SourceBadge source={contact.contactId ? "contacts" : "people"} />
               </div>
@@ -726,7 +737,14 @@ function PeopleDetail({
                           {assigningOrganizationId === organization.id ? (
                             <Spinner />
                           ) : (
-                            <Building2 />
+                            <Avatar className="size-4">
+                              {organization.logo && (
+                                <AvatarImage src={organization.logo} alt="" />
+                              )}
+                              <AvatarFallback>
+                                <Building2 className="size-3" />
+                              </AvatarFallback>
+                            </Avatar>
                           )}
                           {organization.name}
                         </DropdownMenuItem>
@@ -963,7 +981,17 @@ function PeopleDetail({
               setPeopleTab("organizations");
             }}
           >
-            <Badge variant="secondary">{resolvedOrganization.name}</Badge>
+            <Badge variant="secondary">
+              <Avatar className="size-3">
+                {resolvedOrganization.logo && (
+                  <AvatarImage src={resolvedOrganization.logo} alt="" />
+                )}
+                <AvatarFallback>
+                  <Building2 className="size-2.5" />
+                </AvatarFallback>
+              </Avatar>
+              {resolvedOrganization.name}
+            </Badge>
           </button>
         )}
           </section>
@@ -1104,6 +1132,7 @@ function PeopleRowActions({
 function PeopleCard({
   contact,
   organizationLabel,
+  organizationLogo,
   selected,
   photo,
   onSelect,
@@ -1111,6 +1140,7 @@ function PeopleCard({
 }: {
   contact: PeopleContact;
   organizationLabel?: string | null;
+  organizationLogo?: string | null;
   selected: boolean;
   photo: string | null;
   onSelect: () => void;
@@ -1163,6 +1193,7 @@ function PeopleCard({
           <RelationshipBadges
             contact={contact}
             organizationLabel={organizationLabel}
+            organizationLogo={organizationLogo}
             compact
           />
           <span className="flex flex-wrap justify-end gap-1">
@@ -1387,7 +1418,14 @@ function AssignToOrganizationSheet({
                           setStep("preview");
                         }}
                       >
-                        <Building2 />
+                        <Avatar className="size-4">
+                          {organization.logo && (
+                            <AvatarImage src={organization.logo} alt="" />
+                          )}
+                          <AvatarFallback>
+                            <Building2 className="size-3" />
+                          </AvatarFallback>
+                        </Avatar>
                         <span className="min-w-0 flex-1 truncate">
                           {organization.name}
                         </span>
@@ -1556,6 +1594,9 @@ export function PeopleView({
   const { t } = useIdioma();
   const contacts = useAppStore((state) => state.peopleContacts);
   const organizations = useAppStore((state) => state.organizations);
+  const loadOrganizationLogo = useAppStore(
+    (state) => state.loadOrganizationLogo,
+  );
   const selectedId = useAppStore((state) => state.peopleSelectedId);
   const selectPerson = useAppStore((state) => state.selectPerson);
   const loading = useAppStore((state) => state.peopleLoading);
@@ -1655,15 +1696,24 @@ export function PeopleView({
   }, [loadPeople, loaded, loading]);
 
   useEffect(() => {
+    for (const organization of organizations) {
+      if (!organization.logo) void loadOrganizationLogo(organization.id);
+    }
+  }, [loadOrganizationLogo, organizations]);
+
+  useEffect(() => {
     pedirFotos(visibleContacts.map((contact) => contact.emails[0]?.address));
   }, [pedirFotos, visibleContacts]);
 
-  const organizationLabelsByContactId = useMemo(
+  const organizationDataByContactId = useMemo(
     () =>
       new Map(
         contacts.map((contact) => [
           contact.id,
-          contactOrganizationLabel(organizations, contact),
+          {
+            label: contactOrganizationLabel(organizations, contact),
+            organization: resolveContactOrganization(organizations, contact),
+          },
         ]),
       ),
     [contacts, organizations],
@@ -1840,6 +1890,7 @@ export function PeopleView({
         cell: ({ row }) => {
           const contact = row.original;
           const photo = contact.photo || getFoto(contact.emails[0]?.address);
+          const organizationData = organizationDataByContactId.get(contact.id);
           return (
             <div className="flex min-w-0 items-center gap-2.5">
               <Avatar className="size-9">
@@ -1851,9 +1902,8 @@ export function PeopleView({
                   <span className="truncate font-medium">{contact.name}</span>
                   <RelationshipBadges
                     contact={contact}
-                    organizationLabel={
-                      organizationLabelsByContactId.get(contact.id) ?? null
-                    }
+                    organizationLabel={organizationData?.label}
+                    organizationLogo={organizationData?.organization?.logo}
                     compact
                   />
                 </div>
@@ -1953,7 +2003,7 @@ export function PeopleView({
     ],
     [
       getFoto,
-      organizationLabelsByContactId,
+      organizationDataByContactId,
       t,
     ],
   );
@@ -2408,7 +2458,11 @@ export function PeopleView({
                           key={contact.id}
                           contact={contact}
                           organizationLabel={
-                            organizationLabelsByContactId.get(contact.id) ?? null
+                            organizationDataByContactId.get(contact.id)?.label
+                          }
+                          organizationLogo={
+                            organizationDataByContactId.get(contact.id)
+                              ?.organization?.logo
                           }
                           selected={contact.id === selectedId}
                           photo={
