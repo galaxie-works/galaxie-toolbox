@@ -563,6 +563,8 @@ const pt = {
     agendaCalMais: "mais",
     agendaEditar: "Editar",
     agendaExcluir: "Excluir",
+    // Menu de contexto do evento (#330).
+    agendaVerDetalhes: "Ver detalhes",
     agendaFormCriarTitulo: "Novo evento",
     agendaFormEditarTitulo: "Editar evento",
     agendaFormTitulo: "Título",
@@ -1553,6 +1555,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     agendaCalMais: "more",
     agendaEditar: "Edit",
     agendaExcluir: "Delete",
+    // Event context menu (#330).
+    agendaVerDetalhes: "View details",
     agendaFormCriarTitulo: "New event",
     agendaFormEditarTitulo: "Edit event",
     agendaFormTitulo: "Title",
