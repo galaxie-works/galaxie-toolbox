@@ -277,10 +277,12 @@ function DetailValue({
 function PeopleEmpty({
   search,
   filtered,
+  directory = false,
   onClear,
 }: {
   search: boolean;
   filtered: boolean;
+  directory?: boolean;
   onClear: () => void;
 }) {
   const { t } = useIdioma();
@@ -290,11 +292,17 @@ function PeopleEmpty({
         {search || filtered ? <SearchX className="size-5" /> : <Users className="size-5" />}
       </IconStack>
       <p className="font-medium">
-        {search || filtered ? t.controlRoom.peopleSemResultado : t.controlRoom.peopleVazio}
+        {search || filtered
+          ? t.controlRoom.peopleSemResultado
+          : directory
+            ? t.controlRoom.peopleDirectoryEmpty
+            : t.controlRoom.peopleVazio}
       </p>
       {!search && !filtered && (
         <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-          {t.controlRoom.peopleVazioDesc}
+          {directory
+            ? t.controlRoom.peopleDirectoryEmptyDesc
+            : t.controlRoom.peopleVazioDesc}
         </p>
       )}
       {(search || filtered) && (
@@ -629,7 +637,15 @@ function PeopleDetail({
                   organizationLabel={organizationLabel}
                   organizationLogo={resolvedOrganization?.logo}
                 />
-                <SourceBadge source={contact.contactId ? "contacts" : "people"} />
+                <SourceBadge
+                  source={
+                    contact.sources.includes("directory")
+                      ? "directory"
+                      : contact.contactId
+                        ? "contacts"
+                        : "people"
+                  }
+                />
               </div>
             </div>
           </div>
@@ -705,56 +721,58 @@ function PeopleDetail({
                 >
                   <ExternalLink />
                 </ToolbarButton>
-                <DropdownMenu>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <DropdownMenuTrigger asChild>
-                        <ToolbarButton
-                          variant="default"
-                          aria-label={t.controlRoom.orgsAtribuirContato}
-                        >
-                          <MoreHorizontal />
-                        </ToolbarButton>
-                      </DropdownMenuTrigger>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {t.controlRoom.orgsAtribuirContato}
-                    </TooltipContent>
-                  </Tooltip>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuLabel>
-                      {t.controlRoom.orgsAtribuirContato}
-                    </DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {organizations.length === 0 ? (
-                      <DropdownMenuItem disabled>
-                        {t.controlRoom.orgsSemOrganizacoes}
-                      </DropdownMenuItem>
-                    ) : (
-                      organizations.map((organization) => (
-                        <DropdownMenuItem
-                          key={organization.id}
-                          disabled={assigningOrganizationId !== null}
-                          onClick={() => void assignOrganization(organization)}
-                        >
-                          {assigningOrganizationId === organization.id ? (
-                            <Spinner />
-                          ) : (
-                            <Avatar className="size-4">
-                              {organization.logo && (
-                                <AvatarImage src={organization.logo} alt="" />
-                              )}
-                              <AvatarFallback>
-                                <Building2 className="size-3" />
-                              </AvatarFallback>
-                            </Avatar>
-                          )}
-                          {organization.name}
+                {!editLocked && (
+                  <DropdownMenu>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <ToolbarButton
+                            variant="default"
+                            aria-label={t.controlRoom.orgsAtribuirContato}
+                          >
+                            <MoreHorizontal />
+                          </ToolbarButton>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {t.controlRoom.orgsAtribuirContato}
+                      </TooltipContent>
+                    </Tooltip>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuLabel>
+                        {t.controlRoom.orgsAtribuirContato}
+                      </DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {organizations.length === 0 ? (
+                        <DropdownMenuItem disabled>
+                          {t.controlRoom.orgsSemOrganizacoes}
                         </DropdownMenuItem>
-                      ))
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                      ) : (
+                        organizations.map((organization) => (
+                          <DropdownMenuItem
+                            key={organization.id}
+                            disabled={assigningOrganizationId !== null}
+                            onClick={() => void assignOrganization(organization)}
+                          >
+                            {assigningOrganizationId === organization.id ? (
+                              <Spinner />
+                            ) : (
+                              <Avatar className="size-4">
+                                {organization.logo && (
+                                  <AvatarImage src={organization.logo} alt="" />
+                                )}
+                                <AvatarFallback>
+                                  <Building2 className="size-3" />
+                                </AvatarFallback>
+                              </Avatar>
+                            )}
+                            {organization.name}
+                          </DropdownMenuItem>
+                        ))
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
               </Toolbar>
               {primaryEmail && (
                 <Button onClick={() => onCompose(primaryEmail)}>
@@ -1958,6 +1976,19 @@ export function PeopleView({
   const missingScopes = useAppStore((state) => state.peopleMissingScopes);
   const nextLinks = useAppStore((state) => state.peopleNextLinks);
   const fetchingMore = useAppStore((state) => state.peopleFetchingMore);
+  const directory = useAppStore((state) => state.peopleDirectory);
+  const directoryLoading = useAppStore(
+    (state) => state.peopleDirectoryLoading,
+  );
+  const directoryLoaded = useAppStore((state) => state.peopleDirectoryLoaded);
+  const directoryError = useAppStore((state) => state.peopleDirectoryError);
+  const directoryMissingScopes = useAppStore(
+    (state) => state.peopleDirectoryMissingScopes,
+  );
+  const hydratePeopleM365 = useAppStore((state) => state.hydratePeopleM365);
+  const peopleSessionGeneration = useAppStore(
+    (state) => state.peopleSessionGeneration,
+  );
   const filters = useAppStore((state) => state.peopleFilters);
   const view = useAppStore((state) => state.peopleView);
   const columnVisibility = useAppStore((state) => state.peopleColumnVisibility);
@@ -2014,13 +2045,48 @@ export function PeopleView({
     selectedGroupId == null
       ? EMPTY_CONTACTS
       : (groupMembersById[selectedGroupId] ?? EMPTY_CONTACTS);
-  const visibleContacts = peopleTab === "groups" ? groupMembers : contacts;
+  const visibleContacts =
+    peopleTab === "groups"
+      ? groupMembers
+      : peopleTab === "directory"
+        ? directory
+        : contacts;
   const activeGroup =
     groups.find((group) => group.id === selectedGroupId) ?? null;
   const groupMembersLoading =
     peopleTab === "groups" &&
     selectedGroupId != null &&
     groupMembersLoadingId === selectedGroupId;
+  const listLoading =
+    peopleTab === "groups"
+      ? groupMembersLoading
+      : peopleTab === "directory"
+        ? directoryLoading
+        : loading;
+  const listLoaded =
+    peopleTab === "groups"
+      ? !groupMembersLoading
+      : peopleTab === "directory"
+        ? directoryLoaded
+        : loaded;
+  const canLoadMore = peopleTab === "contacts" && nextLinks.length > 0;
+
+  useEffect(() => {
+    setRowSelection({});
+    setKeyboardActiveId(null);
+    selectionAnchorRef.current = null;
+  }, [peopleSessionGeneration]);
+  useEffect(() => {
+    setRowSelection({});
+    setKeyboardActiveId(null);
+    selectionAnchorRef.current = null;
+  }, [peopleTab]);
+  const activeMissingScopes =
+    peopleTab === "directory"
+      ? directoryMissingScopes
+      : peopleTab === "contacts"
+        ? missingScopes
+        : [];
 
   useLayoutEffect(() => {
     const el = detailContainerRef.current;
@@ -2062,7 +2128,7 @@ export function PeopleView({
   const organizationDataByContactId = useMemo(
     () =>
       new Map(
-        contacts.map((contact) => [
+        visibleContacts.map((contact) => [
           contact.id,
           {
             label: contactOrganizationLabel(organizations, contact),
@@ -2070,7 +2136,7 @@ export function PeopleView({
           },
         ]),
       ),
-    [contacts, organizations],
+    [organizations, visibleContacts],
   );
 
   const filterFields = useMemo<FilterFieldConfig<string>[]>(() => {
@@ -2079,7 +2145,7 @@ export function PeopleView({
       { value: "is_not", label: t.controlRoom.filtroOpNaoE },
     ];
     const companyLabels = [
-      ...contacts.map((contact) =>
+      ...visibleContacts.map((contact) =>
         contactOrganizationLabel(organizations, contact),
       ),
       ...organizations.map((organization) => organization.name),
@@ -2156,7 +2222,7 @@ export function PeopleView({
         ],
       },
     ];
-  }, [contacts, organizations, t]);
+  }, [organizations, t, visibleContacts]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = useMemo(() => {
@@ -2197,8 +2263,11 @@ export function PeopleView({
   }, [filters, normalizedQuery, organizations, visibleContacts]);
 
   const selectedContacts = useMemo(
-    () => filtered.filter((contact) => rowSelection[contact.id]),
-    [filtered, rowSelection],
+    () =>
+      peopleTab === "directory"
+        ? EMPTY_CONTACTS
+        : filtered.filter((contact) => rowSelection[contact.id]),
+    [filtered, peopleTab, rowSelection],
   );
 
   const selected =
@@ -2361,15 +2430,22 @@ export function PeopleView({
       t,
     ],
   );
+  const activeColumns = useMemo(
+    () =>
+      peopleTab === "directory"
+        ? columns.filter((column) => column.id !== "select")
+        : columns,
+    [columns, peopleTab],
+  );
 
   const table = useReactTable({
     data: filtered,
-    columns,
+    columns: activeColumns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getRowId: (row) => row.id,
-    enableRowSelection: true,
-    enableMultiRowSelection: true,
+    enableRowSelection: peopleTab !== "directory",
+    enableMultiRowSelection: peopleTab !== "directory",
     onRowSelectionChange: setRowSelection,
     onSortingChange: setSorting,
     onColumnOrderChange: setColumnOrder,
@@ -2409,6 +2485,7 @@ export function PeopleView({
     }
 
     if (
+      peopleTab !== "directory" &&
       (event.ctrlKey || event.metaKey) &&
       event.key.toLocaleLowerCase() === "a"
     ) {
@@ -2440,7 +2517,7 @@ export function PeopleView({
       const nextRow = tableRows[nextIndex];
       if (!nextRow) return;
 
-      if (event.shiftKey) {
+      if (event.shiftKey && peopleTab !== "directory") {
         const anchorId =
           selectionAnchorRef.current ?? keyboardActiveId ?? nextRow.id;
         const anchorIndex = tableRows.findIndex((row) => row.id === anchorId);
@@ -2469,6 +2546,7 @@ export function PeopleView({
     }
 
     if (event.key === " ") {
+      if (peopleTab === "directory") return;
       handled();
       const activeRow =
         (activeRowIndex >= 0 ? tableRows[activeRowIndex] : null) ?? tableRows[0];
@@ -2524,13 +2602,13 @@ export function PeopleView({
         }}
       />
 
-      {missingScopes.length > 0 && (
+      {activeMissingScopes.length > 0 && (
         <Alert variant="warning">
           <KeyRound />
           <AlertTitle>{t.controlRoom.peopleSemPermissao}</AlertTitle>
           <AlertDescription>
             {preencher(t.controlRoom.peopleSemPermissaoDesc, {
-              escopos: missingScopes.join(" + "),
+              escopos: activeMissingScopes.join(" + "),
             })}
           </AlertDescription>
           <AlertAction>
@@ -2541,12 +2619,28 @@ export function PeopleView({
         </Alert>
       )}
 
-      {error && (
+      {peopleTab === "contacts" && error && (
         <Alert variant="destructive">
           <AlertTitle>{t.controlRoom.peopleErro}</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
           <AlertAction>
             <Button variant="outline" size="sm" onClick={() => void loadPeople()}>
+              {t.controlRoom.peopleTentarNovamente}
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
+
+      {peopleTab === "directory" && directoryError && (
+        <Alert variant="destructive">
+          <AlertTitle>{t.controlRoom.peopleDirectoryError}</AlertTitle>
+          <AlertDescription>{directoryError}</AlertDescription>
+          <AlertAction>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void hydratePeopleM365({ force: true })}
+            >
               {t.controlRoom.peopleTentarNovamente}
             </Button>
           </AlertAction>
@@ -2657,7 +2751,7 @@ export function PeopleView({
                   </ToolbarButton>
                 </Toolbar>
               </FramePanel>
-              {selectedContacts.length > 0 && (
+              {peopleTab !== "directory" && selectedContacts.length > 0 && (
                 <FramePanel
                   fit
                   className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-t bg-secondary/40 px-2 py-1.5"
@@ -2710,41 +2804,39 @@ export function PeopleView({
                 </FramePanel>
               )}
               <FramePanel className="min-h-0 p-0">
-                {filtered.length === 0 &&
-                !(loading && !loaded) &&
-                !groupMembersLoading ? (
+                {filtered.length === 0 && !(listLoading && !listLoaded) ? (
                   peopleTab === "groups" &&
                   !normalizedQuery &&
                   filters.length === 0 ? (
                     <PeopleGroupEmpty selected={selectedGroupId != null} />
-                  ) : missingScopes.length > 0 ? (
+                  ) : activeMissingScopes.length > 0 ? (
                     <PeoplePermissionEmpty />
                   ) : (
                     <PeopleEmpty
                       search={Boolean(normalizedQuery)}
                       filtered={filters.length > 0}
+                      directory={peopleTab === "directory"}
                       onClear={() => {
                         setPeopleSearchQuery("");
                         setFilters([]);
                       }}
                     />
                   )
-                ) : view === "table" ||
-                  (loading && !loaded) ||
-                  groupMembersLoading ? (
+                ) : view === "table" || (listLoading && !listLoaded) ? (
                   <DataGrid
                     table={table}
                     recordCount={filtered.length}
                     activeRowId={keyboardActiveId}
-                    isLoading={(loading && !loaded) || groupMembersLoading}
+                    isLoading={listLoading && !listLoaded}
                     loadingMode="skeleton"
                     emptyMessage={
-                      missingScopes.length > 0 ? (
+                      activeMissingScopes.length > 0 ? (
                         <PeoplePermissionEmpty />
                       ) : (
                         <PeopleEmpty
                           search={Boolean(normalizedQuery)}
                           filtered={filters.length > 0}
+                          directory={peopleTab === "directory"}
                           onClear={() => {
                             setPeopleSearchQuery("");
                             setFilters([]);
@@ -2794,18 +2886,14 @@ export function PeopleView({
                         <ScrollArea className="h-full">
                           <DataGridTableVirtual
                             onFetchMore={() => {
-                              if (peopleTab !== "groups") {
+                              if (peopleTab === "contacts") {
                                 void loadMorePeople();
                               }
                             }}
                             isFetchingMore={
-                              peopleTab === "groups" ? false : fetchingMore
+                              peopleTab === "contacts" && fetchingMore
                             }
-                            hasMore={
-                              peopleTab === "groups"
-                                ? false
-                                : nextLinks.length > 0
-                            }
+                            hasMore={canLoadMore}
                             fetchMoreOffset={8}
                             estimateSize={48}
                             overscan={8}
@@ -2842,7 +2930,7 @@ export function PeopleView({
                         />
                       ))}
                     </div>
-                    {peopleTab !== "groups" && nextLinks.length > 0 && (
+                    {canLoadMore && (
                       <div className="flex justify-center py-4">
                         <Button
                           variant="outline"
@@ -2861,7 +2949,7 @@ export function PeopleView({
           );
 
           const detailPane =
-            (loading && !loaded) || groupMembersLoading ? (
+            listLoading && !listLoaded ? (
               <PeopleDetailSkeleton />
             ) : selected ? (
               <PeopleDetail

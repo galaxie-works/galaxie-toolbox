@@ -636,6 +636,15 @@ const pt = {
     peopleDescricao: "Seus contatos e pessoas relevantes do Microsoft 365.",
     peopleContactsTab: "Pessoas",
     peopleOrganizationsTab: "Organizações",
+    peopleMyOrganization: "Minha organização",
+    peopleOrganizationLoading: "Carregando organização…",
+    peopleOrganizationError:
+      "Não foi possível carregar o nome da organização.",
+    peopleDirectoryError:
+      "Não foi possível carregar as pessoas da organização.",
+    peopleDirectoryEmpty: "Nenhuma pessoa encontrada na organização",
+    peopleDirectoryEmptyDesc:
+      "O diretório do Microsoft 365 não retornou nenhuma pessoa.",
     peopleGroupsSection: "Grupos",
     peopleGroupsLoading: "Carregando grupos…",
     peopleGroupsEmpty: "Nenhum grupo M365 encontrado.",
@@ -1674,6 +1683,13 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleDescricao: "Your contacts and relevant people from Microsoft 365.",
     peopleContactsTab: "People",
     peopleOrganizationsTab: "Organizations",
+    peopleMyOrganization: "My organization",
+    peopleOrganizationLoading: "Loading organization…",
+    peopleOrganizationError: "The organization name could not be loaded.",
+    peopleDirectoryError: "The organization's people could not be loaded.",
+    peopleDirectoryEmpty: "No people found in the organization",
+    peopleDirectoryEmptyDesc:
+      "The Microsoft 365 directory did not return any people.",
     peopleGroupsSection: "Groups",
     peopleGroupsLoading: "Loading groups…",
     peopleGroupsEmpty: "No Microsoft 365 groups found.",

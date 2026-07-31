@@ -266,6 +266,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (atraso !== undefined) state.marcarLidoAtraso = atraso;
     const peopleTab = lerTexto<PeopleTab>(UI_KEYS.peopleTab, [
       "contacts",
+      "directory",
       "organizations",
       "groups",
     ]);

@@ -1,14 +1,14 @@
 import type { StateCreator } from "zustand";
 
-import * as api from "@/lib/api";
+import * as api from "../lib/api.ts";
 import {
   applyPeopleEnrichment,
   mergePeopleGroupMembers,
   mergePeopleRecords,
   resolvePerson,
   type PeopleContact,
-} from "@/lib/people";
-import type { Filter } from "@/components/reui/filters";
+} from "../lib/people.ts";
+import type { Filter } from "../components/reui/filters";
 import type {
   PeopleBulkDetailsChange,
   PeopleBulkDetailsField,
@@ -16,9 +16,24 @@ import type {
   PeopleEnrichFieldKey,
   PeopleEnrichPreview,
   PeopleGroup,
+  PeopleTenantOrganization,
   Pessoa,
-} from "@/lib/types";
+} from "../lib/types";
 import type { AppStore } from "./index";
+
+type PeopleApi = Pick<
+  typeof api,
+  | "crPeopleList"
+  | "crPessoas"
+  | "crPeopleOrganization"
+  | "crPeopleDirectory"
+  | "crPeopleGroups"
+  | "crPeopleGroupMembers"
+  | "crPeopleEnrichPreview"
+  | "crPeopleCompanyWrite"
+  | "crPeopleDetailsWrite"
+  | "crPeopleContactUpdate"
+>;
 
 const resolveInFlight = new Map<string, Promise<PeopleContact | null>>();
 const directoryEnrichInFlight = new Map<
@@ -32,6 +47,13 @@ const DIRECTORY_AUTO_ENRICH_FIELDS = new Set<PeopleEnrichFieldKey>([
   "officeLocation",
   "manager",
 ]);
+
+function peopleResultError(
+  failures: string[],
+  missingScopes: string[],
+): string | null {
+  return [...failures, ...missingScopes].join(" · ") || null;
+}
 
 type PeopleBulkDetailsSnapshot = Pick<
   PeopleContact,
@@ -163,7 +185,22 @@ export interface PeopleSlice {
   peopleView: "table" | "cards";
   peopleColumnVisibility: Record<string, boolean>;
   peopleRequestGeneration: number;
+  peopleSessionGeneration: number;
   peopleDirectoryEnrichedEmails: string[];
+  peopleM365Generation: number;
+  peopleM365Loading: boolean;
+  peopleM365Loaded: boolean;
+  peopleM365Error: string | null;
+  peopleTenantOrganization: PeopleTenantOrganization | null;
+  peopleTenantOrganizationLoading: boolean;
+  peopleTenantOrganizationLoaded: boolean;
+  peopleTenantOrganizationError: string | null;
+  peopleTenantOrganizationMissingScopes: string[];
+  peopleDirectory: PeopleContact[];
+  peopleDirectoryLoading: boolean;
+  peopleDirectoryLoaded: boolean;
+  peopleDirectoryError: string | null;
+  peopleDirectoryMissingScopes: string[];
   peopleGroups: PeopleGroup[];
   peopleGroupsLoading: boolean;
   peopleGroupsLoaded: boolean;
@@ -184,6 +221,9 @@ export interface PeopleSlice {
   setPeopleView: (view: "table" | "cards") => void;
   setPeopleColumnVisibility: (visibility: Record<string, boolean>) => void;
   setPeopleSearchQuery: (query: string) => void;
+  hydratePeopleM365: (options?: { force?: boolean }) => Promise<void>;
+  resetPeopleSession: () => void;
+  selectPeopleDirectory: (id?: string | null) => void;
   loadPeopleGroups: () => Promise<void>;
   selectPeopleGroup: (groupId: string) => Promise<void>;
   autoEnrichDirectoryContact: (
@@ -210,12 +250,16 @@ export interface PeopleSlice {
   updatePeopleContact: (id: string, input: PeopleContactEdit) => Promise<void>;
 }
 
-export const createPeopleSlice: StateCreator<
+export function criarPeopleSlice(
+  overrides: Partial<PeopleApi> = {},
+): StateCreator<
   AppStore,
   [["zustand/persist", unknown]],
   [],
   PeopleSlice
-> = (set, get) => ({
+> {
+  const client = { ...api, ...overrides } as PeopleApi;
+  return (set, get) => ({
   peopleSearchQuery: "",
   peopleContacts: [],
   peopleSelectedId: null,
@@ -237,7 +281,22 @@ export const createPeopleSlice: StateCreator<
     actions: true,
   },
   peopleRequestGeneration: 0,
+  peopleSessionGeneration: 0,
   peopleDirectoryEnrichedEmails: [],
+  peopleM365Generation: 0,
+  peopleM365Loading: false,
+  peopleM365Loaded: false,
+  peopleM365Error: null,
+  peopleTenantOrganization: null,
+  peopleTenantOrganizationLoading: false,
+  peopleTenantOrganizationLoaded: false,
+  peopleTenantOrganizationError: null,
+  peopleTenantOrganizationMissingScopes: [],
+  peopleDirectory: [],
+  peopleDirectoryLoading: false,
+  peopleDirectoryLoaded: false,
+  peopleDirectoryError: null,
+  peopleDirectoryMissingScopes: [],
   peopleGroups: [],
   peopleGroupsLoading: false,
   peopleGroupsLoaded: false,
@@ -249,14 +308,20 @@ export const createPeopleSlice: StateCreator<
 
   loadPeople: async () => {
     const generation = get().peopleRequestGeneration + 1;
+    const sessionGeneration = get().peopleSessionGeneration;
     set({
       peopleLoading: true,
       peopleError: null,
       peopleRequestGeneration: generation,
     });
     try {
-      const result = await api.crPeopleList();
-      if (get().peopleRequestGeneration !== generation) return;
+      const result = await client.crPeopleList();
+      if (
+        get().peopleRequestGeneration !== generation ||
+        get().peopleSessionGeneration !== sessionGeneration
+      ) {
+        return;
+      }
       const contacts = mergePeopleRecords(result.records);
       for (const cached of get().peopleContacts) {
         if (
@@ -280,7 +345,12 @@ export const createPeopleSlice: StateCreator<
         peopleDirectoryEnrichedEmails: [],
       });
     } catch (error) {
-      if (get().peopleRequestGeneration !== generation) return;
+      if (
+        get().peopleRequestGeneration !== generation ||
+        get().peopleSessionGeneration !== sessionGeneration
+      ) {
+        return;
+      }
       set({
         peopleLoading: false,
         peopleLoaded: true,
@@ -292,9 +362,11 @@ export const createPeopleSlice: StateCreator<
   loadMorePeople: async () => {
     const { peopleFetchingMore, peopleNextLinks } = get();
     if (peopleFetchingMore || peopleNextLinks.length === 0) return;
+    const sessionGeneration = get().peopleSessionGeneration;
     set({ peopleFetchingMore: true });
     try {
-      const result = await api.crPeopleList(peopleNextLinks);
+      const result = await client.crPeopleList(peopleNextLinks);
+      if (get().peopleSessionGeneration !== sessionGeneration) return;
       const previous = get().peopleContacts;
       const incoming = mergePeopleRecords(result.records);
       const appended = previous.map((contact) => ({
@@ -348,6 +420,7 @@ export const createPeopleSlice: StateCreator<
             : get().peopleError,
       });
     } catch (error) {
+      if (get().peopleSessionGeneration !== sessionGeneration) return;
       set({ peopleFetchingMore: false, peopleError: String(error) });
     }
   },
@@ -362,19 +435,21 @@ export const createPeopleSlice: StateCreator<
     const existingRequest = resolveInFlight.get(normalized);
     if (existingRequest) return existingRequest;
 
+    const sessionGeneration = get().peopleSessionGeneration;
     const request = (async () => {
       let person =
         fallback?.origem && fallback.email.trim().toLocaleLowerCase() === normalized
           ? fallback
           : undefined;
       if (!person) {
-        const suggestions = await api.crPessoas(email);
+        const suggestions = await client.crPessoas(email);
         person = suggestions.find(
           (candidate) =>
             candidate.email.trim().toLocaleLowerCase() === normalized,
         );
       }
       if (!person) return null;
+      if (get().peopleSessionGeneration !== sessionGeneration) return null;
 
       const current = resolvePerson(get().peopleContacts, normalized);
       if (current) return current;
@@ -384,11 +459,14 @@ export const createPeopleSlice: StateCreator<
         peopleContacts: [...state.peopleContacts, contact],
       }));
       return contact;
-    })()
-      .catch(() => null)
-      .finally(() => resolveInFlight.delete(normalized));
+    })().catch(() => null);
 
     resolveInFlight.set(normalized, request);
+    void request.finally(() => {
+      if (resolveInFlight.get(normalized) === request) {
+        resolveInFlight.delete(normalized);
+      }
+    });
     return request;
   },
 
@@ -398,12 +476,195 @@ export const createPeopleSlice: StateCreator<
   setPeopleColumnVisibility: (peopleColumnVisibility) =>
     set({ peopleColumnVisibility }),
   setPeopleSearchQuery: (peopleSearchQuery) => set({ peopleSearchQuery }),
+  hydratePeopleM365: async (options) => {
+    const force = options?.force === true;
+    const current = get();
+    if (
+      (!force && current.peopleM365Loaded) ||
+      (!force && current.peopleM365Loading)
+    ) {
+      return;
+    }
+
+    const generation = current.peopleM365Generation + 1;
+    const sessionGeneration = current.peopleSessionGeneration;
+    if (force) {
+      directoryEnrichInFlight.clear();
+    }
+    set({
+      peopleM365Generation: generation,
+      peopleM365Loading: true,
+      peopleM365Error: null,
+      peopleTenantOrganizationLoading: true,
+      peopleTenantOrganizationLoaded: false,
+      peopleTenantOrganizationError: null,
+      peopleDirectoryLoading: true,
+      peopleDirectoryLoaded: false,
+      peopleDirectoryError: null,
+      peopleGroupsLoading: true,
+      peopleGroupsLoaded: false,
+      peopleGroupsError: null,
+      ...(force
+        ? {
+            peopleDirectoryEnrichedEmails: [],
+            peopleSelectedGroupId: null,
+            peopleGroupMembersById: {},
+            peopleGroupMembersLoadingId: null,
+            peopleGroupMembersError: null,
+          }
+        : {}),
+    });
+
+    const [organizationResult, directoryResult, groupsResult] =
+      await Promise.allSettled([
+        client.crPeopleOrganization(),
+        client.crPeopleDirectory(),
+        client.crPeopleGroups(),
+      ]);
+    if (
+      get().peopleM365Generation !== generation ||
+      get().peopleSessionGeneration !== sessionGeneration
+    ) {
+      return;
+    }
+
+    const organization =
+      organizationResult.status === "fulfilled"
+        ? organizationResult.value.organization ?? null
+        : null;
+    const organizationMissingScopes =
+      organizationResult.status === "fulfilled"
+        ? organizationResult.value.missingScopes
+        : [];
+    const organizationError =
+      organizationResult.status === "fulfilled"
+        ? peopleResultError(
+            organizationResult.value.failures,
+            organizationMissingScopes,
+          )
+        : String(organizationResult.reason);
+
+    const directoryRecords =
+      directoryResult.status === "fulfilled"
+        ? directoryResult.value.records.filter(
+            (record) => record.source === "directory",
+          )
+        : [];
+    const directoryMissingScopes =
+      directoryResult.status === "fulfilled"
+        ? directoryResult.value.missingScopes
+        : [];
+    const directoryError =
+      directoryResult.status === "fulfilled"
+        ? peopleResultError(
+            directoryResult.value.failures,
+            directoryMissingScopes,
+          )
+        : String(directoryResult.reason);
+
+    const groups =
+      groupsResult.status === "fulfilled" ? groupsResult.value.groups : [];
+    const groupsError =
+      groupsResult.status === "fulfilled"
+        ? peopleResultError(
+            groupsResult.value.failures,
+            groupsResult.value.missingScopes,
+          )
+        : String(groupsResult.reason);
+    const errors = [
+      organizationError,
+      directoryError,
+      groupsError,
+    ].filter((error): error is string => Boolean(error));
+
+    set({
+      peopleM365Loading: false,
+      peopleM365Loaded: true,
+      peopleM365Error: errors.join(" · ") || null,
+      peopleTenantOrganization: organization,
+      peopleTenantOrganizationLoading: false,
+      peopleTenantOrganizationLoaded: true,
+      peopleTenantOrganizationError: organizationError,
+      peopleTenantOrganizationMissingScopes: organizationMissingScopes,
+      peopleDirectory: mergePeopleRecords(directoryRecords),
+      peopleDirectoryLoading: false,
+      peopleDirectoryLoaded: true,
+      peopleDirectoryError: directoryError,
+      peopleDirectoryMissingScopes: directoryMissingScopes,
+      peopleGroups: groups,
+      peopleGroupsLoading: false,
+      peopleGroupsLoaded: true,
+      peopleGroupsError: groupsError,
+    });
+  },
+  resetPeopleSession: () => {
+    resolveInFlight.clear();
+    directoryEnrichInFlight.clear();
+    const current = get();
+    set({
+      peopleSearchQuery: "",
+      peopleContacts: [],
+      peopleSelectedId: null,
+      peopleLoading: false,
+      peopleLoaded: false,
+      peopleError: null,
+      peopleMissingScopes: [],
+      peopleNextLinks: [],
+      peopleFetchingMore: false,
+      peopleFilters: [],
+      peopleRequestGeneration: current.peopleRequestGeneration + 1,
+      peopleSessionGeneration: current.peopleSessionGeneration + 1,
+      peopleDirectoryEnrichedEmails: [],
+      peopleM365Generation: current.peopleM365Generation + 1,
+      peopleM365Loading: false,
+      peopleM365Loaded: false,
+      peopleM365Error: null,
+      peopleTenantOrganization: null,
+      peopleTenantOrganizationLoading: false,
+      peopleTenantOrganizationLoaded: false,
+      peopleTenantOrganizationError: null,
+      peopleTenantOrganizationMissingScopes: [],
+      peopleDirectory: [],
+      peopleDirectoryLoading: false,
+      peopleDirectoryLoaded: false,
+      peopleDirectoryError: null,
+      peopleDirectoryMissingScopes: [],
+      peopleGroups: [],
+      peopleGroupsLoading: false,
+      peopleGroupsLoaded: false,
+      peopleGroupsError: null,
+      peopleSelectedGroupId: null,
+      peopleGroupMembersById: {},
+      peopleGroupMembersLoadingId: null,
+      peopleGroupMembersError: null,
+    });
+  },
+  selectPeopleDirectory: (peopleSelectedId = null) => {
+    get().setPeopleTab("directory");
+    set({
+      peopleSelectedId,
+      peopleSelectedGroupId: null,
+      peopleGroupMembersError: null,
+    });
+  },
   loadPeopleGroups: async () => {
-    const { peopleGroupsLoading, peopleGroupsLoaded } = get();
-    if (peopleGroupsLoading || peopleGroupsLoaded) return;
+    const {
+      peopleGroupsLoading,
+      peopleGroupsLoaded,
+      peopleM365Loading,
+      peopleM365Generation,
+      peopleSessionGeneration,
+    } = get();
+    if (peopleGroupsLoading || peopleGroupsLoaded || peopleM365Loading) return;
     set({ peopleGroupsLoading: true, peopleGroupsError: null });
     try {
-      const result = await api.crPeopleGroups();
+      const result = await client.crPeopleGroups();
+      if (
+        get().peopleSessionGeneration !== peopleSessionGeneration ||
+        get().peopleM365Generation !== peopleM365Generation
+      ) {
+        return;
+      }
       set({
         peopleGroups: result.groups,
         peopleGroupsLoading: false,
@@ -412,6 +673,12 @@ export const createPeopleSlice: StateCreator<
           [...result.failures, ...result.missingScopes].join(" · ") || null,
       });
     } catch (error) {
+      if (
+        get().peopleSessionGeneration !== peopleSessionGeneration ||
+        get().peopleM365Generation !== peopleM365Generation
+      ) {
+        return;
+      }
       set({
         peopleGroupsLoading: false,
         peopleGroupsLoaded: true,
@@ -420,6 +687,8 @@ export const createPeopleSlice: StateCreator<
     }
   },
   selectPeopleGroup: async (groupId) => {
+    const sessionGeneration = get().peopleSessionGeneration;
+    const m365Generation = get().peopleM365Generation;
     get().setPeopleTab("groups");
     get().selectPerson(null);
     set({
@@ -430,7 +699,13 @@ export const createPeopleSlice: StateCreator<
 
     set({ peopleGroupMembersLoadingId: groupId });
     try {
-      const result = await api.crPeopleGroupMembers(groupId);
+      const result = await client.crPeopleGroupMembers(groupId);
+      if (
+        get().peopleSessionGeneration !== sessionGeneration ||
+        get().peopleM365Generation !== m365Generation
+      ) {
+        return;
+      }
       const members = mergePeopleGroupMembers(
         result.records,
         get().peopleContacts,
@@ -451,6 +726,12 @@ export const createPeopleSlice: StateCreator<
             : state.peopleGroupMembersLoadingId,
       }));
     } catch (error) {
+      if (
+        get().peopleSessionGeneration !== sessionGeneration ||
+        get().peopleM365Generation !== m365Generation
+      ) {
+        return;
+      }
       set({
         peopleGroupMembersLoadingId: null,
         peopleGroupMembersError: String(error),
@@ -458,7 +739,11 @@ export const createPeopleSlice: StateCreator<
     }
   },
   autoEnrichDirectoryContact: async (id, sameOrganization) => {
-    const contact = get().peopleContacts.find((candidate) => candidate.id === id);
+    const sessionGeneration = get().peopleSessionGeneration;
+    const m365Generation = get().peopleM365Generation;
+    const contact =
+      get().peopleContacts.find((candidate) => candidate.id === id) ??
+      get().peopleDirectory.find((candidate) => candidate.id === id);
     const email = contact?.emails[0]?.address.trim();
     const normalizedEmail = email?.toLowerCase() ?? "";
     if (
@@ -472,30 +757,46 @@ export const createPeopleSlice: StateCreator<
 
     let request = directoryEnrichInFlight.get(normalizedEmail);
     if (!request) {
-      request = api
-        .crPeopleEnrichPreview(contact.contactId ?? null, email, true)
-        .finally(() => directoryEnrichInFlight.delete(normalizedEmail));
+      request = client.crPeopleEnrichPreview(
+        contact.contactId ?? null,
+        email,
+        true,
+      );
       directoryEnrichInFlight.set(normalizedEmail, request);
+      const clearRequest = () => {
+        if (directoryEnrichInFlight.get(normalizedEmail) === request) {
+          directoryEnrichInFlight.delete(normalizedEmail);
+        }
+      };
+      void request.then(clearRequest, clearRequest);
     }
 
     const result = await request;
+    if (
+      get().peopleSessionGeneration !== sessionGeneration ||
+      get().peopleM365Generation !== m365Generation
+    ) {
+      return;
+    }
     const fields = result.fields.filter((field) =>
       DIRECTORY_AUTO_ENRICH_FIELDS.has(field.key),
     );
     const successful = result.failures.length === 0;
     set((state) => {
-      const originalStillExists = state.peopleContacts.some(
-        (candidate) => candidate.id === id,
-      );
+      const applyFields = (contacts: PeopleContact[]) =>
+        fields.length > 0
+          ? contacts.map((candidate) =>
+              candidate.id === id
+                ? applyPeopleEnrichment(candidate, fields)
+                : candidate,
+            )
+          : contacts;
+      const originalStillExists =
+        state.peopleContacts.some((candidate) => candidate.id === id) ||
+        state.peopleDirectory.some((candidate) => candidate.id === id);
       return {
-        peopleContacts:
-          fields.length > 0
-            ? state.peopleContacts.map((candidate) =>
-                candidate.id === id
-                  ? applyPeopleEnrichment(candidate, fields)
-                  : candidate,
-              )
-            : state.peopleContacts,
+        peopleContacts: applyFields(state.peopleContacts),
+        peopleDirectory: applyFields(state.peopleDirectory),
         peopleDirectoryEnrichedEmails:
           successful && originalStillExists
             ? Array.from(
@@ -601,7 +902,7 @@ export const createPeopleSlice: StateCreator<
     };
 
     try {
-      const result = await api.crPeopleCompanyWrite(
+      const result = await client.crPeopleCompanyWrite(
         writes.map((contact) => contact.contactId!),
         organization.name,
       );
@@ -780,7 +1081,7 @@ export const createPeopleSlice: StateCreator<
     };
 
     try {
-      const result = await api.crPeopleDetailsWrite(
+      const result = await client.crPeopleDetailsWrite(
         writes.map(([contactId]) => contactId),
         normalizedChanges,
       );
@@ -843,7 +1144,7 @@ export const createPeopleSlice: StateCreator<
       ),
     }));
     try {
-      await api.crPeopleContactUpdate(current.contactId, input);
+      await client.crPeopleContactUpdate(current.contactId, input);
     } catch (error) {
       set((state) => ({
         peopleContacts: state.peopleContacts.map((contact) =>
@@ -853,4 +1154,7 @@ export const createPeopleSlice: StateCreator<
       throw error;
     }
   },
-});
+  });
+}
+
+export const createPeopleSlice = criarPeopleSlice();

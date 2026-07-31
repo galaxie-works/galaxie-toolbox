@@ -1490,6 +1490,19 @@ function FolderSidebar({
 }) {
   const peopleTab = useAppStore((state) => state.peopleTab);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
+  const selectPeopleDirectory = useAppStore(
+    (state) => state.selectPeopleDirectory,
+  );
+  const peopleTenantOrganization = useAppStore(
+    (state) => state.peopleTenantOrganization,
+  );
+  const peopleTenantOrganizationLoading = useAppStore(
+    (state) => state.peopleTenantOrganizationLoading,
+  );
+  const peopleTenantOrganizationError = useAppStore(
+    (state) => state.peopleTenantOrganizationError,
+  );
+  const hydratePeopleM365 = useAppStore((state) => state.hydratePeopleM365);
   const peopleGroups = useAppStore((state) => state.peopleGroups);
   const peopleGroupsLoading = useAppStore(
     (state) => state.peopleGroupsLoading,
@@ -2018,14 +2031,75 @@ function FolderSidebar({
             </nav>
 
             <nav
-              aria-label={t.controlRoom.peopleGroupsSection}
+              aria-label={t.controlRoom.peopleMyOrganization}
               className={cn(
                 "flex w-full flex-col gap-0.5",
                 colapsada && "items-center"
               )}
             >
               {!colapsada && (
-                <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">
+                <div className="min-w-0 px-2 pb-1">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {t.controlRoom.peopleMyOrganization}
+                  </p>
+                  <p className="truncate text-sm font-medium">
+                    {peopleTenantOrganizationLoading &&
+                    !peopleTenantOrganization
+                      ? t.controlRoom.peopleOrganizationLoading
+                      : peopleTenantOrganization?.name?.trim() ||
+                        t.controlRoom.peopleMyOrganization}
+                  </p>
+                </div>
+              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={peopleTab === "directory" ? "secondary" : "ghost"}
+                    onClick={() => selectPeopleDirectory()}
+                    aria-label={t.controlRoom.peopleContactsTab}
+                    aria-current={
+                      peopleTab === "directory" ? "page" : undefined
+                    }
+                    className={cn(
+                      "shrink-0",
+                      colapsada
+                        ? "size-9 justify-center p-0"
+                        : "w-full justify-start gap-2.5",
+                      peopleTab === "directory"
+                        ? "bg-secondary font-medium text-secondary-foreground"
+                        : "text-muted-foreground hover:bg-accent/50",
+                    )}
+                  >
+                    <User className="size-4 shrink-0" />
+                    {!colapsada && (
+                      <span>{t.controlRoom.peopleContactsTab}</span>
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                {colapsada && (
+                  <TooltipContent side="right" align="center">
+                    {t.controlRoom.peopleContactsTab}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+              {!colapsada && peopleTenantOrganizationError && (
+                <div className="px-2 py-1">
+                  <p className="text-xs text-destructive">
+                    {t.controlRoom.peopleOrganizationError}
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-1 h-7 px-2"
+                    onClick={() => void hydratePeopleM365({ force: true })}
+                  >
+                    <RefreshCw className="size-3.5" />
+                    {t.controlRoom.peopleTentarNovamente}
+                  </Button>
+                </div>
+              )}
+              {!colapsada && (
+                <p className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
                   {t.controlRoom.peopleGroupsSection}
                 </p>
               )}

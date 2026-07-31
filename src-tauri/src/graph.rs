@@ -3239,6 +3239,29 @@ pub struct PeopleListResult {
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PeopleTenantOrganization {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleOrganizationResult {
+    pub organization: Option<PeopleTenantOrganization>,
+    pub missing_scopes: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleDirectoryResult {
+    pub records: Vec<PeopleRecord>,
+    pub missing_scopes: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PeopleGroup {
     pub id: String,
     pub name: String,
@@ -3364,6 +3387,51 @@ fn telefones_de_people(item: &serde_json::Value) -> Vec<PeoplePhone> {
         .collect()
 }
 
+fn registro_de_usuario_do_diretorio(item: &serde_json::Value) -> Option<PeopleRecord> {
+    let id = item["id"].as_str()?.trim();
+    let address = item["mail"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            item["userPrincipalName"]
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })?;
+    if id.is_empty() {
+        return None;
+    }
+
+    let name = item["displayName"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(address);
+    Some(PeopleRecord {
+        id: id.to_string(),
+        source: "directory".to_string(),
+        name: name.to_string(),
+        emails: vec![PeopleEmail {
+            address: address.to_string(),
+            label: None,
+        }],
+        phones: telefones_de_contato(item),
+        job_title: texto_opcional(item, "jobTitle"),
+        company: texto_opcional(item, "companyName"),
+        department: texto_opcional(item, "department"),
+        office_location: texto_opcional(item, "officeLocation"),
+        manager: None,
+        organization: true,
+        people_rank: None,
+    })
+}
+
+fn url_continuacao_graph_valida(url: &str) -> bool {
+    url.strip_prefix(GRAPH)
+        .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 /// `/me/people` mistura pessoas e objetos mail-enabled. `personType.class` é o
 /// sinal canônico do Graph para excluir Teams, listas de distribuição e sites
 /// SharePoint respaldados por Microsoft 365 Groups da lista de pessoas (#281).
@@ -3400,6 +3468,71 @@ mod testes_people_person_type {
         });
         assert!(!eh_grupo_de_people(&pessoa));
         assert!(!eh_grupo_de_people(&serde_json::json!({})));
+    }
+}
+
+#[cfg(test)]
+mod testes_people_directory {
+    use super::{registro_de_usuario_do_diretorio, url_continuacao_graph_valida};
+
+    #[test]
+    fn normaliza_usuario_do_diretorio_com_campos_do_people() {
+        let item = serde_json::json!({
+            "id": " user-1 ",
+            "displayName": " Ada Lovelace ",
+            "mail": " ada@example.com ",
+            "userPrincipalName": "ada@example.onmicrosoft.com",
+            "businessPhones": [" +44 20 7946 0958 "],
+            "mobilePhone": " +44 7700 900123 ",
+            "jobTitle": " Architect ",
+            "companyName": " Analytical Engines ",
+            "department": " Research ",
+            "officeLocation": " London "
+        });
+
+        let record = registro_de_usuario_do_diretorio(&item).expect("usuario valido");
+        assert_eq!(record.id, "user-1");
+        assert_eq!(record.source, "directory");
+        assert_eq!(record.name, "Ada Lovelace");
+        assert_eq!(record.emails[0].address, "ada@example.com");
+        assert_eq!(record.phones.len(), 2);
+        assert_eq!(record.job_title.as_deref(), Some("Architect"));
+        assert_eq!(record.company.as_deref(), Some("Analytical Engines"));
+        assert_eq!(record.department.as_deref(), Some("Research"));
+        assert_eq!(record.office_location.as_deref(), Some("London"));
+        assert!(record.organization);
+    }
+
+    #[test]
+    fn usa_upn_quando_mail_esta_vazio_e_descarta_usuario_sem_endereco() {
+        let com_upn = serde_json::json!({
+            "id": "user-2",
+            "displayName": "",
+            "mail": " ",
+            "userPrincipalName": "grace@example.com"
+        });
+        let record = registro_de_usuario_do_diretorio(&com_upn).expect("upn valido");
+        assert_eq!(record.name, "grace@example.com");
+        assert_eq!(record.emails[0].address, "grace@example.com");
+
+        let sem_endereco = serde_json::json!({
+            "id": "user-3",
+            "displayName": "Sem endereço"
+        });
+        assert!(registro_de_usuario_do_diretorio(&sem_endereco).is_none());
+    }
+
+    #[test]
+    fn aceita_apenas_continuacao_dentro_do_graph_v1() {
+        assert!(url_continuacao_graph_valida(
+            "https://graph.microsoft.com/v1.0/users?$skiptoken=abc"
+        ));
+        assert!(!url_continuacao_graph_valida(
+            "https://graph.microsoft.com/v1.0.evil.example/users"
+        ));
+        assert!(!url_continuacao_graph_valida(
+            "https://example.com/v1.0/users"
+        ));
     }
 }
 
@@ -3558,6 +3691,136 @@ pub fn cr_people_list(
     Ok(result)
 }
 
+/// Organização do tenant atual, usando o nome canônico do Microsoft Graph.
+pub fn cr_organizacao(store: &TokenStore) -> Result<PeopleOrganizationResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut result = PeopleOrganizationResult {
+        organization: None,
+        missing_scopes: Vec::new(),
+        failures: Vec::new(),
+    };
+    let url = format!("{GRAPH}/organization?$select=id,displayName");
+
+    match graph_enviar("people:organization", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => {
+                let organization = body["value"].as_array().and_then(|items| {
+                    items.iter().find_map(|item| {
+                        let id = item["id"].as_str()?.trim();
+                        let name = item["displayName"].as_str()?.trim();
+                        if id.is_empty() || name.is_empty() {
+                            return None;
+                        }
+                        Some(PeopleTenantOrganization {
+                            id: id.to_string(),
+                            name: name.to_string(),
+                        })
+                    })
+                });
+                if organization.is_none() {
+                    result
+                        .failures
+                        .push("Organization: resposta sem organização válida".to_string());
+                }
+                result.organization = organization;
+            }
+            Err(error) => result
+                .failures
+                .push(format!("Organization: resposta invalida ({error})")),
+        },
+        Ok(resp) => result
+            .failures
+            .push(format!("Organization: Graph retornou {}", resp.status())),
+        Err(error) => result
+            .failures
+            .push(format!("Organization: falha de rede ({error})")),
+    }
+
+    Ok(result)
+}
+
+/// Snapshot completo dos usuários do tenant. A paginação é consumida no
+/// backend para que a hidratação de sessão não dependa da máquina nem de cache
+/// local e nunca exponha uma lista silenciosamente truncada.
+pub fn cr_people_directory(store: &TokenStore) -> Result<PeopleDirectoryResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut result = PeopleDirectoryResult {
+        records: Vec::new(),
+        missing_scopes: Vec::new(),
+        failures: Vec::new(),
+    };
+    let mut proxima = Some(format!(
+        "{GRAPH}/users?$top=999&$select=id,displayName,mail,userPrincipalName,businessPhones,mobilePhone,jobTitle,companyName,department,officeLocation"
+    ));
+    let mut paginas_visitadas = std::collections::HashSet::new();
+
+    while let Some(url) = proxima.take() {
+        if !url_continuacao_graph_valida(&url) {
+            result
+                .failures
+                .push("Directory: continuation URL outside Microsoft Graph".to_string());
+            break;
+        }
+        if !paginas_visitadas.insert(url.clone()) {
+            result
+                .failures
+                .push("Directory: continuation URL repeated".to_string());
+            break;
+        }
+        match graph_enviar("people:directory", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        }) {
+            Ok(resp) if resp.status().is_success() => {
+                let body = match resp.json::<serde_json::Value>() {
+                    Ok(body) => body,
+                    Err(error) => {
+                        result
+                            .failures
+                            .push(format!("Directory: resposta invalida ({error})"));
+                        break;
+                    }
+                };
+                proxima = body["@odata.nextLink"].as_str().map(str::to_string);
+                let Some(items) = body["value"].as_array() else {
+                    result
+                        .failures
+                        .push("Directory: resposta sem coleção de usuários".to_string());
+                    break;
+                };
+                result
+                    .records
+                    .extend(items.iter().filter_map(registro_de_usuario_do_diretorio));
+            }
+            Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
+                result.missing_scopes.push("User.Read.All".to_string());
+                break;
+            }
+            Ok(resp) => {
+                result
+                    .failures
+                    .push(format!("Directory: Graph retornou {}", resp.status()));
+                break;
+            }
+            Err(error) => {
+                result
+                    .failures
+                    .push(format!("Directory: falha de rede ({error})"));
+                break;
+            }
+        }
+    }
+
+    result
+        .records
+        .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    result.records.dedup_by(|a, b| a.id == b.id);
+    Ok(result)
+}
+
 /// Grupos M365/security aos quais o usuário atual pertence diretamente (#293).
 /// A lista não dispara N+1: a contagem fica ausente até `cr_grupo_membros`.
 pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
@@ -3677,59 +3940,7 @@ pub fn cr_grupo_membros(
             .map_err(|error| format!("Group members: resposta invalida ({error})"))?;
         proxima = body["@odata.nextLink"].as_str().map(str::to_string);
         if let Some(items) = body["value"].as_array() {
-            records.extend(items.iter().filter_map(|item| {
-                let id = item["id"].as_str()?.trim();
-                let address = item["mail"]
-                    .as_str()
-                    .or_else(|| item["userPrincipalName"].as_str())?
-                    .trim();
-                if id.is_empty() || address.is_empty() {
-                    return None;
-                }
-                let mut phones = item["businessPhones"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|value| value.as_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(|number| PeoplePhone {
-                        number: number.to_string(),
-                        label: "work".to_string(),
-                    })
-                    .collect::<Vec<_>>();
-                if let Some(number) = item["mobilePhone"]
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    phones.push(PeoplePhone {
-                        number: number.to_string(),
-                        label: "mobile".to_string(),
-                    });
-                }
-                Some(PeopleRecord {
-                    id: id.to_string(),
-                    source: "directory".to_string(),
-                    name: item["displayName"]
-                        .as_str()
-                        .unwrap_or(address)
-                        .trim()
-                        .to_string(),
-                    emails: vec![PeopleEmail {
-                        address: address.to_string(),
-                        label: None,
-                    }],
-                    phones,
-                    job_title: texto_opcional(item, "jobTitle"),
-                    company: texto_opcional(item, "companyName"),
-                    department: texto_opcional(item, "department"),
-                    office_location: texto_opcional(item, "officeLocation"),
-                    manager: None,
-                    organization: true,
-                    people_rank: None,
-                })
-            }));
+            records.extend(items.iter().filter_map(registro_de_usuario_do_diretorio));
         }
     }
 

@@ -97,6 +97,12 @@ function AppInner() {
   );
   const dismissReauth = useAppStore((state) => state.dismissReauth);
   const clearReauth = useAppStore((state) => state.clearReauth);
+  const hydratePeopleM365 = useAppStore(
+    (state) => state.hydratePeopleM365,
+  );
+  const resetPeopleSession = useAppStore(
+    (state) => state.resetPeopleSession,
+  );
   const [user, setUser] = useState<AppUser | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -246,7 +252,9 @@ function AppInner() {
         const u = await api.restoreSession();
         if (!vivo) return;
         if (u) {
+          resetPeopleSession();
           setUser(u);
+          void hydratePeopleM365({ force: true });
           const permissions = await api.requiredScopesStatus();
           if (!vivo) return;
           setReauthMissingScopes(permissions.missingScopes);
@@ -268,7 +276,12 @@ function AppInner() {
     return () => {
       vivo = false;
     };
-  }, [lockState, setReauthMissingScopes]);
+  }, [
+    hydratePeopleM365,
+    lockState,
+    resetPeopleSession,
+    setReauthMissingScopes,
+  ]);
 
   // --- Splash de boot (#164) ---------------------------------------------
   // Dois gates para revelar a main: o app só aparece depois que a animação
@@ -321,12 +334,14 @@ function AppInner() {
   async function handleLogin(email: string) {
     setLoginLoading(true);
     setError(null);
+    resetPeopleSession();
     try {
       const u = await api.login(email, idioma);
       // Login novo pode trazer o escopo de fotos (#39) recém-consentido: zera o
       // cache pra não herdar negative-cache de sessão sem permissão.
       limparFotos();
       setUser(u);
+      void hydratePeopleM365({ force: true });
       const permissions = await api.requiredScopesStatus();
       setReauthMissingScopes(permissions.missingScopes);
       setLoadingSites(true);
@@ -715,6 +730,7 @@ function AppInner() {
     await api.logout();
     limparFotos(); // privacidade (#39): não deixa fotos no disco após sair
     clearReauth();
+    resetPeopleSession();
     setUser(null);
     setSites([]);
     setError(null);
@@ -724,6 +740,7 @@ function AppInner() {
   async function recuperarBloqueio() {
     await api.logout();
     limparFotos();
+    resetPeopleSession();
     setUser(null);
     setSites([]);
     setError(null);

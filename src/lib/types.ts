@@ -354,6 +354,25 @@ export interface PeopleListResult {
   nextLinks: string[];
 }
 
+/** Organização canônica do tenant atual, separada das organizações do app. */
+export interface PeopleTenantOrganization {
+  id: string;
+  name: string;
+}
+
+export interface PeopleOrganizationResult {
+  organization?: PeopleTenantOrganization | null;
+  missingScopes: string[];
+  failures: string[];
+}
+
+/** Snapshot completo e paginado no backend dos usuários do tenant. */
+export interface PeopleDirectoryResult {
+  records: PeopleRecord[];
+  missingScopes: string[];
+  failures: string[];
+}
+
 /** Grupo M365 ao qual o usuário atual pertence (#293). */
 export interface PeopleGroup {
   id: string;
