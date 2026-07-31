@@ -34,6 +34,9 @@ const evento = (id: string): EventoAgenda => ({
   totalParticipantes: 0,
   temAnexos: false,
   categorias: [],
+  resposta: "organizer",
+  souOrganizador: true,
+  respostaSolicitada: false,
 });
 
 const detalhe = (assunto: string): EventoDetalhe => ({
@@ -44,6 +47,8 @@ const detalhe = (assunto: string): EventoDetalhe => ({
   online: true,
   organizador: "Galaxie",
   souOrganizador: true,
+  resposta: "organizer",
+  respostaSolicitada: false,
   corpo: "<p>Pauta</p>",
   corpoTipo: "html",
   participantes: [],

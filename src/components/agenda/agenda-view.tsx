@@ -182,6 +182,10 @@ export function AgendaView() {
 
   const eventos: CalendarEvent[] = useMemo(() => {
     return (mesEventos ?? [])
+      // Semântica do convite (#287): eventos recusados somem do calendário
+      // (mesmo comportamento do Outlook). Os demais estados (aceito/talvez/
+      // pendente) aparecem; o RSVP e o badge ficam no detalhe do evento.
+      .filter((ev) => ev.resposta !== "declined")
       .map((ev): CalendarEvent | null => {
         const inicio = new Date(comZ(ev.inicio));
         const fim = new Date(comZ(ev.fim));

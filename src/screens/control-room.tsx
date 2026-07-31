@@ -1,6 +1,6 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BridgeHeaderIcon } from "@/components/ui/icons/marca-anim";
-import { Badge } from "@/components/reui/badge";
+import { Badge, type BadgeProps } from "@/components/reui/badge";
 import {
   Filters,
   type FilterFieldConfig,
@@ -116,6 +116,7 @@ import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -167,10 +168,12 @@ import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
 import DOMPurify from "dompurify";
 import { cn, comLoginHint } from "@/lib/utils";
 import type {
+  AcaoRsvp,
   AnexoEmail,
   AppUser,
   EmailItem,
   PastaEmail,
+  RespostaConvite,
 } from "@/lib/types";
 import {
   analisarLink,
@@ -191,6 +194,8 @@ import {
   CalendarClock,
   CalendarDays,
   CalendarX2,
+  Check,
+  CircleHelp,
   ChevronDown,
   ListFilter,
   ChevronRight,
@@ -4753,6 +4758,31 @@ const MessageDetail = forwardRef<
 });
 
 
+/** Badge semântica do estado de resposta a um convite (#287). Devolve o
+ *  variant do Badge (reui) e o rótulo i18n; `null` para eventos sem semântica de
+ *  convite (ex.: sem resposta requisitada e ainda `none`). */
+function badgeResposta(
+  resposta: RespostaConvite,
+  souOrganizador: boolean,
+  t: ReturnType<typeof useIdioma>["t"],
+): { variant: BadgeProps["variant"]; label: string } | null {
+  if (souOrganizador || resposta === "organizer") {
+    return { variant: "primary-light", label: t.controlRoom.rsvpStatusOrganizador };
+  }
+  switch (resposta) {
+    case "accepted":
+      return { variant: "success-light", label: t.controlRoom.rsvpStatusAceito };
+    case "tentativelyAccepted":
+      return { variant: "warning-light", label: t.controlRoom.rsvpStatusTalvez };
+    case "declined":
+      return { variant: "destructive-light", label: t.controlRoom.rsvpStatusRecusado };
+    case "notResponded":
+      return { variant: "secondary", label: t.controlRoom.rsvpStatusPendente };
+    default:
+      return null;
+  }
+}
+
 function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const { idioma, t } = useIdioma();
   const id = useAppStore((s) => s.agendaEventoId);
@@ -4761,9 +4791,35 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const abrirFormEditar = useAppStore((s) => s.abrirFormEditar);
   const excluirEvento = useAppStore((s) => s.excluirEvento);
   const cancelarEvento = useAppStore((s) => s.cancelarEvento);
+  const responderEvento = useAppStore((s) => s.responderEvento);
   const eventosMes = useAppStore((s) => s.agendaEventosMes);
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
+
+  // RSVP a convites (#287): só quando o usuário é CONVIDADO (não organiza) — o
+  // organizador vê os status dos convidados, não RSVP. `respostaSolicitada`
+  // false = convite informativo: mostramos o badge, sem as ações.
+  const ehConvite = !!det && !det.souOrganizador && det.resposta !== "organizer";
+  const podeResponder = ehConvite && (det?.respostaSolicitada ?? true);
+  const badge = det ? badgeResposta(det.resposta, det.souOrganizador, t) : null;
+  const [comentarioRsvp, setComentarioRsvp] = useState("");
+  const [enviarResposta, setEnviarResposta] = useState(true);
+  const [rsvpEmVoo, setRsvpEmVoo] = useState<AcaoRsvp | null>(null);
+
+  // Envia o RSVP (#287): otimista no store (badge/lista atualizam na hora);
+  // toasta o resultado. Mantém o Sheet aberto — o usuário pode trocar a resposta.
+  const responder = async (acao: AcaoRsvp) => {
+    if (!id) return;
+    setRsvpEmVoo(acao);
+    try {
+      await responderEvento(id, acao, enviarResposta, comentarioRsvp.trim());
+      toast.success(t.controlRoom.rsvpEnviado);
+    } catch {
+      toast.error(t.controlRoom.rsvpErro);
+    } finally {
+      setRsvpEmVoo(null);
+    }
+  };
 
   // Cancelar evento (#260): só faz sentido pra quem ORGANIZA um evento COM
   // convidados — aí o cancelamento os notifica. Sem isso, resta só o Excluir
@@ -4819,6 +4875,13 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
     if (det?.participantes.length) pedirFotos(det.participantes.map((p) => p.email));
   }, [det, pedirFotos]);
 
+  // Zera o rascunho de RSVP ao trocar de evento (#287).
+  useEffect(() => {
+    setComentarioRsvp("");
+    setEnviarResposta(true);
+    setRsvpEmVoo(null);
+  }, [id]);
+
   return (
     <Sheet open={!!id} onOpenChange={(o) => !o && fecharEventoAgenda()}>
       <SheetContent side="right" className="flex w-[30%] flex-col gap-0 p-0 sm:max-w-[30vw]">
@@ -4836,6 +4899,12 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
                 <CalendarClock className="size-4 shrink-0" />
                 <span>{faixaHora(det.inicio, det.fim, idioma)}</span>
               </div>
+              {/* Semântica do convite (#287): badge do estado da resposta. */}
+              {badge && (
+                <Badge variant={badge.variant} size="lg">
+                  {badge.label}
+                </Badge>
+              )}
               {(det.online || det.local) && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   {det.online ? (
@@ -4872,6 +4941,84 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
                       );
                     })}
                   </div>
+                </div>
+              )}
+              {/* RSVP a convites (#287): Aceitar/Talvez/Recusar. Só para
+                  convidados; o botão do estado atual fica destacado (permite
+                  trocar). Convite informativo (responseRequested=false) mostra
+                  só o aviso, sem ações. */}
+              {ehConvite && (
+                <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs font-medium">{t.controlRoom.rsvpTitulo}</p>
+                  {podeResponder ? (
+                    <>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant={det.resposta === "accepted" ? "default" : "outline"}
+                          size="sm"
+                          disabled={!!rsvpEmVoo}
+                          onClick={() => void responder("accept")}
+                        >
+                          {rsvpEmVoo === "accept" ? (
+                            <Spinner className="size-4" />
+                          ) : (
+                            <Check />
+                          )}
+                          {t.controlRoom.rsvpAceitar}
+                        </Button>
+                        <Button
+                          variant={
+                            det.resposta === "tentativelyAccepted" ? "default" : "outline"
+                          }
+                          size="sm"
+                          disabled={!!rsvpEmVoo}
+                          onClick={() => void responder("tentativelyAccept")}
+                        >
+                          {rsvpEmVoo === "tentativelyAccept" ? (
+                            <Spinner className="size-4" />
+                          ) : (
+                            <CircleHelp />
+                          )}
+                          {t.controlRoom.rsvpTalvez}
+                        </Button>
+                        <Button
+                          variant={det.resposta === "declined" ? "default" : "outline"}
+                          size="sm"
+                          disabled={!!rsvpEmVoo}
+                          onClick={() => void responder("decline")}
+                        >
+                          {rsvpEmVoo === "decline" ? (
+                            <Spinner className="size-4" />
+                          ) : (
+                            <X />
+                          )}
+                          {t.controlRoom.rsvpRecusar}
+                        </Button>
+                      </div>
+                      <Textarea
+                        value={comentarioRsvp}
+                        onChange={(e) => setComentarioRsvp(e.target.value)}
+                        placeholder={t.controlRoom.rsvpComentarioPlaceholder}
+                        rows={2}
+                        disabled={!!rsvpEmVoo}
+                      />
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id="agenda-rsvp-enviar"
+                          checked={enviarResposta}
+                          onCheckedChange={setEnviarResposta}
+                          disabled={!!rsvpEmVoo}
+                        />
+                        <Label htmlFor="agenda-rsvp-enviar" className="text-xs font-normal">
+                          {t.controlRoom.rsvpEnviarResposta}
+                        </Label>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {t.controlRoom.rsvpInfoSemResposta}
+                    </p>
+                  )}
                 </div>
               )}
               {det.corpo.trim() && (

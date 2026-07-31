@@ -444,6 +444,24 @@ async fn cr_cancelar_evento(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda: responde a um convite de reunião (#287) — RSVP Aceitar/Talvez/Recusar
+/// via POST /me/events/{id}/{accept|tentativelyAccept|decline}. Calendars.ReadWrite.
+#[tauri::command]
+async fn cr_responder_evento(
+    state: State<'_, Store>,
+    id: String,
+    resposta: String,
+    enviar_resposta: bool,
+    comentario: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_responder_evento(&store, &id, &resposta, enviar_resposta, &comentario)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Control room: fotos (avatar) de remetentes internos, em lote. User.Read.All.
 #[tauri::command]
 async fn cr_fotos_contatos(
@@ -1380,6 +1398,7 @@ pub fn run() {
             cr_editar_evento,
             cr_excluir_evento,
             cr_cancelar_evento,
+            cr_responder_evento,
             cr_fotos_contatos,
             cr_pessoas,
             cr_people_list,
