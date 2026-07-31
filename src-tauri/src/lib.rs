@@ -653,6 +653,20 @@ async fn cr_people_company_write(
 }
 
 #[tauri::command]
+async fn cr_people_details_write(
+    state: State<'_, Store>,
+    contact_ids: Vec<String>,
+    changes: Vec<graph::PeopleBulkDetailsChange>,
+) -> Result<graph::PeopleBulkDetailsWriteResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_details_write(&store, contact_ids, changes)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn cr_people_interactions(
     state: State<'_, Store>,
     email: String,
@@ -1423,6 +1437,7 @@ pub fn run() {
             cr_people_write_available,
             cr_people_contact_update,
             cr_people_company_write,
+            cr_people_details_write,
             cr_people_interactions,
             cr_enviar_novo,
             cr_compartilhar_onedrive,

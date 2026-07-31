@@ -87,6 +87,7 @@ import {
 } from "@/components/reui/timeline";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Command,
   CommandEmpty,
@@ -148,6 +149,8 @@ import {
   type PeopleOrg,
 } from "@/lib/organizations";
 import type {
+  PeopleBulkDetailsChange,
+  PeopleBulkDetailsField,
   PeopleContactEdit,
   PeopleEnrichSource,
   PeopleInteraction,
@@ -1208,6 +1211,24 @@ function PeopleCard({
 }
 
 type BulkAssignStep = "pick" | "create" | "preview";
+type BulkEditDetailsStep = "edit" | "preview";
+type BulkEditDetailsFieldState = {
+  enabled: boolean;
+  clear: boolean;
+  value: string;
+};
+type BulkEditDetailsState = Record<
+  PeopleBulkDetailsField,
+  BulkEditDetailsFieldState
+>;
+
+function emptyBulkEditDetailsState(): BulkEditDetailsState {
+  return {
+    companyName: { enabled: false, clear: false, value: "" },
+    department: { enabled: false, clear: false, value: "" },
+    officeLocation: { enabled: false, clear: false, value: "" },
+  };
+}
 
 function splitDomains(value: string): string[] {
   return value
@@ -1580,6 +1601,338 @@ function AssignToOrganizationSheet({
   );
 }
 
+function BulkEditDetailsSheet({
+  open,
+  contacts,
+  onOpenChange,
+  onDone,
+}: {
+  open: boolean;
+  contacts: PeopleContact[];
+  onOpenChange: (open: boolean) => void;
+  onDone: () => void;
+}) {
+  const { t } = useIdioma();
+  const bulkEditPeopleDetails = useAppStore(
+    (state) => state.bulkEditPeopleDetails,
+  );
+  const [step, setStep] = useState<BulkEditDetailsStep>("edit");
+  const [edits, setEdits] = useState<BulkEditDetailsState>(
+    emptyBulkEditDetailsState,
+  );
+  const [validationAttempted, setValidationAttempted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const wasOpenRef = useRef(false);
+
+  const editableCount = contacts.filter((contact) =>
+    Boolean(contact.contactId),
+  ).length;
+  const readOnlyCount = contacts.length - editableCount;
+  const fields: Array<{
+    key: PeopleBulkDetailsField;
+    label: string;
+    placeholder: string;
+  }> = [
+    {
+      key: "companyName",
+      label: t.controlRoom.bulkDetailsEmpresa,
+      placeholder: t.controlRoom.bulkDetailsEmpresaPlaceholder,
+    },
+    {
+      key: "department",
+      label: t.controlRoom.bulkDetailsDepartamento,
+      placeholder: t.controlRoom.bulkDetailsDepartamentoPlaceholder,
+    },
+    {
+      key: "officeLocation",
+      label: t.controlRoom.bulkDetailsLocalEscritorio,
+      placeholder: t.controlRoom.bulkDetailsLocalEscritorioPlaceholder,
+    },
+  ];
+
+  useEffect(() => {
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
+    setStep("edit");
+    setEdits(emptyBulkEditDetailsState());
+    setValidationAttempted(false);
+    setSaving(false);
+  }, [open]);
+
+  const enabledFields = fields.filter(({ key }) => edits[key].enabled);
+  const missingValueFields = enabledFields.filter(
+    ({ key }) => !edits[key].clear && !edits[key].value.trim(),
+  );
+  const changes: PeopleBulkDetailsChange[] = enabledFields.map(({ key }) => ({
+    field: key,
+    value: edits[key].clear ? null : edits[key].value.trim(),
+  }));
+
+  const updateField = (
+    key: PeopleBulkDetailsField,
+    patch: Partial<BulkEditDetailsFieldState>,
+  ) => {
+    setEdits((current) => ({
+      ...current,
+      [key]: { ...current[key], ...patch },
+    }));
+  };
+
+  const goToPreview = () => {
+    setValidationAttempted(true);
+    if (enabledFields.length === 0 || missingValueFields.length > 0) return;
+    setStep("preview");
+  };
+
+  const apply = async () => {
+    if (changes.length === 0) return;
+    setSaving(true);
+    try {
+      const result = await bulkEditPeopleDetails(
+        contacts.map((contact) => contact.id),
+        changes,
+      );
+      if (result.updated > 0) {
+        toast.success(
+          preencher(t.controlRoom.bulkDetailsAtualizados, {
+            n: result.updated,
+          }),
+        );
+      }
+      if (result.unchanged > 0) {
+        toast.info(
+          preencher(t.controlRoom.bulkDetailsSemMudanca, {
+            n: result.unchanged,
+          }),
+        );
+      }
+      if (result.skipped > 0) {
+        toast.warning(
+          preencher(t.controlRoom.bulkDetailsIgnorados, {
+            n: result.skipped,
+          }),
+        );
+      }
+      if (result.failed > 0) {
+        toast.error(
+          preencher(t.controlRoom.bulkDetailsFalhas, {
+            n: result.failed,
+          }),
+        );
+      }
+      onDone();
+    } catch {
+      toast.error(t.controlRoom.bulkDetailsErro);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 p-0 sm:max-w-lg"
+      >
+        <SheetHeader className="border-b px-4 py-3">
+          <SheetTitle className="pr-6 text-left">
+            {preencher(t.controlRoom.bulkDetailsTitulo, {
+              n: contacts.length,
+            })}
+          </SheetTitle>
+          <SheetDescription className="text-left">
+            {t.controlRoom.bulkDetailsDescricao}
+          </SheetDescription>
+        </SheetHeader>
+
+        <ScrollArea className="min-h-0 flex-1 **:data-[slot=scroll-area-viewport]:overscroll-contain">
+          <div className="grid gap-4 px-4 py-4">
+            {step === "edit" ? (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary">
+                    {contacts.length} {t.controlRoom.bulkDetailsSelecionados}
+                  </Badge>
+                  <Badge variant="outline">
+                    {editableCount} {t.controlRoom.bulkDetailsEditaveis}
+                  </Badge>
+                  <Badge variant="outline">
+                    {readOnlyCount} {t.controlRoom.bulkDetailsSomenteLeitura}
+                  </Badge>
+                </div>
+
+                <div className="grid gap-3">
+                  {fields.map(({ key, label, placeholder }) => {
+                    const edit = edits[key];
+                    const inputId = `bulk-details-${key}`;
+                    const enabledId = `${inputId}-enabled`;
+                    const clearId = `${inputId}-clear`;
+                    const missingValue =
+                      validationAttempted &&
+                      edit.enabled &&
+                      !edit.clear &&
+                      !edit.value.trim();
+                    return (
+                      <div key={key} className="grid gap-3 rounded-lg border p-3">
+                        <div className="flex items-start gap-2">
+                          <Checkbox
+                            id={enabledId}
+                            checked={edit.enabled}
+                            onCheckedChange={(checked) =>
+                              updateField(key, {
+                                enabled: checked === true,
+                              })
+                            }
+                          />
+                          <div className="grid gap-0.5">
+                            <Label htmlFor={enabledId}>{label}</Label>
+                            <p className="text-xs text-muted-foreground">
+                              {t.controlRoom.bulkDetailsPreservado}
+                            </p>
+                          </div>
+                        </div>
+
+                        {edit.enabled && (
+                          <div className="grid gap-3 border-t pt-3">
+                            <div className="grid gap-2">
+                              <Label htmlFor={inputId}>
+                                {t.controlRoom.bulkDetailsNovoValor}
+                              </Label>
+                              <Input
+                                id={inputId}
+                                value={edit.value}
+                                onChange={(event) =>
+                                  updateField(key, {
+                                    value: event.target.value,
+                                  })
+                                }
+                                placeholder={placeholder}
+                                disabled={edit.clear}
+                                aria-invalid={missingValue}
+                              />
+                              {missingValue && (
+                                <p className="text-xs text-destructive">
+                                  {t.controlRoom.bulkDetailsValorObrigatorio}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <Checkbox
+                                id={clearId}
+                                checked={edit.clear}
+                                onCheckedChange={(checked) =>
+                                  updateField(key, {
+                                    clear: checked === true,
+                                  })
+                                }
+                              />
+                              <div className="grid gap-0.5">
+                                <Label htmlFor={clearId}>
+                                  {t.controlRoom.bulkDetailsLimpar}
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                  {t.controlRoom.bulkDetailsLimparDescricao}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {validationAttempted && enabledFields.length === 0 && (
+                  <p className="text-sm text-destructive">
+                    {t.controlRoom.bulkDetailsSelecioneCampo}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <div>
+                  <h3 className="text-sm font-medium">
+                    {t.controlRoom.bulkDetailsPreviewTitulo}
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t.controlRoom.bulkDetailsPreviewDescricao}
+                  </p>
+                </div>
+
+                <ul className="grid gap-2 text-sm">
+                  <li className="flex items-center justify-between gap-3">
+                    <span>{t.controlRoom.bulkDetailsSelecionados}</span>
+                    <Badge variant="secondary">{contacts.length}</Badge>
+                  </li>
+                  <li className="flex items-center justify-between gap-3">
+                    <span>{t.controlRoom.bulkDetailsEditaveis}</span>
+                    <Badge variant="outline">{editableCount}</Badge>
+                  </li>
+                  <li className="flex items-center justify-between gap-3">
+                    <span>{t.controlRoom.bulkDetailsSomenteLeitura}</span>
+                    <Badge variant="outline">{readOnlyCount}</Badge>
+                  </li>
+                </ul>
+
+                <Separator />
+
+                <ul className="grid gap-2">
+                  {enabledFields.map(({ key, label }) => (
+                    <li
+                      key={key}
+                      className="grid gap-1 rounded-lg border p-3 text-sm"
+                    >
+                      <span className="font-medium">{label}</span>
+                      <span className="break-words text-muted-foreground">
+                        {edits[key].clear
+                          ? t.controlRoom.bulkDetailsLimparValor
+                          : preencher(t.controlRoom.bulkDetailsDefinirComo, {
+                              valor: edits[key].value.trim(),
+                            })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        </ScrollArea>
+
+        <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
+          {step === "edit" ? (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                {t.controlRoom.orgsCancelar}
+              </Button>
+              <Button onClick={goToPreview}>
+                {t.controlRoom.bulkDetailsContinuar}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => setStep("edit")}
+                disabled={saving}
+              >
+                {t.controlRoom.bulkOrgVoltar}
+              </Button>
+              <Button onClick={() => void apply()} disabled={saving}>
+                {saving && <Spinner />}
+                {t.controlRoom.bulkDetailsConfirmar}
+              </Button>
+            </>
+          )}
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export function PeopleView({
   userEmail,
   onGrantAccess,
@@ -1650,6 +2003,7 @@ export function PeopleView({
   const tableFocusRef = useRef<HTMLDivElement>(null);
   const selectionAnchorRef = useRef<string | null>(null);
   const [assignOrgOpen, setAssignOrgOpen] = useState(false);
+  const [bulkEditDetailsOpen, setBulkEditDetailsOpen] = useState(false);
   const { getFoto, pedirFotos } = useFotos();
   // Mede o shell estável do MÓDULO (não a aba nem a janela): Contacts e
   // Organizations alternam o conteúdo interno, mas este elemento nunca desmonta.
@@ -2160,6 +2514,15 @@ export function PeopleView({
           table.resetRowSelection();
         }}
       />
+      <BulkEditDetailsSheet
+        open={bulkEditDetailsOpen}
+        contacts={selectedContacts}
+        onOpenChange={setBulkEditDetailsOpen}
+        onDone={() => {
+          setBulkEditDetailsOpen(false);
+          table.resetRowSelection();
+        }}
+      />
 
       {missingScopes.length > 0 && (
         <Alert variant="warning">
@@ -2334,7 +2697,11 @@ export function PeopleView({
                         <DropdownMenuItem disabled>
                           {t.controlRoom.peopleBulkMesclar}
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled>
+                        <DropdownMenuItem
+                          disabled={selectedContacts.length < 2}
+                          onSelect={() => setBulkEditDetailsOpen(true)}
+                        >
+                          <Pencil />
                           {t.controlRoom.peopleBulkEditarDetalhes}
                         </DropdownMenuItem>
                       </DropdownMenuContent>

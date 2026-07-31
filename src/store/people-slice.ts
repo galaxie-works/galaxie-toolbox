@@ -10,6 +10,8 @@ import {
 } from "@/lib/people";
 import type { Filter } from "@/components/reui/filters";
 import type {
+  PeopleBulkDetailsChange,
+  PeopleBulkDetailsField,
   PeopleContactEdit,
   PeopleEnrichFieldKey,
   PeopleEnrichPreview,
@@ -30,6 +32,101 @@ const DIRECTORY_AUTO_ENRICH_FIELDS = new Set<PeopleEnrichFieldKey>([
   "officeLocation",
   "manager",
 ]);
+
+type PeopleBulkDetailsSnapshot = Pick<
+  PeopleContact,
+  | "company"
+  | "companySource"
+  | "department"
+  | "departmentSource"
+  | "officeLocation"
+  | "officeLocationSource"
+>;
+
+function normalizeBulkDetailsChanges(
+  changes: PeopleBulkDetailsChange[],
+): PeopleBulkDetailsChange[] {
+  if (changes.length === 0) {
+    throw new Error("At least one details change is required.");
+  }
+
+  const seen = new Set<PeopleBulkDetailsField>();
+  return changes.map((change) => {
+    if (seen.has(change.field)) {
+      throw new Error(`Duplicate bulk details field: ${change.field}.`);
+    }
+    seen.add(change.field);
+
+    if (change.value === null) return change;
+
+    const value = change.value.trim();
+    if (value.length === 0 || new TextEncoder().encode(value).length > 256) {
+      throw new Error(`Invalid value for bulk details field: ${change.field}.`);
+    }
+    return { ...change, value };
+  });
+}
+
+function bulkDetailsValue(
+  contact: PeopleContact,
+  field: PeopleBulkDetailsField,
+): string | null {
+  switch (field) {
+    case "companyName":
+      return contact.company ?? null;
+    case "department":
+      return contact.department ?? null;
+    case "officeLocation":
+      return contact.officeLocation ?? null;
+  }
+}
+
+function applyBulkDetailsChanges(
+  contact: PeopleContact,
+  changes: PeopleBulkDetailsChange[],
+): PeopleContact {
+  let next = contact;
+  for (const change of changes) {
+    const source = change.value == null ? undefined : "contacts";
+    switch (change.field) {
+      case "companyName":
+        next = {
+          ...next,
+          company: change.value,
+          companySource: source,
+        };
+        break;
+      case "department":
+        next = {
+          ...next,
+          department: change.value,
+          departmentSource: source,
+        };
+        break;
+      case "officeLocation":
+        next = {
+          ...next,
+          officeLocation: change.value,
+          officeLocationSource: source,
+        };
+        break;
+    }
+  }
+  return next;
+}
+
+function bulkDetailsSnapshot(
+  contact: PeopleContact,
+): PeopleBulkDetailsSnapshot {
+  return {
+    company: contact.company,
+    companySource: contact.companySource,
+    department: contact.department,
+    departmentSource: contact.departmentSource,
+    officeLocation: contact.officeLocation,
+    officeLocationSource: contact.officeLocationSource,
+  };
+}
 
 function personFromSuggestion(person: Pessoa): PeopleContact {
   const email = person.email.trim();
@@ -100,6 +197,15 @@ export interface PeopleSlice {
     assigned: number;
     skipped: number;
     failed: number;
+  }>;
+  bulkEditPeopleDetails: (
+    contactIds: string[],
+    changes: PeopleBulkDetailsChange[],
+  ) => Promise<{
+    updated: number;
+    skipped: number;
+    failed: number;
+    unchanged: number;
   }>;
   updatePeopleContact: (id: string, input: PeopleContactEdit) => Promise<void>;
 }
@@ -517,6 +623,188 @@ export const createPeopleSlice: StateCreator<
       };
     } catch (error) {
       restore(new Set(writes.map((contact) => contact.id)));
+      throw error;
+    }
+  },
+  bulkEditPeopleDetails: async (contactIds, changes) => {
+    const normalizedChanges = normalizeBulkDetailsChanges(changes);
+    const stateAtStart = get();
+    const contactsById = new Map<string, PeopleContact[]>();
+    const indexContact = (contact: PeopleContact) => {
+      const candidates = contactsById.get(contact.id);
+      if (candidates) candidates.push(contact);
+      else contactsById.set(contact.id, [contact]);
+    };
+    for (const contact of stateAtStart.peopleContacts) indexContact(contact);
+    for (const members of Object.values(
+      stateAtStart.peopleGroupMembersById,
+    )) {
+      for (const contact of members) {
+        indexContact(contact);
+      }
+    }
+
+    const requestedIds = Array.from(new Set(contactIds));
+    const requestedContacts = requestedIds.map((id) => {
+      const candidates = contactsById.get(id);
+      return (
+        candidates?.find((contact) => Boolean(contact.contactId?.trim())) ??
+        candidates?.[0]
+      );
+    });
+    const skipped = requestedContacts.filter(
+      (contact) => !contact?.contactId?.trim(),
+    ).length;
+    const editableByContactId = new Map<string, PeopleContact>();
+    for (const contact of requestedContacts) {
+      const contactId = contact?.contactId?.trim();
+      if (!contact || !contactId || editableByContactId.has(contactId)) {
+        continue;
+      }
+      const canonical =
+        stateAtStart.peopleContacts.find(
+          (candidate) => candidate.contactId?.trim() === contactId,
+        ) ?? contact;
+      editableByContactId.set(contactId, canonical);
+    }
+    const unchangedContactIds = new Set(
+      Array.from(editableByContactId)
+        .filter(([, contact]) =>
+          normalizedChanges.every(
+            (change) =>
+              bulkDetailsValue(contact, change.field) === change.value,
+          ),
+        )
+        .map(([contactId]) => contactId),
+    );
+    const writes = Array.from(editableByContactId).filter(
+      ([contactId]) => !unchangedContactIds.has(contactId),
+    );
+
+    if (editableByContactId.size === 0) {
+      return {
+        updated: 0,
+        skipped,
+        failed: 0,
+        unchanged: 0,
+      };
+    }
+
+    const targetContactIds = new Set(editableByContactId.keys());
+    const writeContactIds = new Set(
+      writes.map(([contactId]) => contactId),
+    );
+    const peopleSnapshots = new Map(
+      stateAtStart.peopleContacts
+        .filter((contact) =>
+          writeContactIds.has(contact.contactId?.trim() ?? ""),
+        )
+        .map((contact) => [contact.id, bulkDetailsSnapshot(contact)]),
+    );
+    const groupSnapshots = new Map<
+      string,
+      Map<string, PeopleBulkDetailsSnapshot>
+    >();
+    for (const [groupId, members] of Object.entries(
+      stateAtStart.peopleGroupMembersById,
+    )) {
+      const snapshots = new Map(
+        members
+          .filter((contact) =>
+            writeContactIds.has(contact.contactId?.trim() ?? ""),
+          )
+          .map((contact) => [contact.id, bulkDetailsSnapshot(contact)]),
+      );
+      if (snapshots.size > 0) groupSnapshots.set(groupId, snapshots);
+    }
+
+    const updateContacts = (contacts: PeopleContact[]) =>
+      contacts.map((contact) =>
+        targetContactIds.has(contact.contactId?.trim() ?? "")
+          ? applyBulkDetailsChanges(contact, normalizedChanges)
+          : contact,
+      );
+
+    set((state) => ({
+      peopleContacts: updateContacts(state.peopleContacts),
+      peopleGroupMembersById: Object.fromEntries(
+        Object.entries(state.peopleGroupMembersById).map(
+          ([groupId, members]) => [groupId, updateContacts(members)],
+        ),
+      ),
+    }));
+
+    if (writes.length === 0) {
+      return {
+        updated: 0,
+        skipped,
+        failed: 0,
+        unchanged: unchangedContactIds.size,
+      };
+    }
+
+    const restoreContacts = (
+      contacts: PeopleContact[],
+      snapshots: Map<string, PeopleBulkDetailsSnapshot> | undefined,
+      failedContactIds: Set<string>,
+    ) =>
+      snapshots
+        ? contacts.map((contact) => {
+            const contactId = contact.contactId?.trim();
+            if (!contactId || !failedContactIds.has(contactId)) return contact;
+            const snapshot = snapshots.get(contact.id);
+            return snapshot ? { ...contact, ...snapshot } : contact;
+          })
+        : contacts;
+    const restore = (failedContactIds: Set<string>) => {
+      if (failedContactIds.size === 0) return;
+      set((state) => ({
+        peopleContacts: restoreContacts(
+          state.peopleContacts,
+          peopleSnapshots,
+          failedContactIds,
+        ),
+        peopleGroupMembersById: Object.fromEntries(
+          Object.entries(state.peopleGroupMembersById).map(
+            ([groupId, members]) => [
+              groupId,
+              restoreContacts(
+                members,
+                groupSnapshots.get(groupId),
+                failedContactIds,
+              ),
+            ],
+          ),
+        ),
+      }));
+    };
+
+    try {
+      const result = await api.crPeopleDetailsWrite(
+        writes.map(([contactId]) => contactId),
+        normalizedChanges,
+      );
+      const savedContactIds = new Set(result.savedContactIds);
+      const reportedFailedContactIds = new Set(result.failedContactIds);
+      const failedContactIds = new Set(
+        writes
+          .filter(
+            ([contactId]) =>
+              !result.writeAvailable ||
+              reportedFailedContactIds.has(contactId) ||
+              !savedContactIds.has(contactId),
+          )
+          .map(([contactId]) => contactId),
+      );
+      restore(failedContactIds);
+      return {
+        updated: writes.length - failedContactIds.size,
+        skipped,
+        failed: failedContactIds.size,
+        unchanged: unchangedContactIds.size,
+      };
+    } catch (error) {
+      restore(writeContactIds);
       throw error;
     }
   },

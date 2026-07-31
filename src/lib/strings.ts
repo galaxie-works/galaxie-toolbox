@@ -691,6 +691,40 @@ const pt = {
     peopleBulkAtribuirOrg: "Atribuir a organização",
     peopleBulkMesclar: "Mesclar",
     peopleBulkEditarDetalhes: "Editar detalhes",
+    bulkDetailsTitulo: "Editar detalhes de {n} contatos",
+    bulkDetailsDescricao:
+      "Escolha somente os campos que deseja alterar. Campos desmarcados serão preservados.",
+    bulkDetailsSelecionados: "selecionados",
+    bulkDetailsEditaveis: "editáveis",
+    bulkDetailsSomenteLeitura: "somente leitura",
+    bulkDetailsEmpresa: "Empresa",
+    bulkDetailsEmpresaPlaceholder: "Ex.: Galaxie Works",
+    bulkDetailsDepartamento: "Departamento",
+    bulkDetailsDepartamentoPlaceholder: "Ex.: Produto",
+    bulkDetailsLocalEscritorio: "Local do escritório",
+    bulkDetailsLocalEscritorioPlaceholder: "Ex.: São Paulo",
+    bulkDetailsPreservado: "Preservado enquanto estiver desmarcado.",
+    bulkDetailsNovoValor: "Novo valor",
+    bulkDetailsLimpar: "Limpar valores atuais",
+    bulkDetailsLimparDescricao:
+      "Remove este valor de todos os contatos editáveis selecionados.",
+    bulkDetailsValorObrigatorio:
+      "Informe um valor ou marque a opção para limpar.",
+    bulkDetailsSelecioneCampo: "Selecione pelo menos um campo para alterar.",
+    bulkDetailsPreviewTitulo: "Revise as alterações",
+    bulkDetailsPreviewDescricao:
+      "Somente contatos editáveis receberão estas alterações.",
+    bulkDetailsLimparValor: "Limpar valor atual",
+    bulkDetailsDefinirComo: "Definir como “{valor}”",
+    bulkDetailsContinuar: "Revisar alterações",
+    bulkDetailsConfirmar: "Aplicar alterações",
+    bulkDetailsAtualizados: "{n} contatos atualizados.",
+    bulkDetailsSemMudanca: "{n} contatos já tinham esses valores.",
+    bulkDetailsIgnorados: "{n} pessoas somente leitura foram ignoradas.",
+    bulkDetailsFalhas:
+      "{n} contatos não puderam ser atualizados; os valores anteriores foram restaurados.",
+    bulkDetailsErro:
+      "Não foi possível aplicar as alterações; os valores anteriores foram restaurados.",
     bulkOrgTitulo: "Atribuir {n} contatos a uma organização",
     bulkOrgDescricao:
       "Escolha uma organização existente ou crie uma nova. A atribuição é aditiva e não remove ninguém.",
@@ -1695,6 +1729,40 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleBulkAtribuirOrg: "Assign to organization",
     peopleBulkMesclar: "Merge",
     peopleBulkEditarDetalhes: "Edit details",
+    bulkDetailsTitulo: "Edit details for {n} contacts",
+    bulkDetailsDescricao:
+      "Choose only the fields you want to change. Unchecked fields will be preserved.",
+    bulkDetailsSelecionados: "selected",
+    bulkDetailsEditaveis: "editable",
+    bulkDetailsSomenteLeitura: "read-only",
+    bulkDetailsEmpresa: "Company",
+    bulkDetailsEmpresaPlaceholder: "E.g. Galaxie Works",
+    bulkDetailsDepartamento: "Department",
+    bulkDetailsDepartamentoPlaceholder: "E.g. Product",
+    bulkDetailsLocalEscritorio: "Office location",
+    bulkDetailsLocalEscritorioPlaceholder: "E.g. São Paulo",
+    bulkDetailsPreservado: "Preserved while unchecked.",
+    bulkDetailsNovoValor: "New value",
+    bulkDetailsLimpar: "Clear current values",
+    bulkDetailsLimparDescricao:
+      "Removes this value from every selected editable contact.",
+    bulkDetailsValorObrigatorio:
+      "Enter a value or select the option to clear it.",
+    bulkDetailsSelecioneCampo: "Select at least one field to change.",
+    bulkDetailsPreviewTitulo: "Review changes",
+    bulkDetailsPreviewDescricao:
+      "Only editable contacts will receive these changes.",
+    bulkDetailsLimparValor: "Clear current value",
+    bulkDetailsDefinirComo: "Set to “{valor}”",
+    bulkDetailsContinuar: "Review changes",
+    bulkDetailsConfirmar: "Apply changes",
+    bulkDetailsAtualizados: "{n} contacts updated.",
+    bulkDetailsSemMudanca: "{n} contacts already had these values.",
+    bulkDetailsIgnorados: "{n} read-only people were skipped.",
+    bulkDetailsFalhas:
+      "{n} contacts could not be updated; previous values were restored.",
+    bulkDetailsErro:
+      "Changes could not be applied; previous values were restored.",
     bulkOrgTitulo: "Assign {n} contacts to an organization",
     bulkOrgDescricao:
       "Pick an existing organization or create a new one. The assignment is additive and removes no one.",

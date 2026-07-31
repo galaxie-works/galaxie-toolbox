@@ -400,6 +400,22 @@ export interface PeopleCompanyWriteResult {
   failedContactIds: string[];
 }
 
+export type PeopleBulkDetailsField =
+  | "companyName"
+  | "department"
+  | "officeLocation";
+
+export interface PeopleBulkDetailsChange {
+  field: PeopleBulkDetailsField;
+  value: string | null;
+}
+
+export interface PeopleBulkDetailsWriteResult {
+  writeAvailable: boolean;
+  savedContactIds: string[];
+  failedContactIds: string[];
+}
+
 export interface PeopleContactEdit {
   name: string;
   emails: PeopleEmail[];
