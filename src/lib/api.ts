@@ -14,6 +14,7 @@ import type {
   PastaEmail,
   PastaOD,
   Pessoa,
+  PeopleCompanyWriteResult,
   PeopleEnrichApplyResult,
   PeopleContactEdit,
   PeopleEnrichField,
@@ -1032,6 +1033,28 @@ export async function crPeopleContactUpdate(
     return;
   }
   return invoke<void>("cr_people_contact_update", { contactId, input });
+}
+
+/**
+ * Grava `companyName` apenas nos contatos pessoais editáveis. O backend usa
+ * `$batch` (20 por envelope) e devolve sucesso/falha por contato para rollback.
+ */
+export async function crPeopleCompanyWrite(
+  contactIds: string[],
+  companyName: string,
+): Promise<PeopleCompanyWriteResult> {
+  if (!inTauri()) {
+    await sleep(550);
+    return {
+      writeAvailable: true,
+      savedContactIds: [...new Set(contactIds)],
+      failedContactIds: [],
+    };
+  }
+  return invoke<PeopleCompanyWriteResult>("cr_people_company_write", {
+    contactIds,
+    companyName,
+  });
 }
 
 /** Mensagens recentes diretamente relacionadas ao endereço selecionado. */

@@ -140,9 +140,10 @@ import { useIdioma, preencher } from "@/lib/idioma";
 import { type PeopleContact } from "@/lib/people";
 import {
   contactDomain,
+  contactOrganizationLabel,
   normalizeDomain,
   organizationMembers,
-  resolveOrganization,
+  resolveContactOrganization,
   suggestedOrganizationName,
   type PeopleOrg,
 } from "@/lib/organizations";
@@ -372,19 +373,19 @@ function PeopleDetail({
   const organizations = useAppStore((state) => state.organizations);
   const selectOrganization = useAppStore((state) => state.selectOrganization);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
-  const addContactToOrganization = useAppStore(
-    (state) => state.addContactToOrganization,
+  const assignPeopleOrganization = useAppStore(
+    (state) => state.assignPeopleOrganization,
   );
   const primaryEmail = contact.emails[0]?.address;
   const userDomain = normalizeDomain(userEmail.split("@").at(-1) ?? "");
   const sameOrganization =
     contact.organization ||
     Boolean(userDomain && contactDomain(contact) === userDomain);
-  const resolvedOrganization = resolveOrganization(
+  const resolvedOrganization = resolveContactOrganization(
     organizations,
-    contactDomain(contact),
+    contact,
   );
-  const organizationLabel = resolvedOrganization?.name ?? null;
+  const organizationLabel = contactOrganizationLabel(organizations, contact);
   const [enrichError, setEnrichError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -399,6 +400,9 @@ function PeopleDetail({
   const [interactions, setInteractions] = useState<PeopleInteraction[]>([]);
   const [interactionsLoading, setInteractionsLoading] = useState(Boolean(primaryEmail));
   const [interactionsError, setInteractionsError] = useState(false);
+  const [assigningOrganizationId, setAssigningOrganizationId] = useState<
+    string | null
+  >(null);
   const editUnavailableReason = sameOrganization
     ? "directory"
     : !contact.contactId
@@ -519,6 +523,28 @@ function PeopleDetail({
       setEditError(t.controlRoom.peopleEditError);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const assignOrganization = async (organization: PeopleOrg) => {
+    setAssigningOrganizationId(organization.id);
+    try {
+      const result = await assignPeopleOrganization(organization.id, [contact.id]);
+      if (result.skipped > 0) {
+        toast.warning(t.controlRoom.orgWritebackSomenteLeitura);
+        return;
+      }
+      if (result.failed > 0) {
+        toast.error(t.controlRoom.orgWritebackErro);
+        return;
+      }
+      toast.success(t.controlRoom.orgWritebackSucesso);
+      selectOrganization(organization.id);
+      setPeopleTab("organizations");
+    } catch {
+      toast.error(t.controlRoom.orgWritebackErro);
+    } finally {
+      setAssigningOrganizationId(null);
     }
   };
 
@@ -694,17 +720,14 @@ function PeopleDetail({
                       organizations.map((organization) => (
                         <DropdownMenuItem
                           key={organization.id}
-                          onClick={() => {
-                            addContactToOrganization(
-                              organization.id,
-                              contact.id,
-                              useAppStore.getState().peopleContacts,
-                            );
-                            selectOrganization(organization.id);
-                            setPeopleTab("organizations");
-                          }}
+                          disabled={assigningOrganizationId !== null}
+                          onClick={() => void assignOrganization(organization)}
                         >
-                          <Building2 />
+                          {assigningOrganizationId === organization.id ? (
+                            <Spinner />
+                          ) : (
+                            <Building2 />
+                          )}
                           {organization.name}
                         </DropdownMenuItem>
                       ))
@@ -1164,8 +1187,8 @@ function splitDomains(value: string): string[] {
 
 /**
  * Barra de massa → atribuir os contatos selecionados a uma organização
- * (existente ou nova). Aditivo: itera `addContactToOrganization` (idempotente),
- * nunca `assignOrganizationContacts` (que poda quem não foi selecionado).
+ * (existente ou nova). Aditivo e persistido no `companyName` dos contatos
+ * editáveis; pessoas do diretório continuam read-only.
  */
 function AssignToOrganizationSheet({
   open,
@@ -1181,8 +1204,8 @@ function AssignToOrganizationSheet({
   const { t } = useIdioma();
   const organizations = useAppStore((state) => state.organizations);
   const createOrganization = useAppStore((state) => state.createOrganization);
-  const addContactToOrganization = useAppStore(
-    (state) => state.addContactToOrganization,
+  const assignPeopleOrganization = useAppStore(
+    (state) => state.assignPeopleOrganization,
   );
   const selectOrganization = useAppStore((state) => state.selectOrganization);
 
@@ -1192,6 +1215,7 @@ function AssignToOrganizationSheet({
   const [name, setName] = useState("");
   const [domains, setDomains] = useState("");
   const [error, setError] = useState(false);
+  const [saving, setSaving] = useState(false);
   const wasOpenRef = useRef(false);
 
   const selectedDomains = useMemo(
@@ -1237,21 +1261,25 @@ function AssignToOrganizationSheet({
   // `noEmail` = sem domínio, entra como membro explícito.
   const preview = useMemo(() => {
     if (!target) return null;
-    const domainSet = new Set(target.domains.map(normalizeDomain));
-    const memberIds = new Set(target.memberIds);
-    const excludedIds = new Set(target.excludedIds);
+    const currentMemberIds = new Set(
+      organizationMembers(target, contacts).map((contact) => contact.id),
+    );
     let added = 0;
     let already = 0;
     let noEmail = 0;
+    let readOnly = 0;
     for (const contact of contacts) {
+      if (!contact.contactId) {
+        readOnly += 1;
+        continue;
+      }
       const domain = contactDomain(contact);
-      const derived = Boolean(domain && domainSet.has(domain));
-      const isMember = memberIds.has(contact.id) || (derived && !excludedIds.has(contact.id));
+      const isMember = currentMemberIds.has(contact.id);
       if (isMember) already += 1;
       else added += 1;
       if (!domain && !isMember) noEmail += 1;
     }
-    return { added, already, noEmail, total: contacts.length };
+    return { added, already, noEmail, readOnly, total: contacts.length };
   }, [target, contacts]);
 
   const goToCreate = () => {
@@ -1276,20 +1304,47 @@ function AssignToOrganizationSheet({
     setStep("preview");
   };
 
-  const apply = () => {
+  const apply = async () => {
     if (!target) return;
-    const all = useAppStore.getState().peopleContacts;
-    for (const contact of contacts) {
-      addContactToOrganization(target.id, contact.id, all);
+    setSaving(true);
+    try {
+      const result = await assignPeopleOrganization(
+        target.id,
+        contacts.map((contact) => contact.id),
+      );
+      if (result.assigned > 0) {
+        toast.success(
+          preencher(t.controlRoom.bulkOrgSucesso, {
+            n: result.assigned,
+            nome: target.name,
+          }),
+        );
+        selectOrganization(target.id);
+      }
+      if (result.skipped > 0) {
+        toast.warning(
+          preencher(t.controlRoom.bulkOrgSomenteLeitura, {
+            n: result.skipped,
+          }),
+        );
+      }
+      if (result.failed > 0) {
+        toast.error(
+          preencher(t.controlRoom.bulkOrgFalhas, {
+            n: result.failed,
+          }),
+        );
+      }
+      onDone();
+    } catch {
+      toast.error(
+        preencher(t.controlRoom.bulkOrgFalhas, {
+          n: contacts.filter((contact) => Boolean(contact.contactId)).length,
+        }),
+      );
+    } finally {
+      setSaving(false);
     }
-    selectOrganization(target.id);
-    toast.success(
-      preencher(t.controlRoom.bulkOrgSucesso, {
-        n: contacts.length,
-        nome: target.name,
-      }),
-    );
-    onDone();
   };
 
   return (
@@ -1435,6 +1490,16 @@ function AssignToOrganizationSheet({
                     </span>
                   </li>
                 )}
+                {preview.readOnly > 0 && (
+                  <li className="flex items-center gap-2">
+                    <Badge variant="outline">{preview.readOnly}</Badge>
+                    <span className="text-muted-foreground">
+                      {preencher(t.controlRoom.bulkOrgSomenteLeitura, {
+                        n: preview.readOnly,
+                      })}
+                    </span>
+                  </li>
+                )}
               </ul>
             </div>
           )}
@@ -1458,10 +1523,17 @@ function AssignToOrganizationSheet({
           )}
           {step === "preview" && (
             <>
-              <Button variant="outline" onClick={() => setStep("pick")}>
+              <Button
+                variant="outline"
+                onClick={() => setStep("pick")}
+                disabled={saving}
+              >
                 {t.controlRoom.bulkOrgVoltar}
               </Button>
-              <Button onClick={apply}>{t.controlRoom.bulkOrgConfirmar}</Button>
+              <Button onClick={() => void apply()} disabled={saving}>
+                {saving && <Spinner />}
+                {t.controlRoom.bulkOrgConfirmar}
+              </Button>
             </>
           )}
         </SheetFooter>
@@ -1586,29 +1658,41 @@ export function PeopleView({
     pedirFotos(visibleContacts.map((contact) => contact.emails[0]?.address));
   }, [pedirFotos, visibleContacts]);
 
-  const organizationLabelsByDomain = useMemo(() => {
-    const labels = new Map<string, string>();
-    for (const organization of organizations) {
-      for (const candidate of organization.domains) {
-        const domain = normalizeDomain(candidate);
-        if (domain) labels.set(domain, organization.name);
-      }
-    }
-    return labels;
-  }, [organizations]);
+  const organizationLabelsByContactId = useMemo(
+    () =>
+      new Map(
+        contacts.map((contact) => [
+          contact.id,
+          contactOrganizationLabel(organizations, contact),
+        ]),
+      ),
+    [contacts, organizations],
+  );
 
   const filterFields = useMemo<FilterFieldConfig<string>[]>(() => {
     const operators: FilterOperator[] = [
       { value: "is", label: t.controlRoom.filtroOperadorIs },
       { value: "is_not", label: t.controlRoom.filtroOpNaoE },
     ];
-    const companyOptions: FilterOption<string>[] = Array.from(
-      new Set(
-        visibleContacts.map((contact) => contact.company).filter(Boolean),
+    const companyLabels = [
+      ...contacts.map((contact) =>
+        contactOrganizationLabel(organizations, contact),
       ),
+      ...organizations.map((organization) => organization.name),
+    ].filter((value): value is string => Boolean(value?.trim()));
+    const companyOptions: FilterOption<string>[] = Array.from(
+      new Map(
+        companyLabels.map((label) => [
+          label.trim().toLocaleLowerCase(),
+          label.trim(),
+        ]),
+      ).values(),
     )
       .sort((a, b) => String(a).localeCompare(String(b)))
-      .map((company) => ({ value: String(company), label: String(company) }));
+      .map((company) => ({
+        value: String(company).toLocaleLowerCase(),
+        label: String(company),
+      }));
     return [
       {
         key: "company",
@@ -1668,7 +1752,7 @@ export function PeopleView({
         ],
       },
     ];
-  }, [organizations, t, visibleContacts]);
+  }, [contacts, organizations, t]);
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const filtered = useMemo(() => {
@@ -1690,12 +1774,12 @@ export function PeopleView({
         const values = new Set(filter.values);
         let matches = true;
         if (filter.field === "company") {
-          matches = Boolean(contact.company && values.has(contact.company));
-        } else if (filter.field === "relationship") {
-          const organization = resolveOrganization(
-            organizations,
-            contactDomain(contact),
+          const label = contactOrganizationLabel(organizations, contact);
+          matches = Boolean(
+            label && values.has(label.trim().toLocaleLowerCase()),
           );
+        } else if (filter.field === "relationship") {
+          const organization = resolveContactOrganization(organizations, contact);
           matches = Boolean(organization && values.has(organization.id));
         } else if (filter.field === "phone") {
           matches = values.has(contact.phones.length > 0 ? "yes" : "no");
@@ -1768,9 +1852,7 @@ export function PeopleView({
                   <RelationshipBadges
                     contact={contact}
                     organizationLabel={
-                      organizationLabelsByDomain.get(
-                        contactDomain(contact) ?? "",
-                      ) ?? null
+                      organizationLabelsByContactId.get(contact.id) ?? null
                     }
                     compact
                   />
@@ -1871,7 +1953,7 @@ export function PeopleView({
     ],
     [
       getFoto,
-      organizationLabelsByDomain,
+      organizationLabelsByContactId,
       t,
     ],
   );
@@ -2326,9 +2408,7 @@ export function PeopleView({
                           key={contact.id}
                           contact={contact}
                           organizationLabel={
-                            organizationLabelsByDomain.get(
-                              contactDomain(contact) ?? "",
-                            ) ?? null
+                            organizationLabelsByContactId.get(contact.id) ?? null
                           }
                           selected={contact.id === selectedId}
                           photo={

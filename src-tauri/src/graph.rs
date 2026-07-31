@@ -4562,6 +4562,122 @@ pub fn cr_people_contact_update(
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleCompanyWriteResult {
+    pub write_available: bool,
+    pub saved_contact_ids: Vec<String>,
+    pub failed_contact_ids: Vec<String>,
+}
+
+/// Persiste a Organization escolhida explicitamente como `companyName`.
+/// O Graph limita JSON batches a 20 sub-requisições; cada envelope é casado
+/// pelo `id`, pois a ordem das respostas não é garantida.
+pub fn cr_people_company_write(
+    store: &TokenStore,
+    contact_ids: Vec<String>,
+    company_name: &str,
+) -> Result<PeopleCompanyWriteResult, String> {
+    let company_name = company_name.trim();
+    if company_name.is_empty() || company_name.len() > 256 {
+        return Err("Invalid company name.".to_string());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let contact_ids: Vec<String> = contact_ids
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty() && id.len() <= 512 && seen.insert(id.clone()))
+        .collect();
+    if contact_ids.is_empty() {
+        return Ok(PeopleCompanyWriteResult {
+            write_available: token_tem_escopo(store, "Contacts.ReadWrite")?,
+            saved_contact_ids: Vec::new(),
+            failed_contact_ids: Vec::new(),
+        });
+    }
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Ok(PeopleCompanyWriteResult {
+            write_available: false,
+            saved_contact_ids: Vec::new(),
+            failed_contact_ids: contact_ids,
+        });
+    }
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut saved_contact_ids = Vec::new();
+    let mut failed_contact_ids = Vec::new();
+
+    for chunk in contact_ids.chunks(20) {
+        let requests: Vec<serde_json::Value> = chunk
+            .iter()
+            .enumerate()
+            .map(|(index, contact_id)| {
+                serde_json::json!({
+                    "id": index.to_string(),
+                    "method": "PATCH",
+                    "url": format!(
+                        "/me/contacts/{}",
+                        urlencoding::encode(contact_id)
+                    ),
+                    "headers": { "Content-Type": "application/json" },
+                    "body": { "companyName": company_name },
+                })
+            })
+            .collect();
+        let body = serde_json::json!({ "requests": requests });
+        let url = format!("{GRAPH}/$batch");
+        let response = match graph_enviar("people:company-write", GRAPH_TETO_ESPERA_S, || {
+            client.post(&url).bearer_auth(&token).json(&body).send()
+        }) {
+            Ok(response) => response,
+            Err(_) => {
+                failed_contact_ids.extend(chunk.iter().cloned());
+                continue;
+            }
+        };
+        if !response.status().is_success() {
+            failed_contact_ids.extend(chunk.iter().cloned());
+            continue;
+        }
+
+        let value: serde_json::Value = match response.json() {
+            Ok(value) => value,
+            Err(_) => {
+                failed_contact_ids.extend(chunk.iter().cloned());
+                continue;
+            }
+        };
+        let mut successful_indexes = std::collections::HashSet::new();
+        for item in value["responses"].as_array().into_iter().flatten() {
+            let Some(index) = item["id"]
+                .as_str()
+                .and_then(|id| id.parse::<usize>().ok())
+            else {
+                continue;
+            };
+            let status = item["status"].as_u64().unwrap_or_default();
+            if index < chunk.len() && (200..300).contains(&status) {
+                successful_indexes.insert(index);
+            }
+        }
+        for (index, contact_id) in chunk.iter().enumerate() {
+            if successful_indexes.contains(&index) {
+                saved_contact_ids.push(contact_id.clone());
+            } else {
+                failed_contact_ids.push(contact_id.clone());
+            }
+        }
+    }
+
+    Ok(PeopleCompanyWriteResult {
+        write_available: true,
+        saved_contact_ids,
+        failed_contact_ids,
+    })
+}
+
 fn destinatario_tem_email(item: &serde_json::Value, email: &str) -> bool {
     item["toRecipients"]
         .as_array()

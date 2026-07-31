@@ -702,6 +702,15 @@ const pt = {
     bulkOrgPreviewJaPertencem: "já pertencem (sem mudança)",
     bulkOrgPreviewSemEmail: "sem e-mail entram como membro explícito",
     bulkOrgSucesso: "{n} contatos atribuídos a {nome}.",
+    bulkOrgSomenteLeitura:
+      "{n} pessoas somente leitura foram ignoradas; a empresa delas é gerenciada pelo diretório.",
+    bulkOrgFalhas:
+      "{n} contatos não puderam ser atualizados; os valores anteriores foram restaurados.",
+    orgWritebackSucesso: "Empresa atualizada no Outlook.",
+    orgWritebackSomenteLeitura:
+      "Esta pessoa é somente leitura; a empresa é gerenciada pelo diretório.",
+    orgWritebackErro:
+      "Não foi possível atualizar a empresa; o valor anterior foi restaurado.",
     peopleBuscar: "Buscar por nome, e-mail ou empresa...",
     peopleOrdenar: "Ordenar contatos",
     peopleRelevancia: "Relevância",
@@ -1694,6 +1703,15 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     bulkOrgPreviewJaPertencem: "already belong (no change)",
     bulkOrgPreviewSemEmail: "without email join as explicit members",
     bulkOrgSucesso: "{n} contacts assigned to {nome}.",
+    bulkOrgSomenteLeitura:
+      "{n} read-only people were skipped; their company is managed by the directory.",
+    bulkOrgFalhas:
+      "{n} contacts could not be updated; previous values were restored.",
+    orgWritebackSucesso: "Company updated in Outlook.",
+    orgWritebackSomenteLeitura:
+      "This person is read-only; their company is managed by the directory.",
+    orgWritebackErro:
+      "The company could not be updated; the previous value was restored.",
     peopleBuscar: "Search by name, email, or company...",
     peopleOrdenar: "Sort contacts",
     peopleRelevancia: "Relevance",

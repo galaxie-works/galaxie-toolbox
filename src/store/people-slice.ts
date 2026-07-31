@@ -93,6 +93,14 @@ export interface PeopleSlice {
     id: string,
     sameOrganization: boolean,
   ) => Promise<void>;
+  assignPeopleOrganization: (
+    organizationId: string,
+    contactIds: string[],
+  ) => Promise<{
+    assigned: number;
+    skipped: number;
+    failed: number;
+  }>;
   updatePeopleContact: (id: string, input: PeopleContactEdit) => Promise<void>;
 }
 
@@ -396,6 +404,120 @@ export const createPeopleSlice: StateCreator<
 
     if (fields.length === 0 && result.failures.length > 0) {
       throw new Error(result.failures.join(" · "));
+    }
+  },
+  assignPeopleOrganization: async (organizationId, contactIds) => {
+    const organization = get().organizations.find(
+      (candidate) => candidate.id === organizationId,
+    );
+    if (!organization) throw new Error("Organization not found.");
+
+    const requested = Array.from(new Set(contactIds))
+      .map((id) => get().peopleContacts.find((contact) => contact.id === id))
+      .filter((contact): contact is PeopleContact => Boolean(contact));
+    const editable = requested.filter((contact) => Boolean(contact.contactId));
+    const skipped = requested.length - editable.length;
+    if (editable.length === 0) {
+      return { assigned: 0, skipped, failed: 0 };
+    }
+
+    const previousCompanies = new Map(
+      editable.map((contact) => [
+        contact.id,
+        {
+          company: contact.company,
+          companySource: contact.companySource,
+        },
+      ]),
+    );
+    const organizationSnapshot = get().organizations.find(
+      (candidate) => candidate.id === organizationId,
+    )!;
+    const snapshotMemberIds = new Set(organizationSnapshot.memberIds);
+    const snapshotExcludedIds = new Set(organizationSnapshot.excludedIds);
+    const allContacts = get().peopleContacts;
+
+    for (const contact of editable) {
+      get().addContactToOrganization(organizationId, contact.id, allContacts);
+    }
+    set((state) => ({
+      peopleContacts: state.peopleContacts.map((contact) =>
+        previousCompanies.has(contact.id)
+          ? {
+              ...contact,
+              company: organization.name,
+              companySource: "contacts",
+            }
+          : contact,
+      ),
+    }));
+
+    const writes = editable.filter(
+      (contact) =>
+        contact.company?.trim().toLocaleLowerCase() !==
+        organization.name.trim().toLocaleLowerCase(),
+    );
+    if (writes.length === 0) {
+      return { assigned: editable.length, skipped, failed: 0 };
+    }
+
+    const restore = (failedPeopleIds: Set<string>) => {
+      set((state) => ({
+        peopleContacts: state.peopleContacts.map((contact) => {
+          if (!failedPeopleIds.has(contact.id)) return contact;
+          const previous = previousCompanies.get(contact.id);
+          return previous
+            ? {
+                ...contact,
+                company: previous.company,
+                companySource: previous.companySource,
+              }
+            : contact;
+        }),
+        organizations: state.organizations.map((candidate) => {
+          if (candidate.id !== organizationId) return candidate;
+          const memberIds = new Set(candidate.memberIds);
+          const excludedIds = new Set(candidate.excludedIds);
+          for (const id of failedPeopleIds) {
+            if (snapshotMemberIds.has(id)) memberIds.add(id);
+            else memberIds.delete(id);
+            if (snapshotExcludedIds.has(id)) excludedIds.add(id);
+            else excludedIds.delete(id);
+          }
+          return {
+            ...candidate,
+            memberIds: [...memberIds],
+            excludedIds: [...excludedIds],
+            updatedAt: Date.now(),
+          };
+        }),
+      }));
+    };
+
+    try {
+      const result = await api.crPeopleCompanyWrite(
+        writes.map((contact) => contact.contactId!),
+        organization.name,
+      );
+      const failedContactIds = new Set(result.failedContactIds);
+      const failedPeopleIds = new Set(
+        writes
+          .filter(
+            (contact) =>
+              !result.writeAvailable ||
+              failedContactIds.has(contact.contactId!),
+          )
+          .map((contact) => contact.id),
+      );
+      if (failedPeopleIds.size > 0) restore(failedPeopleIds);
+      return {
+        assigned: editable.length - failedPeopleIds.size,
+        skipped,
+        failed: failedPeopleIds.size,
+      };
+    } catch (error) {
+      restore(new Set(writes.map((contact) => contact.id)));
+      throw error;
     }
   },
   updatePeopleContact: async (id, input) => {
