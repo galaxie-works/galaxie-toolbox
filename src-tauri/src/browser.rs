@@ -12,9 +12,55 @@
 //! o retangulo e o Rust reposiciona. Coordenadas em pixels logicos (CSS), iguais
 //! aos que o React mede com getBoundingClientRect.
 
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, WebviewBuilder, WebviewUrl};
 
 const PREFIXO: &str = "browser-";
+
+// ============================================================================
+// #202 — restauracao de scroll das sleeping tabs.
+//
+// Dormir uma aba = DESTRUIR a webview (#173); acordar = recriar via
+// `browser_abrir`. Pra o scroll voltar exatamente onde estava, cada pagina
+// reporta continuamente o `scrollY` pro Rust (postMessage nativo do WebView2 →
+// WebMessageReceived), que guarda o ultimo valor por aba num cache de sessao. O
+// cache SOBREVIVE ao destroy, entao ao recriar a aba dormida injetamos um
+// `initialization_script` que rola pra la no load. Tudo transparente no Rust —
+// o lifecycle do #173 (fechar/abrir) nao muda no TS. Best-effort (spec §3.4):
+// nice-to-have, degrada limpo se a pagina nao cooperar.
+// ============================================================================
+
+/// Ultimo scrollY conhecido por aba (label). Alimentado pelo WebMessageReceived.
+static SCROLL: Mutex<Option<HashMap<String, f64>>> = Mutex::new(None);
+
+fn scroll_lembrado(label: &str) -> Option<f64> {
+    SCROLL.lock().ok()?.as_ref()?.get(label).copied()
+}
+
+fn lembrar_scroll(label: &str, y: f64) {
+    if let Ok(mut g) = SCROLL.lock() {
+        g.get_or_insert_with(HashMap::new).insert(label.to_string(), y);
+    }
+}
+
+/// Injetado em toda pagina da aba: reporta o scrollY (debounced) pro Rust pelo
+/// canal nativo do WebView2. Prefixo `gxscroll:` separa de outras mensagens.
+const SCRIPT_CAPTURA_SCROLL: &str = r#"(function(){
+  if(!window.chrome||!window.chrome.webview)return;
+  var t;
+  var envia=function(){try{window.chrome.webview.postMessage('gxscroll:'+Math.round(window.scrollY||window.pageYOffset||0));}catch(e){}};
+  window.addEventListener('scroll',function(){clearTimeout(t);t=setTimeout(envia,200);},{passive:true});
+  window.addEventListener('beforeunload',envia);
+})();"#;
+
+/// Restaura o scroll no load da pagina recriada (best-effort, spec §3.4).
+fn script_restaura_scroll(y: f64) -> String {
+    format!(
+        "window.addEventListener('load',function(){{try{{window.scrollTo(0,{});}}catch(e){{}}}});",
+        y as i64
+    )
+}
 
 /// Rotulo do webview a partir do id do app. Rotulo de webview so aceita
 /// [a-zA-Z0-9-/:_], entao filtramos o id (que vem do catalogo).
@@ -96,12 +142,20 @@ pub async fn browser_abrir(
     }
 
     let destino = url.parse().map_err(|_| "url invalida".to_string())?;
-    let builder = WebviewBuilder::new(&label, WebviewUrl::External(destino));
+    // #202: captura contínua do scrollY + restauração se a aba foi dormida antes
+    // (o cache sobrevive ao destroy). Ambos os scripts rodam a cada navegação.
+    let mut builder = WebviewBuilder::new(&label, WebviewUrl::External(destino))
+        .initialization_script(SCRIPT_CAPTURA_SCROLL);
+    if let Some(scroll) = scroll_lembrado(&label) {
+        builder = builder.initialization_script(&script_restaura_scroll(scroll));
+    }
     let wv = win
         .add_child(builder, LogicalPosition::new(x, y), LogicalSize::new(w, h))
         .map_err(|e| format!("falha ao criar a aba: {e}"))?;
     // #272 S2: atalhos do Navigator com a página em foco (accelerators nativos).
     instalar_accelerators(&app, &wv);
+    // #202: recebe o scrollY reportado pela página e guarda no cache por aba.
+    instalar_captura_scroll(&wv, &label);
     esconder_menos(&win, Some(&label));
     Ok(())
 }
@@ -326,3 +380,47 @@ pub fn instalar_accelerators(app: &AppHandle, wv: &tauri::webview::Webview) {
 
 #[cfg(not(windows))]
 pub fn instalar_accelerators(_app: &AppHandle, _wv: &tauri::webview::Webview) {}
+
+/// #202: registra o WebMessageReceived da webview pra capturar o scrollY que a
+/// pagina reporta (via SCRIPT_CAPTURA_SCROLL) e guardar no cache por aba. COM,
+/// mesmo padrao do #272. Best-effort: falha de COM só significa "scroll nao
+/// restaura" (degrada limpo), nunca quebra a aba.
+#[cfg(windows)]
+pub fn instalar_captura_scroll(wv: &tauri::webview::Webview, label: &str) {
+    use webview2_com::WebMessageReceivedEventHandler;
+
+    let label = label.to_string();
+    let _ = wv.with_webview(move |pw| {
+        let core = match unsafe { pw.controller().CoreWebView2() } {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let handler = WebMessageReceivedEventHandler::create(Box::new(move |_wv, args| {
+            let args = match args {
+                Some(a) => a,
+                None => return Ok(()),
+            };
+            unsafe {
+                let mut bruto = windows::core::PWSTR::null();
+                if args.TryGetWebMessageAsString(&mut bruto).is_ok() && !bruto.is_null() {
+                    let texto = bruto.to_string().unwrap_or_default();
+                    // A string vem alocada pelo WebView2 (CoTaskMemAlloc) — liberar.
+                    windows::Win32::System::Com::CoTaskMemFree(Some(bruto.as_ptr() as *const _));
+                    if let Some(v) = texto.strip_prefix("gxscroll:") {
+                        if let Ok(y) = v.trim().parse::<f64>() {
+                            lembrar_scroll(&label, y);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }));
+        let mut token = Default::default();
+        unsafe {
+            let _ = core.add_WebMessageReceived(&handler, &mut token);
+        }
+    });
+}
+
+#[cfg(not(windows))]
+pub fn instalar_captura_scroll(_wv: &tauri::webview::Webview, _label: &str) {}
