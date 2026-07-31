@@ -43,6 +43,7 @@ const detalhe = (assunto: string): EventoDetalhe => ({
   local: "Teams",
   online: true,
   organizador: "Galaxie",
+  souOrganizador: true,
   corpo: "<p>Pauta</p>",
   corpoTipo: "html",
   participantes: [],

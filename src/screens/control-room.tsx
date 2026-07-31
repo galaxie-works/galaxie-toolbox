@@ -114,6 +114,7 @@ import { shortcutAccessibleLabel } from "@/components/ui/shortcut";
 import type { ShortcutDefinition } from "@/components/ui/shortcut";
 import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
@@ -189,6 +190,7 @@ import {
   CalendarCheck,
   CalendarClock,
   CalendarDays,
+  CalendarX2,
   ChevronDown,
   ListFilter,
   ChevronRight,
@@ -4653,9 +4655,18 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const fecharEventoAgenda = useAppStore((s) => s.fecharEventoAgenda);
   const abrirFormEditar = useAppStore((s) => s.abrirFormEditar);
   const excluirEvento = useAppStore((s) => s.excluirEvento);
+  const cancelarEvento = useAppStore((s) => s.cancelarEvento);
   const eventosMes = useAppStore((s) => s.agendaEventosMes);
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
+
+  // Cancelar evento (#260): só faz sentido pra quem ORGANIZA um evento COM
+  // convidados — aí o cancelamento os notifica. Sem isso, resta só o Excluir
+  // (silencioso). Confirmação em AlertDialog com comentário opcional.
+  const podeCancelar = !!det?.souOrganizador && (det?.participantes.length ?? 0) > 0;
+  const [confirmarCancelar, setConfirmarCancelar] = useState(false);
+  const [comentarioCancel, setComentarioCancel] = useState("");
+  const [cancelando, setCancelando] = useState(false);
 
   // Abre o formulário de edição com o evento clicado (vindo da lista do mês).
   const editar = () => {
@@ -4676,6 +4687,25 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
       toast.success(t.controlRoom.agendaExcluido);
     } catch {
       toast.error(t.controlRoom.agendaErroExcluir);
+    }
+  };
+
+  // Cancela (#260): POST /events/{id}/cancel com comentário opcional — notifica
+  // os convidados. Otimista no store; fecha confirmação + Sheet e toasta.
+  const cancelar = async () => {
+    if (!id) return;
+    const comentario = comentarioCancel.trim();
+    setCancelando(true);
+    try {
+      await cancelarEvento(id, comentario);
+      setConfirmarCancelar(false);
+      setComentarioCancel("");
+      fecharEventoAgenda();
+      toast.success(t.controlRoom.agendaCancelado);
+    } catch {
+      toast.error(t.controlRoom.agendaErroCancelar);
+    } finally {
+      setCancelando(false);
     }
   };
 
@@ -4763,6 +4793,16 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
               >
                 <Trash2 /> {t.controlRoom.agendaExcluir}
               </Button>
+              {podeCancelar && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => setConfirmarCancelar(true)}
+                >
+                  <CalendarX2 /> {t.controlRoom.agendaCancelar}
+                </Button>
+              )}
               <div className="grow" />
               {det.webLink && (
                 <Button
@@ -4781,6 +4821,59 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
           </>
         )}
       </SheetContent>
+
+      {/* Confirmação do "Cancelar evento" (#260). Destrutiva → AlertDialog (mesmo
+          padrão do "Excluir pasta" #90), mas com campo de comentário opcional
+          que segue aos convidados junto do cancelamento. */}
+      <AlertDialog
+        open={confirmarCancelar}
+        onOpenChange={(aberto) => {
+          if (!aberto && !cancelando) {
+            setConfirmarCancelar(false);
+            setComentarioCancel("");
+          }
+        }}
+      >
+        <AlertDialogContent className="max-w-md!">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.controlRoom.agendaCancelarTitulo}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.agendaCancelarDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="agenda-cancelar-comentario">
+              {t.controlRoom.agendaCancelarComentario}
+            </Label>
+            <Textarea
+              id="agenda-cancelar-comentario"
+              value={comentarioCancel}
+              onChange={(e) => setComentarioCancel(e.target.value)}
+              placeholder={t.controlRoom.agendaCancelarComentarioPlaceholder}
+              rows={3}
+              disabled={cancelando}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={cancelando}>
+              {t.controlRoom.agendaCancelarVoltar}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={cancelando}
+              onClick={(e) => {
+                // Impede o fechamento automático do AlertDialog até a chamada
+                // resolver (mostramos o spinner enquanto o Graph notifica).
+                e.preventDefault();
+                void cancelar();
+              }}
+            >
+              {cancelando && <Spinner className="size-4" />}
+              {t.controlRoom.agendaCancelarConfirmar}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Sheet>
   );
 }

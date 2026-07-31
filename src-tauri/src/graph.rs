@@ -1277,6 +1277,9 @@ pub struct EventoDetalhe {
     pub online: bool,
     pub join_url: Option<String>,
     pub organizador: String,
+    /// True quando o usuário ativo organiza o evento (Graph `isOrganizer`).
+    /// Habilita a ação "Cancelar evento" (#260), que notifica os convidados.
+    pub sou_organizador: bool,
     pub corpo: String,
     pub corpo_tipo: String, // "html" | "text"
     pub participantes: Vec<Participante>,
@@ -1290,7 +1293,7 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
 
     let url = format!(
         "{GRAPH}/me/events/{id}?$select=subject,start,end,location,onlineMeeting,\
-         isOnlineMeeting,onlineMeetingUrl,organizer,body,attendees,webLink"
+         isOnlineMeeting,onlineMeetingUrl,organizer,isOrganizer,body,attendees,webLink"
     );
     let resp = client
         .get(&url)
@@ -1326,6 +1329,7 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
         online: it["onlineMeeting"].is_object() || it["isOnlineMeeting"].as_bool().unwrap_or(false),
         join_url,
         organizador: it["organizer"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
+        sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
         corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
         corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
         participantes,
@@ -1462,6 +1466,28 @@ pub fn cr_excluir_evento(store: &TokenStore, id: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(erro_escrita("me/events", "excluir evento", resp.status()))
+    }
+}
+
+/// Cancela um evento organizado pelo usuário (POST /me/events/{id}/cancel).
+/// Diferente de excluir (#260): envia uma mensagem de cancelamento a todos os
+/// convidados e remove o evento. Só é válido quando o usuário é o organizador —
+/// a UI já restringe a ação; um 403/400 do Graph vira erro tratado. O
+/// `comentario` opcional entra no corpo como "Comment". Calendars.ReadWrite.
+pub fn cr_cancelar_evento(store: &TokenStore, id: &str, comentario: &str) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events/{id}/cancel");
+    let body = serde_json::json!({ "Comment": comentario });
+    let resp = graph_enviar("agenda:cancelar", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao cancelar o evento: {e}"))?;
+    // 404 = já removido (idempotente, como no excluir).
+    if resp.status().is_success() || resp.status().as_u16() == 404 {
+        Ok(())
+    } else {
+        Err(erro_escrita("me/events", "cancelar evento", resp.status()))
     }
 }
 
