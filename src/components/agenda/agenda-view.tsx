@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 
 import { useAppStore } from "@/store";
+import { podeGerenciarEvento } from "@/lib/agenda-permissions";
 import { useIdioma } from "@/lib/idioma";
 import type { Idioma } from "@/lib/strings";
 import type {
@@ -433,11 +434,13 @@ function EventoContextMenu({
 
   // Mesmas condições do detalhe (#287/#260): convidado (não organizer) com
   // resposta solicitada pode dar RSVP; organizer COM convidados pode cancelar.
-  const ehConvite = !evento.souOrganizador && evento.resposta !== "organizer";
+  const podeGerenciar = podeGerenciarEvento(evento);
+  const ehConvite = !podeGerenciar;
   const podeResponder = ehConvite && evento.respostaSolicitada;
-  const podeCancelar = evento.souOrganizador && evento.totalParticipantes > 0;
+  const podeCancelar = podeGerenciar && evento.totalParticipantes > 0;
 
   const excluir = async () => {
+    if (!podeGerenciar) return;
     try {
       await excluirEvento(evento.id);
       toast.success(t.controlRoom.agendaExcluido);
@@ -465,9 +468,11 @@ function EventoContextMenu({
       >
         <Eye /> {t.controlRoom.agendaVerDetalhes}
       </ContextMenuItem>
-      <ContextMenuItem className="gap-2" onClick={() => abrirFormEditar(evento)}>
-        <Pencil /> {t.controlRoom.agendaEditar}
-      </ContextMenuItem>
+      {podeGerenciar && (
+        <ContextMenuItem className="gap-2" onClick={() => abrirFormEditar(evento)}>
+          <Pencil /> {t.controlRoom.agendaEditar}
+        </ContextMenuItem>
+      )}
 
       {podeResponder && (
         <ContextMenuSub>
@@ -497,24 +502,27 @@ function EventoContextMenu({
         </ContextMenuSub>
       )}
 
-      <ContextMenuSeparator />
-
-      {podeCancelar && (
-        <ContextMenuItem
-          variant="destructive"
-          className="gap-2"
-          onClick={() => onPedirCancelar(evento)}
-        >
-          <CalendarX2 /> {t.controlRoom.agendaCancelar}
-        </ContextMenuItem>
+      {podeGerenciar && (
+        <>
+          <ContextMenuSeparator />
+          {podeCancelar && (
+            <ContextMenuItem
+              variant="destructive"
+              className="gap-2"
+              onClick={() => onPedirCancelar(evento)}
+            >
+              <CalendarX2 /> {t.controlRoom.agendaCancelar}
+            </ContextMenuItem>
+          )}
+          <ContextMenuItem
+            variant="destructive"
+            className="gap-2"
+            onClick={() => void excluir()}
+          >
+            <Trash2 /> {t.controlRoom.agendaExcluir}
+          </ContextMenuItem>
+        </>
       )}
-      <ContextMenuItem
-        variant="destructive"
-        className="gap-2"
-        onClick={() => void excluir()}
-      >
-        <Trash2 /> {t.controlRoom.agendaExcluir}
-      </ContextMenuItem>
     </ContextMenuContent>
   );
 }
