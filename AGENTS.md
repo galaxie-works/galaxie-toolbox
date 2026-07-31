@@ -42,6 +42,13 @@ Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3
 
 Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pra PO Approved — isso é do usuário (PO), que também **ajusta a Sprint** se necessário.
 
+> ✅ **AO TERMINAR um item — protocolo OBRIGATÓRIO (regra do PO, 31/07/2026), nesta ordem:**
+> 1. **Comente na issue** a evidência (o que fez, arquivos, commit, ACs traçados, builds verdes).
+> 2. **Poste no #133** o progresso + declare se **vai pegar a próxima da fila** ou se está **livre pra próxima** (pra o Polaris saber o estado sem adivinhar — nada de agente idle silencioso).
+> 3. **Mova o card pra In review** (`gh project item-edit --id <itemId> --project-id PVT_kwHOD_4JN84BedaN --field-id PVTSSF_lAHOD_4JN84BedaNzhY3dus --single-select-option-id df73e18b`).
+>
+> Aí o **Polaris pega de In review** → integra + code-QA → **QA Approved**. Semântica do board: **In progress** = ainda codando · **In review** = entregue, com o Polaris · **QA Approved** = verificado, aguardando o PO. **Não deixe item entregue parado em In progress/Ready** — mova em tempo real.
+
 > 📌 **OBRIGATÓRIO ao mover pra QA Approved: postar a EVIDÊNCIA como comentário NA issue** (`gh issue comment N`). Mover o card sem comentar faz o PO abrir a issue, não ver prova, e reprovar com *"Faltam evidências e comentários relativos ao desenvolvimento"* (aconteceu com #31/#76/#94/#96 em 2026-07-27, com código certo). O comentário deve ter: **(1) Desenvolvimento** — o que foi feito, arquivos, decisões, commit hash; **(2) QA** — `tsc`/`cargo` verdes + passos da QA visual e resultado observado + cada AC (Given/When/Then) traçado; **(3) Pro PO validar em runtime** — comportamento dependente de Graph real que o mock não exercita. ⚠️ **Mock ≠ real:** para features de interação (scroll/teclado/hover/tooltip/dados reais), exercitar esses caminhos no mock e listar o que só o PO valida no app — a QA de mock do #40 passou mas o PO achou 5 bugs de interação no app real.
 
 > 🚀 **RELEASE de PO Approved é decisão do agente** (delegado pelo PO em 2026-07-26). Uma vez em **PO Approved**, o agente decide quando **mergear na `main`, cortar release** (bump de versão + tag + notas) e mover pra **Done - Released**, sem cobrar o PO. A autonomia começa em PO Approved (QA Approved→PO Approved continua sendo do PO). Não cortar release com código não-aprovado/rejeitado ainda na `feat` (ex.: rework com `Closes #N` já mergeado) — limpar/reworkar antes.
