@@ -98,7 +98,7 @@ function fromRecord(record: PeopleRecord): PeopleContact {
 export function mergePeopleRecords(records: PeopleRecord[]): PeopleContact[] {
   const contacts: PeopleContact[] = [];
   const people = records
-    .filter((record) => record.source === "people")
+    .filter((record) => record.source !== "contacts")
     .map(fromRecord);
   const byEmail = new Map<string, PeopleContact>();
 
@@ -168,7 +168,9 @@ export function mergePeopleRecords(records: PeopleRecord[]): PeopleContact[] {
         : person.peopleRank == null
           ? existing.peopleRank
           : Math.min(existing.peopleRank, person.peopleRank);
-    if (!existing.sources.includes("people")) existing.sources.push("people");
+    for (const source of person.sources) {
+      if (!existing.sources.includes(source)) existing.sources.push(source);
+    }
     for (const email of existing.emails) byEmail.set(keyEmail(email.address), existing);
   }
 
@@ -177,6 +179,49 @@ export function mergePeopleRecords(records: PeopleRecord[]): PeopleContact[] {
     const bRank = b.peopleRank ?? Number.POSITIVE_INFINITY;
     if (aRank !== bRank) return aRank - bRank;
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  });
+}
+
+/**
+ * Mantém a completude dos membros do diretório e reaproveita os dados mais ricos
+ * de Contacts/People quando o mesmo endereço já existe no cache da sessão.
+ */
+export function mergePeopleGroupMembers(
+  records: PeopleRecord[],
+  cached: PeopleContact[],
+): PeopleContact[] {
+  return mergePeopleRecords(records).map((member) => {
+    const existing = member.emails
+      .map((email) => resolvePerson(cached, email.address))
+      .find(Boolean);
+    if (!existing) return member;
+
+    return {
+      ...member,
+      ...existing,
+      id: member.id,
+      emails: uniqueEmails([...existing.emails, ...member.emails]),
+      phones: uniquePhones([...existing.phones, ...member.phones]),
+      jobTitle: existing.jobTitle || member.jobTitle,
+      jobTitleSource: existing.jobTitle
+        ? existing.jobTitleSource
+        : member.jobTitleSource,
+      company: existing.company || member.company,
+      companySource: existing.company
+        ? existing.companySource
+        : member.companySource,
+      department: existing.department || member.department,
+      departmentSource: existing.department
+        ? existing.departmentSource
+        : member.departmentSource,
+      officeLocation: existing.officeLocation || member.officeLocation,
+      officeLocationSource: existing.officeLocation
+        ? existing.officeLocationSource
+        : member.officeLocationSource,
+      organization: true,
+      frequent: existing.frequent,
+      sources: Array.from(new Set([...existing.sources, ...member.sources])),
+    };
   });
 }
 

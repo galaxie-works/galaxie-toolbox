@@ -18,6 +18,8 @@ import type {
   PeopleEnrichField,
   PeopleEnrichPreview,
   PeopleInteraction,
+  PeopleGroupMembersResult,
+  PeopleGroupsResult,
   PeopleListResult,
   Reuniao,
   SegurancaEmail,
@@ -850,6 +852,58 @@ export async function crPeopleList(nextLinks: string[] = []): Promise<PeopleList
     };
   }
   return invoke<PeopleListResult>("cr_people_list", { nextLinks });
+}
+
+/** Grupos M365 diretos do usuário atual (#293). */
+export async function crPeopleGroups(): Promise<PeopleGroupsResult> {
+  if (!inTauri()) {
+    await sleep(350);
+    return {
+      groups: [
+        { id: "group-product", name: "Product", memberCount: null },
+        { id: "group-leadership", name: "Leadership", memberCount: null },
+      ],
+      missingScopes: [],
+      failures: [],
+    };
+  }
+  return invoke<PeopleGroupsResult>("cr_grupos");
+}
+
+/** Membros usuários de um grupo M365, carregados sob demanda (#293). */
+export async function crPeopleGroupMembers(
+  groupId: string,
+): Promise<PeopleGroupMembersResult> {
+  if (!inTauri()) {
+    await sleep(450);
+    const all = [
+      {
+        id: "directory-ada",
+        source: "directory" as const,
+        name: "Ada Lovelace",
+        emails: [{ address: "ada@example.com" }],
+        phones: [],
+        jobTitle: "Product Director",
+        company: "Analytical Engines",
+        organization: true,
+        peopleRank: null,
+      },
+      {
+        id: "directory-grace",
+        source: "directory" as const,
+        name: "Grace Hopper",
+        emails: [{ address: "grace@example.com" }],
+        phones: [{ number: "+1 212 555 0102", label: "mobile" }],
+        jobTitle: "Engineering Lead",
+        company: "Compiler Labs",
+        organization: true,
+        peopleRank: null,
+      },
+    ];
+    const records = groupId === "group-leadership" ? all.slice(0, 1) : all;
+    return { records, memberCount: records.length };
+  }
+  return invoke<PeopleGroupMembersResult>("cr_grupo_membros", { groupId });
 }
 
 /** Busca sugestões revisáveis para um contato sem alterar nada. */

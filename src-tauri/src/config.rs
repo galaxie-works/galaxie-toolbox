@@ -38,7 +38,7 @@ pub const CLIENT_ID: &str = "214d735e-eb9b-4052-8851-578d3bd91627";
 // Admin consent JÁ concedido no tenant; é escopo novo no pedido, então sessões
 // logadas antes dele precisam RE-LOGAR para criar categorias.
 pub const SCOPES: &str = "openid profile offline_access \
-     User.Read User.Read.All Files.ReadWrite Sites.Read.All \
+     User.Read User.Read.All Directory.Read.All Files.ReadWrite Sites.Read.All \
      Calendars.ReadWrite MailboxSettings.ReadWrite Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Tasks.ReadWrite \
      People.Read Contacts.ReadWrite";
 

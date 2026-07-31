@@ -482,6 +482,29 @@ async fn cr_people_list(
         .map_err(|e| e.to_string())?
 }
 
+/// People: grupos M365 diretos do usuário atual.
+#[tauri::command]
+async fn cr_grupos(state: State<'_, Store>) -> Result<graph::PeopleGroupsResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_grupos(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// People: membros usuários de um grupo M365, carregados sob demanda.
+#[tauri::command]
+async fn cr_grupo_membros(
+    state: State<'_, Store>,
+    group_id: String,
+) -> Result<graph::PeopleGroupMembersResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_grupo_membros(&store, &group_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// People Enrich: monta o preview sem alterar o contato.
 #[tauri::command]
 async fn cr_people_enrich_preview(
@@ -1360,6 +1383,8 @@ pub fn run() {
             cr_fotos_contatos,
             cr_pessoas,
             cr_people_list,
+            cr_grupos,
+            cr_grupo_membros,
             cr_people_enrich_preview,
             cr_people_enrich_apply,
             cr_people_write_available,

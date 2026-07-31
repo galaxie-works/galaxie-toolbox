@@ -229,6 +229,7 @@ import {
   TriangleAlert,
   User,
   Users,
+  UsersRound,
   Video,
   X,
 } from "lucide-react";
@@ -1483,6 +1484,31 @@ function FolderSidebar({
 }) {
   const peopleTab = useAppStore((state) => state.peopleTab);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
+  const peopleGroups = useAppStore((state) => state.peopleGroups);
+  const peopleGroupsLoading = useAppStore(
+    (state) => state.peopleGroupsLoading,
+  );
+  const peopleGroupsLoaded = useAppStore((state) => state.peopleGroupsLoaded);
+  const peopleGroupsError = useAppStore((state) => state.peopleGroupsError);
+  const peopleSelectedGroupId = useAppStore(
+    (state) => state.peopleSelectedGroupId,
+  );
+  const loadPeopleGroups = useAppStore((state) => state.loadPeopleGroups);
+  const selectPeopleGroup = useAppStore((state) => state.selectPeopleGroup);
+  useEffect(() => {
+    if (
+      bridgeView === "people" &&
+      !peopleGroupsLoaded &&
+      !peopleGroupsLoading
+    ) {
+      void loadPeopleGroups();
+    }
+  }, [
+    bridgeView,
+    loadPeopleGroups,
+    peopleGroupsLoaded,
+    peopleGroupsLoading,
+  ]);
   // Pasta pendente de confirmação do "Esvaziar" — ação destrutiva nunca sai
   // direto do menu: passa pelo AlertDialog (DoD + padrão do app).
   const [aEsvaziar, setAEsvaziar] = useState<{ id: string; rotulo: string } | null>(
@@ -1930,59 +1956,138 @@ function FolderSidebar({
         </>
       ) : bridgeView === "people" ? (
         <ScrollArea className="min-h-0 w-full flex-1">
-          <nav
-            aria-label={t.controlRoom.peopleTitulo}
-            className={cn(
-              "flex w-full flex-col gap-0.5",
-              colapsada && "items-center"
-            )}
-          >
-            {(
-              [
-                {
-                  value: "contacts",
-                  label: t.controlRoom.peopleContactsTab,
-                  Icon: Users,
-                },
-                {
-                  value: "organizations",
-                  label: t.controlRoom.peopleOrganizationsTab,
-                  Icon: Building2,
-                },
-              ] as const
-            ).map(({ value, label, Icon }) => {
-              const ativo = peopleTab === value;
-              return (
-                <Tooltip key={value}>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant={ativo ? "secondary" : "ghost"}
-                      onClick={() => setPeopleTab(value)}
-                      aria-label={label}
-                      aria-current={ativo ? "page" : undefined}
-                      className={cn(
-                        "shrink-0",
-                        colapsada
-                          ? "size-9 justify-center p-0"
-                          : "w-full justify-start gap-2.5",
-                        ativo
-                          ? "bg-secondary font-medium text-secondary-foreground"
-                          : "text-muted-foreground hover:bg-accent/50"
-                      )}
-                    >
-                      <Icon className="size-4 shrink-0" />
-                      {!colapsada && <span>{label}</span>}
-                    </Button>
-                  </TooltipTrigger>
-                  {colapsada && (
-                    <TooltipContent side="right" align="center">
-                      {label}
-                    </TooltipContent>
-                  )}
-                </Tooltip>
-              );
-            })}
-          </nav>
+          <div className="flex w-full flex-col gap-3">
+            <nav
+              aria-label={t.controlRoom.peopleTitulo}
+              className={cn(
+                "flex w-full flex-col gap-0.5",
+                colapsada && "items-center"
+              )}
+            >
+              {(
+                [
+                  {
+                    value: "contacts",
+                    label: t.controlRoom.peopleContactsTab,
+                    Icon: Users,
+                  },
+                  {
+                    value: "organizations",
+                    label: t.controlRoom.peopleOrganizationsTab,
+                    Icon: Building2,
+                  },
+                ] as const
+              ).map(({ value, label, Icon }) => {
+                const ativo = peopleTab === value;
+                return (
+                  <Tooltip key={value}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={ativo ? "secondary" : "ghost"}
+                        onClick={() => setPeopleTab(value)}
+                        aria-label={label}
+                        aria-current={ativo ? "page" : undefined}
+                        className={cn(
+                          "shrink-0",
+                          colapsada
+                            ? "size-9 justify-center p-0"
+                            : "w-full justify-start gap-2.5",
+                          ativo
+                            ? "bg-secondary font-medium text-secondary-foreground"
+                            : "text-muted-foreground hover:bg-accent/50"
+                        )}
+                      >
+                        <Icon className="size-4 shrink-0" />
+                        {!colapsada && <span>{label}</span>}
+                      </Button>
+                    </TooltipTrigger>
+                    {colapsada && (
+                      <TooltipContent side="right" align="center">
+                        {label}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                );
+              })}
+            </nav>
+
+            <nav
+              aria-label={t.controlRoom.peopleGroupsSection}
+              className={cn(
+                "flex w-full flex-col gap-0.5",
+                colapsada && "items-center"
+              )}
+            >
+              {!colapsada && (
+                <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">
+                  {t.controlRoom.peopleGroupsSection}
+                </p>
+              )}
+              {peopleGroups.map((group) => {
+                const ativo =
+                  peopleTab === "groups" &&
+                  peopleSelectedGroupId === group.id;
+                const tooltip =
+                  group.memberCount == null
+                    ? group.name
+                    : `${group.name} (${group.memberCount})`;
+                return (
+                  <Tooltip key={group.id}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={ativo ? "secondary" : "ghost"}
+                        onClick={() => void selectPeopleGroup(group.id)}
+                        aria-label={tooltip}
+                        aria-current={ativo ? "page" : undefined}
+                        className={cn(
+                          "shrink-0",
+                          colapsada
+                            ? "size-9 justify-center p-0"
+                            : "w-full justify-start gap-2.5",
+                          ativo
+                            ? "bg-secondary font-medium text-secondary-foreground"
+                            : "text-muted-foreground hover:bg-accent/50"
+                        )}
+                      >
+                        <UsersRound className="size-4 shrink-0" />
+                        {!colapsada && (
+                          <>
+                            <span className="min-w-0 flex-1 truncate text-left">
+                              {group.name}
+                            </span>
+                            {group.memberCount != null && (
+                              <span className="shrink-0 text-xs tabular-nums">
+                                {group.memberCount}
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    {colapsada && (
+                      <TooltipContent side="right" align="center">
+                        {tooltip}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                );
+              })}
+              {!colapsada && peopleGroupsLoading && (
+                <p className="px-2 py-1 text-xs text-muted-foreground">
+                  {t.controlRoom.peopleGroupsLoading}
+                </p>
+              )}
+              {!colapsada &&
+                peopleGroupsLoaded &&
+                peopleGroups.length === 0 && (
+                  <p className="px-2 py-1 text-xs text-muted-foreground">
+                    {peopleGroupsError
+                      ? t.controlRoom.peopleGroupsError
+                      : t.controlRoom.peopleGroupsEmpty}
+                  </p>
+                )}
+            </nav>
+          </div>
         </ScrollArea>
       ) : (
         <div className="flex-1" />

@@ -3168,6 +3168,29 @@ pub struct PeopleListResult {
     pub next_links: Vec<String>,
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleGroup {
+    pub id: String,
+    pub name: String,
+    pub member_count: Option<usize>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleGroupsResult {
+    pub groups: Vec<PeopleGroup>,
+    pub missing_scopes: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleGroupMembersResult {
+    pub records: Vec<PeopleRecord>,
+    pub member_count: usize,
+}
+
 fn texto_opcional(item: &serde_json::Value, campo: &str) -> Option<String> {
     item[campo]
         .as_str()
@@ -3464,6 +3487,190 @@ pub fn cr_people_list(
     }
 
     Ok(result)
+}
+
+/// Grupos M365/security aos quais o usuário atual pertence diretamente (#293).
+/// A lista não dispara N+1: a contagem fica ausente até `cr_grupo_membros`.
+pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut result = PeopleGroupsResult {
+        groups: Vec::new(),
+        missing_scopes: Vec::new(),
+        failures: Vec::new(),
+    };
+    let mut proxima = Some(format!(
+        "{GRAPH}/me/memberOf?$top=999&$select=id,displayName,groupTypes,mailEnabled,securityEnabled"
+    ));
+
+    while let Some(url) = proxima.take() {
+        if !url.starts_with(GRAPH) {
+            result
+                .failures
+                .push("Groups: continuation URL outside Microsoft Graph".to_string());
+            break;
+        }
+        match graph_enviar("people:groups", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        }) {
+            Ok(resp) if resp.status().is_success() => {
+                let body = match resp.json::<serde_json::Value>() {
+                    Ok(body) => body,
+                    Err(error) => {
+                        result
+                            .failures
+                            .push(format!("Groups: resposta invalida ({error})"));
+                        break;
+                    }
+                };
+                proxima = body["@odata.nextLink"].as_str().map(str::to_string);
+                if let Some(items) = body["value"].as_array() {
+                    result.groups.extend(items.iter().filter_map(|item| {
+                        let is_group = item["@odata.type"]
+                            .as_str()
+                            .is_some_and(|kind| kind.eq_ignore_ascii_case("#microsoft.graph.group"));
+                        if !is_group {
+                            return None;
+                        }
+                        let id = item["id"].as_str()?.trim();
+                        let name = item["displayName"].as_str()?.trim();
+                        if id.is_empty() || name.is_empty() {
+                            return None;
+                        }
+                        Some(PeopleGroup {
+                            id: id.to_string(),
+                            name: name.to_string(),
+                            member_count: None,
+                        })
+                    }));
+                }
+            }
+            Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
+                result
+                    .missing_scopes
+                    .push("Directory.Read.All".to_string());
+                break;
+            }
+            Ok(resp) => {
+                result
+                    .failures
+                    .push(format!("Groups: Graph retornou {}", resp.status()));
+                break;
+            }
+            Err(error) => {
+                result
+                    .failures
+                    .push(format!("Groups: falha de rede ({error})"));
+                break;
+            }
+        }
+    }
+
+    result
+        .groups
+        .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    result.groups.dedup_by(|a, b| a.id == b.id);
+    Ok(result)
+}
+
+/// Usuários membros de um grupo M365. Carregado somente ao selecionar o grupo,
+/// preservando completude sem fazer uma chamada por grupo no sidebar (#293).
+pub fn cr_grupo_membros(
+    store: &TokenStore,
+    group_id: &str,
+) -> Result<PeopleGroupMembersResult, String> {
+    let group_id = group_id.trim();
+    if group_id.is_empty() {
+        return Err("Group id is required.".to_string());
+    }
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut records = Vec::new();
+    let mut proxima = Some(format!(
+        "{GRAPH}/groups/{}/members/microsoft.graph.user?$top=999&$select=id,displayName,mail,userPrincipalName,businessPhones,mobilePhone,jobTitle,companyName,department,officeLocation",
+        urlencoding::encode(group_id)
+    ));
+
+    while let Some(url) = proxima.take() {
+        if !url.starts_with(GRAPH) {
+            return Err("Groups: continuation URL outside Microsoft Graph".to_string());
+        }
+        let resp = graph_enviar("people:group-members", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        })
+        .map_err(|error| format!("Group members: falha de rede ({error})"))?;
+        if !resp.status().is_success() {
+            return Err(format!("Group members: Graph retornou {}", resp.status()));
+        }
+        let body = resp
+            .json::<serde_json::Value>()
+            .map_err(|error| format!("Group members: resposta invalida ({error})"))?;
+        proxima = body["@odata.nextLink"].as_str().map(str::to_string);
+        if let Some(items) = body["value"].as_array() {
+            records.extend(items.iter().filter_map(|item| {
+                let id = item["id"].as_str()?.trim();
+                let address = item["mail"]
+                    .as_str()
+                    .or_else(|| item["userPrincipalName"].as_str())?
+                    .trim();
+                if id.is_empty() || address.is_empty() {
+                    return None;
+                }
+                let mut phones = item["businessPhones"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|value| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(|number| PeoplePhone {
+                        number: number.to_string(),
+                        label: "work".to_string(),
+                    })
+                    .collect::<Vec<_>>();
+                if let Some(number) = item["mobilePhone"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    phones.push(PeoplePhone {
+                        number: number.to_string(),
+                        label: "mobile".to_string(),
+                    });
+                }
+                Some(PeopleRecord {
+                    id: id.to_string(),
+                    source: "directory".to_string(),
+                    name: item["displayName"]
+                        .as_str()
+                        .unwrap_or(address)
+                        .trim()
+                        .to_string(),
+                    emails: vec![PeopleEmail {
+                        address: address.to_string(),
+                        label: None,
+                    }],
+                    phones,
+                    job_title: texto_opcional(item, "jobTitle"),
+                    company: texto_opcional(item, "companyName"),
+                    department: texto_opcional(item, "department"),
+                    office_location: texto_opcional(item, "officeLocation"),
+                    manager: None,
+                    organization: true,
+                    people_rank: None,
+                })
+            }));
+        }
+    }
+
+    records.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    records.dedup_by(|a, b| a.id == b.id);
+    let member_count = records.len();
+    Ok(PeopleGroupMembersResult {
+        records,
+        member_count,
+    })
 }
 
 /// Campo individual e revisavel sugerido pelo Enrich (#167).
