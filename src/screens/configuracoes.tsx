@@ -6,7 +6,7 @@ import {
   UserRound,
 } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
-import { BridgeIcon } from "@/components/ui/icons/marca-anim";
+import { BridgeIcon, NavigatorIcon } from "@/components/ui/icons/marca-anim";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
 import { GalaxieSymbol } from "@/components/brand";
 import {
@@ -26,6 +26,7 @@ import type { SettingsItemId } from "@/store/settings-ui-slice";
 import { cn } from "@/lib/utils";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
+import { NavigatorSearchPanel } from "@/components/navigator-settings";
 import { LockScreenSettings } from "@/components/lock-screen-settings";
 import { StartupSettings } from "@/components/startup-settings";
 import {
@@ -233,6 +234,21 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
                 subtitle:
                   "Choose how often Bridge checks for new messages in the background.",
                 node: <SyncPreferencesPanel />,
+              },
+            ],
+          },
+          {
+            id: "navigator",
+            label: "Navigator",
+            description: "Configure the Navigator browser.",
+            icon: NavigatorIcon,
+            frames: [
+              {
+                key: "search",
+                title: "Search",
+                subtitle:
+                  "Choose the default search engine used by the address bar.",
+                node: <NavigatorSearchPanel />,
               },
             ],
           },
