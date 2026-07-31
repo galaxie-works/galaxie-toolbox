@@ -916,6 +916,7 @@ function EventoFormSheet() {
                 onChange={setConvEmails}
                 onPessoas={setConvPessoas}
                 placeholder={t.controlRoom.agendaFormConvidadosPlaceholder}
+                compactarSelecionados
               />
             </div>
           </Field>
