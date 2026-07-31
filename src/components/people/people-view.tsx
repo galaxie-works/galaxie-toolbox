@@ -27,6 +27,7 @@ import {
   List,
   ListFilter,
   Mail,
+  GitMerge,
   Pencil,
   MoreHorizontal,
   Phone,
@@ -135,6 +136,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { OrganizationsView } from "@/components/people/organizations-view";
+import { ContactMergeSheet } from "@/components/people/contact-merge-sheet";
 import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
 import { useIdioma, preencher } from "@/lib/idioma";
@@ -2035,6 +2037,7 @@ export function PeopleView({
   const selectionAnchorRef = useRef<string | null>(null);
   const [assignOrgOpen, setAssignOrgOpen] = useState(false);
   const [bulkEditDetailsOpen, setBulkEditDetailsOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
   const { getFoto, pedirFotos } = useFotos();
   // Mede o shell estável do MÓDULO (não a aba nem a janela): Contacts e
   // Organizations alternam o conteúdo interno, mas este elemento nunca desmonta.
@@ -2601,6 +2604,11 @@ export function PeopleView({
           table.resetRowSelection();
         }}
       />
+      <ContactMergeSheet
+        open={mergeOpen}
+        contacts={selectedContacts}
+        onOpenChange={setMergeOpen}
+      />
 
       {activeMissingScopes.length > 0 && (
         <Alert variant="warning">
@@ -2788,7 +2796,11 @@ export function PeopleView({
                           <Building2 />
                           {t.controlRoom.peopleBulkAtribuirOrg}
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled>
+                        <DropdownMenuItem
+                          disabled={selectedContacts.length < 2}
+                          onSelect={() => setMergeOpen(true)}
+                        >
+                          <GitMerge />
                           {t.controlRoom.peopleBulkMesclar}
                         </DropdownMenuItem>
                         <DropdownMenuItem
