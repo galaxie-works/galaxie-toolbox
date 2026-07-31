@@ -785,6 +785,9 @@ export function NavegadorScreen({
   // Estado efêmero de UI (só quem lê é este componente): não pertence ao store.
   const [paletaAberta, setPaletaAberta] = useState(false);
   const [historicoAberto, setHistoricoAberto] = useState(false);
+  // #275 rework: snapshot (data URL JPEG) da aba mostrado por baixo do overlay
+  // pra o conteúdo não sumir quando a webview é escondida. Null = sem overlay.
+  const [snapshotOverlay, setSnapshotOverlay] = useState<string | null>(null);
 
   // Z-order (#275): conta os overlays DOM abertos SOBRE a webview (menus de
   // contexto, dropdowns da barra, diálogos). Enquanto houver algum, a webview
@@ -1383,10 +1386,28 @@ export function NavegadorScreen({
   // aparecer; ao fechar, este mesmo efeito reroda e revela/reposiciona a aba
   // ativa atual — restaurando a página por baixo.
   useEffect(() => {
-    if (paletaAberta || overlaysWebview > 0 || menuAbertoId !== null || !ativa) {
-      browser.esconderTodas();
+    const overlayAtivo =
+      paletaAberta || overlaysWebview > 0 || menuAbertoId !== null;
+    if (overlayAtivo || !ativa) {
+      // #275 rework: ANTES de esconder, tira um snapshot da aba ativa e o mostra
+      // como imagem sob o overlay (conteúdo congela, não some). Só uma vez por
+      // abertura (guard `!snapshotOverlay`). No mock o snapshot vem null e cai no
+      // comportamento antigo (esconde). Esconder acontece de qualquer forma.
+      if (ativa && activeTab && !snapshotOverlay) {
+        void browser
+          .snapshot(ativa)
+          .then((uri) => {
+            if (uri) setSnapshotOverlay(uri);
+          })
+          .catch(() => {})
+          .finally(() => browser.esconderTodas());
+      } else {
+        browser.esconderTodas();
+      }
       return;
     }
+    // Overlay fechou: remove o snapshot e revela/reposiciona a webview real.
+    if (snapshotOverlay) setSnapshotOverlay(null);
     const r = medir();
     if (activeTab && r) {
       void browser
@@ -1399,7 +1420,7 @@ export function NavegadorScreen({
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview, menuAbertoId]);
+  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview, menuAbertoId, snapshotOverlay]);
 
   // Auto-cura do menu de contexto (#275): se o dono do menu aberto (aba/grupo)
   // sumiu — chip desmontou com o menu aberto, sem disparar o fechamento — limpa a
@@ -1802,6 +1823,16 @@ export function NavegadorScreen({
         </div>
       ) : (
         <div ref={area} className="relative flex-1 bg-background">
+          {/* #275 rework: snapshot da webview por baixo do overlay (conteúdo
+              congela em vez de sumir quando a webview nativa é escondida). */}
+          {snapshotOverlay && (
+            <img
+              src={snapshotOverlay}
+              alt=""
+              draggable={false}
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover object-left-top"
+            />
+          )}
           <div className="pointer-events-none absolute inset-0 grid place-items-center text-muted-foreground">
             <div className="flex flex-col items-center gap-2">
               <Loader2 className="size-6 animate-spin opacity-40" />

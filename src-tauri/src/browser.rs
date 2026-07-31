@@ -431,3 +431,98 @@ pub fn instalar_captura_scroll(wv: &tauri::webview::Webview, label: &str) {
 
 #[cfg(not(windows))]
 pub fn instalar_captura_scroll(_wv: &tauri::webview::Webview, _label: &str) {}
+
+// ============================================================================
+// #275 rework — snapshot-to-image (Direção 1 aprovada pelo Polaris).
+//
+// A webview nativa (windowed) pinta ACIMA do DOM, então o app a esconde quando
+// abre um overlay (menu de contexto, Sheet, paleta) — e aí o CONTEÚDO SUMIA
+// (rejeição do Wagner no #275). Cura: ANTES de esconder, capturamos a webview
+// num JPEG (CapturePreview) e o front mostra essa imagem estática exatamente
+// sobre a área; o overlay renderiza acima dela (z-order DOM normal). Ao fechar,
+// o front remove a imagem e revela a webview (repaint do #336). Conteúdo
+// "congela" sob o overlay, mas não some.
+// ============================================================================
+
+/// Captura a aba ativa como um data URL JPEG (ou `None`). Chamado pelo front
+/// imediatamente antes de esconder a webview ao abrir um overlay.
+#[tauri::command]
+pub async fn browser_snapshot(app: AppHandle, id: String) -> Result<Option<String>, String> {
+    let win = janela(&app)?;
+    let wv = match achar(&win, &rotulo(&id)) {
+        Some(w) => w,
+        None => return Ok(None),
+    };
+    Ok(capturar_snapshot(&wv))
+}
+
+#[cfg(windows)]
+fn capturar_snapshot(wv: &tauri::webview::Webview) -> Option<String> {
+    use base64::Engine;
+    use std::sync::{Arc, Mutex};
+    use webview2_com::CapturePreviewCompletedHandler;
+    use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG;
+    use windows::Win32::System::Com::STREAM_SEEK_SET;
+    use windows::Win32::UI::Shell::SHCreateMemStream;
+
+    let saida: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let saida_cl = saida.clone();
+    let _ = wv.with_webview(move |pw| unsafe {
+        let core = match pw.controller().CoreWebView2() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let stream = match SHCreateMemStream(None) {
+            Some(s) => s,
+            None => return,
+        };
+        // Pump síncrono até o CapturePreview terminar (padrão do wry/webview2-com).
+        let stream_op = stream.clone();
+        let feito = CapturePreviewCompletedHandler::wait_for_async_operation(
+            Box::new(move |handler| {
+                core.CapturePreview(
+                    COREWEBVIEW2_CAPTURE_PREVIEW_IMAGE_FORMAT_JPEG,
+                    &stream_op,
+                    &handler,
+                )?;
+                Ok(())
+            }),
+            Box::new(|res| res),
+        );
+        if feito.is_err() {
+            return;
+        }
+        // Rebobina e lê os bytes do JPEG.
+        if stream.Seek(0, STREAM_SEEK_SET, None).is_err() {
+            return;
+        }
+        let mut bytes = Vec::new();
+        let mut buf = [0u8; 16384];
+        loop {
+            let mut lidos = 0u32;
+            if stream
+                .Read(buf.as_mut_ptr() as *mut _, buf.len() as u32, Some(&mut lidos))
+                .is_err()
+            {
+                break;
+            }
+            if lidos == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&buf[..lidos as usize]);
+        }
+        if !bytes.is_empty() {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            if let Ok(mut g) = saida_cl.lock() {
+                *g = Some(format!("data:image/jpeg;base64,{b64}"));
+            }
+        }
+    });
+    let r = saida.lock().ok().and_then(|mut g| g.take());
+    r
+}
+
+#[cfg(not(windows))]
+fn capturar_snapshot(_wv: &tauri::webview::Webview) -> Option<String> {
+    None
+}

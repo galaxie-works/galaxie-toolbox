@@ -1505,6 +1505,7 @@ pub fn run() {
             browser::browser_esconder_todas,
             browser::browser_recarregar,
             browser::browser_fechar_todas,
+            browser::browser_snapshot,
             enable_long_paths,
             long_paths_status,
             log_frontend_error,
