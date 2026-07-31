@@ -53,6 +53,8 @@ windows = { version = "0.61", features = [
     "Win32_Graphics_Gdi",
     # #272 S2: GetKeyState + VK_* pros modificadores no handler de accelerators.
     "Win32_UI_Input_KeyboardAndMouse",
+    # #202: CoTaskMemFree pra liberar a string do WebMessageReceived (scroll).
+    "Win32_System_Com",
 ] }
 # #272 S2 (accelerators do Navigator): AcceleratorKeyPressed do WebView2. Versao
 # ja resolvida transitivamente pelo wry 2.11 (0.38.2) — dep direta so pra usar as
