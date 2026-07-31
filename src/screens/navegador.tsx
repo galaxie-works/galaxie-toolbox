@@ -89,6 +89,13 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -2039,6 +2046,10 @@ function SheetHistorico({
   // z-order (#275): esconde a webview enquanto o histórico estiver aberto.
   useOcultarWebviewEnquantoAberto(aberto);
   const lista = useMemo(() => buscarHistorico(historico, q), [historico, q]);
+  // #177 rework: sem NENHUM histórico gravado, esconder Search + botões e mostrar
+  // o empty state padrão do app (Empty/reui). Busca sem resultado (mas com
+  // histórico) mantém o Search + a msg inline.
+  const semHistorico = historico.length === 0;
   const fmt = useMemo(
     () =>
       new Intl.DateTimeFormat(idioma === "en" ? "en-US" : "pt-BR", {
@@ -2088,20 +2099,39 @@ function SheetHistorico({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="p-4 pb-2">
-          <div className="relative">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={q}
-              onChange={(event) => setQ(event.target.value)}
-              placeholder={t.navegador.historicoBuscar}
-              className="pl-8"
-              autoFocus
-            />
+        {!semHistorico && (
+          <div className="p-4 pb-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={q}
+                onChange={(event) => setQ(event.target.value)}
+                placeholder={t.navegador.historicoBuscar}
+                className="pl-8"
+                autoFocus
+              />
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* #311: scrollbar do padrão do app (ScrollArea reui), não a do OS. */}
+        {/* #177 rework: sem histórico → empty state padrão do app (Empty/reui),
+            sem Search nem botões. */}
+        {semHistorico ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <History />
+                </EmptyMedia>
+                <EmptyTitle>{t.navegador.historicoTitulo}</EmptyTitle>
+                <EmptyDescription>
+                  {t.navegador.historicoVazio}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </div>
+        ) : (
+        /* #311: scrollbar do padrão do app (ScrollArea reui), não a do OS. */
         <ScrollArea className="min-h-0 flex-1">
           {lista.length === 0 ? (
             <div className="grid h-full place-items-center px-4 text-center text-sm text-muted-foreground">
@@ -2163,7 +2193,9 @@ function SheetHistorico({
             </ul>
           )}
         </ScrollArea>
+        )}
 
+        {!semHistorico && (
         <SheetFooter className="gap-3 border-t border-border">
           <Button
             type="button"
@@ -2206,6 +2238,7 @@ function SheetHistorico({
             </Button>
           </div>
         </SheetFooter>
+        )}
       </SheetContent>
     </Sheet>
   );
