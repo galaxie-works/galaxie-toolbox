@@ -169,6 +169,9 @@ export interface EventoDetalhe {
   online: boolean;
   joinUrl?: string | null;
   organizador: string;
+  /** True quando o usuário ativo organiza o evento (Graph `isOrganizer`).
+   *  Habilita a ação "Cancelar evento" (#260), que notifica os convidados. */
+  souOrganizador: boolean;
   corpo: string;
   corpoTipo: "html" | "text";
   participantes: Participante[];

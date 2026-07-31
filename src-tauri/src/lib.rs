@@ -429,6 +429,21 @@ async fn cr_excluir_evento(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda: cancela um evento organizado pelo usuário (#260), enviando o
+/// cancelamento aos convidados (POST /me/events/{id}/cancel). Distinto de
+/// excluir (silencioso). Calendars.ReadWrite.
+#[tauri::command]
+async fn cr_cancelar_evento(
+    state: State<'_, Store>,
+    id: String,
+    comentario: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_cancelar_evento(&store, &id, &comentario))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Control room: fotos (avatar) de remetentes internos, em lote. User.Read.All.
 #[tauri::command]
 async fn cr_fotos_contatos(
@@ -1341,6 +1356,7 @@ pub fn run() {
             cr_criar_evento,
             cr_editar_evento,
             cr_excluir_evento,
+            cr_cancelar_evento,
             cr_fotos_contatos,
             cr_pessoas,
             cr_people_list,

@@ -6,6 +6,7 @@ import {
   crCalendarios,
   crCategorias,
   crCriarCategoria,
+  crCancelarEvento,
   crCriarEvento,
   crEditarEvento,
   crEventoCorpo,
@@ -57,6 +58,7 @@ interface AgendaApi {
   criarEvento: (input: EventoInput) => Promise<string>;
   editarEvento: (id: string, input: EventoInput) => Promise<void>;
   excluirEvento: (id: string) => Promise<void>;
+  cancelarEvento: (id: string, comentario: string) => Promise<void>;
 }
 
 export interface AgendaSlice {
@@ -116,6 +118,8 @@ export interface AgendaSlice {
   criarEvento: (input: EventoInput) => Promise<void>;
   editarEvento: (id: string, input: EventoInput) => Promise<void>;
   excluirEvento: (id: string) => Promise<void>;
+  // Cancela (notifica os convidados), distinto de excluir (silencioso) (#260).
+  cancelarEvento: (id: string, comentario: string) => Promise<void>;
 }
 
 const agendaApi: AgendaApi = {
@@ -128,6 +132,7 @@ const agendaApi: AgendaApi = {
   criarEvento: crCriarEvento,
   editarEvento: crEditarEvento,
   excluirEvento: crExcluirEvento,
+  cancelarEvento: crCancelarEvento,
 };
 
 /** Converte hora-de-parede local (sem Z) para ISO UTC, para o calendário
@@ -456,6 +461,20 @@ export function criarAgendaSlice(
       set({ agendaEventosMes: antes.filter((e) => e.id !== id) });
       try {
         await api.excluirEvento(id);
+      } catch (erro) {
+        set({ agendaEventosMes: antes });
+        throw erro;
+      }
+    },
+
+    // Cancela um evento organizado pelo usuário (#260): notifica os convidados
+    // com o cancelamento (POST /events/{id}/cancel) e remove o evento. Mesma
+    // remoção otimista + rollback do excluir; a distinção é a notificação.
+    cancelarEvento: async (id, comentario) => {
+      const antes = get().agendaEventosMes ?? [];
+      set({ agendaEventosMes: antes.filter((e) => e.id !== id) });
+      try {
+        await api.cancelarEvento(id, comentario);
       } catch (erro) {
         set({ agendaEventosMes: antes });
         throw erro;

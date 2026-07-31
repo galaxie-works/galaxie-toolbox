@@ -582,6 +582,18 @@ const pt = {
     agendaExcluido: "Evento excluído.",
     agendaErroSalvar: "Não foi possível salvar o evento.",
     agendaErroExcluir: "Não foi possível excluir o evento.",
+    // Cancelar evento (#260) — notifica os convidados, distinto de excluir.
+    agendaCancelar: "Cancelar evento",
+    agendaCancelarTitulo: "Cancelar este evento?",
+    agendaCancelarDesc:
+      "Os convidados receberão um aviso de cancelamento e o evento será removido da agenda. Diferente de excluir, que remove sem avisar ninguém.",
+    agendaCancelarComentario: "Comentário (opcional)",
+    agendaCancelarComentarioPlaceholder:
+      "Mensagem enviada aos convidados junto do cancelamento",
+    agendaCancelarConfirmar: "Cancelar evento",
+    agendaCancelarVoltar: "Voltar",
+    agendaCancelado: "Evento cancelado — convidados avisados.",
+    agendaErroCancelar: "Não foi possível cancelar o evento.",
     agendaFormConvidados: "Convidados",
     agendaFormConvidadosPlaceholder: "Adicione convidados",
     agendaFormTeams: "Reunião do Teams",
@@ -1532,6 +1544,18 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     agendaExcluido: "Event deleted.",
     agendaErroSalvar: "Couldn't save the event.",
     agendaErroExcluir: "Couldn't delete the event.",
+    // Cancel event (#260) — notifies attendees, distinct from delete.
+    agendaCancelar: "Cancel event",
+    agendaCancelarTitulo: "Cancel this event?",
+    agendaCancelarDesc:
+      "Attendees will get a cancellation notice and the event will be removed from the calendar. Unlike delete, which removes it silently.",
+    agendaCancelarComentario: "Comment (optional)",
+    agendaCancelarComentarioPlaceholder:
+      "Message sent to attendees with the cancellation",
+    agendaCancelarConfirmar: "Cancel event",
+    agendaCancelarVoltar: "Back",
+    agendaCancelado: "Event canceled — attendees notified.",
+    agendaErroCancelar: "Couldn't cancel the event.",
     agendaFormConvidados: "Attendees",
     agendaFormConvidadosPlaceholder: "Add attendees",
     agendaFormTeams: "Teams meeting",

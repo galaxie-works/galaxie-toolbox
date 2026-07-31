@@ -463,6 +463,7 @@ export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
       online: true,
       joinUrl: "https://teams.microsoft.com/l/meetup-join/mock",
       organizador: "Wagner Consani",
+      souOrganizador: true,
       corpo: "<p>Pauta: revisar orçamento de compras do trimestre e alinhar próximos passos.</p>",
       corpoTipo: "html",
       participantes: MOCK_PARTS,
@@ -497,6 +498,17 @@ export async function crExcluirEvento(id: string): Promise<void> {
     return;
   }
   await invoke("cr_excluir_evento", { id });
+}
+
+/** Cancela um evento organizado pelo usuário (#260): envia o cancelamento aos
+ *  convidados via POST /me/events/{id}/cancel, com comentário opcional.
+ *  Distinto de excluir (silencioso). */
+export async function crCancelarEvento(id: string, comentario: string): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  await invoke("cr_cancelar_evento", { id, comentario });
 }
 
 export async function crInboxDia(inicio: string, fim: string): Promise<EmailItem[]> {
