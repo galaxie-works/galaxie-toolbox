@@ -118,7 +118,6 @@ function AppInner() {
   // de 25 pra não crescer sem limite.
   const [fechadas, setFechadas] = useState<{ url: string; nome: string }[]>([]);
   const [navigatorClock, setNavigatorClock] = useState(0);
-  const [navigatorMemorySettings] = useState(loadNavigatorMemorySettings);
   // Historico de navegacao (Story 5): capturado nos pontos onde o app commita
   // uma URL num webview (abrir app / omnibox / favorito). Persistido em
   // localStorage, igual aos pins/grupos/favoritos.
@@ -164,12 +163,11 @@ function AppInner() {
   }, []);
 
   useEffect(() => {
-    const ids = tabsToSleep(
-      abas,
-      abaAtiva,
-      navigatorMemorySettings,
-      Date.now(),
-    );
+    // Lê fresh do localStorage (#306): o painel Settings>Navigator>Tabs altera as
+    // prefs e o eviction reage no próximo tick/interação. Off → nada dorme.
+    const settings = loadNavigatorMemorySettings();
+    if (!settings.ativo) return;
+    const ids = tabsToSleep(abas, abaAtiva, settings, Date.now());
     if (ids.length === 0) return;
     const selected = new Set(ids);
     for (const id of ids) void browser.fechar(id);
@@ -180,7 +178,7 @@ function AppInner() {
           : tab,
       ),
     );
-  }, [abaAtiva, abas, navigatorClock, navigatorMemorySettings]);
+  }, [abaAtiva, abas, navigatorClock]);
 
   useEffect(() => {
     let vivo = true;

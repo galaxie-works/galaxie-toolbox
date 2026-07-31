@@ -17,11 +17,14 @@ export interface AbaBrowser {
 }
 
 export interface NavigatorMemorySettings {
+  /** Sleeping tabs ligado (#306). Off → nenhuma aba dorme automaticamente. */
+  ativo: boolean;
   idleMinutes: number;
   maxLive: number;
 }
 
 export const NAVIGATOR_MEMORY_DEFAULTS: NavigatorMemorySettings = {
+  ativo: true,
   idleMinutes: 30,
   maxLive: 5,
 };
@@ -48,6 +51,7 @@ export function loadNavigatorMemorySettings(): NavigatorMemorySettings {
       localStorage.getItem(NAVIGATOR_MEMORY_SETTINGS_KEY) || "null",
     ) as Partial<NavigatorMemorySettings> | null;
     return {
+      ativo: typeof parsed?.ativo === "boolean" ? parsed.ativo : NAVIGATOR_MEMORY_DEFAULTS.ativo,
       idleMinutes:
         typeof parsed?.idleMinutes === "number" &&
         Number.isFinite(parsed.idleMinutes) &&
@@ -63,6 +67,20 @@ export function loadNavigatorMemorySettings(): NavigatorMemorySettings {
     };
   } catch {
     return NAVIGATOR_MEMORY_DEFAULTS;
+  }
+}
+
+export function persistNavigatorMemorySettings(
+  settings: NavigatorMemorySettings,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(
+      NAVIGATOR_MEMORY_SETTINGS_KEY,
+      JSON.stringify(settings),
+    );
+  } catch {
+    // best-effort.
   }
 }
 
