@@ -9,6 +9,7 @@ import { NavegadorScreen } from "@/screens/navegador";
 import {
   loadNavigatorMemorySettings,
   loadNavigatorPrefs,
+  persistNavigatorPrefs,
   loadPinnedNavigatorTabs,
   loadLastSession,
   orderPinnedFirst,
@@ -171,6 +172,21 @@ function AppInner() {
     const onLimpo = () => setHistorico(loadHistorico());
     window.addEventListener("galaxie:historico-limpo", onLimpo);
     return () => window.removeEventListener("galaxie:historico-limpo", onLimpo);
+  }, []);
+
+  // #326: o atalho "Turn off" no hero da aba privada desliga o "Private mode
+  // only" — persiste a pref e sai do modo privado na hora.
+  useEffect(() => {
+    const onDesligar = () => {
+      persistNavigatorPrefs({
+        ...loadNavigatorPrefs(),
+        semprePrivado: false,
+      });
+      setModoPrivado(false);
+    };
+    window.addEventListener("galaxie:private-only-off", onDesligar);
+    return () =>
+      window.removeEventListener("galaxie:private-only-off", onDesligar);
   }, []);
 
   // Ponto unico de captura: so grava fora do modo privado, com "salvar histórico"

@@ -169,12 +169,17 @@ function NavigatorHero({
   subtitulo,
   privada,
   rotuloPrivada,
+  semprePrivadoAtivo,
+  onDesligarPrivado,
 }: {
   titulo: string;
   subtitulo: string;
   privada?: boolean;
   rotuloPrivada?: string;
+  semprePrivadoAtivo?: boolean;
+  onDesligarPrivado?: () => void;
 }) {
+  const { t } = useIdioma();
   const nave = useRef<ShipIconHandle>(null);
   // Anima no mount e mantém o balanço infinito (o <g> do barco tem repeat:Infinity).
   useEffect(() => {
@@ -206,6 +211,20 @@ function NavigatorHero({
         <SoftBlurIn className="text-[15px] text-muted-foreground" delay={300} stagger={14}>
           {subtitulo}
         </SoftBlurIn>
+      )}
+      {/* #326: quando "Private mode only" está ON, explicar por que TODA aba é
+          privada + atalho pra desligar. */}
+      {privada && semprePrivadoAtivo && (
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          {t.navegador.privateOnlyMotivo}{" "}
+          <button
+            type="button"
+            onClick={onDesligarPrivado}
+            className="font-medium text-info underline-offset-2 hover:underline"
+          >
+            {t.navegador.privateOnlyDesligar}
+          </button>
+        </p>
       )}
     </div>
   );
@@ -552,6 +571,10 @@ function Launcher({ privada, ...props }: AcoesPaleta & { privada?: boolean }) {
         subtitulo={t.navegador.subtitulo}
         privada={privada}
         rotuloPrivada={t.navegador.modoPrivadoAtivo}
+        semprePrivadoAtivo={loadNavigatorPrefs().semprePrivado}
+        onDesligarPrivado={() =>
+          window.dispatchEvent(new CustomEvent("galaxie:private-only-off"))
+        }
       />
       <ConteudoPaleta
         {...props}
@@ -1758,6 +1781,27 @@ export function NavegadorScreen({
         </div>
         {/* "+" logo após as abas (convenção de navegador); o spacer empurra os
             ícones (history/command) pra direita, fora do caminho do "+" (#277). */}
+        {loadNavigatorPrefs().semprePrivado ? (
+          // #326: "Private mode only" ON → o "+" abre DIRETO uma aba privada,
+          // sem o menu (normal/privada). Cor info reforça que está privado.
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={t.navegador.novaAbaPrivada}
+                onClick={onNovaAbaPrivada}
+                className={cn(
+                  "m-1 grid size-8 shrink-0 place-items-center rounded-md text-info",
+                  "hover:bg-accent",
+                  ativa === null && abas.length > 0 && "bg-accent"
+                )}
+              >
+                <Plus className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{t.navegador.novaAbaPrivada}</TooltipContent>
+          </Tooltip>
+        ) : (
         <DropdownMenu onOpenChange={registrarOverlayWebview}>
           <DropdownMenuTrigger asChild>
             <button
@@ -1789,6 +1833,7 @@ export function NavegadorScreen({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
         <div className="flex-1" aria-hidden="true" />
         {sleepingCount > 0 && (
           <Badge variant="info-light" className="my-2 shrink-0">
