@@ -97,8 +97,23 @@ export const createPersonalizationSlice: StateCreator<
     // cedo e não piscar; remove ao voltar pro tema (None).
     const url = urlDoFundo(id);
     try {
-      if (url) localStorage.setItem(CHAVE_BOOT_FUNDO_IMAGEM, url);
-      else localStorage.removeItem(CHAVE_BOOT_FUNDO_IMAGEM);
+      // Mantém o <html> vivo em sincronia com o que o boot (index.html) pinta.
+      // Sem isso, trocar pra "None" numa sessão que BOOTOU com imagem deixa o
+      // `backgroundImage` de boot preso no <html>: como o Estrelas retorna null
+      // quando fundoEstrelado=false, nada cobre a imagem antiga e o "None" só
+      // faria efeito após reload.
+      const raiz = document.documentElement;
+      if (url) {
+        localStorage.setItem(CHAVE_BOOT_FUNDO_IMAGEM, url);
+        raiz.style.backgroundImage = `url("${url}")`;
+        raiz.style.backgroundSize = "cover";
+        raiz.style.backgroundPosition = "center";
+      } else {
+        localStorage.removeItem(CHAVE_BOOT_FUNDO_IMAGEM);
+        raiz.style.backgroundImage = "";
+        raiz.style.backgroundSize = "";
+        raiz.style.backgroundPosition = "";
+      }
     } catch {
       // best-effort
     }
