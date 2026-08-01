@@ -34,7 +34,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { Atualizacao } from "@/components/atualizacao";
 import { TelaBloqueio } from "@/components/tela-bloqueio";
 import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
-import { Estrelas } from "@/components/estrelas";
+import { FundoApp } from "@/components/fundo-app";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
@@ -786,7 +786,7 @@ function AppInner() {
       <div className="relative grid h-full place-items-center overflow-hidden">
         <FaixaArrasto />
         <BarraJanela />
-        <Estrelas />
+        <FundoApp />
         <div className="relative flex flex-col items-center gap-4">
           <Avatar className="logo-in size-18 ring-2 ring-border">
             {cache?.photo && <AvatarImage src={cache.photo} alt="" />}
@@ -847,7 +847,7 @@ function AppInner() {
         onAbrirUrl={abrirUrl}
       />
       <SidebarInset className="relative overflow-hidden">
-        <Estrelas className="pointer-events-none" />
+        <FundoApp className="pointer-events-none" />
 
         <header
           data-tauri-drag-region

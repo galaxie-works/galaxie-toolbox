@@ -19,6 +19,10 @@ import {
   type ModoTema,
   type TemaVisual,
 } from "@/lib/tema";
+import {
+  CHAVE_BOOT_FUNDO_IMAGEM,
+  urlDoFundo,
+} from "@/lib/backgrounds";
 import type { AppStore } from "./index";
 
 /**
@@ -32,6 +36,9 @@ export interface PersonalizationSlice {
   notificacoes: PreferenciasNotificacao;
   /** Exibe o fundo estrelado em todas as superfícies do app. */
   fundoEstrelado: boolean;
+  /** #378: id da imagem de fundo (registry `backgrounds.ts`) ou `null` = fundo
+   *  do tema. Mutuamente exclusivo com `fundoEstrelado`. */
+  fundoImagem: string | null;
   /** Claro, escuro ou seguindo a preferência do sistema operacional. */
   modoTema: ModoTema;
   /** Paleta/estilo visual independente do modo claro/escuro. */
@@ -41,6 +48,7 @@ export interface PersonalizationSlice {
 
   setSomNotificacao: (escopo: EscopoNotificacao, somId: string) => void;
   setFundoEstrelado: (ativo: boolean) => void;
+  setFundoImagem: (id: string | null) => void;
   setModoTema: (modo: ModoTema) => void;
   setTemaVisual: (tema: TemaVisual) => void;
   setAltoContraste: (ativo: boolean) => void;
@@ -49,6 +57,7 @@ export interface PersonalizationSlice {
 export const PERSONALIZATION_KEYS = {
   notificacoes: CHAVE_NOTIFICACOES,
   fundoEstrelado: "galaxie-toolbox.background.stars",
+  fundoImagem: "galaxie-toolbox.background.image",
   modoTema: CHAVE_MODO_TEMA,
   temaVisual: CHAVE_TEMA_VISUAL,
   altoContraste: CHAVE_ALTO_CONTRASTE,
@@ -58,6 +67,7 @@ export type PersonalizationPersistido = Pick<
   PersonalizationSlice,
   | "notificacoes"
   | "fundoEstrelado"
+  | "fundoImagem"
   | "modoTema"
   | "temaVisual"
   | "altoContraste"
@@ -71,6 +81,7 @@ export const createPersonalizationSlice: StateCreator<
 > = (set, get) => ({
   notificacoes: { ...PREF_PADRAO },
   fundoEstrelado: true,
+  fundoImagem: null,
   modoTema: modoTemaSalvo(),
   temaVisual: temaVisualSalvo(),
   altoContraste: altoContrasteSalvo(),
@@ -80,6 +91,19 @@ export const createPersonalizationSlice: StateCreator<
       notificacoes: { ...state.notificacoes, [escopo]: somId },
     })),
   setFundoEstrelado: (ativo) => set({ fundoEstrelado: ativo }),
+  setFundoImagem: (id) => {
+    // #378: imagem e estrelas são mutuamente exclusivas — escolher imagem
+    // desliga o starry. Escreve a chave de boot (URL) pra o index.html pintar
+    // cedo e não piscar; remove ao voltar pro tema (None).
+    const url = urlDoFundo(id);
+    try {
+      if (url) localStorage.setItem(CHAVE_BOOT_FUNDO_IMAGEM, url);
+      else localStorage.removeItem(CHAVE_BOOT_FUNDO_IMAGEM);
+    } catch {
+      // best-effort
+    }
+    set(id ? { fundoImagem: id, fundoEstrelado: false } : { fundoImagem: null });
+  },
   setModoTema: (modo) => {
     aplicarModoTema(modo);
     set({ modoTema: modo });

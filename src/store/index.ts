@@ -314,6 +314,10 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       PERSONALIZATION_KEYS.fundoEstrelado
     );
     if (fundoEstrelado !== undefined) state.fundoEstrelado = fundoEstrelado;
+    const fundoImagem = lerChave<string | null>(
+      PERSONALIZATION_KEYS.fundoImagem
+    );
+    if (fundoImagem !== undefined) state.fundoImagem = fundoImagem;
     const modoTema = lerTexto<ModoTema>(
       PERSONALIZATION_KEYS.modoTema,
       MODOS_TEMA
@@ -431,6 +435,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     );
     gravarChave(PERSONALIZATION_KEYS.notificacoes, s.notificacoes);
     gravarChave(PERSONALIZATION_KEYS.fundoEstrelado, s.fundoEstrelado);
+    gravarChave(PERSONALIZATION_KEYS.fundoImagem, s.fundoImagem);
     gravarTexto(PERSONALIZATION_KEYS.modoTema, s.modoTema);
     gravarTexto(PERSONALIZATION_KEYS.temaVisual, s.temaVisual);
     gravarChave(PERSONALIZATION_KEYS.altoContraste, s.altoContraste);
@@ -511,6 +516,7 @@ export const useAppStore = create<AppStore>()(
         settingsFramesAbertos: s.settingsFramesAbertos,
         notificacoes: s.notificacoes,
         fundoEstrelado: s.fundoEstrelado,
+        fundoImagem: s.fundoImagem,
         modoTema: s.modoTema,
         temaVisual: s.temaVisual,
         altoContraste: s.altoContraste,
