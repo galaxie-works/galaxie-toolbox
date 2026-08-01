@@ -58,6 +58,12 @@ jobs:
       - name: Instalar dependências
         run: pnpm install --frozen-lockfile
 
+      # Os testes (node:test) rodam ANTES do build do Rust — que domina o tempo.
+      # Uma regressão barra o release aqui em segundos, sem gastar a compilação
+      # inteira só pra descobrir que a versão não deveria sair.
+      - name: Testes
+        run: pnpm test
+
       - name: Compilar e assinar
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
