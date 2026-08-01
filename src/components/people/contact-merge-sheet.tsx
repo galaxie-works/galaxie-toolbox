@@ -52,6 +52,13 @@ import {
 } from "@/lib/people-merge";
 import type { PeopleContact } from "@/lib/people";
 import { cn } from "@/lib/utils";
+import { Progress } from "@/components/ui/progress";
+import { toast } from "sonner";
+import { useAppStore } from "@/store";
+import type {
+  PeopleMergePhase,
+  PeopleMergeProgress,
+} from "@/store/people-slice";
 
 function initials(name: string): string {
   return (
@@ -76,17 +83,24 @@ export function ContactMergeSheet({
   open,
   contacts,
   onOpenChange,
+  onDone,
 }: {
   open: boolean;
   contacts: PeopleContact[];
   onOpenChange: (open: boolean) => void;
+  /** Chamado após um merge bem-sucedido (ex.: limpar a seleção da tabela). */
+  onDone?: () => void;
 }) {
   const { t } = useIdioma();
+  const mergePeopleContacts = useAppStore((s) => s.mergePeopleContacts);
+  const undoMergeContacts = useAppStore((s) => s.undoMergeContacts);
+  const mergeRunning = useAppStore((s) => s.peopleMergeRunning);
   const [step, setStep] = useState(1);
   const [draft, setDraft] = useState<MergeDraft>(() =>
     createMergeDraft(snapshotMergeSelection([])),
   );
   const [plan, setPlan] = useState<MergePlan | null>(null);
+  const [progress, setProgress] = useState<PeopleMergeProgress | null>(null);
   const wasOpenRef = useRef(false);
 
   useEffect(() => {
@@ -132,8 +146,75 @@ export function ContactMergeSheet({
     setPlan(buildMergePlan(draft));
   };
 
+  const faseLabel = (phase: PeopleMergePhase): string =>
+    ({
+      snapshot: t.controlRoom.mergeFaseSnapshot,
+      master: t.controlRoom.mergeFaseMaster,
+      absorbed: t.controlRoom.mergeFaseAbsorbed,
+      refetch: t.controlRoom.mergeFaseRefetch,
+      done: t.controlRoom.mergeFaseDone,
+    })[phase];
+
+  const desfazerMerge = async () => {
+    const res = await undoMergeContacts();
+    if (res.error && !res.masterRestored && res.recreated.length === 0) {
+      toast.error(res.error);
+      return;
+    }
+    if (res.failed.length > 0) {
+      toast.warning(
+        preencher(t.controlRoom.mergeDesfeitoParcial, { n: res.failed.length }),
+      );
+    } else {
+      toast.success(t.controlRoom.mergeDesfeito);
+    }
+  };
+
+  const executarMerge = async () => {
+    if (!plan) return;
+    setProgress({
+      phase: "snapshot",
+      completed: 0,
+      total: 1 + plan.absorbed.length + 1,
+    });
+    const res = await mergePeopleContacts(plan, setProgress);
+    setProgress(null);
+    if (!res.masterUpdated) {
+      // PATCH falhou: nada foi apagado — mantém o Sheet aberto pra retry.
+      toast.error(res.error ?? t.controlRoom.mergeErroMaster);
+      return;
+    }
+    onOpenChange(false);
+    onDone?.();
+    if (res.failedDeletes.length > 0) {
+      toast.warning(
+        preencher(t.controlRoom.mergeParcial, { n: res.failedDeletes.length }),
+      );
+    } else {
+      toast.success(
+        preencher(t.controlRoom.mergeSucesso, { n: res.deleted.length }),
+        {
+          action: {
+            label: t.controlRoom.mergeDesfazer,
+            onClick: () => {
+              void desfazerMerge();
+            },
+          },
+          duration: 12000,
+        },
+      );
+    }
+  };
+
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet
+      open={open}
+      onOpenChange={(next) => {
+        // Trava o fechamento durante a mutação (#379).
+        if (!next && mergeRunning) return;
+        onOpenChange(next);
+      }}
+    >
       <SheetContent
         side="right"
         className="flex w-full flex-col gap-0 p-0 sm:max-w-lg"
@@ -516,18 +597,42 @@ export function ContactMergeSheet({
                 {t.controlRoom.mergeContinuar}
               </Button>
             </>
+          ) : mergeRunning || progress ? (
+            <div className="flex-1">
+              <div className="mb-1.5 flex items-center justify-between text-sm">
+                <span>
+                  {progress
+                    ? faseLabel(progress.phase)
+                    : t.controlRoom.mergeFaseSnapshot}
+                </span>
+                <span className="text-muted-foreground">
+                  {progress ? `${progress.completed}/${progress.total}` : null}
+                </span>
+              </div>
+              <Progress
+                value={
+                  progress && progress.total > 0
+                    ? Math.round((progress.completed / progress.total) * 100)
+                    : 0
+                }
+              />
+            </div>
           ) : (
             <>
               <Button variant="outline" onClick={() => setStep(2)}>
                 {t.controlRoom.bulkOrgVoltar}
               </Button>
-              <Button disabled={Boolean(plan)} onClick={createPlan}>
-                {plan
-                  ? t.controlRoom.mergeProntoCta
-                  : preencher(t.controlRoom.mergeCta, {
-                      n: draft.candidates.length,
-                    })}
-              </Button>
+              {plan ? (
+                <Button onClick={() => void executarMerge()}>
+                  {t.controlRoom.mergeProntoCta}
+                </Button>
+              ) : (
+                <Button onClick={createPlan}>
+                  {preencher(t.controlRoom.mergeCta, {
+                    n: draft.candidates.length,
+                  })}
+                </Button>
+              )}
             </>
           )}
         </SheetFooter>

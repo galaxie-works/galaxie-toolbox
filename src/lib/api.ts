@@ -1080,6 +1080,33 @@ export async function crPeopleContactUpdate(
 }
 
 /**
+ * Cria um contato completo (POST /me/contacts) e devolve o id do Graph criado.
+ * Usado pelo Undo do merge (#379) pra recriar os absorvidos deletados — o
+ * `crSalvarContatos` legado deduplica por email e não devolve id.
+ */
+export async function crPeopleContactCreate(
+  input: PeopleContactEdit,
+): Promise<string> {
+  if (!inTauri()) {
+    await sleep(400);
+    return `mock-contact-${crypto.randomUUID()}`;
+  }
+  return invoke<string>("cr_people_contact_create", { input });
+}
+
+/**
+ * Exclui um contato (DELETE /me/contacts/{id}); 404 conta como sucesso
+ * (idempotente). Execução do merge (#379) — o chamador trata item a item.
+ */
+export async function crPeopleContactDelete(contactId: string): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  return invoke<void>("cr_people_contact_delete", { contactId });
+}
+
+/**
  * Grava `companyName` apenas nos contatos pessoais editáveis. O backend usa
  * `$batch` (20 por envelope) e devolve sucesso/falha por contato para rollback.
  */
