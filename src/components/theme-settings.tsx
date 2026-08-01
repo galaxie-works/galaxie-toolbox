@@ -66,6 +66,11 @@ const MOODS: MoodOption[] = [
     label: "Fallout",
     color: "oklch(0.5930 0.1524 52.0222)",
   },
+  {
+    value: "glacial-drift",
+    label: "Glacial",
+    color: "oklch(0.6400 0.2050 28)",
+  },
 ];
 
 const STYLES: StyleOption[] = [

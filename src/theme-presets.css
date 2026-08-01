@@ -794,3 +794,77 @@ html.dark[data-theme="high-contrast"] {
   --shadow-2xl: 0px 10px 20px 0px hsl(0, 0, 0 / 1.25);
 }
 
+/* Glacial Drift — inspirado numa foto aérea: caiaque vermelho-amarelo num lago
+   quase congelado. Água azul-petróleo profunda, gelo pálido, acento do caiaque
+   (vermelho-laranja) + amarelo da proa. O dark é o herói (água escura dominante). */
+html[data-theme="glacial-drift"] {
+  --background: oklch(0.9550 0.0075 233);
+  --foreground: oklch(0.2750 0.0450 250);
+  --card: oklch(0.9750 0.0055 230);
+  --card-foreground: oklch(0.2750 0.0450 250);
+  --popover: oklch(0.9800 0.0045 230);
+  --popover-foreground: oklch(0.2750 0.0450 250);
+  --primary: oklch(0.6000 0.2050 28);
+  --primary-foreground: oklch(0.9850 0.0120 60);
+  --secondary: oklch(0.4150 0.0720 245);
+  --secondary-foreground: oklch(0.9700 0.0080 230);
+  --muted: oklch(0.9080 0.0130 233);
+  --muted-foreground: oklch(0.4700 0.0320 248);
+  --accent: oklch(0.8350 0.1450 88);
+  --accent-foreground: oklch(0.2800 0.0550 60);
+  --destructive: oklch(0.5050 0.1950 26);
+  --destructive-foreground: oklch(0.9850 0.0080 60);
+  --border: oklch(0.8650 0.0160 233);
+  --input: oklch(0.9050 0.0130 233);
+  --ring: oklch(0.6000 0.2050 28);
+  --chart-1: oklch(0.6000 0.2050 28);
+  --chart-2: oklch(0.8000 0.1450 88);
+  --chart-3: oklch(0.4150 0.0720 245);
+  --chart-4: oklch(0.6600 0.1400 52);
+  --chart-5: oklch(0.6200 0.0250 240);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.9300 0.0110 236);
+  --sidebar-foreground: oklch(0.2750 0.0450 250);
+  --sidebar-primary: oklch(0.6000 0.2050 28);
+  --sidebar-primary-foreground: oklch(0.9850 0.0120 60);
+  --sidebar-accent: oklch(0.8900 0.0150 233);
+  --sidebar-accent-foreground: oklch(0.2750 0.0450 250);
+  --sidebar-border: oklch(0.8550 0.0160 234);
+  --sidebar-ring: oklch(0.6000 0.2050 28);
+}
+
+html.dark[data-theme="glacial-drift"] {
+  --background: oklch(0.2350 0.0430 249);
+  --foreground: oklch(0.9050 0.0120 230);
+  --card: oklch(0.2720 0.0430 249);
+  --card-foreground: oklch(0.9200 0.0100 230);
+  --popover: oklch(0.2150 0.0440 250);
+  --popover-foreground: oklch(0.9100 0.0110 230);
+  --primary: oklch(0.6400 0.2050 28);
+  --primary-foreground: oklch(0.9850 0.0150 60);
+  --secondary: oklch(0.3350 0.0320 246);
+  --secondary-foreground: oklch(0.9050 0.0100 230);
+  --muted: oklch(0.2950 0.0300 248);
+  --muted-foreground: oklch(0.6650 0.0220 234);
+  --accent: oklch(0.8000 0.1500 88);
+  --accent-foreground: oklch(0.2400 0.0500 60);
+  --destructive: oklch(0.5850 0.1950 26);
+  --destructive-foreground: oklch(0.9850 0.0080 60);
+  --border: oklch(0.3300 0.0300 249);
+  --input: oklch(0.3000 0.0340 249);
+  --ring: oklch(0.6400 0.2050 28);
+  --chart-1: oklch(0.6400 0.2050 28);
+  --chart-2: oklch(0.8000 0.1500 88);
+  --chart-3: oklch(0.6200 0.0900 240);
+  --chart-4: oklch(0.7000 0.1500 52);
+  --chart-5: oklch(0.7200 0.0200 234);
+  --sidebar: oklch(0.2050 0.0450 251);
+  --sidebar-foreground: oklch(0.9050 0.0120 230);
+  --sidebar-primary: oklch(0.6400 0.2050 28);
+  --sidebar-primary-foreground: oklch(0.9850 0.0150 60);
+  --sidebar-accent: oklch(0.2950 0.0300 248);
+  --sidebar-accent-foreground: oklch(0.9200 0.0100 230);
+  --sidebar-border: oklch(0.3200 0.0300 250);
+  --sidebar-ring: oklch(0.6400 0.2050 28);
+}
+

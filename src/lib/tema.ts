@@ -52,6 +52,7 @@ export const TEMAS_VISUAIS = [
   "sunny-sprout",
   "nordic-moss",
   "fallout",
+  "glacial-drift",
 ] as const;
 export type TemaVisual = (typeof TEMAS_VISUAIS)[number];
 
