@@ -71,6 +71,16 @@ export async function fecharTodas(): Promise<void> {
 }
 
 /**
+ * Captura a aba como um data URL JPEG (#275 rework) — chamado ANTES de esconder
+ * a webview ao abrir um overlay, pra mostrar a imagem estática por baixo (o
+ * conteúdo congela mas não some). `null` no mock/web ou se a captura falhar.
+ */
+export async function snapshot(id: string): Promise<string | null> {
+  if (!inTauri()) return null;
+  return (await invoke<string | null>("browser_snapshot", { id })) ?? null;
+}
+
+/**
  * Interpreta o que a pessoa digitou na barra do Cruiser: se parece endereço,
  * vira URL; senão, vira busca na web. `nome` é o rótulo curto para a aba.
  */

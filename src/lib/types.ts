@@ -98,6 +98,22 @@ export interface Participante {
   foto?: string | null;
 }
 
+/**
+ * Semântica de resposta a um convite (#287) — espelha `responseStatus.response`
+ * do Graph. `organizer` = evento próprio (sem RSVP); `notResponded`/`none` =
+ * pendente; `tentativelyAccepted` = talvez; `accepted`/`declined` = decididos.
+ */
+export type RespostaConvite =
+  | "none"
+  | "organizer"
+  | "tentativelyAccepted"
+  | "accepted"
+  | "declined"
+  | "notResponded";
+
+/** Ação de RSVP enviada ao backend (#287): mapeia 1:1 aos endpoints do Graph. */
+export type AcaoRsvp = "accept" | "tentativelyAccept" | "decline";
+
 export interface EventoAgenda {
   id: string;
   assunto: string;
@@ -111,6 +127,12 @@ export interface EventoAgenda {
   totalParticipantes: number;
   temAnexos: boolean;
   categorias: string[];
+  /** Semântica do convite (#287): estado da resposta do usuário ao evento. */
+  resposta: RespostaConvite;
+  /** True quando o usuário organiza o evento (Graph `isOrganizer`) — sem RSVP. */
+  souOrganizador: boolean;
+  /** Graph `responseRequested`: false = convite informativo (sem pedir RSVP). */
+  respostaSolicitada: boolean;
   /** Id do calendário de origem (#233). Marcado no front ao mesclar múltiplos
    *  calendários; ausente quando vindo do calendário padrão (/me/calendarView). */
   calendarioId?: string;
@@ -172,6 +194,11 @@ export interface EventoDetalhe {
   /** True quando o usuário ativo organiza o evento (Graph `isOrganizer`).
    *  Habilita a ação "Cancelar evento" (#260), que notifica os convidados. */
   souOrganizador: boolean;
+  /** Semântica do convite (#287): estado da resposta do usuário — habilita o
+   *  RSVP (Aceitar/Talvez/Recusar) e o badge de estado no detalhe. */
+  resposta: RespostaConvite;
+  /** Graph `responseRequested`: false = convite informativo (sem RSVP). */
+  respostaSolicitada: boolean;
   corpo: string;
   corpoTipo: "html" | "text";
   participantes: Participante[];
@@ -327,6 +354,25 @@ export interface PeopleListResult {
   nextLinks: string[];
 }
 
+/** Organização canônica do tenant atual, separada das organizações do app. */
+export interface PeopleTenantOrganization {
+  id: string;
+  name: string;
+}
+
+export interface PeopleOrganizationResult {
+  organization?: PeopleTenantOrganization | null;
+  missingScopes: string[];
+  failures: string[];
+}
+
+/** Snapshot completo e paginado no backend dos usuários do tenant. */
+export interface PeopleDirectoryResult {
+  records: PeopleRecord[];
+  missingScopes: string[];
+  failures: string[];
+}
+
 /** Grupo M365 ao qual o usuário atual pertence (#293). */
 export interface PeopleGroup {
   id: string;
@@ -364,6 +410,29 @@ export interface PeopleEnrichPreview {
 export interface PeopleEnrichApplyResult {
   saved: boolean;
   writeAvailable: boolean;
+}
+
+/** Resultado por contato do write-back Company ↔ Organization (#288). */
+export interface PeopleCompanyWriteResult {
+  writeAvailable: boolean;
+  savedContactIds: string[];
+  failedContactIds: string[];
+}
+
+export type PeopleBulkDetailsField =
+  | "companyName"
+  | "department"
+  | "officeLocation";
+
+export interface PeopleBulkDetailsChange {
+  field: PeopleBulkDetailsField;
+  value: string | null;
+}
+
+export interface PeopleBulkDetailsWriteResult {
+  writeAvailable: boolean;
+  savedContactIds: string[];
+  failedContactIds: string[];
 }
 
 export interface PeopleContactEdit {

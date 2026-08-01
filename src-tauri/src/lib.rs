@@ -444,6 +444,24 @@ async fn cr_cancelar_evento(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda: responde a um convite de reunião (#287) — RSVP Aceitar/Talvez/Recusar
+/// via POST /me/events/{id}/{accept|tentativelyAccept|decline}. Calendars.ReadWrite.
+#[tauri::command]
+async fn cr_responder_evento(
+    state: State<'_, Store>,
+    id: String,
+    resposta: String,
+    enviar_resposta: bool,
+    comentario: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_responder_evento(&store, &id, &resposta, enviar_resposta, &comentario)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Control room: fotos (avatar) de remetentes internos, em lote. User.Read.All.
 #[tauri::command]
 async fn cr_fotos_contatos(
@@ -478,6 +496,28 @@ async fn cr_people_list(
     tauri::async_runtime::spawn_blocking(move || {
         graph::cr_people_list(&store, next_links.unwrap_or_default())
     })
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// People: organização canônica do tenant atual.
+#[tauri::command]
+async fn cr_organizacao(
+    state: State<'_, Store>,
+) -> Result<graph::PeopleOrganizationResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_organizacao(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// People: snapshot paginado completo do diretório do tenant.
+#[tauri::command]
+async fn cr_people_directory(
+    state: State<'_, Store>,
+) -> Result<graph::PeopleDirectoryResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_people_directory(&store))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -615,6 +655,34 @@ async fn cr_people_contact_update(
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         graph::cr_people_contact_update(&store, &contact_id, input)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cr_people_company_write(
+    state: State<'_, Store>,
+    contact_ids: Vec<String>,
+    company_name: String,
+) -> Result<graph::PeopleCompanyWriteResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_company_write(&store, contact_ids, &company_name)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cr_people_details_write(
+    state: State<'_, Store>,
+    contact_ids: Vec<String>,
+    changes: Vec<graph::PeopleBulkDetailsChange>,
+) -> Result<graph::PeopleBulkDetailsWriteResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_details_write(&store, contact_ids, changes)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1380,15 +1448,20 @@ pub fn run() {
             cr_editar_evento,
             cr_excluir_evento,
             cr_cancelar_evento,
+            cr_responder_evento,
             cr_fotos_contatos,
             cr_pessoas,
             cr_people_list,
+            cr_organizacao,
+            cr_people_directory,
             cr_grupos,
             cr_grupo_membros,
             cr_people_enrich_preview,
             cr_people_enrich_apply,
             cr_people_write_available,
             cr_people_contact_update,
+            cr_people_company_write,
+            cr_people_details_write,
             cr_people_interactions,
             cr_enviar_novo,
             cr_compartilhar_onedrive,
@@ -1432,6 +1505,7 @@ pub fn run() {
             browser::browser_esconder_todas,
             browser::browser_recarregar,
             browser::browser_fechar_todas,
+            browser::browser_snapshot,
             enable_long_paths,
             long_paths_status,
             log_frontend_error,

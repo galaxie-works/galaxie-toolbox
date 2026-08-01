@@ -169,6 +169,12 @@ function gravarChave(chave: string, valor: unknown): void {
   }
 }
 
+function organizationsSemLogoPersistido(
+  organizations: PeopleOrg[],
+): Array<Omit<PeopleOrg, "logo">> {
+  return organizations.map(({ logo: _logo, ...organization }) => organization);
+}
+
 function lerTexto<T extends string>(
   chave: string,
   permitidos: readonly T[]
@@ -260,6 +266,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (atraso !== undefined) state.marcarLidoAtraso = atraso;
     const peopleTab = lerTexto<PeopleTab>(UI_KEYS.peopleTab, [
       "contacts",
+      "directory",
       "organizations",
       "groups",
     ]);
@@ -390,7 +397,14 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     const organizations = lerChave<PeopleOrg[]>(
       ORGANIZATIONS_KEYS.organizations
     );
-    if (Array.isArray(organizations)) state.organizations = organizations;
+    if (Array.isArray(organizations)) {
+      // O favicon é derivado e pode ser um data URI grande. Mantê-lo fora do
+      // localStorage evita estourar a quota; a slice o reidrata pelo domínio.
+      state.organizations = organizations.map((organization) => ({
+        ...organization,
+        logo: null,
+      }));
+    }
     return { state: state as AppPersistido, version: 0 };
   },
   setItem: (_name, value: StorageValue<AppPersistido>): void => {
@@ -430,7 +444,10 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       AGENDA_KEYS.agendaCalendariosSel,
       s.agendaCalendariosSelecionados
     );
-    gravarChave(ORGANIZATIONS_KEYS.organizations, s.organizations);
+    gravarChave(
+      ORGANIZATIONS_KEYS.organizations,
+      organizationsSemLogoPersistido(s.organizations),
+    );
   },
   removeItem: (): void => {
     for (const chave of TODAS_CHAVES) {
@@ -504,7 +521,7 @@ export const useAppStore = create<AppStore>()(
         syncIntervalMinutes: s.syncIntervalMinutes,
         agendaView: s.agendaView,
         agendaCalendariosSelecionados: s.agendaCalendariosSelecionados,
-        organizations: s.organizations,
+        organizations: organizationsSemLogoPersistido(s.organizations),
       }),
     }
   )

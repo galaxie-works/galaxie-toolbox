@@ -460,6 +460,10 @@ function EventCalendarEvent<TData = unknown>({
     <Comp
       type="button"
       data-slot="event-calendar-event"
+      // Id do evento no DOM: seam para um menu de contexto do app achar a
+      // ocorrência sob o cursor no right-click (#330). Só data, sem comportamento;
+      // o clone de preview (inerte) não recebe para não confundir o closest().
+      data-event-id={preview ? undefined : occurrence.eventId}
       data-view={view}
       data-all-day={occurrence.allDay || undefined}
       data-recurring={occurrence.isRecurring || undefined}

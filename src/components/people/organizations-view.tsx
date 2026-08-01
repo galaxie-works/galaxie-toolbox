@@ -19,7 +19,11 @@ import {
   Autocomplete,
   AutocompleteInput,
 } from "@/components/reui/autocomplete";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Avatar,
+  AvatarFallback,
+  AvatarImage,
+} from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -272,7 +276,7 @@ function OrganizationForm({
             {t.controlRoom.orgsDescricao}
           </SheetDescription>
         </SheetHeader>
-        <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto scrollbar-fina px-4 py-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto scrollbar-fina px-4 py-4">
           {form}
         </div>
         <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
@@ -496,6 +500,12 @@ export function OrganizationsView({
                   )}
                 >
                   <Avatar>
+                    {organization.logo && (
+                      <AvatarImage
+                        src={organization.logo}
+                        alt={organization.name}
+                      />
+                    )}
                     <AvatarFallback>
                       {initials(organization.name) || <Building2 className="size-4" />}
                     </AvatarFallback>
@@ -538,6 +548,9 @@ export function OrganizationsView({
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
             <Avatar className="size-16">
+              {selected.logo && (
+                <AvatarImage src={selected.logo} alt={selected.name} />
+              )}
               <AvatarFallback className="text-lg">
                 {initials(selected.name) || <Building2 className="size-5" />}
               </AvatarFallback>

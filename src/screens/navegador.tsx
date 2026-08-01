@@ -29,6 +29,7 @@ import {
   origemDaUrl,
   loadFaviconCache,
   loadNavigatorPrefs,
+  persistNavigatorPrefs,
   persistFaviconCache,
   NAVIGATOR_GROUP_COLORS,
   NAVIGATOR_GROUP_COLOR_ORDER,
@@ -86,6 +87,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 import {
   Sheet,
   SheetContent,
@@ -112,6 +121,7 @@ import { cn } from "@/lib/utils";
 import {
   BedDouble,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Coffee,
   Command as CommandIcon,
@@ -158,12 +168,17 @@ function NavigatorHero({
   subtitulo,
   privada,
   rotuloPrivada,
+  semprePrivadoAtivo,
+  onDesligarPrivado,
 }: {
   titulo: string;
   subtitulo: string;
   privada?: boolean;
   rotuloPrivada?: string;
+  semprePrivadoAtivo?: boolean;
+  onDesligarPrivado?: () => void;
 }) {
+  const { t } = useIdioma();
   const nave = useRef<ShipIconHandle>(null);
   // Anima no mount e mantém o balanço infinito (o <g> do barco tem repeat:Infinity).
   useEffect(() => {
@@ -195,6 +210,20 @@ function NavigatorHero({
         <SoftBlurIn className="text-[15px] text-muted-foreground" delay={300} stagger={14}>
           {subtitulo}
         </SoftBlurIn>
+      )}
+      {/* #326: quando "Private mode only" está ON, explicar por que TODA aba é
+          privada + atalho pra desligar. */}
+      {privada && semprePrivadoAtivo && (
+        <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+          {t.navegador.privateOnlyMotivo}{" "}
+          <button
+            type="button"
+            onClick={onDesligarPrivado}
+            className="font-medium text-info underline-offset-2 hover:underline"
+          >
+            {t.navegador.privateOnlyDesligar}
+          </button>
+        </p>
       )}
     </div>
   );
@@ -541,6 +570,10 @@ function Launcher({ privada, ...props }: AcoesPaleta & { privada?: boolean }) {
         subtitulo={t.navegador.subtitulo}
         privada={privada}
         rotuloPrivada={t.navegador.modoPrivadoAtivo}
+        semprePrivadoAtivo={loadNavigatorPrefs().semprePrivado}
+        onDesligarPrivado={() =>
+          window.dispatchEvent(new CustomEvent("galaxie:private-only-off"))
+        }
       />
       <ConteudoPaleta
         {...props}
@@ -782,6 +815,21 @@ export function NavegadorScreen({
   // Estado efêmero de UI (só quem lê é este componente): não pertence ao store.
   const [paletaAberta, setPaletaAberta] = useState(false);
   const [historicoAberto, setHistoricoAberto] = useState(false);
+  // #275 rework: snapshot (data URL JPEG) da aba mostrado por baixo do overlay
+  // pra o conteúdo não sumir quando a webview é escondida. Null = sem overlay.
+  const [snapshotOverlay, setSnapshotOverlay] = useState<string | null>(null);
+  // #358: overlays do APP SHELL (fora do Navigator) que abrem sobre a área da
+  // webview — ex.: o menu do usuário no AppSidebar — avisam por window-event
+  // pra a webview ceder. Contador auto-curável (clamp >= 0).
+  const [chromeOverlays, setChromeOverlays] = useState(0);
+  useEffect(() => {
+    const aoCeder = (e: Event) => {
+      const aberto = (e as CustomEvent<boolean>).detail;
+      setChromeOverlays((n) => Math.max(0, n + (aberto ? 1 : -1)));
+    };
+    window.addEventListener("galaxie:webview-ceder", aoCeder);
+    return () => window.removeEventListener("galaxie:webview-ceder", aoCeder);
+  }, []);
 
   // Z-order (#275): conta os overlays DOM abertos SOBRE a webview (menus de
   // contexto, dropdowns da barra, diálogos). Enquanto houver algum, a webview
@@ -847,6 +895,19 @@ export function NavegadorScreen({
   // #307: visibilidade da barra de favoritos (Settings>Navigator>Favorites).
   // Lida no mount; a tela remonta ao voltar do Settings, então reflete a pref.
   const [mostrarBarraFav] = useState(() => loadNavigatorPrefs().mostrarBarraFav);
+  // #318 S2: rail lateral de pinned tabs; colapso persistido em NavigatorPrefs.
+  const [railColapsado, setRailColapsado] = useState(
+    () => loadNavigatorPrefs().railPinsColapsado,
+  );
+  const alternarRail = () =>
+    setRailColapsado((v) => {
+      const proximo = !v;
+      persistNavigatorPrefs({
+        ...loadNavigatorPrefs(),
+        railPinsColapsado: proximo,
+      });
+      return proximo;
+    });
   const faviconTentados = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -1173,6 +1234,28 @@ export function NavegadorScreen({
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
+        {/* #360: sem o pino estático por aba (o badge "Pinned" do grupo já
+            marca); no hover, um botão de DESAFIXAR com tooltip. */}
+        {aba.fixada && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={t.navegador.desafixarAba}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAlternarFixada(aba.id);
+                }}
+                className="absolute -right-0.5 -bottom-0.5 z-20 grid size-4 place-items-center rounded-full border border-background bg-background text-muted-foreground opacity-0 hover:text-foreground focus-visible:opacity-100 group-hover/chip:opacity-100"
+              >
+                <PinOff className="size-2.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {t.navegador.desafixarAba}
+            </TooltipContent>
+          </Tooltip>
+        )}
         <SortableItemHandle
           aria-label={t.navegador.grupoReordenar}
           title={t.navegador.grupoReordenar}
@@ -1305,6 +1388,46 @@ export function NavegadorScreen({
     onTrocar,
   ]);
 
+  // #272 S2 (fecha #324): atalhos digitados com foco DENTRO da webview-filha são
+  // capturados por um accelerator nativo (Rust) e chegam como evento Tauri.
+  // Re-disparamos um keydown SINTÉTICO no window pra reusar EXATAMENTE o handler
+  // acima — zero duplicação da lógica de atalhos. No mock/web o import falha e
+  // cai no catch (a ponte nativa não existe).
+  useEffect(() => {
+    let vivo = true;
+    let desescutar: (() => void) | undefined;
+    void (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        const off = await listen<{
+          key: string;
+          ctrl: boolean;
+          shift: boolean;
+          alt: boolean;
+        }>("navigator-atalho", (evento) => {
+          const { key, ctrl, shift, alt } = evento.payload;
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key,
+              ctrlKey: ctrl,
+              shiftKey: shift,
+              altKey: alt,
+              bubbles: true,
+            }),
+          );
+        });
+        if (vivo) desescutar = off;
+        else off();
+      } catch {
+        // Sem ponte nativa (mock/web): nada a escutar.
+      }
+    })();
+    return () => {
+      vivo = false;
+      desescutar?.();
+    };
+  }, []);
+
   // #174: ao cair na aba vazia (Launcher inline cobre), zera o overlay pendente
   // — senão ele reabriria sozinho ao voltar para uma aba viva.
   useEffect(() => {
@@ -1316,10 +1439,31 @@ export function NavegadorScreen({
   // aparecer; ao fechar, este mesmo efeito reroda e revela/reposiciona a aba
   // ativa atual — restaurando a página por baixo.
   useEffect(() => {
-    if (paletaAberta || overlaysWebview > 0 || menuAbertoId !== null || !ativa) {
-      browser.esconderTodas();
+    const overlayAtivo =
+      paletaAberta ||
+      overlaysWebview > 0 ||
+      menuAbertoId !== null ||
+      chromeOverlays > 0; // #358: menu do usuário (app shell) sobre a webview
+    if (overlayAtivo || !ativa) {
+      // #275 rework: ANTES de esconder, tira um snapshot da aba ativa e o mostra
+      // como imagem sob o overlay (conteúdo congela, não some). Só uma vez por
+      // abertura (guard `!snapshotOverlay`). No mock o snapshot vem null e cai no
+      // comportamento antigo (esconde). Esconder acontece de qualquer forma.
+      if (ativa && activeTab && !snapshotOverlay) {
+        void browser
+          .snapshot(ativa)
+          .then((uri) => {
+            if (uri) setSnapshotOverlay(uri);
+          })
+          .catch(() => {})
+          .finally(() => browser.esconderTodas());
+      } else {
+        browser.esconderTodas();
+      }
       return;
     }
+    // Overlay fechou: remove o snapshot e revela/reposiciona a webview real.
+    if (snapshotOverlay) setSnapshotOverlay(null);
     const r = medir();
     if (activeTab && r) {
       void browser
@@ -1332,7 +1476,7 @@ export function NavegadorScreen({
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview, menuAbertoId]);
+  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview, menuAbertoId, chromeOverlays, snapshotOverlay]);
 
   // Auto-cura do menu de contexto (#275): se o dono do menu aberto (aba/grupo)
   // sumiu — chip desmontou com o menu aberto, sem disparar o fechamento — limpa a
@@ -1366,6 +1510,145 @@ export function NavegadorScreen({
       browser.esconderTodas();
     };
   }, []);
+
+  // #318 S2: rail lateral colapsível das pinned tabs (semente de Workspaces).
+  // Só aparece quando há abas fixadas. Encolhe a área de conteúdo → o
+  // ResizeObserver da `area` reposiciona a webview automaticamente. Colapsado =
+  // só favicons; expandido = ícone + nome. Clicar foca a aba.
+  const renderPinRail = () => {
+    const pinadas = abas.filter((aba) => aba.fixada);
+    if (pinadas.length === 0) return null;
+
+    const iconeDaAba = (aba: AbaBrowser) => {
+      const app = porId(aba.id);
+      if (app)
+        return (
+          <img src={urlIcone(app)} alt="" className="size-4 shrink-0" draggable={false} />
+        );
+      const fav = !aba.privada ? faviconDaAba(aba) : undefined;
+      if (fav)
+        return (
+          <img src={fav} alt="" className="size-4 shrink-0 rounded-[3px]" draggable={false} />
+        );
+      return <Globe className="size-4 shrink-0 text-muted-foreground" />;
+    };
+
+    if (railColapsado) {
+      return (
+        <div className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-border bg-muted/30 py-2">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={alternarRail}
+                aria-label={t.navegador.railPinsExpandir}
+                className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                <ChevronRight className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right">{t.navegador.railPinsExpandir}</TooltipContent>
+          </Tooltip>
+          {pinadas.map((aba) => (
+            <Tooltip key={aba.id}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => onTrocar(aba.id)}
+                  aria-label={aba.nome}
+                  aria-current={aba.id === ativa}
+                  className={cn(
+                    "grid size-8 place-items-center rounded-md",
+                    aba.id === ativa
+                      ? "bg-accent text-foreground"
+                      : "text-muted-foreground hover:bg-accent/50",
+                  )}
+                >
+                  {iconeDaAba(aba)}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">{aba.nome}</TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex w-52 shrink-0 flex-col border-r border-border bg-muted/20">
+        <div className="flex items-center justify-between gap-2 px-3 py-2">
+          <span className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+            <Pin className="size-3.5" />
+            {t.navegador.railPinsTitulo}
+          </span>
+          <button
+            type="button"
+            onClick={alternarRail}
+            aria-label={t.navegador.railPinsColapsar}
+            className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+        </div>
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-0.5 px-2 pb-2">
+            {pinadas.map((aba) => (
+              <div
+                key={aba.id}
+                className={cn(
+                  "group/pin flex items-center gap-1 rounded-md pr-1 text-sm",
+                  aba.id === ativa
+                    ? "bg-accent font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-accent/50",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => onTrocar(aba.id)}
+                  aria-current={aba.id === ativa}
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {iconeDaAba(aba)}
+                  <span className="min-w-0 flex-1 truncate">{aba.nome}</span>
+                </button>
+                {/* #360: unpin no hover + x pra fechar, com tooltip. */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={t.navegador.desafixarAba}
+                      onClick={() => onAlternarFixada(aba.id)}
+                      className="grid size-5 shrink-0 place-items-center rounded opacity-0 hover:bg-foreground/10 focus-visible:opacity-100 group-hover/pin:opacity-100"
+                    >
+                      <PinOff className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    {t.navegador.desafixarAba}
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label={t.navegador.fecharAba}
+                      onClick={() => onFechar(aba.id)}
+                      className="grid size-5 shrink-0 place-items-center rounded opacity-0 hover:bg-foreground/10 focus-visible:opacity-100 group-hover/pin:opacity-100"
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    {t.navegador.fecharAba}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      </div>
+    );
+  };
 
   return (
     <OcultarWebviewContext.Provider value={registrarOverlayWebview}>
@@ -1466,21 +1749,50 @@ export function NavegadorScreen({
               );
             }
             return (
-              <Sortable
-                key={lane.tipo}
-                strategy="horizontal"
-                value={lane.abas}
-                onValueChange={reordenarLaneAbas}
-                getItemValue={(a) => a.id}
-                className="flex items-stretch gap-1"
-              >
-                {lane.abas.map((aba) => renderChip(aba, lane.tipo === "pins"))}
-              </Sortable>
+              <div key={lane.tipo} className="flex items-stretch gap-1">
+                {/* #360: badge do grupo "Pinned" (em vez do pino por aba). */}
+                {lane.tipo === "pins" && (
+                  <span className="my-1 flex shrink-0 items-center gap-1 self-center rounded-md bg-muted px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                    <Pin className="size-3" />
+                    {t.navegador.railPinsTitulo}
+                  </span>
+                )}
+                <Sortable
+                  strategy="horizontal"
+                  value={lane.abas}
+                  onValueChange={reordenarLaneAbas}
+                  getItemValue={(a) => a.id}
+                  className="flex items-stretch gap-1"
+                >
+                  {lane.abas.map((aba) => renderChip(aba, lane.tipo === "pins"))}
+                </Sortable>
+              </div>
             );
           })}
         </div>
         {/* "+" logo após as abas (convenção de navegador); o spacer empurra os
             ícones (history/command) pra direita, fora do caminho do "+" (#277). */}
+        {loadNavigatorPrefs().semprePrivado ? (
+          // #326: "Private mode only" ON → o "+" abre DIRETO uma aba privada,
+          // sem o menu (normal/privada). Cor info reforça que está privado.
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                aria-label={t.navegador.novaAbaPrivada}
+                onClick={onNovaAbaPrivada}
+                className={cn(
+                  "m-1 grid size-8 shrink-0 place-items-center rounded-md text-info",
+                  "hover:bg-accent",
+                  ativa === null && abas.length > 0 && "bg-accent"
+                )}
+              >
+                <Plus className="size-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>{t.navegador.novaAbaPrivada}</TooltipContent>
+          </Tooltip>
+        ) : (
         <DropdownMenu onOpenChange={registrarOverlayWebview}>
           <DropdownMenuTrigger asChild>
             <button
@@ -1512,6 +1824,7 @@ export function NavegadorScreen({
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        )}
         <div className="flex-1" aria-hidden="true" />
         {sleepingCount > 0 && (
           <Badge variant="info-light" className="my-2 shrink-0">
@@ -1608,7 +1921,11 @@ export function NavegadorScreen({
         />
       )}
 
-      {ativa === null ? (
+      {/* #318 S2: rail das pinned tabs à esquerda + o conteúdo (Launcher/webview).
+          O rail encolhe a área; o ResizeObserver da `area` reposiciona a webview. */}
+      <div className="flex min-h-0 flex-1">
+        {renderPinRail()}
+        {ativa === null ? (
         <div className="flex-1 overflow-hidden">
           <Launcher
             abas={abas}
@@ -1627,6 +1944,16 @@ export function NavegadorScreen({
         </div>
       ) : (
         <div ref={area} className="relative flex-1 bg-background">
+          {/* #275 rework: snapshot da webview por baixo do overlay (conteúdo
+              congela em vez de sumir quando a webview nativa é escondida). */}
+          {snapshotOverlay && (
+            <img
+              src={snapshotOverlay}
+              alt=""
+              draggable={false}
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover object-left-top"
+            />
+          )}
           <div className="pointer-events-none absolute inset-0 grid place-items-center text-muted-foreground">
             <div className="flex flex-col items-center gap-2">
               <Loader2 className="size-6 animate-spin opacity-40" />
@@ -1636,7 +1963,8 @@ export function NavegadorScreen({
             </div>
           </div>
         </div>
-      )}
+        )}
+      </div>
 
       {/* Overlay global (Ctrl/Cmd+K) por cima da aba viva. */}
       <PaletaOverlay
@@ -1832,6 +2160,10 @@ function SheetHistorico({
   // z-order (#275): esconde a webview enquanto o histórico estiver aberto.
   useOcultarWebviewEnquantoAberto(aberto);
   const lista = useMemo(() => buscarHistorico(historico, q), [historico, q]);
+  // #177 rework: sem NENHUM histórico gravado, esconder Search + botões e mostrar
+  // o empty state padrão do app (Empty/reui). Busca sem resultado (mas com
+  // histórico) mantém o Search + a msg inline.
+  const semHistorico = historico.length === 0;
   const fmt = useMemo(
     () =>
       new Intl.DateTimeFormat(idioma === "en" ? "en-US" : "pt-BR", {
@@ -1881,20 +2213,40 @@ function SheetHistorico({
           </SheetDescription>
         </SheetHeader>
 
-        <div className="p-4 pb-2">
-          <div className="relative">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={q}
-              onChange={(event) => setQ(event.target.value)}
-              placeholder={t.navegador.historicoBuscar}
-              className="pl-8"
-              autoFocus
-            />
+        {!semHistorico && (
+          <div className="p-4 pb-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={q}
+                onChange={(event) => setQ(event.target.value)}
+                placeholder={t.navegador.historicoBuscar}
+                className="pl-8"
+                autoFocus
+              />
+            </div>
           </div>
-        </div>
+        )}
 
-        <div className="scrollbar-fina min-h-0 flex-1 overflow-y-auto">
+        {/* #177 rework: sem histórico → empty state padrão do app (Empty/reui),
+            sem Search nem botões. */}
+        {semHistorico ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center p-4">
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <History />
+                </EmptyMedia>
+                <EmptyTitle>{t.navegador.historicoTitulo}</EmptyTitle>
+                <EmptyDescription>
+                  {t.navegador.historicoVazio}
+                </EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          </div>
+        ) : (
+        /* #311: scrollbar do padrão do app (ScrollArea reui), não a do OS. */
+        <ScrollArea className="min-h-0 flex-1">
           {lista.length === 0 ? (
             <div className="grid h-full place-items-center px-4 text-center text-sm text-muted-foreground">
               {t.navegador.historicoVazio}
@@ -1954,8 +2306,10 @@ function SheetHistorico({
               })}
             </ul>
           )}
-        </div>
+        </ScrollArea>
+        )}
 
+        {!semHistorico && (
         <SheetFooter className="gap-3 border-t border-border">
           <Button
             type="button"
@@ -1998,6 +2352,7 @@ function SheetHistorico({
             </Button>
           </div>
         </SheetFooter>
+        )}
       </SheetContent>
     </Sheet>
   );

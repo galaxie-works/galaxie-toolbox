@@ -1,6 +1,6 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BridgeHeaderIcon } from "@/components/ui/icons/marca-anim";
-import { Badge } from "@/components/reui/badge";
+import { Badge, type BadgeProps } from "@/components/reui/badge";
 import {
   Filters,
   type FilterFieldConfig,
@@ -116,6 +116,7 @@ import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -124,6 +125,7 @@ import {
 } from "@/components/compose/compor-mensagem";
 import { NovaMensagemModal } from "@/components/compose/nova-mensagem-modal";
 import { AgendaView } from "@/components/agenda/agenda-view";
+import { AgendaCalendarSelector } from "@/components/agenda/agenda-calendar-selector";
 import { PeopleView } from "@/components/people/people-view";
 import { PersonHoverCard } from "@/components/people/person-hover-card";
 import * as AnimatedButton from "@/components/morphin/animated-border-button";
@@ -134,6 +136,7 @@ import { TextMorph } from "torph/react";
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
+import { podeGerenciarEvento } from "@/lib/agenda-permissions";
 import {
   CAIXA_PROPRIA,
   descricaoErroEnvio,
@@ -167,10 +170,13 @@ import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
 import DOMPurify from "dompurify";
 import { cn, comLoginHint } from "@/lib/utils";
 import type {
+  AcaoRsvp,
   AnexoEmail,
   AppUser,
   EmailItem,
   PastaEmail,
+  Participante,
+  RespostaConvite,
 } from "@/lib/types";
 import {
   analisarLink,
@@ -191,6 +197,8 @@ import {
   CalendarClock,
   CalendarDays,
   CalendarX2,
+  Check,
+  CircleHelp,
   ChevronDown,
   ListFilter,
   ChevronRight,
@@ -238,6 +246,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useId,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -1484,6 +1493,19 @@ function FolderSidebar({
 }) {
   const peopleTab = useAppStore((state) => state.peopleTab);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
+  const selectPeopleDirectory = useAppStore(
+    (state) => state.selectPeopleDirectory,
+  );
+  const peopleTenantOrganization = useAppStore(
+    (state) => state.peopleTenantOrganization,
+  );
+  const peopleTenantOrganizationLoading = useAppStore(
+    (state) => state.peopleTenantOrganizationLoading,
+  );
+  const peopleTenantOrganizationError = useAppStore(
+    (state) => state.peopleTenantOrganizationError,
+  );
+  const hydratePeopleM365 = useAppStore((state) => state.hydratePeopleM365);
   const peopleGroups = useAppStore((state) => state.peopleGroups);
   const peopleGroupsLoading = useAppStore(
     (state) => state.peopleGroupsLoading,
@@ -2012,14 +2034,75 @@ function FolderSidebar({
             </nav>
 
             <nav
-              aria-label={t.controlRoom.peopleGroupsSection}
+              aria-label={t.controlRoom.peopleMyOrganization}
               className={cn(
                 "flex w-full flex-col gap-0.5",
                 colapsada && "items-center"
               )}
             >
               {!colapsada && (
-                <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">
+                <div className="min-w-0 px-2 pb-1">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    {t.controlRoom.peopleMyOrganization}
+                  </p>
+                  <p className="truncate text-sm font-medium">
+                    {peopleTenantOrganizationLoading &&
+                    !peopleTenantOrganization
+                      ? t.controlRoom.peopleOrganizationLoading
+                      : peopleTenantOrganization?.name?.trim() ||
+                        t.controlRoom.peopleMyOrganization}
+                  </p>
+                </div>
+              )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={peopleTab === "directory" ? "secondary" : "ghost"}
+                    onClick={() => selectPeopleDirectory()}
+                    aria-label={t.controlRoom.peopleContactsTab}
+                    aria-current={
+                      peopleTab === "directory" ? "page" : undefined
+                    }
+                    className={cn(
+                      "shrink-0",
+                      colapsada
+                        ? "size-9 justify-center p-0"
+                        : "w-full justify-start gap-2.5",
+                      peopleTab === "directory"
+                        ? "bg-secondary font-medium text-secondary-foreground"
+                        : "text-muted-foreground hover:bg-accent/50",
+                    )}
+                  >
+                    <User className="size-4 shrink-0" />
+                    {!colapsada && (
+                      <span>{t.controlRoom.peopleContactsTab}</span>
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                {colapsada && (
+                  <TooltipContent side="right" align="center">
+                    {t.controlRoom.peopleContactsTab}
+                  </TooltipContent>
+                )}
+              </Tooltip>
+              {!colapsada && peopleTenantOrganizationError && (
+                <div className="px-2 py-1">
+                  <p className="text-xs text-destructive">
+                    {t.controlRoom.peopleOrganizationError}
+                  </p>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="mt-1 h-7 px-2"
+                    onClick={() => void hydratePeopleM365({ force: true })}
+                  >
+                    <RefreshCw className="size-3.5" />
+                    {t.controlRoom.peopleTentarNovamente}
+                  </Button>
+                </div>
+              )}
+              {!colapsada && (
+                <p className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
                   {t.controlRoom.peopleGroupsSection}
                 </p>
               )}
@@ -2090,7 +2173,9 @@ function FolderSidebar({
           </div>
         </ScrollArea>
       ) : (
-        <div className="flex-1" />
+        <ScrollArea className="min-h-0 w-full flex-1">
+          <AgendaCalendarSelector colapsada={colapsada} />
+        </ScrollArea>
       )}
 
       <Separator className={cn("shrink-0", colapsada && "w-6")} />
@@ -4753,6 +4838,72 @@ const MessageDetail = forwardRef<
 });
 
 
+/** Badge semântica do estado de resposta a um convite (#287). Devolve o
+ *  variant do Badge (reui) e o rótulo i18n; `null` para eventos sem semântica de
+ *  convite (ex.: sem resposta requisitada e ainda `none`). */
+function badgeResposta(
+  resposta: RespostaConvite,
+  souOrganizador: boolean,
+  t: ReturnType<typeof useIdioma>["t"],
+): { variant: BadgeProps["variant"]; label: string } | null {
+  if (souOrganizador || resposta === "organizer") {
+    return { variant: "primary-light", label: t.controlRoom.rsvpStatusOrganizador };
+  }
+  switch (resposta) {
+    case "accepted":
+      return { variant: "success-light", label: t.controlRoom.rsvpStatusAceito };
+    case "tentativelyAccepted":
+      return { variant: "warning-light", label: t.controlRoom.rsvpStatusTalvez };
+    case "declined":
+      return { variant: "destructive-light", label: t.controlRoom.rsvpStatusRecusado };
+    case "notResponded":
+      return { variant: "secondary", label: t.controlRoom.rsvpStatusPendente };
+    default:
+      return null;
+  }
+}
+
+function EventoParticipantePill({
+  participante,
+  foto,
+  mostrarTooltip = true,
+}: {
+  participante: Participante;
+  foto?: string | null;
+  mostrarTooltip?: boolean;
+}) {
+  const nome = participante.nome.trim() || participante.email;
+  const email = participante.email.trim();
+  const rotuloCompleto =
+    email && email.toLocaleLowerCase() !== nome.toLocaleLowerCase()
+      ? `${nome} · ${email}`
+      : nome;
+
+  const pill = (
+    <span
+      tabIndex={mostrarTooltip ? 0 : undefined}
+      title={rotuloCompleto}
+      aria-label={mostrarTooltip ? rotuloCompleto : undefined}
+      className="inline-flex w-fit min-w-0 max-w-full items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+    >
+      <Avatar size="sm" className="shrink-0">
+        {foto && <AvatarImage src={foto} alt="" />}
+        <AvatarFallback>{participante.iniciais}</AvatarFallback>
+      </Avatar>
+      <span className="min-w-0 max-w-40 truncate text-xs">{nome}</span>
+    </span>
+  );
+
+  return mostrarTooltip ? (
+    <Tooltip>
+      <TooltipTrigger asChild>{pill}</TooltipTrigger>
+      <TooltipContent className="max-w-xs break-words">{rotuloCompleto}</TooltipContent>
+    </Tooltip>
+  ) : (
+    pill
+  );
+}
+
 function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const { idioma, t } = useIdioma();
   const id = useAppStore((s) => s.agendaEventoId);
@@ -4761,21 +4912,49 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const abrirFormEditar = useAppStore((s) => s.abrirFormEditar);
   const excluirEvento = useAppStore((s) => s.excluirEvento);
   const cancelarEvento = useAppStore((s) => s.cancelarEvento);
+  const responderEvento = useAppStore((s) => s.responderEvento);
   const eventosMes = useAppStore((s) => s.agendaEventosMes);
+  const participantesPopoverTituloId = useId();
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
+
+  // RSVP a convites (#287): só quando o usuário é CONVIDADO (não organiza) — o
+  // organizador vê os status dos convidados, não RSVP. `respostaSolicitada`
+  // false = convite informativo: mostramos o badge, sem as ações.
+  const podeGerenciar = podeGerenciarEvento(det);
+  const ehConvite = !!det && !podeGerenciar;
+  const podeResponder = ehConvite && (det?.respostaSolicitada ?? true);
+  const badge = det ? badgeResposta(det.resposta, det.souOrganizador, t) : null;
+  const [comentarioRsvp, setComentarioRsvp] = useState("");
+  const [enviarResposta, setEnviarResposta] = useState(true);
+  const [rsvpEmVoo, setRsvpEmVoo] = useState<AcaoRsvp | null>(null);
+
+  // Envia o RSVP (#287): otimista no store (badge/lista atualizam na hora);
+  // toasta o resultado. Mantém o Sheet aberto — o usuário pode trocar a resposta.
+  const responder = async (acao: AcaoRsvp) => {
+    if (!id) return;
+    setRsvpEmVoo(acao);
+    try {
+      await responderEvento(id, acao, enviarResposta, comentarioRsvp.trim());
+      toast.success(t.controlRoom.rsvpEnviado);
+    } catch {
+      toast.error(t.controlRoom.rsvpErro);
+    } finally {
+      setRsvpEmVoo(null);
+    }
+  };
 
   // Cancelar evento (#260): só faz sentido pra quem ORGANIZA um evento COM
   // convidados — aí o cancelamento os notifica. Sem isso, resta só o Excluir
   // (silencioso). Confirmação em AlertDialog com comentário opcional.
-  const podeCancelar = !!det?.souOrganizador && (det?.participantes.length ?? 0) > 0;
+  const podeCancelar = podeGerenciar && (det?.participantes.length ?? 0) > 0;
   const [confirmarCancelar, setConfirmarCancelar] = useState(false);
   const [comentarioCancel, setComentarioCancel] = useState("");
   const [cancelando, setCancelando] = useState(false);
 
   // Abre o formulário de edição com o evento clicado (vindo da lista do mês).
   const editar = () => {
-    if (!id) return;
+    if (!id || !podeGerenciar) return;
     const ev = eventosMes?.find((e) => e.id === id);
     if (ev) {
       abrirFormEditar(ev);
@@ -4785,7 +4964,7 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
 
   // Exclui (otimista no store); fecha o Sheet e toasta o resultado.
   const excluir = async () => {
-    if (!id) return;
+    if (!id || !podeGerenciar) return;
     fecharEventoAgenda();
     try {
       await excluirEvento(id);
@@ -4798,7 +4977,7 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   // Cancela (#260): POST /events/{id}/cancel com comentário opcional — notifica
   // os convidados. Otimista no store; fecha confirmação + Sheet e toasta.
   const cancelar = async () => {
-    if (!id) return;
+    if (!id || !podeCancelar) return;
     const comentario = comentarioCancel.trim();
     setCancelando(true);
     try {
@@ -4819,6 +4998,13 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
     if (det?.participantes.length) pedirFotos(det.participantes.map((p) => p.email));
   }, [det, pedirFotos]);
 
+  // Zera o rascunho de RSVP ao trocar de evento (#287).
+  useEffect(() => {
+    setComentarioRsvp("");
+    setEnviarResposta(true);
+    setRsvpEmVoo(null);
+  }, [id]);
+
   return (
     <Sheet open={!!id} onOpenChange={(o) => !o && fecharEventoAgenda()}>
       <SheetContent side="right" className="flex w-[30%] flex-col gap-0 p-0 sm:max-w-[30vw]">
@@ -4836,6 +5022,12 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
                 <CalendarClock className="size-4 shrink-0" />
                 <span>{faixaHora(det.inicio, det.fim, idioma)}</span>
               </div>
+              {/* Semântica do convite (#287): badge do estado da resposta. */}
+              {badge && (
+                <Badge variant={badge.variant} size="lg">
+                  {badge.label}
+                </Badge>
+              )}
               {(det.online || det.local) && (
                 <div className="flex items-center gap-2 text-muted-foreground">
                   {det.online ? (
@@ -4855,23 +5047,129 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
               {det.participantes.length > 0 && (
                 <div>
                   <p className="mb-2 text-xs font-medium">{t.controlRoom.convidadosTitulo}</p>
-                  <div className="flex flex-wrap gap-2">
-                    {det.participantes.map((p) => {
-                      const foto = p.foto ?? getFoto(p.email);
-                      return (
-                        <div
+                  <div className="max-h-[8.5rem] overflow-hidden">
+                    <div className="flex flex-wrap gap-2">
+                      {det.participantes.slice(0, 3).map((p) => (
+                        <EventoParticipantePill
                           key={p.email || p.nome}
-                          className="flex items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1"
-                        >
-                          <Avatar size="sm">
-                            {foto && <AvatarImage src={foto} alt="" />}
-                            <AvatarFallback>{p.iniciais}</AvatarFallback>
-                          </Avatar>
-                          <span className="text-xs">{p.nome}</span>
-                        </div>
-                      );
-                    })}
+                          participante={p}
+                          foto={p.foto ?? getFoto(p.email)}
+                        />
+                      ))}
+                    </div>
                   </div>
+                  {det.participantes.length > 3 && (
+                    <Popover>
+                      <PopoverTrigger
+                        type="button"
+                        className="mt-1 cursor-pointer truncate rounded-sm px-1.5 py-1 text-start text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        {preencher(t.controlRoom.agendaMostrarTodosConvidados, {
+                          count: det.participantes.length,
+                        })}
+                      </PopoverTrigger>
+                      <PopoverContent
+                        align="start"
+                        aria-labelledby={participantesPopoverTituloId}
+                        className="w-80 gap-2 p-2"
+                      >
+                        <p
+                          id={participantesPopoverTituloId}
+                          className="px-1 text-xs font-medium"
+                        >
+                          {t.controlRoom.agendaTodosConvidados}
+                        </p>
+                        <div className="flex max-h-64 flex-wrap gap-2 overflow-y-auto p-1 scrollbar-fina">
+                          {det.participantes.map((p) => (
+                            <EventoParticipantePill
+                              key={p.email || p.nome}
+                              participante={p}
+                              foto={p.foto ?? getFoto(p.email)}
+                              mostrarTooltip={false}
+                            />
+                          ))}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                </div>
+              )}
+              {/* RSVP a convites (#287): Aceitar/Talvez/Recusar. Só para
+                  convidados; o botão do estado atual fica destacado (permite
+                  trocar). Convite informativo (responseRequested=false) mostra
+                  só o aviso, sem ações. */}
+              {ehConvite && (
+                <div className="space-y-3 rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs font-medium">{t.controlRoom.rsvpTitulo}</p>
+                  {podeResponder ? (
+                    <>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant={det.resposta === "accepted" ? "default" : "outline"}
+                          size="sm"
+                          disabled={!!rsvpEmVoo}
+                          onClick={() => void responder("accept")}
+                        >
+                          {rsvpEmVoo === "accept" ? (
+                            <Spinner className="size-4" />
+                          ) : (
+                            <Check />
+                          )}
+                          {t.controlRoom.rsvpAceitar}
+                        </Button>
+                        <Button
+                          variant={
+                            det.resposta === "tentativelyAccepted" ? "default" : "outline"
+                          }
+                          size="sm"
+                          disabled={!!rsvpEmVoo}
+                          onClick={() => void responder("tentativelyAccept")}
+                        >
+                          {rsvpEmVoo === "tentativelyAccept" ? (
+                            <Spinner className="size-4" />
+                          ) : (
+                            <CircleHelp />
+                          )}
+                          {t.controlRoom.rsvpTalvez}
+                        </Button>
+                        <Button
+                          variant={det.resposta === "declined" ? "default" : "outline"}
+                          size="sm"
+                          disabled={!!rsvpEmVoo}
+                          onClick={() => void responder("decline")}
+                        >
+                          {rsvpEmVoo === "decline" ? (
+                            <Spinner className="size-4" />
+                          ) : (
+                            <X />
+                          )}
+                          {t.controlRoom.rsvpRecusar}
+                        </Button>
+                      </div>
+                      <Textarea
+                        value={comentarioRsvp}
+                        onChange={(e) => setComentarioRsvp(e.target.value)}
+                        placeholder={t.controlRoom.rsvpComentarioPlaceholder}
+                        rows={2}
+                        disabled={!!rsvpEmVoo}
+                      />
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          id="agenda-rsvp-enviar"
+                          checked={enviarResposta}
+                          onCheckedChange={setEnviarResposta}
+                          disabled={!!rsvpEmVoo}
+                        />
+                        <Label htmlFor="agenda-rsvp-enviar" className="text-xs font-normal">
+                          {t.controlRoom.rsvpEnviarResposta}
+                        </Label>
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      {t.controlRoom.rsvpInfoSemResposta}
+                    </p>
+                  )}
                 </div>
               )}
               {det.corpo.trim() && (
@@ -4882,22 +5180,26 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
               )}
             </div>
             <SheetFooter className="flex-row items-center gap-2 border-t px-4 py-3">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={editar}
-                disabled={!eventosMes?.some((e) => e.id === id)}
-              >
-                <Pencil /> {t.controlRoom.agendaEditar}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:text-destructive"
-                onClick={() => void excluir()}
-              >
-                <Trash2 /> {t.controlRoom.agendaExcluir}
-              </Button>
+              {podeGerenciar && (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={editar}
+                    disabled={!eventosMes?.some((e) => e.id === id)}
+                  >
+                    <Pencil /> {t.controlRoom.agendaEditar}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => void excluir()}
+                  >
+                    <Trash2 /> {t.controlRoom.agendaExcluir}
+                  </Button>
+                </>
+              )}
               {podeCancelar && (
                 <Button
                   variant="ghost"
@@ -6158,7 +6460,6 @@ export function ControlRoomScreen({
           bridgeView={bridgeView}
           onSelectModule={(view) => {
             setBridgeView(view);
-            setSidebarAberta(view !== "agenda");
           }}
           t={t}
         />

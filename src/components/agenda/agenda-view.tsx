@@ -8,14 +8,33 @@ import { useEffect, useMemo, useState } from "react";
 import { enUS, ptBR } from "date-fns/locale";
 import type { Locale } from "date-fns";
 import { toast } from "sonner";
-import { CalendarClock, CalendarPlus, Check, Plus, RefreshCw, Video, X } from "lucide-react";
+import {
+  CalendarClock,
+  CalendarPlus,
+  CalendarX2,
+  Check,
+  CircleHelp,
+  Eye,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+  Video,
+  X,
+} from "lucide-react";
 
 import { useAppStore } from "@/store";
+import { podeGerenciarEvento } from "@/lib/agenda-permissions";
 import { useIdioma } from "@/lib/idioma";
 import type { Idioma } from "@/lib/strings";
-import type { ConvidadoInput, EventoInput, Pessoa } from "@/lib/types";
+import type {
+  AcaoRsvp,
+  ConvidadoInput,
+  EventoAgenda,
+  EventoInput,
+  Pessoa,
+} from "@/lib/types";
 import { CampoPessoas } from "@/components/compose/campo-pessoas";
-import { AgendaCalendarSelector } from "@/components/agenda/agenda-calendar-selector";
 
 import { EventCalendar } from "@/components/reui/event-calendar/event-calendar";
 import { EventCalendarContent } from "@/components/reui/event-calendar/event-calendar-content";
@@ -39,8 +58,30 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -145,6 +186,56 @@ export function AgendaView() {
   const carregarCalendarios = useAppStore((s) => s.carregarCalendarios);
   const selecionarEventoAgenda = useAppStore((s) => s.selecionarEventoAgenda);
   const abrirFormCriar = useAppStore((s) => s.abrirFormCriar);
+  const cancelarEvento = useAppStore((s) => s.cancelarEvento);
+
+  // Menu de contexto do evento (#330): o right-click num chip abre o ContextMenu
+  // do app com as ações condicionadas ao contexto. Identificamos a ocorrência
+  // sob o cursor pelo `data-event-id` que o chip do event-calendar expõe, e
+  // resolvemos o EventoAgenda completo na lista do mês (organizer/RSVP/etc.).
+  const [menuEventoId, setMenuEventoId] = useState<string | null>(null);
+  const menuEvento = useMemo(
+    () =>
+      menuEventoId
+        ? ((mesEventos ?? []).find((e) => e.id === menuEventoId) ?? null)
+        : null,
+    [menuEventoId, mesEventos],
+  );
+
+  // Confirmação do "Cancelar evento" (#260) disparada pelo menu — destrutiva e
+  // notifica os convidados, então reusa o mesmo AlertDialog + comentário do
+  // detalhe (EventoDialog). Excluir é silencioso; cancelar avisa.
+  const [cancelarAlvo, setCancelarAlvo] = useState<EventoAgenda | null>(null);
+  const [comentarioCancel, setComentarioCancel] = useState("");
+  const [cancelando, setCancelando] = useState(false);
+
+  // Right-click: acha o chip sob o cursor. Fora de um evento (célula vazia,
+  // navbar), suprime o menu (preventDefault também impede o menu nativo) — o
+  // ContextMenuTrigger do Radix pula a abertura quando o evento já veio
+  // defaultPrevented.
+  const aoAbrirMenu = (e: React.MouseEvent) => {
+    const alvo = (e.target as HTMLElement).closest?.("[data-event-id]");
+    const id = alvo?.getAttribute("data-event-id") ?? null;
+    if (!id) {
+      e.preventDefault();
+      return;
+    }
+    setMenuEventoId(id);
+  };
+
+  const confirmarCancelamento = async () => {
+    if (!cancelarAlvo) return;
+    setCancelando(true);
+    try {
+      await cancelarEvento(cancelarAlvo.id, comentarioCancel.trim());
+      setCancelarAlvo(null);
+      setComentarioCancel("");
+      toast.success(t.controlRoom.agendaCancelado);
+    } catch {
+      toast.error(t.controlRoom.agendaErroCancelar);
+    } finally {
+      setCancelando(false);
+    }
+  };
 
   // Cores reais das categorias do Outlook (nome -> hex), uma vez.
   useEffect(() => {
@@ -182,6 +273,10 @@ export function AgendaView() {
 
   const eventos: CalendarEvent[] = useMemo(() => {
     return (mesEventos ?? [])
+      // Semântica do convite (#287): eventos recusados somem do calendário
+      // (mesmo comportamento do Outlook). Os demais estados (aceito/talvez/
+      // pendente) aparecem; o RSVP e o badge ficam no detalhe do evento.
+      .filter((ev) => ev.resposta !== "declined")
       .map((ev): CalendarEvent | null => {
         const inicio = new Date(comZ(ev.inicio));
         const fim = new Date(comZ(ev.fim));
@@ -252,36 +347,247 @@ export function AgendaView() {
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-      <EventCalendar
-        events={eventos}
-        view={view}
-        date={dia}
-        views={VIEWS}
-        locale={locale}
-        i18n={i18nCal}
-        loading={mesEventos === null}
-        interactions={INTERACOES}
-        showDayAddButton
-        onRangeChange={buscarFaixa}
-        onDateChange={setDia}
-        onViewChange={(v) => setView(v as typeof view)}
-        onEventClick={aoClicarEvento}
-        onSlotClick={aoClicarSlot}
-        className="min-h-0 flex-1"
-      >
-        <div className="flex min-w-0 items-center gap-1 border-b">
-          <EventCalendarNav className="min-w-0 flex-1 border-b-0" />
-          <EventCalendarToolbar className="shrink-0 gap-1.5 pr-2">
-            <AgendaCalendarSelector />
-            <Button size="sm" onClick={() => abrirFormCriar()}>
-              <CalendarPlus /> {t.controlRoom.agendaNovoEvento}
-            </Button>
-          </EventCalendarToolbar>
-        </div>
-        <EventCalendarContent />
-      </EventCalendar>
+      <ContextMenu onOpenChange={(aberto) => !aberto && setMenuEventoId(null)}>
+        <ContextMenuTrigger asChild>
+          <div
+            className="flex min-h-0 min-w-0 flex-1 flex-col"
+            onContextMenu={aoAbrirMenu}
+          >
+            <EventCalendar
+              events={eventos}
+              view={view}
+              date={dia}
+              views={VIEWS}
+              locale={locale}
+              i18n={i18nCal}
+              loading={mesEventos === null}
+              interactions={INTERACOES}
+              showDayAddButton
+              onRangeChange={buscarFaixa}
+              onDateChange={setDia}
+              onViewChange={(v) => setView(v as typeof view)}
+              onEventClick={aoClicarEvento}
+              onSlotClick={aoClicarSlot}
+              className="min-h-0 flex-1"
+            >
+              <div className="flex min-w-0 items-center gap-1 border-b">
+                <EventCalendarNav className="min-w-0 flex-1 border-b-0" />
+                <EventCalendarToolbar className="shrink-0 gap-1.5 pr-2">
+                  <Button size="sm" onClick={() => abrirFormCriar()}>
+                    <CalendarPlus /> {t.controlRoom.agendaNovoEvento}
+                  </Button>
+                </EventCalendarToolbar>
+              </div>
+              <EventCalendarContent />
+            </EventCalendar>
+          </div>
+        </ContextMenuTrigger>
+        <EventoContextMenu
+          evento={menuEvento}
+          onPedirCancelar={(ev) => {
+            setCancelarAlvo(ev);
+            setComentarioCancel("");
+          }}
+        />
+      </ContextMenu>
       <EventoFormSheet />
+      <CancelarEventoDialog
+        alvo={cancelarAlvo}
+        comentario={comentarioCancel}
+        onComentario={setComentarioCancel}
+        cancelando={cancelando}
+        onConfirmar={confirmarCancelamento}
+        onFechar={() => {
+          if (!cancelando) {
+            setCancelarAlvo(null);
+            setComentarioCancel("");
+          }
+        }}
+      />
     </div>
+  );
+}
+
+// --- Menu de contexto do evento (#330) --------------------------------------
+// Right-click num evento abre o ContextMenu do design system (mesmo padrão do
+// menu de e-mail #86). As ações NÃO são reimplementadas: cada item chama o
+// fluxo que já existe na Agenda — detalhe (#34), editar (#211), RSVP (#287),
+// cancelar (#260), excluir. A visibilidade segue as MESMAS condições do detalhe
+// (EventoDialog): organizer vs. convidado, com/sem convidados.
+
+function EventoContextMenu({
+  evento,
+  onPedirCancelar,
+}: {
+  evento: EventoAgenda | null;
+  onPedirCancelar: (ev: EventoAgenda) => void;
+}) {
+  const { t } = useIdioma();
+  const selecionarEventoAgenda = useAppStore((s) => s.selecionarEventoAgenda);
+  const abrirFormEditar = useAppStore((s) => s.abrirFormEditar);
+  const excluirEvento = useAppStore((s) => s.excluirEvento);
+  const responderEvento = useAppStore((s) => s.responderEvento);
+
+  // Sem alvo resolvido (ainda), o conteúdo fica vazio; o trigger só abre o menu
+  // quando o right-click acerta um chip (data-event-id), então isto é defensivo.
+  if (!evento) return <ContextMenuContent />;
+
+  // Mesmas condições do detalhe (#287/#260): convidado (não organizer) com
+  // resposta solicitada pode dar RSVP; organizer COM convidados pode cancelar.
+  const podeGerenciar = podeGerenciarEvento(evento);
+  const ehConvite = !podeGerenciar;
+  const podeResponder = ehConvite && evento.respostaSolicitada;
+  const podeCancelar = podeGerenciar && evento.totalParticipantes > 0;
+
+  const excluir = async () => {
+    if (!podeGerenciar) return;
+    try {
+      await excluirEvento(evento.id);
+      toast.success(t.controlRoom.agendaExcluido);
+    } catch {
+      toast.error(t.controlRoom.agendaErroExcluir);
+    }
+  };
+
+  // RSVP rápido pelo menu (#287): envia resposta ao organizador, sem comentário
+  // (o detalhe segue disponível pra RSVP com comentário/opções).
+  const responder = async (acao: AcaoRsvp) => {
+    try {
+      await responderEvento(evento.id, acao, true, "");
+      toast.success(t.controlRoom.rsvpEnviado);
+    } catch {
+      toast.error(t.controlRoom.rsvpErro);
+    }
+  };
+
+  return (
+    <ContextMenuContent className="w-52">
+      <ContextMenuItem
+        className="gap-2"
+        onClick={() => void selecionarEventoAgenda(evento.id)}
+      >
+        <Eye /> {t.controlRoom.agendaVerDetalhes}
+      </ContextMenuItem>
+      {podeGerenciar && (
+        <ContextMenuItem className="gap-2" onClick={() => abrirFormEditar(evento)}>
+          <Pencil /> {t.controlRoom.agendaEditar}
+        </ContextMenuItem>
+      )}
+
+      {podeResponder && (
+        <ContextMenuSub>
+          <ContextMenuSubTrigger className="gap-2">
+            <Check /> {t.controlRoom.rsvpTitulo}
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent>
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => void responder("accept")}
+            >
+              <Check /> {t.controlRoom.rsvpAceitar}
+            </ContextMenuItem>
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => void responder("tentativelyAccept")}
+            >
+              <CircleHelp /> {t.controlRoom.rsvpTalvez}
+            </ContextMenuItem>
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => void responder("decline")}
+            >
+              <X /> {t.controlRoom.rsvpRecusar}
+            </ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+      )}
+
+      {podeGerenciar && (
+        <>
+          <ContextMenuSeparator />
+          {podeCancelar && (
+            <ContextMenuItem
+              variant="destructive"
+              className="gap-2"
+              onClick={() => onPedirCancelar(evento)}
+            >
+              <CalendarX2 /> {t.controlRoom.agendaCancelar}
+            </ContextMenuItem>
+          )}
+          <ContextMenuItem
+            variant="destructive"
+            className="gap-2"
+            onClick={() => void excluir()}
+          >
+            <Trash2 /> {t.controlRoom.agendaExcluir}
+          </ContextMenuItem>
+        </>
+      )}
+    </ContextMenuContent>
+  );
+}
+
+// Confirmação do "Cancelar evento" (#260) acionada pelo menu de contexto. Mesmo
+// AlertDialog + campo de comentário do detalhe (EventoDialog): o comentário
+// segue aos convidados junto do cancelamento.
+function CancelarEventoDialog({
+  alvo,
+  comentario,
+  onComentario,
+  cancelando,
+  onConfirmar,
+  onFechar,
+}: {
+  alvo: EventoAgenda | null;
+  comentario: string;
+  onComentario: (v: string) => void;
+  cancelando: boolean;
+  onConfirmar: () => void;
+  onFechar: () => void;
+}) {
+  const { t } = useIdioma();
+  return (
+    <AlertDialog open={!!alvo} onOpenChange={(aberto) => !aberto && onFechar()}>
+      <AlertDialogContent className="max-w-md!">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t.controlRoom.agendaCancelarTitulo}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t.controlRoom.agendaCancelarDesc}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="space-y-2">
+          <Label htmlFor="agenda-menu-cancelar-comentario">
+            {t.controlRoom.agendaCancelarComentario}
+          </Label>
+          <Textarea
+            id="agenda-menu-cancelar-comentario"
+            value={comentario}
+            onChange={(e) => onComentario(e.target.value)}
+            placeholder={t.controlRoom.agendaCancelarComentarioPlaceholder}
+            rows={3}
+            disabled={cancelando}
+          />
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={cancelando}>
+            {t.controlRoom.agendaCancelarVoltar}
+          </AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={cancelando}
+            onClick={(e) => {
+              // Segura o fechamento até a chamada resolver (spinner enquanto o
+              // Graph notifica os convidados).
+              e.preventDefault();
+              onConfirmar();
+            }}
+          >
+            {cancelando && <Spinner className="size-4" />}
+            {t.controlRoom.agendaCancelarConfirmar}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 
@@ -610,6 +916,7 @@ function EventoFormSheet() {
                 onChange={setConvEmails}
                 onPessoas={setConvPessoas}
                 placeholder={t.controlRoom.agendaFormConvidadosPlaceholder}
+                compactarSelecionados
               />
             </div>
           </Field>

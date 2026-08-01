@@ -1,8 +1,20 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { XIcon } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { PersonHoverCard } from "@/components/people/person-hover-card";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Combobox,
   ComboboxChip,
@@ -59,6 +71,11 @@ export interface CampoPessoasProps {
   onChange: (v: string[]) => void;
   placeholder?: string;
   /**
+   * Limita a apresentação a três chips e oferece a lista completa em Popover.
+   * Opt-in da Agenda: o compose de e-mail mantém o layout original.
+   */
+  compactarSelecionados?: boolean;
+  /**
    * Reporta os destinatários escolhidos como `Pessoa` (nome/e-mail/foto), não só
    * os e-mails de `valor`. Usado pelo compose para alimentar o autocomplete de
    * menção (@) no corpo com avatar + nome (#106). Dispara sempre que a lista de
@@ -88,6 +105,7 @@ export function CampoPessoas({
   onChange,
   placeholder,
   onPessoas,
+  compactarSelecionados = false,
 }: CampoPessoasProps) {
   const { t } = useIdioma();
   const textos = t.controlRoom;
@@ -96,6 +114,7 @@ export function CampoPessoas({
   const [sugestoes, setSugestoes] = useState<Pessoa[]>([]);
   const [carregando, setCarregando] = useState(false);
   const [aberto, setAberto] = useState(false);
+  const [todosAbertos, setTodosAbertos] = useState(false);
   /** Detalhes (nome/cargo) dos e-mails já escolhidos, para pintar os chips. */
   const [detalhes, setDetalhes] = useState<Record<string, Pessoa>>({});
 
@@ -287,34 +306,157 @@ export function CampoPessoas({
           <ComboboxValue>
             {(escolhidos: Pessoa[]) => (
               <Fragment>
-                {escolhidos.map((p) => {
-                  const foto = p.foto ?? getFoto(p.email);
-                  const rotuloRemover = preencher(textos.removerDestinatario, {
-                    nome: p.nome || p.email,
-                  });
-                  return (
-                    <PersonHoverCard
-                      key={p.email.toLowerCase()}
-                      email={p.email}
-                      fallback={{ ...p, foto }}
-                    >
-                      <ComboboxChip
-                        aria-label={rotuloRemover}
-                        tabIndex={0}
-                        showRemove={true}
-                        className="bg-background rounded-full inline-flex h-auto items-center gap-1.5 border py-0.5 pl-2 shadow-xs **:data-[slot=combobox-chip-remove]:mr-0.5 **:data-[slot=combobox-chip-remove]:bg-transparent"
+                {compactarSelecionados ? (
+                  /* O corte conservador impede que chips escondidos pelo
+                     overflow continuem no tab order. O valor completo segue
+                     no Combobox e no Popover. */
+                  <div className="flex max-h-[4.875rem] min-w-0 basis-full flex-wrap items-start gap-1.5 overflow-hidden">
+                    {escolhidos.slice(0, 3).map((p) => {
+                      const foto = p.foto ?? getFoto(p.email);
+                      const nome = p.nome || p.email;
+                      const rotuloRemover = preencher(
+                        textos.removerDestinatario,
+                        { nome }
+                      );
+                      return (
+                        <Tooltip key={p.email.toLowerCase()}>
+                          <TooltipTrigger asChild>
+                            <ComboboxChip
+                              aria-label={rotuloRemover}
+                              tabIndex={0}
+                              showRemove={true}
+                              className="bg-background inline-flex h-auto min-w-0 max-w-48 items-center gap-1.5 rounded-full border py-0.5 pl-2 shadow-xs **:data-[slot=combobox-chip-remove]:mr-0.5 **:data-[slot=combobox-chip-remove]:bg-transparent"
+                            >
+                              <Avatar className="size-4 shrink-0">
+                                {foto && <AvatarImage src={foto} alt="" />}
+                                <AvatarFallback className="text-[8px]">
+                                  {iniciaisDe(p.nome, p.email)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="min-w-0 truncate">{nome}</span>
+                            </ComboboxChip>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <div className="max-w-64">
+                              <p className="font-medium">{nome}</p>
+                              {nome !== p.email && <p>{p.email}</p>}
+                            </div>
+                          </TooltipContent>
+                        </Tooltip>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  escolhidos.map((p) => {
+                    const foto = p.foto ?? getFoto(p.email);
+                    const rotuloRemover = preencher(textos.removerDestinatario, {
+                      nome: p.nome || p.email,
+                    });
+                    return (
+                      <PersonHoverCard
+                        key={p.email.toLowerCase()}
+                        email={p.email}
+                        fallback={{ ...p, foto }}
                       >
-                        <Avatar className="size-4">
-                          {foto && <AvatarImage src={foto} alt="" />}
-                          <AvatarFallback className="text-[8px]">
-                            {iniciaisDe(p.nome, p.email)}
-                          </AvatarFallback>
-                        </Avatar>
-                        {p.nome || p.email}
-                      </ComboboxChip>
-                    </PersonHoverCard>
-                  );
-                })}
+                        <ComboboxChip
+                          aria-label={rotuloRemover}
+                          tabIndex={0}
+                          showRemove={true}
+                          className="bg-background rounded-full inline-flex h-auto items-center gap-1.5 border py-0.5 pl-2 shadow-xs **:data-[slot=combobox-chip-remove]:mr-0.5 **:data-[slot=combobox-chip-remove]:bg-transparent"
+                        >
+                          <Avatar className="size-4">
+                            {foto && <AvatarImage src={foto} alt="" />}
+                            <AvatarFallback className="text-[8px]">
+                              {iniciaisDe(p.nome, p.email)}
+                            </AvatarFallback>
+                          </Avatar>
+                          {p.nome || p.email}
+                        </ComboboxChip>
+                      </PersonHoverCard>
+                    );
+                  })
+                )}
+
+                {compactarSelecionados && escolhidos.length > 3 && (
+                  <Popover open={todosAbertos} onOpenChange={setTodosAbertos}>
+                    <PopoverTrigger
+                      type="button"
+                      className="cursor-pointer truncate rounded-sm px-1.5 py-1 text-start text-xs text-muted-foreground hover:text-foreground"
+                      aria-label={preencher(
+                        textos.agendaMostrarTodosConvidados,
+                        { count: escolhidos.length }
+                      )}
+                    >
+                      {preencher(textos.agendaMostrarTodosConvidados, {
+                        count: escolhidos.length,
+                      })}
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      className="pointer-events-auto w-80 gap-2 p-2"
+                      aria-label={textos.agendaTodosConvidados}
+                    >
+                      <p className="px-2 text-xs font-medium text-muted-foreground">
+                        {textos.agendaTodosConvidados}
+                      </p>
+                      <ScrollArea className="**:data-[slot=scroll-area-viewport]:max-h-64">
+                        <div className="space-y-1">
+                          {escolhidos.map((p) => {
+                            const foto = p.foto ?? getFoto(p.email);
+                            const nome = p.nome || p.email;
+                            const rotuloRemover = preencher(
+                              textos.removerDestinatario,
+                              { nome }
+                            );
+                            return (
+                              <div
+                                key={p.email.toLowerCase()}
+                                className="flex items-center gap-2 rounded-md px-2 py-1.5"
+                              >
+                                <Avatar className="size-6 shrink-0">
+                                  {foto && <AvatarImage src={foto} alt="" />}
+                                  <AvatarFallback className="text-[9px]">
+                                    {iniciaisDe(p.nome, p.email)}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-medium" title={nome}>
+                                    {nome}
+                                  </p>
+                                  {nome !== p.email && (
+                                    <p
+                                      className="truncate text-xs text-muted-foreground"
+                                      title={p.email}
+                                    >
+                                      {p.email}
+                                    </p>
+                                  )}
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  aria-label={rotuloRemover}
+                                  onClick={() => {
+                                    const restantes = escolhidos.filter(
+                                      (item) => !mesmoEmail(item.email, p.email)
+                                    );
+                                    aplicar(restantes);
+                                    if (restantes.length <= 3) {
+                                      setTodosAbertos(false);
+                                    }
+                                  }}
+                                >
+                                  <XIcon />
+                                </Button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </ScrollArea>
+                    </PopoverContent>
+                  </Popover>
+                )}
                 <ComboboxChipsInput
                   aria-label={rotulo}
                   placeholder={

@@ -548,12 +548,18 @@ export interface NavigatorPrefs {
   salvarHistorico: boolean;
   /** Dias de retenção do histórico; 0 = manter sempre. */
   retencaoDias: number;
+  /** "Private mode only" (#326): toda nova aba nasce privada por padrão. */
+  semprePrivado: boolean;
+  /** #318 S2: rail lateral de pinned tabs colapsado (só aparece se houver pins). */
+  railPinsColapsado: boolean;
 }
 
 export const NAVIGATOR_PREFS_DEFAULTS: NavigatorPrefs = {
   mostrarBarraFav: true,
   salvarHistorico: true,
   retencaoDias: 0,
+  semprePrivado: false,
+  railPinsColapsado: false,
 };
 
 export const NAVIGATOR_PREFS_KEY = "galaxie.navigator.prefs.v1";
@@ -579,6 +585,14 @@ export function loadNavigatorPrefs(): NavigatorPrefs {
         p.retencaoDias >= 0
           ? p.retencaoDias
           : NAVIGATOR_PREFS_DEFAULTS.retencaoDias,
+      semprePrivado:
+        typeof p?.semprePrivado === "boolean"
+          ? p.semprePrivado
+          : NAVIGATOR_PREFS_DEFAULTS.semprePrivado,
+      railPinsColapsado:
+        typeof p?.railPinsColapsado === "boolean"
+          ? p.railPinsColapsado
+          : NAVIGATOR_PREFS_DEFAULTS.railPinsColapsado,
     };
   } catch {
     return NAVIGATOR_PREFS_DEFAULTS;

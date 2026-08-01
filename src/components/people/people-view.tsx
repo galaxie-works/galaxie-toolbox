@@ -27,6 +27,7 @@ import {
   List,
   ListFilter,
   Mail,
+  GitMerge,
   Pencil,
   MoreHorizontal,
   Phone,
@@ -87,6 +88,7 @@ import {
 } from "@/components/reui/timeline";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Command,
   CommandEmpty,
@@ -134,19 +136,23 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { OrganizationsView } from "@/components/people/organizations-view";
+import { ContactMergeSheet } from "@/components/people/contact-merge-sheet";
 import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
 import { useIdioma, preencher } from "@/lib/idioma";
 import { type PeopleContact } from "@/lib/people";
 import {
   contactDomain,
+  contactOrganizationLabel,
   normalizeDomain,
   organizationMembers,
-  resolveOrganization,
+  resolveContactOrganization,
   suggestedOrganizationName,
   type PeopleOrg,
 } from "@/lib/organizations";
 import type {
+  PeopleBulkDetailsChange,
+  PeopleBulkDetailsField,
   PeopleContactEdit,
   PeopleEnrichSource,
   PeopleInteraction,
@@ -197,10 +203,12 @@ function PeopleColumnsHeader({ label }: { label: string }) {
 function RelationshipBadges({
   contact,
   organizationLabel,
+  organizationLogo,
   compact = false,
 }: {
   contact: PeopleContact;
   organizationLabel?: string | null;
+  organizationLogo?: string | null;
   compact?: boolean;
 }) {
   const { t } = useIdioma();
@@ -208,6 +216,14 @@ function RelationshipBadges({
     <span className="flex flex-wrap items-center gap-1">
       {organizationLabel && (
         <Badge variant="outline" size={compact ? "xs" : "sm"}>
+          <Avatar className="size-3">
+            {organizationLogo && (
+              <AvatarImage src={organizationLogo} alt="" />
+            )}
+            <AvatarFallback>
+              <Building2 className="size-2.5" />
+            </AvatarFallback>
+          </Avatar>
           {organizationLabel}
         </Badge>
       )}
@@ -263,10 +279,12 @@ function DetailValue({
 function PeopleEmpty({
   search,
   filtered,
+  directory = false,
   onClear,
 }: {
   search: boolean;
   filtered: boolean;
+  directory?: boolean;
   onClear: () => void;
 }) {
   const { t } = useIdioma();
@@ -276,11 +294,17 @@ function PeopleEmpty({
         {search || filtered ? <SearchX className="size-5" /> : <Users className="size-5" />}
       </IconStack>
       <p className="font-medium">
-        {search || filtered ? t.controlRoom.peopleSemResultado : t.controlRoom.peopleVazio}
+        {search || filtered
+          ? t.controlRoom.peopleSemResultado
+          : directory
+            ? t.controlRoom.peopleDirectoryEmpty
+            : t.controlRoom.peopleVazio}
       </p>
       {!search && !filtered && (
         <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-          {t.controlRoom.peopleVazioDesc}
+          {directory
+            ? t.controlRoom.peopleDirectoryEmptyDesc
+            : t.controlRoom.peopleVazioDesc}
         </p>
       )}
       {(search || filtered) && (
@@ -372,19 +396,19 @@ function PeopleDetail({
   const organizations = useAppStore((state) => state.organizations);
   const selectOrganization = useAppStore((state) => state.selectOrganization);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
-  const addContactToOrganization = useAppStore(
-    (state) => state.addContactToOrganization,
+  const assignPeopleOrganization = useAppStore(
+    (state) => state.assignPeopleOrganization,
   );
   const primaryEmail = contact.emails[0]?.address;
   const userDomain = normalizeDomain(userEmail.split("@").at(-1) ?? "");
   const sameOrganization =
     contact.organization ||
     Boolean(userDomain && contactDomain(contact) === userDomain);
-  const resolvedOrganization = resolveOrganization(
+  const resolvedOrganization = resolveContactOrganization(
     organizations,
-    contactDomain(contact),
+    contact,
   );
-  const organizationLabel = resolvedOrganization?.name ?? null;
+  const organizationLabel = contactOrganizationLabel(organizations, contact);
   const [enrichError, setEnrichError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -399,6 +423,9 @@ function PeopleDetail({
   const [interactions, setInteractions] = useState<PeopleInteraction[]>([]);
   const [interactionsLoading, setInteractionsLoading] = useState(Boolean(primaryEmail));
   const [interactionsError, setInteractionsError] = useState(false);
+  const [assigningOrganizationId, setAssigningOrganizationId] = useState<
+    string | null
+  >(null);
   const editUnavailableReason = sameOrganization
     ? "directory"
     : !contact.contactId
@@ -522,6 +549,28 @@ function PeopleDetail({
     }
   };
 
+  const assignOrganization = async (organization: PeopleOrg) => {
+    setAssigningOrganizationId(organization.id);
+    try {
+      const result = await assignPeopleOrganization(organization.id, [contact.id]);
+      if (result.skipped > 0) {
+        toast.warning(t.controlRoom.orgWritebackSomenteLeitura);
+        return;
+      }
+      if (result.failed > 0) {
+        toast.error(t.controlRoom.orgWritebackErro);
+        return;
+      }
+      toast.success(t.controlRoom.orgWritebackSucesso);
+      selectOrganization(organization.id);
+      setPeopleTab("organizations");
+    } catch {
+      toast.error(t.controlRoom.orgWritebackErro);
+    } finally {
+      setAssigningOrganizationId(null);
+    }
+  };
+
   useEffect(() => {
     let active = true;
     if (sameOrganization) {
@@ -588,8 +637,17 @@ function PeopleDetail({
                 <RelationshipBadges
                   contact={contact}
                   organizationLabel={organizationLabel}
+                  organizationLogo={resolvedOrganization?.logo}
                 />
-                <SourceBadge source={contact.contactId ? "contacts" : "people"} />
+                <SourceBadge
+                  source={
+                    contact.sources.includes("directory")
+                      ? "directory"
+                      : contact.contactId
+                        ? "contacts"
+                        : "people"
+                  }
+                />
               </div>
             </div>
           </div>
@@ -665,52 +723,58 @@ function PeopleDetail({
                 >
                   <ExternalLink />
                 </ToolbarButton>
-                <DropdownMenu>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <DropdownMenuTrigger asChild>
-                        <ToolbarButton
-                          variant="default"
-                          aria-label={t.controlRoom.orgsAtribuirContato}
-                        >
-                          <MoreHorizontal />
-                        </ToolbarButton>
-                      </DropdownMenuTrigger>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      {t.controlRoom.orgsAtribuirContato}
-                    </TooltipContent>
-                  </Tooltip>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuLabel>
-                      {t.controlRoom.orgsAtribuirContato}
-                    </DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {organizations.length === 0 ? (
-                      <DropdownMenuItem disabled>
-                        {t.controlRoom.orgsSemOrganizacoes}
-                      </DropdownMenuItem>
-                    ) : (
-                      organizations.map((organization) => (
-                        <DropdownMenuItem
-                          key={organization.id}
-                          onClick={() => {
-                            addContactToOrganization(
-                              organization.id,
-                              contact.id,
-                              useAppStore.getState().peopleContacts,
-                            );
-                            selectOrganization(organization.id);
-                            setPeopleTab("organizations");
-                          }}
-                        >
-                          <Building2 />
-                          {organization.name}
+                {!editLocked && (
+                  <DropdownMenu>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <DropdownMenuTrigger asChild>
+                          <ToolbarButton
+                            variant="default"
+                            aria-label={t.controlRoom.orgsAtribuirContato}
+                          >
+                            <MoreHorizontal />
+                          </ToolbarButton>
+                        </DropdownMenuTrigger>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {t.controlRoom.orgsAtribuirContato}
+                      </TooltipContent>
+                    </Tooltip>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuLabel>
+                        {t.controlRoom.orgsAtribuirContato}
+                      </DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {organizations.length === 0 ? (
+                        <DropdownMenuItem disabled>
+                          {t.controlRoom.orgsSemOrganizacoes}
                         </DropdownMenuItem>
-                      ))
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                      ) : (
+                        organizations.map((organization) => (
+                          <DropdownMenuItem
+                            key={organization.id}
+                            disabled={assigningOrganizationId !== null}
+                            onClick={() => void assignOrganization(organization)}
+                          >
+                            {assigningOrganizationId === organization.id ? (
+                              <Spinner />
+                            ) : (
+                              <Avatar className="size-4">
+                                {organization.logo && (
+                                  <AvatarImage src={organization.logo} alt="" />
+                                )}
+                                <AvatarFallback>
+                                  <Building2 className="size-3" />
+                                </AvatarFallback>
+                              </Avatar>
+                            )}
+                            {organization.name}
+                          </DropdownMenuItem>
+                        ))
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
               </Toolbar>
               {primaryEmail && (
                 <Button onClick={() => onCompose(primaryEmail)}>
@@ -940,7 +1004,17 @@ function PeopleDetail({
               setPeopleTab("organizations");
             }}
           >
-            <Badge variant="secondary">{resolvedOrganization.name}</Badge>
+            <Badge variant="secondary">
+              <Avatar className="size-3">
+                {resolvedOrganization.logo && (
+                  <AvatarImage src={resolvedOrganization.logo} alt="" />
+                )}
+                <AvatarFallback>
+                  <Building2 className="size-2.5" />
+                </AvatarFallback>
+              </Avatar>
+              {resolvedOrganization.name}
+            </Badge>
           </button>
         )}
           </section>
@@ -1081,6 +1155,7 @@ function PeopleRowActions({
 function PeopleCard({
   contact,
   organizationLabel,
+  organizationLogo,
   selected,
   photo,
   onSelect,
@@ -1088,6 +1163,7 @@ function PeopleCard({
 }: {
   contact: PeopleContact;
   organizationLabel?: string | null;
+  organizationLogo?: string | null;
   selected: boolean;
   photo: string | null;
   onSelect: () => void;
@@ -1140,6 +1216,7 @@ function PeopleCard({
           <RelationshipBadges
             contact={contact}
             organizationLabel={organizationLabel}
+            organizationLogo={organizationLogo}
             compact
           />
           <span className="flex flex-wrap justify-end gap-1">
@@ -1154,6 +1231,24 @@ function PeopleCard({
 }
 
 type BulkAssignStep = "pick" | "create" | "preview";
+type BulkEditDetailsStep = "edit" | "preview";
+type BulkEditDetailsFieldState = {
+  enabled: boolean;
+  clear: boolean;
+  value: string;
+};
+type BulkEditDetailsState = Record<
+  PeopleBulkDetailsField,
+  BulkEditDetailsFieldState
+>;
+
+function emptyBulkEditDetailsState(): BulkEditDetailsState {
+  return {
+    companyName: { enabled: false, clear: false, value: "" },
+    department: { enabled: false, clear: false, value: "" },
+    officeLocation: { enabled: false, clear: false, value: "" },
+  };
+}
 
 function splitDomains(value: string): string[] {
   return value
@@ -1164,8 +1259,8 @@ function splitDomains(value: string): string[] {
 
 /**
  * Barra de massa → atribuir os contatos selecionados a uma organização
- * (existente ou nova). Aditivo: itera `addContactToOrganization` (idempotente),
- * nunca `assignOrganizationContacts` (que poda quem não foi selecionado).
+ * (existente ou nova). Aditivo e persistido no `companyName` dos contatos
+ * editáveis; pessoas do diretório continuam read-only.
  */
 function AssignToOrganizationSheet({
   open,
@@ -1181,8 +1276,8 @@ function AssignToOrganizationSheet({
   const { t } = useIdioma();
   const organizations = useAppStore((state) => state.organizations);
   const createOrganization = useAppStore((state) => state.createOrganization);
-  const addContactToOrganization = useAppStore(
-    (state) => state.addContactToOrganization,
+  const assignPeopleOrganization = useAppStore(
+    (state) => state.assignPeopleOrganization,
   );
   const selectOrganization = useAppStore((state) => state.selectOrganization);
 
@@ -1192,6 +1287,7 @@ function AssignToOrganizationSheet({
   const [name, setName] = useState("");
   const [domains, setDomains] = useState("");
   const [error, setError] = useState(false);
+  const [saving, setSaving] = useState(false);
   const wasOpenRef = useRef(false);
 
   const selectedDomains = useMemo(
@@ -1237,21 +1333,25 @@ function AssignToOrganizationSheet({
   // `noEmail` = sem domínio, entra como membro explícito.
   const preview = useMemo(() => {
     if (!target) return null;
-    const domainSet = new Set(target.domains.map(normalizeDomain));
-    const memberIds = new Set(target.memberIds);
-    const excludedIds = new Set(target.excludedIds);
+    const currentMemberIds = new Set(
+      organizationMembers(target, contacts).map((contact) => contact.id),
+    );
     let added = 0;
     let already = 0;
     let noEmail = 0;
+    let readOnly = 0;
     for (const contact of contacts) {
+      if (!contact.contactId) {
+        readOnly += 1;
+        continue;
+      }
       const domain = contactDomain(contact);
-      const derived = Boolean(domain && domainSet.has(domain));
-      const isMember = memberIds.has(contact.id) || (derived && !excludedIds.has(contact.id));
+      const isMember = currentMemberIds.has(contact.id);
       if (isMember) already += 1;
       else added += 1;
       if (!domain && !isMember) noEmail += 1;
     }
-    return { added, already, noEmail, total: contacts.length };
+    return { added, already, noEmail, readOnly, total: contacts.length };
   }, [target, contacts]);
 
   const goToCreate = () => {
@@ -1276,20 +1376,47 @@ function AssignToOrganizationSheet({
     setStep("preview");
   };
 
-  const apply = () => {
+  const apply = async () => {
     if (!target) return;
-    const all = useAppStore.getState().peopleContacts;
-    for (const contact of contacts) {
-      addContactToOrganization(target.id, contact.id, all);
+    setSaving(true);
+    try {
+      const result = await assignPeopleOrganization(
+        target.id,
+        contacts.map((contact) => contact.id),
+      );
+      if (result.assigned > 0) {
+        toast.success(
+          preencher(t.controlRoom.bulkOrgSucesso, {
+            n: result.assigned,
+            nome: target.name,
+          }),
+        );
+        selectOrganization(target.id);
+      }
+      if (result.skipped > 0) {
+        toast.warning(
+          preencher(t.controlRoom.bulkOrgSomenteLeitura, {
+            n: result.skipped,
+          }),
+        );
+      }
+      if (result.failed > 0) {
+        toast.error(
+          preencher(t.controlRoom.bulkOrgFalhas, {
+            n: result.failed,
+          }),
+        );
+      }
+      onDone();
+    } catch {
+      toast.error(
+        preencher(t.controlRoom.bulkOrgFalhas, {
+          n: contacts.filter((contact) => Boolean(contact.contactId)).length,
+        }),
+      );
+    } finally {
+      setSaving(false);
     }
-    selectOrganization(target.id);
-    toast.success(
-      preencher(t.controlRoom.bulkOrgSucesso, {
-        n: contacts.length,
-        nome: target.name,
-      }),
-    );
-    onDone();
   };
 
   return (
@@ -1332,7 +1459,14 @@ function AssignToOrganizationSheet({
                           setStep("preview");
                         }}
                       >
-                        <Building2 />
+                        <Avatar className="size-4">
+                          {organization.logo && (
+                            <AvatarImage src={organization.logo} alt="" />
+                          )}
+                          <AvatarFallback>
+                            <Building2 className="size-3" />
+                          </AvatarFallback>
+                        </Avatar>
                         <span className="min-w-0 flex-1 truncate">
                           {organization.name}
                         </span>
@@ -1435,6 +1569,16 @@ function AssignToOrganizationSheet({
                     </span>
                   </li>
                 )}
+                {preview.readOnly > 0 && (
+                  <li className="flex items-center gap-2">
+                    <Badge variant="outline">{preview.readOnly}</Badge>
+                    <span className="text-muted-foreground">
+                      {preencher(t.controlRoom.bulkOrgSomenteLeitura, {
+                        n: preview.readOnly,
+                      })}
+                    </span>
+                  </li>
+                )}
               </ul>
             </div>
           )}
@@ -1458,10 +1602,349 @@ function AssignToOrganizationSheet({
           )}
           {step === "preview" && (
             <>
-              <Button variant="outline" onClick={() => setStep("pick")}>
+              <Button
+                variant="outline"
+                onClick={() => setStep("pick")}
+                disabled={saving}
+              >
                 {t.controlRoom.bulkOrgVoltar}
               </Button>
-              <Button onClick={apply}>{t.controlRoom.bulkOrgConfirmar}</Button>
+              <Button onClick={() => void apply()} disabled={saving}>
+                {saving && <Spinner />}
+                {t.controlRoom.bulkOrgConfirmar}
+              </Button>
+            </>
+          )}
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function BulkEditDetailsSheet({
+  open,
+  contacts,
+  onOpenChange,
+  onDone,
+}: {
+  open: boolean;
+  contacts: PeopleContact[];
+  onOpenChange: (open: boolean) => void;
+  onDone: () => void;
+}) {
+  const { t } = useIdioma();
+  const bulkEditPeopleDetails = useAppStore(
+    (state) => state.bulkEditPeopleDetails,
+  );
+  const [step, setStep] = useState<BulkEditDetailsStep>("edit");
+  const [edits, setEdits] = useState<BulkEditDetailsState>(
+    emptyBulkEditDetailsState,
+  );
+  const [validationAttempted, setValidationAttempted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const wasOpenRef = useRef(false);
+
+  const editableCount = contacts.filter((contact) =>
+    Boolean(contact.contactId),
+  ).length;
+  const readOnlyCount = contacts.length - editableCount;
+  const fields: Array<{
+    key: PeopleBulkDetailsField;
+    label: string;
+    placeholder: string;
+  }> = [
+    {
+      key: "companyName",
+      label: t.controlRoom.bulkDetailsEmpresa,
+      placeholder: t.controlRoom.bulkDetailsEmpresaPlaceholder,
+    },
+    {
+      key: "department",
+      label: t.controlRoom.bulkDetailsDepartamento,
+      placeholder: t.controlRoom.bulkDetailsDepartamentoPlaceholder,
+    },
+    {
+      key: "officeLocation",
+      label: t.controlRoom.bulkDetailsLocalEscritorio,
+      placeholder: t.controlRoom.bulkDetailsLocalEscritorioPlaceholder,
+    },
+  ];
+
+  useEffect(() => {
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (wasOpenRef.current) return;
+    wasOpenRef.current = true;
+    setStep("edit");
+    setEdits(emptyBulkEditDetailsState());
+    setValidationAttempted(false);
+    setSaving(false);
+  }, [open]);
+
+  const enabledFields = fields.filter(({ key }) => edits[key].enabled);
+  const missingValueFields = enabledFields.filter(
+    ({ key }) => !edits[key].clear && !edits[key].value.trim(),
+  );
+  const changes: PeopleBulkDetailsChange[] = enabledFields.map(({ key }) => ({
+    field: key,
+    value: edits[key].clear ? null : edits[key].value.trim(),
+  }));
+
+  const updateField = (
+    key: PeopleBulkDetailsField,
+    patch: Partial<BulkEditDetailsFieldState>,
+  ) => {
+    setEdits((current) => ({
+      ...current,
+      [key]: { ...current[key], ...patch },
+    }));
+  };
+
+  const goToPreview = () => {
+    setValidationAttempted(true);
+    if (enabledFields.length === 0 || missingValueFields.length > 0) return;
+    setStep("preview");
+  };
+
+  const apply = async () => {
+    if (changes.length === 0) return;
+    setSaving(true);
+    try {
+      const result = await bulkEditPeopleDetails(
+        contacts.map((contact) => contact.id),
+        changes,
+      );
+      if (result.updated > 0) {
+        toast.success(
+          preencher(t.controlRoom.bulkDetailsAtualizados, {
+            n: result.updated,
+          }),
+        );
+      }
+      if (result.unchanged > 0) {
+        toast.info(
+          preencher(t.controlRoom.bulkDetailsSemMudanca, {
+            n: result.unchanged,
+          }),
+        );
+      }
+      if (result.skipped > 0) {
+        toast.warning(
+          preencher(t.controlRoom.bulkDetailsIgnorados, {
+            n: result.skipped,
+          }),
+        );
+      }
+      if (result.failed > 0) {
+        toast.error(
+          preencher(t.controlRoom.bulkDetailsFalhas, {
+            n: result.failed,
+          }),
+        );
+      }
+      onDone();
+    } catch {
+      toast.error(t.controlRoom.bulkDetailsErro);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="flex w-full flex-col gap-0 p-0 sm:max-w-lg"
+      >
+        <SheetHeader className="border-b px-4 py-3">
+          <SheetTitle className="pr-6 text-left">
+            {preencher(t.controlRoom.bulkDetailsTitulo, {
+              n: contacts.length,
+            })}
+          </SheetTitle>
+          <SheetDescription className="text-left">
+            {t.controlRoom.bulkDetailsDescricao}
+          </SheetDescription>
+        </SheetHeader>
+
+        <ScrollArea className="min-h-0 flex-1 **:data-[slot=scroll-area-viewport]:overscroll-contain">
+          <div className="grid gap-4 px-4 py-4">
+            {step === "edit" ? (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="secondary">
+                    {contacts.length} {t.controlRoom.bulkDetailsSelecionados}
+                  </Badge>
+                  <Badge variant="outline">
+                    {editableCount} {t.controlRoom.bulkDetailsEditaveis}
+                  </Badge>
+                  <Badge variant="outline">
+                    {readOnlyCount} {t.controlRoom.bulkDetailsSomenteLeitura}
+                  </Badge>
+                </div>
+
+                <div className="grid gap-3">
+                  {fields.map(({ key, label, placeholder }) => {
+                    const edit = edits[key];
+                    const inputId = `bulk-details-${key}`;
+                    const enabledId = `${inputId}-enabled`;
+                    const clearId = `${inputId}-clear`;
+                    const missingValue =
+                      validationAttempted &&
+                      edit.enabled &&
+                      !edit.clear &&
+                      !edit.value.trim();
+                    return (
+                      <div key={key} className="grid gap-3 rounded-lg border p-3">
+                        <div className="flex items-start gap-2">
+                          <Checkbox
+                            id={enabledId}
+                            checked={edit.enabled}
+                            onCheckedChange={(checked) =>
+                              updateField(key, {
+                                enabled: checked === true,
+                              })
+                            }
+                          />
+                          <div className="grid gap-0.5">
+                            <Label htmlFor={enabledId}>{label}</Label>
+                            <p className="text-xs text-muted-foreground">
+                              {t.controlRoom.bulkDetailsPreservado}
+                            </p>
+                          </div>
+                        </div>
+
+                        {edit.enabled && (
+                          <div className="grid gap-3 border-t pt-3">
+                            <div className="grid gap-2">
+                              <Label htmlFor={inputId}>
+                                {t.controlRoom.bulkDetailsNovoValor}
+                              </Label>
+                              <Input
+                                id={inputId}
+                                value={edit.value}
+                                onChange={(event) =>
+                                  updateField(key, {
+                                    value: event.target.value,
+                                  })
+                                }
+                                placeholder={placeholder}
+                                disabled={edit.clear}
+                                aria-invalid={missingValue}
+                              />
+                              {missingValue && (
+                                <p className="text-xs text-destructive">
+                                  {t.controlRoom.bulkDetailsValorObrigatorio}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-start gap-2">
+                              <Checkbox
+                                id={clearId}
+                                checked={edit.clear}
+                                onCheckedChange={(checked) =>
+                                  updateField(key, {
+                                    clear: checked === true,
+                                  })
+                                }
+                              />
+                              <div className="grid gap-0.5">
+                                <Label htmlFor={clearId}>
+                                  {t.controlRoom.bulkDetailsLimpar}
+                                </Label>
+                                <p className="text-xs text-muted-foreground">
+                                  {t.controlRoom.bulkDetailsLimparDescricao}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {validationAttempted && enabledFields.length === 0 && (
+                  <p className="text-sm text-destructive">
+                    {t.controlRoom.bulkDetailsSelecioneCampo}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <div>
+                  <h3 className="text-sm font-medium">
+                    {t.controlRoom.bulkDetailsPreviewTitulo}
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t.controlRoom.bulkDetailsPreviewDescricao}
+                  </p>
+                </div>
+
+                <ul className="grid gap-2 text-sm">
+                  <li className="flex items-center justify-between gap-3">
+                    <span>{t.controlRoom.bulkDetailsSelecionados}</span>
+                    <Badge variant="secondary">{contacts.length}</Badge>
+                  </li>
+                  <li className="flex items-center justify-between gap-3">
+                    <span>{t.controlRoom.bulkDetailsEditaveis}</span>
+                    <Badge variant="outline">{editableCount}</Badge>
+                  </li>
+                  <li className="flex items-center justify-between gap-3">
+                    <span>{t.controlRoom.bulkDetailsSomenteLeitura}</span>
+                    <Badge variant="outline">{readOnlyCount}</Badge>
+                  </li>
+                </ul>
+
+                <Separator />
+
+                <ul className="grid gap-2">
+                  {enabledFields.map(({ key, label }) => (
+                    <li
+                      key={key}
+                      className="grid gap-1 rounded-lg border p-3 text-sm"
+                    >
+                      <span className="font-medium">{label}</span>
+                      <span className="break-words text-muted-foreground">
+                        {edits[key].clear
+                          ? t.controlRoom.bulkDetailsLimparValor
+                          : preencher(t.controlRoom.bulkDetailsDefinirComo, {
+                              valor: edits[key].value.trim(),
+                            })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        </ScrollArea>
+
+        <SheetFooter className="flex-row justify-end gap-2 border-t px-4 py-3">
+          {step === "edit" ? (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                {t.controlRoom.orgsCancelar}
+              </Button>
+              <Button onClick={goToPreview}>
+                {t.controlRoom.bulkDetailsContinuar}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => setStep("edit")}
+                disabled={saving}
+              >
+                {t.controlRoom.bulkOrgVoltar}
+              </Button>
+              <Button onClick={() => void apply()} disabled={saving}>
+                {saving && <Spinner />}
+                {t.controlRoom.bulkDetailsConfirmar}
+              </Button>
             </>
           )}
         </SheetFooter>
@@ -1484,6 +1967,9 @@ export function PeopleView({
   const { t } = useIdioma();
   const contacts = useAppStore((state) => state.peopleContacts);
   const organizations = useAppStore((state) => state.organizations);
+  const loadOrganizationLogo = useAppStore(
+    (state) => state.loadOrganizationLogo,
+  );
   const selectedId = useAppStore((state) => state.peopleSelectedId);
   const selectPerson = useAppStore((state) => state.selectPerson);
   const loading = useAppStore((state) => state.peopleLoading);
@@ -1492,6 +1978,19 @@ export function PeopleView({
   const missingScopes = useAppStore((state) => state.peopleMissingScopes);
   const nextLinks = useAppStore((state) => state.peopleNextLinks);
   const fetchingMore = useAppStore((state) => state.peopleFetchingMore);
+  const directory = useAppStore((state) => state.peopleDirectory);
+  const directoryLoading = useAppStore(
+    (state) => state.peopleDirectoryLoading,
+  );
+  const directoryLoaded = useAppStore((state) => state.peopleDirectoryLoaded);
+  const directoryError = useAppStore((state) => state.peopleDirectoryError);
+  const directoryMissingScopes = useAppStore(
+    (state) => state.peopleDirectoryMissingScopes,
+  );
+  const hydratePeopleM365 = useAppStore((state) => state.hydratePeopleM365);
+  const peopleSessionGeneration = useAppStore(
+    (state) => state.peopleSessionGeneration,
+  );
   const filters = useAppStore((state) => state.peopleFilters);
   const view = useAppStore((state) => state.peopleView);
   const columnVisibility = useAppStore((state) => state.peopleColumnVisibility);
@@ -1537,6 +2036,8 @@ export function PeopleView({
   const tableFocusRef = useRef<HTMLDivElement>(null);
   const selectionAnchorRef = useRef<string | null>(null);
   const [assignOrgOpen, setAssignOrgOpen] = useState(false);
+  const [bulkEditDetailsOpen, setBulkEditDetailsOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
   const { getFoto, pedirFotos } = useFotos();
   // Mede o shell estável do MÓDULO (não a aba nem a janela): Contacts e
   // Organizations alternam o conteúdo interno, mas este elemento nunca desmonta.
@@ -1547,13 +2048,48 @@ export function PeopleView({
     selectedGroupId == null
       ? EMPTY_CONTACTS
       : (groupMembersById[selectedGroupId] ?? EMPTY_CONTACTS);
-  const visibleContacts = peopleTab === "groups" ? groupMembers : contacts;
+  const visibleContacts =
+    peopleTab === "groups"
+      ? groupMembers
+      : peopleTab === "directory"
+        ? directory
+        : contacts;
   const activeGroup =
     groups.find((group) => group.id === selectedGroupId) ?? null;
   const groupMembersLoading =
     peopleTab === "groups" &&
     selectedGroupId != null &&
     groupMembersLoadingId === selectedGroupId;
+  const listLoading =
+    peopleTab === "groups"
+      ? groupMembersLoading
+      : peopleTab === "directory"
+        ? directoryLoading
+        : loading;
+  const listLoaded =
+    peopleTab === "groups"
+      ? !groupMembersLoading
+      : peopleTab === "directory"
+        ? directoryLoaded
+        : loaded;
+  const canLoadMore = peopleTab === "contacts" && nextLinks.length > 0;
+
+  useEffect(() => {
+    setRowSelection({});
+    setKeyboardActiveId(null);
+    selectionAnchorRef.current = null;
+  }, [peopleSessionGeneration]);
+  useEffect(() => {
+    setRowSelection({});
+    setKeyboardActiveId(null);
+    selectionAnchorRef.current = null;
+  }, [peopleTab]);
+  const activeMissingScopes =
+    peopleTab === "directory"
+      ? directoryMissingScopes
+      : peopleTab === "contacts"
+        ? missingScopes
+        : [];
 
   useLayoutEffect(() => {
     const el = detailContainerRef.current;
@@ -1583,32 +2119,53 @@ export function PeopleView({
   }, [loadPeople, loaded, loading]);
 
   useEffect(() => {
+    for (const organization of organizations) {
+      if (!organization.logo) void loadOrganizationLogo(organization.id);
+    }
+  }, [loadOrganizationLogo, organizations]);
+
+  useEffect(() => {
     pedirFotos(visibleContacts.map((contact) => contact.emails[0]?.address));
   }, [pedirFotos, visibleContacts]);
 
-  const organizationLabelsByDomain = useMemo(() => {
-    const labels = new Map<string, string>();
-    for (const organization of organizations) {
-      for (const candidate of organization.domains) {
-        const domain = normalizeDomain(candidate);
-        if (domain) labels.set(domain, organization.name);
-      }
-    }
-    return labels;
-  }, [organizations]);
+  const organizationDataByContactId = useMemo(
+    () =>
+      new Map(
+        visibleContacts.map((contact) => [
+          contact.id,
+          {
+            label: contactOrganizationLabel(organizations, contact),
+            organization: resolveContactOrganization(organizations, contact),
+          },
+        ]),
+      ),
+    [organizations, visibleContacts],
+  );
 
   const filterFields = useMemo<FilterFieldConfig<string>[]>(() => {
     const operators: FilterOperator[] = [
       { value: "is", label: t.controlRoom.filtroOperadorIs },
       { value: "is_not", label: t.controlRoom.filtroOpNaoE },
     ];
-    const companyOptions: FilterOption<string>[] = Array.from(
-      new Set(
-        visibleContacts.map((contact) => contact.company).filter(Boolean),
+    const companyLabels = [
+      ...visibleContacts.map((contact) =>
+        contactOrganizationLabel(organizations, contact),
       ),
+      ...organizations.map((organization) => organization.name),
+    ].filter((value): value is string => Boolean(value?.trim()));
+    const companyOptions: FilterOption<string>[] = Array.from(
+      new Map(
+        companyLabels.map((label) => [
+          label.trim().toLocaleLowerCase(),
+          label.trim(),
+        ]),
+      ).values(),
     )
       .sort((a, b) => String(a).localeCompare(String(b)))
-      .map((company) => ({ value: String(company), label: String(company) }));
+      .map((company) => ({
+        value: String(company).toLocaleLowerCase(),
+        label: String(company),
+      }));
     return [
       {
         key: "company",
@@ -1690,12 +2247,12 @@ export function PeopleView({
         const values = new Set(filter.values);
         let matches = true;
         if (filter.field === "company") {
-          matches = Boolean(contact.company && values.has(contact.company));
-        } else if (filter.field === "relationship") {
-          const organization = resolveOrganization(
-            organizations,
-            contactDomain(contact),
+          const label = contactOrganizationLabel(organizations, contact);
+          matches = Boolean(
+            label && values.has(label.trim().toLocaleLowerCase()),
           );
+        } else if (filter.field === "relationship") {
+          const organization = resolveContactOrganization(organizations, contact);
           matches = Boolean(organization && values.has(organization.id));
         } else if (filter.field === "phone") {
           matches = values.has(contact.phones.length > 0 ? "yes" : "no");
@@ -1709,8 +2266,11 @@ export function PeopleView({
   }, [filters, normalizedQuery, organizations, visibleContacts]);
 
   const selectedContacts = useMemo(
-    () => filtered.filter((contact) => rowSelection[contact.id]),
-    [filtered, rowSelection],
+    () =>
+      peopleTab === "directory"
+        ? EMPTY_CONTACTS
+        : filtered.filter((contact) => rowSelection[contact.id]),
+    [filtered, peopleTab, rowSelection],
   );
 
   const selected =
@@ -1756,6 +2316,7 @@ export function PeopleView({
         cell: ({ row }) => {
           const contact = row.original;
           const photo = contact.photo || getFoto(contact.emails[0]?.address);
+          const organizationData = organizationDataByContactId.get(contact.id);
           return (
             <div className="flex min-w-0 items-center gap-2.5">
               <Avatar className="size-9">
@@ -1767,11 +2328,8 @@ export function PeopleView({
                   <span className="truncate font-medium">{contact.name}</span>
                   <RelationshipBadges
                     contact={contact}
-                    organizationLabel={
-                      organizationLabelsByDomain.get(
-                        contactDomain(contact) ?? "",
-                      ) ?? null
-                    }
+                    organizationLabel={organizationData?.label}
+                    organizationLogo={organizationData?.organization?.logo}
                     compact
                   />
                 </div>
@@ -1871,19 +2429,26 @@ export function PeopleView({
     ],
     [
       getFoto,
-      organizationLabelsByDomain,
+      organizationDataByContactId,
       t,
     ],
+  );
+  const activeColumns = useMemo(
+    () =>
+      peopleTab === "directory"
+        ? columns.filter((column) => column.id !== "select")
+        : columns,
+    [columns, peopleTab],
   );
 
   const table = useReactTable({
     data: filtered,
-    columns,
+    columns: activeColumns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getRowId: (row) => row.id,
-    enableRowSelection: true,
-    enableMultiRowSelection: true,
+    enableRowSelection: peopleTab !== "directory",
+    enableMultiRowSelection: peopleTab !== "directory",
     onRowSelectionChange: setRowSelection,
     onSortingChange: setSorting,
     onColumnOrderChange: setColumnOrder,
@@ -1923,6 +2488,7 @@ export function PeopleView({
     }
 
     if (
+      peopleTab !== "directory" &&
       (event.ctrlKey || event.metaKey) &&
       event.key.toLocaleLowerCase() === "a"
     ) {
@@ -1954,7 +2520,7 @@ export function PeopleView({
       const nextRow = tableRows[nextIndex];
       if (!nextRow) return;
 
-      if (event.shiftKey) {
+      if (event.shiftKey && peopleTab !== "directory") {
         const anchorId =
           selectionAnchorRef.current ?? keyboardActiveId ?? nextRow.id;
         const anchorIndex = tableRows.findIndex((row) => row.id === anchorId);
@@ -1983,6 +2549,7 @@ export function PeopleView({
     }
 
     if (event.key === " ") {
+      if (peopleTab === "directory") return;
       handled();
       const activeRow =
         (activeRowIndex >= 0 ? tableRows[activeRowIndex] : null) ?? tableRows[0];
@@ -2028,14 +2595,28 @@ export function PeopleView({
           table.resetRowSelection();
         }}
       />
+      <BulkEditDetailsSheet
+        open={bulkEditDetailsOpen}
+        contacts={selectedContacts}
+        onOpenChange={setBulkEditDetailsOpen}
+        onDone={() => {
+          setBulkEditDetailsOpen(false);
+          table.resetRowSelection();
+        }}
+      />
+      <ContactMergeSheet
+        open={mergeOpen}
+        contacts={selectedContacts}
+        onOpenChange={setMergeOpen}
+      />
 
-      {missingScopes.length > 0 && (
+      {activeMissingScopes.length > 0 && (
         <Alert variant="warning">
           <KeyRound />
           <AlertTitle>{t.controlRoom.peopleSemPermissao}</AlertTitle>
           <AlertDescription>
             {preencher(t.controlRoom.peopleSemPermissaoDesc, {
-              escopos: missingScopes.join(" + "),
+              escopos: activeMissingScopes.join(" + "),
             })}
           </AlertDescription>
           <AlertAction>
@@ -2046,12 +2627,28 @@ export function PeopleView({
         </Alert>
       )}
 
-      {error && (
+      {peopleTab === "contacts" && error && (
         <Alert variant="destructive">
           <AlertTitle>{t.controlRoom.peopleErro}</AlertTitle>
           <AlertDescription>{error}</AlertDescription>
           <AlertAction>
             <Button variant="outline" size="sm" onClick={() => void loadPeople()}>
+              {t.controlRoom.peopleTentarNovamente}
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
+
+      {peopleTab === "directory" && directoryError && (
+        <Alert variant="destructive">
+          <AlertTitle>{t.controlRoom.peopleDirectoryError}</AlertTitle>
+          <AlertDescription>{directoryError}</AlertDescription>
+          <AlertAction>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void hydratePeopleM365({ force: true })}
+            >
               {t.controlRoom.peopleTentarNovamente}
             </Button>
           </AlertAction>
@@ -2162,7 +2759,7 @@ export function PeopleView({
                   </ToolbarButton>
                 </Toolbar>
               </FramePanel>
-              {selectedContacts.length > 0 && (
+              {peopleTab !== "directory" && selectedContacts.length > 0 && (
                 <FramePanel
                   fit
                   className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-2 border-t bg-secondary/40 px-2 py-1.5"
@@ -2199,10 +2796,18 @@ export function PeopleView({
                           <Building2 />
                           {t.controlRoom.peopleBulkAtribuirOrg}
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled>
+                        <DropdownMenuItem
+                          disabled={selectedContacts.length < 2}
+                          onSelect={() => setMergeOpen(true)}
+                        >
+                          <GitMerge />
                           {t.controlRoom.peopleBulkMesclar}
                         </DropdownMenuItem>
-                        <DropdownMenuItem disabled>
+                        <DropdownMenuItem
+                          disabled={selectedContacts.length < 2}
+                          onSelect={() => setBulkEditDetailsOpen(true)}
+                        >
+                          <Pencil />
                           {t.controlRoom.peopleBulkEditarDetalhes}
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -2211,41 +2816,39 @@ export function PeopleView({
                 </FramePanel>
               )}
               <FramePanel className="min-h-0 p-0">
-                {filtered.length === 0 &&
-                !(loading && !loaded) &&
-                !groupMembersLoading ? (
+                {filtered.length === 0 && !(listLoading && !listLoaded) ? (
                   peopleTab === "groups" &&
                   !normalizedQuery &&
                   filters.length === 0 ? (
                     <PeopleGroupEmpty selected={selectedGroupId != null} />
-                  ) : missingScopes.length > 0 ? (
+                  ) : activeMissingScopes.length > 0 ? (
                     <PeoplePermissionEmpty />
                   ) : (
                     <PeopleEmpty
                       search={Boolean(normalizedQuery)}
                       filtered={filters.length > 0}
+                      directory={peopleTab === "directory"}
                       onClear={() => {
                         setPeopleSearchQuery("");
                         setFilters([]);
                       }}
                     />
                   )
-                ) : view === "table" ||
-                  (loading && !loaded) ||
-                  groupMembersLoading ? (
+                ) : view === "table" || (listLoading && !listLoaded) ? (
                   <DataGrid
                     table={table}
                     recordCount={filtered.length}
                     activeRowId={keyboardActiveId}
-                    isLoading={(loading && !loaded) || groupMembersLoading}
+                    isLoading={listLoading && !listLoaded}
                     loadingMode="skeleton"
                     emptyMessage={
-                      missingScopes.length > 0 ? (
+                      activeMissingScopes.length > 0 ? (
                         <PeoplePermissionEmpty />
                       ) : (
                         <PeopleEmpty
                           search={Boolean(normalizedQuery)}
                           filtered={filters.length > 0}
+                          directory={peopleTab === "directory"}
                           onClear={() => {
                             setPeopleSearchQuery("");
                             setFilters([]);
@@ -2295,18 +2898,14 @@ export function PeopleView({
                         <ScrollArea className="h-full">
                           <DataGridTableVirtual
                             onFetchMore={() => {
-                              if (peopleTab !== "groups") {
+                              if (peopleTab === "contacts") {
                                 void loadMorePeople();
                               }
                             }}
                             isFetchingMore={
-                              peopleTab === "groups" ? false : fetchingMore
+                              peopleTab === "contacts" && fetchingMore
                             }
-                            hasMore={
-                              peopleTab === "groups"
-                                ? false
-                                : nextLinks.length > 0
-                            }
+                            hasMore={canLoadMore}
                             fetchMoreOffset={8}
                             estimateSize={48}
                             overscan={8}
@@ -2326,9 +2925,11 @@ export function PeopleView({
                           key={contact.id}
                           contact={contact}
                           organizationLabel={
-                            organizationLabelsByDomain.get(
-                              contactDomain(contact) ?? "",
-                            ) ?? null
+                            organizationDataByContactId.get(contact.id)?.label
+                          }
+                          organizationLogo={
+                            organizationDataByContactId.get(contact.id)
+                              ?.organization?.logo
                           }
                           selected={contact.id === selectedId}
                           photo={
@@ -2341,7 +2942,7 @@ export function PeopleView({
                         />
                       ))}
                     </div>
-                    {peopleTab !== "groups" && nextLinks.length > 0 && (
+                    {canLoadMore && (
                       <div className="flex justify-center py-4">
                         <Button
                           variant="outline"
@@ -2360,7 +2961,7 @@ export function PeopleView({
           );
 
           const detailPane =
-            (loading && !loaded) || groupMembersLoading ? (
+            listLoading && !listLoaded ? (
               <PeopleDetailSkeleton />
             ) : selected ? (
               <PeopleDetail

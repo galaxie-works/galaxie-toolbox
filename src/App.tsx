@@ -9,6 +9,7 @@ import { NavegadorScreen } from "@/screens/navegador";
 import {
   loadNavigatorMemorySettings,
   loadNavigatorPrefs,
+  persistNavigatorPrefs,
   loadPinnedNavigatorTabs,
   loadLastSession,
   orderPinnedFirst,
@@ -97,6 +98,12 @@ function AppInner() {
   );
   const dismissReauth = useAppStore((state) => state.dismissReauth);
   const clearReauth = useAppStore((state) => state.clearReauth);
+  const hydratePeopleM365 = useAppStore(
+    (state) => state.hydratePeopleM365,
+  );
+  const resetPeopleSession = useAppStore(
+    (state) => state.resetPeopleSession,
+  );
   const [user, setUser] = useState<AppUser | null>(null);
   const [sites, setSites] = useState<Site[]>([]);
   const [loginLoading, setLoginLoading] = useState(false);
@@ -124,8 +131,11 @@ function AppInner() {
   // localStorage, igual aos pins/grupos/favoritos.
   const [historico, setHistorico] = useState<HistoryEntry[]>(loadHistorico);
   // Modo privado: enquanto ligado, novas abas nao gravam historico e ganham
-  // tratamento visual distinto (aba "privada").
-  const [modoPrivado, setModoPrivado] = useState(false);
+  // tratamento visual distinto (aba "privada"). Nasce do "Private mode only"
+  // (#326): com a pref ligada, o app já abre em modo privado por padrão.
+  const [modoPrivado, setModoPrivado] = useState(
+    () => loadNavigatorPrefs().semprePrivado,
+  );
   // Sessão anterior (#274): capturado UMA vez no mount (antes do persist effect
   // sobrescrever), pra oferecer restaurar. `dispensada` esconde o oferecimento.
   const [sessaoAnterior] = useState(loadLastSession);
@@ -164,10 +174,33 @@ function AppInner() {
     return () => window.removeEventListener("galaxie:historico-limpo", onLimpo);
   }, []);
 
+  // #326: o atalho "Turn off" no hero da aba privada desliga o "Private mode
+  // only" — persiste a pref e sai do modo privado na hora.
+  useEffect(() => {
+    const onDesligar = () => {
+      persistNavigatorPrefs({
+        ...loadNavigatorPrefs(),
+        semprePrivado: false,
+      });
+      setModoPrivado(false);
+    };
+    window.addEventListener("galaxie:private-only-off", onDesligar);
+    return () =>
+      window.removeEventListener("galaxie:private-only-off", onDesligar);
+  }, []);
+
   // Ponto unico de captura: so grava fora do modo privado, com "salvar histórico"
   // ligado (#307) e so http(s).
-  function registrarHistorico(url: string, nome: string) {
-    if (modoPrivado || !loadNavigatorPrefs().salvarHistorico) return;
+  // `privadoOverride` (#340): ações originadas do histórico/sessão passam o
+  // contexto explícito (normal) em vez de herdar o `modoPrivado` ad-hoc da aba
+  // de origem — o setState de modoPrivado só valeria no próximo tick.
+  function registrarHistorico(
+    url: string,
+    nome: string,
+    privadoOverride?: boolean,
+  ) {
+    const privado = privadoOverride ?? modoPrivado;
+    if (privado || !loadNavigatorPrefs().salvarHistorico) return;
     setHistorico((prev) => registrarVisita(prev, { url, nome }));
   }
 
@@ -235,7 +268,9 @@ function AppInner() {
         const u = await api.restoreSession();
         if (!vivo) return;
         if (u) {
+          resetPeopleSession();
           setUser(u);
+          void hydratePeopleM365({ force: true });
           const permissions = await api.requiredScopesStatus();
           if (!vivo) return;
           setReauthMissingScopes(permissions.missingScopes);
@@ -257,7 +292,12 @@ function AppInner() {
     return () => {
       vivo = false;
     };
-  }, [lockState, setReauthMissingScopes]);
+  }, [
+    hydratePeopleM365,
+    lockState,
+    resetPeopleSession,
+    setReauthMissingScopes,
+  ]);
 
   // --- Splash de boot (#164) ---------------------------------------------
   // Dois gates para revelar a main: o app só aparece depois que a animação
@@ -310,12 +350,14 @@ function AppInner() {
   async function handleLogin(email: string) {
     setLoginLoading(true);
     setError(null);
+    resetPeopleSession();
     try {
       const u = await api.login(email, idioma);
       // Login novo pode trazer o escopo de fotos (#39) recém-consentido: zera o
       // cache pra não herdar negative-cache de sessão sem permissão.
       limparFotos();
       setUser(u);
+      void hydratePeopleM365({ force: true });
       const permissions = await api.requiredScopesStatus();
       setReauthMissingScopes(permissions.missingScopes);
       setLoadingSites(true);
@@ -440,7 +482,8 @@ function AppInner() {
   }
 
   /** Abre uma URL/busca livre (da omnibox do Cruiser) como aba própria. */
-  function abrirUrlLivre(url: string, nome: string) {
+  function abrirUrlLivre(url: string, nome: string, privadoOverride?: boolean) {
+    const privado = privadoOverride ?? modoPrivado;
     const id = `web-${Date.now()}`;
     const now = Date.now();
     setAbas((prev) =>
@@ -450,10 +493,10 @@ function AppInner() {
             ? tab
             : { ...tab, estado: "fundo" as const },
         ),
-        { id, nome, url, estado: "ativa", ultimoAcesso: now, privada: modoPrivado },
+        { id, nome, url, estado: "ativa", ultimoAcesso: now, privada: privado },
       ]),
     );
-    registrarHistorico(url, nome);
+    registrarHistorico(url, nome, privado);
     setAbaAtiva(id);
     setTela("navegador");
   }
@@ -462,6 +505,11 @@ function AppInner() {
    *  (Date.now pode repetir num mesmo tick); a última vira ativa. */
   function restaurarAbas(entradas: { url: string; nome: string }[]) {
     if (entradas.length === 0) return;
+    // #340: restaurar do histórico/sessão SEMPRE abre em contexto NORMAL — nunca
+    // herda o modo privado ad-hoc da aba de onde a ação foi disparada. Privado
+    // não persiste histórico; restaurar em privado perderia o histórico dessas
+    // abas silenciosamente. Alinha o contexto global pras próximas navegações.
+    setModoPrivado(false);
     const base = Date.now();
     const novas: AbaBrowser[] = entradas.map((entrada, i) => ({
       id: `web-${base}-${i}`,
@@ -469,7 +517,7 @@ function AppInner() {
       url: entrada.url,
       estado: i === entradas.length - 1 ? "ativa" : "fundo",
       ultimoAcesso: base + i,
-      privada: modoPrivado,
+      privada: false,
     }));
     setAbas((prev) =>
       orderPinnedFirst([
@@ -479,7 +527,8 @@ function AppInner() {
         ...novas,
       ]),
     );
-    for (const entrada of entradas) registrarHistorico(entrada.url, entrada.nome);
+    for (const entrada of entradas)
+      registrarHistorico(entrada.url, entrada.nome, false);
     setAbaAtiva(novas[novas.length - 1].id);
     setTela("navegador");
   }
@@ -525,9 +574,10 @@ function AppInner() {
   }
 
   // Nova aba normal sai do modo privado; nova aba privada entra (#273). O
-  // `modoPrivado` é herdado pela próxima navegação (`privada` da aba).
+  // `modoPrivado` é herdado pela próxima navegação (`privada` da aba). Com
+  // "Private mode only" (#326) ligado, a aba "normal" também nasce privada.
   function novaAba() {
-    setModoPrivado(false);
+    setModoPrivado(loadNavigatorPrefs().semprePrivado);
     abrirAbaVazia();
   }
 
@@ -558,12 +608,15 @@ function AppInner() {
     }
   }
 
-  /** Reabre a última aba fechada (#272 · Ctrl+Shift+T). */
+  /** Reabre a última aba fechada (#272 · Ctrl+Shift+T). #340: reabrir também não
+   *  herda o privado ad-hoc — volta em contexto normal (senão perderia histórico
+   *  da aba reaberta pela mesma razão do restaurar). */
   function reabrirFechada() {
     const ultima = fechadas[0];
     if (!ultima) return;
     setFechadas((prev) => prev.slice(1));
-    abrirUrlLivre(ultima.url, ultima.nome);
+    setModoPrivado(false);
+    abrirUrlLivre(ultima.url, ultima.nome, false);
   }
 
   /** Fecha todas as abas menos a clicada (e as fixadas), deixando-a ativa (#275). */
@@ -693,6 +746,7 @@ function AppInner() {
     await api.logout();
     limparFotos(); // privacidade (#39): não deixa fotos no disco após sair
     clearReauth();
+    resetPeopleSession();
     setUser(null);
     setSites([]);
     setError(null);
@@ -702,6 +756,7 @@ function AppInner() {
   async function recuperarBloqueio() {
     await api.logout();
     limparFotos();
+    resetPeopleSession();
     setUser(null);
     setSites([]);
     setError(null);

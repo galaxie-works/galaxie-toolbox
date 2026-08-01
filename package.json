@@ -1,13 +1,15 @@
 {
   "name": "galaxie-toolbox",
   "private": true,
-  "version": "0.33.0",
+  "version": "0.34.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test --experimental-strip-types \"src/**/*.test.ts\"",
+    "test:watch": "node --test --watch --experimental-strip-types \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@ai-sdk/react": "^4.0.40",

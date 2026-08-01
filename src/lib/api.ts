@@ -1,4 +1,5 @@
 import type {
+  AcaoRsvp,
   AppUser,
   CaixaEntrada,
   Calendario,
@@ -13,14 +14,20 @@ import type {
   PastaEmail,
   PastaOD,
   Pessoa,
+  PeopleBulkDetailsChange,
+  PeopleBulkDetailsWriteResult,
+  PeopleCompanyWriteResult,
   PeopleEnrichApplyResult,
   PeopleContactEdit,
   PeopleEnrichField,
   PeopleEnrichPreview,
   PeopleInteraction,
+  PeopleDirectoryResult,
   PeopleGroupMembersResult,
   PeopleGroupsResult,
   PeopleListResult,
+  PeopleOrganizationResult,
+  PeopleRecord,
   Reuniao,
   SegurancaEmail,
   Site,
@@ -375,6 +382,10 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
         totalParticipantes: 2,
         temAnexos: false,
         categorias: ["Crítico"],
+        // Evento próprio: organizador, sem RSVP (#287).
+        resposta: "organizer",
+        souOrganizador: true,
+        respostaSolicitada: false,
       },
       {
         id: "ev2",
@@ -389,6 +400,10 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
         totalParticipantes: 6,
         temAnexos: true,
         categorias: [],
+        // Convite pendente: aparece com semântica de "sem resposta" e RSVP (#287).
+        resposta: "notResponded",
+        souOrganizador: false,
+        respostaSolicitada: true,
       },
     ];
   }
@@ -465,7 +480,10 @@ export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
       online: true,
       joinUrl: "https://teams.microsoft.com/l/meetup-join/mock",
       organizador: "Wagner Consani",
-      souOrganizador: true,
+      souOrganizador: false,
+      // Convite pendente no mock (#287) para exibir o RSVP no dev do browser.
+      resposta: "notResponded",
+      respostaSolicitada: true,
       corpo: "<p>Pauta: revisar orçamento de compras do trimestre e alinhar próximos passos.</p>",
       corpoTipo: "html",
       participantes: MOCK_PARTS,
@@ -473,6 +491,27 @@ export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
     };
   }
   return invoke<EventoDetalhe>("cr_evento_corpo", { id });
+}
+
+/** Responde a um convite de reunião (#287): RSVP Aceitar/Talvez/Recusar via
+ *  POST /me/events/{id}/{accept|tentativelyAccept|decline}. `enviarResposta`
+ *  liga o aviso ao organizador; `comentario` opcional acompanha a resposta. */
+export async function crResponderEvento(
+  id: string,
+  resposta: AcaoRsvp,
+  enviarResposta: boolean,
+  comentario: string,
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  await invoke("cr_responder_evento", {
+    id,
+    resposta,
+    enviarResposta,
+    comentario,
+  });
 }
 
 /** Cria um evento no calendário (#211). Devolve o id do evento criado. */
@@ -742,6 +781,31 @@ const MOCK_PESSOAS: Pessoa[] = [
   { nome: "Gustavo Barata", email: "gustavo.barata@voaz.com.br", cargo: "Estagiário de Engenharia", origem: "organizacao" },
 ];
 
+const MOCK_DIRECTORY_RECORDS: PeopleRecord[] = [
+  {
+    id: "directory-ada",
+    source: "directory",
+    name: "Ada Lovelace",
+    emails: [{ address: "ada@example.com" }],
+    phones: [],
+    jobTitle: "Product Director",
+    company: "Analytical Engines",
+    organization: true,
+    peopleRank: null,
+  },
+  {
+    id: "directory-grace",
+    source: "directory",
+    name: "Grace Hopper",
+    emails: [{ address: "grace@example.com" }],
+    phones: [{ number: "+1 212 555 0102", label: "mobile" }],
+    jobTitle: "Engineering Lead",
+    company: "Compiler Labs",
+    organization: true,
+    peopleRank: null,
+  },
+];
+
 /**
  * Fotos (avatar) de remetentes internos, em lote (#39). Recebe e-mails e devolve
  * um mapa e-mail(minúsculo) → data URI | null (null = sem foto). Fora do Tauri
@@ -854,6 +918,39 @@ export async function crPeopleList(nextLinks: string[] = []): Promise<PeopleList
   return invoke<PeopleListResult>("cr_people_list", { nextLinks });
 }
 
+/** Organização canônica do tenant atual; não é uma organização criada no app. */
+export async function crPeopleOrganization(): Promise<PeopleOrganizationResult> {
+  if (!inTauri()) {
+    await sleep(250);
+    return {
+      organization: {
+        id: "organization-voaz",
+        name: MOCK_USER.organizacao ?? "Voaz",
+      },
+      missingScopes: [],
+      failures: [],
+    };
+  }
+  return invoke<PeopleOrganizationResult>("cr_organizacao");
+}
+
+/** Snapshot completo do diretório M365; a paginação é consumida no backend. */
+export async function crPeopleDirectory(): Promise<PeopleDirectoryResult> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      records: MOCK_DIRECTORY_RECORDS.map((record) => ({
+        ...record,
+        emails: record.emails.map((email) => ({ ...email })),
+        phones: record.phones.map((phone) => ({ ...phone })),
+      })),
+      missingScopes: [],
+      failures: [],
+    };
+  }
+  return invoke<PeopleDirectoryResult>("cr_people_directory");
+}
+
 /** Grupos M365 diretos do usuário atual (#293). */
 export async function crPeopleGroups(): Promise<PeopleGroupsResult> {
   if (!inTauri()) {
@@ -876,30 +973,11 @@ export async function crPeopleGroupMembers(
 ): Promise<PeopleGroupMembersResult> {
   if (!inTauri()) {
     await sleep(450);
-    const all = [
-      {
-        id: "directory-ada",
-        source: "directory" as const,
-        name: "Ada Lovelace",
-        emails: [{ address: "ada@example.com" }],
-        phones: [],
-        jobTitle: "Product Director",
-        company: "Analytical Engines",
-        organization: true,
-        peopleRank: null,
-      },
-      {
-        id: "directory-grace",
-        source: "directory" as const,
-        name: "Grace Hopper",
-        emails: [{ address: "grace@example.com" }],
-        phones: [{ number: "+1 212 555 0102", label: "mobile" }],
-        jobTitle: "Engineering Lead",
-        company: "Compiler Labs",
-        organization: true,
-        peopleRank: null,
-      },
-    ];
+    const all = MOCK_DIRECTORY_RECORDS.map((record) => ({
+      ...record,
+      emails: record.emails.map((email) => ({ ...email })),
+      phones: record.phones.map((phone) => ({ ...phone })),
+    }));
     const records = groupId === "group-leadership" ? all.slice(0, 1) : all;
     return { records, memberCount: records.length };
   }
@@ -999,6 +1077,50 @@ export async function crPeopleContactUpdate(
     return;
   }
   return invoke<void>("cr_people_contact_update", { contactId, input });
+}
+
+/**
+ * Grava `companyName` apenas nos contatos pessoais editáveis. O backend usa
+ * `$batch` (20 por envelope) e devolve sucesso/falha por contato para rollback.
+ */
+export async function crPeopleCompanyWrite(
+  contactIds: string[],
+  companyName: string,
+): Promise<PeopleCompanyWriteResult> {
+  if (!inTauri()) {
+    await sleep(550);
+    return {
+      writeAvailable: true,
+      savedContactIds: [...new Set(contactIds)],
+      failedContactIds: [],
+    };
+  }
+  return invoke<PeopleCompanyWriteResult>("cr_people_company_write", {
+    contactIds,
+    companyName,
+  });
+}
+
+/**
+ * Grava campos seguros em contatos pessoais editáveis. O backend aplica as
+ * mudanças via `$batch` e devolve sucesso/falha por contato para rollback.
+ */
+export async function crPeopleDetailsWrite(
+  contactIds: string[],
+  changes: PeopleBulkDetailsChange[],
+): Promise<PeopleBulkDetailsWriteResult> {
+  if (!inTauri()) {
+    await sleep(550);
+    return {
+      writeAvailable: true,
+      savedContactIds: [...new Set(contactIds)],
+      failedContactIds: [],
+    };
+  }
+  return invoke<PeopleBulkDetailsWriteResult>("cr_people_details_write", {
+    contactIds,
+    changes,
+  });
 }
 
 /** Mensagens recentes diretamente relacionadas ao endereço selecionado. */

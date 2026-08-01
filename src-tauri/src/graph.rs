@@ -1000,6 +1000,15 @@ pub struct EventoAgenda {
     pub total_participantes: usize,
     pub tem_anexos: bool,
     pub categorias: Vec<String>,
+    /// Semântica do convite (#287): `responseStatus.response` do Graph —
+    /// `none` · `organizer` · `tentativelyAccepted` · `accepted` · `declined`
+    /// · `notResponded`. A UI usa isso para renderizar o estado (RSVP) e para
+    /// ocultar/riscar os recusados.
+    pub resposta: String,
+    /// True quando o usuário organiza o evento (Graph `isOrganizer`) — sem RSVP.
+    pub sou_organizador: bool,
+    /// Graph `responseRequested`: false = convite informativo (sem pedir RSVP).
+    pub resposta_solicitada: bool,
 }
 
 /// Parseia a resposta de um `calendarView` (lista `value[]`) em EventoAgenda.
@@ -1041,6 +1050,14 @@ fn parse_eventos(v: &serde_json::Value) -> Vec<EventoAgenda> {
                 total_participantes: total,
                 tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
                 categorias,
+                // Semântica do convite (#287). `isOrganizer` também vem como
+                // `response: "organizer"`, mas mantemos ambos para a UI decidir.
+                resposta: it["responseStatus"]["response"]
+                    .as_str()
+                    .unwrap_or("none")
+                    .to_string(),
+                sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
+                resposta_solicitada: it["responseRequested"].as_bool().unwrap_or(true),
             });
         }
     }
@@ -1070,7 +1087,7 @@ fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgend
     Ok(parse_eventos(&v))
 }
 
-const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories";
+const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,responseRequested";
 
 /// Eventos do calendário padrão no intervalo (limites em ISO UTC). Calendars.Read.
 pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
@@ -1280,6 +1297,11 @@ pub struct EventoDetalhe {
     /// True quando o usuário ativo organiza o evento (Graph `isOrganizer`).
     /// Habilita a ação "Cancelar evento" (#260), que notifica os convidados.
     pub sou_organizador: bool,
+    /// Semântica do convite (#287): `responseStatus.response` — habilita o RSVP
+    /// (Aceitar/Talvez/Recusar) e o badge de estado no detalhe.
+    pub resposta: String,
+    /// Graph `responseRequested`: false = convite informativo (sem RSVP).
+    pub resposta_solicitada: bool,
     pub corpo: String,
     pub corpo_tipo: String, // "html" | "text"
     pub participantes: Vec<Participante>,
@@ -1293,7 +1315,8 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
 
     let url = format!(
         "{GRAPH}/me/events/{id}?$select=subject,start,end,location,onlineMeeting,\
-         isOnlineMeeting,onlineMeetingUrl,organizer,isOrganizer,body,attendees,webLink"
+         isOnlineMeeting,onlineMeetingUrl,organizer,isOrganizer,responseStatus,\
+         responseRequested,body,attendees,webLink"
     );
     let resp = client
         .get(&url)
@@ -1330,6 +1353,11 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
         join_url,
         organizador: it["organizer"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
         sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
+        resposta: it["responseStatus"]["response"]
+            .as_str()
+            .unwrap_or("none")
+            .to_string(),
+        resposta_solicitada: it["responseRequested"].as_bool().unwrap_or(true),
         corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
         corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
         participantes,
@@ -1488,6 +1516,47 @@ pub fn cr_cancelar_evento(store: &TokenStore, id: &str, comentario: &str) -> Res
         Ok(())
     } else {
         Err(erro_escrita("me/events", "cancelar evento", resp.status()))
+    }
+}
+
+/// Responde a um convite de reunião (#287): RSVP via
+/// POST /me/events/{id}/{accept|tentativelyAccept|decline}, com
+/// `{ comment, sendResponse }`. `resposta` é a ação semântica vinda do front
+/// ("accept" · "tentativelyAccept" · "decline"); qualquer outro valor é erro.
+/// `enviar_resposta` liga/desliga o aviso ao organizador; `comentario` opcional
+/// acompanha a resposta. Só faz sentido para quem foi CONVIDADO — a UI restringe
+/// a ação (organizer não vê RSVP). Calendars.ReadWrite.
+pub fn cr_responder_evento(
+    store: &TokenStore,
+    id: &str,
+    resposta: &str,
+    enviar_resposta: bool,
+    comentario: &str,
+) -> Result<(), String> {
+    // Mapeia a ação semântica -> segmento do endpoint do Graph. Recusamos
+    // valores desconhecidos em vez de montar uma URL inválida.
+    let acao = match resposta {
+        "accept" | "accepted" | "aceitar" => "accept",
+        "tentativelyAccept" | "tentativelyAccepted" | "talvez" | "tentative" => "tentativelyAccept",
+        "decline" | "declined" | "recusar" => "decline",
+        outro => return Err(format!("resposta de convite inválida: {outro}")),
+    };
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events/{id}/{acao}");
+    let body = serde_json::json!({
+        "comment": comentario,
+        "sendResponse": enviar_resposta,
+    });
+    let resp = graph_enviar("agenda:responder", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao responder o convite: {e}"))?;
+    // 404 = evento já não existe (idempotente, como cancelar/excluir).
+    if resp.status().is_success() || resp.status().as_u16() == 404 {
+        Ok(())
+    } else {
+        Err(erro_escrita("me/events", "responder convite", resp.status()))
     }
 }
 
@@ -3170,6 +3239,29 @@ pub struct PeopleListResult {
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PeopleTenantOrganization {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleOrganizationResult {
+    pub organization: Option<PeopleTenantOrganization>,
+    pub missing_scopes: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleDirectoryResult {
+    pub records: Vec<PeopleRecord>,
+    pub missing_scopes: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PeopleGroup {
     pub id: String,
     pub name: String,
@@ -3295,6 +3387,51 @@ fn telefones_de_people(item: &serde_json::Value) -> Vec<PeoplePhone> {
         .collect()
 }
 
+fn registro_de_usuario_do_diretorio(item: &serde_json::Value) -> Option<PeopleRecord> {
+    let id = item["id"].as_str()?.trim();
+    let address = item["mail"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            item["userPrincipalName"]
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })?;
+    if id.is_empty() {
+        return None;
+    }
+
+    let name = item["displayName"]
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(address);
+    Some(PeopleRecord {
+        id: id.to_string(),
+        source: "directory".to_string(),
+        name: name.to_string(),
+        emails: vec![PeopleEmail {
+            address: address.to_string(),
+            label: None,
+        }],
+        phones: telefones_de_contato(item),
+        job_title: texto_opcional(item, "jobTitle"),
+        company: texto_opcional(item, "companyName"),
+        department: texto_opcional(item, "department"),
+        office_location: texto_opcional(item, "officeLocation"),
+        manager: None,
+        organization: true,
+        people_rank: None,
+    })
+}
+
+fn url_continuacao_graph_valida(url: &str) -> bool {
+    url.strip_prefix(GRAPH)
+        .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 /// `/me/people` mistura pessoas e objetos mail-enabled. `personType.class` é o
 /// sinal canônico do Graph para excluir Teams, listas de distribuição e sites
 /// SharePoint respaldados por Microsoft 365 Groups da lista de pessoas (#281).
@@ -3331,6 +3468,71 @@ mod testes_people_person_type {
         });
         assert!(!eh_grupo_de_people(&pessoa));
         assert!(!eh_grupo_de_people(&serde_json::json!({})));
+    }
+}
+
+#[cfg(test)]
+mod testes_people_directory {
+    use super::{registro_de_usuario_do_diretorio, url_continuacao_graph_valida};
+
+    #[test]
+    fn normaliza_usuario_do_diretorio_com_campos_do_people() {
+        let item = serde_json::json!({
+            "id": " user-1 ",
+            "displayName": " Ada Lovelace ",
+            "mail": " ada@example.com ",
+            "userPrincipalName": "ada@example.onmicrosoft.com",
+            "businessPhones": [" +44 20 7946 0958 "],
+            "mobilePhone": " +44 7700 900123 ",
+            "jobTitle": " Architect ",
+            "companyName": " Analytical Engines ",
+            "department": " Research ",
+            "officeLocation": " London "
+        });
+
+        let record = registro_de_usuario_do_diretorio(&item).expect("usuario valido");
+        assert_eq!(record.id, "user-1");
+        assert_eq!(record.source, "directory");
+        assert_eq!(record.name, "Ada Lovelace");
+        assert_eq!(record.emails[0].address, "ada@example.com");
+        assert_eq!(record.phones.len(), 2);
+        assert_eq!(record.job_title.as_deref(), Some("Architect"));
+        assert_eq!(record.company.as_deref(), Some("Analytical Engines"));
+        assert_eq!(record.department.as_deref(), Some("Research"));
+        assert_eq!(record.office_location.as_deref(), Some("London"));
+        assert!(record.organization);
+    }
+
+    #[test]
+    fn usa_upn_quando_mail_esta_vazio_e_descarta_usuario_sem_endereco() {
+        let com_upn = serde_json::json!({
+            "id": "user-2",
+            "displayName": "",
+            "mail": " ",
+            "userPrincipalName": "grace@example.com"
+        });
+        let record = registro_de_usuario_do_diretorio(&com_upn).expect("upn valido");
+        assert_eq!(record.name, "grace@example.com");
+        assert_eq!(record.emails[0].address, "grace@example.com");
+
+        let sem_endereco = serde_json::json!({
+            "id": "user-3",
+            "displayName": "Sem endereço"
+        });
+        assert!(registro_de_usuario_do_diretorio(&sem_endereco).is_none());
+    }
+
+    #[test]
+    fn aceita_apenas_continuacao_dentro_do_graph_v1() {
+        assert!(url_continuacao_graph_valida(
+            "https://graph.microsoft.com/v1.0/users?$skiptoken=abc"
+        ));
+        assert!(!url_continuacao_graph_valida(
+            "https://graph.microsoft.com/v1.0.evil.example/users"
+        ));
+        assert!(!url_continuacao_graph_valida(
+            "https://example.com/v1.0/users"
+        ));
     }
 }
 
@@ -3489,6 +3691,136 @@ pub fn cr_people_list(
     Ok(result)
 }
 
+/// Organização do tenant atual, usando o nome canônico do Microsoft Graph.
+pub fn cr_organizacao(store: &TokenStore) -> Result<PeopleOrganizationResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut result = PeopleOrganizationResult {
+        organization: None,
+        missing_scopes: Vec::new(),
+        failures: Vec::new(),
+    };
+    let url = format!("{GRAPH}/organization?$select=id,displayName");
+
+    match graph_enviar("people:organization", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => {
+                let organization = body["value"].as_array().and_then(|items| {
+                    items.iter().find_map(|item| {
+                        let id = item["id"].as_str()?.trim();
+                        let name = item["displayName"].as_str()?.trim();
+                        if id.is_empty() || name.is_empty() {
+                            return None;
+                        }
+                        Some(PeopleTenantOrganization {
+                            id: id.to_string(),
+                            name: name.to_string(),
+                        })
+                    })
+                });
+                if organization.is_none() {
+                    result
+                        .failures
+                        .push("Organization: resposta sem organização válida".to_string());
+                }
+                result.organization = organization;
+            }
+            Err(error) => result
+                .failures
+                .push(format!("Organization: resposta invalida ({error})")),
+        },
+        Ok(resp) => result
+            .failures
+            .push(format!("Organization: Graph retornou {}", resp.status())),
+        Err(error) => result
+            .failures
+            .push(format!("Organization: falha de rede ({error})")),
+    }
+
+    Ok(result)
+}
+
+/// Snapshot completo dos usuários do tenant. A paginação é consumida no
+/// backend para que a hidratação de sessão não dependa da máquina nem de cache
+/// local e nunca exponha uma lista silenciosamente truncada.
+pub fn cr_people_directory(store: &TokenStore) -> Result<PeopleDirectoryResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut result = PeopleDirectoryResult {
+        records: Vec::new(),
+        missing_scopes: Vec::new(),
+        failures: Vec::new(),
+    };
+    let mut proxima = Some(format!(
+        "{GRAPH}/users?$top=999&$select=id,displayName,mail,userPrincipalName,businessPhones,mobilePhone,jobTitle,companyName,department,officeLocation"
+    ));
+    let mut paginas_visitadas = std::collections::HashSet::new();
+
+    while let Some(url) = proxima.take() {
+        if !url_continuacao_graph_valida(&url) {
+            result
+                .failures
+                .push("Directory: continuation URL outside Microsoft Graph".to_string());
+            break;
+        }
+        if !paginas_visitadas.insert(url.clone()) {
+            result
+                .failures
+                .push("Directory: continuation URL repeated".to_string());
+            break;
+        }
+        match graph_enviar("people:directory", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        }) {
+            Ok(resp) if resp.status().is_success() => {
+                let body = match resp.json::<serde_json::Value>() {
+                    Ok(body) => body,
+                    Err(error) => {
+                        result
+                            .failures
+                            .push(format!("Directory: resposta invalida ({error})"));
+                        break;
+                    }
+                };
+                proxima = body["@odata.nextLink"].as_str().map(str::to_string);
+                let Some(items) = body["value"].as_array() else {
+                    result
+                        .failures
+                        .push("Directory: resposta sem coleção de usuários".to_string());
+                    break;
+                };
+                result
+                    .records
+                    .extend(items.iter().filter_map(registro_de_usuario_do_diretorio));
+            }
+            Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
+                result.missing_scopes.push("User.Read.All".to_string());
+                break;
+            }
+            Ok(resp) => {
+                result
+                    .failures
+                    .push(format!("Directory: Graph retornou {}", resp.status()));
+                break;
+            }
+            Err(error) => {
+                result
+                    .failures
+                    .push(format!("Directory: falha de rede ({error})"));
+                break;
+            }
+        }
+    }
+
+    result
+        .records
+        .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    result.records.dedup_by(|a, b| a.id == b.id);
+    Ok(result)
+}
+
 /// Grupos M365/security aos quais o usuário atual pertence diretamente (#293).
 /// A lista não dispara N+1: a contagem fica ausente até `cr_grupo_membros`.
 pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
@@ -3608,59 +3940,7 @@ pub fn cr_grupo_membros(
             .map_err(|error| format!("Group members: resposta invalida ({error})"))?;
         proxima = body["@odata.nextLink"].as_str().map(str::to_string);
         if let Some(items) = body["value"].as_array() {
-            records.extend(items.iter().filter_map(|item| {
-                let id = item["id"].as_str()?.trim();
-                let address = item["mail"]
-                    .as_str()
-                    .or_else(|| item["userPrincipalName"].as_str())?
-                    .trim();
-                if id.is_empty() || address.is_empty() {
-                    return None;
-                }
-                let mut phones = item["businessPhones"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|value| value.as_str())
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(|number| PeoplePhone {
-                        number: number.to_string(),
-                        label: "work".to_string(),
-                    })
-                    .collect::<Vec<_>>();
-                if let Some(number) = item["mobilePhone"]
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                {
-                    phones.push(PeoplePhone {
-                        number: number.to_string(),
-                        label: "mobile".to_string(),
-                    });
-                }
-                Some(PeopleRecord {
-                    id: id.to_string(),
-                    source: "directory".to_string(),
-                    name: item["displayName"]
-                        .as_str()
-                        .unwrap_or(address)
-                        .trim()
-                        .to_string(),
-                    emails: vec![PeopleEmail {
-                        address: address.to_string(),
-                        label: None,
-                    }],
-                    phones,
-                    job_title: texto_opcional(item, "jobTitle"),
-                    company: texto_opcional(item, "companyName"),
-                    department: texto_opcional(item, "department"),
-                    office_location: texto_opcional(item, "officeLocation"),
-                    manager: None,
-                    organization: true,
-                    people_rank: None,
-                })
-            }));
+            records.extend(items.iter().filter_map(registro_de_usuario_do_diretorio));
         }
     }
 
@@ -4491,6 +4771,387 @@ pub fn cr_people_contact_update(
         return Err(format!("Contacts: Graph returned {}", resp.status()));
     }
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleCompanyWriteResult {
+    pub write_available: bool,
+    pub saved_contact_ids: Vec<String>,
+    pub failed_contact_ids: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PeopleBulkDetailsField {
+    CompanyName,
+    Department,
+    OfficeLocation,
+}
+
+impl PeopleBulkDetailsField {
+    fn graph_key(self) -> &'static str {
+        match self {
+            Self::CompanyName => "companyName",
+            Self::Department => "department",
+            Self::OfficeLocation => "officeLocation",
+        }
+    }
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleBulkDetailsChange {
+    pub field: PeopleBulkDetailsField,
+    #[serde(deserialize_with = "deserialize_required_nullable_string")]
+    pub value: Option<String>,
+}
+
+fn deserialize_required_nullable_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <Option<String> as serde::Deserialize>::deserialize(deserializer)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeopleBulkDetailsWriteResult {
+    pub write_available: bool,
+    pub saved_contact_ids: Vec<String>,
+    pub failed_contact_ids: Vec<String>,
+}
+
+fn people_bulk_details_body(
+    changes: Vec<PeopleBulkDetailsChange>,
+) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    if changes.is_empty() {
+        return Err("At least one details change is required.".to_string());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let mut body = serde_json::Map::new();
+    for change in changes {
+        if !seen.insert(change.field) {
+            return Err(format!(
+                "Duplicate bulk details field: {}.",
+                change.field.graph_key()
+            ));
+        }
+        let value = match change.value {
+            Some(value) => {
+                let value = value.trim();
+                if value.is_empty() || value.len() > 256 {
+                    return Err(format!(
+                        "Invalid value for bulk details field: {}.",
+                        change.field.graph_key()
+                    ));
+                }
+                serde_json::Value::String(value.to_string())
+            }
+            None => serde_json::Value::Null,
+        };
+        body.insert(change.field.graph_key().to_string(), value);
+    }
+    Ok(body)
+}
+
+/// Persiste a Organization escolhida explicitamente como `companyName`.
+/// O Graph limita JSON batches a 20 sub-requisições; cada envelope é casado
+/// pelo `id`, pois a ordem das respostas não é garantida.
+pub fn cr_people_company_write(
+    store: &TokenStore,
+    contact_ids: Vec<String>,
+    company_name: &str,
+) -> Result<PeopleCompanyWriteResult, String> {
+    let company_name = company_name.trim();
+    if company_name.is_empty() || company_name.len() > 256 {
+        return Err("Invalid company name.".to_string());
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    let contact_ids: Vec<String> = contact_ids
+        .into_iter()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty() && id.len() <= 512 && seen.insert(id.clone()))
+        .collect();
+    if contact_ids.is_empty() {
+        return Ok(PeopleCompanyWriteResult {
+            write_available: token_tem_escopo(store, "Contacts.ReadWrite")?,
+            saved_contact_ids: Vec::new(),
+            failed_contact_ids: Vec::new(),
+        });
+    }
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Ok(PeopleCompanyWriteResult {
+            write_available: false,
+            saved_contact_ids: Vec::new(),
+            failed_contact_ids: contact_ids,
+        });
+    }
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut saved_contact_ids = Vec::new();
+    let mut failed_contact_ids = Vec::new();
+
+    for chunk in contact_ids.chunks(20) {
+        let requests: Vec<serde_json::Value> = chunk
+            .iter()
+            .enumerate()
+            .map(|(index, contact_id)| {
+                serde_json::json!({
+                    "id": index.to_string(),
+                    "method": "PATCH",
+                    "url": format!(
+                        "/me/contacts/{}",
+                        urlencoding::encode(contact_id)
+                    ),
+                    "headers": { "Content-Type": "application/json" },
+                    "body": { "companyName": company_name },
+                })
+            })
+            .collect();
+        let body = serde_json::json!({ "requests": requests });
+        let url = format!("{GRAPH}/$batch");
+        let response = match graph_enviar("people:company-write", GRAPH_TETO_ESPERA_S, || {
+            client.post(&url).bearer_auth(&token).json(&body).send()
+        }) {
+            Ok(response) => response,
+            Err(_) => {
+                failed_contact_ids.extend(chunk.iter().cloned());
+                continue;
+            }
+        };
+        if !response.status().is_success() {
+            failed_contact_ids.extend(chunk.iter().cloned());
+            continue;
+        }
+
+        let value: serde_json::Value = match response.json() {
+            Ok(value) => value,
+            Err(_) => {
+                failed_contact_ids.extend(chunk.iter().cloned());
+                continue;
+            }
+        };
+        let mut successful_indexes = std::collections::HashSet::new();
+        for item in value["responses"].as_array().into_iter().flatten() {
+            let Some(index) = item["id"]
+                .as_str()
+                .and_then(|id| id.parse::<usize>().ok())
+            else {
+                continue;
+            };
+            let status = item["status"].as_u64().unwrap_or_default();
+            if index < chunk.len() && (200..300).contains(&status) {
+                successful_indexes.insert(index);
+            }
+        }
+        for (index, contact_id) in chunk.iter().enumerate() {
+            if successful_indexes.contains(&index) {
+                saved_contact_ids.push(contact_id.clone());
+            } else {
+                failed_contact_ids.push(contact_id.clone());
+            }
+        }
+    }
+
+    Ok(PeopleCompanyWriteResult {
+        write_available: true,
+        saved_contact_ids,
+        failed_contact_ids,
+    })
+}
+
+/// Aplica a mesma alteração de detalhes seguros a vários contatos pessoais.
+/// O Graph limita JSON batches a 20 sub-requisições; falhas de transporte ou
+/// sub-respostas não-2xx são isoladas nos IDs correspondentes.
+pub fn cr_people_details_write(
+    store: &TokenStore,
+    contact_ids: Vec<String>,
+    changes: Vec<PeopleBulkDetailsChange>,
+) -> Result<PeopleBulkDetailsWriteResult, String> {
+    let body = people_bulk_details_body(changes)?;
+
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized_contact_ids = Vec::new();
+    for contact_id in contact_ids {
+        let contact_id = contact_id.trim();
+        if contact_id.is_empty() || contact_id.len() > 512 {
+            return Err("Invalid contact ID.".to_string());
+        }
+        if seen.insert(contact_id.to_string()) {
+            normalized_contact_ids.push(contact_id.to_string());
+        }
+    }
+
+    let write_available = token_tem_escopo(store, "Contacts.ReadWrite")?;
+    if normalized_contact_ids.is_empty() {
+        return Ok(PeopleBulkDetailsWriteResult {
+            write_available,
+            saved_contact_ids: Vec::new(),
+            failed_contact_ids: Vec::new(),
+        });
+    }
+    if !write_available {
+        return Ok(PeopleBulkDetailsWriteResult {
+            write_available: false,
+            saved_contact_ids: Vec::new(),
+            failed_contact_ids: normalized_contact_ids,
+        });
+    }
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let batch_url = format!("{GRAPH}/$batch");
+    let mut saved_contact_ids = Vec::new();
+    let mut failed_contact_ids = Vec::new();
+
+    for chunk in normalized_contact_ids.chunks(20) {
+        let requests: Vec<serde_json::Value> = chunk
+            .iter()
+            .enumerate()
+            .map(|(index, contact_id)| {
+                serde_json::json!({
+                    "id": index.to_string(),
+                    "method": "PATCH",
+                    "url": format!(
+                        "/me/contacts/{}",
+                        urlencoding::encode(contact_id)
+                    ),
+                    "headers": { "Content-Type": "application/json" },
+                    "body": body.clone(),
+                })
+            })
+            .collect();
+        let batch_body = serde_json::json!({ "requests": requests });
+        let response = match graph_enviar("people:details-write", GRAPH_TETO_ESPERA_S, || {
+            client
+                .post(&batch_url)
+                .bearer_auth(&token)
+                .json(&batch_body)
+                .send()
+        }) {
+            Ok(response) => response,
+            Err(_) => {
+                failed_contact_ids.extend(chunk.iter().cloned());
+                continue;
+            }
+        };
+        if !response.status().is_success() {
+            failed_contact_ids.extend(chunk.iter().cloned());
+            continue;
+        }
+
+        let value: serde_json::Value = match response.json() {
+            Ok(value) => value,
+            Err(_) => {
+                failed_contact_ids.extend(chunk.iter().cloned());
+                continue;
+            }
+        };
+        let mut successful_indexes = std::collections::HashSet::new();
+        for item in value["responses"].as_array().into_iter().flatten() {
+            let Some(index) = item["id"].as_str().and_then(|id| id.parse::<usize>().ok()) else {
+                continue;
+            };
+            let status = item["status"].as_u64().unwrap_or_default();
+            if index < chunk.len() && (200..300).contains(&status) {
+                successful_indexes.insert(index);
+            }
+        }
+        for (index, contact_id) in chunk.iter().enumerate() {
+            if successful_indexes.contains(&index) {
+                saved_contact_ids.push(contact_id.clone());
+            } else {
+                failed_contact_ids.push(contact_id.clone());
+            }
+        }
+    }
+
+    Ok(PeopleBulkDetailsWriteResult {
+        write_available: true,
+        saved_contact_ids,
+        failed_contact_ids,
+    })
+}
+
+#[cfg(test)]
+mod people_bulk_details_tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_values_and_represents_explicit_clear_as_null() {
+        let body = people_bulk_details_body(vec![
+            PeopleBulkDetailsChange {
+                field: PeopleBulkDetailsField::CompanyName,
+                value: Some("  Galaxie Works  ".to_string()),
+            },
+            PeopleBulkDetailsChange {
+                field: PeopleBulkDetailsField::Department,
+                value: None,
+            },
+        ])
+        .expect("valid changes");
+
+        assert_eq!(body["companyName"], serde_json::json!("Galaxie Works"));
+        assert_eq!(body["department"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn rejects_empty_duplicate_and_invalid_values() {
+        assert!(people_bulk_details_body(Vec::new()).is_err());
+        assert!(people_bulk_details_body(vec![
+            PeopleBulkDetailsChange {
+                field: PeopleBulkDetailsField::OfficeLocation,
+                value: Some("London".to_string()),
+            },
+            PeopleBulkDetailsChange {
+                field: PeopleBulkDetailsField::OfficeLocation,
+                value: None,
+            },
+        ])
+        .is_err());
+        assert!(people_bulk_details_body(vec![PeopleBulkDetailsChange {
+            field: PeopleBulkDetailsField::Department,
+            value: Some("   ".to_string()),
+        }])
+        .is_err());
+        assert!(people_bulk_details_body(vec![PeopleBulkDetailsChange {
+            field: PeopleBulkDetailsField::Department,
+            value: Some("x".repeat(257)),
+        }])
+        .is_err());
+    }
+
+    #[test]
+    fn serde_field_whitelist_is_exact() {
+        let valid: PeopleBulkDetailsChange = serde_json::from_value(serde_json::json!({
+            "field": "officeLocation",
+            "value": "London"
+        }))
+        .expect("whitelisted field");
+        assert_eq!(valid.field, PeopleBulkDetailsField::OfficeLocation);
+
+        let explicit_clear: PeopleBulkDetailsChange = serde_json::from_value(serde_json::json!({
+            "field": "department",
+            "value": null
+        }))
+        .expect("explicit null is a valid clear");
+        assert_eq!(explicit_clear.value, None);
+
+        let missing_value = serde_json::from_value::<PeopleBulkDetailsChange>(serde_json::json!({
+            "field": "department"
+        }));
+        assert!(missing_value.is_err());
+
+        let invalid = serde_json::from_value::<PeopleBulkDetailsChange>(serde_json::json!({
+            "field": "jobTitle",
+            "value": "Director"
+        }));
+        assert!(invalid.is_err());
+    }
 }
 
 fn destinatario_tem_email(item: &serde_json::Value, email: &str) -> bool {

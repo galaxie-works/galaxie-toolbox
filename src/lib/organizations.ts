@@ -35,6 +35,39 @@ export function contactDomain(contact: PeopleContact): string | null {
   return separator > 0 ? email!.slice(separator + 1) : null;
 }
 
+function normalizeOrganizationName(value: string | null | undefined): string {
+  return value?.trim().toLocaleLowerCase() ?? "";
+}
+
+/**
+ * Resolve a entidade app-owned de um contato. O `companyName` explícito do
+ * Outlook é a fonte de verdade; domínio só entra como fallback (#288).
+ */
+export function resolveContactOrganization(
+  organizations: PeopleOrg[],
+  contact: PeopleContact,
+): PeopleOrg | null {
+  const company = normalizeOrganizationName(contact.company);
+  if (company) {
+    return (
+      organizations.find(
+        (organization) => normalizeOrganizationName(organization.name) === company,
+      ) ?? null
+    );
+  }
+  return resolveOrganization(organizations, contactDomain(contact));
+}
+
+/** Label unificado Company ↔ Organization exibido e filtrado pelo People. */
+export function contactOrganizationLabel(
+  organizations: PeopleOrg[],
+  contact: PeopleContact,
+): string | null {
+  const company = contact.company?.trim();
+  if (company) return company;
+  return resolveOrganization(organizations, contactDomain(contact))?.name ?? null;
+}
+
 export function organizationMembers(
   organization: PeopleOrg,
   contacts: PeopleContact[],
@@ -42,7 +75,10 @@ export function organizationMembers(
   const domains = new Set(organization.domains.map(normalizeDomain));
   const explicit = new Set(organization.memberIds);
   const excluded = new Set(organization.excludedIds);
+  const organizationName = normalizeOrganizationName(organization.name);
   return contacts.filter((contact) => {
+    const company = normalizeOrganizationName(contact.company);
+    if (company) return company === organizationName;
     if (explicit.has(contact.id)) return true;
     const domain = contactDomain(contact);
     return Boolean(domain && domains.has(domain) && !excluded.has(contact.id));
