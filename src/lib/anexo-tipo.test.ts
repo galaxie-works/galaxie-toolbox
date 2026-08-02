@@ -40,21 +40,32 @@ test("TXT pelo sufixo do nome", () => {
   assert.equal(classificarAnexo(anexo({ nome: "notas.txt" })), "txt");
 });
 
-test("formato fora do MVP → nao-suportado", () => {
+test("docx pelo contentType OOXML", () => {
   assert.equal(
     classificarAnexo(
       anexo({
-        nome: "planilha.xlsx",
+        nome: "carta",
         contentType:
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
       })
     ),
-    "nao-suportado"
+    "docx"
   );
 });
 
-test("ehPrevisualizavel: true p/ pdf e txt, false p/ o resto", () => {
+test("xlsx pelo sufixo do nome", () => {
+  assert.equal(classificarAnexo(anexo({ nome: "orcamento.XLSX" })), "xlsx");
+});
+
+test("formato fora do escopo → nao-suportado", () => {
+  assert.equal(classificarAnexo(anexo({ nome: "slides.pptx" })), "nao-suportado");
+  assert.equal(classificarAnexo(anexo({ nome: "pacote.zip" })), "nao-suportado");
+});
+
+test("ehPrevisualizavel: true p/ pdf/txt/docx/xlsx, false p/ o resto", () => {
   assert.equal(ehPrevisualizavel(anexo({ nome: "a.pdf" })), true);
   assert.equal(ehPrevisualizavel(anexo({ nome: "a.txt" })), true);
-  assert.equal(ehPrevisualizavel(anexo({ nome: "a.docx" })), false);
+  assert.equal(ehPrevisualizavel(anexo({ nome: "a.docx" })), true);
+  assert.equal(ehPrevisualizavel(anexo({ nome: "a.xlsx" })), true);
+  assert.equal(ehPrevisualizavel(anexo({ nome: "a.pptx" })), false);
 });
