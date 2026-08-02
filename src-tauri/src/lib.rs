@@ -1304,6 +1304,15 @@ fn telemetry_status(state: State<'_, telemetry::TelemetryState>) -> telemetry::S
     state.status()
 }
 
+/// Inspetor DEV (#389): dump dos envelopes já na fila (scrubbed). Retorna vazio
+/// em release — o front só chama sob `import.meta.env.DEV`.
+#[tauri::command]
+fn telemetry_debug_dump(
+    state: State<'_, telemetry::TelemetryState>,
+) -> Vec<telemetry::EnvelopeCarimbado> {
+    state.debug_dump()
+}
+
 /// Navigator (#176): importa favoritos do Chrome/Edge lendo SOMENTE o arquivo
 /// `Bookmarks` (JSON) de cada perfil. Nunca le `Login Data`/credenciais. Devolve
 /// a arvore por navegador+perfil; ausencia degrada em lista vazia (sem panico).
@@ -1572,6 +1581,7 @@ pub fn run() {
             telemetry_set_consent,
             telemetry_revoke,
             telemetry_status,
+            telemetry_debug_dump,
             import_browser_bookmarks,
             fetch_favicon,
             autostart_status,

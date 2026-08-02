@@ -1993,6 +1993,23 @@ export interface TelemetryStatus {
   consent: TelemetryConsent;
   sessionId: string;
   queued: number;
+  /** #389: há consent gravado? `false` = 1º run (default ON) → mostra o aviso. */
+  configurado: boolean;
+}
+
+/** Envelope já carimbado e higienizado na fila (dump do inspetor DEV, #389).
+ *  Campos em snake_case porque o Rust não renomeia (é interno/dev-only). */
+export interface TelemetryEnvelopeCarimbado {
+  schema_version: number;
+  app_version: string;
+  build_channel: string;
+  os: string;
+  arch: string;
+  session_id: string;
+  ts_unix: number;
+  categoria: TelemetryCategoria;
+  evento: string;
+  atributos: Record<string, TelemetryValor>;
 }
 
 /** Emite um evento (fire-and-forget). Engole qualquer erro — telemetria não
@@ -2024,4 +2041,17 @@ export async function telemetryRevoke(): Promise<void> {
 export async function telemetryStatus(): Promise<TelemetryStatus | null> {
   if (!inTauri()) return null;
   return invoke<TelemetryStatus>("telemetry_status");
+}
+
+/** Inspetor DEV (#389): envelopes já na fila (scrubbed). Vazio fora do Tauri e
+ *  em builds de release (o backend só devolve dados em debug). */
+export async function telemetryDebugDump(): Promise<
+  TelemetryEnvelopeCarimbado[]
+> {
+  if (!inTauri()) return [];
+  try {
+    return await invoke<TelemetryEnvelopeCarimbado[]>("telemetry_debug_dump");
+  } catch {
+    return [];
+  }
 }
