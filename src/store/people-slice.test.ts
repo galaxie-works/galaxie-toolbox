@@ -342,3 +342,62 @@ test("undoMergeContacts restores master first and recreates only deleted absorbe
   assert.equal(ultimo?.name, "Master");
   assert.deepEqual(creates, ["A1", "A2"]);
 });
+
+const peopleContact = (id: string, categories: string[] = []) =>
+  ({
+    id,
+    contactId: `graph-${id}`,
+    name: id,
+    emails: [],
+    phones: [],
+    organization: false,
+    frequent: false,
+    sources: ["contacts"],
+    categories,
+  }) as never;
+
+test("#278 S3b assign categorias é otimista e reverte no erro", async () => {
+  let calls = 0;
+  const { state } = criarStore({
+    crPeopleContactCategories: async () => {
+      calls += 1;
+      if (calls === 2) throw new Error("graph 500");
+    },
+  });
+  state.peopleContacts = [peopleContact("c1")];
+
+  // Sucesso: aplica na hora (otimista) e persiste.
+  await state.setPeopleContactCategorias("c1", ["Crítico"]);
+  assert.deepEqual(state.peopleContacts[0].categories, ["Crítico"]);
+
+  // Erro: reverte pro estado anterior e propaga.
+  await assert.rejects(
+    state.setPeopleContactCategorias("c1", ["Azul", "Crítico"]),
+  );
+  assert.deepEqual(state.peopleContacts[0].categories, ["Crítico"]);
+  assert.equal(calls, 2);
+});
+
+test("#278 S3b assign recusa contato não-editável (sem contactId)", async () => {
+  let chamou = false;
+  const { state } = criarStore({
+    crPeopleContactCategories: async () => {
+      chamou = true;
+    },
+  });
+  const semContactId = { ...peopleContact("d1"), contactId: null } as never;
+  state.peopleContacts = [semContactId];
+
+  await assert.rejects(state.setPeopleContactCategorias("d1", ["X"]));
+  assert.equal(chamou, false, "não pode chamar o Graph pra item do diretório");
+});
+
+test("#278 S3b criarCategoriaPeople insere no mapa nome→cor", async () => {
+  const { state } = criarStore({
+    crCriarCategoria: async (nome: string) => ({ nome, cor: "#123456" }),
+  });
+  state.peopleCategorias = new Map();
+
+  await state.criarCategoriaPeople("Fornecedores", "preset0");
+  assert.equal(state.peopleCategorias.get("Fornecedores"), "#123456");
+});

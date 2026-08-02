@@ -4903,6 +4903,36 @@ pub fn cr_people_contact_update(
     Ok(())
 }
 
+/// Atribui as categorias do Outlook a um contato (#278 S3b): PATCH parcial só
+/// do campo `categories` em /me/contacts/{id}. Parcial de propósito — não mexe
+/// em nome/emails/telefones (serve tanto pro detalhe quanto pro bulk). As
+/// categorias são os NOMES das masterCategories (multi-valor), como no #211.
+pub fn cr_people_contact_categories(
+    store: &TokenStore,
+    contact_id: &str,
+    categorias: Vec<String>,
+) -> Result<(), String> {
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Err("Contacts.ReadWrite is required to edit contacts.".to_string());
+    }
+    let contact_id = contact_id.trim();
+    if contact_id.is_empty() {
+        return Err("Invalid contact.".to_string());
+    }
+    let body = serde_json::json!({ "categories": categorias });
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/contacts/{}", urlencoding::encode(contact_id));
+    let resp = graph_enviar("people:contact-categories", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|error| format!("Failed to update categories: {error}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Contacts: Graph returned {}", resp.status()));
+    }
+    Ok(())
+}
+
 /// Cria um contato completo (POST /me/contacts) e devolve o id do Graph criado.
 /// Necessário pro Undo do merge (#379): recria os absorvidos deletados e
 /// registra o novo id. O `cr_salvar_contatos` legado deduplica por email e não

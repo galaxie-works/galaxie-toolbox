@@ -1082,6 +1082,22 @@ export async function crPeopleContactUpdate(
 }
 
 /**
+ * Atribui as categorias do Outlook a um contato (#278 S3b): PATCH parcial só do
+ * campo `categories` — não mexe nos outros dados. `categorias` são os NOMES das
+ * masterCategories (multi-valor). Serve pro detalhe e pro bulk.
+ */
+export async function crPeopleContactCategories(
+  contactId: string,
+  categorias: string[],
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  return invoke<void>("cr_people_contact_categories", { contactId, categorias });
+}
+
+/**
  * Cria um contato completo (POST /me/contacts) e devolve o id do Graph criado.
  * Usado pelo Undo do merge (#379) pra recriar os absorvidos deletados — o
  * `crSalvarContatos` legado deduplica por email e não devolve id.

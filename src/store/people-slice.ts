@@ -35,9 +35,11 @@ type PeopleApi = Pick<
   | "crPeopleCompanyWrite"
   | "crPeopleDetailsWrite"
   | "crPeopleContactUpdate"
+  | "crPeopleContactCategories"
   | "crPeopleContactCreate"
   | "crPeopleContactDelete"
   | "crCategorias"
+  | "crCriarCategoria"
 >;
 
 /** Fases da execução do merge (#379), na ordem segura do #376. */
@@ -280,6 +282,20 @@ export interface PeopleSlice {
   selectPeopleCategory: (nome: string) => void;
   /** #406: (re)carrega as categorias do Outlook (masterCategories). */
   carregarCategoriasPeople: () => Promise<void>;
+  /**
+   * #278 S3b: define as categorias de UM contato (PATCH parcial). Otimista;
+   * reverte no erro. Só contatos editáveis (com `contactId`) — diretório não.
+   */
+  setPeopleContactCategorias: (
+    id: string,
+    categorias: string[],
+  ) => Promise<void>;
+  /**
+   * #278 S3b: cria uma categoria do Outlook inline (durante o assign) e já a
+   * insere no mapa `peopleCategorias` pra aparecer no seletor na hora. `preset`
+   * = nome do preset de cor do Outlook ("preset0".."preset24").
+   */
+  criarCategoriaPeople: (nome: string, preset: string) => Promise<void>;
   autoEnrichDirectoryContact: (
     id: string,
     sameOrganization: boolean,
@@ -1242,6 +1258,39 @@ export function criarPeopleSlice(
       }));
       throw error;
     }
+  },
+  setPeopleContactCategorias: async (id, categorias) => {
+    const current = get().peopleContacts.find((contact) => contact.id === id);
+    if (!current?.contactId) {
+      throw new Error("This person is not an editable Microsoft contact.");
+    }
+    const snapshot = [...current.categories];
+    // Otimista: aplica na grid/detalhe já; reverte a lista antiga no erro.
+    set((state) => ({
+      peopleContacts: state.peopleContacts.map((contact) =>
+        contact.id === id ? { ...contact, categories: categorias } : contact,
+      ),
+    }));
+    try {
+      await client.crPeopleContactCategories(current.contactId, categorias);
+    } catch (error) {
+      set((state) => ({
+        peopleContacts: state.peopleContacts.map((contact) =>
+          contact.id === id ? { ...contact, categories: snapshot } : contact,
+        ),
+      }));
+      throw error;
+    }
+  },
+  criarCategoriaPeople: async (nome, preset) => {
+    const criada = await client.crCriarCategoria(nome, preset);
+    // Insere no mapa nome→cor pra o seletor do detalhe mostrar na hora, sem
+    // esperar um novo hydrate. Mantém a ordem de inserção (Map).
+    set((state) => {
+      const proximo = new Map(state.peopleCategorias);
+      proximo.set(criada.nome, criada.cor);
+      return { peopleCategorias: proximo };
+    });
   },
   mergePeopleContacts: async (plan, onProgress) => {
     // Trava dupla execução (#379): reentrância enquanto uma mutação corre.
