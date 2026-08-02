@@ -883,6 +883,10 @@ pub fn cr_email(store: &TokenStore) -> Result<CaixaEntrada, String> {
 pub struct Tarefa {
     pub titulo: String,
     pub lista: String,
+    // #184 (Atoms S2): ids pra concluir in-place + prazo pro score de atenção.
+    pub id: String,
+    pub lista_id: String,
+    pub prazo: Option<String>,
 }
 
 /// Tarefas pendentes do To Do (todas as listas, ate 8). Tasks.ReadWrite.
@@ -916,7 +920,7 @@ pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
             // 2) tarefas nao concluidas de cada lista
             let url = format!(
                 "{GRAPH}/me/todo/lists/{id}/tasks?$filter=status ne 'completed'\
-                 &$select=title&$top=8"
+                 &$select=id,title,dueDateTime&$top=8"
             );
             if let Ok(r) = client.get(&url).bearer_auth(&token).send() {
                 if r.status().is_success() {
@@ -926,9 +930,16 @@ pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
                                 if tarefas.len() >= 8 {
                                     break;
                                 }
+                                // dueDateTime é objeto { dateTime, timeZone } no Graph.
+                                let prazo = it["dueDateTime"]["dateTime"]
+                                    .as_str()
+                                    .map(|s| s.to_string());
                                 tarefas.push(Tarefa {
                                     titulo: it["title"].as_str().unwrap_or("").to_string(),
                                     lista: nome.clone(),
+                                    id: it["id"].as_str().unwrap_or("").to_string(),
+                                    lista_id: id.to_string(),
+                                    prazo,
                                 });
                             }
                         }
@@ -938,6 +949,36 @@ pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
         }
     }
     Ok(tarefas)
+}
+
+/// Conclui uma tarefa do To Do (#184, Atoms S2): PATCH status=completed em
+/// /me/todo/lists/{lista}/tasks/{id}. Tasks.ReadWrite (já concedido).
+pub fn cr_tarefa_concluir(
+    store: &TokenStore,
+    lista_id: &str,
+    tarefa_id: &str,
+) -> Result<(), String> {
+    let lista_id = lista_id.trim();
+    let tarefa_id = tarefa_id.trim();
+    if lista_id.is_empty() || tarefa_id.is_empty() {
+        return Err("Invalid task.".to_string());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!(
+        "{GRAPH}/me/todo/lists/{}/tasks/{}",
+        urlencoding::encode(lista_id),
+        urlencoding::encode(tarefa_id)
+    );
+    let body = serde_json::json!({ "status": "completed" });
+    let resp = graph_enviar("todo:concluir", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("Failed to complete task: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("To Do: Graph returned {}", resp.status()));
+    }
+    Ok(())
 }
 
 // ----------------------------------------------------------------------------

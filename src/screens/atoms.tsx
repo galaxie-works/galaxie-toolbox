@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
+import { motion, type Transition } from "motion/react";
 import {
   CalendarClock,
   CalendarDays,
   Flag,
+  ListTodo,
   Mail,
   RefreshCw,
   Sparkles,
   Video,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Badge } from "@/components/reui/badge";
@@ -18,11 +21,14 @@ import {
 } from "@/components/reui/alert";
 import { IconStack } from "@/components/reui/icon-stack";
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/animate-ui/primitives/radix/checkbox";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { useIdioma, preencher } from "@/lib/idioma";
+import { ordenarAtoms, criarAtom } from "@/lib/atoms";
 import type { Tela } from "@/lib/navegacao";
-import type { AppUser, EventoAgenda } from "@/lib/types";
+import type { AppUser, EventoAgenda, Tarefa } from "@/lib/types";
 import * as api from "@/lib/api";
 
 /** Início/fim (ISO) da janela "agora → +7 dias" pra próximo evento + hoje. */
@@ -80,6 +86,7 @@ export function AtomsScreen({
   const [email, setEmail] = useState<
     Estado<{ naoLidos: number; sinalizados: number }>
   >({ fase: "carregando" });
+  const [todos, setTodos] = useState<Estado<Tarefa[]>>({ fase: "carregando" });
 
   const carregarAgenda = useCallback(async () => {
     setAgenda({ fase: "carregando" });
@@ -108,19 +115,40 @@ export function AtomsScreen({
     }
   }, []);
 
+  const carregarTodos = useCallback(async () => {
+    setTodos({ fase: "carregando" });
+    try {
+      const tarefas = await api.crTarefas();
+      setTodos({ fase: "ok", dados: tarefas });
+    } catch {
+      setTodos({ fase: "erro" });
+    }
+  }, []);
+
   useEffect(() => {
     void carregarAgenda();
     void carregarEmail();
-  }, [carregarAgenda, carregarEmail]);
+    void carregarTodos();
+  }, [carregarAgenda, carregarEmail, carregarTodos]);
 
-  // "Tudo em dia" do dashboard inteiro: as duas fontes carregadas E sem nada
-  // pendente (agenda sem eventos e caixa limpa). Só quando ambas resolveram ok.
+  // Remove uma tarefa da lista após concluí-la (otimista; o widget faz o write).
+  const removerTarefa = useCallback((id: string) => {
+    setTodos((atual) =>
+      atual.fase === "ok"
+        ? { fase: "ok", dados: atual.dados.filter((tf) => tf.id !== id) }
+        : atual,
+    );
+  }, []);
+
+  // "Tudo em dia" do dashboard inteiro: as três fontes carregadas E sem nada
+  // pendente. Só quando todas resolveram ok.
   const agendaVazia = agenda.fase === "ok" && agenda.dados.length === 0;
   const emailVazio =
     email.fase === "ok" &&
     email.dados.naoLidos === 0 &&
     email.dados.sinalizados === 0;
-  const tudoEmDia = agendaVazia && emailVazio;
+  const todosVazio = todos.fase === "ok" && todos.dados.length === 0;
+  const tudoEmDia = agendaVazia && emailVazio && todosVazio;
 
   return (
     <div className="w-full space-y-6">
@@ -163,6 +191,12 @@ export function AtomsScreen({
             t={t}
             onRetry={() => void carregarEmail()}
             onNavegar={onNavegar}
+          />
+          <TodosWidget
+            estado={todos}
+            t={t}
+            onRetry={() => void carregarTodos()}
+            onConcluida={removerTarefa}
           />
         </div>
       )}
@@ -382,6 +416,155 @@ function EmailWidget({
         <FrameTitle className="flex items-center gap-2">
           <Mail className="size-4 text-muted-foreground" />
           {t.atoms.emailTitulo}
+        </FrameTitle>
+      </FrameHeader>
+      <FramePanel>{corpo()}</FramePanel>
+    </Frame>
+  );
+}
+
+// Strike-through do check-off — reusa a animação do seed `playful-todolist`.
+const getPathAnimate = (marcada: boolean) => ({
+  pathLength: marcada ? 1 : 0,
+  opacity: marcada ? 1 : 0,
+});
+const getPathTransition = (marcada: boolean): Transition => ({
+  pathLength: { duration: 0.6, ease: "easeInOut" },
+  opacity: { duration: 0.01, delay: marcada ? 0 : 0.6 },
+});
+
+/** Fatos de atenção de uma tarefa: prazo vencido (antes de hoje) × vence hoje. */
+function sinalTarefa(tf: Tarefa) {
+  if (!tf.prazo) return { origem: "todo" as const };
+  const q = new Date(/Z$/.test(tf.prazo) ? tf.prazo : `${tf.prazo}Z`).getTime();
+  const inicioHoje = new Date();
+  inicioHoje.setHours(0, 0, 0, 0);
+  const hoje = mesmoDia(new Date(q), new Date());
+  return {
+    origem: "todo" as const,
+    quando: q,
+    vencido: q < inicioHoje.getTime() && !hoje,
+    hoje,
+  };
+}
+
+function TodosWidget({
+  estado,
+  t,
+  onRetry,
+  onConcluida,
+}: {
+  estado: Estado<Tarefa[]>;
+  t: Dic;
+  onRetry: () => void;
+  onConcluida: (id: string) => void;
+}) {
+  // ids em transição de conclusão (tocando o strike antes de sumir).
+  const [concluindo, setConcluindo] = useState<Set<string>>(new Set());
+
+  const concluir = async (tf: Tarefa) => {
+    setConcluindo((s) => new Set(s).add(tf.id));
+    try {
+      await api.crTarefaConcluir(tf.listaId, tf.id);
+      // Deixa o strike tocar, depois remove da lista (otimista pós-write ok).
+      setTimeout(() => onConcluida(tf.id), 600);
+    } catch {
+      setConcluindo((s) => {
+        const n = new Set(s);
+        n.delete(tf.id);
+        return n;
+      });
+      toast.error(t.atoms.todosErroConcluir);
+    }
+  };
+
+  const corpo = () => {
+    if (estado.fase === "carregando") return <SkeletonLinhas />;
+    if (estado.fase === "erro") return <ErroCard t={t} onRetry={onRetry} />;
+    if (estado.dados.length === 0) {
+      return (
+        <div className="flex flex-col items-center gap-2 py-6 text-center">
+          <IconStack>
+            <ListTodo className="size-5 text-muted-foreground" />
+          </IconStack>
+          <p className="text-sm text-muted-foreground">{t.atoms.todosVazio}</p>
+        </div>
+      );
+    }
+
+    // Ordena pelo score de atenção (vencidas/prazo primeiro), reusa lib/atoms.
+    const agora = Date.now();
+    const ordenadas = ordenarAtoms(
+      estado.dados.map((tf) =>
+        criarAtom(tf.id, "todo", tf.titulo, sinalTarefa(tf), agora),
+      ),
+    );
+    const porId = new Map(estado.dados.map((tf) => [tf.id, tf]));
+
+    return (
+      <ul className="space-y-3.5">
+        {ordenadas.map((item) => {
+          const tf = porId.get(item.id)!;
+          const marcada = concluindo.has(tf.id);
+          return (
+            <li key={tf.id} className="flex items-center gap-2.5">
+              <Checkbox
+                checked={marcada}
+                onCheckedChange={(v) => {
+                  if (v === true && !marcada) void concluir(tf);
+                }}
+                id={`atom-todo-${tf.id}`}
+              />
+              <div className="relative min-w-0 flex-1">
+                <Label
+                  htmlFor={`atom-todo-${tf.id}`}
+                  className="block truncate font-normal"
+                >
+                  {tf.titulo}
+                </Label>
+                <motion.svg
+                  width="340"
+                  height="32"
+                  viewBox="0 0 340 32"
+                  className="pointer-events-none absolute left-0 top-1/2 z-20 h-8 w-full -translate-y-1/2"
+                >
+                  <motion.path
+                    d="M 10 16.91 s 79.8 -11.36 98.1 -11.34 c 22.2 0.02 -47.82 14.25 -33.39 22.02 c 12.61 6.77 124.18 -27.98 133.31 -17.28 c 7.52 8.38 -26.8 20.02 4.61 22.05 c 24.55 1.93 113.37 -20.36 113.37 -20.36"
+                    vectorEffect="non-scaling-stroke"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeMiterlimit={10}
+                    fill="none"
+                    initial={false}
+                    animate={getPathAnimate(marcada)}
+                    transition={getPathTransition(marcada)}
+                    className="stroke-muted-foreground"
+                  />
+                </motion.svg>
+              </div>
+              {item.motivo === "vencido" && (
+                <Badge variant="destructive" size="sm" className="shrink-0">
+                  {t.atoms.motivoVencido}
+                </Badge>
+              )}
+              {item.motivo === "prazoHoje" && (
+                <Badge variant="secondary" size="sm" className="shrink-0">
+                  {t.atoms.motivoPrazoHoje}
+                </Badge>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    );
+  };
+
+  return (
+    <Frame className="w-full">
+      <FrameHeader>
+        <FrameTitle className="flex items-center gap-2">
+          <ListTodo className="size-4 text-muted-foreground" />
+          {t.atoms.todosTitulo}
         </FrameTitle>
       </FrameHeader>
       <FramePanel>{corpo()}</FramePanel>

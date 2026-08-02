@@ -345,12 +345,25 @@ export async function crEmail(): Promise<CaixaEntrada> {
 export async function crTarefas(): Promise<Tarefa[]> {
   if (!inTauri()) {
     await sleep(450);
+    const ontem = new Date(Date.now() - 86_400_000).toISOString();
     return [
-      { titulo: "Revisar migração PROJ-H", lista: "Trabalho" },
-      { titulo: "Ligar para o suporte MS", lista: "Trabalho" },
+      { titulo: "Revisar migração PROJ-H", lista: "Trabalho", id: "t1", listaId: "l1", prazo: ontem },
+      { titulo: "Ligar para o suporte MS", lista: "Trabalho", id: "t2", listaId: "l1", prazo: null },
     ];
   }
   return invoke<Tarefa[]>("cr_tarefas");
+}
+
+/** Atoms (#184): conclui uma tarefa do To Do (complete-in-place). */
+export async function crTarefaConcluir(
+  listaId: string,
+  tarefaId: string,
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(250);
+    return;
+  }
+  return invoke<void>("cr_tarefa_concluir", { listaId, tarefaId });
 }
 
 // --- Agenda do dia + inbox do dia ----------------------------------------
