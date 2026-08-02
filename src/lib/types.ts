@@ -88,6 +88,10 @@ export interface CaixaEntrada {
 export interface Tarefa {
   titulo: string;
   lista: string;
+  // #184 (Atoms S2): ids pra concluir in-place + prazo (ISO) pro score.
+  id: string;
+  listaId: string;
+  prazo?: string | null;
 }
 
 // --- Agenda do dia + inbox do dia (Control room rico) --------------------

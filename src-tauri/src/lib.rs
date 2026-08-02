@@ -272,6 +272,21 @@ async fn cr_tarefas(state: State<'_, Store>) -> Result<Vec<graph::Tarefa>, Strin
         .map_err(|e| e.to_string())?
 }
 
+/// Atoms (#184): conclui uma tarefa do To Do (complete-in-place).
+#[tauri::command]
+async fn cr_tarefa_concluir(
+    state: State<'_, Store>,
+    lista_id: String,
+    tarefa_id: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_tarefa_concluir(&store, &lista_id, &tarefa_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Control room: eventos da agenda no dia escolhido (limites ISO UTC).
 #[tauri::command]
 async fn cr_agenda(
@@ -1548,6 +1563,7 @@ pub fn run() {
             cr_reunioes,
             cr_email,
             cr_tarefas,
+            cr_tarefa_concluir,
             cr_agenda,
             cr_calendarios,
             cr_agenda_calendario,
