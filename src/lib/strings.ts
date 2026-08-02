@@ -739,15 +739,29 @@ const pt = {
     mergeResumoDescricao: "{n} contatos → 1 contato",
     mergeMaster: "Contato principal",
     mergeAbsorvidos: "Contatos absorvidos",
-    mergeAvisoTitulo: "A execução real pertence à S3",
+    mergeAvisoTitulo: "Ação destrutiva",
     mergeAvisoDescricao:
-      "DELETE será permanente e os IDs originais não voltarão. Nesta etapa, nenhum contato será alterado ou removido.",
-    mergeProntoTitulo: "Plano pronto para a S3",
+      "Os contatos absorvidos serão apagados no Microsoft 365. Você pode desfazer logo depois (recriando-os), mas os IDs originais não voltam.",
+    mergeProntoTitulo: "Plano pronto",
     mergeProntoDescricao:
-      "MergePlan v{version} criado localmente com {n} contatos absorvidos; nenhuma operação foi executada.",
+      "MergePlan v{version} com {n} contatos absorvidos. Confirme para atualizar o principal e apagar os absorvidos.",
     mergeContinuar: "Continuar",
     mergeCta: "Mesclar {n} contatos",
-    mergeProntoCta: "Pronto para S3",
+    mergeProntoCta: "Confirmar e mesclar",
+    mergeFaseSnapshot: "Preparando snapshot",
+    mergeFaseMaster: "Atualizando o contato principal",
+    mergeFaseAbsorbed: "Apagando os absorvidos",
+    mergeFaseRefetch: "Finalizando",
+    mergeFaseDone: "Concluído",
+    mergeSucesso: "{n} contatos mesclados em 1.",
+    mergeParcial:
+      "Principal atualizado, mas {n} não puderam ser apagados e seguem como duplicatas.",
+    mergeErroMaster:
+      "Não foi possível atualizar o contato principal. Nenhum contato foi apagado.",
+    mergeDesfazer: "Desfazer",
+    mergeDesfeito: "Merge desfeito.",
+    mergeDesfeitoParcial:
+      "Principal restaurado, mas {n} recriação(ões) falharam.",
     peopleBulkEditarDetalhes: "Editar detalhes",
     bulkDetailsTitulo: "Editar detalhes de {n} contatos",
     bulkDetailsDescricao:
@@ -1833,15 +1847,29 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     mergeResumoDescricao: "{n} contacts → 1 contact",
     mergeMaster: "Primary contact",
     mergeAbsorvidos: "Absorbed contacts",
-    mergeAvisoTitulo: "Real execution belongs to S3",
+    mergeAvisoTitulo: "Destructive action",
     mergeAvisoDescricao:
-      "DELETE will be permanent and original IDs will not return. At this stage, no contact is changed or removed.",
-    mergeProntoTitulo: "Plan ready for S3",
+      "Absorbed contacts will be deleted in Microsoft 365. You can undo right after (by recreating them), but the original IDs won't come back.",
+    mergeProntoTitulo: "Plan ready",
     mergeProntoDescricao:
-      "MergePlan v{version} created locally with {n} absorbed contacts; no operation was executed.",
+      "MergePlan v{version} with {n} absorbed contacts. Confirm to update the primary and delete the absorbed ones.",
     mergeContinuar: "Continue",
     mergeCta: "Merge {n} contacts",
-    mergeProntoCta: "Ready for S3",
+    mergeProntoCta: "Confirm and merge",
+    mergeFaseSnapshot: "Preparing snapshot",
+    mergeFaseMaster: "Updating the primary contact",
+    mergeFaseAbsorbed: "Deleting absorbed contacts",
+    mergeFaseRefetch: "Finishing",
+    mergeFaseDone: "Done",
+    mergeSucesso: "{n} contacts merged into 1.",
+    mergeParcial:
+      "Primary updated, but {n} couldn't be deleted and remain as duplicates.",
+    mergeErroMaster:
+      "Couldn't update the primary contact. No contact was deleted.",
+    mergeDesfazer: "Undo",
+    mergeDesfeito: "Merge undone.",
+    mergeDesfeitoParcial:
+      "Primary restored, but {n} recreation(s) failed.",
     peopleBulkEditarDetalhes: "Edit details",
     bulkDetailsTitulo: "Edit details for {n} contacts",
     bulkDetailsDescricao:
