@@ -24,14 +24,16 @@ import {
   ChevronRight,
   Download,
   FileWarning,
+  Loader2,
   RotateCcw,
+  Sparkles,
   X,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
 
 import * as api from "@/lib/api";
-import { classificarAnexo } from "@/lib/anexo-tipo";
+import { aceitaAltaFidelidade, classificarAnexo } from "@/lib/anexo-tipo";
 import { renderDocxParaHtml } from "@/lib/docx-render";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { carregarPdf, renderizarPagina } from "@/lib/pdf-preview";
@@ -85,6 +87,11 @@ export function PreviewAnexo({
   const tipo = classificarAnexo(anexo);
   const grande = anexo.tamanho > LIMITE_PREVIEW_BYTES;
 
+  // pptx sempre via Path C (Graph→PDF); docx/xlsx opcionalmente, via o toggle.
+  const [altaFidelidade, setAltaFidelidade] = useState(false);
+  const usarPathC =
+    tipo === "pptx" || (aceitaAltaFidelidade(tipo) && altaFidelidade);
+
   const [carregando, setCarregando] = useState(tipo !== "nao-suportado");
   const [erro, setErro] = useState<string | null>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -93,6 +100,7 @@ export function PreviewAnexo({
   const [planilhas, setPlanilhas] = useState<Planilha[] | null>(null);
 
   // Busca e decodifica os bytes uma vez (a menos que seja não-suportado/grande).
+  // `usarPathC` nas deps: alternar alta fidelidade re-busca (converte no OneDrive).
   useEffect(() => {
     if (tipo === "nao-suportado" || grande) {
       setCarregando(false);
@@ -102,8 +110,17 @@ export function PreviewAnexo({
     let doc: PDFDocumentProxy | null = null;
     setCarregando(true);
     setErro(null);
+    setPdf(null); // limpa render anterior ao trocar de modo (client ↔ Path C)
     (async () => {
       try {
+        if (usarPathC) {
+          // Path C: converte para PDF no OneDrive e renderiza no mesmo pdf.js.
+          const conv = await api.crAnexoParaPdf(messageId, anexo.id, mailbox);
+          doc = await carregarPdf(base64ParaBytes(conv.bytesB64));
+          if (vivo) setPdf(doc);
+          else void doc.loadingTask.destroy();
+          return;
+        }
         const conteudo = await api.crLerAnexo(messageId, anexo.id, mailbox);
         const bytes = base64ParaBytes(conteudo.bytesB64);
         if (tipo === "txt") {
@@ -129,7 +146,7 @@ export function PreviewAnexo({
       vivo = false;
       if (doc) void doc.loadingTask.destroy();
     };
-  }, [messageId, anexo.id, mailbox, tipo, grande]);
+  }, [messageId, anexo.id, mailbox, tipo, grande, usarPathC]);
 
   return (
     <div
@@ -142,6 +159,17 @@ export function PreviewAnexo({
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {anexo.nome}
         </span>
+        {aceitaAltaFidelidade(tipo) && (
+          <Button
+            variant={altaFidelidade ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => setAltaFidelidade((v) => !v)}
+            aria-pressed={altaFidelidade}
+          >
+            <Sparkles className="size-3.5" /> {tp.previewAltaFidelidade}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"
@@ -181,6 +209,12 @@ export function PreviewAnexo({
           />
         ) : carregando ? (
           <div className="space-y-2 p-4">
+            {usarPathC && (
+              <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="size-3.5 animate-spin" />
+                {tp.previewConvertendo}
+              </p>
+            )}
             <Skeleton className="h-4 w-1/3" />
             <Skeleton className="h-40 w-full" />
           </div>
@@ -192,6 +226,16 @@ export function PreviewAnexo({
               <AlertDescription>{erro}</AlertDescription>
             </Alert>
           </div>
+        ) : usarPathC ? (
+          pdf ? (
+            <div>
+              <PdfViewer doc={pdf} tp={tp} />
+              {/* Egress consciente (§7.3): converteu no OneDrive do usuário. */}
+              <p className="border-t px-3 py-1.5 text-[11px] text-muted-foreground">
+                {tp.previewConvertido}
+              </p>
+            </div>
+          ) : null
         ) : tipo === "txt" && txt !== null ? (
           <TxtViewer texto={txt} rotulo={anexo.nome} />
         ) : tipo === "pdf" && pdf ? (

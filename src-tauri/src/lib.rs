@@ -1190,6 +1190,28 @@ async fn cr_ler_anexo(
     .map_err(|e| e.to_string())?
 }
 
+/// Control room: converte um anexo Office para PDF em alta fidelidade via
+/// Path C (OneDrive do usuário → ?format=pdf → cleanup); renderiza no pdf.js (#190).
+#[tauri::command]
+async fn cr_anexo_para_pdf(
+    state: State<'_, Store>,
+    message_id: String,
+    attachment_id: String,
+    mailbox: Option<String>,
+) -> Result<graph::AnexoConteudo, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_anexo_para_pdf(
+            &store,
+            &message_id,
+            &attachment_id,
+            mailbox.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Abre um arquivo local com o aplicativo padrao do Windows.
 #[tauri::command]
 async fn abrir_caminho(path: String) -> Result<(), String> {
@@ -1624,6 +1646,7 @@ pub fn run() {
             cr_mover_pasta,
             cr_baixar_anexo,
             cr_ler_anexo,
+            cr_anexo_para_pdf,
             abrir_caminho,
             revelar_no_explorer,
             connect_site,

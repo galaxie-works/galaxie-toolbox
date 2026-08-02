@@ -3,7 +3,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { classificarAnexo, ehPrevisualizavel } from "./anexo-tipo.ts";
+import {
+  aceitaAltaFidelidade,
+  classificarAnexo,
+  ehPrevisualizavel,
+} from "./anexo-tipo.ts";
 import type { AnexoEmail } from "./types.ts";
 
 function anexo(over: Partial<AnexoEmail>): AnexoEmail {
@@ -57,15 +61,27 @@ test("xlsx pelo sufixo do nome", () => {
   assert.equal(classificarAnexo(anexo({ nome: "orcamento.XLSX" })), "xlsx");
 });
 
+test("pptx pelo sufixo do nome (Path C, #190)", () => {
+  assert.equal(classificarAnexo(anexo({ nome: "deck.PPTX" })), "pptx");
+});
+
 test("formato fora do escopo → nao-suportado", () => {
-  assert.equal(classificarAnexo(anexo({ nome: "slides.pptx" })), "nao-suportado");
+  assert.equal(classificarAnexo(anexo({ nome: "arquivo.msg" })), "nao-suportado");
   assert.equal(classificarAnexo(anexo({ nome: "pacote.zip" })), "nao-suportado");
 });
 
-test("ehPrevisualizavel: true p/ pdf/txt/docx/xlsx, false p/ o resto", () => {
+test("ehPrevisualizavel: true p/ pdf/txt/docx/xlsx/pptx, false p/ o resto", () => {
   assert.equal(ehPrevisualizavel(anexo({ nome: "a.pdf" })), true);
   assert.equal(ehPrevisualizavel(anexo({ nome: "a.txt" })), true);
   assert.equal(ehPrevisualizavel(anexo({ nome: "a.docx" })), true);
   assert.equal(ehPrevisualizavel(anexo({ nome: "a.xlsx" })), true);
-  assert.equal(ehPrevisualizavel(anexo({ nome: "a.pptx" })), false);
+  assert.equal(ehPrevisualizavel(anexo({ nome: "a.pptx" })), true);
+  assert.equal(ehPrevisualizavel(anexo({ nome: "a.zip" })), false);
+});
+
+test("aceitaAltaFidelidade: só docx/xlsx", () => {
+  assert.equal(aceitaAltaFidelidade("docx"), true);
+  assert.equal(aceitaAltaFidelidade("xlsx"), true);
+  assert.equal(aceitaAltaFidelidade("pptx"), false);
+  assert.equal(aceitaAltaFidelidade("pdf"), false);
 });

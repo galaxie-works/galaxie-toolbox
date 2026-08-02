@@ -1818,6 +1818,28 @@ export async function crLerAnexo(
   });
 }
 
+/**
+ * Path C (#190): converte um anexo Office para PDF em alta fidelidade via
+ * OneDrive do usuário (upload temp → `?format=pdf` → cleanup). Devolve o PDF em
+ * base64 para o pdf.js. Usa `Files.ReadWrite` (já concedido).
+ */
+export async function crAnexoParaPdf(
+  messageId: string,
+  attachmentId: string,
+  mailbox?: string
+): Promise<AnexoConteudo> {
+  if (!inTauri()) {
+    await sleep(700);
+    // Conversão depende do Graph real; no dev exercita o caminho de erro/degrade.
+    throw new Error("Conversão via Microsoft 365 indisponível no modo dev");
+  }
+  return invoke<AnexoConteudo>("cr_anexo_para_pdf", {
+    messageId,
+    attachmentId,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
 /** Abre um arquivo local com o aplicativo padrao. */
 export async function abrirCaminho(path: string): Promise<void> {
   if (!inTauri()) {
