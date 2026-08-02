@@ -5,6 +5,7 @@ import type { AppStore } from "./index";
 export const SETTINGS_ITEM_IDS = [
   "accounts",
   "personalization",
+  "privacy",
   "system",
   "galaxie-apps",
   "bridge",

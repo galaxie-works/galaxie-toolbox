@@ -3,6 +3,7 @@ import {
   MonitorCog,
   Palette,
   Settings,
+  ShieldCheck,
   UserRound,
 } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
@@ -34,6 +35,7 @@ import {
 } from "@/components/navigator-settings";
 import { LockScreenSettings } from "@/components/lock-screen-settings";
 import { StartupSettings } from "@/components/startup-settings";
+import { TelemetrySettings } from "@/components/telemetry-settings";
 import {
   AccessibilitySettings,
   MoodSettings,
@@ -169,6 +171,21 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
             title: "Lock screen",
             subtitle: "Protect the app with a PIN.",
             node: <LockScreenSettings />,
+          },
+        ],
+      },
+      {
+        id: "privacy",
+        label: "Privacy",
+        description: "Control what anonymous telemetry the app may collect.",
+        icon: ShieldCheck,
+        frames: [
+          {
+            key: "telemetry",
+            title: "Telemetry & diagnostics",
+            subtitle:
+              "Opt in per category. Off by default; no personal data, ever.",
+            node: <TelemetrySettings />,
           },
         ],
       },
