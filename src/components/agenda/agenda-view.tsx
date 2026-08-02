@@ -30,9 +30,13 @@ import type { Idioma } from "@/lib/strings";
 import type {
   AcaoRsvp,
   ConvidadoInput,
+  DiaSemana,
   EventoAgenda,
   EventoInput,
   Pessoa,
+  RecorrenciaFim,
+  RecorrenciaFrequencia,
+  RecorrenciaInput,
 } from "@/lib/types";
 import { CampoPessoas } from "@/components/compose/campo-pessoas";
 
@@ -101,6 +105,28 @@ import {
 } from "@/components/ui/empty";
 
 type Dic = ReturnType<typeof useIdioma>["t"];
+
+// Recorrência (#396): ordem dos dias (domingo=0, como o getDay do JS) e rótulo
+// curto localizado via Intl (sem precisar de string por dia no dicionário).
+const ORDEM_DIAS: DiaSemana[] = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+function rotuloDiaCurto(dia: DiaSemana): string {
+  const idx = ORDEM_DIAS.indexOf(dia);
+  // 2023-01-01 é um domingo → base estável pra formatar o nome do dia.
+  const d = new Date(2023, 0, 1 + idx);
+  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(d);
+}
+function diaDaData(iso: string): DiaSemana {
+  const d = new Date(`${iso}T00:00:00`);
+  return ORDEM_DIAS[d.getDay()] ?? "monday";
+}
 
 // Identidades estáveis: o store do event-calendar compara settings por
 // referência, então arrays/objetos recriados a cada render forçariam re-render.
@@ -644,6 +670,16 @@ function EventoFormSheet() {
   const [calendarioAlvo, setCalendarioAlvo] = useState<string>("");
   const [salvando, setSalvando] = useState(false);
 
+  // Recorrência (#396, S1) — só ao CRIAR (editar série é o S2). "never" = único.
+  const [recFreq, setRecFreq] = useState<"never" | RecorrenciaFrequencia>(
+    "never",
+  );
+  const [recIntervalo, setRecIntervalo] = useState(1);
+  const [recDias, setRecDias] = useState<DiaSemana[]>([]);
+  const [recFim, setRecFim] = useState<RecorrenciaFim>("noEnd");
+  const [recDataFim, setRecDataFim] = useState("");
+  const [recNumOcorr, setRecNumOcorr] = useState(10);
+
   // Só dá pra criar em calendários editáveis (#233). Calendários somente-leitura
   // (feriados, aniversários, compartilhados) ficam de fora do alvo de criação.
   const calsEditaveis = useMemo(
@@ -696,6 +732,12 @@ function EventoFormSheet() {
       setConvEmails([]);
       setConvPessoas([]);
       setReuniaoTeams(false);
+      setRecFreq("never");
+      setRecIntervalo(1);
+      setRecDias([]);
+      setRecFim("noEnd");
+      setRecDataFim("");
+      setRecNumOcorr(10);
       setInicioDT(paraInputLocal(baseIso));
       setFimDT(paraInputLocal(maisUma));
       setInicioD(paraInputData(baseIso));
@@ -736,6 +778,33 @@ function EventoFormSheet() {
       return { email, nome: p?.nome ?? email };
     });
 
+  // Monta a recorrência (#396) a partir do estado do form. Só ao criar; weekly
+  // sem dias marcados cai no dia da data de início.
+  const montarRecorrencia = (dataInicio: string): RecorrenciaInput | undefined => {
+    if (modo !== "criar" || recFreq === "never" || !dataInicio) return undefined;
+    const dias =
+      recFreq === "weekly"
+        ? recDias.length > 0
+          ? recDias
+          : [diaDaData(dataInicio)]
+        : [];
+    return {
+      frequencia: recFreq,
+      intervalo: Math.max(1, recIntervalo || 1),
+      diasSemana: dias,
+      diaDoMes:
+        recFreq === "monthly" || recFreq === "yearly"
+          ? Number(dataInicio.slice(8, 10))
+          : undefined,
+      mes: recFreq === "yearly" ? Number(dataInicio.slice(5, 7)) : undefined,
+      fimTipo: recFim,
+      dataInicio,
+      dataFim: recFim === "endDate" ? recDataFim || undefined : undefined,
+      numeroOcorrencias:
+        recFim === "numbered" ? Math.max(1, recNumOcorr || 1) : undefined,
+    };
+  };
+
   const montarInput = (): EventoInput | null => {
     const assunto = titulo.trim();
     if (!assunto) {
@@ -767,6 +836,7 @@ function EventoFormSheet() {
         convidados,
         reuniaoTeams,
         calendarioId,
+        recorrencia: montarRecorrencia(inicioD),
       };
     }
     if (!inicioDT) return null;
@@ -783,6 +853,7 @@ function EventoFormSheet() {
       convidados,
       reuniaoTeams,
       calendarioId,
+      recorrencia: montarRecorrencia(inicioDT.slice(0, 10)),
     };
   };
 
@@ -933,6 +1004,141 @@ function EventoFormSheet() {
               {t.controlRoom.agendaFormTeams}
             </FieldLabel>
           </Field>
+
+          {/* Recorrência (#396, S1) — só ao criar; editar série é o S2. */}
+          {modo === "criar" && (
+            <Field>
+              <FieldLabel htmlFor="agenda-recorrencia">
+                {t.controlRoom.agendaFormRepetir}
+              </FieldLabel>
+              <Select
+                value={recFreq}
+                onValueChange={(v) =>
+                  setRecFreq(v as "never" | RecorrenciaFrequencia)
+                }
+              >
+                <SelectTrigger id="agenda-recorrencia" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="never">
+                    {t.controlRoom.agendaRepetirNunca}
+                  </SelectItem>
+                  <SelectItem value="daily">
+                    {t.controlRoom.agendaRepetirDiario}
+                  </SelectItem>
+                  <SelectItem value="weekly">
+                    {t.controlRoom.agendaRepetirSemanal}
+                  </SelectItem>
+                  <SelectItem value="monthly">
+                    {t.controlRoom.agendaRepetirMensal}
+                  </SelectItem>
+                  <SelectItem value="yearly">
+                    {t.controlRoom.agendaRepetirAnual}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+
+              {recFreq !== "never" && (
+                <div className="mt-2 grid gap-3 rounded-lg border border-border p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">
+                      {t.controlRoom.agendaRepetirACada}
+                    </span>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={recIntervalo}
+                      onChange={(e) =>
+                        setRecIntervalo(Math.max(1, Number(e.target.value) || 1))
+                      }
+                      className="w-20"
+                      aria-label={t.controlRoom.agendaRepetirACada}
+                    />
+                  </div>
+
+                  {recFreq === "weekly" && (
+                    <div className="flex flex-wrap gap-1">
+                      {ORDEM_DIAS.map((dia) => {
+                        const ativo = recDias.includes(dia);
+                        return (
+                          <Button
+                            key={dia}
+                            type="button"
+                            size="sm"
+                            variant={ativo ? "default" : "outline"}
+                            className="h-8 min-w-9 px-2 capitalize"
+                            aria-pressed={ativo}
+                            onClick={() =>
+                              setRecDias((atual) =>
+                                atual.includes(dia)
+                                  ? atual.filter((d) => d !== dia)
+                                  : [...atual, dia],
+                              )
+                            }
+                          >
+                            {rotuloDiaCurto(dia)}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="grid gap-2">
+                    <span className="text-sm text-muted-foreground">
+                      {t.controlRoom.agendaRepetirTermina}
+                    </span>
+                    <Select
+                      value={recFim}
+                      onValueChange={(v) => setRecFim(v as RecorrenciaFim)}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="noEnd">
+                          {t.controlRoom.agendaRepetirNuncaTermina}
+                        </SelectItem>
+                        <SelectItem value="endDate">
+                          {t.controlRoom.agendaRepetirAteData}
+                        </SelectItem>
+                        <SelectItem value="numbered">
+                          {t.controlRoom.agendaRepetirAposN}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {recFim === "endDate" && (
+                      <Input
+                        type="date"
+                        value={recDataFim}
+                        onChange={(e) => setRecDataFim(e.target.value)}
+                        aria-label={t.controlRoom.agendaRepetirAteData}
+                      />
+                    )}
+                    {recFim === "numbered" && (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={recNumOcorr}
+                          onChange={(e) =>
+                            setRecNumOcorr(
+                              Math.max(1, Number(e.target.value) || 1),
+                            )
+                          }
+                          className="w-20"
+                          aria-label={t.controlRoom.agendaRepetirAposN}
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          {t.controlRoom.agendaRepetirOcorrencias}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </Field>
+          )}
 
           <Field>
             <FieldLabel htmlFor="agenda-local">
