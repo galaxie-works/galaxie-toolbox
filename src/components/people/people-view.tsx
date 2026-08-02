@@ -1813,19 +1813,30 @@ function BulkCategoriaPicker({
   label,
   placeholder,
   emptyText,
+  createLabel,
   selected,
   categorias,
   onToggle,
+  onCriar,
 }: {
   label: string;
   placeholder: string;
   emptyText: string;
+  /** #401: rótulo do item "criar" (só relevante quando `onCriar` é passado). */
+  createLabel?: string;
   selected: string[];
   categorias: Map<string, string>;
   onToggle: (nome: string) => void;
+  /** #401: criar categoria inline durante o bulk (só no picker de adicionar). */
+  onCriar?: (nome: string) => Promise<void>;
 }) {
   const [aberto, setAberto] = useState(false);
+  const [busca, setBusca] = useState("");
   const nomes = [...categorias.keys()];
+  const buscaLimpa = busca.trim();
+  const jaExiste = nomes.some(
+    (nome) => nome.toLowerCase() === buscaLimpa.toLowerCase(),
+  );
   return (
     <div className="grid gap-1.5">
       <Label className="text-xs text-muted-foreground">{label}</Label>
@@ -1868,7 +1879,11 @@ function BulkCategoriaPicker({
           </PopoverTrigger>
           <PopoverContent align="start" className="w-64 p-0">
             <Command>
-              <CommandInput placeholder={placeholder} />
+              <CommandInput
+                placeholder={placeholder}
+                value={busca}
+                onValueChange={setBusca}
+              />
               <CommandList>
                 <CommandEmpty>{emptyText}</CommandEmpty>
                 <CommandGroup>
@@ -1896,6 +1911,24 @@ function BulkCategoriaPicker({
                     );
                   })}
                 </CommandGroup>
+                {/* #401: criar categoria inline durante o bulk edit. */}
+                {onCriar && buscaLimpa && !jaExiste && (
+                  <>
+                    <CommandSeparator />
+                    <CommandGroup>
+                      <CommandItem
+                        value={`__criar__${buscaLimpa}`}
+                        onSelect={() => {
+                          void onCriar(buscaLimpa);
+                          setBusca("");
+                        }}
+                      >
+                        <Plus className="size-3.5 shrink-0" />
+                        {createLabel} “{buscaLimpa}”
+                      </CommandItem>
+                    </CommandGroup>
+                  </>
+                )}
               </CommandList>
             </Command>
           </PopoverContent>
@@ -1924,6 +1957,9 @@ function BulkEditDetailsSheet({
     (state) => state.bulkSetPeopleCategorias,
   );
   const peopleCategorias = useAppStore((state) => state.peopleCategorias);
+  const criarCategoriaPeople = useAppStore(
+    (state) => state.criarCategoriaPeople,
+  );
   const [step, setStep] = useState<BulkEditDetailsStep>("edit");
   const [edits, setEdits] = useState<BulkEditDetailsState>(
     emptyBulkEditDetailsState,
@@ -2209,9 +2245,15 @@ function BulkEditDetailsSheet({
                     label={t.controlRoom.bulkCategoriasAdicionar}
                     placeholder={t.controlRoom.peopleCategoriaAdd}
                     emptyText={t.controlRoom.peopleCategoriaVazio}
+                    createLabel={t.controlRoom.peopleCategoriaCriar}
                     selected={catAdd}
                     categorias={peopleCategorias}
                     onToggle={(nome) => toggleCat(setCatAdd, setCatRemove, nome)}
+                    onCriar={async (nome) => {
+                      // #401: cria a categoria (M365) e já a marca pra adicionar.
+                      await criarCategoriaPeople(nome, "preset0");
+                      toggleCat(setCatAdd, setCatRemove, nome);
+                    }}
                   />
                   <BulkCategoriaPicker
                     label={t.controlRoom.bulkCategoriasRemover}
