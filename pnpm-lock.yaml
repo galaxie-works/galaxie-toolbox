@@ -215,6 +215,9 @@ importers:
       dedent:
         specifier: 1.0.0
         version: 1.0.0
+      docx-preview:
+        specifier: ^0.4.0
+        version: 0.4.0
       dompurify:
         specifier: ^3.4.12
         version: 3.4.12
@@ -317,6 +320,9 @@ importers:
       use-file-picker:
         specifier: 2.1.2
         version: 2.1.2(react@19.2.8)
+      xlsx:
+        specifier: ^0.18.5
+        version: 0.18.5
       zod:
         specifier: ^4.4.3
         version: 4.4.3
@@ -2830,6 +2836,10 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
+  adler-32@1.3.1:
+    resolution: {integrity: sha512-ynZ4w/nUUv5rrsR8UUGoe1VC9hZj6V5hU9Qw1HlMDJGEJw5S7TfTErWTjMys6M7vr0YWcPqs3qAr4ss0nDfP+A==}
+    engines: {node: '>=0.8'}
+
   ai@7.0.37:
     resolution: {integrity: sha512-stF+SEQJgKY3Qfe3FwNzqUrehHviOp2l7LemoI8YMOa0Zk5PxKsRNgUk3cHXz0RAue9RRyCAis2fz6LSCP6EKw==}
     engines: {node: '>=22'}
@@ -2917,6 +2927,10 @@ packages:
     peerDependencies:
       react: '>=17.0.0'
 
+  cfb@1.2.2:
+    resolution: {integrity: sha512-KfdUZsSOw19/ObEWasvBP/Ac4reZvAGauZhs6S/gqNhXhI7cKwvlH7ulj+dOEYnca4bm4SGo8C1bTAQvnTjgQA==}
+    engines: {node: '>=0.8'}
+
   char-regex@1.0.2:
     resolution: {integrity: sha512-kWWXztvZ5SBQV+eRgKFeh8q5sLuZY2+8WUIzlxWVTg+oGwY14qylx1KbKzHd8P6ZYkAg0xyIDU9JMHhyJMZ1jw==}
     engines: {node: '>=10'}
@@ -2973,6 +2987,10 @@ packages:
   codemirror@6.0.2:
     resolution: {integrity: sha512-VhydHotNW5w1UGK0Qj96BwSk/Zqbp9WbnyK2W/eVMv4QyF41INRGpjUhFJY7/uDNuudSc33a/PKr4iDqRduvHw==}
 
+  codepage@1.15.0:
+    resolution: {integrity: sha512-3g6NUTPd/YtuuGrhMnOMRjFc+LJw/bnMp3+0r/Wcz3IXUuCosKRJvMphm5+Q+bvTVGcJJuRvVLuYba+WojaFaA==}
+    engines: {node: '>=0.8'}
+
   color-name@2.1.1:
     resolution: {integrity: sha512-p2FdgwVx1a9yWBHP2wI0VgShkDpgN4kZISkxdNipGBJWpa5G6b04OINlVWCyJj0JmfvcPrgqt95E9k8yvaOJFg==}
     engines: {node: '>=12.20'}
@@ -3014,6 +3032,11 @@ packages:
   crc-32@0.3.0:
     resolution: {integrity: sha512-kucVIjOmMc1f0tv53BJ/5WIX+MGLcKuoBhnGqQrgKJNqLByb/sVMWfW/Aw6hw0jgcqjJ2pi9E5y32zOIpaUlsA==}
     engines: {node: '>=0.8'}
+
+  crc-32@1.2.2:
+    resolution: {integrity: sha512-ROmzCKrTnOwybPcJApAA6WBWij23HVfGVNKqqrZpuyZOHqK2CwHSvpGuyt/UNNvaIjEd8X5IFGp4Mh+Ie1IHJQ==}
+    engines: {node: '>=0.8'}
+    hasBin: true
 
   crelt@1.0.7:
     resolution: {integrity: sha512-aK6BbWfhf4U/wCcLHKPJl/xa6VkVstRaPywWtMKGwuOLc/wZTyQYuoxgvZnNsBvv7Kg3YTBQYYBCggcviQczuA==}
@@ -3271,6 +3294,9 @@ packages:
   dnd-core@16.0.1:
     resolution: {integrity: sha512-HK294sl7tbw6F6IeuK16YSBUoorvHpY8RHO+9yFfaJyCDVb6n7PRcezrOEOa2SBCqiYpemh5Jx20ZcjKdFAVng==}
 
+  docx-preview@0.4.0:
+    resolution: {integrity: sha512-OdKtE/uj3M4RfGarLkGjahUzRg8/kBp0Sraj1r1NAY1tp/sTpHOBqDrzVf9onMBt9vxP6SdQ6bpLCUCsFwjgcA==}
+
   dom-serializer@0.2.2:
     resolution: {integrity: sha512-2/xPb3ORsQ42nHYiSunXkDjPLBaEj/xTwUO4B7XCZQTRk7EBtTOPaygh10YAAh2OI1Qrp6NWfpAhzswj0ydt9g==}
 
@@ -3448,6 +3474,10 @@ packages:
   flowchart.js@1.18.0:
     resolution: {integrity: sha512-1rZflSLyrj5/+ryzU+qIQr6IGysPIHT4UrgN+6IaVv7pLDSLu7CvC9e0X7FU6ocpRAEtHk5+UaFXv9NZKRoG3g==}
     engines: {node: '>=4.0.0'}
+
+  frac@1.1.2:
+    resolution: {integrity: sha512-w/XBfkibaTl3YDqASwfDUqkna4Z2p9cFSr1aHDt0WoMTECnRfBOv2WArlZILlqgWlmdIlALXGpM2AOhEk5W3IA==}
+    engines: {node: '>=0.8'}
 
   fractional-indexing@3.2.0:
     resolution: {integrity: sha512-PcOxmqwYCW7O2ovKRU8OoQQj2yqTfEB/yeTYk4gPid6dN5ODRfU1hXd9tTVZzax/0NkO7AxpHykvZnT1aYp/BQ==}
@@ -4828,6 +4858,10 @@ packages:
   sqids@0.3.0:
     resolution: {integrity: sha512-lOQK1ucVg+W6n3FhRwwSeUijxe93b51Bfz5PMRMihVf1iVkl82ePQG7V5vwrhzB11v0NtsR25PSZRGiSomJaJw==}
 
+  ssf@0.11.2:
+    resolution: {integrity: sha512-+idbmIXoYET47hH+d7dfm2epdOMUDjqcB4648sTZ+t2JwoyBFL/insLfB/racrDmsKB3diwsDA696pZMieAC5g==}
+    engines: {node: '>=0.8'}
+
   string-template@0.2.1:
     resolution: {integrity: sha512-Yptehjogou2xm4UJbxJ4CxgZx12HBfeystp0y3x7s4Dj32ltVVG1Gg8YhKjHZkHicuKpZX/ffilA8505VbUbpw==}
 
@@ -5220,11 +5254,24 @@ packages:
   wistia-video-element@1.4.0:
     resolution: {integrity: sha512-udI8/yiMZ+KIGwYK1qNOFiXl+s/wffiY+XkwTXlBFICZylFalOS0QYEQqYOmuBsm3jNfGUS4O50tLuN7Ejqm3A==}
 
+  wmf@1.0.2:
+    resolution: {integrity: sha512-/p9K7bEh0Dj6WbXg4JG0xvLQmIadrner1bi45VMJTfnbVHsc7yIajZyoSoK60/dtVBs12Fm6WkUI5/3WAVsNMw==}
+    engines: {node: '>=0.8'}
+
+  word@0.3.0:
+    resolution: {integrity: sha512-OELeY0Q61OXpdUfTp+oweA/vtLVg5VDOXh+3he3PNzLGG/y0oylSOC1xRVj0+l4vQ3tj/bB1HVHv1ocXkQceFA==}
+    engines: {node: '>=0.8'}
+
   x-is-array@0.1.0:
     resolution: {integrity: sha512-goHPif61oNrr0jJgsXRfc8oqtYzvfiMJpTqwE7Z4y9uH+T3UozkGqQ4d2nX9mB9khvA8U2o/UbPOFjgC7hLWIA==}
 
   x-is-string@0.1.0:
     resolution: {integrity: sha512-GojqklwG8gpzOVEVki5KudKNoq7MbbjYZCbyWzEz7tyPA7eleiE0+ePwOWQQRb5fm86rD3S8Tc0tSFf3AOv50w==}
+
+  xlsx@0.18.5:
+    resolution: {integrity: sha512-dmg3LCjBPHZnQp5/F/+nnTa+miPJxUXB6vtk42YjBBKayDNagxGEeIdWApkYPOf3Z3pm3k62Knjzp7lMeTEtFQ==}
+    engines: {node: '>=0.8'}
+    hasBin: true
 
   xmlbuilder2@3.1.1:
     resolution: {integrity: sha512-WCSfbfZnQDdLQLiMdGUQpMxxckeQ4oZNMNhLVkcekTu7xhD4tuUDyAPoY8CwXvBYE6LwBHd6QW2WZXlOWr1vCw==}
@@ -7858,6 +7905,8 @@ snapshots:
 
   acorn@8.17.0: {}
 
+  adler-32@1.3.1: {}
+
   ai@7.0.37(zod@4.4.3):
     dependencies:
       '@ai-sdk/gateway': 4.0.28(zod@4.4.3)
@@ -7933,6 +7982,11 @@ snapshots:
   ce-la-react@0.3.2(react@19.2.8):
     dependencies:
       react: 19.2.8
+
+  cfb@1.2.2:
+    dependencies:
+      adler-32: 1.3.1
+      crc-32: 1.2.2
 
   char-regex@1.0.2: {}
 
@@ -8015,6 +8069,8 @@ snapshots:
       '@codemirror/state': 6.7.1
       '@codemirror/view': 6.43.6
 
+  codepage@1.15.0: {}
+
   color-name@2.1.1: {}
 
   commander@12.1.0: {}
@@ -8050,6 +8106,8 @@ snapshots:
   country-flag-icons@1.6.20: {}
 
   crc-32@0.3.0: {}
+
+  crc-32@1.2.2: {}
 
   crelt@1.0.7: {}
 
@@ -8355,6 +8413,10 @@ snapshots:
       '@react-dnd/invariant': 4.0.2
       redux: 4.2.1
 
+  docx-preview@0.4.0:
+    dependencies:
+      jszip: 3.10.1
+
   dom-serializer@0.2.2:
     dependencies:
       domelementtype: 2.3.0
@@ -8519,6 +8581,8 @@ snapshots:
   flowchart.js@1.18.0:
     dependencies:
       raphael: 2.3.0
+
+  frac@1.1.2: {}
 
   fractional-indexing@3.2.0: {}
 
@@ -10321,6 +10385,10 @@ snapshots:
 
   sqids@0.3.0: {}
 
+  ssf@0.11.2:
+    dependencies:
+      frac: 1.1.2
+
   string-template@0.2.1: {}
 
   string_decoder@1.1.1:
@@ -10632,9 +10700,23 @@ snapshots:
     dependencies:
       super-media-element: 1.4.2
 
+  wmf@1.0.2: {}
+
+  word@0.3.0: {}
+
   x-is-array@0.1.0: {}
 
   x-is-string@0.1.0: {}
+
+  xlsx@0.18.5:
+    dependencies:
+      adler-32: 1.3.1
+      cfb: 1.2.2
+      codepage: 1.15.0
+      crc-32: 1.2.2
+      ssf: 0.11.2
+      wmf: 1.0.2
+      word: 0.3.0
 
   xmlbuilder2@3.1.1:
     dependencies:

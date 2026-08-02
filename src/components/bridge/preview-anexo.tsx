@@ -1,18 +1,21 @@
 /**
- * Pré-visualização de anexos do Bridge (#188 · épico #178, Slice 1).
+ * Pré-visualização de anexos do Bridge (épico #178 · #188 PDF/TXT · #189
+ * docx/xlsx).
  *
- * Renderiza **PDF** (pdf.js, canvas) e **TXT** (em `<pre>` num iframe
- * `sandbox=""`) direto no leitor, sem sair do app. Formatos fora do MVP e
- * arquivos grandes caem para as ações explícitas Salvar / Abrir no Windows.
+ * Renderiza **PDF** (pdf.js, canvas), **TXT** (`<pre>`), **docx** (docx-preview
+ * → HTML sanitizado) e **xlsx** (SheetJS → grid) direto no leitor, sem sair do
+ * app. Formatos fora do escopo e arquivos grandes caem para as ações explícitas
+ * Salvar / Abrir no Windows.
  *
  * Segurança (spec §7 — anexo é input hostil):
  * - Os bytes vêm do `cr_ler_anexo` (em memória, sem tocar o disco); nada de
  *   handler de OS no caminho de preview.
- * - TXT vai para um iframe **`sandbox=""`** (sem scripts, sem same-origin, sem
- *   forms) — mais estrito que o corpo do e-mail, que só ganha `allow-scripts`
- *   no modo escuro. O texto é escapado antes de virar `srcDoc`.
+ * - TXT e docx vão para um iframe **`sandbox=""`** (sem scripts, sem
+ *   same-origin), o docx ainda com **CSP** (`default-src 'none'`) — mais estrito
+ *   que o corpo do e-mail, que só ganha `allow-scripts` no escuro. HTML
+ *   sanitizado (DOMPurify) antes do `srcDoc`.
  * - PDF roda no pdf.js sem `PDFScriptingManager` e o v6 não usa `eval`
- *   (ver `lib/pdf-preview.ts`). Sem rede.
+ *   (ver `lib/pdf-preview.ts`). xlsx nunca avalia fórmula. Sem rede.
  */
 import { useEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
@@ -29,14 +32,22 @@ import {
 
 import * as api from "@/lib/api";
 import { classificarAnexo } from "@/lib/anexo-tipo";
+import { renderDocxParaHtml } from "@/lib/docx-render";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { carregarPdf, renderizarPagina } from "@/lib/pdf-preview";
+import { lerXlsx, type Planilha } from "@/lib/xlsx-render";
 import type { AnexoEmail } from "@/lib/types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
 import { IconTile } from "@/components/reui/icon-tile";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs";
 
 /** Teto de tamanho para preview inline; acima disso, só Salvar/Abrir (spec §7.4). */
 const LIMITE_PREVIEW_BYTES = 25 * 1024 * 1024;
@@ -74,10 +85,12 @@ export function PreviewAnexo({
   const tipo = classificarAnexo(anexo);
   const grande = anexo.tamanho > LIMITE_PREVIEW_BYTES;
 
-  const [carregando, setCarregando] = useState(tipo === "pdf" || tipo === "txt");
+  const [carregando, setCarregando] = useState(tipo !== "nao-suportado");
   const [erro, setErro] = useState<string | null>(null);
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [txt, setTxt] = useState<string | null>(null);
+  const [docxHtml, setDocxHtml] = useState<string | null>(null);
+  const [planilhas, setPlanilhas] = useState<Planilha[] | null>(null);
 
   // Busca e decodifica os bytes uma vez (a menos que seja não-suportado/grande).
   useEffect(() => {
@@ -94,8 +107,13 @@ export function PreviewAnexo({
         const conteudo = await api.crLerAnexo(messageId, anexo.id, mailbox);
         const bytes = base64ParaBytes(conteudo.bytesB64);
         if (tipo === "txt") {
-          const texto = new TextDecoder("utf-8").decode(bytes);
-          if (vivo) setTxt(texto);
+          if (vivo) setTxt(new TextDecoder("utf-8").decode(bytes));
+        } else if (tipo === "docx") {
+          const html = await renderDocxParaHtml(bytes);
+          if (vivo) setDocxHtml(html);
+        } else if (tipo === "xlsx") {
+          const p = await lerXlsx(bytes);
+          if (vivo) setPlanilhas(p);
         } else {
           doc = await carregarPdf(bytes);
           if (vivo) setPdf(doc);
@@ -178,6 +196,10 @@ export function PreviewAnexo({
           <TxtViewer texto={txt} rotulo={anexo.nome} />
         ) : tipo === "pdf" && pdf ? (
           <PdfViewer doc={pdf} tp={tp} />
+        ) : tipo === "docx" && docxHtml !== null ? (
+          <DocxViewer html={docxHtml} rotulo={anexo.nome} vazioTexto={tp.previewVazio} />
+        ) : tipo === "xlsx" && planilhas ? (
+          <XlsxViewer planilhas={planilhas} vazioTexto={tp.previewVazio} />
         ) : null}
       </div>
     </div>
@@ -330,5 +352,92 @@ function PdfViewer({
         </div>
       </ScrollArea>
     </div>
+  );
+}
+
+/** Estado vazio (docx/xlsx sem conteúdo renderável). */
+function PreviewVazio({ texto }: { texto: string }) {
+  return (
+    <div className="p-6 text-center text-xs text-muted-foreground">{texto}</div>
+  );
+}
+
+/**
+ * docx: HTML sanitizado num `<iframe sandbox="">` com **CSP** estrito —
+ * `default-src 'none'` mata rede/script; `img-src data:` deixa só as imagens
+ * embutidas (base64); `style-src 'unsafe-inline'` mantém a folha do docx-preview.
+ */
+function DocxViewer({
+  html,
+  rotulo,
+  vazioTexto,
+}: {
+  html: string;
+  rotulo: string;
+  vazioTexto: string;
+}) {
+  if (!html.trim()) return <PreviewVazio texto={vazioTexto} />;
+  const srcDoc = `<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:">
+<style>body{margin:0;padding:16px;background:#fff;color:#111;font:14px/1.6 system-ui,'Segoe UI',sans-serif}</style>
+</head><body>${html}</body></html>`;
+  return (
+    <iframe
+      sandbox=""
+      srcDoc={srcDoc}
+      title={rotulo}
+      className="h-[32rem] w-full border-0 bg-white"
+    />
+  );
+}
+
+/** xlsx: abas por planilha + grid read-only de valores (em cache, sem fórmula). */
+function XlsxViewer({
+  planilhas,
+  vazioTexto,
+}: {
+  planilhas: Planilha[];
+  vazioTexto: string;
+}) {
+  const temConteudo = planilhas.some((p) => p.linhas.length > 0);
+  if (!temConteudo) return <PreviewVazio texto={vazioTexto} />;
+
+  return (
+    <Tabs defaultValue={planilhas[0]?.nome ?? ""} className="w-full gap-0">
+      {planilhas.length > 1 && (
+        <TabsList className="m-2 flex h-auto w-auto flex-wrap justify-start">
+          {planilhas.map((p) => (
+            <TabsTrigger key={p.nome} value={p.nome} className="text-xs">
+              {p.nome}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      )}
+      {planilhas.map((p) => (
+        <TabsContent key={p.nome} value={p.nome} className="mt-0">
+          <ScrollArea className="h-96 w-full">
+            <table className="w-max border-collapse text-xs">
+              <tbody>
+                {p.linhas.map((linha, i) => (
+                  <tr key={i}>
+                    <td className="sticky left-0 z-10 border bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground">
+                      {i + 1}
+                    </td>
+                    {linha.map((celula, j) => (
+                      <td
+                        key={j}
+                        className="whitespace-nowrap border px-2 py-1"
+                      >
+                        {celula}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </ScrollArea>
+        </TabsContent>
+      ))}
+    </Tabs>
   );
 }

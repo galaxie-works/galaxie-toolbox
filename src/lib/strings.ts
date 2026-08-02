@@ -1034,6 +1034,7 @@ const pt = {
     previewMaisZoom: "Aumentar zoom",
     previewMenosZoom: "Diminuir zoom",
     previewZoomReset: "Redefinir zoom",
+    previewVazio: "Sem conteúdo para mostrar",
     responder: "Responder",
     encaminhar: "Encaminhar",
     // Atalhos de teclado (#28) — catálogo do modal de ajuda ("?"). Chaves
@@ -2194,6 +2195,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     previewMaisZoom: "Zoom in",
     previewMenosZoom: "Zoom out",
     previewZoomReset: "Reset zoom",
+    previewVazio: "Nothing to show",
     responder: "Reply",
     encaminhar: "Forward",
     // Keyboard shortcuts (#28) — catalog for the help modal ("?"). Flat keys.
