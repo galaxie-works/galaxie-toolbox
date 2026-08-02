@@ -96,47 +96,115 @@ export function AppSidebar({
           <SidebarGroup key={grupo.titulo}>
             <SidebarGroupLabel>{t.nav[grupo.titulo]}</SidebarGroupLabel>
             <SidebarMenu>
-              {grupo.itens.map((item) => (
-                <Collapsible
-                  key={item.titulo}
-                  asChild
-                  defaultOpen={item.filhos.some((f) => f.id === tela)}
-                  className="group/collapsible"
-                >
-                  <SidebarMenuItem>
-                    <CollapsibleTrigger asChild>
-                      <SidebarMenuButton tooltip={t.nav[item.titulo]}>
-                        <item.icone className="size-5!" />
-                        <span>{t.nav[item.titulo]}</span>
-                        <ChevronRight className="ml-auto transition-transform duration-300 group-data-[state=open]/collapsible:rotate-90" />
-                      </SidebarMenuButton>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <SidebarMenuSub>
-                        {item.filhos.map((filho) => (
-                          <SidebarMenuSubItem key={filho.id}>
-                            <SidebarMenuSubButton
-                              asChild
-                              isActive={tela === filho.id}
+              {grupo.itens.map((item) =>
+                colapsada ? (
+                  // #359: em icon-mode o submenu inline (`SidebarMenuSub`) é
+                  // escondido por CSS (`group-data-[collapsible=icon]:hidden`),
+                  // então clicar o ícone-pai não mostrava nada. Abrimos as opções
+                  // num flyout à direita (DropdownMenu, como o menu do usuário).
+                  <SidebarMenuItem key={item.titulo}>
+                    <DropdownMenu
+                      // Sobre a webview do Navigator (que pinta acima do DOM), a
+                      // webview cede (esconder+snapshot) enquanto o flyout está
+                      // aberto — gatilho TRANSIENTE, reusa o do #358. Fora do
+                      // Navigator não faz nada.
+                      onOpenChange={(aberto) =>
+                        window.dispatchEvent(
+                          new CustomEvent("galaxie:webview-ceder", {
+                            detail: aberto,
+                          }),
+                        )
+                      }
+                    >
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <DropdownMenuTrigger asChild>
+                            <SidebarMenuButton
+                              isActive={item.filhos.some((f) => f.id === tela)}
+                              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                             >
-                              <a
-                                href="#"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  onNavegar(filho.id);
-                                }}
-                              >
-                                {filho.icone && <filho.icone className="size-5!" />}
-                                <span>{t.nav[filho.titulo]}</span>
-                              </a>
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
+                              <item.icone className="size-5!" />
+                              <span>{t.nav[item.titulo]}</span>
+                            </SidebarMenuButton>
+                          </DropdownMenuTrigger>
+                        </TooltipTrigger>
+                        <TooltipContent side="right" align="center">
+                          {t.nav[item.titulo]}
+                        </TooltipContent>
+                      </Tooltip>
+                      <DropdownMenuContent
+                        side="right"
+                        align="start"
+                        sideOffset={4}
+                        className="min-w-48"
+                      >
+                        <DropdownMenuLabel>
+                          {t.nav[item.titulo]}
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        {item.filhos.map((filho) => (
+                          <DropdownMenuItem
+                            key={filho.id}
+                            onClick={() => onNavegar(filho.id)}
+                            className={
+                              tela === filho.id
+                                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                                : undefined
+                            }
+                          >
+                            {filho.icone && (
+                              <filho.icone className="size-5!" />
+                            )}
+                            <span>{t.nav[filho.titulo]}</span>
+                          </DropdownMenuItem>
                         ))}
-                      </SidebarMenuSub>
-                    </CollapsibleContent>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </SidebarMenuItem>
-                </Collapsible>
-              ))}
+                ) : (
+                  <Collapsible
+                    key={item.titulo}
+                    asChild
+                    defaultOpen={item.filhos.some((f) => f.id === tela)}
+                    className="group/collapsible"
+                  >
+                    <SidebarMenuItem>
+                      <CollapsibleTrigger asChild>
+                        <SidebarMenuButton tooltip={t.nav[item.titulo]}>
+                          <item.icone className="size-5!" />
+                          <span>{t.nav[item.titulo]}</span>
+                          <ChevronRight className="ml-auto transition-transform duration-300 group-data-[state=open]/collapsible:rotate-90" />
+                        </SidebarMenuButton>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <SidebarMenuSub>
+                          {item.filhos.map((filho) => (
+                            <SidebarMenuSubItem key={filho.id}>
+                              <SidebarMenuSubButton
+                                asChild
+                                isActive={tela === filho.id}
+                              >
+                                <a
+                                  href="#"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    onNavegar(filho.id);
+                                  }}
+                                >
+                                  {filho.icone && (
+                                    <filho.icone className="size-5!" />
+                                  )}
+                                  <span>{t.nav[filho.titulo]}</span>
+                                </a>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          ))}
+                        </SidebarMenuSub>
+                      </CollapsibleContent>
+                    </SidebarMenuItem>
+                  </Collapsible>
+                ),
+              )}
             </SidebarMenu>
           </SidebarGroup>
         ))}
