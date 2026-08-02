@@ -366,6 +366,30 @@ export async function crTarefaConcluir(
   return invoke<void>("cr_tarefa_concluir", { listaId, tarefaId });
 }
 
+/** #186 (Atoms S4): estado local do sync do OneDrive (sonda Rust, não Graph). */
+export interface OneDriveSync {
+  estado: "ok" | "pausado" | "naoConfigurado";
+  contas: number;
+  ultimoErro: string | null;
+}
+
+export async function atomsOnedriveSync(): Promise<OneDriveSync> {
+  if (!inTauri()) {
+    await sleep(150);
+    return { estado: "naoConfigurado", contas: 0, ultimoErro: null };
+  }
+  return invoke<OneDriveSync>("atoms_onedrive_sync");
+}
+
+/** #186 (Atoms S4): o token tem Chat.Read? Gate do widget de chats do Teams. */
+export async function crTeamsDisponivel(): Promise<boolean> {
+  if (!inTauri()) {
+    const { missingScopes } = await requiredScopesStatus();
+    return !missingScopes.some((s) => s.toLocaleLowerCase() === "chat.read");
+  }
+  return invoke<boolean>("cr_teams_disponivel");
+}
+
 // --- Agenda do dia + inbox do dia ----------------------------------------
 const MOCK_PARTS = [
   { nome: "Ana Silva", email: "ana@voaz.com.br", iniciais: "AS", foto: null },

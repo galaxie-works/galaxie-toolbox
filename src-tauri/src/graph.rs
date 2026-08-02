@@ -4336,6 +4336,13 @@ pub fn cr_people_write_available(store: &TokenStore) -> Result<bool, String> {
     token_tem_escopo(store, "Contacts.ReadWrite")
 }
 
+/// #186 (Atoms S4): o token carrega `Chat.Read`? Gate do widget de chats do
+/// Teams — sem o escopo, o widget mostra o affordance "Conectar o Teams" (consent
+/// explícito), nunca dispara consent silencioso nem quebra.
+pub fn cr_teams_disponivel(store: &TokenStore) -> Result<bool, String> {
+    token_tem_escopo(store, "Chat.Read")
+}
+
 fn valor_texto(item: &serde_json::Value, campo: &str) -> String {
     item[campo].as_str().unwrap_or("").trim().to_string()
 }
