@@ -57,6 +57,14 @@ interface CalendarEvent<TData = unknown> {
   allDay?: boolean
   /** Structured rule or a raw "RRULE:..." line. */
   recurrence?: EventCalendarRecurrenceRule | string
+  /**
+   * Pre-expanded consumers (e.g. a server that materializes each occurrence)
+   * have no client-side `recurrence` rule, so the derived `isRecurring` would
+   * be false. Set this to flag such a materialized instance as part of a series
+   * so the native recurrence indicator still shows. Ignored when `recurrence`
+   * is present (the expansion sets `isRecurring` itself).
+   */
+  isRecurring?: boolean
   /** This event is an edited single occurrence of that series. */
   recurringEventId?: EventCalendarEventId
   /** Which occurrence it replaces (RECURRENCE-ID semantics). */
