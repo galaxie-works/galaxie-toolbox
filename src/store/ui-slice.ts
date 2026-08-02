@@ -15,7 +15,12 @@ import { resolver, type Updater } from "./updater";
 /** Modo de "marcar como lido" (#95). */
 export type MarcarLidoModo = "imediato" | "atraso" | "manual";
 export type BridgeView = "mail" | "people" | "agenda";
-export type PeopleTab = "contacts" | "directory" | "organizations" | "groups";
+export type PeopleTab =
+  | "contacts"
+  | "directory"
+  | "organizations"
+  | "groups"
+  | "category";
 
 export interface UiSlice {
   /** Zoom manual do leitor (#76). 1 = auto-fit puro. Persistido em `bridge.leitorZoom`. */

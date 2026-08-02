@@ -1,5 +1,6 @@
 import type {
   AcaoRsvp,
+  AnexoConteudo,
   AppUser,
   CaixaEntrada,
   Calendario,
@@ -371,6 +372,7 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
     return [
       {
         id: "ev1",
+        tipo: "singleInstance",
         assunto: "PROH + VOAZ — Orçamento e Compras",
         inicio: em(9),
         fim: em(10),
@@ -389,6 +391,7 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
       },
       {
         id: "ev2",
+        tipo: "singleInstance",
         assunto: "KPMG RJ — Checkpoint interno",
         inicio: em(14),
         fim: em(15),
@@ -618,7 +621,16 @@ export async function crEmailCorpo(
       recebido: new Date().toISOString(),
       corpo,
       corpoTipo: "html",
-      anexos: [{ id: "mock-proposta", nome: "proposta.pdf", tamanho: 245_760 }],
+      anexos: [
+        {
+          id: "mock-proposta",
+          nome: "proposta.pdf",
+          tamanho: 245_760,
+          contentType: "application/pdf",
+          odataType: "#microsoft.graph.fileAttachment",
+          isInline: false,
+        },
+      ],
       webLink: "https://outlook.office365.com/mock",
     };
   }
@@ -1077,6 +1089,22 @@ export async function crPeopleContactUpdate(
     return;
   }
   return invoke<void>("cr_people_contact_update", { contactId, input });
+}
+
+/**
+ * Atribui as categorias do Outlook a um contato (#278 S3b): PATCH parcial só do
+ * campo `categories` — não mexe nos outros dados. `categorias` são os NOMES das
+ * masterCategories (multi-valor). Serve pro detalhe e pro bulk.
+ */
+export async function crPeopleContactCategories(
+  contactId: string,
+  categorias: string[],
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  return invoke<void>("cr_people_contact_categories", { contactId, categorias });
 }
 
 /**
@@ -1751,6 +1779,32 @@ export async function crBaixarAnexo(
   });
 }
 
+/**
+ * Lê um anexo em memória (base64) para pré-visualização, sem gravar em
+ * Downloads (#188). Só trata `fileAttachment`; item/reference vêm em fatias
+ * posteriores do épico (#178 §5).
+ */
+export async function crLerAnexo(
+  messageId: string,
+  attachmentId: string,
+  mailbox?: string
+): Promise<AnexoConteudo> {
+  if (!inTauri()) {
+    await sleep(400);
+    // "Exemplo de preview." em base64 (text/plain) para o modo dev.
+    return {
+      bytesB64: "RXhlbXBsbyBkZSBwcmV2aWV3Lg==",
+      contentType: "text/plain",
+      nome: "exemplo.txt",
+    };
+  }
+  return invoke<AnexoConteudo>("cr_ler_anexo", {
+    messageId,
+    attachmentId,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
 /** Abre um arquivo local com o aplicativo padrao. */
 export async function abrirCaminho(path: string): Promise<void> {
   if (!inTauri()) {
@@ -1958,4 +2012,98 @@ export async function setAutostartEnabled(enabled: boolean): Promise<void> {
     return;
   }
   return invoke<void>("autostart_set", { enabled });
+}
+
+// --- Telemetria (#388, S2) --------------------------------------------------
+// Fachada fina: o React manda só envelopes tipados; o Rust (TelemetryPolicy)
+// carimba o contexto, aplica consent+denylist+sampling e enfileira. NADA vai
+// pra rede antes do opt-in + transporte (S1). A telemetria NUNCA quebra o app.
+
+/** Consentimento por categoria (default: tudo OFF). */
+export interface TelemetryConsent {
+  crash: boolean;
+  diagnostico: boolean;
+  analytics: boolean;
+}
+
+export type TelemetryCategoria = "crash" | "diagnostico" | "analytics";
+
+/** Valor de atributo: só enum/bucket/inteiro/bool — nunca texto livre com PII. */
+export type TelemetryValor =
+  | { t: "enum"; v: string }
+  | { t: "bucket"; v: string }
+  | { t: "int"; v: number }
+  | { t: "bool"; v: boolean };
+
+export interface TelemetryEnvelope {
+  categoria: TelemetryCategoria;
+  evento: string;
+  atributos?: Record<string, TelemetryValor>;
+}
+
+export interface TelemetryStatus {
+  consent: TelemetryConsent;
+  sessionId: string;
+  queued: number;
+  /** #389: há consent gravado? `false` = 1º run (default ON) → mostra o aviso. */
+  configurado: boolean;
+}
+
+/** Envelope já carimbado e higienizado na fila (dump do inspetor DEV, #389).
+ *  Campos em snake_case porque o Rust não renomeia (é interno/dev-only). */
+export interface TelemetryEnvelopeCarimbado {
+  schema_version: number;
+  app_version: string;
+  build_channel: string;
+  os: string;
+  arch: string;
+  session_id: string;
+  ts_unix: number;
+  categoria: TelemetryCategoria;
+  evento: string;
+  atributos: Record<string, TelemetryValor>;
+}
+
+/** Emite um evento (fire-and-forget). Engole qualquer erro — telemetria não
+ *  pode derrubar a UI. */
+export async function telemetryTrack(envelope: TelemetryEnvelope): Promise<void> {
+  if (!inTauri()) return;
+  try {
+    await invoke<void>("telemetry_track", { envelope });
+  } catch {
+    // best-effort
+  }
+}
+
+/** Define o consentimento por categoria (chamado pela Consent UI do S3). */
+export async function telemetrySetConsent(
+  consent: TelemetryConsent,
+): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("telemetry_set_consent", { consent });
+}
+
+/** Revoga tudo: consent OFF, apaga a fila local e reinicia o session-id. */
+export async function telemetryRevoke(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("telemetry_revoke");
+}
+
+/** Estado atual (consent + session-id efêmero + itens na fila). */
+export async function telemetryStatus(): Promise<TelemetryStatus | null> {
+  if (!inTauri()) return null;
+  return invoke<TelemetryStatus>("telemetry_status");
+}
+
+/** Inspetor DEV (#389): envelopes já na fila (scrubbed). Vazio fora do Tauri e
+ *  em builds de release (o backend só devolve dados em debug). */
+export async function telemetryDebugDump(): Promise<
+  TelemetryEnvelopeCarimbado[]
+> {
+  if (!inTauri()) return [];
+  try {
+    return await invoke<TelemetryEnvelopeCarimbado[]>("telemetry_debug_dump");
+  } catch {
+    return [];
+  }
 }

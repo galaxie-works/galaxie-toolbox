@@ -7,6 +7,7 @@ mod favicon;
 mod graph;
 mod lock_screen;
 mod system;
+mod telemetry;
 
 use std::sync::Arc;
 use tauri::{Manager, State};
@@ -661,6 +662,20 @@ async fn cr_people_contact_update(
 }
 
 #[tauri::command]
+async fn cr_people_contact_categories(
+    state: State<'_, Store>,
+    contact_id: String,
+    categorias: Vec<String>,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_contact_categories(&store, &contact_id, categorias)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn cr_people_contact_create(
     state: State<'_, Store>,
     input: graph::PeopleContactEdit,
@@ -1138,6 +1153,28 @@ async fn cr_baixar_anexo(
     .map_err(|e| e.to_string())?
 }
 
+/// Control room: lê um anexo em memória (base64) para pré-visualização, sem
+/// gravar em Downloads (#188).
+#[tauri::command]
+async fn cr_ler_anexo(
+    state: State<'_, Store>,
+    message_id: String,
+    attachment_id: String,
+    mailbox: Option<String>,
+) -> Result<graph::AnexoConteudo, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_ler_anexo(
+            &store,
+            &message_id,
+            &attachment_id,
+            mailbox.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Abre um arquivo local com o aplicativo padrao do Windows.
 #[tauri::command]
 async fn abrir_caminho(path: String) -> Result<(), String> {
@@ -1277,6 +1314,41 @@ fn log_frontend_error(msg: String) {
     log::error!("[frontend] {msg}");
 }
 
+// --- Telemetria (#388, S2): TelemetryPolicy Rust-owned. Comandos sync,
+// fire-and-forget (como o log_frontend_error). A telemetria nunca deve quebrar o
+// app, então tudo é best-effort. Sem rede antes do opt-in + transporte (S1).
+#[tauri::command]
+fn telemetry_track(state: State<'_, telemetry::TelemetryState>, envelope: telemetry::EnvelopeEntrada) {
+    state.track(envelope);
+}
+
+#[tauri::command]
+fn telemetry_set_consent(
+    state: State<'_, telemetry::TelemetryState>,
+    consent: telemetry::Consentimento,
+) {
+    state.definir_consent(consent);
+}
+
+#[tauri::command]
+fn telemetry_revoke(state: State<'_, telemetry::TelemetryState>) {
+    state.revogar();
+}
+
+#[tauri::command]
+fn telemetry_status(state: State<'_, telemetry::TelemetryState>) -> telemetry::StatusDto {
+    state.status()
+}
+
+/// Inspetor DEV (#389): dump dos envelopes já na fila (scrubbed). Retorna vazio
+/// em release — o front só chama sob `import.meta.env.DEV`.
+#[tauri::command]
+fn telemetry_debug_dump(
+    state: State<'_, telemetry::TelemetryState>,
+) -> Vec<telemetry::EnvelopeCarimbado> {
+    state.debug_dump()
+}
+
 /// Navigator (#176): importa favoritos do Chrome/Edge lendo SOMENTE o arquivo
 /// `Bookmarks` (JSON) de cada perfil. Nunca le `Login Data`/credenciais. Devolve
 /// a arvore por navegador+perfil; ausencia degrada em lista vazia (sem panico).
@@ -1317,6 +1389,9 @@ async fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<(), Strin
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // #391 (S5): captura de panic do Rust como breadcrumb (drenado no boot
+    // seguinte pela TelemetryPolicy). Cedo, antes de tudo.
+    telemetry::registrar_panic_hook();
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -1348,6 +1423,7 @@ pub fn run() {
                 .build(),
         )
         .manage(Arc::new(TokenStore::default()))
+        .manage(telemetry::TelemetryState::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -1486,6 +1562,7 @@ pub fn run() {
             cr_people_enrich_apply,
             cr_people_write_available,
             cr_people_contact_update,
+            cr_people_contact_categories,
             cr_people_contact_create,
             cr_people_contact_delete,
             cr_people_company_write,
@@ -1519,6 +1596,7 @@ pub fn run() {
             cr_excluir_pasta,
             cr_mover_pasta,
             cr_baixar_anexo,
+            cr_ler_anexo,
             abrir_caminho,
             revelar_no_explorer,
             connect_site,
@@ -1537,6 +1615,11 @@ pub fn run() {
             enable_long_paths,
             long_paths_status,
             log_frontend_error,
+            telemetry_track,
+            telemetry_set_consent,
+            telemetry_revoke,
+            telemetry_status,
+            telemetry_debug_dump,
             import_browser_bookmarks,
             fetch_favicon,
             autostart_status,

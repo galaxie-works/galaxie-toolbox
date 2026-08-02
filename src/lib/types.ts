@@ -138,6 +138,11 @@ export interface EventoAgenda {
   calendarioId?: string;
   /** Cor (hex) do calendário de origem (#233), aplicada ao evento no merge. */
   corCalendario?: string;
+  /** Graph `type` (#397): "singleInstance" | "occurrence" | "exception" |
+   *  "seriesMaster". Occurrence/exception/seriesMaster = recorrente. */
+  tipo: string;
+  /** Graph `seriesMasterId` (#397): id da série mãe (ocorrências/exceções). */
+  seriesMasterId?: string;
 }
 
 export interface CategoriaCor {
@@ -166,6 +171,40 @@ export interface ConvidadoInput {
   nome: string;
 }
 
+/** Frequência da recorrência (#396). */
+export type RecorrenciaFrequencia = "daily" | "weekly" | "monthly" | "yearly";
+/** Como a série termina (#396). */
+export type RecorrenciaFim = "noEnd" | "endDate" | "numbered";
+/** Dia da semana no formato do Graph (só weekly). */
+export type DiaSemana =
+  | "sunday"
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday";
+
+/**
+ * Recorrência de um evento (#396, S1). Modelo do app; o Rust traduz pro
+ * `recurrence` do Graph (pattern + range).
+ */
+export interface RecorrenciaInput {
+  frequencia: RecorrenciaFrequencia;
+  intervalo: number;
+  /** Só weekly. */
+  diasSemana: DiaSemana[];
+  /** Monthly/yearly: dia do mês (1..31). */
+  diaDoMes?: number;
+  /** Yearly: mês (1..12). */
+  mes?: number;
+  fimTipo: RecorrenciaFim;
+  /** Início da série (YYYY-MM-DD). */
+  dataInicio: string;
+  dataFim?: string;
+  numeroOcorrencias?: number;
+}
+
 export interface EventoInput {
   assunto: string;
   inicio: string; // hora local, sem Z
@@ -181,6 +220,10 @@ export interface EventoInput {
   reuniaoTeams: boolean;
   /** Calendário-alvo (#233). Ausente/"" = calendário padrão (/me/events). */
   calendarioId?: string;
+  /** Recorrência (#396). Ausente = evento único. */
+  recorrencia?: RecorrenciaInput;
+  /** #397: PATCH só de campos (sem start/end/recurrence) — "editar a série". */
+  somenteCampos?: boolean;
 }
 
 export interface EventoDetalhe {
@@ -229,6 +272,24 @@ export interface AnexoEmail {
   id: string;
   nome: string;
   tamanho: number;
+  /** MIME do anexo (`contentType` do Graph). Vazio quando não informado. */
+  contentType: string;
+  /**
+   * `@odata.type` do anexo: `#microsoft.graph.fileAttachment` /
+   * `itemAttachment` / `referenceAttachment`. Roteia o renderer (#178 §5).
+   */
+  odataType: string;
+  /** Anexo inline (embutido no corpo) vs. anexo real. */
+  isInline: boolean;
+}
+
+/** Conteúdo de um anexo lido em memória para preview (#188). */
+export interface AnexoConteudo {
+  /** Bytes do anexo em base64 (repassados do `contentBytes` do Graph). */
+  bytesB64: string;
+  /** MIME informado pelo Graph (ou vazio). */
+  contentType: string;
+  nome: string;
 }
 
 export interface EmailDetalhe {
@@ -343,6 +404,8 @@ export interface PeopleRecord {
   organization: boolean;
   /** Posição em `/me/people`; os dez primeiros são "Frequent". */
   peopleRank?: number | null;
+  /** Categorias do Outlook (#406); só `source==="contacts"`. */
+  categories?: string[];
 }
 
 /** Resultado parcial: uma fonte pode falhar sem apagar a outra. */

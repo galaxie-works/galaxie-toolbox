@@ -94,6 +94,9 @@ export interface AgendaSlice {
   agendaFormAberto: boolean;
   agendaFormModo: "criar" | "editar";
   agendaFormEvento: EventoAgenda | null;
+  // #397: ao editar um recorrente, o escopo escolhido no Edit (ocorrência ×
+  // série) — decidido ANTES de abrir o form. `null` = não recorrente / criar.
+  agendaFormEscopo: "ocorrencia" | "serie" | null;
   agendaFormInicio: string | null; // preset ao criar clicando num dia/slot
   // Convidados COMPLETOS do evento em edição (#240). O resumo do mês
   // (`agendaFormEvento.participantes`) trunca em 5 e o PATCH substitui a coleção
@@ -122,7 +125,10 @@ export interface AgendaSlice {
 
   abrirFormCriar: (inicio?: string) => void;
   // Abre o form de edição e dispara a busca dos attendees COMPLETOS (#240).
-  abrirFormEditar: (ev: EventoAgenda) => void;
+  abrirFormEditar: (
+    ev: EventoAgenda,
+    escopo?: "ocorrencia" | "serie",
+  ) => void;
   fecharForm: () => void;
   // Escrita otimista + rollback (#211): a UI mostra o toast se a promise rejeitar.
   criarEvento: (input: EventoInput) => Promise<void>;
@@ -188,6 +194,9 @@ function eventoDeInput(id: string, input: EventoInput): EventoAgenda {
   }));
   return {
     id,
+    // #397: evento otimista reflete o Graph `type` — com recorrência é a série
+    // mãe, senão instância única. Sem isso o mock/optimista não bate EventoAgenda.
+    tipo: input.recorrencia ? "seriesMaster" : "singleInstance",
     assunto: input.assunto,
     inicio: localParaUtc(input.inicio),
     fim: localParaUtc(input.fim),
@@ -235,6 +244,7 @@ export function criarAgendaSlice(
     agendaFormAberto: false,
     agendaFormModo: "criar",
     agendaFormEvento: null,
+    agendaFormEscopo: null,
     agendaFormInicio: null,
     agendaFormConvidados: null,
     agendaFormConvidadosCarregando: false,
@@ -379,6 +389,7 @@ export function criarAgendaSlice(
         agendaFormAberto: true,
         agendaFormModo: "criar",
         agendaFormEvento: null,
+        agendaFormEscopo: null,
         agendaFormInicio: inicio ?? null,
         // Criar não tem attendees pré-existentes; invalida qualquer busca de
         // edição ainda em voo (#240).
@@ -394,7 +405,7 @@ export function criarAgendaSlice(
     // o que temos (até 5) e substituímos pela lista completa do detalhe
     // (cr_evento_corpo, mesmo caminho do #34) assim que ela chega; o salvar fica
     // bloqueado enquanto carrega. Guardado por geração (mesma técnica do #211).
-    abrirFormEditar: (ev) => {
+    abrirFormEditar: (ev, escopo) => {
       // Convidados só podem responder ao convite. Este guard mantém a regra do
       // detalhe e do menu de contexto mesmo se outro caller tentar abrir o form.
       if (!podeGerenciarEvento(ev)) return;
@@ -403,6 +414,9 @@ export function criarAgendaSlice(
         agendaFormAberto: true,
         agendaFormModo: "editar",
         agendaFormEvento: ev,
+        // #397: o escopo é decidido no Edit (menu ocorrência × série) e o form
+        // apenas o respeita ao salvar — sem prompt no meio do fluxo de save.
+        agendaFormEscopo: escopo ?? null,
         agendaFormInicio: null,
         agendaFormConvidados: ev.participantes,
         agendaFormConvidadosCarregando: true,
@@ -456,6 +470,10 @@ export function criarAgendaSlice(
             e.id === tempId ? { ...e, id: realId || e.id } : e,
           ),
         }));
+        // #396: recarrega o range após criar — o otimista mostra 1 evento, mas
+        // uma SÉRIE recorrente só aparece expandida (calendarView) após refetch;
+        // e garante que o evento único reflita sem sair/voltar da agenda.
+        get().recarregarAgenda();
       } catch (erro) {
         set((s) => ({
           agendaEventosMes: (s.agendaEventosMes ?? []).filter(
@@ -472,7 +490,15 @@ export function criarAgendaSlice(
       const original = antes.find((e) => e.id === id);
       set({
         agendaEventosMes: antes.map((e) =>
-          e.id === id ? { ...e, ...eventoDeInput(id, input) } : e,
+          e.id === id
+            ? {
+                ...e,
+                ...eventoDeInput(id, input),
+                // Preserva o tipo real (recorrente) + a série no update otimista.
+                tipo: e.tipo,
+                seriesMasterId: e.seriesMasterId,
+              }
+            : e,
         ),
       });
       try {

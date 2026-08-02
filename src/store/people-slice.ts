@@ -10,6 +10,7 @@ import {
 } from "../lib/people.ts";
 import type { Filter } from "../components/reui/filters";
 import type { MergePlan } from "../lib/people-merge";
+import { telAcaoConcluida } from "../lib/telemetria.ts";
 import type {
   PeopleBulkDetailsChange,
   PeopleBulkDetailsField,
@@ -34,8 +35,11 @@ type PeopleApi = Pick<
   | "crPeopleCompanyWrite"
   | "crPeopleDetailsWrite"
   | "crPeopleContactUpdate"
+  | "crPeopleContactCategories"
   | "crPeopleContactCreate"
   | "crPeopleContactDelete"
+  | "crCategorias"
+  | "crCriarCategoria"
 >;
 
 /** Fases da execução do merge (#379), na ordem segura do #376. */
@@ -208,6 +212,7 @@ function personFromSuggestion(person: Pessoa): PeopleContact {
     organization: source === "directory",
     frequent: false,
     sources: [source],
+    categories: [],
   };
 }
 
@@ -252,6 +257,10 @@ export interface PeopleSlice {
   peopleGroupMembersError: string | null;
   peopleMergeRunning: boolean;
   peopleMergeUndo: PeopleMergeUndoState | null;
+  /** #406: categorias do Outlook (nome→cor hex), hidratadas no login. */
+  peopleCategorias: Map<string, string>;
+  /** #406: categoria selecionada no sidebar (filtra a grid). */
+  peopleSelectedCategory: string | null;
 
   loadPeople: () => Promise<void>;
   loadMorePeople: () => Promise<void>;
@@ -269,6 +278,40 @@ export interface PeopleSlice {
   selectPeopleDirectory: (id?: string | null) => void;
   loadPeopleGroups: () => Promise<void>;
   selectPeopleGroup: (groupId: string) => Promise<void>;
+  /** #406: seleciona uma categoria no sidebar (filtra a grid por ela). */
+  selectPeopleCategory: (nome: string) => void;
+  /** #406: (re)carrega as categorias do Outlook (masterCategories). */
+  carregarCategoriasPeople: () => Promise<void>;
+  /**
+   * #278 S3b: define as categorias de UM contato (PATCH parcial). Otimista;
+   * reverte no erro. Só contatos editáveis (com `contactId`) — diretório não.
+   */
+  setPeopleContactCategorias: (
+    id: string,
+    categorias: string[],
+  ) => Promise<void>;
+  /**
+   * #278 S3b: cria uma categoria do Outlook inline (durante o assign) e já a
+   * insere no mapa `peopleCategorias` pra aparecer no seletor na hora. `preset`
+   * = nome do preset de cor do Outlook ("preset0".."preset24").
+   */
+  criarCategoriaPeople: (nome: string, preset: string) => Promise<void>;
+  /**
+   * #278 S3c: atribui/remove categorias do Outlook em BULK. Para cada contato
+   * editável, `add` entram (union) e `remove` saem; contatos não-editáveis
+   * (sem `contactId`) são pulados. Otimista + rollback por item. Reporta
+   * updated/skipped/unchanged/failed como o `bulkEditPeopleDetails`.
+   */
+  bulkSetPeopleCategorias: (
+    contactIds: string[],
+    add: string[],
+    remove: string[],
+  ) => Promise<{
+    updated: number;
+    skipped: number;
+    failed: number;
+    unchanged: number;
+  }>;
   autoEnrichDirectoryContact: (
     id: string,
     sameOrganization: boolean,
@@ -355,6 +398,8 @@ export function criarPeopleSlice(
   peopleGroupMembersError: null,
   peopleMergeRunning: false,
   peopleMergeUndo: null,
+  peopleCategorias: new Map(),
+  peopleSelectedCategory: null,
 
   loadPeople: async () => {
     const generation = get().peopleRequestGeneration + 1;
@@ -565,11 +610,12 @@ export function criarPeopleSlice(
         : {}),
     });
 
-    const [organizationResult, directoryResult, groupsResult] =
+    const [organizationResult, directoryResult, groupsResult, categoriasResult] =
       await Promise.allSettled([
         client.crPeopleOrganization(),
         client.crPeopleDirectory(),
         client.crPeopleGroups(),
+        client.crCategorias(),
       ]);
     if (
       get().peopleM365Generation !== generation ||
@@ -621,6 +667,12 @@ export function criarPeopleSlice(
             groupsResult.value.missingScopes,
           )
         : String(groupsResult.reason);
+    // #406: categorias do Outlook (masterCategories) — best-effort; falha não
+    // vira erro visível (cores são secundárias). Mantém as atuais se falhar.
+    const categorias =
+      categoriasResult.status === "fulfilled"
+        ? new Map(categoriasResult.value.map((c) => [c.nome, c.cor]))
+        : get().peopleCategorias;
     const errors = [
       organizationError,
       directoryError,
@@ -641,6 +693,7 @@ export function criarPeopleSlice(
       peopleDirectoryLoaded: true,
       peopleDirectoryError: directoryError,
       peopleDirectoryMissingScopes: directoryMissingScopes,
+      peopleCategorias: categorias,
       peopleGroups: groups,
       peopleGroupsLoading: false,
       peopleGroupsLoaded: true,
@@ -696,6 +749,24 @@ export function criarPeopleSlice(
       peopleSelectedGroupId: null,
       peopleGroupMembersError: null,
     });
+  },
+  // #406: filtra a grid pela categoria escolhida no sidebar.
+  selectPeopleCategory: (nome) => {
+    get().setPeopleTab("category");
+    set({
+      peopleSelectedCategory: nome,
+      peopleSelectedId: null,
+      peopleSelectedGroupId: null,
+    });
+  },
+  // #406: (re)carrega as categorias do Outlook (masterCategories). Best-effort.
+  carregarCategoriasPeople: async () => {
+    try {
+      const cats = await client.crCategorias();
+      set({ peopleCategorias: new Map(cats.map((c) => [c.nome, c.cor])) });
+    } catch {
+      // cores são secundárias; a seção degrada sem cor.
+    }
   },
   loadPeopleGroups: async () => {
     const {
@@ -1204,6 +1275,89 @@ export function criarPeopleSlice(
       throw error;
     }
   },
+  setPeopleContactCategorias: async (id, categorias) => {
+    const current = get().peopleContacts.find((contact) => contact.id === id);
+    if (!current?.contactId) {
+      throw new Error("This person is not an editable Microsoft contact.");
+    }
+    const snapshot = [...current.categories];
+    // Otimista: aplica na grid/detalhe já; reverte a lista antiga no erro.
+    set((state) => ({
+      peopleContacts: state.peopleContacts.map((contact) =>
+        contact.id === id ? { ...contact, categories: categorias } : contact,
+      ),
+    }));
+    try {
+      await client.crPeopleContactCategories(current.contactId, categorias);
+    } catch (error) {
+      set((state) => ({
+        peopleContacts: state.peopleContacts.map((contact) =>
+          contact.id === id ? { ...contact, categories: snapshot } : contact,
+        ),
+      }));
+      throw error;
+    }
+  },
+  criarCategoriaPeople: async (nome, preset) => {
+    const criada = await client.crCriarCategoria(nome, preset);
+    // Insere no mapa nome→cor pra o seletor do detalhe mostrar na hora, sem
+    // esperar um novo hydrate. Mantém a ordem de inserção (Map).
+    set((state) => {
+      const proximo = new Map(state.peopleCategorias);
+      proximo.set(criada.nome, criada.cor);
+      return { peopleCategorias: proximo };
+    });
+  },
+  bulkSetPeopleCategorias: async (contactIds, add, remove) => {
+    const ids = Array.from(new Set(contactIds));
+    const byId = new Map(get().peopleContacts.map((c) => [c.id, c]));
+    const removeSet = new Set(remove);
+    let updated = 0;
+    let skipped = 0;
+    let failed = 0;
+    let unchanged = 0;
+    // Em série: PATCH parcial por contato (mesma rota do S3b). Poucos itens no
+    // fluxo bulk; série evita rajada de 429 e mantém o rollback simples.
+    for (const id of ids) {
+      const contact = byId.get(id);
+      const contactId = contact?.contactId?.trim();
+      if (!contact || !contactId) {
+        skipped += 1;
+        continue;
+      }
+      const atuais = contact.categories ?? [];
+      // Remove primeiro, depois adiciona (union) preservando a ordem atual.
+      const proximas = atuais.filter((nome) => !removeSet.has(nome));
+      for (const nome of add) {
+        if (!proximas.includes(nome)) proximas.push(nome);
+      }
+      const igual =
+        proximas.length === atuais.length &&
+        proximas.every((nome, i) => nome === atuais[i]);
+      if (igual) {
+        unchanged += 1;
+        continue;
+      }
+      const snapshot = [...atuais];
+      set((state) => ({
+        peopleContacts: state.peopleContacts.map((c) =>
+          c.id === id ? { ...c, categories: proximas } : c,
+        ),
+      }));
+      try {
+        await client.crPeopleContactCategories(contactId, proximas);
+        updated += 1;
+      } catch {
+        set((state) => ({
+          peopleContacts: state.peopleContacts.map((c) =>
+            c.id === id ? { ...c, categories: snapshot } : c,
+          ),
+        }));
+        failed += 1;
+      }
+    }
+    return { updated, skipped, failed, unchanged };
+  },
   mergePeopleContacts: async (plan, onProgress) => {
     // Trava dupla execução (#379): reentrância enquanto uma mutação corre.
     if (get().peopleMergeRunning) {
@@ -1315,6 +1469,8 @@ export function criarPeopleSlice(
           ? plan.master.id
           : state.peopleSelectedId,
       }));
+      // Telemetria (#390): conclusão do merge (só resultado, sem PII).
+      telAcaoConcluida("contatos_merge", failedDeletes.length === 0 ? "ok" : "erro");
       return {
         ok: failedDeletes.length === 0,
         masterUpdated: true,

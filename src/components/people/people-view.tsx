@@ -17,6 +17,7 @@ import {
   ArrowUpDown,
   ArrowUpRight,
   Building2,
+  Check,
   ChevronDown,
   Copy,
   ExternalLink,
@@ -35,7 +36,9 @@ import {
   SearchX,
   Save,
   Sparkles,
+  Tag,
   Users,
+  X,
 } from "lucide-react";
 import { isValidPhoneNumber } from "react-phone-number-input";
 import { toast } from "sonner";
@@ -99,6 +102,11 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
 import {
   ResizableHandle,
@@ -368,6 +376,178 @@ function PeopleDetailSkeleton() {
         <Skeleton className="h-9 w-full" />
       </div>
     </div>
+  );
+}
+
+/**
+ * #278 S3b: seletor de categorias do Outlook no detalhe do contato. Mostra as
+ * atuais como chips (swatch da cor real, padrão do sidebar #406) e um
+ * Popover+Command pra marcar/desmarcar (multi-valor) + criar inline. Grava por
+ * PATCH parcial (`setPeopleContactCategorias`). Só aparece pra contatos
+ * EDITÁVEIS (com `contactId`) — itens do diretório (/users) não têm categorias.
+ */
+function ContactCategories({ contact }: { contact: PeopleContact }) {
+  const { t } = useIdioma();
+  const peopleCategorias = useAppStore((state) => state.peopleCategorias);
+  const setPeopleContactCategorias = useAppStore(
+    (state) => state.setPeopleContactCategorias,
+  );
+  const criarCategoriaPeople = useAppStore(
+    (state) => state.criarCategoriaPeople,
+  );
+  const [aberto, setAberto] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  if (!contact.contactId) return null;
+
+  const atuais = contact.categories ?? [];
+  const disponiveis = [...peopleCategorias.keys()];
+  const buscaLimpa = busca.trim();
+  const jaExiste = disponiveis.some(
+    (nome) => nome.toLowerCase() === buscaLimpa.toLowerCase(),
+  );
+
+  const gravar = async (proximas: string[]) => {
+    setSalvando(true);
+    try {
+      await setPeopleContactCategorias(contact.id, proximas);
+    } catch {
+      toast.error(t.controlRoom.peopleCategoriaAtribuirErro);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const alternar = (nome: string) => {
+    const proximas = atuais.includes(nome)
+      ? atuais.filter((categoria) => categoria !== nome)
+      : [...atuais, nome];
+    void gravar(proximas);
+  };
+
+  const criarEAtribuir = async () => {
+    if (!buscaLimpa) return;
+    setSalvando(true);
+    try {
+      await criarCategoriaPeople(buscaLimpa, "preset0");
+      await setPeopleContactCategorias(contact.id, [...atuais, buscaLimpa]);
+      setBusca("");
+    } catch {
+      toast.error(t.controlRoom.peopleCategoriaAtribuirErro);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <>
+      <Separator />
+      <section className="p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Tag className="size-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">
+            {t.controlRoom.peopleCategoriesSection}
+          </h3>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {atuais.map((nome) => {
+            const cor = peopleCategorias.get(nome);
+            return (
+              <Badge key={nome} variant="secondary" className="gap-1.5">
+                {cor ? (
+                  <span
+                    aria-hidden
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ background: cor }}
+                  />
+                ) : (
+                  <Tag className="size-3 shrink-0" />
+                )}
+                {nome}
+                <button
+                  type="button"
+                  className="ml-0.5 rounded-sm opacity-70 hover:opacity-100"
+                  aria-label={t.controlRoom.peopleCategoriaRemover}
+                  onClick={() => alternar(nome)}
+                  disabled={salvando}
+                >
+                  <X className="size-3" />
+                </button>
+              </Badge>
+            );
+          })}
+
+          <Popover open={aberto} onOpenChange={setAberto}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 gap-1 px-2 text-xs"
+                disabled={salvando}
+              >
+                <Plus className="size-3" />
+                {t.controlRoom.peopleCategoriaAdd}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-64 p-0">
+              <Command>
+                <CommandInput
+                  placeholder={t.controlRoom.peopleCategoriaBuscar}
+                  value={busca}
+                  onValueChange={setBusca}
+                />
+                <CommandList>
+                  <CommandEmpty>
+                    {t.controlRoom.peopleCategoriaVazio}
+                  </CommandEmpty>
+                  <CommandGroup>
+                    {disponiveis.map((nome) => {
+                      const cor = peopleCategorias.get(nome);
+                      const marcada = atuais.includes(nome);
+                      return (
+                        <CommandItem
+                          key={nome}
+                          value={nome}
+                          onSelect={() => alternar(nome)}
+                        >
+                          {cor ? (
+                            <span
+                              aria-hidden
+                              className="size-2.5 shrink-0 rounded-full"
+                              style={{ background: cor }}
+                            />
+                          ) : (
+                            <Tag className="size-3.5 shrink-0" />
+                          )}
+                          <span className="flex-1 truncate">{nome}</span>
+                          {marcada && <Check className="size-3.5 shrink-0" />}
+                        </CommandItem>
+                      );
+                    })}
+                  </CommandGroup>
+                  {buscaLimpa && !jaExiste && (
+                    <>
+                      <CommandSeparator />
+                      <CommandGroup>
+                        <CommandItem
+                          value={`__criar__${buscaLimpa}`}
+                          onSelect={() => void criarEAtribuir()}
+                        >
+                          <Plus className="size-3.5 shrink-0" />
+                          {t.controlRoom.peopleCategoriaCriar} “{buscaLimpa}”
+                        </CommandItem>
+                      </CommandGroup>
+                    </>
+                  )}
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -1019,6 +1199,9 @@ function PeopleDetail({
         )}
           </section>
 
+          {/* #278 S3b: categorias do Outlook do contato (só editável). */}
+          <ContactCategories contact={contact} />
+
           <Separator />
 
           <section className="p-4">
@@ -1621,6 +1804,140 @@ function AssignToOrganizationSheet({
   );
 }
 
+/**
+ * #278 S3c: seletor multi-check de categorias pro bulk (adicionar OU remover).
+ * Chips do selecionado + Popover/Command com swatch da cor real, no mesmo
+ * padrão do detalhe (#278 S3b) e do sidebar (#406).
+ */
+function BulkCategoriaPicker({
+  label,
+  placeholder,
+  emptyText,
+  createLabel,
+  selected,
+  categorias,
+  onToggle,
+  onCriar,
+}: {
+  label: string;
+  placeholder: string;
+  emptyText: string;
+  /** #401: rótulo do item "criar" (só relevante quando `onCriar` é passado). */
+  createLabel?: string;
+  selected: string[];
+  categorias: Map<string, string>;
+  onToggle: (nome: string) => void;
+  /** #401: criar categoria inline durante o bulk (só no picker de adicionar). */
+  onCriar?: (nome: string) => Promise<void>;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [busca, setBusca] = useState("");
+  const nomes = [...categorias.keys()];
+  const buscaLimpa = busca.trim();
+  const jaExiste = nomes.some(
+    (nome) => nome.toLowerCase() === buscaLimpa.toLowerCase(),
+  );
+  return (
+    <div className="grid gap-1.5">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {selected.map((nome) => {
+          const cor = categorias.get(nome);
+          return (
+            <Badge key={nome} variant="secondary" className="gap-1.5">
+              {cor ? (
+                <span
+                  aria-hidden
+                  className="size-2.5 shrink-0 rounded-full"
+                  style={{ background: cor }}
+                />
+              ) : (
+                <Tag className="size-3 shrink-0" />
+              )}
+              {nome}
+              <button
+                type="button"
+                className="ml-0.5 rounded-sm opacity-70 hover:opacity-100"
+                onClick={() => onToggle(nome)}
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          );
+        })}
+        <Popover open={aberto} onOpenChange={setAberto}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-6 gap-1 px-2 text-xs"
+            >
+              <Plus className="size-3" />
+              {placeholder}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-64 p-0">
+            <Command>
+              <CommandInput
+                placeholder={placeholder}
+                value={busca}
+                onValueChange={setBusca}
+              />
+              <CommandList>
+                <CommandEmpty>{emptyText}</CommandEmpty>
+                <CommandGroup>
+                  {nomes.map((nome) => {
+                    const cor = categorias.get(nome);
+                    const marcada = selected.includes(nome);
+                    return (
+                      <CommandItem
+                        key={nome}
+                        value={nome}
+                        onSelect={() => onToggle(nome)}
+                      >
+                        {cor ? (
+                          <span
+                            aria-hidden
+                            className="size-2.5 shrink-0 rounded-full"
+                            style={{ background: cor }}
+                          />
+                        ) : (
+                          <Tag className="size-3.5 shrink-0" />
+                        )}
+                        <span className="flex-1 truncate">{nome}</span>
+                        {marcada && <Check className="size-3.5 shrink-0" />}
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+                {/* #401: criar categoria inline durante o bulk edit. */}
+                {onCriar && buscaLimpa && !jaExiste && (
+                  <>
+                    <CommandSeparator />
+                    <CommandGroup>
+                      <CommandItem
+                        value={`__criar__${buscaLimpa}`}
+                        onSelect={() => {
+                          void onCriar(buscaLimpa);
+                          setBusca("");
+                        }}
+                      >
+                        <Plus className="size-3.5 shrink-0" />
+                        {createLabel} “{buscaLimpa}”
+                      </CommandItem>
+                    </CommandGroup>
+                  </>
+                )}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  );
+}
+
 function BulkEditDetailsSheet({
   open,
   contacts,
@@ -1636,10 +1953,20 @@ function BulkEditDetailsSheet({
   const bulkEditPeopleDetails = useAppStore(
     (state) => state.bulkEditPeopleDetails,
   );
+  const bulkSetPeopleCategorias = useAppStore(
+    (state) => state.bulkSetPeopleCategorias,
+  );
+  const peopleCategorias = useAppStore((state) => state.peopleCategorias);
+  const criarCategoriaPeople = useAppStore(
+    (state) => state.criarCategoriaPeople,
+  );
   const [step, setStep] = useState<BulkEditDetailsStep>("edit");
   const [edits, setEdits] = useState<BulkEditDetailsState>(
     emptyBulkEditDetailsState,
   );
+  // #278 S3c: categorias a adicionar / remover no lote (nomes de masterCategory).
+  const [catAdd, setCatAdd] = useState<string[]>([]);
+  const [catRemove, setCatRemove] = useState<string[]>([]);
   const [validationAttempted, setValidationAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const wasOpenRef = useRef(false);
@@ -1679,6 +2006,8 @@ function BulkEditDetailsSheet({
     wasOpenRef.current = true;
     setStep("edit");
     setEdits(emptyBulkEditDetailsState());
+    setCatAdd([]);
+    setCatRemove([]);
     setValidationAttempted(false);
     setSaving(false);
   }, [open]);
@@ -1691,6 +2020,21 @@ function BulkEditDetailsSheet({
     field: key,
     value: edits[key].clear ? null : edits[key].value.trim(),
   }));
+  const hasCatChanges = catAdd.length > 0 || catRemove.length > 0;
+  // Uma categoria em "adicionar" não pode estar em "remover" (e vice-versa): o
+  // seletor de cada lado exclui o que já está no outro.
+  const toggleCat = (
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    outro: React.Dispatch<React.SetStateAction<string[]>>,
+    nome: string,
+  ) => {
+    setter((atual) =>
+      atual.includes(nome)
+        ? atual.filter((c) => c !== nome)
+        : [...atual, nome],
+    );
+    outro((atual) => atual.filter((c) => c !== nome));
+  };
 
   const updateField = (
     key: PeopleBulkDetailsField,
@@ -1704,45 +2048,70 @@ function BulkEditDetailsSheet({
 
   const goToPreview = () => {
     setValidationAttempted(true);
-    if (enabledFields.length === 0 || missingValueFields.length > 0) return;
+    if (enabledFields.length === 0 && !hasCatChanges) return;
+    if (missingValueFields.length > 0) return;
     setStep("preview");
   };
 
   const apply = async () => {
-    if (changes.length === 0) return;
+    if (changes.length === 0 && !hasCatChanges) return;
     setSaving(true);
+    const ids = contacts.map((contact) => contact.id);
     try {
-      const result = await bulkEditPeopleDetails(
-        contacts.map((contact) => contact.id),
-        changes,
-      );
-      if (result.updated > 0) {
-        toast.success(
-          preencher(t.controlRoom.bulkDetailsAtualizados, {
-            n: result.updated,
-          }),
-        );
+      if (changes.length > 0) {
+        const result = await bulkEditPeopleDetails(ids, changes);
+        if (result.updated > 0) {
+          toast.success(
+            preencher(t.controlRoom.bulkDetailsAtualizados, {
+              n: result.updated,
+            }),
+          );
+        }
+        if (result.unchanged > 0) {
+          toast.info(
+            preencher(t.controlRoom.bulkDetailsSemMudanca, {
+              n: result.unchanged,
+            }),
+          );
+        }
+        if (result.skipped > 0) {
+          toast.warning(
+            preencher(t.controlRoom.bulkDetailsIgnorados, {
+              n: result.skipped,
+            }),
+          );
+        }
+        if (result.failed > 0) {
+          toast.error(
+            preencher(t.controlRoom.bulkDetailsFalhas, {
+              n: result.failed,
+            }),
+          );
+        }
       }
-      if (result.unchanged > 0) {
-        toast.info(
-          preencher(t.controlRoom.bulkDetailsSemMudanca, {
-            n: result.unchanged,
-          }),
-        );
-      }
-      if (result.skipped > 0) {
-        toast.warning(
-          preencher(t.controlRoom.bulkDetailsIgnorados, {
-            n: result.skipped,
-          }),
-        );
-      }
-      if (result.failed > 0) {
-        toast.error(
-          preencher(t.controlRoom.bulkDetailsFalhas, {
-            n: result.failed,
-          }),
-        );
+      if (hasCatChanges) {
+        const result = await bulkSetPeopleCategorias(ids, catAdd, catRemove);
+        if (result.updated > 0) {
+          toast.success(
+            preencher(t.controlRoom.bulkCategoriasAtualizados, {
+              n: result.updated,
+            }),
+          );
+        }
+        if (result.skipped > 0) {
+          toast.warning(
+            preencher(t.controlRoom.bulkDetailsIgnorados, {
+              n: result.skipped,
+            }),
+          );
+        }
+        if (result.failed > 0) {
+          toast.error(
+            preencher(t.controlRoom.bulkCategoriasFalhas, {
+              n: result.failed,
+            }),
+          );
+        }
       }
       onDone();
     } catch {
@@ -1866,11 +2235,43 @@ function BulkEditDetailsSheet({
                   })}
                 </div>
 
-                {validationAttempted && enabledFields.length === 0 && (
-                  <p className="text-sm text-destructive">
-                    {t.controlRoom.bulkDetailsSelecioneCampo}
-                  </p>
-                )}
+                {/* #278 S3c: categorias do Outlook em lote (add/remove). */}
+                <div className="grid gap-3 rounded-lg border p-3">
+                  <div className="flex items-center gap-2">
+                    <Tag className="size-4 text-muted-foreground" />
+                    <Label>{t.controlRoom.bulkCategoriasSecao}</Label>
+                  </div>
+                  <BulkCategoriaPicker
+                    label={t.controlRoom.bulkCategoriasAdicionar}
+                    placeholder={t.controlRoom.peopleCategoriaAdd}
+                    emptyText={t.controlRoom.peopleCategoriaVazio}
+                    createLabel={t.controlRoom.peopleCategoriaCriar}
+                    selected={catAdd}
+                    categorias={peopleCategorias}
+                    onToggle={(nome) => toggleCat(setCatAdd, setCatRemove, nome)}
+                    onCriar={async (nome) => {
+                      // #401: cria a categoria (M365) e já a marca pra adicionar.
+                      await criarCategoriaPeople(nome, "preset0");
+                      toggleCat(setCatAdd, setCatRemove, nome);
+                    }}
+                  />
+                  <BulkCategoriaPicker
+                    label={t.controlRoom.bulkCategoriasRemover}
+                    placeholder={t.controlRoom.peopleCategoriaAdd}
+                    emptyText={t.controlRoom.peopleCategoriaVazio}
+                    selected={catRemove}
+                    categorias={peopleCategorias}
+                    onToggle={(nome) => toggleCat(setCatRemove, setCatAdd, nome)}
+                  />
+                </div>
+
+                {validationAttempted &&
+                  enabledFields.length === 0 &&
+                  !hasCatChanges && (
+                    <p className="text-sm text-destructive">
+                      {t.controlRoom.bulkDetailsSelecioneCampo}
+                    </p>
+                  )}
               </>
             ) : (
               <>
@@ -1917,6 +2318,39 @@ function BulkEditDetailsSheet({
                     </li>
                   ))}
                 </ul>
+
+                {hasCatChanges && (
+                  <ul className="grid gap-2">
+                    {catAdd.length > 0 && (
+                      <li className="grid gap-1.5 rounded-lg border p-3 text-sm">
+                        <span className="font-medium">
+                          {t.controlRoom.bulkCategoriasAdicionar}
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {catAdd.map((nome) => (
+                            <Badge key={nome} variant="secondary">
+                              {nome}
+                            </Badge>
+                          ))}
+                        </div>
+                      </li>
+                    )}
+                    {catRemove.length > 0 && (
+                      <li className="grid gap-1.5 rounded-lg border p-3 text-sm">
+                        <span className="font-medium">
+                          {t.controlRoom.bulkCategoriasRemover}
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {catRemove.map((nome) => (
+                            <Badge key={nome} variant="outline">
+                              {nome}
+                            </Badge>
+                          ))}
+                        </div>
+                      </li>
+                    )}
+                  </ul>
+                )}
               </>
             )}
           </div>
@@ -2002,6 +2436,9 @@ export function PeopleView({
     (state) => state.setPeopleColumnVisibility,
   );
   const peopleTab = useAppStore((state) => state.peopleTab);
+  const peopleSelectedCategory = useAppStore(
+    (state) => state.peopleSelectedCategory,
+  );
   const selectedGroupId = useAppStore(
     (state) => state.peopleSelectedGroupId,
   );
@@ -2048,12 +2485,19 @@ export function PeopleView({
     selectedGroupId == null
       ? EMPTY_CONTACTS
       : (groupMembersById[selectedGroupId] ?? EMPTY_CONTACTS);
+  // #406: aba "category" filtra os contatos pessoais pela categoria escolhida.
+  const categoryContacts =
+    peopleTab === "category" && peopleSelectedCategory
+      ? contacts.filter((c) => c.categories.includes(peopleSelectedCategory))
+      : EMPTY_CONTACTS;
   const visibleContacts =
     peopleTab === "groups"
       ? groupMembers
       : peopleTab === "directory"
         ? directory
-        : contacts;
+        : peopleTab === "category"
+          ? categoryContacts
+          : contacts;
   const activeGroup =
     groups.find((group) => group.id === selectedGroupId) ?? null;
   const groupMembersLoading =

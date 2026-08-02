@@ -1,6 +1,8 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BridgeHeaderIcon } from "@/components/ui/icons/marca-anim";
 import { Badge, type BadgeProps } from "@/components/reui/badge";
+import { PreviewAnexo } from "@/components/bridge/preview-anexo";
+import { ehPrevisualizavel } from "@/lib/anexo-tipo";
 import {
   Filters,
   type FilterFieldConfig,
@@ -224,6 +226,7 @@ import {
   PenSquare,
   Pencil,
   RefreshCw,
+  Repeat,
   Reply,
   ReplyAll,
   RotateCcw,
@@ -237,6 +240,7 @@ import {
   TriangleAlert,
   User,
   Users,
+  Tag,
   UsersRound,
   Video,
   X,
@@ -1517,6 +1521,14 @@ function FolderSidebar({
   );
   const loadPeopleGroups = useAppStore((state) => state.loadPeopleGroups);
   const selectPeopleGroup = useAppStore((state) => state.selectPeopleGroup);
+  // #406: categorias do Outlook no sidebar de Contacts.
+  const peopleCategorias = useAppStore((state) => state.peopleCategorias);
+  const peopleSelectedCategory = useAppStore(
+    (state) => state.peopleSelectedCategory,
+  );
+  const selectPeopleCategory = useAppStore(
+    (state) => state.selectPeopleCategory,
+  );
   useEffect(() => {
     if (
       bridgeView === "people" &&
@@ -2169,6 +2181,58 @@ function FolderSidebar({
                       : t.controlRoom.peopleGroupsEmpty}
                   </p>
                 )}
+
+              {/* #406: Categorias do Outlook — grupo customizável portável
+                  (opção b). Clicar filtra os contatos pela categoria. */}
+              {!colapsada && peopleCategorias.size > 0 && (
+                <p className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
+                  {t.controlRoom.peopleCategoriesSection}
+                </p>
+              )}
+              {[...peopleCategorias.entries()].map(([nome, cor]) => {
+                const ativo =
+                  peopleTab === "category" && peopleSelectedCategory === nome;
+                return (
+                  <Tooltip key={nome}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={ativo ? "secondary" : "ghost"}
+                        onClick={() => selectPeopleCategory(nome)}
+                        aria-label={nome}
+                        aria-current={ativo ? "page" : undefined}
+                        className={cn(
+                          "shrink-0",
+                          colapsada
+                            ? "size-9 justify-center p-0"
+                            : "w-full justify-start gap-2.5",
+                          ativo
+                            ? "bg-secondary font-medium text-secondary-foreground"
+                            : "text-muted-foreground hover:bg-accent/50"
+                        )}
+                      >
+                        {cor ? (
+                          <span
+                            className="size-2.5 shrink-0 rounded-full"
+                            style={{ background: cor }}
+                          />
+                        ) : (
+                          <Tag className="size-4 shrink-0" />
+                        )}
+                        {!colapsada && (
+                          <span className="min-w-0 flex-1 truncate text-left">
+                            {nome}
+                          </span>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    {colapsada && (
+                      <TooltipContent side="right" align="center">
+                        {nome}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                );
+              })}
             </nav>
           </div>
         </ScrollArea>
@@ -4351,6 +4415,12 @@ const MessageDetail = forwardRef<
   const carregarLeitor = useAppStore((s) => s.carregarLeitor);
   const limparLeitor = useAppStore((s) => s.limparLeitor);
   const comporRef = useRef<ComporMensagemHandle>(null);
+  // Anexo em pré-visualização (#188); null = nenhum aberto.
+  const [previewAtual, setPreviewAtual] = useState<AnexoEmail | null>(null);
+  // Fecha o preview ao trocar de e-mail (não vazar o anexo do anterior).
+  useEffect(() => {
+    setPreviewAtual(null);
+  }, [id]);
   const textosUndoSend = useMemo(
     () => ({
       tituloPendente: (segundos: number) =>
@@ -4537,7 +4607,11 @@ const MessageDetail = forwardRef<
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    onClick={() => baixarAnexo(a)}
+                    // Previsível → abre o preview inline (#188); senão baixa
+                    // (fluxo antigo, sem regressão para .docx/.zip/etc.).
+                    onClick={() =>
+                      ehPrevisualizavel(a) ? setPreviewAtual(a) : baixarAnexo(a)
+                    }
                     className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
                     aria-label={`${t.controlRoom.abrirArquivo}: ${a.nome}`}
                   >
@@ -4550,6 +4624,15 @@ const MessageDetail = forwardRef<
               </Tooltip>
             ))}
           </div>
+          {previewAtual && id && (
+            <PreviewAnexo
+              anexo={previewAtual}
+              messageId={id}
+              mailbox={mailbox}
+              onSalvar={() => baixarAnexo(previewAtual)}
+              onFechar={() => setPreviewAtual(null)}
+            />
+          )}
         </>
       )}
     </div>
@@ -4911,10 +4994,19 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const fecharEventoAgenda = useAppStore((s) => s.fecharEventoAgenda);
   const abrirFormEditar = useAppStore((s) => s.abrirFormEditar);
   const excluirEvento = useAppStore((s) => s.excluirEvento);
+  const recarregarAgenda = useAppStore((s) => s.recarregarAgenda);
   const cancelarEvento = useAppStore((s) => s.cancelarEvento);
   const responderEvento = useAppStore((s) => s.responderEvento);
   const eventosMes = useAppStore((s) => s.agendaEventosMes);
   const participantesPopoverTituloId = useId();
+  // #399: badge "recorrente". O detalhe (EventoDetalhe) não traz o `type`, mas o
+  // evento da lista (EventoAgenda, #397) sim — casa pelo id selecionado.
+  const eventoLista = eventosMes?.find((e) => e.id === id);
+  const recorrente =
+    !!eventoLista &&
+    (eventoLista.tipo === "occurrence" ||
+      eventoLista.tipo === "exception" ||
+      eventoLista.tipo === "seriesMaster");
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
 
@@ -4953,24 +5045,56 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const [cancelando, setCancelando] = useState(false);
 
   // Abre o formulário de edição com o evento clicado (vindo da lista do mês).
-  const editar = () => {
+  // #397: recorrente passa o escopo (ocorrência × série) já escolhido aqui.
+  const editar = (escopo?: "ocorrencia" | "serie") => {
     if (!id || !podeGerenciar) return;
     const ev = eventosMes?.find((e) => e.id === id);
     if (ev) {
-      abrirFormEditar(ev);
+      abrirFormEditar(ev, escopo);
       fecharEventoAgenda();
     }
   };
 
-  // Exclui (otimista no store); fecha o Sheet e toasta o resultado.
+  // #398: excluir um recorrente pergunta ocorrência × série (guarda o alvo do
+  // prompt); único é direto. Otimista no store; fecha o Sheet e toasta.
+  const [excluirRecAberto, setExcluirRecAberto] = useState(false);
+  const [excluindoRec, setExcluindoRec] = useState(false);
+
   const excluir = async () => {
     if (!id || !podeGerenciar) return;
+    // #398: recorrente escolhe o escopo antes de apagar (não apaga direto).
+    if (recorrente) {
+      setExcluirRecAberto(true);
+      return;
+    }
     fecharEventoAgenda();
     try {
       await excluirEvento(id);
       toast.success(t.controlRoom.agendaExcluido);
     } catch {
       toast.error(t.controlRoom.agendaErroExcluir);
+    }
+  };
+
+  // #398: aplica a escolha do prompt de exclusão do detalhe. "Série" apaga o
+  // seriesMaster (some tudo) + recarrega; "ocorrência" apaga só o id dela.
+  const confirmarExcluirRec = async (alvo: "ocorrencia" | "serie") => {
+    if (!id) return;
+    const alvoId =
+      alvo === "serie" && eventoLista?.seriesMasterId
+        ? eventoLista.seriesMasterId
+        : id;
+    setExcluindoRec(true);
+    try {
+      await excluirEvento(alvoId);
+      if (alvo === "serie") recarregarAgenda();
+      setExcluirRecAberto(false);
+      fecharEventoAgenda();
+      toast.success(t.controlRoom.agendaExcluido);
+    } catch {
+      toast.error(t.controlRoom.agendaErroExcluir);
+    } finally {
+      setExcluindoRec(false);
     }
   };
 
@@ -5016,6 +5140,16 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
           <>
             <SheetHeader className="border-b px-4 py-3">
               <SheetTitle className="pr-6 text-left">{det.assunto}</SheetTitle>
+              {recorrente && (
+                <Badge
+                  variant="secondary"
+                  size="sm"
+                  className="mt-1 w-fit gap-1"
+                >
+                  <Repeat className="size-3" />
+                  {t.controlRoom.agendaRecorrenteBadge}
+                </Badge>
+              )}
             </SheetHeader>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto scrollbar-fina px-4 py-4 text-sm">
               <div className="flex items-center gap-2 text-muted-foreground">
@@ -5182,14 +5316,37 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
             <SheetFooter className="flex-row items-center gap-2 border-t px-4 py-3">
               {podeGerenciar && (
                 <>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={editar}
-                    disabled={!eventosMes?.some((e) => e.id === id)}
-                  >
-                    <Pencil /> {t.controlRoom.agendaEditar}
-                  </Button>
+                  {recorrente ? (
+                    // #397: recorrente escolhe o escopo no próprio Edit.
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={!eventosMes?.some((e) => e.id === id)}
+                        >
+                          <Pencil /> {t.controlRoom.agendaEditar}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start">
+                        <DropdownMenuItem onClick={() => editar("ocorrencia")}>
+                          {t.controlRoom.agendaEditarEstaOcorrencia}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => editar("serie")}>
+                          {t.controlRoom.agendaEditarSerie}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => editar()}
+                      disabled={!eventosMes?.some((e) => e.id === id)}
+                    >
+                      <Pencil /> {t.controlRoom.agendaEditar}
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -5277,6 +5434,51 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
             >
               {cancelando && <Spinner className="size-4" />}
               {t.controlRoom.agendaCancelarConfirmar}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* #398: excluir recorrente pelo detalhe — ocorrência × série. Antes o
+          Delete do detalhe apagava a ocorrência direto, sem perguntar. */}
+      <AlertDialog
+        open={excluirRecAberto}
+        onOpenChange={(o) => {
+          if (!o && !excluindoRec) setExcluirRecAberto(false);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t.controlRoom.agendaExcluirRecorrenteTitulo}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.agendaExcluirRecorrenteDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={excluindoRec}>
+              {t.controlRoom.agendaEditarCancelar}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={excluindoRec}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmarExcluirRec("ocorrencia");
+              }}
+            >
+              {t.controlRoom.agendaEditarEstaOcorrencia}
+            </AlertDialogAction>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={excluindoRec}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmarExcluirRec("serie");
+              }}
+            >
+              {t.controlRoom.agendaEditarSerie}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

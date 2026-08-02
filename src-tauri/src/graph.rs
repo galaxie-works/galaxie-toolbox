@@ -1009,6 +1009,11 @@ pub struct EventoAgenda {
     pub sou_organizador: bool,
     /// Graph `responseRequested`: false = convite informativo (sem pedir RSVP).
     pub resposta_solicitada: bool,
+    /// Graph `type` (#397): "singleInstance" | "occurrence" | "exception" |
+    /// "seriesMaster". Occurrence/exception/seriesMaster = recorrente.
+    pub tipo: String,
+    /// Graph `seriesMasterId` (#397): id da série mãe (só p/ ocorrências/exceções).
+    pub series_master_id: Option<String>,
 }
 
 /// Parseia a resposta de um `calendarView` (lista `value[]`) em EventoAgenda.
@@ -1058,6 +1063,11 @@ fn parse_eventos(v: &serde_json::Value) -> Vec<EventoAgenda> {
                     .to_string(),
                 sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
                 resposta_solicitada: it["responseRequested"].as_bool().unwrap_or(true),
+                tipo: it["type"].as_str().unwrap_or("singleInstance").to_string(),
+                series_master_id: it["seriesMasterId"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
             });
         }
     }
@@ -1087,7 +1097,7 @@ fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgend
     Ok(parse_eventos(&v))
 }
 
-const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,responseRequested";
+const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,responseRequested,type,seriesMasterId";
 
 /// Eventos do calendário padrão no intervalo (limites em ISO UTC). Calendars.Read.
 pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
@@ -1380,6 +1390,38 @@ pub struct Convidado {
     pub nome: String,
 }
 
+fn intervalo_padrao() -> i64 {
+    1
+}
+
+/// Recorrência de evento (#396, S1). Modelo do app; traduzido pro formato do
+/// Graph (`recurrence.pattern` + `recurrence.range`) em `recurrence_json`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Recorrencia {
+    /// "daily" | "weekly" | "monthly" | "yearly".
+    pub frequencia: String,
+    #[serde(default = "intervalo_padrao")]
+    pub intervalo: i64,
+    /// Só weekly: "monday".."sunday".
+    #[serde(default)]
+    pub dias_semana: Vec<String>,
+    /// Monthly/yearly: dia do mês (1..31).
+    #[serde(default)]
+    pub dia_do_mes: Option<i64>,
+    /// Yearly: mês (1..12).
+    #[serde(default)]
+    pub mes: Option<i64>,
+    /// "noEnd" | "endDate" | "numbered".
+    pub fim_tipo: String,
+    /// Início da série (YYYY-MM-DD).
+    pub data_inicio: String,
+    #[serde(default)]
+    pub data_fim: Option<String>,
+    #[serde(default)]
+    pub numero_ocorrencias: Option<i64>,
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventoInput {
@@ -1401,6 +1443,59 @@ pub struct EventoInput {
     /// (/me/events). Presente = /me/calendars/{id}/events.
     #[serde(default)]
     pub calendario_id: Option<String>,
+    /// Recorrência (#396). Ausente = evento único.
+    #[serde(default)]
+    pub recorrencia: Option<Recorrencia>,
+    /// #397: PATCH só de campos (sem start/end/recurrence) — usado no "editar a
+    /// série inteira" pra não mover o schedule ao editar campos. Default false.
+    #[serde(default)]
+    pub somente_campos: bool,
+}
+
+/// Traduz o modelo do app pro objeto `recurrence` do Graph (pattern + range).
+fn recurrence_json(r: &Recorrencia, time_zone: &str) -> serde_json::Value {
+    let (tipo, mut pattern) = match r.frequencia.as_str() {
+        "weekly" => (
+            "weekly",
+            serde_json::json!({
+                "daysOfWeek": r.dias_semana,
+                "firstDayOfWeek": "sunday",
+            }),
+        ),
+        "monthly" => (
+            "absoluteMonthly",
+            serde_json::json!({ "dayOfMonth": r.dia_do_mes.unwrap_or(1) }),
+        ),
+        "yearly" => (
+            "absoluteYearly",
+            serde_json::json!({
+                "dayOfMonth": r.dia_do_mes.unwrap_or(1),
+                "month": r.mes.unwrap_or(1),
+            }),
+        ),
+        _ => ("daily", serde_json::json!({})),
+    };
+    pattern["type"] = serde_json::json!(tipo);
+    pattern["interval"] = serde_json::json!(r.intervalo.max(1));
+
+    let mut range = serde_json::json!({
+        "type": r.fim_tipo,
+        "startDate": r.data_inicio,
+        "recurrenceTimeZone": time_zone,
+    });
+    match r.fim_tipo.as_str() {
+        "endDate" => {
+            if let Some(d) = &r.data_fim {
+                range["endDate"] = serde_json::json!(d);
+            }
+        }
+        "numbered" => {
+            range["numberOfOccurrences"] =
+                serde_json::json!(r.numero_ocorrencias.unwrap_or(1).max(1));
+        }
+        _ => {}
+    }
+    serde_json::json!({ "pattern": pattern, "range": range })
 }
 
 /// Monta o corpo JSON de um evento para POST/PATCH em /me/events. Mandamos a
@@ -1408,8 +1503,6 @@ pub struct EventoInput {
 /// instante, o que também satisfaz a exigência de meia-noite no fuso para
 /// eventos de dia inteiro. O Z é removido por garantia (dateTime não leva zona).
 fn evento_json(input: &EventoInput) -> serde_json::Value {
-    let ini = input.inicio.trim_end_matches('Z');
-    let fim = input.fim.trim_end_matches('Z');
     // Convidados -> attendees[] no formato do Graph (ignora e-mail vazio).
     let attendees: Vec<serde_json::Value> = input
         .convidados
@@ -1424,9 +1517,6 @@ fn evento_json(input: &EventoInput) -> serde_json::Value {
         .collect();
     let mut obj = serde_json::json!({
         "subject": input.assunto,
-        "isAllDay": input.dia_inteiro,
-        "start": { "dateTime": ini, "timeZone": input.time_zone },
-        "end": { "dateTime": fim, "timeZone": input.time_zone },
         "location": { "displayName": input.local },
         "body": { "contentType": "text", "content": input.corpo },
         "categories": input.categorias,
@@ -1437,6 +1527,20 @@ fn evento_json(input: &EventoInput) -> serde_json::Value {
     // o Graph gera o link do Teams no evento.
     if input.reuniao_teams {
         obj["onlineMeetingProvider"] = serde_json::json!("teamsForBusiness");
+    }
+    // #397: no "editar a série inteira" (somente_campos) omitimos start/end e
+    // recurrence pra não mover o schedule; o PATCH no seriesMaster só aplica os
+    // campos. No fluxo normal (criar / editar ocorrência), envia tudo.
+    if !input.somente_campos {
+        let ini = input.inicio.trim_end_matches('Z');
+        let fim = input.fim.trim_end_matches('Z');
+        obj["isAllDay"] = serde_json::json!(input.dia_inteiro);
+        obj["start"] = serde_json::json!({ "dateTime": ini, "timeZone": input.time_zone });
+        obj["end"] = serde_json::json!({ "dateTime": fim, "timeZone": input.time_zone });
+        // Recorrência (#396): só quando presente.
+        if let Some(r) = &input.recorrencia {
+            obj["recurrence"] = recurrence_json(r, &input.time_zone);
+        }
     }
     obj
 }
@@ -1631,6 +1735,14 @@ pub struct AnexoEmail {
     pub id: String,
     pub nome: String,
     pub tamanho: u64,
+    /// MIME do anexo (`contentType` do Graph) — o front decide o renderer
+    /// antes de buscar os bytes. Vazio quando o Graph não informa.
+    pub content_type: String,
+    /// `@odata.type` do anexo: `fileAttachment` / `itemAttachment` /
+    /// `referenceAttachment`. Roteia file vs .msg vs link (#178 §5).
+    pub odata_type: String,
+    /// Anexo inline (embutido no corpo, ex.: imagem citada) vs. anexo real.
+    pub is_inline: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -1697,7 +1809,8 @@ pub fn cr_email_corpo(
     let mut anexos = Vec::new();
     if it["hasAttachments"].as_bool().unwrap_or(false) {
         let au = format!(
-            "{GRAPH}/{prefix}/messages/{id}/attachments?$select=id,name,size"
+            "{GRAPH}/{prefix}/messages/{id}/attachments\
+             ?$select=id,name,size,contentType,isInline"
         );
         if let Ok(r) = graph_enviar("mail:anexos", GRAPH_TETO_ESPERA_S, || {
             client.get(&au).bearer_auth(&token).send()
@@ -1710,6 +1823,11 @@ pub fn cr_email_corpo(
                                 id: a["id"].as_str().unwrap_or("").to_string(),
                                 nome: a["name"].as_str().unwrap_or("arquivo").to_string(),
                                 tamanho: a["size"].as_u64().unwrap_or(0),
+                                content_type: a["contentType"].as_str().unwrap_or("").to_string(),
+                                // `@odata.type` vem automático na coleção polimórfica
+                                // (fileAttachment/itemAttachment/referenceAttachment).
+                                odata_type: a["@odata.type"].as_str().unwrap_or("").to_string(),
+                                is_inline: a["isInline"].as_bool().unwrap_or(false),
                             });
                         }
                     }
@@ -1892,6 +2010,59 @@ pub fn cr_baixar_anexo(
         .map_err(|e| format!("falha ao gravar o arquivo: {e}"))?;
 
     Ok(destino.to_string_lossy().to_string())
+}
+
+/// Conteúdo de um anexo lido em memória para pré-visualização (#188).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnexoConteudo {
+    /// Bytes do anexo já em base64 (o Graph entrega `contentBytes` assim —
+    /// repassamos sem decodificar/recodificar).
+    pub bytes_b64: String,
+    /// MIME informado pelo Graph (ou vazio).
+    pub content_type: String,
+    pub nome: String,
+}
+
+/// Lê um anexo **em memória** (base64) para o preview, **sem** gravar em
+/// Downloads (esse é o papel do `cr_baixar_anexo`, que vira o botão "Salvar").
+/// Só trata `fileAttachment` (tem `contentBytes`); item/reference são tratados
+/// em fatias posteriores do épico (#178 §5).
+pub fn cr_ler_anexo(
+    store: &TokenStore,
+    message_id: &str,
+    attachment_id: &str,
+    mailbox: Option<&str>,
+) -> Result<AnexoConteudo, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
+
+    let url = format!(
+        "{GRAPH}/{prefix}/messages/{message_id}/attachments/{attachment_id}"
+    );
+    let resp = graph_enviar("mail:ler-anexo", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler o anexo: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "/{prefix}/messages/attachments retornou {}",
+            resp.status()
+        ));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let bytes_b64 = v["contentBytes"]
+        .as_str()
+        .ok_or("anexo sem conteúdo (não é um arquivo? .msg/link não têm bytes)")?
+        .to_string();
+
+    Ok(AnexoConteudo {
+        bytes_b64,
+        content_type: v["contentType"].as_str().unwrap_or("").to_string(),
+        nome: v["name"].as_str().unwrap_or("anexo").to_string(),
+    })
 }
 
 /// Devolve um caminho ainda livre dentro de `dir` para `nome`. Se ja existir,
@@ -3223,6 +3394,10 @@ pub struct PeopleRecord {
     pub manager: Option<String>,
     pub organization: bool,
     pub people_rank: Option<usize>,
+    /// Categorias do Outlook do contato (#406). Só `source=="contacts"` (o
+    /// endpoint /me/people não expõe categories). Vazio caso contrário.
+    #[serde(default)]
+    pub categories: Vec<String>,
 }
 
 /// Resultado estruturado: uma fonte pode falhar sem esconder os dados da outra.
@@ -3424,6 +3599,7 @@ fn registro_de_usuario_do_diretorio(item: &serde_json::Value) -> Option<PeopleRe
         manager: None,
         organization: true,
         people_rank: None,
+        categories: Vec::new(),
     })
 }
 
@@ -3557,7 +3733,7 @@ pub fn cr_people_list(
             (
                 "contacts",
                 format!(
-                    "{GRAPH}/me/contacts?$top=100&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager"
+                    "{GRAPH}/me/contacts?$top=100&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager,categories"
                 ),
             ),
             (
@@ -3629,6 +3805,16 @@ pub fn cr_people_list(
                                     manager: texto_opcional(item, "manager"),
                                     organization: false,
                                     people_rank: None,
+                                    categories: item["categories"]
+                                        .as_array()
+                                        .map(|arr| {
+                                            arr.iter()
+                                                .filter_map(|c| {
+                                                    c.as_str().map(|s| s.to_string())
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
                                 })
                             }));
                         } else {
@@ -3666,6 +3852,7 @@ pub fn cr_people_list(
                                         manager: None,
                                         organization,
                                         people_rank: is_first_page.then_some(rank),
+                                        categories: Vec::new(),
                                     })
                                 },
                             ));
@@ -4777,6 +4964,36 @@ pub fn cr_people_contact_update(
             .send()
     })
     .map_err(|error| format!("Failed to update contact: {error}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("Contacts: Graph returned {}", resp.status()));
+    }
+    Ok(())
+}
+
+/// Atribui as categorias do Outlook a um contato (#278 S3b): PATCH parcial só
+/// do campo `categories` em /me/contacts/{id}. Parcial de propósito — não mexe
+/// em nome/emails/telefones (serve tanto pro detalhe quanto pro bulk). As
+/// categorias são os NOMES das masterCategories (multi-valor), como no #211.
+pub fn cr_people_contact_categories(
+    store: &TokenStore,
+    contact_id: &str,
+    categorias: Vec<String>,
+) -> Result<(), String> {
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Err("Contacts.ReadWrite is required to edit contacts.".to_string());
+    }
+    let contact_id = contact_id.trim();
+    if contact_id.is_empty() {
+        return Err("Invalid contact.".to_string());
+    }
+    let body = serde_json::json!({ "categories": categorias });
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/contacts/{}", urlencoding::encode(contact_id));
+    let resp = graph_enviar("people:contact-categories", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|error| format!("Failed to update categories: {error}"))?;
     if !resp.status().is_success() {
         return Err(format!("Contacts: Graph returned {}", resp.status()));
     }

@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { RotateCcw, TriangleAlert } from "lucide-react";
 import { logErro } from "@/lib/log";
+import { telAppCrashed } from "@/lib/telemetria";
 import { revelarAppEFecharSplash } from "@/lib/splash";
 import { useIdioma } from "@/lib/idioma";
 import { Button } from "@/components/ui/button";
@@ -79,6 +80,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     logErro("ErrorBoundary", error, info.componentStack ?? undefined);
+    telAppCrashed("boundary");
     // Boot #164: se o crash aconteceu durante o boot, a main window ainda está
     // oculta atrás do splash. Revela a main (mostrando este fallback) e fecha a
     // splash — em vez de deixar o usuário preso na animação para sempre.

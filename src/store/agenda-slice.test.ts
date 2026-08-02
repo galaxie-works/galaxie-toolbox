@@ -127,6 +127,62 @@ test("closing an event invalidates its in-flight detail and categories stay mapp
   assert.equal(store.agendaEventoDetalhe, null);
 });
 
+test("#396 creating an event refreshes the range so a new series shows at once", async () => {
+  let criados = 0;
+  const store = criarStore({
+    carregarEventos: async () => [],
+    carregarCategorias: async () => [],
+    carregarEvento: async () => detalhe("evento"),
+    criarEvento: async () => {
+      criados += 1;
+      return "real-1";
+    },
+  });
+
+  const recargaAntes = store.agendaRecarga;
+  await store.criarEvento({
+    assunto: "Daily",
+    inicio: "2026-08-05T09:00:00",
+    fim: "2026-08-05T09:30:00",
+    diaInteiro: false,
+    local: "",
+    corpo: "",
+    categorias: [],
+    timeZone: "America/Sao_Paulo",
+    convidados: [],
+    reuniaoTeams: false,
+    recorrencia: { tipo: "daily", intervalo: 1 },
+  } as never);
+
+  assert.equal(criados, 1);
+  // O otimista troca o tempId pelo real e dispara o refetch do range (#396).
+  assert.equal(store.agendaRecarga, recargaAntes + 1);
+});
+
+test("#397 opening the edit form keeps the chosen recurrence scope", () => {
+  const store = criarStore({
+    carregarEventos: async () => [],
+    carregarCategorias: async () => [],
+    carregarEvento: async () => detalhe("evento"),
+  });
+  const recorrente: EventoAgenda = {
+    ...evento("occ-1"),
+    tipo: "occurrence",
+    seriesMasterId: "master-1",
+  };
+
+  store.abrirFormEditar(recorrente, "serie");
+  assert.equal(store.agendaFormAberto, true);
+  assert.equal(store.agendaFormEscopo, "serie");
+
+  store.abrirFormEditar(recorrente, "ocorrencia");
+  assert.equal(store.agendaFormEscopo, "ocorrencia");
+
+  // Sem escopo (evento único) volta a null.
+  store.abrirFormEditar(evento("single"));
+  assert.equal(store.agendaFormEscopo, null);
+});
+
 test("an invited attendee cannot open the organizer edit flow", () => {
   let detalhesCarregados = 0;
   const store = criarStore({

@@ -4,7 +4,7 @@
 // como é); aqui fica só a cola: fetch por faixa visível, estados, i18n e o
 // diálogo de CRUD (padrão do c-event-calendar-3).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { enUS, ptBR } from "date-fns/locale";
 import type { Locale } from "date-fns";
 import { toast } from "sonner";
@@ -30,9 +30,13 @@ import type { Idioma } from "@/lib/strings";
 import type {
   AcaoRsvp,
   ConvidadoInput,
+  DiaSemana,
   EventoAgenda,
   EventoInput,
   Pessoa,
+  RecorrenciaFim,
+  RecorrenciaFrequencia,
+  RecorrenciaInput,
 } from "@/lib/types";
 import { CampoPessoas } from "@/components/compose/campo-pessoas";
 
@@ -101,6 +105,37 @@ import {
 } from "@/components/ui/empty";
 
 type Dic = ReturnType<typeof useIdioma>["t"];
+
+// Recorrência (#396): ordem dos dias (domingo=0, como o getDay do JS) e rótulo
+// curto localizado via Intl (sem precisar de string por dia no dicionário).
+const ORDEM_DIAS: DiaSemana[] = [
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+];
+function rotuloDiaCurto(dia: DiaSemana): string {
+  const idx = ORDEM_DIAS.indexOf(dia);
+  // 2023-01-01 é um domingo → base estável pra formatar o nome do dia.
+  const d = new Date(2023, 0, 1 + idx);
+  return new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(d);
+}
+function diaDaData(iso: string): DiaSemana {
+  const d = new Date(`${iso}T00:00:00`);
+  return ORDEM_DIAS[d.getDay()] ?? "monday";
+}
+
+// #397/#398: um evento é recorrente quando é ocorrência/exceção/série.
+function ehRecorrente(ev: EventoAgenda): boolean {
+  return (
+    ev.tipo === "occurrence" ||
+    ev.tipo === "exception" ||
+    ev.tipo === "seriesMaster"
+  );
+}
 
 // Identidades estáveis: o store do event-calendar compara settings por
 // referência, então arrays/objetos recriados a cada render forçariam re-render.
@@ -207,6 +242,10 @@ export function AgendaView() {
   const [cancelarAlvo, setCancelarAlvo] = useState<EventoAgenda | null>(null);
   const [comentarioCancel, setComentarioCancel] = useState("");
   const [cancelando, setCancelando] = useState(false);
+  // #398: excluir recorrente pede ocorrência × série (excluir é silencioso).
+  const excluirEvento = useAppStore((s) => s.excluirEvento);
+  const [excluirAlvo, setExcluirAlvo] = useState<EventoAgenda | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
 
   // Right-click: acha o chip sob o cursor. Fora de um evento (célula vazia,
   // navbar), suprime o menu (preventDefault também impede o menu nativo) — o
@@ -222,11 +261,13 @@ export function AgendaView() {
     setMenuEventoId(id);
   };
 
-  const confirmarCancelamento = async () => {
+  const confirmarCancelamento = async (alvoId: string, recarregar: boolean) => {
     if (!cancelarAlvo) return;
     setCancelando(true);
     try {
-      await cancelarEvento(cancelarAlvo.id, comentarioCancel.trim());
+      await cancelarEvento(alvoId, comentarioCancel.trim());
+      // Série: as ocorrências exibidas não casam com o id do master — recarrega.
+      if (recarregar) recarregarAgenda();
       setCancelarAlvo(null);
       setComentarioCancel("");
       toast.success(t.controlRoom.agendaCancelado);
@@ -234,6 +275,26 @@ export function AgendaView() {
       toast.error(t.controlRoom.agendaErroCancelar);
     } finally {
       setCancelando(false);
+    }
+  };
+
+  // #398: exclui a ocorrência (id dela) ou a série (seriesMasterId) — silencioso.
+  const confirmarExclusao = async (alvo: "ocorrencia" | "serie") => {
+    if (!excluirAlvo) return;
+    const id =
+      alvo === "serie" && excluirAlvo.seriesMasterId
+        ? excluirAlvo.seriesMasterId
+        : excluirAlvo.id;
+    setExcluindo(true);
+    try {
+      await excluirEvento(id);
+      if (alvo === "serie") recarregarAgenda();
+      setExcluirAlvo(null);
+      toast.success(t.controlRoom.agendaExcluido);
+    } catch {
+      toast.error(t.controlRoom.agendaErroExcluir);
+    } finally {
+      setExcluindo(false);
     }
   };
 
@@ -296,6 +357,13 @@ export function AgendaView() {
           end: fim,
           allDay: ev.diaInteiro,
           color: cor,
+          // #399: as ocorrências vêm expandidas do calendarView (sem regra de
+          // recorrência aqui), então marcamos o instante como parte de uma série
+          // pra acender o indicador nativo (ícone repeat) no card.
+          isRecurring:
+            ev.tipo === "occurrence" ||
+            ev.tipo === "exception" ||
+            ev.tipo === "seriesMaster",
         };
       })
       .filter((e): e is CalendarEvent => e !== null);
@@ -388,6 +456,7 @@ export function AgendaView() {
             setCancelarAlvo(ev);
             setComentarioCancel("");
           }}
+          onPedirExcluir={(ev) => setExcluirAlvo(ev)}
         />
       </ContextMenu>
       <EventoFormSheet />
@@ -404,6 +473,50 @@ export function AgendaView() {
           }
         }}
       />
+
+      {/* #398: excluir evento recorrente — ocorrência × série (silencioso). */}
+      <AlertDialog
+        open={excluirAlvo != null}
+        onOpenChange={(o) => {
+          if (!o && !excluindo) setExcluirAlvo(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t.controlRoom.agendaExcluirRecorrenteTitulo}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.agendaExcluirRecorrenteDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={excluindo}>
+              {t.controlRoom.agendaEditarCancelar}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={excluindo}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmarExclusao("ocorrencia");
+              }}
+            >
+              {t.controlRoom.agendaEditarEstaOcorrencia}
+            </AlertDialogAction>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={excluindo}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmarExclusao("serie");
+              }}
+            >
+              {t.controlRoom.agendaEditarSerie}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -418,9 +531,11 @@ export function AgendaView() {
 function EventoContextMenu({
   evento,
   onPedirCancelar,
+  onPedirExcluir,
 }: {
   evento: EventoAgenda | null;
   onPedirCancelar: (ev: EventoAgenda) => void;
+  onPedirExcluir: (ev: EventoAgenda) => void;
 }) {
   const { t } = useIdioma();
   const selecionarEventoAgenda = useAppStore((s) => s.selecionarEventoAgenda);
@@ -441,6 +556,11 @@ function EventoContextMenu({
 
   const excluir = async () => {
     if (!podeGerenciar) return;
+    // #398: recorrente pergunta ocorrência × série (via dialog no AgendaView).
+    if (ehRecorrente(evento)) {
+      onPedirExcluir(evento);
+      return;
+    }
     try {
       await excluirEvento(evento.id);
       toast.success(t.controlRoom.agendaExcluido);
@@ -468,11 +588,37 @@ function EventoContextMenu({
       >
         <Eye /> {t.controlRoom.agendaVerDetalhes}
       </ContextMenuItem>
-      {podeGerenciar && (
-        <ContextMenuItem className="gap-2" onClick={() => abrirFormEditar(evento)}>
-          <Pencil /> {t.controlRoom.agendaEditar}
-        </ContextMenuItem>
-      )}
+      {podeGerenciar &&
+        (ehRecorrente(evento) ? (
+          // #397: recorrente escolhe o escopo no próprio Edit — nada de prompt
+          // depois de preencher o form.
+          <ContextMenuSub>
+            <ContextMenuSubTrigger className="gap-2">
+              <Pencil /> {t.controlRoom.agendaEditar}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem
+                className="gap-2"
+                onClick={() => abrirFormEditar(evento, "ocorrencia")}
+              >
+                {t.controlRoom.agendaEditarEstaOcorrencia}
+              </ContextMenuItem>
+              <ContextMenuItem
+                className="gap-2"
+                onClick={() => abrirFormEditar(evento, "serie")}
+              >
+                {t.controlRoom.agendaEditarSerie}
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        ) : (
+          <ContextMenuItem
+            className="gap-2"
+            onClick={() => abrirFormEditar(evento)}
+          >
+            <Pencil /> {t.controlRoom.agendaEditar}
+          </ContextMenuItem>
+        ))}
 
       {podeResponder && (
         <ContextMenuSub>
@@ -542,10 +688,11 @@ function CancelarEventoDialog({
   comentario: string;
   onComentario: (v: string) => void;
   cancelando: boolean;
-  onConfirmar: () => void;
+  onConfirmar: (alvoId: string, recarregar: boolean) => void;
   onFechar: () => void;
 }) {
   const { t } = useIdioma();
+  const recorrente = alvo ? ehRecorrente(alvo) : false;
   return (
     <AlertDialog open={!!alvo} onOpenChange={(aberto) => !aberto && onFechar()}>
       <AlertDialogContent className="max-w-md!">
@@ -572,19 +719,46 @@ function CancelarEventoDialog({
           <AlertDialogCancel disabled={cancelando}>
             {t.controlRoom.agendaCancelarVoltar}
           </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={cancelando}
-            onClick={(e) => {
-              // Segura o fechamento até a chamada resolver (spinner enquanto o
-              // Graph notifica os convidados).
-              e.preventDefault();
-              onConfirmar();
-            }}
-          >
-            {cancelando && <Spinner className="size-4" />}
-            {t.controlRoom.agendaCancelarConfirmar}
-          </AlertDialogAction>
+          {recorrente ? (
+            // #398: recorrente — cancelar esta ocorrência × a série inteira.
+            <>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={cancelando}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (alvo) onConfirmar(alvo.id, false);
+                }}
+              >
+                {t.controlRoom.agendaEditarEstaOcorrencia}
+              </AlertDialogAction>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={cancelando}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (alvo?.seriesMasterId) onConfirmar(alvo.seriesMasterId, true);
+                }}
+              >
+                {cancelando && <Spinner className="size-4" />}
+                {t.controlRoom.agendaEditarSerie}
+              </AlertDialogAction>
+            </>
+          ) : (
+            <AlertDialogAction
+              variant="destructive"
+              disabled={cancelando}
+              onClick={(e) => {
+                // Segura o fechamento até a chamada resolver (spinner enquanto o
+                // Graph notifica os convidados).
+                e.preventDefault();
+                if (alvo) onConfirmar(alvo.id, false);
+              }}
+            >
+              {cancelando && <Spinner className="size-4" />}
+              {t.controlRoom.agendaCancelarConfirmar}
+            </AlertDialogAction>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
@@ -622,6 +796,10 @@ function EventoFormSheet() {
   const fecharForm = useAppStore((s) => s.fecharForm);
   const criarEvento = useAppStore((s) => s.criarEvento);
   const editarEvento = useAppStore((s) => s.editarEvento);
+  const recarregarAgenda = useAppStore((s) => s.recarregarAgenda);
+  // #397: o escopo (ocorrência × série) é escolhido no menu Edit ANTES de abrir
+  // o form; o save apenas o respeita — nada de prompt no meio do save.
+  const escopoRec = useAppStore((s) => s.agendaFormEscopo);
   const criarCategoria = useAppStore((s) => s.criarCategoria);
   const coresCat = useAppStore((s) => s.agendaCoresCategoria);
   const calendarios = useAppStore((s) => s.agendaCalendarios);
@@ -643,6 +821,20 @@ function EventoFormSheet() {
   const [reuniaoTeams, setReuniaoTeams] = useState(false);
   const [calendarioAlvo, setCalendarioAlvo] = useState<string>("");
   const [salvando, setSalvando] = useState(false);
+  // #397: assinatura do schedule (início/fim/dia-inteiro) como semeado ao abrir
+  // o form em edição. Ao editar a SÉRIE, só forçamos o schedule no seriesMaster
+  // se o usuário DE FATO mexeu no horário — senão preservamos (somente_campos).
+  const scheduleSeedRef = useRef<string | null>(null);
+
+  // Recorrência (#396, S1) — só ao CRIAR (editar série é o S2). "never" = único.
+  const [recFreq, setRecFreq] = useState<"never" | RecorrenciaFrequencia>(
+    "never",
+  );
+  const [recIntervalo, setRecIntervalo] = useState(1);
+  const [recDias, setRecDias] = useState<DiaSemana[]>([]);
+  const [recFim, setRecFim] = useState<RecorrenciaFim>("noEnd");
+  const [recDataFim, setRecDataFim] = useState("");
+  const [recNumOcorr, setRecNumOcorr] = useState(10);
 
   // Só dá pra criar em calendários editáveis (#233). Calendários somente-leitura
   // (feriados, aniversários, compartilhados) ficam de fora do alvo de criação.
@@ -683,7 +875,13 @@ function EventoFormSheet() {
         setInicioDT(paraInputLocal(evento.inicio));
         setFimDT(paraInputLocal(evento.fim));
       }
+      // #397: assinatura do schedule semeado, pra detectar no save se o usuário
+      // mexeu no horário (aí a edição de série aplica start/end no master).
+      scheduleSeedRef.current = evento.diaInteiro
+        ? `d|${paraInputData(evento.inicio)}|${somarDias(paraInputData(evento.fim), -1) || paraInputData(evento.fim)}`
+        : `t|${paraInputLocal(evento.inicio)}|${paraInputLocal(evento.fim)}`;
     } else {
+      scheduleSeedRef.current = null;
       // Preset do clique pode vir inválido/ausente — cai na próxima hora cheia.
       const bruta = presetInicio ? new Date(comZ(presetInicio)) : proximaHora();
       const base = Number.isNaN(bruta.getTime()) ? proximaHora() : bruta;
@@ -696,6 +894,12 @@ function EventoFormSheet() {
       setConvEmails([]);
       setConvPessoas([]);
       setReuniaoTeams(false);
+      setRecFreq("never");
+      setRecIntervalo(1);
+      setRecDias([]);
+      setRecFim("noEnd");
+      setRecDataFim("");
+      setRecNumOcorr(10);
       setInicioDT(paraInputLocal(baseIso));
       setFimDT(paraInputLocal(maisUma));
       setInicioD(paraInputData(baseIso));
@@ -736,6 +940,33 @@ function EventoFormSheet() {
       return { email, nome: p?.nome ?? email };
     });
 
+  // Monta a recorrência (#396) a partir do estado do form. Só ao criar; weekly
+  // sem dias marcados cai no dia da data de início.
+  const montarRecorrencia = (dataInicio: string): RecorrenciaInput | undefined => {
+    if (modo !== "criar" || recFreq === "never" || !dataInicio) return undefined;
+    const dias =
+      recFreq === "weekly"
+        ? recDias.length > 0
+          ? recDias
+          : [diaDaData(dataInicio)]
+        : [];
+    return {
+      frequencia: recFreq,
+      intervalo: Math.max(1, recIntervalo || 1),
+      diasSemana: dias,
+      diaDoMes:
+        recFreq === "monthly" || recFreq === "yearly"
+          ? Number(dataInicio.slice(8, 10))
+          : undefined,
+      mes: recFreq === "yearly" ? Number(dataInicio.slice(5, 7)) : undefined,
+      fimTipo: recFim,
+      dataInicio,
+      dataFim: recFim === "endDate" ? recDataFim || undefined : undefined,
+      numeroOcorrencias:
+        recFim === "numbered" ? Math.max(1, recNumOcorr || 1) : undefined,
+    };
+  };
+
   const montarInput = (): EventoInput | null => {
     const assunto = titulo.trim();
     if (!assunto) {
@@ -767,6 +998,7 @@ function EventoFormSheet() {
         convidados,
         reuniaoTeams,
         calendarioId,
+        recorrencia: montarRecorrencia(inicioD),
       };
     }
     if (!inicioDT) return null;
@@ -783,16 +1015,29 @@ function EventoFormSheet() {
       convidados,
       reuniaoTeams,
       calendarioId,
+      recorrencia: montarRecorrencia(inicioDT.slice(0, 10)),
     };
   };
 
-  const salvar = async () => {
-    const input = montarInput();
-    if (!input) return;
+  // #397: um evento é recorrente quando é ocorrência/exceção/série.
+  const eventoRecorrente =
+    !!evento &&
+    (evento.tipo === "occurrence" ||
+      evento.tipo === "exception" ||
+      evento.tipo === "seriesMaster");
+
+  const executarSalvar = async (
+    idAlvo: string | null,
+    input: EventoInput,
+    recarregar: boolean,
+  ) => {
     setSalvando(true);
     try {
-      if (modo === "editar" && evento) {
-        await editarEvento(evento.id, input);
+      if (modo === "editar" && evento && idAlvo) {
+        await editarEvento(idAlvo, input);
+        // Série: as ocorrências exibidas não casam com o id do master no update
+        // otimista — recarrega o range pra refletir a mudança em todas.
+        if (recarregar) recarregarAgenda();
         toast.success(t.controlRoom.agendaAtualizado);
       } else {
         await criarEvento(input);
@@ -804,6 +1049,34 @@ function EventoFormSheet() {
     } finally {
       setSalvando(false);
     }
+  };
+
+  const salvar = async () => {
+    const input = montarInput();
+    if (!input) return;
+    // #397: o escopo já foi decidido no menu Edit (ocorrência × série). "Série"
+    // aplica no seriesMaster + recarrega. Se o usuário MEXEU no horário, manda
+    // start/end (o Graph desloca a série toda); se NÃO mexeu, `somente_campos`
+    // preserva o schedule e altera só os campos. "Ocorrência" é PATCH normal no
+    // id dela (vira exceção no Graph). Sem prompt.
+    if (modo === "editar" && evento && eventoRecorrente && escopoRec === "serie") {
+      const idSerie = evento.seriesMasterId ?? evento.id;
+      const scheduleAtual = diaInteiro
+        ? `d|${inicioD}|${fimD}`
+        : `t|${inicioDT}|${fimDT}`;
+      const scheduleMudou = scheduleSeedRef.current !== scheduleAtual;
+      await executarSalvar(
+        idSerie,
+        { ...input, somenteCampos: !scheduleMudou },
+        true,
+      );
+      return;
+    }
+    await executarSalvar(
+      modo === "editar" && evento ? evento.id : null,
+      input,
+      false,
+    );
   };
 
   // Cria a categoria via store (Graph) e já a seleciona no evento.
@@ -825,6 +1098,7 @@ function EventoFormSheet() {
   };
 
   return (
+    <>
     <Sheet open={aberto} onOpenChange={(o) => !o && fecharForm()}>
       <SheetContent
         side="right"
@@ -933,6 +1207,141 @@ function EventoFormSheet() {
               {t.controlRoom.agendaFormTeams}
             </FieldLabel>
           </Field>
+
+          {/* Recorrência (#396, S1) — só ao criar; editar série é o S2. */}
+          {modo === "criar" && (
+            <Field>
+              <FieldLabel htmlFor="agenda-recorrencia">
+                {t.controlRoom.agendaFormRepetir}
+              </FieldLabel>
+              <Select
+                value={recFreq}
+                onValueChange={(v) =>
+                  setRecFreq(v as "never" | RecorrenciaFrequencia)
+                }
+              >
+                <SelectTrigger id="agenda-recorrencia" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="never">
+                    {t.controlRoom.agendaRepetirNunca}
+                  </SelectItem>
+                  <SelectItem value="daily">
+                    {t.controlRoom.agendaRepetirDiario}
+                  </SelectItem>
+                  <SelectItem value="weekly">
+                    {t.controlRoom.agendaRepetirSemanal}
+                  </SelectItem>
+                  <SelectItem value="monthly">
+                    {t.controlRoom.agendaRepetirMensal}
+                  </SelectItem>
+                  <SelectItem value="yearly">
+                    {t.controlRoom.agendaRepetirAnual}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+
+              {recFreq !== "never" && (
+                <div className="mt-2 grid gap-3 rounded-lg border border-border p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">
+                      {t.controlRoom.agendaRepetirACada}
+                    </span>
+                    <Input
+                      type="number"
+                      min={1}
+                      value={recIntervalo}
+                      onChange={(e) =>
+                        setRecIntervalo(Math.max(1, Number(e.target.value) || 1))
+                      }
+                      className="w-20"
+                      aria-label={t.controlRoom.agendaRepetirACada}
+                    />
+                  </div>
+
+                  {recFreq === "weekly" && (
+                    <div className="flex flex-wrap gap-1">
+                      {ORDEM_DIAS.map((dia) => {
+                        const ativo = recDias.includes(dia);
+                        return (
+                          <Button
+                            key={dia}
+                            type="button"
+                            size="sm"
+                            variant={ativo ? "default" : "outline"}
+                            className="h-8 min-w-9 px-2 capitalize"
+                            aria-pressed={ativo}
+                            onClick={() =>
+                              setRecDias((atual) =>
+                                atual.includes(dia)
+                                  ? atual.filter((d) => d !== dia)
+                                  : [...atual, dia],
+                              )
+                            }
+                          >
+                            {rotuloDiaCurto(dia)}
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  <div className="grid gap-2">
+                    <span className="text-sm text-muted-foreground">
+                      {t.controlRoom.agendaRepetirTermina}
+                    </span>
+                    <Select
+                      value={recFim}
+                      onValueChange={(v) => setRecFim(v as RecorrenciaFim)}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="noEnd">
+                          {t.controlRoom.agendaRepetirNuncaTermina}
+                        </SelectItem>
+                        <SelectItem value="endDate">
+                          {t.controlRoom.agendaRepetirAteData}
+                        </SelectItem>
+                        <SelectItem value="numbered">
+                          {t.controlRoom.agendaRepetirAposN}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    {recFim === "endDate" && (
+                      <Input
+                        type="date"
+                        value={recDataFim}
+                        onChange={(e) => setRecDataFim(e.target.value)}
+                        aria-label={t.controlRoom.agendaRepetirAteData}
+                      />
+                    )}
+                    {recFim === "numbered" && (
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={recNumOcorr}
+                          onChange={(e) =>
+                            setRecNumOcorr(
+                              Math.max(1, Number(e.target.value) || 1),
+                            )
+                          }
+                          className="w-20"
+                          aria-label={t.controlRoom.agendaRepetirAposN}
+                        />
+                        <span className="text-sm text-muted-foreground">
+                          {t.controlRoom.agendaRepetirOcorrencias}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </Field>
+          )}
 
           <Field>
             <FieldLabel htmlFor="agenda-local">
@@ -1094,6 +1503,7 @@ function EventoFormSheet() {
         </SheetFooter>
       </SheetContent>
     </Sheet>
+    </>
   );
 }
 
