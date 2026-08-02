@@ -4,8 +4,9 @@
 //! atributos enum/bucket). Aqui carimbamos o contexto confiável (versão, canal,
 //! OS coarse, session-id efêmero), aplicamos a POLICY (consentimento por
 //! categoria + denylist de PII + caps + sampling) e enfileiramos localmente
-//! (bounded, cifrada via DPAPI). **NADA vai pra rede antes do opt-in** e do
-//! transporte real (chega junto do S1/#387). Default OFF.
+//! (bounded, cifrada via DPAPI). O exporter S1/#387 so inicia com endpoint E
+//! credencial injetados; sem os dois, **NADA vai pra rede**. Consentimento e
+//! revogacao continuam sendo aplicados antes da fila e do envio.
 //!
 //! **Denylist de PII é LEI:** qualquer atributo cuja CHAVE case com a denylist é
 //! descartado antes de enfileirar; e o VALOR é estruturalmente restrito a
@@ -13,10 +14,12 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rand::Rng;
+use reqwest::blocking::{Client, RequestBuilder};
+use reqwest::header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 
 const SCHEMA_VERSION: u32 = 1;
@@ -27,6 +30,14 @@ const FILA_MAX: usize = 500;
 const MAX_ATRIBUTOS: usize = 32;
 const MAX_CHAVE_LEN: usize = 64;
 const MAX_VALOR_LEN: usize = 96;
+const EVENTOS_PERMITIDOS: &[&str] = &[
+    "app_session_started",
+    "module_opened",
+    "feature_action_completed",
+    "sync_cycle_completed",
+    "update_check_completed",
+    "app_crashed",
+];
 
 // --- Categorias / consentimento --------------------------------------------
 
@@ -132,11 +143,10 @@ impl Valor {
 /// UPN/nome/empresa, tokens/segredos, mailbox, assunto/corpo, contatos, URL/
 /// paths/arquivos, telefone, ids de usuário/tenant/conta, IP/host/endereço.
 const DENYLIST: &[&str] = &[
-    "email", "e-mail", "upn", "mail", "nome", "name", "empresa", "company",
-    "token", "senha", "password", "secret", "assunto", "subject", "corpo",
-    "body", "contato", "contact", "url", "uri", "path", "caminho", "arquivo",
-    "file", "telefone", "phone", "cpf", "user", "usuario", "tenant", "account",
-    "conta", "ip", "host", "endereco", "address",
+    "email", "e-mail", "upn", "mail", "nome", "name", "empresa", "company", "token", "senha",
+    "password", "secret", "assunto", "subject", "corpo", "body", "contato", "contact", "url",
+    "uri", "path", "caminho", "arquivo", "file", "telefone", "phone", "cpf", "user", "usuario",
+    "tenant", "account", "conta", "ip", "host", "endereco", "address",
 ];
 
 /// `true` se a chave casa com a denylist (deve ser descartada).
@@ -220,6 +230,9 @@ fn aplicar_policy(
     // 1) Consentimento por categoria — sem opt-in, nada passa.
     if !consent.permite(entrada.categoria) {
         return Decisao::Rejeitado("sem-consentimento");
+    }
+    if !EVENTOS_PERMITIDOS.contains(&entrada.evento.as_str()) {
+        return Decisao::Rejeitado("evento-nao-permitido");
     }
     // 2) Scrub: descarta chaves proibidas e aplica caps defensivos.
     let mut limpos: BTreeMap<String, Valor> = BTreeMap::new();
@@ -363,6 +376,283 @@ fn gravar_fila(fila: &VecDeque<EnvelopeCarimbado>) {
     }
 }
 
+// --- Transporte OTLP/HTTP (#387, S1) --------------------------------------
+
+/// Configuracao injetavel do exporter. Endpoint e credenciais nao possuem
+/// default de producao: sem configuracao explicita, nenhuma rede e iniciada.
+#[derive(Clone, Debug)]
+pub struct TransporteConfig {
+    /// URL completa do endpoint OTLP/HTTP Logs (normalmente `/v1/logs`).
+    pub endpoint: String,
+    pub timeout: Duration,
+    pub batch_max: usize,
+    pub poll_interval: Duration,
+    pub backoff_inicial: Duration,
+    pub backoff_maximo: Duration,
+}
+
+impl TransporteConfig {
+    pub fn nova(endpoint: impl Into<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            timeout: Duration::from_secs(10),
+            batch_max: 50,
+            poll_interval: Duration::from_secs(15),
+            backoff_inicial: Duration::from_secs(2),
+            backoff_maximo: Duration::from_secs(5 * 60),
+        }
+    }
+
+    fn validar(&self) -> Result<(), TransporteErro> {
+        let url = reqwest::Url::parse(&self.endpoint)
+            .map_err(|_| TransporteErro::Configuracao("endpoint-invalido"))?;
+        if self.batch_max == 0 {
+            return Err(TransporteErro::Configuracao("batch-vazio"));
+        }
+        if self.backoff_inicial.is_zero() || self.backoff_maximo < self.backoff_inicial {
+            return Err(TransporteErro::Configuracao("backoff-invalido"));
+        }
+        // Em release, telemetria nunca sai por HTTP claro. Loopback fica
+        // disponivel somente em debug para os mocks/testes locais.
+        let loopback_debug = cfg!(debug_assertions)
+            && url.scheme() == "http"
+            && url.host_str().is_some_and(|host| {
+                host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1"
+            });
+        if url.scheme() != "https" && !loopback_debug {
+            return Err(TransporteErro::Configuracao("https-obrigatorio"));
+        }
+        Ok(())
+    }
+}
+
+/// Autenticacao separada do exporter: o fluxo definitivo do installation-token
+/// pode ser conectado depois sem embutir segredo ou alterar o dreno da fila.
+pub trait AuthProvider: Send + Sync + 'static {
+    fn aplicar(&self, request: RequestBuilder) -> Result<RequestBuilder, TransporteErro>;
+}
+
+/// Provider util para mocks e para uma configuracao externa futura. O valor e
+/// mantido privado e nunca entra em Debug/log.
+pub struct BearerAuthProvider {
+    token: HeaderValue,
+}
+
+impl BearerAuthProvider {
+    pub fn novo(token: &str) -> Result<Self, TransporteErro> {
+        if token.trim().is_empty() {
+            return Err(TransporteErro::Configuracao("token-vazio"));
+        }
+        let mut token = HeaderValue::from_str(&format!("Bearer {}", token.trim()))
+            .map_err(|_| TransporteErro::Configuracao("token-invalido"))?;
+        token.set_sensitive(true);
+        Ok(Self { token })
+    }
+}
+
+impl AuthProvider for BearerAuthProvider {
+    fn aplicar(&self, request: RequestBuilder) -> Result<RequestBuilder, TransporteErro> {
+        Ok(request.header(AUTHORIZATION, self.token.clone()))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum TransporteErro {
+    Configuracao(&'static str),
+    Http(u16),
+    Rede,
+}
+
+/// Contrato pequeno para testar o dreno sem rede e trocar o AuthProvider sem
+/// acoplar a fila ao reqwest.
+pub trait Exporter: Send + Sync + 'static {
+    fn exportar(&self, batch: &[EnvelopeCarimbado]) -> Result<(), TransporteErro>;
+}
+
+pub struct OtlpHttpExporter<A: AuthProvider> {
+    config: TransporteConfig,
+    client: Client,
+    auth: A,
+}
+
+impl<A: AuthProvider> OtlpHttpExporter<A> {
+    pub fn novo(config: TransporteConfig, auth: A) -> Result<Self, TransporteErro> {
+        config.validar()?;
+        let client = Client::builder()
+            .timeout(config.timeout)
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| TransporteErro::Configuracao("cliente-http"))?;
+        Ok(Self {
+            config,
+            client,
+            auth,
+        })
+    }
+}
+
+impl<A: AuthProvider> Exporter for OtlpHttpExporter<A> {
+    fn exportar(&self, batch: &[EnvelopeCarimbado]) -> Result<(), TransporteErro> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let payload = payload_otlp_logs(batch);
+        let request = self
+            .client
+            .post(&self.config.endpoint)
+            .header(CONTENT_TYPE, "application/json")
+            .json(&payload);
+        let response = self
+            .auth
+            .aplicar(request)?
+            .send()
+            .map_err(|_| TransporteErro::Rede)?;
+        let status = response.status();
+        if status.is_success() {
+            Ok(())
+        } else {
+            Err(TransporteErro::Http(status.as_u16()))
+        }
+    }
+}
+
+fn valor_otlp(valor: &Valor) -> serde_json::Value {
+    match valor {
+        Valor::Enum(v) | Valor::Bucket(v) => serde_json::json!({ "stringValue": v }),
+        // OTLP/JSON representa int64 como string para nao perder precisao.
+        Valor::Int(v) => serde_json::json!({ "intValue": v.to_string() }),
+        Valor::Bool(v) => serde_json::json!({ "boolValue": v }),
+    }
+}
+
+fn atributo_otlp(chave: &str, valor: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "key": chave, "value": valor })
+}
+
+/// OTLP/HTTP JSON Logs. Os atributos livres ja passaram pela policy; contexto
+/// confiavel e taxonomia sao adicionados aqui com chaves fixas.
+fn payload_otlp_logs(batch: &[EnvelopeCarimbado]) -> serde_json::Value {
+    let registros: Vec<serde_json::Value> = batch
+        .iter()
+        .map(|env| {
+            let mut atributos = vec![
+                atributo_otlp(
+                    "telemetry.schema_version",
+                    serde_json::json!({ "intValue": env.schema_version.to_string() }),
+                ),
+                atributo_otlp(
+                    "app.version",
+                    serde_json::json!({ "stringValue": env.app_version }),
+                ),
+                atributo_otlp(
+                    "build.channel",
+                    serde_json::json!({ "stringValue": env.build_channel }),
+                ),
+                atributo_otlp("os.type", serde_json::json!({ "stringValue": env.os })),
+                atributo_otlp("host.arch", serde_json::json!({ "stringValue": env.arch })),
+                atributo_otlp(
+                    "session.id",
+                    serde_json::json!({ "stringValue": env.session_id }),
+                ),
+                atributo_otlp(
+                    "telemetry.category",
+                    serde_json::json!({
+                        "stringValue": match env.categoria {
+                            Categoria::Crash => "crash",
+                            Categoria::Diagnostico => "diagnostico",
+                            Categoria::Analytics => "analytics",
+                        }
+                    }),
+                ),
+            ];
+            atributos.extend(
+                env.atributos
+                    .iter()
+                    .map(|(chave, valor)| atributo_otlp(chave, valor_otlp(valor))),
+            );
+            let (severity_number, severity_text) = if env.categoria == Categoria::Crash {
+                (17, "ERROR")
+            } else {
+                (9, "INFO")
+            };
+            serde_json::json!({
+                "timeUnixNano": (env.ts_unix as u128 * 1_000_000_000u128).to_string(),
+                "observedTimeUnixNano": (agora_unix() as u128 * 1_000_000_000u128).to_string(),
+                "severityNumber": severity_number,
+                "severityText": severity_text,
+                "body": { "stringValue": env.evento },
+                "attributes": atributos,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "resourceLogs": [{
+            "resource": {
+                "attributes": [
+                    atributo_otlp("service.name", serde_json::json!({ "stringValue": "galaxie-toolbox" }))
+                ]
+            },
+            "scopeLogs": [{
+                "scope": { "name": "galaxie.telemetry", "version": "1" },
+                "logRecords": registros
+            }]
+        }]
+    })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ResultadoDreno {
+    Vazio,
+    Enviado(usize),
+}
+
+/// Clona o lote sob lock, envia fora do lock e remove somente o prefixo que
+/// ainda corresponde ao lote confirmado. Falha mantem a fila intacta.
+fn drenar_uma_vez(
+    inner: &Arc<Mutex<Interno>>,
+    exporter: &dyn Exporter,
+    batch_max: usize,
+) -> Result<ResultadoDreno, TransporteErro> {
+    let batch: Vec<EnvelopeCarimbado> = {
+        let i = inner.lock().map_err(|_| TransporteErro::Rede)?;
+        i.fila.iter().take(batch_max).cloned().collect()
+    };
+    if batch.is_empty() {
+        return Ok(ResultadoDreno::Vazio);
+    }
+    exporter.exportar(&batch)?;
+    let mut removidos = 0;
+    if let Ok(mut i) = inner.lock() {
+        for esperado in &batch {
+            if i.fila.front() != Some(esperado) {
+                break;
+            }
+            i.fila.pop_front();
+            removidos += 1;
+        }
+        if removidos > 0 {
+            persistir_fila_drenada(&i.fila);
+        }
+    }
+    Ok(ResultadoDreno::Enviado(removidos))
+}
+
+fn persistir_fila_drenada(fila: &VecDeque<EnvelopeCarimbado>) {
+    #[cfg(not(test))]
+    gravar_fila(fila);
+    #[cfg(test)]
+    let _ = fila;
+}
+
+fn backoff_exponencial(config: &TransporteConfig, tentativa: u32, jitter: f64) -> Duration {
+    let fator = 2u32.saturating_pow(tentativa.min(20));
+    let bruto = config.backoff_inicial.saturating_mul(fator);
+    let limitado = bruto.min(config.backoff_maximo);
+    let jitter = jitter.clamp(0.5, 1.0);
+    Duration::from_secs_f64(limitado.as_secs_f64() * jitter)
+}
+
 // --- Crash: panic hook + drenagem no boot (#391, S5) -----------------------
 
 /// Instala um panic hook que, além do comportamento anterior (log), grava um
@@ -420,14 +710,9 @@ fn drenar_crashes_pendentes(
             evento: "app_crashed".to_string(),
             atributos,
         };
-        if let Decisao::Aceito(env) = aplicar_policy(
-            entrada,
-            consent,
-            ctx,
-            session_id,
-            agora_unix(),
-            &mut sempre,
-        ) {
+        if let Decisao::Aceito(env) =
+            aplicar_policy(entrada, consent, ctx, session_id, agora_unix(), &mut sempre)
+        {
             empurrar_bounded(fila, *env, FILA_MAX);
             algum = true;
         }
@@ -444,12 +729,13 @@ struct Interno {
     consent: Consentimento,
     session_id: String,
     fila: VecDeque<EnvelopeCarimbado>,
+    transporte_iniciado: bool,
 }
 
 /// Estado gerenciado da telemetria. `Default` restaura consent + fila do disco e
 /// gera um session-id novo.
 pub struct TelemetryState {
-    inner: Mutex<Interno>,
+    inner: Arc<Mutex<Interno>>,
     ctx: Contexto,
 }
 
@@ -463,11 +749,12 @@ impl Default for TelemetryState {
         // envelopes agora (fora do unwind), respeitando o consent.
         drenar_crashes_pendentes(&mut fila, &consent, &ctx, &session_id);
         Self {
-            inner: Mutex::new(Interno {
+            inner: Arc::new(Mutex::new(Interno {
                 consent,
                 session_id,
                 fila,
-            }),
+                transporte_iniciado: false,
+            })),
             ctx,
         }
     }
@@ -489,7 +776,11 @@ impl TelemetryState {
     pub fn definir_consent(&self, consent: Consentimento) {
         if let Ok(mut i) = self.inner.lock() {
             i.consent = consent;
+            // Opt-out por categoria tambem vale para itens ainda nao enviados.
+            // Nao deixa um envelope antigo atravessar a rede depois da escolha.
+            i.fila.retain(|env| consent.permite(env.categoria));
             gravar_consent(&consent);
+            gravar_fila(&i.fila);
         }
     }
 
@@ -505,15 +796,13 @@ impl TelemetryState {
         }
     }
 
-    /// Aplica a policy e, se aceito, enfileira. Retorna se foi aceito. Nunca
-    /// entra em rede (o transporte real chega com o S1).
+    /// Aplica a policy e, se aceito, enfileira. Retorna se foi aceito. O worker
+    /// S1 drena de forma assincrona somente quando configurado externamente.
     pub fn track(&self, entrada: EnvelopeEntrada) -> bool {
         let Ok(mut i) = self.inner.lock() else {
             return false;
         };
-        let mut amostrar = |cat: Categoria| {
-            rand::thread_rng().gen::<f64>() < taxa_amostragem(cat)
-        };
+        let mut amostrar = |cat: Categoria| rand::thread_rng().gen::<f64>() < taxa_amostragem(cat);
         let session = i.session_id.clone();
         let decisao = aplicar_policy(
             entrada,
@@ -556,6 +845,79 @@ impl TelemetryState {
             .map(|i| i.fila.iter().cloned().collect())
             .unwrap_or_default()
     }
+
+    /// Inicia o worker de transporte com dependencias injetadas. Sem chamada
+    /// explicita, nenhum thread nem acesso de rede existe. O worker nunca segura
+    /// o mutex durante HTTP, drena em lotes e preserva a fila em qualquer erro.
+    pub fn iniciar_transporte<E: Exporter>(
+        &self,
+        exporter: E,
+        config: TransporteConfig,
+    ) -> Result<(), TransporteErro> {
+        config.validar()?;
+        {
+            let mut i = self.inner.lock().map_err(|_| TransporteErro::Rede)?;
+            if i.transporte_iniciado {
+                return Err(TransporteErro::Configuracao("worker-ja-iniciado"));
+            }
+            i.transporte_iniciado = true;
+        }
+        let inner = Arc::clone(&self.inner);
+        let inner_worker = Arc::clone(&self.inner);
+        let spawn = std::thread::Builder::new()
+            .name("galaxie-telemetry".into())
+            .spawn(move || {
+                let mut tentativa = 0u32;
+                loop {
+                    match drenar_uma_vez(&inner_worker, &exporter, config.batch_max) {
+                        Ok(ResultadoDreno::Enviado(_)) => {
+                            tentativa = 0;
+                            // Ha possivelmente mais lotes: continua sem esperar.
+                        }
+                        Ok(ResultadoDreno::Vazio) => {
+                            tentativa = 0;
+                            std::thread::sleep(config.poll_interval);
+                        }
+                        Err(_) => {
+                            let jitter = rand::thread_rng().gen_range(0.5..=1.0);
+                            let espera = backoff_exponencial(&config, tentativa, jitter);
+                            tentativa = tentativa.saturating_add(1);
+                            std::thread::sleep(espera);
+                        }
+                    }
+                }
+            });
+        match spawn {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                if let Ok(mut i) = inner.lock() {
+                    i.transporte_iniciado = false;
+                }
+                Err(TransporteErro::Configuracao("worker-thread"))
+            }
+        }
+    }
+
+    /// Bootstrap sem valores hardcoded. O instalador/ambiente injeta endpoint e
+    /// credencial; com ambos ausentes, o transporte permanece desativado. Se
+    /// somente um existir, falha fechado para nunca enviar sem autenticacao.
+    pub fn iniciar_transporte_configurado(&self) -> Result<bool, TransporteErro> {
+        let endpoint = std::env::var("GALAXIE_TELEMETRY_OTLP_ENDPOINT").ok();
+        let token = std::env::var("GALAXIE_TELEMETRY_INGEST_TOKEN").ok();
+        match (endpoint, token) {
+            (None, None) => Ok(false),
+            (Some(_), None) | (None, Some(_)) => {
+                Err(TransporteErro::Configuracao("config-incompleta"))
+            }
+            (Some(endpoint), Some(token)) => {
+                let config = TransporteConfig::nova(endpoint);
+                let auth = BearerAuthProvider::novo(&token)?;
+                let exporter = OtlpHttpExporter::novo(config.clone(), auth)?;
+                self.iniciar_transporte(exporter, config)?;
+                Ok(true)
+            }
+        }
+    }
 }
 
 // --- Testes -----------------------------------------------------------------
@@ -563,6 +925,22 @@ impl TelemetryState {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    struct ExporterFake {
+        falha: bool,
+        batches: Arc<Mutex<Vec<Vec<EnvelopeCarimbado>>>>,
+    }
+
+    impl Exporter for ExporterFake {
+        fn exportar(&self, batch: &[EnvelopeCarimbado]) -> Result<(), TransporteErro> {
+            self.batches.lock().unwrap().push(batch.to_vec());
+            if self.falha {
+                Err(TransporteErro::Rede)
+            } else {
+                Ok(())
+            }
+        }
+    }
 
     fn ctx() -> Contexto {
         Contexto {
@@ -577,8 +955,39 @@ mod testes {
         EnvelopeEntrada {
             categoria: cat,
             evento: "module_opened".into(),
-            atributos: attrs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+            atributos: attrs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
         }
+    }
+
+    fn envelope(ts: u64, categoria: Categoria) -> EnvelopeCarimbado {
+        EnvelopeCarimbado {
+            schema_version: SCHEMA_VERSION,
+            app_version: "9.9.9".into(),
+            build_channel: "test".into(),
+            os: "windows".into(),
+            arch: "x86_64".into(),
+            session_id: "sess".into(),
+            ts_unix: ts,
+            categoria,
+            evento: if categoria == Categoria::Crash {
+                "app_crashed".into()
+            } else {
+                "module_opened".into()
+            },
+            atributos: BTreeMap::new(),
+        }
+    }
+
+    fn interno_com(envelopes: Vec<EnvelopeCarimbado>) -> Arc<Mutex<Interno>> {
+        Arc::new(Mutex::new(Interno {
+            consent: Consentimento::default(),
+            session_id: "sess".into(),
+            fila: VecDeque::from(envelopes),
+            transporte_iniciado: false,
+        }))
     }
 
     #[test]
@@ -596,8 +1005,27 @@ mod testes {
     }
 
     #[test]
+    fn evento_fora_da_taxonomia_e_rejeitado_antes_da_fila() {
+        let mut entrada = entrada(Categoria::Analytics, &[]);
+        entrada.evento = "texto-livre-potencialmente-pii".into();
+        let mut sim = |_: Categoria| true;
+        let d = aplicar_policy(
+            entrada,
+            &Consentimento::default(),
+            &ctx(),
+            "sess",
+            100,
+            &mut sim,
+        );
+        assert!(matches!(d, Decisao::Rejeitado("evento-nao-permitido")));
+    }
+
+    #[test]
     fn denylist_descarta_chaves_de_pii() {
-        let consent = Consentimento { analytics: true, ..Consentimento::nenhum() };
+        let consent = Consentimento {
+            analytics: true,
+            ..Consentimento::nenhum()
+        };
         let mut sim = |_: Categoria| true;
         let d = aplicar_policy(
             entrada(
@@ -620,15 +1048,24 @@ mod testes {
         };
         assert!(env.atributos.contains_key("modulo"));
         assert!(env.atributos.contains_key("duracao"));
-        assert!(!env.atributos.contains_key("email"), "email é PII, deve sumir");
-        assert!(!env.atributos.contains_key("user_id"), "user_id é PII, deve sumir");
+        assert!(
+            !env.atributos.contains_key("email"),
+            "email é PII, deve sumir"
+        );
+        assert!(
+            !env.atributos.contains_key("user_id"),
+            "user_id é PII, deve sumir"
+        );
         assert_eq!(env.app_version, "9.9.9");
         assert_eq!(env.schema_version, SCHEMA_VERSION);
     }
 
     #[test]
     fn caps_limitam_chave_e_valor() {
-        let consent = Consentimento { diagnostico: true, ..Consentimento::nenhum() };
+        let consent = Consentimento {
+            diagnostico: true,
+            ..Consentimento::nenhum()
+        };
         let mut sim = |_: Categoria| true;
         let chave_gigante = "a".repeat(MAX_CHAVE_LEN + 1);
         let valor_gigante = Valor::Enum("x".repeat(MAX_VALOR_LEN + 1));
@@ -647,14 +1084,19 @@ mod testes {
             100,
             &mut sim,
         );
-        let Decisao::Aceito(env) = d else { panic!("aceita") };
+        let Decisao::Aceito(env) = d else {
+            panic!("aceita")
+        };
         assert_eq!(env.atributos.len(), 1);
         assert!(env.atributos.contains_key("ok"));
     }
 
     #[test]
     fn sampling_injetado_rejeita_quando_falso() {
-        let consent = Consentimento { analytics: true, ..Consentimento::nenhum() };
+        let consent = Consentimento {
+            analytics: true,
+            ..Consentimento::nenhum()
+        };
         let mut nunca = |_: Categoria| false;
         let d = aplicar_policy(
             entrada(Categoria::Analytics, &[]),
@@ -716,9 +1158,14 @@ mod testes {
         );
         assert!(matches!(d, Decisao::Rejeitado("sem-consentimento")));
         // Com consent de crash → aceita e preserva a origem.
-        let consent = Consentimento { crash: true, ..Consentimento::nenhum() };
+        let consent = Consentimento {
+            crash: true,
+            ..Consentimento::nenhum()
+        };
         let d = aplicar_policy(entrada_crash(), &consent, &ctx(), "s", 1, &mut sim);
-        let Decisao::Aceito(env) = d else { panic!("aceita") };
+        let Decisao::Aceito(env) = d else {
+            panic!("aceita")
+        };
         assert_eq!(env.categoria, Categoria::Crash);
         assert_eq!(env.evento, "app_crashed");
         assert_eq!(
@@ -731,10 +1178,16 @@ mod testes {
     fn default_consent_liga_tudo_e_nenhum_desliga() {
         // #388: 1º run / instalação nova cai no Default → tudo ON (opt-out).
         let d = Consentimento::default();
-        assert!(d.crash && d.diagnostico && d.analytics, "default deve ser ON");
+        assert!(
+            d.crash && d.diagnostico && d.analytics,
+            "default deve ser ON"
+        );
         // "Revoke all" (#389) aplica `nenhum()` → tudo OFF.
         let n = Consentimento::nenhum();
-        assert!(!n.crash && !n.diagnostico && !n.analytics, "nenhum deve ser OFF");
+        assert!(
+            !n.crash && !n.diagnostico && !n.analytics,
+            "nenhum deve ser OFF"
+        );
     }
 
     #[test]
@@ -759,5 +1212,118 @@ mod testes {
         assert!(!chave_proibida("modulo"));
         assert!(!chave_proibida("duracao_bucket"));
         assert!(!chave_proibida("resultado"));
+    }
+
+    #[test]
+    fn payload_otlp_logs_mapeia_evento_e_crash_sem_texto_livre_extra() {
+        let payload = payload_otlp_logs(&[
+            envelope(10, Categoria::Analytics),
+            envelope(11, Categoria::Crash),
+        ]);
+        let registros = payload["resourceLogs"][0]["scopeLogs"][0]["logRecords"]
+            .as_array()
+            .unwrap();
+        assert_eq!(registros.len(), 2);
+        assert_eq!(registros[0]["body"]["stringValue"], "module_opened");
+        assert_eq!(registros[0]["severityText"], "INFO");
+        assert_eq!(registros[1]["body"]["stringValue"], "app_crashed");
+        assert_eq!(registros[1]["severityText"], "ERROR");
+        assert_eq!(registros[1]["timeUnixNano"], "11000000000");
+    }
+
+    #[test]
+    fn dreno_mock_remove_somente_lote_confirmado() {
+        let inner = interno_com(vec![
+            envelope(1, Categoria::Analytics),
+            envelope(2, Categoria::Diagnostico),
+            envelope(3, Categoria::Crash),
+        ]);
+        let batches = Arc::new(Mutex::new(Vec::new()));
+        let exporter = ExporterFake {
+            falha: false,
+            batches: Arc::clone(&batches),
+        };
+        let resultado = drenar_uma_vez(&inner, &exporter, 2).unwrap();
+        assert_eq!(resultado, ResultadoDreno::Enviado(2));
+        assert_eq!(batches.lock().unwrap()[0].len(), 2);
+        let fila = &inner.lock().unwrap().fila;
+        assert_eq!(fila.len(), 1);
+        assert_eq!(fila.front().unwrap().ts_unix, 3);
+    }
+
+    #[test]
+    fn falha_do_exporter_preserva_fila_para_retry() {
+        let inner = interno_com(vec![envelope(1, Categoria::Analytics)]);
+        let exporter = ExporterFake {
+            falha: true,
+            batches: Arc::new(Mutex::new(Vec::new())),
+        };
+        assert_eq!(
+            drenar_uma_vez(&inner, &exporter, 50),
+            Err(TransporteErro::Rede)
+        );
+        assert_eq!(inner.lock().unwrap().fila.len(), 1);
+    }
+
+    #[test]
+    fn backoff_exponencial_tem_jitter_e_teto() {
+        let mut config = TransporteConfig::nova("http://127.0.0.1:4318/v1/logs");
+        config.backoff_inicial = Duration::from_secs(2);
+        config.backoff_maximo = Duration::from_secs(30);
+        assert_eq!(backoff_exponencial(&config, 0, 1.0), Duration::from_secs(2));
+        assert_eq!(backoff_exponencial(&config, 2, 0.5), Duration::from_secs(4));
+        assert_eq!(
+            backoff_exponencial(&config, 20, 1.0),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
+    fn config_recusa_http_nao_loopback_e_token_vazio() {
+        let config = TransporteConfig::nova("http://example.com/v1/logs");
+        assert_eq!(
+            config.validar(),
+            Err(TransporteErro::Configuracao("https-obrigatorio"))
+        );
+        assert_eq!(
+            BearerAuthProvider::novo(" ").err(),
+            Some(TransporteErro::Configuracao("token-vazio"))
+        );
+    }
+
+    #[test]
+    fn exporter_otlp_http_envia_json_e_auth_ao_mock() {
+        let servidor = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/v1/logs", servidor.server_addr());
+        let receptor = std::thread::spawn(move || {
+            let mut request = servidor
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .expect("request OTLP");
+            assert_eq!(request.method(), &tiny_http::Method::Post);
+            assert_eq!(request.url(), "/v1/logs");
+            let auth = request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("Authorization"))
+                .map(|h| h.value.as_str());
+            assert_eq!(auth, Some("Bearer segredo-do-mock"));
+            let mut body = String::new();
+            request.as_reader().read_to_string(&mut body).unwrap();
+            let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(
+                json["resourceLogs"][0]["scopeLogs"][0]["logRecords"][0]["body"]["stringValue"],
+                "module_opened"
+            );
+            request.respond(tiny_http::Response::empty(200)).unwrap();
+        });
+
+        let config = TransporteConfig::nova(endpoint);
+        let auth = BearerAuthProvider::novo("segredo-do-mock").unwrap();
+        let exporter = OtlpHttpExporter::novo(config, auth).unwrap();
+        exporter
+            .exportar(&[envelope(42, Categoria::Analytics)])
+            .unwrap();
+        receptor.join().unwrap();
     }
 }

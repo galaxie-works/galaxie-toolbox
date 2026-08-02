@@ -1411,6 +1411,17 @@ pub fn run() {
                 )?;
             }
 
+            // #387: o exporter OTLP so inicia quando endpoint + token forem
+            // injetados externamente. Sem ambos, zero rede; nunca loga valores.
+            match app
+                .state::<telemetry::TelemetryState>()
+                .iniciar_transporte_configurado()
+            {
+                Ok(true) => log::info!("[telemetry] transporte OTLP habilitado"),
+                Ok(false) => log::info!("[telemetry] transporte OTLP sem configuracao"),
+                Err(e) => log::error!("[telemetry] transporte OTLP bloqueado: {e:?}"),
+            }
+
             // Primeira vez (sem estado salvo): abre com 50% da resolucao do
             // monitor, centralizado. Nas proximas, o plugin acima restaura o
             // tamanho que o usuario deixou. A janela `main` nasce invisivel
