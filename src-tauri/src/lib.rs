@@ -7,6 +7,7 @@ mod favicon;
 mod graph;
 mod lock_screen;
 mod system;
+mod telemetry;
 
 use std::sync::Arc;
 use tauri::{Manager, State};
@@ -1277,6 +1278,32 @@ fn log_frontend_error(msg: String) {
     log::error!("[frontend] {msg}");
 }
 
+// --- Telemetria (#388, S2): TelemetryPolicy Rust-owned. Comandos sync,
+// fire-and-forget (como o log_frontend_error). A telemetria nunca deve quebrar o
+// app, então tudo é best-effort. Sem rede antes do opt-in + transporte (S1).
+#[tauri::command]
+fn telemetry_track(state: State<'_, telemetry::TelemetryState>, envelope: telemetry::EnvelopeEntrada) {
+    state.track(envelope);
+}
+
+#[tauri::command]
+fn telemetry_set_consent(
+    state: State<'_, telemetry::TelemetryState>,
+    consent: telemetry::Consentimento,
+) {
+    state.definir_consent(consent);
+}
+
+#[tauri::command]
+fn telemetry_revoke(state: State<'_, telemetry::TelemetryState>) {
+    state.revogar();
+}
+
+#[tauri::command]
+fn telemetry_status(state: State<'_, telemetry::TelemetryState>) -> telemetry::StatusDto {
+    state.status()
+}
+
 /// Navigator (#176): importa favoritos do Chrome/Edge lendo SOMENTE o arquivo
 /// `Bookmarks` (JSON) de cada perfil. Nunca le `Login Data`/credenciais. Devolve
 /// a arvore por navegador+perfil; ausencia degrada em lista vazia (sem panico).
@@ -1348,6 +1375,7 @@ pub fn run() {
                 .build(),
         )
         .manage(Arc::new(TokenStore::default()))
+        .manage(telemetry::TelemetryState::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -1537,6 +1565,10 @@ pub fn run() {
             enable_long_paths,
             long_paths_status,
             log_frontend_error,
+            telemetry_track,
+            telemetry_set_consent,
+            telemetry_revoke,
+            telemetry_status,
             import_browser_bookmarks,
             fetch_favicon,
             autostart_status,

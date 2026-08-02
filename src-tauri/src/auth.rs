@@ -337,7 +337,7 @@ fn caminho_sessao() -> Option<std::path::PathBuf> {
 }
 
 #[cfg(windows)]
-mod dpapi {
+pub(crate) mod dpapi {
     use std::ptr;
     use winapi::um::dpapi::{CryptProtectData, CryptUnprotectData};
     use winapi::um::winbase::LocalFree;

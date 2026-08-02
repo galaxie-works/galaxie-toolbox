@@ -1959,3 +1959,67 @@ export async function setAutostartEnabled(enabled: boolean): Promise<void> {
   }
   return invoke<void>("autostart_set", { enabled });
 }
+
+// --- Telemetria (#388, S2) --------------------------------------------------
+// Fachada fina: o React manda só envelopes tipados; o Rust (TelemetryPolicy)
+// carimba o contexto, aplica consent+denylist+sampling e enfileira. NADA vai
+// pra rede antes do opt-in + transporte (S1). A telemetria NUNCA quebra o app.
+
+/** Consentimento por categoria (default: tudo OFF). */
+export interface TelemetryConsent {
+  crash: boolean;
+  diagnostico: boolean;
+  analytics: boolean;
+}
+
+export type TelemetryCategoria = "crash" | "diagnostico" | "analytics";
+
+/** Valor de atributo: só enum/bucket/inteiro/bool — nunca texto livre com PII. */
+export type TelemetryValor =
+  | { t: "enum"; v: string }
+  | { t: "bucket"; v: string }
+  | { t: "int"; v: number }
+  | { t: "bool"; v: boolean };
+
+export interface TelemetryEnvelope {
+  categoria: TelemetryCategoria;
+  evento: string;
+  atributos?: Record<string, TelemetryValor>;
+}
+
+export interface TelemetryStatus {
+  consent: TelemetryConsent;
+  sessionId: string;
+  queued: number;
+}
+
+/** Emite um evento (fire-and-forget). Engole qualquer erro — telemetria não
+ *  pode derrubar a UI. */
+export async function telemetryTrack(envelope: TelemetryEnvelope): Promise<void> {
+  if (!inTauri()) return;
+  try {
+    await invoke<void>("telemetry_track", { envelope });
+  } catch {
+    // best-effort
+  }
+}
+
+/** Define o consentimento por categoria (chamado pela Consent UI do S3). */
+export async function telemetrySetConsent(
+  consent: TelemetryConsent,
+): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("telemetry_set_consent", { consent });
+}
+
+/** Revoga tudo: consent OFF, apaga a fila local e reinicia o session-id. */
+export async function telemetryRevoke(): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("telemetry_revoke");
+}
+
+/** Estado atual (consent + session-id efêmero + itens na fila). */
+export async function telemetryStatus(): Promise<TelemetryStatus | null> {
+  if (!inTauri()) return null;
+  return invoke<TelemetryStatus>("telemetry_status");
+}
