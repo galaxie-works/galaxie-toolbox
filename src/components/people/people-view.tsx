@@ -2608,6 +2608,10 @@ export function PeopleView({
         open={mergeOpen}
         contacts={selectedContacts}
         onOpenChange={setMergeOpen}
+        onDone={() => {
+          setMergeOpen(false);
+          table.resetRowSelection();
+        }}
       />
 
       {activeMissingScopes.length > 0 && (

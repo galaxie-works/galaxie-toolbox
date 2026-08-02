@@ -50,6 +50,14 @@
           bg = escuro ? "#09090B" : "#FFFFFF";
         }
         raiz.style.backgroundColor = bg;
+        // #378: se houver imagem de fundo persistida, pinta cedo (cover/center)
+        // pra nao piscar o fundo do tema antes do React montar o FundoApp.
+        var img = cru("galaxie-toolbox.background.imageUrl");
+        if (img) {
+          raiz.style.backgroundImage = 'url("' + img + '")';
+          raiz.style.backgroundSize = "cover";
+          raiz.style.backgroundPosition = "center";
+        }
       })();
     </script>
   </head>

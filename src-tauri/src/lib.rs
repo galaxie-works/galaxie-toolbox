@@ -661,6 +661,32 @@ async fn cr_people_contact_update(
 }
 
 #[tauri::command]
+async fn cr_people_contact_create(
+    state: State<'_, Store>,
+    input: graph::PeopleContactEdit,
+) -> Result<String, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_contact_create(&store, input)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cr_people_contact_delete(
+    state: State<'_, Store>,
+    contact_id: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_people_contact_delete(&store, &contact_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn cr_people_company_write(
     state: State<'_, Store>,
     contact_ids: Vec<String>,
@@ -1460,6 +1486,8 @@ pub fn run() {
             cr_people_enrich_apply,
             cr_people_write_available,
             cr_people_contact_update,
+            cr_people_contact_create,
+            cr_people_contact_delete,
             cr_people_company_write,
             cr_people_details_write,
             cr_people_interactions,

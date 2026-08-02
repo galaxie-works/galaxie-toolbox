@@ -11,6 +11,7 @@ import {
   criarPeopleSlice,
   type PeopleSlice,
 } from "./people-slice.ts";
+import type { MergePlan } from "../lib/people-merge.ts";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -203,4 +204,141 @@ test("directory selection switches the view without mixing its snapshot into con
   assert.equal(store.selectedTab(), "directory");
   assert.equal(store.state.peopleSelectedId, "directory-1");
   assert.deepEqual(store.state.peopleContacts, []);
+});
+
+// --- Merge execution (#379) -------------------------------------------------
+
+/** MergePlan mínimo: master `m` + 2 absorvidos `a1`/`a2`. */
+function planoDeMerge(): MergePlan {
+  return {
+    version: 1,
+    master: { id: "contacts:m", contactId: "m" },
+    absorbed: [
+      { id: "contacts:a1", contactId: "a1" },
+      { id: "contacts:a2", contactId: "a2" },
+    ],
+    before: {
+      master: { name: "Master", emails: [{ address: "m@x.com" }], phones: [], company: null },
+      absorbed: [
+        { contactId: "a1", value: { name: "A1", emails: [{ address: "a1@x.com" }], phones: [], company: null } },
+        { contactId: "a2", value: { name: "A2", emails: [{ address: "a2@x.com" }], phones: [], company: null } },
+      ],
+    },
+    result: {
+      name: "Master",
+      emails: [{ address: "m@x.com" }, { address: "a1@x.com" }, { address: "a2@x.com" }],
+      phones: [],
+      company: null,
+    },
+  };
+}
+
+const listaSoMaster = async () => ({
+  records: [contactRecord("m")],
+  missingScopes: [],
+  failures: [],
+  nextLinks: [],
+});
+
+test("mergePeopleContacts patches master first, deletes absorbed and stores undo", async () => {
+  const plan = planoDeMerge();
+  const calls = { update: [] as { contactId: string }[], delete: [] as string[] };
+  const { state } = criarStore({
+    crPeopleContactUpdate: async (contactId) => {
+      calls.update.push({ contactId });
+    },
+    crPeopleContactDelete: async (contactId) => {
+      calls.delete.push(contactId);
+    },
+    crPeopleList: listaSoMaster,
+  });
+
+  const phases: string[] = [];
+  const res = await state.mergePeopleContacts(plan, (p) => phases.push(p.phase));
+
+  assert.equal(res.ok, true);
+  assert.equal(res.masterUpdated, true);
+  assert.deepEqual(res.deleted, ["a1", "a2"]);
+  assert.equal(res.failedDeletes.length, 0);
+  assert.deepEqual(calls.update, [{ contactId: "m" }]);
+  assert.deepEqual(calls.delete, ["a1", "a2"]);
+  assert.deepEqual(state.peopleMergeUndo, { plan, deleted: ["a1", "a2"] });
+  assert.equal(state.peopleSelectedId, "contacts:m");
+  assert.equal(state.peopleMergeRunning, false);
+  assert.ok(phases.includes("master") && phases.includes("absorbed") && phases.includes("done"));
+});
+
+test("mergePeopleContacts does zero deletes when the master PATCH fails", async () => {
+  const plan = planoDeMerge();
+  const deletes: string[] = [];
+  const { state } = criarStore({
+    crPeopleContactUpdate: async () => {
+      throw new Error("patch boom");
+    },
+    crPeopleContactDelete: async (id) => {
+      deletes.push(id);
+    },
+    crPeopleList: async () => ({ records: [], missingScopes: [], failures: [], nextLinks: [] }),
+  });
+
+  const res = await state.mergePeopleContacts(plan);
+
+  assert.equal(res.ok, false);
+  assert.equal(res.masterUpdated, false);
+  assert.deepEqual(res.deleted, []);
+  assert.deepEqual(deletes, []);
+  assert.equal(state.peopleMergeUndo, null);
+  assert.equal(state.peopleMergeRunning, false);
+  assert.match(String(res.error), /patch boom/);
+});
+
+test("mergePeopleContacts keeps the master and reports partial delete failures", async () => {
+  const plan = planoDeMerge();
+  const { state } = criarStore({
+    crPeopleContactUpdate: async () => {},
+    crPeopleContactDelete: async (id) => {
+      if (id === "a2") throw new Error("delete boom");
+    },
+    crPeopleList: listaSoMaster,
+  });
+
+  const res = await state.mergePeopleContacts(plan);
+
+  assert.equal(res.masterUpdated, true);
+  assert.equal(res.ok, false);
+  assert.deepEqual(res.deleted, ["a1"]);
+  assert.equal(res.failedDeletes.length, 1);
+  assert.equal(res.failedDeletes[0]?.contactId, "a2");
+  // Sem rollback global cego: undo guarda só o que foi deletado de fato.
+  assert.deepEqual(state.peopleMergeUndo, { plan, deleted: ["a1"] });
+});
+
+test("undoMergeContacts restores master first and recreates only deleted absorbed", async () => {
+  const plan = planoDeMerge();
+  const updates: { contactId: string; name: string }[] = [];
+  const creates: string[] = [];
+  const { state } = criarStore({
+    crPeopleContactUpdate: async (contactId, input) => {
+      updates.push({ contactId, name: input.name });
+    },
+    crPeopleContactDelete: async () => {},
+    crPeopleContactCreate: async (input) => {
+      creates.push(input.name);
+      return `new-${creates.length}`;
+    },
+    crPeopleList: listaSoMaster,
+  });
+
+  await state.mergePeopleContacts(plan);
+  const res = await state.undoMergeContacts();
+
+  assert.equal(res.masterRestored, true);
+  assert.deepEqual(res.recreated.map((r) => r.oldId), ["a1", "a2"]);
+  assert.equal(res.failed.length, 0);
+  assert.equal(state.peopleMergeUndo, null);
+  // O último PATCH restaura o master ao estado anterior (before.master).
+  const ultimo = updates[updates.length - 1];
+  assert.equal(ultimo?.contactId, "m");
+  assert.equal(ultimo?.name, "Master");
+  assert.deepEqual(creates, ["A1", "A2"]);
 });

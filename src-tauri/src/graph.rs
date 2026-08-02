@@ -4679,21 +4679,13 @@ fn rotulo_telefone(label: &str) -> &'static str {
     }
 }
 
-/// Atualiza todos os valores editáveis do formulário em um único PATCH. A UI
-/// preserva quantidade e rótulos; o backend mantém essa mesma classificação ao
-/// projetar os telefones para os campos suportados por Microsoft Contacts.
-pub fn cr_people_contact_update(
-    store: &TokenStore,
-    contact_id: &str,
-    input: PeopleContactEdit,
-) -> Result<(), String> {
-    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
-        return Err("Contacts.ReadWrite is required to edit contacts.".to_string());
-    }
-    let contact_id = contact_id.trim();
+/// Valida os campos editáveis e projeta o corpo JSON de um contato para o Graph
+/// (POST/PATCH /me/contacts). Compartilhado por update, create e a recriação do
+/// Undo do merge (#379) — mantém a mesma classificação de telefones.
+fn contato_body(input: PeopleContactEdit) -> Result<serde_json::Value, String> {
     let name = input.name.trim();
-    if contact_id.is_empty() || name.is_empty() || name.len() > 256 {
-        return Err("Invalid contact or display name.".to_string());
+    if name.is_empty() || name.len() > 256 {
+        return Err("Invalid display name.".to_string());
     }
     if input.company.as_deref().unwrap_or("").trim().len() > 256 {
         return Err("Invalid company name.".to_string());
@@ -4745,14 +4737,32 @@ pub fn cr_people_contact_update(
         .unwrap_or_default()
         .trim()
         .to_string();
-    let body = serde_json::json!({
+    Ok(serde_json::json!({
         "displayName": name,
         "emailAddresses": email_addresses,
         "businessPhones": business_phones,
         "homePhones": home_phones,
         "mobilePhone": mobile_phone,
         "companyName": company,
-    });
+    }))
+}
+
+/// Atualiza todos os valores editáveis do formulário em um único PATCH. A UI
+/// preserva quantidade e rótulos; o backend mantém essa mesma classificação ao
+/// projetar os telefones para os campos suportados por Microsoft Contacts.
+pub fn cr_people_contact_update(
+    store: &TokenStore,
+    contact_id: &str,
+    input: PeopleContactEdit,
+) -> Result<(), String> {
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Err("Contacts.ReadWrite is required to edit contacts.".to_string());
+    }
+    let contact_id = contact_id.trim();
+    if contact_id.is_empty() {
+        return Err("Invalid contact.".to_string());
+    }
+    let body = contato_body(input)?;
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
     let url = format!(
@@ -4771,6 +4781,60 @@ pub fn cr_people_contact_update(
         return Err(format!("Contacts: Graph returned {}", resp.status()));
     }
     Ok(())
+}
+
+/// Cria um contato completo (POST /me/contacts) e devolve o id do Graph criado.
+/// Necessário pro Undo do merge (#379): recria os absorvidos deletados e
+/// registra o novo id. O `cr_salvar_contatos` legado deduplica por email e não
+/// devolve id, inadequado aqui.
+pub fn cr_people_contact_create(
+    store: &TokenStore,
+    input: PeopleContactEdit,
+) -> Result<String, String> {
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Err("Contacts.ReadWrite is required to create contacts.".to_string());
+    }
+    let body = contato_body(input)?;
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/contacts");
+    let resp = graph_enviar("people:contact-create", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|error| format!("Failed to create contact: {error}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita("me/contacts", "criar contato", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(v["id"].as_str().unwrap_or("").to_string())
+}
+
+/// Exclui um contato (DELETE /me/contacts/{id}). 404 conta como sucesso
+/// (idempotente — já removido). Contacts.ReadWrite. Usado na execução do
+/// merge (#379), com resultado por item tratado no chamador.
+pub fn cr_people_contact_delete(store: &TokenStore, contact_id: &str) -> Result<(), String> {
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Err("Contacts.ReadWrite is required to delete contacts.".to_string());
+    }
+    let contact_id = contact_id.trim();
+    if contact_id.is_empty() {
+        return Err("Invalid contact.".to_string());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!(
+        "{GRAPH}/me/contacts/{}",
+        urlencoding::encode(contact_id)
+    );
+    let resp = graph_enviar("people:contact-delete", GRAPH_TETO_ESPERA_S, || {
+        client.delete(&url).bearer_auth(&token).send()
+    })
+    .map_err(|error| format!("Failed to delete contact: {error}"))?;
+    if resp.status().is_success() || resp.status().as_u16() == 404 {
+        Ok(())
+    } else {
+        Err(erro_escrita("me/contacts", "excluir contato", resp.status()))
+    }
 }
 
 #[derive(serde::Serialize)]

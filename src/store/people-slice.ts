@@ -9,6 +9,7 @@ import {
   type PeopleContact,
 } from "../lib/people.ts";
 import type { Filter } from "../components/reui/filters";
+import type { MergePlan } from "../lib/people-merge";
 import type {
   PeopleBulkDetailsChange,
   PeopleBulkDetailsField,
@@ -33,7 +34,47 @@ type PeopleApi = Pick<
   | "crPeopleCompanyWrite"
   | "crPeopleDetailsWrite"
   | "crPeopleContactUpdate"
+  | "crPeopleContactCreate"
+  | "crPeopleContactDelete"
 >;
+
+/** Fases da execução do merge (#379), na ordem segura do #376. */
+export type PeopleMergePhase =
+  | "snapshot"
+  | "master"
+  | "absorbed"
+  | "refetch"
+  | "done";
+
+/** Progresso por unidades concluídas (1 PATCH + M DELETEs + 1 refetch). */
+export interface PeopleMergeProgress {
+  phase: PeopleMergePhase;
+  completed: number;
+  total: number;
+}
+
+/** Resultado da execução do merge, com status por item dos DELETEs. */
+export interface PeopleMergeResult {
+  ok: boolean;
+  masterUpdated: boolean;
+  deleted: string[];
+  failedDeletes: Array<{ contactId: string; error: string }>;
+  error?: string;
+}
+
+/** Resultado do Undo por recriação (oldId→newId), com casos parciais. */
+export interface PeopleMergeUndoResult {
+  masterRestored: boolean;
+  recreated: Array<{ oldId: string; newId: string }>;
+  failed: Array<{ contactId: string; error: string }>;
+  error?: string;
+}
+
+/** Snapshot do Undo no store (vive além do toast; restart encerra). */
+export interface PeopleMergeUndoState {
+  plan: MergePlan;
+  deleted: string[];
+}
 
 const resolveInFlight = new Map<string, Promise<PeopleContact | null>>();
 const directoryEnrichInFlight = new Map<
@@ -209,6 +250,8 @@ export interface PeopleSlice {
   peopleGroupMembersById: Record<string, PeopleContact[]>;
   peopleGroupMembersLoadingId: string | null;
   peopleGroupMembersError: string | null;
+  peopleMergeRunning: boolean;
+  peopleMergeUndo: PeopleMergeUndoState | null;
 
   loadPeople: () => Promise<void>;
   loadMorePeople: () => Promise<void>;
@@ -248,6 +291,11 @@ export interface PeopleSlice {
     unchanged: number;
   }>;
   updatePeopleContact: (id: string, input: PeopleContactEdit) => Promise<void>;
+  mergePeopleContacts: (
+    plan: MergePlan,
+    onProgress?: (progress: PeopleMergeProgress) => void,
+  ) => Promise<PeopleMergeResult>;
+  undoMergeContacts: () => Promise<PeopleMergeUndoResult>;
 }
 
 export function criarPeopleSlice(
@@ -305,6 +353,8 @@ export function criarPeopleSlice(
   peopleGroupMembersById: {},
   peopleGroupMembersLoadingId: null,
   peopleGroupMembersError: null,
+  peopleMergeRunning: false,
+  peopleMergeUndo: null,
 
   loadPeople: async () => {
     const generation = get().peopleRequestGeneration + 1;
@@ -1152,6 +1202,190 @@ export function criarPeopleSlice(
         ),
       }));
       throw error;
+    }
+  },
+  mergePeopleContacts: async (plan, onProgress) => {
+    // Trava dupla execução (#379): reentrância enquanto uma mutação corre.
+    if (get().peopleMergeRunning) {
+      return {
+        ok: false,
+        masterUpdated: false,
+        deleted: [],
+        failedDeletes: [],
+        error: "A merge is already running.",
+      };
+    }
+    const sessionGeneration = get().peopleSessionGeneration;
+    // Unidades: 1 PATCH no master + M DELETEs + 1 refetch.
+    const total = 1 + plan.absorbed.length + 1;
+    let completed = 0;
+    const report = (phase: PeopleMergeProgress["phase"]) =>
+      onProgress?.({ phase, completed, total });
+
+    set({ peopleMergeRunning: true });
+    report("snapshot");
+    try {
+      // 1) PATCH no master PRIMEIRO (ordem segura do #376).
+      report("master");
+      try {
+        await client.crPeopleContactUpdate(plan.master.contactId, plan.result);
+      } catch (error) {
+        // PATCH falhou/timeout ambíguo: ZERO delete; refetch antes de decidir
+        // retry, sem tocar nos absorvidos.
+        await get().loadPeople();
+        set({ peopleMergeRunning: false });
+        return {
+          ok: false,
+          masterUpdated: false,
+          deleted: [],
+          failedDeletes: [],
+          error: String(error),
+        };
+      }
+      completed += 1;
+      // Aplica o resultado no master (otimista), igual ao updatePeopleContact.
+      set((state) => ({
+        peopleContacts: state.peopleContacts.map((contact) =>
+          contact.id === plan.master.id
+            ? {
+                ...contact,
+                name: plan.result.name,
+                emails: plan.result.emails.map((email) => ({
+                  ...email,
+                  source: email.source ?? "contacts",
+                })),
+                phones: plan.result.phones.map((phone) => ({
+                  ...phone,
+                  source: phone.source ?? "contacts",
+                })),
+                company: plan.result.company,
+                companySource: plan.result.company ? "contacts" : undefined,
+              }
+            : contact,
+        ),
+      }));
+
+      // 2) Só APÓS o sucesso, DELETE dos absorvidos — status individual por item.
+      report("absorbed");
+      const deleted: string[] = [];
+      const failedDeletes: Array<{ contactId: string; error: string }> = [];
+      for (const absorbed of plan.absorbed) {
+        try {
+          await client.crPeopleContactDelete(absorbed.contactId);
+          deleted.push(absorbed.contactId);
+          // Remove do cache pra o refetch não ressuscitar via preservação de
+          // cache (loadPeople reinjeta cacheados cujo email não resolve).
+          set((state) => ({
+            peopleContacts: state.peopleContacts.filter(
+              (contact) => contact.id !== absorbed.id,
+            ),
+          }));
+        } catch (error) {
+          // DELETE parcial: mantém o master enriquecido; o absorvido que falhou
+          // segue como duplicata. Sem rollback global cego.
+          failedDeletes.push({ contactId: absorbed.contactId, error: String(error) });
+        }
+        completed += 1;
+        report("absorbed");
+      }
+
+      // 3) Refetch/reconciliar o store.
+      report("refetch");
+      await get().loadPeople();
+      completed += 1;
+      report("done");
+
+      // Sessão resetada no meio (ex.: logout): não fixa seleção/undo.
+      if (get().peopleSessionGeneration !== sessionGeneration) {
+        set({ peopleMergeRunning: false });
+        return {
+          ok: failedDeletes.length === 0,
+          masterUpdated: true,
+          deleted,
+          failedDeletes,
+        };
+      }
+
+      set((state) => ({
+        peopleMergeRunning: false,
+        // Snapshot do Undo no store (só os realmente deletados são recriáveis).
+        peopleMergeUndo: { plan, deleted },
+        // Sucesso: seleciona o master (se sobreviveu ao refetch).
+        peopleSelectedId: state.peopleContacts.some((c) => c.id === plan.master.id)
+          ? plan.master.id
+          : state.peopleSelectedId,
+      }));
+      return {
+        ok: failedDeletes.length === 0,
+        masterUpdated: true,
+        deleted,
+        failedDeletes,
+      };
+    } catch (error) {
+      set({ peopleMergeRunning: false });
+      return {
+        ok: false,
+        masterUpdated: false,
+        deleted: [],
+        failedDeletes: [],
+        error: String(error),
+      };
+    }
+  },
+  undoMergeContacts: async () => {
+    const undo = get().peopleMergeUndo;
+    if (!undo) {
+      return {
+        masterRestored: false,
+        recreated: [],
+        failed: [],
+        error: "Nothing to undo.",
+      };
+    }
+    if (get().peopleMergeRunning) {
+      return {
+        masterRestored: false,
+        recreated: [],
+        failed: [],
+        error: "A merge is already running.",
+      };
+    }
+    const { plan, deleted } = undo;
+    const recreated: Array<{ oldId: string; newId: string }> = [];
+    const failed: Array<{ contactId: string; error: string }> = [];
+    let masterRestored = false;
+    set({ peopleMergeRunning: true });
+    try {
+      // 1) Restaura o master ao estado anterior (PATCH) PRIMEIRO.
+      try {
+        await client.crPeopleContactUpdate(
+          plan.master.contactId,
+          plan.before.master,
+        );
+        masterRestored = true;
+      } catch (error) {
+        failed.push({ contactId: plan.master.contactId, error: String(error) });
+      }
+      // 2) Recria SÓ os absorvidos realmente deletados (novos ids; oldId→newId).
+      for (const contactId of deleted) {
+        const snap = plan.before.absorbed.find(
+          (item) => item.contactId === contactId,
+        );
+        if (!snap) continue;
+        try {
+          const newId = await client.crPeopleContactCreate(snap.value);
+          recreated.push({ oldId: contactId, newId });
+        } catch (error) {
+          failed.push({ contactId, error: String(error) });
+        }
+      }
+      // 3) Refetch e encerra o Undo.
+      await get().loadPeople();
+      set({ peopleMergeRunning: false, peopleMergeUndo: null });
+      return { masterRestored, recreated, failed };
+    } catch (error) {
+      set({ peopleMergeRunning: false });
+      return { masterRestored, recreated, failed, error: String(error) };
     }
   },
   });
