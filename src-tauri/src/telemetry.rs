@@ -38,19 +38,51 @@ pub enum Categoria {
     Analytics,
 }
 
-/// Consentimento por categoria. **Default: tudo OFF.** Precedência
+/// Consentimento por categoria. **Default: tudo ON** (#388 — diagnóstico
+/// anônimo ligado por padrão, opt-OUT por categoria). Precedência
 /// admin>tenant>usuário é resolvida no front (S3) antes de chegar aqui.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// O default só vale quando NÃO há consent gravado (1º run / instalação nova):
+/// aí `carregar_consent().unwrap_or_default()` cai neste `Default` (tudo ON) e
+/// o front mostra o aviso de transparência do 1º run (#389). Quem já gravou uma
+/// escolha mantém exatamente o que salvou.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Consentimento {
-    #[serde(default)]
+    #[serde(default = "verdadeiro")]
     pub crash: bool,
-    #[serde(default)]
+    #[serde(default = "verdadeiro")]
     pub diagnostico: bool,
-    #[serde(default)]
+    #[serde(default = "verdadeiro")]
     pub analytics: bool,
 }
 
+/// Default de campo do consent quando ausente no JSON: ON (#388). Mantém a
+/// coerência com `Default` mesmo em JSON parcial.
+fn verdadeiro() -> bool {
+    true
+}
+
+impl Default for Consentimento {
+    fn default() -> Self {
+        Self {
+            crash: true,
+            diagnostico: true,
+            analytics: true,
+        }
+    }
+}
+
 impl Consentimento {
+    /// Todas as categorias OFF. Distinto do `Default` (tudo ON, #388): é o que
+    /// o "Revoke all" (#389) aplica e a base explícita dos testes.
+    pub const fn nenhum() -> Self {
+        Self {
+            crash: false,
+            diagnostico: false,
+            analytics: false,
+        }
+    }
+
     fn permite(&self, categoria: Categoria) -> bool {
         match categoria {
             Categoria::Crash => self.crash,
@@ -281,6 +313,13 @@ fn carregar_consent() -> Consentimento {
         .unwrap_or_default()
 }
 
+/// Existe consent gravado? Distingue "1º run / instalação nova" (default ON,
+/// #388) de "usuário já escolheu". O front usa isto pro aviso de transparência
+/// do 1º run (#389) — mostrado até o usuário interagir/confirmar.
+fn consent_existe() -> bool {
+    caminho_consent().is_some_and(|p| p.exists())
+}
+
 fn gravar_consent(c: &Consentimento) {
     if let (Some(p), Ok(txt)) = (caminho_consent(), serde_json::to_vec_pretty(c)) {
         if let Err(e) = std::fs::write(&p, txt) {
@@ -441,6 +480,9 @@ pub struct StatusDto {
     pub consent: Consentimento,
     pub session_id: String,
     pub queued: usize,
+    /// #389: há consent gravado? `false` = 1º run (default ON) → front mostra o
+    /// aviso de transparência até o usuário confirmar/interagir.
+    pub configurado: bool,
 }
 
 impl TelemetryState {
@@ -455,7 +497,7 @@ impl TelemetryState {
     /// session-id efêmero.
     pub fn revogar(&self) {
         if let Ok(mut i) = self.inner.lock() {
-            i.consent = Consentimento::default();
+            i.consent = Consentimento::nenhum();
             i.fila.clear();
             i.session_id = novo_session_id();
             gravar_consent(&i.consent);
@@ -497,7 +539,22 @@ impl TelemetryState {
             consent: i.consent,
             session_id: i.session_id.clone(),
             queued: i.fila.len(),
+            configurado: consent_existe(),
         }
+    }
+
+    /// Inspetor DEV (#389): dump dos envelopes já na fila. Todos JÁ passaram pelo
+    /// scrub da policy (sem PII, só enum/bucket/int/bool). Retorna vazio em
+    /// release — defesa em profundidade além do gate `import.meta.env.DEV` no
+    /// front, pra que um build de produção nunca exponha o conteúdo da fila.
+    pub fn debug_dump(&self) -> Vec<EnvelopeCarimbado> {
+        if !cfg!(debug_assertions) {
+            return Vec::new();
+        }
+        self.inner
+            .lock()
+            .map(|i| i.fila.iter().cloned().collect())
+            .unwrap_or_default()
     }
 }
 
@@ -529,7 +586,7 @@ mod testes {
         let mut sim = |_: Categoria| true;
         let d = aplicar_policy(
             entrada(Categoria::Analytics, &[]),
-            &Consentimento::default(), // tudo OFF
+            &Consentimento::nenhum(),
             &ctx(),
             "sess",
             100,
@@ -540,7 +597,7 @@ mod testes {
 
     #[test]
     fn denylist_descarta_chaves_de_pii() {
-        let consent = Consentimento { analytics: true, ..Default::default() };
+        let consent = Consentimento { analytics: true, ..Consentimento::nenhum() };
         let mut sim = |_: Categoria| true;
         let d = aplicar_policy(
             entrada(
@@ -571,7 +628,7 @@ mod testes {
 
     #[test]
     fn caps_limitam_chave_e_valor() {
-        let consent = Consentimento { diagnostico: true, ..Default::default() };
+        let consent = Consentimento { diagnostico: true, ..Consentimento::nenhum() };
         let mut sim = |_: Categoria| true;
         let chave_gigante = "a".repeat(MAX_CHAVE_LEN + 1);
         let valor_gigante = Valor::Enum("x".repeat(MAX_VALOR_LEN + 1));
@@ -597,7 +654,7 @@ mod testes {
 
     #[test]
     fn sampling_injetado_rejeita_quando_falso() {
-        let consent = Consentimento { analytics: true, ..Default::default() };
+        let consent = Consentimento { analytics: true, ..Consentimento::nenhum() };
         let mut nunca = |_: Categoria| false;
         let d = aplicar_policy(
             entrada(Categoria::Analytics, &[]),
@@ -651,7 +708,7 @@ mod testes {
         // Sem consent de crash → rejeita.
         let d = aplicar_policy(
             entrada_crash(),
-            &Consentimento::default(),
+            &Consentimento::nenhum(),
             &ctx(),
             "s",
             1,
@@ -659,7 +716,7 @@ mod testes {
         );
         assert!(matches!(d, Decisao::Rejeitado("sem-consentimento")));
         // Com consent de crash → aceita e preserva a origem.
-        let consent = Consentimento { crash: true, ..Default::default() };
+        let consent = Consentimento { crash: true, ..Consentimento::nenhum() };
         let d = aplicar_policy(entrada_crash(), &consent, &ctx(), "s", 1, &mut sim);
         let Decisao::Aceito(env) = d else { panic!("aceita") };
         assert_eq!(env.categoria, Categoria::Crash);
@@ -668,6 +725,28 @@ mod testes {
             env.atributos.get("origem"),
             Some(&Valor::Enum("rust_panic".into()))
         );
+    }
+
+    #[test]
+    fn default_consent_liga_tudo_e_nenhum_desliga() {
+        // #388: 1º run / instalação nova cai no Default → tudo ON (opt-out).
+        let d = Consentimento::default();
+        assert!(d.crash && d.diagnostico && d.analytics, "default deve ser ON");
+        // "Revoke all" (#389) aplica `nenhum()` → tudo OFF.
+        let n = Consentimento::nenhum();
+        assert!(!n.crash && !n.diagnostico && !n.analytics, "nenhum deve ser OFF");
+    }
+
+    #[test]
+    fn json_ausente_cai_no_default_on() {
+        // Consent gravado parcial/ausente não deve rebaixar pra OFF (#388): os
+        // campos ausentes usam `verdadeiro` (ON), coerente com o Default.
+        let c: Consentimento = serde_json::from_str("{}").expect("json vazio");
+        assert!(c.crash && c.diagnostico && c.analytics);
+        let so_analytics: Consentimento =
+            serde_json::from_str(r#"{"analytics":false}"#).expect("json parcial");
+        assert!(so_analytics.crash && so_analytics.diagnostico);
+        assert!(!so_analytics.analytics);
     }
 
     #[test]
