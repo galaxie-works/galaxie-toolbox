@@ -269,6 +269,10 @@ fn caminho_fila() -> Option<PathBuf> {
     dir_base().map(|d| d.join("telemetria-fila.bin"))
 }
 
+fn caminho_crashes() -> Option<PathBuf> {
+    dir_base().map(|d| d.join("telemetria-crashes.log"))
+}
+
 /// Consent não é segredo (só booleans) → JSON puro (padrão do `estado.rs`).
 fn carregar_consent() -> Consentimento {
     caminho_consent()
@@ -320,6 +324,81 @@ fn gravar_fila(fila: &VecDeque<EnvelopeCarimbado>) {
     }
 }
 
+// --- Crash: panic hook + drenagem no boot (#391, S5) -----------------------
+
+/// Instala um panic hook que, além do comportamento anterior (log), grava um
+/// breadcrumb best-effort num arquivo append-only. Fazer IO/lock pesado DENTRO
+/// do unwind é arriscado (deadlock/corrupção); então o hook só anexa a
+/// LOCALIZAÇÃO (caminho de código, não PII) e o boot seguinte drena isso pra
+/// fila via policy — fora do unwind. Chamado uma vez no setup.
+pub fn registrar_panic_hook() {
+    let anterior = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if let Some(p) = caminho_crashes() {
+            let local = info
+                .location()
+                .map(|l| format!("{}:{}", l.file(), l.line()))
+                .unwrap_or_else(|| "?".to_string());
+            let linha = format!("{}|rust_panic|{}\n", agora_unix(), local);
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&p)
+            {
+                use std::io::Write;
+                let _ = f.write_all(linha.as_bytes());
+            }
+        }
+        anterior(info);
+    }));
+}
+
+/// Drena os breadcrumbs de crash de runs anteriores → envelopes de crash na
+/// fila (via policy: só entra se houver consent de crash). Depois apaga o
+/// arquivo (mesmo sem consent — não guarda crash pendente sem opt-in).
+fn drenar_crashes_pendentes(
+    fila: &mut VecDeque<EnvelopeCarimbado>,
+    consent: &Consentimento,
+    ctx: &Contexto,
+    session_id: &str,
+) {
+    let Some(p) = caminho_crashes() else { return };
+    let Ok(conteudo) = std::fs::read_to_string(&p) else {
+        return;
+    };
+    let mut algum = false;
+    let mut sempre = |_: Categoria| true; // crash tem taxa 1.0
+    for linha in conteudo.lines() {
+        if linha.trim().is_empty() {
+            continue;
+        }
+        // formato: ts|origem|local — só a origem (enum) vai; local é code path.
+        let origem = linha.split('|').nth(1).unwrap_or("rust_panic").to_string();
+        let mut atributos = BTreeMap::new();
+        atributos.insert("origem".to_string(), Valor::Enum(origem));
+        let entrada = EnvelopeEntrada {
+            categoria: Categoria::Crash,
+            evento: "app_crashed".to_string(),
+            atributos,
+        };
+        if let Decisao::Aceito(env) = aplicar_policy(
+            entrada,
+            consent,
+            ctx,
+            session_id,
+            agora_unix(),
+            &mut sempre,
+        ) {
+            empurrar_bounded(fila, *env, FILA_MAX);
+            algum = true;
+        }
+    }
+    let _ = std::fs::remove_file(&p);
+    if algum {
+        gravar_fila(fila);
+    }
+}
+
 // --- Estado gerenciado (Tauri State) ---------------------------------------
 
 struct Interno {
@@ -337,13 +416,20 @@ pub struct TelemetryState {
 
 impl Default for TelemetryState {
     fn default() -> Self {
+        let consent = carregar_consent();
+        let ctx = Contexto::atual();
+        let session_id = novo_session_id();
+        let mut fila = carregar_fila();
+        // #391: crashes registrados pelo panic hook em runs anteriores viram
+        // envelopes agora (fora do unwind), respeitando o consent.
+        drenar_crashes_pendentes(&mut fila, &consent, &ctx, &session_id);
         Self {
             inner: Mutex::new(Interno {
-                consent: carregar_consent(),
-                session_id: novo_session_id(),
-                fila: carregar_fila(),
+                consent,
+                session_id,
+                fila,
             }),
-            ctx: Contexto::atual(),
+            ctx,
         }
     }
 }
@@ -548,6 +634,40 @@ mod testes {
         // O mais antigo (ts 0..9) caiu; o primeiro agora é ts 10.
         assert_eq!(fila.front().unwrap().ts_unix, 10);
         assert_eq!(fila.back().unwrap().ts_unix, (FILA_MAX + 9) as u64);
+    }
+
+    #[test]
+    fn crash_respeita_consent_e_preserva_origem() {
+        let mut sim = |_: Categoria| true;
+        let entrada_crash = || EnvelopeEntrada {
+            categoria: Categoria::Crash,
+            evento: "app_crashed".into(),
+            atributos: {
+                let mut m = BTreeMap::new();
+                m.insert("origem".into(), Valor::Enum("rust_panic".into()));
+                m
+            },
+        };
+        // Sem consent de crash → rejeita.
+        let d = aplicar_policy(
+            entrada_crash(),
+            &Consentimento::default(),
+            &ctx(),
+            "s",
+            1,
+            &mut sim,
+        );
+        assert!(matches!(d, Decisao::Rejeitado("sem-consentimento")));
+        // Com consent de crash → aceita e preserva a origem.
+        let consent = Consentimento { crash: true, ..Default::default() };
+        let d = aplicar_policy(entrada_crash(), &consent, &ctx(), "s", 1, &mut sim);
+        let Decisao::Aceito(env) = d else { panic!("aceita") };
+        assert_eq!(env.categoria, Categoria::Crash);
+        assert_eq!(env.evento, "app_crashed");
+        assert_eq!(
+            env.atributos.get("origem"),
+            Some(&Valor::Enum("rust_panic".into()))
+        );
     }
 
     #[test]

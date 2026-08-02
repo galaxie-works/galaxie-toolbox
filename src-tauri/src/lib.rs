@@ -1344,6 +1344,9 @@ async fn autostart_set(app: tauri::AppHandle, enabled: bool) -> Result<(), Strin
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // #391 (S5): captura de panic do Rust como breadcrumb (drenado no boot
+    // seguinte pela TelemetryPolicy). Cedo, antes de tudo.
+    telemetry::registrar_panic_hook();
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
