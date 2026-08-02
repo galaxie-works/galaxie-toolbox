@@ -679,6 +679,7 @@ const pt = {
     peopleDirectoryEmptyDesc:
       "O diretório do Microsoft 365 não retornou nenhuma pessoa.",
     peopleGroupsSection: "Grupos",
+    peopleCategoriesSection: "Categorias",
     peopleGroupsLoading: "Carregando grupos…",
     peopleGroupsEmpty: "Nenhum grupo M365 encontrado.",
     peopleGroupsError: "Não foi possível carregar os grupos.",
@@ -1816,6 +1817,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleDirectoryEmptyDesc:
       "The Microsoft 365 directory did not return any people.",
     peopleGroupsSection: "Groups",
+    peopleCategoriesSection: "Categories",
     peopleGroupsLoading: "Loading groups…",
     peopleGroupsEmpty: "No Microsoft 365 groups found.",
     peopleGroupsError: "Groups could not be loaded.",

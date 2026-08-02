@@ -238,6 +238,7 @@ import {
   TriangleAlert,
   User,
   Users,
+  Tag,
   UsersRound,
   Video,
   X,
@@ -1518,6 +1519,14 @@ function FolderSidebar({
   );
   const loadPeopleGroups = useAppStore((state) => state.loadPeopleGroups);
   const selectPeopleGroup = useAppStore((state) => state.selectPeopleGroup);
+  // #406: categorias do Outlook no sidebar de Contacts.
+  const peopleCategorias = useAppStore((state) => state.peopleCategorias);
+  const peopleSelectedCategory = useAppStore(
+    (state) => state.peopleSelectedCategory,
+  );
+  const selectPeopleCategory = useAppStore(
+    (state) => state.selectPeopleCategory,
+  );
   useEffect(() => {
     if (
       bridgeView === "people" &&
@@ -2170,6 +2179,58 @@ function FolderSidebar({
                       : t.controlRoom.peopleGroupsEmpty}
                   </p>
                 )}
+
+              {/* #406: Categorias do Outlook — grupo customizável portável
+                  (opção b). Clicar filtra os contatos pela categoria. */}
+              {!colapsada && peopleCategorias.size > 0 && (
+                <p className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
+                  {t.controlRoom.peopleCategoriesSection}
+                </p>
+              )}
+              {[...peopleCategorias.entries()].map(([nome, cor]) => {
+                const ativo =
+                  peopleTab === "category" && peopleSelectedCategory === nome;
+                return (
+                  <Tooltip key={nome}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={ativo ? "secondary" : "ghost"}
+                        onClick={() => selectPeopleCategory(nome)}
+                        aria-label={nome}
+                        aria-current={ativo ? "page" : undefined}
+                        className={cn(
+                          "shrink-0",
+                          colapsada
+                            ? "size-9 justify-center p-0"
+                            : "w-full justify-start gap-2.5",
+                          ativo
+                            ? "bg-secondary font-medium text-secondary-foreground"
+                            : "text-muted-foreground hover:bg-accent/50"
+                        )}
+                      >
+                        {cor ? (
+                          <span
+                            className="size-2.5 shrink-0 rounded-full"
+                            style={{ background: cor }}
+                          />
+                        ) : (
+                          <Tag className="size-4 shrink-0" />
+                        )}
+                        {!colapsada && (
+                          <span className="min-w-0 flex-1 truncate text-left">
+                            {nome}
+                          </span>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    {colapsada && (
+                      <TooltipContent side="right" align="center">
+                        {nome}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                );
+              })}
             </nav>
           </div>
         </ScrollArea>

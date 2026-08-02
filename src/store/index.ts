@@ -269,6 +269,7 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       "directory",
       "organizations",
       "groups",
+      "category",
     ]);
     if (peopleTab !== undefined) state.peopleTab = peopleTab;
     // Filtros / busca / ordenação (#129)

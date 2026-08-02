@@ -3327,6 +3327,10 @@ pub struct PeopleRecord {
     pub manager: Option<String>,
     pub organization: bool,
     pub people_rank: Option<usize>,
+    /// Categorias do Outlook do contato (#406). Só `source=="contacts"` (o
+    /// endpoint /me/people não expõe categories). Vazio caso contrário.
+    #[serde(default)]
+    pub categories: Vec<String>,
 }
 
 /// Resultado estruturado: uma fonte pode falhar sem esconder os dados da outra.
@@ -3528,6 +3532,7 @@ fn registro_de_usuario_do_diretorio(item: &serde_json::Value) -> Option<PeopleRe
         manager: None,
         organization: true,
         people_rank: None,
+        categories: Vec::new(),
     })
 }
 
@@ -3661,7 +3666,7 @@ pub fn cr_people_list(
             (
                 "contacts",
                 format!(
-                    "{GRAPH}/me/contacts?$top=100&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager"
+                    "{GRAPH}/me/contacts?$top=100&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager,categories"
                 ),
             ),
             (
@@ -3733,6 +3738,16 @@ pub fn cr_people_list(
                                     manager: texto_opcional(item, "manager"),
                                     organization: false,
                                     people_rank: None,
+                                    categories: item["categories"]
+                                        .as_array()
+                                        .map(|arr| {
+                                            arr.iter()
+                                                .filter_map(|c| {
+                                                    c.as_str().map(|s| s.to_string())
+                                                })
+                                                .collect()
+                                        })
+                                        .unwrap_or_default(),
                                 })
                             }));
                         } else {
@@ -3770,6 +3785,7 @@ pub fn cr_people_list(
                                         manager: None,
                                         organization,
                                         people_rank: is_first_page.then_some(rank),
+                                        categories: Vec::new(),
                                     })
                                 },
                             ));

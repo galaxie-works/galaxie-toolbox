@@ -475,7 +475,15 @@ export function criarAgendaSlice(
       const original = antes.find((e) => e.id === id);
       set({
         agendaEventosMes: antes.map((e) =>
-          e.id === id ? { ...e, ...eventoDeInput(id, input) } : e,
+          e.id === id
+            ? {
+                ...e,
+                ...eventoDeInput(id, input),
+                // Preserva o tipo real (recorrente) + a série no update otimista.
+                tipo: e.tipo,
+                seriesMasterId: e.seriesMasterId,
+              }
+            : e,
         ),
       });
       try {

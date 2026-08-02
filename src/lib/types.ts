@@ -386,6 +386,8 @@ export interface PeopleRecord {
   organization: boolean;
   /** Posição em `/me/people`; os dez primeiros são "Frequent". */
   peopleRank?: number | null;
+  /** Categorias do Outlook (#406); só `source==="contacts"`. */
+  categories?: string[];
 }
 
 /** Resultado parcial: uma fonte pode falhar sem apagar a outra. */
