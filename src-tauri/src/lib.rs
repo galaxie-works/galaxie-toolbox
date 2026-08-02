@@ -1139,6 +1139,28 @@ async fn cr_baixar_anexo(
     .map_err(|e| e.to_string())?
 }
 
+/// Control room: lê um anexo em memória (base64) para pré-visualização, sem
+/// gravar em Downloads (#188).
+#[tauri::command]
+async fn cr_ler_anexo(
+    state: State<'_, Store>,
+    message_id: String,
+    attachment_id: String,
+    mailbox: Option<String>,
+) -> Result<graph::AnexoConteudo, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_ler_anexo(
+            &store,
+            &message_id,
+            &attachment_id,
+            mailbox.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Abre um arquivo local com o aplicativo padrao do Windows.
 #[tauri::command]
 async fn abrir_caminho(path: String) -> Result<(), String> {
@@ -1550,6 +1572,7 @@ pub fn run() {
             cr_excluir_pasta,
             cr_mover_pasta,
             cr_baixar_anexo,
+            cr_ler_anexo,
             abrir_caminho,
             revelar_no_explorer,
             connect_site,

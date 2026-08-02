@@ -1,5 +1,6 @@
 import type {
   AcaoRsvp,
+  AnexoConteudo,
   AppUser,
   CaixaEntrada,
   Calendario,
@@ -620,7 +621,16 @@ export async function crEmailCorpo(
       recebido: new Date().toISOString(),
       corpo,
       corpoTipo: "html",
-      anexos: [{ id: "mock-proposta", nome: "proposta.pdf", tamanho: 245_760 }],
+      anexos: [
+        {
+          id: "mock-proposta",
+          nome: "proposta.pdf",
+          tamanho: 245_760,
+          contentType: "application/pdf",
+          odataType: "#microsoft.graph.fileAttachment",
+          isInline: false,
+        },
+      ],
       webLink: "https://outlook.office365.com/mock",
     };
   }
@@ -1747,6 +1757,32 @@ export async function crBaixarAnexo(
     return "C:/Users/voce/Downloads/exemplo.pdf";
   }
   return invoke<string>("cr_baixar_anexo", {
+    messageId,
+    attachmentId,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
+/**
+ * Lê um anexo em memória (base64) para pré-visualização, sem gravar em
+ * Downloads (#188). Só trata `fileAttachment`; item/reference vêm em fatias
+ * posteriores do épico (#178 §5).
+ */
+export async function crLerAnexo(
+  messageId: string,
+  attachmentId: string,
+  mailbox?: string
+): Promise<AnexoConteudo> {
+  if (!inTauri()) {
+    await sleep(400);
+    // "Exemplo de preview." em base64 (text/plain) para o modo dev.
+    return {
+      bytesB64: "RXhlbXBsbyBkZSBwcmV2aWV3Lg==",
+      contentType: "text/plain",
+      nome: "exemplo.txt",
+    };
+  }
+  return invoke<AnexoConteudo>("cr_ler_anexo", {
     messageId,
     attachmentId,
     mailbox: mailboxArg(mailbox),

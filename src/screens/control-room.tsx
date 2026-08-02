@@ -1,6 +1,8 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BridgeHeaderIcon } from "@/components/ui/icons/marca-anim";
 import { Badge, type BadgeProps } from "@/components/reui/badge";
+import { PreviewAnexo } from "@/components/bridge/preview-anexo";
+import { ehPrevisualizavel } from "@/lib/anexo-tipo";
 import {
   Filters,
   type FilterFieldConfig,
@@ -4413,6 +4415,12 @@ const MessageDetail = forwardRef<
   const carregarLeitor = useAppStore((s) => s.carregarLeitor);
   const limparLeitor = useAppStore((s) => s.limparLeitor);
   const comporRef = useRef<ComporMensagemHandle>(null);
+  // Anexo em pré-visualização (#188); null = nenhum aberto.
+  const [previewAtual, setPreviewAtual] = useState<AnexoEmail | null>(null);
+  // Fecha o preview ao trocar de e-mail (não vazar o anexo do anterior).
+  useEffect(() => {
+    setPreviewAtual(null);
+  }, [id]);
   const textosUndoSend = useMemo(
     () => ({
       tituloPendente: (segundos: number) =>
@@ -4599,7 +4607,11 @@ const MessageDetail = forwardRef<
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    onClick={() => baixarAnexo(a)}
+                    // Previsível → abre o preview inline (#188); senão baixa
+                    // (fluxo antigo, sem regressão para .docx/.zip/etc.).
+                    onClick={() =>
+                      ehPrevisualizavel(a) ? setPreviewAtual(a) : baixarAnexo(a)
+                    }
                     className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
                     aria-label={`${t.controlRoom.abrirArquivo}: ${a.nome}`}
                   >
@@ -4612,6 +4624,15 @@ const MessageDetail = forwardRef<
               </Tooltip>
             ))}
           </div>
+          {previewAtual && id && (
+            <PreviewAnexo
+              anexo={previewAtual}
+              messageId={id}
+              mailbox={mailbox}
+              onSalvar={() => baixarAnexo(previewAtual)}
+              onFechar={() => setPreviewAtual(null)}
+            />
+          )}
         </>
       )}
     </div>

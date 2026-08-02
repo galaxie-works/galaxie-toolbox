@@ -272,6 +272,24 @@ export interface AnexoEmail {
   id: string;
   nome: string;
   tamanho: number;
+  /** MIME do anexo (`contentType` do Graph). Vazio quando não informado. */
+  contentType: string;
+  /**
+   * `@odata.type` do anexo: `#microsoft.graph.fileAttachment` /
+   * `itemAttachment` / `referenceAttachment`. Roteia o renderer (#178 §5).
+   */
+  odataType: string;
+  /** Anexo inline (embutido no corpo) vs. anexo real. */
+  isInline: boolean;
+}
+
+/** Conteúdo de um anexo lido em memória para preview (#188). */
+export interface AnexoConteudo {
+  /** Bytes do anexo em base64 (repassados do `contentBytes` do Graph). */
+  bytesB64: string;
+  /** MIME informado pelo Graph (ou vazio). */
+  contentType: string;
+  nome: string;
 }
 
 export interface EmailDetalhe {
