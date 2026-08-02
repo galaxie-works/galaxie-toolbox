@@ -451,3 +451,18 @@ test("#278 S3c bulk categorias: reverte só o item que falha e conta failed", as
   assert.deepEqual(c1?.categories, ["Nova"], "c1 persiste");
   assert.deepEqual(c2?.categories, [], "c2 reverte no erro");
 });
+
+test("#278 S4 selectPeopleDomain troca pra aba domain e limpa os outros filtros", () => {
+  const { state, selectedTab } = criarStore({});
+  state.peopleSelectedCategory = "Crítico";
+  state.peopleSelectedGroupId = "g1";
+  state.peopleSelectedId = "c1";
+
+  state.selectPeopleDomain("acme.com");
+
+  assert.equal(selectedTab(), "domain");
+  assert.equal(state.peopleSelectedDomain, "acme.com");
+  assert.equal(state.peopleSelectedCategory, null);
+  assert.equal(state.peopleSelectedGroupId, null);
+  assert.equal(state.peopleSelectedId, null);
+});

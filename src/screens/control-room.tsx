@@ -137,6 +137,7 @@ import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
 import { podeGerenciarEvento } from "@/lib/agenda-permissions";
+import { dominiosExternos, normalizeDomain } from "@/lib/organizations";
 import {
   CAIXA_PROPRIA,
   descricaoErroEnvio,
@@ -1456,6 +1457,7 @@ function FolderSidebar({
   onToggleSidebar,
   bridgeView,
   onSelectModule,
+  userEmail,
   t,
 }: {
   pastas: PastaEmail[] | null;
@@ -1491,6 +1493,7 @@ function FolderSidebar({
   onToggleSidebar: () => void;
   bridgeView: BridgeView;
   onSelectModule: (view: BridgeView) => void;
+  userEmail: string;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   const peopleTab = useAppStore((state) => state.peopleTab);
@@ -1526,6 +1529,17 @@ function FolderSidebar({
   );
   const selectPeopleCategory = useAppStore(
     (state) => state.selectPeopleCategory,
+  );
+  // #278 S4: "Other organizations" — domínios externos DERIVADOS dos contatos.
+  const peopleContacts = useAppStore((state) => state.peopleContacts);
+  const peopleSelectedDomain = useAppStore(
+    (state) => state.peopleSelectedDomain,
+  );
+  const selectPeopleDomain = useAppStore((state) => state.selectPeopleDomain);
+  const userDomain = normalizeDomain(userEmail.split("@").at(-1) ?? "");
+  const dominios = useMemo(
+    () => dominiosExternos(peopleContacts, userDomain),
+    [peopleContacts, userDomain],
   );
   useEffect(() => {
     if (
@@ -2226,6 +2240,56 @@ function FolderSidebar({
                     {colapsada && (
                       <TooltipContent side="right" align="center">
                         {nome}
+                      </TooltipContent>
+                    )}
+                  </Tooltip>
+                );
+              })}
+
+              {/* #278 S4: Other organizations — domínios externos DERIVADOS dos
+                  contatos (opção b, sem estado local). Clicar filtra por domínio. */}
+              {!colapsada && dominios.length > 0 && (
+                <p className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
+                  {t.controlRoom.peopleOtherOrganizationsSection}
+                </p>
+              )}
+              {dominios.map(({ dominio, total }) => {
+                const ativo =
+                  peopleTab === "domain" && peopleSelectedDomain === dominio;
+                return (
+                  <Tooltip key={dominio}>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant={ativo ? "secondary" : "ghost"}
+                        onClick={() => selectPeopleDomain(dominio)}
+                        aria-label={dominio}
+                        aria-current={ativo ? "page" : undefined}
+                        className={cn(
+                          "shrink-0",
+                          colapsada
+                            ? "size-9 justify-center p-0"
+                            : "w-full justify-start gap-2.5",
+                          ativo
+                            ? "bg-secondary font-medium text-secondary-foreground"
+                            : "text-muted-foreground hover:bg-accent/50"
+                        )}
+                      >
+                        <Building2 className="size-4 shrink-0" />
+                        {!colapsada && (
+                          <>
+                            <span className="min-w-0 flex-1 truncate text-left">
+                              {dominio}
+                            </span>
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {total}
+                            </span>
+                          </>
+                        )}
+                      </Button>
+                    </TooltipTrigger>
+                    {colapsada && (
+                      <TooltipContent side="right" align="center">
+                        {dominio} · {total}
                       </TooltipContent>
                     )}
                   </Tooltip>
@@ -6642,6 +6706,7 @@ export function ControlRoomScreen({
           onSelectModule={(view) => {
             setBridgeView(view);
           }}
+          userEmail={user.email}
           t={t}
         />
 
