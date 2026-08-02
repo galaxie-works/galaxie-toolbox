@@ -679,7 +679,7 @@ const pt = {
     peopleDirectoryEmptyDesc:
       "O diretório do Microsoft 365 não retornou nenhuma pessoa.",
     peopleGroupsSection: "Grupos",
-    peopleCategoriesSection: "Categorias",
+    peopleCategoriesSection: "Categorias",
     peopleCategoriaAdd: "Categoria",
     peopleCategoriaBuscar: "Buscar ou criar…",
     peopleCategoriaVazio: "Nenhuma categoria.",
@@ -1019,6 +1019,21 @@ const pt = {
     // Detalhe do e-mail
     para: "Para",
     anexosTitulo: "Anexos",
+    // Pré-visualização de anexos (#188)
+    previewTitulo: "Pré-visualização: {nome}",
+    previewSalvar: "Salvar",
+    previewFechar: "Fechar",
+    previewErro: "Não foi possível ler o arquivo",
+    previewNaoSuportado: "Não dá pra pré-visualizar aqui",
+    previewNaoSuportadoDesc: "Salve o arquivo ou abra no Windows.",
+    previewGrande: "Arquivo grande",
+    previewGrandeDesc: "{tam} — baixe para abrir.",
+    previewPaginaDe: "Página {n} de {total}",
+    previewPaginaAnterior: "Página anterior",
+    previewProximaPagina: "Próxima página",
+    previewMaisZoom: "Aumentar zoom",
+    previewMenosZoom: "Diminuir zoom",
+    previewZoomReset: "Redefinir zoom",
     responder: "Responder",
     encaminhar: "Encaminhar",
     // Atalhos de teclado (#28) — catálogo do modal de ajuda ("?"). Chaves
@@ -1828,7 +1843,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleDirectoryEmptyDesc:
       "The Microsoft 365 directory did not return any people.",
     peopleGroupsSection: "Groups",
-    peopleCategoriesSection: "Categories",
+    peopleCategoriesSection: "Categories",
     peopleCategoriaAdd: "Category",
     peopleCategoriaBuscar: "Search or create…",
     peopleCategoriaVazio: "No categories.",
@@ -2164,6 +2179,21 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Detalhe do e-mail
     para: "To",
     anexosTitulo: "Attachments",
+    // Attachment preview (#188)
+    previewTitulo: "Preview: {nome}",
+    previewSalvar: "Save",
+    previewFechar: "Close",
+    previewErro: "Couldn't read the file",
+    previewNaoSuportado: "Can't preview this here",
+    previewNaoSuportadoDesc: "Save the file or open it in Windows.",
+    previewGrande: "Large file",
+    previewGrandeDesc: "{tam} — download to open.",
+    previewPaginaDe: "Page {n} of {total}",
+    previewPaginaAnterior: "Previous page",
+    previewProximaPagina: "Next page",
+    previewMaisZoom: "Zoom in",
+    previewMenosZoom: "Zoom out",
+    previewZoomReset: "Reset zoom",
     responder: "Reply",
     encaminhar: "Forward",
     // Keyboard shortcuts (#28) — catalog for the help modal ("?"). Flat keys.

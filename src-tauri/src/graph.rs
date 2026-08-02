@@ -1735,6 +1735,14 @@ pub struct AnexoEmail {
     pub id: String,
     pub nome: String,
     pub tamanho: u64,
+    /// MIME do anexo (`contentType` do Graph) — o front decide o renderer
+    /// antes de buscar os bytes. Vazio quando o Graph não informa.
+    pub content_type: String,
+    /// `@odata.type` do anexo: `fileAttachment` / `itemAttachment` /
+    /// `referenceAttachment`. Roteia file vs .msg vs link (#178 §5).
+    pub odata_type: String,
+    /// Anexo inline (embutido no corpo, ex.: imagem citada) vs. anexo real.
+    pub is_inline: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -1801,7 +1809,8 @@ pub fn cr_email_corpo(
     let mut anexos = Vec::new();
     if it["hasAttachments"].as_bool().unwrap_or(false) {
         let au = format!(
-            "{GRAPH}/{prefix}/messages/{id}/attachments?$select=id,name,size"
+            "{GRAPH}/{prefix}/messages/{id}/attachments\
+             ?$select=id,name,size,contentType,isInline"
         );
         if let Ok(r) = graph_enviar("mail:anexos", GRAPH_TETO_ESPERA_S, || {
             client.get(&au).bearer_auth(&token).send()
@@ -1814,6 +1823,11 @@ pub fn cr_email_corpo(
                                 id: a["id"].as_str().unwrap_or("").to_string(),
                                 nome: a["name"].as_str().unwrap_or("arquivo").to_string(),
                                 tamanho: a["size"].as_u64().unwrap_or(0),
+                                content_type: a["contentType"].as_str().unwrap_or("").to_string(),
+                                // `@odata.type` vem automático na coleção polimórfica
+                                // (fileAttachment/itemAttachment/referenceAttachment).
+                                odata_type: a["@odata.type"].as_str().unwrap_or("").to_string(),
+                                is_inline: a["isInline"].as_bool().unwrap_or(false),
                             });
                         }
                     }
@@ -1996,6 +2010,59 @@ pub fn cr_baixar_anexo(
         .map_err(|e| format!("falha ao gravar o arquivo: {e}"))?;
 
     Ok(destino.to_string_lossy().to_string())
+}
+
+/// Conteúdo de um anexo lido em memória para pré-visualização (#188).
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnexoConteudo {
+    /// Bytes do anexo já em base64 (o Graph entrega `contentBytes` assim —
+    /// repassamos sem decodificar/recodificar).
+    pub bytes_b64: String,
+    /// MIME informado pelo Graph (ou vazio).
+    pub content_type: String,
+    pub nome: String,
+}
+
+/// Lê um anexo **em memória** (base64) para o preview, **sem** gravar em
+/// Downloads (esse é o papel do `cr_baixar_anexo`, que vira o botão "Salvar").
+/// Só trata `fileAttachment` (tem `contentBytes`); item/reference são tratados
+/// em fatias posteriores do épico (#178 §5).
+pub fn cr_ler_anexo(
+    store: &TokenStore,
+    message_id: &str,
+    attachment_id: &str,
+    mailbox: Option<&str>,
+) -> Result<AnexoConteudo, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
+
+    let url = format!(
+        "{GRAPH}/{prefix}/messages/{message_id}/attachments/{attachment_id}"
+    );
+    let resp = graph_enviar("mail:ler-anexo", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler o anexo: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "/{prefix}/messages/attachments retornou {}",
+            resp.status()
+        ));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+
+    let bytes_b64 = v["contentBytes"]
+        .as_str()
+        .ok_or("anexo sem conteúdo (não é um arquivo? .msg/link não têm bytes)")?
+        .to_string();
+
+    Ok(AnexoConteudo {
+        bytes_b64,
+        content_type: v["contentType"].as_str().unwrap_or("").to_string(),
+        nome: v["name"].as_str().unwrap_or("anexo").to_string(),
+    })
 }
 
 /// Devolve um caminho ainda livre dentro de `dir` para `nome`. Se ja existir,
