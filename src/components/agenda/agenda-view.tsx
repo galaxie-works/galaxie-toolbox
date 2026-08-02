@@ -357,6 +357,13 @@ export function AgendaView() {
           end: fim,
           allDay: ev.diaInteiro,
           color: cor,
+          // #399: as ocorrências vêm expandidas do calendarView (sem regra de
+          // recorrência aqui), então marcamos o instante como parte de uma série
+          // pra acender o indicador nativo (ícone repeat) no card.
+          isRecurring:
+            ev.tipo === "occurrence" ||
+            ev.tipo === "exception" ||
+            ev.tipo === "seriesMaster",
         };
       })
       .filter((e): e is CalendarEvent => e !== null);
@@ -581,11 +588,37 @@ function EventoContextMenu({
       >
         <Eye /> {t.controlRoom.agendaVerDetalhes}
       </ContextMenuItem>
-      {podeGerenciar && (
-        <ContextMenuItem className="gap-2" onClick={() => abrirFormEditar(evento)}>
-          <Pencil /> {t.controlRoom.agendaEditar}
-        </ContextMenuItem>
-      )}
+      {podeGerenciar &&
+        (ehRecorrente(evento) ? (
+          // #397: recorrente escolhe o escopo no próprio Edit — nada de prompt
+          // depois de preencher o form.
+          <ContextMenuSub>
+            <ContextMenuSubTrigger className="gap-2">
+              <Pencil /> {t.controlRoom.agendaEditar}
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem
+                className="gap-2"
+                onClick={() => abrirFormEditar(evento, "ocorrencia")}
+              >
+                {t.controlRoom.agendaEditarEstaOcorrencia}
+              </ContextMenuItem>
+              <ContextMenuItem
+                className="gap-2"
+                onClick={() => abrirFormEditar(evento, "serie")}
+              >
+                {t.controlRoom.agendaEditarSerie}
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        ) : (
+          <ContextMenuItem
+            className="gap-2"
+            onClick={() => abrirFormEditar(evento)}
+          >
+            <Pencil /> {t.controlRoom.agendaEditar}
+          </ContextMenuItem>
+        ))}
 
       {podeResponder && (
         <ContextMenuSub>
@@ -764,9 +797,9 @@ function EventoFormSheet() {
   const criarEvento = useAppStore((s) => s.criarEvento);
   const editarEvento = useAppStore((s) => s.editarEvento);
   const recarregarAgenda = useAppStore((s) => s.recarregarAgenda);
-  // #397: prompt "esta ocorrência × a série" ao editar um evento recorrente
-  // (guarda o input pendente enquanto o prompt está aberto).
-  const [promptRec, setPromptRec] = useState<EventoInput | null>(null);
+  // #397: o escopo (ocorrência × série) é escolhido no menu Edit ANTES de abrir
+  // o form; o save apenas o respeita — nada de prompt no meio do save.
+  const escopoRec = useAppStore((s) => s.agendaFormEscopo);
   const criarCategoria = useAppStore((s) => s.criarCategoria);
   const coresCat = useAppStore((s) => s.agendaCoresCategoria);
   const calendarios = useAppStore((s) => s.agendaCalendarios);
@@ -1011,9 +1044,12 @@ function EventoFormSheet() {
   const salvar = async () => {
     const input = montarInput();
     if (!input) return;
-    // #397: editar um recorrente pergunta ocorrência × série antes de aplicar.
-    if (modo === "editar" && evento && eventoRecorrente) {
-      setPromptRec(input);
+    // #397: o escopo já foi decidido no menu Edit (ocorrência × série). "Série"
+    // edita só os campos (sem mexer no schedule) no seriesMaster + recarrega;
+    // "ocorrência" é PATCH normal no id dela (vira exceção no Graph). Sem prompt.
+    if (modo === "editar" && evento && eventoRecorrente && escopoRec === "serie") {
+      const idSerie = evento.seriesMasterId ?? evento.id;
+      await executarSalvar(idSerie, { ...input, somenteCampos: true }, true);
       return;
     }
     await executarSalvar(
@@ -1021,24 +1057,6 @@ function EventoFormSheet() {
       input,
       false,
     );
-  };
-
-  // #397: aplica a escolha do prompt. "Série" edita só os campos (sem mexer no
-  // schedule) no seriesMaster + recarrega; "ocorrência" é PATCH normal no id
-  // dela (vira exceção no Graph).
-  const confirmarPromptRec = async (alvo: "ocorrencia" | "serie") => {
-    const input = promptRec;
-    setPromptRec(null);
-    if (!input || !evento) return;
-    if (alvo === "serie" && evento.seriesMasterId) {
-      await executarSalvar(
-        evento.seriesMasterId,
-        { ...input, somenteCampos: true },
-        true,
-      );
-    } else {
-      await executarSalvar(evento.id, input, false);
-    }
   };
 
   // Cria a categoria via store (Graph) e já a seleciona no evento.
@@ -1465,36 +1483,6 @@ function EventoFormSheet() {
         </SheetFooter>
       </SheetContent>
     </Sheet>
-
-    {/* #397: escolha ocorrência × série ao editar um evento recorrente. */}
-    <AlertDialog
-      open={promptRec != null}
-      onOpenChange={(o) => {
-        if (!o) setPromptRec(null);
-      }}
-    >
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            {t.controlRoom.agendaEditarRecorrenteTitulo}
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            {t.controlRoom.agendaEditarRecorrenteDesc}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>
-            {t.controlRoom.agendaEditarCancelar}
-          </AlertDialogCancel>
-          <AlertDialogAction onClick={() => void confirmarPromptRec("ocorrencia")}>
-            {t.controlRoom.agendaEditarEstaOcorrencia}
-          </AlertDialogAction>
-          <AlertDialogAction onClick={() => void confirmarPromptRec("serie")}>
-            {t.controlRoom.agendaEditarSerie}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
     </>
   );
 }

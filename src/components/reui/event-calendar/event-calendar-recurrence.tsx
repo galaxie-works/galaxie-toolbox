@@ -222,7 +222,9 @@ function expandRecurrence<TData>(
           start: event.start,
           end: event.end,
           allDay,
-          isRecurring: false,
+          // Pre-expanded consumers flag series instances via event.isRecurring
+          // (no client rule to derive it from). Defaults to false.
+          isRecurring: event.isRecurring ?? false,
         },
       ]
     }

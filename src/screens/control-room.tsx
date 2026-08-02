@@ -4973,6 +4973,7 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const fecharEventoAgenda = useAppStore((s) => s.fecharEventoAgenda);
   const abrirFormEditar = useAppStore((s) => s.abrirFormEditar);
   const excluirEvento = useAppStore((s) => s.excluirEvento);
+  const recarregarAgenda = useAppStore((s) => s.recarregarAgenda);
   const cancelarEvento = useAppStore((s) => s.cancelarEvento);
   const responderEvento = useAppStore((s) => s.responderEvento);
   const eventosMes = useAppStore((s) => s.agendaEventosMes);
@@ -5023,24 +5024,56 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const [cancelando, setCancelando] = useState(false);
 
   // Abre o formulário de edição com o evento clicado (vindo da lista do mês).
-  const editar = () => {
+  // #397: recorrente passa o escopo (ocorrência × série) já escolhido aqui.
+  const editar = (escopo?: "ocorrencia" | "serie") => {
     if (!id || !podeGerenciar) return;
     const ev = eventosMes?.find((e) => e.id === id);
     if (ev) {
-      abrirFormEditar(ev);
+      abrirFormEditar(ev, escopo);
       fecharEventoAgenda();
     }
   };
 
-  // Exclui (otimista no store); fecha o Sheet e toasta o resultado.
+  // #398: excluir um recorrente pergunta ocorrência × série (guarda o alvo do
+  // prompt); único é direto. Otimista no store; fecha o Sheet e toasta.
+  const [excluirRecAberto, setExcluirRecAberto] = useState(false);
+  const [excluindoRec, setExcluindoRec] = useState(false);
+
   const excluir = async () => {
     if (!id || !podeGerenciar) return;
+    // #398: recorrente escolhe o escopo antes de apagar (não apaga direto).
+    if (recorrente) {
+      setExcluirRecAberto(true);
+      return;
+    }
     fecharEventoAgenda();
     try {
       await excluirEvento(id);
       toast.success(t.controlRoom.agendaExcluido);
     } catch {
       toast.error(t.controlRoom.agendaErroExcluir);
+    }
+  };
+
+  // #398: aplica a escolha do prompt de exclusão do detalhe. "Série" apaga o
+  // seriesMaster (some tudo) + recarrega; "ocorrência" apaga só o id dela.
+  const confirmarExcluirRec = async (alvo: "ocorrencia" | "serie") => {
+    if (!id) return;
+    const alvoId =
+      alvo === "serie" && eventoLista?.seriesMasterId
+        ? eventoLista.seriesMasterId
+        : id;
+    setExcluindoRec(true);
+    try {
+      await excluirEvento(alvoId);
+      if (alvo === "serie") recarregarAgenda();
+      setExcluirRecAberto(false);
+      fecharEventoAgenda();
+      toast.success(t.controlRoom.agendaExcluido);
+    } catch {
+      toast.error(t.controlRoom.agendaErroExcluir);
+    } finally {
+      setExcluindoRec(false);
     }
   };
 
@@ -5262,14 +5295,37 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
             <SheetFooter className="flex-row items-center gap-2 border-t px-4 py-3">
               {podeGerenciar && (
                 <>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={editar}
-                    disabled={!eventosMes?.some((e) => e.id === id)}
-                  >
-                    <Pencil /> {t.controlRoom.agendaEditar}
-                  </Button>
+                  {recorrente ? (
+                    // #397: recorrente escolhe o escopo no próprio Edit.
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={!eventosMes?.some((e) => e.id === id)}
+                        >
+                          <Pencil /> {t.controlRoom.agendaEditar}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start">
+                        <DropdownMenuItem onClick={() => editar("ocorrencia")}>
+                          {t.controlRoom.agendaEditarEstaOcorrencia}
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => editar("serie")}>
+                          {t.controlRoom.agendaEditarSerie}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => editar()}
+                      disabled={!eventosMes?.some((e) => e.id === id)}
+                    >
+                      <Pencil /> {t.controlRoom.agendaEditar}
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -5357,6 +5413,51 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
             >
               {cancelando && <Spinner className="size-4" />}
               {t.controlRoom.agendaCancelarConfirmar}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* #398: excluir recorrente pelo detalhe — ocorrência × série. Antes o
+          Delete do detalhe apagava a ocorrência direto, sem perguntar. */}
+      <AlertDialog
+        open={excluirRecAberto}
+        onOpenChange={(o) => {
+          if (!o && !excluindoRec) setExcluirRecAberto(false);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t.controlRoom.agendaExcluirRecorrenteTitulo}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.agendaExcluirRecorrenteDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={excluindoRec}>
+              {t.controlRoom.agendaEditarCancelar}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={excluindoRec}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmarExcluirRec("ocorrencia");
+              }}
+            >
+              {t.controlRoom.agendaEditarEstaOcorrencia}
+            </AlertDialogAction>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={excluindoRec}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmarExcluirRec("serie");
+              }}
+            >
+              {t.controlRoom.agendaEditarSerie}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
