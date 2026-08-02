@@ -2486,10 +2486,18 @@ export function PeopleView({
       ? EMPTY_CONTACTS
       : (groupMembersById[selectedGroupId] ?? EMPTY_CONTACTS);
   // #406: aba "category" filtra os contatos pessoais pela categoria escolhida.
-  const categoryContacts =
-    peopleTab === "category" && peopleSelectedCategory
-      ? contacts.filter((c) => c.categories.includes(peopleSelectedCategory))
-      : EMPTY_CONTACTS;
+  // #417 (P0): MEMOIZAR — sem isto o filtro inline gera um array NOVO a cada
+  // render; a referência instável entra na DataGrid virtualizada (efeitos
+  // por-commit sem dep estável) e trava o app (mesma classe do #416, o filtro
+  // por domínio). As outras fontes (contacts/directory/groupMembers) já são
+  // refs estáveis do store — esta era a única derivada inline.
+  const categoryContacts = useMemo(
+    () =>
+      peopleTab === "category" && peopleSelectedCategory
+        ? contacts.filter((c) => c.categories.includes(peopleSelectedCategory))
+        : EMPTY_CONTACTS,
+    [peopleTab, peopleSelectedCategory, contacts],
+  );
   const visibleContacts =
     peopleTab === "groups"
       ? groupMembers
