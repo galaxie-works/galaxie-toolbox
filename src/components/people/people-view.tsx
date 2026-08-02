@@ -17,6 +17,7 @@ import {
   ArrowUpDown,
   ArrowUpRight,
   Building2,
+  Check,
   ChevronDown,
   Copy,
   ExternalLink,
@@ -35,7 +36,9 @@ import {
   SearchX,
   Save,
   Sparkles,
+  Tag,
   Users,
+  X,
 } from "lucide-react";
 import { isValidPhoneNumber } from "react-phone-number-input";
 import { toast } from "sonner";
@@ -99,6 +102,11 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Label } from "@/components/ui/label";
 import {
   ResizableHandle,
@@ -368,6 +376,178 @@ function PeopleDetailSkeleton() {
         <Skeleton className="h-9 w-full" />
       </div>
     </div>
+  );
+}
+
+/**
+ * #278 S3b: seletor de categorias do Outlook no detalhe do contato. Mostra as
+ * atuais como chips (swatch da cor real, padrão do sidebar #406) e um
+ * Popover+Command pra marcar/desmarcar (multi-valor) + criar inline. Grava por
+ * PATCH parcial (`setPeopleContactCategorias`). Só aparece pra contatos
+ * EDITÁVEIS (com `contactId`) — itens do diretório (/users) não têm categorias.
+ */
+function ContactCategories({ contact }: { contact: PeopleContact }) {
+  const { t } = useIdioma();
+  const peopleCategorias = useAppStore((state) => state.peopleCategorias);
+  const setPeopleContactCategorias = useAppStore(
+    (state) => state.setPeopleContactCategorias,
+  );
+  const criarCategoriaPeople = useAppStore(
+    (state) => state.criarCategoriaPeople,
+  );
+  const [aberto, setAberto] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [salvando, setSalvando] = useState(false);
+
+  if (!contact.contactId) return null;
+
+  const atuais = contact.categories ?? [];
+  const disponiveis = [...peopleCategorias.keys()];
+  const buscaLimpa = busca.trim();
+  const jaExiste = disponiveis.some(
+    (nome) => nome.toLowerCase() === buscaLimpa.toLowerCase(),
+  );
+
+  const gravar = async (proximas: string[]) => {
+    setSalvando(true);
+    try {
+      await setPeopleContactCategorias(contact.id, proximas);
+    } catch {
+      toast.error(t.controlRoom.peopleCategoriaAtribuirErro);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const alternar = (nome: string) => {
+    const proximas = atuais.includes(nome)
+      ? atuais.filter((categoria) => categoria !== nome)
+      : [...atuais, nome];
+    void gravar(proximas);
+  };
+
+  const criarEAtribuir = async () => {
+    if (!buscaLimpa) return;
+    setSalvando(true);
+    try {
+      await criarCategoriaPeople(buscaLimpa, "preset0");
+      await setPeopleContactCategorias(contact.id, [...atuais, buscaLimpa]);
+      setBusca("");
+    } catch {
+      toast.error(t.controlRoom.peopleCategoriaAtribuirErro);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <>
+      <Separator />
+      <section className="p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <Tag className="size-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold">
+            {t.controlRoom.peopleCategoriesSection}
+          </h3>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          {atuais.map((nome) => {
+            const cor = peopleCategorias.get(nome);
+            return (
+              <Badge key={nome} variant="secondary" className="gap-1.5">
+                {cor ? (
+                  <span
+                    aria-hidden
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ background: cor }}
+                  />
+                ) : (
+                  <Tag className="size-3 shrink-0" />
+                )}
+                {nome}
+                <button
+                  type="button"
+                  className="ml-0.5 rounded-sm opacity-70 hover:opacity-100"
+                  aria-label={t.controlRoom.peopleCategoriaRemover}
+                  onClick={() => alternar(nome)}
+                  disabled={salvando}
+                >
+                  <X className="size-3" />
+                </button>
+              </Badge>
+            );
+          })}
+
+          <Popover open={aberto} onOpenChange={setAberto}>
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-6 gap-1 px-2 text-xs"
+                disabled={salvando}
+              >
+                <Plus className="size-3" />
+                {t.controlRoom.peopleCategoriaAdd}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-64 p-0">
+              <Command>
+                <CommandInput
+                  placeholder={t.controlRoom.peopleCategoriaBuscar}
+                  value={busca}
+                  onValueChange={setBusca}
+                />
+                <CommandList>
+                  <CommandEmpty>
+                    {t.controlRoom.peopleCategoriaVazio}
+                  </CommandEmpty>
+                  <CommandGroup>
+                    {disponiveis.map((nome) => {
+                      const cor = peopleCategorias.get(nome);
+                      const marcada = atuais.includes(nome);
+                      return (
+                        <CommandItem
+                          key={nome}
+                          value={nome}
+                          onSelect={() => alternar(nome)}
+                        >
+                          {cor ? (
+                            <span
+                              aria-hidden
+                              className="size-2.5 shrink-0 rounded-full"
+                              style={{ background: cor }}
+                            />
+                          ) : (
+                            <Tag className="size-3.5 shrink-0" />
+                          )}
+                          <span className="flex-1 truncate">{nome}</span>
+                          {marcada && <Check className="size-3.5 shrink-0" />}
+                        </CommandItem>
+                      );
+                    })}
+                  </CommandGroup>
+                  {buscaLimpa && !jaExiste && (
+                    <>
+                      <CommandSeparator />
+                      <CommandGroup>
+                        <CommandItem
+                          value={`__criar__${buscaLimpa}`}
+                          onSelect={() => void criarEAtribuir()}
+                        >
+                          <Plus className="size-3.5 shrink-0" />
+                          {t.controlRoom.peopleCategoriaCriar} “{buscaLimpa}”
+                        </CommandItem>
+                      </CommandGroup>
+                    </>
+                  )}
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -1018,6 +1198,9 @@ function PeopleDetail({
           </button>
         )}
           </section>
+
+          {/* #278 S3b: categorias do Outlook do contato (só editável). */}
+          <ContactCategories contact={contact} />
 
           <Separator />
 
