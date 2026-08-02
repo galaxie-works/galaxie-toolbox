@@ -1009,6 +1009,11 @@ pub struct EventoAgenda {
     pub sou_organizador: bool,
     /// Graph `responseRequested`: false = convite informativo (sem pedir RSVP).
     pub resposta_solicitada: bool,
+    /// Graph `type` (#397): "singleInstance" | "occurrence" | "exception" |
+    /// "seriesMaster". Occurrence/exception/seriesMaster = recorrente.
+    pub tipo: String,
+    /// Graph `seriesMasterId` (#397): id da série mãe (só p/ ocorrências/exceções).
+    pub series_master_id: Option<String>,
 }
 
 /// Parseia a resposta de um `calendarView` (lista `value[]`) em EventoAgenda.
@@ -1058,6 +1063,11 @@ fn parse_eventos(v: &serde_json::Value) -> Vec<EventoAgenda> {
                     .to_string(),
                 sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
                 resposta_solicitada: it["responseRequested"].as_bool().unwrap_or(true),
+                tipo: it["type"].as_str().unwrap_or("singleInstance").to_string(),
+                series_master_id: it["seriesMasterId"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
             });
         }
     }
@@ -1087,7 +1097,7 @@ fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgend
     Ok(parse_eventos(&v))
 }
 
-const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,responseRequested";
+const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,responseRequested,type,seriesMasterId";
 
 /// Eventos do calendário padrão no intervalo (limites em ISO UTC). Calendars.Read.
 pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
@@ -1436,6 +1446,10 @@ pub struct EventoInput {
     /// Recorrência (#396). Ausente = evento único.
     #[serde(default)]
     pub recorrencia: Option<Recorrencia>,
+    /// #397: PATCH só de campos (sem start/end/recurrence) — usado no "editar a
+    /// série inteira" pra não mover o schedule ao editar campos. Default false.
+    #[serde(default)]
+    pub somente_campos: bool,
 }
 
 /// Traduz o modelo do app pro objeto `recurrence` do Graph (pattern + range).
@@ -1489,8 +1503,6 @@ fn recurrence_json(r: &Recorrencia, time_zone: &str) -> serde_json::Value {
 /// instante, o que também satisfaz a exigência de meia-noite no fuso para
 /// eventos de dia inteiro. O Z é removido por garantia (dateTime não leva zona).
 fn evento_json(input: &EventoInput) -> serde_json::Value {
-    let ini = input.inicio.trim_end_matches('Z');
-    let fim = input.fim.trim_end_matches('Z');
     // Convidados -> attendees[] no formato do Graph (ignora e-mail vazio).
     let attendees: Vec<serde_json::Value> = input
         .convidados
@@ -1505,9 +1517,6 @@ fn evento_json(input: &EventoInput) -> serde_json::Value {
         .collect();
     let mut obj = serde_json::json!({
         "subject": input.assunto,
-        "isAllDay": input.dia_inteiro,
-        "start": { "dateTime": ini, "timeZone": input.time_zone },
-        "end": { "dateTime": fim, "timeZone": input.time_zone },
         "location": { "displayName": input.local },
         "body": { "contentType": "text", "content": input.corpo },
         "categories": input.categorias,
@@ -1519,9 +1528,19 @@ fn evento_json(input: &EventoInput) -> serde_json::Value {
     if input.reuniao_teams {
         obj["onlineMeetingProvider"] = serde_json::json!("teamsForBusiness");
     }
-    // Recorrência (#396): só quando presente — mesmo padrão do onlineMeeting.
-    if let Some(r) = &input.recorrencia {
-        obj["recurrence"] = recurrence_json(r, &input.time_zone);
+    // #397: no "editar a série inteira" (somente_campos) omitimos start/end e
+    // recurrence pra não mover o schedule; o PATCH no seriesMaster só aplica os
+    // campos. No fluxo normal (criar / editar ocorrência), envia tudo.
+    if !input.somente_campos {
+        let ini = input.inicio.trim_end_matches('Z');
+        let fim = input.fim.trim_end_matches('Z');
+        obj["isAllDay"] = serde_json::json!(input.dia_inteiro);
+        obj["start"] = serde_json::json!({ "dateTime": ini, "timeZone": input.time_zone });
+        obj["end"] = serde_json::json!({ "dateTime": fim, "timeZone": input.time_zone });
+        // Recorrência (#396): só quando presente.
+        if let Some(r) = &input.recorrencia {
+            obj["recurrence"] = recurrence_json(r, &input.time_zone);
+        }
     }
     obj
 }
