@@ -6,6 +6,8 @@
  * arquivo de log do `tauri-plugin-log`, em vez de sumir sem deixar pista.
  */
 
+import { telAppCrashed } from "./telemetria.ts";
+
 /** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
 function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -64,9 +66,11 @@ export function registrarHandlersGlobais(): void {
       ? `${ev.filename}:${ev.lineno}:${ev.colno}`
       : undefined;
     logErro("window.error", ev.error ?? ev.message, onde);
+    telAppCrashed("window");
   });
 
   window.addEventListener("unhandledrejection", (ev) => {
     logErro("unhandledrejection", ev.reason);
+    telAppCrashed("promise");
   });
 }

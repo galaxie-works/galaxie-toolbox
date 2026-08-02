@@ -72,3 +72,19 @@ export function telUpdateVerificado(resultado: ResultadoUpdate): void {
     atributos: { resultado: { t: "enum", v: resultado } },
   });
 }
+
+/** Origem de um crash capturado (enum fechado). */
+export type OrigemCrash = "window" | "promise" | "boundary" | "rust_panic";
+
+/**
+ * `app_crashed` — sinal de crash (#391, S5). Categoria `crash`. Carrega SÓ a
+ * origem (enum) — a mensagem/stack fica no log local (`log.ts` / log do Rust);
+ * o envio com stack scrubbed pro GlitchTip é o transporte do S1.
+ */
+export function telAppCrashed(origem: OrigemCrash): void {
+  void telemetryTrack({
+    categoria: "crash",
+    evento: "app_crashed",
+    atributos: { origem: { t: "enum", v: origem } },
+  });
+}
