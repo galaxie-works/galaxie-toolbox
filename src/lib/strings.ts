@@ -1418,6 +1418,16 @@ const pt = {
       "Salve o histórico de navegação, defina a retenção e limpe-o.",
     cfgCopilotLabel: "Microsoft 365 Copilot",
     cfgCopilotDesc: "Gerencie as integrações do Microsoft 365 Copilot.",
+    cfgOrganizationLabel: "Organização",
+    cfgOrganizationDesc:
+      "Governança do Microsoft 365 em nível de organização, para administradores.",
+    cfgOrgGovernanceTitulo: "Governança",
+    cfgOrgGovernanceSubtitulo:
+      "Configurações do Microsoft 365 em nível de organização do seu tenant. Requer permissões de administrador.",
+    cfgOrgGateMsg:
+      "As configurações de organização precisam de permissões de administrador do Microsoft 365. Se você é administrador, saia e entre novamente para habilitá-las — as permissões necessárias foram concedidas para a sua organização, mas sua sessão atual é anterior a elas.",
+    cfgOrgPlaceholderMsg:
+      "Governança do Microsoft 365 em nível de organização do seu tenant. Cartões somente leitura de Apps e Serviços, Forms e Instalação do Microsoft 365, além do contexto multi-tenant, aparecem aqui.",
     cfgWindowsLabel: "Windows",
     cfgWindowsDesc: "Revise as configurações do app relacionadas ao Windows.",
     cfgNavAriaLabel: "Navegação das configurações",
@@ -2939,6 +2949,15 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgHistorySubtitulo: "Save browsing history, set retention and clear it.",
     cfgCopilotLabel: "Microsoft 365 Copilot",
     cfgCopilotDesc: "Manage Microsoft 365 Copilot integrations.",
+    cfgOrganizationLabel: "Organization",
+    cfgOrganizationDesc: "Org-wide Microsoft 365 governance for admins.",
+    cfgOrgGovernanceTitulo: "Governance",
+    cfgOrgGovernanceSubtitulo:
+      "Org-wide Microsoft 365 settings for your tenant. Requires admin permissions.",
+    cfgOrgGateMsg:
+      "Organization settings need Microsoft 365 admin permissions. If you're an admin, sign out and back in to enable them — the required permissions were granted for your organization but your current session predates them.",
+    cfgOrgPlaceholderMsg:
+      "Org-wide Microsoft 365 governance for your tenant. Read-only cards for Apps & Services, Forms and Microsoft 365 Install and multi-tenant context appear here.",
     cfgWindowsLabel: "Windows",
     cfgWindowsDesc: "Review Windows-related app settings.",
     cfgNavAriaLabel: "Settings navigation",

@@ -11,6 +11,7 @@ export const SETTINGS_ITEM_IDS = [
   "bridge",
   "navigator",
   "microsoft-365-copilot",
+  "organization",
   "windows",
 ] as const;
 
