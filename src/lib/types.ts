@@ -166,6 +166,40 @@ export interface ConvidadoInput {
   nome: string;
 }
 
+/** Frequência da recorrência (#396). */
+export type RecorrenciaFrequencia = "daily" | "weekly" | "monthly" | "yearly";
+/** Como a série termina (#396). */
+export type RecorrenciaFim = "noEnd" | "endDate" | "numbered";
+/** Dia da semana no formato do Graph (só weekly). */
+export type DiaSemana =
+  | "sunday"
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday";
+
+/**
+ * Recorrência de um evento (#396, S1). Modelo do app; o Rust traduz pro
+ * `recurrence` do Graph (pattern + range).
+ */
+export interface RecorrenciaInput {
+  frequencia: RecorrenciaFrequencia;
+  intervalo: number;
+  /** Só weekly. */
+  diasSemana: DiaSemana[];
+  /** Monthly/yearly: dia do mês (1..31). */
+  diaDoMes?: number;
+  /** Yearly: mês (1..12). */
+  mes?: number;
+  fimTipo: RecorrenciaFim;
+  /** Início da série (YYYY-MM-DD). */
+  dataInicio: string;
+  dataFim?: string;
+  numeroOcorrencias?: number;
+}
+
 export interface EventoInput {
   assunto: string;
   inicio: string; // hora local, sem Z
@@ -181,6 +215,8 @@ export interface EventoInput {
   reuniaoTeams: boolean;
   /** Calendário-alvo (#233). Ausente/"" = calendário padrão (/me/events). */
   calendarioId?: string;
+  /** Recorrência (#396). Ausente = evento único. */
+  recorrencia?: RecorrenciaInput;
 }
 
 export interface EventoDetalhe {

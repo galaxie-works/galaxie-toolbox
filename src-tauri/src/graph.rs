@@ -1380,6 +1380,38 @@ pub struct Convidado {
     pub nome: String,
 }
 
+fn intervalo_padrao() -> i64 {
+    1
+}
+
+/// Recorrência de evento (#396, S1). Modelo do app; traduzido pro formato do
+/// Graph (`recurrence.pattern` + `recurrence.range`) em `recurrence_json`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Recorrencia {
+    /// "daily" | "weekly" | "monthly" | "yearly".
+    pub frequencia: String,
+    #[serde(default = "intervalo_padrao")]
+    pub intervalo: i64,
+    /// Só weekly: "monday".."sunday".
+    #[serde(default)]
+    pub dias_semana: Vec<String>,
+    /// Monthly/yearly: dia do mês (1..31).
+    #[serde(default)]
+    pub dia_do_mes: Option<i64>,
+    /// Yearly: mês (1..12).
+    #[serde(default)]
+    pub mes: Option<i64>,
+    /// "noEnd" | "endDate" | "numbered".
+    pub fim_tipo: String,
+    /// Início da série (YYYY-MM-DD).
+    pub data_inicio: String,
+    #[serde(default)]
+    pub data_fim: Option<String>,
+    #[serde(default)]
+    pub numero_ocorrencias: Option<i64>,
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventoInput {
@@ -1401,6 +1433,55 @@ pub struct EventoInput {
     /// (/me/events). Presente = /me/calendars/{id}/events.
     #[serde(default)]
     pub calendario_id: Option<String>,
+    /// Recorrência (#396). Ausente = evento único.
+    #[serde(default)]
+    pub recorrencia: Option<Recorrencia>,
+}
+
+/// Traduz o modelo do app pro objeto `recurrence` do Graph (pattern + range).
+fn recurrence_json(r: &Recorrencia, time_zone: &str) -> serde_json::Value {
+    let (tipo, mut pattern) = match r.frequencia.as_str() {
+        "weekly" => (
+            "weekly",
+            serde_json::json!({
+                "daysOfWeek": r.dias_semana,
+                "firstDayOfWeek": "sunday",
+            }),
+        ),
+        "monthly" => (
+            "absoluteMonthly",
+            serde_json::json!({ "dayOfMonth": r.dia_do_mes.unwrap_or(1) }),
+        ),
+        "yearly" => (
+            "absoluteYearly",
+            serde_json::json!({
+                "dayOfMonth": r.dia_do_mes.unwrap_or(1),
+                "month": r.mes.unwrap_or(1),
+            }),
+        ),
+        _ => ("daily", serde_json::json!({})),
+    };
+    pattern["type"] = serde_json::json!(tipo);
+    pattern["interval"] = serde_json::json!(r.intervalo.max(1));
+
+    let mut range = serde_json::json!({
+        "type": r.fim_tipo,
+        "startDate": r.data_inicio,
+        "recurrenceTimeZone": time_zone,
+    });
+    match r.fim_tipo.as_str() {
+        "endDate" => {
+            if let Some(d) = &r.data_fim {
+                range["endDate"] = serde_json::json!(d);
+            }
+        }
+        "numbered" => {
+            range["numberOfOccurrences"] =
+                serde_json::json!(r.numero_ocorrencias.unwrap_or(1).max(1));
+        }
+        _ => {}
+    }
+    serde_json::json!({ "pattern": pattern, "range": range })
 }
 
 /// Monta o corpo JSON de um evento para POST/PATCH em /me/events. Mandamos a
@@ -1437,6 +1518,10 @@ fn evento_json(input: &EventoInput) -> serde_json::Value {
     // o Graph gera o link do Teams no evento.
     if input.reuniao_teams {
         obj["onlineMeetingProvider"] = serde_json::json!("teamsForBusiness");
+    }
+    // Recorrência (#396): só quando presente — mesmo padrão do onlineMeeting.
+    if let Some(r) = &input.recorrencia {
+        obj["recurrence"] = recurrence_json(r, &input.time_zone);
     }
     obj
 }
