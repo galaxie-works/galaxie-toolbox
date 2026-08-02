@@ -188,6 +188,9 @@ function eventoDeInput(id: string, input: EventoInput): EventoAgenda {
   }));
   return {
     id,
+    // #397: evento otimista reflete o Graph `type` — com recorrência é a série
+    // mãe, senão instância única. Sem isso o mock/optimista não bate EventoAgenda.
+    tipo: input.recorrencia ? "seriesMaster" : "singleInstance",
     assunto: input.assunto,
     inicio: localParaUtc(input.inicio),
     fim: localParaUtc(input.fim),

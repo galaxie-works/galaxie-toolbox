@@ -371,6 +371,7 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
     return [
       {
         id: "ev1",
+        tipo: "singleInstance",
         assunto: "PROH + VOAZ — Orçamento e Compras",
         inicio: em(9),
         fim: em(10),
@@ -389,6 +390,7 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
       },
       {
         id: "ev2",
+        tipo: "singleInstance",
         assunto: "KPMG RJ — Checkpoint interno",
         inicio: em(14),
         fim: em(15),
