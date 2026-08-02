@@ -20,7 +20,10 @@ export type PeopleTab =
   | "directory"
   | "organizations"
   | "groups"
-  | "category";
+  | "category"
+  // #278 S4: visão derivada por domínio ("Other organizations"). Aba lógica sem
+  // UI de aba, dirigida pelo sidebar (como "category" do S3a).
+  | "domain";
 
 export interface UiSlice {
   /** Zoom manual do leitor (#76). 1 = auto-fit puro. Persistido em `bridge.leitorZoom`. */

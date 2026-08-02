@@ -39,6 +39,36 @@ function normalizeOrganizationName(value: string | null | undefined): string {
   return value?.trim().toLocaleLowerCase() ?? "";
 }
 
+/** #278 S4: um domínio externo derivado dos contatos + quantos contatos tem. */
+export interface DominioExterno {
+  dominio: string;
+  total: number;
+}
+
+/**
+ * #278 S4 (opção b): domínios EXTERNOS derivados dos contatos — "Other
+ * organizations" é a visão por domínio, sem estado local persistido. Exclui o
+ * domínio do próprio usuário e contatos sem email. Ordena por contagem (desc) e
+ * depois alfabeticamente.
+ */
+export function dominiosExternos(
+  contacts: PeopleContact[],
+  userDomain: string,
+): DominioExterno[] {
+  const alvo = normalizeDomain(userDomain);
+  const counts = new Map<string, number>();
+  for (const contact of contacts) {
+    const bruto = contactDomain(contact);
+    if (!bruto) continue;
+    const dominio = normalizeDomain(bruto);
+    if (!dominio || dominio === alvo) continue;
+    counts.set(dominio, (counts.get(dominio) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([dominio, total]) => ({ dominio, total }))
+    .sort((a, b) => b.total - a.total || a.dominio.localeCompare(b.dominio));
+}
+
 /**
  * Resolve a entidade app-owned de um contato. O `companyName` explícito do
  * Outlook é a fonte de verdade; domínio só entra como fallback (#288).
