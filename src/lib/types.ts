@@ -138,6 +138,11 @@ export interface EventoAgenda {
   calendarioId?: string;
   /** Cor (hex) do calendário de origem (#233), aplicada ao evento no merge. */
   corCalendario?: string;
+  /** Graph `type` (#397): "singleInstance" | "occurrence" | "exception" |
+   *  "seriesMaster". Occurrence/exception/seriesMaster = recorrente. */
+  tipo: string;
+  /** Graph `seriesMasterId` (#397): id da série mãe (ocorrências/exceções). */
+  seriesMasterId?: string;
 }
 
 export interface CategoriaCor {
@@ -217,6 +222,8 @@ export interface EventoInput {
   calendarioId?: string;
   /** Recorrência (#396). Ausente = evento único. */
   recorrencia?: RecorrenciaInput;
+  /** #397: PATCH só de campos (sem start/end/recurrence) — "editar a série". */
+  somenteCampos?: boolean;
 }
 
 export interface EventoDetalhe {
