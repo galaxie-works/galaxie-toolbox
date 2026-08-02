@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { telModuloAberto, telSessaoIniciada } from "@/lib/telemetria";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { registrarHandlersGlobais } from "@/lib/log";
 import { LoginScreen } from "@/screens/login";
@@ -144,6 +145,20 @@ function AppInner() {
   useEffect(() => {
     persistPinnedNavigatorTabs(abas);
   }, [abas]);
+
+  // Telemetria (#390, S4). Só emite após autenticar; a policy (consent/sampling)
+  // é do Rust — aqui só descrevemos o QUÊ, via a fachada tipada.
+  const sessaoEmitida = useRef(false);
+  useEffect(() => {
+    if (user && !sessaoEmitida.current) {
+      sessaoEmitida.current = true;
+      telSessaoIniciada();
+    }
+  }, [user]);
+  // `module_opened` a cada troca de módulo (e no primeiro, ao autenticar).
+  useEffect(() => {
+    if (user) telModuloAberto(tela);
+  }, [tela, user]);
 
   // Snapshot da sessão a cada mudança (não pinadas, não privadas). No próximo
   // boot vira a "sessão anterior" a oferecer.

@@ -10,6 +10,7 @@ import {
 } from "../lib/people.ts";
 import type { Filter } from "../components/reui/filters";
 import type { MergePlan } from "../lib/people-merge";
+import { telAcaoConcluida } from "../lib/telemetria.ts";
 import type {
   PeopleBulkDetailsChange,
   PeopleBulkDetailsField,
@@ -1315,6 +1316,8 @@ export function criarPeopleSlice(
           ? plan.master.id
           : state.peopleSelectedId,
       }));
+      // Telemetria (#390): conclusão do merge (só resultado, sem PII).
+      telAcaoConcluida("contatos_merge", failedDeletes.length === 0 ? "ok" : "erro");
       return {
         ok: failedDeletes.length === 0,
         masterUpdated: true,

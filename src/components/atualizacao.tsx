@@ -14,6 +14,7 @@ import { useIdioma } from "@/lib/idioma";
 import { preencher } from "@/lib/idioma";
 import { ShieldAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { telUpdateVerificado } from "@/lib/telemetria";
 
 interface Disponivel {
   versao: string;
@@ -48,7 +49,10 @@ export function Atualizacao() {
       try {
         const { check } = await import("@tauri-apps/plugin-updater");
         const novo = await check();
-        if (!vivo || !novo) return;
+        if (!vivo) return;
+        // Telemetria (#390): resultado da verificação de update (sem PII).
+        telUpdateVerificado(novo ? "disponivel" : "sem-atualizacao");
+        if (!novo) return;
         setPacote(novo);
         setInfo({
           versao: novo.version,
@@ -58,6 +62,7 @@ export function Atualizacao() {
         setEstado("disponivel");
       } catch {
         // sem endpoint, sem rede ou assinatura invalida: segue a vida
+        if (vivo) telUpdateVerificado("erro");
       }
     })();
     return () => {
