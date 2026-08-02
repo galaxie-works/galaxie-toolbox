@@ -224,6 +224,7 @@ import {
   PenSquare,
   Pencil,
   RefreshCw,
+  Repeat,
   Reply,
   ReplyAll,
   RotateCcw,
@@ -4915,6 +4916,14 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
   const responderEvento = useAppStore((s) => s.responderEvento);
   const eventosMes = useAppStore((s) => s.agendaEventosMes);
   const participantesPopoverTituloId = useId();
+  // #399: badge "recorrente". O detalhe (EventoDetalhe) não traz o `type`, mas o
+  // evento da lista (EventoAgenda, #397) sim — casa pelo id selecionado.
+  const eventoLista = eventosMes?.find((e) => e.id === id);
+  const recorrente =
+    !!eventoLista &&
+    (eventoLista.tipo === "occurrence" ||
+      eventoLista.tipo === "exception" ||
+      eventoLista.tipo === "seriesMaster");
   // Avatares dos participantes internos (#39).
   const { getFoto, pedirFotos } = useFotos();
 
@@ -5016,6 +5025,16 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
           <>
             <SheetHeader className="border-b px-4 py-3">
               <SheetTitle className="pr-6 text-left">{det.assunto}</SheetTitle>
+              {recorrente && (
+                <Badge
+                  variant="secondary"
+                  size="sm"
+                  className="mt-1 w-fit gap-1"
+                >
+                  <Repeat className="size-3" />
+                  {t.controlRoom.agendaRecorrenteBadge}
+                </Badge>
+              )}
             </SheetHeader>
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto scrollbar-fina px-4 py-4 text-sm">
               <div className="flex items-center gap-2 text-muted-foreground">
