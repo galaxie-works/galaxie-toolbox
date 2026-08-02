@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
 use rand::Rng;
 use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{HeaderValue, AUTHORIZATION, CONTENT_TYPE};
@@ -432,27 +433,49 @@ pub trait AuthProvider: Send + Sync + 'static {
     fn aplicar(&self, request: RequestBuilder) -> Result<RequestBuilder, TransporteErro>;
 }
 
-/// Provider util para mocks e para uma configuracao externa futura. O valor e
-/// mantido privado e nunca entra em Debug/log.
-pub struct BearerAuthProvider {
-    token: HeaderValue,
+/// Autenticacao exigida pelo OTLP/HTTP do OpenObserve self-hosted. O token de
+/// ingestao e combinado ao identificador do emissor apenas em memoria e o
+/// header resultante e marcado como sensivel para nunca entrar em logs.
+pub struct OpenObserveAuthProvider {
+    authorization: HeaderValue,
+    stream: HeaderValue,
 }
 
-impl BearerAuthProvider {
-    pub fn novo(token: &str) -> Result<Self, TransporteErro> {
-        if token.trim().is_empty() {
+impl OpenObserveAuthProvider {
+    pub fn novo(email: &str, token: &str, stream: &str) -> Result<Self, TransporteErro> {
+        let email = email.trim();
+        let token = token.trim();
+        let stream = stream.trim();
+        if email.is_empty() || email.contains(':') {
+            return Err(TransporteErro::Configuracao("email-invalido"));
+        }
+        if token.is_empty() {
             return Err(TransporteErro::Configuracao("token-vazio"));
         }
-        let mut token = HeaderValue::from_str(&format!("Bearer {}", token.trim()))
+        if stream.is_empty() {
+            return Err(TransporteErro::Configuracao("stream-vazio"));
+        }
+
+        let credencial =
+            base64::engine::general_purpose::STANDARD.encode(format!("{email}:{token}"));
+        let mut authorization = HeaderValue::from_str(&format!("Basic {credencial}"))
             .map_err(|_| TransporteErro::Configuracao("token-invalido"))?;
-        token.set_sensitive(true);
-        Ok(Self { token })
+        authorization.set_sensitive(true);
+        let stream = HeaderValue::from_str(stream)
+            .map_err(|_| TransporteErro::Configuracao("stream-invalido"))?;
+
+        Ok(Self {
+            authorization,
+            stream,
+        })
     }
 }
 
-impl AuthProvider for BearerAuthProvider {
+impl AuthProvider for OpenObserveAuthProvider {
     fn aplicar(&self, request: RequestBuilder) -> Result<RequestBuilder, TransporteErro> {
-        Ok(request.header(AUTHORIZATION, self.token.clone()))
+        Ok(request
+            .header(AUTHORIZATION, self.authorization.clone())
+            .header("stream-name", self.stream.clone()))
     }
 }
 
@@ -898,24 +921,24 @@ impl TelemetryState {
         }
     }
 
-    /// Bootstrap sem valores hardcoded. O instalador/ambiente injeta endpoint e
-    /// credencial; com ambos ausentes, o transporte permanece desativado. Se
-    /// somente um existir, falha fechado para nunca enviar sem autenticacao.
+    /// Bootstrap sem valores hardcoded. O instalador/ambiente injeta endpoint,
+    /// emissor, token e stream; todos ausentes mantem o transporte desativado.
+    /// Qualquer configuracao parcial falha fechado antes de iniciar a rede.
     pub fn iniciar_transporte_configurado(&self) -> Result<bool, TransporteErro> {
         let endpoint = std::env::var("GALAXIE_TELEMETRY_OTLP_ENDPOINT").ok();
+        let email = std::env::var("GALAXIE_TELEMETRY_INGEST_EMAIL").ok();
         let token = std::env::var("GALAXIE_TELEMETRY_INGEST_TOKEN").ok();
-        match (endpoint, token) {
-            (None, None) => Ok(false),
-            (Some(_), None) | (None, Some(_)) => {
-                Err(TransporteErro::Configuracao("config-incompleta"))
-            }
-            (Some(endpoint), Some(token)) => {
+        let stream = std::env::var("GALAXIE_TELEMETRY_STREAM_NAME").ok();
+        match (endpoint, email, token, stream) {
+            (None, None, None, None) => Ok(false),
+            (Some(endpoint), Some(email), Some(token), Some(stream)) => {
                 let config = TransporteConfig::nova(endpoint);
-                let auth = BearerAuthProvider::novo(&token)?;
+                let auth = OpenObserveAuthProvider::novo(&email, &token, &stream)?;
                 let exporter = OtlpHttpExporter::novo(config.clone(), auth)?;
                 self.iniciar_transporte(exporter, config)?;
                 Ok(true)
             }
+            _ => Err(TransporteErro::Configuracao("config-incompleta")),
         }
     }
 }
@@ -1279,20 +1302,20 @@ mod testes {
     }
 
     #[test]
-    fn config_recusa_http_nao_loopback_e_token_vazio() {
+    fn config_recusa_http_nao_loopback_e_credencial_invalida() {
         let config = TransporteConfig::nova("http://example.com/v1/logs");
         assert_eq!(
             config.validar(),
             Err(TransporteErro::Configuracao("https-obrigatorio"))
         );
         assert_eq!(
-            BearerAuthProvider::novo(" ").err(),
+            OpenObserveAuthProvider::novo("telemetry@galaxie.test", " ", "galaxie_toolbox").err(),
             Some(TransporteErro::Configuracao("token-vazio"))
         );
     }
 
     #[test]
-    fn exporter_otlp_http_envia_json_e_auth_ao_mock() {
+    fn exporter_otlp_http_envia_json_e_auth_openobserve_ao_mock() {
         let servidor = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let endpoint = format!("http://{}/v1/logs", servidor.server_addr());
         let receptor = std::thread::spawn(move || {
@@ -1307,7 +1330,16 @@ mod testes {
                 .iter()
                 .find(|h| h.field.equiv("Authorization"))
                 .map(|h| h.value.as_str());
-            assert_eq!(auth, Some("Bearer segredo-do-mock"));
+            let esperado = base64::engine::general_purpose::STANDARD
+                .encode("telemetry@galaxie.test:segredo-do-mock");
+            let esperado = format!("Basic {esperado}");
+            assert_eq!(auth, Some(esperado.as_str()));
+            let stream = request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv("stream-name"))
+                .map(|h| h.value.as_str());
+            assert_eq!(stream, Some("galaxie_toolbox"));
             let mut body = String::new();
             request.as_reader().read_to_string(&mut body).unwrap();
             let json: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -1319,11 +1351,32 @@ mod testes {
         });
 
         let config = TransporteConfig::nova(endpoint);
-        let auth = BearerAuthProvider::novo("segredo-do-mock").unwrap();
+        let auth = OpenObserveAuthProvider::novo(
+            "telemetry@galaxie.test",
+            "segredo-do-mock",
+            "galaxie_toolbox",
+        )
+        .unwrap();
         let exporter = OtlpHttpExporter::novo(config, auth).unwrap();
         exporter
             .exportar(&[envelope(42, Categoria::Analytics)])
             .unwrap();
         receptor.join().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requer endpoint e credencial OpenObserve injetados no processo"]
+    fn exporter_otlp_http_envia_para_openobserve_real() {
+        let endpoint = std::env::var("GALAXIE_TELEMETRY_OTLP_ENDPOINT").unwrap();
+        let email = std::env::var("GALAXIE_TELEMETRY_INGEST_EMAIL").unwrap();
+        let token = std::env::var("GALAXIE_TELEMETRY_INGEST_TOKEN").unwrap();
+        let stream = std::env::var("GALAXIE_TELEMETRY_STREAM_NAME").unwrap();
+
+        let config = TransporteConfig::nova(endpoint);
+        let auth = OpenObserveAuthProvider::novo(&email, &token, &stream).unwrap();
+        let exporter = OtlpHttpExporter::novo(config, auth).unwrap();
+        exporter
+            .exportar(&[envelope(agora_unix(), Categoria::Analytics)])
+            .unwrap();
     }
 }
