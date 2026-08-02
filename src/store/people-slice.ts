@@ -261,8 +261,6 @@ export interface PeopleSlice {
   peopleCategorias: Map<string, string>;
   /** #406: categoria selecionada no sidebar (filtra a grid). */
   peopleSelectedCategory: string | null;
-  /** #278 S4: domínio externo selecionado no sidebar (filtra a grid). */
-  peopleSelectedDomain: string | null;
 
   loadPeople: () => Promise<void>;
   loadMorePeople: () => Promise<void>;
@@ -282,8 +280,6 @@ export interface PeopleSlice {
   selectPeopleGroup: (groupId: string) => Promise<void>;
   /** #406: seleciona uma categoria no sidebar (filtra a grid por ela). */
   selectPeopleCategory: (nome: string) => void;
-  /** #278 S4: seleciona um domínio externo no sidebar (filtra a grid por ele). */
-  selectPeopleDomain: (dominio: string) => void;
   /** #406: (re)carrega as categorias do Outlook (masterCategories). */
   carregarCategoriasPeople: () => Promise<void>;
   /**
@@ -404,7 +400,6 @@ export function criarPeopleSlice(
   peopleMergeUndo: null,
   peopleCategorias: new Map(),
   peopleSelectedCategory: null,
-  peopleSelectedDomain: null,
 
   loadPeople: async () => {
     const generation = get().peopleRequestGeneration + 1;
@@ -745,7 +740,6 @@ export function criarPeopleSlice(
       peopleGroupMembersById: {},
       peopleGroupMembersLoadingId: null,
       peopleGroupMembersError: null,
-      peopleSelectedDomain: null,
     });
   },
   selectPeopleDirectory: (peopleSelectedId = null) => {
@@ -754,7 +748,6 @@ export function criarPeopleSlice(
       peopleSelectedId,
       peopleSelectedGroupId: null,
       peopleGroupMembersError: null,
-      peopleSelectedDomain: null,
     });
   },
   // #406: filtra a grid pela categoria escolhida no sidebar.
@@ -764,18 +757,6 @@ export function criarPeopleSlice(
       peopleSelectedCategory: nome,
       peopleSelectedId: null,
       peopleSelectedGroupId: null,
-      peopleSelectedDomain: null,
-    });
-  },
-  // #278 S4: filtra a grid pelo domínio externo escolhido no sidebar. A visão
-  // "Other organizations" é DERIVADA dos contatos (sem estado local persistido).
-  selectPeopleDomain: (dominio) => {
-    get().setPeopleTab("domain");
-    set({
-      peopleSelectedDomain: dominio,
-      peopleSelectedId: null,
-      peopleSelectedGroupId: null,
-      peopleSelectedCategory: null,
     });
   },
   // #406: (re)carrega as categorias do Outlook (masterCategories). Best-effort.
