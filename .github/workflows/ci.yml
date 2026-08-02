@@ -1,0 +1,81 @@
+# Gate de integração: roda em todo push/PR pro feat e main. Pega regressão
+# ANTES da integração manual — hoje o único gate é o build local do Polaris na
+# hora de integrar cada PR. Espelha o setup provado do release.yml.
+name: CI
+
+on:
+  push:
+    branches: [feat/bridge-email-client, main]
+  pull_request:
+    branches: [feat/bridge-email-client, main]
+
+# Um push novo na mesma ref cancela a run anterior (economiza runner).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Front-end: typecheck + build + lint + testes. Roda no ubuntu (rápido/barato);
+  # o build do Vite é puro JS, não precisa das libs nativas do Tauri.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Cache do pnpm
+        uses: actions/cache@v4
+        with:
+          path: ~/.pnpm-store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      # `pnpm build` = `tsc -b && vite build` — cobre typecheck E o build do Vite.
+      - name: Build (tsc + vite)
+        run: pnpm build
+
+      - name: Lint (oxlint)
+        run: pnpm lint
+
+      - name: Testes (node:test)
+        run: pnpm test
+
+  # Rust/Tauri: cargo check + testes. Roda no windows-latest (mesma plataforma do
+  # release, evita as libs de sistema que o Tauri exige no Linux). O rust-cache
+  # deixa rápido quando o Rust não mudou.
+  rust:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache do cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
