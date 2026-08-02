@@ -4,7 +4,7 @@
 // como é); aqui fica só a cola: fetch por faixa visível, estados, i18n e o
 // diálogo de CRUD (padrão do c-event-calendar-3).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { enUS, ptBR } from "date-fns/locale";
 import type { Locale } from "date-fns";
 import { toast } from "sonner";
@@ -821,6 +821,10 @@ function EventoFormSheet() {
   const [reuniaoTeams, setReuniaoTeams] = useState(false);
   const [calendarioAlvo, setCalendarioAlvo] = useState<string>("");
   const [salvando, setSalvando] = useState(false);
+  // #397: assinatura do schedule (início/fim/dia-inteiro) como semeado ao abrir
+  // o form em edição. Ao editar a SÉRIE, só forçamos o schedule no seriesMaster
+  // se o usuário DE FATO mexeu no horário — senão preservamos (somente_campos).
+  const scheduleSeedRef = useRef<string | null>(null);
 
   // Recorrência (#396, S1) — só ao CRIAR (editar série é o S2). "never" = único.
   const [recFreq, setRecFreq] = useState<"never" | RecorrenciaFrequencia>(
@@ -871,7 +875,13 @@ function EventoFormSheet() {
         setInicioDT(paraInputLocal(evento.inicio));
         setFimDT(paraInputLocal(evento.fim));
       }
+      // #397: assinatura do schedule semeado, pra detectar no save se o usuário
+      // mexeu no horário (aí a edição de série aplica start/end no master).
+      scheduleSeedRef.current = evento.diaInteiro
+        ? `d|${paraInputData(evento.inicio)}|${somarDias(paraInputData(evento.fim), -1) || paraInputData(evento.fim)}`
+        : `t|${paraInputLocal(evento.inicio)}|${paraInputLocal(evento.fim)}`;
     } else {
+      scheduleSeedRef.current = null;
       // Preset do clique pode vir inválido/ausente — cai na próxima hora cheia.
       const bruta = presetInicio ? new Date(comZ(presetInicio)) : proximaHora();
       const base = Number.isNaN(bruta.getTime()) ? proximaHora() : bruta;
@@ -1045,11 +1055,21 @@ function EventoFormSheet() {
     const input = montarInput();
     if (!input) return;
     // #397: o escopo já foi decidido no menu Edit (ocorrência × série). "Série"
-    // edita só os campos (sem mexer no schedule) no seriesMaster + recarrega;
-    // "ocorrência" é PATCH normal no id dela (vira exceção no Graph). Sem prompt.
+    // aplica no seriesMaster + recarrega. Se o usuário MEXEU no horário, manda
+    // start/end (o Graph desloca a série toda); se NÃO mexeu, `somente_campos`
+    // preserva o schedule e altera só os campos. "Ocorrência" é PATCH normal no
+    // id dela (vira exceção no Graph). Sem prompt.
     if (modo === "editar" && evento && eventoRecorrente && escopoRec === "serie") {
       const idSerie = evento.seriesMasterId ?? evento.id;
-      await executarSalvar(idSerie, { ...input, somenteCampos: true }, true);
+      const scheduleAtual = diaInteiro
+        ? `d|${inicioD}|${fimD}`
+        : `t|${inicioDT}|${fimDT}`;
+      const scheduleMudou = scheduleSeedRef.current !== scheduleAtual;
+      await executarSalvar(
+        idSerie,
+        { ...input, somenteCampos: !scheduleMudou },
+        true,
+      );
       return;
     }
     await executarSalvar(
