@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, type Transition } from "motion/react";
 import {
   CalendarClock,
@@ -26,9 +26,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/animate-ui/primitives/radix/checkbox";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { useIdioma, preencher } from "@/lib/idioma";
-import { ordenarAtoms, criarAtom } from "@/lib/atoms";
+import { ordenarAtoms, criarAtom, type AtomItem } from "@/lib/atoms";
 import type { Tela } from "@/lib/navegacao";
-import type { AppUser, EventoAgenda, Tarefa } from "@/lib/types";
+import type { AppUser, EmailRecente, EventoAgenda, Tarefa } from "@/lib/types";
 import * as api from "@/lib/api";
 
 /** Início/fim (ISO) da janela "agora → +7 dias" pra próximo evento + hoje. */
@@ -84,7 +84,11 @@ export function AtomsScreen({
     fase: "carregando",
   });
   const [email, setEmail] = useState<
-    Estado<{ naoLidos: number; sinalizados: number }>
+    Estado<{
+      naoLidos: number;
+      sinalizados: number;
+      recentes: EmailRecente[];
+    }>
   >({ fase: "carregando" });
   const [todos, setTodos] = useState<Estado<Tarefa[]>>({ fase: "carregando" });
 
@@ -108,7 +112,11 @@ export function AtomsScreen({
       ]);
       setEmail({
         fase: "ok",
-        dados: { naoLidos: caixa.naoLidos, sinalizados: contadores.flagged },
+        dados: {
+          naoLidos: caixa.naoLidos,
+          sinalizados: contadores.flagged,
+          recentes: caixa.recentes,
+        },
       });
     } catch {
       setEmail({ fase: "erro" });
@@ -177,6 +185,17 @@ export function AtomsScreen({
           </FramePanel>
         </Frame>
       ) : (
+        <div className="space-y-4">
+        {/* #185: "Atenção agora" — o feed unificado ranqueado (diferenciador),
+            âncora acima da grade. Composição das 3 fontes via o score da S1. */}
+        <FeedAtencao
+          agenda={agenda}
+          email={email}
+          todos={todos}
+          idioma={idioma}
+          t={t}
+          onNavegar={onNavegar}
+        />
         <div className="grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-4">
           <AgendaWidget
             estado={agenda}
@@ -199,12 +218,215 @@ export function AtomsScreen({
             onConcluida={removerTarefa}
           />
         </div>
+        </div>
       )}
     </div>
   );
 }
 
 type Dic = ReturnType<typeof useIdioma>["t"];
+
+/** Motivo (§3) → string localizada, mostrada no item do feed (self-explaining). */
+function motivoTexto(item: AtomItem, t: Dic): string {
+  switch (item.motivo) {
+    case "iminente":
+      return preencher(t.atoms.motivoIminente, { min: item.minutos ?? 0 });
+    case "vencido":
+      return t.atoms.motivoVencido;
+    case "prazoHoje":
+      return t.atoms.motivoPrazoHoje;
+    case "sinalizado":
+      return t.atoms.motivoSinalizado;
+    case "naoLido":
+      return t.atoms.motivoNaoLido;
+    case "hoje":
+      return t.atoms.motivoHoje;
+    default:
+      return "";
+  }
+}
+
+const ICONE_ORIGEM = {
+  agenda: CalendarClock,
+  email: Mail,
+  todo: ListTodo,
+} as const;
+
+/**
+ * #185 — "Atenção agora": UM feed ranqueado (agenda ≤30min + e-mail não-lido
+ * envelhecendo/sinalizado + To Do vencida) pelo score determinístico da S1
+ * (lib/atoms, SEM IA). Sem nova fonte — compõe as 3 já cabeadas. Cada item é
+ * porta (clica → destino). Reusa o visual do seed `notification-list`
+ * (cards motion) num layout legível/acessível. Recalcula a cada 60s + no focus.
+ */
+function FeedAtencao({
+  agenda,
+  email,
+  todos,
+  idioma,
+  t,
+  onNavegar,
+}: {
+  agenda: Estado<EventoAgenda[]>;
+  email: Estado<{ naoLidos: number; sinalizados: number; recentes: EmailRecente[] }>;
+  todos: Estado<Tarefa[]>;
+  idioma: string;
+  t: Dic;
+  onNavegar: (tela: Tela) => void;
+}) {
+  // O score depende do "agora" — recalcula em intervalo leve + ao voltar o foco
+  // (barato: aritmética sobre dados já buscados, sem chamada Graph nova).
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 60_000);
+    const aoFocar = () => setTick((n) => n + 1);
+    window.addEventListener("focus", aoFocar);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", aoFocar);
+    };
+  }, []);
+
+  const itens = useMemo(() => {
+    const agora = Date.now();
+    const irBridge = () => onNavegar("control-room");
+    const out: AtomItem[] = [];
+    if (agenda.fase === "ok") {
+      for (const ev of agenda.dados) {
+        if (comZ(ev.fim).getTime() < agora) continue;
+        out.push(
+          criarAtom(
+            `ag-${ev.id}`,
+            "agenda",
+            ev.assunto,
+            {
+              origem: "agenda",
+              quando: comZ(ev.inicio).getTime(),
+              hoje: mesmoDia(comZ(ev.inicio), new Date()),
+            },
+            agora,
+            irBridge,
+          ),
+        );
+      }
+    }
+    if (email.fase === "ok") {
+      email.dados.recentes.forEach((m, i) => {
+        out.push(
+          criarAtom(
+            `mail-${i}`,
+            "email",
+            m.assunto,
+            { origem: "email", naoLido: true, quando: comZ(m.recebido).getTime() },
+            agora,
+            irBridge,
+          ),
+        );
+      });
+      if (email.dados.sinalizados > 0) {
+        out.push(
+          criarAtom(
+            "mail-flag",
+            "email",
+            preencher(t.atoms.feedSinalizados, { n: email.dados.sinalizados }),
+            { origem: "email", flagged: true },
+            agora,
+            irBridge,
+          ),
+        );
+      }
+    }
+    if (todos.fase === "ok") {
+      for (const tf of todos.dados) {
+        out.push(criarAtom(`td-${tf.id}`, "todo", tf.titulo, sinalTarefa(tf), agora));
+      }
+    }
+    // Só o que "exige agora": corta o ruído de baseline muito baixo (futuro/hoje
+    // fraco) e mostra o topo ranqueado.
+    return ordenarAtoms(out)
+      .filter((i) => i.score >= 0.3)
+      .slice(0, 6);
+    // `tick` força o recompute periódico; as fases são as fontes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agenda, email, todos, t, onNavegar, tick]);
+
+  const carregando =
+    agenda.fase === "carregando" ||
+    email.fase === "carregando" ||
+    todos.fase === "carregando";
+
+  const corpo = () => {
+    if (itens.length === 0 && carregando) return <SkeletonLinhas />;
+    if (itens.length === 0) {
+      return (
+        <div className="flex flex-col items-center gap-2 py-6 text-center">
+          <IconStack>
+            <Sparkles className="size-5 text-muted-foreground" />
+          </IconStack>
+          <p className="text-sm text-muted-foreground">{t.atoms.feedVazio}</p>
+        </div>
+      );
+    }
+    return (
+      <ul aria-live="polite" className="space-y-2">
+        {itens.map((item) => {
+          const Icone = ICONE_ORIGEM[item.origem];
+          const conteudo = (
+            <>
+              <Icone className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">
+                  {item.titulo}
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {motivoTexto(item, t)}
+                </span>
+              </span>
+              {item.quando != null && (
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {horaCurta(new Date(item.quando), idioma)}
+                </span>
+              )}
+            </>
+          );
+          return (
+            <motion.li
+              key={item.id}
+              layout
+              transition={{ type: "spring", stiffness: 300, damping: 26 }}
+            >
+              {item.acao ? (
+                <button
+                  type="button"
+                  onClick={item.acao}
+                  className="flex w-full items-start gap-2.5 rounded-lg border border-border bg-background/50 p-2.5 text-left transition-colors hover:bg-accent/50"
+                >
+                  {conteudo}
+                </button>
+              ) : (
+                <div className="flex items-start gap-2.5 rounded-lg border border-border bg-background/50 p-2.5">
+                  {conteudo}
+                </div>
+              )}
+            </motion.li>
+          );
+        })}
+      </ul>
+    );
+  };
+
+  return (
+    <Frame className="w-full">
+      <FrameHeader>
+        <FrameTitle className="flex items-center gap-2">
+          <Sparkles className="size-4 text-muted-foreground" />
+          {t.atoms.feedTitulo}
+        </FrameTitle>
+      </FrameHeader>
+      <FramePanel>{corpo()}</FramePanel>
+    </Frame>
+  );
+}
 
 /** Cabeçalho de erro por-card: isola a falha, mantém os outros cards de pé. */
 function ErroCard({ t, onRetry }: { t: Dic; onRetry: () => void }) {
