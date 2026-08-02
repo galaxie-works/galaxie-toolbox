@@ -128,6 +128,15 @@ function diaDaData(iso: string): DiaSemana {
   return ORDEM_DIAS[d.getDay()] ?? "monday";
 }
 
+// #397/#398: um evento é recorrente quando é ocorrência/exceção/série.
+function ehRecorrente(ev: EventoAgenda): boolean {
+  return (
+    ev.tipo === "occurrence" ||
+    ev.tipo === "exception" ||
+    ev.tipo === "seriesMaster"
+  );
+}
+
 // Identidades estáveis: o store do event-calendar compara settings por
 // referência, então arrays/objetos recriados a cada render forçariam re-render.
 const VIEWS: ("month" | "week" | "day" | "agenda")[] = [
@@ -233,6 +242,10 @@ export function AgendaView() {
   const [cancelarAlvo, setCancelarAlvo] = useState<EventoAgenda | null>(null);
   const [comentarioCancel, setComentarioCancel] = useState("");
   const [cancelando, setCancelando] = useState(false);
+  // #398: excluir recorrente pede ocorrência × série (excluir é silencioso).
+  const excluirEvento = useAppStore((s) => s.excluirEvento);
+  const [excluirAlvo, setExcluirAlvo] = useState<EventoAgenda | null>(null);
+  const [excluindo, setExcluindo] = useState(false);
 
   // Right-click: acha o chip sob o cursor. Fora de um evento (célula vazia,
   // navbar), suprime o menu (preventDefault também impede o menu nativo) — o
@@ -248,11 +261,13 @@ export function AgendaView() {
     setMenuEventoId(id);
   };
 
-  const confirmarCancelamento = async () => {
+  const confirmarCancelamento = async (alvoId: string, recarregar: boolean) => {
     if (!cancelarAlvo) return;
     setCancelando(true);
     try {
-      await cancelarEvento(cancelarAlvo.id, comentarioCancel.trim());
+      await cancelarEvento(alvoId, comentarioCancel.trim());
+      // Série: as ocorrências exibidas não casam com o id do master — recarrega.
+      if (recarregar) recarregarAgenda();
       setCancelarAlvo(null);
       setComentarioCancel("");
       toast.success(t.controlRoom.agendaCancelado);
@@ -260,6 +275,26 @@ export function AgendaView() {
       toast.error(t.controlRoom.agendaErroCancelar);
     } finally {
       setCancelando(false);
+    }
+  };
+
+  // #398: exclui a ocorrência (id dela) ou a série (seriesMasterId) — silencioso.
+  const confirmarExclusao = async (alvo: "ocorrencia" | "serie") => {
+    if (!excluirAlvo) return;
+    const id =
+      alvo === "serie" && excluirAlvo.seriesMasterId
+        ? excluirAlvo.seriesMasterId
+        : excluirAlvo.id;
+    setExcluindo(true);
+    try {
+      await excluirEvento(id);
+      if (alvo === "serie") recarregarAgenda();
+      setExcluirAlvo(null);
+      toast.success(t.controlRoom.agendaExcluido);
+    } catch {
+      toast.error(t.controlRoom.agendaErroExcluir);
+    } finally {
+      setExcluindo(false);
     }
   };
 
@@ -414,6 +449,7 @@ export function AgendaView() {
             setCancelarAlvo(ev);
             setComentarioCancel("");
           }}
+          onPedirExcluir={(ev) => setExcluirAlvo(ev)}
         />
       </ContextMenu>
       <EventoFormSheet />
@@ -430,6 +466,50 @@ export function AgendaView() {
           }
         }}
       />
+
+      {/* #398: excluir evento recorrente — ocorrência × série (silencioso). */}
+      <AlertDialog
+        open={excluirAlvo != null}
+        onOpenChange={(o) => {
+          if (!o && !excluindo) setExcluirAlvo(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t.controlRoom.agendaExcluirRecorrenteTitulo}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.agendaExcluirRecorrenteDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={excluindo}>
+              {t.controlRoom.agendaEditarCancelar}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={excluindo}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmarExclusao("ocorrencia");
+              }}
+            >
+              {t.controlRoom.agendaEditarEstaOcorrencia}
+            </AlertDialogAction>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={excluindo}
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmarExclusao("serie");
+              }}
+            >
+              {t.controlRoom.agendaEditarSerie}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -444,9 +524,11 @@ export function AgendaView() {
 function EventoContextMenu({
   evento,
   onPedirCancelar,
+  onPedirExcluir,
 }: {
   evento: EventoAgenda | null;
   onPedirCancelar: (ev: EventoAgenda) => void;
+  onPedirExcluir: (ev: EventoAgenda) => void;
 }) {
   const { t } = useIdioma();
   const selecionarEventoAgenda = useAppStore((s) => s.selecionarEventoAgenda);
@@ -467,6 +549,11 @@ function EventoContextMenu({
 
   const excluir = async () => {
     if (!podeGerenciar) return;
+    // #398: recorrente pergunta ocorrência × série (via dialog no AgendaView).
+    if (ehRecorrente(evento)) {
+      onPedirExcluir(evento);
+      return;
+    }
     try {
       await excluirEvento(evento.id);
       toast.success(t.controlRoom.agendaExcluido);
@@ -568,10 +655,11 @@ function CancelarEventoDialog({
   comentario: string;
   onComentario: (v: string) => void;
   cancelando: boolean;
-  onConfirmar: () => void;
+  onConfirmar: (alvoId: string, recarregar: boolean) => void;
   onFechar: () => void;
 }) {
   const { t } = useIdioma();
+  const recorrente = alvo ? ehRecorrente(alvo) : false;
   return (
     <AlertDialog open={!!alvo} onOpenChange={(aberto) => !aberto && onFechar()}>
       <AlertDialogContent className="max-w-md!">
@@ -598,19 +686,46 @@ function CancelarEventoDialog({
           <AlertDialogCancel disabled={cancelando}>
             {t.controlRoom.agendaCancelarVoltar}
           </AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={cancelando}
-            onClick={(e) => {
-              // Segura o fechamento até a chamada resolver (spinner enquanto o
-              // Graph notifica os convidados).
-              e.preventDefault();
-              onConfirmar();
-            }}
-          >
-            {cancelando && <Spinner className="size-4" />}
-            {t.controlRoom.agendaCancelarConfirmar}
-          </AlertDialogAction>
+          {recorrente ? (
+            // #398: recorrente — cancelar esta ocorrência × a série inteira.
+            <>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={cancelando}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (alvo) onConfirmar(alvo.id, false);
+                }}
+              >
+                {t.controlRoom.agendaEditarEstaOcorrencia}
+              </AlertDialogAction>
+              <AlertDialogAction
+                variant="destructive"
+                disabled={cancelando}
+                onClick={(e) => {
+                  e.preventDefault();
+                  if (alvo?.seriesMasterId) onConfirmar(alvo.seriesMasterId, true);
+                }}
+              >
+                {cancelando && <Spinner className="size-4" />}
+                {t.controlRoom.agendaEditarSerie}
+              </AlertDialogAction>
+            </>
+          ) : (
+            <AlertDialogAction
+              variant="destructive"
+              disabled={cancelando}
+              onClick={(e) => {
+                // Segura o fechamento até a chamada resolver (spinner enquanto o
+                // Graph notifica os convidados).
+                e.preventDefault();
+                if (alvo) onConfirmar(alvo.id, false);
+              }}
+            >
+              {cancelando && <Spinner className="size-4" />}
+              {t.controlRoom.agendaCancelarConfirmar}
+            </AlertDialogAction>
+          )}
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
