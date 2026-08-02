@@ -1035,6 +1035,7 @@ function AppInner() {
               user={user}
               onNavegar={setTela}
               onAbrirUrl={abrirUrl}
+              onAbrirApp={abrirAppAqui}
             />
           )}
           {tela === "onedrive" && (

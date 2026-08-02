@@ -5,10 +5,13 @@ import {
   CalendarDays,
   CloudOff,
   Flag,
+  Grip,
+  LayoutGrid,
   ListTodo,
   Mail,
   MessageSquare,
   RefreshCw,
+  Settings2,
   Sparkles,
   Video,
 } from "lucide-react";
@@ -16,6 +19,26 @@ import { toast } from "sonner";
 
 import { Frame, FrameHeader, FramePanel, FrameTitle } from "@/components/reui/frame";
 import { Badge } from "@/components/reui/badge";
+import {
+  Sortable,
+  SortableItem,
+  SortableItemHandle,
+} from "@/components/reui/sortable";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
+import {
+  loadAtomsPrefs,
+  persistAtomsPrefs,
+  WIDGETS,
+  type AtomsPrefs,
+  type WidgetId,
+} from "@/lib/atoms-prefs";
+import { APPS, urlIcone, type AppM365 } from "@/lib/apps";
 import {
   Alert,
   AlertDescription,
@@ -74,12 +97,25 @@ export function AtomsScreen({
   user,
   onNavegar,
   onAbrirUrl,
+  onAbrirApp,
 }: {
   user: AppUser;
   onNavegar: (tela: Tela) => void;
   onAbrirUrl: (url: string) => void;
+  /** #187: abre um app do speed-dial como aba do Navigator (reusa abrirAppAqui). */
+  onAbrirApp: (app: AppM365) => void;
 }) {
   const { idioma, t } = useIdioma();
+  // #187: personalização — ordem/visibilidade/densidade, persistidas.
+  const [prefs, setPrefs] = useState<AtomsPrefs>(loadAtomsPrefs);
+  const atualizarPrefs = useCallback((patch: Partial<AtomsPrefs>) => {
+    setPrefs((atual) => {
+      const prox = { ...atual, ...patch };
+      persistAtomsPrefs(prox);
+      return prox;
+    });
+  }, []);
+  const denso = prefs.densidade === "compacta";
   const primeiroNome = user.displayName.trim().split(/\s+/)[0] || user.displayName;
 
   const [agenda, setAgenda] = useState<Estado<EventoAgenda[]>>({
@@ -167,16 +203,122 @@ export function AtomsScreen({
   const todosVazio = todos.fase === "ok" && todos.dados.length === 0;
   const tudoEmDia = agendaVazia && emailVazio && todosVazio;
 
+  // #187: widgets customizáveis visíveis, na ordem do usuário.
+  const visiveis = prefs.ordem.filter((id) => !prefs.ocultos.includes(id));
+
+  const reordenar = (nova: WidgetId[]) => {
+    // O Sortable devolve só os VISÍVEIS reordenados; recompõe a ordem completa
+    // (visíveis na nova ordem + ocultos preservados na ordem anterior).
+    const ocultosEmOrdem = prefs.ordem.filter((id) =>
+      prefs.ocultos.includes(id),
+    );
+    atualizarPrefs({ ordem: [...nova, ...ocultosEmOrdem] });
+  };
+
+  const alternarWidget = (id: WidgetId) => {
+    const ocultos = prefs.ocultos.includes(id)
+      ? prefs.ocultos.filter((x) => x !== id)
+      : [...prefs.ocultos, id];
+    atualizarPrefs({ ocultos });
+  };
+
+  const renderWidget = (id: WidgetId) => {
+    switch (id) {
+      case "agenda":
+        return (
+          <AgendaWidget
+            estado={agenda}
+            idioma={idioma}
+            t={t}
+            denso={denso}
+            onRetry={() => void carregarAgenda()}
+            onNavegar={onNavegar}
+            onAbrirUrl={onAbrirUrl}
+          />
+        );
+      case "email":
+        return (
+          <EmailWidget
+            estado={email}
+            t={t}
+            denso={denso}
+            onRetry={() => void carregarEmail()}
+            onNavegar={onNavegar}
+          />
+        );
+      case "todos":
+        return (
+          <TodosWidget
+            estado={todos}
+            t={t}
+            denso={denso}
+            onRetry={() => void carregarTodos()}
+            onConcluida={removerTarefa}
+          />
+        );
+      case "speeddial":
+        return <SpeedDialWidget t={t} denso={denso} onAbrirApp={onAbrirApp} />;
+    }
+  };
+
+  const nomeWidget: Record<WidgetId, string> = {
+    agenda: t.atoms.agendaTitulo,
+    email: t.atoms.emailTitulo,
+    todos: t.atoms.todosTitulo,
+    speeddial: t.atoms.speedDialTitulo,
+  };
+
   return (
     <div className="w-full space-y-6">
       {/* Header band — greeting + subtítulo, airy, sobre o starfield. */}
-      <div className="px-1 pt-2">
-        <SoftBlurIn className="text-2xl font-semibold tracking-tight">
-          {preencher(t.atoms.saudacao, { nome: primeiroNome })}
-        </SoftBlurIn>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {tudoEmDia ? t.atoms.tudoEmDiaDesc : t.atoms.subtitulo}
-        </p>
+      <div className="flex items-start justify-between gap-3 px-1 pt-2">
+        <div className="min-w-0">
+          <SoftBlurIn className="text-2xl font-semibold tracking-tight">
+            {preencher(t.atoms.saudacao, { nome: primeiroNome })}
+          </SoftBlurIn>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {tudoEmDia ? t.atoms.tudoEmDiaDesc : t.atoms.subtitulo}
+          </p>
+        </div>
+        {/* #187: Personalizar — ligar/desligar widgets + densidade. */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="shrink-0 gap-1.5 text-muted-foreground"
+              aria-label={t.atoms.personalizar}
+            >
+              <Settings2 className="size-4" />
+              <span className="hidden sm:inline">{t.atoms.personalizar}</span>
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-64">
+            <p className="mb-2 text-sm font-medium">{t.atoms.widgetsTitulo}</p>
+            <div className="space-y-2.5">
+              {WIDGETS.map((id) => (
+                <div key={id} className="flex items-center justify-between gap-3">
+                  <span className="text-sm">{nomeWidget[id]}</span>
+                  <Switch
+                    checked={!prefs.ocultos.includes(id)}
+                    onCheckedChange={() => alternarWidget(id)}
+                    aria-label={nomeWidget[id]}
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-border pt-3">
+              <span className="text-sm">{t.atoms.densidadeCompacta}</span>
+              <Switch
+                checked={denso}
+                onCheckedChange={(v) =>
+                  atualizarPrefs({ densidade: v ? "compacta" : "confortavel" })
+                }
+                aria-label={t.atoms.densidadeCompacta}
+              />
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
 
       {tudoEmDia ? (
@@ -205,34 +347,42 @@ export function AtomsScreen({
           t={t}
           onNavegar={onNavegar}
         />
-        <div className="grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))] gap-4">
-          <AgendaWidget
-            estado={agenda}
-            idioma={idioma}
-            t={t}
-            onRetry={() => void carregarAgenda()}
-            onNavegar={onNavegar}
-            onAbrirUrl={onAbrirUrl}
-          />
-          <EmailWidget
-            estado={email}
-            t={t}
-            onRetry={() => void carregarEmail()}
-            onNavegar={onNavegar}
-          />
-          <TodosWidget
-            estado={todos}
-            t={t}
-            onRetry={() => void carregarTodos()}
-            onConcluida={removerTarefa}
-          />
-          {/* #186 S4: OneDrive só aparece quando há problema (não finge verde). */}
-          {onedrive?.estado === "pausado" && (
-            <OneDriveWidget t={t} />
+        {/* #187: bento REORDENÁVEL (drag pela alça) + visibilidade, persistido. */}
+        <Sortable
+          value={visiveis}
+          onValueChange={reordenar}
+          getItemValue={(id) => id}
+          strategy="grid"
+          className={cn(
+            "grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))]",
+            denso ? "gap-2" : "gap-4",
           )}
-          {/* #186 S4: Teams gated — só o affordance de conectar quando sem escopo. */}
-          {teamsOk === false && <TeamsWidget t={t} />}
-        </div>
+        >
+          {visiveis.map((id) => (
+            <SortableItem key={id} value={id} className="relative">
+              {/* Alça de arraste discreta (canto), pra não roubar o clique do card. */}
+              <SortableItemHandle
+                aria-label={t.atoms.reordenar}
+                className="absolute right-1.5 top-1.5 z-10 grid size-6 cursor-grab place-items-center rounded-md text-muted-foreground/50 opacity-0 transition-opacity hover:bg-accent/50 focus-visible:opacity-100 group-hover/atom:opacity-100 active:cursor-grabbing [[data-dragging=true]_&]:opacity-100"
+              >
+                <Grip className="size-3.5" />
+              </SortableItemHandle>
+              <div className="group/atom h-full">{renderWidget(id)}</div>
+            </SortableItem>
+          ))}
+        </Sortable>
+        {/* #186 S4: cards de sistema (não customizáveis) — só quando relevantes. */}
+        {(onedrive?.estado === "pausado" || teamsOk === false) && (
+          <div
+            className={cn(
+              "grid grid-cols-[repeat(auto-fit,minmax(320px,1fr))]",
+              denso ? "gap-2" : "gap-4",
+            )}
+          >
+            {onedrive?.estado === "pausado" && <OneDriveWidget t={t} />}
+            {teamsOk === false && <TeamsWidget t={t} />}
+          </div>
+        )}
         </div>
       )}
     </div>
@@ -474,6 +624,7 @@ function AgendaWidget({
   onRetry,
   onNavegar,
   onAbrirUrl,
+  denso,
 }: {
   estado: Estado<EventoAgenda[]>;
   idioma: string;
@@ -481,6 +632,7 @@ function AgendaWidget({
   onRetry: () => void;
   onNavegar: (tela: Tela) => void;
   onAbrirUrl: (url: string) => void;
+  denso: boolean;
 }) {
   const agora = Date.now();
 
@@ -587,7 +739,7 @@ function AgendaWidget({
   };
 
   return (
-    <Frame className="w-full">
+    <Frame className="w-full" dense={denso}>
       <FrameHeader>
         <FrameTitle className="flex items-center gap-2">
           <CalendarDays className="size-4 text-muted-foreground" />
@@ -604,11 +756,13 @@ function EmailWidget({
   t,
   onRetry,
   onNavegar,
+  denso,
 }: {
   estado: Estado<{ naoLidos: number; sinalizados: number }>;
   t: Dic;
   onRetry: () => void;
   onNavegar: (tela: Tela) => void;
+  denso: boolean;
 }) {
   const corpo = () => {
     if (estado.fase === "carregando") return <SkeletonLinhas />;
@@ -648,7 +802,7 @@ function EmailWidget({
   };
 
   return (
-    <Frame className="w-full">
+    <Frame className="w-full" dense={denso}>
       <FrameHeader>
         <FrameTitle className="flex items-center gap-2">
           <Mail className="size-4 text-muted-foreground" />
@@ -690,11 +844,13 @@ function TodosWidget({
   t,
   onRetry,
   onConcluida,
+  denso,
 }: {
   estado: Estado<Tarefa[]>;
   t: Dic;
   onRetry: () => void;
   onConcluida: (id: string) => void;
+  denso: boolean;
 }) {
   // ids em transição de conclusão (tocando o strike antes de sumir).
   const [concluindo, setConcluindo] = useState<Set<string>>(new Set());
@@ -797,7 +953,7 @@ function TodosWidget({
   };
 
   return (
-    <Frame className="w-full">
+    <Frame className="w-full" dense={denso}>
       <FrameHeader>
         <FrameTitle className="flex items-center gap-2">
           <ListTodo className="size-4 text-muted-foreground" />
@@ -853,6 +1009,50 @@ function TeamsWidget({ t }: { t: Dic }) {
             <MessageSquare className="size-5 text-muted-foreground" />
           </IconStack>
           <p className="text-sm text-muted-foreground">{t.atoms.teamsGatedDesc}</p>
+        </div>
+      </FramePanel>
+    </Frame>
+  );
+}
+
+/**
+ * #187 S5: speed-dial de apps rápidos (widget opcional). Reusa o catálogo APPS
+ * + `abrirAppAqui` (via onAbrirApp) — clicar abre o app como aba do Navigator.
+ */
+function SpeedDialWidget({
+  t,
+  denso,
+  onAbrirApp,
+}: {
+  t: Dic;
+  denso: boolean;
+  onAbrirApp: (app: AppM365) => void;
+}) {
+  const apps = APPS.slice(0, 8);
+  return (
+    <Frame className="w-full" dense={denso}>
+      <FrameHeader>
+        <FrameTitle className="flex items-center gap-2">
+          <LayoutGrid className="size-4 text-muted-foreground" />
+          {t.atoms.speedDialTitulo}
+        </FrameTitle>
+      </FrameHeader>
+      <FramePanel>
+        <div className="grid grid-cols-4 gap-2">
+          {apps.map((app) => (
+            <button
+              key={app.id}
+              type="button"
+              onClick={() => onAbrirApp(app)}
+              className="flex flex-col items-center gap-1.5 rounded-lg p-2 text-center transition-colors hover:bg-accent/50"
+              title={app.nome}
+            >
+              <img src={urlIcone(app)} alt="" className="size-7" />
+              <span className="w-full truncate text-[11px] text-muted-foreground">
+                {app.nome}
+              </span>
+            </button>
+          ))}
         </div>
       </FramePanel>
     </Frame>
