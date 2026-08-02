@@ -2065,6 +2065,103 @@ pub fn cr_ler_anexo(
     })
 }
 
+/// Path C (spec §4.3): converte um anexo Office para PDF em **alta fidelidade**
+/// usando o próprio OneDrive do usuário — sobe para uma pasta temporária oculta
+/// (`/Bridge Anexos/.preview/`), pede `?format=pdf` ao Graph e **sempre apaga**
+/// o item temporário (mesmo se a conversão falhar). O PDF resultante é
+/// renderizado pelo mesmo pdf.js da Story 1.
+///
+/// Egress consciente (§7.3): o anexo sai para o OneDrive do **próprio tenant**
+/// do usuário (dado dele, tenant dele), em pasta oculta, e o temp é removido no
+/// fim. Usa `Files.ReadWrite` (já concedido) — sem escopo novo.
+pub fn cr_anexo_para_pdf(
+    store: &TokenStore,
+    message_id: &str,
+    attachment_id: &str,
+    mailbox: Option<&str>,
+) -> Result<AnexoConteudo, String> {
+    use base64::{engine::general_purpose, Engine as _};
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
+
+    // 1) Lê o anexo (bytes + nome).
+    let a_url =
+        format!("{GRAPH}/{prefix}/messages/{message_id}/attachments/{attachment_id}");
+    let resp = graph_enviar("mail:ler-anexo-pdf", GRAPH_TETO_ESPERA_S, || {
+        client.get(&a_url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler o anexo: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("leitura do anexo retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let nome = v["name"].as_str().unwrap_or("anexo").to_string();
+    let bytes = general_purpose::STANDARD
+        .decode(v["contentBytes"].as_str().unwrap_or("").trim())
+        .map_err(|e| format!("conteúdo do anexo inválido: {e}"))?;
+
+    let caminho = std::path::Path::new(&nome);
+    let ext = caminho.extension().and_then(|s| s.to_str()).unwrap_or("bin");
+    let stem = caminho.file_stem().and_then(|s| s.to_str()).unwrap_or("anexo");
+
+    // Nome temporário único (nanos): evita colisão entre previews concorrentes.
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_nome = urlencoding::encode(&format!("{ts}.{ext}")).into_owned();
+
+    // 2) PUT numa pasta oculta .preview (o PUT-por-path cria a pasta se preciso).
+    let put_url = format!(
+        "{GRAPH}/me/drive/root:/Bridge%20Anexos/.preview/{temp_nome}:/content"
+    );
+    let resp = graph_enviar("onedrive:preview-upload", GRAPH_TETO_ESPERA_S, || {
+        client
+            .put(&put_url)
+            .bearer_auth(&token)
+            .header("Content-Type", "application/octet-stream")
+            .body(bytes.clone())
+            .send()
+    })
+    .map_err(|e| format!("falha no upload para conversão: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("upload para conversão retornou {}", resp.status()));
+    }
+    let item: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let item_id = item["id"]
+        .as_str()
+        .ok_or("item temporário sem id")?
+        .to_string();
+
+    // 3) GET ?format=pdf (o reqwest segue o redirect de download).
+    let conv_url =
+        format!("{GRAPH}/me/drive/items/{item_id}/content?format=pdf");
+    let conv = graph_enviar("onedrive:convert-pdf", GRAPH_TETO_ESPERA_S, || {
+        client.get(&conv_url).bearer_auth(&token).send()
+    });
+
+    // 4) Cleanup do temp — SEMPRE, dê o que der na conversão (best-effort).
+    let del_url = format!("{GRAPH}/me/drive/items/{item_id}");
+    let _ = graph_enviar("onedrive:preview-delete", GRAPH_TETO_ESPERA_S, || {
+        client.delete(&del_url).bearer_auth(&token).send()
+    });
+
+    // 5) Só agora avalia o resultado da conversão.
+    let conv = conv.map_err(|e| format!("falha na conversão para PDF: {e}"))?;
+    if !conv.status().is_success() {
+        return Err(format!("conversão para PDF retornou {}", conv.status()));
+    }
+    let pdf = conv.bytes().map_err(|e| e.to_string())?;
+
+    Ok(AnexoConteudo {
+        bytes_b64: general_purpose::STANDARD.encode(&pdf),
+        content_type: "application/pdf".to_string(),
+        nome: format!("{stem}.pdf"),
+    })
+}
+
 /// Devolve um caminho ainda livre dentro de `dir` para `nome`. Se ja existir,
 /// anexa " (1)", " (2)", ... antes da extensao ate achar um nome disponivel.
 fn caminho_livre(dir: &std::path::Path, nome: &str) -> std::path::PathBuf {

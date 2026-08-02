@@ -1035,6 +1035,9 @@ const pt = {
     previewMenosZoom: "Diminuir zoom",
     previewZoomReset: "Redefinir zoom",
     previewVazio: "Sem conteúdo para mostrar",
+    previewAltaFidelidade: "Alta fidelidade",
+    previewConvertendo: "Convertendo via Microsoft 365…",
+    previewConvertido: "Convertido em alta fidelidade no seu OneDrive (Microsoft 365).",
     responder: "Responder",
     encaminhar: "Encaminhar",
     // Atalhos de teclado (#28) — catálogo do modal de ajuda ("?"). Chaves
@@ -2196,6 +2199,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     previewMenosZoom: "Zoom out",
     previewZoomReset: "Reset zoom",
     previewVazio: "Nothing to show",
+    previewAltaFidelidade: "High fidelity",
+    previewConvertendo: "Converting via Microsoft 365…",
+    previewConvertido: "Converted in high fidelity in your OneDrive (Microsoft 365).",
     responder: "Reply",
     encaminhar: "Forward",
     // Keyboard shortcuts (#28) — catalog for the help modal ("?"). Flat keys.
