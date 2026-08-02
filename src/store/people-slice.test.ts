@@ -401,3 +401,53 @@ test("#278 S3b criarCategoriaPeople insere no mapa nome→cor", async () => {
   await state.criarCategoriaPeople("Fornecedores", "preset0");
   assert.equal(state.peopleCategorias.get("Fornecedores"), "#123456");
 });
+
+test("#278 S3c bulk categorias: add/remove, pula não-editável e conta unchanged", async () => {
+  const patches: Array<{ id: string; cats: string[] }> = [];
+  const { state } = criarStore({
+    crPeopleContactCategories: async (contactId: string, categorias: string[]) => {
+      patches.push({ id: contactId, cats: categorias });
+    },
+  });
+  state.peopleContacts = [
+    peopleContact("c1", ["Antiga"]),
+    peopleContact("c2", ["Crítico"]),
+    { ...peopleContact("d1"), contactId: null }, // diretório: pula
+  ] as never;
+
+  const res = await state.bulkSetPeopleCategorias(
+    ["c1", "c2", "d1"],
+    ["Crítico"], // add
+    ["Antiga"], // remove
+  );
+
+  // c1: -Antiga +Crítico → muda. c2: já tem Crítico e não tem Antiga → unchanged.
+  assert.equal(res.updated, 1);
+  assert.equal(res.unchanged, 1);
+  assert.equal(res.skipped, 1);
+  assert.equal(res.failed, 0);
+  assert.deepEqual(patches, [{ id: "graph-c1", cats: ["Crítico"] }]);
+  const c1 = state.peopleContacts.find((c) => c.id === "c1");
+  assert.deepEqual(c1?.categories, ["Crítico"]);
+});
+
+test("#278 S3c bulk categorias: reverte só o item que falha e conta failed", async () => {
+  const { state } = criarStore({
+    crPeopleContactCategories: async (contactId: string) => {
+      if (contactId === "graph-c2") throw new Error("graph 500");
+    },
+  });
+  state.peopleContacts = [
+    peopleContact("c1", []),
+    peopleContact("c2", []),
+  ] as never;
+
+  const res = await state.bulkSetPeopleCategorias(["c1", "c2"], ["Nova"], []);
+
+  assert.equal(res.updated, 1);
+  assert.equal(res.failed, 1);
+  const c1 = state.peopleContacts.find((c) => c.id === "c1");
+  const c2 = state.peopleContacts.find((c) => c.id === "c2");
+  assert.deepEqual(c1?.categories, ["Nova"], "c1 persiste");
+  assert.deepEqual(c2?.categories, [], "c2 reverte no erro");
+});

@@ -1804,6 +1804,107 @@ function AssignToOrganizationSheet({
   );
 }
 
+/**
+ * #278 S3c: seletor multi-check de categorias pro bulk (adicionar OU remover).
+ * Chips do selecionado + Popover/Command com swatch da cor real, no mesmo
+ * padrão do detalhe (#278 S3b) e do sidebar (#406).
+ */
+function BulkCategoriaPicker({
+  label,
+  placeholder,
+  emptyText,
+  selected,
+  categorias,
+  onToggle,
+}: {
+  label: string;
+  placeholder: string;
+  emptyText: string;
+  selected: string[];
+  categorias: Map<string, string>;
+  onToggle: (nome: string) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const nomes = [...categorias.keys()];
+  return (
+    <div className="grid gap-1.5">
+      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {selected.map((nome) => {
+          const cor = categorias.get(nome);
+          return (
+            <Badge key={nome} variant="secondary" className="gap-1.5">
+              {cor ? (
+                <span
+                  aria-hidden
+                  className="size-2.5 shrink-0 rounded-full"
+                  style={{ background: cor }}
+                />
+              ) : (
+                <Tag className="size-3 shrink-0" />
+              )}
+              {nome}
+              <button
+                type="button"
+                className="ml-0.5 rounded-sm opacity-70 hover:opacity-100"
+                onClick={() => onToggle(nome)}
+              >
+                <X className="size-3" />
+              </button>
+            </Badge>
+          );
+        })}
+        <Popover open={aberto} onOpenChange={setAberto}>
+          <PopoverTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-6 gap-1 px-2 text-xs"
+            >
+              <Plus className="size-3" />
+              {placeholder}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="w-64 p-0">
+            <Command>
+              <CommandInput placeholder={placeholder} />
+              <CommandList>
+                <CommandEmpty>{emptyText}</CommandEmpty>
+                <CommandGroup>
+                  {nomes.map((nome) => {
+                    const cor = categorias.get(nome);
+                    const marcada = selected.includes(nome);
+                    return (
+                      <CommandItem
+                        key={nome}
+                        value={nome}
+                        onSelect={() => onToggle(nome)}
+                      >
+                        {cor ? (
+                          <span
+                            aria-hidden
+                            className="size-2.5 shrink-0 rounded-full"
+                            style={{ background: cor }}
+                          />
+                        ) : (
+                          <Tag className="size-3.5 shrink-0" />
+                        )}
+                        <span className="flex-1 truncate">{nome}</span>
+                        {marcada && <Check className="size-3.5 shrink-0" />}
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
+      </div>
+    </div>
+  );
+}
+
 function BulkEditDetailsSheet({
   open,
   contacts,
@@ -1819,10 +1920,17 @@ function BulkEditDetailsSheet({
   const bulkEditPeopleDetails = useAppStore(
     (state) => state.bulkEditPeopleDetails,
   );
+  const bulkSetPeopleCategorias = useAppStore(
+    (state) => state.bulkSetPeopleCategorias,
+  );
+  const peopleCategorias = useAppStore((state) => state.peopleCategorias);
   const [step, setStep] = useState<BulkEditDetailsStep>("edit");
   const [edits, setEdits] = useState<BulkEditDetailsState>(
     emptyBulkEditDetailsState,
   );
+  // #278 S3c: categorias a adicionar / remover no lote (nomes de masterCategory).
+  const [catAdd, setCatAdd] = useState<string[]>([]);
+  const [catRemove, setCatRemove] = useState<string[]>([]);
   const [validationAttempted, setValidationAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
   const wasOpenRef = useRef(false);
@@ -1862,6 +1970,8 @@ function BulkEditDetailsSheet({
     wasOpenRef.current = true;
     setStep("edit");
     setEdits(emptyBulkEditDetailsState());
+    setCatAdd([]);
+    setCatRemove([]);
     setValidationAttempted(false);
     setSaving(false);
   }, [open]);
@@ -1874,6 +1984,21 @@ function BulkEditDetailsSheet({
     field: key,
     value: edits[key].clear ? null : edits[key].value.trim(),
   }));
+  const hasCatChanges = catAdd.length > 0 || catRemove.length > 0;
+  // Uma categoria em "adicionar" não pode estar em "remover" (e vice-versa): o
+  // seletor de cada lado exclui o que já está no outro.
+  const toggleCat = (
+    setter: React.Dispatch<React.SetStateAction<string[]>>,
+    outro: React.Dispatch<React.SetStateAction<string[]>>,
+    nome: string,
+  ) => {
+    setter((atual) =>
+      atual.includes(nome)
+        ? atual.filter((c) => c !== nome)
+        : [...atual, nome],
+    );
+    outro((atual) => atual.filter((c) => c !== nome));
+  };
 
   const updateField = (
     key: PeopleBulkDetailsField,
@@ -1887,45 +2012,70 @@ function BulkEditDetailsSheet({
 
   const goToPreview = () => {
     setValidationAttempted(true);
-    if (enabledFields.length === 0 || missingValueFields.length > 0) return;
+    if (enabledFields.length === 0 && !hasCatChanges) return;
+    if (missingValueFields.length > 0) return;
     setStep("preview");
   };
 
   const apply = async () => {
-    if (changes.length === 0) return;
+    if (changes.length === 0 && !hasCatChanges) return;
     setSaving(true);
+    const ids = contacts.map((contact) => contact.id);
     try {
-      const result = await bulkEditPeopleDetails(
-        contacts.map((contact) => contact.id),
-        changes,
-      );
-      if (result.updated > 0) {
-        toast.success(
-          preencher(t.controlRoom.bulkDetailsAtualizados, {
-            n: result.updated,
-          }),
-        );
+      if (changes.length > 0) {
+        const result = await bulkEditPeopleDetails(ids, changes);
+        if (result.updated > 0) {
+          toast.success(
+            preencher(t.controlRoom.bulkDetailsAtualizados, {
+              n: result.updated,
+            }),
+          );
+        }
+        if (result.unchanged > 0) {
+          toast.info(
+            preencher(t.controlRoom.bulkDetailsSemMudanca, {
+              n: result.unchanged,
+            }),
+          );
+        }
+        if (result.skipped > 0) {
+          toast.warning(
+            preencher(t.controlRoom.bulkDetailsIgnorados, {
+              n: result.skipped,
+            }),
+          );
+        }
+        if (result.failed > 0) {
+          toast.error(
+            preencher(t.controlRoom.bulkDetailsFalhas, {
+              n: result.failed,
+            }),
+          );
+        }
       }
-      if (result.unchanged > 0) {
-        toast.info(
-          preencher(t.controlRoom.bulkDetailsSemMudanca, {
-            n: result.unchanged,
-          }),
-        );
-      }
-      if (result.skipped > 0) {
-        toast.warning(
-          preencher(t.controlRoom.bulkDetailsIgnorados, {
-            n: result.skipped,
-          }),
-        );
-      }
-      if (result.failed > 0) {
-        toast.error(
-          preencher(t.controlRoom.bulkDetailsFalhas, {
-            n: result.failed,
-          }),
-        );
+      if (hasCatChanges) {
+        const result = await bulkSetPeopleCategorias(ids, catAdd, catRemove);
+        if (result.updated > 0) {
+          toast.success(
+            preencher(t.controlRoom.bulkCategoriasAtualizados, {
+              n: result.updated,
+            }),
+          );
+        }
+        if (result.skipped > 0) {
+          toast.warning(
+            preencher(t.controlRoom.bulkDetailsIgnorados, {
+              n: result.skipped,
+            }),
+          );
+        }
+        if (result.failed > 0) {
+          toast.error(
+            preencher(t.controlRoom.bulkCategoriasFalhas, {
+              n: result.failed,
+            }),
+          );
+        }
       }
       onDone();
     } catch {
@@ -2049,11 +2199,37 @@ function BulkEditDetailsSheet({
                   })}
                 </div>
 
-                {validationAttempted && enabledFields.length === 0 && (
-                  <p className="text-sm text-destructive">
-                    {t.controlRoom.bulkDetailsSelecioneCampo}
-                  </p>
-                )}
+                {/* #278 S3c: categorias do Outlook em lote (add/remove). */}
+                <div className="grid gap-3 rounded-lg border p-3">
+                  <div className="flex items-center gap-2">
+                    <Tag className="size-4 text-muted-foreground" />
+                    <Label>{t.controlRoom.bulkCategoriasSecao}</Label>
+                  </div>
+                  <BulkCategoriaPicker
+                    label={t.controlRoom.bulkCategoriasAdicionar}
+                    placeholder={t.controlRoom.peopleCategoriaAdd}
+                    emptyText={t.controlRoom.peopleCategoriaVazio}
+                    selected={catAdd}
+                    categorias={peopleCategorias}
+                    onToggle={(nome) => toggleCat(setCatAdd, setCatRemove, nome)}
+                  />
+                  <BulkCategoriaPicker
+                    label={t.controlRoom.bulkCategoriasRemover}
+                    placeholder={t.controlRoom.peopleCategoriaAdd}
+                    emptyText={t.controlRoom.peopleCategoriaVazio}
+                    selected={catRemove}
+                    categorias={peopleCategorias}
+                    onToggle={(nome) => toggleCat(setCatRemove, setCatAdd, nome)}
+                  />
+                </div>
+
+                {validationAttempted &&
+                  enabledFields.length === 0 &&
+                  !hasCatChanges && (
+                    <p className="text-sm text-destructive">
+                      {t.controlRoom.bulkDetailsSelecioneCampo}
+                    </p>
+                  )}
               </>
             ) : (
               <>
@@ -2100,6 +2276,39 @@ function BulkEditDetailsSheet({
                     </li>
                   ))}
                 </ul>
+
+                {hasCatChanges && (
+                  <ul className="grid gap-2">
+                    {catAdd.length > 0 && (
+                      <li className="grid gap-1.5 rounded-lg border p-3 text-sm">
+                        <span className="font-medium">
+                          {t.controlRoom.bulkCategoriasAdicionar}
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {catAdd.map((nome) => (
+                            <Badge key={nome} variant="secondary">
+                              {nome}
+                            </Badge>
+                          ))}
+                        </div>
+                      </li>
+                    )}
+                    {catRemove.length > 0 && (
+                      <li className="grid gap-1.5 rounded-lg border p-3 text-sm">
+                        <span className="font-medium">
+                          {t.controlRoom.bulkCategoriasRemover}
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {catRemove.map((nome) => (
+                            <Badge key={nome} variant="outline">
+                              {nome}
+                            </Badge>
+                          ))}
+                        </div>
+                      </li>
+                    )}
+                  </ul>
+                )}
               </>
             )}
           </div>

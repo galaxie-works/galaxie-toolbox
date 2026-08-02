@@ -296,6 +296,22 @@ export interface PeopleSlice {
    * = nome do preset de cor do Outlook ("preset0".."preset24").
    */
   criarCategoriaPeople: (nome: string, preset: string) => Promise<void>;
+  /**
+   * #278 S3c: atribui/remove categorias do Outlook em BULK. Para cada contato
+   * editável, `add` entram (union) e `remove` saem; contatos não-editáveis
+   * (sem `contactId`) são pulados. Otimista + rollback por item. Reporta
+   * updated/skipped/unchanged/failed como o `bulkEditPeopleDetails`.
+   */
+  bulkSetPeopleCategorias: (
+    contactIds: string[],
+    add: string[],
+    remove: string[],
+  ) => Promise<{
+    updated: number;
+    skipped: number;
+    failed: number;
+    unchanged: number;
+  }>;
   autoEnrichDirectoryContact: (
     id: string,
     sameOrganization: boolean,
@@ -1291,6 +1307,56 @@ export function criarPeopleSlice(
       proximo.set(criada.nome, criada.cor);
       return { peopleCategorias: proximo };
     });
+  },
+  bulkSetPeopleCategorias: async (contactIds, add, remove) => {
+    const ids = Array.from(new Set(contactIds));
+    const byId = new Map(get().peopleContacts.map((c) => [c.id, c]));
+    const removeSet = new Set(remove);
+    let updated = 0;
+    let skipped = 0;
+    let failed = 0;
+    let unchanged = 0;
+    // Em série: PATCH parcial por contato (mesma rota do S3b). Poucos itens no
+    // fluxo bulk; série evita rajada de 429 e mantém o rollback simples.
+    for (const id of ids) {
+      const contact = byId.get(id);
+      const contactId = contact?.contactId?.trim();
+      if (!contact || !contactId) {
+        skipped += 1;
+        continue;
+      }
+      const atuais = contact.categories ?? [];
+      // Remove primeiro, depois adiciona (union) preservando a ordem atual.
+      const proximas = atuais.filter((nome) => !removeSet.has(nome));
+      for (const nome of add) {
+        if (!proximas.includes(nome)) proximas.push(nome);
+      }
+      const igual =
+        proximas.length === atuais.length &&
+        proximas.every((nome, i) => nome === atuais[i]);
+      if (igual) {
+        unchanged += 1;
+        continue;
+      }
+      const snapshot = [...atuais];
+      set((state) => ({
+        peopleContacts: state.peopleContacts.map((c) =>
+          c.id === id ? { ...c, categories: proximas } : c,
+        ),
+      }));
+      try {
+        await client.crPeopleContactCategories(contactId, proximas);
+        updated += 1;
+      } catch {
+        set((state) => ({
+          peopleContacts: state.peopleContacts.map((c) =>
+            c.id === id ? { ...c, categories: snapshot } : c,
+          ),
+        }));
+        failed += 1;
+      }
+    }
+    return { updated, skipped, failed, unchanged };
   },
   mergePeopleContacts: async (plan, onProgress) => {
     // Trava dupla execução (#379): reentrância enquanto uma mutação corre.
