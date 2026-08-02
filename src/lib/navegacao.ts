@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import type { ComponentType } from "react";
 import {
+  AtomIcon,
   BridgeIcon,
   NavigatorIcon,
   CommsIcon,
@@ -24,6 +25,7 @@ export type IconeNav = ComponentType<{ className?: string }>;
 
 /** Telas do canvas. Cada uma sabe onde fica no menu (para o breadcrumb). */
 export type Tela =
+  | "atoms"
   | "onedrive"
   | "apps"
   | "control-room"
@@ -65,6 +67,7 @@ export const NAV: GrupoNav[] = [
         titulo: "galaxie",
         icone: GalaxieSymbol,
         filhos: [
+          { id: "atoms", titulo: "atoms", icone: AtomIcon },
           { id: "control-room", titulo: "controlRoom", icone: BridgeIcon },
           { id: "navegador", titulo: "navegador", icone: NavigatorIcon },
           { id: "comms", titulo: "comms", icone: CommsIcon },
@@ -99,6 +102,7 @@ export const TELAS: Record<
   { titulo: ChaveNav; secao: ChaveNav; icone: IconeNav }
 > = {
   // Produtos Galaxie
+  atoms: { titulo: "atoms", secao: "galaxie", icone: AtomIcon },
   "control-room": { titulo: "controlRoom", secao: "galaxie", icone: BridgeIcon },
   navegador: { titulo: "navegador", secao: "galaxie", icone: NavigatorIcon },
   comms: { titulo: "comms", secao: "galaxie", icone: CommsIcon },

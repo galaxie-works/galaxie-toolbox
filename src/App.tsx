@@ -5,6 +5,7 @@ import { registrarHandlersGlobais } from "@/lib/log";
 import { LoginScreen } from "@/screens/login";
 import { SitesScreen } from "@/screens/sites";
 import { AppsScreen } from "@/screens/apps";
+import { AtomsScreen } from "@/screens/atoms";
 import { ControlRoomScreen } from "@/screens/control-room";
 import { NavegadorScreen } from "@/screens/navegador";
 import {
@@ -116,7 +117,10 @@ function AppInner() {
   >("checking");
   const [lockCheck, setLockCheck] = useState(0);
   const [cache, setCache] = useState<Identidade | null>(null);
-  const [tela, setTela] = useState<Tela>("control-room");
+  // #183 (Atoms): a nova tela inicial. O usuário cai no dashboard Atoms ao
+  // logar/restaurar; o Bridge segue keep-alive (montado/escondido) pra voltar
+  // instantâneo.
+  const [tela, setTela] = useState<Tela>("atoms");
   // Splash (#164): a animação tocou até o fim uma vez? Um dos dois gates da
   // revelação (o outro é `bootPronto`).
   const [videoPronto, setVideoPronto] = useState(false);
@@ -1026,6 +1030,13 @@ function AppInner() {
             existe area rolavel nenhuma. */
         <ScrollArea className="relative z-10 min-h-0 flex-1">
           <main className="flex flex-col p-4 pt-0">
+          {tela === "atoms" && (
+            <AtomsScreen
+              user={user}
+              onNavegar={setTela}
+              onAbrirUrl={abrirUrl}
+            />
+          )}
           {tela === "onedrive" && (
             <SitesScreen
               sites={sites}

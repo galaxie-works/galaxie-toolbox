@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { ShipWheelIcon } from "@/components/ui/ship-wheel";
 import { ShipIcon as ShipAnim } from "@/components/ui/ship";
+import { AtomIcon as AtomAnim } from "@/components/ui/atom";
 import { SatelliteDishIcon } from "@/components/ui/satellite-dish";
 import { BotMessageSquareIcon } from "@/components/ui/bot-message-square";
 
@@ -95,6 +96,11 @@ export function BridgeHeaderIcon({ className }: { className?: string }) {
 /** Navigator (navegador embutido) — nave (ship). */
 export function NavigatorIcon({ className }: { className?: string }) {
   return <IconeAnim Comp={ShipAnim as unknown as AnimIcon} className={className} />;
+}
+
+/** Atoms (home / dashboard) — átomo (elétrons orbitando no hover). */
+export function AtomIcon({ className }: { className?: string }) {
+  return <IconeAnim Comp={AtomAnim as unknown as AnimIcon} className={className} />;
 }
 
 /** Comms — antena parabólica (satellite-dish). */
