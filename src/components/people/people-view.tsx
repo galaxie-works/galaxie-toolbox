@@ -2439,9 +2439,6 @@ export function PeopleView({
   const peopleSelectedCategory = useAppStore(
     (state) => state.peopleSelectedCategory,
   );
-  const peopleSelectedDomain = useAppStore(
-    (state) => state.peopleSelectedDomain,
-  );
   const selectedGroupId = useAppStore(
     (state) => state.peopleSelectedGroupId,
   );
@@ -2493,13 +2490,6 @@ export function PeopleView({
     peopleTab === "category" && peopleSelectedCategory
       ? contacts.filter((c) => c.categories.includes(peopleSelectedCategory))
       : EMPTY_CONTACTS;
-  // #278 S4: aba "domain" filtra pelos contatos do domínio externo escolhido.
-  const domainContacts =
-    peopleTab === "domain" && peopleSelectedDomain
-      ? contacts.filter(
-          (c) => normalizeDomain(contactDomain(c) ?? "") === peopleSelectedDomain,
-        )
-      : EMPTY_CONTACTS;
   const visibleContacts =
     peopleTab === "groups"
       ? groupMembers
@@ -2507,9 +2497,7 @@ export function PeopleView({
         ? directory
         : peopleTab === "category"
           ? categoryContacts
-          : peopleTab === "domain"
-            ? domainContacts
-            : contacts;
+          : contacts;
   const activeGroup =
     groups.find((group) => group.id === selectedGroupId) ?? null;
   const groupMembersLoading =

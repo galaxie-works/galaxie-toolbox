@@ -679,8 +679,7 @@ const pt = {
     peopleDirectoryEmptyDesc:
       "O diretório do Microsoft 365 não retornou nenhuma pessoa.",
     peopleGroupsSection: "Grupos",
-    peopleCategoriesSection: "Categorias",
-    peopleOtherOrganizationsSection: "Outras organizações",
+    peopleCategoriesSection: "Categorias",
     peopleCategoriaAdd: "Categoria",
     peopleCategoriaBuscar: "Buscar ou criar…",
     peopleCategoriaVazio: "Nenhuma categoria.",
@@ -1829,8 +1828,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleDirectoryEmptyDesc:
       "The Microsoft 365 directory did not return any people.",
     peopleGroupsSection: "Groups",
-    peopleCategoriesSection: "Categories",
-    peopleOtherOrganizationsSection: "Other organizations",
+    peopleCategoriesSection: "Categories",
     peopleCategoriaAdd: "Category",
     peopleCategoriaBuscar: "Search or create…",
     peopleCategoriaVazio: "No categories.",
