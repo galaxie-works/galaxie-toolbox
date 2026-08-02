@@ -1,38 +1,23 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  Check,
   ChevronDown,
-  ChevronRight,
-  Download,
   Folder,
   FolderPlus,
   Globe,
-  Loader2,
-  Minus,
+  Link2,
   Pencil,
   Plus,
-  ShieldAlert,
   Star,
   Trash2,
-  Upload,
   X,
 } from "lucide-react";
 import {
-  importBrowserBookmarks,
-  type BookmarkNode,
-  type BrowserBookmarks,
-} from "@/lib/api";
-import {
   achatarLinks,
-  chaveNo,
   criarPasta,
   inserirFavorito,
-  linksDescendentes,
   novoFavoritoId,
-  parseBookmarksHtml,
   removerFavorito,
   renomearFavorito,
-  selecaoParaFavoritos,
   type Favorito,
 } from "@/lib/navigator-bookmarks";
 import { Button } from "@/components/ui/button";
@@ -50,7 +35,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -68,408 +52,54 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { preencher, useIdioma } from "@/lib/idioma";
+import { useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
-import {
-  useOcultarWebviewEnquantoAberto,
-  useRegistrarOverlayWebview,
-} from "@/lib/navigator-overlay";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Tree, TreeItem, TreeItemLabel } from "@/components/reui/tree";
-import { hotkeysCoreFeature, syncDataLoaderFeature } from "@headless-tree/core";
-import { useTree } from "@headless-tree/react";
-
-const ROTULO_NAVEGADOR: Record<string, string> = {
-  chrome: "Chrome",
-  edge: "Edge",
-};
-
-/** Dado de um item da árvore de importação para o headless-tree (@reui/tree). */
-interface ItemArvoreDado {
-  nome: string;
-  ehLink: boolean;
-  children: string[];
-}
-
-const RAIZ_ARVORE = "__raiz__";
+import { useOcultarWebviewEnquantoAberto } from "@/lib/navigator-overlay";
+import { useRegistrarOverlayWebview } from "@/lib/navigator-overlay";
 
 /**
- * Achata as origens (BrowserBookmarks) numa tabela de itens para o headless-tree:
- * cada origem vira uma pasta de topo; cada nó vira um item (id = chaveNo).
- * `linksPorId` guarda os links descendentes de cada item — base do tri-state e do
- * toggle de pasta. Assim reusamos o @reui/tree do registry, sem árvore custom.
+ * Favoritos do Navigator (#176, opção C — mínimo honesto).
+ *
+ * Gerenciamento manual, sem tocar no perfil do navegador (bloqueado por EDR e
+ * comportamento de infostealer): adicionar a aba ativa, **colar/adicionar uma
+ * URL** e **arrastar um link** pra barra, além de pastas/renomear/remover. O
+ * import automático de outros navegadores fica pra um épico à parte (ponte por
+ * extensão), fora daqui.
  */
-function montarArvore(
-  origens: BrowserBookmarks[],
-  rotuloOrigem: (o: BrowserBookmarks) => string,
-): {
-  itens: Record<string, ItemArvoreDado>;
-  expandir: string[];
-  linksPorId: Record<string, string[]>;
-} {
-  const itens: Record<string, ItemArvoreDado> = {};
-  const linksPorId: Record<string, string[]> = {};
-  const expandir: string[] = [];
-  const raizes: string[] = [];
 
-  const visitar = (origem: BrowserBookmarks, no: BookmarkNode): string => {
-    const id = chaveNo(origem, no);
-    if (no.url) {
-      itens[id] = { nome: no.nome || no.url, ehLink: true, children: [] };
-      linksPorId[id] = [id];
-      return id;
-    }
-    const filhos = no.filhos.map((f) => visitar(origem, f));
-    itens[id] = { nome: no.nome || "—", ehLink: false, children: filhos };
-    linksPorId[id] = filhos.flatMap((fid) => linksPorId[fid] ?? []);
-    return id;
-  };
-
-  for (const origem of origens) {
-    const origemId = `origem:${origem.navegador}:${origem.perfil}`;
-    const rootIds = origem.roots.map((raiz) => visitar(origem, raiz));
-    itens[origemId] = {
-      nome: rotuloOrigem(origem),
-      ehLink: false,
-      children: rootIds,
-    };
-    linksPorId[origemId] = rootIds.flatMap((rid) => linksPorId[rid] ?? []);
-    raizes.push(origemId);
-    expandir.push(origemId);
-    for (const rid of rootIds) if (!itens[rid].ehLink) expandir.push(rid);
+/** Normaliza uma entrada em URL http(s) válida (ou `null`). Prefixa https:// se
+ *  faltar esquema; exige um host com ponto pra descartar texto solto. */
+function normalizarUrl(entrada: string): string | null {
+  const limpo = entrada.trim();
+  if (!limpo) return null;
+  const comEsquema = /^https?:\/\//i.test(limpo) ? limpo : `https://${limpo}`;
+  try {
+    const u = new URL(comEsquema);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (!u.hostname.includes(".")) return null;
+    return u.toString();
+  } catch {
+    return null;
   }
-
-  itens[RAIZ_ARVORE] = { nome: "", ehLink: false, children: raizes };
-  linksPorId[RAIZ_ARVORE] = raizes.flatMap((r) => linksPorId[r] ?? []);
-  return { itens, expandir, linksPorId };
 }
 
-/**
- * Árvore de importação com o **@reui/tree** (headless-tree) — sem árvore custom
- * (#176 rework). A seleção tri-state por pasta/item vive fora, num Set de chaves
- * de link; a pasta reflete/alterna os links descendentes. A expansão é do próprio
- * headless-tree. Remonta (via `key` no pai) quando as origens trocam.
- */
-function ArvoreFavoritos({
-  origens,
-  selecionados,
-  onToggle,
-}: {
-  origens: BrowserBookmarks[];
-  selecionados: Set<string>;
-  onToggle: (chaves: string[], ligar: boolean) => void;
-}) {
-  const { t } = useIdioma();
-  const { itens, expandir, linksPorId } = useMemo(
-    () =>
-      montarArvore(origens, (o) =>
-        preencher(t.navegador.importarPerfil, {
-          navegador: ROTULO_NAVEGADOR[o.navegador] ?? o.navegador,
-          perfil: o.perfil,
-        }),
-      ),
-    [origens, t],
-  );
-
-  const tree = useTree<ItemArvoreDado>({
-    initialState: { expandedItems: expandir },
-    indent: 18,
-    rootItemId: RAIZ_ARVORE,
-    getItemName: (item) => item.getItemData().nome,
-    isItemFolder: (item) => !item.getItemData().ehLink,
-    dataLoader: {
-      getItem: (id) => itens[id],
-      getChildren: (id) => itens[id]?.children ?? [],
-    },
-    features: [syncDataLoaderFeature, hotkeysCoreFeature],
-  });
-
-  return (
-    <Tree indent={18} tree={tree} toggleIconType="chevron">
-      {tree.getItems().map((item) => {
-        const id = item.getId();
-        const dado = item.getItemData();
-        const links = linksPorId[id] ?? [];
-        const marcados = links.filter((l) => selecionados.has(l)).length;
-        const estado: boolean | "indeterminate" =
-          links.length > 0 && marcados === links.length
-            ? true
-            : marcados === 0
-              ? false
-              : "indeterminate";
-        return (
-          <TreeItem key={id} item={item} asChild>
-            <div>
-              <TreeItemLabel>
-                <span className="flex min-w-0 items-center gap-2">
-                  <Checkbox
-                    checked={estado}
-                    onCheckedChange={() => onToggle(links, estado !== true)}
-                    onClick={(event) => event.stopPropagation()}
-                    className="size-3.5 shrink-0"
-                    aria-label={dado.nome}
-                  />
-                  {dado.ehLink ? (
-                    <Globe className="size-4 shrink-0 text-muted-foreground" />
-                  ) : (
-                    <Folder className="size-4 shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="truncate">{dado.nome}</span>
-                </span>
-              </TreeItemLabel>
-            </div>
-          </TreeItem>
-        );
-      })}
-    </Tree>
-  );
+/** Nome padrão amigável a partir da URL (hostname sem www). */
+function nomeDeUrl(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "") || url;
+  } catch {
+    return url;
+  }
 }
 
-/**
- * Diálogo de importação: lê os favoritos do Chrome/Edge (Rust `std::fs`), mostra
- * a árvore com seleção tri-state por pasta/item, e ao aplicar converte a seleção
- * em `Favorito`s do app.
- */
-export function DialogImportarFavoritos({
-  aberto,
-  onFechar,
-  onAplicar,
-}: {
-  aberto: boolean;
-  onFechar: () => void;
-  onAplicar: (favoritos: Favorito[]) => void;
-}) {
-  const { t } = useIdioma();
-  // z-order (#275): esconde a webview enquanto o diálogo de import estiver aberto.
-  useOcultarWebviewEnquantoAberto(aberto);
-  const [carregando, setCarregando] = useState(false);
-  const [origens, setOrigens] = useState<BrowserBookmarks[]>([]);
-  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
-  // Diagnóstico da import automática (#176): navegadores detectados vs. com o
-  // acesso bloqueado (antivírus/EDR) — decide a mensagem honesta.
-  const [diag, setDiag] = useState<{ detectados: string[]; bloqueados: string[] }>({
-    detectados: [],
-    bloqueados: [],
-  });
-  const arquivoRef = useRef<HTMLInputElement>(null);
-
-  // Marca TODOS os links (o usuário veio importar — é mais rápido desmarcar). A
-  // expansão inicial fica com o headless-tree (@reui/tree). Reusado pela import
-  // automática e pela por arquivo.
-  const preSelecionarTudo = (dados: BrowserBookmarks[]) => {
-    const marcar = new Set<string>();
-    for (const origem of dados) {
-      for (const raiz of origem.roots) {
-        for (const chave of linksDescendentes(origem, raiz)) marcar.add(chave);
-      }
-    }
-    setSelecionados(marcar);
-  };
-
-  // Import por arquivo HTML (export do próprio navegador): destrava mesmo com a
-  // pasta de perfil bloqueada, sem tocar nela. Só favoritos, nunca credenciais.
-  const carregarArquivo = async (evento: React.ChangeEvent<HTMLInputElement>) => {
-    const arquivo = evento.target.files?.[0];
-    evento.target.value = ""; // permite reimportar o mesmo arquivo
-    if (!arquivo) return;
-    const texto = await arquivo.text();
-    const origem = parseBookmarksHtml(texto, arquivo.name);
-    setDiag({ detectados: [], bloqueados: [] });
-    setOrigens([origem]);
-    preSelecionarTudo([origem]);
-  };
-
-  // Carrega ao abrir; zera ao fechar. Por padrão expande as pastas de topo e
-  // deixa TUDO marcado (o usuário veio importar — é mais rápido desmarcar).
-  useEffect(() => {
-    if (!aberto) return;
-    let vivo = true;
-    setCarregando(true);
-    setOrigens([]);
-    setSelecionados(new Set());
-    setDiag({ detectados: [], bloqueados: [] });
-    importBrowserBookmarks()
-      .then((res) => {
-        if (!vivo) return;
-        setOrigens(res.navegadores);
-        setDiag({ detectados: res.detectados, bloqueados: res.bloqueados });
-        preSelecionarTudo(res.navegadores);
-      })
-      .catch(() => {
-        if (vivo) setOrigens([]);
-      })
-      .finally(() => {
-        if (vivo) setCarregando(false);
-      });
-    return () => {
-      vivo = false;
-    };
-  }, [aberto]);
-
-  const totalLinks = useMemo(
-    () =>
-      origens.reduce(
-        (soma, origem) =>
-          soma +
-          origem.roots.reduce(
-            (s, raiz) => s + linksDescendentes(origem, raiz).length,
-            0,
-          ),
-        0,
-      ),
-    [origens],
-  );
-
-  const alternarSelecao = (chaves: string[], ligar: boolean) => {
-    setSelecionados((prev) => {
-      const proximo = new Set(prev);
-      for (const chave of chaves) {
-        if (ligar) proximo.add(chave);
-        else proximo.delete(chave);
-      }
-      return proximo;
-    });
-  };
-
-  const selecionarTudo = () => {
-    const todos = new Set<string>();
-    for (const origem of origens) {
-      for (const raiz of origem.roots) {
-        for (const chave of linksDescendentes(origem, raiz)) todos.add(chave);
-      }
-    }
-    setSelecionados(todos);
-  };
-
-  const aplicar = () => {
-    const favoritos = selecaoParaFavoritos(origens, selecionados);
-    onAplicar(favoritos);
-    onFechar();
-  };
-
-  return (
-    <Dialog open={aberto} onOpenChange={(a) => !a && onFechar()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{t.navegador.importarTitulo}</DialogTitle>
-          <DialogDescription>{t.navegador.importarDescricao}</DialogDescription>
-        </DialogHeader>
-
-        {/* Import por arquivo HTML (export do próprio navegador) — sempre
-            disponível, e o único caminho quando a pasta de perfil está bloqueada. */}
-        <input
-          ref={arquivoRef}
-          type="file"
-          accept=".html,.htm,text/html"
-          className="hidden"
-          onChange={carregarArquivo}
-        />
-
-        {carregando ? (
-          <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
-            <Loader2 className="size-6 animate-spin opacity-60" />
-            <span className="text-sm">{t.navegador.importarCarregando}</span>
-          </div>
-        ) : origens.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-10 text-center text-muted-foreground">
-            {diag.bloqueados.length > 0 ? (
-              <ShieldAlert className="size-7 text-warning" />
-            ) : (
-              <Globe className="size-7 opacity-40" />
-            )}
-            <span className="max-w-xs text-sm">
-              {diag.bloqueados.length > 0
-                ? t.navegador.importarBloqueado
-                : diag.detectados.length > 0
-                  ? t.navegador.importarSemFavoritos
-                  : t.navegador.importarVazio}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={() => arquivoRef.current?.click()}
-            >
-              <Upload className="size-4" />
-              {t.navegador.importarArquivo}
-            </Button>
-            <span className="max-w-xs text-xs">
-              {t.navegador.importarArquivoDica}
-            </span>
-          </div>
-        ) : (
-          <>
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-muted-foreground">
-                {preencher(t.navegador.importarContagem, {
-                  n: selecionados.size,
-                  total: totalLinks,
-                })}
-              </span>
-              <div className="flex gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={selecionarTudo}
-                >
-                  {t.navegador.importarSelecionarTudo}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setSelecionados(new Set())}
-                >
-                  {t.navegador.importarLimpar}
-                </Button>
-              </div>
-            </div>
-            <div className="scrollbar-fina max-h-[46vh] overflow-y-auto rounded-md border border-border p-2">
-              <ArvoreFavoritos
-                key={origens
-                  .map((o) => `${o.navegador}:${o.perfil}`)
-                  .join("|")}
-                origens={origens}
-                selecionados={selecionados}
-                onToggle={alternarSelecao}
-              />
-            </div>
-          </>
-        )}
-
-        <DialogFooter className="gap-2 sm:justify-between">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="gap-2"
-            onClick={() => arquivoRef.current?.click()}
-          >
-            <Upload className="size-4" />
-            {t.navegador.importarArquivo}
-          </Button>
-          <div className="flex gap-2">
-          <DialogClose asChild>
-            <Button type="button" variant="outline">
-              {t.navegador.favCancelar}
-            </Button>
-          </DialogClose>
-          <Button
-            type="button"
-            onClick={aplicar}
-            disabled={selecionados.size === 0}
-          >
-            {selecionados.size > 0
-              ? preencher(t.navegador.importarAplicar, { n: selecionados.size })
-              : t.navegador.importarNada}
-          </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
+/** Extrai a primeira URL válida de um evento de drop (uri-list ou texto). */
+function urlDoDrop(dt: DataTransfer): string | null {
+  const bruto = dt.getData("text/uri-list") || dt.getData("text/plain") || "";
+  const linha = bruto
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .find((s) => s && !s.startsWith("#"));
+  return linha ? normalizarUrl(linha) : null;
 }
 
 /** Itens de um menu de pasta (recursivo): link abre, subpasta abre submenu. */
@@ -534,8 +164,9 @@ function ItensPasta({
 
 /**
  * Barra de favoritos do Navigator: abre rápido os links salvos e concentra o
- * gerenciamento (adicionar da aba ativa, nova pasta, importar, renomear,
- * remover). Estado dos favoritos vem por prop; as mudanças sobem por `onMudar`.
+ * gerenciamento (adicionar da aba ativa, adicionar/colar URL, nova pasta,
+ * renomear, remover). Aceita arrastar um link pra cima da barra. Estado dos
+ * favoritos vem por prop; as mudanças sobem por `onMudar`.
  */
 export function BarraFavoritos({
   favoritos,
@@ -550,8 +181,9 @@ export function BarraFavoritos({
 }) {
   const { t } = useIdioma();
   const registrarOverlayWebview = useRegistrarOverlayWebview();
-  const [importar, setImportar] = useState(false);
+  const [urlAberto, setUrlAberto] = useState(false);
   const [renomeando, setRenomeando] = useState<Favorito | null>(null);
+  const [arrastando, setArrastando] = useState(false);
 
   const podeAdicionarAba = Boolean(abaAtiva && /^https?:\/\//i.test(abaAtiva.url));
 
@@ -567,21 +199,55 @@ export function BarraFavoritos({
     );
   };
 
+  const adicionarUrl = (url: string, nome: string) => {
+    onMudar(
+      inserirFavorito(favoritos, {
+        id: novoFavoritoId(),
+        tipo: "link",
+        nome: nome || nomeDeUrl(url),
+        url,
+      }),
+    );
+  };
+
   const novaPasta = () => {
-    const { favoritos: proximo } = criarPasta(favoritos, t.navegador.favPastaNomePadrao);
+    const { favoritos: proximo } = criarPasta(
+      favoritos,
+      t.navegador.favPastaNomePadrao,
+    );
     onMudar(proximo);
   };
 
-  const aplicarImportacao = (importados: Favorito[]) => {
-    if (importados.length === 0) return;
-    onMudar([...favoritos, ...importados]);
+  // Drag-and-drop de um link (do próprio app, de outra aba/DOM ou de fora) pra
+  // dentro da barra — só reage quando o arrasto carrega URL/texto.
+  const aoArrastarSobre = (event: React.DragEvent) => {
+    if (
+      Array.from(event.dataTransfer.types).some(
+        (tipo) => tipo === "text/uri-list" || tipo === "text/plain",
+      )
+    ) {
+      event.preventDefault();
+      setArrastando(true);
+    }
+  };
+  const aoSoltar = (event: React.DragEvent) => {
+    event.preventDefault();
+    setArrastando(false);
+    const url = urlDoDrop(event.dataTransfer);
+    if (url) adicionarUrl(url, nomeDeUrl(url));
   };
 
   return (
     <div
-      className="flex items-center gap-0.5 border-b border-border px-1.5 py-1"
+      className={cn(
+        "flex items-center gap-0.5 border-b border-border px-1.5 py-1",
+        arrastando && "ring-2 ring-inset ring-primary/60",
+      )}
       role="toolbar"
       aria-label={t.navegador.favoritosBarra}
+      onDragOver={aoArrastarSobre}
+      onDragLeave={() => setArrastando(false)}
+      onDrop={aoSoltar}
     >
       {/* Menu de gerenciamento (estrela). */}
       <DropdownMenu onOpenChange={registrarOverlayWebview}>
@@ -608,14 +274,13 @@ export function BarraFavoritos({
             <Plus className="size-4" />
             {t.navegador.favAdicionarAba}
           </DropdownMenuItem>
+          <DropdownMenuItem className="gap-2" onSelect={() => setUrlAberto(true)}>
+            <Link2 className="size-4" />
+            {t.navegador.favAdicionarUrl}
+          </DropdownMenuItem>
           <DropdownMenuItem className="gap-2" onSelect={novaPasta}>
             <FolderPlus className="size-4" />
             {t.navegador.favNovaPasta}
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem className="gap-2" onSelect={() => setImportar(true)}>
-            <Download className="size-4" />
-            {t.navegador.favImportar}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -623,10 +288,10 @@ export function BarraFavoritos({
       {favoritos.length === 0 ? (
         <button
           type="button"
-          onClick={() => setImportar(true)}
+          onClick={() => setUrlAberto(true)}
           className="ml-1 truncate rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground"
         >
-          {t.navegador.favImportarDica}
+          {arrastando ? t.navegador.favSoltarUrl : t.navegador.favVazioDica}
         </button>
       ) : (
         <div className="scrollbar-fina flex min-w-0 items-center gap-0.5 overflow-x-auto">
@@ -650,7 +315,9 @@ export function BarraFavoritos({
                         <ItensPasta
                           itens={fav.filhos ?? []}
                           onAbrir={(f) => f.url && onNavegar(f.url, f.nome)}
-                          onRemover={(id) => onMudar(removerFavorito(favoritos, id))}
+                          onRemover={(id) =>
+                            onMudar(removerFavorito(favoritos, id))
+                          }
                           rotuloRemover={t.navegador.favRemover}
                         />
                       </DropdownMenuContent>
@@ -707,7 +374,10 @@ export function BarraFavoritos({
                     <ContextMenuSeparator />
                   </>
                 )}
-                <ContextMenuItem className="gap-2" onClick={() => setRenomeando(fav)}>
+                <ContextMenuItem
+                  className="gap-2"
+                  onClick={() => setRenomeando(fav)}
+                >
                   <Pencil className="size-4" />
                   {t.navegador.favRenomear}
                 </ContextMenuItem>
@@ -725,10 +395,10 @@ export function BarraFavoritos({
         </div>
       )}
 
-      <DialogImportarFavoritos
-        aberto={importar}
-        onFechar={() => setImportar(false)}
-        onAplicar={aplicarImportacao}
+      <DialogAdicionarUrl
+        aberto={urlAberto}
+        onFechar={() => setUrlAberto(false)}
+        onAdicionar={adicionarUrl}
       />
 
       <DialogRenomearFavorito
@@ -737,6 +407,109 @@ export function BarraFavoritos({
         onRenomear={(id, nome) => onMudar(renomearFavorito(favoritos, id, nome))}
       />
     </div>
+  );
+}
+
+/** Diálogo de adicionar URL (alvo de "colar"): prefill best-effort da área de
+ *  transferência, valida http(s) e salva com nome opcional. */
+function DialogAdicionarUrl({
+  aberto,
+  onFechar,
+  onAdicionar,
+}: {
+  aberto: boolean;
+  onFechar: () => void;
+  onAdicionar: (url: string, nome: string) => void;
+}) {
+  const { t } = useIdioma();
+  // z-order (#275): esconde a webview enquanto o diálogo estiver aberto.
+  useOcultarWebviewEnquantoAberto(aberto);
+  const [url, setUrl] = useState("");
+  const [nome, setNome] = useState("");
+
+  useEffect(() => {
+    if (!aberto) return;
+    setUrl("");
+    setNome("");
+    let vivo = true;
+    // Best-effort: se a área de transferência já tem uma URL, pré-preenche
+    // (o "colar" fica a um Enter). Ignora erro/permissão silenciosamente.
+    navigator.clipboard
+      ?.readText?.()
+      .then((texto) => {
+        if (!vivo) return;
+        const norm = texto ? normalizarUrl(texto) : null;
+        if (norm) setUrl(norm);
+      })
+      .catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, [aberto]);
+
+  const norm = normalizarUrl(url);
+  const salvar = () => {
+    if (!norm) return;
+    onAdicionar(norm, nome.trim());
+    onFechar();
+  };
+
+  return (
+    <Dialog open={aberto} onOpenChange={(a) => !a && onFechar()}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader>
+          <DialogTitle>{t.navegador.favUrlTitulo}</DialogTitle>
+          <DialogDescription>{t.navegador.favUrlDescricao}</DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="fav-url" className="text-sm font-medium">
+              {t.navegador.favUrlLabel}
+            </label>
+            <Input
+              id="fav-url"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  salvar();
+                }
+              }}
+              placeholder={t.navegador.favUrlPlaceholder}
+              autoFocus
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="fav-url-nome" className="text-sm font-medium">
+              {t.navegador.favUrlNomeLabel}
+            </label>
+            <Input
+              id="fav-url-nome"
+              value={nome}
+              onChange={(event) => setNome(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  salvar();
+                }
+              }}
+              placeholder={norm ? nomeDeUrl(norm) : ""}
+            />
+          </div>
+        </div>
+        <DialogFooter className="gap-2">
+          <DialogClose asChild>
+            <Button type="button" variant="outline">
+              {t.navegador.favCancelar}
+            </Button>
+          </DialogClose>
+          <Button type="button" onClick={salvar} disabled={!norm}>
+            {t.navegador.favAdicionar}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
