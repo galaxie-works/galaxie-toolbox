@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { motion, type Transition } from "motion/react";
+import { motion, useReducedMotion, type Transition } from "motion/react";
 import {
   CalendarClock,
   CalendarDays,
@@ -359,7 +359,7 @@ export function AtomsScreen({
           )}
         >
           {visiveis.map((id) => (
-            <SortableItem key={id} value={id} className="relative">
+            <SortableItem key={id} value={id} className="group/atom relative">
               {/* Alça de arraste discreta (canto), pra não roubar o clique do card. */}
               <SortableItemHandle
                 aria-label={t.atoms.reordenar}
@@ -367,7 +367,7 @@ export function AtomsScreen({
               >
                 <Grip className="size-3.5" />
               </SortableItemHandle>
-              <div className="group/atom h-full">{renderWidget(id)}</div>
+              <div className="h-full">{renderWidget(id)}</div>
             </SortableItem>
           ))}
         </Sortable>
@@ -439,6 +439,10 @@ function FeedAtencao({
   t: Dic;
   onNavegar: (tela: Tela) => void;
 }) {
+  // #187 self-QA: respeita prefers-reduced-motion no layout animation do feed
+  // (o ranking recompõe a cada 60s; sem isto as linhas deslizariam mesmo com
+  // reduced-motion). O SoftBlurIn/starfield já respeitam por conta própria.
+  const reduzirMovimento = useReducedMotion();
   // O score depende do "agora" — recalcula em intervalo leve + ao voltar o foco
   // (barato: aritmética sobre dados já buscados, sem chamada Graph nova).
   const [tick, setTick] = useState(0);
@@ -557,8 +561,12 @@ function FeedAtencao({
           return (
             <motion.li
               key={item.id}
-              layout
-              transition={{ type: "spring", stiffness: 300, damping: 26 }}
+              layout={!reduzirMovimento}
+              transition={
+                reduzirMovimento
+                  ? { duration: 0 }
+                  : { type: "spring", stiffness: 300, damping: 26 }
+              }
             >
               {item.acao ? (
                 <button
