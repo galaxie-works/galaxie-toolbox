@@ -3,9 +3,11 @@ import { motion, type Transition } from "motion/react";
 import {
   CalendarClock,
   CalendarDays,
+  CloudOff,
   Flag,
   ListTodo,
   Mail,
+  MessageSquare,
   RefreshCw,
   Sparkles,
   Video,
@@ -91,6 +93,10 @@ export function AtomsScreen({
     }>
   >({ fase: "carregando" });
   const [todos, setTodos] = useState<Estado<Tarefa[]>>({ fase: "carregando" });
+  // #186 (S4): sonda local do OneDrive + gate do Teams. Silenciosos: só
+  // aparecem quando há problema (OneDrive) ou como affordance gated (Teams).
+  const [onedrive, setOnedrive] = useState<api.OneDriveSync | null>(null);
+  const [teamsOk, setTeamsOk] = useState<boolean | null>(null);
 
   const carregarAgenda = useCallback(async () => {
     setAgenda({ fase: "carregando" });
@@ -137,6 +143,9 @@ export function AtomsScreen({
     void carregarAgenda();
     void carregarEmail();
     void carregarTodos();
+    // #186: fontes duras — best-effort, não bloqueiam o dashboard.
+    void api.atomsOnedriveSync().then(setOnedrive).catch(() => setOnedrive(null));
+    void api.crTeamsDisponivel().then(setTeamsOk).catch(() => setTeamsOk(false));
   }, [carregarAgenda, carregarEmail, carregarTodos]);
 
   // Remove uma tarefa da lista após concluí-la (otimista; o widget faz o write).
@@ -217,6 +226,12 @@ export function AtomsScreen({
             onRetry={() => void carregarTodos()}
             onConcluida={removerTarefa}
           />
+          {/* #186 S4: OneDrive só aparece quando há problema (não finge verde). */}
+          {onedrive?.estado === "pausado" && (
+            <OneDriveWidget t={t} />
+          )}
+          {/* #186 S4: Teams gated — só o affordance de conectar quando sem escopo. */}
+          {teamsOk === false && <TeamsWidget t={t} />}
         </div>
         </div>
       )}
@@ -790,6 +805,56 @@ function TodosWidget({
         </FrameTitle>
       </FrameHeader>
       <FramePanel>{corpo()}</FramePanel>
+    </Frame>
+  );
+}
+
+/**
+ * #186 S4: card do OneDrive — só renderizado quando a sonda local acusa
+ * PROBLEMA (estado "pausado": cliente fora do ar). Nunca finge verde.
+ */
+function OneDriveWidget({ t }: { t: Dic }) {
+  return (
+    <Frame className="w-full">
+      <FrameHeader>
+        <FrameTitle className="flex items-center gap-2">
+          <CloudOff className="size-4 text-muted-foreground" />
+          {t.atoms.odTitulo}
+        </FrameTitle>
+      </FrameHeader>
+      <FramePanel>
+        <Alert variant="warning">
+          <AlertTitle>{t.atoms.odPausado}</AlertTitle>
+          <AlertDescription>{t.atoms.odPausadoDesc}</AlertDescription>
+        </Alert>
+      </FramePanel>
+    </Frame>
+  );
+}
+
+/**
+ * #186 S4: card do Teams — GATED por escopo (Chat.Read). Sem o escopo, mostra só
+ * o affordance de conectar (consent explícito é responsabilidade do fluxo de
+ * login/settings); nunca dispara consent silencioso nem quebra. A leitura real
+ * de /me/chats entra quando o Chat.Read for concedido + entrar no SCOPES.
+ */
+function TeamsWidget({ t }: { t: Dic }) {
+  return (
+    <Frame className="w-full">
+      <FrameHeader>
+        <FrameTitle className="flex items-center gap-2">
+          <MessageSquare className="size-4 text-muted-foreground" />
+          {t.atoms.teamsTitulo}
+        </FrameTitle>
+      </FrameHeader>
+      <FramePanel>
+        <div className="flex flex-col items-center gap-2 py-6 text-center">
+          <IconStack>
+            <MessageSquare className="size-5 text-muted-foreground" />
+          </IconStack>
+          <p className="text-sm text-muted-foreground">{t.atoms.teamsGatedDesc}</p>
+        </div>
+      </FramePanel>
     </Frame>
   );
 }

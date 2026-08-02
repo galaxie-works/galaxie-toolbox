@@ -6,6 +6,7 @@ mod estado;
 mod favicon;
 mod graph;
 mod lock_screen;
+mod onedrive;
 mod system;
 mod telemetry;
 
@@ -660,6 +661,23 @@ async fn cr_people_write_available(state: State<'_, Store>) -> Result<bool, Stri
     tauri::async_runtime::spawn_blocking(move || graph::cr_people_write_available(&store))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// #186 (Atoms S4): Chat.Read presente? Gate do widget de chats do Teams.
+#[tauri::command]
+async fn cr_teams_disponivel(state: State<'_, Store>) -> Result<bool, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_teams_disponivel(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// #186 (Atoms S4): sonda LOCAL do sync do OneDrive (registry + processo).
+#[tauri::command]
+async fn atoms_onedrive_sync() -> onedrive::OneDriveSync {
+    tauri::async_runtime::spawn_blocking(onedrive::sondar)
+        .await
+        .unwrap_or_else(|_| onedrive::sondar())
 }
 
 #[tauri::command]
@@ -1610,6 +1628,8 @@ pub fn run() {
             cr_people_enrich_preview,
             cr_people_enrich_apply,
             cr_people_write_available,
+            cr_teams_disponivel,
+            atoms_onedrive_sync,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,
