@@ -37,6 +37,7 @@ type PeopleApi = Pick<
   | "crPeopleContactUpdate"
   | "crPeopleContactCreate"
   | "crPeopleContactDelete"
+  | "crCategorias"
 >;
 
 /** Fases da execução do merge (#379), na ordem segura do #376. */
@@ -209,6 +210,7 @@ function personFromSuggestion(person: Pessoa): PeopleContact {
     organization: source === "directory",
     frequent: false,
     sources: [source],
+    categories: [],
   };
 }
 
@@ -253,6 +255,10 @@ export interface PeopleSlice {
   peopleGroupMembersError: string | null;
   peopleMergeRunning: boolean;
   peopleMergeUndo: PeopleMergeUndoState | null;
+  /** #406: categorias do Outlook (nome→cor hex), hidratadas no login. */
+  peopleCategorias: Map<string, string>;
+  /** #406: categoria selecionada no sidebar (filtra a grid). */
+  peopleSelectedCategory: string | null;
 
   loadPeople: () => Promise<void>;
   loadMorePeople: () => Promise<void>;
@@ -270,6 +276,10 @@ export interface PeopleSlice {
   selectPeopleDirectory: (id?: string | null) => void;
   loadPeopleGroups: () => Promise<void>;
   selectPeopleGroup: (groupId: string) => Promise<void>;
+  /** #406: seleciona uma categoria no sidebar (filtra a grid por ela). */
+  selectPeopleCategory: (nome: string) => void;
+  /** #406: (re)carrega as categorias do Outlook (masterCategories). */
+  carregarCategoriasPeople: () => Promise<void>;
   autoEnrichDirectoryContact: (
     id: string,
     sameOrganization: boolean,
@@ -356,6 +366,8 @@ export function criarPeopleSlice(
   peopleGroupMembersError: null,
   peopleMergeRunning: false,
   peopleMergeUndo: null,
+  peopleCategorias: new Map(),
+  peopleSelectedCategory: null,
 
   loadPeople: async () => {
     const generation = get().peopleRequestGeneration + 1;
@@ -566,11 +578,12 @@ export function criarPeopleSlice(
         : {}),
     });
 
-    const [organizationResult, directoryResult, groupsResult] =
+    const [organizationResult, directoryResult, groupsResult, categoriasResult] =
       await Promise.allSettled([
         client.crPeopleOrganization(),
         client.crPeopleDirectory(),
         client.crPeopleGroups(),
+        client.crCategorias(),
       ]);
     if (
       get().peopleM365Generation !== generation ||
@@ -622,6 +635,12 @@ export function criarPeopleSlice(
             groupsResult.value.missingScopes,
           )
         : String(groupsResult.reason);
+    // #406: categorias do Outlook (masterCategories) — best-effort; falha não
+    // vira erro visível (cores são secundárias). Mantém as atuais se falhar.
+    const categorias =
+      categoriasResult.status === "fulfilled"
+        ? new Map(categoriasResult.value.map((c) => [c.nome, c.cor]))
+        : get().peopleCategorias;
     const errors = [
       organizationError,
       directoryError,
@@ -642,6 +661,7 @@ export function criarPeopleSlice(
       peopleDirectoryLoaded: true,
       peopleDirectoryError: directoryError,
       peopleDirectoryMissingScopes: directoryMissingScopes,
+      peopleCategorias: categorias,
       peopleGroups: groups,
       peopleGroupsLoading: false,
       peopleGroupsLoaded: true,
@@ -697,6 +717,24 @@ export function criarPeopleSlice(
       peopleSelectedGroupId: null,
       peopleGroupMembersError: null,
     });
+  },
+  // #406: filtra a grid pela categoria escolhida no sidebar.
+  selectPeopleCategory: (nome) => {
+    get().setPeopleTab("category");
+    set({
+      peopleSelectedCategory: nome,
+      peopleSelectedId: null,
+      peopleSelectedGroupId: null,
+    });
+  },
+  // #406: (re)carrega as categorias do Outlook (masterCategories). Best-effort.
+  carregarCategoriasPeople: async () => {
+    try {
+      const cats = await client.crCategorias();
+      set({ peopleCategorias: new Map(cats.map((c) => [c.nome, c.cor])) });
+    } catch {
+      // cores são secundárias; a seção degrada sem cor.
+    }
   },
   loadPeopleGroups: async () => {
     const {

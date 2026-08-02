@@ -32,6 +32,8 @@ export interface PeopleContact {
   frequent: boolean;
   peopleRank?: number | null;
   sources: PeopleEnrichSource[];
+  /** Categorias do Outlook (#406). Só contatos (`contacts`) têm; outros = []. */
+  categories: string[];
 }
 
 function keyEmail(value: string): string {
@@ -88,6 +90,7 @@ function fromRecord(record: PeopleRecord): PeopleContact {
       record.peopleRank < 10,
     peopleRank: record.peopleRank,
     sources: [record.source],
+    categories: record.categories ?? [],
   };
 }
 
@@ -131,6 +134,12 @@ export function mergePeopleRecords(records: PeopleRecord[]): PeopleContact[] {
       if (!existing.manager && contact.manager) {
         existing.manager = contact.manager;
         existing.managerSource = contact.managerSource;
+      }
+      // #406: une as categorias do Outlook (só contatos as têm).
+      if (contact.categories.length) {
+        existing.categories = Array.from(
+          new Set([...existing.categories, ...contact.categories]),
+        );
       }
       for (const email of existing.emails) byEmail.set(keyEmail(email.address), existing);
       continue;

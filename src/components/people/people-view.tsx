@@ -2002,6 +2002,9 @@ export function PeopleView({
     (state) => state.setPeopleColumnVisibility,
   );
   const peopleTab = useAppStore((state) => state.peopleTab);
+  const peopleSelectedCategory = useAppStore(
+    (state) => state.peopleSelectedCategory,
+  );
   const selectedGroupId = useAppStore(
     (state) => state.peopleSelectedGroupId,
   );
@@ -2048,12 +2051,19 @@ export function PeopleView({
     selectedGroupId == null
       ? EMPTY_CONTACTS
       : (groupMembersById[selectedGroupId] ?? EMPTY_CONTACTS);
+  // #406: aba "category" filtra os contatos pessoais pela categoria escolhida.
+  const categoryContacts =
+    peopleTab === "category" && peopleSelectedCategory
+      ? contacts.filter((c) => c.categories.includes(peopleSelectedCategory))
+      : EMPTY_CONTACTS;
   const visibleContacts =
     peopleTab === "groups"
       ? groupMembers
       : peopleTab === "directory"
         ? directory
-        : contacts;
+        : peopleTab === "category"
+          ? categoryContacts
+          : contacts;
   const activeGroup =
     groups.find((group) => group.id === selectedGroupId) ?? null;
   const groupMembersLoading =
