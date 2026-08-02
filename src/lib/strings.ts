@@ -1072,6 +1072,8 @@ const pt = {
     // Pré-visualização de anexos (#188)
     previewTitulo: "Pré-visualização: {nome}",
     previewSalvar: "Salvar",
+    previewCtxVer: "Pré-visualizar",
+    previewAbrirWindows: "Abrir no Windows",
     previewFechar: "Fechar",
     previewErro: "Não foi possível ler o arquivo",
     previewNaoSuportado: "Não dá pra pré-visualizar aqui",
@@ -2286,6 +2288,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Attachment preview (#188)
     previewTitulo: "Preview: {nome}",
     previewSalvar: "Save",
+    previewCtxVer: "Preview",
+    previewAbrirWindows: "Open in Windows",
     previewFechar: "Close",
     previewErro: "Couldn't read the file",
     previewNaoSuportado: "Can't preview this here",
