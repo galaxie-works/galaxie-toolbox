@@ -67,6 +67,24 @@ test("pptx pelo sufixo do nome (Path C, #190)", () => {
   assert.equal(classificarAnexo(anexo({ nome: "deck.PPTX" })), "pptx");
 });
 
+test("imagem por contentType e sufixo; svg incluso (#450)", () => {
+  assert.equal(
+    classificarAnexo(anexo({ nome: "x", contentType: "image/png" })),
+    "imagem"
+  );
+  assert.equal(classificarAnexo(anexo({ nome: "foto.JPG" })), "imagem");
+  assert.equal(classificarAnexo(anexo({ nome: "logo.svg" })), "imagem");
+  assert.equal(classificarAnexo(anexo({ nome: "anim.gif" })), "imagem");
+});
+
+test("tiff NÃO é imagem previsível (cai em nao-suportado) (#450)", () => {
+  assert.equal(classificarAnexo(anexo({ nome: "scan.tiff" })), "nao-suportado");
+  assert.equal(
+    classificarAnexo(anexo({ nome: "x", contentType: "image/tiff" })),
+    "nao-suportado"
+  );
+});
+
 test("formato fora do escopo → nao-suportado", () => {
   assert.equal(classificarAnexo(anexo({ nome: "arquivo.msg" })), "nao-suportado");
   assert.equal(classificarAnexo(anexo({ nome: "pacote.zip" })), "nao-suportado");

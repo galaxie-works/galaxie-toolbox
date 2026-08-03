@@ -39,7 +39,12 @@ import { preencher, useIdioma } from "@/lib/idioma";
 import { carregarPdf, renderizarPagina } from "@/lib/pdf-preview";
 import { renderXlsxParaHtml } from "@/lib/xlsx-render";
 import type { AnexoEmail } from "@/lib/types";
-import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/reui/alert";
 import { IconTile } from "@/components/reui/icon-tile";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -92,9 +97,13 @@ export function PreviewAnexo({
   const [txt, setTxt] = useState<string | null>(null);
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
   const [xlsxHtml, setXlsxHtml] = useState<string | null>(null);
+  const [imgUrl, setImgUrl] = useState<string | null>(null);
+  // Contador de tentativas: o botão "Tentar de novo" incrementa → re-busca (#450).
+  const [tentativa, setTentativa] = useState(0);
 
   // Busca e decodifica os bytes uma vez (a menos que seja não-suportado/grande).
   // `usarPathC` nas deps: alternar alta fidelidade re-busca (converte no OneDrive).
+  // `tentativa` nas deps: retry após erro sem trocar de anexo.
   useEffect(() => {
     if (tipo === "nao-suportado" || grande) {
       setCarregando(false);
@@ -102,9 +111,11 @@ export function PreviewAnexo({
     }
     let vivo = true;
     let doc: PDFDocumentProxy | null = null;
+    let objUrl: string | null = null;
     setCarregando(true);
     setErro(null);
     setPdf(null); // limpa render anterior ao trocar de modo (client ↔ Path C)
+    setImgUrl(null);
     (async () => {
       try {
         if (usarPathC) {
@@ -125,6 +136,15 @@ export function PreviewAnexo({
         } else if (tipo === "xlsx") {
           const html = await renderXlsxParaHtml(bytes);
           if (vivo) setXlsxHtml(html);
+        } else if (tipo === "imagem") {
+          // Object URL do blob (não data URL gigante). SVG entra como `<img>`,
+          // que roda a imagem em "modo imagem" — scripts embutidos NÃO executam.
+          const blob = new Blob([bytes as BlobPart], {
+            type: conteudo.contentType || anexo.contentType || "image/*",
+          });
+          objUrl = URL.createObjectURL(blob);
+          if (vivo) setImgUrl(objUrl);
+          else URL.revokeObjectURL(objUrl);
         } else {
           doc = await carregarPdf(bytes);
           if (vivo) setPdf(doc);
@@ -139,8 +159,9 @@ export function PreviewAnexo({
     return () => {
       vivo = false;
       if (doc) void doc.loadingTask.destroy();
+      if (objUrl) URL.revokeObjectURL(objUrl);
     };
-  }, [messageId, anexo.id, mailbox, tipo, grande, usarPathC]);
+  }, [messageId, anexo.id, mailbox, tipo, grande, usarPathC, tentativa, anexo.contentType]);
 
   return (
     <div
@@ -218,6 +239,15 @@ export function PreviewAnexo({
               <FileWarning className="size-4" />
               <AlertTitle>{tp.previewErro}</AlertTitle>
               <AlertDescription>{erro}</AlertDescription>
+              <AlertAction>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setTentativa((n) => n + 1)}
+                >
+                  <RotateCcw className="size-3.5" /> {tp.previewTentarNovo}
+                </Button>
+              </AlertAction>
             </Alert>
           </div>
         ) : usarPathC ? (
@@ -246,8 +276,71 @@ export function PreviewAnexo({
             rotulo={anexo.nome}
             vazioTexto={tp.previewVazio}
           />
+        ) : tipo === "imagem" && imgUrl ? (
+          <ImagemViewer url={imgUrl} rotulo={anexo.nome} tp={tp} />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** Imagem: `<img>` com fit-to-frame + zoom. SVG entra por src (modo imagem →
+ *  script embutido não executa); nunca injetamos o markup inline no DOM (#450). */
+function ImagemViewer({
+  url,
+  rotulo,
+  tp,
+}: {
+  url: string;
+  rotulo: string;
+  tp: ReturnType<typeof useIdioma>["t"]["controlRoom"];
+}) {
+  const [escala, setEscala] = useState(1);
+  const ajustarZoom = (delta: number) =>
+    setEscala((e) => Math.min(5, Math.max(0.25, +(e + delta).toFixed(2))));
+
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center gap-1 border-b px-2 py-1">
+        <div className="flex-1" />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={() => ajustarZoom(-0.25)}
+          aria-label={tp.previewMenosZoom}
+        >
+          <ZoomOut className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={() => setEscala(1)}
+          aria-label={tp.previewZoomReset}
+        >
+          <RotateCcw className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={() => ajustarZoom(0.25)}
+          aria-label={tp.previewMaisZoom}
+        >
+          <ZoomIn className="size-4" />
+        </Button>
+      </div>
+      <ScrollArea className="h-96 w-full bg-muted/20">
+        <div className="flex min-h-full items-center justify-center p-3">
+          <img
+            src={url}
+            alt={rotulo}
+            className="max-h-full max-w-full object-contain shadow-sm"
+            style={{ transform: `scale(${escala})`, transformOrigin: "center" }}
+          />
+        </div>
+      </ScrollArea>
     </div>
   );
 }
