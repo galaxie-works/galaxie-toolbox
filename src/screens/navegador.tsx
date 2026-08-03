@@ -304,7 +304,15 @@ function ConteudoPaleta({
   // a flakiness do autoFocus HTML em remount.
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (autoFocus) inputRef.current?.focus();
+    if (!autoFocus) return;
+    // rAF: foca DEPOIS do paint — robusto contra a webview-hide/remount roubando
+    // o foco na mesma tick (a corrida que deixava o input sem foco). O foco por
+    // MONTAGEM cobre a regressão do #454: o Launcher é remontado a cada nova aba
+    // (via `key` no NavegadorScreen), então este efeito re-dispara e o command
+    // recebe foco mesmo quando já estávamos na aba vazia (sem esse remount,
+    // `setAbaAtiva(null)` era no-op e o clique no "+" deixava o foco no botão).
+    const raf = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => cancelAnimationFrame(raf);
   }, [autoFocus]);
 
   // "Mais acessados" REAL: contagem derivada do historico (spec §8.3). Sem
@@ -782,9 +790,13 @@ export function NavegadorScreen({
   onLimparHistorico,
   modoPrivado,
   onAlternarModoPrivado,
+  launcherNonce,
 }: {
   abas: AbaBrowser[];
   ativa: string | null;
+  /** #454: muda a cada nova aba — usado como `key` do Launcher pra remontá-lo e
+   * re-focar o command mesmo quando já estávamos na aba vazia. */
+  launcherNonce: number;
   onTrocar: (id: string) => void;
   onFechar: (id: string) => void;
   onFecharOutras: (id: string) => void;
@@ -1807,7 +1819,13 @@ export function NavegadorScreen({
               <Plus className="size-4" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
+          <DropdownMenuContent
+            align="start"
+            // #454: ao fechar, o Radix devolve o foco ao trigger ("+") — o que
+            // roubava o foco do command da aba nova. Prevenimos o auto-focus e
+            // deixamos o `galaxie:foco-launcher` (de `abrirAbaVazia`) focar o input.
+            onCloseAutoFocus={(e) => e.preventDefault()}
+          >
             <DropdownMenuItem className="gap-2" onSelect={onNovaAba}>
               <Plus className="size-4" />
               {t.navegador.novaAba}
@@ -1928,6 +1946,7 @@ export function NavegadorScreen({
         {ativa === null ? (
         <div className="flex-1 overflow-hidden">
           <Launcher
+            key={launcherNonce}
             abas={abas}
             ativa={ativa}
             favoritos={favoritos}
