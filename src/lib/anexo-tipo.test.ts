@@ -46,6 +46,19 @@ test("TXT pelo sufixo do nome", () => {
   assert.equal(classificarAnexo(anexo({ nome: "notas.txt" })), "txt");
 });
 
+test("CSV por sufixo e por text/csv; .csv com text/plain ainda é csv (#451)", () => {
+  assert.equal(classificarAnexo(anexo({ nome: "dados.CSV" })), "csv");
+  assert.equal(
+    classificarAnexo(anexo({ nome: "x", contentType: "text/csv" })),
+    "csv"
+  );
+  // servidor manda text/plain mas o nome é .csv → csv (antes do txt)
+  assert.equal(
+    classificarAnexo(anexo({ nome: "planilha.csv", contentType: "text/plain" })),
+    "csv"
+  );
+});
+
 test("docx pelo contentType OOXML", () => {
   assert.equal(
     classificarAnexo(

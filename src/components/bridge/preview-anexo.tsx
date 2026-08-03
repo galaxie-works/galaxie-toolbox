@@ -38,6 +38,7 @@ import { renderDocxParaHtml } from "@/lib/docx-render";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { carregarPdf, renderizarPagina } from "@/lib/pdf-preview";
 import { renderXlsxParaHtml } from "@/lib/xlsx-render";
+import { parseCsv, type CsvTabela } from "@/lib/csv-render";
 import type { AnexoEmail } from "@/lib/types";
 import {
   Alert,
@@ -98,6 +99,7 @@ export function PreviewAnexo({
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
   const [xlsxHtml, setXlsxHtml] = useState<string | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [csv, setCsv] = useState<CsvTabela | null>(null);
   // Contador de tentativas: o botão "Tentar de novo" incrementa → re-busca (#450).
   const [tentativa, setTentativa] = useState(0);
 
@@ -136,6 +138,8 @@ export function PreviewAnexo({
         } else if (tipo === "xlsx") {
           const html = await renderXlsxParaHtml(bytes);
           if (vivo) setXlsxHtml(html);
+        } else if (tipo === "csv") {
+          if (vivo) setCsv(parseCsv(new TextDecoder("utf-8").decode(bytes)));
         } else if (tipo === "imagem") {
           // Object URL do blob (não data URL gigante). SVG entra como `<img>`,
           // que roda a imagem em "modo imagem" — scripts embutidos NÃO executam.
@@ -278,8 +282,68 @@ export function PreviewAnexo({
           />
         ) : tipo === "imagem" && imgUrl ? (
           <ImagemViewer url={imgUrl} rotulo={anexo.nome} tp={tp} />
+        ) : tipo === "csv" && csv ? (
+          <CsvViewer tabela={csv} vazioTexto={tp.previewVazio} tp={tp} />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** CSV: tabela com header fixo + scroll H/V. Header = 1ª linha; cap com aviso
+ *  "mostrando N de M". Valores como texto (sem HTML) — seguro (#451). */
+function CsvViewer({
+  tabela,
+  vazioTexto,
+  tp,
+}: {
+  tabela: CsvTabela;
+  vazioTexto: string;
+  tp: ReturnType<typeof useIdioma>["t"]["controlRoom"];
+}) {
+  if (tabela.linhas.length === 0) return <PreviewVazio texto={vazioTexto} />;
+  const [cabecalho, ...corpo] = tabela.linhas;
+  return (
+    <div className="flex flex-col">
+      {tabela.truncado && (
+        <p className="border-b bg-muted/30 px-3 py-1 text-[11px] text-muted-foreground">
+          {preencher(tp.previewCsvTruncado, {
+            n: tabela.linhas.length,
+            m: tabela.total,
+          })}
+        </p>
+      )}
+      <ScrollArea className="h-96 w-full">
+        <table className="w-max border-collapse text-xs">
+          <thead className="sticky top-0 z-10 bg-muted">
+            <tr>
+              <th className="border px-2 py-1" />
+              {(cabecalho ?? []).map((celula, j) => (
+                <th
+                  key={j}
+                  className="whitespace-nowrap border px-2 py-1 text-left font-medium"
+                >
+                  {celula}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {corpo.map((linha, i) => (
+              <tr key={i}>
+                <td className="sticky left-0 z-10 border bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground">
+                  {i + 1}
+                </td>
+                {linha.map((celula, j) => (
+                  <td key={j} className="whitespace-nowrap border px-2 py-1">
+                    {celula}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ScrollArea>
     </div>
   );
 }

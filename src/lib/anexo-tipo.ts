@@ -14,6 +14,7 @@ export type TipoPreview =
   | "xlsx"
   | "pptx"
   | "imagem"
+  | "csv"
   | "nao-suportado";
 
 const CT_DOCX =
@@ -40,6 +41,8 @@ export function classificarAnexo(anexo: AnexoEmail): TipoPreview {
   const ct = anexo.contentType.toLowerCase();
   const nome = anexo.nome.toLowerCase();
   if (ct === "application/pdf" || nome.endsWith(".pdf")) return "pdf";
+  // CSV antes de txt: um `.csv` pode chegar como `text/plain` no contentType.
+  if (ct === "text/csv" || nome.endsWith(".csv")) return "csv";
   if (ct.startsWith("text/plain") || nome.endsWith(".txt")) return "txt";
   if (ct === CT_DOCX || nome.endsWith(".docx")) return "docx";
   if (ct === CT_XLSX || nome.endsWith(".xlsx")) return "xlsx";
