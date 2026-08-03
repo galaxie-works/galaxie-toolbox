@@ -1455,7 +1455,7 @@ export function NavegadorScreen({
       paletaAberta ||
       overlaysWebview > 0 ||
       menuAbertoId !== null ||
-      chromeOverlays > 0; // #358: menu do usuário (app shell) sobre a webview
+      chromeOverlays > 0; // #358: overlays do app shell sobre a webview — menu do usuário + tooltips do sidebar colapsado
     if (overlayAtivo || !ativa) {
       // #275 rework: ANTES de esconder, tira um snapshot da aba ativa e o mostra
       // como imagem sob o overlay (conteúdo congela, não some). Só uma vez por

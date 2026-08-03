@@ -619,7 +619,21 @@ function SidebarMenuButton({
   const mostrarTooltip = state === 'collapsed' && !isMobile;
 
   return (
-    <Tooltip>
+    <Tooltip
+      onOpenChange={(aberto) => {
+        // #358: colapsada, o tooltip abre à direita SOBRE a área da webview do
+        // Navigator (que pinta acima do DOM) e ficava coberto. Avisa a webview a
+        // ceder (esconder+snapshot) enquanto o tooltip está aberto — mesmo
+        // window-event do menu do usuário; no-op fora do Navigator (o listener
+        // do NavegadorScreen só existe quando `tela === "navegador"`).
+        // Abre só quando há tooltip visível (colapsada); FECHA sempre, pra o
+        // contador (auto-curável, clamp>=0) nunca ficar preso escondendo a webview.
+        if (aberto && !mostrarTooltip) return;
+        window.dispatchEvent(
+          new CustomEvent('galaxie:webview-ceder', { detail: aberto }),
+        );
+      }}
+    >
       <TooltipTrigger asChild>{button}</TooltipTrigger>
       {mostrarTooltip && (
         <TooltipContent side="right" align="center" {...tooltip} />
