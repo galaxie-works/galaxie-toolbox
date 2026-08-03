@@ -38,3 +38,7 @@ src-tauri/gen/
 # Chave privada do updater — nunca versionar
 *.key
 *.key.pub
+
+# Scripts locais de validacao (nao portaveis)
+_run-feat.bat
+
