@@ -206,6 +206,7 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
+  Eye,
   FilePen,
   Flag,
   FlagOff,
@@ -4510,6 +4511,17 @@ const MessageDetail = forwardRef<
     }
   }
 
+  // Ação explícita "Abrir no Windows" (#188 rework): baixa e abre no app padrão.
+  async function abrirAnexoNoWindows(anexo: AnexoEmail) {
+    if (!id) return;
+    try {
+      const caminho = await api.crBaixarAnexo(id, anexo.id, mailbox);
+      await api.abrirCaminho(caminho);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { description: String(e) });
+    }
+  }
+
   const abrirOutlook = () =>
     det?.webLink && api.abrirAppInterno("outlook", comLoginHint(det.webLink, userEmail), "Outlook");
 
@@ -4605,30 +4617,55 @@ const MessageDetail = forwardRef<
           <Separator className="my-4" />
           <p className="mb-2 text-xs font-medium">{t.controlRoom.anexosTitulo}</p>
           <div className="flex flex-wrap gap-2">
-            {det.anexos.map((a, i) => (
-              // Anexo (#102): ação sem atalho → Tooltip simples com nome
-              // acessível explícito (o texto visível é o nome do arquivo).
-              // Substitui o `title` nativo.
-              <Tooltip key={a.id || i}>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    // Previsível → abre o preview inline (#188); senão baixa
-                    // (fluxo antigo, sem regressão para .docx/.zip/etc.).
-                    onClick={() =>
-                      ehPrevisualizavel(a) ? setPreviewAtual(a) : baixarAnexo(a)
-                    }
-                    className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
-                    aria-label={`${t.controlRoom.abrirArquivo}: ${a.nome}`}
-                  >
-                    <Paperclip className="size-3.5 text-muted-foreground" />
-                    <span className="max-w-40 truncate">{a.nome}</span>
-                    <Download className="size-3.5 text-muted-foreground" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>{t.controlRoom.abrirArquivo}</TooltipContent>
-              </Tooltip>
-            ))}
+            {det.anexos.map((a, i) => {
+              const previsivel = ehPrevisualizavel(a);
+              const rotuloAcao = previsivel
+                ? t.controlRoom.previewCtxVer
+                : t.controlRoom.abrirArquivo;
+              return (
+                // Clique = pré-visualizar (previsível) ou baixar; right-click
+                // abre o menu de contexto com preview/salvar/abrir (#188 rework).
+                <Tooltip key={a.id || i}>
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            previsivel ? setPreviewAtual(a) : baixarAnexo(a)
+                          }
+                          className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
+                          aria-label={`${rotuloAcao}: ${a.nome}`}
+                        >
+                          <Paperclip className="size-3.5 text-muted-foreground" />
+                          <span className="max-w-40 truncate">{a.nome}</span>
+                          {/* Ícone reflete a ação do clique: olho = preview. */}
+                          {previsivel ? (
+                            <Eye className="size-3.5 text-muted-foreground" />
+                          ) : (
+                            <Download className="size-3.5 text-muted-foreground" />
+                          )}
+                        </button>
+                      </TooltipTrigger>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      {previsivel && (
+                        <ContextMenuItem onSelect={() => setPreviewAtual(a)}>
+                          <Eye /> {t.controlRoom.previewCtxVer}
+                        </ContextMenuItem>
+                      )}
+                      <ContextMenuItem onSelect={() => baixarAnexo(a)}>
+                        <Download /> {t.controlRoom.previewSalvar}
+                      </ContextMenuItem>
+                      <ContextMenuItem onSelect={() => abrirAnexoNoWindows(a)}>
+                        <ExternalLink /> {t.controlRoom.previewAbrirWindows}
+                      </ContextMenuItem>
+                    </ContextMenuContent>
+                  </ContextMenu>
+                  <TooltipContent>{rotuloAcao}</TooltipContent>
+                </Tooltip>
+              );
+            })}
           </div>
           {previewAtual && id && (
             <PreviewAnexo
