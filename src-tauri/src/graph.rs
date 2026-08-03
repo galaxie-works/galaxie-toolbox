@@ -217,6 +217,21 @@ where
 /// primeiros ~1-2s) sem servir dado velho — e as escritas invalidam explicitamente.
 const MEMO_TTL_MS: u64 = 2500;
 
+/// Teto de chaves no mapa de memo. Backstop contra crescimento: chaves de agenda
+/// carregam a janela (bucketizada por minuto), então sessões longas acumulam uma
+/// entrada por minuto navegado. Ao estourar, limpamos o mapa inteiro (raro; quem
+/// está no meio de uma chamada segura seu próprio Arc e não é afetado).
+const MEMO_MAX_CHAVES: usize = 128;
+
+/// Trunca um ISO 8601 ("2026-08-03T10:23:45.123Z") no minuto ("2026-08-03T10:23")
+/// pra usar como CHAVE de memo. Sem isso, `toISOString()` (precisão de ms) geraria
+/// uma chave nova a cada chamada → o coalescing de agenda nunca casaria (Atoms vs.
+/// Bridge no mesmo segundo) e o mapa cresceria a cada mount. O minuto coalesce o
+/// boot (sub-segundo) e mantém o mapa enxuto; a frescura segue governada pelo TTL.
+fn chave_por_minuto(iso: &str) -> &str {
+    iso.get(..16).unwrap_or(iso)
+}
+
 struct FatiaMemo {
     /// O Mutex serializa chamadas da MESMA chave → single-flight: a 2ª chamada
     /// concorrente espera a 1ª e reusa o resultado em vez de refazer a rede.
@@ -246,6 +261,11 @@ where
 {
     let fatia = {
         let mut m = memo_mapa().lock().unwrap_or_else(|e| e.into_inner());
+        // Backstop de crescimento: se estourou o teto e esta é uma chave nova,
+        // limpa o mapa antes de inserir (chamadas em voo seguram o próprio Arc).
+        if m.len() >= MEMO_MAX_CHAVES && !m.contains_key(chave) {
+            m.clear();
+        }
         m.entry(chave.to_string())
             .or_insert_with(|| {
                 std::sync::Arc::new(FatiaMemo { dado: std::sync::Mutex::new(None) })
@@ -1367,9 +1387,10 @@ pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<Even
         "{GRAPH}/me/calendarView?startDateTime={inicio}&endDateTime={fim}\
          &$select={AGENDA_SELECT}&$orderby=start/dateTime&$top=100"
     );
-    com_memo_curto(&format!("agenda:default:{inicio}:{fim}"), || {
-        buscar_calendar_view(store, &url)
-    })
+    com_memo_curto(
+        &format!("agenda:default:{}:{}", chave_por_minuto(inicio), chave_por_minuto(fim)),
+        || buscar_calendar_view(store, &url),
+    )
 }
 
 /// Eventos de um calendário específico no intervalo (#233). Mesmo parse/pool do
@@ -1384,9 +1405,14 @@ pub fn cr_agenda_calendario(
         "{GRAPH}/me/calendars/{calendario_id}/calendarView?startDateTime={inicio}&endDateTime={fim}\
          &$select={AGENDA_SELECT}&$orderby=start/dateTime&$top=100"
     );
-    com_memo_curto(&format!("agenda:{calendario_id}:{inicio}:{fim}"), || {
-        buscar_calendar_view(store, &url)
-    })
+    com_memo_curto(
+        &format!(
+            "agenda:{calendario_id}:{}:{}",
+            chave_por_minuto(inicio),
+            chave_por_minuto(fim)
+        ),
+        || buscar_calendar_view(store, &url),
+    )
 }
 
 #[derive(serde::Serialize)]
@@ -7108,6 +7134,20 @@ mod testes_atoms_email {
             { "id": "sinalizados", "status": 200, "body": 1 }
         ] });
         assert!(atoms_email_de_batch(&v).is_err());
+    }
+
+    #[test]
+    fn chave_por_minuto_trunca_e_coalesce() {
+        // Dois instantes no MESMO minuto → mesma chave (coalesce o boot); ms
+        // diferentes não geram chaves novas (o que vazaria o mapa).
+        let a = chave_por_minuto("2026-08-03T10:23:45.123Z");
+        let b = chave_por_minuto("2026-08-03T10:23:59.998Z");
+        assert_eq!(a, "2026-08-03T10:23");
+        assert_eq!(a, b, "mesmo minuto → mesma chave");
+        // Minuto seguinte → chave diferente (dado fresco após o TTL).
+        assert_ne!(a, chave_por_minuto("2026-08-03T10:24:00.000Z"));
+        // Robusto a string curta/inesperada: devolve a própria entrada.
+        assert_eq!(chave_por_minuto("curto"), "curto");
     }
 }
 
