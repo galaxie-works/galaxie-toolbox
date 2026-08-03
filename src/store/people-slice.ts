@@ -11,6 +11,16 @@ import {
 import type { Filter } from "../components/reui/filters";
 import type { MergePlan } from "../lib/people-merge";
 import { telAcaoConcluida } from "../lib/telemetria.ts";
+// #464 (S2): i18n fora do React — o store não usa o hook `useIdioma`, então lê o
+// idioma atual (mesmo localStorage do provider) e resolve a string na hora, pra
+// erros de People pararem de vazar em inglês pra UI.
+import { DICIONARIOS } from "../lib/strings.ts";
+import { idiomaAtual } from "../lib/idioma.tsx";
+
+/** Strings de People (namespace controlRoom) no idioma atual. */
+function strPeople() {
+  return DICIONARIOS[idiomaAtual()].controlRoom;
+}
 import type {
   PeopleBulkDetailsChange,
   PeopleBulkDetailsField,
@@ -1233,7 +1243,7 @@ export function criarPeopleSlice(
   updatePeopleContact: async (id, input) => {
     const current = get().peopleContacts.find((contact) => contact.id === id);
     if (!current?.contactId) {
-      throw new Error("This person is not an editable Microsoft contact.");
+      throw new Error(strPeople().pessoaNaoEditavel);
     }
     const snapshot: PeopleContact = {
       ...current,
@@ -1278,7 +1288,7 @@ export function criarPeopleSlice(
   setPeopleContactCategorias: async (id, categorias) => {
     const current = get().peopleContacts.find((contact) => contact.id === id);
     if (!current?.contactId) {
-      throw new Error("This person is not an editable Microsoft contact.");
+      throw new Error(strPeople().pessoaNaoEditavel);
     }
     const snapshot = [...current.categories];
     // Otimista: aplica na grid/detalhe já; reverte a lista antiga no erro.
@@ -1366,7 +1376,7 @@ export function criarPeopleSlice(
         masterUpdated: false,
         deleted: [],
         failedDeletes: [],
-        error: "A merge is already running.",
+        error: strPeople().mergeJaRodando,
       };
     }
     const sessionGeneration = get().peopleSessionGeneration;
@@ -1495,7 +1505,7 @@ export function criarPeopleSlice(
         masterRestored: false,
         recreated: [],
         failed: [],
-        error: "Nothing to undo.",
+        error: strPeople().mergeNadaDesfazer,
       };
     }
     if (get().peopleMergeRunning) {
@@ -1503,7 +1513,7 @@ export function criarPeopleSlice(
         masterRestored: false,
         recreated: [],
         failed: [],
-        error: "A merge is already running.",
+        error: strPeople().mergeJaRodando,
       };
     }
     const { plan, deleted } = undo;

@@ -5,6 +5,9 @@ import type {
   PeoplePhone,
   PeopleRecord,
 } from "./types";
+// #464 (S2): fallback de nome sem hook (lib pura) — resolve no idioma atual.
+import { DICIONARIOS } from "./strings.ts";
+import { idiomaAtual } from "./idioma.tsx";
 
 /** Contato canônico compartilhado pela lista, detalhe e futuros resolvers. */
 export interface PeopleContact {
@@ -66,7 +69,10 @@ function fromRecord(record: PeopleRecord): PeopleContact {
     id: `${record.source}:${record.id}`,
     contactId: source === "contacts" ? record.id : null,
     peopleId: source === "people" ? record.id : null,
-    name: record.name || record.emails[0]?.address || "Unknown",
+    name:
+      record.name ||
+      record.emails[0]?.address ||
+      DICIONARIOS[idiomaAtual()].controlRoom.peopleSemNome,
     emails: uniqueEmails(
       record.emails.map((email) => ({ ...email, source: email.source ?? source })),
     ),
