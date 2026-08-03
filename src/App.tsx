@@ -127,6 +127,9 @@ function AppInner() {
   // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
   const [abas, setAbas] = useState<AbaBrowser[]>(loadPinnedNavigatorTabs);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
+  // #454: bump a cada nova aba pra REMONTAR o Launcher (key) e re-focar o command
+  // mesmo quando já estávamos na aba vazia (setAbaAtiva(null) seria no-op).
+  const [launcherNonce, setLauncherNonce] = useState(0);
   // Pilha de abas fechadas recentemente (#272 · Ctrl+Shift+T). Só url/nome; teto
   // de 25 pra não crescer sem limite.
   const [fechadas, setFechadas] = useState<{ url: string; nome: string }[]>([]);
@@ -590,6 +593,11 @@ function AppInner() {
       ),
     );
     setAbaAtiva(null);
+    // #454 (regressão): quando o Launcher já está na tela, `setAbaAtiva(null)` é
+    // no-op e o Launcher não remonta → o command não re-recebe foco (o clique no
+    // "+" o deixou no botão). Bump do nonce força o REMOUNT do Launcher (key), o
+    // que re-dispara o foco-ao-montar do command.
+    setLauncherNonce((n) => n + 1);
   }
 
   // Nova aba normal sai do modo privado; nova aba privada entra (#273). O
@@ -970,6 +978,7 @@ function AppInner() {
         >
           <ControlRoomScreen
             user={user}
+            ativo={tela === "control-room"}
             onGrantPeopleAccess={() => {
               void handleLogin(user.email);
             }}
@@ -993,6 +1002,7 @@ function AppInner() {
             <NavegadorScreen
               abas={abas}
               ativa={abaAtiva}
+              launcherNonce={launcherNonce}
               onTrocar={trocarAba}
               onFechar={fecharAba}
               onFecharOutras={fecharOutras}

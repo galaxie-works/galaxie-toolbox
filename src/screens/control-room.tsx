@@ -2792,6 +2792,7 @@ function MessageList({
   envioBloqueado,
   t,
   idioma,
+  ativo = true,
 }: {
   titulo: string;
   mensagens: EmailItem[] | null;
@@ -2820,6 +2821,11 @@ function MessageList({
   envioBloqueado: boolean;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
+  /** #454: só instala o atalho GLOBAL quando o Bridge é a tela ATIVA. O
+   * control-room fica montado (keep-alive) apenas escondido ao trocar de tela;
+   * sem este gate o listener de `window` seguia vivo e teclas como 'a'
+   * (reply-all) disparavam com o usuário já no Navigator. */
+  ativo?: boolean;
 }) {
   const listaRef = useRef<HTMLDivElement>(null);
   const selecionados = useAppStore((s) => s.selecionados);
@@ -3399,7 +3405,7 @@ function MessageList({
         return;
     }
   }
-  useAtalhos(aoTeclar);
+  useAtalhos(aoTeclar, ativo);
 
   // Clique na linha (#28): Shift+clique seleciona o INTERVALO entre a âncora e
   // o item clicado (sobre a ordem de exibição `idsFiltrados`, ignorando headers
@@ -5496,11 +5502,16 @@ export function ControlRoomScreen({
   onAbrirLink,
   onGrantPeopleAccess,
   onReauthenticate,
+  ativo = true,
 }: {
   user: AppUser;
   onAbrirLink: (url: string) => void;
   onGrantPeopleAccess: () => void;
   onReauthenticate: () => void;
+  /** #454: Bridge é a tela ATIVA? Repassado ao MessageList pra só instalar o
+   * atalho global de teclado quando o Bridge está em primeiro plano (ele fica
+   * montado/escondido em keep-alive). */
+  ativo?: boolean;
 }) {
   const { idioma, t } = useIdioma();
   // Fotos de contatos (#39): só buscamos avatar de remetente do MESMO domínio do
@@ -6688,6 +6699,7 @@ export function ControlRoomScreen({
           >
           <ResizablePanel defaultSize={38} minSize={24} maxSize={55} className="overflow-hidden">
             <MessageList
+              ativo={ativo}
               titulo={tituloLista}
               mensagens={fonteListaAtiva}
               erroLeitura={
