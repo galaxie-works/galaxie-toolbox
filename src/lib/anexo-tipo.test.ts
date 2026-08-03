@@ -98,6 +98,22 @@ test("tiff NÃO é imagem previsível (cai em nao-suportado) (#450)", () => {
   );
 });
 
+test("audio e video suportados; .mov/.mkv caem em nao-suportado (#452)", () => {
+  assert.equal(classificarAnexo(anexo({ nome: "musica.MP3" })), "audio");
+  assert.equal(
+    classificarAnexo(anexo({ nome: "x", contentType: "audio/wav" })),
+    "audio"
+  );
+  assert.equal(classificarAnexo(anexo({ nome: "clipe.mp4" })), "video");
+  assert.equal(
+    classificarAnexo(anexo({ nome: "x", contentType: "video/webm" })),
+    "video"
+  );
+  // sem suporte no WebView2 → não-suportado (CTA baixar, não player quebrado)
+  assert.equal(classificarAnexo(anexo({ nome: "video.mov" })), "nao-suportado");
+  assert.equal(classificarAnexo(anexo({ nome: "video.mkv" })), "nao-suportado");
+});
+
 test("formato fora do escopo → nao-suportado", () => {
   assert.equal(classificarAnexo(anexo({ nome: "arquivo.msg" })), "nao-suportado");
   assert.equal(classificarAnexo(anexo({ nome: "pacote.zip" })), "nao-suportado");
