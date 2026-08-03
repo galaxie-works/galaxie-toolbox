@@ -28,7 +28,7 @@ Leia junto: `docs/atoms-dashboard-spec.md` (a spec original — boa no plano, ma
 - **A3 — Shell flagship (avatar + copy + bento real + motion):** header com avatar, "Seu dia em um olhar", grade bento com hero, stagger blur-in respeitando reduced-motion. **AC:** avatar do usuário ao lado do título; layout com tiles de tamanhos diferentes; cards "montam" com stagger (ou aparecem instantâneos sob reduced-motion).
 - **A4 — Estados vivos de cada widget:** skeleton com a forma do conteúdo, vazios distintos e calorosos, dado com hierarquia visual e cor de status. **AC:** no load vê-se skeleton com a silhueta do card; vazio ≠ erro ≠ "tudo em dia"; um e-mail sinalizado aparece com destaque visível.
 - **A5 — Feed "Atenção agora" que prova valor:** feed lê itens reais (inclusive o e-mail sinalizado concreto), calibrado pra não esvaziar com caixa cheia, cada item com motivo e porta. **AC:** com 1 e-mail sinalizado + 1 reunião hoje + 1 tarefa vencida, os três aparecem ranqueados com o motivo certo e clicam pro destino.
-- **A6 — Teams consent de verdade:** botão "Conectar o Teams" dispara consent incremental de `Chat.Read`; sem escopo, degrada sem mentir. **AC:** clicar "Conectar" abre o consent da MS pedindo Chat.Read; concedido, o card passa a mostrar chats reais; negado, volta ao gate sem quebrar.
+- **A6 — Teams que conecta sozinho:** `Chat.Read` entra no `SCOPES` base → na abertura o widget carrega chats reais **via pool** (como e-mail/agenda), **sem botão de conectar**. Fallback só para sessão antiga sem o escopo: prompt de **relogin único**. **AC:** app aberto e logado (token com Chat.Read) → o card mostra chats reais sem nenhum clique; sessão antiga → prompt de relogar uma vez; nunca "Couldn't load".
 
 Caminho deste documento: `C:\dev\gt-feat\docs\atoms-ux-replan.md`.
 
@@ -109,7 +109,7 @@ Matriz única, aplicada a Agenda, E-mail, Tarefas, Feed:
 | **Erro** | Inline por-card (`Alert` reui), mensagem específica ("Não foi possível carregar a agenda") + **Retry que recupera de verdade** (§3). Outros cards seguem de pé. |
 | **Vazio (fonte limpa)** | Copy calorosa e **distinta** por fonte: "Agenda livre hoje", "Caixa de entrada limpa", "Nenhuma tarefa aberta". Ilustração `icon-stack`, tom positivo. |
 | **Tudo em dia (dashboard)** | O vazio *recompensa*: "Tudo em dia ✨" só quando as 3 fontes resolveram OK e estão limpas — nunca quando alguma falhou (hoje `tudoEmDia` já exige `fase==="ok"`, manter). |
-| **Sem permissão** | Card mostra o escopo faltante + botão "Conectar" que dispara consent (não texto morto). |
+| **Sem permissão** | Só para sessão antiga sem o escopo (Teams): card mostra prompt de **relogar uma vez** (não texto morto, não botão de consent por-feature). Com token novo, nunca aparece. |
 
 ### 2.4 Motion (respeitando reduced-motion)
 - **Entrada:** stagger blur-in dos cards (reusar `SoftBlurIn` com delay incremental por índice) — "átomos se montando". Gate `useReducedMotion()` → sem stagger, aparição instantânea.
@@ -143,11 +143,13 @@ Matriz única, aplicada a Agenda, E-mail, Tarefas, Feed:
 - O `onRetry` deve re-chamar a versão **protegida** (pós-3.1) — aí o backoff do pool faz o Retry funcionar. Adicionar micro-jitter no front pra evitar re-disparo síncrono.
 - **Log no caminho de erro:** trocar `catch {}` (atoms.tsx:143,163,174) por `catch (e) { log(e); setEstado("erro") }` e, no Rust, logar o status/corpo antes de `return Err`. Sem isso não há como o PO/Polaris validar em produção.
 
-### 3.5 Fluxo de consent do Teams (correto)
-1. **Adicionar `Chat.Read` a `config::SCOPES`** (config.rs:40-42) OU tratá-lo como escopo incremental opt-in.
-2. **Botão "Conectar o Teams" real:** o `TeamsWidget` renderiza `Button` com a string `teamsConectar` (já existe, strings.ts:428) que dispara um consent incremental (`acquireToken`/authorize com `scope=Chat.Read` adicional) — padrão do `onGrantPeopleAccess` que o app já usa pra People (App.tsx).
-3. **Degradação honesta:** sem o escopo, o card mostra o gate + botão; concedido, passa a ler `/me/chats` (novo comando Rust sob `graph_enviar`); negado, volta ao gate sem "Couldn't load".
-4. Incluir Chat.Read em `required_resource_scopes_missing` (auth.rs:53) se for tratado como requerido, para o app sinalizar a ausência de forma consistente.
+### 3.5 Fluxo do Teams — conecta na abertura (decisão do PO, 03/ago)
+Decisão: **Teams acende sozinho**, como e-mail/agenda — sem botão de "Conectar" (o opt-in por fonte foi descartado; `Chat.Read` é admin-consentido).
+1. **Adicionar `Chat.Read` a `config::SCOPES`** (config.rs:40-42). No próximo login o token já traz o escopo.
+2. **Novo comando Rust `cr_teams`** que lê `/me/chats` (mensagens/menções não lidas) **sob `graph_enviar`** (pool/429) — nunca chamada crua no boot (senão volta a tempestade que quebrou o Atoms).
+3. **Carregamento no boot** junto com os outros widgets, respeitando o single-flight/$batch do A1/A2 — o Teams é só mais uma fonte da fundação resiliente, não um caminho especial.
+4. **Fallback de sessão antiga:** token sem `Chat.Read` (usuário que não relogou desde a mudança de escopo) → o card mostra um prompt de **relogar uma vez** (reusar o mecanismo de `required_resource_scopes_missing`, auth.rs:53), **não** um botão de consent por-feature. Incluir Chat.Read na lista de escopos requeridos pra o app sinalizar a ausência de forma consistente.
+5. A string `teamsConectar` (strings.ts:428) passa a rotular o prompt de relogin (ou é aposentada) — o texto morto do gate atual sai.
 
 > **Nota de escopo:** Teams (A6) é a única slice que precisa de escopo/Rust novo. Agenda/E-mail/Tarefas são só resiliência + apresentação sobre o que já existe — a spec §0.2 estava certa nisso; o erro foi não blindar o caminho real.
 
@@ -187,10 +189,10 @@ Objetivo: os 3 widgets puxam dado REAL no app real, sem 429 hard-fail.
 - **AC3.** Numa caixa com muitos não-lidos, o feed **não fica vazio** enganosamente: ou mostra os mais relevantes, ou mostra um resumo acionável ("12 não-lidos, 3 sinalizados") — nunca "Nada urgente" com a caixa cheia.
 - **AC4.** O feed recalcula em ~60s e no focus (já existe) e anuncia mudanças com `aria-live="polite"` sem "pular" sob reduced-motion.
 
-### A6 — Teams consent de verdade
-- **AC1.** Clicar **"Conectar o Teams"** abre o consent da Microsoft **pedindo Chat.Read** (verificável: a tela de consent lista a permissão de chat).
-- **AC2.** Concedido, o card passa a mostrar **chats/menções não lidos reais**; ao reabrir o app, permanece conectado.
-- **AC3.** Negado/sem escopo, o card mostra o gate + botão, **sem "Couldn't load"** e sem consent silencioso.
+### A6 — Teams que conecta sozinho
+- **AC1.** App aberto e logado (token com `Chat.Read`), **sem nenhum clique**, o card mostra **chats/menções não lidos reais** — igual e-mail e agenda.
+- **AC2.** O Teams carrega **via `graph_enviar`** junto com os outros widgets (sem chamada crua no boot); sob 429, recupera pelo pool, não some nem mente.
+- **AC3.** Sessão antiga sem o escopo → o card mostra um prompt de **relogar uma vez** (não um botão de consent por-feature); depois de relogar, conecta sozinho. Nunca "Couldn't load".
 
 ### A7 — Personalização (herda o #187, depois da base)
 - **AC1.** Reordenar/ligar/desligar widgets persiste após fechar e reabrir o app (já existe via localStorage — manter, não regredir com o novo bento).
@@ -226,9 +228,9 @@ Rodar no app instalado (atalho do desktop, conta do Wagner — caixa com muitos 
 - [ ] Caixa cheia de não-lidos → feed NÃO diz "Nada urgente".
 
 **Teams (A6)**
-- [ ] "Conectar o Teams" abre consent da MS pedindo Chat.Read.
-- [ ] Conceder → chats reais aparecem; reabrir o app mantém conectado.
-- [ ] Negar → volta ao gate, sem "Couldn't load".
+- [ ] App aberto e logado (com Chat.Read) → chats reais aparecem **sem nenhum clique**, como e-mail/agenda.
+- [ ] Teams carrega via pool no boot (sob 429, recupera; não some).
+- [ ] Sessão antiga sem o escopo → prompt de relogar uma vez; depois conecta sozinho; sem "Couldn't load".
 
 **Regressão**
 - [ ] Personalização (ordem/visibilidade/densidade) persiste após reabrir.
