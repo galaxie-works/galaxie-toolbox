@@ -6,7 +6,9 @@ import assert from "node:assert/strict";
 import {
   aceitaAltaFidelidade,
   classificarAnexo,
+  ehItemAttachment,
   ehPrevisualizavel,
+  ehReferenceAttachment,
 } from "./anexo-tipo.ts";
 import type { AnexoEmail } from "./types.ts";
 
@@ -84,4 +86,14 @@ test("aceitaAltaFidelidade: só docx/xlsx", () => {
   assert.equal(aceitaAltaFidelidade("xlsx"), true);
   assert.equal(aceitaAltaFidelidade("pptx"), false);
   assert.equal(aceitaAltaFidelidade("pdf"), false);
+});
+
+test("item/reference attachment por @odata.type (#191)", () => {
+  const item = anexo({ odataType: "#microsoft.graph.itemAttachment" });
+  const ref = anexo({ odataType: "#microsoft.graph.referenceAttachment" });
+  const file = anexo({ odataType: "#microsoft.graph.fileAttachment" });
+  assert.equal(ehItemAttachment(item), true);
+  assert.equal(ehReferenceAttachment(ref), true);
+  assert.equal(ehItemAttachment(file), false);
+  assert.equal(ehReferenceAttachment(file), false);
 });

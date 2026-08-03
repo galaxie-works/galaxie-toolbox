@@ -2362,6 +2362,104 @@ pub fn cr_ler_anexo(
     })
 }
 
+/// Lê a mensagem embutida de um `itemAttachment` (e-mail encaminhado/`.msg`),
+/// expandindo `microsoft.graph.itemAttachment/item`, e devolve um `EmailDetalhe`
+/// para o mesmo reader (#191). Corrige o bug de itemAttachment não ter
+/// `contentBytes` (o `cr_ler_anexo` falha nesses hoje).
+pub fn cr_ler_anexo_email(
+    store: &TokenStore,
+    message_id: &str,
+    attachment_id: &str,
+    mailbox: Option<&str>,
+) -> Result<EmailDetalhe, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
+
+    let url = format!(
+        "{GRAPH}/{prefix}/messages/{message_id}/attachments/{attachment_id}\
+         ?$expand=microsoft.graph.itemAttachment/item"
+    );
+    let resp = graph_enviar("mail:ler-anexo-email", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler o e-mail anexado: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "leitura do e-mail anexado retornou {}",
+            resp.status()
+        ));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let it = &v["item"];
+    if it.is_null() {
+        return Err("este anexo não é uma mensagem embutida".to_string());
+    }
+
+    let para = nomes_recipients(&it["toRecipients"]);
+    let cc = nomes_recipients(&it["ccRecipients"]);
+
+    // Anexos aninhados (best-effort: só se o Graph os trouxe junto do item).
+    let mut anexos = Vec::new();
+    if let Some(arr) = it["attachments"].as_array() {
+        for a in arr {
+            anexos.push(AnexoEmail {
+                id: a["id"].as_str().unwrap_or("").to_string(),
+                nome: a["name"].as_str().unwrap_or("arquivo").to_string(),
+                tamanho: a["size"].as_u64().unwrap_or(0),
+                content_type: a["contentType"].as_str().unwrap_or("").to_string(),
+                odata_type: a["@odata.type"].as_str().unwrap_or("").to_string(),
+                is_inline: a["isInline"].as_bool().unwrap_or(false),
+            });
+        }
+    }
+
+    Ok(EmailDetalhe {
+        assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+        de: it["from"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
+        de_email: it["from"]["emailAddress"]["address"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+        para,
+        cc,
+        recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
+        corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
+        corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
+        anexos,
+        web_link: it["webLink"].as_str().unwrap_or("").to_string(),
+    })
+}
+
+/// Devolve o link de destino de um `referenceAttachment` (OneDrive/SharePoint)
+/// sem baixar bytes (#191). Cai no `webLink` se não houver `sourceUrl`.
+pub fn cr_anexo_link(
+    store: &TokenStore,
+    message_id: &str,
+    attachment_id: &str,
+    mailbox: Option<&str>,
+) -> Result<String, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
+    let url =
+        format!("{GRAPH}/{prefix}/messages/{message_id}/attachments/{attachment_id}");
+    let resp = graph_enviar("mail:anexo-link", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler o anexo: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("leitura do anexo retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    v["sourceUrl"]
+        .as_str()
+        .or_else(|| v["webLink"].as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "anexo de referência sem link".to_string())
+}
+
 /// Path C (spec §4.3): converte um anexo Office para PDF em **alta fidelidade**
 /// usando o próprio OneDrive do usuário — sobe para uma pasta temporária oculta
 /// (`/Bridge Anexos/.preview/`), pede `?format=pdf` ao Graph e **sempre apaga**
