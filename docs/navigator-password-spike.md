@@ -1,5 +1,7 @@
 # Navigator — Spike de senhas (S5 / #177)
 
+> 📌 **Spike (#177). Conferir status no board.** Bloqueio conhecido de leitura de profile do browser pelo EDR (Access Denied anti-infostealer) — import por arquivo exportado, sem contornar. Doc de spike.
+
 > Recorte aprovado pelo PO (spec §7). **Não** construímos um gerenciador de
 > senhas. Este documento é o entregável do spike: o que é viável via
 > WebView2/DPAPI, o fallback honesto, e o que fica deliberadamente fora de

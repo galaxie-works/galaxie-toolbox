@@ -5,22 +5,31 @@ Escopo atual em foco: **Bridge** (cliente de e-mail dentro do app) + track paral
 
 > 📐 **[`Rules.md`](./Rules.md) é OBRIGATÓRIO** — regras de UI/UX, uso de componentes (não inventar UI), scrollbar/tema/persistência e **custo/eficiência do agente**. Leia antes de produzir UI ou entregar. Violou uma regra de lá → o PO reprova.
 
+> 🔴 **MÉTODO — atualizado 03/ago/2026 (aprendido na marra: o épico Atoms saiu MEDÍOCRE por "verde = pronto").** Leitura obrigatória de todos os agentes:
+> 1. **VERDE ≠ PRONTO.** `tsc`/`cargo`/CI verdes e teste sobre **mock** NÃO fecham nada. Widget que "renderiza no mock" quebra contra o Graph real (429/erro/shape) — foi o que aconteceu (5 slices com "Couldn't load" que ninguém pegou).
+> 2. **Definition of Done = FUNCIONA no app REAL com dado REAL.** Se você (auth-gate) não conseguiu exercer o dado real, a entrega fica **In review** com o rótulo explícito **"NÃO verificado com dado real (auth-gate)"** — **nunca insinue "pronto"**. O **Polaris faz o live-QA** no desktop do PO (conta logada) antes de QA Approved; sem isso, não aprova.
+> 3. **Confira o CONTRATO de dado real ANTES de construir** — a chamada Graph no Rust (params, forma, tratamento de erro/429), não o tipo TS + mock. Toda chamada Graph nova passa pelo **pool `graph_enviar`** (retry/429); chamada crua fora do pool estoura no boot.
+> 4. **AC EXPERIENCIAIS, não estruturais.** "Componente X renderiza" é AC ruim. AC bom é verificável abrindo o app real logado: "mostra o dado real; skeleton no load; erro que RECUPERA no retry; vazio ≠ erro ≠ tudo-em-dia; transições; copy/bento certos".
+> 5. **Profundidade > throughput.** Superfície flagship = UX research ANTES de codar. Não empilhar slices data-heavy sem validar a fundação de dado.
+> 6. **Fix sobre algo já integrado vai em PR NOVO** (o merge local do Polaris fecha o PR → push no branch fechado não roda CI e ele pode não ver). Ou pingue "re-integra o branch X".
+> Causa-raiz detalhada: ver os retrospectos no #133 (02–03/ago) e `docs/atoms-ux-replan.md`.
+
 ## 1. O app em uma frase
 Tauri 2 + React 19 + TypeScript + Tailwind v4. Fala com **Microsoft Graph delegado (`/me`)** — **não há IMAP**. Login sempre na página oficial da Microsoft; o app **nunca** vê a senha/MFA/token do usuário.
 
 ### 1.1 Permissões Graph — GRANTED vs. REQUESTED
 Public client + PKCE, delegado `/me`. Distinção que importa pro roadmap:
-- **GRANTED** = concedido no app registration (admin consent do tenant Galaxie Works Ltd). Disponível **sem novo consent** — 53 escopos delegados (lista completa abaixo).
+- **GRANTED** = concedido no app registration (admin consent do tenant Galaxie Works Ltd). Disponível **sem novo consent**.
+  - 📄 **Fonte única de verdade dos escopos concedidos: [`docs/graph-scopes.md`](./docs/graph-scopes.md)** (atualizado 2026-08-03, **101 escopos** admin-consented). NÃO duplicar a lista aqui — ela driftou (esta seção já esteve com "53"). Sempre conferir o graph-scopes.md.
+  - Na tabela do graph-scopes.md, a coluna **"Admin?"** = *exige admin consent?* — **"Não" NÃO significa "não concedido"**; significa que é user-consentable. Todos os 101 já estão concedidos.
 - **REQUESTED** = subconjunto **mínimo** que a app pede no token, em `src-tauri/src/config.rs` const `SCOPES`. Adicionar um escopo já-GRANTED aqui **não** dispara re-consent (admin já consentiu); só exige o usuário **relogar** pra token novo.
 
-**REQUESTED hoje:** `openid profile offline_access User.Read User.Read.All Files.ReadWrite Sites.Read.All Calendars.Read Mail.ReadWrite Mail.Send Tasks.ReadWrite People.Read Contacts.ReadWrite`
-
-**GRANTED (53, todos admin-consented):** Analytics.Read · AuditLogsQuery(-Exchange/-OneDrive/-SharePoint/).Read.All · Bookings.Read.All · Calendars.Read · Chat.ReadWrite · Contacts.Read · Domain.Read.All · EAS.AccessAsUser.All · email · EWS.AccessAsUser.All · ExchangeMessageTrace.Read.All · Files.ReadWrite · Files.ReadWrite.All · IMAP.AccessAsUser.All · Mail-Advanced.ReadWrite(.Shared) · Mail.Read · **Mail.Read.Shared** · Mail.ReadBasic(.Shared) · Mail.ReadWrite · **Mail.ReadWrite.Shared** · Mail.Send · **Mail.Send.Shared** · MailboxFolder.Read(Write) · MailboxItem.Read(Write) · Notes.Create/Read/Read.All/ReadWrite/ReadWrite.All · Organization.Read.All · OrganizationalBranding.Read.All · OrgContact.Read.All · profile · ProfilePhoto.Read.All · ProfilePhoto.ReadWrite.All · Reports.Read.All · Schedule.Read.All · ServiceHealth.Read.All · Sites.Read.All · Tasks.ReadWrite · TeamMember.Read.All · TeamsActivity.Read · User.Read · User.Read.All · User.ReadBasic.All · UserNotification.ReadWrite.CreatedByApp
+**REQUESTED hoje** (`config.rs` SCOPES): `openid profile offline_access User.Read User.Read.All Files.ReadWrite Sites.Read.All Calendars.Read Mail.ReadWrite Mail.Send Tasks.ReadWrite People.Read Contacts.ReadWrite` — conferir sempre no `config.rs` (é a fonte).
 
 **Implicações:**
-- **#27 (caixas compartilhadas) NÃO está bloqueado** — `Mail.Read.Shared`/`Mail.ReadWrite.Shared`/`Mail.Send.Shared` já GRANTED. Basta adicionar à const `SCOPES` + relogar; sem ação admin nova.
-- **#91 (segurança no leitor):** `internetMessageHeaders` (SPF/DKIM/DMARC, Reply-To) vem com `Mail.Read`/`Mail.ReadWrite` — sem escopo novo.
-- ⚠️ Reconciliar: a app pede `Contacts.ReadWrite` e `People.Read`, mas o granted mostra `Contacts.Read` (sem Write) e não lista `People.Read` — verificar antes de depender de escrita em contatos / People API.
+- **Chat.Read (Atoms A6 / #445) JÁ está GRANTED** (graph-scopes.md, seção Teams/Chat). O blocker do widget de Teams é só **adicionar Chat.Read à const `SCOPES` + relogar** — não é consent novo de admin. (Confusão anterior: o "Admin? = Não" foi lido como "não concedido".)
+- **Caixas compartilhadas** — `Mail.*.Shared` já GRANTED; adicionar à `SCOPES` + relogar.
+- ⚠️ `Contacts.ReadWrite` já GRANTED (graph-scopes.md; destravou o edit de contato no People).
 - **NÃO usar IMAP/EWS/EAS** apesar de granted — arquitetura é **Graph-only, delegado /me**.
 
 ## 2. Board de trabalho (GitHub Projects) — a fonte da verdade
@@ -112,7 +121,9 @@ Para **dúvidas de design** (padrão de componente, comportamento de interação
 - Cada feature que mereça commit, comita. `tsc` + `cargo check` verdes antes de PR.
 
 ## 5. Definition of Done
-`tsc -p tsconfig.app.json --noEmit` + `cargo check` verdes · tema **claro/escuro** ok · **sem regressão** em teclado/multi-seleção/virtualização · feedback/toast presente · escopo **mínimo** de permissão (re-consent sinalizado em escopo novo) · **componentes reui usados literalmente** (regra "não inventar UI": instalar do registry e usar como veio) · **conforme [`Rules.md`](./Rules.md)** (UI/UX + componentes + persistência + custo).
+**Gate de build (necessário, NÃO suficiente):** `tsc -b` (build mode — o `--noEmit` deixa passar erro que o build de release pega) + `cargo check`/`cargo test` (se Rust) + `oxlint` + `node --test` verdes · tema **claro/escuro** ok · **sem regressão** em teclado/multi-seleção/virtualização · feedback/toast presente · escopo **mínimo** de permissão (re-consent sinalizado em escopo novo) · **componentes reui usados literalmente** (regra "não inventar UI") · **conforme [`Rules.md`](./Rules.md)**.
+
+**Gate de realidade (o que FECHA — ver o callout 🔴 MÉTODO no topo):** cada AC verificado **no app REAL com dado REAL** (não mock). Se auth-gate impede o agente de validar, a entrega declara **"NÃO verificado com dado real"** e o **Polaris faz o live-QA** antes de QA Approved. AC experienciais (skeleton/erro-que-recupera/vazio/dado real/transições), não estruturais. **Build verde não fecha item.**
 
 ## 6. Segurança
 - `CLIENT_ID` `214d735e-eb9b-4052-8851-578d3bd91627` é **público por design** (public client + PKCE).
