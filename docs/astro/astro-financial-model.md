@@ -4,7 +4,7 @@
 
 > Camada de IA pré-paga do **GALAXIE Toolbox**. Backend no **VPS Hostinger do Wagner** (fixo, já pago), provider **Claude (Anthropic API)**, meeting-assistant com **ASR própria**. Este documento fecha unit economics, modelo de crédito, tabela multi-moeda, gateway, trial e viabilidade.
 >
-> **Status:** proposta financeira fechada (números concretos). Preços de provider e câmbio são *inputs configuráveis* — confirmar na hora de implementar (mudam). Referências reais: legado Suzette (`suzette-ai-credits/pricing.ts`), discovery `docs/galaxie-ai-discovery.md`.
+> **Status:** proposta financeira fechada (números concretos). Preços de provider e câmbio são *inputs configuráveis* — confirmar na hora de implementar (mudam). Referências reais: legado Suzette (`suzette-ai-credits/pricing.ts`), discovery `docs/astro/galaxie-ai-discovery.md`.
 
 ---
 

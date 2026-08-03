@@ -188,7 +188,7 @@ People.Read  Contacts.ReadWrite
 
 Referência rápida de como os escopos concedidos habilitam funcionalidades. Detalhe de produto vive nas issues/épicos.
 
-- **Atoms** (#181, replanejado — ver [`atoms-ux-replan.md`](./atoms-ux-replan.md)): `Chat.Read` está concedido → o blocker do widget de Teams (A6/#445) é só adicioná-lo à `SCOPES` + relogar, **não** é consent de admin. `Tasks.Read`/`Tasks.ReadWrite` → widget de To-Dos com dado real. `Notes.*` → widget OneNote (follow-up).
+- **Atoms** (#181, replanejado — ver [`atoms-ux-replan.md`](../atoms/atoms-ux-replan.md)): `Chat.Read` está concedido → o blocker do widget de Teams (A6/#445) é só adicioná-lo à `SCOPES` + relogar, **não** é consent de admin. `Tasks.Read`/`Tasks.ReadWrite` → widget de To-Dos com dado real. `Notes.*` → widget OneNote (follow-up).
 - **Previews / seletor de arquivo** (#178): a família `Files.*` completa (incl. `Files.Read.Selected`, `Files.ReadWrite.Selected`, `Files.SelectedOperations.Selected`) permite **acesso granular por arquivo selecionado**, sem escopo amplo.
 - **Galaxie AI** (#180): `Directory.Read.All` + `RoleManagement.Read.Directory` → derivar o "usuário master" do papel de admin no M365. `OnlineMeetingRecording/Transcript/AiInsight.Read.All` → puxar a gravação oficial via Graph e rodar ASR própria. `Chat.*`/`ChatMessage.*`/`TeamsActivity.Read` → IA lê/age em chats.
 - **People** (#167): `User.Read.All` + `People.Read.All` + `ProfilePhoto.Read.All` → enrich por diretório e foto.

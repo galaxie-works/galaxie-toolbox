@@ -6,7 +6,7 @@ Issue #178 · GALAXIE Toolbox / Bridge email client
 Stack: Tauri 2 (multi-webview) + React 19 + TypeScript + Tailwind v4 + shadcn/new-york + **reui** registry
 Status: research + design only (no code). Reuse-first, cost-honest.
 
-> Read alongside `docs/bridge-people-ux.md` (#143) and `docs/navigator-ux-spec.md` (#172) — same depth, same component-map discipline, same INVEST slicing.
+> Read alongside `docs/bridge/bridge-people-ux.md` (#143) and `docs/navigator/navigator-ux-spec.md` (#172) — same depth, same component-map discipline, same INVEST slicing.
 
 ---
 

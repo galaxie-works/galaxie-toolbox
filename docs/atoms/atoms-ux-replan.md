@@ -3,7 +3,7 @@
 Épico #181 · stories #183–187 ENTREGUES e REPROVADAS · GALAXIE Toolbox
 Stack: Tauri 2 + React 19 + TS + Tailwind v4 + shadcn/new-york + reui + animate-ui · Microsoft Graph (delegado /me)
 Método: UX research (skill `design:user-research`) + auditoria técnica de código real.
-Leia junto: `docs/atoms-dashboard-spec.md` (a spec original — boa no plano, mal executada).
+Leia junto: `docs/atoms/atoms-dashboard-spec.md` (a spec original — boa no plano, mal executada).
 
 > **Veredito de uma linha:** o Atoms foi construído como *maquete sobre mock* — a spec (que é sólida) foi implementada na largura, não na profundidade. Os widgets "passam" fora do Tauri (mock em `api.ts`) e **quebram no app real** porque duas chamadas Graph centrais (`cr_email`, `cr_tarefas`) **não usam o pool de retry/429** que o resto do app usa, o widget de e-mail **derruba tudo se o contador falhar**, e o boot dispara **6 chamadas Graph de uma vez** concorrendo com o keep-alive do Bridge → tempestade de 429. A camada de UX ficou no esqueleto: sem avatar, sem bento de verdade, sem motion, sem vida. Isto aqui é o retrabalho.
 
@@ -30,7 +30,7 @@ Leia junto: `docs/atoms-dashboard-spec.md` (a spec original — boa no plano, ma
 - **A5 — Feed "Atenção agora" que prova valor:** feed lê itens reais (inclusive o e-mail sinalizado concreto), calibrado pra não esvaziar com caixa cheia, cada item com motivo e porta. **AC:** com 1 e-mail sinalizado + 1 reunião hoje + 1 tarefa vencida, os três aparecem ranqueados com o motivo certo e clicam pro destino.
 - **A6 — Teams que conecta sozinho:** `Chat.Read` entra no `SCOPES` base → na abertura o widget carrega chats reais **via pool** (como e-mail/agenda), **sem botão de conectar**. Fallback só para sessão antiga sem o escopo: prompt de **relogin único**. **AC:** app aberto e logado (token com Chat.Read) → o card mostra chats reais sem nenhum clique; sessão antiga → prompt de relogar uma vez; nunca "Couldn't load".
 
-Caminho deste documento: `C:\dev\gt-feat\docs\atoms-ux-replan.md`.
+Caminho deste documento: `docs/atoms/atoms-ux-replan.md`.
 
 ---
 

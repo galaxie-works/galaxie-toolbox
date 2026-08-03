@@ -6,7 +6,7 @@ Issue #172 · GALAXIE Toolbox / Navigator (internal name **Cruiser**)
 Stack: Tauri 2 (multi-webview, feature `unstable`) + React 19 + TypeScript + Tailwind v4 + shadcn/new-york + **reui** registry (`radix-nova`)
 Status: research + design only (no code). The "revolution" the PO asked for.
 
-> Read alongside `docs/bridge-people-ux.md` (#143) — same depth, same component-map discipline, same INVEST slicing.
+> Read alongside `docs/bridge/bridge-people-ux.md` (#143) — same depth, same component-map discipline, same INVEST slicing.
 
 ---
 

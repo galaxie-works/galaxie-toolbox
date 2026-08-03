@@ -6,7 +6,7 @@ Issues #203 (detail CTA/toolbar/frame/responsive) · #204 (Outlook-style navbar)
 GALAXIE Toolbox / Bridge · Tauri 2 + React 19 + TS + Tailwind v4 + shadcn + **reui** (`@reui`, free tier)
 Status: design only (no production code). PO feedback on the shipped People module (v0.29/0.30).
 
-> Read alongside `docs/bridge-people-ux.md` (#143 — the original People spec) and `docs/navigator-ux-spec.md` (#172). Same discipline: every surface maps to a real installed component; nothing invented. These three issues are **one information architecture** — the module nav (#204) contains the People module, which contains the Contacts/Organizations sub-nav (#205), whose detail pane is the thing #203 fixes. Design them together.
+> Read alongside `docs/bridge/bridge-people-ux.md` (#143 — the original People spec) and `docs/navigator/navigator-ux-spec.md` (#172). Same discipline: every surface maps to a real installed component; nothing invented. These three issues are **one information architecture** — the module nav (#204) contains the People module, which contains the Contacts/Organizations sub-nav (#205), whose detail pane is the thing #203 fixes. Design them together.
 
 Anchored in the real code: `src/components/people/people-view.tsx` (`PeopleView`, `PeopleDetail`, `PeopleRowActions`, `PeopleCard`, `BulkEnrichReview`), `src/screens/control-room.tsx` (the Bridge sidebar `aside`, the `Linha` folder rows, the People/Agenda footer buttons, `bridgeView`), `src/store/people-slice.ts` (`PeopleSlice`), `src/lib/people.ts` (`PeopleContact`, `mergePeopleRecords`, `resolvePerson`).
 
