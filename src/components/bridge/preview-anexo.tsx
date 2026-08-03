@@ -37,19 +37,19 @@ import { aceitaAltaFidelidade, classificarAnexo } from "@/lib/anexo-tipo";
 import { renderDocxParaHtml } from "@/lib/docx-render";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { carregarPdf, renderizarPagina } from "@/lib/pdf-preview";
-import { lerXlsx, type Planilha } from "@/lib/xlsx-render";
+import { renderXlsxParaHtml } from "@/lib/xlsx-render";
+import { parseCsv, type CsvTabela } from "@/lib/csv-render";
 import type { AnexoEmail } from "@/lib/types";
-import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/reui/alert";
 import { IconTile } from "@/components/reui/icon-tile";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
 
 /** Teto de tamanho para preview inline; acima disso, só Salvar/Abrir (spec §7.4). */
 const LIMITE_PREVIEW_BYTES = 25 * 1024 * 1024;
@@ -97,10 +97,15 @@ export function PreviewAnexo({
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [txt, setTxt] = useState<string | null>(null);
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
-  const [planilhas, setPlanilhas] = useState<Planilha[] | null>(null);
+  const [xlsxHtml, setXlsxHtml] = useState<string | null>(null);
+  const [imgUrl, setImgUrl] = useState<string | null>(null);
+  const [csv, setCsv] = useState<CsvTabela | null>(null);
+  // Contador de tentativas: o botão "Tentar de novo" incrementa → re-busca (#450).
+  const [tentativa, setTentativa] = useState(0);
 
   // Busca e decodifica os bytes uma vez (a menos que seja não-suportado/grande).
   // `usarPathC` nas deps: alternar alta fidelidade re-busca (converte no OneDrive).
+  // `tentativa` nas deps: retry após erro sem trocar de anexo.
   useEffect(() => {
     if (tipo === "nao-suportado" || grande) {
       setCarregando(false);
@@ -108,9 +113,11 @@ export function PreviewAnexo({
     }
     let vivo = true;
     let doc: PDFDocumentProxy | null = null;
+    let objUrl: string | null = null;
     setCarregando(true);
     setErro(null);
     setPdf(null); // limpa render anterior ao trocar de modo (client ↔ Path C)
+    setImgUrl(null);
     (async () => {
       try {
         if (usarPathC) {
@@ -129,8 +136,19 @@ export function PreviewAnexo({
           const html = await renderDocxParaHtml(bytes);
           if (vivo) setDocxHtml(html);
         } else if (tipo === "xlsx") {
-          const p = await lerXlsx(bytes);
-          if (vivo) setPlanilhas(p);
+          const html = await renderXlsxParaHtml(bytes);
+          if (vivo) setXlsxHtml(html);
+        } else if (tipo === "csv") {
+          if (vivo) setCsv(parseCsv(new TextDecoder("utf-8").decode(bytes)));
+        } else if (tipo === "imagem") {
+          // Object URL do blob (não data URL gigante). SVG entra como `<img>`,
+          // que roda a imagem em "modo imagem" — scripts embutidos NÃO executam.
+          const blob = new Blob([bytes as BlobPart], {
+            type: conteudo.contentType || anexo.contentType || "image/*",
+          });
+          objUrl = URL.createObjectURL(blob);
+          if (vivo) setImgUrl(objUrl);
+          else URL.revokeObjectURL(objUrl);
         } else {
           doc = await carregarPdf(bytes);
           if (vivo) setPdf(doc);
@@ -145,8 +163,9 @@ export function PreviewAnexo({
     return () => {
       vivo = false;
       if (doc) void doc.loadingTask.destroy();
+      if (objUrl) URL.revokeObjectURL(objUrl);
     };
-  }, [messageId, anexo.id, mailbox, tipo, grande, usarPathC]);
+  }, [messageId, anexo.id, mailbox, tipo, grande, usarPathC, tentativa, anexo.contentType]);
 
   return (
     <div
@@ -224,6 +243,15 @@ export function PreviewAnexo({
               <FileWarning className="size-4" />
               <AlertTitle>{tp.previewErro}</AlertTitle>
               <AlertDescription>{erro}</AlertDescription>
+              <AlertAction>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setTentativa((n) => n + 1)}
+                >
+                  <RotateCcw className="size-3.5" /> {tp.previewTentarNovo}
+                </Button>
+              </AlertAction>
             </Alert>
           </div>
         ) : usarPathC ? (
@@ -241,11 +269,142 @@ export function PreviewAnexo({
         ) : tipo === "pdf" && pdf ? (
           <PdfViewer doc={pdf} tp={tp} />
         ) : tipo === "docx" && docxHtml !== null ? (
-          <DocxViewer html={docxHtml} rotulo={anexo.nome} vazioTexto={tp.previewVazio} />
-        ) : tipo === "xlsx" && planilhas ? (
-          <XlsxViewer planilhas={planilhas} vazioTexto={tp.previewVazio} />
+          <HtmlSandboxViewer
+            html={docxHtml}
+            rotulo={anexo.nome}
+            vazioTexto={tp.previewVazio}
+          />
+        ) : tipo === "xlsx" && xlsxHtml !== null ? (
+          <HtmlSandboxViewer
+            html={xlsxHtml}
+            rotulo={anexo.nome}
+            vazioTexto={tp.previewVazio}
+          />
+        ) : tipo === "imagem" && imgUrl ? (
+          <ImagemViewer url={imgUrl} rotulo={anexo.nome} tp={tp} />
+        ) : tipo === "csv" && csv ? (
+          <CsvViewer tabela={csv} vazioTexto={tp.previewVazio} tp={tp} />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** CSV: tabela com header fixo + scroll H/V. Header = 1ª linha; cap com aviso
+ *  "mostrando N de M". Valores como texto (sem HTML) — seguro (#451). */
+function CsvViewer({
+  tabela,
+  vazioTexto,
+  tp,
+}: {
+  tabela: CsvTabela;
+  vazioTexto: string;
+  tp: ReturnType<typeof useIdioma>["t"]["controlRoom"];
+}) {
+  if (tabela.linhas.length === 0) return <PreviewVazio texto={vazioTexto} />;
+  const [cabecalho, ...corpo] = tabela.linhas;
+  return (
+    <div className="flex flex-col">
+      {tabela.truncado && (
+        <p className="border-b bg-muted/30 px-3 py-1 text-[11px] text-muted-foreground">
+          {preencher(tp.previewCsvTruncado, {
+            n: tabela.linhas.length,
+            m: tabela.total,
+          })}
+        </p>
+      )}
+      <ScrollArea className="h-96 w-full">
+        <table className="w-max border-collapse text-xs">
+          <thead className="sticky top-0 z-10 bg-muted">
+            <tr>
+              <th className="border px-2 py-1" />
+              {(cabecalho ?? []).map((celula, j) => (
+                <th
+                  key={j}
+                  className="whitespace-nowrap border px-2 py-1 text-left font-medium"
+                >
+                  {celula}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {corpo.map((linha, i) => (
+              <tr key={i}>
+                <td className="sticky left-0 z-10 border bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground">
+                  {i + 1}
+                </td>
+                {linha.map((celula, j) => (
+                  <td key={j} className="whitespace-nowrap border px-2 py-1">
+                    {celula}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ScrollArea>
+    </div>
+  );
+}
+
+/** Imagem: `<img>` com fit-to-frame + zoom. SVG entra por src (modo imagem →
+ *  script embutido não executa); nunca injetamos o markup inline no DOM (#450). */
+function ImagemViewer({
+  url,
+  rotulo,
+  tp,
+}: {
+  url: string;
+  rotulo: string;
+  tp: ReturnType<typeof useIdioma>["t"]["controlRoom"];
+}) {
+  const [escala, setEscala] = useState(1);
+  const ajustarZoom = (delta: number) =>
+    setEscala((e) => Math.min(5, Math.max(0.25, +(e + delta).toFixed(2))));
+
+  return (
+    <div className="flex flex-col">
+      <div className="flex items-center gap-1 border-b px-2 py-1">
+        <div className="flex-1" />
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={() => ajustarZoom(-0.25)}
+          aria-label={tp.previewMenosZoom}
+        >
+          <ZoomOut className="size-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={() => setEscala(1)}
+          aria-label={tp.previewZoomReset}
+        >
+          <RotateCcw className="size-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={() => ajustarZoom(0.25)}
+          aria-label={tp.previewMaisZoom}
+        >
+          <ZoomIn className="size-4" />
+        </Button>
+      </div>
+      <ScrollArea className="h-96 w-full bg-muted/20">
+        <div className="flex min-h-full items-center justify-center p-3">
+          <img
+            src={url}
+            alt={rotulo}
+            className="max-h-full max-w-full object-contain shadow-sm"
+            style={{ transform: `scale(${escala})`, transformOrigin: "center" }}
+          />
+        </div>
+      </ScrollArea>
     </div>
   );
 }
@@ -407,11 +566,13 @@ function PreviewVazio({ texto }: { texto: string }) {
 }
 
 /**
- * docx: HTML sanitizado num `<iframe sandbox="">` com **CSP** estrito —
- * `default-src 'none'` mata rede/script; `img-src data:` deixa só as imagens
- * embutidas (base64); `style-src 'unsafe-inline'` mantém a folha do docx-preview.
+ * Viewer de HTML não-confiável (docx e xlsx) — injeta o HTML **já sanitizado**
+ * (DOMPurify, nos módulos `docx-render`/`xlsx-render`) num `<iframe sandbox="">`
+ * com **CSP** estrita: `default-src 'none'` mata rede/script; `img-src data:`
+ * deixa só as imagens embutidas (base64); `style-src 'unsafe-inline'` mantém a
+ * folha do docx-preview / xlsx-preview. Nenhum script do documento executa.
  */
-function DocxViewer({
+function HtmlSandboxViewer({
   html,
   rotulo,
   vazioTexto,
@@ -432,56 +593,5 @@ function DocxViewer({
       title={rotulo}
       className="h-[32rem] w-full border-0 bg-white"
     />
-  );
-}
-
-/** xlsx: abas por planilha + grid read-only de valores (em cache, sem fórmula). */
-function XlsxViewer({
-  planilhas,
-  vazioTexto,
-}: {
-  planilhas: Planilha[];
-  vazioTexto: string;
-}) {
-  const temConteudo = planilhas.some((p) => p.linhas.length > 0);
-  if (!temConteudo) return <PreviewVazio texto={vazioTexto} />;
-
-  return (
-    <Tabs defaultValue={planilhas[0]?.nome ?? ""} className="w-full gap-0">
-      {planilhas.length > 1 && (
-        <TabsList className="m-2 flex h-auto w-auto flex-wrap justify-start">
-          {planilhas.map((p) => (
-            <TabsTrigger key={p.nome} value={p.nome} className="text-xs">
-              {p.nome}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      )}
-      {planilhas.map((p) => (
-        <TabsContent key={p.nome} value={p.nome} className="mt-0">
-          <ScrollArea className="h-96 w-full">
-            <table className="w-max border-collapse text-xs">
-              <tbody>
-                {p.linhas.map((linha, i) => (
-                  <tr key={i}>
-                    <td className="sticky left-0 z-10 border bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground">
-                      {i + 1}
-                    </td>
-                    {linha.map((celula, j) => (
-                      <td
-                        key={j}
-                        className="whitespace-nowrap border px-2 py-1"
-                      >
-                        {celula}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ScrollArea>
-        </TabsContent>
-      ))}
-    </Tabs>
   );
 }

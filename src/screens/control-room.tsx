@@ -2,7 +2,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BridgeHeaderIcon } from "@/components/ui/icons/marca-anim";
 import { Badge, type BadgeProps } from "@/components/reui/badge";
 import { PreviewAnexo } from "@/components/bridge/preview-anexo";
-import { ehPrevisualizavel } from "@/lib/anexo-tipo";
+import {
+  ehItemAttachment,
+  ehPrevisualizavel,
+  ehReferenceAttachment,
+} from "@/lib/anexo-tipo";
 import {
   Filters,
   type FilterFieldConfig,
@@ -175,6 +179,7 @@ import type {
   AcaoRsvp,
   AnexoEmail,
   AppUser,
+  EmailDetalhe,
   EmailItem,
   PastaEmail,
   Participante,
@@ -206,6 +211,7 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
+  Eye,
   FilePen,
   Flag,
   FlagOff,
@@ -2792,6 +2798,7 @@ function MessageList({
   envioBloqueado,
   t,
   idioma,
+  ativo = true,
 }: {
   titulo: string;
   mensagens: EmailItem[] | null;
@@ -2820,6 +2827,11 @@ function MessageList({
   envioBloqueado: boolean;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
+  /** #454: só instala o atalho GLOBAL quando o Bridge é a tela ATIVA. O
+   * control-room fica montado (keep-alive) apenas escondido ao trocar de tela;
+   * sem este gate o listener de `window` seguia vivo e teclas como 'a'
+   * (reply-all) disparavam com o usuário já no Navigator. */
+  ativo?: boolean;
 }) {
   const listaRef = useRef<HTMLDivElement>(null);
   const selecionados = useAppStore((s) => s.selecionados);
@@ -3399,7 +3411,7 @@ function MessageList({
         return;
     }
   }
-  useAtalhos(aoTeclar);
+  useAtalhos(aoTeclar, ativo);
 
   // Clique na linha (#28): Shift+clique seleciona o INTERVALO entre a âncora e
   // o item clicado (sobre a ordem de exibição `idsFiltrados`, ignorando headers
@@ -4368,6 +4380,119 @@ export interface MessageDetailHandle {
   encaminhar: () => void;
 }
 
+/**
+ * Reader aninhado de um e-mail embutido (itemAttachment / `.msg`, #191): busca a
+ * mensagem via `cr_ler_anexo_email` e renderiza com o MESMO `CorpoMensagem`
+ * (pipeline sandbox), header e a lista de anexos aninhados. Corrige o erro atual
+ * de itemAttachment (que não tem `contentBytes`).
+ */
+function PreviewEmailAninhado({
+  anexo,
+  messageId,
+  mailbox,
+  onFechar,
+  onAbrirLink,
+}: {
+  anexo: AnexoEmail;
+  messageId: string;
+  mailbox?: string;
+  onFechar: () => void;
+  onAbrirLink: (url: string) => void;
+}) {
+  const { t } = useIdioma();
+  const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
+  const [det, setDet] = useState<EmailDetalhe | null>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    setCarregando(true);
+    setErro(null);
+    api
+      .crLerAnexoEmail(messageId, anexo.id, mailbox)
+      .then((d) => {
+        if (vivo) setDet(d);
+      })
+      .catch((e) => {
+        if (vivo) setErro(String(e));
+      })
+      .finally(() => {
+        if (vivo) setCarregando(false);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [messageId, anexo.id, mailbox]);
+
+  return (
+    <div
+      className="mt-3 overflow-hidden rounded-lg border bg-card"
+      role="region"
+      aria-label={anexo.nome}
+    >
+      <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5">
+        <Mail className="size-3.5 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+          {det?.assunto || anexo.nome}
+        </span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-7"
+          onClick={onFechar}
+          aria-label={t.controlRoom.previewFechar}
+        >
+          <X className="size-3.5" />
+        </Button>
+      </div>
+      <div className="min-h-24">
+        {carregando ? (
+          <div className="space-y-2 p-4">
+            <Skeleton className="h-4 w-1/3" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        ) : erro ? (
+          <div className="p-4">
+            <Alert variant="destructive">
+              <AlertTitle>{t.controlRoom.previewErro}</AlertTitle>
+              <AlertDescription>{erro}</AlertDescription>
+            </Alert>
+          </div>
+        ) : det ? (
+          <div className="px-4 py-3">
+            <div className="mb-2 text-xs">
+              <p className="font-medium">{det.de || det.deEmail}</p>
+              {det.para.length > 0 && (
+                <p className="truncate text-muted-foreground">
+                  {t.controlRoom.para}: {det.para.join(", ")}
+                </p>
+              )}
+            </div>
+            <CorpoMensagem
+              corpo={det.corpo}
+              tipo={det.corpoTipo}
+              onAbrirLink={onAbrirLink}
+            />
+            {det.anexos.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {det.anexos.map((a, i) => (
+                  <span
+                    key={a.id || i}
+                    className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
+                  >
+                    <Paperclip className="size-3" />
+                    <span className="max-w-40 truncate">{a.nome}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 const MessageDetail = forwardRef<
   MessageDetailHandle,
   {
@@ -4417,9 +4542,12 @@ const MessageDetail = forwardRef<
   const comporRef = useRef<ComporMensagemHandle>(null);
   // Anexo em pré-visualização (#188); null = nenhum aberto.
   const [previewAtual, setPreviewAtual] = useState<AnexoEmail | null>(null);
-  // Fecha o preview ao trocar de e-mail (não vazar o anexo do anterior).
+  // E-mail embutido (itemAttachment) aberto no reader aninhado (#191).
+  const [anexoEmail, setAnexoEmail] = useState<AnexoEmail | null>(null);
+  // Fecha preview/reader aninhado ao trocar de e-mail (não vaza o anterior).
   useEffect(() => {
     setPreviewAtual(null);
+    setAnexoEmail(null);
   }, [id]);
   const textosUndoSend = useMemo(
     () => ({
@@ -4499,6 +4627,29 @@ const MessageDetail = forwardRef<
           void api.revelarNoExplorer(caminho);
         },
       });
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { description: String(e) });
+    }
+  }
+
+  // Ação explícita "Abrir no Windows" (#188 rework): baixa e abre no app padrão.
+  async function abrirAnexoNoWindows(anexo: AnexoEmail) {
+    if (!id) return;
+    try {
+      const caminho = await api.crBaixarAnexo(id, anexo.id, mailbox);
+      await api.abrirCaminho(caminho);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { description: String(e) });
+    }
+  }
+
+  // Anexo de referência (#191): busca o link de destino e abre no Navigator,
+  // sem baixar bytes.
+  async function abrirAnexoLink(anexo: AnexoEmail) {
+    if (!id) return;
+    try {
+      const url = await api.crAnexoLink(id, anexo.id, mailbox);
+      onAbrirLink(url);
     } catch (e) {
       toast.error(t.controlRoom.erroAcao, { description: String(e) });
     }
@@ -4599,30 +4750,82 @@ const MessageDetail = forwardRef<
           <Separator className="my-4" />
           <p className="mb-2 text-xs font-medium">{t.controlRoom.anexosTitulo}</p>
           <div className="flex flex-wrap gap-2">
-            {det.anexos.map((a, i) => (
-              // Anexo (#102): ação sem atalho → Tooltip simples com nome
-              // acessível explícito (o texto visível é o nome do arquivo).
-              // Substitui o `title` nativo.
-              <Tooltip key={a.id || i}>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    // Previsível → abre o preview inline (#188); senão baixa
-                    // (fluxo antigo, sem regressão para .docx/.zip/etc.).
-                    onClick={() =>
-                      ehPrevisualizavel(a) ? setPreviewAtual(a) : baixarAnexo(a)
-                    }
-                    className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
-                    aria-label={`${t.controlRoom.abrirArquivo}: ${a.nome}`}
-                  >
-                    <Paperclip className="size-3.5 text-muted-foreground" />
-                    <span className="max-w-40 truncate">{a.nome}</span>
-                    <Download className="size-3.5 text-muted-foreground" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>{t.controlRoom.abrirArquivo}</TooltipContent>
-              </Tooltip>
-            ))}
+            {det.anexos.map((a, i) => {
+              // Tipo do anexo (#188 rework + #191): roteia clique/ícone/menu.
+              const ref = ehReferenceAttachment(a);
+              const item = ehItemAttachment(a);
+              const previsivel = ehPrevisualizavel(a);
+              const rotuloAcao = previsivel
+                ? t.controlRoom.previewCtxVer
+                : t.controlRoom.abrirArquivo;
+              return (
+                // Clique roteia por tipo: referência → link; e-mail embutido →
+                // reader aninhado; previsível → preview; senão baixa. Right-click
+                // abre o menu de contexto.
+                <Tooltip key={a.id || i}>
+                  <ContextMenu>
+                    <ContextMenuTrigger asChild>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            ref
+                              ? abrirAnexoLink(a)
+                              : item
+                                ? setAnexoEmail(a)
+                                : previsivel
+                                  ? setPreviewAtual(a)
+                                  : baixarAnexo(a)
+                          }
+                          className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
+                          aria-label={`${rotuloAcao}: ${a.nome}`}
+                        >
+                          <Paperclip className="size-3.5 text-muted-foreground" />
+                          <span className="max-w-40 truncate">{a.nome}</span>
+                          {ref ? (
+                            <ExternalLink className="size-3.5 text-muted-foreground" />
+                          ) : item ? (
+                            <Mail className="size-3.5 text-muted-foreground" />
+                          ) : previsivel ? (
+                            <Eye className="size-3.5 text-muted-foreground" />
+                          ) : (
+                            <Download className="size-3.5 text-muted-foreground" />
+                          )}
+                        </button>
+                      </TooltipTrigger>
+                    </ContextMenuTrigger>
+                    <ContextMenuContent>
+                      {ref ? (
+                        <ContextMenuItem onSelect={() => abrirAnexoLink(a)}>
+                          <ExternalLink /> {t.controlRoom.abrirArquivo}
+                        </ContextMenuItem>
+                      ) : item ? (
+                        <ContextMenuItem onSelect={() => setAnexoEmail(a)}>
+                          <Mail /> {t.controlRoom.abrirArquivo}
+                        </ContextMenuItem>
+                      ) : (
+                        <>
+                          {previsivel && (
+                            <ContextMenuItem onSelect={() => setPreviewAtual(a)}>
+                              <Eye /> {t.controlRoom.previewCtxVer}
+                            </ContextMenuItem>
+                          )}
+                          <ContextMenuItem onSelect={() => baixarAnexo(a)}>
+                            <Download /> {t.controlRoom.previewSalvar}
+                          </ContextMenuItem>
+                          <ContextMenuItem
+                            onSelect={() => abrirAnexoNoWindows(a)}
+                          >
+                            <ExternalLink /> {t.controlRoom.previewAbrirWindows}
+                          </ContextMenuItem>
+                        </>
+                      )}
+                    </ContextMenuContent>
+                  </ContextMenu>
+                  <TooltipContent>{rotuloAcao}</TooltipContent>
+                </Tooltip>
+              );
+            })}
           </div>
           {previewAtual && id && (
             <PreviewAnexo
@@ -4631,6 +4834,15 @@ const MessageDetail = forwardRef<
               mailbox={mailbox}
               onSalvar={() => baixarAnexo(previewAtual)}
               onFechar={() => setPreviewAtual(null)}
+            />
+          )}
+          {anexoEmail && id && (
+            <PreviewEmailAninhado
+              anexo={anexoEmail}
+              messageId={id}
+              mailbox={mailbox}
+              onFechar={() => setAnexoEmail(null)}
+              onAbrirLink={onAbrirLink}
             />
           )}
         </>
@@ -5496,11 +5708,16 @@ export function ControlRoomScreen({
   onAbrirLink,
   onGrantPeopleAccess,
   onReauthenticate,
+  ativo = true,
 }: {
   user: AppUser;
   onAbrirLink: (url: string) => void;
   onGrantPeopleAccess: () => void;
   onReauthenticate: () => void;
+  /** #454: Bridge é a tela ATIVA? Repassado ao MessageList pra só instalar o
+   * atalho global de teclado quando o Bridge está em primeiro plano (ele fica
+   * montado/escondido em keep-alive). */
+  ativo?: boolean;
 }) {
   const { idioma, t } = useIdioma();
   // Fotos de contatos (#39): só buscamos avatar de remetente do MESMO domínio do
@@ -6688,6 +6905,7 @@ export function ControlRoomScreen({
           >
           <ResizablePanel defaultSize={38} minSize={24} maxSize={55} className="overflow-hidden">
             <MessageList
+              ativo={ativo}
               titulo={tituloLista}
               mensagens={fonteListaAtiva}
               erroLeitura={

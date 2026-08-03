@@ -34,6 +34,7 @@ import {
   NavigatorTabsPanel,
 } from "@/components/navigator-settings";
 import { LockScreenSettings } from "@/components/lock-screen-settings";
+import { LanguageSettings } from "@/components/language-settings";
 import { StartupSettings } from "@/components/startup-settings";
 import { TelemetrySettings } from "@/components/telemetry-settings";
 import {
@@ -195,6 +196,12 @@ const SETTINGS_SECTIONS: SettingsSection[] = [
         description: "Choose how GALAXIE Toolbox works with your device.",
         icon: MonitorCog,
         frames: [
+          {
+            key: "language",
+            title: "Language",
+            subtitle: "Choose the app's language.",
+            node: <LanguageSettings />,
+          },
           {
             key: "startup",
             title: "Startup",

@@ -6,7 +6,9 @@ import assert from "node:assert/strict";
 import {
   aceitaAltaFidelidade,
   classificarAnexo,
+  ehItemAttachment,
   ehPrevisualizavel,
+  ehReferenceAttachment,
 } from "./anexo-tipo.ts";
 import type { AnexoEmail } from "./types.ts";
 
@@ -44,6 +46,19 @@ test("TXT pelo sufixo do nome", () => {
   assert.equal(classificarAnexo(anexo({ nome: "notas.txt" })), "txt");
 });
 
+test("CSV por sufixo e por text/csv; .csv com text/plain ainda é csv (#451)", () => {
+  assert.equal(classificarAnexo(anexo({ nome: "dados.CSV" })), "csv");
+  assert.equal(
+    classificarAnexo(anexo({ nome: "x", contentType: "text/csv" })),
+    "csv"
+  );
+  // servidor manda text/plain mas o nome é .csv → csv (antes do txt)
+  assert.equal(
+    classificarAnexo(anexo({ nome: "planilha.csv", contentType: "text/plain" })),
+    "csv"
+  );
+});
+
 test("docx pelo contentType OOXML", () => {
   assert.equal(
     classificarAnexo(
@@ -65,6 +80,24 @@ test("pptx pelo sufixo do nome (Path C, #190)", () => {
   assert.equal(classificarAnexo(anexo({ nome: "deck.PPTX" })), "pptx");
 });
 
+test("imagem por contentType e sufixo; svg incluso (#450)", () => {
+  assert.equal(
+    classificarAnexo(anexo({ nome: "x", contentType: "image/png" })),
+    "imagem"
+  );
+  assert.equal(classificarAnexo(anexo({ nome: "foto.JPG" })), "imagem");
+  assert.equal(classificarAnexo(anexo({ nome: "logo.svg" })), "imagem");
+  assert.equal(classificarAnexo(anexo({ nome: "anim.gif" })), "imagem");
+});
+
+test("tiff NÃO é imagem previsível (cai em nao-suportado) (#450)", () => {
+  assert.equal(classificarAnexo(anexo({ nome: "scan.tiff" })), "nao-suportado");
+  assert.equal(
+    classificarAnexo(anexo({ nome: "x", contentType: "image/tiff" })),
+    "nao-suportado"
+  );
+});
+
 test("formato fora do escopo → nao-suportado", () => {
   assert.equal(classificarAnexo(anexo({ nome: "arquivo.msg" })), "nao-suportado");
   assert.equal(classificarAnexo(anexo({ nome: "pacote.zip" })), "nao-suportado");
@@ -84,4 +117,14 @@ test("aceitaAltaFidelidade: só docx/xlsx", () => {
   assert.equal(aceitaAltaFidelidade("xlsx"), true);
   assert.equal(aceitaAltaFidelidade("pptx"), false);
   assert.equal(aceitaAltaFidelidade("pdf"), false);
+});
+
+test("item/reference attachment por @odata.type (#191)", () => {
+  const item = anexo({ odataType: "#microsoft.graph.itemAttachment" });
+  const ref = anexo({ odataType: "#microsoft.graph.referenceAttachment" });
+  const file = anexo({ odataType: "#microsoft.graph.fileAttachment" });
+  assert.equal(ehItemAttachment(item), true);
+  assert.equal(ehReferenceAttachment(ref), true);
+  assert.equal(ehItemAttachment(file), false);
+  assert.equal(ehReferenceAttachment(file), false);
 });
