@@ -39,6 +39,16 @@ export function aceitaAltaFidelidade(tipo: TipoPreview): boolean {
   return tipo === "docx" || tipo === "xlsx";
 }
 
+/** Mensagem embutida (e-mail encaminhado/.msg) — abre no reader aninhado (#191). */
+export function ehItemAttachment(anexo: AnexoEmail): boolean {
+  return anexo.odataType.toLowerCase().includes("itemattachment");
+}
+
+/** Anexo de referência (link OneDrive/SharePoint) — abre o link, sem baixar (#191). */
+export function ehReferenceAttachment(anexo: AnexoEmail): boolean {
+  return anexo.odataType.toLowerCase().includes("referenceattachment");
+}
+
 /** O clique do chip abre o preview só para formatos que sabemos renderizar. */
 export function ehPrevisualizavel(anexo: AnexoEmail): boolean {
   return classificarAnexo(anexo) !== "nao-suportado";

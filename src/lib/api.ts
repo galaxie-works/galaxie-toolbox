@@ -1890,6 +1890,54 @@ export async function crAnexoParaPdf(
   });
 }
 
+/**
+ * Lê a mensagem embutida de um itemAttachment (e-mail encaminhado/.msg) para o
+ * reader aninhado (#191).
+ */
+export async function crLerAnexoEmail(
+  messageId: string,
+  attachmentId: string,
+  mailbox?: string
+): Promise<EmailDetalhe> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      assunto: "Fwd: Proposta comercial (exemplo)",
+      de: "Ana Souza",
+      deEmail: "ana@exemplo.com",
+      para: ["voce@galaxie.works"],
+      cc: [],
+      recebido: "2026-08-01T10:00:00Z",
+      corpo: "<p>Segue a proposta em anexo. Abraço,<br/>Ana</p>",
+      corpoTipo: "html",
+      anexos: [],
+      webLink: "https://outlook.office365.com/mock",
+    };
+  }
+  return invoke<EmailDetalhe>("cr_ler_anexo_email", {
+    messageId,
+    attachmentId,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
+/** Link de destino de um referenceAttachment (sem baixar bytes) (#191). */
+export async function crAnexoLink(
+  messageId: string,
+  attachmentId: string,
+  mailbox?: string
+): Promise<string> {
+  if (!inTauri()) {
+    await sleep(300);
+    return "https://exemplo-my.sharepoint.com/personal/doc.docx";
+  }
+  return invoke<string>("cr_anexo_link", {
+    messageId,
+    attachmentId,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
 /** Abre um arquivo local com o aplicativo padrao. */
 export async function abrirCaminho(path: string): Promise<void> {
   if (!inTauri()) {
