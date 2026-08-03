@@ -15,6 +15,8 @@ export type TipoPreview =
   | "pptx"
   | "imagem"
   | "csv"
+  | "audio"
+  | "video"
   | "nao-suportado";
 
 const CT_DOCX =
@@ -36,6 +38,23 @@ const CT_IMAGEM = new Set([
 ]);
 const EXT_IMAGEM = /\.(png|jpe?g|gif|webp|bmp|svg)$/;
 
+// Áudio/vídeo que o WebView2/Chromium toca. `.mov`/quicktime, `.mkv`, `.avi`
+// ficam de fora (não-suportado → CTA de baixar); o player ainda tem fallback
+// por `onError` para codec fora de suporte que passe pela classificação (#452).
+const CT_AUDIO = new Set([
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/mp4",
+  "audio/aac",
+  "audio/ogg",
+  "audio/webm",
+]);
+const EXT_AUDIO = /\.(mp3|wav|m4a|aac|ogg|oga|weba)$/;
+const CT_VIDEO = new Set(["video/mp4", "video/webm", "video/ogg"]);
+const EXT_VIDEO = /\.(mp4|m4v|webm|ogv)$/;
+
 /** Decide o renderer pelo `contentType` (preferido) e cai no sufixo do nome. */
 export function classificarAnexo(anexo: AnexoEmail): TipoPreview {
   const ct = anexo.contentType.toLowerCase();
@@ -48,6 +67,8 @@ export function classificarAnexo(anexo: AnexoEmail): TipoPreview {
   if (ct === CT_XLSX || nome.endsWith(".xlsx")) return "xlsx";
   if (ct === CT_PPTX || nome.endsWith(".pptx")) return "pptx";
   if (CT_IMAGEM.has(ct) || EXT_IMAGEM.test(nome)) return "imagem";
+  if (CT_AUDIO.has(ct) || EXT_AUDIO.test(nome)) return "audio";
+  if (CT_VIDEO.has(ct) || EXT_VIDEO.test(nome)) return "video";
   return "nao-suportado";
 }
 
