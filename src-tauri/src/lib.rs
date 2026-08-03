@@ -445,6 +445,19 @@ async fn cr_editar_evento(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda (#397): recorrência da série (do seriesMaster) pra o form carregar os
+/// campos ao editar "a série inteira". None = não recorrente/não modelado.
+#[tauri::command]
+async fn cr_evento_recorrencia(
+    state: State<'_, Store>,
+    id: String,
+) -> Result<Option<graph::Recorrencia>, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_evento_recorrencia(&store, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Agenda: exclui um evento (#211). Calendars.ReadWrite.
 #[tauri::command]
 async fn cr_excluir_evento(
@@ -1670,6 +1683,7 @@ pub fn run() {
             cr_criar_categoria,
             cr_criar_evento,
             cr_editar_evento,
+            cr_evento_recorrencia,
             cr_excluir_evento,
             cr_cancelar_evento,
             cr_responder_evento,
