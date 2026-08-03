@@ -16,6 +16,7 @@ import type {
   PastaEmail,
   PastaOD,
   Pessoa,
+  RecorrenciaInput,
   PeopleBulkDetailsChange,
   PeopleBulkDetailsWriteResult,
   PeopleCompanyWriteResult,
@@ -596,6 +597,18 @@ export async function crEditarEvento(id: string, input: EventoInput): Promise<vo
     return;
   }
   await invoke("cr_editar_evento", { id, input });
+}
+
+/** #397: recorrência da SÉRIE (do seriesMaster) pra o form carregar os campos ao
+ * editar "a série inteira". `null` = evento único ou padrão não modelado (relative*). */
+export async function crEventoRecorrencia(
+  id: string,
+): Promise<RecorrenciaInput | null> {
+  if (!inTauri()) {
+    await sleep(200);
+    return null;
+  }
+  return invoke<RecorrenciaInput | null>("cr_evento_recorrencia", { id });
 }
 
 /** Exclui um evento (#211). */
