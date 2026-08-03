@@ -38,6 +38,7 @@ import type {
   RecorrenciaFrequencia,
   RecorrenciaInput,
 } from "@/lib/types";
+import { crEventoRecorrencia } from "@/lib/api";
 import { CampoPessoas } from "@/components/compose/campo-pessoas";
 
 import { EventCalendar } from "@/components/reui/event-calendar/event-calendar";
@@ -825,8 +826,14 @@ function EventoFormSheet() {
   // o form em edição. Ao editar a SÉRIE, só forçamos o schedule no seriesMaster
   // se o usuário DE FATO mexeu no horário — senão preservamos (somente_campos).
   const scheduleSeedRef = useRef<string | null>(null);
+  // #397: início REAL da série (do fetch da recorrência) — usado no montar pra NÃO
+  // mover o começo da série ao editar (a data no form é a da ocorrência). E a
+  // assinatura da recorrência semeada, pra detectar no save se o usuário mexeu no
+  // padrão (aí NÃO usa `somente_campos`, senão o recurrence editado não é enviado).
+  const recSerieInicioRef = useRef<string | null>(null);
+  const recSeedRef = useRef<string>("never");
 
-  // Recorrência (#396, S1) — só ao CRIAR (editar série é o S2). "never" = único.
+  // Recorrência (#396, S1 criar; #397 S2 editar série). "never" = único.
   const [recFreq, setRecFreq] = useState<"never" | RecorrenciaFrequencia>(
     "never",
   );
@@ -940,15 +947,29 @@ function EventoFormSheet() {
       return { email, nome: p?.nome ?? email };
     });
 
-  // Monta a recorrência (#396) a partir do estado do form. Só ao criar; weekly
-  // sem dias marcados cai no dia da data de início.
-  const montarRecorrencia = (dataInicio: string): RecorrenciaInput | undefined => {
-    if (modo !== "criar" || recFreq === "never" || !dataInicio) return undefined;
+  // #397: assinatura do estado de recorrência do form — comparada com a semeada
+  // (`recSeedRef`) no save pra saber se o usuário MEXEU no padrão ao editar a série.
+  const assinaturaRec = (): string =>
+    recFreq === "never"
+      ? "never"
+      : `${recFreq}|${recIntervalo}|${[...recDias].sort().join(",")}|${recFim}|${recDataFim}|${recNumOcorr}`;
+
+  // Monta a recorrência a partir do estado do form (#396 criar; #397 editar série).
+  // weekly sem dias marcados cai no dia da data de início. Ao editar a SÉRIE, o
+  // início vem da PRÓPRIA série (fetch), não da data da ocorrência no form — senão
+  // salvar a série moveria o começo dela.
+  const montarRecorrencia = (dataOcorrencia: string): RecorrenciaInput | undefined => {
+    const editandoSerie = modo === "editar" && escopoRec === "serie";
+    if ((modo !== "criar" && !editandoSerie) || recFreq === "never") return undefined;
+    const inicio = editandoSerie
+      ? (recSerieInicioRef.current ?? dataOcorrencia)
+      : dataOcorrencia;
+    if (!inicio) return undefined;
     const dias =
       recFreq === "weekly"
         ? recDias.length > 0
           ? recDias
-          : [diaDaData(dataInicio)]
+          : [diaDaData(inicio)]
         : [];
     return {
       frequencia: recFreq,
@@ -956,11 +977,11 @@ function EventoFormSheet() {
       diasSemana: dias,
       diaDoMes:
         recFreq === "monthly" || recFreq === "yearly"
-          ? Number(dataInicio.slice(8, 10))
+          ? Number(inicio.slice(8, 10))
           : undefined,
-      mes: recFreq === "yearly" ? Number(dataInicio.slice(5, 7)) : undefined,
+      mes: recFreq === "yearly" ? Number(inicio.slice(5, 7)) : undefined,
       fimTipo: recFim,
-      dataInicio,
+      dataInicio: inicio,
       dataFim: recFim === "endDate" ? recDataFim || undefined : undefined,
       numeroOcorrencias:
         recFim === "numbered" ? Math.max(1, recNumOcorr || 1) : undefined,
@@ -1026,6 +1047,53 @@ function EventoFormSheet() {
       evento.tipo === "exception" ||
       evento.tipo === "seriesMaster");
 
+  // #397: ao abrir o Edit da SÉRIE, carrega a recorrência do master pra o form
+  // MOSTRAR/editar os campos (a reprovação foi "não carrega os campos da
+  // recorrência"). Ocorrência, não-recorrente ou padrão não modelado (relative*):
+  // recFreq "never" (sem edição de recorrência). Async à parte pra não re-semear
+  // título/datas do efeito de carga principal.
+  useEffect(() => {
+    if (!aberto || modo !== "editar" || !evento) return;
+    const editaSerie = escopoRec === "serie" && eventoRecorrente;
+    if (!editaSerie) {
+      setRecFreq("never");
+      recSeedRef.current = "never";
+      recSerieInicioRef.current = null;
+      return;
+    }
+    const masterId =
+      evento.tipo === "seriesMaster" ? evento.id : evento.seriesMasterId;
+    if (!masterId) return;
+    let vivo = true;
+    void crEventoRecorrencia(masterId)
+      .then((rec) => {
+        if (!vivo) return;
+        if (!rec) {
+          setRecFreq("never");
+          recSeedRef.current = "never";
+          recSerieInicioRef.current = null;
+          return;
+        }
+        setRecFreq(rec.frequencia);
+        setRecIntervalo(rec.intervalo);
+        setRecDias(rec.diasSemana);
+        setRecFim(rec.fimTipo);
+        setRecDataFim(rec.dataFim ?? "");
+        setRecNumOcorr(rec.numeroOcorrencias ?? 10);
+        recSerieInicioRef.current = rec.dataInicio;
+        recSeedRef.current = `${rec.frequencia}|${rec.intervalo}|${[...rec.diasSemana].sort().join(",")}|${rec.fimTipo}|${rec.dataFim ?? ""}|${rec.numeroOcorrencias ?? 10}`;
+      })
+      .catch(() => {
+        if (!vivo) return;
+        setRecFreq("never");
+        recSeedRef.current = "never";
+        recSerieInicioRef.current = null;
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [aberto, modo, evento, escopoRec, eventoRecorrente]);
+
   const executarSalvar = async (
     idAlvo: string | null,
     input: EventoInput,
@@ -1065,9 +1133,12 @@ function EventoFormSheet() {
         ? `d|${inicioD}|${fimD}`
         : `t|${inicioDT}|${fimDT}`;
       const scheduleMudou = scheduleSeedRef.current !== scheduleAtual;
+      // #397: se o usuário mexeu no PADRÃO de recorrência, o PATCH tem que enviar o
+      // `recurrence` — então NÃO pode ser somente_campos (que omite recurrence).
+      const recorrenciaMudou = recSeedRef.current !== assinaturaRec();
       await executarSalvar(
         idSerie,
-        { ...input, somenteCampos: !scheduleMudou },
+        { ...input, somenteCampos: !scheduleMudou && !recorrenciaMudou },
         true,
       );
       return;
@@ -1213,7 +1284,10 @@ function EventoFormSheet() {
           </Field>
 
           {/* Recorrência (#396, S1) — só ao criar; editar série é o S2. */}
-          {modo === "criar" && (
+          {/* #397: recorrência aparece ao CRIAR e ao editar a SÉRIE (carregada do
+              master). Ocorrência não edita recorrência (vira exceção). */}
+          {(modo === "criar" ||
+            (modo === "editar" && eventoRecorrente && escopoRec === "serie")) && (
             <Field>
               <FieldLabel htmlFor="agenda-recorrencia">
                 {t.controlRoom.agendaFormRepetir}
