@@ -6,7 +6,7 @@ Issue #180 · GALAXIE Toolbox / **Galaxie AI** (novo item de Galaxie Apps)
 Stack: Tauri 2 (multi-webview, feature `unstable`) + React 19 + TypeScript + Tailwind v4 + shadcn/reui · Microsoft Graph **delegado (`/me`)**, multi-tenant (tenant detectado pelo domínio)
 Status: **discovery + estratégia** (sem código). Foco: **produto + arquitetura + modelo de negócio** — não só UI.
 
-> Leia junto de `docs/bridge-people-ux.md` (#143) e `docs/navigator-ux-spec.md` (#172) — mesma disciplina de mapeamento pro código real e mesmo fatiamento INVEST. Aqui o eixo é **como o app se sustenta e gera renda**, não uma tela.
+> Leia junto de `docs/bridge/bridge-people-ux.md` (#143) e `docs/navigator/navigator-ux-spec.md` (#172) — mesma disciplina de mapeamento pro código real e mesmo fatiamento INVEST. Aqui o eixo é **como o app se sustenta e gera renda**, não uma tela.
 >
 > **Este documento NÃO fecha preço nem estratégia.** Traz o modelo do Suzette com números reais como *referência*, recalcula pro Galaxie, e apresenta **opções** — as decisões de preço, master-user e escopo do meeting assistant são do Wagner (ver §10, perguntas abertas).
 

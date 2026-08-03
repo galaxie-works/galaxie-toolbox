@@ -12,7 +12,7 @@ Escopo atual em foco: **Bridge** (cliente de e-mail dentro do app) + track paral
 > 4. **AC EXPERIENCIAIS, não estruturais.** "Componente X renderiza" é AC ruim. AC bom é verificável abrindo o app real logado: "mostra o dado real; skeleton no load; erro que RECUPERA no retry; vazio ≠ erro ≠ tudo-em-dia; transições; copy/bento certos".
 > 5. **Profundidade > throughput.** Superfície flagship = UX research ANTES de codar. Não empilhar slices data-heavy sem validar a fundação de dado.
 > 6. **Fix sobre algo já integrado vai em PR NOVO** (o merge local do Polaris fecha o PR → push no branch fechado não roda CI e ele pode não ver). Ou pingue "re-integra o branch X".
-> Causa-raiz detalhada: ver os retrospectos no #133 (02–03/ago) e `docs/atoms-ux-replan.md`.
+> Causa-raiz detalhada: ver os retrospectos no #133 (02–03/ago) e `docs/atoms/atoms-ux-replan.md`.
 
 ## 1. O app em uma frase
 Tauri 2 + React 19 + TypeScript + Tailwind v4. Fala com **Microsoft Graph delegado (`/me`)** — **não há IMAP**. Login sempre na página oficial da Microsoft; o app **nunca** vê a senha/MFA/token do usuário.
@@ -20,7 +20,7 @@ Tauri 2 + React 19 + TypeScript + Tailwind v4. Fala com **Microsoft Graph delega
 ### 1.1 Permissões Graph — GRANTED vs. REQUESTED
 Public client + PKCE, delegado `/me`. Distinção que importa pro roadmap:
 - **GRANTED** = concedido no app registration (admin consent do tenant Galaxie Works Ltd). Disponível **sem novo consent**.
-  - 📄 **Fonte única de verdade dos escopos concedidos: [`docs/graph-scopes.md`](./docs/graph-scopes.md)** (atualizado 2026-08-03, **101 escopos** admin-consented). NÃO duplicar a lista aqui — ela driftou (esta seção já esteve com "53"). Sempre conferir o graph-scopes.md.
+  - 📄 **Fonte única de verdade dos escopos concedidos: [`docs/reference/graph-scopes.md`](./docs/reference/graph-scopes.md)** (atualizado 2026-08-03, **101 escopos** admin-consented). NÃO duplicar a lista aqui — ela driftou (esta seção já esteve com "53"). Sempre conferir o graph-scopes.md.
   - Na tabela do graph-scopes.md, a coluna **"Admin?"** = *exige admin consent?* — **"Não" NÃO significa "não concedido"**; significa que é user-consentable. Todos os 101 já estão concedidos.
 - **REQUESTED** = subconjunto **mínimo** que a app pede no token, em `src-tauri/src/config.rs` const `SCOPES`. Adicionar um escopo já-GRANTED aqui **não** dispara re-consent (admin já consentiu); só exige o usuário **relogar** pra token novo.
 
