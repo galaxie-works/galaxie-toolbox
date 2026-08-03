@@ -273,6 +273,17 @@ async fn cr_tarefas(state: State<'_, Store>) -> Result<Vec<graph::Tarefa>, Strin
         .map_err(|e| e.to_string())?
 }
 
+/// Atoms (#440 A1): e-mail do dashboard num único $batch (não-lidos + sinalizados
+/// + recentes), sob o pool e memoizado. 1 request, 1 caminho de erro — substitui
+/// o Promise.all([cr_email, cr_contadores]) do front.
+#[tauri::command]
+async fn atoms_email(state: State<'_, Store>) -> Result<graph::AtomsEmail, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::atoms_email(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Atoms (#184): conclui uma tarefa do To Do (complete-in-place).
 #[tauri::command]
 async fn cr_tarefa_concluir(
@@ -1603,6 +1614,7 @@ pub fn run() {
             cr_reunioes,
             cr_email,
             cr_tarefas,
+            atoms_email,
             cr_tarefa_concluir,
             cr_agenda,
             cr_calendarios,
