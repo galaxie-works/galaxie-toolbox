@@ -1203,6 +1203,12 @@ const pt = {
       "Faça login novamente para enviar usando caixas compartilhadas.",
     caixaAcessoParcial:
       "Acesso parcial — você não tem permissão para abrir esta pasta.",
+    // #464 (S2): erros/rótulos de People que vazavam em inglês pra UI.
+    pessoaNaoEditavel: "Esta pessoa não é um contato editável do Microsoft.",
+    mergeJaRodando: "Uma mesclagem já está em andamento.",
+    mergeNadaDesfazer: "Nada a desfazer.",
+    peopleSemNome: "Sem nome",
+    corpoEmail: "Conteúdo do e-mail",
   },
   emBreveControlRoom: {
     descricao: "O painel de controle da Galaxie — sua visão geral. Em breve.",
@@ -1244,6 +1250,10 @@ const pt = {
     recarregar: "Recarregar",
     detalhes: "Detalhes técnicos",
   },
+
+  // #464 (S0): esqueleto do namespace de Settings — o S1 (~268 strings) preenche
+  // quando o PO priorizar. Vazio de propósito por ora (a paridade pt↔en vale).
+  settings: {},
 } as const;
 
 export type Dicionario = typeof pt;
@@ -2420,6 +2430,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
       "Sign in again to send using shared mailboxes.",
     caixaAcessoParcial:
       "Partial access — you don't have permission to open this folder.",
+    pessoaNaoEditavel: "This person is not an editable Microsoft contact.",
+    mergeJaRodando: "A merge is already running.",
+    mergeNadaDesfazer: "Nothing to undo.",
+    peopleSemNome: "Unknown",
+    corpoEmail: "Email content",
   },
   emBreveControlRoom: {
     descricao: "The Galaxie control panel — your overview. Coming soon.",
@@ -2459,6 +2474,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     recarregar: "Reload",
     detalhes: "Technical details",
   },
+
+  // #464 (S0): Settings namespace skeleton — the S1 fills it in.
+  settings: {},
 };
 
 export const DICIONARIOS: Record<Idioma, Dicionario> = {

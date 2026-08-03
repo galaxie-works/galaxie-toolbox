@@ -11,11 +11,21 @@ import { DICIONARIOS, type Dicionario, type Idioma } from "@/lib/strings";
 
 const CHAVE = "galaxie-idioma";
 
-/** Idioma salvo; na falta dele, o do sistema; na falta dos dois, ingles. */
-function idiomaInicial(): Idioma {
+/**
+ * Idioma atual: preferência salva → idioma do sistema (pt→pt-BR) → **inglês**
+ * (#464 S0: o default do PO é EN — sem preferência salva e sistema não-pt cai em
+ * `en`). Fonte de verdade FORA do React: stores/libs que não podem usar o hook
+ * `useIdioma` chamam isto (o `definir` grava o mesmo `localStorage`).
+ */
+export function idiomaAtual(): Idioma {
   const salvo = localStorage.getItem(CHAVE);
   if (salvo === "pt-BR" || salvo === "en") return salvo;
   return navigator.language?.toLowerCase().startsWith("pt") ? "pt-BR" : "en";
+}
+
+/** Idioma inicial do provider (= `idiomaAtual`). */
+function idiomaInicial(): Idioma {
+  return idiomaAtual();
 }
 
 interface Ctx {
@@ -54,7 +64,14 @@ export function useIdioma(): Ctx {
   return ctx;
 }
 
-/** Troca `{chave}` pelos valores informados. */
+/**
+ * Troca `{chave}` pelos valores informados.
+ *
+ * #464 (S0) — débito conhecido de PLURAL: `{n}` NÃO flexiona a frase (ex.: "1
+ * item" vs "2 itens" / "1 item" vs "2 items"). Hoje cada string escolhe uma forma
+ * fixa. Resolver plural real (Intl.PluralRules por idioma) fica pro épico i18n —
+ * registrado aqui de propósito, não é pra corrigir agora.
+ */
 export function preencher(
   texto: string,
   valores: Record<string, string | number>
