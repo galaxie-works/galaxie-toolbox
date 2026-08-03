@@ -7,6 +7,7 @@ import type {
   CategoriaCor,
   EmailDetalhe,
   EmailItem,
+  EmailRecente,
   EventoAgenda,
   EventoDetalhe,
   EventoInput,
@@ -340,6 +341,31 @@ export async function crEmail(): Promise<CaixaEntrada> {
     };
   }
   return invoke<CaixaEntrada>("cr_email");
+}
+
+/** #440 (Atoms A1): e-mail do dashboard num único $batch (não-lidos + sinalizados
+ * + recentes). 1 comando, 1 caminho de erro — substitui o
+ * Promise.all([crEmail, crContadores]) que derrubava o widget quando só o
+ * contador falhava (#187). O não-lido é sinal-chave: um erro real propaga. */
+export interface AtomsEmail {
+  naoLidos: number;
+  sinalizados: number;
+  recentes: EmailRecente[];
+}
+
+export async function crAtomsEmail(): Promise<AtomsEmail> {
+  if (!inTauri()) {
+    await sleep(500);
+    return {
+      naoLidos: 12,
+      sinalizados: 3,
+      recentes: [
+        { assunto: "Fatura de julho", de: "Financeiro", recebido: new Date().toISOString() },
+        { assunto: "Aprovação pendente", de: "João", recebido: new Date().toISOString() },
+      ],
+    };
+  }
+  return invoke<AtomsEmail>("atoms_email");
 }
 
 export async function crTarefas(): Promise<Tarefa[]> {

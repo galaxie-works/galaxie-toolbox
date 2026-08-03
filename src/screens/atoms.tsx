@@ -51,6 +51,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/animate-ui/primitives/radix/checkbox";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { useIdioma, preencher } from "@/lib/idioma";
+import { logErro } from "@/lib/log";
 import { ordenarAtoms, criarAtom, type AtomItem } from "@/lib/atoms";
 import type { Tela } from "@/lib/navegacao";
 import type { AppUser, EmailRecente, EventoAgenda, Tarefa } from "@/lib/types";
@@ -140,7 +141,10 @@ export function AtomsScreen({
       const { inicio, fim } = janela7Dias();
       const eventos = await api.crAgenda(inicio, fim);
       setAgenda({ fase: "ok", dados: eventos });
-    } catch {
+    } catch (e) {
+      // #441 (A2): erro NÃO é mais silencioso — vai pro log do backend com
+      // contexto, pra dar pra diagnosticar em produção ("como o Delphero faria").
+      logErro("atoms:agenda", e);
       setAgenda({ fase: "erro" });
     }
   }, []);
@@ -148,19 +152,20 @@ export function AtomsScreen({
   const carregarEmail = useCallback(async () => {
     setEmail({ fase: "carregando" });
     try {
-      const [caixa, contadores] = await Promise.all([
-        api.crEmail(),
-        api.crContadores("inbox"),
-      ]);
+      // #440 (A1): um único $batch (não-lidos + sinalizados + recentes). Substitui
+      // o Promise.all([crEmail, crContadores]), que rejeitava tudo quando só o
+      // contador falhava e derrubava o widget mesmo com o não-lido resolvido (#187).
+      const email = await api.crAtomsEmail();
       setEmail({
         fase: "ok",
         dados: {
-          naoLidos: caixa.naoLidos,
-          sinalizados: contadores.flagged,
-          recentes: caixa.recentes,
+          naoLidos: email.naoLidos,
+          sinalizados: email.sinalizados,
+          recentes: email.recentes,
         },
       });
-    } catch {
+    } catch (e) {
+      logErro("atoms:email", e);
       setEmail({ fase: "erro" });
     }
   }, []);
@@ -170,18 +175,36 @@ export function AtomsScreen({
     try {
       const tarefas = await api.crTarefas();
       setTodos({ fase: "ok", dados: tarefas });
-    } catch {
+    } catch (e) {
+      logErro("atoms:tarefas", e);
       setTodos({ fase: "erro" });
     }
   }, []);
 
   useEffect(() => {
-    void carregarAgenda();
-    void carregarEmail();
-    void carregarTodos();
-    // #186: fontes duras — best-effort, não bloqueiam o dashboard.
-    void api.atomsOnedriveSync().then(setOnedrive).catch(() => setOnedrive(null));
-    void api.crTeamsDisponivel().then(setTeamsOk).catch(() => setTeamsOk(false));
+    // #440 (A1): boot SEQUENCIADO pra matar o "thundering herd" (6 chamadas Graph
+    // juntas competindo com o keep-alive do Bridge → 429). Prioriza agenda+e-mail
+    // (o que o usuário olha primeiro), depois tarefas, e só então as fontes duras
+    // best-effort. O pool + single-flight do Rust deduplicam com o Bridge.
+    let vivo = true;
+    void (async () => {
+      await Promise.allSettled([carregarAgenda(), carregarEmail()]);
+      if (!vivo) return;
+      await carregarTodos();
+      if (!vivo) return;
+      // #186: fontes duras — best-effort, atrasadas, fora do pico do boot.
+      void api
+        .atomsOnedriveSync()
+        .then((v) => vivo && setOnedrive(v))
+        .catch(() => vivo && setOnedrive(null));
+      void api
+        .crTeamsDisponivel()
+        .then((v) => vivo && setTeamsOk(v))
+        .catch(() => vivo && setTeamsOk(false));
+    })();
+    return () => {
+      vivo = false;
+    };
   }, [carregarAgenda, carregarEmail, carregarTodos]);
 
   // Remove uma tarefa da lista após concluí-la (otimista; o widget faz o write).
