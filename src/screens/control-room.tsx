@@ -5131,7 +5131,7 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
 
   return (
     <Sheet open={!!id} onOpenChange={(o) => !o && fecharEventoAgenda()}>
-      <SheetContent side="right" className="flex w-[30%] flex-col gap-0 p-0 sm:max-w-[30vw]">
+      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-lg">
         {!det ? (
           <div className="flex flex-1 items-center justify-center py-10">
             <Spinner className="size-6 text-muted-foreground" />

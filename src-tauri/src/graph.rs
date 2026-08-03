@@ -201,6 +201,100 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+// Single-flight + cache de TTL curto por operação (#440 A1)
+//
+// O pool acima corta a rajada e re-tenta 429, mas NÃO impede que a MESMA leitura
+// seja disparada duas vezes quase junto — o boot do Atoms e o keep-alive do
+// Bridge pedem agenda/e-mail no mesmo instante. Aqui coalescemos chamadas
+// idênticas concorrentes e reusamos um resultado fresco (janela curta), matando
+// o "thundering herd" na ORIGEM. Só resultado Ok é cacheado; um Err re-executa na
+// próxima chamada (o Retry PRECISA funcionar). Escritas invalidam a chave via
+// `memo_invalidar` para o próximo read trazer dado fresco.
+// ---------------------------------------------------------------------------
+
+/// Janela de reuso do memo. Curta de propósito: cobre o pico do boot (tudo nos
+/// primeiros ~1-2s) sem servir dado velho — e as escritas invalidam explicitamente.
+const MEMO_TTL_MS: u64 = 2500;
+
+/// Teto de chaves no mapa de memo. Backstop contra crescimento: chaves de agenda
+/// carregam a janela (bucketizada por minuto), então sessões longas acumulam uma
+/// entrada por minuto navegado. Ao estourar, limpamos o mapa inteiro (raro; quem
+/// está no meio de uma chamada segura seu próprio Arc e não é afetado).
+const MEMO_MAX_CHAVES: usize = 128;
+
+/// Trunca um ISO 8601 ("2026-08-03T10:23:45.123Z") no minuto ("2026-08-03T10:23")
+/// pra usar como CHAVE de memo. Sem isso, `toISOString()` (precisão de ms) geraria
+/// uma chave nova a cada chamada → o coalescing de agenda nunca casaria (Atoms vs.
+/// Bridge no mesmo segundo) e o mapa cresceria a cada mount. O minuto coalesce o
+/// boot (sub-segundo) e mantém o mapa enxuto; a frescura segue governada pelo TTL.
+fn chave_por_minuto(iso: &str) -> &str {
+    iso.get(..16).unwrap_or(iso)
+}
+
+struct FatiaMemo {
+    /// O Mutex serializa chamadas da MESMA chave → single-flight: a 2ª chamada
+    /// concorrente espera a 1ª e reusa o resultado em vez de refazer a rede.
+    /// Chaves diferentes usam fatias diferentes e não se bloqueiam.
+    dado: std::sync::Mutex<Option<(u64, std::sync::Arc<dyn std::any::Any + Send + Sync>)>>,
+}
+
+fn memo_mapa(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<FatiaMemo>>> {
+    static MEMO: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<FatiaMemo>>>,
+    > = std::sync::OnceLock::new();
+    MEMO.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn agora_ms() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+}
+
+/// Executa `calc` sob single-flight + cache de TTL curto na `chave`. `T` precisa
+/// ser clonável e `'static` (guardado type-erased via `Any` e clonado na volta).
+/// Só sucesso é cacheado — um erro re-executa na próxima chamada.
+fn com_memo_curto<T, F>(chave: &str, calc: F) -> Result<T, String>
+where
+    T: Clone + Send + Sync + 'static,
+    F: FnOnce() -> Result<T, String>,
+{
+    let fatia = {
+        let mut m = memo_mapa().lock().unwrap_or_else(|e| e.into_inner());
+        // Backstop de crescimento: se estourou o teto e esta é uma chave nova,
+        // limpa o mapa antes de inserir (chamadas em voo seguram o próprio Arc).
+        if m.len() >= MEMO_MAX_CHAVES && !m.contains_key(chave) {
+            m.clear();
+        }
+        m.entry(chave.to_string())
+            .or_insert_with(|| {
+                std::sync::Arc::new(FatiaMemo { dado: std::sync::Mutex::new(None) })
+            })
+            .clone()
+    };
+    // Trava da fatia: enquanto a 1ª chamada busca, a 2ª espera aqui e, ao entrar,
+    // encontra o resultado fresco — coalesce sem refazer a rede.
+    let mut guard = fatia.dado.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((quando, val)) = guard.as_ref() {
+        if agora_ms().saturating_sub(*quando) < MEMO_TTL_MS {
+            if let Ok(tipado) = val.clone().downcast::<T>() {
+                return Ok((*tipado).clone());
+            }
+        }
+    }
+    let resultado = calc()?;
+    *guard = Some((agora_ms(), std::sync::Arc::new(resultado.clone())));
+    Ok(resultado)
+}
+
+/// Invalida toda entrada de memo cuja chave começa com `prefixo`. Chamado pelas
+/// escritas (criar/editar/excluir evento → "agenda:"; concluir tarefa →
+/// "tarefas:") para o próximo read trazer dado fresco em vez do cacheado.
+fn memo_invalidar(prefixo: &str) {
+    let mut m = memo_mapa().lock().unwrap_or_else(|e| e.into_inner());
+    m.retain(|k, _| !k.starts_with(prefixo));
+}
+
 /// Devolve um access_token valido, renovando via refresh_token se estiver
 /// perto de expirar. Atualiza o store.
 pub fn access_token(store: &TokenStore) -> Result<String, String> {
@@ -821,7 +915,7 @@ pub fn cr_reunioes(store: &TokenStore) -> Result<Vec<Reuniao>, String> {
     Ok(reunioes)
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailRecente {
     pub assunto: String,
@@ -829,7 +923,7 @@ pub struct EmailRecente {
     pub recebido: String,
 }
 
-#[derive(serde::Serialize, Default)]
+#[derive(serde::Serialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CaixaEntrada {
     pub nao_lidos: u64,
@@ -837,26 +931,40 @@ pub struct CaixaEntrada {
 }
 
 /// Nao-lidos da Caixa de Entrada + ultimas mensagens nao lidas. Mail.Read.
+///
+/// #440 (A1): AGORA sob o pool (`graph_enviar` — retry/429), e a contagem de
+/// não-lidos PROPAGA erro em vez de devolver "0 silencioso" (o front tem de
+/// distinguir "caixa vazia" de "falhou"; AC4). Os recentes seguem best-effort: a
+/// contagem é o sinal principal e a lista é só enriquecimento.
 pub fn cr_email(store: &TokenStore) -> Result<CaixaEntrada, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
 
     let mut cx = CaixaEntrada::default();
 
+    // Não-lidos: sinal-chave → um erro real vira Err (nunca "0" falso).
     let url = format!("{GRAPH}/me/mailFolders/inbox?$select=unreadItemCount");
-    if let Ok(resp) = client.get(&url).bearer_auth(&token).send() {
-        if resp.status().is_success() {
-            if let Ok(v) = resp.json::<serde_json::Value>() {
-                cx.nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
-            }
-        }
+    let resp = graph_enviar("mail:naolidos", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler não-lidos: {e}"))?;
+    if !resp.status().is_success() {
+        let st = resp.status();
+        log::warn!("[mail:naolidos] Graph retornou {st}");
+        return Err(format!("/me/mailFolders/inbox retornou {st}"));
+    }
+    if let Ok(v) = resp.json::<serde_json::Value>() {
+        cx.nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
     }
 
+    // Recentes: enriquecimento. Se falhar, mantém a contagem e degrada.
     let url = format!(
         "{GRAPH}/me/mailFolders/inbox/messages?$filter=isRead eq false\
          &$select=subject,from,receivedDateTime&$top=5&$orderby=receivedDateTime desc"
     );
-    if let Ok(resp) = client.get(&url).bearer_auth(&token).send() {
+    if let Ok(resp) = graph_enviar("mail:recentes", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    }) {
         if resp.status().is_success() {
             if let Ok(v) = resp.json::<serde_json::Value>() {
                 if let Some(items) = v["value"].as_array() {
@@ -873,32 +981,160 @@ pub fn cr_email(store: &TokenStore) -> Result<CaixaEntrada, String> {
                     }
                 }
             }
+        } else {
+            log::warn!("[mail:recentes] Graph retornou {} (degradando)", resp.status());
         }
     }
     Ok(cx)
 }
 
-#[derive(serde::Serialize)]
+/// E-mail do dashboard Atoms (#440 A1): não-lidos + sinalizados + recentes num
+/// ÚNICO `$batch` sob o pool — 1 request, 1 caminho de erro. Substitui o
+/// `Promise.all([cr_email, cr_contadores])` do front, que acoplava duas chamadas
+/// de resiliência diferente e derrubava o widget inteiro quando só o contador
+/// falhava (#187). Memoizado (single-flight + TTL curto) pra não competir com o
+/// Bridge no boot. Só o não-lido é sinal-chave (propaga erro); sinalizados e
+/// recentes degradam graciosamente. Mail.Read.
+#[derive(serde::Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AtomsEmail {
+    pub nao_lidos: u64,
+    pub sinalizados: u64,
+    pub recentes: Vec<EmailRecente>,
+}
+
+pub fn atoms_email(store: &TokenStore) -> Result<AtomsEmail, String> {
+    com_memo_curto("email:atoms", || atoms_email_inner(store))
+}
+
+fn atoms_email_inner(store: &TokenStore) -> Result<AtomsEmail, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let requests = serde_json::json!({
+        "requests": [
+            {
+                "id": "naoLidos",
+                "method": "GET",
+                "url": "/me/mailFolders/inbox?$select=unreadItemCount"
+            },
+            {
+                "id": "sinalizados",
+                "method": "GET",
+                "url": format!(
+                    "/me/mailFolders/inbox/messages/$count?$filter={}",
+                    urlencoding::encode("flag/flagStatus eq 'flagged'")
+                ),
+                "headers": { "ConsistencyLevel": "eventual" }
+            },
+            {
+                "id": "recentes",
+                "method": "GET",
+                "url": "/me/mailFolders/inbox/messages?$filter=isRead eq false&$select=subject,from,receivedDateTime&$top=5&$orderby=receivedDateTime desc"
+            }
+        ]
+    });
+    let url = format!("{GRAPH}/$batch");
+    let resp = graph_enviar("atoms:email", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&requests).send()
+    })
+    .map_err(|e| format!("falha no e-mail do Atoms: {e}"))?;
+    if !resp.status().is_success() {
+        let st = resp.status();
+        log::warn!("[atoms:email] $batch retornou {st}");
+        return Err(format!("/$batch (atoms:email) retornou {st}"));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    atoms_email_de_batch(&v)
+}
+
+/// Extrai `AtomsEmail` do JSON de resposta do `$batch` — lógica PURA (sem rede),
+/// exercitada em teste. Casa cada sub-resposta pelo `id` (o Graph não garante a
+/// ordem). O não-lido é o sinal-chave: se a sub-resposta dele não for 200, a
+/// função inteira falha (AC4 — nada de "0 não-lidos" mentiroso). Sinalizados e
+/// recentes que falharem caem no default (degradação graciosa).
+fn atoms_email_de_batch(v: &serde_json::Value) -> Result<AtomsEmail, String> {
+    let mut out = AtomsEmail::default();
+    let mut viu_nao_lidos = false;
+    if let Some(items) = v["responses"].as_array() {
+        for it in items {
+            let id = it["id"].as_str().unwrap_or("");
+            let status = it["status"].as_u64().unwrap_or(0);
+            match id {
+                "naoLidos" => {
+                    if status != 200 {
+                        return Err(format!("sub-resposta naoLidos: status {status}"));
+                    }
+                    out.nao_lidos = it["body"]["unreadItemCount"].as_u64().unwrap_or(0);
+                    viu_nao_lidos = true;
+                }
+                "sinalizados" if status == 200 => {
+                    out.sinalizados = it["body"]
+                        .as_u64()
+                        .or_else(|| it["body"].as_str().and_then(|s| s.trim().parse().ok()))
+                        .unwrap_or(0);
+                }
+                "recentes" if status == 200 => {
+                    if let Some(msgs) = it["body"]["value"].as_array() {
+                        for m in msgs {
+                            out.recentes.push(EmailRecente {
+                                assunto: m["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
+                                de: m["from"]["emailAddress"]["name"]
+                                    .as_str()
+                                    .or_else(|| m["from"]["emailAddress"]["address"].as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                                recebido: m["receivedDateTime"].as_str().unwrap_or("").to_string(),
+                            });
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    if !viu_nao_lidos {
+        return Err("resposta do $batch sem a sub-resposta naoLidos".to_string());
+    }
+    Ok(out)
+}
+
+#[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Tarefa {
     pub titulo: String,
     pub lista: String,
+    // #184 (Atoms S2): ids pra concluir in-place + prazo pro score de atenção.
+    pub id: String,
+    pub lista_id: String,
+    pub prazo: Option<String>,
 }
 
 /// Tarefas pendentes do To Do (todas as listas, ate 8). Tasks.ReadWrite.
+///
+/// #440 (A1): AGORA cada request passa pelo pool (`graph_enviar` — retry/429),
+/// e o resultado é memoizado (single-flight + TTL curto) pra não repetir a
+/// varredura de listas no boot. Era a causa do "Couldn't load" em Tasks: a
+/// chamada crua estourava 429 e o `Err` no 1º 429 derrubava o widget, com o
+/// Retry re-chamando a MESMA função desprotegida (#184).
 pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
+    com_memo_curto("tarefas:atoms", || cr_tarefas_inner(store))
+}
+
+fn cr_tarefas_inner(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
 
     // 1) listas
     let url = format!("{GRAPH}/me/todo/lists?$select=id,displayName&$top=50");
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .map_err(|e| format!("falha ao ler as listas: {e}"))?;
+    let resp = graph_enviar("todo:listas", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler as listas: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("/me/todo/lists retornou {}", resp.status()));
+        let st = resp.status();
+        log::warn!("[todo:listas] Graph retornou {st}");
+        return Err(format!("/me/todo/lists retornou {st}"));
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
 
@@ -916,9 +1152,11 @@ pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
             // 2) tarefas nao concluidas de cada lista
             let url = format!(
                 "{GRAPH}/me/todo/lists/{id}/tasks?$filter=status ne 'completed'\
-                 &$select=title&$top=8"
+                 &$select=id,title,dueDateTime&$top=8"
             );
-            if let Ok(r) = client.get(&url).bearer_auth(&token).send() {
+            if let Ok(r) = graph_enviar("todo:tarefas", GRAPH_TETO_ESPERA_S, || {
+                client.get(&url).bearer_auth(&token).send()
+            }) {
                 if r.status().is_success() {
                     if let Ok(vt) = r.json::<serde_json::Value>() {
                         if let Some(items) = vt["value"].as_array() {
@@ -926,9 +1164,16 @@ pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
                                 if tarefas.len() >= 8 {
                                     break;
                                 }
+                                // dueDateTime é objeto { dateTime, timeZone } no Graph.
+                                let prazo = it["dueDateTime"]["dateTime"]
+                                    .as_str()
+                                    .map(|s| s.to_string());
                                 tarefas.push(Tarefa {
                                     titulo: it["title"].as_str().unwrap_or("").to_string(),
                                     lista: nome.clone(),
+                                    id: it["id"].as_str().unwrap_or("").to_string(),
+                                    lista_id: id.to_string(),
+                                    prazo,
                                 });
                             }
                         }
@@ -938,6 +1183,39 @@ pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
         }
     }
     Ok(tarefas)
+}
+
+/// Conclui uma tarefa do To Do (#184, Atoms S2): PATCH status=completed em
+/// /me/todo/lists/{lista}/tasks/{id}. Tasks.ReadWrite (já concedido).
+pub fn cr_tarefa_concluir(
+    store: &TokenStore,
+    lista_id: &str,
+    tarefa_id: &str,
+) -> Result<(), String> {
+    let lista_id = lista_id.trim();
+    let tarefa_id = tarefa_id.trim();
+    if lista_id.is_empty() || tarefa_id.is_empty() {
+        return Err("Invalid task.".to_string());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!(
+        "{GRAPH}/me/todo/lists/{}/tasks/{}",
+        urlencoding::encode(lista_id),
+        urlencoding::encode(tarefa_id)
+    );
+    let body = serde_json::json!({ "status": "completed" });
+    let resp = graph_enviar("todo:concluir", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("Failed to complete task: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("To Do: Graph returned {}", resp.status()));
+    }
+    // #440: a lista de tarefas mudou — invalida o memo pra o próximo read do
+    // dashboard não trazer a tarefa concluída de volta do cache.
+    memo_invalidar("tarefas:");
+    Ok(())
 }
 
 // ----------------------------------------------------------------------------
@@ -984,7 +1262,7 @@ fn participante(no: &serde_json::Value) -> Participante {
     }
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EventoAgenda {
     pub id: String,
@@ -1100,12 +1378,19 @@ fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgend
 const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,responseRequested,type,seriesMasterId";
 
 /// Eventos do calendário padrão no intervalo (limites em ISO UTC). Calendars.Read.
+///
+/// #440 (A1): memoizado (single-flight + TTL curto, chave "agenda:") — o boot do
+/// Atoms e o keep-alive do Bridge pedem a MESMA janela quase juntos; coalescer
+/// evita a duplicata no mesmo segundo (AC3). Escritas invalidam "agenda:".
 pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
     let url = format!(
         "{GRAPH}/me/calendarView?startDateTime={inicio}&endDateTime={fim}\
          &$select={AGENDA_SELECT}&$orderby=start/dateTime&$top=100"
     );
-    buscar_calendar_view(store, &url)
+    com_memo_curto(
+        &format!("agenda:default:{}:{}", chave_por_minuto(inicio), chave_por_minuto(fim)),
+        || buscar_calendar_view(store, &url),
+    )
 }
 
 /// Eventos de um calendário específico no intervalo (#233). Mesmo parse/pool do
@@ -1120,7 +1405,14 @@ pub fn cr_agenda_calendario(
         "{GRAPH}/me/calendars/{calendario_id}/calendarView?startDateTime={inicio}&endDateTime={fim}\
          &$select={AGENDA_SELECT}&$orderby=start/dateTime&$top=100"
     );
-    buscar_calendar_view(store, &url)
+    com_memo_curto(
+        &format!(
+            "agenda:{calendario_id}:{}:{}",
+            chave_por_minuto(inicio),
+            chave_por_minuto(fim)
+        ),
+        || buscar_calendar_view(store, &url),
+    )
 }
 
 #[derive(serde::Serialize)]
@@ -1565,6 +1857,7 @@ pub fn cr_criar_evento(store: &TokenStore, input: EventoInput) -> Result<String,
         return Err(erro_escrita("me/events", "criar evento", resp.status()));
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    memo_invalidar("agenda:"); // #440: agenda mudou → próximo read traz fresco
     Ok(v["id"].as_str().unwrap_or("").to_string())
 }
 
@@ -1581,6 +1874,7 @@ pub fn cr_editar_evento(store: &TokenStore, id: &str, input: EventoInput) -> Res
     if !resp.status().is_success() {
         return Err(erro_escrita("me/events", "editar evento", resp.status()));
     }
+    memo_invalidar("agenda:"); // #440
     Ok(())
 }
 
@@ -1595,6 +1889,7 @@ pub fn cr_excluir_evento(store: &TokenStore, id: &str) -> Result<(), String> {
     })
     .map_err(|e| format!("falha ao excluir o evento: {e}"))?;
     if resp.status().is_success() || resp.status().as_u16() == 404 {
+        memo_invalidar("agenda:"); // #440
         Ok(())
     } else {
         Err(erro_escrita("me/events", "excluir evento", resp.status()))
@@ -1617,6 +1912,7 @@ pub fn cr_cancelar_evento(store: &TokenStore, id: &str, comentario: &str) -> Res
     .map_err(|e| format!("falha ao cancelar o evento: {e}"))?;
     // 404 = já removido (idempotente, como no excluir).
     if resp.status().is_success() || resp.status().as_u16() == 404 {
+        memo_invalidar("agenda:"); // #440
         Ok(())
     } else {
         Err(erro_escrita("me/events", "cancelar evento", resp.status()))
@@ -1658,6 +1954,7 @@ pub fn cr_responder_evento(
     .map_err(|e| format!("falha ao responder o convite: {e}"))?;
     // 404 = evento já não existe (idempotente, como cancelar/excluir).
     if resp.status().is_success() || resp.status().as_u16() == 404 {
+        memo_invalidar("agenda:"); // #440
         Ok(())
     } else {
         Err(erro_escrita("me/events", "responder convite", resp.status()))
@@ -2062,6 +2359,103 @@ pub fn cr_ler_anexo(
         bytes_b64,
         content_type: v["contentType"].as_str().unwrap_or("").to_string(),
         nome: v["name"].as_str().unwrap_or("anexo").to_string(),
+    })
+}
+
+/// Path C (spec §4.3): converte um anexo Office para PDF em **alta fidelidade**
+/// usando o próprio OneDrive do usuário — sobe para uma pasta temporária oculta
+/// (`/Bridge Anexos/.preview/`), pede `?format=pdf` ao Graph e **sempre apaga**
+/// o item temporário (mesmo se a conversão falhar). O PDF resultante é
+/// renderizado pelo mesmo pdf.js da Story 1.
+///
+/// Egress consciente (§7.3): o anexo sai para o OneDrive do **próprio tenant**
+/// do usuário (dado dele, tenant dele), em pasta oculta, e o temp é removido no
+/// fim. Usa `Files.ReadWrite` (já concedido) — sem escopo novo.
+pub fn cr_anexo_para_pdf(
+    store: &TokenStore,
+    message_id: &str,
+    attachment_id: &str,
+    mailbox: Option<&str>,
+) -> Result<AnexoConteudo, String> {
+    use base64::{engine::general_purpose, Engine as _};
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
+
+    // 1) Lê o anexo (bytes + nome).
+    let a_url =
+        format!("{GRAPH}/{prefix}/messages/{message_id}/attachments/{attachment_id}");
+    let resp = graph_enviar("mail:ler-anexo-pdf", GRAPH_TETO_ESPERA_S, || {
+        client.get(&a_url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler o anexo: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("leitura do anexo retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let nome = v["name"].as_str().unwrap_or("anexo").to_string();
+    let bytes = general_purpose::STANDARD
+        .decode(v["contentBytes"].as_str().unwrap_or("").trim())
+        .map_err(|e| format!("conteúdo do anexo inválido: {e}"))?;
+
+    let caminho = std::path::Path::new(&nome);
+    let ext = caminho.extension().and_then(|s| s.to_str()).unwrap_or("bin");
+    let stem = caminho.file_stem().and_then(|s| s.to_str()).unwrap_or("anexo");
+
+    // Nome temporário único (nanos): evita colisão entre previews concorrentes.
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let temp_nome = urlencoding::encode(&format!("{ts}.{ext}")).into_owned();
+
+    // 2) PUT numa pasta oculta .preview (o PUT-por-path cria a pasta se preciso).
+    let put_url = format!(
+        "{GRAPH}/me/drive/root:/Bridge%20Anexos/.preview/{temp_nome}:/content"
+    );
+    let resp = graph_enviar("onedrive:preview-upload", GRAPH_TETO_ESPERA_S, || {
+        client
+            .put(&put_url)
+            .bearer_auth(&token)
+            .header("Content-Type", "application/octet-stream")
+            .body(bytes.clone())
+            .send()
+    })
+    .map_err(|e| format!("falha no upload para conversão: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("upload para conversão retornou {}", resp.status()));
+    }
+    let item: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let item_id = item["id"]
+        .as_str()
+        .ok_or("item temporário sem id")?
+        .to_string();
+
+    // 3) GET ?format=pdf (o reqwest segue o redirect de download).
+    let conv_url =
+        format!("{GRAPH}/me/drive/items/{item_id}/content?format=pdf");
+    let conv = graph_enviar("onedrive:convert-pdf", GRAPH_TETO_ESPERA_S, || {
+        client.get(&conv_url).bearer_auth(&token).send()
+    });
+
+    // 4) Cleanup do temp — SEMPRE, dê o que der na conversão (best-effort).
+    let del_url = format!("{GRAPH}/me/drive/items/{item_id}");
+    let _ = graph_enviar("onedrive:preview-delete", GRAPH_TETO_ESPERA_S, || {
+        client.delete(&del_url).bearer_auth(&token).send()
+    });
+
+    // 5) Só agora avalia o resultado da conversão.
+    let conv = conv.map_err(|e| format!("falha na conversão para PDF: {e}"))?;
+    if !conv.status().is_success() {
+        return Err(format!("conversão para PDF retornou {}", conv.status()));
+    }
+    let pdf = conv.bytes().map_err(|e| e.to_string())?;
+
+    Ok(AnexoConteudo {
+        bytes_b64: general_purpose::STANDARD.encode(&pdf),
+        content_type: "application/pdf".to_string(),
+        nome: format!("{stem}.pdf"),
     })
 }
 
@@ -4196,6 +4590,13 @@ fn token_tem_escopo(store: &TokenStore, alvo: &str) -> Result<bool, String> {
 
 pub fn cr_people_write_available(store: &TokenStore) -> Result<bool, String> {
     token_tem_escopo(store, "Contacts.ReadWrite")
+}
+
+/// #186 (Atoms S4): o token carrega `Chat.Read`? Gate do widget de chats do
+/// Teams — sem o escopo, o widget mostra o affordance "Conectar o Teams" (consent
+/// explícito), nunca dispara consent silencioso nem quebra.
+pub fn cr_teams_disponivel(store: &TokenStore) -> Result<bool, String> {
+    token_tem_escopo(store, "Chat.Read")
 }
 
 fn valor_texto(item: &serde_json::Value, campo: &str) -> String {
@@ -6662,6 +7063,91 @@ mod testes_contadores {
         let c = contadores_de_batch(&serde_json::json!({}));
         assert_eq!(c.flagged, 0);
         assert_eq!(c.anexos, 0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #440 (Atoms A1): o parse do $batch de e-mail do dashboard. Garante que casa por
+// id (ordem não garantida), que o não-lido é sinal-chave (sub-falha → Err, nada
+// de "0 mentiroso"), e que sinalizados/recentes degradam graciosamente.
+//
+// Rodar: cargo test --lib graph::testes_atoms_email
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod testes_atoms_email {
+    use super::*;
+
+    #[test]
+    fn casa_por_id_fora_de_ordem() {
+        // Sub-respostas fora de ordem; corpo do /$count como número e como string.
+        let v = serde_json::json!({
+            "responses": [
+                { "id": "recentes", "status": 200, "body": { "value": [
+                    { "subject": "Fatura", "from": { "emailAddress": { "name": "Financeiro" } }, "receivedDateTime": "2026-08-02T10:00:00Z" }
+                ] } },
+                { "id": "sinalizados", "status": 200, "body": "3" },
+                { "id": "naoLidos", "status": 200, "body": { "unreadItemCount": 429 } }
+            ]
+        });
+        let e = atoms_email_de_batch(&v).expect("naoLidos 200 → Ok");
+        assert_eq!(e.nao_lidos, 429, "não-lido casou pelo id");
+        assert_eq!(e.sinalizados, 3, "sinalizados aceitou corpo em string");
+        assert_eq!(e.recentes.len(), 1);
+        assert_eq!(e.recentes[0].assunto, "Fatura");
+        assert_eq!(e.recentes[0].de, "Financeiro");
+    }
+
+    #[test]
+    fn nao_lido_com_erro_propaga() {
+        // O não-lido é o sinal-chave: se a sub-resposta dele falhar, a função
+        // inteira falha (AC4 — nada de "0 não-lidos" falso sob 429).
+        let v = serde_json::json!({
+            "responses": [
+                { "id": "naoLidos", "status": 429, "body": { "error": {} } },
+                { "id": "sinalizados", "status": 200, "body": 2 }
+            ]
+        });
+        assert!(atoms_email_de_batch(&v).is_err(), "sub-falha do não-lido → Err");
+    }
+
+    #[test]
+    fn sinalizados_e_recentes_degradam() {
+        // Não-lido OK; sinalizados e recentes falharam: caem no default sem
+        // derrubar a chamada (são enriquecimento, não sinal-chave).
+        let v = serde_json::json!({
+            "responses": [
+                { "id": "naoLidos", "status": 200, "body": { "unreadItemCount": 5 } },
+                { "id": "sinalizados", "status": 429, "body": { "error": {} } },
+                { "id": "recentes", "status": 503, "body": { "error": {} } }
+            ]
+        });
+        let e = atoms_email_de_batch(&v).expect("não-lido OK → Ok mesmo com o resto falho");
+        assert_eq!(e.nao_lidos, 5);
+        assert_eq!(e.sinalizados, 0, "sub-falha vira 0, não lixo");
+        assert!(e.recentes.is_empty());
+    }
+
+    #[test]
+    fn sem_nao_lidos_e_erro() {
+        // Envelope sem a sub-resposta do não-lido = não dá pra afirmar "0": Err.
+        let v = serde_json::json!({ "responses": [
+            { "id": "sinalizados", "status": 200, "body": 1 }
+        ] });
+        assert!(atoms_email_de_batch(&v).is_err());
+    }
+
+    #[test]
+    fn chave_por_minuto_trunca_e_coalesce() {
+        // Dois instantes no MESMO minuto → mesma chave (coalesce o boot); ms
+        // diferentes não geram chaves novas (o que vazaria o mapa).
+        let a = chave_por_minuto("2026-08-03T10:23:45.123Z");
+        let b = chave_por_minuto("2026-08-03T10:23:59.998Z");
+        assert_eq!(a, "2026-08-03T10:23");
+        assert_eq!(a, b, "mesmo minuto → mesma chave");
+        // Minuto seguinte → chave diferente (dado fresco após o TTL).
+        assert_ne!(a, chave_por_minuto("2026-08-03T10:24:00.000Z"));
+        // Robusto a string curta/inesperada: devolve a própria entrada.
+        assert_eq!(chave_por_minuto("curto"), "curto");
     }
 }
 

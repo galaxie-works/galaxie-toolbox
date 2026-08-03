@@ -7,6 +7,7 @@ import type {
   CategoriaCor,
   EmailDetalhe,
   EmailItem,
+  EmailRecente,
   EventoAgenda,
   EventoDetalhe,
   EventoInput,
@@ -342,15 +343,77 @@ export async function crEmail(): Promise<CaixaEntrada> {
   return invoke<CaixaEntrada>("cr_email");
 }
 
+/** #440 (Atoms A1): e-mail do dashboard num único $batch (não-lidos + sinalizados
+ * + recentes). 1 comando, 1 caminho de erro — substitui o
+ * Promise.all([crEmail, crContadores]) que derrubava o widget quando só o
+ * contador falhava (#187). O não-lido é sinal-chave: um erro real propaga. */
+export interface AtomsEmail {
+  naoLidos: number;
+  sinalizados: number;
+  recentes: EmailRecente[];
+}
+
+export async function crAtomsEmail(): Promise<AtomsEmail> {
+  if (!inTauri()) {
+    await sleep(500);
+    return {
+      naoLidos: 12,
+      sinalizados: 3,
+      recentes: [
+        { assunto: "Fatura de julho", de: "Financeiro", recebido: new Date().toISOString() },
+        { assunto: "Aprovação pendente", de: "João", recebido: new Date().toISOString() },
+      ],
+    };
+  }
+  return invoke<AtomsEmail>("atoms_email");
+}
+
 export async function crTarefas(): Promise<Tarefa[]> {
   if (!inTauri()) {
     await sleep(450);
+    const ontem = new Date(Date.now() - 86_400_000).toISOString();
     return [
-      { titulo: "Revisar migração PROJ-H", lista: "Trabalho" },
-      { titulo: "Ligar para o suporte MS", lista: "Trabalho" },
+      { titulo: "Revisar migração PROJ-H", lista: "Trabalho", id: "t1", listaId: "l1", prazo: ontem },
+      { titulo: "Ligar para o suporte MS", lista: "Trabalho", id: "t2", listaId: "l1", prazo: null },
     ];
   }
   return invoke<Tarefa[]>("cr_tarefas");
+}
+
+/** Atoms (#184): conclui uma tarefa do To Do (complete-in-place). */
+export async function crTarefaConcluir(
+  listaId: string,
+  tarefaId: string,
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(250);
+    return;
+  }
+  return invoke<void>("cr_tarefa_concluir", { listaId, tarefaId });
+}
+
+/** #186 (Atoms S4): estado local do sync do OneDrive (sonda Rust, não Graph). */
+export interface OneDriveSync {
+  estado: "ok" | "pausado" | "naoConfigurado";
+  contas: number;
+  ultimoErro: string | null;
+}
+
+export async function atomsOnedriveSync(): Promise<OneDriveSync> {
+  if (!inTauri()) {
+    await sleep(150);
+    return { estado: "naoConfigurado", contas: 0, ultimoErro: null };
+  }
+  return invoke<OneDriveSync>("atoms_onedrive_sync");
+}
+
+/** #186 (Atoms S4): o token tem Chat.Read? Gate do widget de chats do Teams. */
+export async function crTeamsDisponivel(): Promise<boolean> {
+  if (!inTauri()) {
+    const { missingScopes } = await requiredScopesStatus();
+    return !missingScopes.some((s) => s.toLocaleLowerCase() === "chat.read");
+  }
+  return invoke<boolean>("cr_teams_disponivel");
 }
 
 // --- Agenda do dia + inbox do dia ----------------------------------------
@@ -1799,6 +1862,28 @@ export async function crLerAnexo(
     };
   }
   return invoke<AnexoConteudo>("cr_ler_anexo", {
+    messageId,
+    attachmentId,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
+/**
+ * Path C (#190): converte um anexo Office para PDF em alta fidelidade via
+ * OneDrive do usuário (upload temp → `?format=pdf` → cleanup). Devolve o PDF em
+ * base64 para o pdf.js. Usa `Files.ReadWrite` (já concedido).
+ */
+export async function crAnexoParaPdf(
+  messageId: string,
+  attachmentId: string,
+  mailbox?: string
+): Promise<AnexoConteudo> {
+  if (!inTauri()) {
+    await sleep(700);
+    // Conversão depende do Graph real; no dev exercita o caminho de erro/degrade.
+    throw new Error("Conversão via Microsoft 365 indisponível no modo dev");
+  }
+  return invoke<AnexoConteudo>("cr_anexo_para_pdf", {
     messageId,
     attachmentId,
     mailbox: mailboxArg(mailbox),

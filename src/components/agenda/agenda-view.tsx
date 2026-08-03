@@ -1106,9 +1106,13 @@ function EventoFormSheet() {
       >
         <SheetHeader className="border-b px-4 py-3">
           <SheetTitle className="text-left">
-            {modo === "editar"
-              ? t.controlRoom.agendaFormEditarTitulo
-              : t.controlRoom.agendaFormCriarTitulo}
+            {modo !== "editar"
+              ? t.controlRoom.agendaFormCriarTitulo
+              : eventoRecorrente && escopoRec === "serie"
+                ? t.controlRoom.agendaFormEditarSerieTitulo
+                : eventoRecorrente && escopoRec === "ocorrencia"
+                  ? t.controlRoom.agendaFormEditarOcorrenciaTitulo
+                  : t.controlRoom.agendaFormEditarTitulo}
           </SheetTitle>
         </SheetHeader>
 

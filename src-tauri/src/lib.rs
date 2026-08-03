@@ -6,6 +6,7 @@ mod estado;
 mod favicon;
 mod graph;
 mod lock_screen;
+mod onedrive;
 mod system;
 mod telemetry;
 
@@ -270,6 +271,32 @@ async fn cr_tarefas(state: State<'_, Store>) -> Result<Vec<graph::Tarefa>, Strin
     tauri::async_runtime::spawn_blocking(move || graph::cr_tarefas(&store))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Atoms (#440 A1): e-mail do dashboard num único $batch (não-lidos + sinalizados
+/// + recentes), sob o pool e memoizado. 1 request, 1 caminho de erro — substitui
+/// o Promise.all([cr_email, cr_contadores]) do front.
+#[tauri::command]
+async fn atoms_email(state: State<'_, Store>) -> Result<graph::AtomsEmail, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::atoms_email(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Atoms (#184): conclui uma tarefa do To Do (complete-in-place).
+#[tauri::command]
+async fn cr_tarefa_concluir(
+    state: State<'_, Store>,
+    lista_id: String,
+    tarefa_id: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_tarefa_concluir(&store, &lista_id, &tarefa_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Control room: eventos da agenda no dia escolhido (limites ISO UTC).
@@ -645,6 +672,23 @@ async fn cr_people_write_available(state: State<'_, Store>) -> Result<bool, Stri
     tauri::async_runtime::spawn_blocking(move || graph::cr_people_write_available(&store))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// #186 (Atoms S4): Chat.Read presente? Gate do widget de chats do Teams.
+#[tauri::command]
+async fn cr_teams_disponivel(state: State<'_, Store>) -> Result<bool, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_teams_disponivel(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// #186 (Atoms S4): sonda LOCAL do sync do OneDrive (registry + processo).
+#[tauri::command]
+async fn atoms_onedrive_sync() -> onedrive::OneDriveSync {
+    tauri::async_runtime::spawn_blocking(onedrive::sondar)
+        .await
+        .unwrap_or_else(|_| onedrive::sondar())
 }
 
 #[tauri::command]
@@ -1175,6 +1219,28 @@ async fn cr_ler_anexo(
     .map_err(|e| e.to_string())?
 }
 
+/// Control room: converte um anexo Office para PDF em alta fidelidade via
+/// Path C (OneDrive do usuário → ?format=pdf → cleanup); renderiza no pdf.js (#190).
+#[tauri::command]
+async fn cr_anexo_para_pdf(
+    state: State<'_, Store>,
+    message_id: String,
+    attachment_id: String,
+    mailbox: Option<String>,
+) -> Result<graph::AnexoConteudo, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_anexo_para_pdf(
+            &store,
+            &message_id,
+            &attachment_id,
+            mailbox.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Abre um arquivo local com o aplicativo padrao do Windows.
 #[tauri::command]
 async fn abrir_caminho(path: String) -> Result<(), String> {
@@ -1433,6 +1499,17 @@ pub fn run() {
                 )?;
             }
 
+            // #387: o exporter OTLP so inicia quando endpoint + token forem
+            // injetados externamente. Sem ambos, zero rede; nunca loga valores.
+            match app
+                .state::<telemetry::TelemetryState>()
+                .iniciar_transporte_configurado()
+            {
+                Ok(true) => log::info!("[telemetry] transporte OTLP habilitado"),
+                Ok(false) => log::info!("[telemetry] transporte OTLP sem configuracao"),
+                Err(e) => log::error!("[telemetry] transporte OTLP bloqueado: {e:?}"),
+            }
+
             // Primeira vez (sem estado salvo): abre com 50% da resolucao do
             // monitor, centralizado. Nas proximas, o plugin acima restaura o
             // tamanho que o usuario deixou. A janela `main` nasce invisivel
@@ -1537,6 +1614,8 @@ pub fn run() {
             cr_reunioes,
             cr_email,
             cr_tarefas,
+            atoms_email,
+            cr_tarefa_concluir,
             cr_agenda,
             cr_calendarios,
             cr_agenda_calendario,
@@ -1561,6 +1640,8 @@ pub fn run() {
             cr_people_enrich_preview,
             cr_people_enrich_apply,
             cr_people_write_available,
+            cr_teams_disponivel,
+            atoms_onedrive_sync,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,
@@ -1597,6 +1678,7 @@ pub fn run() {
             cr_mover_pasta,
             cr_baixar_anexo,
             cr_ler_anexo,
+            cr_anexo_para_pdf,
             abrir_caminho,
             revelar_no_explorer,
             connect_site,
