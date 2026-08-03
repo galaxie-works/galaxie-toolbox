@@ -20,8 +20,8 @@ Tauri 2 + React 19 + TypeScript + Tailwind v4. Fala com **Microsoft Graph delega
 ### 1.1 Permissões Graph — GRANTED vs. REQUESTED
 Public client + PKCE, delegado `/me`. Distinção que importa pro roadmap:
 - **GRANTED** = concedido no app registration (admin consent do tenant Galaxie Works Ltd). Disponível **sem novo consent**.
-  - 📄 **Fonte única de verdade dos escopos concedidos: [`docs/graph-scopes.md`](./docs/graph-scopes.md)** (atualizado 2026-07-29, **87 escopos** admin-consented). NÃO duplicar a lista aqui — ela driftou (esta seção já esteve com "53"). Sempre conferir o graph-scopes.md.
-  - Na tabela do graph-scopes.md, a coluna **"Admin?"** = *exige admin consent?* — **"Não" NÃO significa "não concedido"**; significa que é user-consentable. Todos os 87 já estão concedidos.
+  - 📄 **Fonte única de verdade dos escopos concedidos: [`docs/graph-scopes.md`](./docs/graph-scopes.md)** (atualizado 2026-08-03, **101 escopos** admin-consented). NÃO duplicar a lista aqui — ela driftou (esta seção já esteve com "53"). Sempre conferir o graph-scopes.md.
+  - Na tabela do graph-scopes.md, a coluna **"Admin?"** = *exige admin consent?* — **"Não" NÃO significa "não concedido"**; significa que é user-consentable. Todos os 101 já estão concedidos.
 - **REQUESTED** = subconjunto **mínimo** que a app pede no token, em `src-tauri/src/config.rs` const `SCOPES`. Adicionar um escopo já-GRANTED aqui **não** dispara re-consent (admin já consentiu); só exige o usuário **relogar** pra token novo.
 
 **REQUESTED hoje** (`config.rs` SCOPES): `openid profile offline_access User.Read User.Read.All Files.ReadWrite Sites.Read.All Calendars.Read Mail.ReadWrite Mail.Send Tasks.ReadWrite People.Read Contacts.ReadWrite` — conferir sempre no `config.rs` (é a fonte).

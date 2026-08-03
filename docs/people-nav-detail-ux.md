@@ -1,5 +1,7 @@
 # Bridge — People: detail hierarchy, Outlook navbar & Organizations — Design Spec
 
+> 📌 **Design spec. Estado atual: ENTREGUE** — detail hierarchy, navbar estilo Outlook e Contacts | Organizations estão no app. Doc de intenção; comportamento real no código.
+
 Issues #203 (detail CTA/toolbar/frame/responsive) · #204 (Outlook-style navbar) · #205 (Contacts | Organizations, CRM seed)
 GALAXIE Toolbox / Bridge · Tauri 2 + React 19 + TS + Tailwind v4 + shadcn + **reui** (`@reui`, free tier)
 Status: design only (no production code). PO feedback on the shipped People module (v0.29/0.30).

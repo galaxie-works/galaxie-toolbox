@@ -58,7 +58,7 @@ O app é **delegado (`/me`)** e **Graph-only** (sem IMAP/EWS/EAS, ainda que esse
 escopos estejam disponíveis no registro). Há duas listas que não se confundem:
 
 - **Concedidas (*granted*)** — escopos delegados com *admin consent* do tenant,
-  disponíveis **sem novo consent**. A lista completa e atual (**87 escopos**, com a
+  disponíveis **sem novo consent**. A lista completa e atual (**101 escopos**, com a
   implicação por feature) está em **[`docs/graph-scopes.md`](docs/graph-scopes.md)** —
   fonte única de verdade. Inclui caixa compartilhada, Teams/Chat, Online Meetings,
   OneNote, Org settings, entre outros.

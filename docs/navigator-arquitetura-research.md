@@ -1,5 +1,7 @@
 # Navigator — Research de arquitetura (#363)
 
+> 📌 **Research/spike (#363) — read-first, débito técnico. Estado atual: backlog/idea**, não implementado. Doc de investigação.
+
 > **Débito técnico / spike (read-first, sem implementar).** Origem: ressalva do
 > Wagner ao aprovar o épico #324 — *"Tauri nunca foi construído pra se fazer um
 > app navegador nele... o Navigator funciona bem, mas os débitos técnicos

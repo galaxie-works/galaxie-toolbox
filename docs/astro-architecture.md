@@ -1,5 +1,7 @@
 # Astro — Arquitetura de Solução
 
+> 📌 **Snapshot de discovery/pesquisa (2026-07/08). Estado atual: NÃO construído** — Astro (#180/#196) segue em fase de decisão do PO (go/no-go). Este doc reflete a arquitetura proposta, não o que existe no app. Fonte viva de escopos: [`graph-scopes.md`](./graph-scopes.md).
+
 Camada de IA pré-paga do **GALAXIE Toolbox** (Tauri 2 + React 19 + Graph delegado).
 Autor: Arquiteto de Soluções (delegado pelo PO). Data: 2026-07-29.
 Companheiro deste doc: `docs/galaxie-ai-discovery.md` (#180, produto/negócio) — **este documento fecha o COMO técnico**, não repete a estratégia.

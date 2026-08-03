@@ -1,5 +1,7 @@
 # Research / Discovery — Bulk EDIT de contatos (#236)
 
+> 📌 **Snapshot de research (#236). Conferir status das stories no board** antes de tratar como pendente — parte pode já ter shipado no People. Doc de intenção.
+
 > **Tipo:** discovery. **Sem código de feature nesta issue** — só design doc + stories INVEST.
 > **Restrição dura do PO:** 🚫 bulk **delete** jamais entra (nem escondido). Ver §4.
 > **Método:** discovery ancorado no código real (`design:research-synthesis` — separar observação de interpretação, quantificar, insight→oportunidade). As "evidências" aqui são o comportamento verificado do código, não entrevistas.

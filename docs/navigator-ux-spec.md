@@ -1,5 +1,7 @@
 # Navigator (Cruiser) — New Features — Design Spec
 
+> 📌 **Design spec. Estado atual: ENTREGUE (#172 Done)** — Navigator com abas, sleeping tabs, command palette, favoritos e histórico/privacidade está no app. Doc de intenção; comportamento real no código.
+
 Issue #172 · GALAXIE Toolbox / Navigator (internal name **Cruiser**)
 Stack: Tauri 2 (multi-webview, feature `unstable`) + React 19 + TypeScript + Tailwind v4 + shadcn/new-york + **reui** registry (`radix-nova`)
 Status: research + design only (no code). The "revolution" the PO asked for.

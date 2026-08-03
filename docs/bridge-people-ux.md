@@ -1,5 +1,7 @@
 # Bridge — "People" module — Design Spec
 
+> 📌 **Design spec original. Estado atual: ENTREGUE e em produção** — o módulo People está no app (contatos M365, categorias, organizações). Este doc é a intenção de design; o comportamento real está no código e evoluiu além dele (ver também `people-nav-detail-ux.md` e `people-bulk-edit-research.md`).
+
 Issue #143 · GALAXIE Toolbox / Bridge email client
 Stack: React 19 + TypeScript + Tailwind v4 + shadcn / **reui** registry · Microsoft Graph (delegated)
 Status: research + design only (no code). Seed of a future CRM.
