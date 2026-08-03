@@ -1,114 +1,197 @@
-# Microsoft Graph — escopos delegados concedidos (app GALAXIE Toolbox)
+# Escopos Microsoft Graph — referência
 
-Fonte: Entra ID → app registration → API permissions, **admin consent concedido para "Galaxie Works Ltd"**.
-Atualizado: **2026-08-03 — 101 escopos** (53 → 63 → 75 → 77 → 84 → 87 → **101**). Última rodada (+14) trouxe, principalmente: a **família Files completa** (`Files.Read`, `Files.Read.All`, `Files.Read.Selected`, `Files.ReadWrite.AppFolder`, `Files.ReadWrite.Selected`, `Files.SelectedOperations.Selected`) → destrava seletor/preview granular de arquivo; **Bookings** de escrita (`Bookings.ReadWrite.All`, `BookingsAppointment.ReadWrite.All`); **Tasks** completo (`Tasks.Read`, `Tasks.Read.Shared`, `Tasks.ReadWrite.Shared`); **People.Read.All**; e **Bookmark.Read.All**.
-Tipo: todos **Delegated** (o app é public client + PKCE, sem secret). "Admin?" = exige consentimento de admin (**"Não" ≠ "não concedido"** — os 101 já estão TODOS *granted*; "Não" só quer dizer que é user-consentable).
+Referência dos **escopos delegados** do Microsoft Graph concedidos ao app **GALAXIE Toolbox** no tenant **Galaxie Works Ltd**. Use para consultar, na hora, se um escopo está disponível, se exige consentimento de admin e o que ele permite.
 
-> ⚠️ Adicionar escopo no Entra **não basta**: o app só recebe o token com o escopo se ele estiver na lista pedida em `config.rs`/auth **e** o usuário **relogar** (refresh com escopo novo). Muitos recursos exigem reconsentimento/novo login.
+- **Fonte:** Entra ID → app registration → API permissions.
+- **Atualizado:** 2026-08-03 · **101 escopos** · todos **Delegated** (`/me`), *public client* + PKCE (sem secret).
+- **Histórico de contagem:** 53 → 63 → 75 → 77 → 84 → 87 → 101.
 
-## Correio (Mail / Exchange) — 18
-| Escopo | Admin? |
-|---|---|
-| Mail.Read · Mail.ReadBasic · Mail.ReadWrite · Mail.Send | Não |
-| Mail.Read.Shared · Mail.ReadBasic.Shared · Mail.ReadWrite.Shared · Mail.Send.Shared | Não |
-| Mail-Advanced.ReadWrite · Mail-Advanced.ReadWrite.Shared | **Sim** |
-| MailboxFolder.Read · MailboxFolder.ReadWrite · MailboxItem.Read | Não |
-| MailboxItem.ReadWrite | **Sim** |
-| EAS.AccessAsUser.All · EWS.AccessAsUser.All · IMAP.AccessAsUser.All | Não |
-| ExchangeMessageTrace.Read.All | **Sim** |
+## Como ler
 
-## Teams / Chat — 13
-| Escopo | Admin? |
-|---|---|
-| Chat.Read · Chat.ReadBasic · Chat.ReadWrite · Chat.Create | Não |
-| Chat.ReadWrite.All | **Sim** |
-| ChatMessage.Read · ChatMessage.Send | Não |
-| ChatMember.Read · ChatMember.ReadWrite | **Sim** |
-| Team.ReadBasic.All · TeamsActivity.Read | Não |
-| TeamMember.Read.All · TeamsUserConfiguration.Read.All | **Sim** |
+- **Todos os 101 já estão concedidos** (admin consent do tenant). As tabelas listam o que está disponível hoje.
+- Coluna **Admin**: `✔` = exigiu consentimento de admin (**já dado**); `—` = user-consentable. **`✔` não significa "não concedido"** — significa apenas que precisou de admin, e o admin já consentiu.
+- ⚠️ **Concedido ≠ requisitado.** O app só recebe no token os escopos listados em `src-tauri/src/config.rs` (const `SCOPES`). Um escopo concedido que não esteja nessa lista **não vem no token** até ser adicionado **e** o usuário **relogar** (refresh com escopo novo). Adicionar um escopo já concedido **não** dispara novo consent.
 
-## Calendário / Agendamento / Bookings — 9
-| Escopo | Admin? |
-|---|---|
-| Calendars.Read · Calendars.ReadBasic · Calendars.ReadWrite | Não |
-| Calendars.Read.Shared · Calendars.ReadWrite.Shared | Não |
-| Schedule.Read.All | **Sim** |
-| Bookings.Read.All · Bookings.ReadWrite.All · BookingsAppointment.ReadWrite.All | Não |
+**Requisitados hoje** (`config.rs` → `SCOPES`, o subconjunto mínimo que o app pede):
 
-## Online Meetings (Teams) — 6 — chave pro #180
-| Escopo | Admin? |
-|---|---|
-| OnlineMeetings.Read · OnlineMeetings.ReadWrite | Não |
-| OnlineMeetingArtifact.Read.All | Não |
-| OnlineMeetingRecording.Read.All · OnlineMeetingTranscript.Read.All · OnlineMeetingAiInsight.Read.All | **Sim** |
+```
+openid  profile  offline_access  User.Read  User.Read.All  Files.ReadWrite
+Sites.Read.All  Calendars.Read  Mail.ReadWrite  Mail.Send  Tasks.ReadWrite
+People.Read  Contacts.ReadWrite
+```
 
-## Contatos / Pessoas / Usuários / Diretório — 19
-| Escopo | Admin? |
-|---|---|
-| Contacts.Read · Contacts.ReadWrite | Não |
-| Contacts.Read.Shared · Contacts.ReadWrite.Shared | Não |
-| People.Read | Não |
-| People.Read.All | **Sim** |
-| User.Read · profile · email | Não |
-| User.ReadBasic.All | Não |
-| User.Read.All | **Sim** |
-| ProfilePhoto.Read.All · ProfilePhoto.ReadWrite.All | **Sim** |
-| OrgContact.Read.All · Organization.Read.All · OrganizationalBranding.Read.All · Domain.Read.All | **Sim** |
-| Directory.Read.All · RoleManagement.Read.Directory | **Sim** |
+---
 
-## Arquivos / Sites (SharePoint / OneDrive) — 9
-| Escopo | Admin? |
-|---|---|
-| Files.Read · Files.Read.All · Files.Read.Selected | Não |
-| Files.ReadWrite · Files.ReadWrite.All | Não |
-| Files.ReadWrite.AppFolder · Files.ReadWrite.Selected | Não |
-| Files.SelectedOperations.Selected | **Sim** |
-| Sites.Read.All | Não |
+## Correio · Mail / Exchange (18)
 
-## OneNote (Notas) — 5
-| Escopo | Admin? |
-|---|---|
-| Notes.Read · Notes.Create · Notes.ReadWrite | Não |
-| Notes.Read.All · Notes.ReadWrite.All | Não |
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `Mail.Read` | Ler o correio do usuário | — |
+| `Mail.ReadBasic` | Ler correio básico do usuário | — |
+| `Mail.ReadWrite` | Ler e escrever o correio do usuário | — |
+| `Mail.Send` | Enviar e-mail como o usuário | — |
+| `Mail.Read.Shared` | Ler correio do usuário e de caixas compartilhadas | — |
+| `Mail.ReadBasic.Shared` | Ler correio básico do usuário e compartilhado | — |
+| `Mail.ReadWrite.Shared` | Ler e escrever correio do usuário e compartilhado | — |
+| `Mail.Send.Shared` | Enviar e-mail em nome de terceiros | — |
+| `Mail-Advanced.ReadWrite` | Ler/escrever correio, incl. modificar mensagens não-rascunho | ✔ |
+| `Mail-Advanced.ReadWrite.Shared` | O mesmo, sobre todo correio acessível ao usuário | ✔ |
+| `MailboxFolder.Read` | Ler as pastas da caixa | — |
+| `MailboxFolder.ReadWrite` | Ler e escrever as pastas da caixa | — |
+| `MailboxItem.Read` | Ler os itens da caixa | — |
+| `MailboxItem.ReadWrite` | Ler e escrever itens da caixa | ✔ |
+| `EAS.AccessAsUser.All` | Acessar caixas via Exchange ActiveSync | — |
+| `EWS.AccessAsUser.All` | Acessar caixas via Exchange Web Services | — |
+| `IMAP.AccessAsUser.All` | Acesso de leitura/escrita a caixas via IMAP | — |
+| `ExchangeMessageTrace.Read.All` | Pesquisar o rastreamento de mensagens | ✔ |
 
-## Tarefas / Notificações / Atividade / Bookmarks — 7
-| Escopo | Admin? |
-|---|---|
-| Tasks.Read · Tasks.Read.Shared · Tasks.ReadWrite · Tasks.ReadWrite.Shared | Não |
-| UserNotification.ReadWrite.CreatedByApp | Não |
-| Analytics.Read | Não |
-| Bookmark.Read.All | Não |
+> O app é **Graph-only**: apesar de concedidos, `IMAP`/`EWS`/`EAS` **não são usados** (arquitetura delegada `/me`).
 
-## Aplicações / Service Principals do tenant — 2
-| Escopo | Admin? |
-|---|---|
-| Application.Read.All · ServicePrincipalEndpoint.Read.All | **Sim** |
+## Teams / Chat (13)
 
-## Org settings / Multi-tenant (admin) — 7
-| Escopo | Admin? |
-|---|---|
-| MultiTenantOrganization.Read.All | **Sim** |
-| MultiTenantOrganization.ReadBasic.All | Não |
-| OrgSettings-AppsAndServices.Read.All · OrgSettings-Forms.Read.All · OrgSettings-Microsoft365Install.Read.All | **Sim** |
-| OrgSettings-Todo.Read.All · OrgSettings-Todo.ReadWrite.All | **Sim** |
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `Chat.Create` | Criar chats | — |
+| `Chat.Read` | Ler as mensagens de chat do usuário | — |
+| `Chat.ReadBasic` | Ler nomes e membros das threads de chat | — |
+| `Chat.ReadWrite` | Ler e escrever mensagens de chat do usuário | — |
+| `Chat.ReadWrite.All` | Ler e escrever todas as mensagens de chat | ✔ |
+| `ChatMessage.Read` | Ler mensagens de chat do usuário | — |
+| `ChatMessage.Send` | Enviar mensagens de chat | — |
+| `ChatMember.Read` | Ler os membros dos chats | ✔ |
+| `ChatMember.ReadWrite` | Adicionar/remover membros de chats | ✔ |
+| `Team.ReadBasic.All` | Ler nomes e descrições dos times | — |
+| `TeamMember.Read.All` | Ler os membros dos times | ✔ |
+| `TeamsActivity.Read` | Ler o feed de atividade do Teams | — |
+| `TeamsUserConfiguration.Read.All` | Ler configurações de usuário do Teams | ✔ |
 
-## Admin / Relatórios / Auditoria — 6
-| Escopo | Admin? |
-|---|---|
-| Reports.Read.All · ServiceHealth.Read.All | **Sim** |
-| AuditLogsQuery.Read.All · AuditLogsQuery-Exchange.Read.All · AuditLogsQuery-OneDrive.Read.All · AuditLogsQuery-SharePoint.Read.All | **Sim** |
+## Calendário / Bookings (9)
 
-> **Total: 101** (18 Mail + 13 Teams + 9 Calendário + 6 Online Meetings + 19 Pessoas/Diretório + 9 Arquivos + 5 OneNote + 7 Tarefas + 2 Apps + 7 Org settings + 6 Admin).
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `Calendars.Read` | Ler os calendários do usuário | — |
+| `Calendars.ReadBasic` | Ler detalhes básicos dos calendários | — |
+| `Calendars.ReadWrite` | Acesso total aos calendários do usuário | — |
+| `Calendars.Read.Shared` | Ler calendários do usuário e compartilhados | — |
+| `Calendars.ReadWrite.Shared` | Ler e escrever calendários do usuário e compartilhados | — |
+| `Schedule.Read.All` | Ler itens de agenda (schedule) | ✔ |
+| `Bookings.Read.All` | Ler informações do Bookings | — |
+| `Bookings.ReadWrite.All` | Ler e escrever informações do Bookings | — |
+| `BookingsAppointment.ReadWrite.All` | Ler e escrever compromissos do Bookings | — |
 
-## Impacto nas ideias/épicos
-- **Atoms #181 (REPLANEJADO — ver `docs/atoms-ux-replan.md`, stories #440–446):** `Chat.Read` **está concedido** (admin consent; "Admin?=Não" = não exige admin, NÃO = "não concedido"). Blocker do widget de Teams (A6/#445) = só **adicionar Chat.Read à `config.rs` SCOPES + relogar** (consent incremental), não é permissão nova de admin. `Notes.*` concedido → widget OneNote viável (follow-up). `Tasks.Read`/`Tasks.ReadWrite` concedidos → widget de To-Dos com dado real.
-- **File previews / seletor #178:** agora com a **família Files completa** — `Files.Read`, `Files.Read.All`, `Files.Read.Selected`, `Files.ReadWrite.Selected`, `Files.SelectedOperations.Selected` → dá pra fazer **acesso granular por arquivo selecionado** (preview/convert-to-PDF sem pedir escopo amplo). `Files.ReadWrite.AppFolder` → pasta própria do app.
-- **Galaxie AI #180:**
-  - **"Usuário master" da org:** `Directory.Read.All` + `RoleManagement.Read.Directory` (concedidos) → derivar o master do papel de admin no M365 (opção A do discovery) **sem consent novo**.
-  - **Meeting-assistant:** `OnlineMeetingRecording.Read.All` + `OnlineMeetingTranscript.Read.All` + `OnlineMeetingAiInsight.Read.All` → puxar a **gravação oficial via Graph e rodar NOSSA ASR** (melhor que o transcript nativo). Companion Delphi segue útil pra reunião ao vivo/não-gravada.
-  - `Chat.Read/ReadWrite`, `ChatMessage.*`, `TeamsActivity.Read` → IA lê/age em chats.
-- **People #167 (Enrich):** `User.Read.All` + `People.Read.All` + `ProfilePhoto.Read.All` → enrich por diretório (`/users/{id}`) e foto plenamente cobertos.
-- **Agendamento externo (novo):** `Bookings.ReadWrite.All` + `BookingsAppointment.ReadWrite.All` → base pra um módulo de **Bookings/agendamento** (marcar/gerir compromissos de reserva), além do calendário pessoal.
-- **Tela Apps (M365 Copilot > Apps):** `Application.Read.All` + `ServicePrincipalEndpoint.Read.All` (+ `OrgSettings-Microsoft365Install.Read.All`) → listar os **apps/service principals reais do tenant**, em vez do catálogo estático de `lib/apps.ts`. Apps tenant-aware.
-- **Astro #180 / admin da org:** `MultiTenantOrganization.*` + `OrgSettings-*` → base pra um **painel de admin/governança da org** (Apps&Services, Forms, To Do org-wide, instalação M365) e pro contexto multi-tenant do modelo de créditos. `OrgSettings-Todo.ReadWrite.All` permite configurar To Do org-wide (relevante pro Atoms/To-Dos).
-- **Auditoria/relatórios (admin):** `AuditLogsQuery-*` + `Reports.Read.All` + `ServiceHealth.Read.All` → base pra telas de compliance/telemetria administrativa da org.
+## Reuniões online · Teams (6)
+
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `OnlineMeetings.Read` | Ler as reuniões online do usuário | — |
+| `OnlineMeetings.ReadWrite` | Ler e criar reuniões online do usuário | — |
+| `OnlineMeetingArtifact.Read.All` | Ler artefatos das reuniões online | — |
+| `OnlineMeetingRecording.Read.All` | Ler todas as gravações de reuniões online | ✔ |
+| `OnlineMeetingTranscript.Read.All` | Ler todas as transcrições de reuniões online | ✔ |
+| `OnlineMeetingAiInsight.Read.All` | Ler todos os AI Insights de reuniões online | ✔ |
+
+## Contatos / Pessoas / Usuários / Diretório (19)
+
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `Contacts.Read` | Ler os contatos do usuário | — |
+| `Contacts.ReadWrite` | Acesso total aos contatos do usuário | — |
+| `Contacts.Read.Shared` | Ler contatos do usuário e compartilhados | — |
+| `Contacts.ReadWrite.Shared` | Ler e escrever contatos do usuário e compartilhados | — |
+| `People.Read` | Ler a lista de pessoas relevantes do usuário | — |
+| `People.Read.All` | Ler a lista de pessoas relevantes de todos | ✔ |
+| `User.Read` | Entrar e ler o perfil do usuário | — |
+| `User.ReadBasic.All` | Ler o perfil básico de todos os usuários | — |
+| `User.Read.All` | Ler o perfil completo de todos os usuários | ✔ |
+| `profile` | Ver o perfil básico do usuário | — |
+| `email` | Ver o endereço de e-mail do usuário | — |
+| `ProfilePhoto.Read.All` | Ler a foto de perfil de usuário/grupo | ✔ |
+| `ProfilePhoto.ReadWrite.All` | Ler e escrever a foto de perfil de usuário/grupo | ✔ |
+| `OrgContact.Read.All` | Ler os contatos organizacionais | ✔ |
+| `Organization.Read.All` | Ler informações da organização | ✔ |
+| `OrganizationalBranding.Read.All` | Ler a identidade visual da organização | ✔ |
+| `Domain.Read.All` | Ler domínios | ✔ |
+| `Directory.Read.All` | Ler dados do diretório | ✔ |
+| `RoleManagement.Read.Directory` | Ler as configurações de RBAC do diretório | ✔ |
+
+## Arquivos / Sites · SharePoint / OneDrive (9)
+
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `Files.Read` | Ler os arquivos do usuário | — |
+| `Files.Read.All` | Ler todos os arquivos acessíveis ao usuário | — |
+| `Files.Read.Selected` | Ler arquivos que o usuário seleciona (preview) | — |
+| `Files.ReadWrite` | Acesso total aos arquivos do usuário | — |
+| `Files.ReadWrite.All` | Acesso total a todos os arquivos acessíveis | — |
+| `Files.ReadWrite.AppFolder` | Acesso total à pasta do próprio app (preview) | — |
+| `Files.ReadWrite.Selected` | Ler e escrever arquivos que o usuário seleciona (preview) | — |
+| `Files.SelectedOperations.Selected` | Acessar arquivos selecionados em nome do usuário | ✔ |
+| `Sites.Read.All` | Ler itens em todas as coleções de sites | — |
+
+## OneNote (5)
+
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `Notes.Create` | Criar blocos de anotações do OneNote | — |
+| `Notes.Read` | Ler os blocos de anotações do usuário | — |
+| `Notes.Read.All` | Ler todos os blocos acessíveis ao usuário | — |
+| `Notes.ReadWrite` | Ler e escrever os blocos do usuário | — |
+| `Notes.ReadWrite.All` | Ler e escrever todos os blocos acessíveis | — |
+
+## Tarefas / Notificações / Analytics / Bookmarks (7)
+
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `Tasks.Read` | Ler tarefas e listas de tarefas do usuário | — |
+| `Tasks.Read.Shared` | Ler tarefas do usuário e compartilhadas | — |
+| `Tasks.ReadWrite` | Criar, ler, atualizar e excluir tarefas e listas | — |
+| `Tasks.ReadWrite.Shared` | Ler e escrever tarefas do usuário e compartilhadas | — |
+| `UserNotification.ReadWrite.CreatedByApp` | Entregar e gerir notificações do usuário | — |
+| `Analytics.Read` | Ler estatísticas de atividade do usuário | — |
+| `Bookmark.Read.All` | Ler todos os bookmarks acessíveis ao usuário | — |
+
+## Aplicações / Service Principals (2)
+
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `Application.Read.All` | Ler aplicações do tenant | ✔ |
+| `ServicePrincipalEndpoint.Read.All` | Ler endpoints de service principals | ✔ |
+
+## Org settings / Multi-tenant (7)
+
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `MultiTenantOrganization.Read.All` | Ler detalhes e tenants da organização multi-tenant | ✔ |
+| `MultiTenantOrganization.ReadBasic.All` | Ler detalhes básicos e tenants ativos | — |
+| `OrgSettings-AppsAndServices.Read.All` | Ler configs org-wide de apps e serviços | ✔ |
+| `OrgSettings-Forms.Read.All` | Ler configs org-wide do Microsoft Forms | ✔ |
+| `OrgSettings-Microsoft365Install.Read.All` | Ler configs org-wide de instalação do M365 | ✔ |
+| `OrgSettings-Todo.Read.All` | Ler configs org-wide do Microsoft To Do | ✔ |
+| `OrgSettings-Todo.ReadWrite.All` | Ler e escrever configs org-wide do Microsoft To Do | ✔ |
+
+## Admin / Relatórios / Auditoria (6)
+
+| Escopo | O que permite | Admin |
+|---|---|:--:|
+| `Reports.Read.All` | Ler todos os relatórios de uso | ✔ |
+| `ServiceHealth.Read.All` | Ler a saúde dos serviços | ✔ |
+| `AuditLogsQuery.Read.All` | Ler logs de auditoria de todos os serviços | ✔ |
+| `AuditLogsQuery-Exchange.Read.All` | Ler logs de auditoria do Exchange | ✔ |
+| `AuditLogsQuery-OneDrive.Read.All` | Ler logs de auditoria do OneDrive | ✔ |
+| `AuditLogsQuery-SharePoint.Read.All` | Ler logs de auditoria do SharePoint | ✔ |
+
+**Total: 101** — Mail 18 · Teams 13 · Calendário 9 · Reuniões 6 · Pessoas/Diretório 19 · Arquivos 9 · OneNote 5 · Tarefas 7 · Apps 2 · Org settings 7 · Admin 6.
+
+---
+
+## O que cada área destrava (notas de roadmap)
+
+Referência rápida de como os escopos concedidos habilitam funcionalidades. Detalhe de produto vive nas issues/épicos.
+
+- **Atoms** (#181, replanejado — ver [`atoms-ux-replan.md`](./atoms-ux-replan.md)): `Chat.Read` está concedido → o blocker do widget de Teams (A6/#445) é só adicioná-lo à `SCOPES` + relogar, **não** é consent de admin. `Tasks.Read`/`Tasks.ReadWrite` → widget de To-Dos com dado real. `Notes.*` → widget OneNote (follow-up).
+- **Previews / seletor de arquivo** (#178): a família `Files.*` completa (incl. `Files.Read.Selected`, `Files.ReadWrite.Selected`, `Files.SelectedOperations.Selected`) permite **acesso granular por arquivo selecionado**, sem escopo amplo.
+- **Galaxie AI** (#180): `Directory.Read.All` + `RoleManagement.Read.Directory` → derivar o "usuário master" do papel de admin no M365. `OnlineMeetingRecording/Transcript/AiInsight.Read.All` → puxar a gravação oficial via Graph e rodar ASR própria. `Chat.*`/`ChatMessage.*`/`TeamsActivity.Read` → IA lê/age em chats.
+- **People** (#167): `User.Read.All` + `People.Read.All` + `ProfilePhoto.Read.All` → enrich por diretório e foto.
+- **Bookings** (novo): `Bookings.ReadWrite.All` + `BookingsAppointment.ReadWrite.All` → base para um módulo de agendamento/reservas.
+- **Apps tenant-aware** (M365 > Apps): `Application.Read.All` + `ServicePrincipalEndpoint.Read.All` → listar apps/service principals reais do tenant, em vez do catálogo estático.
+- **Admin/governança da org** (#180 / Astro): `MultiTenantOrganization.*` + `OrgSettings-*` + `AuditLogsQuery-*` + `Reports.Read.All` → base para painel de admin, compliance e o contexto multi-tenant do modelo de créditos.
