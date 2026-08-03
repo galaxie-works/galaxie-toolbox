@@ -67,6 +67,11 @@ Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pr
 
 > 🚀 **RELEASE de PO Approved é decisão do agente** (delegado pelo PO em 2026-07-26). Uma vez em **PO Approved**, o agente decide quando **mergear na `main`, cortar release** (bump de versão + tag + notas) e mover pra **Done - Released**, sem cobrar o PO. A autonomia começa em PO Approved (QA Approved→PO Approved continua sendo do PO). Não cortar release com código não-aprovado/rejeitado ainda na `feat` (ex.: rework com `Closes #N` já mergeado) — limpar/reworkar antes.
 
+> 🌿 **HIGIENE DE BRANCH E DE `main` (regra do PO, 2026-08-03 — o repo chegou a 138 branches e a `main` 32 commits atrás).** O modelo é **`feat/bridge-email-client` = tronco/develop**, **`main` = release** (o workflow de Release só dispara em **push de tag `v*`** ou dispatch — push na `main` NÃO builda/publica).
+> - **Deletar o branch ao integrar.** Quando o Polaris mergeia teu branch na `feat`, ele **deleta o branch remoto** no mesmo passo (`git push origin --delete <branch>`). Branch mergeado = lixo; não acumular. Worktree de agente: remover ao concluir.
+> - **`main` nunca deve encalhar.** Alinhar `feat→main` (PR de merge, padrão do repo) a cada release real, e **release incremental a cada ~3 issues** — a `main` não pode passar de ~10 commits atrás da `feat`. Se a fila em QA Approved cresce sem release, o Polaris **cobra o PO** pra validar e cortar.
+> - **Não deixar branch não-mergeado órfão.** Se um rework/WIP não vai ser integrado, decidir: reintegrar ou descartar explicitamente (não deixar boiando anos). O Polaris varre branches não-mergeados no sweep e cobra dono/decisão.
+
 > 💸 **Custo / eficiência — modelo atual de integração (NÃO queimar créditos):**
 > - Quem **ENTREGA** (Orion/Confucius/subagent) faz só: build local verde (`tsc` + `cargo` se tocar Rust + `vite`) + **evidência CONCISA** (o que mudou, arquivos, commit, ACs cobertos) → **PR pra `feat`** e **PARA**.
 > - A **integração + code-QA + o move pra QA Approved são do Polaris** (orquestrador). Neste projeto isso **substitui** o "agente dispara subagente QA" da tabela acima — o QA é **centralizado no Polaris**. O agente que entrega **NÃO** roda subagente de QA/review próprio nem re-revisa o código inteiro linha-a-linha (duplica o Polaris e queima o limite semanal).
