@@ -93,7 +93,7 @@ Tipo: todos **Delegated** (o app é public client + PKCE, sem secret). "Admin?" 
 | AuditLogsQuery.Read.All · AuditLogsQuery-Exchange.Read.All · AuditLogsQuery-OneDrive.Read.All · AuditLogsQuery-SharePoint.Read.All | **Sim** |
 
 ## Impacto nas ideias/épicos
-- **Atoms #181 (Slice 4 / #186):** `Chat.Read` **agora concedido** → o widget de **Teams chats não lidos deixa de precisar de consent round-trip** (era o principal bloqueio). `Notes.*` → o widget de **Anotações (OneNote)** vira viável (era "investigar"). Atualizar o AC da Slice 4.
+- **Atoms #181 (REPLANEJADO — ver `docs/atoms-ux-replan.md`, stories #440–446):** `Chat.Read` **está concedido** (admin consent; "Admin?=Não" = não exige admin, NÃO = "não concedido"). Blocker do widget de Teams (A6/#445) = só **adicionar Chat.Read à `config.rs` SCOPES + relogar** (consent incremental), não é permissão nova de admin. `Notes.*` concedido → widget OneNote viável (follow-up).
 - **Galaxie AI #180 — MUDANÇAS GRANDES da última rodada:**
   - **"Usuário master" da org agora tem caminho pronto:** `Directory.Read.All` + `RoleManagement.Read.Directory` (concedidos) → dá pra **derivar o master do papel de admin no M365** (opção A do discovery) **sem consent novo**.
   - **Meeting-assistant ganhou caminho oficial:** `OnlineMeetingRecording.Read.All` + `OnlineMeetingTranscript.Read.All` + `OnlineMeetingAiInsight.Read.All` → dá pra **puxar a GRAVAÇÃO oficial da reunião via Graph e rodar NOSSA ASR** (melhor que o transcript nativo, que o PO diz ser ruim) — alternativa mais limpa que a captura WASAPI/Delphi pra reuniões gravadas (o companion Delphi segue útil pra reunião ao vivo/não-gravada). `OnlineMeetingArtifact` = artefatos; `OnlineMeetings.ReadWrite` = criar/gerir.

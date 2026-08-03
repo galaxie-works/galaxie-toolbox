@@ -1,29 +1,37 @@
 # GALAXIE Toolbox
 
-Aplicativo desktop que dá aos usuários de um cliente acesso simples aos arquivos
-da empresa no SharePoint — e serve de base para ferramentas de auto-ajuda do
-Microsoft 365.
+Aplicativo desktop (workspace de produtividade Microsoft 365) que dá aos
+usuários de um cliente acesso simples aos arquivos da empresa no SharePoint **e**
+um conjunto de ferramentas integradas de e-mail, agenda, contatos, navegação e
+dashboard — tudo sobre Microsoft Graph delegado (`/me`), sem IMAP.
 
 A pessoa entra com o e-mail corporativo, o app descobre o tenant, ela faz login
-na página oficial da Microsoft e vê as bibliotecas a que tem acesso. Um clique
-em **Conectar** cria o atalho no OneDrive dela; a partir daí os arquivos
-aparecem no Explorer, sem ocupar espaço até serem abertos.
-
-Feito pela [Galaxie Works](https://galaxie.works) para atender múltiplos
-clientes a partir do mesmo binário.
+na página oficial da Microsoft e cai no workspace. Feito pela
+[Galaxie Works](https://galaxie.works) para atender múltiplos clientes a partir
+do mesmo binário. Auto-atualiza (installer assinado publicado no repo de
+distribuição; o app se atualiza sozinho).
 
 ---
 
 ## O que faz hoje
 
+**Base (acesso a arquivos)**
+
 | Recurso | Descrição |
 |---|---|
-| **Login por e-mail** | Detecta o tenant pelo domínio (documento OIDC público) e abre o login oficial da Microsoft já preenchido |
-| **Sessão persistente** | Reabre logado, sem passar pelo navegador |
-| **Lista de bibliotecas** | Mostra os sites do SharePoint que aquele usuário enxerga |
-| **Conectar / Desconectar** | Cria e remove o atalho no OneDrive do usuário |
-| **Abrir no Explorer** | Abre a pasta local certa, mesmo com vários OneDrive na máquina |
-| **Caminhos longos** | Liga `LongPathsEnabled` (>260 caracteres) via UAC |
+| **Login por e-mail** | Detecta o tenant pelo domínio (OIDC público) e abre o login oficial da Microsoft já preenchido |
+| **Sessão persistente** | Reabre logado (refresh token cifrado com DPAPI) |
+| **Bibliotecas SharePoint** | Lista os sites que o usuário enxerga; **Conectar/Desconectar** cria/remove o atalho no OneDrive; **Abrir no Explorer**; liga `LongPathsEnabled` via UAC |
+
+**Módulos (Galaxie Apps)**
+
+| Módulo | Descrição |
+|---|---|
+| **Bridge** | Cliente de e-mail (4 painéis) + **Agenda** (eventos, recorrência) + **People** (contatos M365, categorias, organizações) — tudo via Graph delegado |
+| **Navigator** | Navegador embutido (WebView2) com abas, sleeping tabs, command palette, favoritos, histórico/privacidade |
+| **Atoms** | Tela inicial / dashboard do usuário — widgets (agenda, e-mail, to-dos), feed "Atenção agora", personalização. ⚠️ Em **retrabalho** (ver `docs/atoms-ux-replan.md`) |
+| **Previews** | Preview de anexos (PDF/TXT/docx/xlsx/pptx) dentro do app, com sandbox de segurança |
+| **Telemetria** | Diagnóstico/observabilidade privacy-first (TelemetryPolicy em Rust → OpenObserve self-host; consent por categoria, PII-scrubbed) |
 
 ## Como funciona a autenticação
 
@@ -49,10 +57,11 @@ O `CLIENT_ID` em `src-tauri/src/config.rs` é público por natureza — aplicaç
 O app é **delegado (`/me`)** e **Graph-only** (sem IMAP/EWS/EAS, ainda que esses
 escopos estejam disponíveis no registro). Há duas listas que não se confundem:
 
-- **Concedidas (*granted*)** — 53 escopos delegados com *admin consent* do tenant.
-  Ficam disponíveis **sem novo consent**. Inclui, entre outros, os de caixa
-  compartilhada (`Mail.Read.Shared`, `Mail.ReadWrite.Shared`, `Mail.Send.Shared`),
-  `MailboxFolder.ReadWrite`, `User.Read.All` e `ProfilePhoto.Read.All`.
+- **Concedidas (*granted*)** — escopos delegados com *admin consent* do tenant,
+  disponíveis **sem novo consent**. A lista completa e atual (**87 escopos**, com a
+  implicação por feature) está em **[`docs/graph-scopes.md`](docs/graph-scopes.md)** —
+  fonte única de verdade. Inclui caixa compartilhada, Teams/Chat, Online Meetings,
+  OneNote, Org settings, entre outros.
 - **Requisitadas (*requested*)** — o subconjunto **mínimo** que o app pede no token,
   na const `SCOPES` de `src-tauri/src/config.rs`. Hoje:
 
@@ -97,16 +106,23 @@ está em **[REGISTRO-APP.md](REGISTRO-APP.md)**.
 
 ```
 src/                    interface (React)
-  components/ui/        componentes shadcn
-  screens/              login e lista de bibliotecas
+  components/           ui (shadcn/reui), agenda, people, bridge, animate-ui…
+  screens/              login, control-room (Bridge), navegador, atoms, configuracoes…
   lib/api.ts            ponte para o backend (mock fora do Tauri)
+  lib/                  atoms, tema, strings (i18n pt/en), telemetria, store zustand…
 src-tauri/src/
   auth.rs               PKCE, tenant, sessão (DPAPI), foto do perfil
-  graph.rs              Microsoft Graph: sites e atalhos
+  graph.rs              Microsoft Graph: mail, agenda, people, tarefas, sites (pool graph_enviar/429)
+  telemetry.rs          TelemetryPolicy (consent/scrub/sampling) + transporte OTLP
+  onedrive.rs           sonda local de sync do OneDrive (Atoms)
   system.rs             registro do Windows e Explorer
   estado.rs             registro local dos atalhos criados
-  config.rs             CLIENT_ID e endpoints
+  config.rs             CLIENT_ID, endpoints e SCOPES requisitados
 ```
+
+Docs de referência em [`docs/`](docs/): specs/UX por módulo, `graph-scopes.md`
+(escopos), `atoms-ux-replan.md` (retrabalho do Atoms), `telemetria-*`.
+Instruções operacionais dos agentes: [`AGENTS.md`](AGENTS.md) + [`Rules.md`](Rules.md).
 
 ## Limitações conhecidas
 
@@ -126,6 +142,8 @@ precisa virar *multitenant* e o admin de cada cliente dar consent uma vez.
 
 ## Próximos passos
 
-Ferramentas de diagnóstico e auto-ajuda do OneDrive: reset e reinício do
-cliente, limpeza de cache, verificação de nomes e caminhos que travam a
-sincronização, e leitura de quota.
+Em andamento: retrabalho profundo do **Atoms** (dashboard) com fundação de dados
+resiliente e UX flagship (ver `docs/atoms-ux-replan.md`); telemetria live no
+build shipado; **Astro** (Galaxie AI — créditos de IA + meeting-assistant, ver
+`docs/galaxie-ai-discovery.md`). O roadmap vive no board (GitHub Projects) — ver
+`AGENTS.md` §2.

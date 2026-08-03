@@ -4,6 +4,8 @@ Issue #181 · GALAXIE Toolbox
 Stack: Tauri 2 + React 19 + TypeScript + Tailwind v4 + shadcn/new-york + **reui** registry + **animate-ui** (motion). Microsoft Graph (delegated).
 Status: research + design only (no code).
 
+> ⚠️ **SUPERSEDED em parte (03/ago/2026).** A 1ª implementação (stories #183–187) foi REPROVADA pelo PO como medíocre (widgets quebravam no app real + UX rasa). Esta spec é boa **no plano** mas foi mal executada. **A fonte de verdade do retrabalho é [`docs/atoms-ux-replan.md`](./atoms-ux-replan.md)** — diagnóstico técnico (429/pool, consent do Teams), visão-alvo (bento real, avatar, copy, motion) e o replan re-fatiado (stories #440–446 = A1–A7) com **AC experienciais verificáveis no app real**. Leia o replan ANTES de codar Atoms.
+
 > Read alongside `docs/bridge-people-ux.md` (#143) and `docs/navigator-ux-spec.md` (#172) — same depth, same component-map discipline, same INVEST slicing, same "reuse-don't-invent" rule.
 
 ---
