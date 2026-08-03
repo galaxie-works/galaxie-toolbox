@@ -37,19 +37,13 @@ import { aceitaAltaFidelidade, classificarAnexo } from "@/lib/anexo-tipo";
 import { renderDocxParaHtml } from "@/lib/docx-render";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { carregarPdf, renderizarPagina } from "@/lib/pdf-preview";
-import { lerXlsx, type Planilha } from "@/lib/xlsx-render";
+import { renderXlsxParaHtml } from "@/lib/xlsx-render";
 import type { AnexoEmail } from "@/lib/types";
 import { Alert, AlertDescription, AlertTitle } from "@/components/reui/alert";
 import { IconTile } from "@/components/reui/icon-tile";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
 
 /** Teto de tamanho para preview inline; acima disso, só Salvar/Abrir (spec §7.4). */
 const LIMITE_PREVIEW_BYTES = 25 * 1024 * 1024;
@@ -97,7 +91,7 @@ export function PreviewAnexo({
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [txt, setTxt] = useState<string | null>(null);
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
-  const [planilhas, setPlanilhas] = useState<Planilha[] | null>(null);
+  const [xlsxHtml, setXlsxHtml] = useState<string | null>(null);
 
   // Busca e decodifica os bytes uma vez (a menos que seja não-suportado/grande).
   // `usarPathC` nas deps: alternar alta fidelidade re-busca (converte no OneDrive).
@@ -129,8 +123,8 @@ export function PreviewAnexo({
           const html = await renderDocxParaHtml(bytes);
           if (vivo) setDocxHtml(html);
         } else if (tipo === "xlsx") {
-          const p = await lerXlsx(bytes);
-          if (vivo) setPlanilhas(p);
+          const html = await renderXlsxParaHtml(bytes);
+          if (vivo) setXlsxHtml(html);
         } else {
           doc = await carregarPdf(bytes);
           if (vivo) setPdf(doc);
@@ -241,9 +235,17 @@ export function PreviewAnexo({
         ) : tipo === "pdf" && pdf ? (
           <PdfViewer doc={pdf} tp={tp} />
         ) : tipo === "docx" && docxHtml !== null ? (
-          <DocxViewer html={docxHtml} rotulo={anexo.nome} vazioTexto={tp.previewVazio} />
-        ) : tipo === "xlsx" && planilhas ? (
-          <XlsxViewer planilhas={planilhas} vazioTexto={tp.previewVazio} />
+          <HtmlSandboxViewer
+            html={docxHtml}
+            rotulo={anexo.nome}
+            vazioTexto={tp.previewVazio}
+          />
+        ) : tipo === "xlsx" && xlsxHtml !== null ? (
+          <HtmlSandboxViewer
+            html={xlsxHtml}
+            rotulo={anexo.nome}
+            vazioTexto={tp.previewVazio}
+          />
         ) : null}
       </div>
     </div>
@@ -407,11 +409,13 @@ function PreviewVazio({ texto }: { texto: string }) {
 }
 
 /**
- * docx: HTML sanitizado num `<iframe sandbox="">` com **CSP** estrito —
- * `default-src 'none'` mata rede/script; `img-src data:` deixa só as imagens
- * embutidas (base64); `style-src 'unsafe-inline'` mantém a folha do docx-preview.
+ * Viewer de HTML não-confiável (docx e xlsx) — injeta o HTML **já sanitizado**
+ * (DOMPurify, nos módulos `docx-render`/`xlsx-render`) num `<iframe sandbox="">`
+ * com **CSP** estrita: `default-src 'none'` mata rede/script; `img-src data:`
+ * deixa só as imagens embutidas (base64); `style-src 'unsafe-inline'` mantém a
+ * folha do docx-preview / xlsx-preview. Nenhum script do documento executa.
  */
-function DocxViewer({
+function HtmlSandboxViewer({
   html,
   rotulo,
   vazioTexto,
@@ -432,56 +436,5 @@ function DocxViewer({
       title={rotulo}
       className="h-[32rem] w-full border-0 bg-white"
     />
-  );
-}
-
-/** xlsx: abas por planilha + grid read-only de valores (em cache, sem fórmula). */
-function XlsxViewer({
-  planilhas,
-  vazioTexto,
-}: {
-  planilhas: Planilha[];
-  vazioTexto: string;
-}) {
-  const temConteudo = planilhas.some((p) => p.linhas.length > 0);
-  if (!temConteudo) return <PreviewVazio texto={vazioTexto} />;
-
-  return (
-    <Tabs defaultValue={planilhas[0]?.nome ?? ""} className="w-full gap-0">
-      {planilhas.length > 1 && (
-        <TabsList className="m-2 flex h-auto w-auto flex-wrap justify-start">
-          {planilhas.map((p) => (
-            <TabsTrigger key={p.nome} value={p.nome} className="text-xs">
-              {p.nome}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-      )}
-      {planilhas.map((p) => (
-        <TabsContent key={p.nome} value={p.nome} className="mt-0">
-          <ScrollArea className="h-96 w-full">
-            <table className="w-max border-collapse text-xs">
-              <tbody>
-                {p.linhas.map((linha, i) => (
-                  <tr key={i}>
-                    <td className="sticky left-0 z-10 border bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground">
-                      {i + 1}
-                    </td>
-                    {linha.map((celula, j) => (
-                      <td
-                        key={j}
-                        className="whitespace-nowrap border px-2 py-1"
-                      >
-                        {celula}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </ScrollArea>
-        </TabsContent>
-      ))}
-    </Tabs>
   );
 }

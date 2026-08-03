@@ -1,37 +1,22 @@
 /**
- * xlsx → matriz de valores para pré-visualização (#189 · épico #178, Slice 2).
+ * xlsx → HTML estilizado para pré-visualização (#189, rework p/ xlsx-preview).
  *
- * Segurança (spec §7): **valores em cache, nunca avaliar fórmula** nem gerar
- * HTML (`cellFormula:false`, `cellHTML:false`). `HYPERLINK`/`WEBSERVICE` viram
- * texto. A lib é carregada sob demanda.
+ * Troca o grid de valores (SheetJS) pelo **xlsx-preview** (baseado em exceljs),
+ * que renderiza a planilha em **HTML com estilos** (cores, mesclagens, larguras
+ * — cara de Excel). O HTML é sanitizado (DOMPurify) e injetado num
+ * `<iframe sandbox="">` com CSP estrita, a mesma moldura de segurança do docx.
+ *
+ * Segurança (spec §7): saída é HTML → sandbox sem scripts + CSP `default-src
+ * 'none'` (sem rede). exceljs lê valores/estilos, não avalia fórmula viva. Lib
+ * carregada sob demanda (dynamic import) — não pesa o bundle principal.
  */
-export interface Planilha {
-  nome: string;
-  linhas: string[][];
-}
+import DOMPurify from "dompurify";
 
-/** Teto defensivo para planilhas gigantes (o preview é para "decidir", não BI). */
-const MAX_LINHAS = 1000;
-const MAX_COLUNAS = 50;
-
-export async function lerXlsx(bytes: Uint8Array): Promise<Planilha[]> {
-  const XLSX = await import("xlsx");
-  const wb = XLSX.read(bytes, {
-    type: "array",
-    cellFormula: false,
-    cellHTML: false,
+export async function renderXlsxParaHtml(bytes: Uint8Array): Promise<string> {
+  const xlsxPreview = (await import("xlsx-preview")).default;
+  const html = await xlsxPreview.xlsx2Html(new Blob([bytes as BlobPart]), {
+    output: "string",
+    separateSheets: false,
   });
-  return wb.SheetNames.map((nome) => {
-    const ws = wb.Sheets[nome];
-    const bruto = XLSX.utils.sheet_to_json(ws, {
-      header: 1,
-      raw: false,
-      defval: "",
-      blankrows: false,
-    }) as unknown[][];
-    const linhas = bruto
-      .slice(0, MAX_LINHAS)
-      .map((r) => r.slice(0, MAX_COLUNAS).map((c) => String(c ?? "")));
-    return { nome, linhas };
-  });
+  return DOMPurify.sanitize(String(html), { ADD_TAGS: ["style"] });
 }
