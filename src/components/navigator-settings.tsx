@@ -26,6 +26,7 @@ import {
   type NavigatorSearchSettings,
 } from "@/lib/navigator-tabs";
 import { persistHistorico } from "@/lib/navigator-history";
+import { useIdioma } from "@/lib/idioma";
 
 /**
  * Settings > Galaxie Apps > Navigator — grupo **Search** (#305). Provedor de
@@ -34,6 +35,7 @@ import { persistHistorico } from "@/lib/navigator-history";
  * Select), sem inventar UI.
  */
 export function NavigatorSearchPanel() {
+  const { t } = useIdioma();
   const [settings, setSettings] =
     useState<NavigatorSearchSettings>(loadNavigatorSearch);
 
@@ -48,9 +50,11 @@ export function NavigatorSearchPanel() {
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Default search engine</h3>
+          <h3 className="text-sm font-semibold">
+            {t.settings.navigatorSearchTitulo}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            Used by the address bar when you type a search instead of a URL.
+            {t.settings.navigatorSearchDesc}
           </p>
         </div>
         <Select
@@ -60,17 +64,19 @@ export function NavigatorSearchPanel() {
           }
         >
           <SelectTrigger
-            aria-label="Default search engine"
+            aria-label={t.settings.navigatorSearchTitulo}
             className="w-56 shrink-0"
           >
-            <SelectValue placeholder="Select a provider" />
+            <SelectValue placeholder={t.settings.navigatorSearchPlaceholder} />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
             <SelectGroup>
               <SelectItem value="bing">Bing</SelectItem>
               <SelectItem value="google">Google</SelectItem>
               <SelectItem value="duckduckgo">DuckDuckGo</SelectItem>
-              <SelectItem value="custom">Custom…</SelectItem>
+              <SelectItem value="custom">
+                {t.settings.navigatorSearchCustomOpcao}
+              </SelectItem>
             </SelectGroup>
           </SelectContent>
         </Select>
@@ -78,15 +84,18 @@ export function NavigatorSearchPanel() {
 
       {settings.provider === "custom" && (
         <div className="mt-3 flex flex-col gap-1.5">
-          <Label htmlFor="nav-search-custom">Custom search URL</Label>
+          <Label htmlFor="nav-search-custom">
+            {t.settings.navigatorSearchCustomLabel}
+          </Label>
           <Input
             id="nav-search-custom"
             value={settings.customUrl}
             onChange={(event) => atualizar({ customUrl: event.target.value })}
-            placeholder="https://example.com/search?q=%s"
+            placeholder={t.settings.navigatorSearchCustomPlaceholder}
           />
           <p className="text-xs text-muted-foreground">
-            Use <code>%s</code> where the search term should go.
+            {t.settings.navigatorSearchCustomDicaAntes} <code>%s</code>{" "}
+            {t.settings.navigatorSearchCustomDicaDepois}
           </p>
         </div>
       )}
@@ -97,10 +106,11 @@ export function NavigatorSearchPanel() {
 /**
  * Settings > Galaxie Apps > Navigator — grupo **Tabs/Sleeping** (#306, liga #173).
  * Sleeping on/off + tempo ocioso + máx. de abas ativas. Persiste no localStorage
- * (NAVIGATOR_MEMORY_SETTINGS); o eviction do App relê e respeita. EN hardcoded
- * como o resto do Settings.
+ * (NAVIGATOR_MEMORY_SETTINGS); o eviction do App relê e respeita. Textos via
+ * i18n (`t.settings.navigator*`), como o resto do Settings.
  */
 export function NavigatorTabsPanel() {
+  const { t } = useIdioma();
   const [settings, setSettings] =
     useState<NavigatorMemorySettings>(loadNavigatorMemorySettings);
 
@@ -115,24 +125,27 @@ export function NavigatorTabsPanel() {
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Sleeping tabs</h3>
+          <h3 className="text-sm font-semibold">
+            {t.settings.navigatorTabsSleepTitulo}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            Free memory by putting idle background tabs to sleep. Active and
-            pinned tabs never sleep.
+            {t.settings.navigatorTabsSleepDesc}
           </p>
         </div>
         <Switch
           checked={settings.ativo}
           onCheckedChange={(valor) => atualizar({ ativo: valor })}
-          aria-label="Sleeping tabs"
+          aria-label={t.settings.navigatorTabsSleepTitulo}
         />
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-4 border-t border-border pt-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Idle time before sleeping</h3>
+          <h3 className="text-sm font-semibold">
+            {t.settings.navigatorTabsIdleTitulo}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            How long a background tab stays idle before it sleeps.
+            {t.settings.navigatorTabsIdleDesc}
           </p>
         </div>
         <Select
@@ -140,14 +153,23 @@ export function NavigatorTabsPanel() {
           onValueChange={(valor) => atualizar({ idleMinutes: Number(valor) })}
           disabled={!settings.ativo}
         >
-          <SelectTrigger aria-label="Idle time" className="w-44 shrink-0">
+          <SelectTrigger
+            aria-label={t.settings.navigatorTabsIdleAria}
+            className="w-44 shrink-0"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
             <SelectGroup>
-              <SelectItem value="15">15 minutes</SelectItem>
-              <SelectItem value="30">30 minutes</SelectItem>
-              <SelectItem value="60">60 minutes</SelectItem>
+              <SelectItem value="15">
+                {t.settings.navigatorTabsIdle15}
+              </SelectItem>
+              <SelectItem value="30">
+                {t.settings.navigatorTabsIdle30}
+              </SelectItem>
+              <SelectItem value="60">
+                {t.settings.navigatorTabsIdle60}
+              </SelectItem>
             </SelectGroup>
           </SelectContent>
         </Select>
@@ -155,9 +177,11 @@ export function NavigatorTabsPanel() {
 
       <div className="mt-4 flex items-center justify-between gap-4 border-t border-border pt-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Max active tabs</h3>
+          <h3 className="text-sm font-semibold">
+            {t.settings.navigatorTabsMaxTitulo}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            Beyond this, the least recently used background tab goes to sleep.
+            {t.settings.navigatorTabsMaxDesc}
           </p>
         </div>
         <Select
@@ -165,14 +189,19 @@ export function NavigatorTabsPanel() {
           onValueChange={(valor) => atualizar({ maxLive: Number(valor) })}
           disabled={!settings.ativo}
         >
-          <SelectTrigger aria-label="Max active tabs" className="w-44 shrink-0">
+          <SelectTrigger
+            aria-label={t.settings.navigatorTabsMaxTitulo}
+            className="w-44 shrink-0"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
             <SelectGroup>
-              <SelectItem value="3">3 tabs</SelectItem>
-              <SelectItem value="5">5 tabs</SelectItem>
-              <SelectItem value="10">10 tabs</SelectItem>
+              <SelectItem value="3">{t.settings.navigatorTabsMax3}</SelectItem>
+              <SelectItem value="5">{t.settings.navigatorTabsMax5}</SelectItem>
+              <SelectItem value="10">
+                {t.settings.navigatorTabsMax10}
+              </SelectItem>
             </SelectGroup>
           </SelectContent>
         </Select>
@@ -186,6 +215,7 @@ export function NavigatorTabsPanel() {
  * da barra de favoritos (liga #176). Persiste no localStorage (NavigatorPrefs).
  */
 export function NavigatorFavoritosPanel() {
+  const { t } = useIdioma();
   const [prefs, setPrefs] = useState<NavigatorPrefs>(loadNavigatorPrefs);
   const atualizar = (patch: Partial<NavigatorPrefs>) =>
     setPrefs((prev) => {
@@ -198,15 +228,17 @@ export function NavigatorFavoritosPanel() {
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Show favorites bar</h3>
+          <h3 className="text-sm font-semibold">
+            {t.settings.navigatorFavTitulo}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            Show the favorites bar under the tab strip for quick access.
+            {t.settings.navigatorFavDesc}
           </p>
         </div>
         <Switch
           checked={prefs.mostrarBarraFav}
           onCheckedChange={(valor) => atualizar({ mostrarBarraFav: valor })}
-          aria-label="Show favorites bar"
+          aria-label={t.settings.navigatorFavTitulo}
         />
       </div>
     </FramePanel>
@@ -219,6 +251,7 @@ export function NavigatorFavoritosPanel() {
  * localStorage; "Clear all" dispara evento pro App reler o histórico do disco.
  */
 export function NavigatorHistoryPanel() {
+  const { t } = useIdioma();
   const [prefs, setPrefs] = useState<NavigatorPrefs>(loadNavigatorPrefs);
   const atualizar = (patch: Partial<NavigatorPrefs>) =>
     setPrefs((prev) => {
@@ -236,39 +269,43 @@ export function NavigatorHistoryPanel() {
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Private mode only</h3>
+          <h3 className="text-sm font-semibold">
+            {t.settings.navigatorHistPrivadoTitulo}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            Always browse privately: every new tab opens in a private tab, and
-            nothing is saved to history.
+            {t.settings.navigatorHistPrivadoDesc}
           </p>
         </div>
         <Switch
           checked={prefs.semprePrivado}
           onCheckedChange={(valor) => atualizar({ semprePrivado: valor })}
-          aria-label="Private mode only"
+          aria-label={t.settings.navigatorHistPrivadoTitulo}
         />
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-4 border-t border-border pt-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Save browsing history</h3>
+          <h3 className="text-sm font-semibold">
+            {t.settings.navigatorHistSalvarTitulo}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            Record the pages you visit so you can search and reopen them. Private
-            tabs never record.
+            {t.settings.navigatorHistSalvarDesc}
           </p>
         </div>
         <Switch
           checked={prefs.salvarHistorico}
           onCheckedChange={(valor) => atualizar({ salvarHistorico: valor })}
-          aria-label="Save browsing history"
+          aria-label={t.settings.navigatorHistSalvarTitulo}
         />
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-4 border-t border-border pt-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Keep history for</h3>
+          <h3 className="text-sm font-semibold">
+            {t.settings.navigatorHistRetencaoTitulo}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            Automatically remove history older than this.
+            {t.settings.navigatorHistRetencaoDesc}
           </p>
         </div>
         <Select
@@ -276,15 +313,24 @@ export function NavigatorHistoryPanel() {
           onValueChange={(valor) => atualizar({ retencaoDias: Number(valor) })}
           disabled={!prefs.salvarHistorico}
         >
-          <SelectTrigger aria-label="Keep history for" className="w-44 shrink-0">
+          <SelectTrigger
+            aria-label={t.settings.navigatorHistRetencaoTitulo}
+            className="w-44 shrink-0"
+          >
             <SelectValue />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
             <SelectGroup>
-              <SelectItem value="7">7 days</SelectItem>
-              <SelectItem value="30">30 days</SelectItem>
-              <SelectItem value="90">90 days</SelectItem>
-              <SelectItem value="0">Forever</SelectItem>
+              <SelectItem value="7">{t.settings.navigatorHistRet7}</SelectItem>
+              <SelectItem value="30">
+                {t.settings.navigatorHistRet30}
+              </SelectItem>
+              <SelectItem value="90">
+                {t.settings.navigatorHistRet90}
+              </SelectItem>
+              <SelectItem value="0">
+                {t.settings.navigatorHistRetForever}
+              </SelectItem>
             </SelectGroup>
           </SelectContent>
         </Select>
@@ -292,9 +338,11 @@ export function NavigatorHistoryPanel() {
 
       <div className="mt-4 flex items-center justify-between gap-4 border-t border-border pt-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Clear browsing history</h3>
+          <h3 className="text-sm font-semibold">
+            {t.settings.navigatorHistLimparTitulo}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            Remove all recorded history from this device.
+            {t.settings.navigatorHistLimparDesc}
           </p>
         </div>
         <Button
@@ -304,7 +352,7 @@ export function NavigatorHistoryPanel() {
           className="shrink-0 text-destructive hover:text-destructive"
           onClick={limparTudo}
         >
-          Clear all
+          {t.settings.navigatorHistLimparBotao}
         </Button>
       </div>
     </FramePanel>

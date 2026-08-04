@@ -25,6 +25,8 @@ import {
 import { useAppStore } from "@/store";
 import type { SettingsItemId } from "@/store/settings-ui-slice";
 import { cn } from "@/lib/utils";
+import { useIdioma, preencher } from "@/lib/idioma";
+import type { Dicionario } from "@/lib/strings";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
 import { BackgroundSettings } from "@/components/background-settings";
 import {
@@ -112,222 +114,227 @@ function AppearancePanels() {
   );
 }
 
-const SETTINGS_SECTIONS: SettingsSection[] = [
-  {
-    label: "General settings",
-    items: [
-      {
-        id: "accounts",
-        label: "Accounts",
-        description: "Manage the accounts connected to GALAXIE Toolbox.",
-        icon: UserRound,
-        // c-empty-19 literal (radix-nova), sem botões: só header + ilustração.
-        emptyState: (
-          <div className="flex items-center justify-center p-4">
-            <Empty className="py-12">
-              <EmptyHeader>
-                <EmptyMedia>
-                  <NodesIllustration />
-                </EmptyMedia>
-                <EmptyTitle>Accounts</EmptyTitle>
-                <EmptyDescription>
-                  Multiple accounts are coming soon.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          </div>
-        ),
-      },
-      {
-        id: "personalization",
-        label: "Personalization",
-        description: "Make GALAXIE Toolbox feel like your workspace.",
-        icon: Palette,
-        frames: [
-          {
-            key: "sound-notifications",
-            title: "Sound & notifications",
-            subtitle: "Choose which events play a sound.",
-            // Interino (AC5): os controles do #48 vão DIRETO aqui (sem moldura
-            // própria); #119 realoca/reestiliza depois.
-            node: <NotificacoesPanels />,
-          },
-          {
-            key: "background",
-            title: "Background",
-            subtitle: "Set a background for your workspace.",
-            node: <BackgroundSettings />,
-          },
-          {
-            key: "appearance",
-            title: "Appearance",
-            subtitle: "Set the mood and light or dark style of the app.",
-            // Frame with stacked cards (c-frame-3 dentro do c-frame-5): Mood,
-            // Style e Accessibility são FramePanels empilhados NUM frame só, igual
-            // ao Sound & notifications. Cada card traz label+descrição + controle.
-            node: <AppearancePanels />,
-          },
-          {
-            key: "lock-screen",
-            title: "Lock screen",
-            subtitle: "Protect the app with a PIN.",
-            node: <LockScreenSettings />,
-          },
-        ],
-      },
-      {
-        id: "privacy",
-        label: "Privacy",
-        description: "Control what anonymous telemetry the app may collect.",
-        icon: ShieldCheck,
-        frames: [
-          {
-            key: "telemetry",
-            title: "Telemetry & diagnostics",
-            subtitle:
-              "Opt in per category. Off by default; no personal data, ever.",
-            node: <TelemetrySettings />,
-          },
-        ],
-      },
-      {
-        id: "system",
-        label: "System",
-        description: "Choose how GALAXIE Toolbox works with your device.",
-        icon: MonitorCog,
-        frames: [
-          {
-            key: "language",
-            title: "Language",
-            subtitle: "Choose the app's language.",
-            node: <LanguageSettings />,
-          },
-          {
-            key: "startup",
-            title: "Startup",
-            subtitle: "Choose what runs when the app starts.",
-            node: <StartupSettings />,
-          },
-        ],
-      },
-    ],
-  },
-  {
-    label: "Apps",
-    items: [
-      {
-        id: "galaxie-apps",
-        label: "Galaxie Apps",
-        description: "Configure the apps created by Galaxie.",
-        icon: GalaxieSymbol,
-        // Agrupador: a configuração real vive no subitem Bridge.
-        children: [
-          {
-            id: "bridge",
-            label: "Bridge",
-            description: "Configure the Bridge email client.",
-            icon: BridgeIcon,
-            frames: [
-              {
-                key: "reading",
-                title: "Reading",
-                subtitle:
-                  "Choose how Bridge groups messages into threads and when it marks them as read.",
-                // Frame with stacked cards (c-frame-3 dentro do c-frame-5): os
-                // controles de leitura empilhados num frame só (igual ao
-                // Appearance). O "Mark as read" (#227) migrou da toolbar do leitor.
-                node: (
-                  <>
-                    <ConversationViewPanel />
-                    <ReadingPreferencesPanel />
-                  </>
-                ),
-              },
-              {
-                key: "sending",
-                title: "Sending",
-                subtitle:
-                  "Manage signatures, templates and how long Bridge waits before a sent email leaves.",
-                // Signature & Templates + Undo send, empilhados num frame só.
-                node: (
-                  <>
-                    <SignaturesPanel />
-                    <EmailTemplatesPanel />
-                    <UndoSendPanel />
-                  </>
-                ),
-              },
-              {
-                key: "sync",
-                title: "Sync",
-                subtitle:
-                  "Choose how often Bridge checks for new messages in the background.",
-                node: <SyncPreferencesPanel />,
-              },
-            ],
-          },
-          {
-            id: "navigator",
-            label: "Navigator",
-            description: "Configure the Navigator browser.",
-            icon: NavigatorIcon,
-            frames: [
-              {
-                key: "search",
-                title: "Search",
-                subtitle:
-                  "Choose the default search engine used by the address bar.",
-                node: <NavigatorSearchPanel />,
-              },
-              {
-                key: "tabs",
-                title: "Tabs",
-                subtitle:
-                  "Sleeping tabs, idle timeout and how many tabs stay active.",
-                node: <NavigatorTabsPanel />,
-              },
-              {
-                key: "favorites",
-                title: "Favorites",
-                subtitle: "Show or hide the favorites bar under the tabs.",
-                node: <NavigatorFavoritosPanel />,
-              },
-              {
-                key: "history",
-                title: "History & privacy",
-                subtitle:
-                  "Save browsing history, set retention and clear it.",
-                node: <NavigatorHistoryPanel />,
-              },
-            ],
-          },
-        ],
-      },
-      {
-        id: "microsoft-365-copilot",
-        label: "Microsoft 365 Copilot",
-        description: "Manage Microsoft 365 Copilot integrations.",
-        icon: CopilotIcon,
-      },
-      {
-        id: "windows",
-        label: "Windows",
-        description: "Review Windows-related app settings.",
-        icon: MonitorCog,
-      },
-    ],
-  },
-];
+/**
+ * Monta as seções da Settings a partir do dicionário ativo (`t`). Precisa ser
+ * função — e não const de módulo — porque o `t` só existe em runtime, dentro do
+ * componente (o hook `useIdioma` não roda em escopo de módulo). Os componentes
+ * de `node` seguem sendo JSX estático (não têm string pra traduzir aqui).
+ */
+function settingsSections(t: Dicionario): SettingsSection[] {
+  const s = t.settings;
+  return [
+    {
+      label: s.cfgGeneralLabel,
+      items: [
+        {
+          id: "accounts",
+          label: s.cfgAccountsLabel,
+          description: s.cfgAccountsDesc,
+          icon: UserRound,
+          // c-empty-19 literal (radix-nova), sem botões: só header + ilustração.
+          emptyState: (
+            <div className="flex items-center justify-center p-4">
+              <Empty className="py-12">
+                <EmptyHeader>
+                  <EmptyMedia>
+                    <NodesIllustration />
+                  </EmptyMedia>
+                  <EmptyTitle>{s.cfgAccountsEmptyTitulo}</EmptyTitle>
+                  <EmptyDescription>{s.cfgAccountsEmptyDesc}</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            </div>
+          ),
+        },
+        {
+          id: "personalization",
+          label: s.cfgPersonalizationLabel,
+          description: s.cfgPersonalizationDesc,
+          icon: Palette,
+          frames: [
+            {
+              key: "sound-notifications",
+              title: s.cfgSoundTitulo,
+              subtitle: s.cfgSoundSubtitulo,
+              // Interino (AC5): os controles do #48 vão DIRETO aqui (sem moldura
+              // própria); #119 realoca/reestiliza depois.
+              node: <NotificacoesPanels />,
+            },
+            {
+              key: "background",
+              title: s.cfgBackgroundTitulo,
+              subtitle: s.cfgBackgroundSubtitulo,
+              node: <BackgroundSettings />,
+            },
+            {
+              key: "appearance",
+              title: s.cfgAppearanceTitulo,
+              subtitle: s.cfgAppearanceSubtitulo,
+              // Frame with stacked cards (c-frame-3 dentro do c-frame-5): Mood,
+              // Style e Accessibility são FramePanels empilhados NUM frame só, igual
+              // ao Sound & notifications. Cada card traz label+descrição + controle.
+              node: <AppearancePanels />,
+            },
+            {
+              key: "lock-screen",
+              title: s.cfgLockScreenTitulo,
+              subtitle: s.cfgLockScreenSubtitulo,
+              node: <LockScreenSettings />,
+            },
+          ],
+        },
+        {
+          id: "privacy",
+          label: s.cfgPrivacyLabel,
+          description: s.cfgPrivacyDesc,
+          icon: ShieldCheck,
+          frames: [
+            {
+              key: "telemetry",
+              title: s.cfgTelemetryTitulo,
+              subtitle: s.cfgTelemetrySubtitulo,
+              node: <TelemetrySettings />,
+            },
+          ],
+        },
+        {
+          id: "system",
+          label: s.cfgSystemLabel,
+          description: s.cfgSystemDesc,
+          icon: MonitorCog,
+          frames: [
+            {
+              key: "language",
+              title: s.cfgLanguageTitulo,
+              subtitle: s.cfgLanguageSubtitulo,
+              node: <LanguageSettings />,
+            },
+            {
+              key: "startup",
+              title: s.cfgStartupTitulo,
+              subtitle: s.cfgStartupSubtitulo,
+              node: <StartupSettings />,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      label: s.cfgAppsLabel,
+      items: [
+        {
+          id: "galaxie-apps",
+          label: s.cfgGalaxieAppsLabel,
+          description: s.cfgGalaxieAppsDesc,
+          icon: GalaxieSymbol,
+          // Agrupador: a configuração real vive no subitem Bridge.
+          children: [
+            {
+              id: "bridge",
+              label: s.cfgBridgeLabel,
+              description: s.cfgBridgeDesc,
+              icon: BridgeIcon,
+              frames: [
+                {
+                  key: "reading",
+                  title: s.cfgReadingTitulo,
+                  subtitle: s.cfgReadingSubtitulo,
+                  // Frame with stacked cards (c-frame-3 dentro do c-frame-5): os
+                  // controles de leitura empilhados num frame só (igual ao
+                  // Appearance). O "Mark as read" (#227) migrou da toolbar do leitor.
+                  node: (
+                    <>
+                      <ConversationViewPanel />
+                      <ReadingPreferencesPanel />
+                    </>
+                  ),
+                },
+                {
+                  key: "sending",
+                  title: s.cfgSendingTitulo,
+                  subtitle: s.cfgSendingSubtitulo,
+                  // Signature & Templates + Undo send, empilhados num frame só.
+                  node: (
+                    <>
+                      <SignaturesPanel />
+                      <EmailTemplatesPanel />
+                      <UndoSendPanel />
+                    </>
+                  ),
+                },
+                {
+                  key: "sync",
+                  title: s.cfgSyncTitulo,
+                  subtitle: s.cfgSyncSubtitulo,
+                  node: <SyncPreferencesPanel />,
+                },
+              ],
+            },
+            {
+              id: "navigator",
+              label: s.cfgNavigatorLabel,
+              description: s.cfgNavigatorDesc,
+              icon: NavigatorIcon,
+              frames: [
+                {
+                  key: "search",
+                  title: s.cfgSearchTitulo,
+                  subtitle: s.cfgSearchSubtitulo,
+                  node: <NavigatorSearchPanel />,
+                },
+                {
+                  key: "tabs",
+                  title: s.cfgTabsTitulo,
+                  subtitle: s.cfgTabsSubtitulo,
+                  node: <NavigatorTabsPanel />,
+                },
+                {
+                  key: "favorites",
+                  title: s.cfgFavoritesTitulo,
+                  subtitle: s.cfgFavoritesSubtitulo,
+                  node: <NavigatorFavoritosPanel />,
+                },
+                {
+                  key: "history",
+                  title: s.cfgHistoryTitulo,
+                  subtitle: s.cfgHistorySubtitulo,
+                  node: <NavigatorHistoryPanel />,
+                },
+              ],
+            },
+          ],
+        },
+        {
+          id: "microsoft-365-copilot",
+          label: s.cfgCopilotLabel,
+          description: s.cfgCopilotDesc,
+          icon: CopilotIcon,
+        },
+        {
+          id: "windows",
+          label: s.cfgWindowsLabel,
+          description: s.cfgWindowsDesc,
+          icon: MonitorCog,
+        },
+      ],
+    },
+  ];
+}
 
 /** Achata itens + subitens (children) num mapa id → item, pra lookup do contexto. */
-const SETTINGS_BY_ID = new Map<SettingsItemId, SettingsItem>();
-for (const section of SETTINGS_SECTIONS) {
-  for (const item of section.items) {
-    SETTINGS_BY_ID.set(item.id, item);
-    for (const child of item.children ?? []) {
-      SETTINGS_BY_ID.set(child.id, child);
+function mapaSettingsPorId(
+  sections: SettingsSection[]
+): Map<SettingsItemId, SettingsItem> {
+  const mapa = new Map<SettingsItemId, SettingsItem>();
+  for (const section of sections) {
+    for (const item of section.items) {
+      mapa.set(item.id, item);
+      for (const child of item.children ?? []) {
+        mapa.set(child.id, child);
+      }
     }
   }
+  return mapa;
 }
 
 function NavButton({
@@ -362,18 +369,21 @@ function NavButton({
 }
 
 function SettingsNavigation({
+  sections,
   selected,
   onSelect,
 }: {
+  sections: SettingsSection[];
   selected: SettingsItemId;
   onSelect: (item: SettingsItemId) => void;
 }) {
+  const { t } = useIdioma();
   return (
     <aside
-      aria-label="Settings navigation"
+      aria-label={t.settings.cfgNavAriaLabel}
       className="w-full shrink-0 overflow-y-auto rounded-xl border bg-card p-2 md:h-full md:w-64"
     >
-      {SETTINGS_SECTIONS.map((section) => (
+      {sections.map((section) => (
         <Collapsible key={section.label} defaultOpen className="group/settings-section">
           <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-accent/50">
             <span className="flex-1">{section.label}</span>
@@ -413,6 +423,7 @@ function OptionFrame({
   owner: SettingsItemId;
   frame: SettingsFrame;
 }) {
+  const { t } = useIdioma();
   const frameId = `${owner}:${frame.key}`;
   const aberto = useAppStore(
     (state) => state.settingsFramesAbertos[frameId] ?? false
@@ -442,8 +453,10 @@ function OptionFrame({
             <FramePanel>
               <FrameDescription>
                 {frame.pending
-                  ? `Delivered in a follow-up (#${frame.pending}).`
-                  : "Configuration controls for this option will appear here."}
+                  ? preencher(t.settings.cfgFramePendingPlaceholder, {
+                      issue: frame.pending,
+                    })
+                  : t.settings.cfgFrameEmptyPlaceholder}
               </FrameDescription>
             </FramePanel>
           )}
@@ -455,9 +468,12 @@ function OptionFrame({
 
 /** Base da #118; os painéis reais das sub-opções vêm nas filhas #119–#124. */
 export function ConfiguracoesScreen() {
+  const { t } = useIdioma();
   const selectedItem = useAppStore((state) => state.selectedSettingsItem);
   const setSelectedItem = useAppStore((state) => state.setSelectedSettingsItem);
-  const current = SETTINGS_BY_ID.get(selectedItem) ?? SETTINGS_SECTIONS[0].items[0];
+  const secoes = settingsSections(t);
+  const porId = mapaSettingsPorId(secoes);
+  const current = porId.get(selectedItem) ?? secoes[0].items[0];
   const CurrentIcon = current.icon;
   const frames = current.frames ?? [];
 
@@ -469,15 +485,21 @@ export function ConfiguracoesScreen() {
           <Settings className="size-5" aria-hidden="true" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+          <h1 className="text-xl font-semibold tracking-tight">
+            {t.settings.cfgHeroTitulo}
+          </h1>
           <p className="text-sm text-muted-foreground">
-            Manage GALAXIE Toolbox settings in one place.
+            {t.settings.cfgHeroSubtitulo}
           </p>
         </div>
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
-        <SettingsNavigation selected={selectedItem} onSelect={setSelectedItem} />
+        <SettingsNavigation
+          sections={secoes}
+          selected={selectedItem}
+          onSelect={setSelectedItem}
+        />
 
         {/* Área de contexto PLANA (sem card/borda): título+descrição uma vez e,
             abaixo, um frame colapsável por sub-opção. Itens com empty state
@@ -507,7 +529,7 @@ export function ConfiguracoesScreen() {
                 </div>
               ) : (
                 <p className="mt-6 text-sm text-muted-foreground">
-                  No configurable options here yet.
+                  {t.settings.cfgSemOpcoes}
                 </p>
               )}
             </>
