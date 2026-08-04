@@ -15,9 +15,29 @@ Companheiro deste doc: `docs/astro/galaxie-ai-discovery.md` (#180, produto/negó
 - **`astro` já existe como slot na sidebar** (`src/lib/navegacao.ts` → `NAV[0].itens[0].filhos` tem `{ id: "astro", icone: AstroIcon }`, e `TELAS.astro`). Não se cria item novo: veste-se essa tela com o painel de saldo/compra e liga-se o e-mail-assist. O nome de marca do produto de IA **é "Astro"**.
 - **Backend Astro roda no VPS Hostinger do Wagner** — fora do M365, controle total. Stack recomendada: **Node 22 LTS + Fastify + TypeScript + Postgres + Redis**, atrás de **Caddy** (TLS automático), tudo em **Docker Compose**, com a chave Claude e a ASR vivendo **só lá**. É o `suzette-local-server.mjs` promovido de script local a serviço hospedado, tipado e com DB real.
 - **Auth desktop→backend sem senha paralela:** expor uma **API própria no mesmo registro Entra** (`api://{CLIENT_ID}/Astro.Use`); o PKCE de `auth.rs` passa a pedir esse escopo junto; o backend valida o JWT pela **JWKS do Entra** e extrai `tid` (tenant) + `oid` (usuário). Zero cadastro de senha, mantendo o princípio do `auth.rs` (o app nunca vê senha).
-- **Modelo de créditos = Suzette transplantado 1:1**, trocando *conta→tenant* e *filial→usuário*. Reaproveita a mecânica de `pricing.ts`/`domain.ts` (medição token→custo→crédito, ledger, gate duplo, idempotência de compra), recalibrada para os preços do Claude e roteamento por tarefa.
+- **Modelo de créditos = Suzette transplantado 1:1**, trocando *conta→tenant* e *filial→usuário*. Reaproveita a mecânica de `pricing.ts`/`domain.ts` (medição token→custo→crédito, ledger, gate duplo, idempotência de compra), recalibrada para os preços do Claude e roteamento por tarefa. **Refinado (PO, 04/ago): duas cotas por usuário (org + pessoal), consumo org-first — ver a seção Modelo de cotas abaixo.**
 - **Meeting-assistant, recomendação:** **híbrido por origem da reunião** — quando existe **gravação oficial** (reunião gravada), puxa via Graph `OnlineMeetingRecording.Read.All` e roda **nossa ASR** (sem companion); para **ao vivo / não-gravada**, o **companion Delphi (WASAPI loopback)** é o motor. Montagem sempre: **ASR → Claude Opus (ata) + To-Dos → Microsoft To Do** + **crachá** (active-speaker) faseado. O transcript nativo do Teams é só benchmark.
 - **Fatiamento:** **A** motor de créditos + e-mail-assist · **B** meeting-assistant premium · **C** master/cota/crachá · **D** óculos completo + RAG.
+
+---
+
+## Modelo de cotas (org + pessoal) — refinamento do PO (04/ago/2026)
+
+**Cada usuário tem DUAS carteiras separadas, consumidas em ordem fixa:**
+
+1. **Cota da org (`wallet_org`)** — o **dono do negócio / master** faz top-up no nível do **tenant** e **distribui com controle fino: por departamento e por pessoa**. É o crédito que a empresa banca. Origem do saldo: alocação do master.
+2. **Cota pessoal (`wallet_personal`)** — o **próprio usuário** pode fazer top-up pra si; vira um **saldo separado, dele**, que não se mistura com o da org nem volta pra empresa. Origem: compra do próprio usuário.
+
+**Ordem de consumo — regra dura: ORG-FIRST.** Todo débito de medição (token→custo→crédito) **esgota primeiro a cota da org** disponível pro usuário; só quando ela zera é que consome a **cota pessoal**. Um único gasto pode **atravessar** as duas carteiras (parte org, resto pessoal) → o ledger registra o **split** por operação. Garante que o crédito bancado pela empresa é usado antes do dinheiro do próprio usuário.
+
+**Impacto no ledger/dados (a fatia A já nasce com isso — não retrofitar depois):**
+- **Duas carteiras por `oid` (usuário)**, ambas ancoradas no `tid` (tenant): `wallet_org` (saldo alocado + histórico de alocação) e `wallet_personal` (saldo comprado pelo usuário).
+- **Alocação hierárquica da org:** master → **departamento** → **pessoa**. O campo `department` vem de graça do diretório M365 (`/users/{id}` com `User.Read.All`), então dá pra distribuir por depto **sem cadastro paralelo**. O master pode ratear por depto e/ou fixar override por pessoa.
+- **Débito atômico org-first:** o gate de medição consome `min(custo, saldo_org)` da org e o resto de `wallet_personal`; só falha (402/insufficient) se **ambas** zeram. Idempotência de compra/top-up (do Suzette) mantida **por carteira**.
+- **Visibilidade:** o **master** vê consumo e saldo **por depto e por pessoa** (painel de governança); o **usuário** vê **quanto a empresa deu / restante da cota org** + o **saldo pessoal separado**, sinalizando qual está sendo gasto.
+- **A decidir (flags pro PO):** a cota da org **expira / volta pro pool** ao fim de um ciclo? a pessoal segue política própria do usuário? top-up mínimo? reembolso?
+
+**Fatiamento:** o detalhamento acima é o coração da fatia **C** (master/cota), MAS a fatia **A** (motor de créditos) precisa **nascer com o ledger de 2 carteiras + ordem org-first** desde o início — a UI de alocação por depto/pessoa e o painel do master entram na C.
 
 ---
 
