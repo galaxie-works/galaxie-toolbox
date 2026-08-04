@@ -470,6 +470,9 @@ const pt = {
     semEventosTitulo: "Sem eventos",
     agendaErroTitulo: "Não foi possível carregar a agenda",
     agendaErroDica: "Falha momentânea na conexão. Tente atualizar.",
+    agendaSemAcessoCaixaTitulo: "Sem acesso ao calendário desta caixa",
+    agendaSemAcessoCaixaDica:
+      "Você não tem permissão para ver o calendário desta caixa compartilhada.",
     atualizar: "Atualizar",
     tentarNovamente: "Tentar novamente",
     // Ações de e-mail
@@ -935,6 +938,7 @@ const pt = {
     peopleErro: "Não foi possível atualizar todos os contatos.",
     peopleTentarNovamente: "Tentar novamente",
     peopleSemPermissao: "Acesso ao People necessário",
+    peopleSemAcessoCaixa: "Sem acesso aos contatos desta caixa",
     peopleSemPermissaoDesc:
       "Autorize {escopos} para carregar seus contatos. O login só abre quando você confirmar.",
     peopleConcederAcesso: "Conceder acesso",
@@ -1986,6 +1990,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     semEventosTitulo: "No events",
     agendaErroTitulo: "Couldn't load the calendar",
     agendaErroDica: "Temporary connection glitch. Try refreshing.",
+    agendaSemAcessoCaixaTitulo: "No access to this mailbox's calendar",
+    agendaSemAcessoCaixaDica:
+      "You don't have permission to view this shared mailbox's calendar.",
     atualizar: "Refresh",
     tentarNovamente: "Try again",
     // Ações de e-mail
@@ -2449,6 +2456,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleErro: "We couldn't refresh every contact source.",
     peopleTentarNovamente: "Try again",
     peopleSemPermissao: "People access required",
+    peopleSemAcessoCaixa: "No access to this mailbox's contacts",
     peopleSemPermissaoDesc:
       "Grant {escopos} to load your contacts. Sign-in only opens after you confirm.",
     peopleConcederAcesso: "Grant access",

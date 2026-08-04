@@ -242,6 +242,10 @@ export interface PeopleSlice {
   peopleColumnVisibility: Record<string, boolean>;
   peopleRequestGeneration: number;
   peopleSessionGeneration: number;
+  /** #495: a QUAL caixa (`caixaAtiva`, "me" = própria) os contatos carregados
+   *  pertencem. Guarda contra vazamento entre caixas: o merge com o cache só
+   *  acontece se for a mesma caixa; trocar de caixa limpa e recarrega. */
+  peopleCaixaDados: string;
   peopleDirectoryEnrichedEmails: string[];
   peopleM365Generation: number;
   peopleM365Loading: boolean;
@@ -383,6 +387,7 @@ export function criarPeopleSlice(
   },
   peopleRequestGeneration: 0,
   peopleSessionGeneration: 0,
+  peopleCaixaDados: "me",
   peopleDirectoryEnrichedEmails: [],
   peopleM365Generation: 0,
   peopleM365Loading: false,
@@ -412,32 +417,46 @@ export function criarPeopleSlice(
   peopleSelectedCategory: null,
 
   loadPeople: async () => {
+    // #495: contatos seguem a caixa selecionada (própria = /me, compartilhada =
+    // /users/{addr}). Se trocou de caixa, limpa NA HORA os contatos da caixa
+    // anterior — nada de mostrar/mesclar dados de outra caixa (anti-leak Cruiser).
+    const caixa = get().caixaAtiva;
+    const trocouCaixa = get().peopleCaixaDados !== caixa;
     const generation = get().peopleRequestGeneration + 1;
     const sessionGeneration = get().peopleSessionGeneration;
     set({
       peopleLoading: true,
       peopleError: null,
       peopleRequestGeneration: generation,
+      ...(trocouCaixa
+        ? { peopleContacts: [], peopleSelectedId: null, peopleNextLinks: [] }
+        : {}),
     });
     try {
-      const result = await client.crPeopleList();
+      const result = await client.crPeopleList([], caixa);
       if (
         get().peopleRequestGeneration !== generation ||
-        get().peopleSessionGeneration !== sessionGeneration
+        get().peopleSessionGeneration !== sessionGeneration ||
+        get().caixaAtiva !== caixa
       ) {
         return;
       }
       const contacts = mergePeopleRecords(result.records);
-      for (const cached of get().peopleContacts) {
-        if (
-          !cached.emails.some((email) => resolvePerson(contacts, email.address))
-        ) {
-          contacts.push(cached);
+      // Só reaproveita o cache se for da MESMA caixa (senão vazaria contato de
+      // outra caixa na lista atual).
+      if (get().peopleCaixaDados === caixa) {
+        for (const cached of get().peopleContacts) {
+          if (
+            !cached.emails.some((email) => resolvePerson(contacts, email.address))
+          ) {
+            contacts.push(cached);
+          }
         }
       }
       const current = get().peopleSelectedId;
       set({
         peopleContacts: contacts,
+        peopleCaixaDados: caixa,
         peopleSelectedId:
           current && contacts.some((contact) => contact.id === current)
             ? current
@@ -452,7 +471,8 @@ export function criarPeopleSlice(
     } catch (error) {
       if (
         get().peopleRequestGeneration !== generation ||
-        get().peopleSessionGeneration !== sessionGeneration
+        get().peopleSessionGeneration !== sessionGeneration ||
+        get().caixaAtiva !== caixa
       ) {
         return;
       }
@@ -467,11 +487,18 @@ export function criarPeopleSlice(
   loadMorePeople: async () => {
     const { peopleFetchingMore, peopleNextLinks } = get();
     if (peopleFetchingMore || peopleNextLinks.length === 0) return;
+    // #495: a paginação é da MESMA caixa dos dados atuais; os nextLinks são
+    // /users/{addr}/... e o backend rejeita se vier com outra caixa.
+    const caixa = get().peopleCaixaDados;
     const sessionGeneration = get().peopleSessionGeneration;
     set({ peopleFetchingMore: true });
     try {
-      const result = await client.crPeopleList(peopleNextLinks);
-      if (get().peopleSessionGeneration !== sessionGeneration) return;
+      const result = await client.crPeopleList(peopleNextLinks, caixa);
+      if (
+        get().peopleSessionGeneration !== sessionGeneration ||
+        get().caixaAtiva !== caixa
+      )
+        return;
       const previous = get().peopleContacts;
       const incoming = mergePeopleRecords(result.records);
       const appended = previous.map((contact) => ({
@@ -727,6 +754,8 @@ export function criarPeopleSlice(
       peopleFilters: [],
       peopleRequestGeneration: current.peopleRequestGeneration + 1,
       peopleSessionGeneration: current.peopleSessionGeneration + 1,
+      // #495: nova sessão volta pra caixa própria.
+      peopleCaixaDados: "me",
       peopleDirectoryEnrichedEmails: [],
       peopleM365Generation: current.peopleM365Generation + 1,
       peopleM365Loading: false,

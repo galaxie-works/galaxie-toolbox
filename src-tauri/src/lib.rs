@@ -305,35 +305,42 @@ async fn cr_agenda(
     state: State<'_, Store>,
     inicio: String,
     fim: String,
+    mailbox: Option<String>,
 ) -> Result<Vec<graph::EventoAgenda>, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_agenda(&store, &inicio, &fim))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_agenda(&store, &inicio, &fim, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-/// Agenda: lista os calendários do usuário (#233). Calendars.Read.
+/// Agenda: lista os calendários do usuário (#233). Calendars.Read(.Shared #495).
 #[tauri::command]
 async fn cr_calendarios(
     state: State<'_, Store>,
+    mailbox: Option<String>,
 ) -> Result<Vec<graph::Calendario>, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_calendarios(&store))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_calendarios(&store, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-/// Agenda: eventos de um calendário específico no intervalo (#233). Calendars.Read.
+/// Agenda: eventos de um calendário específico no intervalo (#233). Calendars.Read(.Shared #495).
 #[tauri::command]
 async fn cr_agenda_calendario(
     state: State<'_, Store>,
     calendario_id: String,
     inicio: String,
     fim: String,
+    mailbox: Option<String>,
 ) -> Result<Vec<graph::EventoAgenda>, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_agenda_calendario(&store, &calendario_id, &inicio, &fim)
+        graph::cr_agenda_calendario(&store, &calendario_id, &inicio, &fim, mailbox.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -532,10 +539,11 @@ async fn cr_pessoas(
 async fn cr_people_list(
     state: State<'_, Store>,
     next_links: Option<Vec<String>>,
+    mailbox: Option<String>,
 ) -> Result<graph::PeopleListResult, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_people_list(&store, next_links.unwrap_or_default())
+        graph::cr_people_list(&store, next_links.unwrap_or_default(), mailbox.as_deref())
     })
         .await
         .map_err(|e| e.to_string())?
