@@ -69,6 +69,7 @@ import { crCompartilharOneDrive, type AnexoEnvio } from "@/lib/api";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { type TemplateEmail } from "@/lib/templates";
 import { useAppStore } from "@/store";
+import type { Assinatura } from "@/store/bridge-slice";
 
 import { CampoPessoas } from "./campo-pessoas";
 import { COMPOSE_KIT } from "./compose-kit";
@@ -115,8 +116,9 @@ export interface ComporMensagemProps {
   };
 }
 
-/** Assinatura simples usada quando não há assinatura padrão definida (#135). */
-const ASSINATURA_FALLBACK = "--\nEnviado pelo GALAXIE Toolbox";
+/** #498: marca os blocos inseridos como assinatura, pra remover a anterior antes
+ *  de inserir a nova (idempotência — não acumula assinatura). */
+const MARCA_ASSINATURA = "assinaturaInserida";
 
 /**
  * Mesmo saneamento usado pelo editor de assinaturas/templates (#147): remove
@@ -280,6 +282,7 @@ export const ComporMensagem = forwardRef<
   // Templates saem do store único (#135): fonte da verdade compartilhada com a
   // Settings, sempre em dia sem cópia local que envelheceria.
   const templates = useAppStore((s) => s.templates);
+  const assinaturas = useAppStore((s) => s.assinaturas);
   const assinaturaPadrao = useAppStore((s) =>
     s.assinaturas.find((assinatura) => assinatura.id === s.assinaturaPadraoId)
   );
@@ -411,24 +414,29 @@ export const ComporMensagem = forwardRef<
   }
 
   /**
-   * Insere a assinatura padrão ao final do corpo. A padrão vive no store (#135)
-   * como HTML do próprio Plate — basta desserializar de volta, igual ao
-   * template. Sem padrão definida, cai numa assinatura simples em texto.
+   * #498: insere a assinatura escolhida (ou a padrão das Settings) ao final do
+   * corpo. As assinaturas vivem no store (#135) como HTML do próprio Plate —
+   * basta desserializar de volta, igual ao template.
+   *
+   * Idempotência: os blocos da assinatura são marcados (`MARCA_ASSINATURA`); ao
+   * inserir de novo, os blocos marcados anteriores são removidos primeiro — não
+   * acumula assinatura a cada clique / troca.
    */
-  function inserirAssinatura() {
+  function inserirAssinatura(assinatura?: Assinatura) {
     const { assinaturas, assinaturaPadraoId } = useAppStore.getState();
-    const padrao = assinaturas.find((a) => a.id === assinaturaPadraoId);
-    if (padrao && padrao.corpo.trim()) {
-      const nodes = desserializarBlocosPlate(editor, padrao.corpo);
-      if (nodes.length > 0) {
-        inserirNoFim(nodes);
-        return;
-      }
-    }
-    const linhas = ASSINATURA_FALLBACK.split(/\r?\n/);
-    inserirNoFim(
-      linhas.map((linha) => ({ type: "p", children: [{ text: linha }] }))
-    );
+    const alvo =
+      assinatura ??
+      assinaturas.find((a) => a.id === assinaturaPadraoId) ??
+      assinaturas[0];
+    if (!alvo || !alvo.corpo.trim()) return;
+    const nodes = desserializarBlocosPlate(editor, alvo.corpo);
+    if (nodes.length === 0) return;
+    // Remove a assinatura inserida antes (marcada) pra não duplicar.
+    editor.tf.removeNodes({
+      at: [],
+      match: (n) => (n as Record<string, unknown>)[MARCA_ASSINATURA] === true,
+    });
+    inserirNoFim(nodes.map((n) => ({ ...n, [MARCA_ASSINATURA]: true })));
   }
 
   /**
@@ -603,13 +611,47 @@ export const ComporMensagem = forwardRef<
           </ShortcutMarkToolbarButton>
           <BulletedListToolbarButton />
           <LinkToolbarButton />
-          <ToolbarButton
-            tooltip={t.compose.inserirAssinatura}
-            aria-label={t.compose.inserirAssinatura}
-            onClick={inserirAssinatura}
-          >
-            <PenToolIcon />
-          </ToolbarButton>
+          {/* #498: assinatura plugada nas Settings. Sem assinatura → desabilitado
+              com tooltip; 1 → insere direto; >1 → dropdown pra escolher. */}
+          {assinaturas.length <= 1 ? (
+            <ToolbarButton
+              tooltip={
+                assinaturas.length === 0
+                  ? t.compose.assinaturaNenhuma
+                  : t.compose.inserirAssinatura
+              }
+              aria-label={t.compose.inserirAssinatura}
+              disabled={assinaturas.length === 0}
+              onClick={() => inserirAssinatura()}
+            >
+              <PenToolIcon />
+            </ToolbarButton>
+          ) : (
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <ToolbarButton
+                  tooltip={t.compose.assinaturaEscolher}
+                  aria-label={t.compose.assinaturaEscolher}
+                  isDropdown
+                >
+                  <PenToolIcon />
+                </ToolbarButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                className="ignore-click-outside/toolbar min-w-48"
+                align="start"
+              >
+                {assinaturas.map((assinatura) => (
+                  <DropdownMenuItem
+                    key={assinatura.id}
+                    onSelect={() => inserirAssinatura(assinatura)}
+                  >
+                    {assinatura.nome}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
           {/* Templates: lista o que está salvo em Configurações e insere no fim. */}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
