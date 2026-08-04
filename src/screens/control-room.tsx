@@ -139,6 +139,8 @@ import SuccessIcon from "@/components/ui/icons/success";
 import TrashIcon from "@/components/ui/icons/trash";
 // Ícones animados das pastas de e-mail (#494) — lucide-animated via registry.
 import { MailboxIcon } from "@/components/ui/mailbox";
+import { CalendarDaysIcon } from "@/components/ui/calendar-days";
+import { UsersIcon } from "@/components/ui/users";
 import { SquarePenIcon } from "@/components/ui/square-pen";
 import { SendIcon } from "@/components/ui/send";
 import { ArchiveIcon } from "@/components/ui/archive";
@@ -1588,7 +1590,9 @@ function FolderSidebar({
   }: {
     view: BridgeView;
     rotulo: string;
-    icon: typeof Mailbox;
+    // #491: ícones ANIMADOS (lucide-animated) — componente div-based com prop
+    // `size` (não `className` p/ tamanho) e `stroke=currentColor`; animam no hover.
+    icon: React.ComponentType<{ size?: number; className?: string }>;
   }) => {
     const ativo = bridgeView === view;
     return (
@@ -1607,7 +1611,7 @@ function FolderSidebar({
                 : "text-muted-foreground hover:bg-accent/50"
             )}
           >
-            <Icon className="size-4 shrink-0" />
+            <Icon size={16} className="shrink-0" />
             {!colapsada && <span>{rotulo}</span>}
           </Button>
         </TooltipTrigger>
@@ -2274,9 +2278,10 @@ function FolderSidebar({
         aria-label={t.nav.controlRoom}
         className={cn("flex w-full flex-col gap-0.5", colapsada && "items-center")}
       >
-        <Modulo view="mail" rotulo={t.controlRoom.mailboxTitulo} icon={Mailbox} />
-        <Modulo view="people" rotulo={t.controlRoom.peopleTitulo} icon={Users} />
-        <Modulo view="agenda" rotulo={t.controlRoom.agendaTitulo} icon={CalendarDays} />
+        {/* #491: ordem Mailbox → Calendar → Contacts + ícones animados (lucide-animated). */}
+        <Modulo view="mail" rotulo={t.controlRoom.mailboxTitulo} icon={MailboxIcon} />
+        <Modulo view="agenda" rotulo={t.controlRoom.agendaTitulo} icon={CalendarDaysIcon} />
+        <Modulo view="people" rotulo={t.controlRoom.peopleTitulo} icon={UsersIcon} />
       </nav>
 
       {/* Confirmação do "Esvaziar pasta": destrutiva e não desfazível, então
