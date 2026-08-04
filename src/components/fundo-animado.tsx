@@ -47,21 +47,27 @@ export function RenderFundoAnimado({
         <HexagonBackground className={cn("absolute inset-0", className)} />
       )}
       {tipo === "gravity" && (
-        <GravityStarsBackground className={cn("absolute inset-0", className)} />
+        // #474 rework 2: calibrado pra ficar suave (o padrão do registry fica
+        // "a milhão", ainda mais no preview pequeno) — via props, sem forkar:
+        // movimento e gravidade mais baixos, menos influência do mouse.
+        <GravityStarsBackground
+          className={cn("absolute inset-0", className)}
+          movementSpeed={0.12}
+          gravityStrength={35}
+          mouseInfluence={55}
+        />
       )}
     </MotionConfig>
   );
 }
 
 /**
- * Fundo animado da app: lê o switcher (`fundosAnimadosAtivo`) e a escolha
- * (`fundoAnimado`) do store. Desligado = nada (o tema pinta atrás, como o Starry
- * fazia).
+ * Fundo animado da app: lê a escolha (`fundoAnimado`) do store. `"none"` = nada
+ * (o tema pinta atrás) — é o jeito de desligar, sem switch (#474 rework 2).
  */
 export function FundoAnimado({ className }: { className?: string }) {
-  const ativo = useAppStore((s) => s.fundosAnimadosAtivo);
   const tipo = useAppStore((s) => s.fundoAnimado);
-  if (!ativo) return null;
+  if (tipo === "none") return null;
 
   return <RenderFundoAnimado tipo={tipo} className={className} />;
 }
