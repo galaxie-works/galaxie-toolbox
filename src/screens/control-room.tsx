@@ -6914,24 +6914,14 @@ export function ControlRoomScreen({
   // "New mail" — abre o nosso composer em modal.
   const novoEmailModal = () => abrirCompose("novo", caixaAtiva);
 
-  // #231: o header do conteúdo reflete o MÓDULO ativo (fonte da verdade =
-  // `bridgeView` no store), não mais uma saudação genérica. Título + subtítulo
-  // por módulo (i18n pt/en); nada de estado local.
-  // #490: no módulo Mailbox o título da content-area é a SECTION ("Bridge"),
-  // não "E-mail" (que fica só como rótulo do módulo/nav) — e sem subtítulo, pra
-  // dar mais cara de produto. People/Calendário mantêm título + subtítulo.
-  const tituloModulo =
-    bridgeView === "people"
-      ? t.controlRoom.peopleTitulo
-      : bridgeView === "agenda"
-        ? t.controlRoom.agendaTitulo
-        : t.nav.controlRoom;
-  const subtituloModulo =
-    bridgeView === "people"
-      ? t.controlRoom.peopleSubtitulo
-      : bridgeView === "agenda"
-        ? t.controlRoom.agendaSubtitulo
-        : undefined;
+  // #490 (rework após feedback do PO): o header do conteúdo do Bridge é
+  // CONSTANTE nos 3 módulos — sempre título "Bridge" (nav.controlRoom) +
+  // subtítulo fixo. O que muda ao alternar E-mail/Contatos/Calendário é o
+  // BREADCRUMB, não este header. (Antes o header trocava por módulo e o mail
+  // ficou sem subtítulo — o PO rejeitou os dois: quer o header fixo e o
+  // subtítulo de volta com copy melhor.)
+  const tituloModulo = t.nav.controlRoom;
+  const subtituloModulo = t.controlRoom.bridgeSubtitulo;
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -6942,9 +6932,7 @@ export function ControlRoomScreen({
         </span>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{tituloModulo}</h1>
-          {subtituloModulo && (
-            <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
-          )}
+          <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
         </div>
       </div>
 

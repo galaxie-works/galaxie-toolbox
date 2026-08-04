@@ -614,10 +614,10 @@ const pt = {
     diaInteiro: "Dia inteiro",
     mailboxTitulo: "E-mail",
     agendaTitulo: "Calendário",
-    // Subtítulos do header do Bridge por módulo (#231). #490: Mailbox sem
-    // subtítulo (título "Bridge" sozinho) — a chave mailboxSubtitulo foi removida.
-    peopleSubtitulo: "Seus contatos do Microsoft 365.",
-    agendaSubtitulo: "Seus próximos compromissos.",
+    // #490 (rework): o header do Bridge é CONSTANTE nos 3 módulos — título
+    // "Bridge" (nav.controlRoom) + este subtítulo fixo. O que muda por módulo é
+    // o breadcrumb, não o header. (Substitui os subtítulos por módulo do #231.)
+    bridgeSubtitulo: "E-mail, contatos e calendário à sua disposição",
     // Agenda — calendário completo (#211)
     agendaNovoEvento: "Novo evento",
     agendaHoje: "Hoje",
@@ -2134,10 +2134,10 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     diaInteiro: "All day",
     mailboxTitulo: "Mailbox",
     agendaTitulo: "Calendar",
-    // Bridge header subtitles per module (#231). #490: Mailbox has no subtitle
-    // (title "Bridge" stands alone) — the mailboxSubtitulo key was removed.
-    peopleSubtitulo: "Your Microsoft 365 contacts.",
-    agendaSubtitulo: "Your upcoming schedule.",
+    // #490 (rework): the Bridge header is CONSTANT across all 3 modules — title
+    // "Bridge" (nav.controlRoom) + this fixed subtitle. Only the breadcrumb
+    // changes per module. (Replaces the per-module subtitles from #231.)
+    bridgeSubtitulo: "Email, contacts and calendar at your disposal",
     // Agenda — full calendar (#211)
     agendaNovoEvento: "New event",
     agendaHoje: "Today",
