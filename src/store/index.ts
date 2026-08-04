@@ -313,11 +313,6 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (notificacoes !== undefined) {
       state.notificacoes = { ...PREF_PADRAO, ...notificacoes };
     }
-    const fundosAnimadosAtivo = lerChave<boolean>(
-      PERSONALIZATION_KEYS.fundosAnimadosAtivo
-    );
-    if (fundosAnimadosAtivo !== undefined)
-      state.fundosAnimadosAtivo = fundosAnimadosAtivo;
     const fundoAnimado = lerTexto<TipoFundoAnimado>(
       PERSONALIZATION_KEYS.fundoAnimado,
       TIPOS_FUNDO_ANIMADO
@@ -439,10 +434,6 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       s.settingsFramesAbertos
     );
     gravarChave(PERSONALIZATION_KEYS.notificacoes, s.notificacoes);
-    gravarChave(
-      PERSONALIZATION_KEYS.fundosAnimadosAtivo,
-      s.fundosAnimadosAtivo
-    );
     gravarTexto(PERSONALIZATION_KEYS.fundoAnimado, s.fundoAnimado);
     gravarTexto(PERSONALIZATION_KEYS.modoTema, s.modoTema);
     gravarTexto(PERSONALIZATION_KEYS.temaVisual, s.temaVisual);
@@ -523,7 +514,6 @@ export const useAppStore = create<AppStore>()(
         selectedSettingsItem: s.selectedSettingsItem,
         settingsFramesAbertos: s.settingsFramesAbertos,
         notificacoes: s.notificacoes,
-        fundosAnimadosAtivo: s.fundosAnimadosAtivo,
         fundoAnimado: s.fundoAnimado,
         modoTema: s.modoTema,
         temaVisual: s.temaVisual,

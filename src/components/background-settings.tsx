@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronRight, ImageOff } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { FramePanel } from "@/components/reui/frame";
 import {
-  Field,
-  FieldContent,
-  FieldDescription,
-  FieldLabel,
-} from "@/components/ui/field";
-import { Switch } from "@/components/ui/switch";
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   FUNDOS_ANIMADOS,
   RenderFundoAnimado,
@@ -18,79 +16,60 @@ import { useAppStore } from "@/store";
 import { useIdioma } from "@/lib/idioma";
 
 /**
- * #474: Animated backgrounds — vive dentro do Appearance. O switch liga/desliga o
- * fundo animado; ligado, mostra os 4 fundos (Animate UI) em preview ao vivo.
- *
- * O chevron à direita do switch (rework do feedback do #474) colapsa/expande as
- * opções de preview de forma INDEPENDENTE do on/off — dá pra liberar espaço na
- * tela sem precisar desligar o fundo. Estado de sessão (`expandido`), começa
- * aberto. Os nomes são próprios (Starry/Super nova/Space hive/Gravity).
+ * #474 (rework 2): Animated backgrounds — vive dentro do Appearance. NÃO há mais
+ * switch on/off: o seletor tem "Nenhum" como 1ª opção (desliga o fundo) + os 4
+ * fundos (Animate UI) em preview ao vivo. O chevron colapsa/expande as opções pra
+ * liberar espaço, no MESMO estilo dos frames colapsáveis de Settings (Collapsible
+ * + ChevronRight que rotaciona 90°). Os nomes são próprios (não traduzem).
  */
 export function BackgroundSettings() {
   const { t } = useIdioma();
-  const ativo = useAppStore((state) => state.fundosAnimadosAtivo);
-  const setAtivo = useAppStore((state) => state.setFundosAnimadosAtivo);
   const fundoAnimado = useAppStore((state) => state.fundoAnimado);
   const setFundoAnimado = useAppStore((state) => state.setFundoAnimado);
-  const [expandido, setExpandido] = useState(true);
+  const [aberto, setAberto] = useState(true);
 
   return (
     <FramePanel>
-      <Field orientation="horizontal">
-        <FieldContent>
-          <FieldLabel htmlFor="animated-backgrounds">
-            {t.settings.bgAnimados}
-          </FieldLabel>
-          <FieldDescription>{t.settings.bgAnimadosDesc}</FieldDescription>
-        </FieldContent>
-        <Switch
-          id="animated-backgrounds"
-          checked={ativo}
-          onCheckedChange={setAtivo}
-        />
-        {/* Chevron: colapsa/expande as opções sem tocar no on/off. Só faz sentido
-            quando o fundo está ligado (senão não há opções pra mostrar). */}
-        {ativo && (
-          <button
-            type="button"
-            onClick={() => setExpandido((v) => !v)}
-            aria-expanded={expandido}
-            aria-controls="animated-backgrounds-opcoes"
-            aria-label={
-              expandido
-                ? t.settings.bgAnimadosColapsar
-                : t.settings.bgAnimadosExpandir
-            }
-            className="grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <ChevronDown
-              className={cn(
-                "size-4 transition-transform",
-                expandido ? "" : "-rotate-90"
-              )}
-            />
-          </button>
-        )}
-      </Field>
-
-      {ativo && expandido && (
-        <div
-          id="animated-backgrounds-opcoes"
-          className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4"
-        >
-          {FUNDOS_ANIMADOS.map((fundo) => (
+      <Collapsible
+        open={aberto}
+        onOpenChange={setAberto}
+        className="group/collapsible"
+      >
+        <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">{t.settings.bgAnimados}</p>
+            <p className="text-sm text-muted-foreground">
+              {t.settings.bgAnimadosDesc}
+            </p>
+          </div>
+          <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+            {/* 1ª opção: Nenhum — desliga o fundo animado (sem preview ao vivo). */}
             <SelectableCard
-              key={fundo.valor}
-              selecionado={fundoAnimado === fundo.valor}
-              onClick={() => setFundoAnimado(fundo.valor)}
-              label={fundo.rotulo}
+              selecionado={fundoAnimado === "none"}
+              onClick={() => setFundoAnimado("none")}
+              label={t.settings.bgNenhum}
             >
-              {/* Preview ao vivo do componente do registry (sem customização). */}
-              <RenderFundoAnimado tipo={fundo.valor} />
+              <div className="grid size-full place-items-center bg-muted text-muted-foreground">
+                <ImageOff className="size-5" />
+              </div>
             </SelectableCard>
-          ))}
-        </div>
-      )}
+            {FUNDOS_ANIMADOS.map((fundo) => (
+              <SelectableCard
+                key={fundo.valor}
+                selecionado={fundoAnimado === fundo.valor}
+                onClick={() => setFundoAnimado(fundo.valor)}
+                label={fundo.rotulo}
+              >
+                {/* Preview ao vivo do componente do registry (sem customização). */}
+                <RenderFundoAnimado tipo={fundo.valor} />
+              </SelectableCard>
+            ))}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
     </FramePanel>
   );
 }
