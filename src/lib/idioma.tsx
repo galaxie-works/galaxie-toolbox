@@ -8,20 +8,12 @@ import {
   type ReactNode,
 } from "react";
 import { DICIONARIOS, type Dicionario, type Idioma } from "@/lib/strings";
+import { idiomaAtual, CHAVE_IDIOMA } from "./idioma-core.ts";
 
-const CHAVE = "galaxie-idioma";
-
-/**
- * Idioma atual: preferência salva → idioma do sistema (pt→pt-BR) → **inglês**
- * (#464 S0: o default do PO é EN — sem preferência salva e sistema não-pt cai em
- * `en`). Fonte de verdade FORA do React: stores/libs que não podem usar o hook
- * `useIdioma` chamam isto (o `definir` grava o mesmo `localStorage`).
- */
-export function idiomaAtual(): Idioma {
-  const salvo = localStorage.getItem(CHAVE);
-  if (salvo === "pt-BR" || salvo === "en") return salvo;
-  return navigator.language?.toLowerCase().startsWith("pt") ? "pt-BR" : "en";
-}
+// O `idiomaAtual` puro (e a chave) vivem em `idioma-core.ts` (.ts sem JSX) para
+// que store/lib importáveis por testes (`node --test`) não puxem `.tsx`.
+// Reexporta pra compat de quem já importava daqui.
+export { idiomaAtual };
 
 /** Idioma inicial do provider (= `idiomaAtual`). */
 function idiomaInicial(): Idioma {
@@ -46,7 +38,7 @@ export function IdiomaProvider({ children }: { children: ReactNode }) {
   }, [idioma]);
 
   const definir = useCallback((i: Idioma) => {
-    localStorage.setItem(CHAVE, i);
+    localStorage.setItem(CHAVE_IDIOMA, i);
     setIdioma(i);
   }, []);
 

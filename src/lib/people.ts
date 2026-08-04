@@ -7,7 +7,7 @@ import type {
 } from "./types";
 // #464 (S2): fallback de nome sem hook (lib pura) — resolve no idioma atual.
 import { DICIONARIOS } from "./strings.ts";
-import { idiomaAtual } from "./idioma.tsx";
+import { idiomaAtual } from "./idioma-core.ts";
 
 /** Contato canônico compartilhado pela lista, detalhe e futuros resolvers. */
 export interface PeopleContact {
