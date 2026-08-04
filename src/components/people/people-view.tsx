@@ -33,7 +33,6 @@ import {
   MoreHorizontal,
   Phone,
   Plus,
-  SearchX,
   Save,
   Sparkles,
   Tag,
@@ -76,7 +75,18 @@ import {
   FramePanel,
   FrameTitle,
 } from "@/components/reui/frame";
-import { IconStack } from "@/components/reui/icon-stack";
+// #468: empty-states padronizadas no componente reui `Empty` + ilustração do
+// registry (NodesIllustration = c-empty-19, theme-aware). Mesmo padrão da "Caixa
+// limpa" do mail e do Accounts em Settings.
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { NodesIllustration } from "@/components/examples/c-empty-19";
 import { IconTile } from "@/components/reui/icon-tile";
 import { PhoneInput } from "@/components/reui/phone-input";
 import {
@@ -296,31 +306,36 @@ function PeopleEmpty({
   onClear: () => void;
 }) {
   const { t } = useIdioma();
+  const buscando = search || filtered;
   return (
-    <div className="flex h-full min-h-56 w-full flex-col items-center justify-center px-6 text-center">
-      <IconStack className="mb-2">
-        {search || filtered ? <SearchX className="size-5" /> : <Users className="size-5" />}
-      </IconStack>
-      <p className="font-medium">
-        {search || filtered
-          ? t.controlRoom.peopleSemResultado
-          : directory
-            ? t.controlRoom.peopleDirectoryEmpty
-            : t.controlRoom.peopleVazio}
-      </p>
-      {!search && !filtered && (
-        <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-          {directory
-            ? t.controlRoom.peopleDirectoryEmptyDesc
-            : t.controlRoom.peopleVazioDesc}
-        </p>
+    <Empty className="min-h-56">
+      <EmptyHeader>
+        <EmptyMedia>
+          <NodesIllustration />
+        </EmptyMedia>
+        <EmptyTitle>
+          {buscando
+            ? t.controlRoom.peopleSemResultado
+            : directory
+              ? t.controlRoom.peopleDirectoryEmpty
+              : t.controlRoom.peopleVazio}
+        </EmptyTitle>
+        {!buscando && (
+          <EmptyDescription>
+            {directory
+              ? t.controlRoom.peopleDirectoryEmptyDesc
+              : t.controlRoom.peopleVazioDesc}
+          </EmptyDescription>
+        )}
+      </EmptyHeader>
+      {buscando && (
+        <EmptyContent>
+          <Button variant="outline" size="sm" onClick={onClear}>
+            {filtered ? t.controlRoom.peopleClearFilters : t.controlRoom.peopleLimparBusca}
+          </Button>
+        </EmptyContent>
       )}
-      {(search || filtered) && (
-        <Button className="mt-3" variant="outline" size="sm" onClick={onClear}>
-          {filtered ? t.controlRoom.peopleClearFilters : t.controlRoom.peopleLimparBusca}
-        </Button>
-      )}
-    </div>
+    </Empty>
   );
 }
 
@@ -339,21 +354,23 @@ function PeoplePermissionEmpty() {
 function PeopleGroupEmpty({ selected }: { selected: boolean }) {
   const { t } = useIdioma();
   return (
-    <div className="flex h-full min-h-56 w-full flex-col items-center justify-center px-6 text-center">
-      <IconStack className="mb-2">
-        <Users className="size-5" />
-      </IconStack>
-      <p className="font-medium">
-        {selected
-          ? t.controlRoom.peopleGroupEmpty
-          : t.controlRoom.peopleGroupSelect}
-      </p>
-      <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        {selected
-          ? t.controlRoom.peopleGroupEmptyDesc
-          : t.controlRoom.peopleGroupSelectDesc}
-      </p>
-    </div>
+    <Empty className="min-h-56">
+      <EmptyHeader>
+        <EmptyMedia>
+          <NodesIllustration />
+        </EmptyMedia>
+        <EmptyTitle>
+          {selected
+            ? t.controlRoom.peopleGroupEmpty
+            : t.controlRoom.peopleGroupSelect}
+        </EmptyTitle>
+        <EmptyDescription>
+          {selected
+            ? t.controlRoom.peopleGroupEmptyDesc
+            : t.controlRoom.peopleGroupSelectDesc}
+        </EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 }
 
@@ -3431,17 +3448,17 @@ export function PeopleView({
                 stacked={!wideSplit}
               />
             ) : (
-              <div className="flex h-full min-h-0 w-full flex-col items-center justify-center gap-3 rounded-xl border bg-card p-6 text-center">
-                <IconStack>
-                  <Users className="size-5" />
-                </IconStack>
-                <div>
-                  <p className="font-medium">{t.controlRoom.peopleSelecionar}</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
+              <Empty className="h-full min-h-0 rounded-xl border border-solid bg-card">
+                <EmptyHeader>
+                  <EmptyMedia>
+                    <NodesIllustration />
+                  </EmptyMedia>
+                  <EmptyTitle>{t.controlRoom.peopleSelecionar}</EmptyTitle>
+                  <EmptyDescription>
                     {t.controlRoom.peopleSelecionarDesc}
-                  </p>
-                </div>
-              </div>
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
             );
 
           if (!wideSplit) {
