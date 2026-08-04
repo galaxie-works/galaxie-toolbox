@@ -1873,7 +1873,14 @@ function FolderSidebar({
     <aside
       className={cn(
         "flex shrink-0 flex-col gap-3 rounded-xl border bg-card p-3 transition-[width] duration-200",
-        colapsada ? "w-16 items-center" : "w-52"
+        // #466: o w-52 (208px) cortava "Caixa de entrada" (pt). Fit-content NÃO
+        // resolve aqui — os rótulos são `min-w-0 flex-1 truncate` (o min-w-0 do
+        // truncate faz o fit-content colapsar pro min-content e ficar no min). Então
+        // largura fixa que cabe o MAIOR rótulo padrão nos 2 idiomas: "Caixa de
+        // entrada" (pt) mede ~224px com o chrome do row; w-64 (256px) cabe com folga
+        // e o en (mais curto) sobra. A lista de e-mails ao lado pega o resto (flex-1
+        // min-w-0); nomes de pasta custom gigantes ainda truncam com tooltip.
+        colapsada ? "w-16 items-center" : "w-64"
       )}
     >
       <div
