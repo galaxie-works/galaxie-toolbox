@@ -100,6 +100,7 @@ export function PreviewAnexo({
   const [xlsxHtml, setXlsxHtml] = useState<string | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [csv, setCsv] = useState<CsvTabela | null>(null);
+  const [midiaUrl, setMidiaUrl] = useState<string | null>(null);
   // Contador de tentativas: o botão "Tentar de novo" incrementa → re-busca (#450).
   const [tentativa, setTentativa] = useState(0);
 
@@ -118,6 +119,7 @@ export function PreviewAnexo({
     setErro(null);
     setPdf(null); // limpa render anterior ao trocar de modo (client ↔ Path C)
     setImgUrl(null);
+    setMidiaUrl(null);
     (async () => {
       try {
         if (usarPathC) {
@@ -148,6 +150,14 @@ export function PreviewAnexo({
           });
           objUrl = URL.createObjectURL(blob);
           if (vivo) setImgUrl(objUrl);
+          else URL.revokeObjectURL(objUrl);
+        } else if (tipo === "audio" || tipo === "video") {
+          // Object URL → o <audio>/<video> streama por range, não carrega tudo.
+          const blob = new Blob([bytes as BlobPart], {
+            type: conteudo.contentType || anexo.contentType || "",
+          });
+          objUrl = URL.createObjectURL(blob);
+          if (vivo) setMidiaUrl(objUrl);
           else URL.revokeObjectURL(objUrl);
         } else {
           doc = await carregarPdf(bytes);
@@ -284,8 +294,72 @@ export function PreviewAnexo({
           <ImagemViewer url={imgUrl} rotulo={anexo.nome} tp={tp} />
         ) : tipo === "csv" && csv ? (
           <CsvViewer tabela={csv} vazioTexto={tp.previewVazio} tp={tp} />
+        ) : (tipo === "audio" || tipo === "video") && midiaUrl ? (
+          <MidiaViewer
+            url={midiaUrl}
+            tipo={tipo}
+            rotulo={anexo.nome}
+            onSalvar={onSalvar}
+            tp={tp}
+          />
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Áudio/vídeo via `<audio>`/`<video controls>` com object URL (streama por
+ * range, sem carregar tudo). **Sem autoplay** (respeita reduced-motion). Se o
+ * codec não tocar (ex.: `.mov` que passe pela classificação), o `onError` cai
+ * no aviso de não-suportado com CTA de baixar — nunca um player quebrado (#452).
+ */
+function MidiaViewer({
+  url,
+  tipo,
+  rotulo,
+  onSalvar,
+  tp,
+}: {
+  url: string;
+  tipo: "audio" | "video";
+  rotulo: string;
+  onSalvar: () => void;
+  tp: ReturnType<typeof useIdioma>["t"]["controlRoom"];
+}) {
+  const [semSuporte, setSemSuporte] = useState(false);
+  if (semSuporte) {
+    return (
+      <PreviewAviso
+        titulo={tp.previewNaoSuportado}
+        descricao={tp.previewNaoSuportadoDesc}
+        onSalvar={onSalvar}
+        rotuloSalvar={tp.previewSalvar}
+      />
+    );
+  }
+  if (tipo === "audio") {
+    return (
+      <div className="p-4">
+        <audio
+          controls
+          src={url}
+          title={rotulo}
+          className="w-full"
+          onError={() => setSemSuporte(true)}
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="flex justify-center bg-black/90 p-2">
+      <video
+        controls
+        src={url}
+        title={rotulo}
+        className="max-h-96 max-w-full"
+        onError={() => setSemSuporte(true)}
+      />
     </div>
   );
 }

@@ -535,7 +535,7 @@ function CorpoHtml({
         // allow-scripts só no escuro: é o que o Dark Reader precisa pra rodar no
         // load. No claro mantemos o sandbox estrito (nenhum script do e-mail roda).
         sandbox={escuro ? "allow-same-origin allow-popups allow-scripts" : "allow-same-origin allow-popups"}
-        title="e-mail"
+        title={t.controlRoom.corpoEmail}
         className="w-full border-0 bg-white"
         style={{ height: altura }}
       />
@@ -2250,7 +2250,7 @@ function FolderSidebar({
 
       <Separator className={cn("shrink-0", colapsada && "w-6")} />
       <nav
-        aria-label="Bridge"
+        aria-label={t.nav.controlRoom}
         className={cn("flex w-full flex-col gap-0.5", colapsada && "items-center")}
       >
         <Modulo view="mail" rotulo={t.controlRoom.mailboxTitulo} icon={Mailbox} />

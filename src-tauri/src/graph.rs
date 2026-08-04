@@ -1688,7 +1688,10 @@ fn intervalo_padrao() -> i64 {
 
 /// Recorrência de evento (#396, S1). Modelo do app; traduzido pro formato do
 /// Graph (`recurrence.pattern` + `recurrence.range`) em `recurrence_json`.
-#[derive(serde::Deserialize)]
+///
+/// #397: `Serialize` também — pra o back devolver a recorrência da série (parseada
+/// do Graph por `recorrencia_de_json`) e o form CARREGAR os campos ao editar.
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Recorrencia {
     /// "daily" | "weekly" | "monthly" | "yearly".
@@ -1788,6 +1791,146 @@ fn recurrence_json(r: &Recorrencia, time_zone: &str) -> serde_json::Value {
         _ => {}
     }
     serde_json::json!({ "pattern": pattern, "range": range })
+}
+
+/// Reverso de `recurrence_json` (#397): traduz o objeto `recurrence` do Graph
+/// (`pattern` + `range`) de volta pro modelo do app, pra o form CARREGAR os campos
+/// ao editar a série. Lógica PURA (sem rede), exercitada em teste.
+///
+/// `None` quando não há recorrência (evento único) OU o pattern é de um tipo que o
+/// app não modela fielmente (relativeMonthly/relativeYearly = "a 1ª segunda do mês")
+/// — melhor degradar do que mentir um padrão editável que não corresponde.
+fn recorrencia_de_json(recurrence: &serde_json::Value) -> Option<Recorrencia> {
+    let pattern = recurrence.get("pattern")?;
+    let range = recurrence.get("range")?;
+    let frequencia = match pattern["type"].as_str()? {
+        "daily" => "daily",
+        "weekly" => "weekly",
+        "absoluteMonthly" => "monthly",
+        "absoluteYearly" => "yearly",
+        _ => return None, // relative* e desconhecidos: não modelados
+    }
+    .to_string();
+
+    let dias_semana: Vec<String> = pattern["daysOfWeek"]
+        .as_array()
+        .map(|a| a.iter().filter_map(|d| d.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    Some(Recorrencia {
+        frequencia,
+        intervalo: pattern["interval"].as_i64().unwrap_or(1).max(1),
+        dias_semana,
+        dia_do_mes: pattern["dayOfMonth"].as_i64(),
+        mes: pattern["month"].as_i64(),
+        fim_tipo: range["type"].as_str().unwrap_or("noEnd").to_string(),
+        data_inicio: range["startDate"].as_str().unwrap_or("").to_string(),
+        data_fim: range["endDate"].as_str().map(String::from),
+        numero_ocorrencias: range["numberOfOccurrences"].as_i64(),
+    })
+}
+
+/// #397: recorrência da SÉRIE (do `seriesMaster`) pra o form CARREGAR os campos ao
+/// editar "a série inteira". `GET /me/events/{id}?$select=recurrence` sob o pool.
+/// `None` quando o evento não é recorrente ou o padrão não é modelado pelo app
+/// (o form então esconde/desabilita a recorrência em vez de mostrar errado).
+/// Calendars.Read.
+pub fn cr_evento_recorrencia(
+    store: &TokenStore,
+    id: &str,
+) -> Result<Option<Recorrencia>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events/{id}?$select=recurrence");
+    let resp = graph_enviar("agenda:recorrencia", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("falha ao ler a recorrência: {e}"))?;
+    if !resp.status().is_success() {
+        let st = resp.status();
+        log::warn!("[agenda:recorrencia] Graph retornou {st}");
+        return Err(format!("/me/events (recorrência) retornou {st}"));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(recorrencia_de_json(&v["recurrence"]))
+}
+
+// ---------------------------------------------------------------------------
+// #397: parse Graph→app da recorrência (o que faltava — a série não carregava os
+// campos no form). Round-trip com `recurrence_json` + casos de borda.
+//
+// Rodar: cargo test --lib graph::testes_recorrencia
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod testes_recorrencia {
+    use super::*;
+
+    #[test]
+    fn round_trip_weekly_com_fim_por_data() {
+        let r = Recorrencia {
+            frequencia: "weekly".into(),
+            intervalo: 2,
+            dias_semana: vec!["monday".into(), "wednesday".into()],
+            dia_do_mes: None,
+            mes: None,
+            fim_tipo: "endDate".into(),
+            data_inicio: "2026-08-03".into(),
+            data_fim: Some("2026-12-31".into()),
+            numero_ocorrencias: None,
+        };
+        let g = recurrence_json(&r, "America/Sao_Paulo");
+        let volta = recorrencia_de_json(&g).expect("weekly volta");
+        assert_eq!(volta.frequencia, "weekly");
+        assert_eq!(volta.intervalo, 2);
+        assert_eq!(volta.dias_semana, vec!["monday", "wednesday"]);
+        assert_eq!(volta.fim_tipo, "endDate");
+        assert_eq!(volta.data_inicio, "2026-08-03");
+        assert_eq!(volta.data_fim.as_deref(), Some("2026-12-31"));
+    }
+
+    #[test]
+    fn absolute_monthly_vira_monthly() {
+        let g = serde_json::json!({
+            "pattern": { "type": "absoluteMonthly", "interval": 1, "dayOfMonth": 15 },
+            "range": { "type": "noEnd", "startDate": "2026-01-15" }
+        });
+        let r = recorrencia_de_json(&g).expect("monthly");
+        assert_eq!(r.frequencia, "monthly");
+        assert_eq!(r.dia_do_mes, Some(15));
+        assert_eq!(r.fim_tipo, "noEnd");
+        assert!(r.data_fim.is_none());
+    }
+
+    #[test]
+    fn numbered_traz_a_contagem() {
+        let g = serde_json::json!({
+            "pattern": { "type": "daily", "interval": 3 },
+            "range": { "type": "numbered", "startDate": "2026-02-01", "numberOfOccurrences": 10 }
+        });
+        let r = recorrencia_de_json(&g).expect("daily numbered");
+        assert_eq!(r.frequencia, "daily");
+        assert_eq!(r.intervalo, 3);
+        assert_eq!(r.fim_tipo, "numbered");
+        assert_eq!(r.numero_ocorrencias, Some(10));
+    }
+
+    #[test]
+    fn relativo_nao_modelado_vira_none() {
+        // relativeMonthly ("a 1ª segunda do mês") não é modelado → None, pra o form
+        // não mostrar um padrão editável que não corresponde.
+        let g = serde_json::json!({
+            "pattern": { "type": "relativeMonthly", "interval": 1, "daysOfWeek": ["monday"], "index": "first" },
+            "range": { "type": "noEnd", "startDate": "2026-01-01" }
+        });
+        assert!(recorrencia_de_json(&g).is_none());
+    }
+
+    #[test]
+    fn sem_recurrence_vira_none() {
+        // Evento único: `recurrence` vem null/ausente → None.
+        assert!(recorrencia_de_json(&serde_json::Value::Null).is_none());
+        assert!(recorrencia_de_json(&serde_json::json!({})).is_none());
+    }
 }
 
 /// Monta o corpo JSON de um evento para POST/PATCH em /me/events. Mandamos a

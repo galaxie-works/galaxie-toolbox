@@ -201,10 +201,15 @@ function UploadToast({
   nomeArquivo,
   tamanho,
   progress,
+  rotuloConcluido,
+  rotuloEnviando,
 }: {
   nomeArquivo: string
   tamanho: string
   progress: number
+  // #464 (S2): texto por parâmetro (convenção do arquivo) — nada de PT hardcoded.
+  rotuloConcluido: string
+  rotuloEnviando: string
 }) {
   const done = progress >= 100
 
@@ -217,7 +222,8 @@ function UploadToast({
         <div className="flex flex-1 flex-col overflow-hidden">
           <p className="truncate text-sm font-medium">{nomeArquivo}</p>
           <p className="text-muted-foreground text-xs">
-            {tamanho} &middot; {done ? "Concluído" : `Enviando... ${progress}%`}
+            {tamanho} &middot;{" "}
+            {done ? rotuloConcluido : `${rotuloEnviando} ${progress}%`}
           </p>
         </div>
       </div>
@@ -236,6 +242,8 @@ function UploadToast({
 export function toastUpload(
   nomeArquivo: string,
   tamanho: string,
+  // #464 (S2): rótulos traduzidos pelo chamador (convenção do arquivo).
+  rotulos: { concluido: string; enviando: string },
 ): { atualizar(progress: number): void; concluir(): void } {
   let progress = 0
 
@@ -245,6 +253,8 @@ export function toastUpload(
         nomeArquivo={nomeArquivo}
         tamanho={tamanho}
         progress={progress}
+        rotuloConcluido={rotulos.concluido}
+        rotuloEnviando={rotulos.enviando}
       />
     ),
     { duration: Infinity },
@@ -257,6 +267,8 @@ export function toastUpload(
           nomeArquivo={nomeArquivo}
           tamanho={tamanho}
           progress={progress}
+          rotuloConcluido={rotulos.concluido}
+          rotuloEnviando={rotulos.enviando}
         />
       ),
       { id, duration },
