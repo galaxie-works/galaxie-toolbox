@@ -88,8 +88,8 @@ const pt = {
     caminhosLongos: "Caminhos longos",
     configuracoes: "Configurações",
     conta: "Conta",
-    // Agenda vive no rodapé do sidebar, seção separada da caixa de entrada (#50).
-    agenda: "Agenda",
+    // Calendário vive no rodapé do sidebar, seção separada da caixa de entrada (#50).
+    agenda: "Calendário",
     irPara365: "Ir para Microsoft 365",
     sharepoint: "SharePoint",
     sair: "Sair",
@@ -609,10 +609,10 @@ const pt = {
     agendaBuscar: "Buscar eventos...",
     online: "Online",
     diaInteiro: "Dia inteiro",
-    mailboxTitulo: "Caixa de correio",
-    agendaTitulo: "Agenda",
-    // Subtítulos do header do Bridge por módulo (#231)
-    mailboxSubtitulo: "Suas mensagens em um olhar.",
+    mailboxTitulo: "E-mail",
+    agendaTitulo: "Calendário",
+    // Subtítulos do header do Bridge por módulo (#231). #490: Mailbox sem
+    // subtítulo (título "Bridge" sozinho) — a chave mailboxSubtitulo foi removida.
     peopleSubtitulo: "Seus contatos do Microsoft 365.",
     agendaSubtitulo: "Seus próximos compromissos.",
     // Agenda — calendário completo (#211)
@@ -1607,8 +1607,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     caminhosLongos: "Long paths",
     configuracoes: "Settings",
     conta: "Account",
-    // Agenda lives at the bottom of the sidebar, a section apart from the inbox (#50).
-    agenda: "Agenda",
+    // Calendar lives at the bottom of the sidebar, a section apart from the inbox (#50).
+    agenda: "Calendar",
     irPara365: "Go to Microsoft 365",
     sharepoint: "SharePoint",
     sair: "Sign out",
@@ -2126,9 +2126,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     online: "Online",
     diaInteiro: "All day",
     mailboxTitulo: "Mailbox",
-    agendaTitulo: "Agenda",
-    // Bridge header subtitles per module (#231)
-    mailboxSubtitulo: "Your messages at a glance.",
+    agendaTitulo: "Calendar",
+    // Bridge header subtitles per module (#231). #490: Mailbox has no subtitle
+    // (title "Bridge" stands alone) — the mailboxSubtitulo key was removed.
     peopleSubtitulo: "Your Microsoft 365 contacts.",
     agendaSubtitulo: "Your upcoming schedule.",
     // Agenda — full calendar (#211)
