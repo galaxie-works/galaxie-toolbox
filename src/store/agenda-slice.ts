@@ -49,13 +49,19 @@ export interface AgendaPersistido {
 }
 
 interface AgendaApi {
-  carregarEventos: (inicio: string, fim: string) => Promise<EventoAgenda[]>;
+  // #495: `mailbox` opcional (undefined/"me" = própria; endereço = compartilhada).
+  carregarEventos: (
+    inicio: string,
+    fim: string,
+    mailbox?: string,
+  ) => Promise<EventoAgenda[]>;
   carregarEventosCalendario: (
     calendarioId: string,
     inicio: string,
     fim: string,
+    mailbox?: string,
   ) => Promise<EventoAgenda[]>;
-  listarCalendarios: () => Promise<Calendario[]>;
+  listarCalendarios: (mailbox?: string) => Promise<Calendario[]>;
   carregarCategorias: () => Promise<CategoriaCor[]>;
   criarCategoria: (nome: string, preset: string) => Promise<CategoriaCor>;
   carregarEvento: (id: string) => Promise<EventoDetalhe>;
@@ -79,6 +85,9 @@ export interface AgendaSlice {
   agendaRecarga: number;
   agendaCoresCategoria: Map<string, string>;
   agendaGeracao: number;
+  /** #495: a QUAL caixa (`caixaAtiva`, "me" = própria) os eventos/calendários
+   *  carregados pertencem. O control-room dispara recarga quando muda. */
+  agendaCaixaDados: string;
 
   // Calendários do usuário (#233): lista + seleção ativa (persistida). `null` na
   // seleção = ainda não inicializada (usa o padrão até os calendários carregarem).
@@ -232,6 +241,7 @@ export function criarAgendaSlice(
     agendaRecarga: 0,
     agendaCoresCategoria: new Map(),
     agendaGeracao: 0,
+    agendaCaixaDados: "me",
 
     agendaCalendarios: null,
     agendaCalendariosErro: null,
@@ -255,6 +265,10 @@ export function criarAgendaSlice(
     setAgendaView: (view) => set({ agendaView: view }),
 
     carregarMesAgenda: async (inicio, fim) => {
+      // #495: eventos seguem a caixa selecionada. `agendaEventosMes: null` já
+      // limpa a lista da caixa anterior na hora (estado de loading), então não
+      // há vazamento visual ao trocar.
+      const caixa = get().caixaAtiva;
       const geracao = get().agendaGeracao + 1;
       set({
         agendaEventosMes: null,
@@ -267,7 +281,7 @@ export function criarAgendaSlice(
         let eventos: EventoAgenda[];
         if (sel === null || cals.length === 0) {
           // Ainda não inicializado (ou lista vazia): calendário padrão (#211).
-          eventos = await api.carregarEventos(inicio, fim);
+          eventos = await api.carregarEventos(inicio, fim, caixa);
         } else {
           const alvos = cals.filter((c) => sel.includes(c.id));
           if (alvos.length === 0) {
@@ -278,7 +292,12 @@ export function criarAgendaSlice(
             // id e a cor do seu calendário de origem (#233).
             const listas = await Promise.all(
               alvos.map(async (c) => {
-                const evs = await api.carregarEventosCalendario(c.id, inicio, fim);
+                const evs = await api.carregarEventosCalendario(
+                  c.id,
+                  inicio,
+                  fim,
+                  caixa,
+                );
                 return evs.map((e) => ({
                   ...e,
                   calendarioId: c.id,
@@ -289,23 +308,28 @@ export function criarAgendaSlice(
             eventos = listas.flat();
           }
         }
-        if (get().agendaGeracao === geracao) {
-          set({ agendaEventosMes: eventos });
+        // Guarda anti-leak: só aplica se a geração E a caixa ainda batem.
+        if (get().agendaGeracao === geracao && get().caixaAtiva === caixa) {
+          set({ agendaEventosMes: eventos, agendaCaixaDados: caixa });
         }
       } catch (erro) {
-        if (get().agendaGeracao === geracao) {
+        if (get().agendaGeracao === geracao && get().caixaAtiva === caixa) {
           set({
             agendaErro: String(erro),
             agendaEventosMes: [],
+            agendaCaixaDados: caixa,
           });
         }
       }
     },
 
     carregarCalendarios: async () => {
+      // #495: calendários são da caixa selecionada (/me ou /users/{addr}).
+      const caixa = get().caixaAtiva;
       set({ agendaCalendariosErro: null });
       try {
-        const cals = await api.listarCalendarios();
+        const cals = await api.listarCalendarios(caixa);
+        if (get().caixaAtiva !== caixa) return;
         set({ agendaCalendarios: cals });
         // 1ª carga: sem seleção persistida, começa no calendário padrão.
         if (get().agendaCalendariosSelecionados === null) {

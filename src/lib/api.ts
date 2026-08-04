@@ -424,7 +424,11 @@ const MOCK_PARTS = [
   { nome: "Carla Dias", email: "carla@voaz.com.br", iniciais: "CD", foto: null },
 ];
 
-export async function crAgenda(inicio: string, fim: string): Promise<EventoAgenda[]> {
+export async function crAgenda(
+  inicio: string,
+  fim: string,
+  mailbox?: string,
+): Promise<EventoAgenda[]> {
   if (!inTauri()) {
     await sleep(400);
     const base = new Date(inicio);
@@ -474,11 +478,11 @@ export async function crAgenda(inicio: string, fim: string): Promise<EventoAgend
       },
     ];
   }
-  return invoke<EventoAgenda[]>("cr_agenda", { inicio, fim });
+  return invoke<EventoAgenda[]>("cr_agenda", { inicio, fim, mailbox: mailboxArg(mailbox) });
 }
 
-/** Lista os calendários do usuário (#233) — /me/calendars. */
-export async function crCalendarios(): Promise<Calendario[]> {
+/** Lista os calendários do usuário (#233) — /me/calendars, ou /users/{addr} (#495). */
+export async function crCalendarios(mailbox?: string): Promise<Calendario[]> {
   if (!inTauri()) {
     await sleep(300);
     return [
@@ -487,7 +491,7 @@ export async function crCalendarios(): Promise<Calendario[]> {
       { id: "cal-feriados", nome: "Feriados", cor: "#498205", isDefaultCalendar: false, canEdit: false },
     ];
   }
-  return invoke<Calendario[]>("cr_calendarios");
+  return invoke<Calendario[]>("cr_calendarios", { mailbox: mailboxArg(mailbox) });
 }
 
 /** Eventos de um calendário específico no intervalo (#233). */
@@ -495,12 +499,18 @@ export async function crAgendaCalendario(
   calendarioId: string,
   inicio: string,
   fim: string,
+  mailbox?: string,
 ): Promise<EventoAgenda[]> {
   if (!inTauri()) {
     // Reaproveita o mock do calendário padrão para simular a carga por id.
     return crAgenda(inicio, fim);
   }
-  return invoke<EventoAgenda[]>("cr_agenda_calendario", { calendarioId, inicio, fim });
+  return invoke<EventoAgenda[]>("cr_agenda_calendario", {
+    calendarioId,
+    inicio,
+    fim,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 export async function crCategorias(): Promise<CategoriaCor[]> {
@@ -928,7 +938,10 @@ export async function crPessoas(query: string): Promise<Pessoa[]> {
 }
 
 /** Dados iniciais do módulo People, mantendo falhas e permissões por fonte. */
-export async function crPeopleList(nextLinks: string[] = []): Promise<PeopleListResult> {
+export async function crPeopleList(
+  nextLinks: string[] = [],
+  mailbox?: string,
+): Promise<PeopleListResult> {
   if (!inTauri()) {
     await sleep(450);
     if (nextLinks.length > 0) {
@@ -1003,7 +1016,10 @@ export async function crPeopleList(nextLinks: string[] = []): Promise<PeopleList
       ],
     };
   }
-  return invoke<PeopleListResult>("cr_people_list", { nextLinks });
+  return invoke<PeopleListResult>("cr_people_list", {
+    nextLinks,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** Organização canônica do tenant atual; não é uma organização criada no app. */

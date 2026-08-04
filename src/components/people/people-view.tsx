@@ -2447,6 +2447,9 @@ export function PeopleView({
   const columnVisibility = useAppStore((state) => state.peopleColumnVisibility);
   const loadPeople = useAppStore((state) => state.loadPeople);
   const loadMorePeople = useAppStore((state) => state.loadMorePeople);
+  // #495: caixa selecionada + a que os dados atuais pertencem (reload ao trocar).
+  const caixaAtiva = useAppStore((state) => state.caixaAtiva);
+  const caixaDadosPeople = useAppStore((state) => state.peopleCaixaDados);
   const setFilters = useAppStore((state) => state.setPeopleFilters);
   const setView = useAppStore((state) => state.setPeopleView);
   const setColumnVisibility = useAppStore(
@@ -2583,9 +2586,14 @@ export function PeopleView({
   const listMinSize = moduleWidth ? Math.min(50, (340 / moduleWidth) * 100) : 30;
   const detailMinSize = moduleWidth ? Math.min(64, (420 / moduleWidth) * 100) : 40;
 
+  // #495: carrega na 1ª vez E recarrega quando a caixa selecionada muda
+  // (contatos seguem a caixa; `peopleCaixaDados !== caixaAtiva` = dados de outra
+  // caixa, precisa recarregar). O `loadPeople` limpa e busca pra caixa atual.
   useEffect(() => {
-    if (!loaded && !loading) void loadPeople();
-  }, [loadPeople, loaded, loading]);
+    if ((!loaded && !loading) || caixaDadosPeople !== caixaAtiva) {
+      void loadPeople();
+    }
+  }, [loadPeople, loaded, loading, caixaAtiva, caixaDadosPeople]);
 
   useEffect(() => {
     for (const organization of organizations) {

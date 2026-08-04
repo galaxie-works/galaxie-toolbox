@@ -220,6 +220,8 @@ export function AgendaView() {
   const coresCat = useAppStore((s) => s.agendaCoresCategoria);
   const carregarCoresAgenda = useAppStore((s) => s.carregarCoresAgenda);
   const carregarCalendarios = useAppStore((s) => s.carregarCalendarios);
+  // #495: caixa selecionada — muda ⇒ recarrega calendários/eventos da caixa.
+  const caixaAtiva = useAppStore((s) => s.caixaAtiva);
   const selecionarEventoAgenda = useAppStore((s) => s.selecionarEventoAgenda);
   const abrirFormCriar = useAppStore((s) => s.abrirFormCriar);
   const cancelarEvento = useAppStore((s) => s.cancelarEvento);
@@ -304,11 +306,13 @@ export function AgendaView() {
     void carregarCoresAgenda();
   }, [carregarCoresAgenda]);
 
-  // Lista de calendários do usuário (#233), uma vez. Ao carregar, a slice
-  // inicializa a seleção (padrão) e re-busca os eventos com as cores.
+  // Lista de calendários do usuário (#233). Ao carregar, a slice inicializa a
+  // seleção (padrão) e re-busca os eventos com as cores.
+  // #495: re-executa quando a caixa selecionada muda — calendários e eventos
+  // passam a ser os da caixa (própria = /me, compartilhada = /users/{addr}).
   useEffect(() => {
     void carregarCalendarios();
-  }, [carregarCalendarios]);
+  }, [carregarCalendarios, caixaAtiva]);
 
   // Uma mudança de faixa visível (mês/semana/dia ou navegação) re-busca os
   // eventos daquele intervalo. `recargaAgenda` força o refetch no retry e após
