@@ -37,10 +37,19 @@ pub const CLIENT_ID: &str = "214d735e-eb9b-4052-8851-578d3bd91627";
 // (POST /me/outlook/masterCategories) exige escrita de mailbox settings.
 // Admin consent JÁ concedido no tenant; é escopo novo no pedido, então sessões
 // logadas antes dele precisam RE-LOGAR para criar categorias.
+//
+// Contacts.ReadWrite.Shared / Calendars.ReadWrite.Shared (caixa compartilhada
+// dirige Contacts + Calendar, #495): ler (e futuramente escrever) contatos e
+// eventos de uma caixa compartilhada via /users/{addr}/contacts|events. Pedimos
+// o superset ReadWrite.Shared (não só Read.Shared) espelhando Mail.ReadWrite.Shared
+// — evita um 2º relogin quando formos criar evento / editar contato em caixa
+// compartilhada. Admin consent do tenant JÁ concedido (Wagner é Global Admin); é
+// escopo novo no pedido, então sessões anteriores precisam RE-LOGAR (até lá,
+// caixa compartilhada em Contacts/Calendar dá 403 → empty state gracioso).
 pub const SCOPES: &str = "openid profile offline_access \
      User.Read User.Read.All Directory.Read.All Files.ReadWrite Sites.Read.All \
-     Calendars.ReadWrite MailboxSettings.ReadWrite Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Tasks.ReadWrite \
-     People.Read Contacts.ReadWrite";
+     Calendars.ReadWrite Calendars.ReadWrite.Shared MailboxSettings.ReadWrite Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Tasks.ReadWrite \
+     People.Read Contacts.ReadWrite Contacts.ReadWrite.Shared";
 
 pub fn client_id() -> String {
     // GALAXIE_CLIENT_ID permite apontar para outro registro sem recompilar

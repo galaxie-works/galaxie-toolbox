@@ -137,6 +137,14 @@ import { PersonHoverCard } from "@/components/people/person-hover-card";
 import * as AnimatedButton from "@/components/morphin/animated-border-button";
 import SuccessIcon from "@/components/ui/icons/success";
 import TrashIcon from "@/components/ui/icons/trash";
+// Ícones animados das pastas de e-mail (#494) — lucide-animated via registry.
+import { MailboxIcon } from "@/components/ui/mailbox";
+import { SquarePenIcon } from "@/components/ui/square-pen";
+import { SendIcon } from "@/components/ui/send";
+import { ArchiveIcon } from "@/components/ui/archive";
+import { DeleteIcon } from "@/components/ui/delete";
+import { BadgeAlertIcon } from "@/components/ui/badge-alert";
+import { FolderOpenIcon } from "@/components/ui/folder-open";
 import { AnimatePresence, motion } from "motion/react";
 import { TextMorph } from "torph/react";
 import { toast } from "sonner";
@@ -196,7 +204,6 @@ import {
   type ResultadoAutenticacao,
 } from "@/lib/seguranca-leitor";
 import {
-  Archive,
   ArrowDownUp,
   AtSign,
   Building2,
@@ -212,7 +219,6 @@ import {
   Download,
   ExternalLink,
   Eye,
-  FilePen,
   Flag,
   FlagOff,
   FunnelX,
@@ -237,7 +243,6 @@ import {
   ReplyAll,
   RotateCcw,
   Send,
-  Send as SendIcon,
   Shield,
   ShieldAlert,
   ShieldCheck,
@@ -996,13 +1001,20 @@ function AgendaErro({
 // Painel 1 — pastas
 // ===========================================================================
 
-const ICONE_PASTA: Record<string, React.ComponentType<{ className?: string }>> = {
-  inbox: Inbox,
-  drafts: FilePen,
+// #494: ícones ANIMADOS (lucide-animated) por tipo de well-known folder. Custom
+// e subpastas caem no fallback FolderOpenIcon (ver `Ico` na Linha). Componentes
+// do registry usados como vêm — animam no hover (stroke=currentColor herda a cor
+// do container, tamanho pela prop `size`).
+const ICONE_PASTA: Record<
+  string,
+  React.ComponentType<{ className?: string; size?: number }>
+> = {
+  inbox: MailboxIcon,
+  drafts: SquarePenIcon,
   sentitems: SendIcon,
-  archive: Archive,
-  junkemail: ShieldAlert,
-  deleteditems: Trash2,
+  archive: ArchiveIcon,
+  junkemail: BadgeAlertIcon,
+  deleteditems: DeleteIcon,
 };
 
 const GRUPO_MAIL = ["inbox", "drafts", "sentitems"];
@@ -1633,7 +1645,8 @@ function FolderSidebar({
   // mutação (#90). Nas raízes é `undefined`.
   const Linha = (p: PastaEmail, paiId?: string) => {
     const ehFilho = paiId !== undefined;
-    const Ico = ICONE_PASTA[p.tipo] ?? Inbox;
+    // Custom/subpasta (tipo desconhecido) → folder-open animado (#494).
+    const Ico = ICONE_PASTA[p.tipo] ?? FolderOpenIcon;
     const ativo = p.id === sel;
     // `contagem` é NÃO-LIDOS para inbox/junk/lixeira/custom; para drafts/sentitems
     // é o TOTAL de itens (não-lido não faz sentido em enviados/rascunhos).
@@ -1669,7 +1682,7 @@ function FolderSidebar({
           // nunca em drafts/sentitems (ali é o total, #56); Lixeira/Junk são
           // ruído → também sem dot.
           <span className="relative">
-            <Ico className="size-4 shrink-0 text-muted-foreground" />
+            <Ico size={16} className="shrink-0 text-muted-foreground" />
             {contagem > 0 &&
               contagemEhNaoLidos &&
               p.tipo !== "deleteditems" &&
@@ -1679,7 +1692,7 @@ function FolderSidebar({
           </span>
         ) : (
           <>
-            <Ico className="size-4 shrink-0 text-muted-foreground" />
+            <Ico size={16} className="shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate text-left">{rotulo}</span>
             {p.acessoNegado && (
               <TriangleAlert className="size-3.5 shrink-0 text-warning" />
@@ -6904,18 +6917,21 @@ export function ControlRoomScreen({
   // #231: o header do conteúdo reflete o MÓDULO ativo (fonte da verdade =
   // `bridgeView` no store), não mais uma saudação genérica. Título + subtítulo
   // por módulo (i18n pt/en); nada de estado local.
+  // #490: no módulo Mailbox o título da content-area é a SECTION ("Bridge"),
+  // não "E-mail" (que fica só como rótulo do módulo/nav) — e sem subtítulo, pra
+  // dar mais cara de produto. People/Calendário mantêm título + subtítulo.
   const tituloModulo =
     bridgeView === "people"
       ? t.controlRoom.peopleTitulo
       : bridgeView === "agenda"
         ? t.controlRoom.agendaTitulo
-        : t.controlRoom.mailboxTitulo;
+        : t.nav.controlRoom;
   const subtituloModulo =
     bridgeView === "people"
       ? t.controlRoom.peopleSubtitulo
       : bridgeView === "agenda"
         ? t.controlRoom.agendaSubtitulo
-        : t.controlRoom.mailboxSubtitulo;
+        : undefined;
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -6926,7 +6942,9 @@ export function ControlRoomScreen({
         </span>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{tituloModulo}</h1>
-          <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
+          {subtituloModulo && (
+            <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
+          )}
         </div>
       </div>
 

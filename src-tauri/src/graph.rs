@@ -1382,13 +1382,26 @@ const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeetin
 /// #440 (A1): memoizado (single-flight + TTL curto, chave "agenda:") — o boot do
 /// Atoms e o keep-alive do Bridge pedem a MESMA janela quase juntos; coalescer
 /// evita a duplicata no mesmo segundo (AC3). Escritas invalidam "agenda:".
-pub fn cr_agenda(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EventoAgenda>, String> {
+pub fn cr_agenda(
+    store: &TokenStore,
+    inicio: &str,
+    fim: &str,
+    mailbox: Option<&str>,
+) -> Result<Vec<EventoAgenda>, String> {
+    // #495: caixa própria = /me, caixa compartilhada = /users/{addr}. O prefixo
+    // entra TAMBÉM na chave do memo curto — sem isso, os eventos de uma caixa
+    // vazariam pra outra (isolamento estilo Cruiser).
+    let prefix = mailbox_prefix(mailbox);
     let url = format!(
-        "{GRAPH}/me/calendarView?startDateTime={inicio}&endDateTime={fim}\
+        "{GRAPH}/{prefix}/calendarView?startDateTime={inicio}&endDateTime={fim}\
          &$select={AGENDA_SELECT}&$orderby=start/dateTime&$top=100"
     );
     com_memo_curto(
-        &format!("agenda:default:{}:{}", chave_por_minuto(inicio), chave_por_minuto(fim)),
+        &format!(
+            "agenda:{prefix}:default:{}:{}",
+            chave_por_minuto(inicio),
+            chave_por_minuto(fim)
+        ),
         || buscar_calendar_view(store, &url),
     )
 }
@@ -1400,14 +1413,18 @@ pub fn cr_agenda_calendario(
     calendario_id: &str,
     inicio: &str,
     fim: &str,
+    mailbox: Option<&str>,
 ) -> Result<Vec<EventoAgenda>, String> {
+    // #495: caixa própria = /me, caixa compartilhada = /users/{addr}. Prefixo na
+    // chave do memo pra não vazar eventos entre caixas.
+    let prefix = mailbox_prefix(mailbox);
     let url = format!(
-        "{GRAPH}/me/calendars/{calendario_id}/calendarView?startDateTime={inicio}&endDateTime={fim}\
+        "{GRAPH}/{prefix}/calendars/{calendario_id}/calendarView?startDateTime={inicio}&endDateTime={fim}\
          &$select={AGENDA_SELECT}&$orderby=start/dateTime&$top=100"
     );
     com_memo_curto(
         &format!(
-            "agenda:{calendario_id}:{}:{}",
+            "agenda:{prefix}:{calendario_id}:{}:{}",
             chave_por_minuto(inicio),
             chave_por_minuto(fim)
         ),
@@ -1445,12 +1462,17 @@ fn cor_calendario_para_hex(cor: &str) -> &'static str {
 
 /// Lista os calendários do usuário (GET /me/calendars). Calendars.Read. Fica sob
 /// o mesmo pool + retry central (#64) das demais chamadas.
-pub fn cr_calendarios(store: &TokenStore) -> Result<Vec<Calendario>, String> {
+pub fn cr_calendarios(
+    store: &TokenStore,
+    mailbox: Option<&str>,
+) -> Result<Vec<Calendario>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
 
+    // #495: caixa própria = /me, caixa compartilhada = /users/{addr}.
+    let prefix = mailbox_prefix(mailbox);
     let url = format!(
-        "{GRAPH}/me/calendars?$select=id,name,color,hexColor,isDefaultCalendar,canEdit&$top=100"
+        "{GRAPH}/{prefix}/calendars?$select=id,name,color,hexColor,isDefaultCalendar,canEdit&$top=100"
     );
     let resp = graph_enviar("calendarios", GRAPH_TETO_ESPERA_S, || {
         client.get(&url).bearer_auth(&token).send()
@@ -4353,6 +4375,7 @@ mod testes_people_directory {
 pub fn cr_people_list(
     store: &TokenStore,
     next_links: Vec<String>,
+    mailbox: Option<&str>,
 ) -> Result<PeopleListResult, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
@@ -4363,31 +4386,39 @@ pub fn cr_people_list(
         next_links: Vec::new(),
     };
 
+    // #495: caixa própria = /me (contatos + relevância "people"); caixa
+    // COMPARTILHADA = só /users/{addr}/contacts. O "/me/people" é a relevância do
+    // usuário LOGADO (não da caixa) e "/users/{addr}/people" exigiria
+    // People.Read.All (não concedido) — então pra caixa compartilhada mostramos
+    // apenas os contatos reais daquela caixa.
+    let prefix = mailbox_prefix(mailbox);
+    let base = format!("{GRAPH}/{prefix}/");
     let requests: Vec<(&str, String)> = if next_links.is_empty() {
-        vec![
-            (
-                "contacts",
-                format!(
-                    "{GRAPH}/me/contacts?$top=100&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager,categories"
-                ),
+        let mut reqs = vec![(
+            "contacts",
+            format!(
+                "{base}contacts?$top=100&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager,categories"
             ),
-            (
+        )];
+        if mailbox_prefix(mailbox) == "me" {
+            reqs.push((
                 "people",
                 format!(
                     "{GRAPH}/me/people?$top=100&$select=id,displayName,scoredEmailAddresses,phones,companyName,jobTitle,personType,userPrincipalName"
                 ),
-            ),
-        ]
+            ));
+        }
+        reqs
     } else {
         next_links
             .into_iter()
             .filter_map(|url| {
-                if !url.starts_with(&format!("{GRAPH}/me/")) {
+                if !url.starts_with(&base) {
                     return None;
                 }
-                if url.contains("/me/contacts?") {
+                if url.contains("/contacts?") {
                     Some(("contacts", url))
-                } else if url.contains("/me/people?") {
+                } else if url.contains("/people?") {
                     Some(("people", url))
                 } else {
                     None

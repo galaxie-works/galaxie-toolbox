@@ -220,6 +220,8 @@ export function AgendaView() {
   const coresCat = useAppStore((s) => s.agendaCoresCategoria);
   const carregarCoresAgenda = useAppStore((s) => s.carregarCoresAgenda);
   const carregarCalendarios = useAppStore((s) => s.carregarCalendarios);
+  // #495: caixa selecionada — muda ⇒ recarrega calendários/eventos da caixa.
+  const caixaAtiva = useAppStore((s) => s.caixaAtiva);
   const selecionarEventoAgenda = useAppStore((s) => s.selecionarEventoAgenda);
   const abrirFormCriar = useAppStore((s) => s.abrirFormCriar);
   const cancelarEvento = useAppStore((s) => s.cancelarEvento);
@@ -304,11 +306,13 @@ export function AgendaView() {
     void carregarCoresAgenda();
   }, [carregarCoresAgenda]);
 
-  // Lista de calendários do usuário (#233), uma vez. Ao carregar, a slice
-  // inicializa a seleção (padrão) e re-busca os eventos com as cores.
+  // Lista de calendários do usuário (#233). Ao carregar, a slice inicializa a
+  // seleção (padrão) e re-busca os eventos com as cores.
+  // #495: re-executa quando a caixa selecionada muda — calendários e eventos
+  // passam a ser os da caixa (própria = /me, compartilhada = /users/{addr}).
   useEffect(() => {
     void carregarCalendarios();
-  }, [carregarCalendarios]);
+  }, [carregarCalendarios, caixaAtiva]);
 
   // Uma mudança de faixa visível (mês/semana/dia ou navegação) re-busca os
   // eventos daquele intervalo. `recargaAgenda` força o refetch no retry e após
@@ -391,6 +395,10 @@ export function AgendaView() {
   };
 
   if (erroAgenda) {
+    // #495: caixa compartilhada sem permissão (403) → empty gracioso, sem botão
+    // de retry (relogin/permissão não resolve com refresh).
+    const semAcessoCaixa =
+      caixaAtiva !== "me" && /403|forbidden/i.test(erroAgenda);
     return (
       <div className="flex h-full min-h-0 flex-1 items-center justify-center p-6">
         <Empty className="py-8">
@@ -398,16 +406,24 @@ export function AgendaView() {
             <EmptyMedia>
               <CalendarClock className="size-8 text-muted-foreground" />
             </EmptyMedia>
-            <EmptyTitle>{t.controlRoom.agendaErroTitulo}</EmptyTitle>
+            <EmptyTitle>
+              {semAcessoCaixa
+                ? t.controlRoom.agendaSemAcessoCaixaTitulo
+                : t.controlRoom.agendaErroTitulo}
+            </EmptyTitle>
             <EmptyDescription className="text-xs">
-              {t.controlRoom.agendaErroDica}
+              {semAcessoCaixa
+                ? t.controlRoom.agendaSemAcessoCaixaDica
+                : t.controlRoom.agendaErroDica}
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>
-            <Button variant="outline" size="sm" onClick={recarregarAgenda}>
-              <RefreshCw /> {t.controlRoom.atualizar}
-            </Button>
-          </EmptyContent>
+          {!semAcessoCaixa && (
+            <EmptyContent>
+              <Button variant="outline" size="sm" onClick={recarregarAgenda}>
+                <RefreshCw /> {t.controlRoom.atualizar}
+              </Button>
+            </EmptyContent>
+          )}
         </Empty>
         <EventoFormSheet />
       </div>

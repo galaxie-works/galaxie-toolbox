@@ -339,14 +339,14 @@ function PeopleEmpty({
   );
 }
 
-function PeoplePermissionEmpty() {
+function PeoplePermissionEmpty({ mensagem }: { mensagem?: string }) {
   const { t } = useIdioma();
   return (
     <div className="flex h-full min-h-56 w-full flex-col items-center justify-center px-6 text-center">
       <IconTile className="mb-3" variant="frame" size="lg">
         <KeyRound />
       </IconTile>
-      <p className="font-medium">{t.controlRoom.peopleSemPermissao}</p>
+      <p className="font-medium">{mensagem ?? t.controlRoom.peopleSemPermissao}</p>
     </div>
   );
 }
@@ -2447,6 +2447,9 @@ export function PeopleView({
   const columnVisibility = useAppStore((state) => state.peopleColumnVisibility);
   const loadPeople = useAppStore((state) => state.loadPeople);
   const loadMorePeople = useAppStore((state) => state.loadMorePeople);
+  // #495: caixa selecionada + a que os dados atuais pertencem (reload ao trocar).
+  const caixaAtiva = useAppStore((state) => state.caixaAtiva);
+  const caixaDadosPeople = useAppStore((state) => state.peopleCaixaDados);
   const setFilters = useAppStore((state) => state.setPeopleFilters);
   const setView = useAppStore((state) => state.setPeopleView);
   const setColumnVisibility = useAppStore(
@@ -2559,6 +2562,10 @@ export function PeopleView({
       : peopleTab === "contacts"
         ? missingScopes
         : [];
+  // #495: caixa compartilhada sem permissão (403) → empty gracioso em vez de
+  // "nenhum contato" (que dá a impressão errada de caixa vazia).
+  const semAcessoCaixa =
+    caixaAtiva !== "me" && !!error && /403|forbidden/i.test(error);
 
   useLayoutEffect(() => {
     const el = detailContainerRef.current;
@@ -2583,9 +2590,14 @@ export function PeopleView({
   const listMinSize = moduleWidth ? Math.min(50, (340 / moduleWidth) * 100) : 30;
   const detailMinSize = moduleWidth ? Math.min(64, (420 / moduleWidth) * 100) : 40;
 
+  // #495: carrega na 1ª vez E recarrega quando a caixa selecionada muda
+  // (contatos seguem a caixa; `peopleCaixaDados !== caixaAtiva` = dados de outra
+  // caixa, precisa recarregar). O `loadPeople` limpa e busca pra caixa atual.
   useEffect(() => {
-    if (!loaded && !loading) void loadPeople();
-  }, [loadPeople, loaded, loading]);
+    if ((!loaded && !loading) || caixaDadosPeople !== caixaAtiva) {
+      void loadPeople();
+    }
+  }, [loadPeople, loaded, loading, caixaAtiva, caixaDadosPeople]);
 
   useEffect(() => {
     for (const organization of organizations) {
@@ -3294,6 +3306,10 @@ export function PeopleView({
                   !normalizedQuery &&
                   filters.length === 0 ? (
                     <PeopleGroupEmpty selected={selectedGroupId != null} />
+                  ) : semAcessoCaixa ? (
+                    <PeoplePermissionEmpty
+                      mensagem={t.controlRoom.peopleSemAcessoCaixa}
+                    />
                   ) : activeMissingScopes.length > 0 ? (
                     <PeoplePermissionEmpty />
                   ) : (
@@ -3315,7 +3331,11 @@ export function PeopleView({
                     isLoading={listLoading && !listLoaded}
                     loadingMode="skeleton"
                     emptyMessage={
-                      activeMissingScopes.length > 0 ? (
+                      semAcessoCaixa ? (
+                        <PeoplePermissionEmpty
+                          mensagem={t.controlRoom.peopleSemAcessoCaixa}
+                        />
+                      ) : activeMissingScopes.length > 0 ? (
                         <PeoplePermissionEmpty />
                       ) : (
                         <PeopleEmpty
