@@ -5507,7 +5507,23 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
               {det.organizador && (
                 <p className="text-xs text-muted-foreground">
                   <span className="font-medium">{t.controlRoom.organizador}:</span>{" "}
-                  {det.organizador}
+                  {/* #515: com email real → PersonHoverCard no organizador;
+                      sem email cai no texto simples de antes. */}
+                  {det.organizadorEmail ? (
+                    <PersonHoverCard
+                      email={det.organizadorEmail}
+                      fallback={{ nome: det.organizador, email: det.organizadorEmail }}
+                    >
+                      <span
+                        tabIndex={0}
+                        className="cursor-default rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {det.organizador}
+                      </span>
+                    </PersonHoverCard>
+                  ) : (
+                    det.organizador
+                  )}
                 </p>
               )}
               {det.participantes.length > 0 && (

@@ -46,6 +46,7 @@ const detalhe = (assunto: string): EventoDetalhe => ({
   local: "Teams",
   online: true,
   organizador: "Galaxie",
+  organizadorEmail: "contato@galaxie.works",
   souOrganizador: true,
   resposta: "organizer",
   respostaSolicitada: false,

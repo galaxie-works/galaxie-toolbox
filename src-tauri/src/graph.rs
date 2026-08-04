@@ -1618,6 +1618,9 @@ pub struct EventoDetalhe {
     pub online: bool,
     pub join_url: Option<String>,
     pub organizador: String,
+    /// E-mail do organizador (Graph `organizer.emailAddress.address`). Aditivo
+    /// (#515): habilita o `PersonHoverCard` no organizador do detalhe.
+    pub organizador_email: String,
     /// True quando o usuário ativo organiza o evento (Graph `isOrganizer`).
     /// Habilita a ação "Cancelar evento" (#260), que notifica os convidados.
     pub sou_organizador: bool,
@@ -1676,6 +1679,7 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
         online: it["onlineMeeting"].is_object() || it["isOnlineMeeting"].as_bool().unwrap_or(false),
         join_url,
         organizador: it["organizer"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
+        organizador_email: it["organizer"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
         sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
         resposta: it["responseStatus"]["response"]
             .as_str()
