@@ -57,7 +57,16 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { IconStack } from "@/components/reui/icon-stack";
+// #468: empty-states no componente reui `Empty` + ilustração do registry
+// (NodesIllustration, theme-aware) — consistente com People e a "Caixa limpa".
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
+import { NodesIllustration } from "@/components/examples/c-empty-19";
 import {
   Frame,
   FramePanel,
@@ -472,17 +481,15 @@ export function OrganizationsView({
       <FramePanel className="min-h-0 p-0">
         <ScrollArea className="h-full min-h-0">
         {filtered.length === 0 ? (
-          <div className="flex h-full min-h-72 flex-col items-center justify-center gap-3 p-6 text-center">
-            <IconStack>
-              <Building2 className="size-5" />
-            </IconStack>
-            <div>
-              <p className="font-medium">{t.controlRoom.orgsVazia}</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {t.controlRoom.orgsVaziaDesc}
-              </p>
-            </div>
-          </div>
+          <Empty className="h-full min-h-72">
+            <EmptyHeader>
+              <EmptyMedia>
+                <NodesIllustration />
+              </EmptyMedia>
+              <EmptyTitle>{t.controlRoom.orgsVazia}</EmptyTitle>
+              <EmptyDescription>{t.controlRoom.orgsVaziaDesc}</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
           <div className="divide-y">
             {filtered.map((organization) => {
@@ -679,17 +686,15 @@ export function OrganizationsView({
       />
     </div>
   ) : (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-3 rounded-xl border bg-card p-6 text-center">
-      <IconStack>
-        <Building2 className="size-5" />
-      </IconStack>
-      <div>
-        <p className="font-medium">{t.controlRoom.orgsSelecionar}</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {t.controlRoom.orgsSelecionarDesc}
-        </p>
-      </div>
-    </div>
+    <Empty className="h-full min-h-0 rounded-xl border border-solid bg-card">
+      <EmptyHeader>
+        <EmptyMedia>
+          <NodesIllustration />
+        </EmptyMedia>
+        <EmptyTitle>{t.controlRoom.orgsSelecionar}</EmptyTitle>
+        <EmptyDescription>{t.controlRoom.orgsSelecionarDesc}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   );
 
   return (
