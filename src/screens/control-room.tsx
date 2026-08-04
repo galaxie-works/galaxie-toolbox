@@ -142,6 +142,7 @@ import { MailboxIcon } from "@/components/ui/mailbox";
 import { CalendarDaysIcon } from "@/components/ui/calendar-days";
 import { UsersIcon } from "@/components/ui/users";
 import { SquarePenIcon } from "@/components/ui/square-pen";
+import { ChevronDownIcon } from "@/components/ui/chevron-down";
 import { SendIcon } from "@/components/ui/send";
 import { ArchiveIcon } from "@/components/ui/archive";
 import { DeleteIcon } from "@/components/ui/delete";
@@ -235,7 +236,6 @@ import {
   MapPin,
   Plus,
   Paperclip,
-  PenSquare,
   Pencil,
   RefreshCw,
   Repeat,
@@ -1903,8 +1903,8 @@ function FolderSidebar({
     >
       <div
         className={cn(
-          "flex w-full shrink-0",
-          colapsada ? "justify-center" : "justify-start"
+          "flex w-full shrink-0 items-center",
+          colapsada ? "justify-center" : "justify-between"
         )}
       >
         <Tooltip>
@@ -1922,6 +1922,46 @@ function FolderSidebar({
             {t.nav.alternarMenu}
           </TooltipContent>
         </Tooltip>
+        {/* #492: "Novo e-mail" vira button-group (c-button-group-4) na MESMA
+            linha do toggle, alinhado à direita. Só no módulo Mailbox e expandido
+            (no colapsado o w-16 não cabe os dois → ícone empilhado abaixo). */}
+        {!colapsada && bridgeView === "mail" && (
+          <ButtonGroup>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  onClick={onNovo}
+                  aria-label={t.controlRoom.novoEmail}
+                >
+                  <SquarePenIcon size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t.controlRoom.novoEmail}</TooltipContent>
+            </Tooltip>
+            <DropdownMenu>
+              {/* Tooltip > DropdownMenu: dois gatilhos asChild no mesmo botão. */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="icon"
+                      aria-label={t.controlRoom.composeOutlook}
+                    >
+                      <ChevronDownIcon size={16} />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>{t.controlRoom.composeOutlook}</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={onComposeOutlook}>
+                  {t.controlRoom.composeOutlook}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </ButtonGroup>
+        )}
       </div>
       <Separator className={cn("shrink-0", colapsada && "w-6")} />
 
@@ -1943,42 +1983,20 @@ function FolderSidebar({
             </p>
           ) : null}
 
-          {colapsada ? (
+          {/* #492: no colapsado (w-16), só o ícone primário (square-pen) empilhado
+              — o button-group completo com chevron mora no header quando expandido.
+              A opção "Escrever no Outlook" fica acessível ao expandir. */}
+          {colapsada && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
-                  <PenSquare />
+                  <SquarePenIcon size={16} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right" align="center">
                 {t.controlRoom.novoEmail}
               </TooltipContent>
             </Tooltip>
-          ) : (
-            <ButtonGroup className="w-full">
-              <Button className="flex-1" onClick={onNovo}>
-                <PenSquare /> {t.controlRoom.novoEmail}
-              </Button>
-              <DropdownMenu>
-                {/* Tooltip > DropdownMenu: os dois gatilhos com asChild no mesmo
-                    botão, igual ao app-sidebar (#100). */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <DropdownMenuTrigger asChild>
-                      <Button size="icon" aria-label={t.controlRoom.composeOutlook}>
-                        <ChevronDown />
-                      </Button>
-                    </DropdownMenuTrigger>
-                  </TooltipTrigger>
-                  <TooltipContent>{t.controlRoom.composeOutlook}</TooltipContent>
-                </Tooltip>
-                <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuItem onClick={onComposeOutlook}>
-                    {t.controlRoom.composeOutlook}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </ButtonGroup>
           )}
 
           {!pastas ? (
