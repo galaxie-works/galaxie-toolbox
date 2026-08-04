@@ -1548,6 +1548,15 @@ const pt = {
     lockErroRemover:
       "Não foi possível remover o PIN. Confira o PIN e tente de novo.",
   },
+  // #475: textos sr-only/aria dos primitivos ui/ compartilhados. Localizados nos
+  // próprios primitivos via `textoUi` (idiomaAtual() puro, sem o hook useIdioma —
+  // mantém o registry sem hook, seguindo a orientação da issue).
+  ui: {
+    fechar: "Fechar",
+    mais: "Mais",
+    carregando: "Carregando",
+    semResultados: "Sem resultados",
+  },
 } as const;
 
 export type Dicionario = typeof pt;
@@ -3051,6 +3060,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     lockErroDefinir: "Couldn’t set the PIN. Please try again.",
     lockToastRemovido: "PIN removed",
     lockErroRemover: "Couldn’t remove the PIN. Check your PIN and try again.",
+  },
+  ui: {
+    fechar: "Close",
+    mais: "More",
+    carregando: "Loading",
+    semResultados: "No results",
   },
 };
 

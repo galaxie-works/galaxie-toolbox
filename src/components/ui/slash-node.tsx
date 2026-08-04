@@ -4,6 +4,8 @@ import * as React from 'react';
 
 import type { PlateEditor, PlateElementProps } from 'platejs/react';
 
+import { textoUi } from '@/lib/idioma-core';
+
 import { AIChatPlugin } from '@platejs/ai/react';
 import {
   CalendarIcon,
@@ -242,7 +244,7 @@ export function SlashInputElement(
         <InlineComboboxInput />
 
         <InlineComboboxContent>
-          <InlineComboboxEmpty>No results</InlineComboboxEmpty>
+          <InlineComboboxEmpty>{textoUi("semResultados")}</InlineComboboxEmpty>
 
           {groups.map(({ group, items }) => (
             <InlineComboboxGroup key={group}>
