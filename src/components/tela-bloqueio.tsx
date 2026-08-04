@@ -4,7 +4,7 @@ import * as api from "@/lib/api";
 import type { Identidade } from "@/lib/types";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
-import { Estrelas } from "@/components/estrelas";
+import { FundoAnimado } from "@/components/fundo-animado";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -103,7 +103,7 @@ export function TelaBloqueio({
     <div className="relative grid h-full place-items-center overflow-hidden">
       <FaixaArrasto />
       <BarraJanela />
-      <Estrelas />
+      <FundoAnimado />
       <Dialog open>
         <DialogContent
           className="gap-0 overflow-hidden p-0 sm:max-w-sm"

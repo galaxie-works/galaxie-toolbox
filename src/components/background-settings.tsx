@@ -1,6 +1,5 @@
-import { Check, ImageOff } from "lucide-react";
+import { Check } from "lucide-react";
 
-import { APP_BACKGROUNDS } from "@/lib/backgrounds";
 import { cn } from "@/lib/utils";
 import { FramePanel } from "@/components/reui/frame";
 import {
@@ -10,73 +9,62 @@ import {
   FieldLabel,
 } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
+import {
+  FUNDOS_ANIMADOS,
+  RenderFundoAnimado,
+} from "@/components/fundo-animado";
 import { useAppStore } from "@/store";
 import { useIdioma } from "@/lib/idioma";
 
+/**
+ * #474: Animated backgrounds — vive dentro do Appearance. Um switcher liga/desliga
+ * o fundo animado; ligado, mostra os 4 fundos (Animate UI) em preview ao vivo, no
+ * mesmo formato de card do antigo "Background images". Os nomes são próprios
+ * (Starry/Super nova/Space hive/Gravity), não traduzem.
+ */
 export function BackgroundSettings() {
   const { t } = useIdioma();
-  const fundoEstrelado = useAppStore((state) => state.fundoEstrelado);
-  const setFundoEstrelado = useAppStore((state) => state.setFundoEstrelado);
-  const fundoImagem = useAppStore((state) => state.fundoImagem);
-  const setFundoImagem = useAppStore((state) => state.setFundoImagem);
+  const ativo = useAppStore((state) => state.fundosAnimadosAtivo);
+  const setAtivo = useAppStore((state) => state.setFundosAnimadosAtivo);
+  const fundoAnimado = useAppStore((state) => state.fundoAnimado);
+  const setFundoAnimado = useAppStore((state) => state.setFundoAnimado);
 
   return (
     <FramePanel>
       <Field orientation="horizontal">
         <FieldContent>
-          <FieldLabel htmlFor="starry-background">
-            {t.settings.bgEstreladoLabel}
+          <FieldLabel htmlFor="animated-backgrounds">
+            {t.settings.bgAnimados}
           </FieldLabel>
-          <FieldDescription>{t.settings.bgEstreladoDesc}</FieldDescription>
+          <FieldDescription>{t.settings.bgAnimadosDesc}</FieldDescription>
         </FieldContent>
         <Switch
-          id="starry-background"
-          checked={fundoEstrelado}
-          onCheckedChange={setFundoEstrelado}
+          id="animated-backgrounds"
+          checked={ativo}
+          onCheckedChange={setAtivo}
         />
       </Field>
 
-      {/* #378: galeria de imagens de fundo (extensível via backgrounds.ts).
-          Selecionar uma imagem desliga o starry; "None" volta ao tema. */}
-      <div className="mt-4 border-t border-border pt-4">
-        <h3 className="text-sm font-semibold">{t.settings.bgImagensTitulo}</h3>
-        <p className="text-sm text-muted-foreground">
-          {t.settings.bgImagensDesc}
-        </p>
-        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <SelectableCard
-            selecionado={fundoImagem === null}
-            onClick={() => setFundoImagem(null)}
-            label={t.settings.bgNenhum}
-          >
-            <div className="grid size-full place-items-center bg-muted text-muted-foreground">
-              <ImageOff className="size-5" />
-            </div>
-          </SelectableCard>
-
-          {APP_BACKGROUNDS.map((bg) => (
+      {ativo && (
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {FUNDOS_ANIMADOS.map((fundo) => (
             <SelectableCard
-              key={bg.id}
-              selecionado={fundoImagem === bg.id}
-              onClick={() => setFundoImagem(bg.id)}
-              label={bg.label}
+              key={fundo.valor}
+              selecionado={fundoAnimado === fundo.valor}
+              onClick={() => setFundoAnimado(fundo.valor)}
+              label={fundo.rotulo}
             >
-              <img
-                src={bg.thumb}
-                alt=""
-                loading="lazy"
-                draggable={false}
-                className="size-full object-cover"
-              />
+              {/* Preview ao vivo do componente do registry (sem customização). */}
+              <RenderFundoAnimado tipo={fundo.valor} />
             </SelectableCard>
           ))}
         </div>
-      </div>
+      )}
     </FramePanel>
   );
 }
 
-/** Card selecionável da galeria (thumb + rótulo + estado de seleção). */
+/** Card selecionável do preview (fundo ao vivo + rótulo + estado de seleção). */
 function SelectableCard({
   selecionado,
   onClick,
@@ -93,6 +81,7 @@ function SelectableCard({
       type="button"
       onClick={onClick}
       aria-pressed={selecionado}
+      aria-label={label}
       className={cn(
         "group relative flex flex-col overflow-hidden rounded-lg border text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
         selecionado
@@ -100,10 +89,10 @@ function SelectableCard({
           : "border-border hover:border-foreground/30"
       )}
     >
-      <div className="relative aspect-video w-full overflow-hidden">
+      <div className="relative aspect-video w-full overflow-hidden bg-muted">
         {children}
         {selecionado && (
-          <span className="absolute top-1.5 right-1.5 grid size-5 place-items-center rounded-full bg-primary text-primary-foreground shadow">
+          <span className="absolute top-1.5 right-1.5 z-10 grid size-5 place-items-center rounded-full bg-primary text-primary-foreground shadow">
             <Check className="size-3" />
           </span>
         )}

@@ -50,14 +50,9 @@
           bg = escuro ? "#09090B" : "#FFFFFF";
         }
         raiz.style.backgroundColor = bg;
-        // #378: se houver imagem de fundo persistida, pinta cedo (cover/center)
-        // pra nao piscar o fundo do tema antes do React montar o FundoApp.
-        var img = cru("galaxie-toolbox.background.imageUrl");
-        if (img) {
-          raiz.style.backgroundImage = 'url("' + img + '")';
-          raiz.style.backgroundSize = "cover";
-          raiz.style.backgroundPosition = "center";
-        }
+        // #474: sem boot-paint de imagem — os fundos são componentes React
+        // (Animate UI) que montam com o app; o tema pinta atrás até lá, igual ao
+        // Starry sempre fez. Sem regressão de flash.
       })();
     </script>
   </head>
