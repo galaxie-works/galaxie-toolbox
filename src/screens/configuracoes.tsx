@@ -110,6 +110,9 @@ function AppearancePanels() {
       <MoodSettings disabled={altoContraste} />
       <StyleSettings />
       <AccessibilitySettings />
+      {/* #474: Background (fundos animados) passou a viver aqui, junto de
+          Mood/Style/Accessibility — deixou de ser frame próprio. */}
+      <BackgroundSettings />
     </>
   );
 }
@@ -159,12 +162,6 @@ function settingsSections(t: Dicionario): SettingsSection[] {
               // Interino (AC5): os controles do #48 vão DIRETO aqui (sem moldura
               // própria); #119 realoca/reestiliza depois.
               node: <NotificacoesPanels />,
-            },
-            {
-              key: "background",
-              title: s.cfgBackgroundTitulo,
-              subtitle: s.cfgBackgroundSubtitulo,
-              node: <BackgroundSettings />,
             },
             {
               key: "appearance",

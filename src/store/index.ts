@@ -33,6 +33,8 @@ import {
   PERSONALIZATION_KEYS,
   type PersonalizationPersistido,
   type PersonalizationSlice,
+  TIPOS_FUNDO_ANIMADO,
+  type TipoFundoAnimado,
 } from "./personalization-slice";
 import {
   createBridgeSlice,
@@ -311,14 +313,16 @@ const legacyStorage: PersistStorage<AppPersistido> = {
     if (notificacoes !== undefined) {
       state.notificacoes = { ...PREF_PADRAO, ...notificacoes };
     }
-    const fundoEstrelado = lerChave<boolean>(
-      PERSONALIZATION_KEYS.fundoEstrelado
+    const fundosAnimadosAtivo = lerChave<boolean>(
+      PERSONALIZATION_KEYS.fundosAnimadosAtivo
     );
-    if (fundoEstrelado !== undefined) state.fundoEstrelado = fundoEstrelado;
-    const fundoImagem = lerChave<string | null>(
-      PERSONALIZATION_KEYS.fundoImagem
+    if (fundosAnimadosAtivo !== undefined)
+      state.fundosAnimadosAtivo = fundosAnimadosAtivo;
+    const fundoAnimado = lerTexto<TipoFundoAnimado>(
+      PERSONALIZATION_KEYS.fundoAnimado,
+      TIPOS_FUNDO_ANIMADO
     );
-    if (fundoImagem !== undefined) state.fundoImagem = fundoImagem;
+    if (fundoAnimado !== undefined) state.fundoAnimado = fundoAnimado;
     const modoTema = lerTexto<ModoTema>(
       PERSONALIZATION_KEYS.modoTema,
       MODOS_TEMA
@@ -435,8 +439,11 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       s.settingsFramesAbertos
     );
     gravarChave(PERSONALIZATION_KEYS.notificacoes, s.notificacoes);
-    gravarChave(PERSONALIZATION_KEYS.fundoEstrelado, s.fundoEstrelado);
-    gravarChave(PERSONALIZATION_KEYS.fundoImagem, s.fundoImagem);
+    gravarChave(
+      PERSONALIZATION_KEYS.fundosAnimadosAtivo,
+      s.fundosAnimadosAtivo
+    );
+    gravarTexto(PERSONALIZATION_KEYS.fundoAnimado, s.fundoAnimado);
     gravarTexto(PERSONALIZATION_KEYS.modoTema, s.modoTema);
     gravarTexto(PERSONALIZATION_KEYS.temaVisual, s.temaVisual);
     gravarChave(PERSONALIZATION_KEYS.altoContraste, s.altoContraste);
@@ -516,8 +523,8 @@ export const useAppStore = create<AppStore>()(
         selectedSettingsItem: s.selectedSettingsItem,
         settingsFramesAbertos: s.settingsFramesAbertos,
         notificacoes: s.notificacoes,
-        fundoEstrelado: s.fundoEstrelado,
-        fundoImagem: s.fundoImagem,
+        fundosAnimadosAtivo: s.fundosAnimadosAtivo,
+        fundoAnimado: s.fundoAnimado,
         modoTema: s.modoTema,
         temaVisual: s.temaVisual,
         altoContraste: s.altoContraste,

@@ -19,11 +19,21 @@ import {
   type ModoTema,
   type TemaVisual,
 } from "@/lib/tema";
-import {
-  CHAVE_BOOT_FUNDO_IMAGEM,
-  urlDoFundo,
-} from "@/lib/backgrounds";
 import type { AppStore } from "./index";
+
+/**
+ * #474: fundos animados disponíveis. Cada valor mapeia 1:1 pra um componente do
+ * registry Animate UI (ver `fundo-animado.tsx`). A ordem é a do preview no
+ * Settings; serve também de allowlist na hidratação (`lerTexto`).
+ */
+export const TIPOS_FUNDO_ANIMADO = [
+  "starry",
+  "supernova",
+  "spacehive",
+  "gravity",
+] as const;
+
+export type TipoFundoAnimado = (typeof TIPOS_FUNDO_ANIMADO)[number];
 
 /**
  * Preferências da área Personalization da Settings (#119–#122).
@@ -34,11 +44,10 @@ import type { AppStore } from "./index";
 export interface PersonalizationSlice {
   /** Sons por evento. Preserva `bridge.notificacoes` e o contrato do #48. */
   notificacoes: PreferenciasNotificacao;
-  /** Exibe o fundo estrelado em todas as superfícies do app. */
-  fundoEstrelado: boolean;
-  /** #378: id da imagem de fundo (registry `backgrounds.ts`) ou `null` = fundo
-   *  do tema. Mutuamente exclusivo com `fundoEstrelado`. */
-  fundoImagem: string | null;
+  /** #474: switcher liga/desliga o fundo animado em todas as superfícies. */
+  fundosAnimadosAtivo: boolean;
+  /** #474: qual fundo animado (Animate UI) é pintado quando o switcher liga. */
+  fundoAnimado: TipoFundoAnimado;
   /** Claro, escuro ou seguindo a preferência do sistema operacional. */
   modoTema: ModoTema;
   /** Paleta/estilo visual independente do modo claro/escuro. */
@@ -47,8 +56,8 @@ export interface PersonalizationSlice {
   altoContraste: boolean;
 
   setSomNotificacao: (escopo: EscopoNotificacao, somId: string) => void;
-  setFundoEstrelado: (ativo: boolean) => void;
-  setFundoImagem: (id: string | null) => void;
+  setFundosAnimadosAtivo: (ativo: boolean) => void;
+  setFundoAnimado: (tipo: TipoFundoAnimado) => void;
   setModoTema: (modo: ModoTema) => void;
   setTemaVisual: (tema: TemaVisual) => void;
   setAltoContraste: (ativo: boolean) => void;
@@ -56,8 +65,8 @@ export interface PersonalizationSlice {
 
 export const PERSONALIZATION_KEYS = {
   notificacoes: CHAVE_NOTIFICACOES,
-  fundoEstrelado: "galaxie-toolbox.background.stars",
-  fundoImagem: "galaxie-toolbox.background.image",
+  fundosAnimadosAtivo: "galaxie-toolbox.background.stars",
+  fundoAnimado: "galaxie-toolbox.background.animated",
   modoTema: CHAVE_MODO_TEMA,
   temaVisual: CHAVE_TEMA_VISUAL,
   altoContraste: CHAVE_ALTO_CONTRASTE,
@@ -66,8 +75,8 @@ export const PERSONALIZATION_KEYS = {
 export type PersonalizationPersistido = Pick<
   PersonalizationSlice,
   | "notificacoes"
-  | "fundoEstrelado"
-  | "fundoImagem"
+  | "fundosAnimadosAtivo"
+  | "fundoAnimado"
   | "modoTema"
   | "temaVisual"
   | "altoContraste"
@@ -80,8 +89,8 @@ export const createPersonalizationSlice: StateCreator<
   PersonalizationSlice
 > = (set, get) => ({
   notificacoes: { ...PREF_PADRAO },
-  fundoEstrelado: true,
-  fundoImagem: null,
+  fundosAnimadosAtivo: true,
+  fundoAnimado: "starry",
   modoTema: modoTemaSalvo(),
   temaVisual: temaVisualSalvo(),
   altoContraste: altoContrasteSalvo(),
@@ -90,35 +99,8 @@ export const createPersonalizationSlice: StateCreator<
     set((state) => ({
       notificacoes: { ...state.notificacoes, [escopo]: somId },
     })),
-  setFundoEstrelado: (ativo) => set({ fundoEstrelado: ativo }),
-  setFundoImagem: (id) => {
-    // #378: imagem e estrelas são mutuamente exclusivas — escolher imagem
-    // desliga o starry. Escreve a chave de boot (URL) pra o index.html pintar
-    // cedo e não piscar; remove ao voltar pro tema (None).
-    const url = urlDoFundo(id);
-    try {
-      // Mantém o <html> vivo em sincronia com o que o boot (index.html) pinta.
-      // Sem isso, trocar pra "None" numa sessão que BOOTOU com imagem deixa o
-      // `backgroundImage` de boot preso no <html>: como o Estrelas retorna null
-      // quando fundoEstrelado=false, nada cobre a imagem antiga e o "None" só
-      // faria efeito após reload.
-      const raiz = document.documentElement;
-      if (url) {
-        localStorage.setItem(CHAVE_BOOT_FUNDO_IMAGEM, url);
-        raiz.style.backgroundImage = `url("${url}")`;
-        raiz.style.backgroundSize = "cover";
-        raiz.style.backgroundPosition = "center";
-      } else {
-        localStorage.removeItem(CHAVE_BOOT_FUNDO_IMAGEM);
-        raiz.style.backgroundImage = "";
-        raiz.style.backgroundSize = "";
-        raiz.style.backgroundPosition = "";
-      }
-    } catch {
-      // best-effort
-    }
-    set(id ? { fundoImagem: id, fundoEstrelado: false } : { fundoImagem: null });
-  },
+  setFundosAnimadosAtivo: (ativo) => set({ fundosAnimadosAtivo: ativo }),
+  setFundoAnimado: (tipo) => set({ fundoAnimado: tipo }),
   setModoTema: (modo) => {
     aplicarModoTema(modo);
     set({ modoTema: modo });

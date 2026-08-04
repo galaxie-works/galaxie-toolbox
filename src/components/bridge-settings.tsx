@@ -579,7 +579,9 @@ export function SignaturesPanel() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel variant="ghost">{t.settings.bridgeBtnCancelar}</AlertDialogCancel>
-            <AlertDialogAction onClick={excluir}>{t.settings.bridgeBtnExcluir}</AlertDialogAction>
+            <AlertDialogAction variant="destructive" onClick={excluir}>
+              {t.settings.bridgeBtnExcluir}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -853,7 +855,9 @@ export function EmailTemplatesPanel() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel variant="ghost">{tr.settings.bridgeBtnCancelar}</AlertDialogCancel>
-            <AlertDialogAction onClick={excluir}>{tr.settings.bridgeBtnExcluir}</AlertDialogAction>
+            <AlertDialogAction variant="destructive" onClick={excluir}>
+              {tr.settings.bridgeBtnExcluir}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
