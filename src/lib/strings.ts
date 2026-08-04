@@ -445,6 +445,11 @@ const pt = {
     motivoHoje: "Hoje",
   },
 
+  sidebar: {
+    collapse: "Recolher barra lateral",
+    expand: "Expandir barra lateral",
+  },
+
   controlRoom: {
     saudacao: "Olá, {nome}",
     subtitulo: "Seu dia em um olhar.",
@@ -1967,6 +1972,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     motivoSinalizado: "You flagged it",
     motivoNaoLido: "Unread",
     motivoHoje: "Today",
+  },
+
+  sidebar: {
+    collapse: "Collapse sidebar",
+    expand: "Expand sidebar",
   },
 
   controlRoom: {

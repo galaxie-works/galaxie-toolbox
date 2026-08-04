@@ -232,8 +232,6 @@ import {
   MailOpen,
   MapPin,
   Plus,
-  PanelLeftClose,
-  PanelLeftOpen,
   Paperclip,
   PenSquare,
   Pencil,
@@ -256,6 +254,9 @@ import {
   Video,
   X,
 } from "lucide-react";
+// #489: ícones de collapse do registry animate-ui (animados), por estado.
+import { PanelLeftClose as PanelLeftCloseIcon } from "@/components/animate-ui/icons/panel-left-close";
+import { PanelLeftOpen as PanelLeftOpenIcon } from "@/components/animate-ui/icons/panel-left-open";
 import {
   forwardRef,
   useCallback,
@@ -1915,9 +1916,9 @@ function FolderSidebar({
               variant="ghost"
               size="icon-sm"
               onClick={onToggleSidebar}
-              aria-label={t.nav.alternarMenu}
+              aria-label={colapsada ? t.sidebar.expand : t.sidebar.collapse}
             >
-              {colapsada ? <PanelLeftOpen /> : <PanelLeftClose />}
+              {colapsada ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right" align="center">
