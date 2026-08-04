@@ -1289,6 +1289,8 @@ const pt = {
     // Background (#474: fundos animados dentro do Appearance)
     bgAnimados: "Fundos animados",
     bgAnimadosDesc: "Escolha um fundo animado para o app",
+    bgAnimadosColapsar: "Colapsar as opções de fundo",
+    bgAnimadosExpandir: "Expandir as opções de fundo",
     // Language
     languageDesc:
       "Escolha o idioma do app, independente do idioma do seu Windows.",
@@ -2795,6 +2797,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Background (#474: animated backgrounds inside Appearance)
     bgAnimados: "Animated backgrounds",
     bgAnimadosDesc: "Choose an animated background for the app",
+    bgAnimadosColapsar: "Collapse background options",
+    bgAnimadosExpandir: "Expand background options",
     // Language
     languageDesc:
       "Choose the language of the app, independent of your Windows language.",
