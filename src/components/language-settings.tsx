@@ -33,7 +33,7 @@ export function LanguageSettings() {
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">{t.login.idioma}</h3>
           <p className="text-sm text-muted-foreground">
-            Choose the language of the app, independent of your Windows language.
+            {t.settings.languageDesc}
           </p>
         </div>
         <Select

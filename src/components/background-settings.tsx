@@ -11,8 +11,10 @@ import {
 } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
 import { useAppStore } from "@/store";
+import { useIdioma } from "@/lib/idioma";
 
 export function BackgroundSettings() {
+  const { t } = useIdioma();
   const fundoEstrelado = useAppStore((state) => state.fundoEstrelado);
   const setFundoEstrelado = useAppStore((state) => state.setFundoEstrelado);
   const fundoImagem = useAppStore((state) => state.fundoImagem);
@@ -22,11 +24,10 @@ export function BackgroundSettings() {
     <FramePanel>
       <Field orientation="horizontal">
         <FieldContent>
-          <FieldLabel htmlFor="starry-background">Starry background</FieldLabel>
-          <FieldDescription>
-            Show the animated stars behind GALAXIE Toolbox. Turns off when you
-            pick a background image.
-          </FieldDescription>
+          <FieldLabel htmlFor="starry-background">
+            {t.settings.bgEstreladoLabel}
+          </FieldLabel>
+          <FieldDescription>{t.settings.bgEstreladoDesc}</FieldDescription>
         </FieldContent>
         <Switch
           id="starry-background"
@@ -38,16 +39,15 @@ export function BackgroundSettings() {
       {/* #378: galeria de imagens de fundo (extensível via backgrounds.ts).
           Selecionar uma imagem desliga o starry; "None" volta ao tema. */}
       <div className="mt-4 border-t border-border pt-4">
-        <h3 className="text-sm font-semibold">Background images</h3>
+        <h3 className="text-sm font-semibold">{t.settings.bgImagensTitulo}</h3>
         <p className="text-sm text-muted-foreground">
-          Pick an image to use as the app background. Choosing one turns off the
-          starry background.
+          {t.settings.bgImagensDesc}
         </p>
         <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
           <SelectableCard
             selecionado={fundoImagem === null}
             onClick={() => setFundoImagem(null)}
-            label="None"
+            label={t.settings.bgNenhum}
           >
             <div className="grid size-full place-items-center bg-muted text-muted-foreground">
               <ImageOff className="size-5" />

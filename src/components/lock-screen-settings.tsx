@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -26,6 +25,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { FramePanel } from "@/components/reui/frame";
+import { useIdioma } from "@/lib/idioma";
 
 /** PIN numérico de 4 a 8 dígitos — mesma faixa da tela de unlock (#122). */
 const PIN_REGEX = /^\d{4,8}$/;
@@ -86,6 +86,7 @@ type ModoDialogo = "set" | "change";
  * operação. Toda a persistência é o backend Rust via `@/lib/api`.
  */
 export function LockScreenSettings() {
+  const { t } = useIdioma();
   const [enabled, setEnabled] = useState<boolean | null>(null);
 
   const [modo, setModo] = useState<ModoDialogo | null>(null);
@@ -134,11 +135,11 @@ export function LockScreenSettings() {
     if (salvando || modo === null) return;
 
     if (!PIN_REGEX.test(pinNovo)) {
-      setErro("The PIN must be 4 to 8 digits.");
+      setErro(t.settings.lockErroFaixa);
       return;
     }
     if (pinNovo !== pinConfirmar) {
-      setErro("The PINs don’t match.");
+      setErro(t.settings.lockErroNaoConfere);
       return;
     }
 
@@ -149,13 +150,17 @@ export function LockScreenSettings() {
       await recarregar();
       setModo(null);
       limparCampos();
-      toast.success(modo === "change" ? "PIN changed" : "PIN set");
+      toast.success(
+        modo === "change"
+          ? t.settings.lockToastAlterado
+          : t.settings.lockToastDefinido
+      );
     } catch {
       // Erro mais provável no "change": PIN atual incorreto.
       setErro(
         modo === "change"
-          ? "Couldn’t change the PIN. Check your current PIN and try again."
-          : "Couldn’t set the PIN. Please try again."
+          ? t.settings.lockErroAlterar
+          : t.settings.lockErroDefinir
       );
       setSalvando(false);
     }
@@ -171,7 +176,7 @@ export function LockScreenSettings() {
     e.preventDefault();
     if (salvando) return;
     if (!PIN_REGEX.test(pinAtual)) {
-      setErro("The PIN must be 4 to 8 digits.");
+      setErro(t.settings.lockErroFaixa);
       return;
     }
     setSalvando(true);
@@ -181,9 +186,9 @@ export function LockScreenSettings() {
       await recarregar();
       setRemovendo(false);
       limparCampos();
-      toast.success("PIN removed");
+      toast.success(t.settings.lockToastRemovido);
     } catch {
-      setErro("Couldn’t remove the PIN. Check your PIN and try again.");
+      setErro(t.settings.lockErroRemover);
       setSalvando(false);
     }
   }
@@ -192,11 +197,11 @@ export function LockScreenSettings() {
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">App lock</h3>
+          <h3 className="text-sm font-semibold">{t.settings.lockTitulo}</h3>
           <p className="text-sm text-muted-foreground">
             {enabled
-              ? "A PIN is required to open GALAXIE Toolbox."
-              : "Require a PIN each time GALAXIE Toolbox opens."}
+              ? t.settings.lockDescAtivo
+              : t.settings.lockDescInativo}
           </p>
         </div>
 
@@ -206,7 +211,7 @@ export function LockScreenSettings() {
           <div className="flex shrink-0 items-center gap-2">
             <Button variant="outline" onClick={() => abrirDialogo("change")}>
               <KeyRound aria-hidden="true" />
-              Change PIN
+              {t.settings.lockChangeBtn}
             </Button>
             <Button
               variant="ghost"
@@ -216,13 +221,13 @@ export function LockScreenSettings() {
                 setRemovendo(true);
               }}
             >
-              Remove PIN
+              {t.settings.lockRemoveBtn}
             </Button>
           </div>
         ) : (
           <Button className="shrink-0" onClick={() => abrirDialogo("set")}>
             <LockKeyhole aria-hidden="true" />
-            Set PIN
+            {t.settings.lockSetBtn}
           </Button>
         )}
       </div>
@@ -233,12 +238,14 @@ export function LockScreenSettings() {
           <form onSubmit={salvarPin}>
             <DialogHeader>
               <DialogTitle>
-                {modo === "change" ? "Change PIN" : "Set a PIN"}
+                {modo === "change"
+                  ? t.settings.lockChangeBtn
+                  : t.settings.lockSetTitulo}
               </DialogTitle>
               <DialogDescription>
                 {modo === "change"
-                  ? "Enter your current PIN and choose a new one."
-                  : "Choose a PIN of 4 to 8 digits to protect the app."}
+                  ? t.settings.lockChangeDesc
+                  : t.settings.lockSetDesc}
               </DialogDescription>
             </DialogHeader>
 
@@ -246,7 +253,7 @@ export function LockScreenSettings() {
               {modo === "change" && (
                 <PinField
                   id="lock-current-pin"
-                  label="Current PIN"
+                  label={t.settings.lockCampoAtual}
                   value={pinAtual}
                   onChange={setPinAtual}
                   autoFocus
@@ -255,7 +262,7 @@ export function LockScreenSettings() {
               )}
               <PinField
                 id="lock-new-pin"
-                label="New PIN"
+                label={t.settings.lockCampoNovo}
                 value={pinNovo}
                 onChange={setPinNovo}
                 autoFocus={modo === "set"}
@@ -263,7 +270,7 @@ export function LockScreenSettings() {
               />
               <PinField
                 id="lock-confirm-pin"
-                label="Confirm PIN"
+                label={t.settings.lockCampoConfirmar}
                 value={pinConfirmar}
                 onChange={setPinConfirmar}
                 disabled={salvando}
@@ -283,7 +290,7 @@ export function LockScreenSettings() {
                 onClick={() => fecharDialogo(false)}
                 disabled={salvando}
               >
-                Cancel
+                {t.settings.lockCancelar}
               </Button>
               <Button
                 type="submit"
@@ -295,7 +302,7 @@ export function LockScreenSettings() {
                 }
               >
                 {salvando && <Spinner data-icon="inline-start" />}
-                Save
+                {t.settings.lockSalvar}
               </Button>
             </DialogFooter>
           </form>
@@ -307,17 +314,18 @@ export function LockScreenSettings() {
         <AlertDialogContent>
           <form onSubmit={removerPin}>
             <AlertDialogHeader>
-              <AlertDialogTitle>Remove PIN?</AlertDialogTitle>
+              <AlertDialogTitle>
+                {t.settings.lockRemoveTitulo}
+              </AlertDialogTitle>
               <AlertDialogDescription>
-                The app will no longer ask for a PIN on startup. Enter your
-                current PIN to confirm.
+                {t.settings.lockRemoveDesc}
               </AlertDialogDescription>
             </AlertDialogHeader>
 
             <div className="space-y-4 py-4">
               <PinField
                 id="lock-remove-pin"
-                label="Current PIN"
+                label={t.settings.lockCampoAtual}
                 value={pinAtual}
                 onChange={setPinAtual}
                 autoFocus
@@ -336,7 +344,7 @@ export function LockScreenSettings() {
                 variant="ghost"
                 disabled={salvando}
               >
-                Cancel
+                {t.settings.lockCancelar}
               </AlertDialogCancel>
               <Button
                 type="submit"
@@ -344,7 +352,7 @@ export function LockScreenSettings() {
                 disabled={salvando || !PIN_REGEX.test(pinAtual)}
               >
                 {salvando && <Spinner data-icon="inline-start" />}
-                Remove PIN
+                {t.settings.lockRemoveBtn}
               </Button>
             </AlertDialogFooter>
           </form>
