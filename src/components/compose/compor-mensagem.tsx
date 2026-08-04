@@ -14,7 +14,6 @@ import {
   type PlateEditor,
 } from "platejs/react";
 import {
-  BoldIcon,
   FileArchiveIcon,
   FileIcon,
   FileSpreadsheetIcon,
@@ -22,17 +21,20 @@ import {
   FileType2Icon,
   HeadphonesIcon,
   ImageIcon,
-  ItalicIcon,
-  PaperclipIcon,
-  PenLineIcon,
   StrikethroughIcon,
   Trash2Icon,
-  UnderlineIcon,
   UploadCloudIcon,
   UploadIcon,
   VideoIcon,
   XIcon,
 } from "lucide-react";
+// #500/#499: ícones animados da toolbar do composer (registry) + marca OneDrive.
+import { BoldIcon } from "@/components/ui/bold";
+import { ItalicIcon } from "@/components/ui/italic";
+import { UnderlineIcon } from "@/components/ui/underline";
+import { AttachFileIcon } from "@/components/ui/attach-file";
+import { PenToolIcon } from "@/components/ui/pen-tool";
+import { OneDriveIcon } from "@/components/ui/icons/marca/onedrive";
 import { toast } from "sonner";
 
 import {
@@ -606,7 +608,7 @@ export const ComporMensagem = forwardRef<
             aria-label={t.compose.inserirAssinatura}
             onClick={inserirAssinatura}
           >
-            <PenLineIcon />
+            <PenToolIcon />
           </ToolbarButton>
           {/* Templates: lista o que está salvo em Configurações e insere no fim. */}
           <DropdownMenu modal={false}>
@@ -644,7 +646,7 @@ export const ComporMensagem = forwardRef<
             aria-label={t.compose.anexarArquivo}
             onClick={anexarArquivo}
           >
-            <PaperclipIcon />
+            <AttachFileIcon />
           </ToolbarButton>
           <ToolbarButton
             tooltip={t.compose.compartilharOneDrive}
@@ -652,7 +654,7 @@ export const ComporMensagem = forwardRef<
             onClick={compartilharOneDrive}
             disabled={compartilhando}
           >
-            <UploadCloudIcon />
+            <OneDriveIcon />
           </ToolbarButton>
         </FixedToolbar>
 
