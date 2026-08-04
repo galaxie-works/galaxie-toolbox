@@ -7,8 +7,11 @@ import {
   useIndentTodoToolBarButton,
   useIndentTodoToolBarButtonState,
 } from '@platejs/list/react';
-import { List, ListOrdered, ListTodoIcon } from 'lucide-react';
+import { ListOrdered, ListTodoIcon } from 'lucide-react';
 import { useEditorRef, useEditorSelector } from 'platejs/react';
+
+// #500: ícone de lista animado do animate-ui (registry) na bulleted list.
+import { ListIcon } from '@/components/animate-ui/icons/list';
 
 import {
   DropdownMenu,
@@ -58,7 +61,10 @@ export function BulletedListToolbarButton() {
             }}
             data-state={pressed ? 'on' : 'off'}
           >
-            <List className="size-4" />
+            <ListIcon
+              animateOnHover
+              className="size-4 pointer-events-auto"
+            />
           </ToolbarSplitButtonPrimary>
         </TooltipTrigger>
         <TooltipContent>Bulleted list</TooltipContent>
