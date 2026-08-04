@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { StarsBackground } from "@/components/animate-ui/components/backgrounds/stars";
 import { cn } from "@/lib/utils";
-import { useAppStore } from "@/store";
 
 /**
  * Observa a classe .dark no <html>. O demo do Animate UI usa next-themes;
@@ -22,11 +21,14 @@ export function useIsDark() {
   return dark;
 }
 
-/** Fundo estrelado, igual ao demo oficial (cores e gradiente radial). */
+/**
+ * Fundo estrelado (opção "Starry" do #474), igual ao demo oficial. Visual puro:
+ * o gate de "qual fundo animado / ligado" mora no `FundoAnimado`; aqui só se
+ * pinta o `StarsBackground` do registry adaptado ao tema (claro/escuro), que é a
+ * única diferença justificada em relação ao demo (dark-only).
+ */
 export function Estrelas({ className }: { className?: string }) {
   const dark = useIsDark();
-  const fundoEstrelado = useAppStore((state) => state.fundoEstrelado);
-  if (!fundoEstrelado) return null;
 
   return (
     <StarsBackground

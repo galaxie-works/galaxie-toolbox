@@ -1282,14 +1282,9 @@ const pt = {
       "Abrir o GALAXIE Toolbox automaticamente ao entrar no Windows.",
     startupErro:
       "Não foi possível atualizar a inicialização automática. Tente novamente.",
-    // Background
-    bgEstreladoLabel: "Fundo estrelado",
-    bgEstreladoDesc:
-      "Mostrar as estrelas animadas atrás do GALAXIE Toolbox. Desliga quando você escolhe uma imagem de fundo.",
-    bgImagensTitulo: "Imagens de fundo",
-    bgImagensDesc:
-      "Escolha uma imagem pra usar como fundo do app. Escolher uma desliga o fundo estrelado.",
-    bgNenhum: "Nenhuma",
+    // Background (#474: fundos animados dentro do Appearance)
+    bgAnimados: "Fundos animados",
+    bgAnimadosDesc: "Escolha um fundo animado para o app",
     // Language
     languageDesc:
       "Escolha o idioma do app, independente do idioma do seu Windows.",
@@ -1368,8 +1363,6 @@ const pt = {
     cfgPersonalizationDesc: "Deixe o GALAXIE Toolbox com a sua cara.",
     cfgSoundTitulo: "Som e notificações",
     cfgSoundSubtitulo: "Escolha quais eventos tocam um som.",
-    cfgBackgroundTitulo: "Plano de fundo",
-    cfgBackgroundSubtitulo: "Defina um plano de fundo para o seu espaço.",
     cfgAppearanceTitulo: "Aparência",
     cfgAppearanceSubtitulo: "Defina o clima e o estilo claro ou escuro do app.",
     cfgLockScreenTitulo: "Tela de bloqueio",
@@ -2791,14 +2784,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     startupDesc:
       "Open GALAXIE Toolbox automatically when you sign in to Windows.",
     startupErro: "Couldn’t update launch on startup. Please try again.",
-    // Background
-    bgEstreladoLabel: "Starry background",
-    bgEstreladoDesc:
-      "Show the animated stars behind GALAXIE Toolbox. Turns off when you pick a background image.",
-    bgImagensTitulo: "Background images",
-    bgImagensDesc:
-      "Pick an image to use as the app background. Choosing one turns off the starry background.",
-    bgNenhum: "None",
+    // Background (#474: animated backgrounds inside Appearance)
+    bgAnimados: "Animated backgrounds",
+    bgAnimadosDesc: "Choose an animated background for the app",
     // Language
     languageDesc:
       "Choose the language of the app, independent of your Windows language.",
@@ -2876,8 +2864,6 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgPersonalizationDesc: "Make GALAXIE Toolbox feel like your workspace.",
     cfgSoundTitulo: "Sound & notifications",
     cfgSoundSubtitulo: "Choose which events play a sound.",
-    cfgBackgroundTitulo: "Background",
-    cfgBackgroundSubtitulo: "Set a background for your workspace.",
     cfgAppearanceTitulo: "Appearance",
     cfgAppearanceSubtitulo: "Set the mood and light or dark style of the app.",
     cfgLockScreenTitulo: "Lock screen",

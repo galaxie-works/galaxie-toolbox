@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GalaxieMark } from "@/components/brand";
-import { Estrelas } from "@/components/estrelas";
+import { FundoAnimado } from "@/components/fundo-animado";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { IdiomaSelect } from "@/components/ui/idioma-select";
 import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
@@ -46,7 +46,7 @@ export function LoginScreen({
     <div className="relative grid h-full place-items-center overflow-hidden px-6">
       <FaixaArrasto />
       <BarraJanela />
-      <Estrelas />
+      <FundoAnimado />
       {/* brilho de fundo sutil, por cima das estrelas */}
       <div className="pointer-events-none absolute -top-40 left-1/2 h-[520px] w-[720px] -translate-x-1/2 rounded-full bg-foreground/[0.04] blur-[120px]" />
 
