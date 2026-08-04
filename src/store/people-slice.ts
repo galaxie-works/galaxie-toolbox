@@ -15,7 +15,7 @@ import { telAcaoConcluida } from "../lib/telemetria.ts";
 // idioma atual (mesmo localStorage do provider) e resolve a string na hora, pra
 // erros de People pararem de vazar em inglês pra UI.
 import { DICIONARIOS } from "../lib/strings.ts";
-import { idiomaAtual } from "../lib/idioma.tsx";
+import { idiomaAtual } from "../lib/idioma-core.ts";
 
 /** Strings de People (namespace controlRoom) no idioma atual. */
 function strPeople() {
