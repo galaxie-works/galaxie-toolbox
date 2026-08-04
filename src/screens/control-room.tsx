@@ -231,7 +231,6 @@ import {
   Forward,
   Inbox,
   Mail,
-  Mailbox,
   MailOpen,
   MapPin,
   Plus,
@@ -1241,9 +1240,41 @@ const CAIXA_ADICIONAR = "__adicionar__";
  * ativa e a sinaliza (o próprio trigger mostra qual está ativa) — a listagem do
  * conteúdo dela é a #112. Colapsado, vira um ícone que abre o dialog direto.
  */
+/** Iniciais de uma caixa a partir do e-mail (não há nome): "wagner.consani" →
+ *  "WC", "financeiro" → "FI". Fallback "?" (#493). */
+function iniciaisDeEmail(email: string): string {
+  const local = (email.split("@")[0] || email).trim();
+  const partes = local.split(/[._-]+/).filter(Boolean);
+  const base =
+    partes.length >= 2 ? partes[0][0] + partes[1][0] : local.slice(0, 2);
+  return base.toUpperCase() || "?";
+}
+
+/** Avatar da caixa: foto do Graph (via cache de fotos #39) com fallback de
+ *  iniciais. Sem foto / 404 / sem permissão → iniciais, sem erro visível (#493). */
+function AvatarCaixa({
+  email,
+  foto,
+  className,
+}: {
+  email: string;
+  foto?: string | null;
+  className?: string;
+}) {
+  return (
+    <Avatar className={cn("size-5 shrink-0", className)}>
+      {foto && <AvatarImage src={foto} alt="" />}
+      <AvatarFallback className="text-[9px]">
+        {iniciaisDeEmail(email)}
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
 function SeletorCaixa({
   caixas,
   ativa,
+  emailProprio,
   onSelecionar,
   onAdicionar,
   colapsada,
@@ -1251,18 +1282,25 @@ function SeletorCaixa({
 }: {
   caixas: string[];
   ativa: string;
+  emailProprio: string;
   onSelecionar: (v: string) => void;
   onAdicionar: () => void;
   colapsada: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
+  // #493: foto das caixas (própria + compartilhadas) via o cache de fotos (#39).
+  // Só e-mails internos viram request; 404/sem permissão degrada pra iniciais.
+  const { getFoto, pedirFotos } = useFotos();
+  useEffect(() => {
+    pedirFotos([emailProprio, ...caixas]);
+  }, [emailProprio, caixas, pedirFotos]);
+
+  const emailAtivo = ativa === CAIXA_PROPRIA ? emailProprio : ativa;
+
   if (colapsada) {
-    // Colapsada, o rótulo textual some: o nome da caixa ativa passa a aparecer
-    // por tooltip canônico (#158) em vez do `title` nativo, mesma composição do
-    // sidebar colapsado (#100) — Tooltip > TooltipTrigger asChild > Button,
-    // TooltipContent side="right" align="center". A `aria-label` (ação "Adicionar
-    // caixa…", o clique abre o dialog) fica intacta.
-    const dica = ativa === CAIXA_PROPRIA ? t.controlRoom.caixaMinha : ativa;
+    // Colapsada, o rótulo textual some: o e-mail da caixa ativa aparece por
+    // tooltip canônico (#158). A `aria-label` (ação "Adicionar caixa…", o clique
+    // abre o dialog) fica intacta; ring no avatar sinaliza caixa não-própria.
     return (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -1271,13 +1309,18 @@ function SeletorCaixa({
             variant="ghost"
             onClick={onAdicionar}
             aria-label={t.controlRoom.caixaAdicionarItem}
-            className={cn(ativa !== CAIXA_PROPRIA && "text-primary")}
           >
-            <Mailbox />
+            <AvatarCaixa
+              email={emailAtivo}
+              foto={getFoto(emailAtivo)}
+              className={cn(
+                ativa !== CAIXA_PROPRIA && "ring-2 ring-primary ring-offset-1"
+              )}
+            />
           </Button>
         </TooltipTrigger>
         <TooltipContent side="right" align="center">
-          {dica}
+          {emailAtivo}
         </TooltipContent>
       </Tooltip>
     );
@@ -1297,14 +1340,14 @@ function SeletorCaixa({
         <SelectGroup>
           <SelectItem value={CAIXA_PROPRIA}>
             <span className="flex items-center gap-2">
-              <Inbox className="size-4 shrink-0 text-muted-foreground" />
-              <span className="truncate">{t.controlRoom.caixaMinha}</span>
+              <AvatarCaixa email={emailProprio} foto={getFoto(emailProprio)} />
+              <span className="truncate">{emailProprio}</span>
             </span>
           </SelectItem>
           {caixas.map((c) => (
             <SelectItem key={c} value={c}>
               <span className="flex items-center gap-2">
-                <Mailbox className="size-4 shrink-0 text-muted-foreground" />
+                <AvatarCaixa email={c} foto={getFoto(c)} />
                 <span className="truncate">{c}</span>
               </span>
             </SelectItem>
@@ -1472,6 +1515,7 @@ function FolderSidebar({
   onMoverPasta,
   caixas,
   caixaAtiva,
+  emailProprio,
   onSelecionarCaixa,
   onAbrirAdicionarCaixa,
   caixaCompartilhada,
@@ -1507,6 +1551,8 @@ function FolderSidebar({
   caixas: string[];
   /** Caixa ativa: CAIXA_PROPRIA (/me) ou um endereço de `caixas`. */
   caixaAtiva: string;
+  /** E-mail da caixa própria (/me) — mostrado no lugar de "Minha caixa" (#493). */
+  emailProprio: string;
   onSelecionarCaixa: (v: string) => void;
   onAbrirAdicionarCaixa: () => void;
   caixaCompartilhada: boolean;
@@ -1972,6 +2018,7 @@ function FolderSidebar({
           <SeletorCaixa
             caixas={caixas}
             ativa={caixaAtiva}
+            emailProprio={emailProprio}
             onSelecionar={onSelecionarCaixa}
             onAdicionar={onAbrirAdicionarCaixa}
             colapsada={colapsada}
@@ -6935,6 +6982,7 @@ export function ControlRoomScreen({
           onMoverPasta={moverPasta}
           caixas={caixasCompartilhadas}
           caixaAtiva={caixaAtiva}
+          emailProprio={user.email}
           onSelecionarCaixa={(caixa) => {
             setBridgeView("mail");
             setCaixaAtiva(caixa);
