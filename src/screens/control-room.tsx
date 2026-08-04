@@ -5016,19 +5016,35 @@ const MessageDetail = forwardRef<
       <div className="border-b px-5 py-4">
         <h1 className="text-base font-semibold">{det.assunto}</h1>
         <div className="mt-3 flex items-start gap-3">
-          <Avatar>
-            {getFoto(det.deEmail) && (
-              <AvatarImage src={getFoto(det.deEmail)!} alt="" />
-            )}
-            <AvatarFallback>
-              {det.de
-                .split(" ")
-                .map((w) => w[0])
-                .join("")
-                .slice(0, 2)
-                .toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
+          {(() => {
+            const avatar = (
+              <Avatar>
+                {getFoto(det.deEmail) && (
+                  <AvatarImage src={getFoto(det.deEmail)!} alt="" />
+                )}
+                <AvatarFallback>
+                  {det.de
+                    .split(" ")
+                    .map((w) => w[0])
+                    .join("")
+                    .slice(0, 2)
+                    .toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+            );
+            // #478 rework: o avatar do remetente também abre o PersonHoverCard
+            // (o nome ao lado já abre, via InsightsRemetentePopover) — consistência.
+            return det.deEmail ? (
+              <PersonHoverCard
+                email={det.deEmail}
+                fallback={{ nome: det.de, email: det.deEmail }}
+              >
+                {avatar}
+              </PersonHoverCard>
+            ) : (
+              avatar
+            );
+          })()}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               {det.deEmail ? (
@@ -5204,7 +5220,9 @@ function EventoParticipantePill({
   const pill = (
     <span
       tabIndex={mostrarTooltip ? 0 : undefined}
-      title={rotuloCompleto}
+      // #478 rework: com email o PersonHoverCard cobre o hover — o title nativo
+      // duplicaria; mantido só no fallback sem email.
+      title={email ? undefined : rotuloCompleto}
       aria-label={mostrarTooltip ? rotuloCompleto : undefined}
       className="inline-flex w-fit min-w-0 max-w-full items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
     >
@@ -5215,6 +5233,17 @@ function EventoParticipantePill({
       <span className="min-w-0 max-w-40 truncate text-xs">{nome}</span>
     </span>
   );
+
+  // #478 rework: participante com email → PersonHoverCard (avatar/nome/ações),
+  // substitui o Tooltip simples em TODOS os locais com pessoa (detalhe do evento,
+  // lista compacta e popover "ver todos"). Sem email cai no Tooltip/plain de antes.
+  if (email) {
+    return (
+      <PersonHoverCard email={email} fallback={{ nome, email, foto }}>
+        {pill}
+      </PersonHoverCard>
+    );
+  }
 
   return mostrarTooltip ? (
     <Tooltip>
