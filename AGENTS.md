@@ -12,6 +12,7 @@ Escopo atual em foco: **Bridge** (cliente de e-mail dentro do app) + track paral
 > 4. **AC EXPERIENCIAIS, não estruturais.** "Componente X renderiza" é AC ruim. AC bom é verificável abrindo o app real logado: "mostra o dado real; skeleton no load; erro que RECUPERA no retry; vazio ≠ erro ≠ tudo-em-dia; transições; copy/bento certos".
 > 5. **Profundidade > throughput.** Superfície flagship = UX research ANTES de codar. Não empilhar slices data-heavy sem validar a fundação de dado.
 > 6. **Fix sobre algo já integrado vai em PR NOVO** (o merge local do Polaris fecha o PR → push no branch fechado não roda CI e ele pode não ver). Ou pingue "re-integra o branch X".
+> 7. **UI com texto = i18n OBRIGATÓRIO na própria task (regra do PO, 04/ago).** Toda task que cria/muda UI com texto DEVE trazer, na issue: (a) **AC de i18n** — "strings via `t`; **copy pt-BR e en**; com pt-BR nenhuma string em inglês visível, en reverte 100%; aria-labels/toasts/sr-only incluídos"; (b) **a copy dos 2 idiomas escrita na própria issue** (pt-BR + en), pra o agente só ligar no `t` — não inventar nem deixar hardcoded. Assim **não se revalida o app caçando inglês num app pt-BR**. Zero string nova hardcoded. (Quem escreve a issue — Polaris/PO — já entrega a copy dos idiomas.)
 > Causa-raiz detalhada: ver os retrospectos no #133 (02–03/ago) e `docs/atoms/atoms-ux-replan.md`.
 
 ## 1. O app em uma frase

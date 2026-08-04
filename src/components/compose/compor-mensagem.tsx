@@ -64,7 +64,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { crCompartilharOneDrive, type AnexoEnvio } from "@/lib/api";
-import { useIdioma } from "@/lib/idioma";
+import { preencher, useIdioma } from "@/lib/idioma";
 import { type TemplateEmail } from "@/lib/templates";
 import { useAppStore } from "@/store";
 
@@ -461,7 +461,7 @@ export const ComporMensagem = forwardRef<
       });
       addFiles(novos);
     } catch (e) {
-      toast.error("Falha ao anexar o arquivo", { description: String(e) });
+      toast.error(t.compose.falhaAnexar, { description: String(e) });
     }
   }
 
@@ -489,10 +489,12 @@ export const ComporMensagem = forwardRef<
         ]);
       }
       toast.success(
-        arqs.length > 1 ? `${arqs.length} links inseridos` : `Link inserido: ${arqs[0].nome}`
+        arqs.length > 1
+          ? preencher(t.compose.linksInseridos, { n: arqs.length })
+          : preencher(t.compose.linkInserido, { nome: arqs[0]?.nome ?? "" })
       );
     } catch (e) {
-      toast.error("Falha ao compartilhar pelo OneDrive", {
+      toast.error(t.compose.falhaOneDrive, {
         description: String(e),
       });
     } finally {
@@ -571,28 +573,28 @@ export const ComporMensagem = forwardRef<
         <FixedToolbar className="justify-start rounded-none border-b bg-background">
           <ShortcutMarkToolbarButton
             nodeType={KEYS.bold}
-            label="Negrito"
+            label={t.compose.negrito}
             shortcut={{ primary: true, key: "B" }}
           >
             <BoldIcon />
           </ShortcutMarkToolbarButton>
           <ShortcutMarkToolbarButton
             nodeType={KEYS.italic}
-            label="Itálico"
+            label={t.compose.italico}
             shortcut={{ primary: true, key: "I" }}
           >
             <ItalicIcon />
           </ShortcutMarkToolbarButton>
           <ShortcutMarkToolbarButton
             nodeType={KEYS.underline}
-            label="Sublinhado"
+            label={t.compose.sublinhado}
             shortcut={{ primary: true, key: "U" }}
           >
             <UnderlineIcon />
           </ShortcutMarkToolbarButton>
           <ShortcutMarkToolbarButton
             nodeType={KEYS.strikethrough}
-            label="Tachado"
+            label={t.compose.tachado}
             shortcut={{ primary: true, shift: true, key: "M" }}
           >
             <StrikethroughIcon />
@@ -600,8 +602,8 @@ export const ComporMensagem = forwardRef<
           <BulletedListToolbarButton />
           <LinkToolbarButton />
           <ToolbarButton
-            tooltip="Inserir assinatura"
-            aria-label="Inserir assinatura"
+            tooltip={t.compose.inserirAssinatura}
+            aria-label={t.compose.inserirAssinatura}
             onClick={inserirAssinatura}
           >
             <PenLineIcon />
@@ -638,15 +640,15 @@ export const ComporMensagem = forwardRef<
             </DropdownMenuContent>
           </DropdownMenu>
           <ToolbarButton
-            tooltip="Anexar arquivo"
-            aria-label="Anexar arquivo"
+            tooltip={t.compose.anexarArquivo}
+            aria-label={t.compose.anexarArquivo}
             onClick={anexarArquivo}
           >
             <PaperclipIcon />
           </ToolbarButton>
           <ToolbarButton
-            tooltip="Compartilhar via OneDrive"
-            aria-label="Compartilhar via OneDrive"
+            tooltip={t.compose.compartilharOneDrive}
+            aria-label={t.compose.compartilharOneDrive}
             onClick={compartilharOneDrive}
             disabled={compartilhando}
           >
@@ -699,18 +701,20 @@ export const ComporMensagem = forwardRef<
 
               <div className="space-y-2">
                 <p className="text-sm font-medium">
-                  Arraste arquivos aqui ou{" "}
+                  {t.compose.arrasteArquivos}{" "}
                   <button
                     type="button"
                     onClick={openFileDialog}
                     className="text-primary cursor-pointer underline-offset-4 hover:underline"
                   >
-                    selecione
+                    {t.compose.selecione}
                   </button>
                 </p>
                 <p className="text-muted-foreground text-xs">
-                  Tamanho máximo: {formatBytes(MAX_TAMANHO)} • Máximo de
-                  arquivos: {MAX_ARQUIVOS}
+                  {preencher(t.compose.limites, {
+                    tam: formatBytes(MAX_TAMANHO),
+                    max: MAX_ARQUIVOS,
+                  })}
                 </p>
               </div>
             </div>
@@ -721,16 +725,16 @@ export const ComporMensagem = forwardRef<
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium">
-                  Anexos ({arquivos.length})
+                  {preencher(t.compose.anexosTitulo, { n: arquivos.length })}
                 </h3>
                 <div className="flex gap-2">
                   <Button onClick={openFileDialog} variant="outline" size="sm">
                     <UploadCloudIcon />
-                    Adicionar
+                    {t.compose.adicionar}
                   </Button>
                   <Button onClick={clearFiles} variant="outline" size="sm">
                     <Trash2Icon />
-                    Remover todos
+                    {t.compose.removerTodos}
                   </Button>
                 </div>
               </div>
@@ -747,13 +751,19 @@ export const ComporMensagem = forwardRef<
                           onClick={() => removeFile(fileItem.id)}
                           variant="outline"
                           size="icon"
-                          aria-label={`Remover ${fileItem.file.name}`}
+                          aria-label={preencher(t.compose.remover, {
+                            nome: fileItem.file.name,
+                          })}
                           className="absolute -end-2 -top-2 z-10 size-6 rounded-full opacity-0 transition-opacity group-hover/item:opacity-100 dark:bg-zinc-800 hover:dark:bg-zinc-700"
                         >
                           <XIcon className="size-3.5" />
                         </Button>
                       </TooltipTrigger>
-                      <TooltipContent>{`Remover ${fileItem.file.name}`}</TooltipContent>
+                      <TooltipContent>
+                        {preencher(t.compose.remover, {
+                          nome: fileItem.file.name,
+                        })}
+                      </TooltipContent>
                     </Tooltip>
 
                     {/* Wrapper */}

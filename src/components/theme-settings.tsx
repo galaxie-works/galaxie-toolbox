@@ -17,6 +17,7 @@ import {
   type TemaVisual,
 } from "@/lib/tema";
 import { useAppStore } from "@/store";
+import { useIdioma } from "@/lib/idioma";
 
 interface MoodOption {
   value: TemaVisual;
@@ -73,12 +74,9 @@ const MOODS: MoodOption[] = [
   },
 ];
 
-const STYLES: StyleOption[] = [
-  { value: "light", label: "Light", icon: Sun },
-  { value: "dark", label: "Dark", icon: Moon },
-  { value: "system", label: "System", icon: MonitorCog },
-];
-
+// #469: os rótulos (Light/Dark/System) são traduzidos, então o array é montado no
+// corpo do componente (o hook `t` não roda em escopo de módulo). O `value`/`icon`
+// ficam estáveis; só o `label` vem do `t`.
 function modoValido(valor: string): valor is ModoTema {
   return MODOS_TEMA.includes(valor as ModoTema);
 }
@@ -97,6 +95,7 @@ function temaValido(valor: string): valor is TemaVisual {
  * preset high-contrast sobrepõe o Mood, então escolher paleta não faz efeito.
  */
 export function MoodSettings({ disabled = false }: { disabled?: boolean }) {
+  const { t } = useIdioma();
   const temaVisual = useAppStore((state) => state.temaVisual);
   const setTemaVisual = useAppStore((state) => state.setTemaVisual);
 
@@ -104,9 +103,9 @@ export function MoodSettings({ disabled = false }: { disabled?: boolean }) {
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Mood</h3>
+          <h3 className="text-sm font-semibold">{t.settings.themeMoodTitulo}</h3>
           <p className="text-sm text-muted-foreground">
-            Set the atmosphere and color palette for your workspace.
+            {t.settings.themeMoodDesc}
           </p>
         </div>
         <Select
@@ -116,8 +115,11 @@ export function MoodSettings({ disabled = false }: { disabled?: boolean }) {
             if (temaValido(valor)) setTemaVisual(valor);
           }}
         >
-          <SelectTrigger aria-label="Mood" className="w-56 shrink-0">
-            <SelectValue placeholder="Select a mood" />
+          <SelectTrigger
+            aria-label={t.settings.themeMoodTitulo}
+            className="w-56 shrink-0"
+          >
+            <SelectValue placeholder={t.settings.themeMoodPlaceholder} />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
             <SelectGroup>
@@ -147,16 +149,23 @@ export function MoodSettings({ disabled = false }: { disabled?: boolean }) {
  * Select = ReUI c-select-2 (ícone + caption), persistido no useAppStore.
  */
 export function StyleSettings() {
+  const { t } = useIdioma();
   const modoTema = useAppStore((state) => state.modoTema);
   const setModoTema = useAppStore((state) => state.setModoTema);
+
+  const styles: StyleOption[] = [
+    { value: "light", label: t.settings.themeStyleLight, icon: Sun },
+    { value: "dark", label: t.settings.themeStyleDark, icon: Moon },
+    { value: "system", label: t.settings.themeStyleSystem, icon: MonitorCog },
+  ];
 
   return (
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Style</h3>
+          <h3 className="text-sm font-semibold">{t.settings.themeStyleTitulo}</h3>
           <p className="text-sm text-muted-foreground">
-            Choose light, dark, or match your operating system.
+            {t.settings.themeStyleDesc}
           </p>
         </div>
         <Select
@@ -165,12 +174,15 @@ export function StyleSettings() {
             if (modoValido(valor)) setModoTema(valor);
           }}
         >
-          <SelectTrigger aria-label="Style" className="w-56 shrink-0">
-            <SelectValue placeholder="Select a style" />
+          <SelectTrigger
+            aria-label={t.settings.themeStyleTitulo}
+            className="w-56 shrink-0"
+          >
+            <SelectValue placeholder={t.settings.themeStylePlaceholder} />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
             <SelectGroup>
-              {STYLES.map((style) => {
+              {styles.map((style) => {
                 const Icon = style.icon;
                 return (
                   <SelectItem key={style.value} value={style.value}>
@@ -194,6 +206,7 @@ export function StyleSettings() {
  * alto contraste (sobrepondo o Mood) e persiste no useAppStore.
  */
 export function AccessibilitySettings() {
+  const { t } = useIdioma();
   const altoContraste = useAppStore((state) => state.altoContraste);
   const setAltoContraste = useAppStore((state) => state.setAltoContraste);
 
@@ -201,13 +214,15 @@ export function AccessibilitySettings() {
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Accessibility</h3>
+          <h3 className="text-sm font-semibold">
+            {t.settings.themeAccessTitulo}
+          </h3>
           <p className="text-sm text-muted-foreground">
-            Turn on a high contrast theme for better readability.
+            {t.settings.themeAccessDesc}
           </p>
         </div>
         <Switch
-          aria-label="High contrast"
+          aria-label={t.settings.themeAccessAria}
           checked={altoContraste}
           onCheckedChange={setAltoContraste}
           className="shrink-0"

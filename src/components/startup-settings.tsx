@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/field";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { useIdioma } from "@/lib/idioma";
 
 /**
  * Settings > System > Startup (#123).
@@ -26,6 +27,7 @@ import { Switch } from "@/components/ui/switch";
  * Nunca quebra: erros são logados (#148) e o toggle revertido, com toast.
  */
 export function StartupSettings() {
+  const { t } = useIdioma();
   // null = ainda carregando o estado real do SO.
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -56,7 +58,7 @@ export function StartupSettings() {
     } catch (e) {
       logErro("startup.setAutostartEnabled", e);
       setEnabled(!proximo);
-      toast.error("Couldn’t update launch on startup. Please try again.");
+      toast.error(t.settings.startupErro);
     } finally {
       setSalvando(false);
     }
@@ -66,10 +68,10 @@ export function StartupSettings() {
     <FramePanel>
       <Field orientation="horizontal">
         <FieldContent>
-          <FieldLabel htmlFor="launch-on-startup">Launch on startup</FieldLabel>
-          <FieldDescription>
-            Open GALAXIE Toolbox automatically when you sign in to Windows.
-          </FieldDescription>
+          <FieldLabel htmlFor="launch-on-startup">
+            {t.settings.startupLabel}
+          </FieldLabel>
+          <FieldDescription>{t.settings.startupDesc}</FieldDescription>
         </FieldContent>
         {enabled === null ? (
           <Spinner className="shrink-0" />

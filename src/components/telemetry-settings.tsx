@@ -18,6 +18,7 @@ import {
   type TelemetryConsent,
   type TelemetryEnvelopeCarimbado,
 } from "@/lib/api";
+import { useIdioma, comDestaque } from "@/lib/idioma";
 
 const CONSENT_ON: TelemetryConsent = {
   crash: true,
@@ -48,6 +49,7 @@ const CONSENT_OFF: TelemetryConsent = {
  * (MDM/Graph) é follow-up (ver #133).
  */
 export function TelemetrySettings() {
+  const { t } = useIdioma();
   // Otimista no default ON (#388) enquanto o status carrega — evita um flash de
   // "tudo OFF"; o status do Rust é a verdade e sobrescreve ao chegar.
   const [consent, setConsent] = useState<TelemetryConsent>(CONSENT_ON);
@@ -98,11 +100,7 @@ export function TelemetrySettings() {
       <div className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/30 p-3">
         <ShieldCheck className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">
-          Anonymous diagnostics are{" "}
-          <span className="font-medium text-foreground">on by default</span> —
-          turn off any category you don&apos;t want below. GALAXIE Toolbox never
-          collects personal data — no emails, names, message content, URLs or
-          file paths, only anonymous, bucketed diagnostics. Data is self-hosted.
+          {comDestaque(t.settings.telBanner, "estado", t.settings.telBannerEstado)}
         </p>
       </div>
 
@@ -110,14 +108,10 @@ export function TelemetrySettings() {
         <div className="flex items-start gap-2.5 rounded-lg border border-primary/30 bg-primary/5 p-3">
           <Info className="mt-0.5 size-4 shrink-0 text-primary" />
           <div className="flex flex-1 flex-col gap-2">
-            <p className="text-sm text-foreground">
-              To help us improve GALAXIE Toolbox, anonymous diagnostics are on by
-              default. No personal data is ever collected. You can turn off any
-              category here at any time.
-            </p>
+            <p className="text-sm text-foreground">{t.settings.telAviso1run}</p>
             <div>
               <Button type="button" size="sm" onClick={confirmarAviso}>
-                Got it
+                {t.settings.telAvisoOk}
               </Button>
             </div>
           </div>
@@ -126,11 +120,10 @@ export function TelemetrySettings() {
 
       <Field orientation="horizontal">
         <FieldContent>
-          <FieldLabel htmlFor="telemetry-crash">Crash reports</FieldLabel>
-          <FieldDescription>
-            Send crash reports so we can fix what breaks. Essential diagnostics
-            only.
-          </FieldDescription>
+          <FieldLabel htmlFor="telemetry-crash">
+            {t.settings.telCrashLabel}
+          </FieldLabel>
+          <FieldDescription>{t.settings.telCrashDesc}</FieldDescription>
         </FieldContent>
         <Switch
           id="telemetry-crash"
@@ -142,12 +135,9 @@ export function TelemetrySettings() {
       <Field orientation="horizontal">
         <FieldContent>
           <FieldLabel htmlFor="telemetry-diagnostics">
-            Performance diagnostics
+            {t.settings.telPerfLabel}
           </FieldLabel>
-          <FieldDescription>
-            Share anonymous performance and error diagnostics to help us find
-            slow spots.
-          </FieldDescription>
+          <FieldDescription>{t.settings.telPerfDesc}</FieldDescription>
         </FieldContent>
         <Switch
           id="telemetry-diagnostics"
@@ -158,10 +148,10 @@ export function TelemetrySettings() {
 
       <Field orientation="horizontal">
         <FieldContent>
-          <FieldLabel htmlFor="telemetry-analytics">Anonymous usage</FieldLabel>
-          <FieldDescription>
-            Share anonymous feature-usage stats so we know what to improve.
-          </FieldDescription>
+          <FieldLabel htmlFor="telemetry-analytics">
+            {t.settings.telUsoLabel}
+          </FieldLabel>
+          <FieldDescription>{t.settings.telUsoDesc}</FieldDescription>
         </FieldContent>
         <Switch
           id="telemetry-analytics"
@@ -172,8 +162,7 @@ export function TelemetrySettings() {
 
       <div className="flex items-center justify-between gap-3 border-t border-border pt-3">
         <p className="text-xs text-muted-foreground">
-          Revoking turns everything off, clears the local queue and resets your
-          ephemeral session id.
+          {t.settings.telRevogarDesc}
         </p>
         <Button
           type="button"
@@ -182,7 +171,7 @@ export function TelemetrySettings() {
           onClick={revogar}
           disabled={!algumLigado}
         >
-          Revoke all
+          {t.settings.telRevogarBtn}
         </Button>
       </div>
 

@@ -98,6 +98,7 @@ import {
 import type { Assinatura } from "@/store/bridge-slice";
 import type { MarcarLidoModo } from "@/store/ui-slice";
 import type { TemplateEmail } from "@/lib/templates";
+import { useIdioma, preencher } from "@/lib/idioma";
 
 /** Largura ~33% da Sheet (padrão dos painéis laterais da Settings do #135). */
 const SHEET_33 = "flex w-[33%] flex-col gap-0 p-0 sm:max-w-[33vw]";
@@ -163,6 +164,7 @@ function normalizarValorEditor(editor: PlateEditor, valorInicial: string): Value
  * direita. Default ON vem da decisão final do PO na #133.
  */
 export function ConversationViewPanel() {
+  const { t } = useIdioma();
   const agruparConversas = useAppStore((state) => state.agruparConversas);
   const setAgruparConversas = useAppStore(
     (state) => state.setAgruparConversas
@@ -173,10 +175,10 @@ export function ConversationViewPanel() {
       <Field orientation="horizontal">
         <FieldContent>
           <FieldLabel htmlFor="bridge-conversation-view">
-            Group messages by conversation
+            {t.settings.bridgeAgruparConversasLabel}
           </FieldLabel>
           <FieldDescription>
-            Keep related emails together in expandable threads.
+            {t.settings.bridgeAgruparConversasDesc}
           </FieldDescription>
         </FieldContent>
         <Switch
@@ -204,6 +206,7 @@ function EditorCorpo({
   placeholder: string;
   refCorpo: React.RefObject<HTMLDivElement | null>;
 }) {
+  const { t } = useIdioma();
   const editor = usePlateEditor({
     plugins: COMPOSE_KIT,
     // #147: o `corpo` salvo é o `innerHTML` do próprio Plate — a marcação
@@ -226,28 +229,28 @@ function EditorCorpo({
       <FixedToolbar className="justify-start rounded-none border-b bg-background">
         <ShortcutMarkToolbarButton
           nodeType={KEYS.bold}
-          label="Bold"
+          label={t.settings.bridgeEditorNegrito}
           shortcut={{ primary: true, key: "B" }}
         >
           <BoldIcon />
         </ShortcutMarkToolbarButton>
         <ShortcutMarkToolbarButton
           nodeType={KEYS.italic}
-          label="Italic"
+          label={t.settings.bridgeEditorItalico}
           shortcut={{ primary: true, key: "I" }}
         >
           <ItalicIcon />
         </ShortcutMarkToolbarButton>
         <ShortcutMarkToolbarButton
           nodeType={KEYS.underline}
-          label="Underline"
+          label={t.settings.bridgeEditorSublinhado}
           shortcut={{ primary: true, key: "U" }}
         >
           <UnderlineIcon />
         </ShortcutMarkToolbarButton>
         <ShortcutMarkToolbarButton
           nodeType={KEYS.strikethrough}
-          label="Strikethrough"
+          label={t.settings.bridgeEditorTachado}
           shortcut={{ primary: true, shift: true, key: "M" }}
         >
           <StrikethroughIcon />
@@ -281,8 +284,6 @@ interface EdicaoAssinatura {
   usarEmRespostas: boolean;
 }
 
-const ROTULO_SEM_PADRAO = "No default signature";
-
 /**
  * Stacked card das assinaturas (#135). Label + descrição à esquerda; à direita
  * um ButtonGroup (c-button-group-7): dropdown listando as assinaturas com a
@@ -291,6 +292,7 @@ const ROTULO_SEM_PADRAO = "No default signature";
  * editor rico e o switch "Set as default signature".
  */
 export function SignaturesPanel() {
+  const { t } = useIdioma();
   const assinaturas = useAppStore((s) => s.assinaturas);
   const assinaturaPadraoId = useAppStore((s) => s.assinaturaPadraoId);
   const adicionarAssinatura = useAppStore((s) => s.adicionarAssinatura);
@@ -349,7 +351,7 @@ export function SignaturesPanel() {
       });
     }
     setEdicao(null);
-    toast.success("Signature saved");
+    toast.success(t.settings.bridgeAssinaturaSalva);
   }
 
   function excluir() {
@@ -357,16 +359,16 @@ export function SignaturesPanel() {
     removerAssinatura(excluindoId);
     if (edicao?.id === excluindoId) setEdicao(null);
     setExcluindoId(null);
-    toast.success("Signature deleted");
+    toast.success(t.settings.bridgeAssinaturaExcluida);
   }
 
   return (
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Signatures</h3>
+          <h3 className="text-sm font-semibold">{t.settings.bridgeAssinaturasTitulo}</h3>
           <p className="text-sm text-muted-foreground">
-            Manage your email signatures and pick the default used in Bridge.
+            {t.settings.bridgeAssinaturasDesc}
           </p>
         </div>
 
@@ -376,7 +378,7 @@ export function SignaturesPanel() {
               <Button variant="outline" className="w-56 justify-start gap-2">
                 <SignatureIcon aria-hidden="true" className="size-4" />
                 <span className="truncate">
-                  {padrao ? padrao.nome : ROTULO_SEM_PADRAO}
+                  {padrao ? padrao.nome : t.settings.bridgeSemAssinaturaPadrao}
                 </span>
                 <ChevronDownIcon
                   aria-hidden="true"
@@ -386,7 +388,7 @@ export function SignaturesPanel() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuGroup>
-                <DropdownMenuLabel>Default signature</DropdownMenuLabel>
+                <DropdownMenuLabel>{t.settings.bridgeAssinaturaPadraoLabel}</DropdownMenuLabel>
                 {assinaturas.map((a) => (
                   <DropdownMenuItem
                     key={a.id}
@@ -404,7 +406,7 @@ export function SignaturesPanel() {
                 ))}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => definirAssinaturaPadrao(null)}>
-                  <span>{ROTULO_SEM_PADRAO}</span>
+                  <span>{t.settings.bridgeSemAssinaturaPadrao}</span>
                   {assinaturaPadraoId === null && (
                     <CheckIcon
                       aria-hidden="true"
@@ -421,41 +423,41 @@ export function SignaturesPanel() {
               <Button
                 variant="outline"
                 size="icon"
-                aria-label="Add signature"
+                aria-label={t.settings.bridgeAssinaturaAdd}
                 onClick={abrirNova}
               >
                 <PlusIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Add signature</TooltipContent>
+            <TooltipContent>{t.settings.bridgeAssinaturaAdd}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="outline"
                 size="icon"
-                aria-label="Edit signature"
+                aria-label={t.settings.bridgeAssinaturaEditar}
                 disabled={!padrao}
                 onClick={() => padrao && abrirEdicao(padrao)}
               >
                 <PencilIcon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Edit signature</TooltipContent>
+            <TooltipContent>{t.settings.bridgeAssinaturaEditar}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="outline"
                 size="icon"
-                aria-label="Delete signature"
+                aria-label={t.settings.bridgeAssinaturaExcluir}
                 disabled={!padrao}
                 onClick={() => padrao && setExcluindoId(padrao.id)}
               >
                 <Trash2Icon aria-hidden="true" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Delete signature</TooltipContent>
+            <TooltipContent>{t.settings.bridgeAssinaturaExcluir}</TooltipContent>
           </Tooltip>
         </ButtonGroup>
       </div>
@@ -469,18 +471,20 @@ export function SignaturesPanel() {
         <SheetContent side="right" className={SHEET_33}>
           <SheetHeader className="border-b px-4 py-3">
             <SheetTitle className="text-left">
-              {edicao?.id ? "Edit signature" : "New signature"}
+              {edicao?.id
+                ? t.settings.bridgeAssinaturaEditarTitulo
+                : t.settings.bridgeAssinaturaNovaTitulo}
             </SheetTitle>
           </SheetHeader>
 
           {edicao && (
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
               <div className="grid gap-2">
-                <Label htmlFor="assinatura-nome">Name</Label>
+                <Label htmlFor="assinatura-nome">{t.settings.bridgeCampoNome}</Label>
                 <Input
                   id="assinatura-nome"
                   value={edicao.nome}
-                  placeholder="e.g. Work signature"
+                  placeholder={t.settings.bridgeAssinaturaNomePlaceholder}
                   onChange={(e) =>
                     setEdicao((atual) =>
                       atual ? { ...atual, nome: e.target.value } : atual
@@ -490,22 +494,22 @@ export function SignaturesPanel() {
               </div>
 
               <div className="grid gap-2">
-                <Label>Signature</Label>
+                <Label>{t.settings.bridgeAssinaturaCampo}</Label>
                 <div className="overflow-hidden rounded-md border">
                   <EditorCorpo
                     key={edicao.id ?? "nova"}
                     refCorpo={corpoRef}
                     valorInicial={edicao.corpo}
-                    placeholder="Write your signature..."
+                    placeholder={t.settings.bridgeAssinaturaCorpoPlaceholder}
                   />
                 </div>
               </div>
 
               <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">Set as default signature</p>
+                  <p className="text-sm font-medium">{t.settings.bridgeAssinaturaSetPadrao}</p>
                   <p className="text-sm text-muted-foreground">
-                    Use this signature in Bridge emails.
+                    {t.settings.bridgeAssinaturaSetPadraoDesc}
                   </p>
                 </div>
                 <Switch
@@ -521,10 +525,10 @@ export function SignaturesPanel() {
               <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium">
-                    Use for replies and forwardings
+                    {t.settings.bridgeAssinaturaRespostas}
                   </p>
                   <p className="text-sm text-muted-foreground">
-                    Auto insert this signature in replies and forwardings.
+                    {t.settings.bridgeAssinaturaRespostasDesc}
                   </p>
                 </div>
                 <Switch
@@ -546,14 +550,14 @@ export function SignaturesPanel() {
                 className="mr-auto text-destructive hover:text-destructive"
                 onClick={() => setExcluindoId(edicao.id)}
               >
-                <Trash2Icon /> Delete
+                <Trash2Icon /> {t.settings.bridgeBtnExcluir}
               </Button>
             )}
             <Button variant="outline" onClick={() => setEdicao(null)}>
-              Cancel
+              {t.settings.bridgeBtnCancelar}
             </Button>
             <Button onClick={salvar} disabled={!edicao?.nome.trim()}>
-              Save
+              {t.settings.bridgeBtnSalvar}
             </Button>
           </SheetFooter>
         </SheetContent>
@@ -566,15 +570,16 @@ export function SignaturesPanel() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete signature?</AlertDialogTitle>
+            <AlertDialogTitle>{t.settings.bridgeExcluirAssinaturaTitulo}</AlertDialogTitle>
             <AlertDialogDescription>
-              “{excluindo?.nome ?? ""}” will be removed from this computer. This
-              can’t be undone.
+              {preencher(t.settings.bridgeExcluirDesc, {
+                nome: excluindo?.nome ?? "",
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={excluir}>Delete</AlertDialogAction>
+            <AlertDialogCancel variant="ghost">{t.settings.bridgeBtnCancelar}</AlertDialogCancel>
+            <AlertDialogAction onClick={excluir}>{t.settings.bridgeBtnExcluir}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -623,6 +628,7 @@ function StackedCardsIllustration() {
  * mesma Sheet: nome, descrição, editor rico, Save/Cancel/Delete.
  */
 export function EmailTemplatesPanel() {
+  const { t: tr } = useIdioma();
   const templates = useAppStore((s) => s.templates);
   const adicionarTemplate = useAppStore((s) => s.adicionarTemplate);
   const atualizarTemplate = useAppStore((s) => s.atualizarTemplate);
@@ -675,7 +681,7 @@ export function EmailTemplatesPanel() {
       adicionarTemplate({ nome, descricao, corpo });
     }
     setEdicao(null);
-    toast.success("Template saved");
+    toast.success(tr.settings.bridgeTemplateSalvo);
   }
 
   function excluir() {
@@ -683,16 +689,16 @@ export function EmailTemplatesPanel() {
     removerTemplate(excluindoId);
     if (edicao?.id === excluindoId) setEdicao(null);
     setExcluindoId(null);
-    toast.success("Template deleted");
+    toast.success(tr.settings.bridgeTemplateExcluido);
   }
 
   return (
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Email templates</h3>
+          <h3 className="text-sm font-semibold">{tr.settings.bridgeTemplatesTitulo}</h3>
           <p className="text-sm text-muted-foreground">
-            Reusable message templates you can insert while composing in Bridge.
+            {tr.settings.bridgeTemplatesDesc}
           </p>
         </div>
         <Button
@@ -700,18 +706,18 @@ export function EmailTemplatesPanel() {
           className="shrink-0"
           onClick={() => setSheetAberta(true)}
         >
-          View
+          {tr.settings.bridgeTemplatesView}
         </Button>
       </div>
 
       <Sheet open={sheetAberta} onOpenChange={fecharSheet}>
         <SheetContent side="right" className={SHEET_33}>
           <SheetHeader className="border-b px-4 py-3">
-            <SheetTitle className="text-left">Email templates</SheetTitle>
+            <SheetTitle className="text-left">{tr.settings.bridgeTemplatesTitulo}</SheetTitle>
             <SheetDescription className="text-left">
               {edicao
-                ? "Edit the template name, description and body."
-                : "Pick a template to edit, or add a new one."}
+                ? tr.settings.bridgeTemplateEditDesc
+                : tr.settings.bridgeTemplatePickDesc}
             </SheetDescription>
           </SheetHeader>
 
@@ -719,11 +725,11 @@ export function EmailTemplatesPanel() {
             {edicao ? (
               <>
                 <div className="grid gap-2">
-                  <Label htmlFor="template-nome">Name</Label>
+                  <Label htmlFor="template-nome">{tr.settings.bridgeCampoNome}</Label>
                   <Input
                     id="template-nome"
                     value={edicao.nome}
-                    placeholder="e.g. Support reply"
+                    placeholder={tr.settings.bridgeTemplateNomePlaceholder}
                     onChange={(e) =>
                       setEdicao((atual) =>
                         atual ? { ...atual, nome: e.target.value } : atual
@@ -732,11 +738,11 @@ export function EmailTemplatesPanel() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label htmlFor="template-descricao">Description</Label>
+                  <Label htmlFor="template-descricao">{tr.settings.bridgeTemplateDescricaoLabel}</Label>
                   <Input
                     id="template-descricao"
                     value={edicao.descricao}
-                    placeholder="Short summary shown in the picker"
+                    placeholder={tr.settings.bridgeTemplateDescricaoPlaceholder}
                     onChange={(e) =>
                       setEdicao((atual) =>
                         atual ? { ...atual, descricao: e.target.value } : atual
@@ -745,13 +751,13 @@ export function EmailTemplatesPanel() {
                   />
                 </div>
                 <div className="grid gap-2">
-                  <Label>Body</Label>
+                  <Label>{tr.settings.bridgeTemplateBodyLabel}</Label>
                   <div className="overflow-hidden rounded-md border">
                     <EditorCorpo
                       key={edicao.id ?? "novo"}
                       refCorpo={corpoRef}
                       valorInicial={edicao.corpo}
-                      placeholder="Write the template content..."
+                      placeholder={tr.settings.bridgeTemplateCorpoPlaceholder}
                     />
                   </div>
                 </div>
@@ -762,24 +768,23 @@ export function EmailTemplatesPanel() {
                   <EmptyMedia>
                     <StackedCardsIllustration />
                   </EmptyMedia>
-                  <EmptyTitle>No templates</EmptyTitle>
+                  <EmptyTitle>{tr.settings.bridgeTemplatesVazioTitulo}</EmptyTitle>
                   <EmptyDescription>
-                    You don’t have any templates yet. Create one to reuse the
-                    messages you send often.
+                    {tr.settings.bridgeTemplatesVazioDesc}
                   </EmptyDescription>
                 </EmptyHeader>
                 <EmptyContent>
                   <Button onClick={abrirNovo}>
-                    <PlusIcon /> Add new template
+                    <PlusIcon /> {tr.settings.bridgeTemplateAdd}
                   </Button>
                 </EmptyContent>
               </Empty>
             ) : (
               <Field>
-                <Label>Templates</Label>
+                <Label>{tr.settings.bridgeTemplatesLabel}</Label>
                 <Select value="" onValueChange={selecionar}>
                   <SelectTrigger className="h-auto! w-full">
-                    <SelectValue placeholder="Select a template" />
+                    <SelectValue placeholder={tr.settings.bridgeTemplateSelectPlaceholder} />
                   </SelectTrigger>
                   <SelectContent position="popper" align="end">
                     <SelectGroup>
@@ -802,7 +807,7 @@ export function EmailTemplatesPanel() {
                     <SelectItem value={ADD_TEMPLATE}>
                       <span className="flex items-center gap-2">
                         <PlusIcon aria-hidden="true" className="size-4" />
-                        Add new template
+                        {tr.settings.bridgeTemplateAdd}
                       </span>
                     </SelectItem>
                   </SelectContent>
@@ -819,14 +824,14 @@ export function EmailTemplatesPanel() {
                   className="mr-auto text-destructive hover:text-destructive"
                   onClick={() => setExcluindoId(edicao.id)}
                 >
-                  <Trash2Icon /> Delete
+                  <Trash2Icon /> {tr.settings.bridgeBtnExcluir}
                 </Button>
               )}
               <Button variant="outline" onClick={() => setEdicao(null)}>
-                Cancel
+                {tr.settings.bridgeBtnCancelar}
               </Button>
               <Button onClick={salvar} disabled={!edicao.nome.trim()}>
-                Save
+                {tr.settings.bridgeBtnSalvar}
               </Button>
             </SheetFooter>
           )}
@@ -839,15 +844,16 @@ export function EmailTemplatesPanel() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete template?</AlertDialogTitle>
+            <AlertDialogTitle>{tr.settings.bridgeExcluirTemplateTitulo}</AlertDialogTitle>
             <AlertDialogDescription>
-              “{excluindo?.nome ?? ""}” will be removed from this computer. This
-              can’t be undone.
+              {preencher(tr.settings.bridgeExcluirDesc, {
+                nome: excluindo?.nome ?? "",
+              })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel variant="ghost">Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={excluir}>Delete</AlertDialogAction>
+            <AlertDialogCancel variant="ghost">{tr.settings.bridgeBtnCancelar}</AlertDialogCancel>
+            <AlertDialogAction onClick={excluir}>{tr.settings.bridgeBtnExcluir}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -859,13 +865,6 @@ export function EmailTemplatesPanel() {
 // Card 3 — Undo send delay (#150)
 // ===========================================================================
 
-/** Rótulos das opções do atraso (segundos), na ordem de `UNDO_SEND_DELAYS_MS`. */
-const UNDO_SEND_LABELS: Record<number, string> = {
-  5_000: "5 seconds",
-  10_000: "10 seconds",
-  30_000: "30 seconds",
-};
-
 /**
  * Stacked card do "Undo send" (#150). Mesmo padrão do Mood/Style: label +
  * descrição à esquerda; select à direita. Escolhe por quanto tempo o envio fica
@@ -873,30 +872,38 @@ const UNDO_SEND_LABELS: Record<number, string> = {
  * `agendarEnvio`. Persistido no useAppStore (`bridge.undoSendDelay`).
  */
 export function UndoSendPanel() {
+  const { t } = useIdioma();
   const undoSendDelayMs = useAppStore((s) => s.undoSendDelayMs);
   const setUndoSendDelay = useAppStore((s) => s.setUndoSendDelay);
+
+  /** Rótulos das opções do atraso (segundos), na ordem de `UNDO_SEND_DELAYS_MS`. */
+  const undoSendLabels: Record<number, string> = {
+    5_000: t.settings.bridgeUndoSend5s,
+    10_000: t.settings.bridgeUndoSend10s,
+    30_000: t.settings.bridgeUndoSend30s,
+  };
 
   return (
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Undo send delay</h3>
+          <h3 className="text-sm font-semibold">{t.settings.bridgeUndoSendTitulo}</h3>
           <p className="text-sm text-muted-foreground">
-            How long a sent email waits before it leaves, so you can undo it.
+            {t.settings.bridgeUndoSendDesc}
           </p>
         </div>
         <Select
           value={String(undoSendDelayMs)}
           onValueChange={(valor) => setUndoSendDelay(Number(valor))}
         >
-          <SelectTrigger aria-label="Undo send delay" className="w-56 shrink-0">
-            <SelectValue placeholder="Select a delay" />
+          <SelectTrigger aria-label={t.settings.bridgeUndoSendTitulo} className="w-56 shrink-0">
+            <SelectValue placeholder={t.settings.bridgeUndoSendPlaceholder} />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
             <SelectGroup>
               {UNDO_SEND_DELAYS_MS.map((ms) => (
                 <SelectItem key={ms} value={String(ms)}>
-                  {UNDO_SEND_LABELS[ms]}
+                  {undoSendLabels[ms]}
                 </SelectItem>
               ))}
             </SelectGroup>
@@ -924,6 +931,7 @@ const MARCAR_LIDO_ATRASOS = [2, 5, 10] as const;
  * pra unir modo + atraso num controle único (sem UI condicional).
  */
 export function ReadingPreferencesPanel() {
+  const { t } = useIdioma();
   const marcarLidoModo = useAppStore((s) => s.marcarLidoModo);
   const setMarcarLidoModo = useAppStore((s) => s.setMarcarLidoModo);
   const marcarLidoAtraso = useAppStore((s) => s.marcarLidoAtraso);
@@ -945,26 +953,26 @@ export function ReadingPreferencesPanel() {
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Mark as read</h3>
+          <h3 className="text-sm font-semibold">{t.settings.bridgeMarkReadTitulo}</h3>
           <p className="text-sm text-muted-foreground">
-            Choose when an open message is marked as read.
+            {t.settings.bridgeMarkReadDesc}
           </p>
         </div>
         <Select value={valor} onValueChange={aoMudar}>
-          <SelectTrigger aria-label="Mark as read" className="w-56 shrink-0">
-            <SelectValue placeholder="Select an option" />
+          <SelectTrigger aria-label={t.settings.bridgeMarkReadTitulo} className="w-56 shrink-0">
+            <SelectValue placeholder={t.settings.bridgeMarkReadPlaceholder} />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
             <SelectGroup>
-              <SelectItem value="imediato">When opened</SelectItem>
+              <SelectItem value="imediato">{t.settings.bridgeMarkReadAberto}</SelectItem>
               {MARCAR_LIDO_ATRASOS.map((s) => (
                 <SelectItem key={s} value={`atraso:${s}`}>
-                  {`After ${s} seconds`}
+                  {preencher(t.settings.bridgeMarkReadAtraso, { s })}
                 </SelectItem>
               ))}
             </SelectGroup>
             <SelectSeparator />
-            <SelectItem value="manual">Manually only</SelectItem>
+            <SelectItem value="manual">{t.settings.bridgeMarkReadManual}</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -976,14 +984,6 @@ export function ReadingPreferencesPanel() {
 // Card — Sync interval (#227, NOVO)
 // ===========================================================================
 
-/** Rótulos das opções do intervalo de sincronização (minutos). */
-const SYNC_INTERVAL_LABELS: Record<number, string> = {
-  5: "Every 5 minutes",
-  15: "Every 15 minutes",
-  30: "Every 30 minutes",
-  60: "Every hour",
-};
-
 /**
  * Preferência de sincronização (#227, NOVO): de quanto em quanto tempo o Bridge
  * busca mensagens novas na Inbox. Antes fixo em 15 min no control-room; agora o
@@ -991,16 +991,25 @@ const SYNC_INTERVAL_LABELS: Record<number, string> = {
  * (`bridge.syncInterval`); padrão 15 min mantém o comportamento histórico.
  */
 export function SyncPreferencesPanel() {
+  const { t } = useIdioma();
   const syncIntervalMinutes = useAppStore((s) => s.syncIntervalMinutes);
   const setSyncInterval = useAppStore((s) => s.setSyncInterval);
+
+  /** Rótulos das opções do intervalo de sincronização (minutos). */
+  const syncIntervalLabels: Record<number, string> = {
+    5: t.settings.bridgeSync5,
+    15: t.settings.bridgeSync15,
+    30: t.settings.bridgeSync30,
+    60: t.settings.bridgeSync60,
+  };
 
   return (
     <FramePanel>
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Check for new messages</h3>
+          <h3 className="text-sm font-semibold">{t.settings.bridgeSyncTitulo}</h3>
           <p className="text-sm text-muted-foreground">
-            How often Bridge looks for new messages in the background.
+            {t.settings.bridgeSyncDesc}
           </p>
         </div>
         <Select
@@ -1008,16 +1017,16 @@ export function SyncPreferencesPanel() {
           onValueChange={(valor) => setSyncInterval(Number(valor))}
         >
           <SelectTrigger
-            aria-label="Check for new messages"
+            aria-label={t.settings.bridgeSyncTitulo}
             className="w-56 shrink-0"
           >
-            <SelectValue placeholder="Select an interval" />
+            <SelectValue placeholder={t.settings.bridgeSyncPlaceholder} />
           </SelectTrigger>
           <SelectContent position="popper" align="end">
             <SelectGroup>
               {SYNC_INTERVALS_MINUTES.map((min) => (
                 <SelectItem key={min} value={String(min)}>
-                  {SYNC_INTERVAL_LABELS[min]}
+                  {syncIntervalLabels[min]}
                 </SelectItem>
               ))}
             </SelectGroup>
