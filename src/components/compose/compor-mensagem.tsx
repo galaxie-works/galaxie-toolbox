@@ -283,6 +283,9 @@ export const ComporMensagem = forwardRef<
   // Settings, sempre em dia sem cópia local que envelheceria.
   const templates = useAppStore((s) => s.templates);
   const assinaturas = useAppStore((s) => s.assinaturas);
+  // #498 rework: sem assinatura, o botão fecha o compose e abre a config.
+  const fecharCompose = useAppStore((s) => s.fecharCompose);
+  const abrirConfigAssinaturas = useAppStore((s) => s.abrirConfigAssinaturas);
   const assinaturaPadrao = useAppStore((s) =>
     s.assinaturas.find((assinatura) => assinatura.id === s.assinaturaPadraoId)
   );
@@ -611,17 +614,24 @@ export const ComporMensagem = forwardRef<
           </ShortcutMarkToolbarButton>
           <BulletedListToolbarButton />
           <LinkToolbarButton />
-          {/* #498: assinatura plugada nas Settings. Sem assinatura → desabilitado
-              com tooltip; 1 → insere direto; >1 → dropdown pra escolher. */}
-          {assinaturas.length <= 1 ? (
+          {/* #498: assinatura plugada nas Settings. Sem assinatura → botão
+              HABILITADO, tooltip explica e o clique abre a config (#498 rework);
+              1 → insere direto; >1 → dropdown pra escolher. */}
+          {assinaturas.length === 0 ? (
             <ToolbarButton
-              tooltip={
-                assinaturas.length === 0
-                  ? t.compose.assinaturaNenhuma
-                  : t.compose.inserirAssinatura
-              }
+              tooltip={t.compose.assinaturaNenhuma}
+              aria-label={t.compose.assinaturaNenhuma}
+              onClick={() => {
+                fecharCompose();
+                abrirConfigAssinaturas();
+              }}
+            >
+              <PenToolIcon />
+            </ToolbarButton>
+          ) : assinaturas.length === 1 ? (
+            <ToolbarButton
+              tooltip={t.compose.inserirAssinatura}
               aria-label={t.compose.inserirAssinatura}
-              disabled={assinaturas.length === 0}
               onClick={() => inserirAssinatura()}
             >
               <PenToolIcon />
