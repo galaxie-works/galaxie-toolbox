@@ -6917,18 +6917,21 @@ export function ControlRoomScreen({
   // #231: o header do conteúdo reflete o MÓDULO ativo (fonte da verdade =
   // `bridgeView` no store), não mais uma saudação genérica. Título + subtítulo
   // por módulo (i18n pt/en); nada de estado local.
+  // #490: no módulo Mailbox o título da content-area é a SECTION ("Bridge"),
+  // não "E-mail" (que fica só como rótulo do módulo/nav) — e sem subtítulo, pra
+  // dar mais cara de produto. People/Calendário mantêm título + subtítulo.
   const tituloModulo =
     bridgeView === "people"
       ? t.controlRoom.peopleTitulo
       : bridgeView === "agenda"
         ? t.controlRoom.agendaTitulo
-        : t.controlRoom.mailboxTitulo;
+        : t.nav.controlRoom;
   const subtituloModulo =
     bridgeView === "people"
       ? t.controlRoom.peopleSubtitulo
       : bridgeView === "agenda"
         ? t.controlRoom.agendaSubtitulo
-        : t.controlRoom.mailboxSubtitulo;
+        : undefined;
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -6939,7 +6942,9 @@ export function ControlRoomScreen({
         </span>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{tituloModulo}</h1>
-          <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
+          {subtituloModulo && (
+            <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
+          )}
         </div>
       </div>
 
