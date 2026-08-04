@@ -319,30 +319,28 @@ export function CampoPessoas({
                         { nome }
                       );
                       return (
-                        <Tooltip key={p.email.toLowerCase()}>
-                          <TooltipTrigger asChild>
-                            <ComboboxChip
-                              aria-label={rotuloRemover}
-                              tabIndex={0}
-                              showRemove={true}
-                              className="bg-background inline-flex h-auto min-w-0 max-w-48 items-center gap-1.5 rounded-full border py-0.5 pl-2 shadow-xs **:data-[slot=combobox-chip-remove]:mr-0.5 **:data-[slot=combobox-chip-remove]:bg-transparent"
-                            >
-                              <Avatar className="size-4 shrink-0">
-                                {foto && <AvatarImage src={foto} alt="" />}
-                                <AvatarFallback className="text-[8px]">
-                                  {iniciaisDe(p.nome, p.email)}
-                                </AvatarFallback>
-                              </Avatar>
-                              <span className="min-w-0 truncate">{nome}</span>
-                            </ComboboxChip>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <div className="max-w-64">
-                              <p className="font-medium">{nome}</p>
-                              {nome !== p.email && <p>{p.email}</p>}
-                            </div>
-                          </TooltipContent>
-                        </Tooltip>
+                        // #478: uniformiza com o ramo não-compactado — mesmo
+                        // PersonHoverCard (avatar/nome/ações) no lugar do Tooltip.
+                        <PersonHoverCard
+                          key={p.email.toLowerCase()}
+                          email={p.email}
+                          fallback={{ ...p, foto }}
+                        >
+                          <ComboboxChip
+                            aria-label={rotuloRemover}
+                            tabIndex={0}
+                            showRemove={true}
+                            className="bg-background inline-flex h-auto min-w-0 max-w-48 items-center gap-1.5 rounded-full border py-0.5 pl-2 shadow-xs **:data-[slot=combobox-chip-remove]:mr-0.5 **:data-[slot=combobox-chip-remove]:bg-transparent"
+                          >
+                            <Avatar className="size-4 shrink-0">
+                              {foto && <AvatarImage src={foto} alt="" />}
+                              <AvatarFallback className="text-[8px]">
+                                {iniciaisDe(p.nome, p.email)}
+                              </AvatarFallback>
+                            </Avatar>
+                            <span className="min-w-0 truncate">{nome}</span>
+                          </ComboboxChip>
+                        </PersonHoverCard>
                       );
                     })}
                   </div>
