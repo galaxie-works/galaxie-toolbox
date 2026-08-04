@@ -318,6 +318,15 @@ const legacyStorage: PersistStorage<AppPersistido> = {
       TIPOS_FUNDO_ANIMADO
     );
     if (fundoAnimado !== undefined) state.fundoAnimado = fundoAnimado;
+    // #474 rework 2: migração do estado antigo. Removemos o flag
+    // `fundosAnimadosAtivo` (chave `...background.stars`); quem tinha o fundo
+    // DESLIGADO (flag=false) deve cair em "none" — senão o `fundoAnimado` salvo
+    // religaria o fundo por engano. Só migra se o flag antigo era explicitamente
+    // false (sessões novas não têm a chave e seguem o default/`fundoAnimado`).
+    const fundosAnimadosAtivoLegado = lerChave<boolean>(
+      "galaxie-toolbox.background.stars"
+    );
+    if (fundosAnimadosAtivoLegado === false) state.fundoAnimado = "none";
     const modoTema = lerTexto<ModoTema>(
       PERSONALIZATION_KEYS.modoTema,
       MODOS_TEMA
