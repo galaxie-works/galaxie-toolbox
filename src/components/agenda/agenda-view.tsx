@@ -395,6 +395,10 @@ export function AgendaView() {
   };
 
   if (erroAgenda) {
+    // #495: caixa compartilhada sem permissão (403) → empty gracioso, sem botão
+    // de retry (relogin/permissão não resolve com refresh).
+    const semAcessoCaixa =
+      caixaAtiva !== "me" && /403|forbidden/i.test(erroAgenda);
     return (
       <div className="flex h-full min-h-0 flex-1 items-center justify-center p-6">
         <Empty className="py-8">
@@ -402,16 +406,24 @@ export function AgendaView() {
             <EmptyMedia>
               <CalendarClock className="size-8 text-muted-foreground" />
             </EmptyMedia>
-            <EmptyTitle>{t.controlRoom.agendaErroTitulo}</EmptyTitle>
+            <EmptyTitle>
+              {semAcessoCaixa
+                ? t.controlRoom.agendaSemAcessoCaixaTitulo
+                : t.controlRoom.agendaErroTitulo}
+            </EmptyTitle>
             <EmptyDescription className="text-xs">
-              {t.controlRoom.agendaErroDica}
+              {semAcessoCaixa
+                ? t.controlRoom.agendaSemAcessoCaixaDica
+                : t.controlRoom.agendaErroDica}
             </EmptyDescription>
           </EmptyHeader>
-          <EmptyContent>
-            <Button variant="outline" size="sm" onClick={recarregarAgenda}>
-              <RefreshCw /> {t.controlRoom.atualizar}
-            </Button>
-          </EmptyContent>
+          {!semAcessoCaixa && (
+            <EmptyContent>
+              <Button variant="outline" size="sm" onClick={recarregarAgenda}>
+                <RefreshCw /> {t.controlRoom.atualizar}
+              </Button>
+            </EmptyContent>
+          )}
         </Empty>
         <EventoFormSheet />
       </div>
