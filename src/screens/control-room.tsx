@@ -261,6 +261,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import { useAtalhos, isTypingTarget, ehModPrincipal } from "@/hooks/use-atalhos";
 import { AtalhosAjuda } from "@/components/atalhos-ajuda";
@@ -1464,6 +1465,7 @@ function FolderSidebar({
   onToggleSidebar,
   bridgeView,
   onSelectModule,
+  emPainel,
   t,
 }: {
   pastas: PastaEmail[] | null;
@@ -1499,6 +1501,9 @@ function FolderSidebar({
   onToggleSidebar: () => void;
   bridgeView: BridgeView;
   onSelectModule: (view: BridgeView) => void;
+  /** Quando expandida dentro de um ResizablePanel, o painel controla a largura
+   *  (aside vira `w-full`) — o divisor arrastável fica por conta do grupo (#466). */
+  emPainel?: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   const peopleTab = useAppStore((state) => state.peopleTab);
@@ -1880,7 +1885,9 @@ function FolderSidebar({
         // entrada" (pt) mede ~224px com o chrome do row; w-64 (256px) cabe com folga
         // e o en (mais curto) sobra. A lista de e-mails ao lado pega o resto (flex-1
         // min-w-0); nomes de pasta custom gigantes ainda truncam com tooltip.
-        colapsada ? "w-16 items-center" : "w-64"
+        // #466: dentro do ResizablePanel (expandida), o painel controla a
+        // largura → `w-full`; fora dele, o w-64 fixo de sempre.
+        colapsada ? "w-16 items-center" : emPainel ? "h-full w-full" : "w-64"
       )}
     >
       <div
@@ -5710,6 +5717,58 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
 // Tela
 // ===========================================================================
 
+/**
+ * Divisor arrastável sidebar ↔ conteúdo (#466). Quando a sidebar está expandida,
+ * envolve [sidebar | conteúdo] num `ResizablePanelGroup` do reui — largura
+ * persistida por `autoSaveId`, com **mínimo = w-64 (256px)** em % medido do
+ * container (não corta os rótulos). Quando colapsada, volta ao flex fixo (a
+ * sidebar já é w-16, sem sentido arrastar). Vale para as 3 telas (Mailbox,
+ * People, Agenda) porque a sidebar é compartilhada e só o conteúdo troca.
+ */
+function LayoutSidebarConteudo({
+  expandida,
+  minPct,
+  sidebar,
+  conteudo,
+}: {
+  expandida: boolean;
+  minPct: number;
+  sidebar: ReactNode;
+  conteudo: ReactNode;
+}) {
+  if (!expandida) {
+    return (
+      <div className="flex min-w-0 flex-1 gap-4">
+        {sidebar}
+        {conteudo}
+      </div>
+    );
+  }
+  return (
+    <ResizablePanelGroup
+      autoSaveId="bridge.sidebar"
+      direction="horizontal"
+      className="flex min-w-0 flex-1"
+    >
+      <ResizablePanel
+        defaultSize={minPct}
+        minSize={minPct}
+        maxSize={45}
+        className="min-w-0 overflow-hidden"
+      >
+        {sidebar}
+      </ResizablePanel>
+      <ResizableHandle
+        withHandle
+        className="mx-1.5 bg-transparent hover:bg-border"
+      />
+      <ResizablePanel minSize={40} className="min-w-0 overflow-hidden">
+        <div className="flex h-full min-w-0">{conteudo}</div>
+      </ResizablePanel>
+    </ResizablePanelGroup>
+  );
+}
+
 export function ControlRoomScreen({
   user,
   onAbrirLink,
@@ -5818,6 +5877,26 @@ export function ControlRoomScreen({
   // Sidebar migrada pro ui slice (#126). Chave `bridge.sidebar` preservada.
   const sidebarAberta = useAppStore((s) => s.sidebarAberta);
   const setSidebarAberta = useAppStore((s) => s.setSidebarAberta);
+
+  // Largura do container do layout, medida p/ o mínimo px→% do divisor (#466):
+  // w-64 (256px) tem que ser default E mínimo (não corta "Caixa de entrada"),
+  // independente da largura da janela — daí converter 256px na % atual.
+  const grupoLayoutRef = useRef<HTMLDivElement>(null);
+  const [larguraLayout, setLarguraLayout] = useState(0);
+  useEffect(() => {
+    const el = grupoLayoutRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entradas) => {
+      const w = entradas[0]?.contentRect.width ?? 0;
+      if (w > 0) setLarguraLayout(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const sidebarMinPct =
+    larguraLayout > 0
+      ? Math.min(45, Math.max(10, (256 / larguraLayout) * 100))
+      : 20;
   // Filters slice (#129): ordenação/filtros persistem nas chaves legadas; busca,
   // resultados e cursores são somente de sessão.
   const ordenar = useAppStore((s) => s.ordenar);
@@ -6852,8 +6931,12 @@ export function ControlRoomScreen({
       </div>
 
       {/* Sidebar de módulos + conteúdo do módulo ativo. */}
-      <div className="flex min-h-0 flex-1 gap-4">
-        <FolderSidebar
+      <div ref={grupoLayoutRef} className="flex min-h-0 flex-1">
+        <LayoutSidebarConteudo
+          expandida={sidebarAberta}
+          minPct={sidebarMinPct}
+          sidebar={
+            <FolderSidebar
           pastas={pastas}
           subpastas={subpastas}
           onCarregarSubpastas={carregarSubpastas}
@@ -6887,12 +6970,11 @@ export function ControlRoomScreen({
           onSelectModule={(view) => {
             setBridgeView(view);
           }}
+          emPainel={sidebarAberta}
           t={t}
         />
-
-        {/* Lista e detalhe compartilham o espaço, com splitter arrastável.
-            autoSaveId persiste a proporção que o usuário deixa. */}
-        {bridgeView === "people" ? (
+          }
+          conteudo={bridgeView === "people" ? (
           <PeopleView
             userEmail={user.email}
             onGrantAccess={onGrantPeopleAccess}
@@ -6972,7 +7054,7 @@ export function ControlRoomScreen({
           </ResizablePanel>
           </ResizablePanelGroup>
         )}
-
+        />
       </div>
 
       <EventoDialog userEmail={user.email} />
