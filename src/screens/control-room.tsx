@@ -4630,6 +4630,7 @@ const MessageDetail = forwardRef<
   const fecharCompose = useAppStore((s) => s.fecharCompose);
   const carregarLeitor = useAppStore((s) => s.carregarLeitor);
   const limparLeitor = useAppStore((s) => s.limparLeitor);
+  const setSidebarAberta = useAppStore((s) => s.setSidebarAberta);
   const comporRef = useRef<ComporMensagemHandle>(null);
   // Anexo em pré-visualização (#188); null = nenhum aberto.
   const [previewAtual, setPreviewAtual] = useState<AnexoEmail | null>(null);
@@ -4640,6 +4641,13 @@ const MessageDetail = forwardRef<
     setPreviewAtual(null);
     setAnexoEmail(null);
   }, [id]);
+  // #496: abrir preview colapsa o sidebar (mais espaço) — gatilho TRANSIENTE
+  // (ação do usuário), NUNCA reativo a estado persistente (P0 do webview). Ao
+  // fechar, o sidebar PERMANECE colapsado (sem re-expandir → evita reflow).
+  const abrirPreview = (a: AnexoEmail) => {
+    setPreviewAtual(a);
+    setSidebarAberta(false);
+  };
   const textosUndoSend = useMemo(
     () => ({
       tituloPendente: (segundos: number) =>
@@ -4865,7 +4873,7 @@ const MessageDetail = forwardRef<
                               : item
                                 ? setAnexoEmail(a)
                                 : previsivel
-                                  ? setPreviewAtual(a)
+                                  ? abrirPreview(a)
                                   : baixarAnexo(a)
                           }
                           className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
@@ -4897,7 +4905,7 @@ const MessageDetail = forwardRef<
                       ) : (
                         <>
                           {previsivel && (
-                            <ContextMenuItem onSelect={() => setPreviewAtual(a)}>
+                            <ContextMenuItem onSelect={() => abrirPreview(a)}>
                               <Eye /> {t.controlRoom.previewCtxVer}
                             </ContextMenuItem>
                           )}
@@ -4918,15 +4926,6 @@ const MessageDetail = forwardRef<
               );
             })}
           </div>
-          {previewAtual && id && (
-            <PreviewAnexo
-              anexo={previewAtual}
-              messageId={id}
-              mailbox={mailbox}
-              onSalvar={() => baixarAnexo(previewAtual)}
-              onFechar={() => setPreviewAtual(null)}
-            />
-          )}
           {anexoEmail && id && (
             <PreviewEmailAninhado
               anexo={anexoEmail}
@@ -5076,6 +5075,15 @@ const MessageDetail = forwardRef<
         </div>
       </div>
 
+      {/* #496: split e-mail ↔ card de preview lateral. O painel do e-mail fica
+          SEMPRE montado (order=1) → sem remount do corpo/iframe ao abrir/fechar
+          o preview (nada de piscar). A largura do preview persiste via autoSaveId. */}
+      <ResizablePanelGroup
+        direction="horizontal"
+        autoSaveId="bridge.preview"
+        className="min-h-0 flex-1"
+      >
+        <ResizablePanel order={1} minSize={30} className="flex min-w-0 flex-col">
       {/* Cabeçalho do e-mail */}
       <div className="border-b px-5 py-4">
         <h1 className="text-base font-semibold">{det.assunto}</h1>
@@ -5156,6 +5164,31 @@ const MessageDetail = forwardRef<
 
       {/* Corpo do e-mail — sempre em altura cheia (sem compose espremido). */}
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina">{corpoInterno}</div>
+        </ResizablePanel>
+        {previewAtual && id && (
+          <>
+            <ResizableHandle
+              withHandle
+              className="mx-1.5 bg-transparent hover:bg-border"
+            />
+            <ResizablePanel
+              order={2}
+              minSize={25}
+              defaultSize={40}
+              className="min-w-0 overflow-hidden"
+            >
+              {/* #496: preview num card à direita, fora do corpo do e-mail. */}
+              <PreviewAnexo
+                anexo={previewAtual}
+                messageId={id}
+                mailbox={mailbox}
+                onSalvar={() => baixarAnexo(previewAtual)}
+                onFechar={() => setPreviewAtual(null)}
+              />
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
 
       {/* Reply / Reply all / Forward num Sheet lateral (como o New Mail): não
           corta a toolbar do compose e deixa o e-mail original visível atrás. A
