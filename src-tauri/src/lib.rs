@@ -743,6 +743,16 @@ async fn cr_org_branding(state: State<'_, Store>) -> Result<graph::OrgBranding, 
         .map_err(|e| e.to_string())?
 }
 
+/// #426 (Org Admin S3): contexto multi-tenant da org (org + tenants membros).
+/// Degrada gracioso (não-membro → inactive; sem permissão → forbidden).
+#[tauri::command]
+async fn cr_multi_tenant(state: State<'_, Store>) -> Result<graph::MultiTenantCard, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_multi_tenant(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// #186 (Atoms S4): sonda LOCAL do sync do OneDrive (registry + processo).
 #[tauri::command]
 async fn atoms_onedrive_sync() -> onedrive::OneDriveSync {
@@ -1750,6 +1760,7 @@ pub fn run() {
             cr_org_settings,
             cr_tenant_apps,
             cr_org_branding,
+            cr_multi_tenant,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,

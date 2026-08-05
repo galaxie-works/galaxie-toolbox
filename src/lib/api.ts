@@ -1351,6 +1351,43 @@ export function crOrgBranding(): Promise<OrgBranding> {
   return brandingCache;
 }
 
+/** #426: tenant membro de uma organização multi-tenant. */
+export interface MultiTenantMember {
+  tenantId: string;
+  displayName: string;
+  /** "owner" | "member" */
+  role: string;
+  /** "active" | "pending" | "removed" */
+  state: string;
+}
+
+export interface MultiTenantCard {
+  /** "ok" | "inactive" | "forbidden" | "error" */
+  status: "ok" | "inactive" | OrgCardStatus;
+  displayName: string | null;
+  members: MultiTenantMember[];
+}
+
+/**
+ * #426 (Org Admin S3): contexto multi-tenant da org (org + tenants membros).
+ * Fora do Tauri devolve um mock representativo pra visualizar o cartão no dev.
+ */
+export async function crMultiTenant(): Promise<MultiTenantCard> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      status: "ok",
+      displayName: "Voaz Group",
+      members: [
+        { tenantId: "1fd6544e", displayName: "Voaz Engenharia", role: "owner", state: "active" },
+        { tenantId: "4a12efe6", displayName: "Voaz Builders", role: "member", state: "active" },
+        { tenantId: "5036a0a0", displayName: "Voaz Labs", role: "member", state: "pending" },
+      ],
+    };
+  }
+  return invoke<MultiTenantCard>("cr_multi_tenant");
+}
+
 /** Atualiza, em uma única operação, os campos editáveis de um contato. */
 export async function crPeopleContactUpdate(
   contactId: string,
