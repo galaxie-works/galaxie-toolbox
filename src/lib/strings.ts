@@ -1569,6 +1569,23 @@ const pt = {
     // #525: SidebarTrigger/SidebarRail (animate-ui) — sr-only/aria-label/title.
     alternarBarra: "Alternar barra lateral",
   },
+  // #529 (i18n S4 / fecha o épico #459): rótulos do editor Plate, config-driven
+  // (fonte única aqui; acesso via `plateLabel` em plate-labels.ts, padrão não-hook
+  // do textoUi #475/#525). Só as chaves que RENDERIZAM nos editores shipados
+  // (composer + editor de assinatura). A toolbar completa (table/headings/align/
+  // code) só existe no editor demo não-shipado → deferida como follow-up trivial.
+  plate: {
+    link: "Link",
+    bulletedList: "Lista com marcadores",
+    bulletedListOptions: "Opções da lista com marcadores",
+    listDisc: "Padrão",
+    listCircle: "Círculo",
+    listSquare: "Quadrado",
+    pasteLink: "Colar link",
+    linkText: "Texto a exibir",
+    editLink: "Editar link",
+    abrirNovaAba: "Abrir link em nova aba",
+  },
 } as const;
 
 export type Dicionario = typeof pt;
@@ -3088,6 +3105,18 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     carregando: "Loading",
     semResultados: "No results",
     alternarBarra: "Toggle sidebar",
+  },
+  plate: {
+    link: "Link",
+    bulletedList: "Bulleted list",
+    bulletedListOptions: "Bulleted list options",
+    listDisc: "Default",
+    listCircle: "Circle",
+    listSquare: "Square",
+    pasteLink: "Paste link",
+    linkText: "Text to display",
+    editLink: "Edit link",
+    abrirNovaAba: "Open link in a new tab",
   },
 };
 

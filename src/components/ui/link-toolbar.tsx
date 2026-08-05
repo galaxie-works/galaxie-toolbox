@@ -30,6 +30,8 @@ import {
 
 import { buttonVariants } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+// #529: rótulos config-driven do editor (helper não-hook, padrão textoUi).
+import { plateLabel } from '@/lib/plate-labels';
 
 const popoverVariants = cva(
   'z-50 w-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-md outline-hidden'
@@ -107,7 +109,7 @@ export function LinkFloatingToolbar({
 
         <FloatingLinkUrlInput
           className={inputVariants()}
-          placeholder="Paste link"
+          placeholder={plateLabel("pasteLink")}
           data-plate-focus
         />
       </div>
@@ -118,7 +120,7 @@ export function LinkFloatingToolbar({
         </div>
         <input
           className={inputVariants()}
-          placeholder="Text to display"
+          placeholder={plateLabel("linkText")}
           data-plate-focus
           {...textInputProps}
         />
@@ -135,7 +137,7 @@ export function LinkFloatingToolbar({
         type="button"
         {...editButtonProps}
       >
-        Edit link
+        {plateLabel("editLink")}
       </button>
 
       <Separator orientation="vertical" />
@@ -199,7 +201,7 @@ function LinkOpenButton() {
       onMouseOver={(e) => {
         e.stopPropagation();
       }}
-      aria-label="Open link in a new tab"
+      aria-label={plateLabel("abrirNovaAba")}
       target="_blank"
     >
       <ExternalLink width={18} />
