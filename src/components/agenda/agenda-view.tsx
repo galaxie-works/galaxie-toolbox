@@ -4,7 +4,14 @@
 // como é); aqui fica só a cola: fetch por faixa visível, estados, i18n e o
 // diálogo de CRUD (padrão do c-event-calendar-3).
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { enUS, ptBR } from "date-fns/locale";
 import type { Locale } from "date-fns";
 import { toast } from "sonner";
@@ -41,6 +48,9 @@ import type {
 } from "@/lib/types";
 import { crEventoRecorrencia } from "@/lib/api";
 import { CampoPessoas } from "@/components/compose/campo-pessoas";
+// #570: avatar do organizador no chip (day/week), mesmo cache de fotos do #533.
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useFotos } from "@/lib/fotos";
 
 import {
   EventCalendar,
@@ -150,15 +160,45 @@ function ehRecorrente(ev: EventoAgenda): boolean {
  * `renderEvent` do event-calendar — NÃO instala variante nova. O avatar do
  * organizador é follow-up (#570, só day/week, depende de dado da agenda).
  */
-function renderChipEvento({
-  occurrence,
-}: EventCalendarRenderEventProps): ReactNode {
+/** #570: payload do evento no calendar — leva o organizador pro chip. */
+type DadosChipEvento = { organizadorEmail: string };
+
+/** Iniciais a partir do e-mail (não temos o nome do organizador no list-item). */
+function iniciaisEmail(email: string): string {
+  const base = email.split("@")[0] ?? email;
+  return (
+    base
+      .split(/[._-]+/)
+      .filter(Boolean)
+      .map((p) => p[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "?"
+  );
+}
+
+function renderChipEvento(
+  { occurrence, view }: EventCalendarRenderEventProps<DadosChipEvento>,
+  getFoto: (email: string | null | undefined) => string | null | undefined,
+): ReactNode {
+  // #570: avatar do organizador SÓ em day/week (blocos maiores). No mês o chip é
+  // apertado demais (decisão de design). Sem foto no cache → iniciais.
+  const orgEmail = occurrence.event.data?.organizadorEmail?.trim();
+  const mostrarAvatar = (view === "day" || view === "week") && !!orgEmail;
   return (
     <span className="flex w-full min-w-0 items-center gap-1.5">
       <span
         aria-hidden
         className="size-2 shrink-0 rounded-[3px] bg-(--ec-event-color)"
       />
+      {mostrarAvatar && orgEmail && (
+        <Avatar className="size-3.5 shrink-0">
+          <AvatarImage src={getFoto(orgEmail) ?? undefined} alt="" />
+          <AvatarFallback className="text-[8px]">
+            {iniciaisEmail(orgEmail)}
+          </AvatarFallback>
+        </Avatar>
+      )}
       {occurrence.isRecurring && (
         <Repeat className="size-2.5 shrink-0 opacity-70" aria-hidden="true" />
       )}
@@ -368,13 +408,13 @@ export function AgendaView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recargaAgenda]);
 
-  const eventos: CalendarEvent[] = useMemo(() => {
+  const eventos: CalendarEvent<DadosChipEvento>[] = useMemo(() => {
     return (mesEventos ?? [])
       // Semântica do convite (#287): eventos recusados somem do calendário
       // (mesmo comportamento do Outlook). Os demais estados (aceito/talvez/
       // pendente) aparecem; o RSVP e o badge ficam no detalhe do evento.
       .filter((ev) => ev.resposta !== "declined")
-      .map((ev): CalendarEvent | null => {
+      .map((ev): CalendarEvent<DadosChipEvento> | null => {
         const inicio = new Date(comZ(ev.inicio));
         const fim = new Date(comZ(ev.fim));
         if (Number.isNaN(inicio.getTime()) || Number.isNaN(fim.getTime())) {
@@ -400,10 +440,25 @@ export function AgendaView() {
             ev.tipo === "occurrence" ||
             ev.tipo === "exception" ||
             ev.tipo === "seriesMaster",
+          // #570: leva o organizador pro chip (avatar em day/week).
+          data: { organizadorEmail: ev.organizadorEmail },
         };
       })
-      .filter((e): e is CalendarEvent => e !== null);
+      .filter((e): e is CalendarEvent<DadosChipEvento> => e !== null);
   }, [mesEventos, coresCat]);
+
+  // #570: cache de fotos dos organizadores (mesmo useFotos do #533). Pré-carrega
+  // em batch só em day/week (onde o avatar aparece); month não mostra.
+  const { getFoto, pedirFotos } = useFotos();
+  useEffect(() => {
+    if (view !== "day" && view !== "week") return;
+    pedirFotos((mesEventos ?? []).map((ev) => ev.organizadorEmail));
+  }, [mesEventos, pedirFotos, view]);
+  const renderChip = useCallback(
+    (props: EventCalendarRenderEventProps<DadosChipEvento>) =>
+      renderChipEvento(props, getFoto),
+    [getFoto],
+  );
 
   const i18nCal = useMemo(() => montarI18n(t), [t]);
   const locale = localeDe(idioma);
@@ -477,7 +532,7 @@ export function AgendaView() {
               locale={locale}
               i18n={i18nCal}
               loading={mesEventos === null}
-              renderEvent={renderChipEvento}
+              renderEvent={renderChip}
               interactions={INTERACOES}
               showDayAddButton
               onRangeChange={buscarFaixa}

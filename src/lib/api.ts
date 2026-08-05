@@ -455,6 +455,7 @@ export async function crAgenda(
         // Evento próprio: organizador, sem RSVP (#287).
         resposta: "organizer",
         souOrganizador: true,
+        organizadorEmail: "wagner@voaz.builders",
         respostaSolicitada: false,
       },
       {
@@ -474,6 +475,7 @@ export async function crAgenda(
         // Convite pendente: aparece com semântica de "sem resposta" e RSVP (#287).
         resposta: "notResponded",
         souOrganizador: false,
+        organizadorEmail: "ana.kpmg@kpmg.com",
         respostaSolicitada: true,
       },
     ];

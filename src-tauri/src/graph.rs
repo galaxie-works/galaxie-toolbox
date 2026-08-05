@@ -1295,6 +1295,10 @@ pub struct EventoAgenda {
     pub resposta: String,
     /// True quando o usuário organiza o evento (Graph `isOrganizer`) — sem RSVP.
     pub sou_organizador: bool,
+    /// E-mail do organizador (Graph `organizer.emailAddress.address`). Aditivo
+    /// (#570): habilita o avatar do organizador no chip (day/week). Igual ao
+    /// #515 P2, mas no list-item.
+    pub organizador_email: String,
     /// Graph `responseRequested`: false = convite informativo (sem pedir RSVP).
     pub resposta_solicitada: bool,
     /// Graph `type` (#397): "singleInstance" | "occurrence" | "exception" |
@@ -1350,6 +1354,11 @@ fn parse_eventos(v: &serde_json::Value) -> Vec<EventoAgenda> {
                     .unwrap_or("none")
                     .to_string(),
                 sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
+                organizador_email: it["organizer"]["emailAddress"]["address"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
                 resposta_solicitada: it["responseRequested"].as_bool().unwrap_or(true),
                 tipo: it["type"].as_str().unwrap_or("singleInstance").to_string(),
                 series_master_id: it["seriesMasterId"]
@@ -1385,7 +1394,7 @@ fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgend
     Ok(parse_eventos(&v))
 }
 
-const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,responseRequested,type,seriesMasterId";
+const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,organizer,responseRequested,type,seriesMasterId";
 
 /// Eventos do calendário padrão no intervalo (limites em ISO UTC). Calendars.Read.
 ///
