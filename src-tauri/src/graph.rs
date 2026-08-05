@@ -9,6 +9,9 @@ use crate::auth::{refresh, TokenStore};
 
 
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
+/// Alguns settings org-wide (#425: appsAndServices, forms) só existem no beta do
+/// Graph; o M365 Install já é v1.0. Ver `cr_org_settings`.
+const GRAPH_BETA: &str = "https://graph.microsoft.com/beta";
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -4922,6 +4925,273 @@ pub fn cr_teams_disponivel(store: &TokenStore) -> Result<bool, String> {
 /// conjunto OrgSettings (todos entram/saem juntos no mesmo consent).
 pub fn cr_org_admin_available(store: &TokenStore) -> Result<bool, String> {
     token_tem_escopo(store, "OrgSettings-AppsAndServices.Read.All")
+}
+
+// ---------------------------------------------------------------------------
+// #425 (Org Admin S2): cartões READ-ONLY de OrgSettings. Cada GET é independente
+// e degrada sozinho — 403 → "forbidden" (sem o escopo daquele card), rede/parse
+// → "error", 200 → "ok". O painel já é gated pelo `cr_org_admin_available` (S1).
+// Endpoints (verificados na doc do Graph):
+//   • beta/admin/appsAndServices                       (OrgSettings-AppsAndServices.Read.All)
+//   • beta/admin/forms                                  (OrgSettings-Forms.Read.All)
+//   • v1.0/admin/microsoft365Apps/installationOptions   (OrgSettings-Microsoft365Install.Read.All)
+// appsAndServices/forms embrulham em `value.settings`; o M365 Install vem na raiz.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppsAndServicesCard {
+    /// "ok" | "forbidden" | "error"
+    pub status: String,
+    pub is_office_store_enabled: Option<bool>,
+    pub is_app_and_services_trial_enabled: Option<bool>,
+}
+
+impl AppsAndServicesCard {
+    fn vazio(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            is_office_store_enabled: None,
+            is_app_and_services_trial_enabled: None,
+        }
+    }
+    fn dos_settings(s: &serde_json::Value) -> Self {
+        Self {
+            status: "ok".to_string(),
+            is_office_store_enabled: s["isOfficeStoreEnabled"].as_bool(),
+            is_app_and_services_trial_enabled: s["isAppAndServicesTrialEnabled"].as_bool(),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormsCard {
+    pub status: String,
+    pub is_external_send_form_enabled: Option<bool>,
+    pub is_external_share_collaboration_enabled: Option<bool>,
+    pub is_external_share_result_enabled: Option<bool>,
+    pub is_external_share_template_enabled: Option<bool>,
+    pub is_record_identity_by_default_enabled: Option<bool>,
+    pub is_bing_image_search_enabled: Option<bool>,
+    pub is_in_org_forms_phishing_scan_enabled: Option<bool>,
+}
+
+impl FormsCard {
+    fn vazio(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            is_external_send_form_enabled: None,
+            is_external_share_collaboration_enabled: None,
+            is_external_share_result_enabled: None,
+            is_external_share_template_enabled: None,
+            is_record_identity_by_default_enabled: None,
+            is_bing_image_search_enabled: None,
+            is_in_org_forms_phishing_scan_enabled: None,
+        }
+    }
+    fn dos_settings(s: &serde_json::Value) -> Self {
+        Self {
+            status: "ok".to_string(),
+            is_external_send_form_enabled: s["isExternalSendFormEnabled"].as_bool(),
+            is_external_share_collaboration_enabled: s["isExternalShareCollaborationEnabled"]
+                .as_bool(),
+            is_external_share_result_enabled: s["isExternalShareResultEnabled"].as_bool(),
+            is_external_share_template_enabled: s["isExternalShareTemplateEnabled"].as_bool(),
+            is_record_identity_by_default_enabled: s["isRecordIdentityByDefaultEnabled"].as_bool(),
+            is_bing_image_search_enabled: s["isBingImageSearchEnabled"].as_bool(),
+            is_in_org_forms_phishing_scan_enabled: s["isInOrgFormsPhishingScanEnabled"].as_bool(),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct M365AppsPlataforma {
+    pub is_microsoft365_apps_enabled: Option<bool>,
+    pub is_project_enabled: Option<bool>,
+    pub is_skype_for_business_enabled: Option<bool>,
+    pub is_visio_enabled: Option<bool>,
+}
+
+impl M365AppsPlataforma {
+    fn do_valor(v: &serde_json::Value) -> Option<Self> {
+        if !v.is_object() {
+            return None;
+        }
+        Some(Self {
+            is_microsoft365_apps_enabled: v["isMicrosoft365AppsEnabled"].as_bool(),
+            is_project_enabled: v["isProjectEnabled"].as_bool(),
+            is_skype_for_business_enabled: v["isSkypeForBusinessEnabled"].as_bool(),
+            is_visio_enabled: v["isVisioEnabled"].as_bool(),
+        })
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct M365InstallCard {
+    pub status: String,
+    pub update_channel: Option<String>,
+    pub apps_for_windows: Option<M365AppsPlataforma>,
+    pub apps_for_mac: Option<M365AppsPlataforma>,
+}
+
+impl M365InstallCard {
+    fn vazio(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            update_channel: None,
+            apps_for_windows: None,
+            apps_for_mac: None,
+        }
+    }
+    fn da_raiz(body: &serde_json::Value) -> Self {
+        Self {
+            status: "ok".to_string(),
+            update_channel: body["updateChannel"]
+                .as_str()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            apps_for_windows: M365AppsPlataforma::do_valor(&body["appsForWindows"]),
+            apps_for_mac: M365AppsPlataforma::do_valor(&body["appsForMac"]),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgSettingsResult {
+    pub apps_and_services: AppsAndServicesCard,
+    pub forms: FormsCard,
+    pub microsoft365_install: M365InstallCard,
+}
+
+/// Resultado bruto de um GET de OrgSettings, antes de virar card tipado.
+enum OrgGetOutcome {
+    Ok(serde_json::Value),
+    Forbidden,
+    Error,
+}
+
+fn org_settings_get(
+    token: &str,
+    client: &reqwest::blocking::Client,
+    label: &str,
+    url: &str,
+) -> OrgGetOutcome {
+    match graph_enviar(label, GRAPH_TETO_ESPERA_S, || {
+        client.get(url).bearer_auth(token).send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => OrgGetOutcome::Ok(body),
+            Err(_) => OrgGetOutcome::Error,
+        },
+        Ok(resp) if resp.status().as_u16() == 403 => OrgGetOutcome::Forbidden,
+        Ok(_) => OrgGetOutcome::Error,
+        Err(_) => OrgGetOutcome::Error,
+    }
+}
+
+/// #425: lê os 3 grupos de settings org-wide (read-only) num tiro só. Cada card
+/// carrega seu próprio status pra a UI mostrar loading/erro/sem-permissão por card.
+pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let apps_and_services = match org_settings_get(
+        &token,
+        &client,
+        "org:appsAndServices",
+        &format!("{GRAPH_BETA}/admin/appsAndServices"),
+    ) {
+        OrgGetOutcome::Ok(body) => AppsAndServicesCard::dos_settings(&body["value"]["settings"]),
+        OrgGetOutcome::Forbidden => AppsAndServicesCard::vazio("forbidden"),
+        OrgGetOutcome::Error => AppsAndServicesCard::vazio("error"),
+    };
+
+    let forms = match org_settings_get(
+        &token,
+        &client,
+        "org:forms",
+        &format!("{GRAPH_BETA}/admin/forms"),
+    ) {
+        OrgGetOutcome::Ok(body) => FormsCard::dos_settings(&body["value"]["settings"]),
+        OrgGetOutcome::Forbidden => FormsCard::vazio("forbidden"),
+        OrgGetOutcome::Error => FormsCard::vazio("error"),
+    };
+
+    let microsoft365_install = match org_settings_get(
+        &token,
+        &client,
+        "org:m365Install",
+        &format!("{GRAPH}/admin/microsoft365Apps/installationOptions"),
+    ) {
+        OrgGetOutcome::Ok(body) => M365InstallCard::da_raiz(&body),
+        OrgGetOutcome::Forbidden => M365InstallCard::vazio("forbidden"),
+        OrgGetOutcome::Error => M365InstallCard::vazio("error"),
+    };
+
+    Ok(OrgSettingsResult {
+        apps_and_services,
+        forms,
+        microsoft365_install,
+    })
+}
+
+#[cfg(test)]
+mod org_settings_testes {
+    use super::*;
+
+    #[test]
+    fn parse_apps_and_services_do_exemplo_da_doc() {
+        let body: serde_json::Value = serde_json::from_str(
+            r#"{"value":{"id":"c079","settings":{"isOfficeStoreEnabled":false,"isAppAndServicesTrialEnabled":true}}}"#,
+        )
+        .unwrap();
+        let card = AppsAndServicesCard::dos_settings(&body["value"]["settings"]);
+        assert_eq!(card.status, "ok");
+        assert_eq!(card.is_office_store_enabled, Some(false));
+        assert_eq!(card.is_app_and_services_trial_enabled, Some(true));
+    }
+
+    #[test]
+    fn parse_forms_do_exemplo_da_doc() {
+        let body: serde_json::Value = serde_json::from_str(
+            r#"{"value":{"settings":{"isExternalSendFormEnabled":true,"isExternalShareCollaborationEnabled":false,"isExternalShareResultEnabled":false,"isExternalShareTemplateEnabled":true,"isRecordIdentityByDefaultEnabled":true,"isBingImageSearchEnabled":true,"isInOrgFormsPhishingScanEnabled":false}}}"#,
+        )
+        .unwrap();
+        let card = FormsCard::dos_settings(&body["value"]["settings"]);
+        assert_eq!(card.status, "ok");
+        assert_eq!(card.is_external_send_form_enabled, Some(true));
+        assert_eq!(card.is_external_share_collaboration_enabled, Some(false));
+        assert_eq!(card.is_in_org_forms_phishing_scan_enabled, Some(false));
+    }
+
+    #[test]
+    fn parse_m365_install_do_exemplo_da_doc() {
+        let body: serde_json::Value = serde_json::from_str(
+            r#"{"updateChannel":"current","appsForWindows":{"isMicrosoft365AppsEnabled":true,"isProjectEnabled":true,"isSkypeForBusinessEnabled":false,"isVisioEnabled":false},"appsForMac":{"isMicrosoft365AppsEnabled":false,"isSkypeForBusinessEnabled":true}}"#,
+        )
+        .unwrap();
+        let card = M365InstallCard::da_raiz(&body);
+        assert_eq!(card.status, "ok");
+        assert_eq!(card.update_channel.as_deref(), Some("current"));
+        let win = card.apps_for_windows.expect("appsForWindows");
+        assert_eq!(win.is_microsoft365_apps_enabled, Some(true));
+        assert_eq!(win.is_visio_enabled, Some(false));
+        let mac = card.apps_for_mac.expect("appsForMac");
+        assert_eq!(mac.is_skype_for_business_enabled, Some(true));
+        // campo ausente no Mac (isProjectEnabled) → None, sem panic
+        assert_eq!(mac.is_project_enabled, None);
+    }
+
+    #[test]
+    fn cards_vazios_carregam_status() {
+        assert_eq!(AppsAndServicesCard::vazio("forbidden").status, "forbidden");
+        assert_eq!(FormsCard::vazio("error").status, "error");
+        assert!(M365InstallCard::vazio("error").apps_for_windows.is_none());
+    }
 }
 
 fn valor_texto(item: &serde_json::Value, campo: &str) -> String {

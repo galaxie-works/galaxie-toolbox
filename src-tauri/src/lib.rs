@@ -713,6 +713,16 @@ async fn cr_org_admin_available(state: State<'_, Store>) -> Result<bool, String>
         .map_err(|e| e.to_string())?
 }
 
+/// #425 (Org Admin S2): lê os cartões read-only de OrgSettings (Apps & Services,
+/// Forms, Microsoft 365 Install) do tenant. Cada card degrada sozinho.
+#[tauri::command]
+async fn cr_org_settings(state: State<'_, Store>) -> Result<graph::OrgSettingsResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_org_settings(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// #186 (Atoms S4): sonda LOCAL do sync do OneDrive (registry + processo).
 #[tauri::command]
 async fn atoms_onedrive_sync() -> onedrive::OneDriveSync {
@@ -1717,6 +1727,7 @@ pub fn run() {
             cr_teams_disponivel,
             atoms_onedrive_sync,
             cr_org_admin_available,
+            cr_org_settings,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,

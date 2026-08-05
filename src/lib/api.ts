@@ -1191,6 +1191,90 @@ export async function crOrgAdminAvailable(): Promise<boolean> {
   return invoke<boolean>("cr_org_admin_available");
 }
 
+/** #425: status de um cartão OrgSettings — read-only, degrada por card. */
+export type OrgCardStatus = "ok" | "forbidden" | "error";
+
+export interface AppsAndServicesCard {
+  status: OrgCardStatus;
+  isOfficeStoreEnabled: boolean | null;
+  isAppAndServicesTrialEnabled: boolean | null;
+}
+
+export interface FormsCard {
+  status: OrgCardStatus;
+  isExternalSendFormEnabled: boolean | null;
+  isExternalShareCollaborationEnabled: boolean | null;
+  isExternalShareResultEnabled: boolean | null;
+  isExternalShareTemplateEnabled: boolean | null;
+  isRecordIdentityByDefaultEnabled: boolean | null;
+  isBingImageSearchEnabled: boolean | null;
+  isInOrgFormsPhishingScanEnabled: boolean | null;
+}
+
+export interface M365AppsPlatform {
+  isMicrosoft365AppsEnabled: boolean | null;
+  isProjectEnabled: boolean | null;
+  isSkypeForBusinessEnabled: boolean | null;
+  isVisioEnabled: boolean | null;
+}
+
+export interface M365InstallCard {
+  status: OrgCardStatus;
+  updateChannel: string | null;
+  appsForWindows: M365AppsPlatform | null;
+  appsForMac: M365AppsPlatform | null;
+}
+
+export interface OrgSettingsResult {
+  appsAndServices: AppsAndServicesCard;
+  forms: FormsCard;
+  microsoft365Install: M365InstallCard;
+}
+
+/**
+ * #425 (Org Admin S2): lê os cartões read-only de OrgSettings do tenant. Fora do
+ * Tauri devolve um mock representativo pra visualizar o painel no dev/browser.
+ */
+export async function crOrgSettings(): Promise<OrgSettingsResult> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      appsAndServices: {
+        status: "ok",
+        isOfficeStoreEnabled: false,
+        isAppAndServicesTrialEnabled: true,
+      },
+      forms: {
+        status: "ok",
+        isExternalSendFormEnabled: true,
+        isExternalShareCollaborationEnabled: false,
+        isExternalShareResultEnabled: false,
+        isExternalShareTemplateEnabled: true,
+        isRecordIdentityByDefaultEnabled: true,
+        isBingImageSearchEnabled: true,
+        isInOrgFormsPhishingScanEnabled: false,
+      },
+      microsoft365Install: {
+        status: "ok",
+        updateChannel: "current",
+        appsForWindows: {
+          isMicrosoft365AppsEnabled: true,
+          isProjectEnabled: true,
+          isSkypeForBusinessEnabled: false,
+          isVisioEnabled: false,
+        },
+        appsForMac: {
+          isMicrosoft365AppsEnabled: false,
+          isProjectEnabled: null,
+          isSkypeForBusinessEnabled: true,
+          isVisioEnabled: null,
+        },
+      },
+    };
+  }
+  return invoke<OrgSettingsResult>("cr_org_settings");
+}
+
 /** Atualiza, em uma única operação, os campos editáveis de um contato. */
 export async function crPeopleContactUpdate(
   contactId: string,
