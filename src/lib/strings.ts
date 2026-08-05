@@ -658,8 +658,11 @@ const pt = {
     agendaTituloObrigatorio: "Informe um título para o evento.",
     agendaCriado: "Evento criado.",
     agendaAtualizado: "Evento atualizado.",
+    agendaReagendado: "Evento reagendado.",
     agendaExcluido: "Evento excluído.",
     agendaErroSalvar: "Não foi possível salvar o evento.",
+    agendaErroReagendar: "Não foi possível reagendar o evento.",
+    agendaDragBloqueado: "Para mover este evento, use Editar.",
     agendaErroExcluir: "Não foi possível excluir o evento.",
     // Cancelar evento (#260) — notifica os convidados, distinto de excluir.
     agendaCancelar: "Cancelar evento",
@@ -2271,8 +2274,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     agendaTituloObrigatorio: "Enter a title for the event.",
     agendaCriado: "Event created.",
     agendaAtualizado: "Event updated.",
+    agendaReagendado: "Event rescheduled.",
     agendaExcluido: "Event deleted.",
     agendaErroSalvar: "Couldn't save the event.",
+    agendaErroReagendar: "Couldn't reschedule the event.",
+    agendaDragBloqueado: "To move this event, use Edit.",
     agendaErroExcluir: "Couldn't delete the event.",
     // Cancel event (#260) — notifies attendees, distinct from delete.
     agendaCancelar: "Cancel event",

@@ -452,6 +452,25 @@ async fn cr_editar_evento(
         .map_err(|e| e.to_string())?
 }
 
+/// Agenda (#213): reagenda um evento arrastando — PATCH só de start/end/isAllDay,
+/// preservando convidados/corpo/categorias/recorrência. Calendars.ReadWrite.
+#[tauri::command]
+async fn cr_reagendar_evento(
+    state: State<'_, Store>,
+    id: String,
+    inicio: String,
+    fim: String,
+    dia_inteiro: bool,
+    time_zone: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_reagendar_evento(&store, &id, &inicio, &fim, dia_inteiro, &time_zone)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Agenda (#397): recorrência da série (do seriesMaster) pra o form carregar os
 /// campos ao editar "a série inteira". None = não recorrente/não modelado.
 #[tauri::command]
@@ -1761,6 +1780,7 @@ pub fn run() {
             cr_criar_categoria,
             cr_criar_evento,
             cr_editar_evento,
+            cr_reagendar_evento,
             cr_evento_recorrencia,
             cr_excluir_evento,
             cr_cancelar_evento,

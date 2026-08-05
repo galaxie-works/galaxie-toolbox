@@ -612,6 +612,23 @@ export async function crEditarEvento(id: string, input: EventoInput): Promise<vo
   await invoke("cr_editar_evento", { id, input });
 }
 
+/** #213: reagenda um evento arrastando — PATCH só de início/fim/dia-inteiro,
+ * preservando convidados/corpo/categorias/recorrência (diferente do editar, que
+ * reenvia os attendees). Envia hora-de-parede local + fuso IANA, como o criar. */
+export async function crReagendarEvento(
+  id: string,
+  inicio: string,
+  fim: string,
+  diaInteiro: boolean,
+  timeZone: string,
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  await invoke("cr_reagendar_evento", { id, inicio, fim, diaInteiro, timeZone });
+}
+
 /** #397: recorrência da SÉRIE (do seriesMaster) pra o form carregar os campos ao
  * editar "a série inteira". `null` = evento único ou padrão não modelado (relative*). */
 export async function crEventoRecorrencia(

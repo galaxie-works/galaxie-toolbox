@@ -207,3 +207,77 @@ test("an invited attendee cannot open the organizer edit flow", () => {
   assert.equal(store.agendaFormEvento, null);
   assert.equal(detalhesCarregados, 0);
 });
+
+test("#213 dragging reschedules optimistically and forwards only timing", async () => {
+  let chamada: {
+    id: string;
+    inicio: string;
+    fim: string;
+    diaInteiro: boolean;
+    tz: string;
+  } | null = null;
+  const store = criarStore({
+    carregarEventos: async () => [],
+    carregarCategorias: async () => [],
+    carregarEvento: async () => detalhe("evento"),
+    reagendarEvento: async (id, inicio, fim, diaInteiro, tz) => {
+      chamada = { id, inicio, fim, diaInteiro, tz };
+    },
+  });
+  store.agendaEventosMes = [evento("ev1")];
+
+  await store.reagendarEvento(
+    "ev1",
+    "2026-07-29T14:00:00",
+    "2026-07-29T15:00:00",
+    false,
+    "America/Sao_Paulo",
+  );
+
+  // Otimista: o evento na lista já está no novo horário (guardado como ISO UTC).
+  const ev = store.agendaEventosMes![0];
+  assert.equal(
+    new Date(ev.inicio).getTime(),
+    new Date("2026-07-29T14:00:00").getTime(),
+  );
+  assert.equal(
+    new Date(ev.fim).getTime(),
+    new Date("2026-07-29T15:00:00").getTime(),
+  );
+  assert.equal(ev.diaInteiro, false);
+  // Convidados/corpo intactos: só início/fim/dia-inteiro vão pro Graph.
+  assert.deepEqual(chamada, {
+    id: "ev1",
+    inicio: "2026-07-29T14:00:00",
+    fim: "2026-07-29T15:00:00",
+    diaInteiro: false,
+    tz: "America/Sao_Paulo",
+  });
+});
+
+test("#213 a failed reschedule rolls back to the original event", async () => {
+  const store = criarStore({
+    carregarEventos: async () => [],
+    carregarCategorias: async () => [],
+    carregarEvento: async () => detalhe("evento"),
+    reagendarEvento: async () => {
+      throw new Error("PATCH 500");
+    },
+  });
+  const original = evento("ev1");
+  store.agendaEventosMes = [original];
+
+  await assert.rejects(
+    store.reagendarEvento(
+      "ev1",
+      "2026-07-29T14:00:00",
+      "2026-07-29T15:00:00",
+      false,
+      "America/Sao_Paulo",
+    ),
+  );
+
+  // Rollback: restaura o evento original (mesma referência), sem escrita fantasma.
+  assert.equal(store.agendaEventosMes![0], original);
+  assert.equal(store.agendaEventosMes![0].inicio, "2026-07-29T09:00:00");
+});

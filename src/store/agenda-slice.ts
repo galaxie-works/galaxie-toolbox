@@ -9,6 +9,7 @@ import {
   crCancelarEvento,
   crCriarEvento,
   crEditarEvento,
+  crReagendarEvento,
   crEventoCorpo,
   crExcluirEvento,
   crResponderEvento,
@@ -69,6 +70,13 @@ interface AgendaApi {
   carregarEvento: (id: string) => Promise<EventoDetalhe>;
   criarEvento: (input: EventoInput) => Promise<string>;
   editarEvento: (id: string, input: EventoInput) => Promise<void>;
+  reagendarEvento: (
+    id: string,
+    inicio: string,
+    fim: string,
+    diaInteiro: boolean,
+    timeZone: string,
+  ) => Promise<void>;
   excluirEvento: (id: string) => Promise<void>;
   cancelarEvento: (id: string, comentario: string) => Promise<void>;
   responderEvento: (
@@ -109,6 +117,9 @@ export interface AgendaSlice {
   // série) — decidido ANTES de abrir o form. `null` = não recorrente / criar.
   agendaFormEscopo: "ocorrencia" | "serie" | null;
   agendaFormInicio: string | null; // preset ao criar clicando num dia/slot
+  // #213: fim do slot arrastado (drag-to-book) — honra a duração desenhada no
+  // grid. `null` = criar por clique/botão (fim cai no default de +1h do form).
+  agendaFormFim: string | null;
   // Convidados COMPLETOS do evento em edição (#240). O resumo do mês
   // (`agendaFormEvento.participantes`) trunca em 5 e o PATCH substitui a coleção
   // de attendees; então, ao abrir o Sheet de edição, buscamos os attendees
@@ -134,7 +145,8 @@ export interface AgendaSlice {
   selecionarEventoAgenda: (id: string) => Promise<void>;
   fecharEventoAgenda: () => void;
 
-  abrirFormCriar: (inicio?: string) => void;
+  // #213: `inicio`/`fim` do slot (clique traz só início; arrastar traz os dois).
+  abrirFormCriar: (inicio?: string, fim?: string) => void;
   // Abre o form de edição e dispara a busca dos attendees COMPLETOS (#240).
   abrirFormEditar: (
     ev: EventoAgenda,
@@ -144,6 +156,15 @@ export interface AgendaSlice {
   // Escrita otimista + rollback (#211): a UI mostra o toast se a promise rejeitar.
   criarEvento: (input: EventoInput) => Promise<void>;
   editarEvento: (id: string, input: EventoInput) => Promise<void>;
+  // #213: reagenda arrastando (drag-to-book) — só início/fim/dia-inteiro, sem
+  // tocar convidados/corpo. Otimista + rollback (mesmo padrão do editar).
+  reagendarEvento: (
+    id: string,
+    inicio: string,
+    fim: string,
+    diaInteiro: boolean,
+    timeZone: string,
+  ) => Promise<void>;
   excluirEvento: (id: string) => Promise<void>;
   // Cancela (notifica os convidados), distinto de excluir (silencioso) (#260).
   cancelarEvento: (id: string, comentario: string) => Promise<void>;
@@ -170,6 +191,7 @@ const agendaApi: AgendaApi = {
   carregarEvento: crEventoCorpo,
   criarEvento: crCriarEvento,
   editarEvento: crEditarEvento,
+  reagendarEvento: crReagendarEvento,
   excluirEvento: crExcluirEvento,
   cancelarEvento: crCancelarEvento,
   responderEvento: crResponderEvento,
@@ -265,6 +287,7 @@ export function criarAgendaSlice(
     agendaFormEvento: null,
     agendaFormEscopo: null,
     agendaFormInicio: null,
+    agendaFormFim: null,
     agendaFormConvidados: null,
     agendaFormConvidadosCarregando: false,
     agendaFormGeracao: 0,
@@ -291,6 +314,7 @@ export function criarAgendaSlice(
         agendaFormEvento: null,
         agendaFormEscopo: null,
         agendaFormInicio: null,
+        agendaFormFim: null,
         agendaFormConvidados: null,
         agendaFormConvidadosCarregando: false,
         agendaFormGeracao: get().agendaFormGeracao + 1,
@@ -444,13 +468,16 @@ export function criarAgendaSlice(
         agendaEventoGeracao: state.agendaEventoGeracao + 1,
       })),
 
-    abrirFormCriar: (inicio) =>
+    abrirFormCriar: (inicio, fim) =>
       set((s) => ({
         agendaFormAberto: true,
         agendaFormModo: "criar",
         agendaFormEvento: null,
         agendaFormEscopo: null,
         agendaFormInicio: inicio ?? null,
+        // #213: só o slot ARRASTADO traz um fim (honra a duração desenhada); o
+        // clique/botão deixa `null` e o form cai no default de +1h.
+        agendaFormFim: fim ?? null,
         // Criar não tem attendees pré-existentes; invalida qualquer busca de
         // edição ainda em voo (#240).
         agendaFormConvidados: null,
@@ -563,6 +590,40 @@ export function criarAgendaSlice(
       });
       try {
         await api.editarEvento(id, input);
+      } catch (erro) {
+        if (original) {
+          set((s) => ({
+            agendaEventosMes: (s.agendaEventosMes ?? []).map((e) =>
+              e.id === id ? original : e,
+            ),
+          }));
+        }
+        throw erro;
+      }
+    },
+
+    // #213: reagenda arrastando (drag-to-book). Otimista — reposiciona o evento
+    // na lista do mês na hora; restaura o original na falha. Recebe hora-de-parede
+    // local (sem Z) + fuso IANA (mesmo contrato do criar/editar); guarda como ISO
+    // UTC pro calendário posicionar no horário certo. Só toca início/fim/dia-
+    // inteiro — convidados/corpo ficam intactos (PATCH parcial no Graph).
+    reagendarEvento: async (id, inicio, fim, diaInteiro, timeZone) => {
+      const antes = get().agendaEventosMes ?? [];
+      const original = antes.find((e) => e.id === id);
+      set({
+        agendaEventosMes: antes.map((e) =>
+          e.id === id
+            ? {
+                ...e,
+                inicio: localParaUtc(inicio),
+                fim: localParaUtc(fim),
+                diaInteiro,
+              }
+            : e,
+        ),
+      });
+      try {
+        await api.reagendarEvento(id, inicio, fim, diaInteiro, timeZone);
       } catch (erro) {
         if (original) {
           set((s) => ({

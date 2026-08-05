@@ -2066,6 +2066,41 @@ pub fn cr_editar_evento(store: &TokenStore, id: &str, input: EventoInput) -> Res
     Ok(())
 }
 
+/// #213: reagenda um evento arrastando (PATCH /me/events/{id}) — envia SÓ
+/// start/end/isAllDay, preservando attendees/corpo/categorias/recorrência (um
+/// PATCH parcial no Graph não toca nos campos omitidos). Distinto do
+/// `cr_editar_evento`, que reenvia a coleção de attendees. A hora-de-parede
+/// local + o `time_zone` IANA seguem o mesmo contrato do criar/editar; o Z é
+/// removido por garantia (dateTime não leva zona). Calendars.ReadWrite.
+pub fn cr_reagendar_evento(
+    store: &TokenStore,
+    id: &str,
+    inicio: &str,
+    fim: &str,
+    dia_inteiro: bool,
+    time_zone: &str,
+) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events/{id}");
+    let ini = inicio.trim_end_matches('Z');
+    let f = fim.trim_end_matches('Z');
+    let body = serde_json::json!({
+        "isAllDay": dia_inteiro,
+        "start": { "dateTime": ini, "timeZone": time_zone },
+        "end": { "dateTime": f, "timeZone": time_zone },
+    });
+    let resp = graph_enviar("agenda:reagendar", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao reagendar o evento: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita("me/events", "reagendar evento", resp.status()));
+    }
+    memo_invalidar("agenda:"); // #440
+    Ok(())
+}
+
 /// Exclui um evento (DELETE /me/events/{id}). 404 conta como sucesso
 /// (idempotente — já foi removido). Calendars.ReadWrite.
 pub fn cr_excluir_evento(store: &TokenStore, id: &str) -> Result<(), String> {
