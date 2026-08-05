@@ -69,10 +69,9 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { TELAS, type Tela } from "@/lib/navegacao";
-import { useAppStore } from "@/store";
+import { useAppStore, resetSessaoCompleta } from "@/store";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
-import { limparFotos } from "@/lib/fotos";
 import { useIdioma } from "@/lib/idioma";
 import { cn, comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
@@ -99,7 +98,6 @@ function AppInner() {
     (state) => state.setReauthMissingScopes,
   );
   const dismissReauth = useAppStore((state) => state.dismissReauth);
-  const clearReauth = useAppStore((state) => state.clearReauth);
   // #498 rework: o composer sem assinatura pede pra abrir a config (Bridge >
   // Envio). A ação de store seta item/frame + bumpa este nonce; aqui só falta
   // trocar a tela (App-level).
@@ -381,12 +379,12 @@ function AppInner() {
   async function handleLogin(email: string) {
     setLoginLoading(true);
     setError(null);
-    resetPeopleSession();
+    // #555 (P0): fronteira de conta — zera TODO o estado tenant-scoped (mailbox,
+    // agenda, organizations, branding, memos Rust, fotos…) antes de trocar de
+    // conta, pra a conta nova não herdar dado do tenant anterior.
+    resetSessaoCompleta();
     try {
       const u = await api.login(email, idioma);
-      // Login novo pode trazer o escopo de fotos (#39) recém-consentido: zera o
-      // cache pra não herdar negative-cache de sessão sem permissão.
-      limparFotos();
       setUser(u);
       void hydratePeopleM365({ force: true });
       const permissions = await api.requiredScopesStatus();
@@ -780,9 +778,9 @@ function AppInner() {
 
   async function logout() {
     await api.logout();
-    limparFotos(); // privacidade (#39): não deixa fotos no disco após sair
-    clearReauth();
-    resetPeopleSession();
+    // #555 (P0): fronteira de conta — reset completo de sessão (inclui fotos,
+    // reauth, mailbox, agenda, organizations, branding, memos Rust…).
+    resetSessaoCompleta();
     setUser(null);
     setSites([]);
     setError(null);
@@ -791,8 +789,8 @@ function AppInner() {
 
   async function recuperarBloqueio() {
     await api.logout();
-    limparFotos();
-    resetPeopleSession();
+    // #555 (P0): recuperação de bloqueio também sai da conta → reset completo.
+    resetSessaoCompleta();
     setUser(null);
     setSites([]);
     setError(null);

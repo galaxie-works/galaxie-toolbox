@@ -779,6 +779,12 @@ export function criarPeopleSlice(
       peopleGroupMembersById: {},
       peopleGroupMembersLoadingId: null,
       peopleGroupMembersError: null,
+      // #555: campos que a reset esquecia — categorias, filtro de categoria e o
+      // estado do merge são tenant-scoped e não podem vazar entre contas.
+      peopleCategorias: new Map(),
+      peopleSelectedCategory: null,
+      peopleMergeUndo: null,
+      peopleMergeRunning: false,
     });
   },
   selectPeopleDirectory: (peopleSelectedId = null) => {

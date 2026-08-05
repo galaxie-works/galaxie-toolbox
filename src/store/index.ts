@@ -1,6 +1,10 @@
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
+// #555 (P0): vetores de sessão fora do store, zerados pelo seam de reset.
+import { limparFotos } from "@/lib/fotos";
+import { invalidarBrandingCache, resetSessionMemo } from "@/lib/api";
+
 import {
   createUiSlice,
   UI_KEYS,
@@ -245,6 +249,29 @@ const TODAS_CHAVES = [
   // Chave legada da assinatura única (pré-#135): limpa no reset junto do resto.
   "bridge.assinatura",
 ];
+
+/**
+ * #555 (P0): chaves persistidas que são TENANT-SCOPED — precisam ser purgadas do
+ * disco na troca de conta pra não vazarem do tenant anterior (senão reidratam do
+ * localStorage). As demais chaves persistidas são config/prefs (globais) e ficam.
+ * Decisão de PO aplicada: `people.organizations` LIMPA na troca (isolamento).
+ */
+const CHAVES_TENANT: readonly string[] = [
+  MAILBOX_KEYS.caixasCompartilhadas, // "bridge.caixasCompartilhadas"
+  AGENDA_KEYS.agendaCalendariosSel, // "agenda.calendarios.selecao"
+  ORGANIZATIONS_KEYS.organizations, // "people.organizations"
+];
+
+/** Remove do localStorage as chaves tenant-scoped (troca de conta). */
+function purgarChavesTenant(): void {
+  for (const chave of CHAVES_TENANT) {
+    try {
+      localStorage.removeItem(chave);
+    } catch {
+      /* ignora */
+    }
+  }
+}
 
 /**
  * `PersistStorage` que NÃO usa uma chave única: lê/grava cada campo na sua chave
@@ -539,3 +566,34 @@ export const useAppStore = create<AppStore>()(
     }
   )
 );
+
+/**
+ * #555 (P0): SEAM ÚNICO de reset de sessão. Zera TODO o estado tenant-scoped na
+ * troca de conta, num lugar só — impossível esquecer um store (o teste de
+ * herança-zero garante a cobertura). Chamado nas FRONTEIRAS DE CONTA (login novo
+ * e logout), não no restore (mesma conta). PRESERVA config/prefs: tema, idioma,
+ * som, fundo, zoom, sidebar, assinaturas/templates, ordenação e filtros salvos.
+ *
+ * Se um slice novo tiver estado por-conta, adicione seu reset aqui — e o teste
+ * `store/reset-sessao.test.ts` (herança-zero) falha se algo escapar.
+ */
+export function resetSessaoCompleta(): void {
+  const s = useAppStore.getState();
+  // Slices tenant-scoped (reusa limpar*/fechar* existentes + os resets do #555).
+  s.resetSessaoMailbox();
+  s.resetSessaoList();
+  s.resetSessaoSelection();
+  s.limparLeitor(); // reader (#130): e-mail aberto + insights
+  s.limparConsultas(); // filters (#129): busca + resultados
+  s.fecharCompose(); // compose (#132): rascunho + destinatários + anexos
+  s.resetSessaoAgenda();
+  s.resetPeopleSession(); // people (+ categorias/merge, estendido no #555)
+  s.resetSessaoOrganizations();
+  s.clearReauth(); // auth (#235): escopos ausentes do token
+  // Vetores FORA do store.
+  limparFotos(); // cache de fotos (módulo + localStorage)
+  invalidarBrandingCache(); // memo do logo do tenant (#541)
+  void resetSessionMemo(); // memo curto do Graph no Rust (best-effort)
+  // Persistência: purga as chaves tenant-scoped do disco (senão reidratam).
+  purgarChavesTenant();
+}
