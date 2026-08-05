@@ -74,6 +74,8 @@ import {
 } from "@/components/reui/frame";
 import { Toolbar, ToolbarButton } from "@/components/ui/toolbar";
 import { preencher, useIdioma } from "@/lib/idioma";
+// #533: cache de fotos (mesmo padrão do #493/people-view) pro avatar do membro.
+import { useFotos } from "@/lib/fotos";
 import {
   contactDomain,
   organizationMembers,
@@ -413,7 +415,9 @@ export function OrganizationsView({
 }: {
   contacts: PeopleContact[];
 }) {
-  const { t } = useIdioma();
+  const { t, idioma } = useIdioma();
+  // #533: fotos dos membros vêm do mesmo cache (getFoto/pedirFotos) do #493.
+  const { getFoto, pedirFotos } = useFotos();
   const organizations = useAppStore((state) => state.organizations);
   const selectedId = useAppStore((state) => state.organizationSelectedId);
   const selectOrganization = useAppStore((state) => state.selectOrganization);
@@ -448,7 +452,23 @@ export function OrganizationsView({
   );
   const selected =
     organizations.find((organization) => organization.id === selectedId) ?? null;
-  const members = selected ? organizationMembers(selected, contacts) : [];
+  // #535: membros em ordem alfabética (A→Z) por nome, com localeCompare ciente
+  // do locale/acento (É/é/e ordenam junto). Sem nome → cai no e-mail como chave.
+  // useMemo dá identidade estável pro effect de fotos (#533) não refazer o batch
+  // a cada render. `selected`/`contacts` mudam → recomputa; `idioma` afeta a ordem.
+  const members = useMemo(() => {
+    const lista = selected ? organizationMembers(selected, contacts) : [];
+    return [...lista].sort((a, b) => {
+      const ka = a.name?.trim() || a.emails[0]?.address || "";
+      const kb = b.name?.trim() || b.emails[0]?.address || "";
+      return ka.localeCompare(kb, idioma, { sensitivity: "base" });
+    });
+  }, [selected, contacts, idioma]);
+  // #533: popula o cache com as fotos dos membros (batch, dedup no próprio cache).
+  // O `getFoto` no avatar abaixo lê o resultado; o useFotos re-renderiza ao chegar.
+  useEffect(() => {
+    pedirFotos(members.map((contact) => contact.emails[0]?.address));
+  }, [pedirFotos, members]);
   const wide = width >= 768;
   const listMin = width ? Math.min(50, (340 / width) * 100) : 30;
   const detailMin = width ? Math.min(64, (420 / width) * 100) : 40;
@@ -626,6 +646,9 @@ export function OrganizationsView({
                     }}
                   >
                     <Avatar size="sm">
+                      {/* #533: puxa a foto do cache (getFoto); 404/sem foto cai
+                          nas iniciais (o AvatarImage do Radix já degrada). */}
+                      <AvatarImage src={getFoto(memberEmail) ?? undefined} alt="" />
                       <AvatarFallback>{initials(contact.name)}</AvatarFallback>
                     </Avatar>
                     <span className="min-w-0">
