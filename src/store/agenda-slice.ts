@@ -27,12 +27,14 @@ import type {
 import type { AppStore } from "./index";
 
 /** Views suportadas pela Agenda (subconjunto do reui event-calendar). */
-export type AgendaViewTipo = "month" | "week" | "day" | "agenda";
+// #214: "resource" = visão por recurso (salas) — coluna por local, reserva de sala.
+export type AgendaViewTipo = "month" | "week" | "day" | "agenda" | "resource";
 export const AGENDA_VIEWS: readonly AgendaViewTipo[] = [
   "month",
   "week",
   "day",
   "agenda",
+  "resource", // #214: visão por recurso (salas)
 ];
 
 /** Chaves reais no localStorage das preferências persistidas da agenda. */

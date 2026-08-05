@@ -56,6 +56,7 @@ import type {
   CalendarEvent,
   EventCalendarOccurrence,
   EventCalendarRangeInfo,
+  EventCalendarResource,
   EventCalendarSlotInfo,
 } from "@/components/reui/event-calendar/event-calendar-types";
 
@@ -171,12 +172,19 @@ function renderChipEvento({
 
 // Identidades estáveis: o store do event-calendar compara settings por
 // referência, então arrays/objetos recriados a cada render forçariam re-render.
-const VIEWS: ("month" | "week" | "day" | "agenda")[] = [
+const VIEWS: ("month" | "week" | "day" | "agenda" | "resource")[] = [
   "month",
   "week",
   "day",
   "agenda",
+  // #214: visão por RECURSO (salas) — colunas por local, pra reserva de sala.
+  // O EventCalendar do reui já suporta a view "resource" (não recriamos variante);
+  // aqui só a ligamos e alimentamos com os recursos derivados dos eventos.
+  "resource",
 ];
+// #214: recurso "sem local" — eventos sem sala caem nesta coluna, pra não sumirem
+// da visão por recurso.
+const RECURSO_SEM_LOCAL = "__sem_local__";
 // Sem arrastar/redimensionar nem drag-create: a edição é pelo diálogo (#211).
 const INTERACOES = { drag: false, resize: false, selectSlot: false } as const;
 
@@ -231,6 +239,7 @@ function montarI18n(t: Dic): EventCalendarI18nOverrides {
       week: t.controlRoom.agendaViewSemana,
       day: t.controlRoom.agendaViewDia,
       agenda: t.controlRoom.agendaViewAgenda,
+      resource: t.controlRoom.agendaViewResource,
     },
   };
 }
@@ -400,10 +409,34 @@ export function AgendaView() {
             ev.tipo === "occurrence" ||
             ev.tipo === "exception" ||
             ev.tipo === "seriesMaster",
+          // #214: liga o evento à coluna de recurso (sala) na visão por recurso.
+          resourceId: ev.local?.trim() || RECURSO_SEM_LOCAL,
         };
       })
       .filter((e): e is CalendarEvent => e !== null);
   }, [mesEventos, coresCat]);
+
+  // #214: recursos (salas) da visão por recurso, derivados dos LOCAIS dos eventos
+  // carregados — sem depender do Graph rooms (futuro/nicho). Cada sala com evento
+  // vira uma coluna; eventos sem sala caem no recurso "sem local". Ordenados por
+  // nome (localeCompare do idioma), estáveis via useMemo.
+  const recursos: EventCalendarResource[] = useMemo(() => {
+    const locais = new Set<string>();
+    let temSemLocal = false;
+    for (const ev of mesEventos ?? []) {
+      if (ev.resposta === "declined") continue;
+      const l = ev.local?.trim();
+      if (l) locais.add(l);
+      else temSemLocal = true;
+    }
+    const lista: EventCalendarResource[] = [...locais]
+      .sort((a, b) => a.localeCompare(b, idioma, { sensitivity: "base" }))
+      .map((l) => ({ id: l, title: l }));
+    if (temSemLocal) {
+      lista.push({ id: RECURSO_SEM_LOCAL, title: t.controlRoom.agendaSemLocal });
+    }
+    return lista;
+  }, [mesEventos, idioma, t]);
 
   const i18nCal = useMemo(() => montarI18n(t), [t]);
   const locale = localeDe(idioma);
@@ -474,6 +507,7 @@ export function AgendaView() {
               view={view}
               date={dia}
               views={VIEWS}
+              resources={recursos}
               locale={locale}
               i18n={i18nCal}
               loading={mesEventos === null}
