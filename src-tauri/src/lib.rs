@@ -723,6 +723,20 @@ async fn cr_org_settings(state: State<'_, Store>) -> Result<graph::OrgSettingsRe
         .map_err(|e| e.to_string())?
 }
 
+/// #208 (RW): grava uma setting org-wide de To Do. Ver `graph::cr_org_todo_set`
+/// (endpoint `/admin/todo` por confirmar no live-QA; a UI trava a escrita até lá).
+#[tauri::command]
+async fn cr_org_todo_set(
+    state: State<'_, Store>,
+    campo: String,
+    valor: bool,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_org_todo_set(&store, &campo, valor))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// #207 (Org Admin): apps reais do tenant (service principals lançáveis) pra a
 /// tela Apps complementar o catálogo estático. Degrada gracioso.
 #[tauri::command]
@@ -1765,6 +1779,7 @@ pub fn run() {
             atoms_onedrive_sync,
             cr_org_admin_available,
             cr_org_settings,
+            cr_org_todo_set,
             cr_tenant_apps,
             cr_org_branding,
             cr_multi_tenant,

@@ -5195,6 +5195,36 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
     })
 }
 
+/// #208 (RW): grava UMA setting org-wide de To Do (OrgSettings-Todo.ReadWrite.All).
+/// PATCH `/admin/todo` com `{ "settings": { "<campo>": valor } }` — o shape espelha
+/// o GET (que lê `value.settings`). Só aceita os 3 campos conhecidos (nunca PATCH
+/// arbitrário). ⚠️ O endpoint/shape do `/admin/todo` ainda NÃO foi confirmado no
+/// tenant real (auth-gate) — a UI mantém a escrita TRAVADA atrás de um gate até o
+/// live-QA de admin do Wagner validar; este comando fica pronto pra ativar (#208).
+pub fn cr_org_todo_set(store: &TokenStore, campo: &str, valor: bool) -> Result<(), String> {
+    if !matches!(
+        campo,
+        "isPushNotificationEnabled" | "isExternalJoinEnabled" | "isExternalShareEnabled"
+    ) {
+        return Err(format!("campo de To Do desconhecido: {campo}"));
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let body = serde_json::json!({ "settings": { campo: valor } });
+    let resp = graph_enviar("org:todo:set", GRAPH_TETO_ESPERA_S, || {
+        client
+            .patch(format!("{GRAPH_BETA}/admin/todo"))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+    })
+    .map_err(|e| format!("falha ao gravar To Do org-wide: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/admin/todo PATCH retornou {}", resp.status()));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // #207 (Org Admin): apps REAIS do tenant. Lê os service principals (enterprise
 // apps) via GET /servicePrincipals (Application.Read.All, já no SCOPES do #424).

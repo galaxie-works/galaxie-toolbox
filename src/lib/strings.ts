@@ -1442,6 +1442,11 @@ const pt = {
     cfgOrgTodoPush: "Notificações push",
     cfgOrgTodoExternalJoin: "Entrar em listas externas",
     cfgOrgTodoExternalShare: "Compartilhamento externo",
+    cfgOrgTodoConfirmTitle: "Alterar setting org-wide?",
+    cfgOrgTodoConfirmDesc:
+      "Isso muda o comportamento do Microsoft To Do para toda a organização.",
+    cfgOrgTodoConfirmCancel: "Cancelar",
+    cfgOrgTodoConfirmOk: "Alterar",
     cfgOrgUpdateChannel: "Canal de atualização",
     cfgOrgOn: "Ativado",
     cfgOrgOff: "Desativado",
@@ -3029,6 +3034,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgOrgTodoPush: "Push notifications",
     cfgOrgTodoExternalJoin: "Join external lists",
     cfgOrgTodoExternalShare: "External sharing",
+    cfgOrgTodoConfirmTitle: "Change org-wide setting?",
+    cfgOrgTodoConfirmDesc:
+      "This changes Microsoft To Do behavior for the whole organization.",
+    cfgOrgTodoConfirmCancel: "Cancel",
+    cfgOrgTodoConfirmOk: "Change",
     cfgOrgUpdateChannel: "Update channel",
     cfgOrgOn: "On",
     cfgOrgOff: "Off",
