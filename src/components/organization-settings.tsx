@@ -266,6 +266,17 @@ export function OrganizationSettings() {
           {(["appsForWindows", "appsForMac"] as const).map((plataforma) => {
             const p = m365[plataforma];
             const rotulo = plataforma === "appsForWindows" ? "Windows" : "Mac";
+            // #425 fix: o Graph só retorna os apps que a plataforma tem — o
+            // `appsForMac`, p.ex., não traz Project nem Visio. Renderizar só os
+            // campos presentes (não-null) evita mostrar "—" pra app que não
+            // existe naquela plataforma (dúvida do Wagner).
+            const linhas = [
+              { label: "Microsoft 365 Apps", valor: p?.isMicrosoft365AppsEnabled ?? null },
+              { label: "Project", valor: p?.isProjectEnabled ?? null },
+              { label: "Skype for Business", valor: p?.isSkypeForBusinessEnabled ?? null },
+              { label: "Visio", valor: p?.isVisioEnabled ?? null },
+            ].filter((linha) => linha.valor !== null);
+            if (linhas.length === 0) return null;
             return (
               <div key={plataforma} className="py-1.5">
                 <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
@@ -273,16 +284,13 @@ export function OrganizationSettings() {
                   {rotulo}
                 </p>
                 <div className="pl-1">
-                  <LinhaSetting
-                    label="Microsoft 365 Apps"
-                    valor={p?.isMicrosoft365AppsEnabled ?? null}
-                  />
-                  <LinhaSetting label="Project" valor={p?.isProjectEnabled ?? null} />
-                  <LinhaSetting
-                    label="Skype for Business"
-                    valor={p?.isSkypeForBusinessEnabled ?? null}
-                  />
-                  <LinhaSetting label="Visio" valor={p?.isVisioEnabled ?? null} />
+                  {linhas.map((linha) => (
+                    <LinhaSetting
+                      key={linha.label}
+                      label={linha.label}
+                      valor={linha.valor}
+                    />
+                  ))}
                 </div>
               </div>
             );
