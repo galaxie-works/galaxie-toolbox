@@ -733,6 +733,16 @@ async fn cr_tenant_apps(state: State<'_, Store>) -> Result<graph::TenantAppsResu
         .map_err(|e| e.to_string())?
 }
 
+/// #541: logo do tenant (claro + escuro) do Entra branding, pro header do
+/// sidebar. Degrada gracioso (sem branding / sem permissão → None).
+#[tauri::command]
+async fn cr_org_branding(state: State<'_, Store>) -> Result<graph::OrgBranding, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_org_branding(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// #186 (Atoms S4): sonda LOCAL do sync do OneDrive (registry + processo).
 #[tauri::command]
 async fn atoms_onedrive_sync() -> onedrive::OneDriveSync {
@@ -1739,6 +1749,7 @@ pub fn run() {
             cr_org_admin_available,
             cr_org_settings,
             cr_tenant_apps,
+            cr_org_branding,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,

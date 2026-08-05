@@ -34,9 +34,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ClienteMark } from "@/components/brand";
+import { ClienteMark, TenantLogo } from "@/components/brand";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { AppUser } from "@/lib/types";
+import { crOrgBranding } from "@/lib/api";
 import { NAV, type Tela } from "@/lib/navegacao";
 import { useIdioma } from "@/lib/idioma";
 import {
@@ -46,6 +47,7 @@ import {
   LogOut,
   Settings,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export function AppSidebar({
   user,
@@ -67,6 +69,28 @@ export function AppSidebar({
   // mesma regra do SidebarMenuButton dos itens de navegação (#98).
   const colapsada = state === "collapsed" && !isMobile;
 
+  // #541: logo do tenant (Entra branding), theme-aware. Busca uma vez (memoizado
+  // no api.ts); sem branding/sem permissão → null → cai no ClienteMark estático.
+  const [branding, setBranding] = useState<{
+    claro: string;
+    escuro: string;
+  } | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    crOrgBranding()
+      .then((b) => {
+        const claro = b.squareLogo ?? b.squareLogoDark;
+        const escuro = b.squareLogoDark ?? b.squareLogo;
+        if (vivo && claro && escuro) setBranding({ claro, escuro });
+      })
+      .catch(() => {
+        /* degrada pro fallback */
+      });
+    return () => {
+      vivo = false;
+    };
+  }, []);
+
   return (
     <Sidebar collapsible="icon">
       {/* Organizacao do cliente */}
@@ -77,9 +101,20 @@ export function AppSidebar({
               size="lg"
               tooltip={user.organizacao ?? t.nav.organizacao}
             >
-              <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                <ClienteMark className="size-4" />
-              </div>
+              {/* #541: com branding do tenant, o logo aparece LIMPO — sem box,
+                  sem contorno, sem círculo (requisito do PO). Sem branding, cai
+                  no ClienteMark estático dentro do box de sempre. */}
+              {branding ? (
+                <TenantLogo
+                  claro={branding.claro}
+                  escuro={branding.escuro}
+                  className="size-8 shrink-0"
+                />
+              ) : (
+                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+                  <ClienteMark className="size-4" />
+                </div>
+              )}
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-semibold">
                   {user.organizacao ?? t.nav.organizacao}

@@ -5248,6 +5248,99 @@ pub fn cr_tenant_apps(store: &TokenStore) -> Result<TenantAppsResult, String> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// #541: logo do tenant (Entra organizational branding) pro header do sidebar.
+// Busca o squareLogo (claro) e squareLogoDark (escuro) do branding DEFAULT e
+// devolve cada um como data URL (padrão do favicon.rs). Degrada gracioso: sem
+// branding / 403 / 404 / imagem vazia → None (o front cai no fallback).
+// Endpoint (verificado na doc): GET /organization/{id}/branding/localizations/0/{squareLogo|squareLogoDark}
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgBranding {
+    /// Logo pra fundo claro (data URL) — None se não configurado.
+    pub square_logo: Option<String>,
+    /// Logo pra fundo escuro (data URL) — None se não configurado.
+    pub square_logo_dark: Option<String>,
+}
+
+/// Baixa uma imagem de branding e devolve o data URL, ou None em qualquer
+/// falha (status, tipo não-imagem, corpo vazio). Não propaga erro de propósito.
+fn baixar_branding_logo(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    label: &str,
+    url: &str,
+) -> Option<String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let resp = graph_enviar(label, GRAPH_TETO_ESPERA_S, || {
+        client.get(url).bearer_auth(token).send()
+    })
+    .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let tipo = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+        .unwrap_or_default();
+    // Branding não configurado costuma vir 200 com corpo vazio / JSON — só
+    // aceitamos imagem de verdade.
+    if !tipo.starts_with("image/") {
+        return None;
+    }
+    let bytes = resp.bytes().ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let b64 = STANDARD.encode(&bytes);
+    Some(format!("data:{tipo};base64,{b64}"))
+}
+
+/// #541: logo do tenant (claro + escuro) do branding default do Entra.
+pub fn cr_org_branding(store: &TokenStore) -> Result<OrgBranding, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // orgId do usuário logado; sem ele não dá pra montar a URL de branding.
+    let org_id = match graph_enviar("org:branding:orgId", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(format!("{GRAPH}/organization?$select=id"))
+            .bearer_auth(&token)
+            .send()
+    }) {
+        Ok(resp) if resp.status().is_success() => resp
+            .json::<serde_json::Value>()
+            .ok()
+            .and_then(|b| b["value"][0]["id"].as_str().map(|s| s.to_string())),
+        _ => None,
+    };
+    let Some(org_id) = org_id.filter(|s| !s.is_empty()) else {
+        return Ok(OrgBranding {
+            square_logo: None,
+            square_logo_dark: None,
+        });
+    };
+
+    let base = format!("{GRAPH}/organization/{org_id}/branding/localizations/0");
+    let square_logo =
+        baixar_branding_logo(&client, &token, "org:branding:squareLogo", &format!("{base}/squareLogo"));
+    let square_logo_dark = baixar_branding_logo(
+        &client,
+        &token,
+        "org:branding:squareLogoDark",
+        &format!("{base}/squareLogoDark"),
+    );
+
+    Ok(OrgBranding {
+        square_logo,
+        square_logo_dark,
+    })
+}
+
 #[cfg(test)]
 mod org_settings_testes {
     use super::*;
