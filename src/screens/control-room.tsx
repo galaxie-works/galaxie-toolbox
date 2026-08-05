@@ -1979,12 +1979,21 @@ function FolderSidebar({
                 <Button
                   size="icon"
                   onClick={onNovo}
-                  aria-label={t.controlRoom.novoEmail}
+                  aria-label={shortcutAccessibleLabel(
+                    t.controlRoom.novoEmail,
+                    ATALHO_COMPOR
+                  )}
                 >
                   <SquarePenIcon size={16} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{t.controlRoom.novoEmail}</TooltipContent>
+              <TooltipContent>
+                {/* #538: New Mail é icon-only COM atalho (c) → ShortcutTooltip. */}
+                <ShortcutTooltip
+                  label={t.controlRoom.novoEmail}
+                  shortcut={ATALHO_COMPOR}
+                />
+              </TooltipContent>
             </Tooltip>
             <DropdownMenu>
               {/* Tooltip > DropdownMenu: dois gatilhos asChild no mesmo botão. */}
@@ -2037,12 +2046,23 @@ function FolderSidebar({
           {colapsada && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
+                <Button
+                  size="icon"
+                  onClick={onNovo}
+                  aria-label={shortcutAccessibleLabel(
+                    t.controlRoom.novoEmail,
+                    ATALHO_COMPOR
+                  )}
+                >
                   <SquarePenIcon size={16} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right" align="center">
-                {t.controlRoom.novoEmail}
+                {/* #538: New Mail icon-only COM atalho (c) → ShortcutTooltip. */}
+                <ShortcutTooltip
+                  label={t.controlRoom.novoEmail}
+                  shortcut={ATALHO_COMPOR}
+                />
               </TooltipContent>
             </Tooltip>
           )}
@@ -2867,9 +2887,27 @@ const ATALHO_LER_NAO_LIDO: ShortcutDefinition = { key: "U" };
 // por e.key.toLowerCase() = r/a/f). Exibidos como <Kbd> ao lado do rótulo dos
 // botões Responder/Responder a todos/Encaminhar. NÃO inventar — casam com o
 // handler; teclas exibidas em maiúscula (convenção dos demais ATALHO_*).
-const ATALHO_RESPONDER: ShortcutDefinition = { key: "R" };
-const ATALHO_RESPONDER_TODOS: ShortcutDefinition = { key: "A" };
-const ATALHO_ENCAMINHAR: ShortcutDefinition = { key: "F" };
+// #537: esquema Outlook — combos, não single-key (o single F colidia com o
+// Filtro da lista). Responder=Ctrl+R · Responder a todos=Ctrl+Shift+R ·
+// Encaminhar=Ctrl+Shift+F. O `ShortcutDefinition` já suporta primary/shift, e o
+// `formatShortcut` renderiza "Ctrl+Shift+R" no <Kbd> — o exibido acompanha.
+const ATALHO_RESPONDER: ShortcutDefinition = { key: "R", primary: true };
+const ATALHO_RESPONDER_TODOS: ShortcutDefinition = {
+  key: "R",
+  primary: true,
+  shift: true,
+};
+const ATALHO_ENCAMINHAR: ShortcutDefinition = {
+  key: "F",
+  primary: true,
+  shift: true,
+};
+// #538: o Filtro da lista tem atalho F (single, liberado pelo #537) via o
+// `<Filters enableShortcut shortcutKey="f">` — o tooltip precisa exibir o Kbd.
+const ATALHO_FILTRO: ShortcutDefinition = { key: "F" };
+// #538: "Novo e-mail" (icon-only) dispara o mesmo compose do atalho "c" (o
+// handler chama onCompor; onNovo === onCompor === novoEmailModal).
+const ATALHO_COMPOR: ShortcutDefinition = { key: "C" };
 
 function MessageList({
   titulo,
@@ -3434,6 +3472,32 @@ function MessageList({
       return;
     }
 
+    // #537: Responder / Responder a todos / Encaminhar por COMBO (esquema
+    // Outlook). Antes eram single R/A/F, e o F colidia com o Filtro da lista.
+    // Ctrl+R = responder · Ctrl+Shift+R = responder a todos · Ctrl+Shift+F =
+    // encaminhar. Sem modificador, R/A/F ficam livres (F → só o Filtro).
+    if (ehModPrincipal(e) && !e.altKey) {
+      const tecla = e.key.toLowerCase();
+      if (tecla === "r" && !e.shiftKey) {
+        if (envioBloqueado) return;
+        e.preventDefault();
+        onResponder();
+        return;
+      }
+      if (tecla === "r" && e.shiftKey) {
+        if (envioBloqueado) return;
+        e.preventDefault();
+        onResponderTodos();
+        return;
+      }
+      if (tecla === "f" && e.shiftKey) {
+        if (envioBloqueado) return;
+        e.preventDefault();
+        onEncaminhar();
+        return;
+      }
+    }
+
     if (mensagensNavegaveis.length === 0) return;
     const idxAtivo = mensagensNavegaveis.findIndex((m) => m.id === msgSel);
 
@@ -3472,24 +3536,11 @@ function MessageList({
       return;
     }
 
-    // Atalhos de tecla única sem modificadores.
+    // Atalhos de tecla única sem modificadores. (Responder/Responder a todos/
+    // Encaminhar saíram daqui no #537 — agora são combos Ctrl+... acima; R/A/F
+    // single ficam livres, o F pro Filtro da lista.)
     if (ehModPrincipal(e) || e.altKey || e.shiftKey) return;
     switch (e.key.toLowerCase()) {
-      case "r": // responder
-        if (envioBloqueado) return;
-        e.preventDefault();
-        onResponder();
-        return;
-      case "a": // responder a todos
-        if (envioBloqueado) return;
-        e.preventDefault();
-        onResponderTodos();
-        return;
-      case "f": // encaminhar
-        if (envioBloqueado) return;
-        e.preventDefault();
-        onEncaminhar();
-        return;
       case "x": // marcar/desmarcar a mensagem ativa
         if (ativoId) {
           e.preventDefault();
@@ -3650,7 +3701,10 @@ function MessageList({
                   shortcutLabel="F"
                   trigger={
                     <ToolbarButton
-                      aria-label={t.controlRoom.filtroLabel}
+                      aria-label={shortcutAccessibleLabel(
+                        t.controlRoom.filtroLabel,
+                        ATALHO_FILTRO
+                      )}
                       pressed={filtros.length > 0}
                     >
                       <ListFilter />
@@ -3664,7 +3718,13 @@ function MessageList({
                 />
               </span>
             </TooltipTrigger>
-            <TooltipContent>{t.controlRoom.filtroLabel}</TooltipContent>
+            <TooltipContent>
+              {/* #538: Filtro é icon-only COM atalho (F) → ShortcutTooltip c/ Kbd. */}
+              <ShortcutTooltip
+                label={t.controlRoom.filtroLabel}
+                shortcut={ATALHO_FILTRO}
+              />
+            </TooltipContent>
           </Tooltip>
           {filtros.length > 0 && (
             <ToolbarButton

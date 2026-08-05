@@ -51,9 +51,9 @@ export function catalogoAtalhos(t: T): AtalhoCategoria[] {
     {
       titulo: c.atalhosCatAcoes,
       itens: [
-        { teclas: ["r"], rotulo: c.atalhosResponder },
-        { teclas: ["a"], rotulo: c.atalhosResponderTodos },
-        { teclas: ["f"], rotulo: c.atalhosEncaminhar },
+        { teclas: ["Ctrl", "R"], rotulo: c.atalhosResponder },
+        { teclas: ["Ctrl", "Shift", "R"], rotulo: c.atalhosResponderTodos },
+        { teclas: ["Ctrl", "Shift", "F"], rotulo: c.atalhosEncaminhar },
         { teclas: ["c"], rotulo: c.atalhosCompor },
         { teclas: ["u"], rotulo: c.atalhosLidoNaoLido },
         { teclas: ["s"], rotulo: c.atalhosSinalizar },
