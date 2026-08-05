@@ -10,8 +10,16 @@ import {
 import { LinkIcon } from '@/components/ui/link';
 // #529: rótulo config-driven (helper não-hook, padrão textoUi #475/#525).
 import { plateLabel } from '@/lib/plate-labels';
+// #549: atalho Ctrl+K (wire no LinkKit via triggerFloatingLinkHotkeys) → kbd.
+import {
+  shortcutAccessibleLabel,
+  type ShortcutDefinition,
+} from '@/components/ui/shortcut';
+import { ShortcutTooltip } from '@/components/ui/shortcut-tooltip';
 
 import { ToolbarButton } from './toolbar';
+
+const ATALHO_LINK: ShortcutDefinition = { key: 'K', primary: true };
 
 export function LinkToolbarButton(
   props: React.ComponentProps<typeof ToolbarButton>
@@ -23,9 +31,11 @@ export function LinkToolbarButton(
     <ToolbarButton
       {...props}
       {...buttonProps}
-      aria-label={plateLabel("link")}
+      aria-label={shortcutAccessibleLabel(plateLabel("link"), ATALHO_LINK)}
       data-plate-focus
-      tooltip={plateLabel("link")}
+      tooltip={
+        <ShortcutTooltip label={plateLabel("link")} shortcut={ATALHO_LINK} />
+      }
     >
       <LinkIcon />
     </ToolbarButton>

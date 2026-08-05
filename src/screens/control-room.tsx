@@ -2908,6 +2908,11 @@ const ATALHO_FILTRO: ShortcutDefinition = { key: "F" };
 // #538: "Novo e-mail" (icon-only) dispara o mesmo compose do atalho "c" (o
 // handler chama onCompor; onNovo === onCompor === novoEmailModal).
 const ATALHO_COMPOR: ShortcutDefinition = { key: "C" };
+// #549: equiparação Outlook nos icon-only que NÃO tinham atalho.
+// Atualizar = F9 (Outlook Send/Receive All). Ordenar = O (app-nativo — o Outlook
+// não tem atalho único de sort; tecla livre e mnemônica, sem colisão).
+const ATALHO_ATUALIZAR: ShortcutDefinition = { key: "F9" };
+const ATALHO_ORDENAR: ShortcutDefinition = { key: "O" };
 
 function MessageList({
   titulo,
@@ -2987,6 +2992,8 @@ function MessageList({
   const ordemDesc = useAppStore((s) => s.ordemDesc);
   const setOrdemDesc = useAppStore((s) => s.setOrdemDesc);
   const [ajudaAberta, setAjudaAberta] = useState(false);
+  // #549: dropdown do sort controlado, pra o atalho "O" poder abri-lo.
+  const [sortAberto, setSortAberto] = useState(false);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
 
@@ -3472,6 +3479,13 @@ function MessageList({
       return;
     }
 
+    // #549: F9 atualiza a lista (Outlook = Send/Receive All).
+    if (e.key === "F9") {
+      e.preventDefault();
+      onRefresh();
+      return;
+    }
+
     // #537: Responder / Responder a todos / Encaminhar por COMBO (esquema
     // Outlook). Antes eram single R/A/F, e o F colidia com o Filtro da lista.
     // Ctrl+R = responder · Ctrl+Shift+R = responder a todos · Ctrl+Shift+F =
@@ -3541,6 +3555,10 @@ function MessageList({
     // single ficam livres, o F pro Filtro da lista.)
     if (ehModPrincipal(e) || e.altKey || e.shiftKey) return;
     switch (e.key.toLowerCase()) {
+      case "o": // #549: abre o menu de ordenação (app-nativo, Outlook não tem)
+        e.preventDefault();
+        setSortAberto(true);
+        return;
       case "x": // marcar/desmarcar a mensagem ativa
         if (ativoId) {
           e.preventDefault();
@@ -3734,20 +3752,29 @@ function MessageList({
               <FunnelX />
             </ToolbarButton>
           )}
-          <DropdownMenu>
+          <DropdownMenu open={sortAberto} onOpenChange={setSortAberto}>
             {/* #226: sort é icon button com tooltip, igual ao People. */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
                   <ToolbarButton
-                    aria-label={t.controlRoom.ordenarPor}
+                    aria-label={shortcutAccessibleLabel(
+                      t.controlRoom.ordenarPor,
+                      ATALHO_ORDENAR
+                    )}
                     pressed={ordenar !== "data" || !ordemDesc}
                   >
                     <ArrowDownUp />
                   </ToolbarButton>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
-              <TooltipContent>{t.controlRoom.ordenarPor}</TooltipContent>
+              <TooltipContent>
+                {/* #549: Sort ganha atalho O → ShortcutTooltip com Kbd. */}
+                <ShortcutTooltip
+                  label={t.controlRoom.ordenarPor}
+                  shortcut={ATALHO_ORDENAR}
+                />
+              </TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="end" className="w-44">
               <DropdownMenuLabel>{t.controlRoom.ordenarPor}</DropdownMenuLabel>
@@ -3778,14 +3805,27 @@ function MessageList({
           {/* As preferências de LEITURA (marcar como lido) migraram pra
               Settings > Bridge > Reading (#227): a UI do e-mail deixa de ter
               esse controle solto. */}
-          {/* Atualizar (#101): sem atalho → Tooltip canônico. */}
+          {/* Atualizar (#549): atalho F9 (Outlook Send/Receive) → ShortcutTooltip. */}
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label={t.controlRoom.atualizar}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onRefresh}
+                aria-label={shortcutAccessibleLabel(
+                  t.controlRoom.atualizar,
+                  ATALHO_ATUALIZAR
+                )}
+              >
                 <RefreshCw />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{t.controlRoom.atualizar}</TooltipContent>
+            <TooltipContent>
+              <ShortcutTooltip
+                label={t.controlRoom.atualizar}
+                shortcut={ATALHO_ATUALIZAR}
+              />
+            </TooltipContent>
           </Tooltip>
         </Toolbar>
       </div>
