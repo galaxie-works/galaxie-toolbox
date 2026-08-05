@@ -4916,6 +4916,14 @@ pub fn cr_teams_disponivel(store: &TokenStore) -> Result<bool, String> {
     token_tem_escopo(store, "Chat.Read")
 }
 
+/// #206 (Org Admin S1): o token carrega os escopos de settings org-wide? Gate do
+/// painel Organization — só habilita pra quem tem admin consent + relogou depois
+/// de os escopos entrarem no `config::SCOPES`. Checa um escopo representativo do
+/// conjunto OrgSettings (todos entram/saem juntos no mesmo consent).
+pub fn cr_org_admin_available(store: &TokenStore) -> Result<bool, String> {
+    token_tem_escopo(store, "OrgSettings-AppsAndServices.Read.All")
+}
+
 fn valor_texto(item: &serde_json::Value, campo: &str) -> String {
     item[campo].as_str().unwrap_or("").trim().to_string()
 }

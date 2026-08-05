@@ -704,6 +704,15 @@ async fn cr_teams_disponivel(state: State<'_, Store>) -> Result<bool, String> {
         .map_err(|e| e.to_string())?
 }
 
+/// #206 (Org Admin S1): o token tem os escopos de settings org-wide? Gate do painel.
+#[tauri::command]
+async fn cr_org_admin_available(state: State<'_, Store>) -> Result<bool, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_org_admin_available(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// #186 (Atoms S4): sonda LOCAL do sync do OneDrive (registry + processo).
 #[tauri::command]
 async fn atoms_onedrive_sync() -> onedrive::OneDriveSync {
@@ -1707,6 +1716,7 @@ pub fn run() {
             cr_people_write_available,
             cr_teams_disponivel,
             atoms_onedrive_sync,
+            cr_org_admin_available,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,

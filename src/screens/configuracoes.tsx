@@ -1,4 +1,5 @@
 import {
+  Building2,
   ChevronRight,
   MonitorCog,
   Palette,
@@ -39,6 +40,7 @@ import { LockScreenSettings } from "@/components/lock-screen-settings";
 import { LanguageSettings } from "@/components/language-settings";
 import { StartupSettings } from "@/components/startup-settings";
 import { TelemetrySettings } from "@/components/telemetry-settings";
+import { OrganizationSettings } from "@/components/organization-settings";
 import {
   AccessibilitySettings,
   MoodSettings,
@@ -306,6 +308,22 @@ function settingsSections(t: Dicionario): SettingsSection[] {
           label: s.cfgCopilotLabel,
           description: s.cfgCopilotDesc,
           icon: CopilotIcon,
+        },
+        {
+          // #206 Org Admin S1: governança org-wide do M365. Gated por escopo admin
+          // (degrada gracioso). Cartões OrgSettings (S2) + multi-tenant (S3) vêm depois.
+          id: "organization",
+          label: s.cfgOrganizationLabel,
+          description: s.cfgOrganizationDesc,
+          icon: Building2,
+          frames: [
+            {
+              key: "org-governance",
+              title: s.cfgOrgGovernanceTitulo,
+              subtitle: s.cfgOrgGovernanceSubtitulo,
+              node: <OrganizationSettings />,
+            },
+          ],
         },
         {
           id: "windows",

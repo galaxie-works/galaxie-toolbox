@@ -1176,6 +1176,21 @@ export async function crPeopleWriteAvailable(): Promise<boolean> {
   return invoke<boolean>("cr_people_write_available");
 }
 
+/**
+ * #206 (Org Admin S1): o token carrega os escopos de settings org-wide? Gate do
+ * painel Organization. Fora do Tauri, deriva do status de escopos (mock/dev).
+ */
+export async function crOrgAdminAvailable(): Promise<boolean> {
+  if (!inTauri()) {
+    const { missingScopes } = await requiredScopesStatus();
+    return !missingScopes.some(
+      (scope) =>
+        scope.toLocaleLowerCase() === "orgsettings-appsandservices.read.all",
+    );
+  }
+  return invoke<boolean>("cr_org_admin_available");
+}
+
 /** Atualiza, em uma única operação, os campos editáveis de um contato. */
 export async function crPeopleContactUpdate(
   contactId: string,
