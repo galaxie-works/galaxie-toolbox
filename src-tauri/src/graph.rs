@@ -5341,6 +5341,117 @@ pub fn cr_org_branding(store: &TokenStore) -> Result<OrgBranding, String> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// #426 (Org Admin S3): contexto multi-tenant da org (MultiTenantOrganization.Read.All,
+// já no SCOPES do #424). Cartão read-only com a org multi-tenant + tenants membros.
+// Não-membro vem como 200 `state:"inactive"` (não 404) → status "inactive".
+// Endpoints (verificados na doc):
+//   GET /tenantRelationships/multiTenantOrganization           (org: id/displayName/state)
+//   GET /tenantRelationships/multiTenantOrganization/tenants   (membros: tenantId/displayName/role/state)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiTenantMember {
+    pub tenant_id: String,
+    pub display_name: String,
+    /// "owner" | "member"
+    pub role: String,
+    /// "active" | "pending" | "removed"
+    pub state: String,
+}
+
+fn multi_tenant_member(m: &serde_json::Value) -> Option<MultiTenantMember> {
+    let tenant_id = m["tenantId"].as_str().unwrap_or("").trim().to_string();
+    let display_name = m["displayName"].as_str().unwrap_or("").trim().to_string();
+    if tenant_id.is_empty() && display_name.is_empty() {
+        return None;
+    }
+    Some(MultiTenantMember {
+        tenant_id,
+        display_name,
+        role: m["role"].as_str().unwrap_or("").trim().to_string(),
+        state: m["state"].as_str().unwrap_or("").trim().to_string(),
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiTenantCard {
+    /// "ok" | "inactive" | "forbidden" | "error"
+    pub status: String,
+    pub display_name: Option<String>,
+    pub members: Vec<MultiTenantMember>,
+}
+
+impl MultiTenantCard {
+    fn so_status(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            display_name: None,
+            members: Vec::new(),
+        }
+    }
+}
+
+/// #426: org multi-tenant + tenants membros. Só busca os membros se a org
+/// estiver ativa. Degrada gracioso (403 → forbidden, não-membro → inactive).
+pub fn cr_multi_tenant(store: &TokenStore) -> Result<MultiTenantCard, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let org = match graph_enviar("org:multiTenant", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(format!("{GRAPH}/tenantRelationships/multiTenantOrganization"))
+            .bearer_auth(&token)
+            .send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => body,
+            Err(_) => return Ok(MultiTenantCard::so_status("error")),
+        },
+        Ok(resp) if resp.status().as_u16() == 403 => {
+            return Ok(MultiTenantCard::so_status("forbidden"))
+        }
+        Ok(_) => return Ok(MultiTenantCard::so_status("error")),
+        Err(_) => return Ok(MultiTenantCard::so_status("error")),
+    };
+
+    let estado = org["state"].as_str().unwrap_or("inactive");
+    if estado != "active" {
+        // Tenant não faz parte de uma organização multi-tenant.
+        return Ok(MultiTenantCard::so_status("inactive"));
+    }
+
+    let display_name = org["displayName"]
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let members = match graph_enviar("org:multiTenant:tenants", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(format!(
+                "{GRAPH}/tenantRelationships/multiTenantOrganization/tenants"
+            ))
+            .bearer_auth(&token)
+            .send()
+    }) {
+        Ok(resp) if resp.status().is_success() => resp
+            .json::<serde_json::Value>()
+            .ok()
+            .and_then(|b| b["value"].as_array().cloned())
+            .map(|arr| arr.iter().filter_map(multi_tenant_member).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    Ok(MultiTenantCard {
+        status: "ok".to_string(),
+        display_name,
+        members,
+    })
+}
+
 #[cfg(test)]
 mod org_settings_testes {
     use super::*;
@@ -5416,6 +5527,35 @@ mod org_settings_testes {
         )
         .unwrap();
         assert_eq!(tenant_app_do_sp(&sp).unwrap().url, "https://login.app.com");
+    }
+
+    // --- #426: parse de membro multi-tenant ---
+
+    #[test]
+    fn multi_tenant_member_do_exemplo_da_doc() {
+        let m: serde_json::Value = serde_json::from_str(
+            r#"{"tenantId":"1fd6544e","displayName":"Contoso","role":"owner","state":"active"}"#,
+        )
+        .unwrap();
+        let membro = multi_tenant_member(&m).expect("deveria parsear");
+        assert_eq!(membro.tenant_id, "1fd6544e");
+        assert_eq!(membro.display_name, "Contoso");
+        assert_eq!(membro.role, "owner");
+        assert_eq!(membro.state, "active");
+    }
+
+    #[test]
+    fn multi_tenant_member_rejeita_vazio() {
+        let m: serde_json::Value = serde_json::from_str(r#"{"role":"member"}"#).unwrap();
+        assert!(multi_tenant_member(&m).is_none());
+    }
+
+    #[test]
+    fn multi_tenant_card_so_status() {
+        let c = MultiTenantCard::so_status("inactive");
+        assert_eq!(c.status, "inactive");
+        assert!(c.display_name.is_none());
+        assert!(c.members.is_empty());
     }
 
     #[test]

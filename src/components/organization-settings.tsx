@@ -4,6 +4,7 @@ import {
   Building2,
   FileText,
   MonitorDown,
+  Network,
   ShieldAlert,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -11,8 +12,10 @@ import type { LucideIcon } from "lucide-react";
 import { FramePanel } from "@/components/reui/frame";
 import { Spinner } from "@/components/ui/spinner";
 import {
+  crMultiTenant,
   crOrgAdminAvailable,
   crOrgSettings,
+  type MultiTenantCard,
   type OrgCardStatus,
   type OrgSettingsResult,
 } from "@/lib/api";
@@ -56,6 +59,31 @@ function LinhaSetting({ label, valor }: { label: string; valor: boolean | null }
   );
 }
 
+/** #426: pílula do estado de um tenant membro (active/pending/removed). */
+function PilulaEstado({ state }: { state: string }) {
+  const { t } = useIdioma();
+  const s = t.settings;
+  const rotulo =
+    state === "active"
+      ? s.cfgOrgMtActive
+      : state === "pending"
+        ? s.cfgOrgMtPending
+        : state === "removed"
+          ? s.cfgOrgMtRemoved
+          : state;
+  const cor =
+    state === "active"
+      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+      : state === "pending"
+        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+        : "bg-muted text-muted-foreground";
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${cor}`}>
+      {rotulo}
+    </span>
+  );
+}
+
 /** Casca do cartão: header (ícone + título) + corpo, ou mensagem de degradação. */
 function Cartao({
   icon: Icon,
@@ -93,6 +121,7 @@ export function OrganizationSettings() {
   // null = ainda verificando; true/false = tem/ não tem os escopos admin.
   const [disponivel, setDisponivel] = useState<boolean | null>(null);
   const [dados, setDados] = useState<OrgSettingsResult | null>(null);
+  const [multiTenant, setMultiTenant] = useState<MultiTenantCard | null>(null);
   const [carregando, setCarregando] = useState(false);
 
   useEffect(() => {
@@ -114,10 +143,20 @@ export function OrganizationSettings() {
     if (disponivel !== true) return;
     let vivo = true;
     setCarregando(true);
-    crOrgSettings()
-      .then((r) => {
+    // #426: OrgSettings (3 cards) + multi-tenant (1 card) em paralelo; ambos
+    // gated pela S1 e cada um com seu próprio status de degradação.
+    Promise.all([
+      crOrgSettings().then((r) => {
         if (vivo) setDados(r);
-      })
+      }),
+      crMultiTenant()
+        .then((r) => {
+          if (vivo) setMultiTenant(r);
+        })
+        .catch(() => {
+          if (vivo) setMultiTenant({ status: "error", displayName: null, members: [] });
+        }),
+    ])
       .catch(() => {
         if (vivo) setDados(null);
       })
@@ -150,7 +189,7 @@ export function OrganizationSettings() {
     );
   }
 
-  if (carregando || !dados) {
+  if (carregando || !dados || !multiTenant) {
     return (
       <FramePanel>
         <div className="flex items-center justify-center py-8">
@@ -248,6 +287,54 @@ export function OrganizationSettings() {
               </div>
             );
           })}
+        </Cartao>
+
+        {/* #426: contexto multi-tenant (org + tenants membros). "inactive" =
+            tenant não faz parte de uma org multi-tenant → mensagem própria. */}
+        <Cartao
+          icon={Network}
+          title={s.cfgOrgMtTitle}
+          status={multiTenant.status === "inactive" ? "ok" : multiTenant.status}
+        >
+          {multiTenant.status === "inactive" ? (
+            <p className="text-sm text-muted-foreground">{s.cfgOrgMtInactive}</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between gap-3 py-1.5">
+                <span className="text-sm text-muted-foreground">
+                  {s.cfgOrgMtOrg}
+                </span>
+                <span className="text-xs font-medium">
+                  {multiTenant.displayName ?? s.cfgOrgUnknown}
+                </span>
+              </div>
+              <div className="py-1.5">
+                <p className="mb-1 text-xs font-medium text-muted-foreground">
+                  {s.cfgOrgMtTenants}
+                </p>
+                <div className="divide-y divide-border/60 pl-1">
+                  {multiTenant.members.map((m) => (
+                    <div
+                      key={m.tenantId || m.displayName}
+                      className="flex items-center justify-between gap-3 py-1.5"
+                    >
+                      <span className="min-w-0 truncate text-sm">
+                        {m.displayName || m.tenantId}
+                      </span>
+                      <span className="flex shrink-0 items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          {m.role === "owner"
+                            ? s.cfgOrgMtOwner
+                            : s.cfgOrgMtMember}
+                        </span>
+                        <PilulaEstado state={m.state} />
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </Cartao>
       </div>
     </FramePanel>
