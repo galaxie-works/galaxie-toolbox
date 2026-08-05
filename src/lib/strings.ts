@@ -228,6 +228,7 @@ const pt = {
 
   apps: {
     maisUsados: "Mais utilizados",
+    doSeuTenant: "Disponíveis no seu tenant",
     explorar: "Explore por categoria",
     abrirAqui: "Abrir aqui",
     abrirNavegador: "Abrir no navegador padrão",
@@ -1797,6 +1798,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
 
   apps: {
     maisUsados: "Most used",
+    doSeuTenant: "Available in your tenant",
     explorar: "Explore by category",
     abrirAqui: "Open here",
     abrirNavegador: "Open in default browser",
