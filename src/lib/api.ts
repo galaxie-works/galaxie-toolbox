@@ -557,6 +557,7 @@ export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
       online: true,
       joinUrl: "https://teams.microsoft.com/l/meetup-join/mock",
       organizador: "Wagner Consani",
+      organizadorEmail: "wagner@voaz.builders",
       souOrganizador: false,
       // Convite pendente no mock (#287) para exibir o RSVP no dev do browser.
       resposta: "notResponded",
