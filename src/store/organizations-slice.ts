@@ -108,6 +108,9 @@ export interface OrganizationsSlice {
     contactId: string,
     contacts: PeopleContact[],
   ) => void;
+
+  // #555: limpa as organizações e os caches de logo ao trocar de conta.
+  resetSessaoOrganizations: () => void;
 }
 
 export const createOrganizationsSlice: StateCreator<
@@ -261,4 +264,13 @@ export const createOrganizationsSlice: StateCreator<
         };
       }),
     })),
+
+  // #555: organizações limpam na troca de conta (decisão de produto). Também
+  // esvazia os caches de módulo de logo pra não vazar favicon entre contas.
+  resetSessaoOrganizations: () => {
+    organizationLogoRequests.clear();
+    organizationLogos.clear();
+    organizationLogoRetryAt.clear();
+    set({ organizationSelectedId: null, organizations: [] });
+  },
 });

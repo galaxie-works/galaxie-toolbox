@@ -921,14 +921,37 @@ impl TelemetryState {
         }
     }
 
-    /// Bootstrap sem valores hardcoded. O instalador/ambiente injeta endpoint,
-    /// emissor, token e stream; todos ausentes mantem o transporte desativado.
-    /// Qualquer configuracao parcial falha fechado antes de iniciar a rede.
+    /// Config sem valores hardcoded. #387 follow-up: runtime env tem
+    /// precedência (dev / CI / live-test do #428); senão cai no valor **embutido
+    /// em compile-time** via `option_env!` — é assim que o binário shipado
+    /// recebe endpoint/credencial (o `release.yml` injeta os secrets no build).
+    /// Ausente nos dois → None → transporte desativado (fail-closed). Qualquer
+    /// configuracao parcial falha fechado antes de iniciar a rede.
     pub fn iniciar_transporte_configurado(&self) -> Result<bool, TransporteErro> {
-        let endpoint = std::env::var("GALAXIE_TELEMETRY_OTLP_ENDPOINT").ok();
-        let email = std::env::var("GALAXIE_TELEMETRY_INGEST_EMAIL").ok();
-        let token = std::env::var("GALAXIE_TELEMETRY_INGEST_TOKEN").ok();
-        let stream = std::env::var("GALAXIE_TELEMETRY_STREAM_NAME").ok();
+        // Runtime > compile-time; string vazia conta como ausente.
+        fn config_var(runtime: &str, baked: Option<&'static str>) -> Option<String> {
+            std::env::var(runtime)
+                .ok()
+                .filter(|valor| !valor.is_empty())
+                .or_else(|| baked.map(str::to_owned))
+                .filter(|valor| !valor.is_empty())
+        }
+        let endpoint = config_var(
+            "GALAXIE_TELEMETRY_OTLP_ENDPOINT",
+            option_env!("GALAXIE_TELEMETRY_OTLP_ENDPOINT"),
+        );
+        let email = config_var(
+            "GALAXIE_TELEMETRY_INGEST_EMAIL",
+            option_env!("GALAXIE_TELEMETRY_INGEST_EMAIL"),
+        );
+        let token = config_var(
+            "GALAXIE_TELEMETRY_INGEST_TOKEN",
+            option_env!("GALAXIE_TELEMETRY_INGEST_TOKEN"),
+        );
+        let stream = config_var(
+            "GALAXIE_TELEMETRY_STREAM_NAME",
+            option_env!("GALAXIE_TELEMETRY_STREAM_NAME"),
+        );
         match (endpoint, email, token, stream) {
             (None, None, None, None) => Ok(false),
             (Some(endpoint), Some(email), Some(token), Some(stream)) => {

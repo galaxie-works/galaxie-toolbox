@@ -298,6 +298,13 @@ fn memo_invalidar(prefixo: &str) {
     m.retain(|k, _| !k.starts_with(prefixo));
 }
 
+/// #555 (P0): zera TODO o memo curto (chaveado por email:atoms/tarefas/agenda,
+/// SEM discriminador de conta) na troca de conta — senão a conta nova pega, na
+/// janela de 2,5s, o batch memoizado da conta anterior. Chamado no reset de sessão.
+pub fn limpar_memo_sessao() {
+    memo_invalidar("");
+}
+
 /// Devolve um access_token valido, renovando via refresh_token se estiver
 /// perto de expirar. Atualiza o store.
 pub fn access_token(store: &TokenStore) -> Result<String, String> {

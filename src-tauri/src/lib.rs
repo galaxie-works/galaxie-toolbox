@@ -753,6 +753,13 @@ async fn cr_multi_tenant(state: State<'_, Store>) -> Result<graph::MultiTenantCa
         .map_err(|e| e.to_string())?
 }
 
+/// #555 (P0): zera o memo curto do Graph na troca de conta (o seam de reset de
+/// sessão no front chama isto) — evita a conta nova pegar o batch da anterior.
+#[tauri::command]
+fn reset_session_memo() {
+    graph::limpar_memo_sessao();
+}
+
 /// #186 (Atoms S4): sonda LOCAL do sync do OneDrive (registry + processo).
 #[tauri::command]
 async fn atoms_onedrive_sync() -> onedrive::OneDriveSync {
@@ -1761,6 +1768,7 @@ pub fn run() {
             cr_tenant_apps,
             cr_org_branding,
             cr_multi_tenant,
+            reset_session_memo,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,
