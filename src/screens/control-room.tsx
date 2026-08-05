@@ -2997,6 +2997,9 @@ function MessageList({
   const [ajudaAberta, setAjudaAberta] = useState(false);
   // #549: dropdown do sort controlado, pra o atalho "O" poder abri-lo.
   const [sortAberto, setSortAberto] = useState(false);
+  // #565: "Esvaziar lixeira" é destrutivo e irreversível → passa por AlertDialog
+  // (mesmo padrão do "Esvaziar pasta" do menu de contexto), nunca direto.
+  const [confirmarEsvaziar, setConfirmarEsvaziar] = useState(false);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
 
@@ -3706,7 +3709,13 @@ function MessageList({
           aria-label={t.controlRoom.mailboxTitulo}
         >
           {pastaTipo === "deleteditems" && (mensagens?.length ?? 0) > 0 && (
-            <Button variant="ghost" size="sm" onClick={onEsvaziar}>
+            // #565: semântica destrutiva (variant destructive) + confirmação —
+            // ação irreversível não pode parecer/agir como um botão comum.
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setConfirmarEsvaziar(true)}
+            >
               <Trash2 /> {t.controlRoom.esvaziarLixeira}
             </Button>
           )}
@@ -3832,6 +3841,35 @@ function MessageList({
           </Tooltip>
         </Toolbar>
       </div>
+
+      {/* #565: confirmação do "Esvaziar lixeira" — destrutiva e irreversível
+          (reusa as strings/estrutura do "Esvaziar pasta" do menu de contexto). */}
+      <AlertDialog open={confirmarEsvaziar} onOpenChange={setConfirmarEsvaziar}>
+        <AlertDialogContent className="max-w-sm!">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {preencher(t.controlRoom.esvaziarPastaTitulo, {
+                pasta: t.controlRoom.pastaTrash,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.esvaziarPastaDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.controlRoom.cancelar}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                onEsvaziar();
+                setConfirmarEsvaziar(false);
+              }}
+            >
+              {t.controlRoom.esvaziarPastaConfirmar}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {selecionados.size > 0 && (
         <div className="flex items-center gap-2 px-3 pb-2">
