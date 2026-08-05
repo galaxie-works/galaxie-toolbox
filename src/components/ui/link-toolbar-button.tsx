@@ -8,6 +8,8 @@ import {
 } from '@platejs/link/react';
 // #500: ícone animado do registry (lucide-animated) no lugar do lucide estático.
 import { LinkIcon } from '@/components/ui/link';
+// #529: rótulo config-driven (helper não-hook, padrão textoUi #475/#525).
+import { plateLabel } from '@/lib/plate-labels';
 
 import { ToolbarButton } from './toolbar';
 
@@ -21,9 +23,9 @@ export function LinkToolbarButton(
     <ToolbarButton
       {...props}
       {...buttonProps}
-      aria-label="Link"
+      aria-label={plateLabel("link")}
       data-plate-focus
-      tooltip="Link"
+      tooltip={plateLabel("link")}
     >
       <LinkIcon />
     </ToolbarButton>
