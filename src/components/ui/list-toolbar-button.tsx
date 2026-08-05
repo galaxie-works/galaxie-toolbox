@@ -12,6 +12,8 @@ import { useEditorRef, useEditorSelector } from 'platejs/react';
 
 // #500: ícone de lista animado do animate-ui (registry) na bulleted list.
 import { ListIcon } from '@/components/animate-ui/icons/list';
+// #529: rótulos config-driven do editor (helper não-hook, padrão textoUi).
+import { plateLabel } from '@/lib/plate-labels';
 
 import {
   DropdownMenu,
@@ -52,7 +54,7 @@ export function BulletedListToolbarButton() {
       <Tooltip>
         <TooltipTrigger asChild>
           <ToolbarSplitButtonPrimary
-            aria-label="Bulleted list"
+            aria-label={plateLabel("bulletedList")}
             className="data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
             onClick={() => {
               toggleList(editor, {
@@ -67,17 +69,19 @@ export function BulletedListToolbarButton() {
             />
           </ToolbarSplitButtonPrimary>
         </TooltipTrigger>
-        <TooltipContent>Bulleted list</TooltipContent>
+        <TooltipContent>{plateLabel("bulletedList")}</TooltipContent>
       </Tooltip>
 
       <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
-              <ToolbarSplitButtonSecondary aria-label="Bulleted list options" />
+              <ToolbarSplitButtonSecondary
+                aria-label={plateLabel("bulletedListOptions")}
+              />
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>Bulleted list options</TooltipContent>
+          <TooltipContent>{plateLabel("bulletedListOptions")}</TooltipContent>
         </Tooltip>
 
         <DropdownMenuContent align="start" alignOffset={-32}>
@@ -91,7 +95,7 @@ export function BulletedListToolbarButton() {
             >
               <div className="flex items-center gap-2">
                 <div className="size-2 rounded-full border border-current bg-current" />
-                Default
+                {plateLabel("listDisc")}
               </div>
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -103,7 +107,7 @@ export function BulletedListToolbarButton() {
             >
               <div className="flex items-center gap-2">
                 <div className="size-2 rounded-full border border-current" />
-                Circle
+                {plateLabel("listCircle")}
               </div>
             </DropdownMenuItem>
             <DropdownMenuItem
@@ -115,7 +119,7 @@ export function BulletedListToolbarButton() {
             >
               <div className="flex items-center gap-2">
                 <div className="size-2 border border-current bg-current" />
-                Square
+                {plateLabel("listSquare")}
               </div>
             </DropdownMenuItem>
           </DropdownMenuGroup>

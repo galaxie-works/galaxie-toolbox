@@ -704,6 +704,55 @@ async fn cr_teams_disponivel(state: State<'_, Store>) -> Result<bool, String> {
         .map_err(|e| e.to_string())?
 }
 
+/// #206 (Org Admin S1): o token tem os escopos de settings org-wide? Gate do painel.
+#[tauri::command]
+async fn cr_org_admin_available(state: State<'_, Store>) -> Result<bool, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_org_admin_available(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// #425 (Org Admin S2): lê os cartões read-only de OrgSettings (Apps & Services,
+/// Forms, Microsoft 365 Install) do tenant. Cada card degrada sozinho.
+#[tauri::command]
+async fn cr_org_settings(state: State<'_, Store>) -> Result<graph::OrgSettingsResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_org_settings(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// #207 (Org Admin): apps reais do tenant (service principals lançáveis) pra a
+/// tela Apps complementar o catálogo estático. Degrada gracioso.
+#[tauri::command]
+async fn cr_tenant_apps(state: State<'_, Store>) -> Result<graph::TenantAppsResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_tenant_apps(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// #541: logo do tenant (claro + escuro) do Entra branding, pro header do
+/// sidebar. Degrada gracioso (sem branding / sem permissão → None).
+#[tauri::command]
+async fn cr_org_branding(state: State<'_, Store>) -> Result<graph::OrgBranding, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_org_branding(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// #426 (Org Admin S3): contexto multi-tenant da org (org + tenants membros).
+/// Degrada gracioso (não-membro → inactive; sem permissão → forbidden).
+#[tauri::command]
+async fn cr_multi_tenant(state: State<'_, Store>) -> Result<graph::MultiTenantCard, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_multi_tenant(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// #186 (Atoms S4): sonda LOCAL do sync do OneDrive (registry + processo).
 #[tauri::command]
 async fn atoms_onedrive_sync() -> onedrive::OneDriveSync {
@@ -1707,6 +1756,11 @@ pub fn run() {
             cr_people_write_available,
             cr_teams_disponivel,
             atoms_onedrive_sync,
+            cr_org_admin_available,
+            cr_org_settings,
+            cr_tenant_apps,
+            cr_org_branding,
+            cr_multi_tenant,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,

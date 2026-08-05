@@ -46,10 +46,24 @@ pub const CLIENT_ID: &str = "214d735e-eb9b-4052-8851-578d3bd91627";
 // compartilhada. Admin consent do tenant JÁ concedido (Wagner é Global Admin); é
 // escopo novo no pedido, então sessões anteriores precisam RE-LOGAR (até lá,
 // caixa compartilhada em Contacts/Calendar dá 403 → empty state gracioso).
+//
+// Org Admin (#206/#424): MultiTenantOrganization.Read.All, Application.Read.All,
+// ServicePrincipalEndpoint.Read.All e a família OrgSettings-* (AppsAndServices/
+// Forms/Microsoft365Install/Todo) alimentam o painel Settings › Organization
+// (governança org-wide do M365). Exigem admin consent do tenant (Wagner é Global
+// Admin) e, como todo escopo novo no pedido, sessões anteriores precisam RE-LOGAR
+// — até lá `cr_org_admin_available` = false → painel degrada gracioso (sem erro).
+//
+// OrganizationalBranding.Read.All (#541): logo do tenant (claro/escuro) do Entra
+// branding pro header do sidebar. Admin consent do tenant JÁ concedido; escopo
+// novo no pedido → entra no MESMO relogin pendente do Org Admin/#424 + shared/#495.
 pub const SCOPES: &str = "openid profile offline_access \
-     User.Read User.Read.All Directory.Read.All Files.ReadWrite Sites.Read.All \
+     User.Read User.Read.All Directory.Read.All Files.ReadWrite Sites.Read.All OrganizationalBranding.Read.All \
      Calendars.ReadWrite Calendars.ReadWrite.Shared MailboxSettings.ReadWrite Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Tasks.ReadWrite \
-     People.Read Contacts.ReadWrite Contacts.ReadWrite.Shared";
+     People.Read Contacts.ReadWrite Contacts.ReadWrite.Shared \
+     MultiTenantOrganization.Read.All Application.Read.All ServicePrincipalEndpoint.Read.All \
+     OrgSettings-AppsAndServices.Read.All OrgSettings-Forms.Read.All OrgSettings-Microsoft365Install.Read.All \
+     OrgSettings-Todo.Read.All OrgSettings-Todo.ReadWrite.All";
 
 pub fn client_id() -> String {
     // GALAXIE_CLIENT_ID permite apontar para outro registro sem recompilar

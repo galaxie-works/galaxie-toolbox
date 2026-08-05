@@ -31,6 +31,8 @@ function detalhe(assunto: string): EmailDetalhe {
     deEmail: "ana@galaxie.works",
     para: ["Codex"],
     cc: [],
+    paraEmails: ["codex@galaxie.works"],
+    ccEmails: [],
     recebido: "2026-07-29T07:00:00Z",
     corpo: `<p>${assunto}</p>`,
     corpoTipo: "html",

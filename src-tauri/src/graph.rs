@@ -9,6 +9,9 @@ use crate::auth::{refresh, TokenStore};
 
 
 const GRAPH: &str = "https://graph.microsoft.com/v1.0";
+/// Alguns settings org-wide (#425: appsAndServices, forms) só existem no beta do
+/// Graph; o M365 Install já é v1.0. Ver `cr_org_settings`.
+const GRAPH_BETA: &str = "https://graph.microsoft.com/beta";
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1618,6 +1621,9 @@ pub struct EventoDetalhe {
     pub online: bool,
     pub join_url: Option<String>,
     pub organizador: String,
+    /// E-mail do organizador (Graph `organizer.emailAddress.address`). Aditivo
+    /// (#515): habilita o `PersonHoverCard` no organizador do detalhe.
+    pub organizador_email: String,
     /// True quando o usuário ativo organiza o evento (Graph `isOrganizer`).
     /// Habilita a ação "Cancelar evento" (#260), que notifica os convidados.
     pub sou_organizador: bool,
@@ -1676,6 +1682,7 @@ pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, St
         online: it["onlineMeeting"].is_object() || it["isOnlineMeeting"].as_bool().unwrap_or(false),
         join_url,
         organizador: it["organizer"]["emailAddress"]["name"].as_str().unwrap_or("").to_string(),
+        organizador_email: it["organizer"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
         sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
         resposta: it["responseStatus"]["response"]
             .as_str()
@@ -2215,6 +2222,10 @@ pub struct EmailDetalhe {
     pub de_email: String,
     pub para: Vec<String>,
     pub cc: Vec<String>,
+    /// E-mails dos destinatarios, ALINHADOS 1:1 com `para`/`cc` (#515). Existem
+    /// pro front abrir o hover card por pessoa; `para`/`cc` seguem com os nomes.
+    pub para_emails: Vec<String>,
+    pub cc_emails: Vec<String>,
     pub recebido: String,
     pub corpo: String,
     pub corpo_tipo: String, // "html" | "text"
@@ -2222,11 +2233,23 @@ pub struct EmailDetalhe {
     pub web_link: String,
 }
 
+/// Predicado compartilhado por `nomes_recipients`/`emails_recipients`: mantem o
+/// recipient se houver name OU address (senao ambos caem juntos → alinhados).
+fn recipient_tem_conteudo(r: &serde_json::Value) -> bool {
+    !r["emailAddress"]["name"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .or_else(|| r["emailAddress"]["address"].as_str())
+        .unwrap_or("")
+        .is_empty()
+}
+
 /// Nomes (ou e-mails) de uma lista de recipients do Graph.
 fn nomes_recipients(v: &serde_json::Value) -> Vec<String> {
     v.as_array()
         .map(|arr| {
             arr.iter()
+                .filter(|r| recipient_tem_conteudo(r))
                 .map(|r| {
                     r["emailAddress"]["name"]
                         .as_str()
@@ -2235,7 +2258,24 @@ fn nomes_recipients(v: &serde_json::Value) -> Vec<String> {
                         .unwrap_or("")
                         .to_string()
                 })
-                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// E-mails (address) de uma lista de recipients, ALINHADO 1:1 com
+/// `nomes_recipients` (mesmo filtro). Address pode vir "" se so houver name (#515).
+fn emails_recipients(v: &serde_json::Value) -> Vec<String> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter(|r| recipient_tem_conteudo(r))
+                .map(|r| {
+                    r["emailAddress"]["address"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string()
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -2266,6 +2306,8 @@ pub fn cr_email_corpo(
 
     let para = nomes_recipients(&it["toRecipients"]);
     let cc = nomes_recipients(&it["ccRecipients"]);
+    let para_emails = emails_recipients(&it["toRecipients"]);
+    let cc_emails = emails_recipients(&it["ccRecipients"]);
 
     // Anexos so quando houver (poupa uma chamada).
     let mut anexos = Vec::new();
@@ -2304,6 +2346,8 @@ pub fn cr_email_corpo(
         de_email: it["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
         para,
         cc,
+        para_emails,
+        cc_emails,
         recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
         corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
         corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
@@ -2563,6 +2607,8 @@ pub fn cr_ler_anexo_email(
 
     let para = nomes_recipients(&it["toRecipients"]);
     let cc = nomes_recipients(&it["ccRecipients"]);
+    let para_emails = emails_recipients(&it["toRecipients"]);
+    let cc_emails = emails_recipients(&it["ccRecipients"]);
 
     // Anexos aninhados (best-effort: só se o Graph os trouxe junto do item).
     let mut anexos = Vec::new();
@@ -2588,6 +2634,8 @@ pub fn cr_ler_anexo_email(
             .to_string(),
         para,
         cc,
+        para_emails,
+        cc_emails,
         recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
         corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
         corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
@@ -4869,6 +4917,670 @@ pub fn cr_people_write_available(store: &TokenStore) -> Result<bool, String> {
 /// explícito), nunca dispara consent silencioso nem quebra.
 pub fn cr_teams_disponivel(store: &TokenStore) -> Result<bool, String> {
     token_tem_escopo(store, "Chat.Read")
+}
+
+/// #206 (Org Admin S1): o token carrega os escopos de settings org-wide? Gate do
+/// painel Organization — só habilita pra quem tem admin consent + relogou depois
+/// de os escopos entrarem no `config::SCOPES`. Checa um escopo representativo do
+/// conjunto OrgSettings (todos entram/saem juntos no mesmo consent).
+pub fn cr_org_admin_available(store: &TokenStore) -> Result<bool, String> {
+    token_tem_escopo(store, "OrgSettings-AppsAndServices.Read.All")
+}
+
+// ---------------------------------------------------------------------------
+// #425 (Org Admin S2): cartões READ-ONLY de OrgSettings. Cada GET é independente
+// e degrada sozinho — 403 → "forbidden" (sem o escopo daquele card), rede/parse
+// → "error", 200 → "ok". O painel já é gated pelo `cr_org_admin_available` (S1).
+// Endpoints (verificados na doc do Graph):
+//   • beta/admin/appsAndServices                       (OrgSettings-AppsAndServices.Read.All)
+//   • beta/admin/forms                                  (OrgSettings-Forms.Read.All)
+//   • v1.0/admin/microsoft365Apps/installationOptions   (OrgSettings-Microsoft365Install.Read.All)
+// appsAndServices/forms embrulham em `value.settings`; o M365 Install vem na raiz.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppsAndServicesCard {
+    /// "ok" | "forbidden" | "error"
+    pub status: String,
+    pub is_office_store_enabled: Option<bool>,
+    pub is_app_and_services_trial_enabled: Option<bool>,
+}
+
+impl AppsAndServicesCard {
+    fn vazio(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            is_office_store_enabled: None,
+            is_app_and_services_trial_enabled: None,
+        }
+    }
+    fn dos_settings(s: &serde_json::Value) -> Self {
+        Self {
+            status: "ok".to_string(),
+            is_office_store_enabled: s["isOfficeStoreEnabled"].as_bool(),
+            is_app_and_services_trial_enabled: s["isAppAndServicesTrialEnabled"].as_bool(),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FormsCard {
+    pub status: String,
+    pub is_external_send_form_enabled: Option<bool>,
+    pub is_external_share_collaboration_enabled: Option<bool>,
+    pub is_external_share_result_enabled: Option<bool>,
+    pub is_external_share_template_enabled: Option<bool>,
+    pub is_record_identity_by_default_enabled: Option<bool>,
+    pub is_bing_image_search_enabled: Option<bool>,
+    pub is_in_org_forms_phishing_scan_enabled: Option<bool>,
+}
+
+impl FormsCard {
+    fn vazio(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            is_external_send_form_enabled: None,
+            is_external_share_collaboration_enabled: None,
+            is_external_share_result_enabled: None,
+            is_external_share_template_enabled: None,
+            is_record_identity_by_default_enabled: None,
+            is_bing_image_search_enabled: None,
+            is_in_org_forms_phishing_scan_enabled: None,
+        }
+    }
+    fn dos_settings(s: &serde_json::Value) -> Self {
+        Self {
+            status: "ok".to_string(),
+            is_external_send_form_enabled: s["isExternalSendFormEnabled"].as_bool(),
+            is_external_share_collaboration_enabled: s["isExternalShareCollaborationEnabled"]
+                .as_bool(),
+            is_external_share_result_enabled: s["isExternalShareResultEnabled"].as_bool(),
+            is_external_share_template_enabled: s["isExternalShareTemplateEnabled"].as_bool(),
+            is_record_identity_by_default_enabled: s["isRecordIdentityByDefaultEnabled"].as_bool(),
+            is_bing_image_search_enabled: s["isBingImageSearchEnabled"].as_bool(),
+            is_in_org_forms_phishing_scan_enabled: s["isInOrgFormsPhishingScanEnabled"].as_bool(),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct M365AppsPlataforma {
+    pub is_microsoft365_apps_enabled: Option<bool>,
+    pub is_project_enabled: Option<bool>,
+    pub is_skype_for_business_enabled: Option<bool>,
+    pub is_visio_enabled: Option<bool>,
+}
+
+impl M365AppsPlataforma {
+    fn do_valor(v: &serde_json::Value) -> Option<Self> {
+        if !v.is_object() {
+            return None;
+        }
+        Some(Self {
+            is_microsoft365_apps_enabled: v["isMicrosoft365AppsEnabled"].as_bool(),
+            is_project_enabled: v["isProjectEnabled"].as_bool(),
+            is_skype_for_business_enabled: v["isSkypeForBusinessEnabled"].as_bool(),
+            is_visio_enabled: v["isVisioEnabled"].as_bool(),
+        })
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct M365InstallCard {
+    pub status: String,
+    pub update_channel: Option<String>,
+    pub apps_for_windows: Option<M365AppsPlataforma>,
+    pub apps_for_mac: Option<M365AppsPlataforma>,
+}
+
+impl M365InstallCard {
+    fn vazio(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            update_channel: None,
+            apps_for_windows: None,
+            apps_for_mac: None,
+        }
+    }
+    fn da_raiz(body: &serde_json::Value) -> Self {
+        Self {
+            status: "ok".to_string(),
+            update_channel: body["updateChannel"]
+                .as_str()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            apps_for_windows: M365AppsPlataforma::do_valor(&body["appsForWindows"]),
+            apps_for_mac: M365AppsPlataforma::do_valor(&body["appsForMac"]),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgSettingsResult {
+    pub apps_and_services: AppsAndServicesCard,
+    pub forms: FormsCard,
+    pub microsoft365_install: M365InstallCard,
+}
+
+/// Resultado bruto de um GET de OrgSettings, antes de virar card tipado.
+enum OrgGetOutcome {
+    Ok(serde_json::Value),
+    Forbidden,
+    Error,
+}
+
+fn org_settings_get(
+    token: &str,
+    client: &reqwest::blocking::Client,
+    label: &str,
+    url: &str,
+) -> OrgGetOutcome {
+    match graph_enviar(label, GRAPH_TETO_ESPERA_S, || {
+        client.get(url).bearer_auth(token).send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => OrgGetOutcome::Ok(body),
+            Err(_) => OrgGetOutcome::Error,
+        },
+        Ok(resp) if resp.status().as_u16() == 403 => OrgGetOutcome::Forbidden,
+        Ok(_) => OrgGetOutcome::Error,
+        Err(_) => OrgGetOutcome::Error,
+    }
+}
+
+/// #425: lê os 3 grupos de settings org-wide (read-only) num tiro só. Cada card
+/// carrega seu próprio status pra a UI mostrar loading/erro/sem-permissão por card.
+pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let apps_and_services = match org_settings_get(
+        &token,
+        &client,
+        "org:appsAndServices",
+        &format!("{GRAPH_BETA}/admin/appsAndServices"),
+    ) {
+        OrgGetOutcome::Ok(body) => AppsAndServicesCard::dos_settings(&body["value"]["settings"]),
+        OrgGetOutcome::Forbidden => AppsAndServicesCard::vazio("forbidden"),
+        OrgGetOutcome::Error => AppsAndServicesCard::vazio("error"),
+    };
+
+    let forms = match org_settings_get(
+        &token,
+        &client,
+        "org:forms",
+        &format!("{GRAPH_BETA}/admin/forms"),
+    ) {
+        OrgGetOutcome::Ok(body) => FormsCard::dos_settings(&body["value"]["settings"]),
+        OrgGetOutcome::Forbidden => FormsCard::vazio("forbidden"),
+        OrgGetOutcome::Error => FormsCard::vazio("error"),
+    };
+
+    let microsoft365_install = match org_settings_get(
+        &token,
+        &client,
+        "org:m365Install",
+        &format!("{GRAPH}/admin/microsoft365Apps/installationOptions"),
+    ) {
+        OrgGetOutcome::Ok(body) => M365InstallCard::da_raiz(&body),
+        OrgGetOutcome::Forbidden => M365InstallCard::vazio("forbidden"),
+        OrgGetOutcome::Error => M365InstallCard::vazio("error"),
+    };
+
+    Ok(OrgSettingsResult {
+        apps_and_services,
+        forms,
+        microsoft365_install,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// #207 (Org Admin): apps REAIS do tenant. Lê os service principals (enterprise
+// apps) via GET /servicePrincipals (Application.Read.All, já no SCOPES do #424).
+// Filtro client-side pra só apps lançáveis pelo usuário (habilitado, com URL,
+// não escondido). A tela usa isto ADITIVO ao catálogo estático de apps.ts, com
+// fallback gracioso pro estático em erro/sem-permissão/vazio.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantApp {
+    pub app_id: String,
+    pub display_name: String,
+    /// homepage ou loginUrl — pra abrir o app no navegador interno.
+    pub url: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantAppsResult {
+    /// "ok" | "forbidden" | "error"
+    pub status: String,
+    pub apps: Vec<TenantApp>,
+}
+
+impl TenantAppsResult {
+    fn vazio(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            apps: Vec::new(),
+        }
+    }
+}
+
+/// Um service principal vira app da tela quando: está habilitado, é do tipo
+/// Application, tem uma URL de lançamento e não está marcado como escondido
+/// (tag `HideApp`). Devolve None pros que não passam.
+fn tenant_app_do_sp(sp: &serde_json::Value) -> Option<TenantApp> {
+    if !sp["accountEnabled"].as_bool().unwrap_or(false) {
+        return None;
+    }
+    if sp["servicePrincipalType"].as_str() != Some("Application") {
+        return None;
+    }
+    let escondido = sp["tags"]
+        .as_array()
+        .map(|tags| {
+            tags.iter()
+                .any(|t| t.as_str() == Some("HideApp"))
+        })
+        .unwrap_or(false);
+    if escondido {
+        return None;
+    }
+    let url = sp["homepage"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| sp["loginUrl"].as_str().filter(|s| !s.trim().is_empty()))?
+        .trim()
+        .to_string();
+    let display_name = sp["displayName"].as_str().unwrap_or("").trim().to_string();
+    if display_name.is_empty() {
+        return None;
+    }
+    let app_id = sp["appId"].as_str().unwrap_or("").trim().to_string();
+    Some(TenantApp {
+        app_id,
+        display_name,
+        url,
+    })
+}
+
+/// #207: apps do tenant (uma página, ordem alfabética). O teto de 100 evita
+/// paginar centenas de service principals de infra da Microsoft; a tela é um
+/// complemento curado ao catálogo, não um explorador completo de diretório.
+pub fn cr_tenant_apps(store: &TokenStore) -> Result<TenantAppsResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!(
+        "{GRAPH}/servicePrincipals?$select=appId,displayName,accountEnabled,homepage,loginUrl,tags,servicePrincipalType\
+         &$orderby=displayName&$count=true&$top=100"
+    );
+
+    match graph_enviar("org:tenantApps", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => {
+                let apps = body["value"]
+                    .as_array()
+                    .map(|arr| arr.iter().filter_map(tenant_app_do_sp).collect())
+                    .unwrap_or_default();
+                Ok(TenantAppsResult {
+                    status: "ok".to_string(),
+                    apps,
+                })
+            }
+            Err(_) => Ok(TenantAppsResult::vazio("error")),
+        },
+        Ok(resp) if resp.status().as_u16() == 403 => Ok(TenantAppsResult::vazio("forbidden")),
+        Ok(_) => Ok(TenantAppsResult::vazio("error")),
+        Err(_) => Ok(TenantAppsResult::vazio("error")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// #541: logo do tenant (Entra organizational branding) pro header do sidebar.
+// Busca o squareLogo (claro) e squareLogoDark (escuro) do branding DEFAULT e
+// devolve cada um como data URL (padrão do favicon.rs). Degrada gracioso: sem
+// branding / 403 / 404 / imagem vazia → None (o front cai no fallback).
+// Endpoint (verificado na doc): GET /organization/{id}/branding/localizations/0/{squareLogo|squareLogoDark}
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgBranding {
+    /// Logo pra fundo claro (data URL) — None se não configurado.
+    pub square_logo: Option<String>,
+    /// Logo pra fundo escuro (data URL) — None se não configurado.
+    pub square_logo_dark: Option<String>,
+}
+
+/// Baixa uma imagem de branding e devolve o data URL, ou None em qualquer
+/// falha (status, tipo não-imagem, corpo vazio). Não propaga erro de propósito.
+fn baixar_branding_logo(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    label: &str,
+    url: &str,
+) -> Option<String> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let resp = graph_enviar(label, GRAPH_TETO_ESPERA_S, || {
+        client.get(url).bearer_auth(token).send()
+    })
+    .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let tipo = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+        .unwrap_or_default();
+    // Branding não configurado costuma vir 200 com corpo vazio / JSON — só
+    // aceitamos imagem de verdade.
+    if !tipo.starts_with("image/") {
+        return None;
+    }
+    let bytes = resp.bytes().ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let b64 = STANDARD.encode(&bytes);
+    Some(format!("data:{tipo};base64,{b64}"))
+}
+
+/// #541: logo do tenant (claro + escuro) do branding default do Entra.
+pub fn cr_org_branding(store: &TokenStore) -> Result<OrgBranding, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    // orgId do usuário logado; sem ele não dá pra montar a URL de branding.
+    let org_id = match graph_enviar("org:branding:orgId", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(format!("{GRAPH}/organization?$select=id"))
+            .bearer_auth(&token)
+            .send()
+    }) {
+        Ok(resp) if resp.status().is_success() => resp
+            .json::<serde_json::Value>()
+            .ok()
+            .and_then(|b| b["value"][0]["id"].as_str().map(|s| s.to_string())),
+        _ => None,
+    };
+    let Some(org_id) = org_id.filter(|s| !s.is_empty()) else {
+        return Ok(OrgBranding {
+            square_logo: None,
+            square_logo_dark: None,
+        });
+    };
+
+    let base = format!("{GRAPH}/organization/{org_id}/branding/localizations/0");
+    let square_logo =
+        baixar_branding_logo(&client, &token, "org:branding:squareLogo", &format!("{base}/squareLogo"));
+    let square_logo_dark = baixar_branding_logo(
+        &client,
+        &token,
+        "org:branding:squareLogoDark",
+        &format!("{base}/squareLogoDark"),
+    );
+
+    Ok(OrgBranding {
+        square_logo,
+        square_logo_dark,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// #426 (Org Admin S3): contexto multi-tenant da org (MultiTenantOrganization.Read.All,
+// já no SCOPES do #424). Cartão read-only com a org multi-tenant + tenants membros.
+// Não-membro vem como 200 `state:"inactive"` (não 404) → status "inactive".
+// Endpoints (verificados na doc):
+//   GET /tenantRelationships/multiTenantOrganization           (org: id/displayName/state)
+//   GET /tenantRelationships/multiTenantOrganization/tenants   (membros: tenantId/displayName/role/state)
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiTenantMember {
+    pub tenant_id: String,
+    pub display_name: String,
+    /// "owner" | "member"
+    pub role: String,
+    /// "active" | "pending" | "removed"
+    pub state: String,
+}
+
+fn multi_tenant_member(m: &serde_json::Value) -> Option<MultiTenantMember> {
+    let tenant_id = m["tenantId"].as_str().unwrap_or("").trim().to_string();
+    let display_name = m["displayName"].as_str().unwrap_or("").trim().to_string();
+    if tenant_id.is_empty() && display_name.is_empty() {
+        return None;
+    }
+    Some(MultiTenantMember {
+        tenant_id,
+        display_name,
+        role: m["role"].as_str().unwrap_or("").trim().to_string(),
+        state: m["state"].as_str().unwrap_or("").trim().to_string(),
+    })
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MultiTenantCard {
+    /// "ok" | "inactive" | "forbidden" | "error"
+    pub status: String,
+    pub display_name: Option<String>,
+    pub members: Vec<MultiTenantMember>,
+}
+
+impl MultiTenantCard {
+    fn so_status(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            display_name: None,
+            members: Vec::new(),
+        }
+    }
+}
+
+/// #426: org multi-tenant + tenants membros. Só busca os membros se a org
+/// estiver ativa. Degrada gracioso (403 → forbidden, não-membro → inactive).
+pub fn cr_multi_tenant(store: &TokenStore) -> Result<MultiTenantCard, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+
+    let org = match graph_enviar("org:multiTenant", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(format!("{GRAPH}/tenantRelationships/multiTenantOrganization"))
+            .bearer_auth(&token)
+            .send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => body,
+            Err(_) => return Ok(MultiTenantCard::so_status("error")),
+        },
+        Ok(resp) if resp.status().as_u16() == 403 => {
+            return Ok(MultiTenantCard::so_status("forbidden"))
+        }
+        Ok(_) => return Ok(MultiTenantCard::so_status("error")),
+        Err(_) => return Ok(MultiTenantCard::so_status("error")),
+    };
+
+    let estado = org["state"].as_str().unwrap_or("inactive");
+    if estado != "active" {
+        // Tenant não faz parte de uma organização multi-tenant.
+        return Ok(MultiTenantCard::so_status("inactive"));
+    }
+
+    let display_name = org["displayName"]
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let members = match graph_enviar("org:multiTenant:tenants", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(format!(
+                "{GRAPH}/tenantRelationships/multiTenantOrganization/tenants"
+            ))
+            .bearer_auth(&token)
+            .send()
+    }) {
+        Ok(resp) if resp.status().is_success() => resp
+            .json::<serde_json::Value>()
+            .ok()
+            .and_then(|b| b["value"].as_array().cloned())
+            .map(|arr| arr.iter().filter_map(multi_tenant_member).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    Ok(MultiTenantCard {
+        status: "ok".to_string(),
+        display_name,
+        members,
+    })
+}
+
+#[cfg(test)]
+mod org_settings_testes {
+    use super::*;
+
+    #[test]
+    fn parse_apps_and_services_do_exemplo_da_doc() {
+        let body: serde_json::Value = serde_json::from_str(
+            r#"{"value":{"id":"c079","settings":{"isOfficeStoreEnabled":false,"isAppAndServicesTrialEnabled":true}}}"#,
+        )
+        .unwrap();
+        let card = AppsAndServicesCard::dos_settings(&body["value"]["settings"]);
+        assert_eq!(card.status, "ok");
+        assert_eq!(card.is_office_store_enabled, Some(false));
+        assert_eq!(card.is_app_and_services_trial_enabled, Some(true));
+    }
+
+    #[test]
+    fn parse_forms_do_exemplo_da_doc() {
+        let body: serde_json::Value = serde_json::from_str(
+            r#"{"value":{"settings":{"isExternalSendFormEnabled":true,"isExternalShareCollaborationEnabled":false,"isExternalShareResultEnabled":false,"isExternalShareTemplateEnabled":true,"isRecordIdentityByDefaultEnabled":true,"isBingImageSearchEnabled":true,"isInOrgFormsPhishingScanEnabled":false}}}"#,
+        )
+        .unwrap();
+        let card = FormsCard::dos_settings(&body["value"]["settings"]);
+        assert_eq!(card.status, "ok");
+        assert_eq!(card.is_external_send_form_enabled, Some(true));
+        assert_eq!(card.is_external_share_collaboration_enabled, Some(false));
+        assert_eq!(card.is_in_org_forms_phishing_scan_enabled, Some(false));
+    }
+
+    #[test]
+    fn parse_m365_install_do_exemplo_da_doc() {
+        let body: serde_json::Value = serde_json::from_str(
+            r#"{"updateChannel":"current","appsForWindows":{"isMicrosoft365AppsEnabled":true,"isProjectEnabled":true,"isSkypeForBusinessEnabled":false,"isVisioEnabled":false},"appsForMac":{"isMicrosoft365AppsEnabled":false,"isSkypeForBusinessEnabled":true}}"#,
+        )
+        .unwrap();
+        let card = M365InstallCard::da_raiz(&body);
+        assert_eq!(card.status, "ok");
+        assert_eq!(card.update_channel.as_deref(), Some("current"));
+        let win = card.apps_for_windows.expect("appsForWindows");
+        assert_eq!(win.is_microsoft365_apps_enabled, Some(true));
+        assert_eq!(win.is_visio_enabled, Some(false));
+        let mac = card.apps_for_mac.expect("appsForMac");
+        assert_eq!(mac.is_skype_for_business_enabled, Some(true));
+        // campo ausente no Mac (isProjectEnabled) → None, sem panic
+        assert_eq!(mac.is_project_enabled, None);
+    }
+
+    #[test]
+    fn cards_vazios_carregam_status() {
+        assert_eq!(AppsAndServicesCard::vazio("forbidden").status, "forbidden");
+        assert_eq!(FormsCard::vazio("error").status, "error");
+        assert!(M365InstallCard::vazio("error").apps_for_windows.is_none());
+    }
+
+    // --- #207: filtro de service principal → app do tenant ---
+
+    #[test]
+    fn tenant_app_aceita_sp_lancavel() {
+        let sp: serde_json::Value = serde_json::from_str(
+            r#"{"appId":"abc","displayName":"Contoso HR","accountEnabled":true,"servicePrincipalType":"Application","homepage":"https://hr.contoso.com","tags":["WindowsAzureActiveDirectoryIntegratedApp"]}"#,
+        )
+        .unwrap();
+        let app = tenant_app_do_sp(&sp).expect("deveria aceitar");
+        assert_eq!(app.display_name, "Contoso HR");
+        assert_eq!(app.url, "https://hr.contoso.com");
+        assert_eq!(app.app_id, "abc");
+    }
+
+    #[test]
+    fn tenant_app_cai_em_loginurl_sem_homepage() {
+        let sp: serde_json::Value = serde_json::from_str(
+            r#"{"appId":"x","displayName":"App","accountEnabled":true,"servicePrincipalType":"Application","loginUrl":"https://login.app.com"}"#,
+        )
+        .unwrap();
+        assert_eq!(tenant_app_do_sp(&sp).unwrap().url, "https://login.app.com");
+    }
+
+    // --- #426: parse de membro multi-tenant ---
+
+    #[test]
+    fn multi_tenant_member_do_exemplo_da_doc() {
+        let m: serde_json::Value = serde_json::from_str(
+            r#"{"tenantId":"1fd6544e","displayName":"Contoso","role":"owner","state":"active"}"#,
+        )
+        .unwrap();
+        let membro = multi_tenant_member(&m).expect("deveria parsear");
+        assert_eq!(membro.tenant_id, "1fd6544e");
+        assert_eq!(membro.display_name, "Contoso");
+        assert_eq!(membro.role, "owner");
+        assert_eq!(membro.state, "active");
+    }
+
+    #[test]
+    fn multi_tenant_member_rejeita_vazio() {
+        let m: serde_json::Value = serde_json::from_str(r#"{"role":"member"}"#).unwrap();
+        assert!(multi_tenant_member(&m).is_none());
+    }
+
+    #[test]
+    fn multi_tenant_card_so_status() {
+        let c = MultiTenantCard::so_status("inactive");
+        assert_eq!(c.status, "inactive");
+        assert!(c.display_name.is_none());
+        assert!(c.members.is_empty());
+    }
+
+    #[test]
+    fn tenant_app_rejeita_desabilitado_escondido_managed_e_sem_url() {
+        // desabilitado
+        let desab: serde_json::Value = serde_json::from_str(
+            r#"{"displayName":"A","accountEnabled":false,"servicePrincipalType":"Application","homepage":"https://a.com"}"#,
+        ).unwrap();
+        assert!(tenant_app_do_sp(&desab).is_none());
+        // marcado HideApp
+        let escondido: serde_json::Value = serde_json::from_str(
+            r#"{"displayName":"B","accountEnabled":true,"servicePrincipalType":"Application","homepage":"https://b.com","tags":["HideApp"]}"#,
+        ).unwrap();
+        assert!(tenant_app_do_sp(&escondido).is_none());
+        // ManagedIdentity (não é app de usuário)
+        let mi: serde_json::Value = serde_json::from_str(
+            r#"{"displayName":"C","accountEnabled":true,"servicePrincipalType":"ManagedIdentity","homepage":"https://c.com"}"#,
+        ).unwrap();
+        assert!(tenant_app_do_sp(&mi).is_none());
+        // sem URL de lançamento
+        let sem_url: serde_json::Value = serde_json::from_str(
+            r#"{"displayName":"D","accountEnabled":true,"servicePrincipalType":"Application"}"#,
+        ).unwrap();
+        assert!(tenant_app_do_sp(&sem_url).is_none());
+    }
 }
 
 fn valor_texto(item: &serde_json::Value, campo: &str) -> String {

@@ -557,6 +557,7 @@ export async function crEventoCorpo(id: string): Promise<EventoDetalhe> {
       online: true,
       joinUrl: "https://teams.microsoft.com/l/meetup-join/mock",
       organizador: "Wagner Consani",
+      organizadorEmail: "wagner@voaz.builders",
       souOrganizador: false,
       // Convite pendente no mock (#287) para exibir o RSVP no dev do browser.
       resposta: "notResponded",
@@ -679,6 +680,8 @@ export async function crEmailCorpo(
         deEmail: "server@voaz.builders",
         para: ["Wagner Consani"],
         cc: [],
+        paraEmails: ["wagner@galaxie.works"],
+        ccEmails: [],
         recebido: new Date().toISOString(),
         corpo: "<p>Backup concluído com sucesso às 03:00. Nenhuma ação necessária.</p>",
         corpoTipo: "html",
@@ -704,6 +707,8 @@ export async function crEmailCorpo(
       deEmail: "joao@proh.com.br",
       para: ["Wagner Consani"],
       cc: ["Financeiro VOAZ", "Ana Silva"],
+      paraEmails: ["wagner@galaxie.works"],
+      ccEmails: ["fin@voaz.com.br", "ana@exemplo.com"],
       recebido: new Date().toISOString(),
       corpo,
       corpoTipo: "html",
@@ -1169,6 +1174,218 @@ export async function crPeopleWriteAvailable(): Promise<boolean> {
     );
   }
   return invoke<boolean>("cr_people_write_available");
+}
+
+/**
+ * #206 (Org Admin S1): o token carrega os escopos de settings org-wide? Gate do
+ * painel Organization. Fora do Tauri, deriva do status de escopos (mock/dev).
+ */
+export async function crOrgAdminAvailable(): Promise<boolean> {
+  if (!inTauri()) {
+    const { missingScopes } = await requiredScopesStatus();
+    return !missingScopes.some(
+      (scope) =>
+        scope.toLocaleLowerCase() === "orgsettings-appsandservices.read.all",
+    );
+  }
+  return invoke<boolean>("cr_org_admin_available");
+}
+
+/** #425: status de um cartão OrgSettings — read-only, degrada por card. */
+export type OrgCardStatus = "ok" | "forbidden" | "error";
+
+export interface AppsAndServicesCard {
+  status: OrgCardStatus;
+  isOfficeStoreEnabled: boolean | null;
+  isAppAndServicesTrialEnabled: boolean | null;
+}
+
+export interface FormsCard {
+  status: OrgCardStatus;
+  isExternalSendFormEnabled: boolean | null;
+  isExternalShareCollaborationEnabled: boolean | null;
+  isExternalShareResultEnabled: boolean | null;
+  isExternalShareTemplateEnabled: boolean | null;
+  isRecordIdentityByDefaultEnabled: boolean | null;
+  isBingImageSearchEnabled: boolean | null;
+  isInOrgFormsPhishingScanEnabled: boolean | null;
+}
+
+export interface M365AppsPlatform {
+  isMicrosoft365AppsEnabled: boolean | null;
+  isProjectEnabled: boolean | null;
+  isSkypeForBusinessEnabled: boolean | null;
+  isVisioEnabled: boolean | null;
+}
+
+export interface M365InstallCard {
+  status: OrgCardStatus;
+  updateChannel: string | null;
+  appsForWindows: M365AppsPlatform | null;
+  appsForMac: M365AppsPlatform | null;
+}
+
+export interface OrgSettingsResult {
+  appsAndServices: AppsAndServicesCard;
+  forms: FormsCard;
+  microsoft365Install: M365InstallCard;
+}
+
+/**
+ * #425 (Org Admin S2): lê os cartões read-only de OrgSettings do tenant. Fora do
+ * Tauri devolve um mock representativo pra visualizar o painel no dev/browser.
+ */
+export async function crOrgSettings(): Promise<OrgSettingsResult> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      appsAndServices: {
+        status: "ok",
+        isOfficeStoreEnabled: false,
+        isAppAndServicesTrialEnabled: true,
+      },
+      forms: {
+        status: "ok",
+        isExternalSendFormEnabled: true,
+        isExternalShareCollaborationEnabled: false,
+        isExternalShareResultEnabled: false,
+        isExternalShareTemplateEnabled: true,
+        isRecordIdentityByDefaultEnabled: true,
+        isBingImageSearchEnabled: true,
+        isInOrgFormsPhishingScanEnabled: false,
+      },
+      microsoft365Install: {
+        status: "ok",
+        updateChannel: "current",
+        appsForWindows: {
+          isMicrosoft365AppsEnabled: true,
+          isProjectEnabled: true,
+          isSkypeForBusinessEnabled: false,
+          isVisioEnabled: false,
+        },
+        appsForMac: {
+          isMicrosoft365AppsEnabled: false,
+          isProjectEnabled: null,
+          isSkypeForBusinessEnabled: true,
+          isVisioEnabled: null,
+        },
+      },
+    };
+  }
+  return invoke<OrgSettingsResult>("cr_org_settings");
+}
+
+/** #207: app real do tenant (service principal lançável). */
+export interface TenantApp {
+  appId: string;
+  displayName: string;
+  url: string;
+}
+
+export interface TenantAppsResult {
+  status: OrgCardStatus;
+  apps: TenantApp[];
+}
+
+/**
+ * #207 (Org Admin): apps reais do tenant pra a tela Apps complementar o catálogo
+ * estático. Fora do Tauri devolve um mock representativo pra visualizar no dev.
+ */
+export async function crTenantApps(): Promise<TenantAppsResult> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      status: "ok",
+      apps: [
+        { appId: "m1", displayName: "Teams", url: "https://teams.microsoft.com/" },
+        { appId: "m2", displayName: "Viva Engage", url: "https://engage.cloud.microsoft/" },
+        {
+          appId: "m3",
+          displayName: "Power BI",
+          url: "https://app.powerbi.com/",
+        },
+        {
+          appId: "m4",
+          displayName: "Contoso RH",
+          url: "https://rh.contoso.com/",
+        },
+        {
+          appId: "m5",
+          displayName: "Salesforce",
+          url: "https://login.salesforce.com/",
+        },
+      ],
+    };
+  }
+  return invoke<TenantAppsResult>("cr_tenant_apps");
+}
+
+/** #541: logo do tenant (Entra branding) pro header do sidebar. Data URLs. */
+export interface OrgBranding {
+  /** Logo pra fundo claro — null se o tenant não configurou branding. */
+  squareLogo: string | null;
+  /** Logo pra fundo escuro — null se não configurado. */
+  squareLogoDark: string | null;
+}
+
+let brandingCache: Promise<OrgBranding> | null = null;
+
+/**
+ * #541: logo do tenant (claro + escuro) do Entra branding. Memoizado — o
+ * branding muda raramente, então busca uma vez por sessão. Fora do Tauri devolve
+ * um logo de exemplo pra visualizar o header no dev.
+ */
+export function crOrgBranding(): Promise<OrgBranding> {
+  brandingCache ??= (async () => {
+    if (!inTauri()) {
+      await sleep(300);
+      const logo = (fundo: string) =>
+        `data:image/svg+xml;utf8,${encodeURIComponent(
+          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="${fundo}"/><text x="16" y="23" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#fff" text-anchor="middle">V</text></svg>`
+        )}`;
+      // claro = marca escura sobre fundo claro; escuro = marca clara.
+      return { squareLogo: logo("#2563eb"), squareLogoDark: logo("#60a5fa") };
+    }
+    return invoke<OrgBranding>("cr_org_branding");
+  })();
+  return brandingCache;
+}
+
+/** #426: tenant membro de uma organização multi-tenant. */
+export interface MultiTenantMember {
+  tenantId: string;
+  displayName: string;
+  /** "owner" | "member" */
+  role: string;
+  /** "active" | "pending" | "removed" */
+  state: string;
+}
+
+export interface MultiTenantCard {
+  /** "ok" | "inactive" | "forbidden" | "error" */
+  status: "ok" | "inactive" | OrgCardStatus;
+  displayName: string | null;
+  members: MultiTenantMember[];
+}
+
+/**
+ * #426 (Org Admin S3): contexto multi-tenant da org (org + tenants membros).
+ * Fora do Tauri devolve um mock representativo pra visualizar o cartão no dev.
+ */
+export async function crMultiTenant(): Promise<MultiTenantCard> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      status: "ok",
+      displayName: "Voaz Group",
+      members: [
+        { tenantId: "1fd6544e", displayName: "Voaz Engenharia", role: "owner", state: "active" },
+        { tenantId: "4a12efe6", displayName: "Voaz Builders", role: "member", state: "active" },
+        { tenantId: "5036a0a0", displayName: "Voaz Labs", role: "member", state: "pending" },
+      ],
+    };
+  }
+  return invoke<MultiTenantCard>("cr_multi_tenant");
 }
 
 /** Atualiza, em uma única operação, os campos editáveis de um contato. */
@@ -1936,6 +2153,8 @@ export async function crLerAnexoEmail(
       deEmail: "ana@exemplo.com",
       para: ["voce@galaxie.works"],
       cc: [],
+      paraEmails: ["voce@galaxie.works"],
+      ccEmails: [],
       recebido: "2026-08-01T10:00:00Z",
       corpo: "<p>Segue a proposta em anexo. Abraço,<br/>Ana</p>",
       corpoTipo: "html",

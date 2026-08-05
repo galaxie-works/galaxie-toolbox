@@ -8,6 +8,27 @@
 export const UNDO_SEND_DELAY_MS = 10_000;
 export const OUTBOX_TICK_MS = 500;
 
+// #531 (AC5): registro dos envios ainda na janela de undo. Ao FECHAR o app (ou
+// refresh), dispara todos NA HORA — best-effort: o POST é emitido, mas a resposta
+// pode não retornar antes do processo encerrar. Sem isso, um envio pendente seria
+// silenciosamente PERDIDO no fechamento.
+const pendentesForcar = new Set<() => void>();
+let flushRegistrado = false;
+
+/** Dispara imediatamente todos os envios pendentes (fechamento/refresh do app). */
+export function flushOutboxPendentes(): void {
+  for (const forcar of [...pendentesForcar]) forcar();
+}
+
+function registrarFlushNoFechamento(): void {
+  if (flushRegistrado || typeof window === "undefined") return;
+  flushRegistrado = true;
+  // `pagehide` cobre fechar/navegar melhor que `beforeunload` em alguns engines;
+  // registramos os dois (idempotente — a mesma função só dispara pendentes).
+  window.addEventListener("pagehide", flushOutboxPendentes);
+  window.addEventListener("beforeunload", flushOutboxPendentes);
+}
+
 export type FaseEnvioPendente =
   | "pendente"
   | "enviando"
@@ -79,9 +100,13 @@ export function agendarEnvio(
     });
   };
 
+  const forcarDisparo = () => disparar();
+  const desregistrar = () => pendentesForcar.delete(forcarDisparo);
+
   const disparar = () => {
     if (faseAtual !== "pendente") return;
     limparTemporizadores();
+    desregistrar();
     faseAtual = "enviando";
     if (!silencioso) opcoes.onDisparando?.();
 
@@ -97,14 +122,24 @@ export function agendarEnvio(
       });
   };
 
-  notificarContagem();
-  intervalo = setInterval(notificarContagem, intervaloMs);
+  // #531 (AC5): registra o disparo forçado para o flush no fechamento do app.
+  registrarFlushNoFechamento();
+  pendentesForcar.add(forcarDisparo);
+
+  // #531 (AC4/Desligado): atrasoMs=0 não abre janela de undo — envia imediato,
+  // sem toast de contagem (o hook só cria o toast "Desfazer" via `onContagem`).
+  // Com atraso, conta normalmente.
+  if (atrasoMs > 0) {
+    notificarContagem();
+    intervalo = setInterval(notificarContagem, intervaloMs);
+  }
   temporizador = setTimeout(disparar, atrasoMs);
 
   return {
     desfazer: () => {
       if (faseAtual !== "pendente") return false;
       limparTemporizadores();
+      desregistrar();
       faseAtual = "desfeito";
       if (!silencioso) opcoes.onDesfeito?.();
       return true;
@@ -113,6 +148,7 @@ export function agendarEnvio(
       silencioso = true;
       if (faseAtual !== "pendente") return false;
       limparTemporizadores();
+      desregistrar();
       faseAtual = "cancelado";
       return true;
     },

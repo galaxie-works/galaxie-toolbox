@@ -23,12 +23,44 @@ export function GalaxieSymbol({ className }: { className?: string }) {
 }
 
 /**
- * Marca do CLIENTE, exibida no topo da sidebar (o slot que no shadcn e o
- * seletor de organizacao).
+ * #541: logo do TENANT vindo do Entra branding (data URLs claro/escuro), limpo
+ * — sem box/contorno. Theme-aware: `claro` no tema claro, `escuro` no escuro
+ * (cai no claro se não houver dark). É o fallback do multi-tenant que o
+ * `ClienteMark` abaixo antecipava. Só renderiza quando há logo; a decisão de
+ * mostrar isto vs. o `ClienteMark` estático fica no app-sidebar.
+ */
+export function TenantLogo({
+  claro,
+  escuro,
+  className,
+}: {
+  claro: string;
+  escuro: string;
+  className?: string;
+}) {
+  return (
+    <>
+      <img
+        src={claro}
+        alt=""
+        draggable={false}
+        className={cn("object-contain dark:hidden", className)}
+      />
+      <img
+        src={escuro}
+        alt=""
+        draggable={false}
+        className={cn("hidden object-contain dark:block", className)}
+      />
+    </>
+  );
+}
+
+/**
+ * Marca do CLIENTE (fallback estático), exibida no topo da sidebar quando o
+ * tenant não tem branding no Entra. Vai dentro de um box `bg-sidebar-primary`.
  *
- * TODO multi-tenant: hoje o arquivo e fixo. Quando entrar o segundo cliente,
- * isto deve virar um asset por tenant (ou a foto/logo vindo do proprio Entra),
- * resolvido a partir do dominio de quem logou.
+ * O caso tenant-com-branding é o `TenantLogo` acima (#541), limpo e sem box.
  */
 export function ClienteMark({ className }: { className?: string }) {
   return (

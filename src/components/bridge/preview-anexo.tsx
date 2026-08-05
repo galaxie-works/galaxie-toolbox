@@ -179,12 +179,15 @@ export function PreviewAnexo({
 
   return (
     <div
-      className="mt-3 overflow-hidden rounded-lg border bg-card"
+      // #496: preview vive num card à direita (painel resizable), então preenche
+      // a altura do painel — cabeçalho fixo + corpo rolável (antes era inline no
+      // corpo do e-mail, com `mt-3` e altura de conteúdo).
+      className="flex h-full flex-col overflow-hidden rounded-lg border bg-card"
       role="region"
       aria-label={preencher(tp.previewTitulo, { nome: anexo.nome })}
     >
       {/* Cabeçalho: nome + ações explícitas */}
-      <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5">
+      <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 px-3 py-1.5">
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {anexo.nome}
         </span>
@@ -218,8 +221,11 @@ export function PreviewAnexo({
         </Button>
       </div>
 
-      {/* Corpo: estados + renderer */}
-      <div className="min-h-24">
+      {/* Corpo: estados + renderer. #532: é uma COLUNA flex que preenche o card;
+          cada viewer é `flex-1 min-h-0` e rola/escala DENTRO (nada de altura fixa
+          h-96/h-[32rem] que deixava o conteúdo pequeno e cortado). Responsivo ao
+          resize do painel. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {grande ? (
           <PreviewAviso
             titulo={tp.previewGrande}
@@ -266,10 +272,10 @@ export function PreviewAnexo({
           </div>
         ) : usarPathC ? (
           pdf ? (
-            <div>
+            <div className="flex min-h-0 flex-1 flex-col">
               <PdfViewer doc={pdf} tp={tp} />
               {/* Egress consciente (§7.3): converteu no OneDrive do usuário. */}
-              <p className="border-t px-3 py-1.5 text-[11px] text-muted-foreground">
+              <p className="shrink-0 border-t px-3 py-1.5 text-[11px] text-muted-foreground">
                 {tp.previewConvertido}
               </p>
             </div>
@@ -378,7 +384,7 @@ function CsvViewer({
   if (tabela.linhas.length === 0) return <PreviewVazio texto={vazioTexto} />;
   const [cabecalho, ...corpo] = tabela.linhas;
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {tabela.truncado && (
         <p className="border-b bg-muted/30 px-3 py-1 text-[11px] text-muted-foreground">
           {preencher(tp.previewCsvTruncado, {
@@ -387,7 +393,7 @@ function CsvViewer({
           })}
         </p>
       )}
-      <ScrollArea className="h-96 w-full">
+      <ScrollArea className="min-h-0 w-full flex-1">
         <table className="w-max border-collapse text-xs">
           <thead className="sticky top-0 z-10 bg-muted">
             <tr>
@@ -438,7 +444,7 @@ function ImagemViewer({
     setEscala((e) => Math.min(5, Math.max(0.25, +(e + delta).toFixed(2))));
 
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1 border-b px-2 py-1">
         <div className="flex-1" />
         <Button
@@ -469,7 +475,7 @@ function ImagemViewer({
           <ZoomIn className="size-4" />
         </Button>
       </div>
-      <ScrollArea className="h-96 w-full bg-muted/20">
+      <ScrollArea className="min-h-0 w-full flex-1 bg-muted/20">
         <div className="flex min-h-full items-center justify-center p-3">
           <img
             src={url}
@@ -528,7 +534,7 @@ function TxtViewer({ texto, rotulo }: { texto: string; rotulo: string }) {
       sandbox=""
       srcDoc={srcDoc}
       title={rotulo}
-      className="h-80 w-full border-0 bg-white"
+      className="min-h-0 w-full flex-1 border-0 bg-white"
     />
   );
 }
@@ -567,7 +573,7 @@ function PdfViewer({
     setEscala((e) => Math.min(3, Math.max(0.5, +(e + delta).toFixed(2))));
 
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Barra de controles */}
       <div className="flex items-center gap-1 border-b px-2 py-1">
         <Button
@@ -623,7 +629,7 @@ function PdfViewer({
         </Button>
       </div>
       {/* Página */}
-      <ScrollArea className="h-96 w-full bg-muted/20">
+      <ScrollArea className="min-h-0 w-full flex-1 bg-muted/20">
         <div className="flex min-h-full justify-center p-3">
           <canvas ref={canvasRef} className="h-fit shadow-sm" />
         </div>
@@ -665,7 +671,7 @@ function HtmlSandboxViewer({
       sandbox=""
       srcDoc={srcDoc}
       title={rotulo}
-      className="h-[32rem] w-full border-0 bg-white"
+      className="min-h-0 w-full flex-1 border-0 bg-white"
     />
   );
 }

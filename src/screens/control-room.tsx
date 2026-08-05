@@ -116,9 +116,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { shortcutAccessibleLabel } from "@/components/ui/shortcut";
+import { shortcutAccessibleLabel, formatShortcut } from "@/components/ui/shortcut";
 import type { ShortcutDefinition } from "@/components/ui/shortcut";
 import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
+import { Kbd } from "@/components/ui/kbd";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -1978,12 +1979,21 @@ function FolderSidebar({
                 <Button
                   size="icon"
                   onClick={onNovo}
-                  aria-label={t.controlRoom.novoEmail}
+                  aria-label={shortcutAccessibleLabel(
+                    t.controlRoom.novoEmail,
+                    ATALHO_COMPOR
+                  )}
                 >
                   <SquarePenIcon size={16} />
                 </Button>
               </TooltipTrigger>
-              <TooltipContent>{t.controlRoom.novoEmail}</TooltipContent>
+              <TooltipContent>
+                {/* #538: New Mail é icon-only COM atalho (c) → ShortcutTooltip. */}
+                <ShortcutTooltip
+                  label={t.controlRoom.novoEmail}
+                  shortcut={ATALHO_COMPOR}
+                />
+              </TooltipContent>
             </Tooltip>
             <DropdownMenu>
               {/* Tooltip > DropdownMenu: dois gatilhos asChild no mesmo botão. */}
@@ -2036,12 +2046,23 @@ function FolderSidebar({
           {colapsada && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
+                <Button
+                  size="icon"
+                  onClick={onNovo}
+                  aria-label={shortcutAccessibleLabel(
+                    t.controlRoom.novoEmail,
+                    ATALHO_COMPOR
+                  )}
+                >
                   <SquarePenIcon size={16} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right" align="center">
-                {t.controlRoom.novoEmail}
+                {/* #538: New Mail icon-only COM atalho (c) → ShortcutTooltip. */}
+                <ShortcutTooltip
+                  label={t.controlRoom.novoEmail}
+                  shortcut={ATALHO_COMPOR}
+                />
               </TooltipContent>
             </Tooltip>
           )}
@@ -2862,6 +2883,31 @@ const ATALHO_EXCLUIR: ShortcutDefinition = { key: "Delete" };
 // Ler/não-ler do leitor (#102): atalho U. Alimenta aria-label + ShortcutTooltip
 // do botão que ALTERNA lido/não-lido na toolbar do leitor.
 const ATALHO_LER_NAO_LIDO: ShortcutDefinition = { key: "U" };
+// #497: atalhos das ações do leitor JÁ cabeados no handler central (#28, switch
+// por e.key.toLowerCase() = r/a/f). Exibidos como <Kbd> ao lado do rótulo dos
+// botões Responder/Responder a todos/Encaminhar. NÃO inventar — casam com o
+// handler; teclas exibidas em maiúscula (convenção dos demais ATALHO_*).
+// #537: esquema Outlook — combos, não single-key (o single F colidia com o
+// Filtro da lista). Responder=Ctrl+R · Responder a todos=Ctrl+Shift+R ·
+// Encaminhar=Ctrl+Shift+F. O `ShortcutDefinition` já suporta primary/shift, e o
+// `formatShortcut` renderiza "Ctrl+Shift+R" no <Kbd> — o exibido acompanha.
+const ATALHO_RESPONDER: ShortcutDefinition = { key: "R", primary: true };
+const ATALHO_RESPONDER_TODOS: ShortcutDefinition = {
+  key: "R",
+  primary: true,
+  shift: true,
+};
+const ATALHO_ENCAMINHAR: ShortcutDefinition = {
+  key: "F",
+  primary: true,
+  shift: true,
+};
+// #538: o Filtro da lista tem atalho F (single, liberado pelo #537) via o
+// `<Filters enableShortcut shortcutKey="f">` — o tooltip precisa exibir o Kbd.
+const ATALHO_FILTRO: ShortcutDefinition = { key: "F" };
+// #538: "Novo e-mail" (icon-only) dispara o mesmo compose do atalho "c" (o
+// handler chama onCompor; onNovo === onCompor === novoEmailModal).
+const ATALHO_COMPOR: ShortcutDefinition = { key: "C" };
 
 function MessageList({
   titulo,
@@ -3426,6 +3472,32 @@ function MessageList({
       return;
     }
 
+    // #537: Responder / Responder a todos / Encaminhar por COMBO (esquema
+    // Outlook). Antes eram single R/A/F, e o F colidia com o Filtro da lista.
+    // Ctrl+R = responder · Ctrl+Shift+R = responder a todos · Ctrl+Shift+F =
+    // encaminhar. Sem modificador, R/A/F ficam livres (F → só o Filtro).
+    if (ehModPrincipal(e) && !e.altKey) {
+      const tecla = e.key.toLowerCase();
+      if (tecla === "r" && !e.shiftKey) {
+        if (envioBloqueado) return;
+        e.preventDefault();
+        onResponder();
+        return;
+      }
+      if (tecla === "r" && e.shiftKey) {
+        if (envioBloqueado) return;
+        e.preventDefault();
+        onResponderTodos();
+        return;
+      }
+      if (tecla === "f" && e.shiftKey) {
+        if (envioBloqueado) return;
+        e.preventDefault();
+        onEncaminhar();
+        return;
+      }
+    }
+
     if (mensagensNavegaveis.length === 0) return;
     const idxAtivo = mensagensNavegaveis.findIndex((m) => m.id === msgSel);
 
@@ -3464,24 +3536,11 @@ function MessageList({
       return;
     }
 
-    // Atalhos de tecla única sem modificadores.
+    // Atalhos de tecla única sem modificadores. (Responder/Responder a todos/
+    // Encaminhar saíram daqui no #537 — agora são combos Ctrl+... acima; R/A/F
+    // single ficam livres, o F pro Filtro da lista.)
     if (ehModPrincipal(e) || e.altKey || e.shiftKey) return;
     switch (e.key.toLowerCase()) {
-      case "r": // responder
-        if (envioBloqueado) return;
-        e.preventDefault();
-        onResponder();
-        return;
-      case "a": // responder a todos
-        if (envioBloqueado) return;
-        e.preventDefault();
-        onResponderTodos();
-        return;
-      case "f": // encaminhar
-        if (envioBloqueado) return;
-        e.preventDefault();
-        onEncaminhar();
-        return;
       case "x": // marcar/desmarcar a mensagem ativa
         if (ativoId) {
           e.preventDefault();
@@ -3642,7 +3701,10 @@ function MessageList({
                   shortcutLabel="F"
                   trigger={
                     <ToolbarButton
-                      aria-label={t.controlRoom.filtroLabel}
+                      aria-label={shortcutAccessibleLabel(
+                        t.controlRoom.filtroLabel,
+                        ATALHO_FILTRO
+                      )}
                       pressed={filtros.length > 0}
                     >
                       <ListFilter />
@@ -3656,7 +3718,13 @@ function MessageList({
                 />
               </span>
             </TooltipTrigger>
-            <TooltipContent>{t.controlRoom.filtroLabel}</TooltipContent>
+            <TooltipContent>
+              {/* #538: Filtro é icon-only COM atalho (F) → ShortcutTooltip c/ Kbd. */}
+              <ShortcutTooltip
+                label={t.controlRoom.filtroLabel}
+                shortcut={ATALHO_FILTRO}
+              />
+            </TooltipContent>
           </Tooltip>
           {filtros.length > 0 && (
             <ToolbarButton
@@ -4217,11 +4285,38 @@ function MessageList({
 // Painel 3 — detalhe da mensagem + compose inline
 // ===========================================================================
 
-function LinhaPessoas({ rotulo, nomes }: { rotulo: string; nomes: string[] }) {
+function LinhaPessoas({
+  rotulo,
+  nomes,
+  emails,
+}: {
+  rotulo: string;
+  nomes: string[];
+  /** E-mails alinhados 1:1 com `nomes` (#515). "" = sem e-mail → texto simples. */
+  emails: string[];
+}) {
   if (nomes.length === 0) return null;
   return (
     <p className="text-xs text-muted-foreground">
-      <span className="font-medium">{rotulo}:</span> {nomes.join(", ")}
+      <span className="font-medium">{rotulo}:</span>{" "}
+      {nomes.map((nome, i) => {
+        const email = emails[i]?.trim();
+        return (
+          <span key={`${nome}-${i}`}>
+            {i > 0 && ", "}
+            {/* #515: cada destinatário com e-mail abre o PersonHoverCard. */}
+            {email ? (
+              <PersonHoverCard email={email} fallback={{ nome, email }}>
+                <span className="cursor-default underline-offset-2 hover:underline">
+                  {nome}
+                </span>
+              </PersonHoverCard>
+            ) : (
+              nome
+            )}
+          </span>
+        );
+      })}
     </p>
   );
 }
@@ -4630,6 +4725,7 @@ const MessageDetail = forwardRef<
   const fecharCompose = useAppStore((s) => s.fecharCompose);
   const carregarLeitor = useAppStore((s) => s.carregarLeitor);
   const limparLeitor = useAppStore((s) => s.limparLeitor);
+  const setSidebarAberta = useAppStore((s) => s.setSidebarAberta);
   const comporRef = useRef<ComporMensagemHandle>(null);
   // Anexo em pré-visualização (#188); null = nenhum aberto.
   const [previewAtual, setPreviewAtual] = useState<AnexoEmail | null>(null);
@@ -4640,6 +4736,13 @@ const MessageDetail = forwardRef<
     setPreviewAtual(null);
     setAnexoEmail(null);
   }, [id]);
+  // #496: abrir preview colapsa o sidebar (mais espaço) — gatilho TRANSIENTE
+  // (ação do usuário), NUNCA reativo a estado persistente (P0 do webview). Ao
+  // fechar, o sidebar PERMANECE colapsado (sem re-expandir → evita reflow).
+  const abrirPreview = (a: AnexoEmail) => {
+    setPreviewAtual(a);
+    setSidebarAberta(false);
+  };
   const textosUndoSend = useMemo(
     () => ({
       tituloPendente: (segundos: number) =>
@@ -4865,7 +4968,7 @@ const MessageDetail = forwardRef<
                               : item
                                 ? setAnexoEmail(a)
                                 : previsivel
-                                  ? setPreviewAtual(a)
+                                  ? abrirPreview(a)
                                   : baixarAnexo(a)
                           }
                           className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5 text-xs transition-colors hover:bg-muted"
@@ -4897,7 +5000,7 @@ const MessageDetail = forwardRef<
                       ) : (
                         <>
                           {previsivel && (
-                            <ContextMenuItem onSelect={() => setPreviewAtual(a)}>
+                            <ContextMenuItem onSelect={() => abrirPreview(a)}>
                               <Eye /> {t.controlRoom.previewCtxVer}
                             </ContextMenuItem>
                           )}
@@ -4918,15 +5021,6 @@ const MessageDetail = forwardRef<
               );
             })}
           </div>
-          {previewAtual && id && (
-            <PreviewAnexo
-              anexo={previewAtual}
-              messageId={id}
-              mailbox={mailbox}
-              onSalvar={() => baixarAnexo(previewAtual)}
-              onFechar={() => setPreviewAtual(null)}
-            />
-          )}
           {anexoEmail && id && (
             <PreviewEmailAninhado
               anexo={anexoEmail}
@@ -4954,8 +5048,13 @@ const MessageDetail = forwardRef<
             size="sm"
             onClick={() => abrirCompose("responder", mailbox)}
             disabled={envioBloqueado}
+            aria-label={shortcutAccessibleLabel(
+              t.controlRoom.responder,
+              ATALHO_RESPONDER
+            )}
           >
             <Reply /> {t.controlRoom.responder}
+            <Kbd>{formatShortcut(ATALHO_RESPONDER)}</Kbd>
           </Button>
         </DicaSomenteLeitura>
         <DicaSomenteLeitura
@@ -4967,8 +5066,13 @@ const MessageDetail = forwardRef<
             size="sm"
             onClick={() => abrirCompose("responderTodos", mailbox)}
             disabled={envioBloqueado}
+            aria-label={shortcutAccessibleLabel(
+              t.controlRoom.responderTodos,
+              ATALHO_RESPONDER_TODOS
+            )}
           >
             <ReplyAll /> {t.controlRoom.responderTodos}
+            <Kbd>{formatShortcut(ATALHO_RESPONDER_TODOS)}</Kbd>
           </Button>
         </DicaSomenteLeitura>
         <DicaSomenteLeitura
@@ -4980,8 +5084,13 @@ const MessageDetail = forwardRef<
             size="sm"
             onClick={() => abrirCompose("encaminhar", mailbox)}
             disabled={envioBloqueado}
+            aria-label={shortcutAccessibleLabel(
+              t.controlRoom.encaminhar,
+              ATALHO_ENCAMINHAR
+            )}
           >
             <Forward /> {t.controlRoom.encaminhar}
+            <Kbd>{formatShortcut(ATALHO_ENCAMINHAR)}</Kbd>
           </Button>
         </DicaSomenteLeitura>
         <div className="ml-auto flex items-center gap-1">
@@ -5076,6 +5185,15 @@ const MessageDetail = forwardRef<
         </div>
       </div>
 
+      {/* #496: split e-mail ↔ card de preview lateral. O painel do e-mail fica
+          SEMPRE montado (order=1) → sem remount do corpo/iframe ao abrir/fechar
+          o preview (nada de piscar). A largura do preview persiste via autoSaveId. */}
+      <ResizablePanelGroup
+        direction="horizontal"
+        autoSaveId="bridge.preview"
+        className="min-h-0 flex-1"
+      >
+        <ResizablePanel order={1} minSize={30} className="flex min-w-0 flex-col">
       {/* Cabeçalho do e-mail */}
       <div className="border-b px-5 py-4">
         <h1 className="text-base font-semibold">{det.assunto}</h1>
@@ -5133,8 +5251,16 @@ const MessageDetail = forwardRef<
               </span>
             </div>
             <div className="mt-1 space-y-0.5">
-              <LinhaPessoas rotulo={t.controlRoom.para} nomes={det.para} />
-              <LinhaPessoas rotulo={t.controlRoom.ccLabel} nomes={det.cc} />
+              <LinhaPessoas
+                rotulo={t.controlRoom.para}
+                nomes={det.para}
+                emails={det.paraEmails}
+              />
+              <LinhaPessoas
+                rotulo={t.controlRoom.ccLabel}
+                nomes={det.cc}
+                emails={det.ccEmails}
+              />
             </div>
           </div>
         </div>
@@ -5156,6 +5282,35 @@ const MessageDetail = forwardRef<
 
       {/* Corpo do e-mail — sempre em altura cheia (sem compose espremido). */}
       <div className="min-h-0 flex-1 overflow-y-auto scrollbar-fina">{corpoInterno}</div>
+        </ResizablePanel>
+        {previewAtual && id && (
+          <>
+            <ResizableHandle
+              withHandle
+              className="mx-1.5 bg-transparent hover:bg-border"
+            />
+            <ResizablePanel
+              order={2}
+              minSize={25}
+              defaultSize={40}
+              // #532: sem a cadeia de altura (flex/min-h-0/flex-col) o painel não
+              // dava altura DEFINIDA ao card (h-full), então o corpo do preview
+              // (flex-1 overflow-auto) crescia até o conteúdo e o overflow-hidden
+              // do painel cortava embaixo (PDF/xlsx/imagem). Espelha o order=1.
+              className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+            >
+              {/* #496: preview num card à direita, fora do corpo do e-mail. */}
+              <PreviewAnexo
+                anexo={previewAtual}
+                messageId={id}
+                mailbox={mailbox}
+                onSalvar={() => baixarAnexo(previewAtual)}
+                onFechar={() => setPreviewAtual(null)}
+              />
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
 
       {/* Reply / Reply all / Forward num Sheet lateral (como o New Mail): não
           corta a toolbar do compose e deixa o e-mail original visível atrás. A
@@ -5507,7 +5662,23 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
               {det.organizador && (
                 <p className="text-xs text-muted-foreground">
                   <span className="font-medium">{t.controlRoom.organizador}:</span>{" "}
-                  {det.organizador}
+                  {/* #515: com email real → PersonHoverCard no organizador;
+                      sem email cai no texto simples de antes. */}
+                  {det.organizadorEmail ? (
+                    <PersonHoverCard
+                      email={det.organizadorEmail}
+                      fallback={{ nome: det.organizador, email: det.organizadorEmail }}
+                    >
+                      <span
+                        tabIndex={0}
+                        className="cursor-default rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        {det.organizador}
+                      </span>
+                    </PersonHoverCard>
+                  ) : (
+                    det.organizador
+                  )}
                 </p>
               )}
               {det.participantes.length > 0 && (
