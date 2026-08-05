@@ -1292,6 +1292,20 @@ export async function crOrgSettings(): Promise<OrgSettingsResult> {
   return invoke<OrgSettingsResult>("cr_org_settings");
 }
 
+/**
+ * #208 (RW): grava UMA setting org-wide de To Do (OrgSettings-Todo.ReadWrite.All).
+ * ⚠️ O endpoint `/admin/todo` ainda não foi confirmado no tenant real — a UI mantém
+ * a escrita TRAVADA (`TODO_RW_HABILITADO`) até o live-QA de admin validar. Este
+ * wrapper fica pronto; ativar é só destravar a UI. Fora do Tauri é no-op (mock).
+ */
+export async function crOrgTodoSet(campo: string, valor: boolean): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  return invoke<void>("cr_org_todo_set", { campo, valor });
+}
+
 /** #207: app real do tenant (service principal lançável). */
 export interface TenantApp {
   appId: string;
