@@ -179,12 +179,15 @@ export function PreviewAnexo({
 
   return (
     <div
-      className="mt-3 overflow-hidden rounded-lg border bg-card"
+      // #496: preview vive num card à direita (painel resizable), então preenche
+      // a altura do painel — cabeçalho fixo + corpo rolável (antes era inline no
+      // corpo do e-mail, com `mt-3` e altura de conteúdo).
+      className="flex h-full flex-col overflow-hidden rounded-lg border bg-card"
       role="region"
       aria-label={preencher(tp.previewTitulo, { nome: anexo.nome })}
     >
       {/* Cabeçalho: nome + ações explícitas */}
-      <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-1.5">
+      <div className="flex shrink-0 items-center gap-2 border-b bg-muted/30 px-3 py-1.5">
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {anexo.nome}
         </span>
@@ -218,8 +221,8 @@ export function PreviewAnexo({
         </Button>
       </div>
 
-      {/* Corpo: estados + renderer */}
-      <div className="min-h-24">
+      {/* Corpo: estados + renderer — rola dentro do card (#496). */}
+      <div className="min-h-24 flex-1 overflow-auto">
         {grande ? (
           <PreviewAviso
             titulo={tp.previewGrande}
