@@ -669,7 +669,15 @@ export function OrganizationsView({
                     {memberEmail ? (
                       <PersonHoverCard
                         email={memberEmail}
-                        fallback={{ nome: contact.name, email: memberEmail }}
+                        // #553: passa a foto do cache (getFoto) no fallback, igual
+                        // às instâncias que funcionam (reader/participantes) — o
+                        // PersonHoverCard lê `fallback.foto` (não resolve o cache
+                        // sozinho), então sem isto o hover ficava só nas iniciais.
+                        fallback={{
+                          nome: contact.name,
+                          email: memberEmail,
+                          foto: getFoto(memberEmail) ?? undefined,
+                        }}
                       >
                         {identidade}
                       </PersonHoverCard>
