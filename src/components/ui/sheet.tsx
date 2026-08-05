@@ -2,6 +2,7 @@ import * as React from "react"
 import { XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { textoUi } from "@/lib/idioma-core"
 /**
  * #479 (épico #476): sheets laterais migradas pro Animate UI. Este é o **ponto
  * único de troca** — troca o primitivo Radix cru por `@animate-ui/.../radix/sheet`
@@ -77,7 +78,7 @@ function SheetContent({
         {showCloseButton && (
           <SheetClosePrimitive className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-secondary">
             <XIcon className="size-4" />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{textoUi("fechar")}</span>
           </SheetClosePrimitive>
         )}
       </SheetContentPrimitive>

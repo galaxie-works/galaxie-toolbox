@@ -2,6 +2,7 @@ import * as React from "react"
 import { XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
+import { textoUi } from "@/lib/idioma-core"
 import { Button } from "@/components/ui/button"
 /**
  * #480 (épico #476): dialogs migrados pro Animate UI. **Ponto único de troca** —
@@ -100,7 +101,7 @@ function DialogContent({
             className="absolute top-4 right-4 rounded-xs opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <XIcon />
-            <span className="sr-only">Close</span>
+            <span className="sr-only">{textoUi("fechar")}</span>
           </DialogClosePrimitive>
         )}
       </DialogContentPrimitive>
@@ -138,7 +139,7 @@ function DialogFooter({
       {children}
       {showCloseButton && (
         <DialogClosePrimitive asChild>
-          <Button variant="outline">Close</Button>
+          <Button variant="outline">{textoUi("fechar")}</Button>
         </DialogClosePrimitive>
       )}
     </div>

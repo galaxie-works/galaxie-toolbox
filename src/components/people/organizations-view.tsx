@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { PersonHoverCard } from "@/components/people/person-hover-card";
 import {
   Dialog,
   DialogContent,
@@ -613,8 +614,9 @@ export function OrganizationsView({
             </p>
           ) : (
             <div className="divide-y rounded-lg border">
-              {members.map((contact) => (
-                <div key={contact.id} className="flex items-center gap-3 px-3 py-2.5">
+              {members.map((contact) => {
+                const memberEmail = contact.emails[0]?.address;
+                const identidade = (
                   <button
                     type="button"
                     className="flex min-w-0 flex-1 items-center gap-3 text-left"
@@ -635,6 +637,22 @@ export function OrganizationsView({
                       </span>
                     </span>
                   </button>
+                );
+                return (
+                  <div key={contact.id} className="flex items-center gap-3 px-3 py-2.5">
+                    {/* #478 rework: a identidade do membro abre o PersonHoverCard
+                        (avatar/nome/ações). O botão continua abrindo o contato no
+                        clique; o hover mostra o card. Sem email, fica o botão só. */}
+                    {memberEmail ? (
+                      <PersonHoverCard
+                        email={memberEmail}
+                        fallback={{ nome: contact.name, email: memberEmail }}
+                      >
+                        {identidade}
+                      </PersonHoverCard>
+                    ) : (
+                      identidade
+                    )}
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -652,8 +670,9 @@ export function OrganizationsView({
                       {t.controlRoom.orgsRemoverMembro}
                     </TooltipContent>
                   </Tooltip>
-                </div>
-              ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>

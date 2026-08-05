@@ -15,6 +15,7 @@ import {
 } from 'platejs/react';
 
 import { cn } from '@/lib/utils';
+import { textoUi } from '@/lib/idioma-core';
 import { useMounted } from '@/hooks/use-mounted';
 import { inlineSuggestionVariants } from '@/lib/suggestion';
 
@@ -98,7 +99,7 @@ export function MentionInputElement(
         </span>
 
         <InlineComboboxContent className="my-1.5">
-          <InlineComboboxEmpty>No results</InlineComboboxEmpty>
+          <InlineComboboxEmpty>{textoUi("semResultados")}</InlineComboboxEmpty>
 
           <InlineComboboxGroup>
             {MENTIONABLES.map((item) => (

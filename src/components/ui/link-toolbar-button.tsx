@@ -6,7 +6,8 @@ import {
   useLinkToolbarButton,
   useLinkToolbarButtonState,
 } from '@platejs/link/react';
-import { Link } from 'lucide-react';
+// #500: ícone animado do registry (lucide-animated) no lugar do lucide estático.
+import { LinkIcon } from '@/components/ui/link';
 
 import { ToolbarButton } from './toolbar';
 
@@ -24,7 +25,7 @@ export function LinkToolbarButton(
       data-plate-focus
       tooltip="Link"
     >
-      <Link />
+      <LinkIcon />
     </ToolbarButton>
   );
 }

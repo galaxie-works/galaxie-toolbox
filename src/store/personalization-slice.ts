@@ -27,6 +27,9 @@ import type { AppStore } from "./index";
  * Settings; serve também de allowlist na hidratação (`lerTexto`).
  */
 export const TIPOS_FUNDO_ANIMADO = [
+  // #474 (rework 2): "none" = sem fundo animado. É a 1ª opção do seletor e o
+  // jeito de DESLIGAR o fundo (não há mais switch on/off).
+  "none",
   "starry",
   "supernova",
   "spacehive",
@@ -44,9 +47,8 @@ export type TipoFundoAnimado = (typeof TIPOS_FUNDO_ANIMADO)[number];
 export interface PersonalizationSlice {
   /** Sons por evento. Preserva `bridge.notificacoes` e o contrato do #48. */
   notificacoes: PreferenciasNotificacao;
-  /** #474: switcher liga/desliga o fundo animado em todas as superfícies. */
-  fundosAnimadosAtivo: boolean;
-  /** #474: qual fundo animado (Animate UI) é pintado quando o switcher liga. */
+  /** #474: qual fundo animado (Animate UI) é pintado. `"none"` = nenhum
+   *  (desligado — não há mais switch, a opção "Nenhum" do seletor desliga). */
   fundoAnimado: TipoFundoAnimado;
   /** Claro, escuro ou seguindo a preferência do sistema operacional. */
   modoTema: ModoTema;
@@ -56,7 +58,6 @@ export interface PersonalizationSlice {
   altoContraste: boolean;
 
   setSomNotificacao: (escopo: EscopoNotificacao, somId: string) => void;
-  setFundosAnimadosAtivo: (ativo: boolean) => void;
   setFundoAnimado: (tipo: TipoFundoAnimado) => void;
   setModoTema: (modo: ModoTema) => void;
   setTemaVisual: (tema: TemaVisual) => void;
@@ -65,7 +66,6 @@ export interface PersonalizationSlice {
 
 export const PERSONALIZATION_KEYS = {
   notificacoes: CHAVE_NOTIFICACOES,
-  fundosAnimadosAtivo: "galaxie-toolbox.background.stars",
   fundoAnimado: "galaxie-toolbox.background.animated",
   modoTema: CHAVE_MODO_TEMA,
   temaVisual: CHAVE_TEMA_VISUAL,
@@ -75,7 +75,6 @@ export const PERSONALIZATION_KEYS = {
 export type PersonalizationPersistido = Pick<
   PersonalizationSlice,
   | "notificacoes"
-  | "fundosAnimadosAtivo"
   | "fundoAnimado"
   | "modoTema"
   | "temaVisual"
@@ -89,7 +88,6 @@ export const createPersonalizationSlice: StateCreator<
   PersonalizationSlice
 > = (set, get) => ({
   notificacoes: { ...PREF_PADRAO },
-  fundosAnimadosAtivo: true,
   fundoAnimado: "starry",
   modoTema: modoTemaSalvo(),
   temaVisual: temaVisualSalvo(),
@@ -99,7 +97,6 @@ export const createPersonalizationSlice: StateCreator<
     set((state) => ({
       notificacoes: { ...state.notificacoes, [escopo]: somId },
     })),
-  setFundosAnimadosAtivo: (ativo) => set({ fundosAnimadosAtivo: ativo }),
   setFundoAnimado: (tipo) => set({ fundoAnimado: tipo }),
   setModoTema: (modo) => {
     aplicarModoTema(modo);

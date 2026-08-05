@@ -9,6 +9,7 @@ import { EmojiPlugin } from '@platejs/emoji/react';
 import { PlateElement, usePluginOption } from 'platejs/react';
 
 import { useDebounce } from '@/hooks/use-debounce';
+import { textoUi } from '@/lib/idioma-core';
 
 import {
   InlineCombobox,
@@ -49,7 +50,9 @@ export function EmojiInputElement(props: PlateElementProps) {
         <InlineComboboxInput />
 
         <InlineComboboxContent>
-          {!isPending && <InlineComboboxEmpty>No results</InlineComboboxEmpty>}
+          {!isPending && (
+            <InlineComboboxEmpty>{textoUi("semResultados")}</InlineComboboxEmpty>
+          )}
 
           <InlineComboboxGroup>
             {filteredEmojis.map((emoji) => (

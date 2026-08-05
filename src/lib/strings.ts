@@ -445,6 +445,11 @@ const pt = {
     motivoHoje: "Hoje",
   },
 
+  sidebar: {
+    collapse: "Recolher barra lateral",
+    expand: "Expandir barra lateral",
+  },
+
   controlRoom: {
     saudacao: "Olá, {nome}",
     subtitulo: "Seu dia em um olhar.",
@@ -614,10 +619,10 @@ const pt = {
     diaInteiro: "Dia inteiro",
     mailboxTitulo: "E-mail",
     agendaTitulo: "Calendário",
-    // Subtítulos do header do Bridge por módulo (#231). #490: Mailbox sem
-    // subtítulo (título "Bridge" sozinho) — a chave mailboxSubtitulo foi removida.
-    peopleSubtitulo: "Seus contatos do Microsoft 365.",
-    agendaSubtitulo: "Seus próximos compromissos.",
+    // #490 (rework): o header do Bridge é CONSTANTE nos 3 módulos — título
+    // "Bridge" (nav.controlRoom) + este subtítulo fixo. O que muda por módulo é
+    // o breadcrumb, não o header. (Substitui os subtítulos por módulo do #231.)
+    bridgeSubtitulo: "E-mail, contatos e calendário à sua disposição",
     // Agenda — calendário completo (#211)
     agendaNovoEvento: "Novo evento",
     agendaHoje: "Hoje",
@@ -1220,6 +1225,8 @@ const pt = {
     sublinhado: "Sublinhado",
     tachado: "Tachado",
     inserirAssinatura: "Inserir assinatura",
+    assinaturaNenhuma: "Nenhuma assinatura configurada — clique para configurar",
+    assinaturaEscolher: "Escolher assinatura",
     anexarArquivo: "Anexar arquivo",
     compartilharOneDrive: "Compartilhar via OneDrive",
     arrasteArquivos: "Arraste arquivos aqui ou",
@@ -1289,6 +1296,7 @@ const pt = {
     // Background (#474: fundos animados dentro do Appearance)
     bgAnimados: "Fundos animados",
     bgAnimadosDesc: "Escolha um fundo animado para o app",
+    bgNenhum: "Nenhum",
     // Language
     languageDesc:
       "Escolha o idioma do app, independente do idioma do seu Windows.",
@@ -1539,6 +1547,15 @@ const pt = {
     lockToastRemovido: "PIN removido",
     lockErroRemover:
       "Não foi possível remover o PIN. Confira o PIN e tente de novo.",
+  },
+  // #475: textos sr-only/aria dos primitivos ui/ compartilhados. Localizados nos
+  // próprios primitivos via `textoUi` (idiomaAtual() puro, sem o hook useIdioma —
+  // mantém o registry sem hook, seguindo a orientação da issue).
+  ui: {
+    fechar: "Fechar",
+    mais: "Mais",
+    carregando: "Carregando",
+    semResultados: "Sem resultados",
   },
 } as const;
 
@@ -1965,6 +1982,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     motivoHoje: "Today",
   },
 
+  sidebar: {
+    collapse: "Collapse sidebar",
+    expand: "Expand sidebar",
+  },
+
   controlRoom: {
     saudacao: "Hi, {nome}",
     subtitulo: "Your day at a glance.",
@@ -2134,10 +2156,10 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     diaInteiro: "All day",
     mailboxTitulo: "Mailbox",
     agendaTitulo: "Calendar",
-    // Bridge header subtitles per module (#231). #490: Mailbox has no subtitle
-    // (title "Bridge" stands alone) — the mailboxSubtitulo key was removed.
-    peopleSubtitulo: "Your Microsoft 365 contacts.",
-    agendaSubtitulo: "Your upcoming schedule.",
+    // #490 (rework): the Bridge header is CONSTANT across all 3 modules — title
+    // "Bridge" (nav.controlRoom) + this fixed subtitle. Only the breadcrumb
+    // changes per module. (Replaces the per-module subtitles from #231.)
+    bridgeSubtitulo: "Email, contacts and calendar at your disposal",
     // Agenda — full calendar (#211)
     agendaNovoEvento: "New event",
     agendaHoje: "Today",
@@ -2732,6 +2754,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     sublinhado: "Underline",
     tachado: "Strikethrough",
     inserirAssinatura: "Insert signature",
+    assinaturaNenhuma: "No signature set — click to configure",
+    assinaturaEscolher: "Choose signature",
     anexarArquivo: "Attach file",
     compartilharOneDrive: "Share via OneDrive",
     arrasteArquivos: "Drag files here or",
@@ -2795,6 +2819,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Background (#474: animated backgrounds inside Appearance)
     bgAnimados: "Animated backgrounds",
     bgAnimadosDesc: "Choose an animated background for the app",
+    bgNenhum: "None",
     // Language
     languageDesc:
       "Choose the language of the app, independent of your Windows language.",
@@ -3035,6 +3060,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     lockErroDefinir: "Couldn’t set the PIN. Please try again.",
     lockToastRemovido: "PIN removed",
     lockErroRemover: "Couldn’t remove the PIN. Check your PIN and try again.",
+  },
+  ui: {
+    fechar: "Close",
+    mais: "More",
+    carregando: "Loading",
+    semResultados: "No results",
   },
 };
 

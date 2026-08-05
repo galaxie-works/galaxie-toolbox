@@ -100,6 +100,10 @@ function AppInner() {
   );
   const dismissReauth = useAppStore((state) => state.dismissReauth);
   const clearReauth = useAppStore((state) => state.clearReauth);
+  // #498 rework: o composer sem assinatura pede pra abrir a config (Bridge >
+  // Envio). A ação de store seta item/frame + bumpa este nonce; aqui só falta
+  // trocar a tela (App-level).
+  const navConfigNonce = useAppStore((state) => state.navConfigNonce);
   const hydratePeopleM365 = useAppStore(
     (state) => state.hydratePeopleM365,
   );
@@ -121,6 +125,11 @@ function AppInner() {
   // logar/restaurar; o Bridge segue keep-alive (montado/escondido) pra voltar
   // instantâneo.
   const [tela, setTela] = useState<Tela>("atoms");
+  // #498 rework: quando o composer pede a config de assinaturas (bumpa o nonce),
+  // troca pra tela de Settings (a ação de store já selecionou Bridge > Envio).
+  useEffect(() => {
+    if (navConfigNonce > 0) setTela("configuracoes");
+  }, [navConfigNonce]);
   // Splash (#164): a animação tocou até o fim uma vez? Um dos dois gates da
   // revelação (o outro é `bootPronto`).
   const [videoPronto, setVideoPronto] = useState(false);

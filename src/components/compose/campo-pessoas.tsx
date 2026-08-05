@@ -411,25 +411,33 @@ export function CampoPessoas({
                                 key={p.email.toLowerCase()}
                                 className="flex items-center gap-2 rounded-md px-2 py-1.5"
                               >
-                                <Avatar className="size-6 shrink-0">
-                                  {foto && <AvatarImage src={foto} alt="" />}
-                                  <AvatarFallback className="text-[9px]">
-                                    {iniciaisDe(p.nome, p.email)}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <div className="min-w-0 flex-1">
-                                  <p className="truncate text-sm font-medium" title={nome}>
-                                    {nome}
-                                  </p>
-                                  {nome !== p.email && (
-                                    <p
-                                      className="truncate text-xs text-muted-foreground"
-                                      title={p.email}
-                                    >
-                                      {p.email}
-                                    </p>
-                                  )}
-                                </div>
+                                {/* #478 rework: a lista "ver todos" usa o mesmo
+                                    PersonHoverCard dos chips (avatar/nome/ações),
+                                    no lugar do title nativo. O botão remover fica
+                                    fora do trigger. */}
+                                <PersonHoverCard
+                                  email={p.email}
+                                  fallback={{ ...p, foto }}
+                                >
+                                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                                    <Avatar className="size-6 shrink-0">
+                                      {foto && <AvatarImage src={foto} alt="" />}
+                                      <AvatarFallback className="text-[9px]">
+                                        {iniciaisDe(p.nome, p.email)}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    <div className="min-w-0 flex-1">
+                                      <p className="truncate text-sm font-medium">
+                                        {nome}
+                                      </p>
+                                      {nome !== p.email && (
+                                        <p className="truncate text-xs text-muted-foreground">
+                                          {p.email}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </PersonHoverCard>
                                 <Button
                                   type="button"
                                   variant="ghost"

@@ -139,7 +139,10 @@ import SuccessIcon from "@/components/ui/icons/success";
 import TrashIcon from "@/components/ui/icons/trash";
 // Ícones animados das pastas de e-mail (#494) — lucide-animated via registry.
 import { MailboxIcon } from "@/components/ui/mailbox";
+import { CalendarDaysIcon } from "@/components/ui/calendar-days";
+import { UsersIcon } from "@/components/ui/users";
 import { SquarePenIcon } from "@/components/ui/square-pen";
+import { ChevronDownIcon } from "@/components/ui/chevron-down";
 import { SendIcon } from "@/components/ui/send";
 import { ArchiveIcon } from "@/components/ui/archive";
 import { DeleteIcon } from "@/components/ui/delete";
@@ -228,14 +231,10 @@ import {
   Forward,
   Inbox,
   Mail,
-  Mailbox,
   MailOpen,
   MapPin,
   Plus,
-  PanelLeftClose,
-  PanelLeftOpen,
   Paperclip,
-  PenSquare,
   Pencil,
   RefreshCw,
   Repeat,
@@ -256,6 +255,9 @@ import {
   Video,
   X,
 } from "lucide-react";
+// #489: ícones de collapse do registry animate-ui (animados), por estado.
+import { PanelLeftClose as PanelLeftCloseIcon } from "@/components/animate-ui/icons/panel-left-close";
+import { PanelLeftOpen as PanelLeftOpenIcon } from "@/components/animate-ui/icons/panel-left-open";
 import {
   forwardRef,
   useCallback,
@@ -266,7 +268,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import { useAtalhos, isTypingTarget, ehModPrincipal } from "@/hooks/use-atalhos";
 import { AtalhosAjuda } from "@/components/atalhos-ajuda";
@@ -1239,9 +1240,41 @@ const CAIXA_ADICIONAR = "__adicionar__";
  * ativa e a sinaliza (o próprio trigger mostra qual está ativa) — a listagem do
  * conteúdo dela é a #112. Colapsado, vira um ícone que abre o dialog direto.
  */
+/** Iniciais de uma caixa a partir do e-mail (não há nome): "wagner.consani" →
+ *  "WC", "financeiro" → "FI". Fallback "?" (#493). */
+function iniciaisDeEmail(email: string): string {
+  const local = (email.split("@")[0] || email).trim();
+  const partes = local.split(/[._-]+/).filter(Boolean);
+  const base =
+    partes.length >= 2 ? partes[0][0] + partes[1][0] : local.slice(0, 2);
+  return base.toUpperCase() || "?";
+}
+
+/** Avatar da caixa: foto do Graph (via cache de fotos #39) com fallback de
+ *  iniciais. Sem foto / 404 / sem permissão → iniciais, sem erro visível (#493). */
+function AvatarCaixa({
+  email,
+  foto,
+  className,
+}: {
+  email: string;
+  foto?: string | null;
+  className?: string;
+}) {
+  return (
+    <Avatar className={cn("size-5 shrink-0", className)}>
+      {foto && <AvatarImage src={foto} alt="" />}
+      <AvatarFallback className="text-[9px]">
+        {iniciaisDeEmail(email)}
+      </AvatarFallback>
+    </Avatar>
+  );
+}
+
 function SeletorCaixa({
   caixas,
   ativa,
+  emailProprio,
   onSelecionar,
   onAdicionar,
   colapsada,
@@ -1249,18 +1282,25 @@ function SeletorCaixa({
 }: {
   caixas: string[];
   ativa: string;
+  emailProprio: string;
   onSelecionar: (v: string) => void;
   onAdicionar: () => void;
   colapsada: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
+  // #493: foto das caixas (própria + compartilhadas) via o cache de fotos (#39).
+  // Só e-mails internos viram request; 404/sem permissão degrada pra iniciais.
+  const { getFoto, pedirFotos } = useFotos();
+  useEffect(() => {
+    pedirFotos([emailProprio, ...caixas]);
+  }, [emailProprio, caixas, pedirFotos]);
+
+  const emailAtivo = ativa === CAIXA_PROPRIA ? emailProprio : ativa;
+
   if (colapsada) {
-    // Colapsada, o rótulo textual some: o nome da caixa ativa passa a aparecer
-    // por tooltip canônico (#158) em vez do `title` nativo, mesma composição do
-    // sidebar colapsado (#100) — Tooltip > TooltipTrigger asChild > Button,
-    // TooltipContent side="right" align="center". A `aria-label` (ação "Adicionar
-    // caixa…", o clique abre o dialog) fica intacta.
-    const dica = ativa === CAIXA_PROPRIA ? t.controlRoom.caixaMinha : ativa;
+    // Colapsada, o rótulo textual some: o e-mail da caixa ativa aparece por
+    // tooltip canônico (#158). A `aria-label` (ação "Adicionar caixa…", o clique
+    // abre o dialog) fica intacta; ring no avatar sinaliza caixa não-própria.
     return (
       <Tooltip>
         <TooltipTrigger asChild>
@@ -1269,13 +1309,18 @@ function SeletorCaixa({
             variant="ghost"
             onClick={onAdicionar}
             aria-label={t.controlRoom.caixaAdicionarItem}
-            className={cn(ativa !== CAIXA_PROPRIA && "text-primary")}
           >
-            <Mailbox />
+            <AvatarCaixa
+              email={emailAtivo}
+              foto={getFoto(emailAtivo)}
+              className={cn(
+                ativa !== CAIXA_PROPRIA && "ring-2 ring-primary ring-offset-1"
+              )}
+            />
           </Button>
         </TooltipTrigger>
         <TooltipContent side="right" align="center">
-          {dica}
+          {emailAtivo}
         </TooltipContent>
       </Tooltip>
     );
@@ -1295,14 +1340,14 @@ function SeletorCaixa({
         <SelectGroup>
           <SelectItem value={CAIXA_PROPRIA}>
             <span className="flex items-center gap-2">
-              <Inbox className="size-4 shrink-0 text-muted-foreground" />
-              <span className="truncate">{t.controlRoom.caixaMinha}</span>
+              <AvatarCaixa email={emailProprio} foto={getFoto(emailProprio)} />
+              <span className="truncate">{emailProprio}</span>
             </span>
           </SelectItem>
           {caixas.map((c) => (
             <SelectItem key={c} value={c}>
               <span className="flex items-center gap-2">
-                <Mailbox className="size-4 shrink-0 text-muted-foreground" />
+                <AvatarCaixa email={c} foto={getFoto(c)} />
                 <span className="truncate">{c}</span>
               </span>
             </SelectItem>
@@ -1470,6 +1515,7 @@ function FolderSidebar({
   onMoverPasta,
   caixas,
   caixaAtiva,
+  emailProprio,
   onSelecionarCaixa,
   onAbrirAdicionarCaixa,
   caixaCompartilhada,
@@ -1477,7 +1523,6 @@ function FolderSidebar({
   onToggleSidebar,
   bridgeView,
   onSelectModule,
-  emPainel,
   t,
 }: {
   pastas: PastaEmail[] | null;
@@ -1506,6 +1551,8 @@ function FolderSidebar({
   caixas: string[];
   /** Caixa ativa: CAIXA_PROPRIA (/me) ou um endereço de `caixas`. */
   caixaAtiva: string;
+  /** E-mail da caixa própria (/me) — mostrado no lugar de "Minha caixa" (#493). */
+  emailProprio: string;
   onSelecionarCaixa: (v: string) => void;
   onAbrirAdicionarCaixa: () => void;
   caixaCompartilhada: boolean;
@@ -1513,9 +1560,6 @@ function FolderSidebar({
   onToggleSidebar: () => void;
   bridgeView: BridgeView;
   onSelectModule: (view: BridgeView) => void;
-  /** Quando expandida dentro de um ResizablePanel, o painel controla a largura
-   *  (aside vira `w-full`) — o divisor arrastável fica por conta do grupo (#466). */
-  emPainel?: boolean;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
   const peopleTab = useAppStore((state) => state.peopleTab);
@@ -1592,7 +1636,9 @@ function FolderSidebar({
   }: {
     view: BridgeView;
     rotulo: string;
-    icon: typeof Mailbox;
+    // #491: ícones ANIMADOS (lucide-animated) — componente div-based com prop
+    // `size` (não `className` p/ tamanho) e `stroke=currentColor`; animam no hover.
+    icon: React.ComponentType<{ size?: number; className?: string }>;
   }) => {
     const ativo = bridgeView === view;
     return (
@@ -1611,7 +1657,7 @@ function FolderSidebar({
                 : "text-muted-foreground hover:bg-accent/50"
             )}
           >
-            <Icon className="size-4 shrink-0" />
+            <Icon size={16} className="shrink-0" />
             {!colapsada && <span>{rotulo}</span>}
           </Button>
         </TooltipTrigger>
@@ -1898,15 +1944,13 @@ function FolderSidebar({
         // entrada" (pt) mede ~224px com o chrome do row; w-64 (256px) cabe com folga
         // e o en (mais curto) sobra. A lista de e-mails ao lado pega o resto (flex-1
         // min-w-0); nomes de pasta custom gigantes ainda truncam com tooltip.
-        // #466: dentro do ResizablePanel (expandida), o painel controla a
-        // largura → `w-full`; fora dele, o w-64 fixo de sempre.
-        colapsada ? "w-16 items-center" : emPainel ? "h-full w-full" : "w-64"
+        colapsada ? "w-16 items-center" : "w-64"
       )}
     >
       <div
         className={cn(
-          "flex w-full shrink-0",
-          colapsada ? "justify-center" : "justify-start"
+          "flex w-full shrink-0 items-center",
+          colapsada ? "justify-center" : "justify-between"
         )}
       >
         <Tooltip>
@@ -1915,15 +1959,55 @@ function FolderSidebar({
               variant="ghost"
               size="icon-sm"
               onClick={onToggleSidebar}
-              aria-label={t.nav.alternarMenu}
+              aria-label={colapsada ? t.sidebar.expand : t.sidebar.collapse}
             >
-              {colapsada ? <PanelLeftOpen /> : <PanelLeftClose />}
+              {colapsada ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
             </Button>
           </TooltipTrigger>
           <TooltipContent side="right" align="center">
             {t.nav.alternarMenu}
           </TooltipContent>
         </Tooltip>
+        {/* #492: "Novo e-mail" vira button-group (c-button-group-4) na MESMA
+            linha do toggle, alinhado à direita. Só no módulo Mailbox e expandido
+            (no colapsado o w-16 não cabe os dois → ícone empilhado abaixo). */}
+        {!colapsada && bridgeView === "mail" && (
+          <ButtonGroup>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="icon"
+                  onClick={onNovo}
+                  aria-label={t.controlRoom.novoEmail}
+                >
+                  <SquarePenIcon size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t.controlRoom.novoEmail}</TooltipContent>
+            </Tooltip>
+            <DropdownMenu>
+              {/* Tooltip > DropdownMenu: dois gatilhos asChild no mesmo botão. */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="icon"
+                      aria-label={t.controlRoom.composeOutlook}
+                    >
+                      <ChevronDownIcon size={16} />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>{t.controlRoom.composeOutlook}</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem onClick={onComposeOutlook}>
+                  {t.controlRoom.composeOutlook}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </ButtonGroup>
+        )}
       </div>
       <Separator className={cn("shrink-0", colapsada && "w-6")} />
 
@@ -1934,6 +2018,7 @@ function FolderSidebar({
           <SeletorCaixa
             caixas={caixas}
             ativa={caixaAtiva}
+            emailProprio={emailProprio}
             onSelecionar={onSelecionarCaixa}
             onAdicionar={onAbrirAdicionarCaixa}
             colapsada={colapsada}
@@ -1945,42 +2030,20 @@ function FolderSidebar({
             </p>
           ) : null}
 
-          {colapsada ? (
+          {/* #492: no colapsado (w-16), só o ícone primário (square-pen) empilhado
+              — o button-group completo com chevron mora no header quando expandido.
+              A opção "Escrever no Outlook" fica acessível ao expandir. */}
+          {colapsada && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button size="icon" onClick={onNovo} aria-label={t.controlRoom.novoEmail}>
-                  <PenSquare />
+                  <SquarePenIcon size={16} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right" align="center">
                 {t.controlRoom.novoEmail}
               </TooltipContent>
             </Tooltip>
-          ) : (
-            <ButtonGroup className="w-full">
-              <Button className="flex-1" onClick={onNovo}>
-                <PenSquare /> {t.controlRoom.novoEmail}
-              </Button>
-              <DropdownMenu>
-                {/* Tooltip > DropdownMenu: os dois gatilhos com asChild no mesmo
-                    botão, igual ao app-sidebar (#100). */}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <DropdownMenuTrigger asChild>
-                      <Button size="icon" aria-label={t.controlRoom.composeOutlook}>
-                        <ChevronDown />
-                      </Button>
-                    </DropdownMenuTrigger>
-                  </TooltipTrigger>
-                  <TooltipContent>{t.controlRoom.composeOutlook}</TooltipContent>
-                </Tooltip>
-                <DropdownMenuContent align="end" className="w-48">
-                  <DropdownMenuItem onClick={onComposeOutlook}>
-                    {t.controlRoom.composeOutlook}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </ButtonGroup>
           )}
 
           {!pastas ? (
@@ -2280,9 +2343,10 @@ function FolderSidebar({
         aria-label={t.nav.controlRoom}
         className={cn("flex w-full flex-col gap-0.5", colapsada && "items-center")}
       >
-        <Modulo view="mail" rotulo={t.controlRoom.mailboxTitulo} icon={Mailbox} />
-        <Modulo view="people" rotulo={t.controlRoom.peopleTitulo} icon={Users} />
-        <Modulo view="agenda" rotulo={t.controlRoom.agendaTitulo} icon={CalendarDays} />
+        {/* #491: ordem Mailbox → Calendar → Contacts + ícones animados (lucide-animated). */}
+        <Modulo view="mail" rotulo={t.controlRoom.mailboxTitulo} icon={MailboxIcon} />
+        <Modulo view="agenda" rotulo={t.controlRoom.agendaTitulo} icon={CalendarDaysIcon} />
+        <Modulo view="people" rotulo={t.controlRoom.peopleTitulo} icon={UsersIcon} />
       </nav>
 
       {/* Confirmação do "Esvaziar pasta": destrutiva e não desfazível, então
@@ -5016,19 +5080,35 @@ const MessageDetail = forwardRef<
       <div className="border-b px-5 py-4">
         <h1 className="text-base font-semibold">{det.assunto}</h1>
         <div className="mt-3 flex items-start gap-3">
-          <Avatar>
-            {getFoto(det.deEmail) && (
-              <AvatarImage src={getFoto(det.deEmail)!} alt="" />
-            )}
-            <AvatarFallback>
-              {det.de
-                .split(" ")
-                .map((w) => w[0])
-                .join("")
-                .slice(0, 2)
-                .toUpperCase()}
-            </AvatarFallback>
-          </Avatar>
+          {(() => {
+            const avatar = (
+              <Avatar>
+                {getFoto(det.deEmail) && (
+                  <AvatarImage src={getFoto(det.deEmail)!} alt="" />
+                )}
+                <AvatarFallback>
+                  {det.de
+                    .split(" ")
+                    .map((w) => w[0])
+                    .join("")
+                    .slice(0, 2)
+                    .toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+            );
+            // #478 rework: o avatar do remetente também abre o PersonHoverCard
+            // (o nome ao lado já abre, via InsightsRemetentePopover) — consistência.
+            return det.deEmail ? (
+              <PersonHoverCard
+                email={det.deEmail}
+                fallback={{ nome: det.de, email: det.deEmail }}
+              >
+                {avatar}
+              </PersonHoverCard>
+            ) : (
+              avatar
+            );
+          })()}
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               {det.deEmail ? (
@@ -5204,7 +5284,9 @@ function EventoParticipantePill({
   const pill = (
     <span
       tabIndex={mostrarTooltip ? 0 : undefined}
-      title={rotuloCompleto}
+      // #478 rework: com email o PersonHoverCard cobre o hover — o title nativo
+      // duplicaria; mantido só no fallback sem email.
+      title={email ? undefined : rotuloCompleto}
       aria-label={mostrarTooltip ? rotuloCompleto : undefined}
       className="inline-flex w-fit min-w-0 max-w-full items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
     >
@@ -5215,6 +5297,17 @@ function EventoParticipantePill({
       <span className="min-w-0 max-w-40 truncate text-xs">{nome}</span>
     </span>
   );
+
+  // #478 rework: participante com email → PersonHoverCard (avatar/nome/ações),
+  // substitui o Tooltip simples em TODOS os locais com pessoa (detalhe do evento,
+  // lista compacta e popover "ver todos"). Sem email cai no Tooltip/plain de antes.
+  if (email) {
+    return (
+      <PersonHoverCard email={email} fallback={{ nome, email, foto }}>
+        {pill}
+      </PersonHoverCard>
+    );
+  }
 
   return mostrarTooltip ? (
     <Tooltip>
@@ -5730,58 +5823,6 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
 // Tela
 // ===========================================================================
 
-/**
- * Divisor arrastável sidebar ↔ conteúdo (#466). Quando a sidebar está expandida,
- * envolve [sidebar | conteúdo] num `ResizablePanelGroup` do reui — largura
- * persistida por `autoSaveId`, com **mínimo = w-64 (256px)** em % medido do
- * container (não corta os rótulos). Quando colapsada, volta ao flex fixo (a
- * sidebar já é w-16, sem sentido arrastar). Vale para as 3 telas (Mailbox,
- * People, Agenda) porque a sidebar é compartilhada e só o conteúdo troca.
- */
-function LayoutSidebarConteudo({
-  expandida,
-  minPct,
-  sidebar,
-  conteudo,
-}: {
-  expandida: boolean;
-  minPct: number;
-  sidebar: ReactNode;
-  conteudo: ReactNode;
-}) {
-  if (!expandida) {
-    return (
-      <div className="flex min-w-0 flex-1 gap-4">
-        {sidebar}
-        {conteudo}
-      </div>
-    );
-  }
-  return (
-    <ResizablePanelGroup
-      autoSaveId="bridge.sidebar"
-      direction="horizontal"
-      className="flex min-w-0 flex-1"
-    >
-      <ResizablePanel
-        defaultSize={minPct}
-        minSize={minPct}
-        maxSize={45}
-        className="min-w-0 overflow-hidden"
-      >
-        {sidebar}
-      </ResizablePanel>
-      <ResizableHandle
-        withHandle
-        className="mx-1.5 bg-transparent hover:bg-border"
-      />
-      <ResizablePanel minSize={40} className="min-w-0 overflow-hidden">
-        <div className="flex h-full min-w-0">{conteudo}</div>
-      </ResizablePanel>
-    </ResizablePanelGroup>
-  );
-}
-
 export function ControlRoomScreen({
   user,
   onAbrirLink,
@@ -5891,25 +5932,6 @@ export function ControlRoomScreen({
   const sidebarAberta = useAppStore((s) => s.sidebarAberta);
   const setSidebarAberta = useAppStore((s) => s.setSidebarAberta);
 
-  // Largura do container do layout, medida p/ o mínimo px→% do divisor (#466):
-  // w-64 (256px) tem que ser default E mínimo (não corta "Caixa de entrada"),
-  // independente da largura da janela — daí converter 256px na % atual.
-  const grupoLayoutRef = useRef<HTMLDivElement>(null);
-  const [larguraLayout, setLarguraLayout] = useState(0);
-  useEffect(() => {
-    const el = grupoLayoutRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver((entradas) => {
-      const w = entradas[0]?.contentRect.width ?? 0;
-      if (w > 0) setLarguraLayout(w);
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  const sidebarMinPct =
-    larguraLayout > 0
-      ? Math.min(45, Math.max(10, (256 / larguraLayout) * 100))
-      : 20;
   // Filters slice (#129): ordenação/filtros persistem nas chaves legadas; busca,
   // resultados e cursores são somente de sessão.
   const ordenar = useAppStore((s) => s.ordenar);
@@ -6914,24 +6936,14 @@ export function ControlRoomScreen({
   // "New mail" — abre o nosso composer em modal.
   const novoEmailModal = () => abrirCompose("novo", caixaAtiva);
 
-  // #231: o header do conteúdo reflete o MÓDULO ativo (fonte da verdade =
-  // `bridgeView` no store), não mais uma saudação genérica. Título + subtítulo
-  // por módulo (i18n pt/en); nada de estado local.
-  // #490: no módulo Mailbox o título da content-area é a SECTION ("Bridge"),
-  // não "E-mail" (que fica só como rótulo do módulo/nav) — e sem subtítulo, pra
-  // dar mais cara de produto. People/Calendário mantêm título + subtítulo.
-  const tituloModulo =
-    bridgeView === "people"
-      ? t.controlRoom.peopleTitulo
-      : bridgeView === "agenda"
-        ? t.controlRoom.agendaTitulo
-        : t.nav.controlRoom;
-  const subtituloModulo =
-    bridgeView === "people"
-      ? t.controlRoom.peopleSubtitulo
-      : bridgeView === "agenda"
-        ? t.controlRoom.agendaSubtitulo
-        : undefined;
+  // #490 (rework após feedback do PO): o header do conteúdo do Bridge é
+  // CONSTANTE nos 3 módulos — sempre título "Bridge" (nav.controlRoom) +
+  // subtítulo fixo. O que muda ao alternar E-mail/Contatos/Calendário é o
+  // BREADCRUMB, não este header. (Antes o header trocava por módulo e o mail
+  // ficou sem subtítulo — o PO rejeitou os dois: quer o header fixo e o
+  // subtítulo de volta com copy melhor.)
+  const tituloModulo = t.nav.controlRoom;
+  const subtituloModulo = t.controlRoom.bridgeSubtitulo;
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -6942,19 +6954,13 @@ export function ControlRoomScreen({
         </span>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">{tituloModulo}</h1>
-          {subtituloModulo && (
-            <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
-          )}
+          <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
         </div>
       </div>
 
       {/* Sidebar de módulos + conteúdo do módulo ativo. */}
-      <div ref={grupoLayoutRef} className="flex min-h-0 flex-1">
-        <LayoutSidebarConteudo
-          expandida={sidebarAberta}
-          minPct={sidebarMinPct}
-          sidebar={
-            <FolderSidebar
+      <div className="flex min-h-0 flex-1 gap-4">
+        <FolderSidebar
           pastas={pastas}
           subpastas={subpastas}
           onCarregarSubpastas={carregarSubpastas}
@@ -6976,6 +6982,7 @@ export function ControlRoomScreen({
           onMoverPasta={moverPasta}
           caixas={caixasCompartilhadas}
           caixaAtiva={caixaAtiva}
+          emailProprio={user.email}
           onSelecionarCaixa={(caixa) => {
             setBridgeView("mail");
             setCaixaAtiva(caixa);
@@ -6988,11 +6995,10 @@ export function ControlRoomScreen({
           onSelectModule={(view) => {
             setBridgeView(view);
           }}
-          emPainel={sidebarAberta}
           t={t}
         />
-          }
-          conteudo={bridgeView === "people" ? (
+
+        {bridgeView === "people" ? (
           <PeopleView
             userEmail={user.email}
             onGrantAccess={onGrantPeopleAccess}
@@ -7072,7 +7078,6 @@ export function ControlRoomScreen({
           </ResizablePanel>
           </ResizablePanelGroup>
         )}
-        />
       </div>
 
       <EventoDialog userEmail={user.email} />
