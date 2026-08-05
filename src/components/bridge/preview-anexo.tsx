@@ -221,8 +221,10 @@ export function PreviewAnexo({
         </Button>
       </div>
 
-      {/* Corpo: estados + renderer — rola dentro do card (#496). */}
-      <div className="min-h-24 flex-1 overflow-auto">
+      {/* Corpo: estados + renderer — rola dentro do card (#496). `min-h-0`
+          (não min-h-24) é o que deixa o flex-1 encolher e o overflow-auto
+          ENGATAR em vez de transbordar e ser cortado pelo painel (#532). */}
+      <div className="min-h-0 flex-1 overflow-auto">
         {grande ? (
           <PreviewAviso
             titulo={tp.previewGrande}

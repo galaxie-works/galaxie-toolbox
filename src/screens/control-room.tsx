@@ -5233,7 +5233,11 @@ const MessageDetail = forwardRef<
               order={2}
               minSize={25}
               defaultSize={40}
-              className="min-w-0 overflow-hidden"
+              // #532: sem a cadeia de altura (flex/min-h-0/flex-col) o painel não
+              // dava altura DEFINIDA ao card (h-full), então o corpo do preview
+              // (flex-1 overflow-auto) crescia até o conteúdo e o overflow-hidden
+              // do painel cortava embaixo (PDF/xlsx/imagem). Espelha o order=1.
+              className="flex min-h-0 min-w-0 flex-col overflow-hidden"
             >
               {/* #496: preview num card à direita, fora do corpo do e-mail. */}
               <PreviewAnexo
