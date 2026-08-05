@@ -37,7 +37,8 @@ import { aceitaAltaFidelidade, classificarAnexo } from "@/lib/anexo-tipo";
 import { renderDocxParaHtml } from "@/lib/docx-render";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { carregarPdf, renderizarPagina } from "@/lib/pdf-preview";
-import { renderXlsxParaHtml } from "@/lib/xlsx-render";
+import { renderXlsxParaHtml, type XlsxRender } from "@/lib/xlsx-render";
+import { cn } from "@/lib/utils";
 import { parseCsv, type CsvTabela } from "@/lib/csv-render";
 import type { AnexoEmail } from "@/lib/types";
 import {
@@ -97,7 +98,7 @@ export function PreviewAnexo({
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [txt, setTxt] = useState<string | null>(null);
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
-  const [xlsxHtml, setXlsxHtml] = useState<string | null>(null);
+  const [xlsxDados, setXlsxDados] = useState<XlsxRender | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [csv, setCsv] = useState<CsvTabela | null>(null);
   const [midiaUrl, setMidiaUrl] = useState<string | null>(null);
@@ -138,8 +139,8 @@ export function PreviewAnexo({
           const html = await renderDocxParaHtml(bytes);
           if (vivo) setDocxHtml(html);
         } else if (tipo === "xlsx") {
-          const html = await renderXlsxParaHtml(bytes);
-          if (vivo) setXlsxHtml(html);
+          const dados = await renderXlsxParaHtml(bytes);
+          if (vivo) setXlsxDados(dados);
         } else if (tipo === "csv") {
           if (vivo) setCsv(parseCsv(new TextDecoder("utf-8").decode(bytes)));
         } else if (tipo === "imagem") {
@@ -290,9 +291,9 @@ export function PreviewAnexo({
             rotulo={anexo.nome}
             vazioTexto={tp.previewVazio}
           />
-        ) : tipo === "xlsx" && xlsxHtml !== null ? (
-          <HtmlSandboxViewer
-            html={xlsxHtml}
+        ) : tipo === "xlsx" && xlsxDados !== null ? (
+          <XlsxViewer
+            dados={xlsxDados}
             rotulo={anexo.nome}
             vazioTexto={tp.previewVazio}
           />
@@ -673,5 +674,57 @@ function HtmlSandboxViewer({
       title={rotulo}
       className="min-h-0 w-full flex-1 border-0 bg-white"
     />
+  );
+}
+
+/**
+ * Preview de xlsx (#552): as ABAS de planilha ficam em React (fora do iframe) e
+ * só a planilha ATIVA é injetada como HTML estático no `HtmlSandboxViewer`.
+ * Evita o modo multi-sheet do xlsx-preview (`<object data=blob:>` + `<script>`),
+ * que o `iframe sandbox=""` + CSP `default-src 'none'` BLOQUEIA (grid em branco).
+ * Barra de abas embaixo (estilo Excel); some quando há só uma planilha.
+ */
+function XlsxViewer({
+  dados,
+  rotulo,
+  vazioTexto,
+}: {
+  dados: XlsxRender;
+  rotulo: string;
+  vazioTexto: string;
+}) {
+  const [aba, setAba] = useState(0);
+  // Novo arquivo (dados troca) → volta pra 1ª planilha.
+  useEffect(() => setAba(0), [dados]);
+  if (dados.sheets.length === 0) return <PreviewVazio texto={vazioTexto} />;
+  const idx = Math.min(aba, dados.sheets.length - 1);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <HtmlSandboxViewer
+        html={dados.sheets[idx]}
+        rotulo={`${rotulo} — ${dados.nomes[idx] ?? ""}`}
+        vazioTexto={vazioTexto}
+      />
+      {dados.sheets.length > 1 && (
+        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t bg-muted/30 px-2 py-1">
+          {dados.nomes.map((nome, i) => (
+            <button
+              key={`${nome}-${i}`}
+              type="button"
+              onClick={() => setAba(i)}
+              aria-current={i === idx ? "true" : undefined}
+              className={cn(
+                "shrink-0 rounded px-2 py-0.5 text-xs transition-colors",
+                i === idx
+                  ? "bg-background font-medium shadow-sm"
+                  : "text-muted-foreground hover:bg-background/60"
+              )}
+            >
+              {nome}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
