@@ -589,6 +589,7 @@ export function resetSessaoCompleta(): void {
   s.resetSessaoAgenda();
   s.resetPeopleSession(); // people (+ categorias/merge, estendido no #555)
   s.resetSessaoOrganizations();
+  s.resetNavegacao(); // #568: nav (bridgeView→mail, peopleTab→contacts)
   s.clearReauth(); // auth (#235): escopos ausentes do token
   // Vetores FORA do store.
   limparFotos(); // cache de fotos (módulo + localStorage)

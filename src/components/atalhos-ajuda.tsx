@@ -37,6 +37,8 @@ export function catalogoAtalhos(t: T): AtalhoCategoria[] {
         { teclas: ["↑", "↓"], rotulo: c.atalhosNavegar },
         { teclas: ["j", "k"], rotulo: c.atalhosNavegar },
         { teclas: ["/"], rotulo: c.atalhosBuscar },
+        { teclas: ["F9"], rotulo: c.atalhosAtualizar },
+        { teclas: ["O"], rotulo: c.atalhosOrdenar },
       ],
     },
     {
@@ -58,6 +60,16 @@ export function catalogoAtalhos(t: T): AtalhoCategoria[] {
         { teclas: ["u"], rotulo: c.atalhosLidoNaoLido },
         { teclas: ["s"], rotulo: c.atalhosSinalizar },
         { teclas: ["Del"], rotulo: c.atalhosExcluir },
+        { teclas: ["Esc"], rotulo: c.atalhosFecharPreview },
+      ],
+    },
+    {
+      // #549: atalhos de formatação que só valem DENTRO do editor de e-mail
+      // (contenteditable — o keymap central do Bridge não os alcança).
+      titulo: c.atalhosCatFormatacao,
+      itens: [
+        { teclas: ["Ctrl", "K"], rotulo: c.atalhosLink },
+        { teclas: ["Ctrl", "Shift", "L"], rotulo: c.atalhosLista },
       ],
     },
     {

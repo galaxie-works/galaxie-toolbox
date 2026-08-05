@@ -4,7 +4,7 @@
 // como é); aqui fica só a cola: fetch por faixa visível, estados, i18n e o
 // diálogo de CRUD (padrão do c-event-calendar-3).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { enUS, ptBR } from "date-fns/locale";
 import type { Locale } from "date-fns";
 import { toast } from "sonner";
@@ -17,6 +17,7 @@ import {
   Eye,
   Pencil,
   Plus,
+  Repeat,
   RefreshCw,
   Trash2,
   Video,
@@ -41,7 +42,10 @@ import type {
 import { crEventoRecorrencia } from "@/lib/api";
 import { CampoPessoas } from "@/components/compose/campo-pessoas";
 
-import { EventCalendar } from "@/components/reui/event-calendar/event-calendar";
+import {
+  EventCalendar,
+  type EventCalendarRenderEventProps,
+} from "@/components/reui/event-calendar/event-calendar";
 import { EventCalendarContent } from "@/components/reui/event-calendar/event-calendar-content";
 import {
   EventCalendarNav,
@@ -135,6 +139,33 @@ function ehRecorrente(ev: EventoAgenda): boolean {
     ev.tipo === "occurrence" ||
     ev.tipo === "exception" ||
     ev.tipo === "seriesMaster"
+  );
+}
+
+/**
+ * #212: chip de evento custom (padrão c-event-calendar-4) — barra COMPACTA de
+ * uma linha: swatch quadrado na cor da categoria (`--ec-event-color`, do #211) +
+ * título em `font-medium` + ícone de recorrência. Mais denso e limpo que o chip
+ * padrão (sem a coluna de hora, que polui a célula do mês). Injetado via o hook
+ * `renderEvent` do event-calendar — NÃO instala variante nova. O avatar do
+ * organizador é follow-up (#570, só day/week, depende de dado da agenda).
+ */
+function renderChipEvento({
+  occurrence,
+}: EventCalendarRenderEventProps): ReactNode {
+  return (
+    <span className="flex w-full min-w-0 items-center gap-1.5">
+      <span
+        aria-hidden
+        className="size-2 shrink-0 rounded-[3px] bg-(--ec-event-color)"
+      />
+      {occurrence.isRecurring && (
+        <Repeat className="size-2.5 shrink-0 opacity-70" aria-hidden="true" />
+      )}
+      <span className="min-w-0 flex-1 truncate font-medium">
+        {occurrence.event.title}
+      </span>
+    </span>
   );
 }
 
@@ -446,6 +477,7 @@ export function AgendaView() {
               locale={locale}
               i18n={i18nCal}
               loading={mesEventos === null}
+              renderEvent={renderChipEvento}
               interactions={INTERACOES}
               showDayAddButton
               onRangeChange={buscarFaixa}

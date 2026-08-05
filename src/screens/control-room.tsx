@@ -2908,6 +2908,14 @@ const ATALHO_FILTRO: ShortcutDefinition = { key: "F" };
 // #538: "Novo e-mail" (icon-only) dispara o mesmo compose do atalho "c" (o
 // handler chama onCompor; onNovo === onCompor === novoEmailModal).
 const ATALHO_COMPOR: ShortcutDefinition = { key: "C" };
+// #549: equiparação Outlook nos icon-only que NÃO tinham atalho.
+// Atualizar = F9 (Outlook Send/Receive All). Ordenar = O (app-nativo — o Outlook
+// não tem atalho único de sort; tecla livre e mnemônica, sem colisão).
+const ATALHO_ATUALIZAR: ShortcutDefinition = { key: "F9" };
+const ATALHO_ORDENAR: ShortcutDefinition = { key: "O" };
+// #549: Esc fecha o preview de anexo (email aninhado) — por PRECEDÊNCIA sobre o
+// clear-selection (padrão Outlook: Esc fecha o painel aberto primeiro).
+const ATALHO_FECHAR_PREVIEW: ShortcutDefinition = { key: "Esc" };
 
 function MessageList({
   titulo,
@@ -2987,6 +2995,11 @@ function MessageList({
   const ordemDesc = useAppStore((s) => s.ordemDesc);
   const setOrdemDesc = useAppStore((s) => s.setOrdemDesc);
   const [ajudaAberta, setAjudaAberta] = useState(false);
+  // #549: dropdown do sort controlado, pra o atalho "O" poder abri-lo.
+  const [sortAberto, setSortAberto] = useState(false);
+  // #565: "Esvaziar lixeira" é destrutivo e irreversível → passa por AlertDialog
+  // (mesmo padrão do "Esvaziar pasta" do menu de contexto), nunca direto.
+  const [confirmarEsvaziar, setConfirmarEsvaziar] = useState(false);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
 
@@ -3472,6 +3485,13 @@ function MessageList({
       return;
     }
 
+    // #549: F9 atualiza a lista (Outlook = Send/Receive All).
+    if (e.key === "F9") {
+      e.preventDefault();
+      onRefresh();
+      return;
+    }
+
     // #537: Responder / Responder a todos / Encaminhar por COMBO (esquema
     // Outlook). Antes eram single R/A/F, e o F colidia com o Filtro da lista.
     // Ctrl+R = responder · Ctrl+Shift+R = responder a todos · Ctrl+Shift+F =
@@ -3541,6 +3561,10 @@ function MessageList({
     // single ficam livres, o F pro Filtro da lista.)
     if (ehModPrincipal(e) || e.altKey || e.shiftKey) return;
     switch (e.key.toLowerCase()) {
+      case "o": // #549: abre o menu de ordenação (app-nativo, Outlook não tem)
+        e.preventDefault();
+        setSortAberto(true);
+        return;
       case "x": // marcar/desmarcar a mensagem ativa
         if (ativoId) {
           e.preventDefault();
@@ -3685,7 +3709,13 @@ function MessageList({
           aria-label={t.controlRoom.mailboxTitulo}
         >
           {pastaTipo === "deleteditems" && (mensagens?.length ?? 0) > 0 && (
-            <Button variant="ghost" size="sm" onClick={onEsvaziar}>
+            // #565: semântica destrutiva (variant destructive) + confirmação —
+            // ação irreversível não pode parecer/agir como um botão comum.
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => setConfirmarEsvaziar(true)}
+            >
               <Trash2 /> {t.controlRoom.esvaziarLixeira}
             </Button>
           )}
@@ -3734,20 +3764,29 @@ function MessageList({
               <FunnelX />
             </ToolbarButton>
           )}
-          <DropdownMenu>
+          <DropdownMenu open={sortAberto} onOpenChange={setSortAberto}>
             {/* #226: sort é icon button com tooltip, igual ao People. */}
             <Tooltip>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
                   <ToolbarButton
-                    aria-label={t.controlRoom.ordenarPor}
+                    aria-label={shortcutAccessibleLabel(
+                      t.controlRoom.ordenarPor,
+                      ATALHO_ORDENAR
+                    )}
                     pressed={ordenar !== "data" || !ordemDesc}
                   >
                     <ArrowDownUp />
                   </ToolbarButton>
                 </DropdownMenuTrigger>
               </TooltipTrigger>
-              <TooltipContent>{t.controlRoom.ordenarPor}</TooltipContent>
+              <TooltipContent>
+                {/* #549: Sort ganha atalho O → ShortcutTooltip com Kbd. */}
+                <ShortcutTooltip
+                  label={t.controlRoom.ordenarPor}
+                  shortcut={ATALHO_ORDENAR}
+                />
+              </TooltipContent>
             </Tooltip>
             <DropdownMenuContent align="end" className="w-44">
               <DropdownMenuLabel>{t.controlRoom.ordenarPor}</DropdownMenuLabel>
@@ -3778,17 +3817,59 @@ function MessageList({
           {/* As preferências de LEITURA (marcar como lido) migraram pra
               Settings > Bridge > Reading (#227): a UI do e-mail deixa de ter
               esse controle solto. */}
-          {/* Atualizar (#101): sem atalho → Tooltip canônico. */}
+          {/* Atualizar (#549): atalho F9 (Outlook Send/Receive) → ShortcutTooltip. */}
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon-sm" onClick={onRefresh} aria-label={t.controlRoom.atualizar}>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={onRefresh}
+                aria-label={shortcutAccessibleLabel(
+                  t.controlRoom.atualizar,
+                  ATALHO_ATUALIZAR
+                )}
+              >
                 <RefreshCw />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>{t.controlRoom.atualizar}</TooltipContent>
+            <TooltipContent>
+              <ShortcutTooltip
+                label={t.controlRoom.atualizar}
+                shortcut={ATALHO_ATUALIZAR}
+              />
+            </TooltipContent>
           </Tooltip>
         </Toolbar>
       </div>
+
+      {/* #565: confirmação do "Esvaziar lixeira" — destrutiva e irreversível
+          (reusa as strings/estrutura do "Esvaziar pasta" do menu de contexto). */}
+      <AlertDialog open={confirmarEsvaziar} onOpenChange={setConfirmarEsvaziar}>
+        <AlertDialogContent className="max-w-sm!">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {preencher(t.controlRoom.esvaziarPastaTitulo, {
+                pasta: t.controlRoom.pastaTrash,
+              })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.controlRoom.esvaziarPastaDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.controlRoom.cancelar}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                onEsvaziar();
+                setConfirmarEsvaziar(false);
+              }}
+            >
+              {t.controlRoom.esvaziarPastaConfirmar}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {selecionados.size > 0 && (
         <div className="flex items-center gap-2 px-3 pb-2">
@@ -4610,6 +4691,22 @@ function PreviewEmailAninhado({
     };
   }, [messageId, anexo.id, mailbox]);
 
+  // #549: Esc fecha ESTE preview de anexo com PRECEDÊNCIA sobre o clear-selection
+  // da lista (padrão Outlook: Esc fecha o painel aberto primeiro). Como o listener
+  // só existe enquanto o preview está montado e roda em CAPTURE + consome o evento
+  // (stopImmediatePropagation), ele ganha do handler de lista (bubble via useAtalhos).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isTypingTarget(e.target)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onFechar();
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [onFechar]);
+
   return (
     <div
       className="mt-3 overflow-hidden rounded-lg border bg-card"
@@ -4621,15 +4718,30 @@ function PreviewEmailAninhado({
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {det?.assunto || anexo.nome}
         </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          onClick={onFechar}
-          aria-label={t.controlRoom.previewFechar}
-        >
-          <X className="size-3.5" />
-        </Button>
+        {/* #549: fechar preview de anexo ganha atalho Esc → ShortcutTooltip
+            (antes não tinha tooltip nenhum). */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={onFechar}
+              aria-label={shortcutAccessibleLabel(
+                t.controlRoom.previewFechar,
+                ATALHO_FECHAR_PREVIEW
+              )}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <ShortcutTooltip
+              label={t.controlRoom.previewFechar}
+              shortcut={ATALHO_FECHAR_PREVIEW}
+            />
+          </TooltipContent>
+        </Tooltip>
       </div>
       <div className="min-h-24">
         {carregando ? (
