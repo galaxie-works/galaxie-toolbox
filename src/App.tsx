@@ -984,6 +984,12 @@ function AppInner() {
           )}
         >
           <ControlRoomScreen
+            // #555 (P0): key por conta — na troca de tenant o email muda e o
+            // React REMONTA a subárvore, zerando TODO estado LOCAL de componente
+            // (preview/anexoEmail/scroll da lista/pastas expandidas/zoom/página do
+            // PDF) que não vive no store. Catch-all: complementa o reset de store
+            // sem enumerar useState. Só remonta na troca de conta, não de aba.
+            key={user.email}
             user={user}
             ativo={tela === "control-room"}
             onGrantPeopleAccess={() => {
