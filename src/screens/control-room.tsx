@@ -116,9 +116,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { shortcutAccessibleLabel } from "@/components/ui/shortcut";
+import { shortcutAccessibleLabel, formatShortcut } from "@/components/ui/shortcut";
 import type { ShortcutDefinition } from "@/components/ui/shortcut";
 import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
+import { Kbd } from "@/components/ui/kbd";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -2862,6 +2863,13 @@ const ATALHO_EXCLUIR: ShortcutDefinition = { key: "Delete" };
 // Ler/não-ler do leitor (#102): atalho U. Alimenta aria-label + ShortcutTooltip
 // do botão que ALTERNA lido/não-lido na toolbar do leitor.
 const ATALHO_LER_NAO_LIDO: ShortcutDefinition = { key: "U" };
+// #497: atalhos das ações do leitor JÁ cabeados no handler central (#28, switch
+// por e.key.toLowerCase() = r/a/f). Exibidos como <Kbd> ao lado do rótulo dos
+// botões Responder/Responder a todos/Encaminhar. NÃO inventar — casam com o
+// handler; teclas exibidas em maiúscula (convenção dos demais ATALHO_*).
+const ATALHO_RESPONDER: ShortcutDefinition = { key: "R" };
+const ATALHO_RESPONDER_TODOS: ShortcutDefinition = { key: "A" };
+const ATALHO_ENCAMINHAR: ShortcutDefinition = { key: "F" };
 
 function MessageList({
   titulo,
@@ -4954,8 +4962,13 @@ const MessageDetail = forwardRef<
             size="sm"
             onClick={() => abrirCompose("responder", mailbox)}
             disabled={envioBloqueado}
+            aria-label={shortcutAccessibleLabel(
+              t.controlRoom.responder,
+              ATALHO_RESPONDER
+            )}
           >
             <Reply /> {t.controlRoom.responder}
+            <Kbd>{formatShortcut(ATALHO_RESPONDER)}</Kbd>
           </Button>
         </DicaSomenteLeitura>
         <DicaSomenteLeitura
@@ -4967,8 +4980,13 @@ const MessageDetail = forwardRef<
             size="sm"
             onClick={() => abrirCompose("responderTodos", mailbox)}
             disabled={envioBloqueado}
+            aria-label={shortcutAccessibleLabel(
+              t.controlRoom.responderTodos,
+              ATALHO_RESPONDER_TODOS
+            )}
           >
             <ReplyAll /> {t.controlRoom.responderTodos}
+            <Kbd>{formatShortcut(ATALHO_RESPONDER_TODOS)}</Kbd>
           </Button>
         </DicaSomenteLeitura>
         <DicaSomenteLeitura
@@ -4980,8 +4998,13 @@ const MessageDetail = forwardRef<
             size="sm"
             onClick={() => abrirCompose("encaminhar", mailbox)}
             disabled={envioBloqueado}
+            aria-label={shortcutAccessibleLabel(
+              t.controlRoom.encaminhar,
+              ATALHO_ENCAMINHAR
+            )}
           >
             <Forward /> {t.controlRoom.encaminhar}
+            <Kbd>{formatShortcut(ATALHO_ENCAMINHAR)}</Kbd>
           </Button>
         </DicaSomenteLeitura>
         <div className="ml-auto flex items-center gap-1">
