@@ -68,6 +68,14 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # #387 follow-up: config de telemetria embutida em compile-time
+          # (option_env! no telemetry.rs). Endpoint/stream não são segredo → vars;
+          # email/token de ingestão → secrets. Ausentes = telemetria fica off
+          # (fail-closed) + emissão segue consent-gated no runtime.
+          GALAXIE_TELEMETRY_OTLP_ENDPOINT: ${{ vars.GALAXIE_TELEMETRY_OTLP_ENDPOINT }}
+          GALAXIE_TELEMETRY_STREAM_NAME: ${{ vars.GALAXIE_TELEMETRY_STREAM_NAME }}
+          GALAXIE_TELEMETRY_INGEST_EMAIL: ${{ secrets.GALAXIE_TELEMETRY_INGEST_EMAIL }}
+          GALAXIE_TELEMETRY_INGEST_TOKEN: ${{ secrets.GALAXIE_TELEMETRY_INGEST_TOKEN }}
         run: pnpm tauri build
 
       # A assinatura é o ponto do processo inteiro: sem o .sig o aplicativo
