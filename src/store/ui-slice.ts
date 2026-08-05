@@ -1,7 +1,7 @@
 import type { StateCreator } from "zustand";
 
 import type { AppStore } from "./index";
-import { resolver, type Updater } from "./updater";
+import { resolver, type Updater } from "./updater.ts";
 
 /**
  * Slice de UI / preferências do Bridge — épico #125.
@@ -50,6 +50,10 @@ export interface UiSlice {
   setMarcarLidoAtraso: (n: number) => void;
   setBridgeView: (view: BridgeView) => void;
   setPeopleTab: (tab: PeopleTab) => void;
+  /** #568: zera o estado de NAVEGAÇÃO na troca de conta (parte do seam do #555).
+   *  Bridge volta pro E-mail e People pra Contatos — sem herdar a sub-tela da
+   *  conta anterior. (O módulo ativo/home = Atoms é resetado no App.tsx.) */
+  resetNavegacao: () => void;
 }
 
 /**
@@ -110,4 +114,6 @@ export const createUiSlice: StateCreator<
   setMarcarLidoAtraso: (n) => set({ marcarLidoAtraso: n }),
   setBridgeView: (bridgeView) => set({ bridgeView }),
   setPeopleTab: (peopleTab) => set({ peopleTab }),
+  // #568: default de nav = Bridge no E-mail, People em Contatos.
+  resetNavegacao: () => set({ bridgeView: "mail", peopleTab: "contacts" }),
 });

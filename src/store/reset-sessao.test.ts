@@ -14,6 +14,7 @@ import { createFiltersSlice } from "./filters-slice.ts";
 import { createReaderSlice } from "./reader-slice.ts";
 import { createAgendaSlice } from "./agenda-slice.ts";
 import { createPeopleSlice } from "./people-slice.ts";
+import { createUiSlice } from "./ui-slice.ts";
 
 /** Mini-store de um slice só (mesmo padrão de agenda-slice.test.ts). */
 function miniStore<T>(creator: (set: never, get: never, store: never) => T): T {
@@ -139,6 +140,21 @@ test("#555 agenda: resetSessaoAgenda zera eventos/calendários/detalhe", () => {
   assert.equal(s.agendaCaixaDados, "me");
   assert.equal(s.agendaEventoDetalhe, null);
   assert.equal(s.agendaView, "week", "preferência preservada");
+});
+
+test("#568 nav: resetNavegacao volta Bridge pro E-mail e People pra Contatos", () => {
+  const s = miniStore(createUiSlice);
+  Object.assign(s, {
+    bridgeView: "people", // conta A tinha deixado o Bridge em Contatos
+    peopleTab: "groups",
+    zoom: 1.4, // preferência — NÃO pode ser tocada
+    sidebarAberta: false,
+  });
+  s.resetNavegacao();
+  assert.equal(s.bridgeView, "mail");
+  assert.equal(s.peopleTab, "contacts");
+  assert.equal(s.zoom, 1.4, "preferência preservada");
+  assert.equal(s.sidebarAberta, false, "preferência preservada");
 });
 
 test("#555 people: resetPeopleSession também zera categorias/merge (leak residual)", () => {

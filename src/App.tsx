@@ -386,6 +386,9 @@ function AppInner() {
     try {
       const u = await api.login(email, idioma);
       setUser(u);
+      // #568: home = Atoms. Login (nova conta ou re-login) sempre cai no Atoms,
+      // nunca herda o último módulo (o resetSessaoCompleta já zerou o nav do store).
+      setTela("atoms");
       void hydratePeopleM365({ force: true });
       const permissions = await api.requiredScopesStatus();
       setReauthMissingScopes(permissions.missingScopes);
@@ -784,7 +787,8 @@ function AppInner() {
     setUser(null);
     setSites([]);
     setError(null);
-    setTela("onedrive");
+    // #568: home = Atoms — não deixa o módulo ativo em OneDrive pro próximo login.
+    setTela("atoms");
   }
 
   async function recuperarBloqueio() {
