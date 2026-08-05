@@ -14,6 +14,14 @@ import { useEditorRef, useEditorSelector } from 'platejs/react';
 import { ListIcon } from '@/components/animate-ui/icons/list';
 // #529: rótulos config-driven do editor (helper não-hook, padrão textoUi).
 import { plateLabel } from '@/lib/plate-labels';
+// #549: atalho Ctrl+Shift+L (wire no ListKit via onKeyDown) → kbd no tooltip.
+import {
+  shortcutAccessibleLabel,
+  type ShortcutDefinition,
+} from '@/components/ui/shortcut';
+import { ShortcutTooltip } from '@/components/ui/shortcut-tooltip';
+
+const ATALHO_LISTA: ShortcutDefinition = { key: 'L', primary: true, shift: true };
 
 import {
   DropdownMenu,
@@ -54,7 +62,10 @@ export function BulletedListToolbarButton() {
       <Tooltip>
         <TooltipTrigger asChild>
           <ToolbarSplitButtonPrimary
-            aria-label={plateLabel("bulletedList")}
+            aria-label={shortcutAccessibleLabel(
+              plateLabel("bulletedList"),
+              ATALHO_LISTA
+            )}
             className="data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
             onClick={() => {
               toggleList(editor, {
@@ -69,7 +80,12 @@ export function BulletedListToolbarButton() {
             />
           </ToolbarSplitButtonPrimary>
         </TooltipTrigger>
-        <TooltipContent>{plateLabel("bulletedList")}</TooltipContent>
+        <TooltipContent>
+          <ShortcutTooltip
+            label={plateLabel("bulletedList")}
+            shortcut={ATALHO_LISTA}
+          />
+        </TooltipContent>
       </Tooltip>
 
       <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
