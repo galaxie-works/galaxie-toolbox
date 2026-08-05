@@ -305,6 +305,10 @@ export interface EmailDetalhe {
   deEmail: string;
   para: string[];
   cc: string[];
+  /** E-mails dos destinatários, alinhados 1:1 com `para`/`cc` (#515) — pro hover
+   *  card por pessoa. Podem vir "" (recipient só com nome); o front cai em texto. */
+  paraEmails: string[];
+  ccEmails: string[];
   recebido: string;
   corpo: string;
   corpoTipo: "html" | "text";
