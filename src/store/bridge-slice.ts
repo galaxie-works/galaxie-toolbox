@@ -10,11 +10,12 @@ import { UNDO_SEND_DELAY_MS } from "@/lib/outbox";
 import type { AppStore } from "./index";
 
 /**
- * Atrasos permitidos do "desfazer envio" (#150), em ms. A #33 fixava 10 s; aqui
- * o usuário escolhe 5/10/30 s em Settings > Galaxie Apps > Bridge, e o valor
- * alimenta o `atrasoMs` do Outbox. `UNDO_SEND_DELAY_MS` (10 s) segue como padrão.
+ * Atrasos permitidos do "desfazer envio" (#150/#531), em ms. A #33 fixava 10 s;
+ * aqui o usuário escolhe Desligado/5/10/30 s em Settings > Galaxie Apps > Bridge,
+ * e o valor alimenta o `atrasoMs` do Outbox. `0` = Desligado (envia na hora, sem
+ * janela de undo, #531). `UNDO_SEND_DELAY_MS` (10 s) segue como padrão.
  */
-export const UNDO_SEND_DELAYS_MS = [5_000, 10_000, 30_000] as const;
+export const UNDO_SEND_DELAYS_MS = [0, 5_000, 10_000, 30_000] as const;
 export type UndoSendDelayMs = (typeof UNDO_SEND_DELAYS_MS)[number];
 
 /** Normaliza um valor cru para o conjunto permitido; fora dele volta pro padrão. */

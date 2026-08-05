@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { agendarEnvio } from "./outbox.ts"
+import { agendarEnvio, flushOutboxPendentes } from "./outbox.ts"
 
 const esperar = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms))
@@ -92,4 +92,44 @@ test("dispatch errors leave the scheduler in a failed phase", async () => {
 
   assert.equal(erroRecebido, erroEsperado)
   assert.equal(agendamento.fase(), "falhou")
+})
+
+// #531 (AC4): "Desligado" = atrasoMs 0 envia na hora, SEM janela de undo.
+test("atrasoMs 0 (Desligado) dispara na hora, sem contagem de undo", async () => {
+  let envios = 0
+  let contagens = 0
+  const agendamento = agendarEnvio({
+    atrasoMs: 0,
+    enviar: async () => {
+      envios += 1
+    },
+    onContagem: () => {
+      contagens += 1
+    },
+  })
+
+  await esperar(20)
+
+  assert.equal(contagens, 0) // sem toast "Desfazer" no modo Desligado
+  assert.equal(envios, 1)
+  assert.equal(agendamento.fase(), "concluido")
+})
+
+// #531 (AC5): fechar o app na janela → flush dispara o pendente na hora.
+test("flushOutboxPendentes dispara o envio pendente (fechamento do app)", async () => {
+  let envios = 0
+  const agendamento = agendarEnvio({
+    atrasoMs: 10_000, // janela longa: não dispararia sozinho no teste
+    intervaloMs: 10,
+    enviar: async () => {
+      envios += 1
+    },
+  })
+
+  flushOutboxPendentes()
+  await esperar(20)
+
+  assert.equal(envios, 1) // o fechamento forçou o envio
+  assert.equal(agendamento.fase(), "concluido")
+  assert.equal(agendamento.desfazer(), false) // já saiu, não dá pra desfazer
 })

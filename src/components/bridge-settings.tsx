@@ -880,8 +880,9 @@ export function UndoSendPanel() {
   const undoSendDelayMs = useAppStore((s) => s.undoSendDelayMs);
   const setUndoSendDelay = useAppStore((s) => s.setUndoSendDelay);
 
-  /** Rótulos das opções do atraso (segundos), na ordem de `UNDO_SEND_DELAYS_MS`. */
+  /** Rótulos das opções do atraso, na ordem de `UNDO_SEND_DELAYS_MS` (#531: 0 = Desligado). */
   const undoSendLabels: Record<number, string> = {
+    0: t.settings.bridgeUndoSendOff,
     5_000: t.settings.bridgeUndoSend5s,
     10_000: t.settings.bridgeUndoSend10s,
     30_000: t.settings.bridgeUndoSend30s,
