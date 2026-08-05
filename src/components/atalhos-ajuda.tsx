@@ -60,6 +60,7 @@ export function catalogoAtalhos(t: T): AtalhoCategoria[] {
         { teclas: ["u"], rotulo: c.atalhosLidoNaoLido },
         { teclas: ["s"], rotulo: c.atalhosSinalizar },
         { teclas: ["Del"], rotulo: c.atalhosExcluir },
+        { teclas: ["Esc"], rotulo: c.atalhosFecharPreview },
       ],
     },
     {

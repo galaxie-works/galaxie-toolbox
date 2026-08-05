@@ -2913,6 +2913,9 @@ const ATALHO_COMPOR: ShortcutDefinition = { key: "C" };
 // não tem atalho único de sort; tecla livre e mnemônica, sem colisão).
 const ATALHO_ATUALIZAR: ShortcutDefinition = { key: "F9" };
 const ATALHO_ORDENAR: ShortcutDefinition = { key: "O" };
+// #549: Esc fecha o preview de anexo (email aninhado) — por PRECEDÊNCIA sobre o
+// clear-selection (padrão Outlook: Esc fecha o painel aberto primeiro).
+const ATALHO_FECHAR_PREVIEW: ShortcutDefinition = { key: "Esc" };
 
 function MessageList({
   titulo,
@@ -4650,6 +4653,22 @@ function PreviewEmailAninhado({
     };
   }, [messageId, anexo.id, mailbox]);
 
+  // #549: Esc fecha ESTE preview de anexo com PRECEDÊNCIA sobre o clear-selection
+  // da lista (padrão Outlook: Esc fecha o painel aberto primeiro). Como o listener
+  // só existe enquanto o preview está montado e roda em CAPTURE + consome o evento
+  // (stopImmediatePropagation), ele ganha do handler de lista (bubble via useAtalhos).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !isTypingTarget(e.target)) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onFechar();
+      }
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [onFechar]);
+
   return (
     <div
       className="mt-3 overflow-hidden rounded-lg border bg-card"
@@ -4661,15 +4680,30 @@ function PreviewEmailAninhado({
         <span className="min-w-0 flex-1 truncate text-xs font-medium">
           {det?.assunto || anexo.nome}
         </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          onClick={onFechar}
-          aria-label={t.controlRoom.previewFechar}
-        >
-          <X className="size-3.5" />
-        </Button>
+        {/* #549: fechar preview de anexo ganha atalho Esc → ShortcutTooltip
+            (antes não tinha tooltip nenhum). */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              onClick={onFechar}
+              aria-label={shortcutAccessibleLabel(
+                t.controlRoom.previewFechar,
+                ATALHO_FECHAR_PREVIEW
+              )}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <ShortcutTooltip
+              label={t.controlRoom.previewFechar}
+              shortcut={ATALHO_FECHAR_PREVIEW}
+            />
+          </TooltipContent>
+        </Tooltip>
       </div>
       <div className="min-h-24">
         {carregando ? (
