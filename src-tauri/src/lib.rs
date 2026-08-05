@@ -723,6 +723,16 @@ async fn cr_org_settings(state: State<'_, Store>) -> Result<graph::OrgSettingsRe
         .map_err(|e| e.to_string())?
 }
 
+/// #207 (Org Admin): apps reais do tenant (service principals lançáveis) pra a
+/// tela Apps complementar o catálogo estático. Degrada gracioso.
+#[tauri::command]
+async fn cr_tenant_apps(state: State<'_, Store>) -> Result<graph::TenantAppsResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_tenant_apps(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// #186 (Atoms S4): sonda LOCAL do sync do OneDrive (registry + processo).
 #[tauri::command]
 async fn atoms_onedrive_sync() -> onedrive::OneDriveSync {
@@ -1728,6 +1738,7 @@ pub fn run() {
             atoms_onedrive_sync,
             cr_org_admin_available,
             cr_org_settings,
+            cr_tenant_apps,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,

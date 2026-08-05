@@ -367,6 +367,10 @@ const ICONES: Record<string, string> = Object.fromEntries(
 
 export const urlIcone = (app: AppM365) => ICONES[app.icone];
 
+/** #207: URL do ícone local por chave (pra apps do tenant que casam com um do
+ *  catálogo por nome). Sem match → undefined → a tela usa um ícone genérico. */
+export const urlIconePorChave = (chave: string): string | undefined => ICONES[chave];
+
 export const porId = (id: string) => APPS.find((a) => a.id === id);
 
 export const porCategoria = (c: Categoria) =>

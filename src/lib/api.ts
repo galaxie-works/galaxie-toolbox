@@ -1275,6 +1275,51 @@ export async function crOrgSettings(): Promise<OrgSettingsResult> {
   return invoke<OrgSettingsResult>("cr_org_settings");
 }
 
+/** #207: app real do tenant (service principal lançável). */
+export interface TenantApp {
+  appId: string;
+  displayName: string;
+  url: string;
+}
+
+export interface TenantAppsResult {
+  status: OrgCardStatus;
+  apps: TenantApp[];
+}
+
+/**
+ * #207 (Org Admin): apps reais do tenant pra a tela Apps complementar o catálogo
+ * estático. Fora do Tauri devolve um mock representativo pra visualizar no dev.
+ */
+export async function crTenantApps(): Promise<TenantAppsResult> {
+  if (!inTauri()) {
+    await sleep(400);
+    return {
+      status: "ok",
+      apps: [
+        { appId: "m1", displayName: "Teams", url: "https://teams.microsoft.com/" },
+        { appId: "m2", displayName: "Viva Engage", url: "https://engage.cloud.microsoft/" },
+        {
+          appId: "m3",
+          displayName: "Power BI",
+          url: "https://app.powerbi.com/",
+        },
+        {
+          appId: "m4",
+          displayName: "Contoso RH",
+          url: "https://rh.contoso.com/",
+        },
+        {
+          appId: "m5",
+          displayName: "Salesforce",
+          url: "https://login.salesforce.com/",
+        },
+      ],
+    };
+  }
+  return invoke<TenantAppsResult>("cr_tenant_apps");
+}
+
 /** Atualiza, em uma única operação, os campos editáveis de um contato. */
 export async function crPeopleContactUpdate(
   contactId: string,

@@ -5139,6 +5139,115 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
     })
 }
 
+// ---------------------------------------------------------------------------
+// #207 (Org Admin): apps REAIS do tenant. Lê os service principals (enterprise
+// apps) via GET /servicePrincipals (Application.Read.All, já no SCOPES do #424).
+// Filtro client-side pra só apps lançáveis pelo usuário (habilitado, com URL,
+// não escondido). A tela usa isto ADITIVO ao catálogo estático de apps.ts, com
+// fallback gracioso pro estático em erro/sem-permissão/vazio.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantApp {
+    pub app_id: String,
+    pub display_name: String,
+    /// homepage ou loginUrl — pra abrir o app no navegador interno.
+    pub url: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TenantAppsResult {
+    /// "ok" | "forbidden" | "error"
+    pub status: String,
+    pub apps: Vec<TenantApp>,
+}
+
+impl TenantAppsResult {
+    fn vazio(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            apps: Vec::new(),
+        }
+    }
+}
+
+/// Um service principal vira app da tela quando: está habilitado, é do tipo
+/// Application, tem uma URL de lançamento e não está marcado como escondido
+/// (tag `HideApp`). Devolve None pros que não passam.
+fn tenant_app_do_sp(sp: &serde_json::Value) -> Option<TenantApp> {
+    if !sp["accountEnabled"].as_bool().unwrap_or(false) {
+        return None;
+    }
+    if sp["servicePrincipalType"].as_str() != Some("Application") {
+        return None;
+    }
+    let escondido = sp["tags"]
+        .as_array()
+        .map(|tags| {
+            tags.iter()
+                .any(|t| t.as_str() == Some("HideApp"))
+        })
+        .unwrap_or(false);
+    if escondido {
+        return None;
+    }
+    let url = sp["homepage"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| sp["loginUrl"].as_str().filter(|s| !s.trim().is_empty()))?
+        .trim()
+        .to_string();
+    let display_name = sp["displayName"].as_str().unwrap_or("").trim().to_string();
+    if display_name.is_empty() {
+        return None;
+    }
+    let app_id = sp["appId"].as_str().unwrap_or("").trim().to_string();
+    Some(TenantApp {
+        app_id,
+        display_name,
+        url,
+    })
+}
+
+/// #207: apps do tenant (uma página, ordem alfabética). O teto de 100 evita
+/// paginar centenas de service principals de infra da Microsoft; a tela é um
+/// complemento curado ao catálogo, não um explorador completo de diretório.
+pub fn cr_tenant_apps(store: &TokenStore) -> Result<TenantAppsResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!(
+        "{GRAPH}/servicePrincipals?$select=appId,displayName,accountEnabled,homepage,loginUrl,tags,servicePrincipalType\
+         &$orderby=displayName&$count=true&$top=100"
+    );
+
+    match graph_enviar("org:tenantApps", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(&url)
+            .bearer_auth(&token)
+            .header("ConsistencyLevel", "eventual")
+            .send()
+    }) {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+            Ok(body) => {
+                let apps = body["value"]
+                    .as_array()
+                    .map(|arr| arr.iter().filter_map(tenant_app_do_sp).collect())
+                    .unwrap_or_default();
+                Ok(TenantAppsResult {
+                    status: "ok".to_string(),
+                    apps,
+                })
+            }
+            Err(_) => Ok(TenantAppsResult::vazio("error")),
+        },
+        Ok(resp) if resp.status().as_u16() == 403 => Ok(TenantAppsResult::vazio("forbidden")),
+        Ok(_) => Ok(TenantAppsResult::vazio("error")),
+        Err(_) => Ok(TenantAppsResult::vazio("error")),
+    }
+}
+
 #[cfg(test)]
 mod org_settings_testes {
     use super::*;
@@ -5191,6 +5300,53 @@ mod org_settings_testes {
         assert_eq!(AppsAndServicesCard::vazio("forbidden").status, "forbidden");
         assert_eq!(FormsCard::vazio("error").status, "error");
         assert!(M365InstallCard::vazio("error").apps_for_windows.is_none());
+    }
+
+    // --- #207: filtro de service principal → app do tenant ---
+
+    #[test]
+    fn tenant_app_aceita_sp_lancavel() {
+        let sp: serde_json::Value = serde_json::from_str(
+            r#"{"appId":"abc","displayName":"Contoso HR","accountEnabled":true,"servicePrincipalType":"Application","homepage":"https://hr.contoso.com","tags":["WindowsAzureActiveDirectoryIntegratedApp"]}"#,
+        )
+        .unwrap();
+        let app = tenant_app_do_sp(&sp).expect("deveria aceitar");
+        assert_eq!(app.display_name, "Contoso HR");
+        assert_eq!(app.url, "https://hr.contoso.com");
+        assert_eq!(app.app_id, "abc");
+    }
+
+    #[test]
+    fn tenant_app_cai_em_loginurl_sem_homepage() {
+        let sp: serde_json::Value = serde_json::from_str(
+            r#"{"appId":"x","displayName":"App","accountEnabled":true,"servicePrincipalType":"Application","loginUrl":"https://login.app.com"}"#,
+        )
+        .unwrap();
+        assert_eq!(tenant_app_do_sp(&sp).unwrap().url, "https://login.app.com");
+    }
+
+    #[test]
+    fn tenant_app_rejeita_desabilitado_escondido_managed_e_sem_url() {
+        // desabilitado
+        let desab: serde_json::Value = serde_json::from_str(
+            r#"{"displayName":"A","accountEnabled":false,"servicePrincipalType":"Application","homepage":"https://a.com"}"#,
+        ).unwrap();
+        assert!(tenant_app_do_sp(&desab).is_none());
+        // marcado HideApp
+        let escondido: serde_json::Value = serde_json::from_str(
+            r#"{"displayName":"B","accountEnabled":true,"servicePrincipalType":"Application","homepage":"https://b.com","tags":["HideApp"]}"#,
+        ).unwrap();
+        assert!(tenant_app_do_sp(&escondido).is_none());
+        // ManagedIdentity (não é app de usuário)
+        let mi: serde_json::Value = serde_json::from_str(
+            r#"{"displayName":"C","accountEnabled":true,"servicePrincipalType":"ManagedIdentity","homepage":"https://c.com"}"#,
+        ).unwrap();
+        assert!(tenant_app_do_sp(&mi).is_none());
+        // sem URL de lançamento
+        let sem_url: serde_json::Value = serde_json::from_str(
+            r#"{"displayName":"D","accountEnabled":true,"servicePrincipalType":"Application"}"#,
+        ).unwrap();
+        assert!(tenant_app_do_sp(&sem_url).is_none());
     }
 }
 
