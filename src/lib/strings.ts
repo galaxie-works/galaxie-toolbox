@@ -1556,6 +1556,8 @@ const pt = {
     mais: "Mais",
     carregando: "Carregando",
     semResultados: "Sem resultados",
+    // #525: SidebarTrigger/SidebarRail (animate-ui) — sr-only/aria-label/title.
+    alternarBarra: "Alternar barra lateral",
   },
 } as const;
 
@@ -3066,6 +3068,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     mais: "More",
     carregando: "Loading",
     semResultados: "No results",
+    alternarBarra: "Toggle sidebar",
   },
 };
 
