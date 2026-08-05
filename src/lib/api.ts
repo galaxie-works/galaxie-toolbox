@@ -1320,6 +1320,37 @@ export async function crTenantApps(): Promise<TenantAppsResult> {
   return invoke<TenantAppsResult>("cr_tenant_apps");
 }
 
+/** #541: logo do tenant (Entra branding) pro header do sidebar. Data URLs. */
+export interface OrgBranding {
+  /** Logo pra fundo claro — null se o tenant não configurou branding. */
+  squareLogo: string | null;
+  /** Logo pra fundo escuro — null se não configurado. */
+  squareLogoDark: string | null;
+}
+
+let brandingCache: Promise<OrgBranding> | null = null;
+
+/**
+ * #541: logo do tenant (claro + escuro) do Entra branding. Memoizado — o
+ * branding muda raramente, então busca uma vez por sessão. Fora do Tauri devolve
+ * um logo de exemplo pra visualizar o header no dev.
+ */
+export function crOrgBranding(): Promise<OrgBranding> {
+  brandingCache ??= (async () => {
+    if (!inTauri()) {
+      await sleep(300);
+      const logo = (fundo: string) =>
+        `data:image/svg+xml;utf8,${encodeURIComponent(
+          `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="${fundo}"/><text x="16" y="23" font-family="Arial, sans-serif" font-size="19" font-weight="700" fill="#fff" text-anchor="middle">V</text></svg>`
+        )}`;
+      // claro = marca escura sobre fundo claro; escuro = marca clara.
+      return { squareLogo: logo("#2563eb"), squareLogoDark: logo("#60a5fa") };
+    }
+    return invoke<OrgBranding>("cr_org_branding");
+  })();
+  return brandingCache;
+}
+
 /** Atualiza, em uma única operação, os campos editáveis de um contato. */
 export async function crPeopleContactUpdate(
   contactId: string,
