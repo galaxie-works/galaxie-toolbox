@@ -4971,6 +4971,39 @@ impl AppsAndServicesCard {
     }
 }
 
+// #208 (Org Admin): To Do org-wide (OrgSettings-Todo.Read.All). Mesmo padrão dos
+// outros cards — GET independente, status próprio de degradação. Endpoint segue a
+// nomenclatura dos irmãos (`OrgSettings-Todo` → `/admin/todo`, beta). `todoSettings`:
+// push notification / external join / external share.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgTodoCard {
+    /// "ok" | "forbidden" | "error"
+    pub status: String,
+    pub is_push_notification_enabled: Option<bool>,
+    pub is_external_join_enabled: Option<bool>,
+    pub is_external_share_enabled: Option<bool>,
+}
+
+impl OrgTodoCard {
+    fn vazio(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            is_push_notification_enabled: None,
+            is_external_join_enabled: None,
+            is_external_share_enabled: None,
+        }
+    }
+    fn dos_settings(s: &serde_json::Value) -> Self {
+        Self {
+            status: "ok".to_string(),
+            is_push_notification_enabled: s["isPushNotificationEnabled"].as_bool(),
+            is_external_join_enabled: s["isExternalJoinEnabled"].as_bool(),
+            is_external_share_enabled: s["isExternalShareEnabled"].as_bool(),
+        }
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FormsCard {
@@ -5072,6 +5105,7 @@ pub struct OrgSettingsResult {
     pub apps_and_services: AppsAndServicesCard,
     pub forms: FormsCard,
     pub microsoft365_install: M365InstallCard,
+    pub todo: OrgTodoCard,
 }
 
 /// Resultado bruto de um GET de OrgSettings, antes de virar card tipado.
@@ -5139,10 +5173,25 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
         OrgGetOutcome::Error => M365InstallCard::vazio("error"),
     };
 
+    // #208: To Do org-wide (mesmo padrão dos 3 acima). `/admin/todo` segue a
+    // nomenclatura OrgSettings-Todo; a resposta (como os irmãos) traz os settings
+    // em `value.settings`. Sem permissão/erro → card degrada sozinho.
+    let todo = match org_settings_get(
+        &token,
+        &client,
+        "org:todo",
+        &format!("{GRAPH_BETA}/admin/todo"),
+    ) {
+        OrgGetOutcome::Ok(body) => OrgTodoCard::dos_settings(&body["value"]["settings"]),
+        OrgGetOutcome::Forbidden => OrgTodoCard::vazio("forbidden"),
+        OrgGetOutcome::Error => OrgTodoCard::vazio("error"),
+    };
+
     Ok(OrgSettingsResult {
         apps_and_services,
         forms,
         microsoft365_install,
+        todo,
     })
 }
 

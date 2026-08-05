@@ -1225,10 +1225,19 @@ export interface M365InstallCard {
   appsForMac: M365AppsPlatform | null;
 }
 
+/** #208: To Do org-wide (OrgSettings-Todo). */
+export interface OrgTodoCard {
+  status: OrgCardStatus;
+  isPushNotificationEnabled: boolean | null;
+  isExternalJoinEnabled: boolean | null;
+  isExternalShareEnabled: boolean | null;
+}
+
 export interface OrgSettingsResult {
   appsAndServices: AppsAndServicesCard;
   forms: FormsCard;
   microsoft365Install: M365InstallCard;
+  todo: OrgTodoCard;
 }
 
 /**
@@ -1269,6 +1278,12 @@ export async function crOrgSettings(): Promise<OrgSettingsResult> {
           isSkypeForBusinessEnabled: true,
           isVisioEnabled: null,
         },
+      },
+      todo: {
+        status: "ok",
+        isPushNotificationEnabled: true,
+        isExternalJoinEnabled: false,
+        isExternalShareEnabled: true,
       },
     };
   }

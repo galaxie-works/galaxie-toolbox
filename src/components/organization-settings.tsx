@@ -3,6 +3,7 @@ import {
   AppWindow,
   Building2,
   FileText,
+  ListChecks,
   MonitorDown,
   Network,
   ShieldAlert,
@@ -295,6 +296,24 @@ export function OrganizationSettings() {
               </div>
             );
           })}
+        </Cartao>
+
+        {/* #208: To Do org-wide (OrgSettings-Todo). Read-only como os irmãos;
+            a escrita (RW gated + confirmação) é seguida quando o endpoint for
+            confirmado no live-QA (admin real). Degrada sozinho (sem permissão/erro). */}
+        <Cartao icon={ListChecks} title={s.cfgOrgTodoTitle} status={dados.todo.status}>
+          <LinhaSetting
+            label={s.cfgOrgTodoPush}
+            valor={dados.todo.isPushNotificationEnabled}
+          />
+          <LinhaSetting
+            label={s.cfgOrgTodoExternalJoin}
+            valor={dados.todo.isExternalJoinEnabled}
+          />
+          <LinhaSetting
+            label={s.cfgOrgTodoExternalShare}
+            valor={dados.todo.isExternalShareEnabled}
+          />
         </Cartao>
 
         {/* #426: contexto multi-tenant (org + tenants membros). "inactive" =
