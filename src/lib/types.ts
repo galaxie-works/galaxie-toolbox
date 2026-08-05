@@ -135,6 +135,9 @@ export interface EventoAgenda {
   resposta: RespostaConvite;
   /** True quando o usuário organiza o evento (Graph `isOrganizer`) — sem RSVP. */
   souOrganizador: boolean;
+  /** E-mail do organizador (#570): habilita o avatar do organizador no chip
+   *  (day/week). Aditivo, igual ao `organizadorEmail` do EventoDetalhe (#515). */
+  organizadorEmail: string;
   /** Graph `responseRequested`: false = convite informativo (sem pedir RSVP). */
   respostaSolicitada: boolean;
   /** Id do calendário de origem (#233). Marcado no front ao mesclar múltiplos

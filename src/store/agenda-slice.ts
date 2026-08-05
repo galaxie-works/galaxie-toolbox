@@ -224,6 +224,9 @@ function eventoDeInput(id: string, input: EventoInput): EventoAgenda {
     // Evento criado/editado pelo próprio usuário: organizador, sem RSVP (#287).
     resposta: "organizer",
     souOrganizador: true,
+    // #570: otimista não tem o e-mail do organizador em escopo; o auto-refresh
+    // (#396) traz o EventoAgenda real do Graph com o organizadorEmail.
+    organizadorEmail: "",
     respostaSolicitada: false,
   };
 }
