@@ -1351,6 +1351,28 @@ export function crOrgBranding(): Promise<OrgBranding> {
   return brandingCache;
 }
 
+/**
+ * #555 (P0): invalida o memo do branding pra o próximo `crOrgBranding` buscar o
+ * logo do TENANT NOVO. Sem isto, a troca de conta herdava o logo do tenant
+ * anterior (memo "1 fetch/sessão" que nunca resetava). Chamado no reset de sessão.
+ */
+export function invalidarBrandingCache(): void {
+  brandingCache = null;
+}
+
+/**
+ * #555 (P0): zera o memo curto do Graph no backend (Rust) na troca de conta.
+ * No-op fora do Tauri. Chamado pelo seam de reset de sessão.
+ */
+export async function resetSessionMemo(): Promise<void> {
+  if (!inTauri()) return;
+  try {
+    await invoke("reset_session_memo");
+  } catch {
+    // best-effort: o memo tem TTL de 2,5s de qualquer forma.
+  }
+}
+
 /** #426: tenant membro de uma organização multi-tenant. */
 export interface MultiTenantMember {
   tenantId: string;

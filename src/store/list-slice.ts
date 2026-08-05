@@ -29,6 +29,9 @@ export interface ListSlice {
   setListaRecarga: (v: Updater<number>) => void;
   setTemMais: (temMais: boolean) => void;
   setCarregandoMais: (carregando: boolean) => void;
+
+  // #555: reseta a lista/paginação da sessão ao trocar de conta (não toca em `agruparConversas`, que é preferência persistida).
+  resetSessaoList: () => void;
 }
 
 /** Chaves legadas preservadas 1:1 do `usePersistedState`. */
@@ -66,4 +69,15 @@ export const createListSlice: StateCreator<
     set((s) => ({ listaRecarga: resolver(s.listaRecarga, v) })),
   setTemMais: (temMais) => set({ temMais }),
   setCarregandoMais: (carregandoMais) => set({ carregandoMais }),
+
+  // #555: volta ao inicial do slice, preservando `agruparConversas` (persistida).
+  resetSessaoList: () =>
+    set({
+      pastaSel: "inbox",
+      mensagens: null,
+      caixaDados: "me",
+      listaRecarga: 0,
+      temMais: false,
+      carregandoMais: false,
+    }),
 });

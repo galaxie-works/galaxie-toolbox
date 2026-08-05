@@ -34,6 +34,9 @@ export interface SelectionSlice {
   selecionarRange: (idsExibidos: readonly string[], alvo: string) => boolean;
   /** Remove IDs que saíram da lista e reconcilia ativa/âncora. */
   removerDaSelecao: (ids: Iterable<string>) => void;
+
+  // #555: zera seleção/mensagem ativa/âncora ao trocar de conta.
+  resetSessaoSelection: () => void;
 }
 
 export const createSelectionSlice: StateCreator<
@@ -98,4 +101,8 @@ export const createSelectionSlice: StateCreator<
             : state.ancoraSelecao,
       };
     }),
+
+  // #555: volta ao inicial do slice (nenhuma seleção herdada entre contas).
+  resetSessaoSelection: () =>
+    set({ selecionados: new Set(), msgSel: null, ancoraSelecao: null }),
 });

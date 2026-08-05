@@ -153,6 +153,10 @@ export interface AgendaSlice {
     enviarResposta: boolean,
     comentario: string,
   ) => Promise<void>;
+
+  // #555: zera todo o estado tenant-scoped da agenda ao trocar de conta (não
+  // toca em `agendaView`, que é preferência persistida).
+  resetSessaoAgenda: () => void;
 }
 
 const agendaApi: AgendaApi = {
@@ -259,6 +263,33 @@ export function criarAgendaSlice(
     agendaFormConvidados: null,
     agendaFormConvidadosCarregando: false,
     agendaFormGeracao: 0,
+
+    // #555: volta todo o estado tenant-scoped ao inicial do slice; as gerações
+    // são incrementadas (não zeradas) pra invalidar qualquer fetch em voo.
+    resetSessaoAgenda: () =>
+      set({
+        agendaDia: new Date(),
+        agendaEventosMes: null,
+        agendaErro: null,
+        agendaRecarga: 0,
+        agendaCoresCategoria: new Map(),
+        agendaGeracao: get().agendaGeracao + 1,
+        agendaCaixaDados: "me",
+        agendaCalendarios: null,
+        agendaCalendariosErro: null,
+        agendaCalendariosSelecionados: null,
+        agendaEventoId: null,
+        agendaEventoDetalhe: null,
+        agendaEventoGeracao: get().agendaEventoGeracao + 1,
+        agendaFormAberto: false,
+        agendaFormModo: "criar",
+        agendaFormEvento: null,
+        agendaFormEscopo: null,
+        agendaFormInicio: null,
+        agendaFormConvidados: null,
+        agendaFormConvidadosCarregando: false,
+        agendaFormGeracao: get().agendaFormGeracao + 1,
+      }),
 
     setAgendaDia: (dia) => set({ agendaDia: dia }),
 

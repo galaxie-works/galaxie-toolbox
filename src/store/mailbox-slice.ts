@@ -42,6 +42,9 @@ export interface MailboxSlice {
   setSubpastas: (v: Updater<Record<string, PastaEmail[]>>) => void;
   setRecargaPastas: (v: Updater<number>) => void;
 
+  // #555: reseta o estado tenant-scoped da(s) caixa(s) ao trocar de conta.
+  resetSessaoMailbox: () => void;
+
   /**
    * Cache de SESSÃO por pasta (#108) — NÃO persistido (arrays de mensagens são
    * grandes; nunca vão pro localStorage, fora do `partialize`). Chave =
@@ -91,6 +94,17 @@ export const createMailboxSlice: StateCreator<
     set((s) => ({ subpastas: resolver(s.subpastas, v) })),
   setRecargaPastas: (v) =>
     set((s) => ({ recargaPastas: resolver(s.recargaPastas, v) })),
+
+  // #555: volta tudo ao inicial do slice (caixa própria, sem pastas/cache/compartilhadas).
+  resetSessaoMailbox: () =>
+    set({
+      caixaAtiva: "me",
+      pastas: null,
+      subpastas: {},
+      recargaPastas: 0,
+      cachePastas: {},
+      caixasCompartilhadas: [],
+    }),
 
   // Cache de sessão (#108): default vazio, nunca vai pro partialize.
   cachePastas: {},
