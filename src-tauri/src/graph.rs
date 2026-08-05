@@ -2215,6 +2215,10 @@ pub struct EmailDetalhe {
     pub de_email: String,
     pub para: Vec<String>,
     pub cc: Vec<String>,
+    /// E-mails dos destinatarios, ALINHADOS 1:1 com `para`/`cc` (#515). Existem
+    /// pro front abrir o hover card por pessoa; `para`/`cc` seguem com os nomes.
+    pub para_emails: Vec<String>,
+    pub cc_emails: Vec<String>,
     pub recebido: String,
     pub corpo: String,
     pub corpo_tipo: String, // "html" | "text"
@@ -2222,11 +2226,23 @@ pub struct EmailDetalhe {
     pub web_link: String,
 }
 
+/// Predicado compartilhado por `nomes_recipients`/`emails_recipients`: mantem o
+/// recipient se houver name OU address (senao ambos caem juntos → alinhados).
+fn recipient_tem_conteudo(r: &serde_json::Value) -> bool {
+    !r["emailAddress"]["name"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .or_else(|| r["emailAddress"]["address"].as_str())
+        .unwrap_or("")
+        .is_empty()
+}
+
 /// Nomes (ou e-mails) de uma lista de recipients do Graph.
 fn nomes_recipients(v: &serde_json::Value) -> Vec<String> {
     v.as_array()
         .map(|arr| {
             arr.iter()
+                .filter(|r| recipient_tem_conteudo(r))
                 .map(|r| {
                     r["emailAddress"]["name"]
                         .as_str()
@@ -2235,7 +2251,24 @@ fn nomes_recipients(v: &serde_json::Value) -> Vec<String> {
                         .unwrap_or("")
                         .to_string()
                 })
-                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// E-mails (address) de uma lista de recipients, ALINHADO 1:1 com
+/// `nomes_recipients` (mesmo filtro). Address pode vir "" se so houver name (#515).
+fn emails_recipients(v: &serde_json::Value) -> Vec<String> {
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter(|r| recipient_tem_conteudo(r))
+                .map(|r| {
+                    r["emailAddress"]["address"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_string()
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -2266,6 +2299,8 @@ pub fn cr_email_corpo(
 
     let para = nomes_recipients(&it["toRecipients"]);
     let cc = nomes_recipients(&it["ccRecipients"]);
+    let para_emails = emails_recipients(&it["toRecipients"]);
+    let cc_emails = emails_recipients(&it["ccRecipients"]);
 
     // Anexos so quando houver (poupa uma chamada).
     let mut anexos = Vec::new();
@@ -2304,6 +2339,8 @@ pub fn cr_email_corpo(
         de_email: it["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
         para,
         cc,
+        para_emails,
+        cc_emails,
         recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
         corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
         corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),
@@ -2563,6 +2600,8 @@ pub fn cr_ler_anexo_email(
 
     let para = nomes_recipients(&it["toRecipients"]);
     let cc = nomes_recipients(&it["ccRecipients"]);
+    let para_emails = emails_recipients(&it["toRecipients"]);
+    let cc_emails = emails_recipients(&it["ccRecipients"]);
 
     // Anexos aninhados (best-effort: só se o Graph os trouxe junto do item).
     let mut anexos = Vec::new();
@@ -2588,6 +2627,8 @@ pub fn cr_ler_anexo_email(
             .to_string(),
         para,
         cc,
+        para_emails,
+        cc_emails,
         recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
         corpo: it["body"]["content"].as_str().unwrap_or("").to_string(),
         corpo_tipo: it["body"]["contentType"].as_str().unwrap_or("text").to_string(),

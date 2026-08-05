@@ -4217,11 +4217,38 @@ function MessageList({
 // Painel 3 — detalhe da mensagem + compose inline
 // ===========================================================================
 
-function LinhaPessoas({ rotulo, nomes }: { rotulo: string; nomes: string[] }) {
+function LinhaPessoas({
+  rotulo,
+  nomes,
+  emails,
+}: {
+  rotulo: string;
+  nomes: string[];
+  /** E-mails alinhados 1:1 com `nomes` (#515). "" = sem e-mail → texto simples. */
+  emails: string[];
+}) {
   if (nomes.length === 0) return null;
   return (
     <p className="text-xs text-muted-foreground">
-      <span className="font-medium">{rotulo}:</span> {nomes.join(", ")}
+      <span className="font-medium">{rotulo}:</span>{" "}
+      {nomes.map((nome, i) => {
+        const email = emails[i]?.trim();
+        return (
+          <span key={`${nome}-${i}`}>
+            {i > 0 && ", "}
+            {/* #515: cada destinatário com e-mail abre o PersonHoverCard. */}
+            {email ? (
+              <PersonHoverCard email={email} fallback={{ nome, email }}>
+                <span className="cursor-default underline-offset-2 hover:underline">
+                  {nome}
+                </span>
+              </PersonHoverCard>
+            ) : (
+              nome
+            )}
+          </span>
+        );
+      })}
     </p>
   );
 }
@@ -5133,8 +5160,16 @@ const MessageDetail = forwardRef<
               </span>
             </div>
             <div className="mt-1 space-y-0.5">
-              <LinhaPessoas rotulo={t.controlRoom.para} nomes={det.para} />
-              <LinhaPessoas rotulo={t.controlRoom.ccLabel} nomes={det.cc} />
+              <LinhaPessoas
+                rotulo={t.controlRoom.para}
+                nomes={det.para}
+                emails={det.paraEmails}
+              />
+              <LinhaPessoas
+                rotulo={t.controlRoom.ccLabel}
+                nomes={det.cc}
+                emails={det.ccEmails}
+              />
             </div>
           </div>
         </div>
