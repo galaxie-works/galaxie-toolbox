@@ -284,6 +284,13 @@ export function CampoPessoas({
         items={grupos}
         filter={null}
         openOnInputClick={false}
+        // #606: NÃO auto-destacar a 1ª sugestão. Com a busca por relevância do
+        // Graph retornando gente até pra e-mail externo, o auto-highlight fazia o
+        // Base UI selecionar o item destacado DURANTE a digitação (modo multiple
+        // limpa o input ao selecionar) → o endereço que o usuário digitava sumia.
+        // Sem highlight automático, `onValueChange` só dispara em seleção genuína
+        // (clique/Enter na sugestão), e o Enter de e-mail livre é nosso (onKeyDown).
+        autoHighlight={false}
         value={selecionados}
         onValueChange={aplicar}
         inputValue={texto}
