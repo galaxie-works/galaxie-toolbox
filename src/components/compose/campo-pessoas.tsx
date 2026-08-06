@@ -36,6 +36,7 @@ import { preencher, useIdioma } from "@/lib/idioma";
 import type { Pessoa } from "@/lib/types";
 import {
   deveCommitarEnter,
+  deveLimparAposAplicar,
   emailValido,
   mesmoEmail,
 } from "./campo-pessoas-logic";
@@ -237,8 +238,14 @@ export function CampoPessoas({
       emails.push(email);
     }
     onChange(emails);
-    setTexto("");
-    setAberto(false);
+    // #606: só limpamos num commit GENUÍNO. Se o combobox auto-selecionou uma
+    // sugestão enquanto o usuário digitava um e-mail externo, o texto (e-mail
+    // completo fora do commit) tem que ser preservado — senão o endereço some
+    // no meio da digitação.
+    if (deveLimparAposAplicar(texto, emails)) {
+      setTexto("");
+      setAberto(false);
+    }
   }
 
   /** Commita o texto cru do input (endereço fora do diretório). */

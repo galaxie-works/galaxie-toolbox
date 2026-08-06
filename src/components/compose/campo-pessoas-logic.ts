@@ -32,3 +32,27 @@ export function deveCommitarEnter(
   if (!emailValido(texto)) return false;
   return !sugestoes.some((s) => mesmoEmail(s.email, texto));
 }
+
+/**
+ * #606 (o "apaga ENQUANTO digita", caminho value-change): decide se, após um
+ * `onValueChange` do combobox, devemos LIMPAR o input.
+ *
+ * O bug: o Base UI auto-seleciona a 1ª sugestão DURANTE a digitação (o Graph
+ * retorna gente por relevância até pra e-mail externo); isso dispara
+ * `onValueChange` → `aplicar` → `setTexto("")`, apagando o endereço que o usuário
+ * ainda estava digitando. O #298/#610 só blindaram o Enter, não este caminho.
+ *
+ * Regra: NÃO limpamos quando o `texto` atual é um e-mail COMPLETO que NÃO entrou
+ * nos e-mails aplicados — sinal de auto-select espúrio (o texto do usuário ficou
+ * de fora). Em commit genuíno o texto ou está vazio, ou é uma query parcial (o
+ * usuário clicou numa sugestão), ou é o próprio e-mail digitado (Enter) — todos
+ * limpam normalmente.
+ */
+export function deveLimparAposAplicar(
+  texto: string,
+  emailsAplicados: string[],
+): boolean {
+  const t = texto.trim();
+  if (!emailValido(t)) return true;
+  return emailsAplicados.some((e) => mesmoEmail(e, t));
+}
