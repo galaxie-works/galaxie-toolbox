@@ -3075,11 +3075,63 @@ pub fn cr_compartilhar_onedrive(
 
 const ONEDRIVE_SETTINGS_CONTENT_URL: &str =
     "https://graph.microsoft.com/v1.0/me/drive/root:/Documents/Galaxie/AppSettings/toolbox.json:/content";
+const ONEDRIVE_SETTINGS_ITEM_URL: &str =
+    "https://graph.microsoft.com/v1.0/me/drive/root:/Documents/Galaxie/AppSettings/toolbox.json:?$select=eTag,cTag";
+const ONEDRIVE_SETTINGS_CONFLICT: &str = "onedrive-settings-conflict";
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OneDriveSettingsReadResult {
+    pub content: Option<String>,
+    pub e_tag: Option<String>,
+    pub c_tag: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OneDriveSettingsWriteResult {
+    pub e_tag: Option<String>,
+    pub c_tag: Option<String>,
+}
+
+fn drive_item_tags(value: &serde_json::Value) -> (Option<String>, Option<String>) {
+    (
+        value["eTag"].as_str().map(str::to_owned),
+        value["cTag"].as_str().map(str::to_owned),
+    )
+}
 
 /// Lê o JSON privado de configuração. 404 é o primeiro uso, não um erro.
-pub fn onedrive_settings_read(store: &TokenStore) -> Result<Option<String>, String> {
+pub fn onedrive_settings_read(store: &TokenStore) -> Result<OneDriveSettingsReadResult, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
+    let item = graph_enviar("onedrive:settings:item", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(ONEDRIVE_SETTINGS_ITEM_URL)
+            .bearer_auth(&token)
+            .send()
+    })
+    .map_err(|e| format!("falha ao ler versão da configuração do OneDrive: {e}"))?;
+
+    let item_status = item.status();
+    if item_status.as_u16() == 404 {
+        return Ok(OneDriveSettingsReadResult {
+            content: None,
+            e_tag: None,
+            c_tag: None,
+        });
+    }
+    if !item_status.is_success() {
+        let body = item.text().unwrap_or_default();
+        return Err(format!(
+            "leitura da versão da configuração do OneDrive retornou {item_status}: {body}"
+        ));
+    }
+    let item_json: serde_json::Value = item
+        .json()
+        .map_err(|e| format!("versão da configuração do OneDrive ilegível: {e}"))?;
+    let (e_tag, c_tag) = drive_item_tags(&item_json);
+
     let resp = graph_enviar("onedrive:settings:read", GRAPH_TETO_ESPERA_S, || {
         client
             .get(ONEDRIVE_SETTINGS_CONTENT_URL)
@@ -3090,7 +3142,11 @@ pub fn onedrive_settings_read(store: &TokenStore) -> Result<Option<String>, Stri
 
     let status = resp.status();
     if status.as_u16() == 404 {
-        return Ok(None);
+        return Ok(OneDriveSettingsReadResult {
+            content: None,
+            e_tag: None,
+            c_tag: None,
+        });
     }
     if !status.is_success() {
         let body = resp.text().unwrap_or_default();
@@ -3098,24 +3154,37 @@ pub fn onedrive_settings_read(store: &TokenStore) -> Result<Option<String>, Stri
             "leitura da configuração do OneDrive retornou {status}: {body}"
         ));
     }
-    resp.text()
-        .map(Some)
-        .map_err(|e| format!("configuração do OneDrive ilegível: {e}"))
+    let content = resp
+        .text()
+        .map_err(|e| format!("configuração do OneDrive ilegível: {e}"))?;
+    Ok(OneDriveSettingsReadResult {
+        content: Some(content),
+        e_tag,
+        c_tag,
+    })
 }
 
-/// Grava o snapshot JSON no arquivo privado do usuário (sem createLink).
-pub fn onedrive_settings_write(store: &TokenStore, content: &str) -> Result<(), String> {
+/// Grava o snapshot JSON com If-Match; 412 é exposto como conflito recuperável.
+pub fn onedrive_settings_write(
+    store: &TokenStore,
+    content: &str,
+    e_tag: Option<&str>,
+) -> Result<OneDriveSettingsWriteResult, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
     let bytes = content.as_bytes().to_vec();
     let upload = || {
         graph_enviar("onedrive:settings:write", GRAPH_TETO_ESPERA_S, || {
-            client
+            let request = client
                 .put(ONEDRIVE_SETTINGS_CONTENT_URL)
                 .bearer_auth(&token)
                 .header("Content-Type", "application/json; charset=utf-8")
-                .body(bytes.clone())
-                .send()
+                .body(bytes.clone());
+            match e_tag {
+                Some(tag) => request.header(reqwest::header::IF_MATCH, tag),
+                None => request.header(reqwest::header::IF_NONE_MATCH, "*"),
+            }
+            .send()
         })
     };
     let mut resp = upload()
@@ -3129,8 +3198,15 @@ pub fn onedrive_settings_write(store: &TokenStore, content: &str) -> Result<(), 
             .map_err(|e| format!("falha ao gravar configuração no OneDrive: {e}"))?;
     }
 
+    if resp.status().as_u16() == 412 {
+        return Err(ONEDRIVE_SETTINGS_CONFLICT.to_string());
+    }
     if resp.status().is_success() {
-        return Ok(());
+        let value: serde_json::Value = resp
+            .json()
+            .map_err(|e| format!("resposta da gravação do OneDrive ilegível: {e}"))?;
+        let (e_tag, c_tag) = drive_item_tags(&value);
+        return Ok(OneDriveSettingsWriteResult { e_tag, c_tag });
     }
     let status = resp.status();
     let body = resp.text().unwrap_or_default();

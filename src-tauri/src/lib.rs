@@ -696,7 +696,9 @@ async fn cr_compartilhar_onedrive(
 
 /// Configuração privada do usuário no OneDrive (fonte da verdade da S1 #558).
 #[tauri::command]
-async fn onedrive_settings_read(state: State<'_, Store>) -> Result<Option<String>, String> {
+async fn onedrive_settings_read(
+    state: State<'_, Store>,
+) -> Result<graph::OneDriveSettingsReadResult, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || graph::onedrive_settings_read(&store))
         .await
@@ -707,10 +709,11 @@ async fn onedrive_settings_read(state: State<'_, Store>) -> Result<Option<String
 async fn onedrive_settings_write(
     state: State<'_, Store>,
     content: String,
-) -> Result<(), String> {
+    e_tag: Option<String>,
+) -> Result<graph::OneDriveSettingsWriteResult, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::onedrive_settings_write(&store, &content)
+        graph::onedrive_settings_write(&store, &content, e_tag.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
