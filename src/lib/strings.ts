@@ -760,7 +760,7 @@ const pt = {
     peopleGroupsError: "Não foi possível carregar os grupos.",
     peopleGroupSelect: "Selecione um grupo",
     peopleGroupSelectDesc:
-      "Escolha um grupo no sidebar para ver todos os seus membros.",
+      "Escolha um grupo na lista para ver todos os seus membros.",
     peopleGroupEmpty: "Este grupo não tem membros",
     peopleGroupEmptyDesc: "Nenhum usuário foi encontrado neste grupo M365.",
     orgsDescricao: "Agrupe contatos por domínio e mantenha ajustes manuais.",
@@ -2392,7 +2392,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleGroupsError: "Groups could not be loaded.",
     peopleGroupSelect: "Select a group",
     peopleGroupSelectDesc:
-      "Choose a group in the sidebar to see all of its members.",
+      "Choose a group from the list to see all of its members.",
     peopleGroupEmpty: "This group has no members",
     peopleGroupEmptyDesc: "No users were found in this Microsoft 365 group.",
     orgsDescricao: "Group contacts by domain and keep manual overrides.",

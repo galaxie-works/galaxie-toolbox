@@ -1565,30 +1565,14 @@ function FolderSidebar({
 }) {
   const peopleTab = useAppStore((state) => state.peopleTab);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
-  const selectPeopleDirectory = useAppStore(
-    (state) => state.selectPeopleDirectory,
-  );
-  const peopleTenantOrganization = useAppStore(
-    (state) => state.peopleTenantOrganization,
-  );
-  const peopleTenantOrganizationLoading = useAppStore(
-    (state) => state.peopleTenantOrganizationLoading,
-  );
-  const peopleTenantOrganizationError = useAppStore(
-    (state) => state.peopleTenantOrganizationError,
-  );
-  const hydratePeopleM365 = useAppStore((state) => state.hydratePeopleM365);
-  const peopleGroups = useAppStore((state) => state.peopleGroups);
+  // #578: os grupos M365 seguem carregados aqui (loadPeopleGroups no mount do
+  // módulo People), mas o RENDER deles migrou pro GroupsView (grid no painel) —
+  // o bloco "My organization" + o dump de grupos no sidebar foram removidos.
   const peopleGroupsLoading = useAppStore(
     (state) => state.peopleGroupsLoading,
   );
   const peopleGroupsLoaded = useAppStore((state) => state.peopleGroupsLoaded);
-  const peopleGroupsError = useAppStore((state) => state.peopleGroupsError);
-  const peopleSelectedGroupId = useAppStore(
-    (state) => state.peopleSelectedGroupId,
-  );
   const loadPeopleGroups = useAppStore((state) => state.loadPeopleGroups);
-  const selectPeopleGroup = useAppStore((state) => state.selectPeopleGroup);
   // #406: categorias do Outlook no sidebar de Contacts.
   const peopleCategorias = useAppStore((state) => state.peopleCategorias);
   const peopleSelectedCategory = useAppStore(
@@ -2122,6 +2106,13 @@ function FolderSidebar({
                     label: t.controlRoom.peopleContactsTab,
                     Icon: Users,
                   },
+                  // #578: Groups vira item único de nav (não mais o dump de
+                  // grupos no sidebar) — clicar abre o grid de grupos no painel.
+                  {
+                    value: "groups",
+                    label: t.controlRoom.peopleGroupsSection,
+                    Icon: UsersRound,
+                  },
                   {
                     value: "organizations",
                     label: t.controlRoom.peopleOrganizationsTab,
@@ -2162,147 +2153,22 @@ function FolderSidebar({
               })}
             </nav>
 
+            {/* #578: bloco redundante "My organization / VOAZ / People"
+                (que duplicava o People de cima) + o dump de grupos no sidebar
+                REMOVIDOS. Groups virou item da nav primária (grid no painel).
+                As Categorias do Outlook (#406) seguem como nav própria. */}
+            {peopleCategorias.size > 0 && (
             <nav
-              aria-label={t.controlRoom.peopleMyOrganization}
+              aria-label={t.controlRoom.peopleCategoriesSection}
               className={cn(
                 "flex w-full flex-col gap-0.5",
                 colapsada && "items-center"
               )}
             >
-              {!colapsada && (
-                <div className="min-w-0 px-2 pb-1">
-                  <p className="text-xs font-medium text-muted-foreground">
-                    {t.controlRoom.peopleMyOrganization}
-                  </p>
-                  <p className="truncate text-sm font-medium">
-                    {peopleTenantOrganizationLoading &&
-                    !peopleTenantOrganization
-                      ? t.controlRoom.peopleOrganizationLoading
-                      : peopleTenantOrganization?.name?.trim() ||
-                        t.controlRoom.peopleMyOrganization}
-                  </p>
-                </div>
-              )}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant={peopleTab === "directory" ? "secondary" : "ghost"}
-                    onClick={() => selectPeopleDirectory()}
-                    aria-label={t.controlRoom.peopleContactsTab}
-                    aria-current={
-                      peopleTab === "directory" ? "page" : undefined
-                    }
-                    className={cn(
-                      "shrink-0",
-                      colapsada
-                        ? "size-9 justify-center p-0"
-                        : "w-full justify-start gap-2.5",
-                      peopleTab === "directory"
-                        ? "bg-secondary font-medium text-secondary-foreground"
-                        : "text-muted-foreground hover:bg-accent/50",
-                    )}
-                  >
-                    <User className="size-4 shrink-0" />
-                    {!colapsada && (
-                      <span>{t.controlRoom.peopleContactsTab}</span>
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                {colapsada && (
-                  <TooltipContent side="right" align="center">
-                    {t.controlRoom.peopleContactsTab}
-                  </TooltipContent>
-                )}
-              </Tooltip>
-              {!colapsada && peopleTenantOrganizationError && (
-                <div className="px-2 py-1">
-                  <p className="text-xs text-destructive">
-                    {t.controlRoom.peopleOrganizationError}
-                  </p>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="mt-1 h-7 px-2"
-                    onClick={() => void hydratePeopleM365({ force: true })}
-                  >
-                    <RefreshCw className="size-3.5" />
-                    {t.controlRoom.peopleTentarNovamente}
-                  </Button>
-                </div>
-              )}
-              {!colapsada && (
-                <p className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
-                  {t.controlRoom.peopleGroupsSection}
-                </p>
-              )}
-              {peopleGroups.map((group) => {
-                const ativo =
-                  peopleTab === "groups" &&
-                  peopleSelectedGroupId === group.id;
-                const tooltip =
-                  group.memberCount == null
-                    ? group.name
-                    : `${group.name} (${group.memberCount})`;
-                return (
-                  <Tooltip key={group.id}>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant={ativo ? "secondary" : "ghost"}
-                        onClick={() => void selectPeopleGroup(group.id)}
-                        aria-label={tooltip}
-                        aria-current={ativo ? "page" : undefined}
-                        className={cn(
-                          "shrink-0",
-                          colapsada
-                            ? "size-9 justify-center p-0"
-                            : "w-full justify-start gap-2.5",
-                          ativo
-                            ? "bg-secondary font-medium text-secondary-foreground"
-                            : "text-muted-foreground hover:bg-accent/50"
-                        )}
-                      >
-                        <UsersRound className="size-4 shrink-0" />
-                        {!colapsada && (
-                          <>
-                            <span className="min-w-0 flex-1 truncate text-left">
-                              {group.name}
-                            </span>
-                            {group.memberCount != null && (
-                              <span className="shrink-0 text-xs tabular-nums">
-                                {group.memberCount}
-                              </span>
-                            )}
-                          </>
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    {colapsada && (
-                      <TooltipContent side="right" align="center">
-                        {tooltip}
-                      </TooltipContent>
-                    )}
-                  </Tooltip>
-                );
-              })}
-              {!colapsada && peopleGroupsLoading && (
-                <p className="px-2 py-1 text-xs text-muted-foreground">
-                  {t.controlRoom.peopleGroupsLoading}
-                </p>
-              )}
-              {!colapsada &&
-                peopleGroupsLoaded &&
-                peopleGroups.length === 0 && (
-                  <p className="px-2 py-1 text-xs text-muted-foreground">
-                    {peopleGroupsError
-                      ? t.controlRoom.peopleGroupsError
-                      : t.controlRoom.peopleGroupsEmpty}
-                  </p>
-                )}
-
               {/* #406: Categorias do Outlook — grupo customizável portável
                   (opção b). Clicar filtra os contatos pela categoria. */}
-              {!colapsada && peopleCategorias.size > 0 && (
-                <p className="px-2 pt-3 pb-1 text-xs font-medium text-muted-foreground">
+              {!colapsada && (
+                <p className="px-2 pb-1 text-xs font-medium text-muted-foreground">
                   {t.controlRoom.peopleCategoriesSection}
                 </p>
               )}
@@ -2351,6 +2217,7 @@ function FolderSidebar({
                 );
               })}
             </nav>
+            )}
           </div>
         </ScrollArea>
       ) : (
