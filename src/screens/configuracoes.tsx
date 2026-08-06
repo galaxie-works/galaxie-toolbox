@@ -39,6 +39,7 @@ import { LockScreenSettings } from "@/components/lock-screen-settings";
 import { LanguageSettings } from "@/components/language-settings";
 import { StartupSettings } from "@/components/startup-settings";
 import { TelemetrySettings } from "@/components/telemetry-settings";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { TermsOfUseSettings } from "@/components/terms-of-use-settings";
 import { OrganizationSettings } from "@/components/organization-settings";
 import {
@@ -528,7 +529,9 @@ export function ConfiguracoesScreen() {
         </div>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">
-            {t.settings.cfgHeroTitulo}
+            <SoftBlurIn delay={80} stagger={16}>
+              {t.settings.cfgHeroTitulo}
+            </SoftBlurIn>
           </h1>
           <p className="text-sm text-muted-foreground">
             {t.settings.cfgHeroSubtitulo}

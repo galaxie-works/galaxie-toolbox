@@ -74,6 +74,7 @@ import {
 } from "@/components/reui/frame";
 import { Toolbar, ToolbarButton } from "@/components/ui/toolbar";
 import { preencher, useIdioma } from "@/lib/idioma";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 // #533: cache de fotos (mesmo padrão do #493/people-view) pro avatar do membro.
 import { useFotos } from "@/lib/fotos";
 import {
@@ -507,7 +508,11 @@ export function OrganizationsView({
               <EmptyMedia>
                 <NodesIllustration />
               </EmptyMedia>
-              <EmptyTitle>{t.controlRoom.orgsVazia}</EmptyTitle>
+              <EmptyTitle>
+                <SoftBlurIn delay={80} stagger={18}>
+                  {t.controlRoom.orgsVazia}
+                </SoftBlurIn>
+              </EmptyTitle>
               <EmptyDescription>{t.controlRoom.orgsVaziaDesc}</EmptyDescription>
             </EmptyHeader>
           </Empty>

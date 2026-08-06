@@ -1,4 +1,5 @@
 import type { IconeNav } from "@/lib/navegacao";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 
 /** Placeholder das telas que ainda vao ser construidas. */
 export function EmBreveScreen({
@@ -18,7 +19,13 @@ export function EmBreveScreen({
         <div className="mx-auto grid size-12 place-items-center rounded-lg bg-muted text-muted-foreground">
           <Icone className="size-6" />
         </div>
-        <h2 className="mt-4 text-lg font-semibold">{titulo}</h2>
+        <SoftBlurIn
+          className="mt-4 block text-lg font-semibold"
+          delay={120}
+          stagger={16}
+        >
+          {titulo}
+        </SoftBlurIn>
         <p className="mx-auto mt-1.5 max-w-md text-sm text-muted-foreground">
           {descricao}
         </p>
