@@ -6130,6 +6130,9 @@ export function ControlRoomScreen({
   // sessão e permanecem fora da persistência.
   const msgSel = useAppStore((s) => s.msgSel);
   const setMsgSel = useAppStore((s) => s.setMensagemAtiva);
+  // #604: caminho canônico de abrir mensagem (mesmo do clique na lista — seta
+  // msgSel + ancoraSelecao). Usado pelo clique no corpo do toast de e-mail novo.
+  const selecionarMensagem = useAppStore((s) => s.selecionarMensagem);
   const selecionados = useAppStore((s) => s.selecionados);
   const limparSelecao = useAppStore((s) => s.limparSelecao);
   const removerDaSelecao = useAppStore((s) => s.removerDaSelecao);
@@ -6371,12 +6374,18 @@ export function ControlRoomScreen({
             setPastaSel("inbox");
             setMsgSel(m.id);
           },
+          // #604: clicar no corpo do toast abre o e-mail no leitor, pelo mesmo
+          // caminho do clique na lista (seleção + reader).
+          onAbrir: () => {
+            setPastaSel("inbox");
+            selecionarMensagem(m.id);
+          },
         });
       }
       return novos.length;
     },
-    // idioma/t só mudam ao trocar idioma; a ação do store também é estável.
-    [idioma, setMsgSel, setPastaSel, t]
+    // idioma/t só mudam ao trocar idioma; as ações do store são estáveis.
+    [idioma, selecionarMensagem, setMsgSel, setPastaSel, t]
   );
 
   // Poll leve da Inbox (pega e-mail novo enquanto o usuário está parado). O
