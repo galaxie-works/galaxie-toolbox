@@ -3073,6 +3073,115 @@ pub fn cr_compartilhar_onedrive(
     Ok(web)
 }
 
+const ONEDRIVE_SETTINGS_CONTENT_URL: &str =
+    "https://graph.microsoft.com/v1.0/me/drive/root:/Documents/Galaxie/AppSettings/toolbox.json:/content";
+
+/// Lê o JSON privado de configuração. 404 é o primeiro uso, não um erro.
+pub fn onedrive_settings_read(store: &TokenStore) -> Result<Option<String>, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let resp = graph_enviar("onedrive:settings:read", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(ONEDRIVE_SETTINGS_CONTENT_URL)
+            .bearer_auth(&token)
+            .send()
+    })
+    .map_err(|e| format!("falha ao ler configuração do OneDrive: {e}"))?;
+
+    let status = resp.status();
+    if status.as_u16() == 404 {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!(
+            "leitura da configuração do OneDrive retornou {status}: {body}"
+        ));
+    }
+    resp.text()
+        .map(Some)
+        .map_err(|e| format!("configuração do OneDrive ilegível: {e}"))
+}
+
+/// Grava o snapshot JSON no arquivo privado do usuário (sem createLink).
+pub fn onedrive_settings_write(store: &TokenStore, content: &str) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let bytes = content.as_bytes().to_vec();
+    let upload = || {
+        graph_enviar("onedrive:settings:write", GRAPH_TETO_ESPERA_S, || {
+            client
+                .put(ONEDRIVE_SETTINGS_CONTENT_URL)
+                .bearer_auth(&token)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .body(bytes.clone())
+                .send()
+        })
+    };
+    let mut resp = upload()
+        .map_err(|e| format!("falha ao gravar configuração no OneDrive: {e}"))?;
+
+    // Upload por path cria o arquivo, mas exige o parent. No primeiro uso as
+    // duas pastas do app ainda não existem: cria-as e repete o mesmo PUT.
+    if resp.status().as_u16() == 404 {
+        ensure_onedrive_settings_dirs(&client, &token)?;
+        resp = upload()
+            .map_err(|e| format!("falha ao gravar configuração no OneDrive: {e}"))?;
+    }
+
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    Err(format!(
+        "gravação da configuração no OneDrive retornou {status}: {body}"
+    ))
+}
+
+fn ensure_onedrive_settings_dirs(
+    client: &reqwest::blocking::Client,
+    token: &str,
+) -> Result<(), String> {
+    ensure_onedrive_folder(client, token, "Documents", "Galaxie")?;
+    ensure_onedrive_folder(
+        client,
+        token,
+        "Documents/Galaxie",
+        "AppSettings",
+    )
+}
+
+fn ensure_onedrive_folder(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    parent_path: &str,
+    name: &str,
+) -> Result<(), String> {
+    let url = format!("{GRAPH}/me/drive/root:/{parent_path}:/children");
+    let body = serde_json::json!({
+        "name": name,
+        "folder": {},
+        "@microsoft.graph.conflictBehavior": "fail"
+    });
+    let resp = graph_enviar("onedrive:settings:mkdir", GRAPH_TETO_ESPERA_S, || {
+        client
+            .post(&url)
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+    })
+    .map_err(|e| format!("falha ao preparar pasta de configuração: {e}"))?;
+    let status = resp.status();
+    if status.is_success() || status.as_u16() == 409 {
+        return Ok(());
+    }
+    let body = resp.text().unwrap_or_default();
+    Err(format!(
+        "criação da pasta de configuração retornou {status}: {body}"
+    ))
+}
+
 // ----------------------------------------------------------------------------
 // Cliente de e-mail (Control room): pastas + mensagens por pasta.
 // ----------------------------------------------------------------------------

@@ -37,18 +37,6 @@ import {
 
 export type ModoConfirmacao = "conectar" | "desconectar";
 
-/** Preferencia de "nao perguntar mais" — vale so para conectar. */
-const CHAVE_PULAR = "galaxie-pular-confirmacao-conexao";
-
-export function podePularConfirmacao(): boolean {
-  return localStorage.getItem(CHAVE_PULAR) === "1";
-}
-
-export function gravarPularConfirmacao(pular: boolean) {
-  if (pular) localStorage.setItem(CHAVE_PULAR, "1");
-  else localStorage.removeItem(CHAVE_PULAR);
-}
-
 function Cartao({
   icone,
   titulo,

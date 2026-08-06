@@ -4,21 +4,16 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
 import { DICIONARIOS, type Dicionario, type Idioma } from "@/lib/strings";
-import { idiomaAtual, CHAVE_IDIOMA } from "./idioma-core.ts";
+import { idiomaAtual } from "./idioma-core.ts";
+import { useAppStore } from "@/store";
 
 // O `idiomaAtual` puro (e a chave) vivem em `idioma-core.ts` (.ts sem JSX) para
 // que store/lib importáveis por testes (`node --test`) não puxem `.tsx`.
 // Reexporta pra compat de quem já importava daqui.
 export { idiomaAtual };
-
-/** Idioma inicial do provider (= `idiomaAtual`). */
-function idiomaInicial(): Idioma {
-  return idiomaAtual();
-}
 
 interface Ctx {
   idioma: Idioma;
@@ -29,7 +24,8 @@ interface Ctx {
 const IdiomaCtx = createContext<Ctx | null>(null);
 
 export function IdiomaProvider({ children }: { children: ReactNode }) {
-  const [idioma, setIdioma] = useState<Idioma>(idiomaInicial);
+  const idioma = useAppStore((state) => state.idioma);
+  const setIdioma = useAppStore((state) => state.setIdioma);
 
   // Mantem o <html lang> em dia: e o que o leitor de tela usa para escolher a
   // pronuncia, e o que a hifenizacao do navegador consulta.
@@ -38,9 +34,8 @@ export function IdiomaProvider({ children }: { children: ReactNode }) {
   }, [idioma]);
 
   const definir = useCallback((i: Idioma) => {
-    localStorage.setItem(CHAVE_IDIOMA, i);
     setIdioma(i);
-  }, []);
+  }, [setIdioma]);
 
   const valor = useMemo(
     () => ({ idioma, definir, t: DICIONARIOS[idioma] }),

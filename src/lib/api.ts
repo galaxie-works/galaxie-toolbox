@@ -62,6 +62,7 @@ const MOCK_USER: AppUser = {
 const MOCK_LOCK_PIN = "galaxie-mock-lock-pin";
 let mockLockFailures = 0;
 let mockLockBlockedUntil = 0;
+let mockOneDriveSettings: string | null = null;
 
 function mockPinSalvo(): string | null {
   const salvo = localStorage.getItem(MOCK_LOCK_PIN);
@@ -165,6 +166,21 @@ export async function cachedIdentity(): Promise<Identidade | null> {
 export async function restoreSession(): Promise<AppUser | null> {
   if (!inTauri()) return null;
   return invoke<AppUser | null>("restore_session");
+}
+
+/** Arquivo privado de configuração do app no OneDrive do usuário. */
+export async function onedriveSettingsRead(): Promise<string | null> {
+  if (!inTauri()) return mockOneDriveSettings;
+  return invoke<string | null>("onedrive_settings_read");
+}
+
+/** PUT integral do JSON; concorrência/eTag entra na S2 (#559). */
+export async function onedriveSettingsWrite(content: string): Promise<void> {
+  if (!inTauri()) {
+    mockOneDriveSettings = content;
+    return;
+  }
+  return invoke<void>("onedrive_settings_write", { content });
 }
 
 export interface LockStatus {
