@@ -122,8 +122,6 @@ export function CampoPessoas({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Marca o pedido em voo pra descartar respostas fora de ordem.
   const pedidoRef = useRef(0);
-  // Item destacado no popup: com nada destacado, Enter commita o que foi digitado.
-  const destacadoRef = useRef<Pessoa | undefined>(undefined);
 
   const { getFoto, pedirFotos } = useFotos();
 
@@ -265,11 +263,11 @@ export function CampoPessoas({
       }
       return;
     }
-    // Enter commita o endereço digitado (convidado externo fora do diretório) a
-    // menos que uma sugestão REAL de contato esteja destacada — aí o Enter é do
-    // combobox. Ver `deveCommitarEnter`: robusto contra o `destacadoRef` obsoleto
-    // que travava o commit e causava o loop do #268.
-    if (e.key === "Enter" && deveCommitarEnter(texto, destacadoRef.current, sugestoes)) {
+    // Enter commita o endereço digitado (convidado externo fora do diretório)
+    // quando o texto é um e-mail completo que NÃO é uma das sugestões. Ver
+    // `deveCommitarEnter`: #606 — independe do item destacado (o Base UI passou a
+    // auto-destacar a 1ª sugestão, o que travava o commit e apagava o input).
+    if (e.key === "Enter" && deveCommitarEnter(texto, sugestoes)) {
       e.preventDefault();
       adicionarDigitado();
     }
@@ -292,9 +290,6 @@ export function CampoPessoas({
         onInputValueChange={setTexto}
         open={aberto}
         onOpenChange={setAberto}
-        onItemHighlighted={(item) => {
-          destacadoRef.current = item;
-        }}
         itemToStringLabel={(p: Pessoa) => p.nome || p.email}
         itemToStringValue={(p: Pessoa) => p.email}
         isItemEqualToValue={(a: Pessoa, b: Pessoa) => mesmoEmail(a.email, b.email)}

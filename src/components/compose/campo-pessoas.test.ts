@@ -10,31 +10,36 @@ const contato = (email: string, origem: Pessoa["origem"] = "contatos"): Pessoa =
   origem,
 });
 
-test("commita e-mail livre válido quando nada está destacado", () => {
-  assert.equal(deveCommitarEnter("externo@cliente.com", undefined, []), true);
+test("commita e-mail livre válido quando não há sugestões", () => {
+  assert.equal(deveCommitarEnter("externo@cliente.com", []), true);
 });
 
 test("não commita e-mail incompleto (fica editável)", () => {
-  assert.equal(deveCommitarEnter("externo@", undefined, []), false);
-  assert.equal(deveCommitarEnter("externo", undefined, []), false);
-  assert.equal(deveCommitarEnter("", undefined, []), false);
+  assert.equal(deveCommitarEnter("externo@", []), false);
+  assert.equal(deveCommitarEnter("externo", []), false);
+  assert.equal(deveCommitarEnter("", []), false);
 });
 
-test("cede o Enter ao combobox quando um contato REAL está destacado", () => {
+test("cede o Enter ao combobox quando o texto É o e-mail de uma sugestão", () => {
+  // O usuário digitou o e-mail completo de um contato conhecido — o combobox
+  // seleciona esse contato (o chip resultante é o mesmo e-mail).
   const dir = contato("maria@empresa.com", "organizacao");
-  assert.equal(deveCommitarEnter("maria@empresa.com", dir, [dir]), false);
+  assert.equal(deveCommitarEnter("maria@empresa.com", [dir]), false);
 });
 
-test("#268: ignora destacado OBSOLETO fora das sugestões atuais e commita o digitado", () => {
-  // O usuário digitou um trecho que casou com um contato (destacado), depois
-  // completou pra um e-mail externo — as sugestões esvaziaram, mas o ref do
-  // destacado ficou apontando pro contato antigo. Deve commitar mesmo assim.
-  const obsoleto = contato("maria@empresa.com");
-  assert.equal(deveCommitarEnter("externo@cliente.com", obsoleto, []), true);
+test("#606: commita o e-mail externo mesmo com sugestões de OUTROS contatos", () => {
+  // A regressão: o Graph retorna gente por relevância até pra um e-mail externo,
+  // e o Base UI auto-destaca a 1ª sugestão. O commit NÃO pode depender do
+  // highlight — se o texto é um e-mail completo que não é nenhuma sugestão, vira
+  // chip (antes o campo apagava o endereço).
+  const sugestoes = [
+    contato("ana@empresa.com", "organizacao"),
+    contato("joao@empresa.com", "organizacao"),
+  ];
+  assert.equal(deveCommitarEnter("externo@cliente.com", sugestoes), true);
 });
 
-test("#268: destacado obsoleto mesmo com outras sugestões não bloqueia o commit", () => {
-  const obsoleto = contato("maria@empresa.com");
+test("#268: e-mail livre válido commita independentemente das sugestões", () => {
   const sugestoes = [contato("joao@empresa.com", "organizacao")];
-  assert.equal(deveCommitarEnter("externo@cliente.com", obsoleto, sugestoes), true);
+  assert.equal(deveCommitarEnter("externo@cliente.com", sugestoes), true);
 });

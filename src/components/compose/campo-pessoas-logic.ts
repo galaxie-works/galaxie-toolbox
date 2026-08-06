@@ -13,22 +13,22 @@ export function mesmoEmail(a: string, b: string): boolean {
  * Decide se o Enter deve commitar o e-mail digitado como convidado livre, em vez
  * de deixar o combobox selecionar uma sugestão (#268).
  *
- * O Enter só é do combobox quando há um CONTATO REAL destacado — isto é, o item
- * destacado ainda aparece nas sugestões atuais. Não dá pra confiar só em
- * `destacadoRef` truthy: o Base UI nem sempre o limpa quando o item "digitado"
- * deixa de estar destacado (a cada tecla o memo recria o pseudo-item, o highlight
- * cai mas o ref fica obsoleto). Esse ref obsoleto travava o commit e deixava o
- * usuário num loop, sem conseguir adicionar um e-mail que não é contato — o bug
- * do #268. Por isso conferimos se o destacado é mesmo uma das sugestões, não só
- * se o ref existe.
+ * #606 (regressão da classe #268): **NÃO dependemos mais do item destacado**. A
+ * versão anterior conferia se o `destacado` (do `onItemHighlighted`) estava nas
+ * sugestões — mas o Base UI passou a AUTO-destacar a 1ª sugestão ao abrir o
+ * popup. Com a busca por relevância do Graph retornando gente até pra um e-mail
+ * externo, isso fazia o `destacado` virar um contato real, o commit era negado, e
+ * o Enter caía no combobox que LIMPAVA o input — o campo "apagava" o endereço.
+ *
+ * Regra robusta (independe de highlight): se o texto é um e-mail COMPLETO e NÃO é
+ * nenhuma das sugestões atuais, ele é um endereço livre e deve virar chip. Se o
+ * texto casa com uma sugestão (o usuário digitou o e-mail de um contato conhecido),
+ * deixamos o combobox selecionar — o chip resultante é o mesmo e-mail.
  */
 export function deveCommitarEnter(
   texto: string,
-  destacado: Pessoa | undefined,
   sugestoes: Pessoa[],
 ): boolean {
   if (!emailValido(texto)) return false;
-  const contatoRealDestacado =
-    !!destacado && sugestoes.some((s) => mesmoEmail(s.email, destacado.email));
-  return !contatoRealDestacado;
+  return !sugestoes.some((s) => mesmoEmail(s.email, texto));
 }
