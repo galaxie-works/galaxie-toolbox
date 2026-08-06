@@ -6,6 +6,7 @@ import {
   Settings,
   UserRound,
 } from "lucide-react";
+import { useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { BridgeIcon, NavigatorIcon } from "@/components/ui/icons/marca-anim";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
@@ -395,6 +396,52 @@ function NavButton({
   );
 }
 
+/**
+ * #597: item de navegação COM subitens (ex.: Galaxie Apps → Bridge/Navigator).
+ * É ELE que colapsa — chevron no próprio item, subitens escondem/aparecem. O pai
+ * é agrupador (toggle, não seleciona nada; a config real vive nos filhos). Fica
+ * aberto quando um filho está selecionado, pra nunca esconder a seleção.
+ */
+function NavGroupItem({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: SettingsItem;
+  selected: SettingsItemId;
+  onSelect: (item: SettingsItemId) => void;
+}) {
+  const Icon = item.icon;
+  const filhoAtivo = item.children?.some((c) => c.id === selected) ?? false;
+  const [aberto, setAberto] = useState(true);
+  // Força aberto quando um filho está ativo (AC: não esconder a seleção).
+  const open = aberto || filhoAtivo;
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setAberto}
+      className="group/nav-group space-y-1"
+    >
+      <CollapsibleTrigger className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent/50">
+        <Icon className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate">{item.label}</span>
+        <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/nav-group:rotate-90" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="space-y-1">
+        {item.children?.map((child) => (
+          <NavButton
+            key={child.id}
+            item={child}
+            nested
+            active={selected === child.id}
+            onSelect={onSelect}
+          />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function SettingsNavigation({
   sections,
   selected,
@@ -411,28 +458,32 @@ function SettingsNavigation({
       className="w-full shrink-0 overflow-y-auto rounded-xl border bg-card p-2 md:h-full md:w-64"
     >
       {sections.map((section) => (
-        <Collapsible key={section.label} defaultOpen className="group/settings-section">
-          <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs font-medium text-muted-foreground hover:bg-accent/50">
-            <span className="flex-1">{section.label}</span>
-            <ChevronRight className="size-4 transition-transform duration-200 group-data-[state=open]/settings-section:rotate-90" />
-          </CollapsibleTrigger>
-          <CollapsibleContent className="space-y-1 pb-2">
-            {section.items.map((item) => (
-              <div key={item.id} className="space-y-1">
-                <NavButton item={item} active={selected === item.id} onSelect={onSelect} />
-                {item.children?.map((child) => (
-                  <NavButton
-                    key={child.id}
-                    item={child}
-                    nested
-                    active={selected === child.id}
-                    onSelect={onSelect}
-                  />
-                ))}
-              </div>
-            ))}
-          </CollapsibleContent>
-        </Collapsible>
+        <div key={section.label} className="pb-2">
+          {/* #597: rótulo de grupo = cabeçalho estático (divisor visual), SEM
+              chevron/colapso. Quem colapsa é o item com subitens (NavGroupItem). */}
+          <div className="px-2.5 py-2 text-xs font-medium text-muted-foreground">
+            {section.label}
+          </div>
+          <div className="space-y-1">
+            {section.items.map((item) =>
+              item.children && item.children.length > 0 ? (
+                <NavGroupItem
+                  key={item.id}
+                  item={item}
+                  selected={selected}
+                  onSelect={onSelect}
+                />
+              ) : (
+                <NavButton
+                  key={item.id}
+                  item={item}
+                  active={selected === item.id}
+                  onSelect={onSelect}
+                />
+              )
+            )}
+          </div>
+        </div>
       ))}
     </aside>
   );
