@@ -4,7 +4,6 @@ import {
   MonitorCog,
   Palette,
   Settings,
-  ShieldCheck,
   UserRound,
 } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
@@ -183,20 +182,8 @@ function settingsSections(t: Dicionario): SettingsSection[] {
           ],
         },
         {
-          id: "privacy",
-          label: s.cfgPrivacyLabel,
-          description: s.cfgPrivacyDesc,
-          icon: ShieldCheck,
-          frames: [
-            {
-              key: "telemetry",
-              title: s.cfgTelemetryTitulo,
-              subtitle: s.cfgTelemetrySubtitulo,
-              node: <TelemetrySettings />,
-            },
-          ],
-        },
-        {
+          // #580: a seção "Privacy" morreu — só continha o painel de telemetria,
+          // que foi movido pra System (junto do Startup).
           id: "system",
           label: s.cfgSystemLabel,
           description: s.cfgSystemDesc,
@@ -213,6 +200,13 @@ function settingsSections(t: Dicionario): SettingsSection[] {
               title: s.cfgStartupTitulo,
               subtitle: s.cfgStartupSubtitulo,
               node: <StartupSettings />,
+            },
+            {
+              // #580: telemetria agora vive em System.
+              key: "telemetry",
+              title: s.cfgTelemetryTitulo,
+              subtitle: s.cfgTelemetrySubtitulo,
+              node: <TelemetrySettings />,
             },
           ],
         },

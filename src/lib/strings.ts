@@ -1312,13 +1312,7 @@ const pt = {
     // Language
     languageDesc:
       "Escolha o idioma do app, independente do idioma do seu Windows.",
-    // Telemetry
-    telBanner:
-      "Os diagnósticos anônimos estão {estado} — desligue abaixo qualquer categoria que você não quiser. O GALAXIE Toolbox nunca coleta dados pessoais — nada de e-mails, nomes, conteúdo de mensagens, URLs ou caminhos de arquivo, só diagnósticos anônimos e agrupados. Os dados são self-hosted.",
-    telBannerEstado: "ligados por padrão",
-    telAviso1run:
-      "Pra ajudar a melhorar o GALAXIE Toolbox, os diagnósticos anônimos vêm ligados por padrão. Nenhum dado pessoal é coletado. Você pode desligar qualquer categoria aqui a qualquer momento.",
-    telAvisoOk: "Entendi",
+    // Telemetry (#580: banner/aviso/rodapé removidos — só os 3 opt-outs ficam)
     telCrashLabel: "Relatórios de erro",
     telCrashDesc:
       "Envie relatórios de erro pra a gente corrigir o que quebra. Só diagnóstico essencial.",
@@ -1328,9 +1322,6 @@ const pt = {
     telUsoLabel: "Uso anônimo",
     telUsoDesc:
       "Compartilhe estatísticas anônimas de uso de recursos pra sabermos o que melhorar.",
-    telRevogarDesc:
-      "Revogar desliga tudo, limpa a fila local e reinicia o seu id de sessão efêmero.",
-    telRevogarBtn: "Revogar tudo",
     // Navigator
     navigatorSearchTitulo: "Mecanismo de busca padrão",
     navigatorSearchDesc:
@@ -1391,11 +1382,11 @@ const pt = {
     cfgAppearanceSubtitulo: "Defina o clima e o estilo claro ou escuro do app.",
     cfgLockScreenTitulo: "Tela de bloqueio",
     cfgLockScreenSubtitulo: "Proteja o app com um PIN.",
-    cfgPrivacyLabel: "Privacidade",
-    cfgPrivacyDesc: "Controle qual telemetria anônima o app pode coletar.",
     cfgTelemetryTitulo: "Telemetria e diagnósticos",
+    // #580: alinhado à realidade — é LIGADO por padrão (opt-out por categoria),
+    // anônimo e self-hosted, sem PII.
     cfgTelemetrySubtitulo:
-      "Ative por categoria. Desligado por padrão; nunca dados pessoais.",
+      "Anônimo, sem dados pessoais. Ligado por padrão — desligue por categoria.",
     cfgSystemLabel: "Sistema",
     cfgSystemDesc:
       "Escolha como o GALAXIE Toolbox funciona com o seu dispositivo.",
@@ -2932,13 +2923,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Language
     languageDesc:
       "Choose the language of the app, independent of your Windows language.",
-    // Telemetry
-    telBanner:
-      "Anonymous diagnostics are {estado} — turn off any category you don’t want below. GALAXIE Toolbox never collects personal data — no emails, names, message content, URLs or file paths, only anonymous, bucketed diagnostics. Data is self-hosted.",
-    telBannerEstado: "on by default",
-    telAviso1run:
-      "To help us improve GALAXIE Toolbox, anonymous diagnostics are on by default. No personal data is ever collected. You can turn off any category here at any time.",
-    telAvisoOk: "Got it",
+    // Telemetry (#580: banner/notice/footer removed — only the 3 opt-outs remain)
     telCrashLabel: "Crash reports",
     telCrashDesc:
       "Send crash reports so we can fix what breaks. Essential diagnostics only.",
@@ -2948,9 +2933,6 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     telUsoLabel: "Anonymous usage",
     telUsoDesc:
       "Share anonymous feature-usage stats so we know what to improve.",
-    telRevogarDesc:
-      "Revoking turns everything off, clears the local queue and resets your ephemeral session id.",
-    telRevogarBtn: "Revoke all",
     // Navigator
     navigatorSearchTitulo: "Default search engine",
     navigatorSearchDesc:
@@ -3010,11 +2992,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgAppearanceSubtitulo: "Set the mood and light or dark style of the app.",
     cfgLockScreenTitulo: "Lock screen",
     cfgLockScreenSubtitulo: "Protect the app with a PIN.",
-    cfgPrivacyLabel: "Privacy",
-    cfgPrivacyDesc: "Control what anonymous telemetry the app may collect.",
     cfgTelemetryTitulo: "Telemetry & diagnostics",
+    // #580: aligned with reality — it is ON by default (opt out per category),
+    // anonymous and self-hosted, no PII.
     cfgTelemetrySubtitulo:
-      "Opt in per category. Off by default; no personal data, ever.",
+      "Anonymous, no personal data. On by default — opt out per category.",
     cfgSystemLabel: "System",
     cfgSystemDesc: "Choose how GALAXIE Toolbox works with your device.",
     cfgLanguageTitulo: "Language",
