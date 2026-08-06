@@ -155,6 +155,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { OrganizationsView } from "@/components/people/organizations-view";
 import { GroupsView } from "@/components/people/groups-view";
+import { PersonalGroupsView } from "@/components/people/personal-groups-view";
 import { ContactMergeSheet } from "@/components/people/contact-merge-sheet";
 import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
@@ -3043,6 +3044,9 @@ export function PeopleView({
         // #578: Groups vira visão própria (grid → detalhe com membros), como o
         // OrganizationsView — sai do caminho do DataGrid de contatos.
         <GroupsView onCompose={onCompose} />
+      ) : peopleTab === "personalGroups" ? (
+        // #562: grupos de contato pessoais (contactFolders) — seção editável.
+        <PersonalGroupsView onCompose={onCompose} />
       ) : (
         <>
       <AssignToOrganizationSheet
