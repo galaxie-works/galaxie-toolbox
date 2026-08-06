@@ -9,6 +9,7 @@ import {
 } from "./local-cache-backend";
 import {
   LayeredBackend,
+  LocalStorageConfigPatchQueue,
   OneDriveJsonBackend,
   projetarConfigNuvem,
 } from "./onedrive-config-backend";
@@ -110,6 +111,14 @@ const layeredConfigBackend = new LayeredBackend(
   new OneDriveJsonBackend(),
   {
     baseline: () => projetarConfigNuvem(useAppStore.getState()),
+    queue: new LocalStorageConfigPatchQueue(localStorage),
+    onReconciled: (cloud) => {
+      useAppStore.setState(cloud as Partial<AppStore>);
+      const state = useAppStore.getState();
+      aplicarModoTema(state.modoTema);
+      aplicarTemaVisual(state.temaVisual);
+      aplicarAltoContraste(state.altoContraste, state.temaVisual);
+    },
   },
 );
 
@@ -224,7 +233,7 @@ export function prepararConfiguracaoNuvem(accountEmail: string): void {
   } catch {
     // Best-effort; a nuvem segue sendo a fonte da verdade.
   }
-  layeredConfigBackend.activate();
+  layeredConfigBackend.activate(account);
 }
 
 /** Reconciliador pós-login: local imediato, OneDrive assíncrono. */

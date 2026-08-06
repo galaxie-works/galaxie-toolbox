@@ -168,19 +168,52 @@ export async function restoreSession(): Promise<AppUser | null> {
   return invoke<AppUser | null>("restore_session");
 }
 
-/** Arquivo privado de configuração do app no OneDrive do usuário. */
-export async function onedriveSettingsRead(): Promise<string | null> {
-  if (!inTauri()) return mockOneDriveSettings;
-  return invoke<string | null>("onedrive_settings_read");
+export interface OneDriveSettingsReadResult {
+  content: string | null;
+  eTag: string | null;
+  cTag: string | null;
 }
 
-/** PUT integral do JSON; concorrência/eTag entra na S2 (#559). */
-export async function onedriveSettingsWrite(content: string): Promise<void> {
+export interface OneDriveSettingsWriteResult {
+  eTag: string | null;
+  cTag: string | null;
+}
+
+let mockOneDriveSettingsETag = 0;
+
+/** Arquivo privado de configuração + versão otimista do driveItem. */
+export async function onedriveSettingsRead(): Promise<OneDriveSettingsReadResult> {
   if (!inTauri()) {
-    mockOneDriveSettings = content;
-    return;
+    return {
+      content: mockOneDriveSettings,
+      eTag: mockOneDriveSettings === null ? null : `mock-${mockOneDriveSettingsETag}`,
+      cTag: mockOneDriveSettings === null ? null : `mock-${mockOneDriveSettingsETag}`,
+    };
   }
-  return invoke<void>("onedrive_settings_write", { content });
+  return invoke<OneDriveSettingsReadResult>("onedrive_settings_read");
+}
+
+/** PUT condicional: o Graph devolve 412 quando outra máquina venceu a corrida. */
+export async function onedriveSettingsWrite(
+  content: string,
+  eTag: string | null,
+): Promise<OneDriveSettingsWriteResult> {
+  if (!inTauri()) {
+    const atual = mockOneDriveSettings === null
+      ? null
+      : `mock-${mockOneDriveSettingsETag}`;
+    if (eTag !== atual) throw new Error("onedrive-settings-conflict");
+    mockOneDriveSettings = content;
+    mockOneDriveSettingsETag += 1;
+    return {
+      eTag: `mock-${mockOneDriveSettingsETag}`,
+      cTag: `mock-${mockOneDriveSettingsETag}`,
+    };
+  }
+  return invoke<OneDriveSettingsWriteResult>("onedrive_settings_write", {
+    content,
+    eTag,
+  });
 }
 
 export interface LockStatus {
