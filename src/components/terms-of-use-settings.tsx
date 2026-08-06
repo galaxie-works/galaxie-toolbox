@@ -11,7 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { FramePanel } from "@/components/reui/frame";
 import { useIdioma } from "@/lib/idioma";
 
 /**
@@ -31,19 +30,18 @@ export function TermsOfUseSettings() {
   const s = t.settings;
   const [aberto, setAberto] = useState(false);
 
+  // #581-rework: só o botão "Ler" + o modal — o frame é estático (a moldura,
+  // o título e a descrição curta vêm do OptionFrame). Sem FramePanel/lead aqui.
   return (
-    <FramePanel>
-      <div className="flex items-center justify-between gap-4">
-        <p className="min-w-0 text-sm text-muted-foreground">{s.termsLead}</p>
-        <Button
-          variant="outline"
-          className="shrink-0"
-          onClick={() => setAberto(true)}
-        >
-          <FileText aria-hidden="true" />
-          {s.termsLerBtn}
-        </Button>
-      </div>
+    <>
+      <Button
+        variant="outline"
+        className="shrink-0"
+        onClick={() => setAberto(true)}
+      >
+        <FileText aria-hidden="true" />
+        {s.termsLerBtn}
+      </Button>
 
       <Dialog open={aberto} onOpenChange={setAberto}>
         <DialogContent className="sm:max-w-lg">
@@ -68,7 +66,7 @@ export function TermsOfUseSettings() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </FramePanel>
+    </>
   );
 }
 

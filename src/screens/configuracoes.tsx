@@ -77,6 +77,13 @@ interface SettingsFrame {
   node?: ReactNode;
   /** Nº da issue filha que entrega/reestiliza esta sub-opção (placeholder). */
   pending?: number;
+  /**
+   * #581-rework: frame estático — sem chevron/colapso. Renderiza o header
+   * (título + subtítulo) e o `node` como AÇÃO à direita, na mesma linha. Pra
+   * sub-opções que só têm um botão (ex.: Termos de uso → "Ler"), onde não há
+   * conteúdo pra expandir/recolher.
+   */
+  estatico?: boolean;
 }
 
 interface SettingsItem {
@@ -211,10 +218,12 @@ function settingsSections(t: Dicionario): SettingsSection[] {
             },
             {
               // #581: Termos de uso — modal com a transparência (anônimo, sem PII).
+              // #581-rework: estático (só o botão "Ler"), sem chevron/colapso.
               key: "terms",
               title: s.cfgTermsTitulo,
               subtitle: s.cfgTermsSubtitulo,
               node: <TermsOfUseSettings />,
+              estatico: true,
             },
           ],
         },
@@ -448,6 +457,22 @@ function OptionFrame({
   const setSettingsFrameAberto = useAppStore(
     (state) => state.setSettingsFrameAberto
   );
+
+  // #581-rework: frame estático — linha única (título + subtítulo à esquerda,
+  // ação/botão à direita), sem chevron nem colapso.
+  if (frame.estatico) {
+    return (
+      <Frame className="w-full" stacked>
+        <FrameHeader className="flex grow flex-row items-center justify-between gap-3">
+          <div className="min-w-0">
+            <FrameTitle>{frame.title}</FrameTitle>
+            <FrameDescription>{frame.subtitle}</FrameDescription>
+          </div>
+          {frame.node}
+        </FrameHeader>
+      </Frame>
+    );
+  }
 
   return (
     <Frame className="w-full" stacked>
