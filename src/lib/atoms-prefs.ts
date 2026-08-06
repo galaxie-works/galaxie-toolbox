@@ -26,7 +26,7 @@ export interface AtomsPrefs {
   densidade: Densidade;
 }
 
-const CHAVE = "atoms.prefs.v1";
+export const ATOMS_PREFS_KEY = "atoms.prefs.v1";
 
 export function prefsPadrao(): AtomsPrefs {
   return { ordem: [...WIDGETS], ocultos: ["speeddial"], densidade: "confortavel" };
@@ -47,18 +47,22 @@ function normalizarOrdem(ordem: unknown): WidgetId[] {
   return [...semDup, ...faltando];
 }
 
+export function normalizarAtomsPrefs(p: Partial<AtomsPrefs>): AtomsPrefs {
+  return {
+    ordem: normalizarOrdem(p.ordem),
+    ocultos: Array.isArray(p.ocultos)
+      ? p.ocultos.filter((x): x is WidgetId => WIDGETS.includes(x as WidgetId))
+      : [],
+    densidade: p.densidade === "compacta" ? "compacta" : "confortavel",
+  };
+}
+
 export function loadAtomsPrefs(): AtomsPrefs {
   try {
-    const cru = localStorage.getItem(CHAVE);
+    const cru = localStorage.getItem(ATOMS_PREFS_KEY);
     if (!cru) return prefsPadrao();
     const p = JSON.parse(cru) as Partial<AtomsPrefs>;
-    return {
-      ordem: normalizarOrdem(p.ordem),
-      ocultos: Array.isArray(p.ocultos)
-        ? p.ocultos.filter((x): x is WidgetId => WIDGETS.includes(x as WidgetId))
-        : [],
-      densidade: p.densidade === "compacta" ? "compacta" : "confortavel",
-    };
+    return normalizarAtomsPrefs(p);
   } catch {
     return prefsPadrao();
   }
@@ -66,7 +70,7 @@ export function loadAtomsPrefs(): AtomsPrefs {
 
 export function persistAtomsPrefs(prefs: AtomsPrefs): void {
   try {
-    localStorage.setItem(CHAVE, JSON.stringify(prefs));
+    localStorage.setItem(ATOMS_PREFS_KEY, JSON.stringify(prefs));
   } catch {
     // best-effort (modo privado / quota): a UI segue com o estado em memória.
   }

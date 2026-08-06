@@ -4,9 +4,17 @@ import test from "node:test";
 import {
   LocalCacheBackend,
   type AppPersistido,
+  type ConfigBackend,
+  type ConfigSnapshot,
   type KeyValueStorage,
   type LocalCacheCodec,
 } from "./config-backend.ts";
+import {
+  CHAVES_CONFIG_NUVEM,
+  LayeredBackend,
+  OneDriveJsonBackend,
+  projetarConfigNuvem,
+} from "./onedrive-config-backend.ts";
 
 class MemoryStorage implements KeyValueStorage {
   readonly values = new Map<string, string>();
@@ -63,4 +71,164 @@ test("LocalCacheBackend delega save e clear ao storage isolado", async () => {
   assert.equal(storage.getItem("zoom"), null);
   await clear;
   assert.equal(storage.getItem("nao-relacionada"), "preservada");
+});
+
+class MemoryBackend implements ConfigBackend, ConfigSnapshot {
+  readonly saves: Array<Partial<AppPersistido>> = [];
+  private state: Partial<AppPersistido>;
+
+  constructor(state: Partial<AppPersistido>) {
+    this.state = state;
+  }
+
+  getSnapshot(): Partial<AppPersistido> {
+    return { ...this.state };
+  }
+
+  async load(): Promise<Partial<AppPersistido>> {
+    return this.getSnapshot();
+  }
+
+  async save(patch: Partial<AppPersistido>): Promise<void> {
+    this.state = { ...this.state, ...patch };
+    this.saves.push({ ...patch });
+  }
+
+  async clear(): Promise<void> {
+    this.state = {};
+  }
+}
+
+test("projeção cloud cobre grupo A e exclui cache/sessão/S3", () => {
+  const projected = projetarConfigNuvem({
+    zoom: 1.2,
+    idioma: "en",
+    atomsPrefs: {
+      ordem: ["agenda", "email", "todos", "speeddial"],
+      ocultos: ["speeddial"],
+      densidade: "compacta",
+    },
+    pularConfirmacaoConexao: true,
+    gruposColapsados: { inbox: ["today"] },
+    selectedSettingsItem: "bridge",
+    organizations: [],
+  });
+
+  assert.deepEqual(projected, {
+    zoom: 1.2,
+    idioma: "en",
+    atomsPrefs: {
+      ordem: ["agenda", "email", "todos", "speeddial"],
+      ocultos: ["speeddial"],
+      densidade: "compacta",
+    },
+    pularConfirmacaoConexao: true,
+  });
+});
+
+test("matriz do grupo A fica explícita e completa", () => {
+  assert.deepEqual(CHAVES_CONFIG_NUVEM, [
+    "zoom",
+    "sidebarAberta",
+    "marcarLidoModo",
+    "marcarLidoAtraso",
+    "peopleTab",
+    "ordenar",
+    "ordemDesc",
+    "filtros",
+    "agruparConversas",
+    "caixasCompartilhadas",
+    "notificacoes",
+    "fundoAnimado",
+    "modoTema",
+    "temaVisual",
+    "altoContraste",
+    "assinaturas",
+    "assinaturaPadraoId",
+    "templates",
+    "undoSendDelayMs",
+    "syncIntervalMinutes",
+    "agendaView",
+    "agendaCalendariosSelecionados",
+    "idioma",
+    "atomsPrefs",
+    "pularConfirmacaoConexao",
+  ]);
+});
+
+test("OneDriveJsonBackend trata arquivo ausente e rejeita JSON não objeto", async () => {
+  const writes: string[] = [];
+  const absent = new OneDriveJsonBackend({
+    read: async () => null,
+    write: async (content) => void writes.push(content),
+  });
+  assert.deepEqual(await absent.load(), {});
+  await absent.save({ zoom: 1.1, organizations: [] });
+  assert.deepEqual(JSON.parse(writes[0]), { zoom: 1.1 });
+
+  const invalid = new OneDriveJsonBackend({
+    read: async () => "[]",
+    write: async () => undefined,
+  });
+  await assert.rejects(invalid.load(), /não contém um objeto/);
+});
+
+test("LayeredBackend semeia nuvem vazia a partir do cache normalizado", async () => {
+  const local = new MemoryBackend({});
+  const cloud = new MemoryBackend({});
+  const layered = new LayeredBackend(local, cloud, {
+    baseline: () => ({ zoom: 1.25, sidebarAberta: false, templates: [] }),
+  });
+
+  layered.activate();
+  assert.deepEqual(await layered.load(), {
+    zoom: 1.25,
+    sidebarAberta: false,
+    templates: [],
+  });
+  assert.deepEqual(cloud.saves.at(-1), {
+    zoom: 1.25,
+    sidebarAberta: false,
+    templates: [],
+  });
+  layered.deactivate();
+});
+
+test("LayeredBackend usa nuvem como autoridade e completa schema antigo", async () => {
+  const local = new MemoryBackend({ zoom: 1, sidebarAberta: true });
+  const cloud = new MemoryBackend({ zoom: 1.5 });
+  const layered = new LayeredBackend(local, cloud);
+
+  layered.activate();
+  assert.deepEqual(await layered.load(), { zoom: 1.5, sidebarAberta: true });
+  assert.deepEqual(local.getSnapshot(), { zoom: 1.5, sidebarAberta: true });
+  assert.deepEqual(cloud.saves.at(-1), { zoom: 1.5, sidebarAberta: true });
+  layered.deactivate();
+});
+
+test("LayeredBackend grava local na hora e envia só o último snapshot", async () => {
+  const local = new MemoryBackend({ zoom: 1 });
+  const cloud = new MemoryBackend({});
+  const layered = new LayeredBackend(local, cloud, { debounceMs: 60_000 });
+
+  layered.activate();
+  await layered.save({ zoom: 1.1 });
+  await layered.save({ zoom: 1.2 });
+  assert.equal(local.getSnapshot().zoom, 1.2);
+  assert.equal(cloud.saves.length, 0);
+  await layered.flush();
+  assert.deepEqual(cloud.saves, [{ zoom: 1.2 }]);
+  layered.deactivate();
+});
+
+test("LayeredBackend cancela escrita pendente quando a conta muda", async () => {
+  const local = new MemoryBackend({ zoom: 1 });
+  const cloud = new MemoryBackend({});
+  const layered = new LayeredBackend(local, cloud, { debounceMs: 60_000 });
+
+  layered.activate();
+  await layered.save({ zoom: 1.4 });
+  layered.deactivate();
+  await layered.flush();
+  assert.equal(cloud.saves.length, 0);
 });

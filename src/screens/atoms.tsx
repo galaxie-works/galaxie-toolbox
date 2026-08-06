@@ -32,12 +32,11 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import {
-  loadAtomsPrefs,
-  persistAtomsPrefs,
   WIDGETS,
   type AtomsPrefs,
   type WidgetId,
 } from "@/lib/atoms-prefs";
+import { useAppStore } from "@/store";
 import { APPS, urlIcone, type AppM365 } from "@/lib/apps";
 import {
   Alert,
@@ -108,14 +107,12 @@ export function AtomsScreen({
 }) {
   const { idioma, t } = useIdioma();
   // #187: personalização — ordem/visibilidade/densidade, persistidas.
-  const [prefs, setPrefs] = useState<AtomsPrefs>(loadAtomsPrefs);
-  const atualizarPrefs = useCallback((patch: Partial<AtomsPrefs>) => {
-    setPrefs((atual) => {
-      const prox = { ...atual, ...patch };
-      persistAtomsPrefs(prox);
-      return prox;
-    });
-  }, []);
+  const prefs = useAppStore((state) => state.atomsPrefs);
+  const setAtomsPrefs = useAppStore((state) => state.setAtomsPrefs);
+  const atualizarPrefs = useCallback(
+    (patch: Partial<AtomsPrefs>) => setAtomsPrefs(patch),
+    [setAtomsPrefs],
+  );
   const denso = prefs.densidade === "compacta";
   const primeiroNome = user.displayName.trim().split(/\s+/)[0] || user.displayName;
 
