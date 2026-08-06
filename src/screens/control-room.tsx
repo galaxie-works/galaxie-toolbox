@@ -6402,10 +6402,45 @@ export function ControlRoomScreen({
         const msgs = await api.crFolderMensagens("inbox", 0, "data", true, "me");
         if (!vivo) return;
         const novos = notificarNovos(msgs);
-        // Chegou e-mail novo enquanto o usuário estava parado: invalida o cache
-        // da inbox pra que ao voltar pra ela a lista seja rebuscada (não sirva
-        // uma versão sem os novos) — #108.
-        if (novos > 0) limparCachePasta(chaveCache("inbox", "me"));
+        // #603: chegou e-mail novo enquanto o usuário estava parado. Antes só
+        // invalidávamos o cache (#108) — mas a LISTA exibida não re-renderizava,
+        // então o novo só aparecia ao clicar Refresh. Agora, se o usuário está
+        // vendo justamente a inbox própria em data-desc sem busca/filtro (= o
+        // que o poll buscou), PREPENDAMOS os novos na lista exibida + no cache,
+        // sem resetar seleção/scroll (o MessageList reancora o scroll). Fora
+        // desse caso, mantém o comportamento antigo: só invalida.
+        if (novos > 0) {
+          const st = useAppStore.getState();
+          const espelhaInbox =
+            pastaSelRef.current === "inbox" &&
+            caixaAtivaRef.current === CAIXA_PROPRIA &&
+            ordenarRef.current === "data" &&
+            ordemDescRef.current === true &&
+            st.caixaDados === CAIXA_PROPRIA &&
+            st.busca.trim() === "" &&
+            st.filtros.length === 0;
+          const atuais = mensagensRef.current ?? [];
+          const vistos = new Set(atuais.map((m) => m.id));
+          const aPrepender = espelhaInbox
+            ? msgs.filter(
+                (m) => !vistos.has(m.id) && !deletadasRef.current.has(m.id)
+              )
+            : [];
+          if (aPrepender.length > 0) {
+            // Prepend na lista exibida (setter aceita Updater; preserva msgSel e
+            // seleção, que são por id) e no cache da pasta (não invalida).
+            setMensagens((prev) => [...aPrepender, ...(prev ?? [])]);
+            atualizarCachePasta(chaveCache("inbox", "me"), (e) => ({
+              mensagens: [...aPrepender, ...e.mensagens],
+              carregados: e.carregados,
+              temMais: e.temMais,
+            }));
+          } else if (!espelhaInbox) {
+            // Usuário está noutra pasta/caixa/ordem/busca: só invalida pra
+            // rebuscar ao voltar (comportamento #108).
+            limparCachePasta(chaveCache("inbox", "me"));
+          }
+        }
       } catch {
         /* silencioso: é só o aviso de novos e-mails */
       }
@@ -6414,7 +6449,16 @@ export function ControlRoomScreen({
       vivo = false;
       clearInterval(iv);
     };
-  }, [syncIntervalMinutes, notificarNovos, limparCachePasta, chaveCache]);
+    // setMensagens/atualizarCachePasta são ações estáveis do store (#603); os
+    // refs de pasta/caixa/ordem/mensagens são lidos por .current, fora das deps.
+  }, [
+    syncIntervalMinutes,
+    notificarNovos,
+    limparCachePasta,
+    chaveCache,
+    setMensagens,
+    atualizarCachePasta,
+  ]);
 
   // Recarrega o que a mutação de uma PASTA invalidou: as contagens do sidebar
   // sempre; a LISTA só quando a pasta mexida é a que está aberta (senão a lista
