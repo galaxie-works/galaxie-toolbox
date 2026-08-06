@@ -973,7 +973,11 @@ function AppInner() {
           <div className="relative z-20 px-4 pb-3">
             <Alert variant="warning">
               <KeyRound />
-              <AlertTitle>{t.reauth.titulo}</AlertTitle>
+              <AlertTitle>
+                <SoftBlurIn delay={80} stagger={18}>
+                  {t.reauth.titulo}
+                </SoftBlurIn>
+              </AlertTitle>
               <AlertDescription>{t.reauth.descricao}</AlertDescription>
               <AlertAction className="flex-wrap">
                 <Button variant="ghost" size="sm" onClick={dismissReauth}>
@@ -1100,21 +1104,21 @@ function AppInner() {
           )}
           {tela === "comms" && (
             <EmBreveScreen
-              titulo={t.nav.comms}
+              titulo={t.emBreveComms.titulo}
               icone={TELAS.comms.icone}
               descricao={t.emBreveComms.descricao}
             />
           )}
           {tela === "astro" && (
             <EmBreveScreen
-              titulo={t.nav.astro}
+              titulo={t.emBreveAstro.titulo}
               icone={TELAS.astro.icone}
               descricao={t.emBreveAstro.descricao}
             />
           )}
           {tela === "pulsar" && (
             <EmBreveScreen
-              titulo={t.nav.pulsar}
+              titulo={t.emBrevePulsar.titulo}
               icone={TELAS.pulsar.icone}
               descricao={t.emBrevePulsar.descricao}
             />

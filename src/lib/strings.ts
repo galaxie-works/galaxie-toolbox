@@ -22,26 +22,29 @@ export const IDIOMAS: { valor: Idioma; rotulo: string; sigla: string }[] = [
 
 const pt = {
   login: {
-    convite: "Entre para desbloquear um universo de possibilidades.",
+    // #584 copy v2 (cósmica): título animado + descrição clara
+    titulo: "Boa jornada começa aqui",
+    convite: "Entre com a sua conta Microsoft para embarcar na GALAXIE.",
     rotuloEmail: "E-mail corporativo",
     placeholderEmail: "voce@suaempresa.com",
     ajudaEmail: "Usamos o domínio do seu e-mail para identificar a sua organização.",
     entrar: "Entrar com Microsoft",
     entrando: "Abrindo o login da Microsoft...",
     // {senha} recebe destaque em negrito
-    aviso: "Você entra na página oficial da Microsoft. O app {senha} — recebe apenas uma autorização.",
+    aviso: "O login acontece na página oficial da Microsoft. A GALAXIE {senha} — recebe só a autorização de acesso.",
     avisoSenha: "nunca vê sua senha",
     idioma: "Idioma",
   },
 
   carregando: {
-    preparando: "Preparando o seu universo...",
+    preparando: "Alinhando os astros...",
   },
 
   reauth: {
-    titulo: "Atualização de acesso necessária",
+    // #584 copy v2 (cósmica) — padrão-ouro do PO
+    titulo: "A GALAXIE está em expansão",
     descricao:
-      "As permissões do app foram atualizadas. Entre novamente para carregar os novos recursos.",
+      "Novos recursos entraram em órbita. Para ativá-los com segurança, entre novamente na sua conta.",
     entrarNovamente: "Entrar novamente",
     agoraNao: "Agora não",
   },
@@ -264,7 +267,7 @@ const pt = {
     titulo: "Navigator",
     subtitulo: "Hora de zarpar",
     buscar: "Buscar apps ou traçar uma rota...",
-    vazio: "Nada por aqui.",
+    vazio: "Espaço aberto — nada por aqui ainda.",
     navegar: "Traçar rota",
     irPara: "Ir para {nome}",
     pesquisar: "Pesquisar “{q}” na web",
@@ -468,14 +471,14 @@ const pt = {
     pastaJunk: "Lixo eletrônico",
     pastaTrash: "Itens excluídos",
     abaAnexos: "Com anexos",
-    semMensagens: "Nenhuma mensagem nesta pasta.",
-    semMensagensTitulo: "Caixa limpa",
+    semMensagens: "Nenhuma mensagem por aqui.",
+    semMensagensTitulo: "Céu limpo",
     semResultados: "Nenhum resultado.",
     escolhaEmail: "Escolha um e-mail para ver os detalhes.",
     ccLabel: "Cc",
     semEventosTitulo: "Sem eventos",
-    agendaErroTitulo: "Não foi possível carregar a agenda",
-    agendaErroDica: "Falha momentânea na conexão. Tente atualizar.",
+    agendaErroTitulo: "Perdemos o sinal da agenda",
+    agendaErroDica: "Foi só um tropeço na conexão. Atualize para tentar de novo.",
     agendaSemAcessoCaixaTitulo: "Sem acesso ao calendário desta caixa",
     agendaSemAcessoCaixaDica:
       "Você não tem permissão para ver o calendário desta caixa compartilhada.",
@@ -490,7 +493,7 @@ const pt = {
     excluirPermanente: "Excluir permanentemente",
     esvaziarLixeira: "Esvaziar lixeira",
     emailExcluido: "E-mail excluído.",
-    erroAcao: "Não consegui completar a ação.",
+    erroAcao: "Não deu pra concluir. Tente de novo em instantes.",
     // Menu de contexto de PASTA (#89)
     marcarTodasLidas: "Marcar todas como lidas",
     esvaziarPasta: "Esvaziar pasta",
@@ -766,8 +769,9 @@ const pt = {
     orgsDescricao: "Agrupe contatos por domínio e mantenha ajustes manuais.",
     orgsBuscar: "Buscar organizações...",
     orgsNova: "Nova organização",
-    orgsVazia: "Nenhuma organização ainda",
-    orgsVaziaDesc: "Crie uma organização para agrupar seus contatos.",
+    orgsVazia: "Nenhuma órbita ainda",
+    orgsVaziaDesc:
+      "Crie uma organização para reunir os contatos da mesma empresa em torno dela.",
     orgsSelecionar: "Selecione uma organização",
     orgsSelecionarDesc: "Veja membros, domínios e detalhes da organização.",
     orgsMembros: "{n} membros",
@@ -941,12 +945,12 @@ const pt = {
     peopleVoltar: "Voltar aos contatos",
     peopleSelecionar: "Selecione um contato",
     peopleSelecionarDesc: "Escolha uma pessoa na lista para ver os detalhes.",
-    peopleVazio: "Nenhum contato encontrado",
+    peopleVazio: "Sua constelação de contatos",
     peopleVazioDesc:
-      "Seus contatos do Outlook aparecerão aqui conforme você troca e-mails.",
+      "Seus contatos do Outlook vão surgir aqui conforme você troca e-mails.",
     peopleSemResultado: "Nenhum contato corresponde à busca.",
     peopleLimparBusca: "Limpar busca",
-    peopleErro: "Não foi possível atualizar todos os contatos.",
+    peopleErro: "Alguns contatos não atualizaram. Tente de novo.",
     peopleTentarNovamente: "Tentar novamente",
     peopleSemPermissao: "Acesso ao People necessário",
     peopleSemAcessoCaixa: "Sem acesso aos contatos desta caixa",
@@ -1181,7 +1185,7 @@ const pt = {
     enviar: "Enviar",
     cancelar: "Cancelar",
     enviado: "E-mail enviado.",
-    erroEnvio: "Não consegui enviar o e-mail.",
+    erroEnvio: "O e-mail não saiu. Confira a conexão e tente de novo.",
     escrevaAlgo: "Escreva a mensagem antes de enviar.",
     informeDestino: "Informe ao menos um destinatário.",
     // Insights do remetente (#94)
@@ -1255,17 +1259,22 @@ const pt = {
     linkInserido: "Link inserido: {nome}",
     linksInseridos: "{n} links inseridos",
   },
+  // #584 copy v2 (cósmica): título animado + descrição clara
   emBreveControlRoom: {
-    descricao: "O painel de controle da Galaxie — sua visão geral. Em breve.",
+    titulo: "Sua ponte de comando",
+    descricao: "O painel geral da GALAXIE. Em breve.",
   },
   emBreveComms: {
-    descricao: "Comunicação rápida entre a equipe. Em breve.",
+    titulo: "Canal aberto em breve",
+    descricao: "Conversa rápida entre a equipe. Em breve.",
   },
   emBreveAstro: {
-    descricao: "O chatbot da Galaxie vai morar aqui. Em breve.",
+    titulo: "Astro está a caminho",
+    descricao: "A IA da GALAXIE vai morar aqui. Em breve.",
   },
   emBrevePulsar: {
-    descricao: "Central de notificações e alertas — cada pulso, um aviso.",
+    titulo: "Pulsar entra em órbita em breve",
+    descricao: "Suas notificações e alertas, todos num sinal só.",
   },
 
   caminhosLongos: {
@@ -1289,9 +1298,10 @@ const pt = {
   // Fallback do ErrorBoundary raiz (#148): mostrado quando um render estoura, no
   // lugar da tela branca.
   erro: {
-    titulo: "Algo deu errado",
+    // #584 copy v2 (cósmica)
+    titulo: "Saímos de órbita",
     descricao:
-      "O aplicativo encontrou um erro inesperado. Você pode recarregar para tentar novamente.",
+      "A GALAXIE encontrou um erro inesperado. Recarregue para voltar à rota.",
     recarregar: "Recarregar",
     detalhes: "Detalhes técnicos",
   },
@@ -1493,9 +1503,9 @@ const pt = {
     cfgWindowsLabel: "Windows",
     cfgWindowsDesc: "Revise as configurações do app relacionadas ao Windows.",
     cfgNavAriaLabel: "Navegação das configurações",
-    cfgHeroTitulo: "Configurações",
-    cfgHeroSubtitulo:
-      "Gerencie as configurações do GALAXIE em um só lugar.",
+    // #584 copy v2 (cósmica leve)
+    cfgHeroTitulo: "Centro de controle",
+    cfgHeroSubtitulo: "Tudo da GALAXIE ajustado num lugar só.",
     cfgSemOpcoes: "Ainda não há opções configuráveis aqui.",
     cfgFramePendingPlaceholder: "Entregue em um follow-up (#{issue}).",
     cfgFrameEmptyPlaceholder:
@@ -1548,9 +1558,9 @@ const pt = {
     bridgeTemplateDescricaoPlaceholder: "Resumo curto exibido no seletor",
     bridgeTemplateBodyLabel: "Corpo",
     bridgeTemplateCorpoPlaceholder: "Escreva o conteúdo do modelo...",
-    bridgeTemplatesVazioTitulo: "Nenhum modelo",
+    bridgeTemplatesVazioTitulo: "Comece a sua biblioteca estelar",
     bridgeTemplatesVazioDesc:
-      "Você ainda não tem modelos. Crie um para reaproveitar as mensagens que você envia com frequência.",
+      "Sem templates ainda. Crie um para não reescrever os textos que você manda toda hora.",
     bridgeTemplateAdd: "Adicionar novo modelo",
     bridgeTemplatesLabel: "Modelos",
     bridgeTemplateSelectPlaceholder: "Selecione um modelo",
@@ -1674,26 +1684,29 @@ export type Dicionario = typeof pt;
 /** Estrutura identica ao pt: o TypeScript reprova chave faltando ou sobrando. */
 const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = {
   login: {
-    convite: "Sign in to unlock a universe of possibilities.",
+    // #584 copy v2 (cosmic)
+    titulo: "Every journey starts here",
+    convite: "Sign in with your Microsoft account to board GALAXIE.",
     rotuloEmail: "Work email",
     placeholderEmail: "you@yourcompany.com",
     ajudaEmail: "We use your email domain to identify your organization.",
     entrar: "Sign in with Microsoft",
     entrando: "Opening the Microsoft sign-in...",
     aviso:
-      "You sign in on Microsoft's official page. This app {senha} — it only receives an authorization.",
+      "Sign-in happens on Microsoft's official page. GALAXIE {senha} — it only gets an access authorization.",
     avisoSenha: "never sees your password",
     idioma: "Language",
   },
 
   carregando: {
-    preparando: "Getting your universe ready...",
+    preparando: "Aligning the stars...",
   },
 
   reauth: {
-    titulo: "Access update required",
+    // #584 copy v2 (cosmic) — PO gold standard
+    titulo: "GALAXIE is expanding",
     descricao:
-      "The app permissions were updated. Sign in again to load the new features.",
+      "New features have entered orbit. To activate them safely, sign in to your account again.",
     entrarNovamente: "Sign in again",
     agoraNao: "Not now",
   },
@@ -1912,7 +1925,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     titulo: "Navigator",
     subtitulo: "Time to set sail",
     buscar: "Search apps or set a course...",
-    vazio: "Nothing here.",
+    vazio: "Open space — nothing here yet.",
     navegar: "Set a course",
     irPara: "Go to {nome}",
     pesquisar: "Search the web for “{q}”",
@@ -2115,14 +2128,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     pastaJunk: "Junk",
     pastaTrash: "Deleted",
     abaAnexos: "Files",
-    semMensagens: "No messages in this folder.",
-    semMensagensTitulo: "All clear",
+    semMensagens: "No messages here.",
+    semMensagensTitulo: "Clear skies",
     semResultados: "No results.",
     escolhaEmail: "Choose an email to view details.",
     ccLabel: "Cc",
     semEventosTitulo: "No events",
-    agendaErroTitulo: "Couldn't load the calendar",
-    agendaErroDica: "Temporary connection glitch. Try refreshing.",
+    agendaErroTitulo: "Lost the calendar signal",
+    agendaErroDica: "Just a connection hiccup. Refresh to try again.",
     agendaSemAcessoCaixaTitulo: "No access to this mailbox's calendar",
     agendaSemAcessoCaixaDica:
       "You don't have permission to view this shared mailbox's calendar.",
@@ -2137,7 +2150,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     excluirPermanente: "Delete permanently",
     esvaziarLixeira: "Empty trash",
     emailExcluido: "Email deleted.",
-    erroAcao: "Couldn't complete the action.",
+    erroAcao: "That didn't go through. Try again in a moment.",
     // Menu de contexto de PASTA (#89)
     marcarTodasLidas: "Mark all as read",
     esvaziarPasta: "Empty folder",
@@ -2411,8 +2424,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     orgsDescricao: "Group contacts by domain and keep manual overrides.",
     orgsBuscar: "Search organizations...",
     orgsNova: "New organization",
-    orgsVazia: "No organizations yet",
-    orgsVaziaDesc: "Create an organization to group your contacts.",
+    orgsVazia: "No orbits yet",
+    orgsVaziaDesc:
+      "Create an organization to gather contacts from the same company around it.",
     orgsSelecionar: "Select an organization",
     orgsSelecionarDesc: "View the organization's members, domains, and details.",
     orgsMembros: "{n} members",
@@ -2586,12 +2600,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleVoltar: "Back to contacts",
     peopleSelecionar: "Select a contact",
     peopleSelecionarDesc: "Choose someone from the list to see their details.",
-    peopleVazio: "No contacts yet",
+    peopleVazio: "Your contact constellation",
     peopleVazioDesc:
-      "Your Outlook contacts will appear here as you email people.",
+      "Your Outlook contacts appear here as you exchange emails.",
     peopleSemResultado: "No contacts match your search.",
     peopleLimparBusca: "Clear search",
-    peopleErro: "We couldn't refresh every contact source.",
+    peopleErro: "Some contacts didn't refresh. Try again.",
     peopleTentarNovamente: "Try again",
     peopleSemPermissao: "People access required",
     peopleSemAcessoCaixa: "No access to this mailbox's contacts",
@@ -2821,7 +2835,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     enviar: "Send",
     cancelar: "Cancel",
     enviado: "Email sent.",
-    erroEnvio: "Couldn't send the email.",
+    erroEnvio: "The email didn't send. Check your connection and try again.",
     escrevaAlgo: "Write a message before sending.",
     informeDestino: "Enter at least one recipient.",
     // Sender insights (#94)
@@ -2893,16 +2907,20 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     linksInseridos: "{n} links inserted",
   },
   emBreveControlRoom: {
-    descricao: "The Galaxie control panel — your overview. Coming soon.",
+    titulo: "Your command bridge",
+    descricao: "GALAXIE's overview panel. Coming soon.",
   },
   emBreveComms: {
+    titulo: "Channel opening soon",
     descricao: "Fast team chat. Coming soon.",
   },
   emBreveAstro: {
-    descricao: "The Galaxie chatbot will live here. Coming soon.",
+    titulo: "Astro is on its way",
+    descricao: "GALAXIE's AI will live here. Coming soon.",
   },
   emBrevePulsar: {
-    descricao: "Notifications and alerts — every pulse, a heads-up.",
+    titulo: "Pulsar enters orbit soon",
+    descricao: "Your notifications and alerts, all in one signal.",
   },
 
   caminhosLongos: {
@@ -2924,9 +2942,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   },
 
   erro: {
-    titulo: "Something went wrong",
+    titulo: "We drifted off orbit",
     descricao:
-      "The app hit an unexpected error. You can reload to try again.",
+      "GALAXIE hit an unexpected error. Reload to get back on course.",
     recarregar: "Reload",
     detalhes: "Technical details",
   },
@@ -3120,8 +3138,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgWindowsLabel: "Windows",
     cfgWindowsDesc: "Review Windows-related app settings.",
     cfgNavAriaLabel: "Settings navigation",
-    cfgHeroTitulo: "Settings",
-    cfgHeroSubtitulo: "Manage GALAXIE settings in one place.",
+    // #584 copy v2 (cosmic-lite)
+    cfgHeroTitulo: "Control center",
+    cfgHeroSubtitulo: "All of GALAXIE, tuned in one place.",
     cfgSemOpcoes: "No configurable options here yet.",
     cfgFramePendingPlaceholder: "Delivered in a follow-up (#{issue}).",
     cfgFrameEmptyPlaceholder:
@@ -3174,9 +3193,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     bridgeTemplateDescricaoPlaceholder: "Short summary shown in the picker",
     bridgeTemplateBodyLabel: "Body",
     bridgeTemplateCorpoPlaceholder: "Write the template content...",
-    bridgeTemplatesVazioTitulo: "No templates",
+    bridgeTemplatesVazioTitulo: "Start your star chart",
     bridgeTemplatesVazioDesc:
-      "You don’t have any templates yet. Create one to reuse the messages you send often.",
+      "No templates yet. Create one so you stop rewriting the messages you send all the time.",
     bridgeTemplateAdd: "Add new template",
     bridgeTemplatesLabel: "Templates",
     bridgeTemplateSelectPlaceholder: "Select a template",

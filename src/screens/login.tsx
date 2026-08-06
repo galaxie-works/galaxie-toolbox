@@ -54,8 +54,15 @@ export function LoginScreen({
         <div className="flex flex-col items-center text-center">
           <GalaxieMark className="logo-in mb-5 h-12" />
           <SoftBlurIn
-            className="text-[15px] text-muted-foreground"
-            delay={260}
+            className="text-2xl font-semibold tracking-tight"
+            delay={140}
+            stagger={16}
+          >
+            {t.login.titulo}
+          </SoftBlurIn>
+          <SoftBlurIn
+            className="mt-1.5 text-[15px] text-muted-foreground"
+            delay={320}
             stagger={14}
           >
             {t.login.convite}

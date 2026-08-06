@@ -1,6 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BridgeHeaderIcon } from "@/components/ui/icons/marca-anim";
 import { Badge, type BadgeProps } from "@/components/reui/badge";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { PreviewAnexo } from "@/components/bridge/preview-anexo";
 import {
   ehItemAttachment,
@@ -767,7 +768,11 @@ function PastaVazia({ t }: { t: ReturnType<typeof useIdioma>["t"] }) {
         <EmptyMedia>
           <IlustracaoCards />
         </EmptyMedia>
-        <EmptyTitle>{t.controlRoom.semMensagensTitulo}</EmptyTitle>
+        <EmptyTitle>
+          <SoftBlurIn delay={80} stagger={18}>
+            {t.controlRoom.semMensagensTitulo}
+          </SoftBlurIn>
+        </EmptyTitle>
         <EmptyDescription>{t.controlRoom.semMensagens}</EmptyDescription>
       </EmptyHeader>
     </Empty>
@@ -985,7 +990,11 @@ function AgendaErro({
         <EmptyMedia>
           <CalendarClock className="size-8 text-muted-foreground" />
         </EmptyMedia>
-        <EmptyTitle>{t.controlRoom.agendaErroTitulo}</EmptyTitle>
+        <EmptyTitle>
+          <SoftBlurIn delay={80} stagger={18}>
+            {t.controlRoom.agendaErroTitulo}
+          </SoftBlurIn>
+        </EmptyTitle>
         <EmptyDescription className="text-xs">
           {t.controlRoom.agendaErroDica}
         </EmptyDescription>

@@ -84,6 +84,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import { FramePanel } from "@/components/reui/frame";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { Editor, EditorContainer } from "@/components/ui/editor";
 import { FixedToolbar } from "@/components/ui/fixed-toolbar";
 import { ShortcutMarkToolbarButton } from "@/components/ui/shortcut-mark-toolbar-button";
@@ -770,7 +771,11 @@ export function EmailTemplatesPanel() {
                   <EmptyMedia>
                     <StackedCardsIllustration />
                   </EmptyMedia>
-                  <EmptyTitle>{tr.settings.bridgeTemplatesVazioTitulo}</EmptyTitle>
+                  <EmptyTitle>
+                    <SoftBlurIn delay={80} stagger={18}>
+                      {tr.settings.bridgeTemplatesVazioTitulo}
+                    </SoftBlurIn>
+                  </EmptyTitle>
                   <EmptyDescription>
                     {tr.settings.bridgeTemplatesVazioDesc}
                   </EmptyDescription>

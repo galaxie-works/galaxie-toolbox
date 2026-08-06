@@ -34,6 +34,7 @@ import {
 import { useAppStore } from "@/store";
 import { podeGerenciarEvento } from "@/lib/agenda-permissions";
 import { useIdioma } from "@/lib/idioma";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import type { Idioma } from "@/lib/strings";
 import type {
   AcaoRsvp,
@@ -599,9 +600,11 @@ export function AgendaView() {
               <CalendarClock className="size-8 text-muted-foreground" />
             </EmptyMedia>
             <EmptyTitle>
-              {semAcessoCaixa
-                ? t.controlRoom.agendaSemAcessoCaixaTitulo
-                : t.controlRoom.agendaErroTitulo}
+              <SoftBlurIn delay={80} stagger={18}>
+                {semAcessoCaixa
+                  ? t.controlRoom.agendaSemAcessoCaixaTitulo
+                  : t.controlRoom.agendaErroTitulo}
+              </SoftBlurIn>
             </EmptyTitle>
             <EmptyDescription className="text-xs">
               {semAcessoCaixa
