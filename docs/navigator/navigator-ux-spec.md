@@ -2,7 +2,7 @@
 
 > 📌 **Design spec. Estado atual: ENTREGUE (#172 Done)** — Navigator com abas, sleeping tabs, command palette, favoritos e histórico/privacidade está no app. Doc de intenção; comportamento real no código.
 
-Issue #172 · GALAXIE Toolbox / Navigator (internal name **Cruiser**)
+Issue #172 · GALAXIE / Navigator (internal name **Cruiser**)
 Stack: Tauri 2 (multi-webview, feature `unstable`) + React 19 + TypeScript + Tailwind v4 + shadcn/new-york + **reui** registry (`radix-nova`)
 Status: research + design only (no code). The "revolution" the PO asked for.
 
@@ -235,7 +235,7 @@ Each tab is **WebView2 = the Edge engine**, which **already has a password manag
 
 - A Settings toggle **"Salvar senhas de sites (via Windows/Edge)"** that flips WebView2's `IsPasswordAutosaveEnabled` / `IsGeneralAutofillEnabled` (needs a WebView2 settings hook — `webview2-com` crate — so it's a **technical spike**, see 7.4).
 - A **"Gerenciar senhas salvas"** link that deep-links to Windows Credential Manager / Edge settings — management happens in the OS, not in our UI.
-- Copy that states plainly: *stored by Windows, encrypted with DPAPI, tied to your Windows sign-in; GALAXIE Toolbox never sees them.*
+- Copy that states plainly: *stored by Windows, encrypted with DPAPI, tied to your Windows sign-in; GALAXIE never sees them.*
 
 ### 7.3 Explicitly out of scope (by design, for security)
 

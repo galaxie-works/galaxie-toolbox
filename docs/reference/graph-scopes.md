@@ -1,6 +1,6 @@
 # Escopos Microsoft Graph — referência
 
-Referência dos **escopos delegados** do Microsoft Graph concedidos ao app **GALAXIE Toolbox** no tenant **Galaxie Works Ltd**. Use para consultar, na hora, se um escopo está disponível, se exige consentimento de admin e o que ele permite.
+Referência dos **escopos delegados** do Microsoft Graph concedidos ao app **GALAXIE** no tenant **Galaxie Works Ltd**. Use para consultar, na hora, se um escopo está disponível, se exige consentimento de admin e o que ele permite.
 
 - **Fonte:** Entra ID → app registration → API permissions.
 - **Atualizado:** 2026-08-03 · **101 escopos** · todos **Delegated** (`/me`), *public client* + PKCE (sem secret).

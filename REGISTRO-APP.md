@@ -81,5 +81,5 @@ com o mesmo binário.
 - Public client **não guarda segredo**; o `CLIENT_ID` é público por natureza.
 - O app **nunca vê a senha nem o MFA** — quem coleta é a página da Microsoft.
 - O refresh token fica cifrado com **DPAPI** em
-  `%LOCALAPPDATA%\GALAXIE Toolbox\sessao.bin` (chave derivada do usuário do
+  `%LOCALAPPDATA%\GALAXIE\sessao.bin` (chave derivada do usuário do
   Windows). **Sair** apaga o arquivo.

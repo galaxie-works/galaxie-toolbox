@@ -1302,7 +1302,7 @@ const pt = {
     // Startup
     startupLabel: "Abrir na inicialização",
     startupDesc:
-      "Abrir o GALAXIE Toolbox automaticamente ao entrar no Windows.",
+      "Abrir o GALAXIE automaticamente ao entrar no Windows.",
     startupErro:
       "Não foi possível atualizar a inicialização automática. Tente novamente.",
     // Background (#474: fundos animados dentro do Appearance)
@@ -1371,11 +1371,11 @@ const pt = {
     cfgGeneralLabel: "Configurações gerais",
     cfgAppsLabel: "Apps",
     cfgAccountsLabel: "Contas",
-    cfgAccountsDesc: "Gerencie as contas conectadas ao GALAXIE Toolbox.",
+    cfgAccountsDesc: "Gerencie as contas conectadas ao GALAXIE.",
     cfgAccountsEmptyTitulo: "Contas",
     cfgAccountsEmptyDesc: "Múltiplas contas chegam em breve.",
     cfgPersonalizationLabel: "Personalização",
-    cfgPersonalizationDesc: "Deixe o GALAXIE Toolbox com a sua cara.",
+    cfgPersonalizationDesc: "Deixe o GALAXIE com a sua cara.",
     cfgSoundTitulo: "Som e notificações",
     cfgSoundSubtitulo: "Escolha quais eventos tocam um som.",
     cfgAppearanceTitulo: "Aparência",
@@ -1395,7 +1395,7 @@ const pt = {
     termsLerBtn: "Ler",
     termsFecharBtn: "Fechar",
     termsIntro:
-      "O GALAXIE Toolbox foi feito pra ser o seu companheiro de trabalho — rápido, no seu idioma e do seu jeito. Aqui está, sem letras miúdas, como a gente cuida das suas informações.",
+      "O GALAXIE foi feito pra ser o seu companheiro de trabalho — rápido, no seu idioma e do seu jeito. Aqui está, sem letras miúdas, como a gente cuida das suas informações.",
     termsSec1Titulo: "Suas informações são suas",
     termsSec1Corpo:
       "A gente não coleta nada que identifique você. Nem nome, nem e-mail, nem suas mensagens, contatos, arquivos ou o que você escreve. Nada disso sai da sua máquina pra gente.",
@@ -1412,7 +1412,7 @@ const pt = {
       "Você está no controle: pode ajustar o que compartilha em Settings › System › Telemetria e diagnósticos quando quiser.",
     cfgSystemLabel: "Sistema",
     cfgSystemDesc:
-      "Escolha como o GALAXIE Toolbox funciona com o seu dispositivo.",
+      "Escolha como o GALAXIE funciona com o seu dispositivo.",
     cfgLanguageTitulo: "Idioma",
     cfgLanguageSubtitulo: "Escolha o idioma do app.",
     cfgStartupTitulo: "Inicialização",
@@ -1496,7 +1496,7 @@ const pt = {
     cfgNavAriaLabel: "Navegação das configurações",
     cfgHeroTitulo: "Configurações",
     cfgHeroSubtitulo:
-      "Gerencie as configurações do GALAXIE Toolbox em um só lugar.",
+      "Gerencie as configurações do GALAXIE em um só lugar.",
     cfgSemOpcoes: "Ainda não há opções configuráveis aqui.",
     cfgFramePendingPlaceholder: "Entregue em um follow-up (#{issue}).",
     cfgFrameEmptyPlaceholder:
@@ -1593,10 +1593,10 @@ const pt = {
     themeAccessDesc:
       "Ative um tema de alto contraste para melhor legibilidade.",
     themeAccessAria: "Alto contraste",
-    // Lock screen (#122) — "GALAXIE Toolbox" (nome do produto) NÃO traduz.
+    // Lock screen (#122) — "GALAXIE" (nome do produto) NÃO traduz.
     lockTitulo: "Bloqueio do app",
-    lockDescAtivo: "É necessário um PIN para abrir o GALAXIE Toolbox.",
-    lockDescInativo: "Exige um PIN toda vez que o GALAXIE Toolbox abrir.",
+    lockDescAtivo: "É necessário um PIN para abrir o GALAXIE.",
+    lockDescInativo: "Exige um PIN toda vez que o GALAXIE abrir.",
     lockChangeBtn: "Alterar PIN",
     lockRemoveBtn: "Remover PIN",
     lockSetBtn: "Definir PIN",
@@ -2937,7 +2937,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Startup
     startupLabel: "Launch on startup",
     startupDesc:
-      "Open GALAXIE Toolbox automatically when you sign in to Windows.",
+      "Open GALAXIE automatically when you sign in to Windows.",
     startupErro: "Couldn’t update launch on startup. Please try again.",
     // Background (#474: animated backgrounds inside Appearance)
     bgAnimados: "Animated backgrounds",
@@ -3004,11 +3004,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgGeneralLabel: "General settings",
     cfgAppsLabel: "Apps",
     cfgAccountsLabel: "Accounts",
-    cfgAccountsDesc: "Manage the accounts connected to GALAXIE Toolbox.",
+    cfgAccountsDesc: "Manage the accounts connected to GALAXIE.",
     cfgAccountsEmptyTitulo: "Accounts",
     cfgAccountsEmptyDesc: "Multiple accounts are coming soon.",
     cfgPersonalizationLabel: "Personalization",
-    cfgPersonalizationDesc: "Make GALAXIE Toolbox feel like your workspace.",
+    cfgPersonalizationDesc: "Make GALAXIE feel like your workspace.",
     cfgSoundTitulo: "Sound & notifications",
     cfgSoundSubtitulo: "Choose which events play a sound.",
     cfgAppearanceTitulo: "Appearance",
@@ -3028,7 +3028,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     termsLerBtn: "Read",
     termsFecharBtn: "Close",
     termsIntro:
-      "GALAXIE Toolbox was built to be your work companion — fast, in your language, your way. Here's how we look after your information, with no fine print.",
+      "GALAXIE was built to be your work companion — fast, in your language, your way. Here's how we look after your information, with no fine print.",
     termsSec1Titulo: "Your information is yours",
     termsSec1Corpo:
       "We collect nothing that identifies you — not your name, your email, your messages, contacts, files, or anything you type. None of that ever leaves your machine for us.",
@@ -3044,7 +3044,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     termsControle:
       "You're in control: adjust what you share anytime in Settings › System › Telemetry & diagnostics.",
     cfgSystemLabel: "System",
-    cfgSystemDesc: "Choose how GALAXIE Toolbox works with your device.",
+    cfgSystemDesc: "Choose how GALAXIE works with your device.",
     cfgLanguageTitulo: "Language",
     cfgLanguageSubtitulo: "Choose the app's language.",
     cfgStartupTitulo: "Startup",
@@ -3123,7 +3123,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgWindowsDesc: "Review Windows-related app settings.",
     cfgNavAriaLabel: "Settings navigation",
     cfgHeroTitulo: "Settings",
-    cfgHeroSubtitulo: "Manage GALAXIE Toolbox settings in one place.",
+    cfgHeroSubtitulo: "Manage GALAXIE settings in one place.",
     cfgSemOpcoes: "No configurable options here yet.",
     cfgFramePendingPlaceholder: "Delivered in a follow-up (#{issue}).",
     cfgFrameEmptyPlaceholder:
@@ -3218,8 +3218,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     themeAccessDesc: "Turn on a high contrast theme for better readability.",
     themeAccessAria: "High contrast",
     lockTitulo: "App lock",
-    lockDescAtivo: "A PIN is required to open GALAXIE Toolbox.",
-    lockDescInativo: "Require a PIN each time GALAXIE Toolbox opens.",
+    lockDescAtivo: "A PIN is required to open GALAXIE.",
+    lockDescInativo: "Require a PIN each time GALAXIE opens.",
     lockChangeBtn: "Change PIN",
     lockRemoveBtn: "Remove PIN",
     lockSetBtn: "Set PIN",

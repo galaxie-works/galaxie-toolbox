@@ -1,4 +1,4 @@
-# Rules.md — Regras de UI/UX e componentes (GALAXIE Toolbox)
+# Rules.md — Regras de UI/UX e componentes (GALAXIE)
 
 Regras **obrigatórias** para qualquer agente (Orion, Confucius, subagents) que produz UI ou entrega código neste repo. Ligado ao [`AGENTS.md`](./AGENTS.md). Nasceu das rejeições recorrentes do PO (scrollbar fora do padrão #311, webview órfã #310, ícone info minúsculo #269, árvore custom em vez do registry #176, primário no lugar errado #282, org some no restart #295). **Se a entrega quebra uma regra daqui, o PO reprova.**
 

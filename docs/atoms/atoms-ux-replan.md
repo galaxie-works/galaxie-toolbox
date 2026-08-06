@@ -1,6 +1,6 @@
 # Atoms — Estudo + Replan profundo (pós-reprovação do PO)
 
-Épico #181 · stories #183–187 ENTREGUES e REPROVADAS · GALAXIE Toolbox
+Épico #181 · stories #183–187 ENTREGUES e REPROVADAS · GALAXIE
 Stack: Tauri 2 + React 19 + TS + Tailwind v4 + shadcn/new-york + reui + animate-ui · Microsoft Graph (delegado /me)
 Método: UX research (skill `design:user-research`) + auditoria técnica de código real.
 Leia junto: `docs/atoms/atoms-dashboard-spec.md` (a spec original — boa no plano, mal executada).
@@ -19,7 +19,7 @@ Leia junto: `docs/atoms/atoms-dashboard-spec.md` (a spec original — boa no pla
 
 4. **Teams: o consent nunca é pedido porque `Chat.Read` não está nos SCOPES.** `config.rs:40-42` lista os escopos de login e **não inclui `Chat.Read`**; relogar jamais o pede (#186). `cr_teams_disponivel` (graph.rs:4342) só testa presença do escopo → sempre `false`. O `TeamsWidget` (atoms.tsx:1005) mostra texto morto ("Conecte o Teams…") **sem botão, sem trigger de consent** — a string `teamsConectar` existe (strings.ts:428) e nunca é usada. Não há fluxo de consent incremental (`required_resource_scopes_missing` em auth.rs:53 não cobre Chat.Read).
 
-5. **A UX ficou no esqueleto — "sem vida" é literal.** Header sem avatar embora `AppUser.photo` e `<Avatar>` existam (types.ts:29; usado em toasts.tsx:164). Copy ruim: `atoms.subtitulo = "What needs you right now"` (strings.ts:1623) — e a copy boa que o Wagner quer, **"Your day at a glance." / "Seu dia em um olhar."**, já existe como `controlRoom.subtitulo` (strings.ts:1670/450). Não é bento: a grade é `auto-fit minmax(320px,1fr)` uniforme (atoms.tsx:356-359), todos os cards iguais, sem hero nem spans. Motion só no greeting (`SoftBlurIn`, atoms.tsx:276); os cards entram secos — o stagger blur-in da spec §4.3 nunca foi construído. Skeleton = 3 barras cinzas genéricas (`SkeletonLinhas`, atoms.tsx:618) que o fail-fast pro erro esconde. Observabilidade zero: o log real (`GALAXIE Toolbox.log`) não tem uma linha de erro de Atoms/graph — tudo é engolido por `catch {}` (atoms.tsx:143,163,174) e `if let Ok` no Rust.
+5. **A UX ficou no esqueleto — "sem vida" é literal.** Header sem avatar embora `AppUser.photo` e `<Avatar>` existam (types.ts:29; usado em toasts.tsx:164). Copy ruim: `atoms.subtitulo = "What needs you right now"` (strings.ts:1623) — e a copy boa que o Wagner quer, **"Your day at a glance." / "Seu dia em um olhar."**, já existe como `controlRoom.subtitulo` (strings.ts:1670/450). Não é bento: a grade é `auto-fit minmax(320px,1fr)` uniforme (atoms.tsx:356-359), todos os cards iguais, sem hero nem spans. Motion só no greeting (`SoftBlurIn`, atoms.tsx:276); os cards entram secos — o stagger blur-in da spec §4.3 nunca foi construído. Skeleton = 3 barras cinzas genéricas (`SkeletonLinhas`, atoms.tsx:618) que o fail-fast pro erro esconde. Observabilidade zero: o log real (`GALAXIE.log`) não tem uma linha de erro de Atoms/graph — tudo é engolido por `catch {}` (atoms.tsx:143,163,174) e `if let Ok` no Rust.
 
 **As novas stories (1 linha de AC-chave cada):**
 
@@ -80,7 +80,7 @@ Como é `Promise.all`, o `throw` do contador **rejeita a promise inteira** → `
 ### 1.6 Causa sistêmica: tempestade de boot + observabilidade cega
 
 - **Thundering herd:** `useEffect` (atoms.tsx:178-185) dispara `carregarAgenda` + `carregarEmail` (=2 chamadas) + `carregarTodos` (=1..8 chamadas, uma por lista, graph.rs:921) + `atomsOnedriveSync` + `crTeamsDisponivel` **de uma vez**, e o Bridge está montado keep-alive fazendo os próprios `cr_*`. Pico de concorrência no exato momento em que a spec §0.2 vendia "de graça". As chamadas fora do pool (`cr_email`, `cr_tarefas`) são as que estouram.
-- **Log cego:** o `GALAXIE Toolbox.log` real não tem nenhuma linha de erro de Atoms — os `catch {}` do front e os `if let Ok(...)` do Rust descartam a causa. Impossível diagnosticar em produção (contraria a nota "log robusto como Delphero"). Precisa de log no caminho de erro.
+- **Log cego:** o `GALAXIE.log` real não tem nenhuma linha de erro de Atoms — os `catch {}` do front e os `if let Ok(...)` do Rust descartam a causa. Impossível diagnosticar em produção (contraria a nota "log robusto como Delphero"). Precisa de log no caminho de erro.
 
 ---
 
@@ -169,7 +169,7 @@ Objetivo: os 3 widgets puxam dado REAL no app real, sem 429 hard-fail.
 ### A2 — Erro que recupera + observabilidade
 - **AC1.** Com a rede derrubada, cada card mostra erro específico + Retry; **religando a rede e clicando Retry, o card recupera** e mostra o dado — sem reabrir o app.
 - **AC2.** A falha de um card **não** afeta os outros (derrubar só To Do não tira Agenda/E-mail do ar).
-- **AC3.** Todo erro de carga gera **uma linha no log** (`GALAXIE Toolbox.log`) com operação + status HTTP (verificável abrindo o log após forçar um erro).
+- **AC3.** Todo erro de carga gera **uma linha no log** (`GALAXIE.log`) com operação + status HTTP (verificável abrindo o log após forçar um erro).
 
 ### A3 — Shell flagship (avatar + copy + bento + motion)
 - **AC1.** O **avatar do usuário** aparece à esquerda de "Olá, {nome}" (foto real se houver; iniciais no fallback).
@@ -211,7 +211,7 @@ Rodar no app instalado (atalho do desktop, conta do Wagner — caixa com muitos 
 - [ ] Fechar e reabrir 3× seguidas: nenhum boot falha por 429.
 - [ ] Modo avião ON → cada card mostra erro específico. Modo avião OFF → **Retry recupera** o card (sem reabrir o app).
 - [ ] Derrubar só uma fonte: os outros cards continuam de pé.
-- [ ] Após forçar um erro, abrir `GALAXIE Toolbox.log` e confirmar a linha de erro (operação + status).
+- [ ] Após forçar um erro, abrir `GALAXIE.log` e confirmar a linha de erro (operação + status).
 
 **Shell/estados (A3/A4)**
 - [ ] Avatar do usuário ao lado de "Olá, {nome}".

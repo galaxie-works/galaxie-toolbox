@@ -1,4 +1,4 @@
-# GALAXIE Toolbox
+# GALAXIE
 
 Aplicativo desktop (workspace de produtividade Microsoft 365) que dá aos
 usuários de um cliente acesso simples aos arquivos da empresa no SharePoint **e**
@@ -39,7 +39,7 @@ Fluxo **Authorization Code + PKCE** com redirect de loopback. O app **nunca vê 
 senha**: quem coleta credenciais e MFA é a página da Microsoft, no navegador
 padrão. O que volta para o app é um authorization code, trocado por tokens.
 
-O **refresh token** é gravado em `%LOCALAPPDATA%\GALAXIE Toolbox\sessao.bin`,
+O **refresh token** é gravado em `%LOCALAPPDATA%\GALAXIE\sessao.bin`,
 cifrado com **DPAPI** — a mesma abordagem do MSAL no Windows. A chave deriva da
 credencial do usuário do Windows: outro usuário da máquina não decifra, e o
 arquivo copiado para outro computador é inútil.

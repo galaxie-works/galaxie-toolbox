@@ -331,7 +331,7 @@ pub fn refresh(tenant: &str, refresh_token: &str) -> Result<Tokens, String> {
 
 fn caminho_sessao() -> Option<std::path::PathBuf> {
     let base = std::env::var("LOCALAPPDATA").ok()?;
-    let dir = std::path::Path::new(&base).join("GALAXIE Toolbox");
+    let dir = std::path::Path::new(&base).join("GALAXIE");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("sessao.bin"))
 }
@@ -574,13 +574,13 @@ pub fn interactive_login(
             html_page(
                 idioma,
                 "Sign-in failed",
-                "Close this window and try again in GALAXIE Toolbox.",
+                "Close this window and try again in GALAXIE.",
             )
         } else {
             html_page(
                 idioma,
                 "Login falhou",
-                "Feche esta janela e tente novamente no GALAXIE Toolbox.",
+                "Feche esta janela e tente novamente no GALAXIE.",
             )
         };
 
@@ -623,7 +623,7 @@ fn html_page(idioma: &str, titulo: &str, msg: &str) -> String {
     let logo = logo_data_uri();
     format!(
         "<!doctype html><html lang=\"{idioma}\"><head><meta charset=\"utf-8\">\
-         <title>GALAXIE Toolbox</title>\
+         <title>GALAXIE</title>\
          <link rel=\"icon\" type=\"image/png\" href=\"{logo}\">\
          </head>\
          <body style=\"margin:0;height:100vh;display:grid;place-items:center;\

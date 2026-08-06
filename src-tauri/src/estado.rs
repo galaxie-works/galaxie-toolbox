@@ -23,7 +23,7 @@ pub struct Conectado {
 
 fn caminho() -> Option<PathBuf> {
     let base = std::env::var("LOCALAPPDATA").ok()?;
-    let dir = std::path::Path::new(&base).join("GALAXIE Toolbox");
+    let dir = std::path::Path::new(&base).join("GALAXIE");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("conectados.json"))
 }
@@ -74,7 +74,7 @@ pub fn buscar(site_guid: &str) -> Option<Conectado> {
 
 fn caminho_arquivo(nome: &str) -> Option<PathBuf> {
     let base = std::env::var("LOCALAPPDATA").ok()?;
-    let dir = std::path::Path::new(&base).join("GALAXIE Toolbox");
+    let dir = std::path::Path::new(&base).join("GALAXIE");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join(nome))
 }

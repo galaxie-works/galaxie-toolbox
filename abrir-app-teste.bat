@@ -1,9 +1,9 @@
 @echo off
-title GALAXIE Toolbox (teste)
+title GALAXIE (teste)
 cd /d "C:\dev\galaxie-toolbox"
 set CI=true
 echo ============================================================
-echo   GALAXIE Toolbox - APP DE TESTE (build de desenvolvimento)
+echo   GALAXIE - APP DE TESTE (build de desenvolvimento)
 echo ============================================================
 echo.
 echo   Compilando e abrindo o app com o codigo mais recente...
