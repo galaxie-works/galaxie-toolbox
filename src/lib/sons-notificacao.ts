@@ -26,11 +26,13 @@ import somViolao from "@/assets/sons/mixkit-guitar-stroke-down-slow-2339.wav";
 import somInterface from "@/assets/sons/mixkit-software-interface-back-2575.wav";
 import somPortaLoja from "@/assets/sons/mixkit-store-door-bell-ring-934.wav";
 
-/** Um som selecionável: id estável (nome do arquivo), nome de 19 chars e URL. */
+import { DICIONARIOS } from "@/lib/strings";
+import { idiomaAtual } from "@/lib/idioma-core";
+
+/** Um som selecionável: id estável (nome do arquivo) e URL. O nome de exibição
+ *  é localizado (#579) — ver `nomeSom`. */
 export interface SomNotificacao {
   id: string;
-  /** Nome de exibição — sempre 19 caracteres (regra do PO). */
-  nome: string;
   src: string;
 }
 
@@ -38,24 +40,36 @@ export interface SomNotificacao {
 export const VALOR_SEM_SOM = "none";
 
 /**
- * Os 13 sons com nomes de EXATAMENTE 19 caracteres (regra do PO). A contagem
- * foi conferida char a char (incluindo os acentos, contados como 1 code point).
+ * Os 13 sons. O `id` (nome do arquivo) é estável e é o que a preferência guarda;
+ * o nome de exibição é localizado por `nomeSom(id)` (#579), fonte no namespace
+ * `sons` do dicionário. A ORDEM aqui é a ordem do dropdown.
  */
 export const SONS: SomNotificacao[] = [
-  { id: "mixkit-guitar-stroke-down-slow-2339", nome: "Violão desacelerado", src: somViolao },
-  { id: "mixkit-guitar-notification-alert-2320", nome: "Alerta com guitarra", src: somGuitarraAlerta },
-  { id: "mixkit-bell-notification-933", nome: "Sino de notificação", src: somSinoNotif },
-  { id: "mixkit-store-door-bell-ring-934", nome: "Sino de loja aberta", src: somPortaLoja },
-  { id: "mixkit-bike-bell-ring-595", nome: "Campainha bicicleta", src: somBike },
-  { id: "mixkit-airport-announcement-ding-1569", nome: "Chamada de embarque", src: somAeroporto },
-  { id: "mixkit-cartoon-whistling-738", nome: "Assobio de desenhos", src: somAssobio },
-  { id: "mixkit-cartoon-toy-whistle-616", nome: "Apito de brinquedos", src: somApitoBrinquedo },
-  { id: "mixkit-funny-squeaky-toy-hits-2813", nome: "Brinquedo chiadinho", src: somRangente },
-  { id: "mixkit-clown-horn-at-circus-715", nome: "Corneta de palhaços", src: somPalhaco },
-  { id: "mixkit-choir-harp-bless-657", nome: "Harpas abençoadoras", src: somHarpa },
-  { id: "mixkit-bless-choir-655", nome: "Bênção coral divina", src: somCoralBencao },
-  { id: "mixkit-software-interface-back-2575", nome: "Voltar da interface", src: somInterface },
+  { id: "mixkit-guitar-stroke-down-slow-2339", src: somViolao },
+  { id: "mixkit-guitar-notification-alert-2320", src: somGuitarraAlerta },
+  { id: "mixkit-bell-notification-933", src: somSinoNotif },
+  { id: "mixkit-store-door-bell-ring-934", src: somPortaLoja },
+  { id: "mixkit-bike-bell-ring-595", src: somBike },
+  { id: "mixkit-airport-announcement-ding-1569", src: somAeroporto },
+  { id: "mixkit-cartoon-whistling-738", src: somAssobio },
+  { id: "mixkit-cartoon-toy-whistle-616", src: somApitoBrinquedo },
+  { id: "mixkit-funny-squeaky-toy-hits-2813", src: somRangente },
+  { id: "mixkit-clown-horn-at-circus-715", src: somPalhaco },
+  { id: "mixkit-choir-harp-bless-657", src: somHarpa },
+  { id: "mixkit-bless-choir-655", src: somCoralBencao },
+  { id: "mixkit-software-interface-back-2575", src: somInterface },
 ];
+
+/**
+ * Nome de exibição LOCALIZADO de um som (#579). Acessor **não-hook** (mesmo padrão
+ * do `plateLabel`/`textoUi`): lê `idiomaAtual()` puro — pode ser chamado do lib
+ * (fora do React) e reage à troca de idioma via re-render do `IdiomaProvider`.
+ * Fallback pro `id` se a chave sumir (som novo sem tradução).
+ */
+export function nomeSom(id: string): string {
+  const nomes = DICIONARIOS[idiomaAtual()].sons as Record<string, string>;
+  return nomes[id] ?? id;
+}
 
 /** Escopos de notificação que podem ter um som configurado. */
 export type EscopoNotificacao =

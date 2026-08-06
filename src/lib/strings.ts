@@ -1636,6 +1636,24 @@ const pt = {
     editLink: "Editar link",
     abrirNovaAba: "Abrir link em nova aba",
   },
+  // #579: nomes dos sons de notificação (id do arquivo → rótulo). Antes fixos em
+  // pt-BR no `sons-notificacao.ts` (vazavam na UI en); agora por idioma, resolvidos
+  // pelo acessor não-hook `nomeSom` (mesmo padrão do `plateLabel`/`textoUi`).
+  sons: {
+    "mixkit-guitar-stroke-down-slow-2339": "Violão desacelerado",
+    "mixkit-guitar-notification-alert-2320": "Alerta com guitarra",
+    "mixkit-bell-notification-933": "Sino de notificação",
+    "mixkit-store-door-bell-ring-934": "Sino de loja aberta",
+    "mixkit-bike-bell-ring-595": "Campainha bicicleta",
+    "mixkit-airport-announcement-ding-1569": "Chamada de embarque",
+    "mixkit-cartoon-whistling-738": "Assobio de desenhos",
+    "mixkit-cartoon-toy-whistle-616": "Apito de brinquedos",
+    "mixkit-funny-squeaky-toy-hits-2813": "Brinquedo chiadinho",
+    "mixkit-clown-horn-at-circus-715": "Corneta de palhaços",
+    "mixkit-choir-harp-bless-657": "Harpas abençoadoras",
+    "mixkit-bless-choir-655": "Bênção coral divina",
+    "mixkit-software-interface-back-2575": "Voltar da interface",
+  },
 } as const;
 
 export type Dicionario = typeof pt;
@@ -3216,6 +3234,21 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     linkText: "Text to display",
     editLink: "Edit link",
     abrirNovaAba: "Open link in a new tab",
+  },
+  sons: {
+    "mixkit-guitar-stroke-down-slow-2339": "Slow guitar stroke",
+    "mixkit-guitar-notification-alert-2320": "Guitar alert",
+    "mixkit-bell-notification-933": "Notification bell",
+    "mixkit-store-door-bell-ring-934": "Shop door bell",
+    "mixkit-bike-bell-ring-595": "Bicycle bell",
+    "mixkit-airport-announcement-ding-1569": "Boarding call",
+    "mixkit-cartoon-whistling-738": "Cartoon whistling",
+    "mixkit-cartoon-toy-whistle-616": "Toy whistle",
+    "mixkit-funny-squeaky-toy-hits-2813": "Squeaky toy",
+    "mixkit-clown-horn-at-circus-715": "Clown horn",
+    "mixkit-choir-harp-bless-657": "Blessing harps",
+    "mixkit-bless-choir-655": "Divine choir",
+    "mixkit-software-interface-back-2575": "Interface back",
   },
 };
 
