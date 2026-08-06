@@ -7,8 +7,11 @@ import type {
 } from "./config-backend";
 
 /**
- * Grupo A do épico #556. Estado de sessão/cache visual e Organizations (#560)
- * ficam deliberadamente fora desta lista.
+ * Grupo A do épico #556 + `organizations` (#560, S3 — o último dado 100% local
+ * migrado pra nuvem). Estado de sessão/cache visual seguem deliberadamente fora.
+ * `organizations` é tenant-scoped por construção: o toolbox.json vive na OneDrive
+ * do usuário atual (Graph delegado), então trocar de tenant carrega as orgs do
+ * tenant novo. O `logo` (data-URI) é sempre stripado antes de subir (ver projeção).
  */
 export const CHAVES_CONFIG_NUVEM = [
   "zoom",
@@ -33,6 +36,7 @@ export const CHAVES_CONFIG_NUVEM = [
   "syncIntervalMinutes",
   "agendaView",
   "agendaCalendariosSelecionados",
+  "organizations",
   "idioma",
   "atomsPrefs",
   "pularConfirmacaoConexao",
@@ -43,9 +47,18 @@ export function projetarConfigNuvem(
 ): Partial<AppPersistido> {
   const cloud: Partial<AppPersistido> = {};
   for (const key of CHAVES_CONFIG_NUVEM) {
-    if (state[key] !== undefined) {
-      Object.assign(cloud, { [key]: state[key] });
+    if (state[key] === undefined) continue;
+    // #560: o `logo` das orgs é um data-URI pesado (favicon do domínio) e é
+    // re-hidratado localmente; nunca sobe pro toolbox.json. Só a definição da org
+    // (nome/domains/website/notes/memberIds/excludedIds/updatedAt) é a verdade.
+    if (key === "organizations") {
+      cloud.organizations = (state.organizations ?? []).map((org) => ({
+        ...org,
+        logo: null,
+      }));
+      continue;
     }
+    Object.assign(cloud, { [key]: state[key] });
   }
   return cloud;
 }
