@@ -271,6 +271,7 @@ const localCacheCodec: LocalCacheCodec = {
       "directory",
       "organizations",
       "groups",
+      "personalGroups",
       "category",
     ]);
     if (peopleTab !== undefined) state.peopleTab = peopleTab;

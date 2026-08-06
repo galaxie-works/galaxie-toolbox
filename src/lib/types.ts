@@ -475,6 +475,20 @@ export interface PeopleGroupMembersResult {
   memberCount: number;
 }
 
+/** #562: pasta de contatos pessoal (Graph contactFolder) — grupo editável do
+ *  usuário, distinto dos grupos M365 read-only (PeopleGroup). */
+export interface ContactFolder {
+  id: string;
+  name: string;
+  parentFolderId: string;
+}
+
+export interface ContactFoldersResult {
+  folders: ContactFolder[];
+  missingScopes: string[];
+  failures: string[];
+}
+
 /** Uma adição revisável sugerida pelo Enrich, ainda sem efeito no contato. */
 export interface PeopleEnrichField {
   key: PeopleEnrichFieldKey;

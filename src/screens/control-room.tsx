@@ -254,6 +254,7 @@ import {
   Users,
   Tag,
   UsersRound,
+  Contact,
   Video,
   X,
 } from "lucide-react";
@@ -2160,6 +2161,52 @@ function FolderSidebar({
                   </Tooltip>
                 );
               })}
+            </nav>
+
+            {/* #562: grupos de contato PESSOAIS (contactFolders) — seção SEPARADA
+                dos grupos M365 compartilhados (nav primária acima) pra não
+                confundir compartilhado × pessoal. Item único → grid de pastas
+                editáveis no painel. */}
+            <nav
+              aria-label={t.controlRoom.personalGroupsSection}
+              className={cn(
+                "flex w-full flex-col gap-0.5",
+                colapsada && "items-center"
+              )}
+            >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={
+                      peopleTab === "personalGroups" ? "secondary" : "ghost"
+                    }
+                    onClick={() => setPeopleTab("personalGroups")}
+                    aria-label={t.controlRoom.personalGroupsSection}
+                    aria-current={
+                      peopleTab === "personalGroups" ? "page" : undefined
+                    }
+                    className={cn(
+                      "shrink-0",
+                      colapsada
+                        ? "size-9 justify-center p-0"
+                        : "w-full justify-start gap-2.5",
+                      peopleTab === "personalGroups"
+                        ? "bg-secondary font-medium text-secondary-foreground"
+                        : "text-muted-foreground hover:bg-accent/50"
+                    )}
+                  >
+                    <Contact className="size-4 shrink-0" />
+                    {!colapsada && (
+                      <span>{t.controlRoom.personalGroupsSection}</span>
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                {colapsada && (
+                  <TooltipContent side="right" align="center">
+                    {t.controlRoom.personalGroupsSection}
+                  </TooltipContent>
+                )}
+              </Tooltip>
             </nav>
 
             {/* #578: bloco redundante "My organization / VOAZ / People"

@@ -880,6 +880,81 @@ async fn cr_people_contact_delete(
     .map_err(|e| e.to_string())?
 }
 
+// #562: grupos de contato PESSOAIS (contactFolders) — CRUD + mover contato.
+#[tauri::command]
+async fn cr_contact_folders(
+    state: State<'_, Store>,
+) -> Result<graph::ContactFoldersResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_contact_folders(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cr_pasta_contatos(
+    state: State<'_, Store>,
+    folder_id: String,
+    next_links: Vec<String>,
+) -> Result<graph::PeopleListResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_pasta_contatos(&store, &folder_id, next_links)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cr_criar_pasta_contato(
+    state: State<'_, Store>,
+    nome: String,
+) -> Result<graph::ContactFolder, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_criar_pasta_contato(&store, &nome))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cr_renomear_pasta_contato(
+    state: State<'_, Store>,
+    folder_id: String,
+    nome: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_renomear_pasta_contato(&store, &folder_id, &nome)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cr_excluir_pasta_contato(
+    state: State<'_, Store>,
+    folder_id: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_pasta_contato(&store, &folder_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn cr_mover_contato(
+    state: State<'_, Store>,
+    contact_id: String,
+    folder_id: String,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_mover_contato(&store, &contact_id, &folder_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn cr_people_company_write(
     state: State<'_, Store>,
@@ -1833,6 +1908,12 @@ pub fn run() {
             cr_people_contact_categories,
             cr_people_contact_create,
             cr_people_contact_delete,
+            cr_contact_folders,
+            cr_pasta_contatos,
+            cr_criar_pasta_contato,
+            cr_renomear_pasta_contato,
+            cr_excluir_pasta_contato,
+            cr_mover_contato,
             cr_people_company_write,
             cr_people_details_write,
             cr_people_interactions,
