@@ -36,6 +36,7 @@ import { preencher, useIdioma } from "@/lib/idioma";
 import type { Pessoa } from "@/lib/types";
 import {
   deveCommitarEnter,
+  deveLimparAposAplicar,
   emailValido,
   mesmoEmail,
 } from "./campo-pessoas-logic";
@@ -122,8 +123,6 @@ export function CampoPessoas({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Marca o pedido em voo pra descartar respostas fora de ordem.
   const pedidoRef = useRef(0);
-  // Item destacado no popup: com nada destacado, Enter commita o que foi digitado.
-  const destacadoRef = useRef<Pessoa | undefined>(undefined);
 
   const { getFoto, pedirFotos } = useFotos();
 
@@ -239,8 +238,14 @@ export function CampoPessoas({
       emails.push(email);
     }
     onChange(emails);
-    setTexto("");
-    setAberto(false);
+    // #606: só limpamos num commit GENUÍNO. Se o combobox auto-selecionou uma
+    // sugestão enquanto o usuário digitava um e-mail externo, o texto (e-mail
+    // completo fora do commit) tem que ser preservado — senão o endereço some
+    // no meio da digitação.
+    if (deveLimparAposAplicar(texto, emails)) {
+      setTexto("");
+      setAberto(false);
+    }
   }
 
   /** Commita o texto cru do input (endereço fora do diretório). */
@@ -265,11 +270,11 @@ export function CampoPessoas({
       }
       return;
     }
-    // Enter commita o endereço digitado (convidado externo fora do diretório) a
-    // menos que uma sugestão REAL de contato esteja destacada — aí o Enter é do
-    // combobox. Ver `deveCommitarEnter`: robusto contra o `destacadoRef` obsoleto
-    // que travava o commit e causava o loop do #268.
-    if (e.key === "Enter" && deveCommitarEnter(texto, destacadoRef.current, sugestoes)) {
+    // Enter commita o endereço digitado (convidado externo fora do diretório)
+    // quando o texto é um e-mail completo que NÃO é uma das sugestões. Ver
+    // `deveCommitarEnter`: #606 — independe do item destacado (o Base UI passou a
+    // auto-destacar a 1ª sugestão, o que travava o commit e apagava o input).
+    if (e.key === "Enter" && deveCommitarEnter(texto, sugestoes)) {
       e.preventDefault();
       adicionarDigitado();
     }
@@ -286,15 +291,19 @@ export function CampoPessoas({
         items={grupos}
         filter={null}
         openOnInputClick={false}
+        // #606: NÃO auto-destacar a 1ª sugestão. Com a busca por relevância do
+        // Graph retornando gente até pra e-mail externo, o auto-highlight fazia o
+        // Base UI selecionar o item destacado DURANTE a digitação (modo multiple
+        // limpa o input ao selecionar) → o endereço que o usuário digitava sumia.
+        // Sem highlight automático, `onValueChange` só dispara em seleção genuína
+        // (clique/Enter na sugestão), e o Enter de e-mail livre é nosso (onKeyDown).
+        autoHighlight={false}
         value={selecionados}
         onValueChange={aplicar}
         inputValue={texto}
         onInputValueChange={setTexto}
         open={aberto}
         onOpenChange={setAberto}
-        onItemHighlighted={(item) => {
-          destacadoRef.current = item;
-        }}
         itemToStringLabel={(p: Pessoa) => p.nome || p.email}
         itemToStringValue={(p: Pessoa) => p.email}
         isItemEqualToValue={(a: Pessoa, b: Pessoa) => mesmoEmail(a.email, b.email)}
