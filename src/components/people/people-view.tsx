@@ -1331,7 +1331,9 @@ function PeopleRowActions({
   );
 }
 
-function PeopleCard({
+// #578 rework: exportado pra o GroupsView reusar o MESMO card de contato nos
+// membros do grupo (o PO pediu o grid de contatos, não uma lista).
+export function PeopleCard({
   contact,
   organizationLabel,
   organizationLogo,
@@ -3040,7 +3042,7 @@ export function PeopleView({
       ) : peopleTab === "groups" ? (
         // #578: Groups vira visão própria (grid → detalhe com membros), como o
         // OrganizationsView — sai do caminho do DataGrid de contatos.
-        <GroupsView />
+        <GroupsView onCompose={onCompose} />
       ) : (
         <>
       <AssignToOrganizationSheet
