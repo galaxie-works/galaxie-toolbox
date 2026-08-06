@@ -51,7 +51,7 @@ fn tentativas() -> &'static Mutex<Tentativas> {
 
 fn caminho_pin() -> Option<PathBuf> {
     let base = std::env::var("LOCALAPPDATA").ok()?;
-    let dir = std::path::Path::new(&base).join("GALAXIE Toolbox");
+    let dir = std::path::Path::new(&base).join("GALAXIE");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("pin.bin"))
 }

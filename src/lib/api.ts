@@ -62,6 +62,7 @@ const MOCK_USER: AppUser = {
 const MOCK_LOCK_PIN = "galaxie-mock-lock-pin";
 let mockLockFailures = 0;
 let mockLockBlockedUntil = 0;
+let mockOneDriveSettings: string | null = null;
 
 function mockPinSalvo(): string | null {
   const salvo = localStorage.getItem(MOCK_LOCK_PIN);
@@ -165,6 +166,54 @@ export async function cachedIdentity(): Promise<Identidade | null> {
 export async function restoreSession(): Promise<AppUser | null> {
   if (!inTauri()) return null;
   return invoke<AppUser | null>("restore_session");
+}
+
+export interface OneDriveSettingsReadResult {
+  content: string | null;
+  eTag: string | null;
+  cTag: string | null;
+}
+
+export interface OneDriveSettingsWriteResult {
+  eTag: string | null;
+  cTag: string | null;
+}
+
+let mockOneDriveSettingsETag = 0;
+
+/** Arquivo privado de configuração + versão otimista do driveItem. */
+export async function onedriveSettingsRead(): Promise<OneDriveSettingsReadResult> {
+  if (!inTauri()) {
+    return {
+      content: mockOneDriveSettings,
+      eTag: mockOneDriveSettings === null ? null : `mock-${mockOneDriveSettingsETag}`,
+      cTag: mockOneDriveSettings === null ? null : `mock-${mockOneDriveSettingsETag}`,
+    };
+  }
+  return invoke<OneDriveSettingsReadResult>("onedrive_settings_read");
+}
+
+/** PUT condicional: o Graph devolve 412 quando outra máquina venceu a corrida. */
+export async function onedriveSettingsWrite(
+  content: string,
+  eTag: string | null,
+): Promise<OneDriveSettingsWriteResult> {
+  if (!inTauri()) {
+    const atual = mockOneDriveSettings === null
+      ? null
+      : `mock-${mockOneDriveSettingsETag}`;
+    if (eTag !== atual) throw new Error("onedrive-settings-conflict");
+    mockOneDriveSettings = content;
+    mockOneDriveSettingsETag += 1;
+    return {
+      eTag: `mock-${mockOneDriveSettingsETag}`,
+      cTag: `mock-${mockOneDriveSettingsETag}`,
+    };
+  }
+  return invoke<OneDriveSettingsWriteResult>("onedrive_settings_write", {
+    content,
+    eTag,
+  });
 }
 
 export interface LockStatus {
@@ -1085,8 +1134,22 @@ export async function crPeopleGroups(): Promise<PeopleGroupsResult> {
     await sleep(350);
     return {
       groups: [
-        { id: "group-product", name: "Product", memberCount: null },
-        { id: "group-leadership", name: "Leadership", memberCount: null },
+        {
+          id: "group-product",
+          name: "Product",
+          description: "Time de produto — squad de discovery e delivery.",
+          mail: "product@voaz.builders",
+          visibility: "Private",
+          memberCount: null,
+        },
+        {
+          id: "group-leadership",
+          name: "Leadership",
+          description: "",
+          mail: "leadership@voaz.builders",
+          visibility: "Public",
+          memberCount: null,
+        },
       ],
       missingScopes: [],
       failures: [],

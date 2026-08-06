@@ -5,7 +5,7 @@ import type { AppStore } from "./index";
 export const SETTINGS_ITEM_IDS = [
   "accounts",
   "personalization",
-  "privacy",
+  // #580: "privacy" removido — a seção morreu (telemetria migrou pra System).
   "system",
   "galaxie-apps",
   "bridge",

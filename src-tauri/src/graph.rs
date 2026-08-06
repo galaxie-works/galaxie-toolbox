@@ -3073,6 +3073,191 @@ pub fn cr_compartilhar_onedrive(
     Ok(web)
 }
 
+const ONEDRIVE_SETTINGS_CONTENT_URL: &str =
+    "https://graph.microsoft.com/v1.0/me/drive/root:/Documents/Galaxie/AppSettings/toolbox.json:/content";
+const ONEDRIVE_SETTINGS_ITEM_URL: &str =
+    "https://graph.microsoft.com/v1.0/me/drive/root:/Documents/Galaxie/AppSettings/toolbox.json:?$select=eTag,cTag";
+const ONEDRIVE_SETTINGS_CONFLICT: &str = "onedrive-settings-conflict";
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OneDriveSettingsReadResult {
+    pub content: Option<String>,
+    pub e_tag: Option<String>,
+    pub c_tag: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OneDriveSettingsWriteResult {
+    pub e_tag: Option<String>,
+    pub c_tag: Option<String>,
+}
+
+fn drive_item_tags(value: &serde_json::Value) -> (Option<String>, Option<String>) {
+    (
+        value["eTag"].as_str().map(str::to_owned),
+        value["cTag"].as_str().map(str::to_owned),
+    )
+}
+
+/// Lê o JSON privado de configuração. 404 é o primeiro uso, não um erro.
+pub fn onedrive_settings_read(store: &TokenStore) -> Result<OneDriveSettingsReadResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let item = graph_enviar("onedrive:settings:item", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(ONEDRIVE_SETTINGS_ITEM_URL)
+            .bearer_auth(&token)
+            .send()
+    })
+    .map_err(|e| format!("falha ao ler versão da configuração do OneDrive: {e}"))?;
+
+    let item_status = item.status();
+    if item_status.as_u16() == 404 {
+        return Ok(OneDriveSettingsReadResult {
+            content: None,
+            e_tag: None,
+            c_tag: None,
+        });
+    }
+    if !item_status.is_success() {
+        let body = item.text().unwrap_or_default();
+        return Err(format!(
+            "leitura da versão da configuração do OneDrive retornou {item_status}: {body}"
+        ));
+    }
+    let item_json: serde_json::Value = item
+        .json()
+        .map_err(|e| format!("versão da configuração do OneDrive ilegível: {e}"))?;
+    let (e_tag, c_tag) = drive_item_tags(&item_json);
+
+    let resp = graph_enviar("onedrive:settings:read", GRAPH_TETO_ESPERA_S, || {
+        client
+            .get(ONEDRIVE_SETTINGS_CONTENT_URL)
+            .bearer_auth(&token)
+            .send()
+    })
+    .map_err(|e| format!("falha ao ler configuração do OneDrive: {e}"))?;
+
+    let status = resp.status();
+    if status.as_u16() == 404 {
+        return Ok(OneDriveSettingsReadResult {
+            content: None,
+            e_tag: None,
+            c_tag: None,
+        });
+    }
+    if !status.is_success() {
+        let body = resp.text().unwrap_or_default();
+        return Err(format!(
+            "leitura da configuração do OneDrive retornou {status}: {body}"
+        ));
+    }
+    let content = resp
+        .text()
+        .map_err(|e| format!("configuração do OneDrive ilegível: {e}"))?;
+    Ok(OneDriveSettingsReadResult {
+        content: Some(content),
+        e_tag,
+        c_tag,
+    })
+}
+
+/// Grava o snapshot JSON com If-Match; 412 é exposto como conflito recuperável.
+pub fn onedrive_settings_write(
+    store: &TokenStore,
+    content: &str,
+    e_tag: Option<&str>,
+) -> Result<OneDriveSettingsWriteResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let bytes = content.as_bytes().to_vec();
+    let upload = || {
+        graph_enviar("onedrive:settings:write", GRAPH_TETO_ESPERA_S, || {
+            let request = client
+                .put(ONEDRIVE_SETTINGS_CONTENT_URL)
+                .bearer_auth(&token)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .body(bytes.clone());
+            match e_tag {
+                Some(tag) => request.header(reqwest::header::IF_MATCH, tag),
+                None => request.header(reqwest::header::IF_NONE_MATCH, "*"),
+            }
+            .send()
+        })
+    };
+    let mut resp = upload()
+        .map_err(|e| format!("falha ao gravar configuração no OneDrive: {e}"))?;
+
+    // Upload por path cria o arquivo, mas exige o parent. No primeiro uso as
+    // duas pastas do app ainda não existem: cria-as e repete o mesmo PUT.
+    if resp.status().as_u16() == 404 {
+        ensure_onedrive_settings_dirs(&client, &token)?;
+        resp = upload()
+            .map_err(|e| format!("falha ao gravar configuração no OneDrive: {e}"))?;
+    }
+
+    if resp.status().as_u16() == 412 {
+        return Err(ONEDRIVE_SETTINGS_CONFLICT.to_string());
+    }
+    if resp.status().is_success() {
+        let value: serde_json::Value = resp
+            .json()
+            .map_err(|e| format!("resposta da gravação do OneDrive ilegível: {e}"))?;
+        let (e_tag, c_tag) = drive_item_tags(&value);
+        return Ok(OneDriveSettingsWriteResult { e_tag, c_tag });
+    }
+    let status = resp.status();
+    let body = resp.text().unwrap_or_default();
+    Err(format!(
+        "gravação da configuração no OneDrive retornou {status}: {body}"
+    ))
+}
+
+fn ensure_onedrive_settings_dirs(
+    client: &reqwest::blocking::Client,
+    token: &str,
+) -> Result<(), String> {
+    ensure_onedrive_folder(client, token, "Documents", "Galaxie")?;
+    ensure_onedrive_folder(
+        client,
+        token,
+        "Documents/Galaxie",
+        "AppSettings",
+    )
+}
+
+fn ensure_onedrive_folder(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    parent_path: &str,
+    name: &str,
+) -> Result<(), String> {
+    let url = format!("{GRAPH}/me/drive/root:/{parent_path}:/children");
+    let body = serde_json::json!({
+        "name": name,
+        "folder": {},
+        "@microsoft.graph.conflictBehavior": "fail"
+    });
+    let resp = graph_enviar("onedrive:settings:mkdir", GRAPH_TETO_ESPERA_S, || {
+        client
+            .post(&url)
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+    })
+    .map_err(|e| format!("falha ao preparar pasta de configuração: {e}"))?;
+    let status = resp.status();
+    if status.is_success() || status.as_u16() == 409 {
+        return Ok(());
+    }
+    let body = resp.text().unwrap_or_default();
+    Err(format!(
+        "criação da pasta de configuração retornou {status}: {body}"
+    ))
+}
+
 // ----------------------------------------------------------------------------
 // Cliente de e-mail (Control room): pastas + mensagens por pasta.
 // ----------------------------------------------------------------------------
@@ -4196,6 +4381,12 @@ pub struct PeopleDirectoryResult {
 pub struct PeopleGroup {
     pub id: String,
     pub name: String,
+    /// #578: descrição do grupo (M365 `description`), pro detalhe. Vazio se ausente.
+    pub description: String,
+    /// #578 rework: e-mail do grupo (M365 `mail`) — vazio em security group sem mail.
+    pub mail: String,
+    /// #578 rework: `Public`/`Private` (M365 `visibility`); vazio em security group.
+    pub visibility: String,
     pub member_count: Option<usize>,
 }
 
@@ -4784,7 +4975,7 @@ pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
         failures: Vec::new(),
     };
     let mut proxima = Some(format!(
-        "{GRAPH}/me/memberOf?$top=999&$select=id,displayName,groupTypes,mailEnabled,securityEnabled"
+        "{GRAPH}/me/memberOf?$top=999&$select=id,displayName,description,mail,visibility,groupTypes,mailEnabled,securityEnabled"
     ));
 
     while let Some(url) = proxima.take() {
@@ -4824,6 +5015,17 @@ pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
                         Some(PeopleGroup {
                             id: id.to_string(),
                             name: name.to_string(),
+                            description: item["description"]
+                                .as_str()
+                                .unwrap_or("")
+                                .trim()
+                                .to_string(),
+                            mail: item["mail"].as_str().unwrap_or("").trim().to_string(),
+                            visibility: item["visibility"]
+                                .as_str()
+                                .unwrap_or("")
+                                .trim()
+                                .to_string(),
                             member_count: None,
                         })
                     }));

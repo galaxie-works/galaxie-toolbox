@@ -31,6 +31,7 @@ import { useIdioma } from "@/lib/idioma";
 import {
   SONS,
   VALOR_SEM_SOM,
+  nomeSom,
   somPorId,
   tocarSom,
   type EscopoNotificacao,
@@ -136,7 +137,7 @@ function SeletorSom({
   rotuloPreview,
 }: SeletorSomProps) {
   const selecionado = somPorId(valor);
-  const rotulo = selecionado ? selecionado.nome : rotuloSemSom;
+  const rotulo = selecionado ? nomeSom(selecionado.id) : rotuloSemSom;
   const semSelecao = valor === VALOR_SEM_SOM;
 
   return (
@@ -171,7 +172,7 @@ function SeletorSom({
                 onSelect={() => onChange(som.id)}
               >
                 <AudioLinesIcon size={16} aria-hidden="true" />
-                <span>{som.nome}</span>
+                <span>{nomeSom(som.id)}</span>
                 {valor === som.id && (
                   <CheckIcon
                     aria-hidden="true"

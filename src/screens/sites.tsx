@@ -31,8 +31,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { SquareActivityIcon } from "@/components/ui/square-activity";
 import {
   ConfirmarBiblioteca,
-  gravarPularConfirmacao,
-  podePularConfirmacao,
   type ModoConfirmacao,
 } from "@/components/confirmar-biblioteca";
 import { EmBreveScreen } from "@/screens/em-breve";
@@ -43,6 +41,7 @@ import type { Dicionario } from "@/lib/strings";
 import type { Site } from "@/lib/types";
 import { AlertTriangle, Hammer, Info, Loader2, Lock } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useAppStore } from "@/store";
 
 /* size padrao dos icones animados e 28, alto demais pra linha da aba */
 const abas = (t: Dicionario) => [
@@ -239,7 +238,15 @@ export function SitesScreen({
   // Biblioteca aguardando confirmacao, e o que sera feito com ela.
   const [confirmando, setConfirmando] = useState<Site | null>(null);
   const [modo, setModo] = useState<ModoConfirmacao>("conectar");
-  const [pular, setPular] = useState(podePularConfirmacao);
+  const pularPersistido = useAppStore(
+    (state) => state.pularConfirmacaoConexao,
+  );
+  const setPularPersistido = useAppStore(
+    (state) => state.setPularConfirmacaoConexao,
+  );
+  const [pular, setPular] = useState(pularPersistido);
+
+  useEffect(() => setPular(pularPersistido), [pularPersistido]);
 
   function alternar(site: Site, ligar: boolean) {
     // Desconectar sempre confirma: e destrutivo do lado da maquina. Conectar
@@ -257,7 +264,7 @@ export function SitesScreen({
     if (!alvo) return;
     if (modo === "conectar") {
       setConfirmando(null);
-      gravarPularConfirmacao(pular);
+      setPularPersistido(pular);
       await onConnect(alvo);
       return;
     }

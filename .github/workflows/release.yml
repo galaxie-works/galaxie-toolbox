@@ -118,7 +118,7 @@ jobs:
           }
           $manifesto = [ordered]@{
             version   = $versao
-            notes     = "GALAXIE Toolbox $tag"
+            notes     = "GALAXIE $tag"
             pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = [ordered]@{
               "windows-x86_64" = [ordered]@{
@@ -152,7 +152,7 @@ jobs:
           } else {
             gh release create $tag $exe "$exe.sig" latest.json `
               --repo $env:REPO_DISTRIBUICAO `
-              --title "GALAXIE Toolbox $tag" `
+              --title "GALAXIE $tag" `
               --notes "Instalador para Windows. O aplicativo se atualiza sozinho a partir daqui."
           }
 

@@ -454,6 +454,12 @@ export interface PeopleDirectoryResult {
 export interface PeopleGroup {
   id: string;
   name: string;
+  /** #578: descrição do grupo (M365 `description`), pro detalhe. "" se ausente. */
+  description: string;
+  /** #578 rework: e-mail do grupo (M365 `mail`); "" em security group sem mail. */
+  mail: string;
+  /** #578 rework: `Public`/`Private` (M365 `visibility`); "" em security group. */
+  visibility: string;
   /** Só existe depois que os membros desse grupo foram carregados. */
   memberCount?: number | null;
 }

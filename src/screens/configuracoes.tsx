@@ -4,7 +4,6 @@ import {
   MonitorCog,
   Palette,
   Settings,
-  ShieldCheck,
   UserRound,
 } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
@@ -40,6 +39,8 @@ import { LockScreenSettings } from "@/components/lock-screen-settings";
 import { LanguageSettings } from "@/components/language-settings";
 import { StartupSettings } from "@/components/startup-settings";
 import { TelemetrySettings } from "@/components/telemetry-settings";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
+import { TermsOfUseSettings } from "@/components/terms-of-use-settings";
 import { OrganizationSettings } from "@/components/organization-settings";
 import {
   AccessibilitySettings,
@@ -77,6 +78,13 @@ interface SettingsFrame {
   node?: ReactNode;
   /** Nº da issue filha que entrega/reestiliza esta sub-opção (placeholder). */
   pending?: number;
+  /**
+   * #581-rework: frame estático — sem chevron/colapso. Renderiza o header
+   * (título + subtítulo) e o `node` como AÇÃO à direita, na mesma linha. Pra
+   * sub-opções que só têm um botão (ex.: Termos de uso → "Ler"), onde não há
+   * conteúdo pra expandir/recolher.
+   */
+  estatico?: boolean;
 }
 
 interface SettingsItem {
@@ -183,20 +191,8 @@ function settingsSections(t: Dicionario): SettingsSection[] {
           ],
         },
         {
-          id: "privacy",
-          label: s.cfgPrivacyLabel,
-          description: s.cfgPrivacyDesc,
-          icon: ShieldCheck,
-          frames: [
-            {
-              key: "telemetry",
-              title: s.cfgTelemetryTitulo,
-              subtitle: s.cfgTelemetrySubtitulo,
-              node: <TelemetrySettings />,
-            },
-          ],
-        },
-        {
+          // #580: a seção "Privacy" morreu — só continha o painel de telemetria,
+          // que foi movido pra System (junto do Startup).
           id: "system",
           label: s.cfgSystemLabel,
           description: s.cfgSystemDesc,
@@ -213,6 +209,22 @@ function settingsSections(t: Dicionario): SettingsSection[] {
               title: s.cfgStartupTitulo,
               subtitle: s.cfgStartupSubtitulo,
               node: <StartupSettings />,
+            },
+            {
+              // #580: telemetria agora vive em System.
+              key: "telemetry",
+              title: s.cfgTelemetryTitulo,
+              subtitle: s.cfgTelemetrySubtitulo,
+              node: <TelemetrySettings />,
+            },
+            {
+              // #581: Termos de uso — modal com a transparência (anônimo, sem PII).
+              // #581-rework: estático (só o botão "Ler"), sem chevron/colapso.
+              key: "terms",
+              title: s.cfgTermsTitulo,
+              subtitle: s.cfgTermsSubtitulo,
+              node: <TermsOfUseSettings />,
+              estatico: true,
             },
           ],
         },
@@ -447,6 +459,22 @@ function OptionFrame({
     (state) => state.setSettingsFrameAberto
   );
 
+  // #581-rework: frame estático — linha única (título + subtítulo à esquerda,
+  // ação/botão à direita), sem chevron nem colapso.
+  if (frame.estatico) {
+    return (
+      <Frame className="w-full" stacked>
+        <FrameHeader className="flex grow flex-row items-center justify-between gap-3">
+          <div className="min-w-0">
+            <FrameTitle>{frame.title}</FrameTitle>
+            <FrameDescription>{frame.subtitle}</FrameDescription>
+          </div>
+          {frame.node}
+        </FrameHeader>
+      </Frame>
+    );
+  }
+
   return (
     <Frame className="w-full" stacked>
       <Collapsible
@@ -501,7 +529,9 @@ export function ConfiguracoesScreen() {
         </div>
         <div>
           <h1 className="text-xl font-semibold tracking-tight">
-            {t.settings.cfgHeroTitulo}
+            <SoftBlurIn delay={80} stagger={16}>
+              {t.settings.cfgHeroTitulo}
+            </SoftBlurIn>
           </h1>
           <p className="text-sm text-muted-foreground">
             {t.settings.cfgHeroSubtitulo}

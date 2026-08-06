@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Configura a chave de assinatura do atualizador do GALAXIE Toolbox.
+    Configura a chave de assinatura do atualizador do GALAXIE.
 
 .DESCRIPTION
     Gera o par de chaves com senha, grava a chave publica no tauri.conf.json,
@@ -53,7 +53,7 @@ function LimparCaminho($texto) {
 }
 
 Write-Host ""
-Write-Host "  GALAXIE Toolbox - assinatura do atualizador" -ForegroundColor White
+Write-Host "  GALAXIE - assinatura do atualizador" -ForegroundColor White
 
 # --- 0. onde estamos -------------------------------------------------------
 $raiz = Split-Path -Parent $PSScriptRoot

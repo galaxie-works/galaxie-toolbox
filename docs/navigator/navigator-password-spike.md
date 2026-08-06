@@ -53,7 +53,7 @@ O gerenciamento (ver/editar/apagar) acontece **no SO, não na nossa UI**:
 
 Um link em Configurações abre essa tela do Windows. Copy honesta: *guardadas
 pelo Windows, criptografadas com DPAPI, atreladas ao seu login do Windows; o
-GALAXIE Toolbox nunca as vê.*
+GALAXIE nunca as vê.*
 
 ## 3. O que verificar antes de prometer o toggle (o núcleo do spike)
 

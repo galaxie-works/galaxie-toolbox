@@ -1,6 +1,6 @@
 //! Configuracao do app cliente (registro no Entra ID).
 //!
-//! O GALAXIE Toolbox atende varios clientes, entao o tenant NAO e fixo: ele e
+//! O GALAXIE atende varios clientes, entao o tenant NAO e fixo: ele e
 //! descoberto a partir do dominio do e-mail que a pessoa digita (ver
 //! auth::detectar_tenant). O que e fixo e o CLIENT_ID do app registrado.
 //!

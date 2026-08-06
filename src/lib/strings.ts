@@ -22,26 +22,29 @@ export const IDIOMAS: { valor: Idioma; rotulo: string; sigla: string }[] = [
 
 const pt = {
   login: {
-    convite: "Entre para desbloquear um universo de possibilidades.",
+    // #584 copy v2 (cósmica): título animado + descrição clara
+    titulo: "Boa jornada começa aqui",
+    convite: "Entre com a sua conta Microsoft para embarcar na GALAXIE.",
     rotuloEmail: "E-mail corporativo",
     placeholderEmail: "voce@suaempresa.com",
     ajudaEmail: "Usamos o domínio do seu e-mail para identificar a sua organização.",
     entrar: "Entrar com Microsoft",
     entrando: "Abrindo o login da Microsoft...",
     // {senha} recebe destaque em negrito
-    aviso: "Você entra na página oficial da Microsoft. O app {senha} — recebe apenas uma autorização.",
+    aviso: "O login acontece na página oficial da Microsoft. A GALAXIE {senha} — recebe só a autorização de acesso.",
     avisoSenha: "nunca vê sua senha",
     idioma: "Idioma",
   },
 
   carregando: {
-    preparando: "Preparando o seu universo...",
+    preparando: "Alinhando os astros...",
   },
 
   reauth: {
-    titulo: "Atualização de acesso necessária",
+    // #584 copy v2 (cósmica) — padrão-ouro do PO
+    titulo: "A GALAXIE está em expansão",
     descricao:
-      "As permissões do app foram atualizadas. Entre novamente para carregar os novos recursos.",
+      "Novos recursos entraram em órbita. Para ativá-los com segurança, entre novamente na sua conta.",
     entrarNovamente: "Entrar novamente",
     agoraNao: "Agora não",
   },
@@ -264,7 +267,7 @@ const pt = {
     titulo: "Navigator",
     subtitulo: "Hora de zarpar",
     buscar: "Buscar apps ou traçar uma rota...",
-    vazio: "Nada por aqui.",
+    vazio: "Espaço aberto — nada por aqui ainda.",
     navegar: "Traçar rota",
     irPara: "Ir para {nome}",
     pesquisar: "Pesquisar “{q}” na web",
@@ -468,14 +471,14 @@ const pt = {
     pastaJunk: "Lixo eletrônico",
     pastaTrash: "Itens excluídos",
     abaAnexos: "Com anexos",
-    semMensagens: "Nenhuma mensagem nesta pasta.",
-    semMensagensTitulo: "Caixa limpa",
+    semMensagens: "Nenhuma mensagem por aqui.",
+    semMensagensTitulo: "Céu limpo",
     semResultados: "Nenhum resultado.",
     escolhaEmail: "Escolha um e-mail para ver os detalhes.",
     ccLabel: "Cc",
     semEventosTitulo: "Sem eventos",
-    agendaErroTitulo: "Não foi possível carregar a agenda",
-    agendaErroDica: "Falha momentânea na conexão. Tente atualizar.",
+    agendaErroTitulo: "Perdemos o sinal da agenda",
+    agendaErroDica: "Foi só um tropeço na conexão. Atualize para tentar de novo.",
     agendaSemAcessoCaixaTitulo: "Sem acesso ao calendário desta caixa",
     agendaSemAcessoCaixaDica:
       "Você não tem permissão para ver o calendário desta caixa compartilhada.",
@@ -490,7 +493,7 @@ const pt = {
     excluirPermanente: "Excluir permanentemente",
     esvaziarLixeira: "Esvaziar lixeira",
     emailExcluido: "E-mail excluído.",
-    erroAcao: "Não consegui completar a ação.",
+    erroAcao: "Não deu pra concluir. Tente de novo em instantes.",
     // Menu de contexto de PASTA (#89)
     marcarTodasLidas: "Marcar todas como lidas",
     esvaziarPasta: "Esvaziar pasta",
@@ -760,14 +763,15 @@ const pt = {
     peopleGroupsError: "Não foi possível carregar os grupos.",
     peopleGroupSelect: "Selecione um grupo",
     peopleGroupSelectDesc:
-      "Escolha um grupo no sidebar para ver todos os seus membros.",
+      "Escolha um grupo na lista para ver todos os seus membros.",
     peopleGroupEmpty: "Este grupo não tem membros",
     peopleGroupEmptyDesc: "Nenhum usuário foi encontrado neste grupo M365.",
     orgsDescricao: "Agrupe contatos por domínio e mantenha ajustes manuais.",
     orgsBuscar: "Buscar organizações...",
     orgsNova: "Nova organização",
-    orgsVazia: "Nenhuma organização ainda",
-    orgsVaziaDesc: "Crie uma organização para agrupar seus contatos.",
+    orgsVazia: "Nenhuma órbita ainda",
+    orgsVaziaDesc:
+      "Crie uma organização para reunir os contatos da mesma empresa em torno dela.",
     orgsSelecionar: "Selecione uma organização",
     orgsSelecionarDesc: "Veja membros, domínios e detalhes da organização.",
     orgsMembros: "{n} membros",
@@ -941,12 +945,12 @@ const pt = {
     peopleVoltar: "Voltar aos contatos",
     peopleSelecionar: "Selecione um contato",
     peopleSelecionarDesc: "Escolha uma pessoa na lista para ver os detalhes.",
-    peopleVazio: "Nenhum contato encontrado",
+    peopleVazio: "Sua constelação de contatos",
     peopleVazioDesc:
-      "Seus contatos do Outlook aparecerão aqui conforme você troca e-mails.",
+      "Seus contatos do Outlook vão surgir aqui conforme você troca e-mails.",
     peopleSemResultado: "Nenhum contato corresponde à busca.",
     peopleLimparBusca: "Limpar busca",
-    peopleErro: "Não foi possível atualizar todos os contatos.",
+    peopleErro: "Alguns contatos não atualizaram. Tente de novo.",
     peopleTentarNovamente: "Tentar novamente",
     peopleSemPermissao: "Acesso ao People necessário",
     peopleSemAcessoCaixa: "Sem acesso aos contatos desta caixa",
@@ -1181,7 +1185,7 @@ const pt = {
     enviar: "Enviar",
     cancelar: "Cancelar",
     enviado: "E-mail enviado.",
-    erroEnvio: "Não consegui enviar o e-mail.",
+    erroEnvio: "O e-mail não saiu. Confira a conexão e tente de novo.",
     escrevaAlgo: "Escreva a mensagem antes de enviar.",
     informeDestino: "Informe ao menos um destinatário.",
     // Insights do remetente (#94)
@@ -1255,17 +1259,22 @@ const pt = {
     linkInserido: "Link inserido: {nome}",
     linksInseridos: "{n} links inseridos",
   },
+  // #584 copy v2 (cósmica): título animado + descrição clara
   emBreveControlRoom: {
-    descricao: "O painel de controle da Galaxie — sua visão geral. Em breve.",
+    titulo: "Sua ponte de comando",
+    descricao: "O painel geral da GALAXIE. Em breve.",
   },
   emBreveComms: {
-    descricao: "Comunicação rápida entre a equipe. Em breve.",
+    titulo: "Canal aberto em breve",
+    descricao: "Conversa rápida entre a equipe. Em breve.",
   },
   emBreveAstro: {
-    descricao: "O chatbot da Galaxie vai morar aqui. Em breve.",
+    titulo: "Astro está a caminho",
+    descricao: "A IA da GALAXIE vai morar aqui. Em breve.",
   },
   emBrevePulsar: {
-    descricao: "Central de notificações e alertas — cada pulso, um aviso.",
+    titulo: "Pulsar entra em órbita em breve",
+    descricao: "Suas notificações e alertas, todos num sinal só.",
   },
 
   caminhosLongos: {
@@ -1289,9 +1298,10 @@ const pt = {
   // Fallback do ErrorBoundary raiz (#148): mostrado quando um render estoura, no
   // lugar da tela branca.
   erro: {
-    titulo: "Algo deu errado",
+    // #584 copy v2 (cósmica)
+    titulo: "Saímos de órbita",
     descricao:
-      "O aplicativo encontrou um erro inesperado. Você pode recarregar para tentar novamente.",
+      "A GALAXIE encontrou um erro inesperado. Recarregue para voltar à rota.",
     recarregar: "Recarregar",
     detalhes: "Detalhes técnicos",
   },
@@ -1302,7 +1312,7 @@ const pt = {
     // Startup
     startupLabel: "Abrir na inicialização",
     startupDesc:
-      "Abrir o GALAXIE Toolbox automaticamente ao entrar no Windows.",
+      "Abrir o GALAXIE automaticamente ao entrar no Windows.",
     startupErro:
       "Não foi possível atualizar a inicialização automática. Tente novamente.",
     // Background (#474: fundos animados dentro do Appearance)
@@ -1312,13 +1322,7 @@ const pt = {
     // Language
     languageDesc:
       "Escolha o idioma do app, independente do idioma do seu Windows.",
-    // Telemetry
-    telBanner:
-      "Os diagnósticos anônimos estão {estado} — desligue abaixo qualquer categoria que você não quiser. O GALAXIE Toolbox nunca coleta dados pessoais — nada de e-mails, nomes, conteúdo de mensagens, URLs ou caminhos de arquivo, só diagnósticos anônimos e agrupados. Os dados são self-hosted.",
-    telBannerEstado: "ligados por padrão",
-    telAviso1run:
-      "Pra ajudar a melhorar o GALAXIE Toolbox, os diagnósticos anônimos vêm ligados por padrão. Nenhum dado pessoal é coletado. Você pode desligar qualquer categoria aqui a qualquer momento.",
-    telAvisoOk: "Entendi",
+    // Telemetry (#580: banner/aviso/rodapé removidos — só os 3 opt-outs ficam)
     telCrashLabel: "Relatórios de erro",
     telCrashDesc:
       "Envie relatórios de erro pra a gente corrigir o que quebra. Só diagnóstico essencial.",
@@ -1328,9 +1332,6 @@ const pt = {
     telUsoLabel: "Uso anônimo",
     telUsoDesc:
       "Compartilhe estatísticas anônimas de uso de recursos pra sabermos o que melhorar.",
-    telRevogarDesc:
-      "Revogar desliga tudo, limpa a fila local e reinicia o seu id de sessão efêmero.",
-    telRevogarBtn: "Revogar tudo",
     // Navigator
     navigatorSearchTitulo: "Mecanismo de busca padrão",
     navigatorSearchDesc:
@@ -1380,25 +1381,47 @@ const pt = {
     cfgGeneralLabel: "Configurações gerais",
     cfgAppsLabel: "Apps",
     cfgAccountsLabel: "Contas",
-    cfgAccountsDesc: "Gerencie as contas conectadas ao GALAXIE Toolbox.",
+    cfgAccountsDesc: "Gerencie as contas conectadas ao GALAXIE.",
     cfgAccountsEmptyTitulo: "Contas",
     cfgAccountsEmptyDesc: "Múltiplas contas chegam em breve.",
     cfgPersonalizationLabel: "Personalização",
-    cfgPersonalizationDesc: "Deixe o GALAXIE Toolbox com a sua cara.",
+    cfgPersonalizationDesc: "Deixe o GALAXIE com a sua cara.",
     cfgSoundTitulo: "Som e notificações",
     cfgSoundSubtitulo: "Escolha quais eventos tocam um som.",
     cfgAppearanceTitulo: "Aparência",
     cfgAppearanceSubtitulo: "Defina o clima e o estilo claro ou escuro do app.",
     cfgLockScreenTitulo: "Tela de bloqueio",
     cfgLockScreenSubtitulo: "Proteja o app com um PIN.",
-    cfgPrivacyLabel: "Privacidade",
-    cfgPrivacyDesc: "Controle qual telemetria anônima o app pode coletar.",
     cfgTelemetryTitulo: "Telemetria e diagnósticos",
+    // #580: alinhado à realidade — é LIGADO por padrão (opt-out por categoria),
+    // anônimo e self-hosted, sem PII.
     cfgTelemetrySubtitulo:
-      "Ative por categoria. Desligado por padrão; nunca dados pessoais.",
+      "Anônimo, sem dados pessoais. Ligado por padrão — desligue por categoria.",
+    // #581: Termos de uso (frame em System) + corpo do modal (a "casa da
+    // transparência" que saiu do painel de telemetria no #580).
+    cfgTermsTitulo: "Termos de uso",
+    cfgTermsSubtitulo: "Como a gente cuida das suas informações, sem letras miúdas.",
+    termsLerBtn: "Ler",
+    termsFecharBtn: "Fechar",
+    termsIntro:
+      "O GALAXIE foi feito pra ser o seu companheiro de trabalho — rápido, no seu idioma e do seu jeito. Aqui está, sem letras miúdas, como a gente cuida das suas informações.",
+    termsSec1Titulo: "Suas informações são suas",
+    termsSec1Corpo:
+      "A gente não coleta nada que identifique você. Nem nome, nem e-mail, nem suas mensagens, contatos, arquivos ou o que você escreve. Nada disso sai da sua máquina pra gente.",
+    termsSec2Titulo: "O que a gente olha (de forma anônima)",
+    termsSec2Corpo:
+      "Pra deixar o app cada vez melhor, acompanhamos alguns diagnósticos anônimos: quais recursos são mais usados e onde algo trava ou dá erro. São sinais e números, nunca “quem” — a gente não sabe, e nem quer saber, quem está do outro lado.",
+    termsSec3Titulo: "Por que a gente faz isso",
+    termsSec3Corpo:
+      "Simples: pra entender o que você gosta de usar e consertar o que atrapalha. É assim que o Toolbox aprende a ser o melhor companheiro possível pro seu dia a dia.",
+    termsSec4Titulo: "Onde os dados ficam",
+    termsSec4Corpo:
+      "Os diagnósticos são anônimos e guardados na nossa própria infraestrutura. Nunca são vendidos nem compartilhados com terceiros.",
+    termsControle:
+      "Você está no controle: pode ajustar o que compartilha em Settings › System › Telemetria e diagnósticos quando quiser.",
     cfgSystemLabel: "Sistema",
     cfgSystemDesc:
-      "Escolha como o GALAXIE Toolbox funciona com o seu dispositivo.",
+      "Escolha como o GALAXIE funciona com o seu dispositivo.",
     cfgLanguageTitulo: "Idioma",
     cfgLanguageSubtitulo: "Escolha o idioma do app.",
     cfgStartupTitulo: "Inicialização",
@@ -1480,9 +1503,9 @@ const pt = {
     cfgWindowsLabel: "Windows",
     cfgWindowsDesc: "Revise as configurações do app relacionadas ao Windows.",
     cfgNavAriaLabel: "Navegação das configurações",
-    cfgHeroTitulo: "Configurações",
-    cfgHeroSubtitulo:
-      "Gerencie as configurações do GALAXIE Toolbox em um só lugar.",
+    // #584 copy v2 (cósmica leve)
+    cfgHeroTitulo: "Centro de controle",
+    cfgHeroSubtitulo: "Tudo da GALAXIE ajustado num lugar só.",
     cfgSemOpcoes: "Ainda não há opções configuráveis aqui.",
     cfgFramePendingPlaceholder: "Entregue em um follow-up (#{issue}).",
     cfgFrameEmptyPlaceholder:
@@ -1535,9 +1558,9 @@ const pt = {
     bridgeTemplateDescricaoPlaceholder: "Resumo curto exibido no seletor",
     bridgeTemplateBodyLabel: "Corpo",
     bridgeTemplateCorpoPlaceholder: "Escreva o conteúdo do modelo...",
-    bridgeTemplatesVazioTitulo: "Nenhum modelo",
+    bridgeTemplatesVazioTitulo: "Comece a sua biblioteca estelar",
     bridgeTemplatesVazioDesc:
-      "Você ainda não tem modelos. Crie um para reaproveitar as mensagens que você envia com frequência.",
+      "Sem templates ainda. Crie um para não reescrever os textos que você manda toda hora.",
     bridgeTemplateAdd: "Adicionar novo modelo",
     bridgeTemplatesLabel: "Modelos",
     bridgeTemplateSelectPlaceholder: "Selecione um modelo",
@@ -1579,10 +1602,10 @@ const pt = {
     themeAccessDesc:
       "Ative um tema de alto contraste para melhor legibilidade.",
     themeAccessAria: "Alto contraste",
-    // Lock screen (#122) — "GALAXIE Toolbox" (nome do produto) NÃO traduz.
+    // Lock screen (#122) — "GALAXIE" (nome do produto) NÃO traduz.
     lockTitulo: "Bloqueio do app",
-    lockDescAtivo: "É necessário um PIN para abrir o GALAXIE Toolbox.",
-    lockDescInativo: "Exige um PIN toda vez que o GALAXIE Toolbox abrir.",
+    lockDescAtivo: "É necessário um PIN para abrir o GALAXIE.",
+    lockDescInativo: "Exige um PIN toda vez que o GALAXIE abrir.",
     lockChangeBtn: "Alterar PIN",
     lockRemoveBtn: "Remover PIN",
     lockSetBtn: "Definir PIN",
@@ -1636,6 +1659,24 @@ const pt = {
     editLink: "Editar link",
     abrirNovaAba: "Abrir link em nova aba",
   },
+  // #579: nomes dos sons de notificação (id do arquivo → rótulo). Antes fixos em
+  // pt-BR no `sons-notificacao.ts` (vazavam na UI en); agora por idioma, resolvidos
+  // pelo acessor não-hook `nomeSom` (mesmo padrão do `plateLabel`/`textoUi`).
+  sons: {
+    "mixkit-guitar-stroke-down-slow-2339": "Violão desacelerado",
+    "mixkit-guitar-notification-alert-2320": "Alerta com guitarra",
+    "mixkit-bell-notification-933": "Sino de notificação",
+    "mixkit-store-door-bell-ring-934": "Sino de loja aberta",
+    "mixkit-bike-bell-ring-595": "Campainha bicicleta",
+    "mixkit-airport-announcement-ding-1569": "Chamada de embarque",
+    "mixkit-cartoon-whistling-738": "Assobio de desenhos",
+    "mixkit-cartoon-toy-whistle-616": "Apito de brinquedos",
+    "mixkit-funny-squeaky-toy-hits-2813": "Brinquedo chiadinho",
+    "mixkit-clown-horn-at-circus-715": "Corneta de palhaços",
+    "mixkit-choir-harp-bless-657": "Harpas abençoadoras",
+    "mixkit-bless-choir-655": "Bênção coral divina",
+    "mixkit-software-interface-back-2575": "Voltar da interface",
+  },
 } as const;
 
 export type Dicionario = typeof pt;
@@ -1643,26 +1684,29 @@ export type Dicionario = typeof pt;
 /** Estrutura identica ao pt: o TypeScript reprova chave faltando ou sobrando. */
 const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = {
   login: {
-    convite: "Sign in to unlock a universe of possibilities.",
+    // #584 copy v2 (cosmic)
+    titulo: "Every journey starts here",
+    convite: "Sign in with your Microsoft account to board GALAXIE.",
     rotuloEmail: "Work email",
     placeholderEmail: "you@yourcompany.com",
     ajudaEmail: "We use your email domain to identify your organization.",
     entrar: "Sign in with Microsoft",
     entrando: "Opening the Microsoft sign-in...",
     aviso:
-      "You sign in on Microsoft's official page. This app {senha} — it only receives an authorization.",
+      "Sign-in happens on Microsoft's official page. GALAXIE {senha} — it only gets an access authorization.",
     avisoSenha: "never sees your password",
     idioma: "Language",
   },
 
   carregando: {
-    preparando: "Getting your universe ready...",
+    preparando: "Aligning the stars...",
   },
 
   reauth: {
-    titulo: "Access update required",
+    // #584 copy v2 (cosmic) — PO gold standard
+    titulo: "GALAXIE is expanding",
     descricao:
-      "The app permissions were updated. Sign in again to load the new features.",
+      "New features have entered orbit. To activate them safely, sign in to your account again.",
     entrarNovamente: "Sign in again",
     agoraNao: "Not now",
   },
@@ -1881,7 +1925,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     titulo: "Navigator",
     subtitulo: "Time to set sail",
     buscar: "Search apps or set a course...",
-    vazio: "Nothing here.",
+    vazio: "Open space — nothing here yet.",
     navegar: "Set a course",
     irPara: "Go to {nome}",
     pesquisar: "Search the web for “{q}”",
@@ -2084,14 +2128,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     pastaJunk: "Junk",
     pastaTrash: "Deleted",
     abaAnexos: "Files",
-    semMensagens: "No messages in this folder.",
-    semMensagensTitulo: "All clear",
+    semMensagens: "No messages here.",
+    semMensagensTitulo: "Clear skies",
     semResultados: "No results.",
     escolhaEmail: "Choose an email to view details.",
     ccLabel: "Cc",
     semEventosTitulo: "No events",
-    agendaErroTitulo: "Couldn't load the calendar",
-    agendaErroDica: "Temporary connection glitch. Try refreshing.",
+    agendaErroTitulo: "Lost the calendar signal",
+    agendaErroDica: "Just a connection hiccup. Refresh to try again.",
     agendaSemAcessoCaixaTitulo: "No access to this mailbox's calendar",
     agendaSemAcessoCaixaDica:
       "You don't have permission to view this shared mailbox's calendar.",
@@ -2106,7 +2150,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     excluirPermanente: "Delete permanently",
     esvaziarLixeira: "Empty trash",
     emailExcluido: "Email deleted.",
-    erroAcao: "Couldn't complete the action.",
+    erroAcao: "That didn't go through. Try again in a moment.",
     // Menu de contexto de PASTA (#89)
     marcarTodasLidas: "Mark all as read",
     esvaziarPasta: "Empty folder",
@@ -2374,14 +2418,15 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleGroupsError: "Groups could not be loaded.",
     peopleGroupSelect: "Select a group",
     peopleGroupSelectDesc:
-      "Choose a group in the sidebar to see all of its members.",
+      "Choose a group from the list to see all of its members.",
     peopleGroupEmpty: "This group has no members",
     peopleGroupEmptyDesc: "No users were found in this Microsoft 365 group.",
     orgsDescricao: "Group contacts by domain and keep manual overrides.",
     orgsBuscar: "Search organizations...",
     orgsNova: "New organization",
-    orgsVazia: "No organizations yet",
-    orgsVaziaDesc: "Create an organization to group your contacts.",
+    orgsVazia: "No orbits yet",
+    orgsVaziaDesc:
+      "Create an organization to gather contacts from the same company around it.",
     orgsSelecionar: "Select an organization",
     orgsSelecionarDesc: "View the organization's members, domains, and details.",
     orgsMembros: "{n} members",
@@ -2555,12 +2600,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     peopleVoltar: "Back to contacts",
     peopleSelecionar: "Select a contact",
     peopleSelecionarDesc: "Choose someone from the list to see their details.",
-    peopleVazio: "No contacts yet",
+    peopleVazio: "Your contact constellation",
     peopleVazioDesc:
-      "Your Outlook contacts will appear here as you email people.",
+      "Your Outlook contacts appear here as you exchange emails.",
     peopleSemResultado: "No contacts match your search.",
     peopleLimparBusca: "Clear search",
-    peopleErro: "We couldn't refresh every contact source.",
+    peopleErro: "Some contacts didn't refresh. Try again.",
     peopleTentarNovamente: "Try again",
     peopleSemPermissao: "People access required",
     peopleSemAcessoCaixa: "No access to this mailbox's contacts",
@@ -2790,7 +2835,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     enviar: "Send",
     cancelar: "Cancel",
     enviado: "Email sent.",
-    erroEnvio: "Couldn't send the email.",
+    erroEnvio: "The email didn't send. Check your connection and try again.",
     escrevaAlgo: "Write a message before sending.",
     informeDestino: "Enter at least one recipient.",
     // Sender insights (#94)
@@ -2862,16 +2907,20 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     linksInseridos: "{n} links inserted",
   },
   emBreveControlRoom: {
-    descricao: "The Galaxie control panel — your overview. Coming soon.",
+    titulo: "Your command bridge",
+    descricao: "GALAXIE's overview panel. Coming soon.",
   },
   emBreveComms: {
+    titulo: "Channel opening soon",
     descricao: "Fast team chat. Coming soon.",
   },
   emBreveAstro: {
-    descricao: "The Galaxie chatbot will live here. Coming soon.",
+    titulo: "Astro is on its way",
+    descricao: "GALAXIE's AI will live here. Coming soon.",
   },
   emBrevePulsar: {
-    descricao: "Notifications and alerts — every pulse, a heads-up.",
+    titulo: "Pulsar enters orbit soon",
+    descricao: "Your notifications and alerts, all in one signal.",
   },
 
   caminhosLongos: {
@@ -2893,9 +2942,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   },
 
   erro: {
-    titulo: "Something went wrong",
+    titulo: "We drifted off orbit",
     descricao:
-      "The app hit an unexpected error. You can reload to try again.",
+      "GALAXIE hit an unexpected error. Reload to get back on course.",
     recarregar: "Reload",
     detalhes: "Technical details",
   },
@@ -2905,7 +2954,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Startup
     startupLabel: "Launch on startup",
     startupDesc:
-      "Open GALAXIE Toolbox automatically when you sign in to Windows.",
+      "Open GALAXIE automatically when you sign in to Windows.",
     startupErro: "Couldn’t update launch on startup. Please try again.",
     // Background (#474: animated backgrounds inside Appearance)
     bgAnimados: "Animated backgrounds",
@@ -2914,13 +2963,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Language
     languageDesc:
       "Choose the language of the app, independent of your Windows language.",
-    // Telemetry
-    telBanner:
-      "Anonymous diagnostics are {estado} — turn off any category you don’t want below. GALAXIE Toolbox never collects personal data — no emails, names, message content, URLs or file paths, only anonymous, bucketed diagnostics. Data is self-hosted.",
-    telBannerEstado: "on by default",
-    telAviso1run:
-      "To help us improve GALAXIE Toolbox, anonymous diagnostics are on by default. No personal data is ever collected. You can turn off any category here at any time.",
-    telAvisoOk: "Got it",
+    // Telemetry (#580: banner/notice/footer removed — only the 3 opt-outs remain)
     telCrashLabel: "Crash reports",
     telCrashDesc:
       "Send crash reports so we can fix what breaks. Essential diagnostics only.",
@@ -2930,9 +2973,6 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     telUsoLabel: "Anonymous usage",
     telUsoDesc:
       "Share anonymous feature-usage stats so we know what to improve.",
-    telRevogarDesc:
-      "Revoking turns everything off, clears the local queue and resets your ephemeral session id.",
-    telRevogarBtn: "Revoke all",
     // Navigator
     navigatorSearchTitulo: "Default search engine",
     navigatorSearchDesc:
@@ -2981,24 +3021,46 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgGeneralLabel: "General settings",
     cfgAppsLabel: "Apps",
     cfgAccountsLabel: "Accounts",
-    cfgAccountsDesc: "Manage the accounts connected to GALAXIE Toolbox.",
+    cfgAccountsDesc: "Manage the accounts connected to GALAXIE.",
     cfgAccountsEmptyTitulo: "Accounts",
     cfgAccountsEmptyDesc: "Multiple accounts are coming soon.",
     cfgPersonalizationLabel: "Personalization",
-    cfgPersonalizationDesc: "Make GALAXIE Toolbox feel like your workspace.",
+    cfgPersonalizationDesc: "Make GALAXIE feel like your workspace.",
     cfgSoundTitulo: "Sound & notifications",
     cfgSoundSubtitulo: "Choose which events play a sound.",
     cfgAppearanceTitulo: "Appearance",
     cfgAppearanceSubtitulo: "Set the mood and light or dark style of the app.",
     cfgLockScreenTitulo: "Lock screen",
     cfgLockScreenSubtitulo: "Protect the app with a PIN.",
-    cfgPrivacyLabel: "Privacy",
-    cfgPrivacyDesc: "Control what anonymous telemetry the app may collect.",
     cfgTelemetryTitulo: "Telemetry & diagnostics",
+    // #580: aligned with reality — it is ON by default (opt out per category),
+    // anonymous and self-hosted, no PII.
     cfgTelemetrySubtitulo:
-      "Opt in per category. Off by default; no personal data, ever.",
+      "Anonymous, no personal data. On by default — opt out per category.",
+    // #581: Terms of Use (frame in System) + modal body (the "home of
+    // transparency" that left the telemetry panel in #580).
+    cfgTermsTitulo: "Terms of Use",
+    cfgTermsSubtitulo: "How we look after your information — no fine print.",
+    termsLerBtn: "Read",
+    termsFecharBtn: "Close",
+    termsIntro:
+      "GALAXIE was built to be your work companion — fast, in your language, your way. Here's how we look after your information, with no fine print.",
+    termsSec1Titulo: "Your information is yours",
+    termsSec1Corpo:
+      "We collect nothing that identifies you — not your name, your email, your messages, contacts, files, or anything you type. None of that ever leaves your machine for us.",
+    termsSec2Titulo: "What we look at (anonymously)",
+    termsSec2Corpo:
+      "To keep making the app better, we track a few anonymous diagnostics: which features get used most and where something stalls or breaks. Signals and counts — never “who.” We don't know, and don't want to know, who's on the other side.",
+    termsSec3Titulo: "Why we do it",
+    termsSec3Corpo:
+      "Simple: to understand what you enjoy using and fix what gets in your way. That's how Toolbox learns to be the best companion it can be for your day.",
+    termsSec4Titulo: "Where the data lives",
+    termsSec4Corpo:
+      "Diagnostics are anonymous and kept on our own infrastructure. They're never sold or shared with third parties.",
+    termsControle:
+      "You're in control: adjust what you share anytime in Settings › System › Telemetry & diagnostics.",
     cfgSystemLabel: "System",
-    cfgSystemDesc: "Choose how GALAXIE Toolbox works with your device.",
+    cfgSystemDesc: "Choose how GALAXIE works with your device.",
     cfgLanguageTitulo: "Language",
     cfgLanguageSubtitulo: "Choose the app's language.",
     cfgStartupTitulo: "Startup",
@@ -3076,8 +3138,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgWindowsLabel: "Windows",
     cfgWindowsDesc: "Review Windows-related app settings.",
     cfgNavAriaLabel: "Settings navigation",
-    cfgHeroTitulo: "Settings",
-    cfgHeroSubtitulo: "Manage GALAXIE Toolbox settings in one place.",
+    // #584 copy v2 (cosmic-lite)
+    cfgHeroTitulo: "Control center",
+    cfgHeroSubtitulo: "All of GALAXIE, tuned in one place.",
     cfgSemOpcoes: "No configurable options here yet.",
     cfgFramePendingPlaceholder: "Delivered in a follow-up (#{issue}).",
     cfgFrameEmptyPlaceholder:
@@ -3130,9 +3193,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     bridgeTemplateDescricaoPlaceholder: "Short summary shown in the picker",
     bridgeTemplateBodyLabel: "Body",
     bridgeTemplateCorpoPlaceholder: "Write the template content...",
-    bridgeTemplatesVazioTitulo: "No templates",
+    bridgeTemplatesVazioTitulo: "Start your star chart",
     bridgeTemplatesVazioDesc:
-      "You don’t have any templates yet. Create one to reuse the messages you send often.",
+      "No templates yet. Create one so you stop rewriting the messages you send all the time.",
     bridgeTemplateAdd: "Add new template",
     bridgeTemplatesLabel: "Templates",
     bridgeTemplateSelectPlaceholder: "Select a template",
@@ -3172,8 +3235,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     themeAccessDesc: "Turn on a high contrast theme for better readability.",
     themeAccessAria: "High contrast",
     lockTitulo: "App lock",
-    lockDescAtivo: "A PIN is required to open GALAXIE Toolbox.",
-    lockDescInativo: "Require a PIN each time GALAXIE Toolbox opens.",
+    lockDescAtivo: "A PIN is required to open GALAXIE.",
+    lockDescInativo: "Require a PIN each time GALAXIE opens.",
     lockChangeBtn: "Change PIN",
     lockRemoveBtn: "Remove PIN",
     lockSetBtn: "Set PIN",
@@ -3216,6 +3279,21 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     linkText: "Text to display",
     editLink: "Edit link",
     abrirNovaAba: "Open link in a new tab",
+  },
+  sons: {
+    "mixkit-guitar-stroke-down-slow-2339": "Slow guitar stroke",
+    "mixkit-guitar-notification-alert-2320": "Guitar alert",
+    "mixkit-bell-notification-933": "Notification bell",
+    "mixkit-store-door-bell-ring-934": "Shop door bell",
+    "mixkit-bike-bell-ring-595": "Bicycle bell",
+    "mixkit-airport-announcement-ding-1569": "Boarding call",
+    "mixkit-cartoon-whistling-738": "Cartoon whistling",
+    "mixkit-cartoon-toy-whistle-616": "Toy whistle",
+    "mixkit-funny-squeaky-toy-hits-2813": "Squeaky toy",
+    "mixkit-clown-horn-at-circus-715": "Clown horn",
+    "mixkit-choir-harp-bless-657": "Blessing harps",
+    "mixkit-bless-choir-655": "Divine choir",
+    "mixkit-software-interface-back-2575": "Interface back",
   },
 };
 

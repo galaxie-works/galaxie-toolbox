@@ -2,7 +2,7 @@
 
 > 📌 **Snapshot de discovery (2026-07/08). Estado atual: NÃO construído** — aguardando go/no-go do PO (#180/#196). Arquitetura/estratégia proposta; ver também `astro-architecture.md` e `astro-financial-model.md`.
 
-Issue #180 · GALAXIE Toolbox / **Galaxie AI** (novo item de Galaxie Apps)
+Issue #180 · GALAXIE / **Galaxie AI** (novo item de Galaxie Apps)
 Stack: Tauri 2 (multi-webview, feature `unstable`) + React 19 + TypeScript + Tailwind v4 + shadcn/reui · Microsoft Graph **delegado (`/me`)**, multi-tenant (tenant detectado pelo domínio)
 Status: **discovery + estratégia** (sem código). Foco: **produto + arquitetura + modelo de negócio** — não só UI.
 

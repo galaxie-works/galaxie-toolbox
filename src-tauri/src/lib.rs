@@ -694,6 +694,31 @@ async fn cr_compartilhar_onedrive(
     .map_err(|e| e.to_string())?
 }
 
+/// Configuração privada do usuário no OneDrive (fonte da verdade da S1 #558).
+#[tauri::command]
+async fn onedrive_settings_read(
+    state: State<'_, Store>,
+) -> Result<graph::OneDriveSettingsReadResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || graph::onedrive_settings_read(&store))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn onedrive_settings_write(
+    state: State<'_, Store>,
+    content: String,
+    e_tag: Option<String>,
+) -> Result<graph::OneDriveSettingsWriteResult, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::onedrive_settings_write(&store, &content, e_tag.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Compositor: salva contatos pessoais (sem duplicar). Retorna quantos criou.
 #[tauri::command]
 async fn cr_salvar_contatos(
@@ -1813,6 +1838,8 @@ pub fn run() {
             cr_people_interactions,
             cr_enviar_novo,
             cr_compartilhar_onedrive,
+            onedrive_settings_read,
+            onedrive_settings_write,
             cr_salvar_contatos,
             cr_subpastas,
             cr_mail_folders,

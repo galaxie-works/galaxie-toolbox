@@ -4,8 +4,20 @@ import type { AppPersistido } from "./config-backend";
 import {
   localCacheBackend,
   organizationsSemLogoPersistido,
+  purgarChavesConfigNuvem,
   purgarChavesTenant,
 } from "./local-cache-backend";
+import {
+  LayeredBackend,
+  LocalStorageConfigPatchQueue,
+  OneDriveJsonBackend,
+  projetarConfigNuvem,
+} from "./onedrive-config-backend";
+import {
+  aplicarAltoContraste,
+  aplicarModoTema,
+  aplicarTemaVisual,
+} from "@/lib/tema";
 
 // #555 (P0): vetores de sessão fora do store, zerados pelo seam de reset.
 import { limparFotos } from "@/lib/fotos";
@@ -43,6 +55,10 @@ import {
   createAuthSlice,
   type AuthSlice,
 } from "./auth-slice";
+import {
+  createCloudPrefsSlice,
+  type CloudPrefsSlice,
+} from "./cloud-prefs-slice";
 
 /**
  * ============================================================================
@@ -87,16 +103,35 @@ export type AppStore =
   & ComposeSlice
   & PeopleSlice
   & OrganizationsSlice
-  & AuthSlice;
+  & AuthSlice
+  & CloudPrefsSlice;
+
+const layeredConfigBackend = new LayeredBackend(
+  localCacheBackend,
+  new OneDriveJsonBackend(),
+  {
+    baseline: () => projetarConfigNuvem(useAppStore.getState()),
+    queue: new LocalStorageConfigPatchQueue(localStorage),
+    onReconciled: (cloud) => {
+      useAppStore.setState(cloud as Partial<AppStore>);
+      const state = useAppStore.getState();
+      aplicarModoTema(state.modoTema);
+      aplicarTemaVisual(state.temaVisual);
+      aplicarAltoContraste(state.altoContraste, state.temaVisual);
+    },
+  },
+);
+
+const CONFIG_CACHE_OWNER_KEY = "galaxie-toolbox.config-cache-owner.v1";
 
 /** Bridge do contrato híbrido para o middleware persist do Zustand. */
 const zustandConfigStorage: PersistStorage<AppPersistido> = {
   getItem: (): StorageValue<AppPersistido> => ({
-    state: localCacheBackend.getSnapshot() as AppPersistido,
+    state: layeredConfigBackend.getSnapshot() as AppPersistido,
     version: 0,
   }),
-  setItem: (_name, value) => localCacheBackend.save(value.state),
-  removeItem: () => localCacheBackend.clear(),
+  setItem: (_name, value) => layeredConfigBackend.save(value.state),
+  removeItem: () => layeredConfigBackend.clear(),
 };
 
 /**
@@ -128,6 +163,8 @@ export const useAppStore = create<AppStore>()(
       ...createOrganizationsSlice(...a),
       // Escopos ausentes descrevem somente o token atual (#235): session-only.
       ...createAuthSlice(...a),
+      // Idioma, layout do Atoms e confirmação também são config acionável.
+      ...createCloudPrefsSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",
@@ -161,10 +198,58 @@ export const useAppStore = create<AppStore>()(
         agendaView: s.agendaView,
         agendaCalendariosSelecionados: s.agendaCalendariosSelecionados,
         organizations: organizationsSemLogoPersistido(s.organizations),
+        idioma: s.idioma,
+        atomsPrefs: s.atomsPrefs,
+        pularConfirmacaoConexao: s.pularConfirmacaoConexao,
       }),
     }
   )
 );
+
+/**
+ * Abre a raia cloud só depois da autenticação. Na primeira migração preserva o
+ * cache legado; em troca real de conta elimina o seed da conta anterior antes
+ * de qualquer tela autenticada ser mostrada.
+ */
+export function prepararConfiguracaoNuvem(accountEmail: string): void {
+  layeredConfigBackend.deactivate();
+  const account = accountEmail.trim().toLowerCase();
+  let owner: string | null = null;
+  try {
+    owner = localStorage.getItem(CONFIG_CACHE_OWNER_KEY);
+  } catch {
+    // Cache indisponível: o arquivo no drive ainda isola a autoridade.
+  }
+
+  if (owner !== null && owner !== account) {
+    purgarChavesConfigNuvem();
+    const defaults = projetarConfigNuvem(
+      useAppStore.getInitialState() as AppPersistido,
+    );
+    useAppStore.setState(defaults as Partial<AppStore>);
+  }
+  try {
+    localStorage.setItem(CONFIG_CACHE_OWNER_KEY, account);
+  } catch {
+    // Best-effort; a nuvem segue sendo a fonte da verdade.
+  }
+  layeredConfigBackend.activate(account);
+}
+
+/** Reconciliador pós-login: local imediato, OneDrive assíncrono. */
+export async function reconciliarConfiguracaoNuvem(): Promise<void> {
+  const cloud = await layeredConfigBackend.load();
+  useAppStore.setState(cloud as Partial<AppStore>);
+  const state = useAppStore.getState();
+  aplicarModoTema(state.modoTema);
+  aplicarTemaVisual(state.temaVisual);
+  aplicarAltoContraste(state.altoContraste, state.temaVisual);
+}
+
+/** Cancela write-through pendente antes de o token mudar de conta. */
+export function suspenderConfiguracaoNuvem(): void {
+  layeredConfigBackend.deactivate();
+}
 
 /**
  * #555 (P0): SEAM ÚNICO de reset de sessão. Zera TODO o estado tenant-scoped na
@@ -177,6 +262,7 @@ export const useAppStore = create<AppStore>()(
  * `store/reset-sessao.test.ts` (herança-zero) falha se algo escapar.
  */
 export function resetSessaoCompleta(): void {
+  suspenderConfiguracaoNuvem();
   const s = useAppStore.getState();
   // Slices tenant-scoped (reusa limpar*/fechar* existentes + os resets do #555).
   s.resetSessaoMailbox();

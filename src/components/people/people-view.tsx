@@ -154,6 +154,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { OrganizationsView } from "@/components/people/organizations-view";
+import { GroupsView } from "@/components/people/groups-view";
 import { ContactMergeSheet } from "@/components/people/contact-merge-sheet";
 import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
@@ -351,28 +352,6 @@ function PeoplePermissionEmpty({ mensagem }: { mensagem?: string }) {
   );
 }
 
-function PeopleGroupEmpty({ selected }: { selected: boolean }) {
-  const { t } = useIdioma();
-  return (
-    <Empty className="min-h-56">
-      <EmptyHeader>
-        <EmptyMedia>
-          <NodesIllustration />
-        </EmptyMedia>
-        <EmptyTitle>
-          {selected
-            ? t.controlRoom.peopleGroupEmpty
-            : t.controlRoom.peopleGroupSelect}
-        </EmptyTitle>
-        <EmptyDescription>
-          {selected
-            ? t.controlRoom.peopleGroupEmptyDesc
-            : t.controlRoom.peopleGroupSelectDesc}
-        </EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}
 
 function PeopleDetailSkeleton() {
   return (
@@ -1352,7 +1331,9 @@ function PeopleRowActions({
   );
 }
 
-function PeopleCard({
+// #578 rework: exportado pra o GroupsView reusar o MESMO card de contato nos
+// membros do grupo (o PO pediu o grid de contatos, não uma lista).
+export function PeopleCard({
   contact,
   organizationLabel,
   organizationLogo,
@@ -2468,11 +2449,6 @@ export function PeopleView({
   const groupMembersLoadingId = useAppStore(
     (state) => state.peopleGroupMembersLoadingId,
   );
-  const groupMembersError = useAppStore(
-    (state) => state.peopleGroupMembersError,
-  );
-  const groups = useAppStore((state) => state.peopleGroups);
-  const selectPeopleGroup = useAppStore((state) => state.selectPeopleGroup);
   const query = useAppStore((state) => state.peopleSearchQuery);
   const setPeopleSearchQuery = useAppStore(
     (state) => state.setPeopleSearchQuery,
@@ -2526,8 +2502,6 @@ export function PeopleView({
         : peopleTab === "category"
           ? categoryContacts
           : contacts;
-  const activeGroup =
-    groups.find((group) => group.id === selectedGroupId) ?? null;
   const groupMembersLoading =
     peopleTab === "groups" &&
     selectedGroupId != null &&
@@ -3065,6 +3039,10 @@ export function PeopleView({
     >
       {peopleTab === "organizations" ? (
         <OrganizationsView contacts={contacts} />
+      ) : peopleTab === "groups" ? (
+        // #578: Groups vira visão própria (grid → detalhe com membros), como o
+        // OrganizationsView — sai do caminho do DataGrid de contatos.
+        <GroupsView onCompose={onCompose} />
       ) : (
         <>
       <AssignToOrganizationSheet
@@ -3140,21 +3118,8 @@ export function PeopleView({
         </Alert>
       )}
 
-      {peopleTab === "groups" && groupMembersError && selectedGroupId && (
-        <Alert variant="destructive">
-          <AlertTitle>{t.controlRoom.peopleGroupsError}</AlertTitle>
-          <AlertDescription>{groupMembersError}</AlertDescription>
-          <AlertAction>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void selectPeopleGroup(selectedGroupId)}
-            >
-              {t.controlRoom.peopleTentarNovamente}
-            </Button>
-          </AlertAction>
-        </Alert>
-      )}
+      {/* #578: o erro de membros de grupo agora é tratado no GroupsView (a aba
+          "groups" tem visão própria); aqui só sobra o caminho de contatos. */}
 
       <div className="flex min-h-0 flex-1">
         {(() => {
@@ -3169,9 +3134,7 @@ export function PeopleView({
                 className="flex shrink-0 items-center gap-2 px-3 py-3"
               >
                 <h2 className="text-sm font-semibold">
-                  {peopleTab === "groups"
-                    ? activeGroup?.name ?? t.controlRoom.peopleGroupsSection
-                    : t.controlRoom.peopleContactsTab}
+                  {t.controlRoom.peopleContactsTab}
                 </h2>
                 <Badge variant="secondary" size="sm">
                   {filtered.length}
@@ -3302,11 +3265,7 @@ export function PeopleView({
               )}
               <FramePanel className="min-h-0 p-0">
                 {filtered.length === 0 && !(listLoading && !listLoaded) ? (
-                  peopleTab === "groups" &&
-                  !normalizedQuery &&
-                  filters.length === 0 ? (
-                    <PeopleGroupEmpty selected={selectedGroupId != null} />
-                  ) : semAcessoCaixa ? (
+                  semAcessoCaixa ? (
                     <PeoplePermissionEmpty
                       mensagem={t.controlRoom.peopleSemAcessoCaixa}
                     />

@@ -12,6 +12,16 @@ import {
   type PeopleSlice,
 } from "./people-slice.ts";
 import type { MergePlan } from "../lib/people-merge.ts";
+import type { PeopleContact } from "../lib/people.ts";
+
+/** Um contato mínimo, como se hidratado da nuvem (`/me/contacts`). */
+const contatoCloud = (id: string): PeopleContact => ({
+  id,
+  name: id,
+  emails: [{ address: `${id}@tenant-a.com` }],
+  phones: [],
+  organization: false,
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -450,4 +460,23 @@ test("#278 S3c bulk categorias: reverte só o item que falha e conta failed", as
   const c2 = state.peopleContacts.find((c) => c.id === "c2");
   assert.deepEqual(c1?.categories, ["Nova"], "c1 persiste");
   assert.deepEqual(c2?.categories, [], "c2 reverte no erro");
+});
+
+// #561: contatos e categorias são adapters de NUVEM tenant-scoped. A troca de
+// tenant (resetPeopleSession, #555) tem que zerar o cache — nunca servir dado
+// stale de outra conta (o login re-hidrata do tenant novo).
+test("#561 adapters de nuvem: resetPeopleSession zera contatos e categorias", () => {
+  const { state } = criarStore();
+  state.peopleContacts = [contatoCloud("a-1"), contatoCloud("a-2")];
+  state.peopleCategorias = new Map([
+    ["Cliente", "#ff0000"],
+    ["Interno", "#00ff00"],
+  ]);
+  state.peopleSelectedCategory = "Cliente";
+
+  state.resetPeopleSession();
+
+  assert.deepEqual(state.peopleContacts, [], "contatos do tenant anterior somem");
+  assert.equal(state.peopleCategorias.size, 0, "categorias do tenant anterior somem");
+  assert.equal(state.peopleSelectedCategory, null, "filtro de categoria reseta");
 });

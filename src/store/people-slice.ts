@@ -226,7 +226,18 @@ function personFromSuggestion(person: Pessoa): PeopleContact {
   };
 }
 
-/** Cache único e exclusivamente de sessão do módulo People (#166). */
+/**
+ * Cache único e exclusivamente de sessão do módulo People (#166).
+ *
+ * #561 — ADAPTERS DE NUVEM: `peopleContacts` e `peopleCategorias` NÃO são dados
+ * locais; a fonte da verdade vive na NUVEM (M365 via Graph) e estes campos são só
+ * o cache de sessão desses adapters:
+ *  - **Contatos** — `/me/contacts` (`graph.rs:6341-6428` / `api.ts`), por caixa
+ *    ativa (`peopleCaixaDados`, #495).
+ *  - **Categorias** — `masterCategories` (`graph.rs:1556,1592` / `api.ts:516,530`).
+ * Ambos são **tenant-scoped**: o login re-hidrata da nuvem e a troca de tenant os
+ * zera via `resetPeopleSession` (#555) — NUNCA servem dado stale de outra conta.
+ */
 export interface PeopleSlice {
   peopleSearchQuery: string;
   peopleContacts: PeopleContact[];
@@ -291,7 +302,7 @@ export interface PeopleSlice {
   resetPeopleSession: () => void;
   selectPeopleDirectory: (id?: string | null) => void;
   loadPeopleGroups: () => Promise<void>;
-  selectPeopleGroup: (groupId: string) => Promise<void>;
+  selectPeopleGroup: (groupId: string | null) => Promise<void>;
   /** #406: seleciona uma categoria no sidebar (filtra a grid por ela). */
   selectPeopleCategory: (nome: string) => void;
   /** #406: (re)carrega as categorias do Outlook (masterCategories). */
@@ -857,6 +868,11 @@ export function criarPeopleSlice(
     const m365Generation = get().peopleM365Generation;
     get().setPeopleTab("groups");
     get().selectPerson(null);
+    // #578: null desseleciona (volta pro grid de grupos), sem buscar membros.
+    if (groupId === null) {
+      set({ peopleSelectedGroupId: null, peopleGroupMembersError: null });
+      return;
+    }
     set({
       peopleSelectedGroupId: groupId,
       peopleGroupMembersError: null,

@@ -69,7 +69,13 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { TELAS, type Tela } from "@/lib/navegacao";
-import { useAppStore, resetSessaoCompleta } from "@/store";
+import {
+  useAppStore,
+  prepararConfiguracaoNuvem,
+  reconciliarConfiguracaoNuvem,
+  resetSessaoCompleta,
+  suspenderConfiguracaoNuvem,
+} from "@/store";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
@@ -298,7 +304,11 @@ function AppInner() {
         if (!vivo) return;
         if (u) {
           resetPeopleSession();
+          prepararConfiguracaoNuvem(u.email);
           setUser(u);
+          void reconciliarConfiguracaoNuvem().catch(() => {
+            // Offline/Graph indisponível: mantém o cache local desta conta.
+          });
           void hydratePeopleM365({ force: true });
           const permissions = await api.requiredScopesStatus();
           if (!vivo) return;
@@ -385,7 +395,11 @@ function AppInner() {
     resetSessaoCompleta();
     try {
       const u = await api.login(email, idioma);
+      prepararConfiguracaoNuvem(u.email);
       setUser(u);
+      void reconciliarConfiguracaoNuvem().catch(() => {
+        // Login não falha por indisponibilidade temporária da configuração.
+      });
       // #568: home = Atoms. Login (nova conta ou re-login) sempre cai no Atoms,
       // nunca herda o último módulo (o resetSessaoCompleta já zerou o nav do store).
       setTela("atoms");
@@ -780,6 +794,7 @@ function AppInner() {
 
 
   async function logout() {
+    suspenderConfiguracaoNuvem();
     await api.logout();
     // #555 (P0): fronteira de conta — reset completo de sessão (inclui fotos,
     // reauth, mailbox, agenda, organizations, branding, memos Rust…).
@@ -792,6 +807,7 @@ function AppInner() {
   }
 
   async function recuperarBloqueio() {
+    suspenderConfiguracaoNuvem();
     await api.logout();
     // #555 (P0): recuperação de bloqueio também sai da conta → reset completo.
     resetSessaoCompleta();
@@ -957,7 +973,11 @@ function AppInner() {
           <div className="relative z-20 px-4 pb-3">
             <Alert variant="warning">
               <KeyRound />
-              <AlertTitle>{t.reauth.titulo}</AlertTitle>
+              <AlertTitle>
+                <SoftBlurIn delay={80} stagger={18}>
+                  {t.reauth.titulo}
+                </SoftBlurIn>
+              </AlertTitle>
               <AlertDescription>{t.reauth.descricao}</AlertDescription>
               <AlertAction className="flex-wrap">
                 <Button variant="ghost" size="sm" onClick={dismissReauth}>
@@ -1084,21 +1104,21 @@ function AppInner() {
           )}
           {tela === "comms" && (
             <EmBreveScreen
-              titulo={t.nav.comms}
+              titulo={t.emBreveComms.titulo}
               icone={TELAS.comms.icone}
               descricao={t.emBreveComms.descricao}
             />
           )}
           {tela === "astro" && (
             <EmBreveScreen
-              titulo={t.nav.astro}
+              titulo={t.emBreveAstro.titulo}
               icone={TELAS.astro.icone}
               descricao={t.emBreveAstro.descricao}
             />
           )}
           {tela === "pulsar" && (
             <EmBreveScreen
-              titulo={t.nav.pulsar}
+              titulo={t.emBrevePulsar.titulo}
               icone={TELAS.pulsar.icone}
               descricao={t.emBrevePulsar.descricao}
             />

@@ -1,4 +1,6 @@
 import type { PeopleOrg } from "@/lib/organizations";
+import { normalizarAtomsPrefs, type AtomsPrefs } from "@/lib/atoms-prefs";
+import type { Idioma } from "@/lib/strings";
 import {
   normalizarDescricao,
   type TemplateEmail,
@@ -36,6 +38,7 @@ import {
 import { FILTERS_KEYS, type FiltersPersistido } from "./filters-slice";
 import { LIST_KEYS } from "./list-slice";
 import { MAILBOX_KEYS } from "./mailbox-slice";
+import { CLOUD_PREFS_KEYS } from "./cloud-prefs-slice";
 import { ORGANIZATIONS_KEYS } from "./organizations-slice";
 import {
   PERSONALIZATION_KEYS,
@@ -175,6 +178,7 @@ const TODAS_CHAVES = [
   ...Object.values(BRIDGE_KEYS),
   ...Object.values(AGENDA_KEYS),
   ...Object.values(ORGANIZATIONS_KEYS),
+  ...Object.values(CLOUD_PREFS_KEYS),
   // Chave legada da assinatura única (pré-#135): limpa no reset junto do resto.
   "bridge.assinatura",
 ];
@@ -183,11 +187,35 @@ const TODAS_CHAVES = [
  * #555 (P0): chaves persistidas que são TENANT-SCOPED — precisam ser purgadas do
  * disco na troca de conta pra não vazarem do tenant anterior (senão reidratam do
  * localStorage). As demais chaves persistidas são config/prefs (globais) e ficam.
- * Decisão de PO aplicada: `people.organizations` LIMPA na troca (isolamento).
+ * #560 (S3): `people.organizations` SAIU daqui — virou dado de nuvem (toolbox.json),
+ * então o cache local dele é purgado pelo caminho de owner-change (config-nuvem)
+ * e a verdade vem da nuvem no login. O reset #555 das orgs vira "só limpar cache".
  */
 const CHAVES_TENANT: readonly string[] = [
   MAILBOX_KEYS.caixasCompartilhadas,
   AGENDA_KEYS.agendaCalendariosSel,
+];
+
+/**
+ * Chaves locais que são apenas cache de dado sincronizado no OneDrive: o grupo A
+ * (config/prefs) + as `organizations` (#560, S3). Purgadas na troca de dono da
+ * conta pra o cache anterior não semear a nova (a nuvem é a autoridade).
+ */
+const CHAVES_CONFIG_NUVEM_LOCAL: readonly string[] = [
+  UI_KEYS.zoom,
+  UI_KEYS.sidebarAberta,
+  UI_KEYS.marcarLidoModo,
+  UI_KEYS.marcarLidoAtraso,
+  UI_KEYS.peopleTab,
+  FILTERS_KEYS.ordenar,
+  FILTERS_KEYS.ordemDesc,
+  FILTERS_KEYS.filtros,
+  LIST_KEYS.agruparConversas,
+  MAILBOX_KEYS.caixasCompartilhadas,
+  ...Object.values(PERSONALIZATION_KEYS),
+  ...Object.values(BRIDGE_KEYS),
+  ...Object.values(AGENDA_KEYS),
+  ...Object.values(CLOUD_PREFS_KEYS),
   ORGANIZATIONS_KEYS.organizations,
 ];
 
@@ -196,6 +224,19 @@ export function purgarChavesTenant(
   storage: KeyValueStorage = localStorage,
 ): void {
   for (const chave of CHAVES_TENANT) {
+    try {
+      storage.removeItem(chave);
+    } catch {
+      /* ignora */
+    }
+  }
+}
+
+/** Troca de conta: impede que o cache da conta anterior vire seed da nova. */
+export function purgarChavesConfigNuvem(
+  storage: KeyValueStorage = localStorage,
+): void {
+  for (const chave of CHAVES_CONFIG_NUVEM_LOCAL) {
     try {
       storage.removeItem(chave);
     } catch {
@@ -395,6 +436,25 @@ const localCacheCodec: LocalCacheCodec = {
       }));
     }
 
+    const idioma = lerTexto<Idioma>(storage, CLOUD_PREFS_KEYS.idioma, [
+      "pt-BR",
+      "en",
+    ]);
+    if (idioma !== undefined) state.idioma = idioma;
+    const atomsPrefs = lerChave<Partial<AtomsPrefs>>(
+      storage,
+      CLOUD_PREFS_KEYS.atomsPrefs,
+    );
+    if (atomsPrefs !== undefined) {
+      state.atomsPrefs = normalizarAtomsPrefs(atomsPrefs);
+    }
+    try {
+      const pular = storage.getItem(CLOUD_PREFS_KEYS.pularConfirmacaoConexao);
+      if (pular !== null) state.pularConfirmacaoConexao = pular === "1";
+    } catch {
+      /* ausente/indisponível: mantém o default */
+    }
+
     return state;
   },
 
@@ -463,6 +523,19 @@ const localCacheCodec: LocalCacheCodec = {
         ORGANIZATIONS_KEYS.organizations,
         organizationsSemLogoPersistido(state.organizations),
       );
+    }
+    gravarTexto(storage, CLOUD_PREFS_KEYS.idioma, state.idioma);
+    gravarChave(storage, CLOUD_PREFS_KEYS.atomsPrefs, state.atomsPrefs);
+    if (state.pularConfirmacaoConexao !== undefined) {
+      try {
+        if (state.pularConfirmacaoConexao) {
+          storage.setItem(CLOUD_PREFS_KEYS.pularConfirmacaoConexao, "1");
+        } else {
+          storage.removeItem(CLOUD_PREFS_KEYS.pularConfirmacaoConexao);
+        }
+      } catch {
+        /* localStorage indisponível: mantém somente o estado em memória */
+      }
     }
   },
 
