@@ -99,7 +99,7 @@ class MemoryBackend implements ConfigBackend, ConfigSnapshot {
   }
 }
 
-test("projeção cloud cobre grupo A e exclui cache/sessão/S3", () => {
+test("projeção cloud cobre grupo A + organizations (#560) e exclui cache/sessão", () => {
   const projected = projetarConfigNuvem({
     zoom: 1.2,
     idioma: "en",
@@ -123,10 +123,46 @@ test("projeção cloud cobre grupo A e exclui cache/sessão/S3", () => {
       densidade: "compacta",
     },
     pularConfirmacaoConexao: true,
+    // #560: orgs agora entram na projeção cloud (antes excluídas); cache/sessão
+    // (gruposColapsados, selectedSettingsItem) seguem fora.
+    organizations: [],
   });
 });
 
-test("matriz do grupo A fica explícita e completa", () => {
+test("#560: a projeção cloud das orgs strippa o logo (data-URI nunca sobe)", () => {
+  const projected = projetarConfigNuvem({
+    organizations: [
+      {
+        id: "org-1",
+        name: "VOAZ",
+        domains: ["voaz.builders"],
+        website: "",
+        notes: "",
+        memberIds: ["c-1", "c-2"],
+        excludedIds: [],
+        updatedAt: 1_700_000_000_000,
+        logo: "data:image/png;base64,PESADO===",
+      },
+    ] as AppPersistido["organizations"],
+  });
+
+  // A definição da org é preservada; só o logo vira null (re-hidratado local).
+  assert.deepEqual(projected.organizations, [
+    {
+      id: "org-1",
+      name: "VOAZ",
+      domains: ["voaz.builders"],
+      website: "",
+      notes: "",
+      memberIds: ["c-1", "c-2"],
+      excludedIds: [],
+      updatedAt: 1_700_000_000_000,
+      logo: null,
+    },
+  ]);
+});
+
+test("matriz do grupo A + organizations (#560) fica explícita e completa", () => {
   assert.deepEqual(CHAVES_CONFIG_NUVEM, [
     "zoom",
     "sidebarAberta",
@@ -150,6 +186,7 @@ test("matriz do grupo A fica explícita e completa", () => {
     "syncIntervalMinutes",
     "agendaView",
     "agendaCalendariosSelecionados",
+    "organizations",
     "idioma",
     "atomsPrefs",
     "pularConfirmacaoConexao",
@@ -164,7 +201,8 @@ test("OneDriveJsonBackend trata arquivo ausente e rejeita JSON não objeto", asy
   });
   assert.deepEqual(await absent.load(), {});
   await absent.save({ zoom: 1.1, organizations: [] });
-  assert.deepEqual(JSON.parse(writes[0]), { zoom: 1.1 });
+  // #560: orgs agora fazem parte do toolbox.json (antes eram stripadas na escrita).
+  assert.deepEqual(JSON.parse(writes[0]), { zoom: 1.1, organizations: [] });
 
   const invalid = new OneDriveJsonBackend({
     read: async () => "[]",
@@ -203,6 +241,38 @@ test("LayeredBackend usa nuvem como autoridade e completa schema antigo", async 
   assert.deepEqual(await layered.load(), { zoom: 1.5, sidebarAberta: true });
   assert.deepEqual(local.getSnapshot(), { zoom: 1.5, sidebarAberta: true });
   assert.deepEqual(cloud.saves.at(-1), { zoom: 1.5, sidebarAberta: true });
+  layered.deactivate();
+});
+
+test("#560: troca de tenant — load traz as orgs do tenant novo, sem vazar o anterior", async () => {
+  // O owner-change (prepararConfiguracaoNuvem) purga CHAVES_CONFIG_NUVEM_LOCAL —
+  // que agora inclui as orgs — ANTES do load; aqui o cache local já entra vazio.
+  const local = new MemoryBackend({});
+  // A OneDrive do tenant NOVO (Graph delegado = usuário atual) só tem as orgs dele.
+  const cloudTenantB = new MemoryBackend({
+    organizations: [
+      {
+        id: "b-1",
+        name: "Tenant B Org",
+        domains: [],
+        website: "",
+        notes: "",
+        memberIds: [],
+        excludedIds: [],
+        updatedAt: 1,
+        logo: null,
+      },
+    ] as AppPersistido["organizations"],
+  });
+  const layered = new LayeredBackend(local, cloudTenantB);
+
+  layered.activate();
+  const loaded = await layered.load();
+  // Só as orgs do tenant B; nenhuma herança do tenant anterior.
+  assert.deepEqual(
+    loaded.organizations?.map((org) => org.id),
+    ["b-1"],
+  );
   layered.deactivate();
 });
 

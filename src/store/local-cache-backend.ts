@@ -187,15 +187,20 @@ const TODAS_CHAVES = [
  * #555 (P0): chaves persistidas que são TENANT-SCOPED — precisam ser purgadas do
  * disco na troca de conta pra não vazarem do tenant anterior (senão reidratam do
  * localStorage). As demais chaves persistidas são config/prefs (globais) e ficam.
- * Decisão de PO aplicada: `people.organizations` LIMPA na troca (isolamento).
+ * #560 (S3): `people.organizations` SAIU daqui — virou dado de nuvem (toolbox.json),
+ * então o cache local dele é purgado pelo caminho de owner-change (config-nuvem)
+ * e a verdade vem da nuvem no login. O reset #555 das orgs vira "só limpar cache".
  */
 const CHAVES_TENANT: readonly string[] = [
   MAILBOX_KEYS.caixasCompartilhadas,
   AGENDA_KEYS.agendaCalendariosSel,
-  ORGANIZATIONS_KEYS.organizations,
 ];
 
-/** Chaves locais que são apenas cache do grupo A sincronizado no OneDrive. */
+/**
+ * Chaves locais que são apenas cache de dado sincronizado no OneDrive: o grupo A
+ * (config/prefs) + as `organizations` (#560, S3). Purgadas na troca de dono da
+ * conta pra o cache anterior não semear a nova (a nuvem é a autoridade).
+ */
 const CHAVES_CONFIG_NUVEM_LOCAL: readonly string[] = [
   UI_KEYS.zoom,
   UI_KEYS.sidebarAberta,
@@ -211,6 +216,7 @@ const CHAVES_CONFIG_NUVEM_LOCAL: readonly string[] = [
   ...Object.values(BRIDGE_KEYS),
   ...Object.values(AGENDA_KEYS),
   ...Object.values(CLOUD_PREFS_KEYS),
+  ORGANIZATIONS_KEYS.organizations,
 ];
 
 /** Remove do localStorage as chaves tenant-scoped (troca de conta). */
