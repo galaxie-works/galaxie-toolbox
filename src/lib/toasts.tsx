@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
+import { cn } from "@/lib/utils"
 
 /**
  * Helpers de toast reutilizáveis, agnósticos a i18n.
@@ -156,9 +157,41 @@ export function toastMensagem(opts: {
   rotuloResponder: string
   rotuloDispensar: string
   onResponder: () => void
+  // #604: clicar no CORPO do toast abre o e-mail no leitor (mesmo fluxo do clique
+  // na lista). Opcional — sem ele o toast segue puramente informativo.
+  onAbrir?: () => void
 }): void {
-  toast.custom(() => (
-    <div className="bg-popover text-popover-foreground border-border flex w-[356px] items-start gap-3 rounded-md border p-4 shadow-lg">
+  // #604: dismiss POR-toast (`toast.dismiss(id)`, id = retorno do custom) —
+  // mesmo padrão provado do `toastDownload`. Com vários toasts, clicar/dispensar
+  // um fecha só o dele; o closure do onAbrir garante que cada um abre o SEU.
+  const id = toast.custom(() => (
+    <div
+      className={cn(
+        "bg-popover text-popover-foreground border-border flex w-[356px] items-start gap-3 rounded-md border p-4 shadow-lg",
+        opts.onAbrir && "cursor-pointer"
+      )}
+      role={opts.onAbrir ? "button" : undefined}
+      tabIndex={opts.onAbrir ? 0 : undefined}
+      onClick={
+        opts.onAbrir
+          ? () => {
+              opts.onAbrir!()
+              toast.dismiss(id)
+            }
+          : undefined
+      }
+      onKeyDown={
+        opts.onAbrir
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                opts.onAbrir!()
+                toast.dismiss(id)
+              }
+            }
+          : undefined
+      }
+    >
       <Avatar className="size-9 shrink-0">
         {opts.foto ? (
           <AvatarImage src={opts.foto} alt={opts.nome} />
@@ -175,18 +208,23 @@ export function toastMensagem(opts: {
           {opts.texto}
         </p>
         <div className="mt-2 flex gap-2">
+          {/* stopPropagation: os botões não devem disparar o abrir do corpo. */}
           <Button
             size="sm"
             variant="outline"
-            onClick={() => toast.dismiss()}
+            onClick={(e) => {
+              e.stopPropagation()
+              toast.dismiss(id)
+            }}
           >
             {opts.rotuloDispensar}
           </Button>
           <Button
             size="sm"
-            onClick={() => {
+            onClick={(e) => {
+              e.stopPropagation()
               opts.onResponder()
-              toast.dismiss()
+              toast.dismiss(id)
             }}
           >
             {opts.rotuloResponder}
