@@ -22,6 +22,7 @@ function strPeople() {
   return DICIONARIOS[idiomaAtual()].controlRoom;
 }
 import type {
+  ContactFolder,
   PeopleBulkDetailsChange,
   PeopleBulkDetailsField,
   PeopleContactEdit,
@@ -41,6 +42,12 @@ type PeopleApi = Pick<
   | "crPeopleDirectory"
   | "crPeopleGroups"
   | "crPeopleGroupMembers"
+  | "crContactFolders"
+  | "crFolderContacts"
+  | "crCreateContactFolder"
+  | "crRenameContactFolder"
+  | "crDeleteContactFolder"
+  | "crMoveContact"
   | "crPeopleEnrichPreview"
   | "crPeopleCompanyWrite"
   | "crPeopleDetailsWrite"
@@ -280,6 +287,15 @@ export interface PeopleSlice {
   peopleGroupMembersById: Record<string, PeopleContact[]>;
   peopleGroupMembersLoadingId: string | null;
   peopleGroupMembersError: string | null;
+  // #562: pastas de contato PESSOAIS (contactFolders) — grupos editáveis do
+  // usuário, seção separada dos grupos M365 read-only acima.
+  contactFolders: ContactFolder[];
+  contactFoldersLoading: boolean;
+  contactFoldersLoaded: boolean;
+  contactFoldersError: string | null;
+  selectedContactFolderId: string | null;
+  folderContactsById: Record<string, PeopleContact[]>;
+  folderContactsLoadingId: string | null;
   peopleMergeRunning: boolean;
   peopleMergeUndo: PeopleMergeUndoState | null;
   /** #406: categorias do Outlook (nome→cor hex), hidratadas no login. */
@@ -303,6 +319,16 @@ export interface PeopleSlice {
   selectPeopleDirectory: (id?: string | null) => void;
   loadPeopleGroups: () => Promise<void>;
   selectPeopleGroup: (groupId: string | null) => Promise<void>;
+  // #562: pastas de contato pessoais (contactFolders) — CRUD + mover contato.
+  loadContactFolders: () => Promise<void>;
+  selectContactFolder: (folderId: string | null) => Promise<void>;
+  createContactFolder: (nome: string) => Promise<void>;
+  renameContactFolder: (folderId: string, nome: string) => Promise<void>;
+  deleteContactFolder: (folderId: string) => Promise<void>;
+  moveContactToFolder: (
+    contactId: string,
+    targetFolderId: string,
+  ) => Promise<void>;
   /** #406: seleciona uma categoria no sidebar (filtra a grid por ela). */
   selectPeopleCategory: (nome: string) => void;
   /** #406: (re)carrega as categorias do Outlook (masterCategories). */
@@ -422,6 +448,13 @@ export function criarPeopleSlice(
   peopleGroupMembersById: {},
   peopleGroupMembersLoadingId: null,
   peopleGroupMembersError: null,
+  contactFolders: [],
+  contactFoldersLoading: false,
+  contactFoldersLoaded: false,
+  contactFoldersError: null,
+  selectedContactFolderId: null,
+  folderContactsById: {},
+  folderContactsLoadingId: null,
   peopleMergeRunning: false,
   peopleMergeUndo: null,
   peopleCategorias: new Map(),
@@ -790,6 +823,14 @@ export function criarPeopleSlice(
       peopleGroupMembersById: {},
       peopleGroupMembersLoadingId: null,
       peopleGroupMembersError: null,
+      // #562: pastas de contato pessoais são tenant-scoped — zera na troca de conta.
+      contactFolders: [],
+      contactFoldersLoading: false,
+      contactFoldersLoaded: false,
+      contactFoldersError: null,
+      selectedContactFolderId: null,
+      folderContactsById: {},
+      folderContactsLoadingId: null,
       // #555: campos que a reset esquecia — categorias, filtro de categoria e o
       // estado do merge são tenant-scoped e não podem vazar entre contas.
       peopleCategorias: new Map(),
@@ -918,6 +959,139 @@ export function criarPeopleSlice(
         peopleGroupMembersLoadingId: null,
         peopleGroupMembersError: String(error),
       });
+    }
+  },
+  // #562: pastas de contato PESSOAIS (contactFolders) — CRUD + mover contato.
+  loadContactFolders: async () => {
+    const { contactFoldersLoading, contactFoldersLoaded, peopleSessionGeneration } =
+      get();
+    if (contactFoldersLoading || contactFoldersLoaded) return;
+    set({ contactFoldersLoading: true, contactFoldersError: null });
+    try {
+      const result = await client.crContactFolders();
+      if (get().peopleSessionGeneration !== peopleSessionGeneration) return;
+      set({
+        contactFolders: result.folders,
+        contactFoldersLoading: false,
+        contactFoldersLoaded: true,
+        contactFoldersError:
+          [...result.failures, ...result.missingScopes].join(" · ") || null,
+      });
+    } catch (error) {
+      if (get().peopleSessionGeneration !== peopleSessionGeneration) return;
+      set({
+        contactFoldersLoading: false,
+        contactFoldersLoaded: true,
+        contactFoldersError: String(error),
+      });
+    }
+  },
+  selectContactFolder: async (folderId) => {
+    const sessionGeneration = get().peopleSessionGeneration;
+    get().setPeopleTab("personalGroups");
+    get().selectPerson(null);
+    if (folderId === null) {
+      set({ selectedContactFolderId: null });
+      return;
+    }
+    set({ selectedContactFolderId: folderId });
+    if (Object.hasOwn(get().folderContactsById, folderId)) return;
+    set({ folderContactsLoadingId: folderId });
+    try {
+      const result = await client.crFolderContacts(folderId);
+      if (get().peopleSessionGeneration !== sessionGeneration) return;
+      const contacts = mergePeopleRecords(result.records);
+      set((state) => ({
+        folderContactsById: { ...state.folderContactsById, [folderId]: contacts },
+        folderContactsLoadingId:
+          state.folderContactsLoadingId === folderId
+            ? null
+            : state.folderContactsLoadingId,
+      }));
+    } catch (error) {
+      if (get().peopleSessionGeneration !== sessionGeneration) return;
+      set({ folderContactsLoadingId: null, contactFoldersError: String(error) });
+    }
+  },
+  createContactFolder: async (nome) => {
+    const criado = await client.crCreateContactFolder(nome.trim());
+    set((state) => ({
+      contactFolders: [...state.contactFolders, criado].sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+      ),
+      folderContactsById: { ...state.folderContactsById, [criado.id]: [] },
+    }));
+  },
+  renameContactFolder: async (folderId, nome) => {
+    const antes = get().contactFolders;
+    const novoNome = nome.trim();
+    set({
+      contactFolders: antes
+        .map((f) => (f.id === folderId ? { ...f, name: novoNome } : f))
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+        ),
+    });
+    try {
+      await client.crRenameContactFolder(folderId, novoNome);
+    } catch (error) {
+      set({ contactFolders: antes });
+      throw error;
+    }
+  },
+  deleteContactFolder: async (folderId) => {
+    const antesFolders = get().contactFolders;
+    const antesContacts = get().folderContactsById;
+    const antesSelected = get().selectedContactFolderId;
+    set((state) => {
+      const { [folderId]: _removida, ...rest } = state.folderContactsById;
+      return {
+        contactFolders: state.contactFolders.filter((f) => f.id !== folderId),
+        folderContactsById: rest,
+        selectedContactFolderId:
+          state.selectedContactFolderId === folderId
+            ? null
+            : state.selectedContactFolderId,
+      };
+    });
+    try {
+      await client.crDeleteContactFolder(folderId);
+    } catch (error) {
+      set({
+        contactFolders: antesFolders,
+        folderContactsById: antesContacts,
+        selectedContactFolderId: antesSelected,
+      });
+      throw error;
+    }
+  },
+  moveContactToFolder: async (contactId, targetFolderId) => {
+    // O contato movível vive numa das pastas carregadas; o `contactId` do Graph
+    // (editável) é a origem do PATCH parentFolderId.
+    const contato = Object.values(get().folderContactsById)
+      .flat()
+      .find((c) => c.id === contactId);
+    if (!contato || !contato.contactId) {
+      throw new Error("Contact is not movable.");
+    }
+    const graphContactId = contato.contactId;
+    const antes = get().folderContactsById;
+    // Otimista: tira da pasta atual e põe na de destino (se carregada).
+    set((state) => {
+      const next: Record<string, PeopleContact[]> = {};
+      for (const [fid, list] of Object.entries(state.folderContactsById)) {
+        next[fid] = list.filter((c) => c.id !== contactId);
+      }
+      if (Object.hasOwn(next, targetFolderId)) {
+        next[targetFolderId] = [...next[targetFolderId], contato];
+      }
+      return { folderContactsById: next };
+    });
+    try {
+      await client.crMoveContact(graphContactId, targetFolderId);
+    } catch (error) {
+      set({ folderContactsById: antes });
+      throw error;
     }
   },
   autoEnrichDirectoryContact: async (id, sameOrganization) => {

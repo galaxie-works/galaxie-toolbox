@@ -20,6 +20,8 @@ export type PeopleTab =
   | "directory"
   | "organizations"
   | "groups"
+  // #562: grupos de contato pessoais (contactFolders) — seção editável separada.
+  | "personalGroups"
   | "category";
 
 export interface UiSlice {

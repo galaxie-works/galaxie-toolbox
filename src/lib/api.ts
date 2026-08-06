@@ -26,6 +26,8 @@ import type {
   PeopleEnrichPreview,
   PeopleInteraction,
   PeopleDirectoryResult,
+  ContactFolder,
+  ContactFoldersResult,
   PeopleGroupMembersResult,
   PeopleGroupsResult,
   PeopleListResult,
@@ -1173,6 +1175,90 @@ export async function crPeopleGroupMembers(
     return { records, memberCount: records.length };
   }
   return invoke<PeopleGroupMembersResult>("cr_grupo_membros", { groupId });
+}
+
+// #562: grupos de contato PESSOAIS via contactFolders (Contacts.ReadWrite) —
+// pastas editáveis do usuário, distintas dos grupos M365 read-only acima.
+
+/** Lista as pastas de contato pessoais do usuário. */
+export async function crContactFolders(): Promise<ContactFoldersResult> {
+  if (!inTauri()) {
+    await sleep(300);
+    return {
+      folders: [
+        { id: "folder-clientes", name: "Clientes", parentFolderId: "" },
+        { id: "folder-fornecedores", name: "Fornecedores", parentFolderId: "" },
+      ],
+      missingScopes: [],
+      failures: [],
+    };
+  }
+  return invoke<ContactFoldersResult>("cr_contact_folders");
+}
+
+/** Contatos dentro de uma pasta pessoal (mesmo shape do crPeopleList). */
+export async function crFolderContacts(
+  folderId: string,
+  nextLinks: string[] = [],
+): Promise<PeopleListResult> {
+  if (!inTauri()) {
+    await sleep(400);
+    // Contatos de pasta são contatos pessoais editáveis (source "contacts" →
+    // ganham contactId, que habilita o "mover para pasta").
+    const base = MOCK_DIRECTORY_RECORDS.map((record, i) => ({
+      ...record,
+      id: `${folderId}-c${i}`,
+      source: "contacts" as const,
+      emails: record.emails.map((email) => ({ ...email })),
+      phones: record.phones.map((phone) => ({ ...phone })),
+    }));
+    const records =
+      folderId === "folder-fornecedores" ? base.slice(0, 1) : base.slice(0, 2);
+    return { records, missingScopes: [], failures: [], nextLinks: [] };
+  }
+  return invoke<PeopleListResult>("cr_pasta_contatos", { folderId, nextLinks });
+}
+
+/** Cria uma pasta de contatos pessoal; devolve a pasta criada (com id real). */
+export async function crCreateContactFolder(nome: string): Promise<ContactFolder> {
+  if (!inTauri()) {
+    await sleep(300);
+    return { id: `folder-${Date.now()}`, name: nome, parentFolderId: "" };
+  }
+  return invoke<ContactFolder>("cr_criar_pasta_contato", { nome });
+}
+
+/** Renomeia uma pasta de contatos pessoal. */
+export async function crRenameContactFolder(
+  folderId: string,
+  nome: string,
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(250);
+    return;
+  }
+  await invoke("cr_renomear_pasta_contato", { folderId, nome });
+}
+
+/** Exclui uma pasta de contatos pessoal (os contatos dela vão junto). */
+export async function crDeleteContactFolder(folderId: string): Promise<void> {
+  if (!inTauri()) {
+    await sleep(250);
+    return;
+  }
+  await invoke("cr_excluir_pasta_contato", { folderId });
+}
+
+/** Move um contato pra outra pasta (PATCH parentFolderId; id do contato estável). */
+export async function crMoveContact(
+  contactId: string,
+  folderId: string,
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(250);
+    return;
+  }
+  await invoke("cr_mover_contato", { contactId, folderId });
 }
 
 /** Busca sugestões revisáveis para um contato sem alterar nada. */

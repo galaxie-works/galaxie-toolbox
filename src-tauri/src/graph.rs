@@ -6771,6 +6771,312 @@ pub fn cr_people_contact_delete(store: &TokenStore, contact_id: &str) -> Result<
     }
 }
 
+// ===== #562: grupos de contato PESSOAIS via /me/contactFolders (Contacts.ReadWrite)
+// Distintos dos grupos M365 read-only (cr_grupos / /me/memberOf): estes são pastas
+// editáveis privadas do usuário — CRUD de pasta + mover contato entre pastas. =====
+
+/// Pasta de contatos pessoal (Graph contactFolder) — grupo editável do usuário.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactFolder {
+    pub id: String,
+    pub name: String,
+    pub parent_folder_id: String,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContactFoldersResult {
+    pub folders: Vec<ContactFolder>,
+    pub missing_scopes: Vec<String>,
+    pub failures: Vec<String>,
+}
+
+/// Lista as pastas de contato pessoais (GET /me/contactFolders). Leitura só exige
+/// Contacts.Read (subset do ReadWrite já concedido). Ordena por nome.
+pub fn cr_contact_folders(store: &TokenStore) -> Result<ContactFoldersResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let mut result = ContactFoldersResult {
+        folders: Vec::new(),
+        missing_scopes: Vec::new(),
+        failures: Vec::new(),
+    };
+    let mut proxima = Some(format!(
+        "{GRAPH}/me/contactFolders?$top=200&$select=id,displayName,parentFolderId"
+    ));
+    while let Some(url) = proxima.take() {
+        if !url.starts_with(GRAPH) {
+            result
+                .failures
+                .push("ContactFolders: continuation URL outside Microsoft Graph".to_string());
+            break;
+        }
+        match graph_enviar("people:contact-folders", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        }) {
+            Ok(resp) if resp.status().is_success() => {
+                let body: serde_json::Value = match resp.json() {
+                    Ok(b) => b,
+                    Err(e) => {
+                        result
+                            .failures
+                            .push(format!("ContactFolders: resposta invalida ({e})"));
+                        break;
+                    }
+                };
+                proxima = body["@odata.nextLink"].as_str().map(str::to_string);
+                if let Some(items) = body["value"].as_array() {
+                    result.folders.extend(items.iter().filter_map(|item| {
+                        let id = item["id"].as_str()?.trim();
+                        if id.is_empty() {
+                            return None;
+                        }
+                        Some(ContactFolder {
+                            id: id.to_string(),
+                            name: item["displayName"].as_str().unwrap_or("").trim().to_string(),
+                            parent_folder_id: item["parentFolderId"]
+                                .as_str()
+                                .unwrap_or("")
+                                .trim()
+                                .to_string(),
+                        })
+                    }));
+                }
+            }
+            Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
+                result.missing_scopes.push("Contacts.Read".to_string());
+                break;
+            }
+            Ok(resp) => {
+                result
+                    .failures
+                    .push(format!("ContactFolders: Graph retornou {}", resp.status()));
+                break;
+            }
+            Err(error) => {
+                result
+                    .failures
+                    .push(format!("ContactFolders: falha de rede ({error})"));
+                break;
+            }
+        }
+    }
+    result
+        .folders
+        .sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(result)
+}
+
+/// Contatos dentro de uma pasta (GET /me/contactFolders/{id}/contacts). Devolve o
+/// MESMO PeopleListResult do cr_people_list (source=contacts) → cai direto no
+/// mergePeopleRecords do front, sem mudança de shape.
+pub fn cr_pasta_contatos(
+    store: &TokenStore,
+    folder_id: &str,
+    next_links: Vec<String>,
+) -> Result<PeopleListResult, String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let folder_id = folder_id.trim();
+    let mut result = PeopleListResult {
+        records: Vec::new(),
+        missing_scopes: Vec::new(),
+        failures: Vec::new(),
+        next_links: Vec::new(),
+    };
+    if folder_id.is_empty() {
+        return Ok(result);
+    }
+    let base = format!(
+        "{GRAPH}/me/contactFolders/{}/contacts",
+        urlencoding::encode(folder_id)
+    );
+    let urls: Vec<String> = if next_links.is_empty() {
+        vec![format!(
+            "{base}?$top=100&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager,categories"
+        )]
+    } else {
+        next_links
+            .into_iter()
+            .filter(|u| u.starts_with(GRAPH) && u.contains("/contactFolders/"))
+            .collect()
+    };
+    for url in urls {
+        match graph_enviar("people:folder-contacts", GRAPH_TETO_ESPERA_S, || {
+            client.get(&url).bearer_auth(&token).send()
+        }) {
+            Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>() {
+                Ok(body) => {
+                    if let Some(next_link) = body["@odata.nextLink"].as_str() {
+                        result.next_links.push(next_link.to_string());
+                    }
+                    if let Some(items) = body["value"].as_array() {
+                        result.records.extend(items.iter().filter_map(|item| {
+                            let emails = emails_de_contato(item);
+                            if emails.is_empty() {
+                                return None;
+                            }
+                            Some(PeopleRecord {
+                                id: item["id"].as_str().unwrap_or("").to_string(),
+                                source: "contacts".to_string(),
+                                name: item["displayName"].as_str().unwrap_or("").trim().to_string(),
+                                emails,
+                                phones: telefones_de_contato(item),
+                                job_title: texto_opcional(item, "jobTitle"),
+                                company: texto_opcional(item, "companyName"),
+                                department: texto_opcional(item, "department"),
+                                office_location: texto_opcional(item, "officeLocation"),
+                                manager: texto_opcional(item, "manager"),
+                                organization: false,
+                                people_rank: None,
+                                categories: item["categories"]
+                                    .as_array()
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|c| c.as_str().map(|s| s.to_string()))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                            })
+                        }));
+                    }
+                }
+                Err(error) => result
+                    .failures
+                    .push(format!("FolderContacts: resposta invalida ({error})")),
+            },
+            Ok(resp) if matches!(resp.status().as_u16(), 401 | 403) => {
+                result.missing_scopes.push("Contacts.Read".to_string());
+            }
+            Ok(resp) => result
+                .failures
+                .push(format!("FolderContacts: Graph retornou {}", resp.status())),
+            Err(error) => result
+                .failures
+                .push(format!("FolderContacts: falha de rede ({error})")),
+        }
+    }
+    Ok(result)
+}
+
+/// Cria uma pasta de contatos (POST /me/contactFolders). Devolve a pasta criada
+/// (com o id do Graph, pro front trocar o otimista pelo real).
+pub fn cr_criar_pasta_contato(store: &TokenStore, nome: &str) -> Result<ContactFolder, String> {
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Err("Contacts.ReadWrite is required to manage contact folders.".to_string());
+    }
+    let nome = nome.trim();
+    if nome.is_empty() {
+        return Err("Invalid folder name.".to_string());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/contactFolders");
+    let body = serde_json::json!({ "displayName": nome });
+    let resp = graph_enviar("people:folder-create", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("Failed to create contact folder: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita("me/contactFolders", "criar pasta", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    Ok(ContactFolder {
+        id: v["id"].as_str().unwrap_or("").to_string(),
+        name: v["displayName"].as_str().unwrap_or(nome).trim().to_string(),
+        parent_folder_id: v["parentFolderId"].as_str().unwrap_or("").trim().to_string(),
+    })
+}
+
+/// Renomeia uma pasta de contatos (PATCH /me/contactFolders/{id} {displayName}).
+pub fn cr_renomear_pasta_contato(
+    store: &TokenStore,
+    folder_id: &str,
+    nome: &str,
+) -> Result<(), String> {
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Err("Contacts.ReadWrite is required to manage contact folders.".to_string());
+    }
+    let folder_id = folder_id.trim();
+    let nome = nome.trim();
+    if folder_id.is_empty() || nome.is_empty() {
+        return Err("Invalid folder.".to_string());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!(
+        "{GRAPH}/me/contactFolders/{}",
+        urlencoding::encode(folder_id)
+    );
+    let body = serde_json::json!({ "displayName": nome });
+    let resp = graph_enviar("people:folder-rename", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("Failed to rename contact folder: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita("me/contactFolders", "renomear pasta", resp.status()));
+    }
+    Ok(())
+}
+
+/// Exclui uma pasta de contatos (DELETE /me/contactFolders/{id}). 404 = sucesso
+/// (idempotente). Os contatos dentro dela são removidos junto pelo Graph.
+pub fn cr_excluir_pasta_contato(store: &TokenStore, folder_id: &str) -> Result<(), String> {
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Err("Contacts.ReadWrite is required to manage contact folders.".to_string());
+    }
+    let folder_id = folder_id.trim();
+    if folder_id.is_empty() {
+        return Err("Invalid folder.".to_string());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!(
+        "{GRAPH}/me/contactFolders/{}",
+        urlencoding::encode(folder_id)
+    );
+    let resp = graph_enviar("people:folder-delete", GRAPH_TETO_ESPERA_S, || {
+        client.delete(&url).bearer_auth(&token).send()
+    })
+    .map_err(|e| format!("Failed to delete contact folder: {e}"))?;
+    if resp.status().is_success() || resp.status().as_u16() == 404 {
+        Ok(())
+    } else {
+        Err(erro_escrita("me/contactFolders", "excluir pasta", resp.status()))
+    }
+}
+
+/// Move um contato para outra pasta (PATCH /me/contacts/{id} {parentFolderId}).
+/// Graph v1.0 NÃO tem action /move pra contato; `parentFolderId` é atualizável no
+/// PATCH e mantém o id do contato estável (sem remap de cache no front).
+pub fn cr_mover_contato(
+    store: &TokenStore,
+    contact_id: &str,
+    folder_id: &str,
+) -> Result<(), String> {
+    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
+        return Err("Contacts.ReadWrite is required to move contacts.".to_string());
+    }
+    let contact_id = contact_id.trim();
+    let folder_id = folder_id.trim();
+    if contact_id.is_empty() || folder_id.is_empty() {
+        return Err("Invalid contact or folder.".to_string());
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/contacts/{}", urlencoding::encode(contact_id));
+    let body = serde_json::json!({ "parentFolderId": folder_id });
+    let resp = graph_enviar("people:contact-move", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("Failed to move contact: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita("me/contacts", "mover contato", resp.status()));
+    }
+    Ok(())
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PeopleCompanyWriteResult {
