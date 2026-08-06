@@ -1,4 +1,4 @@
-# Documentação — GALAXIE Toolbox
+# Documentação — GALAXIE
 
 Docs escopados **por área do app**. Cada pasta agrupa specs, research e replans de um módulo. Specs de design descrevem a *intenção* — o comportamento real vive no código; onde um doc é snapshot histórico, ele traz um banner de estado no topo.
 

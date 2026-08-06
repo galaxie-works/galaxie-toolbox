@@ -1,6 +1,6 @@
 # Atoms — Galaxie Apps home / user dashboard — Design Spec
 
-Issue #181 · GALAXIE Toolbox
+Issue #181 · GALAXIE
 Stack: Tauri 2 + React 19 + TypeScript + Tailwind v4 + shadcn/new-york + **reui** registry + **animate-ui** (motion). Microsoft Graph (delegated).
 Status: research + design only (no code).
 

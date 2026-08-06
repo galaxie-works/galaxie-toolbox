@@ -1,4 +1,4 @@
-# AGENTS.md — GALAXIE Toolbox
+# AGENTS.md — GALAXIE
 
 Instruções operacionais para agentes (Claude e afins) que trabalham neste repositório.
 Escopo atual em foco: **Bridge** (cliente de e-mail dentro do app) + track paralelo de migração.

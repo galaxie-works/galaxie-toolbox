@@ -2,7 +2,7 @@
 
 > 📌 **Spec de discovery. Estado atual: PARCIALMENTE ENTREGUE** — S1–S3 do épico #178 shipados (#188 rework → #189 engine → #190). Decisão de engine (#189) pode ainda estar em aberto com o Vega. Este doc é o plano original; o comportamento real vive no código (`src/components/.../preview*`) e nos PRs.
 
-Issue #178 · GALAXIE Toolbox / Bridge email client
+Issue #178 · GALAXIE / Bridge email client
 Stack: Tauri 2 (multi-webview) + React 19 + TypeScript + Tailwind v4 + shadcn/new-york + **reui** registry
 Status: research + design only (no code). Reuse-first, cost-honest.
 

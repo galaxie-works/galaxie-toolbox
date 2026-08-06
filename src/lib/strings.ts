@@ -1302,7 +1302,7 @@ const pt = {
     // Startup
     startupLabel: "Abrir na inicialização",
     startupDesc:
-      "Abrir o GALAXIE Toolbox automaticamente ao entrar no Windows.",
+      "Abrir o GALAXIE automaticamente ao entrar no Windows.",
     startupErro:
       "Não foi possível atualizar a inicialização automática. Tente novamente.",
     // Background (#474: fundos animados dentro do Appearance)
@@ -1312,13 +1312,7 @@ const pt = {
     // Language
     languageDesc:
       "Escolha o idioma do app, independente do idioma do seu Windows.",
-    // Telemetry
-    telBanner:
-      "Os diagnósticos anônimos estão {estado} — desligue abaixo qualquer categoria que você não quiser. O GALAXIE Toolbox nunca coleta dados pessoais — nada de e-mails, nomes, conteúdo de mensagens, URLs ou caminhos de arquivo, só diagnósticos anônimos e agrupados. Os dados são self-hosted.",
-    telBannerEstado: "ligados por padrão",
-    telAviso1run:
-      "Pra ajudar a melhorar o GALAXIE Toolbox, os diagnósticos anônimos vêm ligados por padrão. Nenhum dado pessoal é coletado. Você pode desligar qualquer categoria aqui a qualquer momento.",
-    telAvisoOk: "Entendi",
+    // Telemetry (#580: banner/aviso/rodapé removidos — só os 3 opt-outs ficam)
     telCrashLabel: "Relatórios de erro",
     telCrashDesc:
       "Envie relatórios de erro pra a gente corrigir o que quebra. Só diagnóstico essencial.",
@@ -1328,9 +1322,6 @@ const pt = {
     telUsoLabel: "Uso anônimo",
     telUsoDesc:
       "Compartilhe estatísticas anônimas de uso de recursos pra sabermos o que melhorar.",
-    telRevogarDesc:
-      "Revogar desliga tudo, limpa a fila local e reinicia o seu id de sessão efêmero.",
-    telRevogarBtn: "Revogar tudo",
     // Navigator
     navigatorSearchTitulo: "Mecanismo de busca padrão",
     navigatorSearchDesc:
@@ -1380,25 +1371,48 @@ const pt = {
     cfgGeneralLabel: "Configurações gerais",
     cfgAppsLabel: "Apps",
     cfgAccountsLabel: "Contas",
-    cfgAccountsDesc: "Gerencie as contas conectadas ao GALAXIE Toolbox.",
+    cfgAccountsDesc: "Gerencie as contas conectadas ao GALAXIE.",
     cfgAccountsEmptyTitulo: "Contas",
     cfgAccountsEmptyDesc: "Múltiplas contas chegam em breve.",
     cfgPersonalizationLabel: "Personalização",
-    cfgPersonalizationDesc: "Deixe o GALAXIE Toolbox com a sua cara.",
+    cfgPersonalizationDesc: "Deixe o GALAXIE com a sua cara.",
     cfgSoundTitulo: "Som e notificações",
     cfgSoundSubtitulo: "Escolha quais eventos tocam um som.",
     cfgAppearanceTitulo: "Aparência",
     cfgAppearanceSubtitulo: "Defina o clima e o estilo claro ou escuro do app.",
     cfgLockScreenTitulo: "Tela de bloqueio",
     cfgLockScreenSubtitulo: "Proteja o app com um PIN.",
-    cfgPrivacyLabel: "Privacidade",
-    cfgPrivacyDesc: "Controle qual telemetria anônima o app pode coletar.",
     cfgTelemetryTitulo: "Telemetria e diagnósticos",
+    // #580: alinhado à realidade — é LIGADO por padrão (opt-out por categoria),
+    // anônimo e self-hosted, sem PII.
     cfgTelemetrySubtitulo:
-      "Ative por categoria. Desligado por padrão; nunca dados pessoais.",
+      "Anônimo, sem dados pessoais. Ligado por padrão — desligue por categoria.",
+    // #581: Termos de uso (frame em System) + corpo do modal (a "casa da
+    // transparência" que saiu do painel de telemetria no #580).
+    cfgTermsTitulo: "Termos de uso",
+    cfgTermsSubtitulo: "Como a gente cuida das suas informações, sem letras miúdas.",
+    termsLead: "Leia como o app trata os seus dados — anônimo e sem letras miúdas.",
+    termsLerBtn: "Ler",
+    termsFecharBtn: "Fechar",
+    termsIntro:
+      "O GALAXIE foi feito pra ser o seu companheiro de trabalho — rápido, no seu idioma e do seu jeito. Aqui está, sem letras miúdas, como a gente cuida das suas informações.",
+    termsSec1Titulo: "Suas informações são suas",
+    termsSec1Corpo:
+      "A gente não coleta nada que identifique você. Nem nome, nem e-mail, nem suas mensagens, contatos, arquivos ou o que você escreve. Nada disso sai da sua máquina pra gente.",
+    termsSec2Titulo: "O que a gente olha (de forma anônima)",
+    termsSec2Corpo:
+      "Pra deixar o app cada vez melhor, acompanhamos alguns diagnósticos anônimos: quais recursos são mais usados e onde algo trava ou dá erro. São sinais e números, nunca “quem” — a gente não sabe, e nem quer saber, quem está do outro lado.",
+    termsSec3Titulo: "Por que a gente faz isso",
+    termsSec3Corpo:
+      "Simples: pra entender o que você gosta de usar e consertar o que atrapalha. É assim que o Toolbox aprende a ser o melhor companheiro possível pro seu dia a dia.",
+    termsSec4Titulo: "Onde os dados ficam",
+    termsSec4Corpo:
+      "Os diagnósticos são anônimos e guardados na nossa própria infraestrutura. Nunca são vendidos nem compartilhados com terceiros.",
+    termsControle:
+      "Você está no controle: pode ajustar o que compartilha em Settings › System › Telemetria e diagnósticos quando quiser.",
     cfgSystemLabel: "Sistema",
     cfgSystemDesc:
-      "Escolha como o GALAXIE Toolbox funciona com o seu dispositivo.",
+      "Escolha como o GALAXIE funciona com o seu dispositivo.",
     cfgLanguageTitulo: "Idioma",
     cfgLanguageSubtitulo: "Escolha o idioma do app.",
     cfgStartupTitulo: "Inicialização",
@@ -1482,7 +1496,7 @@ const pt = {
     cfgNavAriaLabel: "Navegação das configurações",
     cfgHeroTitulo: "Configurações",
     cfgHeroSubtitulo:
-      "Gerencie as configurações do GALAXIE Toolbox em um só lugar.",
+      "Gerencie as configurações do GALAXIE em um só lugar.",
     cfgSemOpcoes: "Ainda não há opções configuráveis aqui.",
     cfgFramePendingPlaceholder: "Entregue em um follow-up (#{issue}).",
     cfgFrameEmptyPlaceholder:
@@ -1579,10 +1593,10 @@ const pt = {
     themeAccessDesc:
       "Ative um tema de alto contraste para melhor legibilidade.",
     themeAccessAria: "Alto contraste",
-    // Lock screen (#122) — "GALAXIE Toolbox" (nome do produto) NÃO traduz.
+    // Lock screen (#122) — "GALAXIE" (nome do produto) NÃO traduz.
     lockTitulo: "Bloqueio do app",
-    lockDescAtivo: "É necessário um PIN para abrir o GALAXIE Toolbox.",
-    lockDescInativo: "Exige um PIN toda vez que o GALAXIE Toolbox abrir.",
+    lockDescAtivo: "É necessário um PIN para abrir o GALAXIE.",
+    lockDescInativo: "Exige um PIN toda vez que o GALAXIE abrir.",
     lockChangeBtn: "Alterar PIN",
     lockRemoveBtn: "Remover PIN",
     lockSetBtn: "Definir PIN",
@@ -2923,7 +2937,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Startup
     startupLabel: "Launch on startup",
     startupDesc:
-      "Open GALAXIE Toolbox automatically when you sign in to Windows.",
+      "Open GALAXIE automatically when you sign in to Windows.",
     startupErro: "Couldn’t update launch on startup. Please try again.",
     // Background (#474: animated backgrounds inside Appearance)
     bgAnimados: "Animated backgrounds",
@@ -2932,13 +2946,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // Language
     languageDesc:
       "Choose the language of the app, independent of your Windows language.",
-    // Telemetry
-    telBanner:
-      "Anonymous diagnostics are {estado} — turn off any category you don’t want below. GALAXIE Toolbox never collects personal data — no emails, names, message content, URLs or file paths, only anonymous, bucketed diagnostics. Data is self-hosted.",
-    telBannerEstado: "on by default",
-    telAviso1run:
-      "To help us improve GALAXIE Toolbox, anonymous diagnostics are on by default. No personal data is ever collected. You can turn off any category here at any time.",
-    telAvisoOk: "Got it",
+    // Telemetry (#580: banner/notice/footer removed — only the 3 opt-outs remain)
     telCrashLabel: "Crash reports",
     telCrashDesc:
       "Send crash reports so we can fix what breaks. Essential diagnostics only.",
@@ -2948,9 +2956,6 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     telUsoLabel: "Anonymous usage",
     telUsoDesc:
       "Share anonymous feature-usage stats so we know what to improve.",
-    telRevogarDesc:
-      "Revoking turns everything off, clears the local queue and resets your ephemeral session id.",
-    telRevogarBtn: "Revoke all",
     // Navigator
     navigatorSearchTitulo: "Default search engine",
     navigatorSearchDesc:
@@ -2999,24 +3004,47 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgGeneralLabel: "General settings",
     cfgAppsLabel: "Apps",
     cfgAccountsLabel: "Accounts",
-    cfgAccountsDesc: "Manage the accounts connected to GALAXIE Toolbox.",
+    cfgAccountsDesc: "Manage the accounts connected to GALAXIE.",
     cfgAccountsEmptyTitulo: "Accounts",
     cfgAccountsEmptyDesc: "Multiple accounts are coming soon.",
     cfgPersonalizationLabel: "Personalization",
-    cfgPersonalizationDesc: "Make GALAXIE Toolbox feel like your workspace.",
+    cfgPersonalizationDesc: "Make GALAXIE feel like your workspace.",
     cfgSoundTitulo: "Sound & notifications",
     cfgSoundSubtitulo: "Choose which events play a sound.",
     cfgAppearanceTitulo: "Appearance",
     cfgAppearanceSubtitulo: "Set the mood and light or dark style of the app.",
     cfgLockScreenTitulo: "Lock screen",
     cfgLockScreenSubtitulo: "Protect the app with a PIN.",
-    cfgPrivacyLabel: "Privacy",
-    cfgPrivacyDesc: "Control what anonymous telemetry the app may collect.",
     cfgTelemetryTitulo: "Telemetry & diagnostics",
+    // #580: aligned with reality — it is ON by default (opt out per category),
+    // anonymous and self-hosted, no PII.
     cfgTelemetrySubtitulo:
-      "Opt in per category. Off by default; no personal data, ever.",
+      "Anonymous, no personal data. On by default — opt out per category.",
+    // #581: Terms of Use (frame in System) + modal body (the "home of
+    // transparency" that left the telemetry panel in #580).
+    cfgTermsTitulo: "Terms of Use",
+    cfgTermsSubtitulo: "How we look after your information — no fine print.",
+    termsLead: "Read how the app handles your data — anonymous, with no fine print.",
+    termsLerBtn: "Read",
+    termsFecharBtn: "Close",
+    termsIntro:
+      "GALAXIE was built to be your work companion — fast, in your language, your way. Here's how we look after your information, with no fine print.",
+    termsSec1Titulo: "Your information is yours",
+    termsSec1Corpo:
+      "We collect nothing that identifies you — not your name, your email, your messages, contacts, files, or anything you type. None of that ever leaves your machine for us.",
+    termsSec2Titulo: "What we look at (anonymously)",
+    termsSec2Corpo:
+      "To keep making the app better, we track a few anonymous diagnostics: which features get used most and where something stalls or breaks. Signals and counts — never “who.” We don't know, and don't want to know, who's on the other side.",
+    termsSec3Titulo: "Why we do it",
+    termsSec3Corpo:
+      "Simple: to understand what you enjoy using and fix what gets in your way. That's how Toolbox learns to be the best companion it can be for your day.",
+    termsSec4Titulo: "Where the data lives",
+    termsSec4Corpo:
+      "Diagnostics are anonymous and kept on our own infrastructure. They're never sold or shared with third parties.",
+    termsControle:
+      "You're in control: adjust what you share anytime in Settings › System › Telemetry & diagnostics.",
     cfgSystemLabel: "System",
-    cfgSystemDesc: "Choose how GALAXIE Toolbox works with your device.",
+    cfgSystemDesc: "Choose how GALAXIE works with your device.",
     cfgLanguageTitulo: "Language",
     cfgLanguageSubtitulo: "Choose the app's language.",
     cfgStartupTitulo: "Startup",
@@ -3095,7 +3123,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgWindowsDesc: "Review Windows-related app settings.",
     cfgNavAriaLabel: "Settings navigation",
     cfgHeroTitulo: "Settings",
-    cfgHeroSubtitulo: "Manage GALAXIE Toolbox settings in one place.",
+    cfgHeroSubtitulo: "Manage GALAXIE settings in one place.",
     cfgSemOpcoes: "No configurable options here yet.",
     cfgFramePendingPlaceholder: "Delivered in a follow-up (#{issue}).",
     cfgFrameEmptyPlaceholder:
@@ -3190,8 +3218,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     themeAccessDesc: "Turn on a high contrast theme for better readability.",
     themeAccessAria: "High contrast",
     lockTitulo: "App lock",
-    lockDescAtivo: "A PIN is required to open GALAXIE Toolbox.",
-    lockDescInativo: "Require a PIN each time GALAXIE Toolbox opens.",
+    lockDescAtivo: "A PIN is required to open GALAXIE.",
+    lockDescInativo: "Require a PIN each time GALAXIE opens.",
     lockChangeBtn: "Change PIN",
     lockRemoveBtn: "Remove PIN",
     lockSetBtn: "Set PIN",

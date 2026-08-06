@@ -97,7 +97,7 @@ pub fn buscar(url: &str) -> Option<String> {
 fn cliente() -> Option<reqwest::blocking::Client> {
     reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(6))
-        .user_agent("GalaxieToolbox")
+        .user_agent("GALAXIE")
         // Segue os redirects do PROPRIO site (ex.: apex→www), com teto.
         .redirect(reqwest::redirect::Policy::limited(5))
         .build()
