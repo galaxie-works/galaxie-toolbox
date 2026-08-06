@@ -4,15 +4,13 @@
 // ordem alfabética do #535), sem criar/editar/atribuir: grupos são read-only.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, UsersRound } from "lucide-react";
+import { ArrowLeft, Mail, UsersRound } from "lucide-react";
 
-import {
-  Avatar,
-  AvatarFallback,
-  AvatarImage,
-} from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { PersonHoverCard } from "@/components/people/person-hover-card";
+// #578 rework: reusa o MESMO card de contato do people-view nos membros do grupo.
+import { PeopleCard } from "@/components/people/people-view";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -36,16 +34,11 @@ import { useFotos } from "@/lib/fotos";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
 
-function initials(value: string): string {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toLocaleUpperCase())
-    .join("");
-}
-
-export function GroupsView() {
+export function GroupsView({
+  onCompose,
+}: {
+  onCompose: (email: string) => void;
+}) {
   const { t, idioma } = useIdioma();
   const { getFoto, pedirFotos } = useFotos();
   const groups = useAppStore((state) => state.peopleGroups);
@@ -202,10 +195,26 @@ export function GroupsView() {
               <UsersRound className="size-5" />
             </AvatarFallback>
           </Avatar>
-          <div className="min-w-0">
-            <h3 className="truncate text-xl font-semibold">{selected.name}</h3>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-xl font-semibold">{selected.name}</h3>
+              {/* #578 rework: visibility (Public/Private) do grupo M365, quando há. */}
+              {selected.visibility && (
+                <Badge variant="outline" className="shrink-0">
+                  {selected.visibility}
+                </Badge>
+              )}
+            </div>
+            {/* #578 rework: e-mail do grupo (M365 `mail`) — o PO pediu ver o
+                endereço; security group sem mail simplesmente não mostra. */}
+            {selected.mail && (
+              <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-sm text-muted-foreground">
+                <Mail className="size-3.5 shrink-0" />
+                <span className="truncate">{selected.mail}</span>
+              </p>
+            )}
             {selected.description && (
-              <p className="truncate text-sm text-muted-foreground">
+              <p className="mt-1 text-sm text-muted-foreground">
                 {selected.description}
               </p>
             )}
@@ -227,57 +236,27 @@ export function GroupsView() {
               {t.controlRoom.peopleGroupEmpty}
             </p>
           ) : (
-            <div className="divide-y rounded-lg border">
-              {members.map((contact) => {
-                const memberEmail = contact.emails[0]?.address;
-                const identidade = (
-                  <button
-                    type="button"
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                    onClick={() => {
-                      setPeopleTab("contacts");
-                      selectPerson(contact.id);
-                    }}
-                  >
-                    <Avatar size="sm">
-                      {/* #533: foto do cache (getFoto); sem foto cai nas iniciais. */}
-                      <AvatarImage src={getFoto(memberEmail) ?? undefined} alt="" />
-                      <AvatarFallback>{initials(contact.name)}</AvatarFallback>
-                    </Avatar>
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium">
-                        {contact.name}
-                      </span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {contact.emails[0]?.address}
-                      </span>
-                    </span>
-                  </button>
-                );
-                return (
-                  <div
-                    key={contact.id}
-                    className="flex items-center gap-3 px-3 py-2.5"
-                  >
-                    {/* #478/#553: identidade abre o PersonHoverCard; a foto do
-                        cache vai no fallback (o card lê fallback.foto). */}
-                    {memberEmail ? (
-                      <PersonHoverCard
-                        email={memberEmail}
-                        fallback={{
-                          nome: contact.name,
-                          email: memberEmail,
-                          foto: getFoto(memberEmail) ?? undefined,
-                        }}
-                      >
-                        {identidade}
-                      </PersonHoverCard>
-                    ) : (
-                      identidade
-                    )}
-                  </div>
-                );
-              })}
+            // #578 rework: membros no MESMO grid de cards da view de contatos
+            // (reusa o PeopleCard do people-view) — o PO pediu "dentro do grid
+            // que temos de contatos" + "como se fosse um contato", não a lista.
+            <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
+              {members.map((contact) => (
+                <PeopleCard
+                  key={contact.id}
+                  contact={contact}
+                  selected={false}
+                  photo={
+                    contact.photo ||
+                    getFoto(contact.emails[0]?.address) ||
+                    null
+                  }
+                  onSelect={() => {
+                    setPeopleTab("contacts");
+                    selectPerson(contact.id);
+                  }}
+                  onCompose={onCompose}
+                />
+              ))}
             </div>
           )}
         </section>

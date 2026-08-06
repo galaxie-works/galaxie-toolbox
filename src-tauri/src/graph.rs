@@ -4383,6 +4383,10 @@ pub struct PeopleGroup {
     pub name: String,
     /// #578: descrição do grupo (M365 `description`), pro detalhe. Vazio se ausente.
     pub description: String,
+    /// #578 rework: e-mail do grupo (M365 `mail`) — vazio em security group sem mail.
+    pub mail: String,
+    /// #578 rework: `Public`/`Private` (M365 `visibility`); vazio em security group.
+    pub visibility: String,
     pub member_count: Option<usize>,
 }
 
@@ -4971,7 +4975,7 @@ pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
         failures: Vec::new(),
     };
     let mut proxima = Some(format!(
-        "{GRAPH}/me/memberOf?$top=999&$select=id,displayName,description,groupTypes,mailEnabled,securityEnabled"
+        "{GRAPH}/me/memberOf?$top=999&$select=id,displayName,description,mail,visibility,groupTypes,mailEnabled,securityEnabled"
     ));
 
     while let Some(url) = proxima.take() {
@@ -5012,6 +5016,12 @@ pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
                             id: id.to_string(),
                             name: name.to_string(),
                             description: item["description"]
+                                .as_str()
+                                .unwrap_or("")
+                                .trim()
+                                .to_string(),
+                            mail: item["mail"].as_str().unwrap_or("").trim().to_string(),
+                            visibility: item["visibility"]
                                 .as_str()
                                 .unwrap_or("")
                                 .trim()
