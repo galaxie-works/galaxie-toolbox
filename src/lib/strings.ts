@@ -1391,7 +1391,6 @@ const pt = {
     // transparência" que saiu do painel de telemetria no #580).
     cfgTermsTitulo: "Termos de uso",
     cfgTermsSubtitulo: "Como a gente cuida das suas informações, sem letras miúdas.",
-    termsLead: "Leia como o app trata os seus dados — anônimo e sem letras miúdas.",
     termsLerBtn: "Ler",
     termsFecharBtn: "Fechar",
     termsIntro:
@@ -3024,7 +3023,6 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // transparency" that left the telemetry panel in #580).
     cfgTermsTitulo: "Terms of Use",
     cfgTermsSubtitulo: "How we look after your information — no fine print.",
-    termsLead: "Read how the app handles your data — anonymous, with no fine print.",
     termsLerBtn: "Read",
     termsFecharBtn: "Close",
     termsIntro:
