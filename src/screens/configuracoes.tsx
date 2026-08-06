@@ -6,7 +6,6 @@ import {
   Settings,
   UserRound,
 } from "lucide-react";
-import { useState } from "react";
 import type { ComponentType, ReactNode } from "react";
 import { BridgeIcon, NavigatorIcon } from "@/components/ui/icons/marca-anim";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
@@ -16,6 +15,25 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+// #597 rework: mesmo conjunto do app-sidebar.tsx (reui Sidebar). O Collapsible
+// animado vem aliased pra não colidir com o `ui/collapsible` do OptionFrame.
+import {
+  Collapsible as NavCollapsible,
+  CollapsibleContent as NavCollapsibleContent,
+  CollapsibleTrigger as NavCollapsibleTrigger,
+} from "@/components/animate-ui/primitives/radix/collapsible";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupLabel,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+} from "@/components/animate-ui/components/radix/sidebar";
 import {
   Frame,
   FrameDescription,
@@ -25,7 +43,6 @@ import {
 } from "@/components/reui/frame";
 import { useAppStore } from "@/store";
 import type { SettingsItemId } from "@/store/settings-ui-slice";
-import { cn } from "@/lib/utils";
 import { useIdioma, preencher } from "@/lib/idioma";
 import type { Dicionario } from "@/lib/strings";
 import { NotificacoesPanels } from "@/components/notificacoes-settings";
@@ -351,7 +368,7 @@ function settingsSections(t: Dicionario): SettingsSection[] {
 
 /** Achata itens + subitens (children) num mapa id → item, pra lookup do contexto. */
 function mapaSettingsPorId(
-  sections: SettingsSection[]
+  sections: SettingsSection[],
 ): Map<SettingsItemId, SettingsItem> {
   const mapa = new Map<SettingsItemId, SettingsItem>();
   for (const section of sections) {
@@ -363,83 +380,6 @@ function mapaSettingsPorId(
     }
   }
   return mapa;
-}
-
-function NavButton({
-  item,
-  active,
-  nested,
-  onSelect,
-}: {
-  item: SettingsItem;
-  active: boolean;
-  nested?: boolean;
-  onSelect: (item: SettingsItemId) => void;
-}) {
-  const Icon = item.icon;
-  return (
-    <button
-      type="button"
-      aria-current={active ? "page" : undefined}
-      onClick={() => onSelect(item.id)}
-      className={cn(
-        "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors",
-        nested && "pl-8",
-        active
-          ? "bg-secondary font-medium text-secondary-foreground"
-          : "hover:bg-accent/50"
-      )}
-    >
-      <Icon className="size-4 shrink-0 text-muted-foreground" />
-      <span className="min-w-0 flex-1 truncate">{item.label}</span>
-    </button>
-  );
-}
-
-/**
- * #597: item de navegação COM subitens (ex.: Galaxie Apps → Bridge/Navigator).
- * É ELE que colapsa — chevron no próprio item, subitens escondem/aparecem. O pai
- * é agrupador (toggle, não seleciona nada; a config real vive nos filhos). Fica
- * aberto quando um filho está selecionado, pra nunca esconder a seleção.
- */
-function NavGroupItem({
-  item,
-  selected,
-  onSelect,
-}: {
-  item: SettingsItem;
-  selected: SettingsItemId;
-  onSelect: (item: SettingsItemId) => void;
-}) {
-  const Icon = item.icon;
-  const filhoAtivo = item.children?.some((c) => c.id === selected) ?? false;
-  const [aberto, setAberto] = useState(true);
-  // Força aberto quando um filho está ativo (AC: não esconder a seleção).
-  const open = aberto || filhoAtivo;
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={setAberto}
-      className="group/nav-group space-y-1"
-    >
-      <CollapsibleTrigger className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm transition-colors hover:bg-accent/50">
-        <Icon className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate">{item.label}</span>
-        <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]/nav-group:rotate-90" />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="space-y-1">
-        {item.children?.map((child) => (
-          <NavButton
-            key={child.id}
-            item={child}
-            nested
-            active={selected === child.id}
-            onSelect={onSelect}
-          />
-        ))}
-      </CollapsibleContent>
-    </Collapsible>
-  );
 }
 
 function SettingsNavigation({
@@ -455,36 +395,83 @@ function SettingsNavigation({
   return (
     <aside
       aria-label={t.settings.cfgNavAriaLabel}
-      className="w-full shrink-0 overflow-y-auto rounded-xl border bg-card p-2 md:h-full md:w-64"
+      className="w-full shrink-0 rounded-xl border bg-card md:h-full md:w-64"
     >
-      {sections.map((section) => (
-        <div key={section.label} className="pb-2">
-          {/* #597: rótulo de grupo = cabeçalho estático (divisor visual), SEM
-              chevron/colapso. Quem colapsa é o item com subitens (NavGroupItem). */}
-          <div className="px-2.5 py-2 text-xs font-medium text-muted-foreground">
-            {section.label}
-          </div>
-          <div className="space-y-1">
-            {section.items.map((item) =>
-              item.children && item.children.length > 0 ? (
-                <NavGroupItem
-                  key={item.id}
-                  item={item}
-                  selected={selected}
-                  onSelect={onSelect}
-                />
-              ) : (
-                <NavButton
-                  key={item.id}
-                  item={item}
-                  active={selected === item.id}
-                  onSelect={onSelect}
-                />
-              )
-            )}
-          </div>
-        </div>
-      ))}
+      {/* #597 rework: reusa os primitivos do reui Sidebar — o MESMO conjunto do
+          `app-sidebar.tsx` (regra de ouro: reusar, não inventar). O
+          `SidebarGroupLabel` é o rótulo de grupo estático (sem chevron); o item
+          COM children colapsa via Collapsible + SidebarMenuButton (chevron no
+          próprio item) + SidebarMenuSub. `Sidebar collapsible="none"` provê o
+          contexto de Highlight que o SidebarMenuButton usa (senão quebra) e vira
+          um flex simples; roda no SidebarProvider do App. Override bg/width pra
+          herdar a moldura do painel (bg-card do <aside>). */}
+      <Sidebar
+        collapsible="none"
+        className="h-full w-full bg-transparent text-foreground"
+      >
+        <SidebarContent className="gap-0 overflow-y-auto p-2">
+          {sections.map((section) => (
+            <SidebarGroup key={section.label} className="p-0 pb-2">
+              <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
+              <SidebarMenu>
+                {section.items.map((item) =>
+                  item.children && item.children.length > 0 ? (
+                    <NavCollapsible
+                      key={item.id}
+                      asChild
+                      defaultOpen={item.children.some((c) => c.id === selected)}
+                      className="group/collapsible"
+                    >
+                      <SidebarMenuItem>
+                        <NavCollapsibleTrigger asChild>
+                          <SidebarMenuButton>
+                            <item.icon />
+                            <span>{item.label}</span>
+                            <ChevronRight className="ml-auto transition-transform duration-300 group-data-[state=open]/collapsible:rotate-90" />
+                          </SidebarMenuButton>
+                        </NavCollapsibleTrigger>
+                        <NavCollapsibleContent>
+                          <SidebarMenuSub>
+                            {item.children.map((child) => (
+                              <SidebarMenuSubItem key={child.id}>
+                                <SidebarMenuSubButton
+                                  asChild
+                                  isActive={selected === child.id}
+                                >
+                                  <a
+                                    href="#"
+                                    onClick={(e) => {
+                                      e.preventDefault();
+                                      onSelect(child.id);
+                                    }}
+                                  >
+                                    <child.icon />
+                                    <span>{child.label}</span>
+                                  </a>
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            ))}
+                          </SidebarMenuSub>
+                        </NavCollapsibleContent>
+                      </SidebarMenuItem>
+                    </NavCollapsible>
+                  ) : (
+                    <SidebarMenuItem key={item.id}>
+                      <SidebarMenuButton
+                        isActive={selected === item.id}
+                        onClick={() => onSelect(item.id)}
+                      >
+                        <item.icon />
+                        <span>{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ),
+                )}
+              </SidebarMenu>
+            </SidebarGroup>
+          ))}
+        </SidebarContent>
+      </Sidebar>
     </aside>
   );
 }
@@ -504,10 +491,10 @@ function OptionFrame({
   const { t } = useIdioma();
   const frameId = `${owner}:${frame.key}`;
   const aberto = useAppStore(
-    (state) => state.settingsFramesAbertos[frameId] ?? false
+    (state) => state.settingsFramesAbertos[frameId] ?? false,
   );
   const setSettingsFrameAberto = useAppStore(
-    (state) => state.setSettingsFrameAberto
+    (state) => state.setSettingsFrameAberto,
   );
 
   // #581-rework: frame estático — linha única (título + subtítulo à esquerda,
@@ -600,7 +587,10 @@ export function ConfiguracoesScreen() {
         {/* Área de contexto PLANA (sem card/borda): título+descrição uma vez e,
             abaixo, um frame colapsável por sub-opção. Itens com empty state
             próprio (ex.: Accounts) renderizam SÓ o empty, sem header. */}
-        <section aria-labelledby="settings-context-title" className="min-w-0 flex-1 overflow-y-auto pr-1">
+        <section
+          aria-labelledby="settings-context-title"
+          className="min-w-0 flex-1 overflow-y-auto pr-1"
+        >
           {current.emptyState ? (
             current.emptyState
           ) : (
@@ -610,17 +600,26 @@ export function ConfiguracoesScreen() {
                   <CurrentIcon className="size-4" aria-hidden="true" />
                 </div>
                 <div>
-                  <h2 id="settings-context-title" className="text-lg font-semibold tracking-tight">
+                  <h2
+                    id="settings-context-title"
+                    className="text-lg font-semibold tracking-tight"
+                  >
                     {current.label}
                   </h2>
-                  <p className="mt-1 text-sm text-muted-foreground">{current.description}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {current.description}
+                  </p>
                 </div>
               </div>
 
               {frames.length > 0 ? (
                 <div className="mt-6 space-y-3">
                   {frames.map((frame) => (
-                    <OptionFrame key={frame.key} owner={current.id} frame={frame} />
+                    <OptionFrame
+                      key={frame.key}
+                      owner={current.id}
+                      frame={frame}
+                    />
                   ))}
                 </div>
               ) : (
