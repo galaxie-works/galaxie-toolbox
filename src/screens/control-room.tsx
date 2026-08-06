@@ -6365,9 +6365,9 @@ export function ControlRoomScreen({
           iniciais: m.iniciais,
           texto: `${m.assunto} — ${m.preview}`,
           quando: quandoCurto(m.recebido, idioma),
-          rotuloResponder: t.controlRoom.responder,
           rotuloDispensar: t.controlRoom.dispensar,
-          onResponder: () => {
+          // #604: clicar no corpo do toast abre o e-mail no leitor.
+          onAbrir: () => {
             setPastaSel("inbox");
             setMsgSel(m.id);
           },
@@ -6396,7 +6396,16 @@ export function ControlRoomScreen({
         // Chegou e-mail novo enquanto o usuário estava parado: invalida o cache
         // da inbox pra que ao voltar pra ela a lista seja rebuscada (não sirva
         // uma versão sem os novos) — #108.
-        if (novos > 0) limparCachePasta(chaveCache("inbox", "me"));
+        if (novos > 0) {
+          limparCachePasta(chaveCache("inbox", "me"));
+          // #603: se a inbox PRÓPRIA é a view ATIVA, recarrega a lista NA HORA
+          // (mesmo caminho do Refresh — respeita ordenação/filtro/seleção atuais).
+          // Antes só invalidava o cache, e o novo e-mail só aparecia ao clicar
+          // Refresh. Fora da inbox, a invalidação basta (rebusca ao voltar).
+          if (pastaSelRef.current === "inbox" && caixaAtivaRef.current === "me") {
+            setRecarga((x) => x + 1);
+          }
+        }
       } catch {
         /* silencioso: é só o aviso de novos e-mails */
       }
@@ -6405,7 +6414,13 @@ export function ControlRoomScreen({
       vivo = false;
       clearInterval(iv);
     };
-  }, [syncIntervalMinutes, notificarNovos, limparCachePasta, chaveCache]);
+  }, [
+    syncIntervalMinutes,
+    notificarNovos,
+    limparCachePasta,
+    chaveCache,
+    setRecarga,
+  ]);
 
   // Recarrega o que a mutação de uma PASTA invalidou: as contagens do sidebar
   // sempre; a LISTA só quando a pasta mexida é a que está aberta (senão a lista

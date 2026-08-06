@@ -6,6 +6,7 @@ import {
   DownloadIcon,
   FileIcon,
   Undo2Icon,
+  XIcon,
 } from "lucide-react"
 import type { ReactNode } from "react"
 
@@ -145,7 +146,9 @@ export function toastDownload(opts: {
 }
 
 /**
- * Toast de mensagem recebida com avatar e ações (padrão c-sonner-9).
+ * Toast de mensagem recebida com avatar (padrão c-sonner-9). #604: o CORPO é
+ * clicável e abre o e-mail no leitor (`onAbrir`); o "x" dispensa sem abrir. Cada
+ * toast dispensa a SI (`dismiss(id)`), não todos — múltiplos abrem cada um o seu.
  */
 export function toastMensagem(opts: {
   nome: string
@@ -153,46 +156,48 @@ export function toastMensagem(opts: {
   foto?: string | null
   texto: string
   quando: string
-  rotuloResponder: string
   rotuloDispensar: string
-  onResponder: () => void
+  onAbrir: () => void
 }): void {
-  toast.custom(() => (
-    <div className="bg-popover text-popover-foreground border-border flex w-[356px] items-start gap-3 rounded-md border p-4 shadow-lg">
-      <Avatar className="size-9 shrink-0">
-        {opts.foto ? (
-          <AvatarImage src={opts.foto} alt={opts.nome} />
-        ) : (
-          <AvatarFallback>{opts.iniciais}</AvatarFallback>
-        )}
-      </Avatar>
-      <div className="flex flex-1 flex-col gap-1">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold">{opts.nome}</p>
-          <span className="text-muted-foreground text-xs">{opts.quando}</span>
+  const id = toast.custom(() => (
+    <div className="bg-popover text-popover-foreground border-border flex w-[356px] items-start gap-2 rounded-md border p-4 shadow-lg">
+      {/* Corpo clicável: abre o e-mail no leitor e fecha o toast (#604). */}
+      <button
+        type="button"
+        className="flex min-w-0 flex-1 items-start gap-3 text-left"
+        onClick={() => {
+          opts.onAbrir()
+          toast.dismiss(id)
+        }}
+      >
+        <Avatar className="size-9 shrink-0">
+          {opts.foto ? (
+            <AvatarImage src={opts.foto} alt={opts.nome} />
+          ) : (
+            <AvatarFallback>{opts.iniciais}</AvatarFallback>
+          )}
+        </Avatar>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="truncate text-sm font-semibold">{opts.nome}</p>
+            <span className="text-muted-foreground shrink-0 text-xs">
+              {opts.quando}
+            </span>
+          </div>
+          <p className="text-muted-foreground line-clamp-2 text-sm">
+            {opts.texto}
+          </p>
         </div>
-        <p className="text-muted-foreground line-clamp-2 text-sm">
-          {opts.texto}
-        </p>
-        <div className="mt-2 flex gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => toast.dismiss()}
-          >
-            {opts.rotuloDispensar}
-          </Button>
-          <Button
-            size="sm"
-            onClick={() => {
-              opts.onResponder()
-              toast.dismiss()
-            }}
-          >
-            {opts.rotuloResponder}
-          </Button>
-        </div>
-      </div>
+      </button>
+      <Button
+        size="icon"
+        variant="ghost"
+        className="size-7 shrink-0"
+        aria-label={opts.rotuloDispensar}
+        onClick={() => toast.dismiss(id)}
+      >
+        <XIcon className="size-4" aria-hidden="true" />
+      </Button>
     </div>
   ))
 }
