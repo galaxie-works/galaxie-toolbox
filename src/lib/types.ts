@@ -454,6 +454,8 @@ export interface PeopleDirectoryResult {
 export interface PeopleGroup {
   id: string;
   name: string;
+  /** #578: descrição do grupo (M365 `description`), pro detalhe. "" se ausente. */
+  description: string;
   /** Só existe depois que os membros desse grupo foram carregados. */
   memberCount?: number | null;
 }

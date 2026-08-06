@@ -1085,8 +1085,18 @@ export async function crPeopleGroups(): Promise<PeopleGroupsResult> {
     await sleep(350);
     return {
       groups: [
-        { id: "group-product", name: "Product", memberCount: null },
-        { id: "group-leadership", name: "Leadership", memberCount: null },
+        {
+          id: "group-product",
+          name: "Product",
+          description: "Time de produto — squad de discovery e delivery.",
+          memberCount: null,
+        },
+        {
+          id: "group-leadership",
+          name: "Leadership",
+          description: "",
+          memberCount: null,
+        },
       ],
       missingScopes: [],
       failures: [],

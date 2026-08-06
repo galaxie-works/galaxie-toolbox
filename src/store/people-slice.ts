@@ -291,7 +291,7 @@ export interface PeopleSlice {
   resetPeopleSession: () => void;
   selectPeopleDirectory: (id?: string | null) => void;
   loadPeopleGroups: () => Promise<void>;
-  selectPeopleGroup: (groupId: string) => Promise<void>;
+  selectPeopleGroup: (groupId: string | null) => Promise<void>;
   /** #406: seleciona uma categoria no sidebar (filtra a grid por ela). */
   selectPeopleCategory: (nome: string) => void;
   /** #406: (re)carrega as categorias do Outlook (masterCategories). */
@@ -857,6 +857,11 @@ export function criarPeopleSlice(
     const m365Generation = get().peopleM365Generation;
     get().setPeopleTab("groups");
     get().selectPerson(null);
+    // #578: null desseleciona (volta pro grid de grupos), sem buscar membros.
+    if (groupId === null) {
+      set({ peopleSelectedGroupId: null, peopleGroupMembersError: null });
+      return;
+    }
     set({
       peopleSelectedGroupId: groupId,
       peopleGroupMembersError: null,
