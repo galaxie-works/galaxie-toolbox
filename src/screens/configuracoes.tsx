@@ -39,6 +39,7 @@ import { LockScreenSettings } from "@/components/lock-screen-settings";
 import { LanguageSettings } from "@/components/language-settings";
 import { StartupSettings } from "@/components/startup-settings";
 import { TelemetrySettings } from "@/components/telemetry-settings";
+import { TermsOfUseSettings } from "@/components/terms-of-use-settings";
 import { OrganizationSettings } from "@/components/organization-settings";
 import {
   AccessibilitySettings,
@@ -207,6 +208,13 @@ function settingsSections(t: Dicionario): SettingsSection[] {
               title: s.cfgTelemetryTitulo,
               subtitle: s.cfgTelemetrySubtitulo,
               node: <TelemetrySettings />,
+            },
+            {
+              // #581: Termos de uso — modal com a transparência (anônimo, sem PII).
+              key: "terms",
+              title: s.cfgTermsTitulo,
+              subtitle: s.cfgTermsSubtitulo,
+              node: <TermsOfUseSettings />,
             },
           ],
         },

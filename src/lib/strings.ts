@@ -1387,6 +1387,29 @@ const pt = {
     // anônimo e self-hosted, sem PII.
     cfgTelemetrySubtitulo:
       "Anônimo, sem dados pessoais. Ligado por padrão — desligue por categoria.",
+    // #581: Termos de uso (frame em System) + corpo do modal (a "casa da
+    // transparência" que saiu do painel de telemetria no #580).
+    cfgTermsTitulo: "Termos de uso",
+    cfgTermsSubtitulo: "Como a gente cuida das suas informações, sem letras miúdas.",
+    termsLead: "Leia como o app trata os seus dados — anônimo e sem letras miúdas.",
+    termsLerBtn: "Ler",
+    termsFecharBtn: "Fechar",
+    termsIntro:
+      "O GALAXIE Toolbox foi feito pra ser o seu companheiro de trabalho — rápido, no seu idioma e do seu jeito. Aqui está, sem letras miúdas, como a gente cuida das suas informações.",
+    termsSec1Titulo: "Suas informações são suas",
+    termsSec1Corpo:
+      "A gente não coleta nada que identifique você. Nem nome, nem e-mail, nem suas mensagens, contatos, arquivos ou o que você escreve. Nada disso sai da sua máquina pra gente.",
+    termsSec2Titulo: "O que a gente olha (de forma anônima)",
+    termsSec2Corpo:
+      "Pra deixar o app cada vez melhor, acompanhamos alguns diagnósticos anônimos: quais recursos são mais usados e onde algo trava ou dá erro. São sinais e números, nunca “quem” — a gente não sabe, e nem quer saber, quem está do outro lado.",
+    termsSec3Titulo: "Por que a gente faz isso",
+    termsSec3Corpo:
+      "Simples: pra entender o que você gosta de usar e consertar o que atrapalha. É assim que o Toolbox aprende a ser o melhor companheiro possível pro seu dia a dia.",
+    termsSec4Titulo: "Onde os dados ficam",
+    termsSec4Corpo:
+      "Os diagnósticos são anônimos e guardados na nossa própria infraestrutura. Nunca são vendidos nem compartilhados com terceiros.",
+    termsControle:
+      "Você está no controle: pode ajustar o que compartilha em Settings › System › Telemetria e diagnósticos quando quiser.",
     cfgSystemLabel: "Sistema",
     cfgSystemDesc:
       "Escolha como o GALAXIE Toolbox funciona com o seu dispositivo.",
@@ -2997,6 +3020,29 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // anonymous and self-hosted, no PII.
     cfgTelemetrySubtitulo:
       "Anonymous, no personal data. On by default — opt out per category.",
+    // #581: Terms of Use (frame in System) + modal body (the "home of
+    // transparency" that left the telemetry panel in #580).
+    cfgTermsTitulo: "Terms of Use",
+    cfgTermsSubtitulo: "How we look after your information — no fine print.",
+    termsLead: "Read how the app handles your data — anonymous, with no fine print.",
+    termsLerBtn: "Read",
+    termsFecharBtn: "Close",
+    termsIntro:
+      "GALAXIE Toolbox was built to be your work companion — fast, in your language, your way. Here's how we look after your information, with no fine print.",
+    termsSec1Titulo: "Your information is yours",
+    termsSec1Corpo:
+      "We collect nothing that identifies you — not your name, your email, your messages, contacts, files, or anything you type. None of that ever leaves your machine for us.",
+    termsSec2Titulo: "What we look at (anonymously)",
+    termsSec2Corpo:
+      "To keep making the app better, we track a few anonymous diagnostics: which features get used most and where something stalls or breaks. Signals and counts — never “who.” We don't know, and don't want to know, who's on the other side.",
+    termsSec3Titulo: "Why we do it",
+    termsSec3Corpo:
+      "Simple: to understand what you enjoy using and fix what gets in your way. That's how Toolbox learns to be the best companion it can be for your day.",
+    termsSec4Titulo: "Where the data lives",
+    termsSec4Corpo:
+      "Diagnostics are anonymous and kept on our own infrastructure. They're never sold or shared with third parties.",
+    termsControle:
+      "You're in control: adjust what you share anytime in Settings › System › Telemetry & diagnostics.",
     cfgSystemLabel: "System",
     cfgSystemDesc: "Choose how GALAXIE Toolbox works with your device.",
     cfgLanguageTitulo: "Language",
