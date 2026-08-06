@@ -3,6 +3,7 @@ import {
   AppWindow,
   Building2,
   FileText,
+  ListChecks,
   MonitorDown,
   Network,
   ShieldAlert,
@@ -15,11 +16,23 @@ import {
   crMultiTenant,
   crOrgAdminAvailable,
   crOrgSettings,
+  crOrgTodoSet,
   type MultiTenantCard,
   type OrgCardStatus,
   type OrgSettingsResult,
 } from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
+import { Switch } from "@/components/ui/switch";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 /**
  * Settings › Apps › Organization — governança org-wide do M365 (épico #206).
@@ -55,6 +68,80 @@ function LinhaSetting({ label, valor }: { label: string; valor: boolean | null }
     <div className="flex items-center justify-between gap-3 py-1.5">
       <span className="text-sm text-muted-foreground">{label}</span>
       <ValorBool v={valor} />
+    </div>
+  );
+}
+
+/**
+ * #208 (RW): a escrita org-wide de To Do fica TRAVADA até o endpoint `/admin/todo`
+ * ser confirmado no live-QA de admin real (não dá pra testar Graph em dev). O
+ * código do RW já está pronto (backend `cr_org_todo_set` + `crOrgTodoSet` + a UI
+ * abaixo); ATIVAR é só virar isto pra `true` depois de validar o endpoint/shape.
+ */
+const TODO_RW_HABILITADO = false;
+
+/** Linha de setting de To Do: read-only (pílula) enquanto o RW está travado;
+ *  Switch com confirmação (sem escrita silenciosa) quando habilitado (#208). */
+function LinhaTodo({
+  label,
+  valor,
+  campo,
+}: {
+  label: string;
+  valor: boolean | null;
+  campo: string;
+}) {
+  const { t } = useIdioma();
+  const s = t.settings;
+  const [atual, setAtual] = useState<boolean | null>(valor);
+  const [pendente, setPendente] = useState<boolean | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
+  // Travado (gate) ou valor desconhecido → read-only, como os outros cards.
+  if (!TODO_RW_HABILITADO || atual === null) {
+    return <LinhaSetting label={label} valor={atual} />;
+  }
+
+  async function confirmar() {
+    if (pendente === null) return;
+    setSalvando(true);
+    try {
+      await crOrgTodoSet(campo, pendente);
+      setAtual(pendente);
+    } finally {
+      setSalvando(false);
+      setPendente(null);
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 py-1.5">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <Switch
+        checked={atual}
+        disabled={salvando}
+        onCheckedChange={(v) => setPendente(v)}
+        aria-label={label}
+      />
+      <AlertDialog
+        open={pendente !== null}
+        onOpenChange={(o) => !o && !salvando && setPendente(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{s.cfgOrgTodoConfirmTitle}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {s.cfgOrgTodoConfirmDesc}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{s.cfgOrgTodoConfirmCancel}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmar}>
+              {s.cfgOrgTodoConfirmOk}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -295,6 +382,27 @@ export function OrganizationSettings() {
               </div>
             );
           })}
+        </Cartao>
+
+        {/* #208: To Do org-wide (OrgSettings-Todo). Read-only como os irmãos;
+            a escrita (RW gated + confirmação) é seguida quando o endpoint for
+            confirmado no live-QA (admin real). Degrada sozinho (sem permissão/erro). */}
+        <Cartao icon={ListChecks} title={s.cfgOrgTodoTitle} status={dados.todo.status}>
+          <LinhaTodo
+            campo="isPushNotificationEnabled"
+            label={s.cfgOrgTodoPush}
+            valor={dados.todo.isPushNotificationEnabled}
+          />
+          <LinhaTodo
+            campo="isExternalJoinEnabled"
+            label={s.cfgOrgTodoExternalJoin}
+            valor={dados.todo.isExternalJoinEnabled}
+          />
+          <LinhaTodo
+            campo="isExternalShareEnabled"
+            label={s.cfgOrgTodoExternalShare}
+            valor={dados.todo.isExternalShareEnabled}
+          />
         </Cartao>
 
         {/* #426: contexto multi-tenant (org + tenants membros). "inactive" =

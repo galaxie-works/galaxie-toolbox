@@ -4,7 +4,14 @@
 // como é); aqui fica só a cola: fetch por faixa visível, estados, i18n e o
 // diálogo de CRUD (padrão do c-event-calendar-3).
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { enUS, ptBR } from "date-fns/locale";
 import type { Locale } from "date-fns";
 import { toast } from "sonner";
@@ -41,6 +48,9 @@ import type {
 } from "@/lib/types";
 import { crEventoRecorrencia } from "@/lib/api";
 import { CampoPessoas } from "@/components/compose/campo-pessoas";
+// #570: avatar do organizador no chip (day/week), mesmo cache de fotos do #533.
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useFotos } from "@/lib/fotos";
 
 import {
   EventCalendar,
@@ -55,7 +65,10 @@ import type { EventCalendarI18nOverrides } from "@/components/reui/event-calenda
 import type {
   CalendarEvent,
   EventCalendarOccurrence,
+  EventCalendarProposedUpdate,
   EventCalendarRangeInfo,
+  EventCalendarResource,
+  EventCalendarSlotDraft,
   EventCalendarSlotInfo,
 } from "@/components/reui/event-calendar/event-calendar-types";
 
@@ -150,15 +163,45 @@ function ehRecorrente(ev: EventoAgenda): boolean {
  * `renderEvent` do event-calendar — NÃO instala variante nova. O avatar do
  * organizador é follow-up (#570, só day/week, depende de dado da agenda).
  */
-function renderChipEvento({
-  occurrence,
-}: EventCalendarRenderEventProps): ReactNode {
+/** #570: payload do evento no calendar — leva o organizador pro chip. */
+type DadosChipEvento = { organizadorEmail: string };
+
+/** Iniciais a partir do e-mail (não temos o nome do organizador no list-item). */
+function iniciaisEmail(email: string): string {
+  const base = email.split("@")[0] ?? email;
+  return (
+    base
+      .split(/[._-]+/)
+      .filter(Boolean)
+      .map((p) => p[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase() || "?"
+  );
+}
+
+function renderChipEvento(
+  { occurrence, view }: EventCalendarRenderEventProps<DadosChipEvento>,
+  getFoto: (email: string | null | undefined) => string | null | undefined,
+): ReactNode {
+  // #570: avatar do organizador SÓ em day/week (blocos maiores). No mês o chip é
+  // apertado demais (decisão de design). Sem foto no cache → iniciais.
+  const orgEmail = occurrence.event.data?.organizadorEmail?.trim();
+  const mostrarAvatar = (view === "day" || view === "week") && !!orgEmail;
   return (
     <span className="flex w-full min-w-0 items-center gap-1.5">
       <span
         aria-hidden
         className="size-2 shrink-0 rounded-[3px] bg-(--ec-event-color)"
       />
+      {mostrarAvatar && orgEmail && (
+        <Avatar className="size-3.5 shrink-0">
+          <AvatarImage src={getFoto(orgEmail) ?? undefined} alt="" />
+          <AvatarFallback className="text-[8px]">
+            {iniciaisEmail(orgEmail)}
+          </AvatarFallback>
+        </Avatar>
+      )}
       {occurrence.isRecurring && (
         <Repeat className="size-2.5 shrink-0 opacity-70" aria-hidden="true" />
       )}
@@ -171,14 +214,24 @@ function renderChipEvento({
 
 // Identidades estáveis: o store do event-calendar compara settings por
 // referência, então arrays/objetos recriados a cada render forçariam re-render.
-const VIEWS: ("month" | "week" | "day" | "agenda")[] = [
+const VIEWS: ("month" | "week" | "day" | "agenda" | "resource")[] = [
   "month",
   "week",
   "day",
   "agenda",
+  // #214: visão por RECURSO (salas) — colunas por local, pra reserva de sala.
+  // O EventCalendar do reui já suporta a view "resource" (não recriamos variante);
+  // aqui só a ligamos e alimentamos com os recursos derivados dos eventos.
+  "resource",
 ];
-// Sem arrastar/redimensionar nem drag-create: a edição é pelo diálogo (#211).
-const INTERACOES = { drag: false, resize: false, selectSlot: false } as const;
+// #214: recurso "sem local" — eventos sem sala caem nesta coluna, pra não sumirem
+// da visão por recurso.
+const RECURSO_SEM_LOCAL = "__sem_local__";
+// #213 drag-to-book: arrastar um evento reagenda (move) e arrastar num slot vazio
+// abre criar. `resize` (mudar duração pela borda) fica de fora do escopo do #213
+// — segue pelo diálogo. O per-event `draggable` (abaixo) barra recorrentes e
+// convites; `canDropEvent` barra trocar de sala na visão por recurso (#214).
+const INTERACOES = { drag: true, resize: false, selectSlot: true } as const;
 
 // --- helpers de data --------------------------------------------------------
 
@@ -193,6 +246,14 @@ function paraInputLocal(iso: string): string {
   if (Number.isNaN(d.getTime())) return "";
   const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
   return local.toISOString().slice(0, 16);
+}
+
+/** #213: Date (instante) -> hora-de-parede LOCAL "yyyy-MM-ddTHH:mm:ss" (sem Z),
+ *  como o form monta o input pro Graph. O `cr_reagendar_evento` recebe isso +
+ *  o fuso IANA e resolve o instante no servidor. */
+function paraWallLocal(d: Date): string {
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 19);
 }
 
 /** ISO UTC -> valor de <input type="date"> (data local). */
@@ -231,6 +292,7 @@ function montarI18n(t: Dic): EventCalendarI18nOverrides {
       week: t.controlRoom.agendaViewSemana,
       day: t.controlRoom.agendaViewDia,
       agenda: t.controlRoom.agendaViewAgenda,
+      resource: t.controlRoom.agendaViewResource,
     },
   };
 }
@@ -256,6 +318,8 @@ export function AgendaView() {
   const selecionarEventoAgenda = useAppStore((s) => s.selecionarEventoAgenda);
   const abrirFormCriar = useAppStore((s) => s.abrirFormCriar);
   const cancelarEvento = useAppStore((s) => s.cancelarEvento);
+  // #213: reagendar arrastando (drag-to-book).
+  const reagendarEvento = useAppStore((s) => s.reagendarEvento);
 
   // Menu de contexto do evento (#330): o right-click num chip abre o ContextMenu
   // do app com as ações condicionadas ao contexto. Identificamos a ocorrência
@@ -368,13 +432,13 @@ export function AgendaView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recargaAgenda]);
 
-  const eventos: CalendarEvent[] = useMemo(() => {
+  const eventos: CalendarEvent<DadosChipEvento>[] = useMemo(() => {
     return (mesEventos ?? [])
       // Semântica do convite (#287): eventos recusados somem do calendário
       // (mesmo comportamento do Outlook). Os demais estados (aceito/talvez/
       // pendente) aparecem; o RSVP e o badge ficam no detalhe do evento.
       .filter((ev) => ev.resposta !== "declined")
-      .map((ev): CalendarEvent | null => {
+      .map((ev): CalendarEvent<DadosChipEvento> | null => {
         const inicio = new Date(comZ(ev.inicio));
         const fim = new Date(comZ(ev.fim));
         if (Number.isNaN(inicio.getTime()) || Number.isNaN(fim.getTime())) {
@@ -386,6 +450,10 @@ export function AgendaView() {
           ? coresCat.get(ev.categorias[0])
           : undefined;
         const cor = ev.corCalendario ?? corCat;
+        const recorrente =
+          ev.tipo === "occurrence" ||
+          ev.tipo === "exception" ||
+          ev.tipo === "seriesMaster";
         return {
           id: ev.id,
           title: ev.assunto,
@@ -396,14 +464,55 @@ export function AgendaView() {
           // #399: as ocorrências vêm expandidas do calendarView (sem regra de
           // recorrência aqui), então marcamos o instante como parte de uma série
           // pra acender o indicador nativo (ícone repeat) no card.
-          isRecurring:
-            ev.tipo === "occurrence" ||
-            ev.tipo === "exception" ||
-            ev.tipo === "seriesMaster",
+          isRecurring: recorrente,
+          // #213: só arrasta pra reagendar quem o usuário gerencia (organizador)
+          // E não é recorrente — mover ocorrência de série criaria uma exceção
+          // silenciosa de escopo ambíguo (a série segue pelo Editar, que pergunta
+          // ocorrência × série). Convite (não-organizador) também não arrasta.
+          draggable: podeGerenciarEvento(ev) && !recorrente,
+          // #570: leva o organizador pro chip (avatar em day/week).
+          data: { organizadorEmail: ev.organizadorEmail },
+          // #214: liga o evento à coluna de recurso (sala) na visão por recurso.
+          resourceId: ev.local?.trim() || RECURSO_SEM_LOCAL,
         };
       })
-      .filter((e): e is CalendarEvent => e !== null);
+      .filter((e): e is CalendarEvent<DadosChipEvento> => e !== null);
   }, [mesEventos, coresCat]);
+
+  // #570: cache de fotos dos organizadores (mesmo useFotos do #533). Pré-carrega
+  // em batch só em day/week (onde o avatar aparece); month não mostra.
+  const { getFoto, pedirFotos } = useFotos();
+  useEffect(() => {
+    if (view !== "day" && view !== "week") return;
+    pedirFotos((mesEventos ?? []).map((ev) => ev.organizadorEmail));
+  }, [mesEventos, pedirFotos, view]);
+  const renderChip = useCallback(
+    (props: EventCalendarRenderEventProps<DadosChipEvento>) =>
+      renderChipEvento(props, getFoto),
+    [getFoto],
+  );
+
+  // #214: recursos (salas) da visão por recurso, derivados dos LOCAIS dos eventos
+  // carregados — sem depender do Graph rooms (futuro/nicho). Cada sala com evento
+  // vira uma coluna; eventos sem sala caem no recurso "sem local". Ordenados por
+  // nome (localeCompare do idioma), estáveis via useMemo.
+  const recursos: EventCalendarResource[] = useMemo(() => {
+    const locais = new Set<string>();
+    let temSemLocal = false;
+    for (const ev of mesEventos ?? []) {
+      if (ev.resposta === "declined") continue;
+      const l = ev.local?.trim();
+      if (l) locais.add(l);
+      else temSemLocal = true;
+    }
+    const lista: EventCalendarResource[] = [...locais]
+      .sort((a, b) => a.localeCompare(b, idioma, { sensitivity: "base" }))
+      .map((l) => ({ id: l, title: l }));
+    if (temSemLocal) {
+      lista.push({ id: RECURSO_SEM_LOCAL, title: t.controlRoom.agendaSemLocal });
+    }
+    return lista;
+  }, [mesEventos, idioma, t]);
 
   const i18nCal = useMemo(() => montarI18n(t), [t]);
   const locale = localeDe(idioma);
@@ -423,6 +532,58 @@ export function AgendaView() {
         ? d.toISOString()
         : undefined;
     abrirFormCriar(iso);
+  };
+
+  // #213: arrastar num slot vazio abre o criar-evento com a faixa desenhada
+  // (início + fim). Datas inválidas caem no default seguro do form.
+  const aoCriarPorSlot = (draft: EventCalendarSlotDraft) => {
+    const iniOk =
+      draft.start instanceof Date && !Number.isNaN(draft.start.getTime());
+    const fimOk =
+      draft.end instanceof Date && !Number.isNaN(draft.end.getTime());
+    abrirFormCriar(
+      iniOk ? draft.start.toISOString() : undefined,
+      fimOk ? draft.end.toISOString() : undefined,
+    );
+  };
+
+  // #213: soltar um evento reagenda via PATCH /me/events (só início/fim/dia-
+  // inteiro; convidados/corpo intactos). Otimista no store — a UI já mostra o
+  // evento no novo horário; o rollback + toast tratam a falha. Retorna `true`
+  // (aceita); o calendário nunca muta sozinho, então o store é a fonte da verdade.
+  const aoReagendar = (
+    update: EventCalendarProposedUpdate<DadosChipEvento>,
+  ): boolean => {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    void reagendarEvento(
+      update.event.id,
+      paraWallLocal(update.start),
+      paraWallLocal(update.end),
+      update.allDay,
+      tz,
+    )
+      .then(() => toast.success(t.controlRoom.agendaReagendado))
+      .catch(() => toast.error(t.controlRoom.agendaErroReagendar));
+    return true;
+  };
+
+  // #214: na visão por recurso, arrastar entre colunas trocaria a SALA (o
+  // `local`) — fora do escopo do #213 (drag = reagendar tempo). Veta o drop que
+  // muda de recurso; o reschedule de horário dentro da mesma sala segue válido.
+  const podeSoltar = (
+    update: EventCalendarProposedUpdate<DadosChipEvento>,
+  ): boolean =>
+    update.resourceId === undefined ||
+    update.resourceId === update.event.resourceId;
+
+  // #213: feedback quando o usuário TENTA arrastar um evento que não move
+  // (recorrente ou convite). Sem escrita silenciosa — explica o caminho (Editar).
+  const aoBloquearDrag = (
+    _occ: EventCalendarOccurrence<DadosChipEvento>,
+    info: { gesture: "move" | "resize"; reason: string },
+  ) => {
+    if (info.gesture !== "move") return;
+    toast.info(t.controlRoom.agendaDragBloqueado);
   };
 
   if (erroAgenda) {
@@ -474,10 +635,11 @@ export function AgendaView() {
               view={view}
               date={dia}
               views={VIEWS}
+              resources={recursos}
               locale={locale}
               i18n={i18nCal}
               loading={mesEventos === null}
-              renderEvent={renderChipEvento}
+              renderEvent={renderChip}
               interactions={INTERACOES}
               showDayAddButton
               onRangeChange={buscarFaixa}
@@ -485,6 +647,10 @@ export function AgendaView() {
               onViewChange={(v) => setView(v as typeof view)}
               onEventClick={aoClicarEvento}
               onSlotClick={aoClicarSlot}
+              onSelectSlot={aoCriarPorSlot}
+              onEventUpdate={aoReagendar}
+              canDropEvent={podeSoltar}
+              onDragBlocked={aoBloquearDrag}
               className="min-h-0 flex-1"
             >
               <div className="flex min-w-0 items-center gap-1 border-b">
@@ -837,6 +1003,8 @@ function EventoFormSheet() {
   const modo = useAppStore((s) => s.agendaFormModo);
   const evento = useAppStore((s) => s.agendaFormEvento);
   const presetInicio = useAppStore((s) => s.agendaFormInicio);
+  // #213: fim do slot arrastado (drag-to-book) — semeia a duração no form criar.
+  const presetFim = useAppStore((s) => s.agendaFormFim);
   // Convidados completos do evento em edição (#240): buscados ao abrir o Sheet.
   const convidadosFull = useAppStore((s) => s.agendaFormConvidados);
   const convidadosCarregando = useAppStore(
@@ -941,7 +1109,14 @@ function EventoFormSheet() {
       const bruta = presetInicio ? new Date(comZ(presetInicio)) : proximaHora();
       const base = Number.isNaN(bruta.getTime()) ? proximaHora() : bruta;
       const baseIso = base.toISOString();
-      const maisUma = new Date(base.getTime() + 60 * 60000).toISOString();
+      // #213: um slot ARRASTADO traz o fim (honra a duração desenhada); clique/
+      // botão não traz e cai em +1h. Fim inválido/antes do início também cai no
+      // default seguro.
+      const fimBruta = presetFim ? new Date(comZ(presetFim)) : null;
+      const maisUma =
+        fimBruta && !Number.isNaN(fimBruta.getTime()) && fimBruta > base
+          ? fimBruta.toISOString()
+          : new Date(base.getTime() + 60 * 60000).toISOString();
       setTitulo("");
       setDiaInteiro(false);
       setLocal("");
@@ -970,7 +1145,7 @@ function EventoFormSheet() {
           : (calsEditaveis.find((c) => c.isDefaultCalendar)?.id ?? "");
       setCalendarioAlvo(alvoDefault);
     }
-  }, [aberto, modo, evento, presetInicio, calsEditaveis, selCalendarios]);
+  }, [aberto, modo, evento, presetInicio, presetFim, calsEditaveis, selCalendarios]);
 
   // Semeia os convidados do form de EDIÇÃO a partir da lista COMPLETA (#240). O
   // resumo do mês trunca em 5 e o PATCH /me/events/{id} substitui a coleção de

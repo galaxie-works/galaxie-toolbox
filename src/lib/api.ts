@@ -455,6 +455,7 @@ export async function crAgenda(
         // Evento próprio: organizador, sem RSVP (#287).
         resposta: "organizer",
         souOrganizador: true,
+        organizadorEmail: "wagner@voaz.builders",
         respostaSolicitada: false,
       },
       {
@@ -474,6 +475,7 @@ export async function crAgenda(
         // Convite pendente: aparece com semântica de "sem resposta" e RSVP (#287).
         resposta: "notResponded",
         souOrganizador: false,
+        organizadorEmail: "ana.kpmg@kpmg.com",
         respostaSolicitada: true,
       },
     ];
@@ -608,6 +610,23 @@ export async function crEditarEvento(id: string, input: EventoInput): Promise<vo
     return;
   }
   await invoke("cr_editar_evento", { id, input });
+}
+
+/** #213: reagenda um evento arrastando — PATCH só de início/fim/dia-inteiro,
+ * preservando convidados/corpo/categorias/recorrência (diferente do editar, que
+ * reenvia os attendees). Envia hora-de-parede local + fuso IANA, como o criar. */
+export async function crReagendarEvento(
+  id: string,
+  inicio: string,
+  fim: string,
+  diaInteiro: boolean,
+  timeZone: string,
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  await invoke("cr_reagendar_evento", { id, inicio, fim, diaInteiro, timeZone });
 }
 
 /** #397: recorrência da SÉRIE (do seriesMaster) pra o form carregar os campos ao
@@ -1225,10 +1244,19 @@ export interface M365InstallCard {
   appsForMac: M365AppsPlatform | null;
 }
 
+/** #208: To Do org-wide (OrgSettings-Todo). */
+export interface OrgTodoCard {
+  status: OrgCardStatus;
+  isPushNotificationEnabled: boolean | null;
+  isExternalJoinEnabled: boolean | null;
+  isExternalShareEnabled: boolean | null;
+}
+
 export interface OrgSettingsResult {
   appsAndServices: AppsAndServicesCard;
   forms: FormsCard;
   microsoft365Install: M365InstallCard;
+  todo: OrgTodoCard;
 }
 
 /**
@@ -1270,9 +1298,29 @@ export async function crOrgSettings(): Promise<OrgSettingsResult> {
           isVisioEnabled: null,
         },
       },
+      todo: {
+        status: "ok",
+        isPushNotificationEnabled: true,
+        isExternalJoinEnabled: false,
+        isExternalShareEnabled: true,
+      },
     };
   }
   return invoke<OrgSettingsResult>("cr_org_settings");
+}
+
+/**
+ * #208 (RW): grava UMA setting org-wide de To Do (OrgSettings-Todo.ReadWrite.All).
+ * ⚠️ O endpoint `/admin/todo` ainda não foi confirmado no tenant real — a UI mantém
+ * a escrita TRAVADA (`TODO_RW_HABILITADO`) até o live-QA de admin validar. Este
+ * wrapper fica pronto; ativar é só destravar a UI. Fora do Tauri é no-op (mock).
+ */
+export async function crOrgTodoSet(campo: string, valor: boolean): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  return invoke<void>("cr_org_todo_set", { campo, valor });
 }
 
 /** #207: app real do tenant (service principal lançável). */

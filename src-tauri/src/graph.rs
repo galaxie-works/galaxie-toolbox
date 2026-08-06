@@ -1295,6 +1295,10 @@ pub struct EventoAgenda {
     pub resposta: String,
     /// True quando o usuário organiza o evento (Graph `isOrganizer`) — sem RSVP.
     pub sou_organizador: bool,
+    /// E-mail do organizador (Graph `organizer.emailAddress.address`). Aditivo
+    /// (#570): habilita o avatar do organizador no chip (day/week). Igual ao
+    /// #515 P2, mas no list-item.
+    pub organizador_email: String,
     /// Graph `responseRequested`: false = convite informativo (sem pedir RSVP).
     pub resposta_solicitada: bool,
     /// Graph `type` (#397): "singleInstance" | "occurrence" | "exception" |
@@ -1350,6 +1354,11 @@ fn parse_eventos(v: &serde_json::Value) -> Vec<EventoAgenda> {
                     .unwrap_or("none")
                     .to_string(),
                 sou_organizador: it["isOrganizer"].as_bool().unwrap_or(false),
+                organizador_email: it["organizer"]["emailAddress"]["address"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string(),
                 resposta_solicitada: it["responseRequested"].as_bool().unwrap_or(true),
                 tipo: it["type"].as_str().unwrap_or("singleInstance").to_string(),
                 series_master_id: it["seriesMasterId"]
@@ -1385,7 +1394,7 @@ fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgend
     Ok(parse_eventos(&v))
 }
 
-const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,responseRequested,type,seriesMasterId";
+const AGENDA_SELECT: &str = "id,subject,start,end,location,isAllDay,onlineMeeting,attendees,hasAttachments,categories,responseStatus,isOrganizer,organizer,responseRequested,type,seriesMasterId";
 
 /// Eventos do calendário padrão no intervalo (limites em ISO UTC). Calendars.Read.
 ///
@@ -2052,6 +2061,41 @@ pub fn cr_editar_evento(store: &TokenStore, id: &str, input: EventoInput) -> Res
     .map_err(|e| format!("falha ao editar o evento: {e}"))?;
     if !resp.status().is_success() {
         return Err(erro_escrita("me/events", "editar evento", resp.status()));
+    }
+    memo_invalidar("agenda:"); // #440
+    Ok(())
+}
+
+/// #213: reagenda um evento arrastando (PATCH /me/events/{id}) — envia SÓ
+/// start/end/isAllDay, preservando attendees/corpo/categorias/recorrência (um
+/// PATCH parcial no Graph não toca nos campos omitidos). Distinto do
+/// `cr_editar_evento`, que reenvia a coleção de attendees. A hora-de-parede
+/// local + o `time_zone` IANA seguem o mesmo contrato do criar/editar; o Z é
+/// removido por garantia (dateTime não leva zona). Calendars.ReadWrite.
+pub fn cr_reagendar_evento(
+    store: &TokenStore,
+    id: &str,
+    inicio: &str,
+    fim: &str,
+    dia_inteiro: bool,
+    time_zone: &str,
+) -> Result<(), String> {
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let url = format!("{GRAPH}/me/events/{id}");
+    let ini = inicio.trim_end_matches('Z');
+    let f = fim.trim_end_matches('Z');
+    let body = serde_json::json!({
+        "isAllDay": dia_inteiro,
+        "start": { "dateTime": ini, "timeZone": time_zone },
+        "end": { "dateTime": f, "timeZone": time_zone },
+    });
+    let resp = graph_enviar("agenda:reagendar", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&body).send()
+    })
+    .map_err(|e| format!("falha ao reagendar o evento: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(erro_escrita("me/events", "reagendar evento", resp.status()));
     }
     memo_invalidar("agenda:"); // #440
     Ok(())
@@ -4971,6 +5015,39 @@ impl AppsAndServicesCard {
     }
 }
 
+// #208 (Org Admin): To Do org-wide (OrgSettings-Todo.Read.All). Mesmo padrão dos
+// outros cards — GET independente, status próprio de degradação. Endpoint segue a
+// nomenclatura dos irmãos (`OrgSettings-Todo` → `/admin/todo`, beta). `todoSettings`:
+// push notification / external join / external share.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrgTodoCard {
+    /// "ok" | "forbidden" | "error"
+    pub status: String,
+    pub is_push_notification_enabled: Option<bool>,
+    pub is_external_join_enabled: Option<bool>,
+    pub is_external_share_enabled: Option<bool>,
+}
+
+impl OrgTodoCard {
+    fn vazio(status: &str) -> Self {
+        Self {
+            status: status.to_string(),
+            is_push_notification_enabled: None,
+            is_external_join_enabled: None,
+            is_external_share_enabled: None,
+        }
+    }
+    fn dos_settings(s: &serde_json::Value) -> Self {
+        Self {
+            status: "ok".to_string(),
+            is_push_notification_enabled: s["isPushNotificationEnabled"].as_bool(),
+            is_external_join_enabled: s["isExternalJoinEnabled"].as_bool(),
+            is_external_share_enabled: s["isExternalShareEnabled"].as_bool(),
+        }
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FormsCard {
@@ -5072,6 +5149,7 @@ pub struct OrgSettingsResult {
     pub apps_and_services: AppsAndServicesCard,
     pub forms: FormsCard,
     pub microsoft365_install: M365InstallCard,
+    pub todo: OrgTodoCard,
 }
 
 /// Resultado bruto de um GET de OrgSettings, antes de virar card tipado.
@@ -5139,11 +5217,56 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
         OrgGetOutcome::Error => M365InstallCard::vazio("error"),
     };
 
+    // #208: To Do org-wide (mesmo padrão dos 3 acima). `/admin/todo` segue a
+    // nomenclatura OrgSettings-Todo; a resposta (como os irmãos) traz os settings
+    // em `value.settings`. Sem permissão/erro → card degrada sozinho.
+    let todo = match org_settings_get(
+        &token,
+        &client,
+        "org:todo",
+        &format!("{GRAPH_BETA}/admin/todo"),
+    ) {
+        OrgGetOutcome::Ok(body) => OrgTodoCard::dos_settings(&body["value"]["settings"]),
+        OrgGetOutcome::Forbidden => OrgTodoCard::vazio("forbidden"),
+        OrgGetOutcome::Error => OrgTodoCard::vazio("error"),
+    };
+
     Ok(OrgSettingsResult {
         apps_and_services,
         forms,
         microsoft365_install,
+        todo,
     })
+}
+
+/// #208 (RW): grava UMA setting org-wide de To Do (OrgSettings-Todo.ReadWrite.All).
+/// PATCH `/admin/todo` com `{ "settings": { "<campo>": valor } }` — o shape espelha
+/// o GET (que lê `value.settings`). Só aceita os 3 campos conhecidos (nunca PATCH
+/// arbitrário). ⚠️ O endpoint/shape do `/admin/todo` ainda NÃO foi confirmado no
+/// tenant real (auth-gate) — a UI mantém a escrita TRAVADA atrás de um gate até o
+/// live-QA de admin do Wagner validar; este comando fica pronto pra ativar (#208).
+pub fn cr_org_todo_set(store: &TokenStore, campo: &str, valor: bool) -> Result<(), String> {
+    if !matches!(
+        campo,
+        "isPushNotificationEnabled" | "isExternalJoinEnabled" | "isExternalShareEnabled"
+    ) {
+        return Err(format!("campo de To Do desconhecido: {campo}"));
+    }
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let body = serde_json::json!({ "settings": { campo: valor } });
+    let resp = graph_enviar("org:todo:set", GRAPH_TETO_ESPERA_S, || {
+        client
+            .patch(format!("{GRAPH_BETA}/admin/todo"))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+    })
+    .map_err(|e| format!("falha ao gravar To Do org-wide: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/admin/todo PATCH retornou {}", resp.status()));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
