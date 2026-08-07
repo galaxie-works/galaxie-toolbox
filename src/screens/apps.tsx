@@ -1,4 +1,3 @@
-import AnimatedTabs from "@/components/smoothui/animated-tabs";
 import {
   Frame,
   FrameFooter,
@@ -6,6 +5,27 @@ import {
   FramePanel,
   FrameTitle,
 } from "@/components/reui/frame";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarGroup,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@/components/animate-ui/components/radix/sidebar";
+import SoftBlurIn from "@/components/smoothui/soft-blur-in";
+import {
+  AppsIcon,
+  RecommendedIcon,
+  ProdutividadeIcon,
+  UtilitariosIcon,
+  EducacaoIcon,
+  ComunicacaoIcon,
+  ConteudoIcon,
+  ProjetosIcon,
+  ExperienciaIcon,
+  DesenvolvimentoIcon,
+} from "@/components/ui/icons/apps-anim";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -37,7 +57,7 @@ import {
   MoreHorizontal,
   SquareArrowOutUpRight,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 
 /** #207: chave do ícone local por nome de app do catálogo — pra reaproveitar o
  *  ícone oficial nos apps do tenant que casam por nome; o resto usa genérico. */
@@ -176,7 +196,9 @@ export function AppsScreen({
   onAbrirNavegador: (a: AppM365) => void;
 }) {
   const { t } = useIdioma();
-  const [categoria, setCategoria] = useState<string>(CATEGORIAS[0]);
+  // #620: item selecionado no sidebar — "recomendados" (default) ou uma das 8
+  // categorias. Substitui as abas horizontais do "Explorar".
+  const [selecionado, setSelecionado] = useState<string>("recomendados");
   // #207: apps reais do tenant (aditivo). Falha/sem-permissão/vazio → seção
   // some e a tela cai no catálogo estático (fallback gracioso).
   const [tenant, setTenant] = useState<TenantAppsResult | null>(null);
@@ -198,7 +220,36 @@ export function AppsScreen({
   const maisUsados = MAIS_USADOS.map((id) => APPS.find((a) => a.id === id)).filter(
     (a): a is AppM365 => a != null
   );
-  const daCategoria = porCategoria(categoria as (typeof CATEGORIAS)[number]);
+
+  // #620: os 9 itens do sidebar — Recommended + as 8 categorias (mapa do épico
+  // #619), cada um com o seu ícone animado (anima no hover da linha).
+  const itens: {
+    id: string;
+    label: string;
+    Icon: ComponentType<{ className?: string }>;
+  }[] = [
+    { id: "recomendados", label: t.apps.recomendados, Icon: RecommendedIcon },
+    { id: "produtividade", label: t.apps.produtividade, Icon: ProdutividadeIcon },
+    { id: "utilitarios", label: t.apps.utilitarios, Icon: UtilitariosIcon },
+    { id: "educacao", label: t.apps.educacao, Icon: EducacaoIcon },
+    { id: "comunicacao", label: t.apps.comunicacao, Icon: ComunicacaoIcon },
+    { id: "conteudo", label: t.apps.conteudo, Icon: ConteudoIcon },
+    { id: "projetos", label: t.apps.projetos, Icon: ProjetosIcon },
+    { id: "experiencia", label: t.apps.experiencia, Icon: ExperienciaIcon },
+    {
+      id: "desenvolvimento",
+      label: t.apps.desenvolvimento,
+      Icon: DesenvolvimentoIcon,
+    },
+  ];
+  const tituloConteudo =
+    itens.find((i) => i.id === selecionado)?.label ?? t.apps.recomendados;
+  // Conteúdo do item: Recommended → mais usados; categoria → porCategoria. S2/S3
+  // refinam a curadoria; aqui o shell já lista de forma funcional.
+  const appsConteudo =
+    selecionado === "recomendados"
+      ? maisUsados
+      : porCategoria(selecionado as (typeof CATEGORIAS)[number]);
 
   // Abre um app do tenant no navegador interno, reusando o handler existente.
   const abrirTenant = (a: TenantApp) =>
@@ -212,83 +263,118 @@ export function AppsScreen({
     });
 
   return (
-    <div className="w-full space-y-6">
-      {tenantApps.length > 0 && (
-        <Frame className="w-full">
-          <FrameHeader>
-            <FrameTitle>{t.apps.doSeuTenant}</FrameTitle>
-          </FrameHeader>
-          <FramePanel>
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {tenantApps.map((a) => (
-                <TenantAppCard
-                  key={a.appId || a.displayName}
-                  app={a}
-                  onAbrir={abrirTenant}
-                />
-              ))}
-            </div>
-          </FramePanel>
-        </Frame>
-      )}
+    <div className="flex h-full flex-col gap-4">
+      {/* Hero — mesmo padrão do Bridge/Settings: ícone + título animado + descrição. */}
+      <div className="flex shrink-0 items-center gap-3">
+        <div className="flex size-11 items-center justify-center rounded-lg bg-secondary text-secondary-foreground">
+          <AppsIcon className="size-6" />
+        </div>
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">
+            <SoftBlurIn delay={80} stagger={16}>
+              {t.apps.heroTitulo}
+            </SoftBlurIn>
+          </h1>
+          <p className="text-sm text-muted-foreground">{t.apps.heroSubtitulo}</p>
+        </div>
+      </div>
 
-      <Frame className="w-full">
-        {/* Sem descricao aqui: o aviso de sessao aparece uma vez so, no rodape
-            do bloco de baixo. Repetido nos dois, vira ruido. */}
-        <FrameHeader>
-          <FrameTitle>{t.apps.maisUsados}</FrameTitle>
-        </FrameHeader>
-        <FramePanel>
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {maisUsados.map((a) => (
-              <AppCard
-                key={a.id}
-                app={a}
-                compacto
-                onAbrirAqui={onAbrirAqui}
-                onAbrirNavegador={onAbrirNavegador}
-              />
-            ))}
-          </div>
-        </FramePanel>
-      </Frame>
+      {/* Layout sidebar-esquerda + conteúdo — reusa os primitivos reui do
+          SettingsNavigation/app-sidebar (roda no SidebarProvider do App). */}
+      <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
+        <AppsNavigation
+          itens={itens}
+          selecionado={selecionado}
+          onSelecionar={setSelecionado}
+        />
 
-      <Frame className="w-full">
-        <FrameHeader>
-          <FrameTitle>{t.apps.explorar}</FrameTitle>
-        </FrameHeader>
+        <div className="min-w-0 flex-1 space-y-4 overflow-y-auto">
+          {tenantApps.length > 0 && (
+            <Frame className="w-full">
+              <FrameHeader>
+                <FrameTitle>{t.apps.doSeuTenant}</FrameTitle>
+              </FrameHeader>
+              <FramePanel>
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {tenantApps.map((a) => (
+                    <TenantAppCard
+                      key={a.appId || a.displayName}
+                      app={a}
+                      onAbrir={abrirTenant}
+                    />
+                  ))}
+                </div>
+              </FramePanel>
+            </Frame>
+          )}
 
-        <FramePanel>
-          {/* Rolagem horizontal: sao oito categorias e em janela estreita elas
-              nao cabem numa linha so. */}
-          <div className="-mx-1 overflow-x-auto px-1 pb-1">
-            <AnimatedTabs
-              activeTab={categoria}
-              className="[&>button]:whitespace-nowrap"
-              layoutId="apps-categorias"
-              onChange={setCategoria}
-              tabs={CATEGORIAS.map((c) => ({ id: c, label: t.apps[c] }))}
-              variant="segment"
-            />
-          </div>
-
-          <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {daCategoria.map((a) => (
-              <AppCard
-                key={a.id}
-                app={a}
-                onAbrirAqui={onAbrirAqui}
-                onAbrirNavegador={onAbrirNavegador}
-              />
-            ))}
-          </div>
-        </FramePanel>
-
-        <FrameFooter className="flex-row items-center gap-2">
-          <Info className="size-4 shrink-0 text-blue-500 dark:text-blue-400" />
-          <p className="text-muted-foreground text-sm">{t.apps.avisoSessao}</p>
-        </FrameFooter>
-      </Frame>
+          <Frame className="w-full">
+            <FrameHeader>
+              <FrameTitle>{tituloConteudo}</FrameTitle>
+            </FrameHeader>
+            <FramePanel>
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {appsConteudo.map((a) => (
+                  <AppCard
+                    key={a.id}
+                    app={a}
+                    onAbrirAqui={onAbrirAqui}
+                    onAbrirNavegador={onAbrirNavegador}
+                  />
+                ))}
+              </div>
+            </FramePanel>
+            <FrameFooter className="flex-row items-center gap-2">
+              <Info className="size-4 shrink-0 text-blue-500 dark:text-blue-400" />
+              <p className="text-muted-foreground text-sm">{t.apps.avisoSessao}</p>
+            </FrameFooter>
+          </Frame>
+        </div>
+      </div>
     </div>
+  );
+}
+
+/**
+ * #620: sidebar da tela Apps — reusa os primitivos reui (`Sidebar
+ * collapsible="none"` / `SidebarMenuButton` etc.) exatamente como o
+ * `SettingsNavigation` (configuracoes.tsx) e o `app-sidebar.tsx`. Roda dentro do
+ * `SidebarProvider` do App (o mesmo que serve o AppSidebar). Itens flat (sem
+ * subitens) — cada um seleciona uma categoria/Recommended; ícone anima no hover.
+ */
+function AppsNavigation({
+  itens,
+  selecionado,
+  onSelecionar,
+}: {
+  itens: { id: string; label: string; Icon: ComponentType<{ className?: string }> }[];
+  selecionado: string;
+  onSelecionar: (id: string) => void;
+}) {
+  return (
+    <aside className="w-full shrink-0 rounded-xl border bg-card md:h-full md:w-64">
+      <Sidebar
+        collapsible="none"
+        className="h-full w-full bg-transparent text-foreground"
+      >
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarMenu>
+              {itens.map((it) => (
+                <SidebarMenuItem key={it.id}>
+                  <SidebarMenuButton
+                    isActive={selecionado === it.id}
+                    onClick={() => onSelecionar(it.id)}
+                  >
+                    <it.Icon />
+                    <span>{it.label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroup>
+        </SidebarContent>
+      </Sidebar>
+    </aside>
   );
 }

@@ -230,6 +230,10 @@ const pt = {
   },
 
   apps: {
+    // #620: hero + item "Recomendados" do sidebar (shell da tela Apps).
+    heroTitulo: "Apps",
+    heroSubtitulo: "Seus apps do Microsoft 365, num lugar só.",
+    recomendados: "Recomendados",
     maisUsados: "Mais utilizados",
     doSeuTenant: "Disponíveis no seu tenant",
     explorar: "Explore por categoria",
@@ -1910,6 +1914,10 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   },
 
   apps: {
+    // #620: hero + "Recommended" sidebar item (Apps screen shell).
+    heroTitulo: "Apps",
+    heroSubtitulo: "Your Microsoft 365 apps, all in one place.",
+    recomendados: "Recommended",
     maisUsados: "Most used",
     doSeuTenant: "Available in your tenant",
     explorar: "Explore by category",

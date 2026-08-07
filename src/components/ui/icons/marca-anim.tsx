@@ -8,7 +8,7 @@ import { BotMessageSquareIcon } from "@/components/ui/bot-message-square";
 
 /** Handle comum dos ícones lucide-animated (todos têm o mesmo formato). */
 type AnimHandle = { startAnimation: () => void; stopAnimation: () => void };
-type AnimIcon = React.ForwardRefExoticComponent<
+export type AnimIcon = React.ForwardRefExoticComponent<
   { className?: string; size?: number } & React.RefAttributes<AnimHandle>
 >;
 
@@ -23,7 +23,7 @@ type AnimIcon = React.ForwardRefExoticComponent<
  * `<a>`/`<button>` ancestral e disparamos start/stop nele. Assim o ícone anima
  * quando o mouse passa por qualquer ponto da linha (ícone + texto).
  */
-function IconeAnim({ Comp, className }: { Comp: AnimIcon; className?: string }) {
+export function IconeAnim({ Comp, className }: { Comp: AnimIcon; className?: string }) {
   const spanRef = useRef<HTMLSpanElement>(null);
   const handle = useRef<AnimHandle>(null);
 
