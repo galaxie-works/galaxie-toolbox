@@ -5,7 +5,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import {
   Frame,
@@ -74,13 +73,18 @@ function CardUso({ uso }: { uso: UsoOneDrive | null }) {
   const estourou = uso.total > 0 && uso.used > uso.total;
 
   return (
-    <Card className="relative w-full max-w-md gap-5 overflow-visible pb-2">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-sm font-medium">{t.meusArquivos.usoTitulo}</CardTitle>
+    <Frame
+      className="relative w-full max-w-md gap-5 overflow-visible pb-2"
+      stacked
+    >
+      <FrameHeader className="flex flex-row items-center justify-between space-y-0">
+        <FrameTitle className="text-sm font-medium">
+          {t.meusArquivos.usoTitulo}
+        </FrameTitle>
         <span className="text-xs text-muted-foreground">{pct}%</span>
-      </CardHeader>
+      </FrameHeader>
 
-      <CardContent
+      <FramePanel
         className={cn(
           "relative space-y-4 overflow-hidden transition-all duration-500 ease-in-out",
           aberto ? "max-h-[520px]" : "max-h-[128px]"
@@ -132,7 +136,7 @@ function CardUso({ uso }: { uso: UsoOneDrive | null }) {
             aberto ? "opacity-0" : "opacity-100"
           )}
         />
-      </CardContent>
+      </FramePanel>
 
       {/* Botao circular que abre/fecha, na base do card */}
       <div className="absolute -bottom-4 left-1/2 -translate-x-1/2">
@@ -153,7 +157,7 @@ function CardUso({ uso }: { uso: UsoOneDrive | null }) {
           <TooltipContent>{t.meusArquivos.usoTitulo}</TooltipContent>
         </Tooltip>
       </div>
-    </Card>
+    </Frame>
   );
 }
 
