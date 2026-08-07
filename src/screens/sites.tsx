@@ -1,4 +1,5 @@
 import AnimatedTabs from "@/components/smoothui/animated-tabs";
+import { Alert, AlertDescription } from "@/components/reui/alert";
 import { Badge } from "@/components/reui/badge";
 import {
   Frame,
@@ -304,10 +305,10 @@ export function SitesScreen({
       ) : (
         <>
           {error && (
-            <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3.5">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-              <p data-selecionavel className="text-[12.5px] leading-relaxed text-destructive">{error}</p>
-            </div>
+            <Alert variant="destructive" className="mb-4">
+              <AlertTriangle />
+              <AlertDescription data-selecionavel>{error}</AlertDescription>
+            </Alert>
           )}
 
           {loading && sites.length === 0 ? (
