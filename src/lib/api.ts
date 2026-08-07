@@ -2443,11 +2443,12 @@ export async function crAnexoLink(
   });
 }
 
-// --- #636 (épico #635): "Salvar como…" (PDF/.msg) + "Imprimir" --------------
+// --- #636 (épico #635): "Salvar como…" (PDF/.msg) ---------------------------
 // Comandos POR FORMATO, mesma forma do `crSalvarEmailEml` (#637): `(ids, pasta,
 // mailbox?)` → `SalvarEmailResultado`. Em S1 (#636) PDF/.msg são STUB no backend
 // (fingem sucesso); as reais entram em #639/#638 trocando SÓ o corpo. O `.eml`
-// (crSalvarEmailEml) já é real e vive acima.
+// (crSalvarEmailEml) já é real e vive acima. Imprimir (#640) é 100% front
+// (`print()` do WebView2 no iframe do corpo), sem comando Tauri.
 
 /** Salva N e-mails como PDF na pasta escolhida. (real: #639) */
 export async function crSalvarEmailPdf(
@@ -2481,15 +2482,6 @@ export async function crSalvarEmailMsg(
     pasta,
     mailbox: mailboxArg(mailbox),
   });
-}
-
-/** Imprime N e-mails (diálogo do sistema). (real: #640) */
-export async function crImprimirEmail(ids: string[]): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
-  return invoke<void>("cr_imprimir_email", { ids });
 }
 
 /** Abre um arquivo local com o aplicativo padrao. */
