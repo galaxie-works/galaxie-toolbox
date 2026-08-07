@@ -65,3 +65,21 @@ webview2-com = "0.38"
 # DPAPI para cifrar a sessao em disco (o Cofre de Credenciais tem limite de
 # 2560 bytes por blob e o refresh token da Microsoft nao cabe).
 winapi = { version = "0.3", features = ["dpapi", "wincrypt", "minwindef", "winbase"] }
+
+# ── Perfil de dev enxuto (#605) ──────────────────────────────────────────────
+# O `cargo build` de dev estourava a RAM (OOM do rustc-LLVM/linker) na maquina do
+# Wagner. Neste binario gigante (tauri + wry + windows + webview2-com), o grande
+# consumidor de memoria no codegen/link e o *debuginfo*: o perfil dev padrao usa
+# `debug = 2` (DWARF/PDB completo) pra TODOS os crates. Cortar debuginfo e o lever
+# principal contra o OOM (opt-level fica 0 como no dev padrao — nada de LTO, que
+# explodiria a memoria; `codegen-units` fica no 256 padrao do dev, que mantem os
+# modulos LLVM pequenos = menos RAM por modulo; `incremental` segue ligado).
+[profile.dev]
+# Mantem arquivo/linha em panics e backtraces (dev continua diagnosticavel via
+# log "como Delphero"), mas descarta o grosso do DWARF/PDB do nosso crate.
+debug = "line-tables-only"
+
+# Nao se debuga DENTRO das deps (tauri/wry/windows/reqwest/...). Zerar o debuginfo
+# delas encolhe drasticamente os .o e o PDB no link — o maior ganho de memoria.
+[profile.dev.package."*"]
+debug = false
