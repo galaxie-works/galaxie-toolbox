@@ -34,6 +34,7 @@ src-tauri/gen/
 
 # Artefatos locais
 *.pdb
+artifacts/qa-visual/
 
 # Chave privada do updater — nunca versionar
 *.key
