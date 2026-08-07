@@ -5515,12 +5515,23 @@ fn tenant_app_do_sp(sp: &serde_json::Value) -> Option<TenantApp> {
     if sp["servicePrincipalType"].as_str() != Some("Application") {
         return None;
     }
-    let escondido = sp["tags"]
-        .as_array()
-        .map(|tags| {
-            tags.iter()
-                .any(|t| t.as_str() == Some("HideApp"))
+    // #618: espelha a régua do launcher da Microsoft (myapplications.microsoft.com):
+    // só é tile de app quem tem a tag `WindowsAzureActiveDirectoryIntegratedApp`.
+    // Service principals consentidos por OAuth (ferramentas de migração/CLI:
+    // CodeTwo, EdbMails, Cyberduck, EmailJS…) não têm essa tag → ficam de fora.
+    // `HideApp` continua sendo o override manual do admin pra esconder um app.
+    let tags = sp["tags"].as_array();
+    let eh_launcher = tags
+        .map(|t| {
+            t.iter()
+                .any(|v| v.as_str() == Some("WindowsAzureActiveDirectoryIntegratedApp"))
         })
+        .unwrap_or(false);
+    if !eh_launcher {
+        return None;
+    }
+    let escondido = tags
+        .map(|t| t.iter().any(|v| v.as_str() == Some("HideApp")))
         .unwrap_or(false);
     if escondido {
         return None;
