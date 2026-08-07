@@ -41,7 +41,7 @@ import {
 import {
   APPS,
   CATEGORIAS,
-  MAIS_USADOS,
+  RECOMENDADOS,
   porCategoria,
   urlIcone,
   urlIconePorChave,
@@ -217,9 +217,11 @@ export function AppsScreen({
   }, []);
   const tenantApps = tenant?.status === "ok" ? tenant.apps : [];
 
-  const maisUsados = MAIS_USADOS.map((id) => APPS.find((a) => a.id === id)).filter(
-    (a): a is AppM365 => a != null
-  );
+  // #621: item Recommended = pacote Office + OneDrive (RECOMENDADOS, confirmado
+  // pelo PO), puxado do catálogo APPS por id. Substitui o MAIS_USADOS do S1.
+  const recomendados = RECOMENDADOS.map((id) =>
+    APPS.find((a) => a.id === id)
+  ).filter((a): a is AppM365 => a != null);
 
   // #620: os 9 itens do sidebar — Recommended + as 8 categorias (mapa do épico
   // #619), cada um com o seu ícone animado (anima no hover da linha).
@@ -244,11 +246,11 @@ export function AppsScreen({
   ];
   const tituloConteudo =
     itens.find((i) => i.id === selecionado)?.label ?? t.apps.recomendados;
-  // Conteúdo do item: Recommended → mais usados; categoria → porCategoria. S2/S3
-  // refinam a curadoria; aqui o shell já lista de forma funcional.
+  // Conteúdo do item: Recommended → pacote Office+OneDrive (#621); categoria →
+  // porCategoria (#622 refina).
   const appsConteudo =
     selecionado === "recomendados"
-      ? maisUsados
+      ? recomendados
       : porCategoria(selecionado as (typeof CATEGORIAS)[number]);
 
   // Abre um app do tenant no navegador interno, reusando o handler existente.
