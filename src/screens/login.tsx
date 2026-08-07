@@ -8,8 +8,9 @@ import { IdiomaSelect } from "@/components/ui/idioma-select";
 import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { Alert, AlertDescription } from "@/components/reui/alert";
+import { Spinner } from "@/components/ui/spinner";
 import { comDestaque, useIdioma } from "@/lib/idioma";
-import { ShieldCheck, Loader2, AlertTriangle } from "lucide-react";
+import { ShieldCheck, AlertTriangle } from "lucide-react";
 
 /** Logo colorido da Microsoft para o botao de entrar. */
 function MsLogo() {
@@ -97,7 +98,7 @@ export function LoginScreen({
           >
             {loading ? (
               <>
-                <Loader2 className="size-4 animate-spin" />
+                <Spinner data-icon="inline-start" />
                 {t.login.entrando}
               </>
             ) : (
