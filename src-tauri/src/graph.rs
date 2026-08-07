@@ -2823,7 +2823,7 @@ pub fn cr_anexo_para_pdf(
 
 /// Devolve um caminho ainda livre dentro de `dir` para `nome`. Se ja existir,
 /// anexa " (1)", " (2)", ... antes da extensao ate achar um nome disponivel.
-fn caminho_livre(dir: &std::path::Path, nome: &str) -> std::path::PathBuf {
+pub(crate) fn caminho_livre(dir: &std::path::Path, nome: &str) -> std::path::PathBuf {
     let inicial = dir.join(nome);
     if !inicial.exists() {
         return inicial;
@@ -2878,7 +2878,7 @@ pub struct SalvarEmailFalha {
 /// Sanitiza um assunto para nome de arquivo do Windows: troca os caracteres
 /// proibidos (`\ / : * ? " < > |`) e de controle por espaço, colapsa espaços,
 /// corta em ~120 chars e apara `.`/espaço das pontas. Vazio → `fallback`.
-fn sanitizar_nome_arquivo(bruto: &str, fallback: &str) -> String {
+pub(crate) fn sanitizar_nome_arquivo(bruto: &str, fallback: &str) -> String {
     const INVALIDOS: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
     let limpo: String = bruto
         .chars()

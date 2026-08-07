@@ -7,6 +7,7 @@ mod favicon;
 mod graph;
 mod lock_screen;
 mod onedrive;
+mod salvar_pdf;
 mod system;
 mod telemetry;
 
@@ -1523,16 +1524,23 @@ async fn cr_anexo_link(
 //   · S5 #640 → cr_imprimir_email (diálogo de impressão do sistema)
 // O `cr_salvar_email_eml` real vive acima (#637); aqui só os que faltam.
 
-/// STUB (S1 #636): salvar como PDF. Real em S4 (#639). Mesma forma do `_eml`
-/// (#637): devolve `SalvarEmailResultado`. O stub finge sucesso de todos.
+/// Control room: salvar como PDF (S4 #639, real). Renderiza o corpo via WebView2
+/// PrintToPdf numa webview oculta. Corre em spawn_blocking (Graph + impressão
+/// síncronas). Contrato do S1: `{ids,pasta,mailbox}` → `SalvarEmailResultado`.
 #[tauri::command]
 async fn cr_salvar_email_pdf(
+    app: tauri::AppHandle,
+    state: State<'_, Store>,
     ids: Vec<String>,
     pasta: String,
     mailbox: Option<String>,
 ) -> Result<graph::SalvarEmailResultado, String> {
-    let _ = (&pasta, &mailbox);
-    Ok(graph::SalvarEmailResultado { salvos: ids, falhas: vec![] })
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        salvar_pdf::cr_salvar_email_pdf(&app, &store, &ids, &pasta, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// STUB (S1 #636): salvar como `.msg`. Real em S3 (#638). Idem forma do `_eml`.
