@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/reui/alert";
 import * as api from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
 import { AlertTriangle, Check, Loader2, ShieldCheck } from "lucide-react";
@@ -53,18 +54,16 @@ export function CaminhosLongosScreen() {
           )}
         </div>
 
-        <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 p-3.5">
-          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[color:var(--success)]" />
-          <p className="text-[12.5px] leading-relaxed text-muted-foreground">
-            {t.caminhosLongos.aviso}
-          </p>
-        </div>
+        <Alert variant="success" className="mt-5">
+          <ShieldCheck />
+          <AlertDescription>{t.caminhosLongos.aviso}</AlertDescription>
+        </Alert>
 
         {erro && (
-          <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3.5">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-            <p data-selecionavel className="text-[12.5px] leading-relaxed text-destructive">{erro}</p>
-          </div>
+          <Alert variant="destructive" className="mt-3">
+            <AlertTriangle />
+            <AlertDescription data-selecionavel>{erro}</AlertDescription>
+          </Alert>
         )}
 
         <div className="mt-5">

@@ -7,6 +7,7 @@ import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { IdiomaSelect } from "@/components/ui/idioma-select";
 import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
+import { Alert, AlertDescription } from "@/components/reui/alert";
 import { comDestaque, useIdioma } from "@/lib/idioma";
 import { ShieldCheck, Loader2, AlertTriangle } from "lucide-react";
 
@@ -107,20 +108,18 @@ export function LoginScreen({
             )}
           </Button>
 
-          <div className="mt-5 flex items-start gap-2.5 rounded-lg border border-border bg-muted/40 p-3.5">
-            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[color:var(--success)]" />
-            <p className="text-left text-[12.5px] leading-relaxed text-muted-foreground">
+          <Alert variant="success" className="mt-5">
+            <ShieldCheck />
+            <AlertDescription>
               {comDestaque(t.login.aviso, "senha", t.login.avisoSenha)}
-            </p>
-          </div>
+            </AlertDescription>
+          </Alert>
 
           {error && (
-            <div className="mt-3 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3.5">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-              <p data-selecionavel className="text-left text-[12.5px] leading-relaxed text-destructive">
-                {error}
-              </p>
-            </div>
+            <Alert variant="destructive" className="mt-3">
+              <AlertTriangle />
+              <AlertDescription data-selecionavel>{error}</AlertDescription>
+            </Alert>
           )}
         </form>
       </div>

@@ -14,6 +14,7 @@ import {
   type PlateEditor,
 } from "platejs/react";
 import {
+  AlertTriangle,
   FileArchiveIcon,
   FileIcon,
   FileSpreadsheetIcon,
@@ -35,6 +36,7 @@ import { UnderlineIcon } from "@/components/ui/underline";
 import { AttachFileIcon } from "@/components/ui/attach-file";
 import { PenToolIcon } from "@/components/ui/pen-tool";
 import { OneDriveIcon } from "@/components/ui/icons/marca/onedrive";
+import { Alert, AlertDescription } from "@/components/reui/alert";
 import { toast } from "sonner";
 
 import {
@@ -860,11 +862,14 @@ export const ComporMensagem = forwardRef<
 
           {/* Mensagens de erro do uploader */}
           {errors.length > 0 && (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {errors.map((error, index) => (
-                <p key={index}>{error}</p>
-              ))}
-            </div>
+            <Alert variant="destructive">
+              <AlertTriangle />
+              <AlertDescription>
+                {errors.map((error, index) => (
+                  <p key={index}>{error}</p>
+                ))}
+              </AlertDescription>
+            </Alert>
           )}
         </div>
       </Plate>
