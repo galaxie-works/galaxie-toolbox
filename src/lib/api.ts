@@ -2443,6 +2443,55 @@ export async function crAnexoLink(
   });
 }
 
+// --- #636 (épico #635): "Salvar como…" (PDF/.msg) + "Imprimir" --------------
+// Comandos POR FORMATO, mesma forma do `crSalvarEmailEml` (#637): `(ids, pasta,
+// mailbox?)` → `SalvarEmailResultado`. Em S1 (#636) PDF/.msg são STUB no backend
+// (fingem sucesso); as reais entram em #639/#638 trocando SÓ o corpo. O `.eml`
+// (crSalvarEmailEml) já é real e vive acima.
+
+/** Salva N e-mails como PDF na pasta escolhida. (real: #639) */
+export async function crSalvarEmailPdf(
+  ids: string[],
+  pasta: string,
+  mailbox?: string
+): Promise<SalvarEmailResultado> {
+  if (!inTauri()) {
+    await sleep(400);
+    return { salvos: ids.map((_, i) => `${pasta}\\exemplo${i > 0 ? ` (${i + 1})` : ""}.pdf`), falhas: [] };
+  }
+  return invoke<SalvarEmailResultado>("cr_salvar_email_pdf", {
+    ids,
+    pasta,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
+/** Salva N e-mails como `.msg` (Outlook) na pasta escolhida. (real: #638) */
+export async function crSalvarEmailMsg(
+  ids: string[],
+  pasta: string,
+  mailbox?: string
+): Promise<SalvarEmailResultado> {
+  if (!inTauri()) {
+    await sleep(400);
+    return { salvos: ids.map((_, i) => `${pasta}\\exemplo${i > 0 ? ` (${i + 1})` : ""}.msg`), falhas: [] };
+  }
+  return invoke<SalvarEmailResultado>("cr_salvar_email_msg", {
+    ids,
+    pasta,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
+/** Imprime N e-mails (diálogo do sistema). (real: #640) */
+export async function crImprimirEmail(ids: string[]): Promise<void> {
+  if (!inTauri()) {
+    await sleep(300);
+    return;
+  }
+  return invoke<void>("cr_imprimir_email", { ids });
+}
+
 /** Abre um arquivo local com o aplicativo padrao. */
 export async function abrirCaminho(path: string): Promise<void> {
   if (!inTauri()) {
