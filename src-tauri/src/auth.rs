@@ -580,7 +580,7 @@ pub fn interactive_login(
             html_page(
                 idioma,
                 "Login falhou",
-                "Feche esta janela e tente novamente no GALAXIE.",
+                "Feche esta janela e tente novamente na GALAXIE.",
             )
         };
 

@@ -1334,7 +1334,7 @@ const pt = {
     // Startup
     startupLabel: "Abrir na inicialização",
     startupDesc:
-      "Abrir o GALAXIE automaticamente ao entrar no Windows.",
+      "Abrir a GALAXIE automaticamente ao entrar no Windows.",
     startupErro:
       "Não foi possível atualizar a inicialização automática. Tente novamente.",
     // Background (#474: fundos animados dentro do Appearance)
@@ -1403,11 +1403,11 @@ const pt = {
     cfgGeneralLabel: "Configurações gerais",
     cfgAppsLabel: "Apps",
     cfgAccountsLabel: "Contas",
-    cfgAccountsDesc: "Gerencie as contas conectadas ao GALAXIE.",
+    cfgAccountsDesc: "Gerencie as contas conectadas à GALAXIE.",
     cfgAccountsEmptyTitulo: "Contas",
     cfgAccountsEmptyDesc: "Múltiplas contas chegam em breve.",
     cfgPersonalizationLabel: "Personalização",
-    cfgPersonalizationDesc: "Deixe o GALAXIE com a sua cara.",
+    cfgPersonalizationDesc: "Deixe a GALAXIE com a sua cara.",
     cfgSoundTitulo: "Som e notificações",
     cfgSoundSubtitulo: "Escolha quais eventos tocam um som.",
     cfgAppearanceTitulo: "Aparência",
@@ -1426,7 +1426,7 @@ const pt = {
     termsLerBtn: "Ler",
     termsFecharBtn: "Fechar",
     termsIntro:
-      "O GALAXIE foi feito pra ser o seu companheiro de trabalho — rápido, no seu idioma e do seu jeito. Aqui está, sem letras miúdas, como a gente cuida das suas informações.",
+      "A GALAXIE foi feita pra ser a sua companheira de trabalho — rápida, no seu idioma e do seu jeito. Aqui está, sem letras miúdas, como a gente cuida das suas informações.",
     termsSec1Titulo: "Suas informações são suas",
     termsSec1Corpo:
       "A gente não coleta nada que identifique você. Nem nome, nem e-mail, nem suas mensagens, contatos, arquivos ou o que você escreve. Nada disso sai da sua máquina pra gente.",
@@ -1443,7 +1443,7 @@ const pt = {
       "Você está no controle: pode ajustar o que compartilha em Settings › System › Telemetria e diagnósticos quando quiser.",
     cfgSystemLabel: "Sistema",
     cfgSystemDesc:
-      "Escolha como o GALAXIE funciona com o seu dispositivo.",
+      "Escolha como a GALAXIE funciona com o seu dispositivo.",
     cfgLanguageTitulo: "Idioma",
     cfgLanguageSubtitulo: "Escolha o idioma do app.",
     cfgStartupTitulo: "Inicialização",
@@ -1626,8 +1626,8 @@ const pt = {
     themeAccessAria: "Alto contraste",
     // Lock screen (#122) — "GALAXIE" (nome do produto) NÃO traduz.
     lockTitulo: "Bloqueio do app",
-    lockDescAtivo: "É necessário um PIN para abrir o GALAXIE.",
-    lockDescInativo: "Exige um PIN toda vez que o GALAXIE abrir.",
+    lockDescAtivo: "É necessário um PIN para abrir a GALAXIE.",
+    lockDescInativo: "Exige um PIN toda vez que a GALAXIE abrir.",
     lockChangeBtn: "Alterar PIN",
     lockRemoveBtn: "Remover PIN",
     lockSetBtn: "Definir PIN",
