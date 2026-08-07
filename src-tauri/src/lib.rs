@@ -1541,15 +1541,19 @@ async fn cr_salvar_email_pdf(
     .map_err(|e| e.to_string())?
 }
 
-/// STUB (S1 #636): salvar como `.msg`. Real em S3 (#638). Idem forma do `_eml`.
+/// STUB (S1 #636): salvar como `.msg`. Real (ou drop) em S3 (#638, em avaliação).
+/// **Retorna `Err` "não disponível"** de propósito — NUNCA `salvos: ids` (fingir
+/// sucesso com IDs no lugar de paths causava toast-OK + nenhum arquivo + reveal
+/// no Home do Explorer; foi a raiz do falso-bug do #639). Enquanto o formato não
+/// existe de verdade, um erro honesto é a UX certa.
 #[tauri::command]
 async fn cr_salvar_email_msg(
     ids: Vec<String>,
     pasta: String,
     mailbox: Option<String>,
 ) -> Result<graph::SalvarEmailResultado, String> {
-    let _ = (&pasta, &mailbox);
-    Ok(graph::SalvarEmailResultado { salvos: ids, falhas: vec![] })
+    let _ = (&ids, &pasta, &mailbox);
+    Err("Salvar como arquivo do Outlook (.msg) ainda não está disponível.".to_string())
 }
 
 /// Abre um arquivo local com o aplicativo padrao do Windows.
