@@ -182,6 +182,7 @@ import {
   serializarDataFiltro,
 } from "@/store/filters-slice";
 import { tocarSomEscopo } from "@/lib/sons-notificacao";
+import { scrollTopReancorado, type Ancora } from "@/lib/scroll-ancora";
 import { useDebounce } from "@/hooks/use-debounce";
 import { useUndoSend } from "@/hooks/use-undo-send";
 import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
@@ -268,6 +269,7 @@ import {
   useEffect,
   useId,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -3584,6 +3586,44 @@ function MessageList({
     if (el.scrollTop > max) virtualizer.scrollToOffset(max);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linhas.length, colapsadosArr, threadsExpandidasArr]);
+
+  // #611: scroll-anchoring no PREPEND (e-mail novo chega acima — #603). A cada
+  // commit rastreamos a âncora = 1ª linha de mensagem visível (id estável) e seu
+  // offset. Se no commit seguinte essa mesma linha desceu (entraram itens acima,
+  // = prepend), compensamos o `scrollTop` pela diferença, mantendo o conteúdo
+  // exato em vista. Só quando o usuário está scrollado; no topo deixamos o novo
+  // aparecer. `useLayoutEffect` roda antes do paint → sem flicker. Complementa o
+  // efeito acima (que reancora quando a lista ENCOLHE); aqui só agimos na
+  // descida da âncora (delta>0), então não colidem.
+  const ancoraRef = useRef<Ancora | null>(null);
+  useLayoutEffect(() => {
+    const el = listaRef.current;
+    if (!el) return;
+    const vitems = virtualizer.getVirtualItems();
+    const ancora = ancoraRef.current;
+    if (ancora) {
+      const atual = vitems.find((vi) => {
+        const l = linhas[vi.index];
+        return l && l.tipo !== "grupo" && l.m.id === ancora.id;
+      });
+      const novo = scrollTopReancorado(ancora, atual?.start, {
+        noTopo: el.scrollTop <= 0,
+      });
+      if (novo !== null) el.scrollTop = novo;
+    }
+    // (Re)calcula a âncora pro próximo commit: 1ª linha de mensagem cujo fim
+    // passa do topo do viewport (primeira visível), já na posição compensada.
+    const st = el.scrollTop;
+    let nova: Ancora | null = null;
+    for (const vi of vitems) {
+      const l = linhas[vi.index];
+      if (l && l.tipo !== "grupo" && vi.end > st) {
+        nova = { id: l.m.id, start: vi.start, scrollTop: st };
+        break;
+      }
+    }
+    ancoraRef.current = nova;
+  });
 
   const idsFiltrados = filtrada.map((m) => m.id);
   // Ordem de EXIBIÇÃO das mensagens (respeita agrupamento/Flagged-no-topo e
