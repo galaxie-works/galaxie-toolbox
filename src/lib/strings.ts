@@ -1164,13 +1164,26 @@ const pt = {
     atalhosAtualizar: "Atualizar lista",
     atalhosOrdenar: "Ordenar",
     atalhosFecharPreview: "Fechar preview de anexo",
+    // #636: catálogo da ajuda "?" (épico #635 Salvar como…/Imprimir).
+    atalhosSalvarComo: "Salvar como…",
+    atalhosImprimir: "Imprimir",
+    atalhosMaisAcoes: "Mais ações",
     atalhosLink: "Inserir link",
     atalhosLista: "Lista com marcadores",
     atalhosAjuda: "Mostrar esta ajuda",
     abrirOutlook: "Abrir no Outlook",
-    // Salvar como… — S2 .eml (#637) · reusa `abrirPasta` já existente no toast.
+    // Salvar como… / Imprimir (épico #635). `salvarSucesso`/`salvarErroItem`
+    // vieram da S2 (#637, .eml); o #636 adiciona a casca de UI (kebab "..." +
+    // menu de contexto) e os rótulos abaixo. Reusa `abrirPasta` no toast.
     salvarSucesso: "{n} e-mail(s) salvos em {pasta}",
     salvarErroItem: 'Falha ao salvar "{assunto}"',
+    maisAcoes: "Mais ações",
+    salvarComo: "Salvar como…",
+    salvarPdf: "Arquivo PDF (.pdf)",
+    salvarEml: "Arquivo de e-mail (.eml)",
+    salvarMsg: "Arquivo do Outlook (.msg)",
+    imprimir: "Imprimir",
+    escolherPasta: "Escolha a pasta para salvar",
     semCorpo: "(sem conteúdo)",
     conteudoAparado: "Mostrar conteúdo aparado",
     zoomResetar: "Restaurar zoom (Ctrl+0)",
@@ -2841,13 +2854,26 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     atalhosAtualizar: "Refresh list",
     atalhosOrdenar: "Sort",
     atalhosFecharPreview: "Close attachment preview",
+    // #636: help "?" catalog (epic #635 Save as…/Print).
+    atalhosSalvarComo: "Save as…",
+    atalhosImprimir: "Print",
+    atalhosMaisAcoes: "More actions",
     atalhosLink: "Insert link",
     atalhosLista: "Bulleted list",
     atalhosAjuda: "Show this help",
     abrirOutlook: "Open in Outlook",
-    // Save as… — S2 .eml (#637) · reuses the existing `abrirPasta` toast key.
+    // Save as… / Print (epic #635). `salvarSucesso`/`salvarErroItem` came from
+    // S2 (#637, .eml); #636 adds the UI shell (kebab "..." + context menu) and
+    // the labels below. Reuses the existing `abrirPasta` toast key.
     salvarSucesso: "{n} email(s) saved to {pasta}",
     salvarErroItem: 'Failed to save "{assunto}"',
+    maisAcoes: "More actions",
+    salvarComo: "Save as…",
+    salvarPdf: "PDF file (.pdf)",
+    salvarEml: "Email file (.eml)",
+    salvarMsg: "Outlook file (.msg)",
+    imprimir: "Print",
+    escolherPasta: "Choose a folder to save to",
     semCorpo: "(no content)",
     conteudoAparado: "Show trimmed content",
     zoomResetar: "Reset zoom (Ctrl+0)",

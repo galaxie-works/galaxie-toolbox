@@ -1511,6 +1511,48 @@ async fn cr_anexo_link(
     .map_err(|e| e.to_string())?
 }
 
+// --- #636 (épico #635): Salvar como… / Imprimir — STUBS de S1 ---------------
+// A casca de UI (kebab "...", menu de contexto, atalhos F12/Ctrl+P) precisa de
+// um backend que "resolva OK" para ficar testável já. Cada formato tem seu
+// comando; aqui são apenas stubs. As implementações reais entram nas stories
+// seguintes, trocando SÓ o corpo (contrato do front congelado: nome do comando +
+// `{ ids, pasta, mailbox }` → `SalvarEmailResultado`):
+//   · S2 #637 → cr_salvar_email_eml (JÁ REAL — Graph $value → RFC822)
+//   · S3 #638 → cr_salvar_email_msg (OLE2/MAPI)
+//   · S4 #639 → cr_salvar_email_pdf
+//   · S5 #640 → cr_imprimir_email (diálogo de impressão do sistema)
+// O `cr_salvar_email_eml` real vive acima (#637); aqui só os que faltam.
+
+/// STUB (S1 #636): salvar como PDF. Real em S4 (#639). Mesma forma do `_eml`
+/// (#637): devolve `SalvarEmailResultado`. O stub finge sucesso de todos.
+#[tauri::command]
+async fn cr_salvar_email_pdf(
+    ids: Vec<String>,
+    pasta: String,
+    mailbox: Option<String>,
+) -> Result<graph::SalvarEmailResultado, String> {
+    let _ = (&pasta, &mailbox);
+    Ok(graph::SalvarEmailResultado { salvos: ids, falhas: vec![] })
+}
+
+/// STUB (S1 #636): salvar como `.msg`. Real em S3 (#638). Idem forma do `_eml`.
+#[tauri::command]
+async fn cr_salvar_email_msg(
+    ids: Vec<String>,
+    pasta: String,
+    mailbox: Option<String>,
+) -> Result<graph::SalvarEmailResultado, String> {
+    let _ = (&pasta, &mailbox);
+    Ok(graph::SalvarEmailResultado { salvos: ids, falhas: vec![] })
+}
+
+/// STUB (S1 #636): imprimir. Real em S5 (#640, diálogo do sistema).
+#[tauri::command]
+async fn cr_imprimir_email(ids: Vec<String>) -> Result<(), String> {
+    let _ = ids;
+    Ok(())
+}
+
 /// Abre um arquivo local com o aplicativo padrao do Windows.
 #[tauri::command]
 async fn abrir_caminho(path: String) -> Result<(), String> {
@@ -1969,6 +2011,9 @@ pub fn run() {
             cr_anexo_para_pdf,
             cr_ler_anexo_email,
             cr_anexo_link,
+            cr_salvar_email_pdf,
+            cr_salvar_email_msg,
+            cr_imprimir_email,
             abrir_caminho,
             revelar_no_explorer,
             connect_site,

@@ -59,6 +59,8 @@ export function catalogoAtalhos(t: T): AtalhoCategoria[] {
         { teclas: ["c"], rotulo: c.atalhosCompor },
         { teclas: ["u"], rotulo: c.atalhosLidoNaoLido },
         { teclas: ["s"], rotulo: c.atalhosSinalizar },
+        { teclas: ["F12"], rotulo: c.atalhosSalvarComo },
+        { teclas: ["Ctrl", "P"], rotulo: c.atalhosImprimir },
         { teclas: ["Del"], rotulo: c.atalhosExcluir },
         { teclas: ["Esc"], rotulo: c.atalhosFecharPreview },
       ],

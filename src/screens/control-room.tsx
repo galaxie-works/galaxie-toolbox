@@ -32,6 +32,10 @@ import {
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Calendar } from "@/components/ui/calendar";
@@ -86,6 +90,7 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuShortcut,
   ContextMenuSub,
   ContextMenuSubContent,
   ContextMenuSubTrigger,
@@ -120,7 +125,7 @@ import {
 import { shortcutAccessibleLabel, formatShortcut } from "@/components/ui/shortcut";
 import type { ShortcutDefinition } from "@/components/ui/shortcut";
 import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
-import { Kbd } from "@/components/ui/kbd";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -225,6 +230,8 @@ import {
   Download,
   ExternalLink,
   Eye,
+  FileText,
+  FileType2,
   Flag,
   FlagOff,
   FunnelX,
@@ -236,14 +243,17 @@ import {
   Mail,
   MailOpen,
   MapPin,
+  MoreHorizontal,
   Plus,
   Paperclip,
   Pencil,
+  Printer,
   RefreshCw,
   Repeat,
   Reply,
   ReplyAll,
   RotateCcw,
+  Save,
   Send,
   Shield,
   ShieldAlert,
@@ -2731,6 +2741,8 @@ function ItensMenuEmail({
   onMarcarLido,
   onFlag,
   onExcluir,
+  onSalvarComo,
+  onImprimir,
   pastasDestino,
   pastasCarregando,
   onAbrirMover,
@@ -2744,6 +2756,8 @@ function ItensMenuEmail({
   onMarcarLido: (id: string, lido: boolean) => void;
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void | Promise<void>;
+  onSalvarComo: (ids: string[], formato: FormatoSalvar) => void;
+  onImprimir: (ids: string[]) => void;
   pastasDestino: PastaDestino[];
   pastasCarregando: boolean;
   onAbrirMover: () => void;
@@ -2777,6 +2791,37 @@ function ItensMenuEmail({
         onMover={onMover}
         t={t}
       />
+      {/* #636: "Salvar como…" (PDF/.eml/.msg) + "Imprimir" — mesmas ações do
+          kebab "..." do leitor. Age sobre `alvos` (1 linha ou N selecionados). */}
+      <ContextMenuSeparator />
+      <ContextMenuSub>
+        <ContextMenuSubTrigger className="gap-2">
+          <Save />
+          {t.controlRoom.salvarComo}
+          <ContextMenuShortcut>
+            {formatShortcut(ATALHO_SALVAR_COMO)}
+          </ContextMenuShortcut>
+        </ContextMenuSubTrigger>
+        <ContextMenuSubContent className="w-56">
+          <ContextMenuItem className="gap-2" onClick={() => onSalvarComo(alvos, "pdf")}>
+            <FileText />
+            {t.controlRoom.salvarPdf}
+          </ContextMenuItem>
+          <ContextMenuItem className="gap-2" onClick={() => onSalvarComo(alvos, "eml")}>
+            <Mail />
+            {t.controlRoom.salvarEml}
+          </ContextMenuItem>
+          <ContextMenuItem className="gap-2" onClick={() => onSalvarComo(alvos, "msg")}>
+            <FileType2 />
+            {t.controlRoom.salvarMsg}
+          </ContextMenuItem>
+        </ContextMenuSubContent>
+      </ContextMenuSub>
+      <ContextMenuItem className="gap-2" onClick={() => onImprimir(alvos)}>
+        <Printer />
+        {t.controlRoom.imprimir}
+        <ContextMenuShortcut>{formatShortcut(ATALHO_IMPRIMIR)}</ContextMenuShortcut>
+      </ContextMenuItem>
       <ContextMenuSeparator />
       <ContextMenuItem
         variant="destructive"
@@ -2841,6 +2886,14 @@ const ATALHO_ORDENAR: ShortcutDefinition = { key: "O" };
 // #549: Esc fecha o preview de anexo (email aninhado) — por PRECEDÊNCIA sobre o
 // clear-selection (padrão Outlook: Esc fecha o painel aberto primeiro).
 const ATALHO_FECHAR_PREVIEW: ShortcutDefinition = { key: "Esc" };
+// #636 (épico #635): Salvar como… = F12 · Imprimir = Ctrl+P (esquema Outlook).
+// O abridor "..." usa a tecla nativa de context-menu do Windows (Menu/Shift+F10),
+// só documentada no tooltip — o Radix já abre o menu por Enter/Espaço/↓.
+const ATALHO_SALVAR_COMO: ShortcutDefinition = { key: "F12" };
+const ATALHO_IMPRIMIR: ShortcutDefinition = { key: "P", primary: true };
+
+/** #636: formatos de "Salvar como…". Um comando por formato (S2–S5). */
+export type FormatoSalvar = "pdf" | "eml" | "msg";
 
 function MessageList({
   titulo,
@@ -2856,6 +2909,9 @@ function MessageList({
   onFlag,
   onExcluir,
   onMarcarLido,
+  onSalvarComo,
+  onImprimir,
+  onAbrirMaisAcoes,
   pastasDestino,
   pastasCarregando,
   onAbrirMover,
@@ -2883,6 +2939,11 @@ function MessageList({
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void | Promise<void>;
   onMarcarLido: (id: string, lido: boolean) => void;
+  // #636: Salvar como…/Imprimir agem sobre a linha ou a seleção; `onAbrirMaisAcoes`
+  // é o F12 (abre o menu "..." do leitor, delegado ao MessageDetail via ref).
+  onSalvarComo: (ids: string[], formato: FormatoSalvar) => void;
+  onImprimir: (ids: string[]) => void;
+  onAbrirMaisAcoes: () => void;
   pastasDestino: PastaDestino[];
   pastasCarregando: boolean;
   onAbrirMover: () => void;
@@ -3439,6 +3500,29 @@ function MessageList({
         if (envioBloqueado) return;
         e.preventDefault();
         onEncaminhar();
+        return;
+      }
+    }
+
+    // #636: Salvar como… (F12) / Imprimir (Ctrl+P). ANTES do guard de lista
+    // vazia — valem com um e-mail ATIVO no leitor (`msgSel`) mesmo que a lista
+    // navegável esteja vazia (busca/filtro sem resultado). Alvo = seleção, se
+    // houver, senão a mensagem aberta no leitor.
+    {
+      const alvosSalvar = selecionados.size > 0 ? [...selecionados] : msgSel ? [msgSel] : [];
+      // F12 abre o menu "..." do leitor (revela "Salvar como…"), via ref.
+      if (e.key === "F12") {
+        if (msgSel) {
+          e.preventDefault();
+          onAbrirMaisAcoes();
+        }
+        return;
+      }
+      if (ehModPrincipal(e) && e.key.toLowerCase() === "p" && !e.altKey && !e.shiftKey) {
+        if (alvosSalvar.length > 0) {
+          e.preventDefault();
+          onImprimir(alvosSalvar);
+        }
         return;
       }
     }
@@ -4280,6 +4364,8 @@ function MessageList({
                           onMarcarLido={onMarcarLido}
                           onFlag={onFlag}
                           onExcluir={onExcluir}
+                          onSalvarComo={onSalvarComo}
+                          onImprimir={onImprimir}
                           pastasDestino={pastasDestino}
                           pastasCarregando={pastasCarregando}
                           onAbrirMover={onAbrirMover}
@@ -4309,6 +4395,8 @@ function MessageList({
               onMarcarLido={onMarcarLido}
               onFlag={onFlag}
               onExcluir={onExcluir}
+              onSalvarComo={onSalvarComo}
+              onImprimir={onImprimir}
               pastasDestino={pastasDestino}
               pastasCarregando={pastasCarregando}
               onAbrirMover={onAbrirMover}
@@ -4608,6 +4696,8 @@ export interface MessageDetailHandle {
   responder: () => void;
   responderTodos: () => void;
   encaminhar: () => void;
+  /** #636: abre o menu "..." (Mais ações) do leitor — o alvo do atalho F12. */
+  abrirMaisAcoes: () => void;
 }
 
 /**
@@ -4766,6 +4856,8 @@ const MessageDetail = forwardRef<
     onFlag: (id: string, novo: boolean) => void;
     onExcluir: (ids: string[]) => void;
     onMarcarLido: (id: string, lido: boolean) => void;
+    onSalvarComo: (ids: string[], formato: FormatoSalvar) => void;
+    onImprimir: (ids: string[]) => void;
     onAbrirLink: (url: string) => void;
     onMudou: () => void;
     t: ReturnType<typeof useIdioma>["t"];
@@ -4782,6 +4874,8 @@ const MessageDetail = forwardRef<
     onFlag,
     onExcluir,
     onMarcarLido,
+    onSalvarComo,
+    onImprimir,
     onAbrirLink,
     onMudou,
     t,
@@ -4806,6 +4900,8 @@ const MessageDetail = forwardRef<
   const [previewAtual, setPreviewAtual] = useState<AnexoEmail | null>(null);
   // E-mail embutido (itemAttachment) aberto no reader aninhado (#191).
   const [anexoEmail, setAnexoEmail] = useState<AnexoEmail | null>(null);
+  // #636: menu "..." (Mais ações) do leitor — controlado pra o F12 abrir via ref.
+  const [maisAberto, setMaisAberto] = useState(false);
   // Fecha preview/reader aninhado ao trocar de e-mail (não vaza o anterior).
   useEffect(() => {
     setPreviewAtual(null);
@@ -4848,6 +4944,9 @@ const MessageDetail = forwardRef<
         id && !envioBloqueado && abrirCompose("responderTodos", mailbox),
       encaminhar: () =>
         id && !envioBloqueado && abrirCompose("encaminhar", mailbox),
+      abrirMaisAcoes: () => {
+        if (id) setMaisAberto(true);
+      },
     }),
     [id, envioBloqueado, mailbox, abrirCompose]
   );
@@ -5257,6 +5356,78 @@ const MessageDetail = forwardRef<
             </TooltipTrigger>
             <TooltipContent>{t.controlRoom.abrirOutlook}</TooltipContent>
           </Tooltip>
+          {/* #636: "..." (Mais ações) na ponta direita → Salvar como… / Imprimir.
+              Controlado (`maisAberto`) pra o atalho F12 abrir via ref. Tooltip
+              documenta a tecla nativa de context-menu (Menu / Shift+F10); os
+              itens têm seu próprio kbd (F12 / Ctrl+P). */}
+          <DropdownMenu open={maisAberto} onOpenChange={setMaisAberto}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t.controlRoom.maisAcoes}
+                  >
+                    <MoreHorizontal />
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="flex items-center gap-2 text-sm">
+                  {t.controlRoom.maisAcoes}
+                  <KbdGroup>
+                    <Kbd>Menu</Kbd>
+                    <Kbd>Shift+F10</Kbd>
+                  </KbdGroup>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="gap-2">
+                  <Save />
+                  {t.controlRoom.salvarComo}
+                  <DropdownMenuShortcut>
+                    {formatShortcut(ATALHO_SALVAR_COMO)}
+                  </DropdownMenuShortcut>
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-56">
+                  <DropdownMenuItem
+                    className="gap-2"
+                    onClick={() => id && onSalvarComo([id], "pdf")}
+                  >
+                    <FileText />
+                    {t.controlRoom.salvarPdf}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="gap-2"
+                    onClick={() => id && onSalvarComo([id], "eml")}
+                  >
+                    <Mail />
+                    {t.controlRoom.salvarEml}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="gap-2"
+                    onClick={() => id && onSalvarComo([id], "msg")}
+                  >
+                    <FileType2 />
+                    {t.controlRoom.salvarMsg}
+                  </DropdownMenuItem>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuItem
+                className="gap-2"
+                onClick={() => id && onImprimir([id])}
+              >
+                <Printer />
+                {t.controlRoom.imprimir}
+                <DropdownMenuShortcut>
+                  {formatShortcut(ATALHO_IMPRIMIR)}
+                </DropdownMenuShortcut>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
@@ -6841,6 +7012,63 @@ export function ControlRoomScreen({
   }
 
   /**
+   * #636 (épico #635): "Salvar como…" — abre o seletor de pasta do sistema e
+   * chama o backend POR FORMATO (contrato do #637: `SalvarEmailResultado` com
+   * `salvos`/`falhas`). `.eml` já é real (#637); PDF/.msg são stub em S1 (#639/
+   * #638). Sucesso → toast com "Abrir pasta"; falha parcial → um toast por item.
+   */
+  async function salvarComo(ids: string[], formato: FormatoSalvar) {
+    if (ids.length === 0) return;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const pasta = await open({
+        directory: true,
+        title: t.controlRoom.escolherPasta,
+      });
+      if (typeof pasta !== "string") return; // cancelou o diálogo
+      const res =
+        formato === "eml"
+          ? await api.crSalvarEmailEml(ids, pasta, caixaAtiva)
+          : formato === "pdf"
+            ? await api.crSalvarEmailPdf(ids, pasta, caixaAtiva)
+            : await api.crSalvarEmailMsg(ids, pasta, caixaAtiva);
+      if (res.salvos.length > 0) {
+        toast.success(
+          preencher(t.controlRoom.salvarSucesso, {
+            n: res.salvos.length,
+            pasta,
+          }),
+          {
+            action: {
+              label: t.controlRoom.abrirPasta,
+              onClick: () => void api.abrirCaminho(pasta),
+            },
+          }
+        );
+      }
+      // Falha parcial (#637): um toast de erro por item que não salvou.
+      res.falhas.forEach((f) =>
+        toast.error(preencher(t.controlRoom.salvarErroItem, { assunto: f.assunto }), {
+          description: f.erro,
+        })
+      );
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { description: String(e) });
+    }
+  }
+
+  /** #636: "Imprimir" — stub em S1 (backend resolve OK); real em S5 (#640). */
+  async function imprimir(ids: string[]) {
+    if (ids.length === 0) return;
+    try {
+      await api.crImprimirEmail(ids);
+      toast.success(t.controlRoom.imprimir);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { description: String(e) });
+    }
+  }
+
+  /**
    * Move e-mails para outra pasta (#88) — mesmo desenho otimista do
    * `acaoExcluir` (que também é um move, pra Lixeira): some da lista na hora,
    * contadores das pastas ORIGEM e DESTINO ajustados, toast imediato e, no
@@ -7333,6 +7561,9 @@ export function ControlRoomScreen({
               onFlag={acaoFlag}
               onExcluir={acaoExcluir}
               onMarcarLido={acaoMarcarLido}
+              onSalvarComo={salvarComo}
+              onImprimir={imprimir}
+              onAbrirMaisAcoes={() => detalheRef.current?.abrirMaisAcoes()}
               pastasDestino={pastasDestino}
               pastasCarregando={arvorePendentes.length > 0}
               onAbrirMover={() => setPedirArvore(true)}
@@ -7368,6 +7599,8 @@ export function ControlRoomScreen({
                 onFlag={acaoFlag}
                 onExcluir={acaoExcluir}
                 onMarcarLido={acaoMarcarLido}
+                onSalvarComo={salvarComo}
+                onImprimir={imprimir}
                 onAbrirLink={onAbrirLink}
                 onMudou={() => setRecargaPastas((n) => n + 1)}
                 t={t}
