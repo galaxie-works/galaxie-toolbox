@@ -775,9 +775,14 @@ function imprimirEmailDoLeitor(
 
   const iframe = document.createElement("iframe");
   iframe.setAttribute("aria-hidden", "true");
+  // FORA da tela com TAMANHO REAL (não `width:0;height:0;visibility:hidden`): um
+  // iframe sem caixa de layout / com `visibility:hidden` pode imprimir EM BRANCO
+  // (o WebView2 não painta o conteúdo). Off-screen preserva o render tree; o
+  // tamanho da página impressa vem do `@page`, não daqui.
   iframe.style.cssText =
-    "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
-  // Sem allow-scripts (corpo não executa nada); allow-modals libera o print().
+    "position:fixed;left:-10000px;top:0;width:816px;height:1056px;border:0";
+  // Sem allow-scripts (corpo não executa nada); allow-modals libera o print()
+  // (confirmado: com allow-modals o diálogo do sistema abre).
   iframe.setAttribute("sandbox", "allow-same-origin allow-modals");
   iframe.srcdoc = doc;
   iframe.onload = () => {
@@ -788,8 +793,12 @@ function imprimirEmailDoLeitor(
     }
     // Pequeno tick pra layout/imagens assentarem, depois o diálogo do sistema.
     window.setTimeout(() => {
-      w.focus();
-      w.print();
+      try {
+        w.focus();
+        w.print();
+      } catch {
+        /* print bloqueado/indisponível — não deixa o iframe pendurado */
+      }
       // print() é bloqueante no WebView2; remove o iframe depois de fechar.
       window.setTimeout(() => iframe.remove(), 500);
     }, 120);
