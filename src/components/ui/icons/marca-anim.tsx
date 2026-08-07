@@ -54,6 +54,43 @@ export function IconeAnim({ Comp, className }: { Comp: AnimIcon; className?: str
   );
 }
 
+/**
+ * Ícone de ITEM de sidebar (tela Apps) — renderiza o lucide-animated do MESMO
+ * jeito que o Bridge renderiza os ícones de pasta (`<Ico size={16}
+ * className="shrink-0 text-muted-foreground" />`, control-room.tsx): 16px, cor
+ * `muted`, `currentColor`. Ao contrário do `IconeAnim` da app-rail (span
+ * `size-5` + ícone `size={20}`, que saía MAIOR), aqui o box é `display:contents`
+ * — some do layout e o ícone fica pixel-idêntico ao do Bridge. Anima no hover da
+ * LINHA inteira: acha o `<a>/<button>` ancestral e comanda start/stop via ref.
+ */
+export function IconeItemAnim({ Comp, className }: { Comp: AnimIcon; className?: string }) {
+  const ancoraRef = useRef<HTMLSpanElement>(null);
+  const handle = useRef<AnimHandle>(null);
+
+  useEffect(() => {
+    const linha = ancoraRef.current?.closest("a,button");
+    if (!linha) return;
+    const entrar = () => handle.current?.startAnimation();
+    const sair = () => handle.current?.stopAnimation();
+    linha.addEventListener("mouseenter", entrar);
+    linha.addEventListener("mouseleave", sair);
+    return () => {
+      linha.removeEventListener("mouseenter", entrar);
+      linha.removeEventListener("mouseleave", sair);
+    };
+  }, []);
+
+  return (
+    <span ref={ancoraRef} className="contents">
+      <Comp
+        ref={handle}
+        size={16}
+        className={cn("shrink-0 text-muted-foreground", className)}
+      />
+    </span>
+  );
+}
+
 /** Bridge (Control room) — timão (ship-wheel). */
 export function BridgeIcon({ className }: { className?: string }) {
   return <IconeAnim Comp={ShipWheelIcon as unknown as AnimIcon} className={className} />;
