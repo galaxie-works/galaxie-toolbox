@@ -1407,6 +1407,23 @@ async fn cr_baixar_anexo(
     .map_err(|e| e.to_string())?
 }
 
+/// Control room: salva um ou vários e-mails como `.eml` (MIME íntegro) na pasta
+/// escolhida. Lote resiliente — devolve caminhos salvos + falhas por item (#637).
+#[tauri::command]
+async fn cr_salvar_email_eml(
+    state: State<'_, Store>,
+    ids: Vec<String>,
+    pasta: String,
+    mailbox: Option<String>,
+) -> Result<graph::SalvarEmailResultado, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_salvar_email_eml(&store, &ids, &pasta, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Control room: lê um anexo em memória (base64) para pré-visualização, sem
 /// gravar em Downloads (#188).
 #[tauri::command]
@@ -1947,6 +1964,7 @@ pub fn run() {
             cr_excluir_pasta,
             cr_mover_pasta,
             cr_baixar_anexo,
+            cr_salvar_email_eml,
             cr_ler_anexo,
             cr_anexo_para_pdf,
             cr_ler_anexo_email,

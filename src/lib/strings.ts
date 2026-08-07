@@ -1168,6 +1168,9 @@ const pt = {
     atalhosLista: "Lista com marcadores",
     atalhosAjuda: "Mostrar esta ajuda",
     abrirOutlook: "Abrir no Outlook",
+    // Salvar como… — S2 .eml (#637) · reusa `abrirPasta` já existente no toast.
+    salvarSucesso: "{n} e-mail(s) salvos em {pasta}",
+    salvarErroItem: 'Falha ao salvar "{assunto}"',
     semCorpo: "(sem conteúdo)",
     conteudoAparado: "Mostrar conteúdo aparado",
     zoomResetar: "Restaurar zoom (Ctrl+0)",
@@ -2842,6 +2845,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     atalhosLista: "Bulleted list",
     atalhosAjuda: "Show this help",
     abrirOutlook: "Open in Outlook",
+    // Save as… — S2 .eml (#637) · reuses the existing `abrirPasta` toast key.
+    salvarSucesso: "{n} email(s) saved to {pasta}",
+    salvarErroItem: 'Failed to save "{assunto}"',
     semCorpo: "(no content)",
     conteudoAparado: "Show trimmed content",
     zoomResetar: "Reset zoom (Ctrl+0)",

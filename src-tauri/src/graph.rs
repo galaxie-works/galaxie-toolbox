@@ -2851,6 +2851,150 @@ fn caminho_livre(dir: &std::path::Path, nome: &str) -> std::path::PathBuf {
 }
 
 // ----------------------------------------------------------------------------
+// Salvar como… — S2 .eml (#637). Baixa o MIME (RFC822) pronto de cada mensagem
+// via `GET /messages/{id}/$value` e grava um `.eml` íntegro na pasta escolhida.
+// Lote resiliente: a falha de um item não aborta os demais.
+// ----------------------------------------------------------------------------
+
+/// Resultado de um lote de "Salvar como…": caminhos gravados + falhas por item.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SalvarEmailResultado {
+    /// Caminhos absolutos dos arquivos gravados (um por e-mail bem-sucedido).
+    pub salvos: Vec<String>,
+    /// Itens que falharam, identificados pelo assunto, com o motivo.
+    pub falhas: Vec<SalvarEmailFalha>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SalvarEmailFalha {
+    /// Assunto do e-mail (ou "(sem assunto)") para identificar o item no toast.
+    pub assunto: String,
+    /// Motivo legível da falha.
+    pub erro: String,
+}
+
+/// Sanitiza um assunto para nome de arquivo do Windows: troca os caracteres
+/// proibidos (`\ / : * ? " < > |`) e de controle por espaço, colapsa espaços,
+/// corta em ~120 chars e apara `.`/espaço das pontas. Vazio → `fallback`.
+fn sanitizar_nome_arquivo(bruto: &str, fallback: &str) -> String {
+    const INVALIDOS: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
+    let limpo: String = bruto
+        .chars()
+        .map(|c| {
+            if INVALIDOS.contains(&c) || c.is_control() {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let colapsado = limpo.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cortado: String = colapsado.chars().take(120).collect();
+    let aparado = cortado
+        .trim_matches(|c: char| c == '.' || c == ' ')
+        .to_string();
+    if aparado.is_empty() {
+        fallback.to_string()
+    } else {
+        aparado
+    }
+}
+
+/// Lê o assunto de uma mensagem (best-effort) — vira o nome do arquivo e
+/// identifica o item num eventual erro. Falha aqui não impede a gravação.
+fn assunto_da_mensagem(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    prefix: &str,
+    id: &str,
+) -> Option<String> {
+    let url = format!("{GRAPH}/{prefix}/messages/{id}?$select=subject");
+    let resp = graph_enviar("mail:salvar-assunto", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(token).send()
+    })
+    .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().ok()?;
+    v["subject"].as_str().map(|s| s.to_string())
+}
+
+/// Baixa o MIME (RFC822) pronto de uma mensagem via `$value`.
+fn mime_da_mensagem(
+    client: &reqwest::blocking::Client,
+    token: &str,
+    prefix: &str,
+    id: &str,
+) -> Result<Vec<u8>, String> {
+    let url = format!("{GRAPH}/{prefix}/messages/{id}/$value");
+    let resp = graph_enviar("mail:salvar-eml", GRAPH_TETO_ESPERA_S, || {
+        client.get(&url).bearer_auth(token).send()
+    })
+    .map_err(|e| format!("falha ao baixar o e-mail: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("/messages/$value retornou {}", resp.status()));
+    }
+    resp.bytes()
+        .map(|b| b.to_vec())
+        .map_err(|e| format!("falha ao ler o conteudo: {e}"))
+}
+
+/// Salva um ou vários e-mails como `.eml` (MIME íntegro) na `pasta` escolhida.
+/// Nome = assunto sanitizado + `.eml`, com sufixo ` (2)`… em caso de colisão.
+/// Lote resiliente: cada item é independente; falhas vão em `resultado.falhas`.
+pub fn cr_salvar_email_eml(
+    store: &TokenStore,
+    ids: &[String],
+    pasta: &str,
+    mailbox: Option<&str>,
+) -> Result<SalvarEmailResultado, String> {
+    let dir = std::path::Path::new(pasta);
+    if !dir.is_dir() {
+        return Err(format!("pasta invalida: {pasta}"));
+    }
+
+    let token = access_token(store)?;
+    let client = reqwest::blocking::Client::new();
+    let prefix = mailbox_prefix(mailbox);
+
+    let mut salvos: Vec<String> = Vec::new();
+    let mut falhas: Vec<SalvarEmailFalha> = Vec::new();
+
+    for id in ids {
+        // Assunto best-effort: nomeia o arquivo e rotula o item num erro.
+        let assunto = assunto_da_mensagem(&client, &token, &prefix, id).unwrap_or_default();
+        let rotulo = if assunto.trim().is_empty() {
+            "(sem assunto)".to_string()
+        } else {
+            assunto.clone()
+        };
+        let nome = sanitizar_nome_arquivo(&assunto, "(sem assunto)");
+
+        match mime_da_mensagem(&client, &token, &prefix, id) {
+            Ok(bytes) => {
+                let destino = caminho_livre(dir, &format!("{nome}.eml"));
+                match std::fs::write(&destino, &bytes) {
+                    Ok(()) => salvos.push(destino.to_string_lossy().to_string()),
+                    Err(e) => falhas.push(SalvarEmailFalha {
+                        assunto: rotulo,
+                        erro: format!("falha ao gravar o arquivo: {e}"),
+                    }),
+                }
+            }
+            Err(e) => falhas.push(SalvarEmailFalha {
+                assunto: rotulo,
+                erro: e,
+            }),
+        }
+    }
+
+    Ok(SalvarEmailResultado { salvos, falhas })
+}
+
+// ----------------------------------------------------------------------------
 // Envio: responder / encaminhar. Fluxo em 3 passos pra preservar o histórico
 // citado e enviar o HTML composto pelo editor:
 //   1) POST createReply|createReplyAll|createForward  -> rascunho (com a citação)

@@ -2308,6 +2308,44 @@ export async function crBaixarAnexo(
 }
 
 /**
+ * Resultado de "Salvar como… .eml" (#637): caminhos gravados + falhas por item
+ * (assunto + motivo). O front deriva o toast de sucesso a partir de `salvos`.
+ */
+export interface SalvarEmailResultado {
+  /** Caminhos absolutos dos `.eml` gravados (um por e-mail bem-sucedido). */
+  salvos: string[];
+  /** Itens que falharam, com assunto e motivo legível. */
+  falhas: { assunto: string; erro: string }[];
+}
+
+/**
+ * Salva um ou vários e-mails como `.eml` (MIME íntegro do Graph via `$value`)
+ * na `pasta` escolhida. Lote resiliente: a falha de um item não aborta os
+ * demais — veja `resultado.falhas`. O nome do arquivo é o assunto sanitizado,
+ * com sufixo ` (2)`… em caso de colisão (#637).
+ */
+export async function crSalvarEmailEml(
+  ids: string[],
+  pasta: string,
+  mailbox?: string
+): Promise<SalvarEmailResultado> {
+  if (!inTauri()) {
+    await sleep(600);
+    return {
+      salvos: ids.map(
+        (_, i) => `${pasta}\\exemplo${i > 0 ? ` (${i + 1})` : ""}.eml`
+      ),
+      falhas: [],
+    };
+  }
+  return invoke<SalvarEmailResultado>("cr_salvar_email_eml", {
+    ids,
+    pasta,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
+/**
  * Lê um anexo em memória (base64) para pré-visualização, sem gravar em
  * Downloads (#188). Só trata `fileAttachment`; item/reference vêm em fatias
  * posteriores do épico (#178 §5).
