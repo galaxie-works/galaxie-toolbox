@@ -1512,17 +1512,15 @@ async fn cr_anexo_link(
     .map_err(|e| e.to_string())?
 }
 
-// --- #636 (épico #635): Salvar como… / Imprimir — STUBS de S1 ---------------
-// A casca de UI (kebab "...", menu de contexto, atalhos F12/Ctrl+P) precisa de
-// um backend que "resolva OK" para ficar testável já. Cada formato tem seu
-// comando; aqui são apenas stubs. As implementações reais entram nas stories
-// seguintes, trocando SÓ o corpo (contrato do front congelado: nome do comando +
-// `{ ids, pasta, mailbox }` → `SalvarEmailResultado`):
-//   · S2 #637 → cr_salvar_email_eml (JÁ REAL — Graph $value → RFC822)
-//   · S3 #638 → cr_salvar_email_msg (OLE2/MAPI)
-//   · S4 #639 → cr_salvar_email_pdf
-//   · S5 #640 → cr_imprimir_email (diálogo de impressão do sistema)
-// O `cr_salvar_email_eml` real vive acima (#637); aqui só os que faltam.
+// --- #635 Salvar como… / Imprimir — comandos por formato --------------------
+// A casca de UI (kebab "...", menu de contexto) chama um comando POR FORMATO;
+// contrato congelado no S1 (#636): `{ ids, pasta, mailbox }` →
+// `SalvarEmailResultado`. Estado atual:
+//   · .eml (S2 #637) → REAL (Graph $value → RFC822), acima.
+//   · PDF  (S4 #639) → REAL (WebView2 PrintToPdf), logo abaixo.
+//   · .msg (S3 #638) → STUB abaixo (finge sucesso) até a engine nativa.
+// Imprimir (S5 #640) NÃO tem backend: é o `print()` do WebView2 escopado ao
+// iframe do corpo, 100% no front.
 
 /// Control room: salvar como PDF (S4 #639, real). Renderiza o corpo via WebView2
 /// PrintToPdf numa webview oculta. Corre em spawn_blocking (Graph + impressão
@@ -1552,13 +1550,6 @@ async fn cr_salvar_email_msg(
 ) -> Result<graph::SalvarEmailResultado, String> {
     let _ = (&pasta, &mailbox);
     Ok(graph::SalvarEmailResultado { salvos: ids, falhas: vec![] })
-}
-
-/// STUB (S1 #636): imprimir. Real em S5 (#640, diálogo do sistema).
-#[tauri::command]
-async fn cr_imprimir_email(ids: Vec<String>) -> Result<(), String> {
-    let _ = ids;
-    Ok(())
 }
 
 /// Abre um arquivo local com o aplicativo padrao do Windows.
@@ -2021,7 +2012,6 @@ pub fn run() {
             cr_anexo_link,
             cr_salvar_email_pdf,
             cr_salvar_email_msg,
-            cr_imprimir_email,
             abrir_caminho,
             revelar_no_explorer,
             connect_site,
