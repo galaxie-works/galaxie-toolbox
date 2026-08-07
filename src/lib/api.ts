@@ -2447,8 +2447,8 @@ export async function crAnexoLink(
 // Comandos POR FORMATO, mesma forma do `crSalvarEmailEml` (#637): `(ids, pasta,
 // mailbox?)` → `SalvarEmailResultado`. Em S1 (#636) PDF/.msg são STUB no backend
 // (fingem sucesso); as reais entram em #639/#638 trocando SÓ o corpo. O `.eml`
-// (crSalvarEmailEml) já é real e vive acima. Imprimir (#640) é 100% front
-// (`print()` do WebView2 no iframe do corpo), sem comando Tauri.
+// (crSalvarEmailEml) já é real e vive acima. Imprimir (#640) tem comando próprio
+// (`cr_imprimir_email`, ShowPrintUI do WebView2) — logo abaixo.
 
 /** Salva N e-mails como PDF na pasta escolhida. (real: #639) */
 export async function crSalvarEmailPdf(
@@ -2482,6 +2482,23 @@ export async function crSalvarEmailMsg(
     pasta,
     mailbox: mailboxArg(mailbox),
   });
+}
+
+/**
+ * #640: abre o PREVIEW de impressão do Chromium (não o diálogo legado Win32) para
+ * o e-mail em leitura. O backend (`cr_imprimir_email`) renderiza o e-mail numa
+ * janela visível e chama `ICoreWebView2_16::ShowPrintUI(BROWSER)`. Escopo = 1
+ * e-mail (o do leitor); `ids` mantém a forma da família salvar-como.
+ */
+export async function crImprimirEmail(
+  ids: string[],
+  mailbox?: string
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(200);
+    return; // no mock não há WebView2 — no-op
+  }
+  return invoke<void>("cr_imprimir_email", { ids, mailbox: mailboxArg(mailbox) });
 }
 
 /** Abre um arquivo local com o aplicativo padrao. */

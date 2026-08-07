@@ -726,85 +726,11 @@ function CorpoMensagem({
   );
 }
 
-/** Escapa texto pra interpolar com segurança no HTML de impressão. */
-function escaparHtml(s: string): string {
-  return s.replace(
-    /[&<>"]/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string
-  );
-}
-
-/**
- * #640 (S5): imprime o e-mail ABERTO no leitor pelo diálogo de impressão do
- * SISTEMA. Monta um iframe oculto com cabeçalho (assunto/de/para/data) + corpo
- * (mesmo `DOMPurify` do `CorpoHtml`, SEM Dark Reader — impresso é sempre claro)
- * e chama o `print()` do documento DO IFRAME — escopa a impressão ao e-mail, não
- * à UI do app. `allow-modals` no sandbox é obrigatório: sem ele o `print()` de um
- * iframe sandbox é bloqueado; sem `allow-scripts`, o corpo não executa nada.
- */
-function imprimirEmailDoLeitor(
-  det: EmailDetalhe,
-  idioma: string,
-  t: ReturnType<typeof useIdioma>["t"]
-) {
-  const corpoHtml =
-    det.corpoTipo === "html"
-      ? DOMPurify.sanitize(det.corpo, { ADD_ATTR: ["target"] })
-      : `<pre style="white-space:pre-wrap;font:inherit;margin:0">${escaparHtml(det.corpo)}</pre>`;
-  const data = det.recebido
-    ? new Date(det.recebido).toLocaleString(idioma === "en" ? "en-US" : "pt-BR")
-    : "";
-  const linha = (rotulo: string, valor: string) =>
-    valor
-      ? `<div style="margin:2px 0"><span style="color:#666">${escaparHtml(rotulo)}:</span> ${escaparHtml(valor)}</div>`
-      : "";
-  const cabecalho =
-    `<div style="margin:0 0 14px;padding:0 0 10px;border-bottom:1px solid #ccc">` +
-    `<h1 style="margin:0 0 8px;font-size:18px;line-height:1.3">${escaparHtml(det.assunto || t.controlRoom.semCorpo)}</h1>` +
-    linha(t.controlRoom.filtroDe, det.deEmail ? `${det.de} <${det.deEmail}>` : det.de) +
-    linha(t.controlRoom.para, det.para.join(", ")) +
-    (det.cc.length ? linha("Cc", det.cc.join(", ")) : "") +
-    linha(t.controlRoom.imprimirData, data) +
-    `</div>`;
-  const doc =
-    `<!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light">` +
-    `<style>:root{color-scheme:light}html,body{margin:0;background:#fff;color:#111}` +
-    `body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;font-size:13px;line-height:1.5;padding:16px;overflow-wrap:anywhere}` +
-    `img{max-width:100%;height:auto}a{color:#111}@page{margin:14mm}</style></head>` +
-    `<body>${cabecalho}${corpoHtml}</body></html>`;
-
-  const iframe = document.createElement("iframe");
-  iframe.setAttribute("aria-hidden", "true");
-  // FORA da tela com TAMANHO REAL (não `width:0;height:0;visibility:hidden`): um
-  // iframe sem caixa de layout / com `visibility:hidden` pode imprimir EM BRANCO
-  // (o WebView2 não painta o conteúdo). Off-screen preserva o render tree; o
-  // tamanho da página impressa vem do `@page`, não daqui.
-  iframe.style.cssText =
-    "position:fixed;left:-10000px;top:0;width:816px;height:1056px;border:0";
-  // Sem allow-scripts (corpo não executa nada); allow-modals libera o print()
-  // (confirmado: com allow-modals o diálogo do sistema abre).
-  iframe.setAttribute("sandbox", "allow-same-origin allow-modals");
-  iframe.srcdoc = doc;
-  iframe.onload = () => {
-    const w = iframe.contentWindow;
-    if (!w) {
-      iframe.remove();
-      return;
-    }
-    // Pequeno tick pra layout/imagens assentarem, depois o diálogo do sistema.
-    window.setTimeout(() => {
-      try {
-        w.focus();
-        w.print();
-      } catch {
-        /* print bloqueado/indisponível — não deixa o iframe pendurado */
-      }
-      // print() é bloqueante no WebView2; remove o iframe depois de fechar.
-      window.setTimeout(() => iframe.remove(), 500);
-    }, 120);
-  };
-  document.body.appendChild(iframe);
-}
+// #640 (re-spec): a impressão saiu do front. O `window.print()` de um iframe cai
+// no diálogo LEGADO do Windows (Win32); o PO quer o PREVIEW do Chromium. Isso só
+// vem do COM nativo `ICoreWebView2_16::ShowPrintUI(BROWSER)`, feito no backend
+// (`cr_imprimir_email`, reusa `compor_html` + a engine de janela do #639). O front
+// agora só dispara o comando — ver `imprimir()` no ControlRoomScreen.
 
 // --- empty states (reui c-empty-15 / c-empty-20) ---------------------------
 
@@ -7145,15 +7071,20 @@ export function ControlRoomScreen({
   }
 
   /**
-   * #640 (S5): "Imprimir" — abre o diálogo de impressão do SISTEMA sobre o corpo
-   * do e-mail ABERTO no leitor (cabeçalho + corpo fiel). Escopo = e-mail em
-   * leitura (multi fora de escopo); sem e-mail aberto (`leitorDetalhe` nulo) não
-   * faz nada — o item do menu já fica desabilitado e o Ctrl+P é no-op.
+   * #640 (re-spec): "Imprimir" — abre o PREVIEW do Chromium (não o diálogo legado
+   * Win32) sobre o e-mail ABERTO no leitor. O backend `cr_imprimir_email` reusa o
+   * `compor_html` + a engine de janela do #639 e chama o COM `ShowPrintUI(BROWSER)`
+   * numa janela visível com só o e-mail. Escopo = e-mail em leitura (`msgSel`);
+   * sem e-mail aberto não faz nada (o item do menu já fica desabilitado).
    */
-  function imprimir() {
-    const det = useAppStore.getState().leitorDetalhe;
-    if (!det) return;
-    imprimirEmailDoLeitor(det, idioma, t);
+  async function imprimir() {
+    const msgSel = useAppStore.getState().msgSel;
+    if (!msgSel) return;
+    try {
+      await api.crImprimirEmail([msgSel], caixaAtiva);
+    } catch (e) {
+      toast.error(t.controlRoom.erroAcao, { description: String(e) });
+    }
   }
 
   /**
