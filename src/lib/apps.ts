@@ -348,6 +348,20 @@ export const MAIS_USADOS = [
 ];
 
 /**
+ * #621 (Apps S2): item "Recommended" do sidebar — pacote Office + OneDrive,
+ * confirmado pelo PO. Puxados do catálogo `APPS` por id (não hardcode de card),
+ * na ordem do PO. Substitui o `MAIS_USADOS` provisório que o S1 fiava no item.
+ */
+export const RECOMENDADOS = [
+  "word",
+  "excel",
+  "powerpoint",
+  "outlook",
+  "onenote",
+  "onedrive",
+];
+
+/**
  * Icones oficiais do Fluent UI, os mesmos que o portal do M365 usa. Baixados
  * para dentro do projeto de proposito: assim funcionam sem rede e o CDN da
  * Microsoft nao recebe uma requisicao por card renderizado.
