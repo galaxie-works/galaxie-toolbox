@@ -1,4 +1,4 @@
-import { Badge } from "@/components/reui/badge";
+import { MetricaChip } from "@/components/metrica-chip";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -25,32 +25,6 @@ import { ChevronDown, Folder } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 const fmt = (n: number, i: string) => n.toLocaleString(i);
-
-function Metrica({
-  icone,
-  valor,
-  carregando,
-}: {
-  icone: React.ReactNode;
-  valor?: string;
-  carregando?: boolean;
-}) {
-  if (!valor) {
-    if (!carregando) return null;
-    return (
-      <Badge variant="secondary" size="lg">
-        <Spinner data-icon="inline-start" />
-        {icone}
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="secondary" size="lg">
-      {icone}
-      {valor}
-    </Badge>
-  );
-}
 
 /**
  * Card de uso do OneDrive (usado x limite), expansível — na expansão mostra os
@@ -239,11 +213,11 @@ export function MeusArquivosScreen() {
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold">{pasta.name}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                      <Metrica
+                      <MetricaChip
                         icone={<SquareActivityIcon size={13} />}
                         valor={formatBytes(pasta.bytes)}
                       />
-                      <Metrica
+                      <MetricaChip
                         icone={<FoldersIcon size={13} />}
                         valor={
                           pasta.folders != null
@@ -252,7 +226,7 @@ export function MeusArquivosScreen() {
                         }
                         carregando={carregandoDet}
                       />
-                      <Metrica
+                      <MetricaChip
                         icone={<FileStackIcon size={13} />}
                         valor={
                           pasta.files != null

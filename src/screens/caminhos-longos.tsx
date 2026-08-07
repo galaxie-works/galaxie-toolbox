@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/reui/alert";
+import { Spinner } from "@/components/ui/spinner";
 import * as api from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
-import { AlertTriangle, Check, Loader2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Check, ShieldCheck } from "lucide-react";
 
 /**
  * Liga o suporte a caminhos com mais de 260 caracteres no Windows.
@@ -75,7 +76,7 @@ export function CaminhosLongosScreen() {
             <Button onClick={ligar} disabled={aplicando || ligado === null}>
               {aplicando ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" /> {t.caminhosLongos.aplicando}
+                  <Spinner data-icon="inline-start" /> {t.caminhosLongos.aplicando}
                 </>
               ) : (
                 t.caminhosLongos.ativar
