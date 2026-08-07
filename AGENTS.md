@@ -88,7 +88,7 @@ Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pr
 - **projId**: `PVT_kwHOD_4JN84BedaN`
 - **Status** (`PVTSSF_lAHOD_4JN84BedaNzhY3dus`): Backlog `f75ad846` · Ready `61e4505c` · In progress `47fc9ee4` · In review `df73e18b` · Rejected `7389544e` · QA Approved `33a59ba9` · PO Approved `9ef1bdac` · Done - Released `98236657`
 - **Sprint #** (Number): `PVTF_lAHOD_4JN84BedaNzhY3pCE`
-- **Priority** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0o`): P0 `79628723` · P1 `0a877460` · P2 `da944a9c`
+- **Priority** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0o`): Low `79628723` · Normal `0a877460` · High `da944a9c` · Highest `c94b4958`
 - **Size** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0s`): XS `6c6483d2` · S `f784b110` · M `7515a9f1` · L `817d0097` · XL `db339eb2`
 - **Estimate** (Number): `PVTF_lAHOD_4JN84BedaNzhY3d0w`
 
@@ -112,7 +112,7 @@ Use o skill **`/agile-product-owner`** (INVEST + AC + pontos + prioridade). **Re
 
 Mapeamentos para os campos do board:
 - **pts → Size**: 1→XS · 2/3→S · 5→M · 8→L · 13→XL. Setar também **Estimate** = pts.
-- **MoSCoW → Priority**: Must→P0 · Should→P1 · Could→P2.
+- **MoSCoW → Priority**: Must→Highest · Should→High · Could→Normal · Won't→Low.
 - **Sprint** conforme o roadmap.
 
 ## 3.1 Dúvidas de UI/UX/design → subagente de UX Research
