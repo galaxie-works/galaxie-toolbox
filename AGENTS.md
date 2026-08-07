@@ -131,6 +131,13 @@ Para **dúvidas de design** (padrão de componente, comportamento de interação
 
 **Gate de realidade (o que FECHA — ver o callout 🔴 MÉTODO no topo):** cada AC verificado **no app REAL com dado REAL** (não mock). Se auth-gate impede o agente de validar, a entrega declara **"NÃO verificado com dado real"** e o **Polaris faz o live-QA** antes de QA Approved. AC experienciais (skeleton/erro-que-recupera/vazio/dado real/transições), não estruturais. **Build verde não fecha item.**
 
+### 5.1 Anti-UI-inventada (do #597/#601)
+Três travas pra a UI caseira não nascer de novo quando já existe primitivo pronto (`components/ui`, `components/reui`, ou um padrão do próprio app como `app-sidebar.tsx` / o grid de `PeopleCard`):
+
+1. **Referência interna na task (Polaris ao escopar):** toda task de UI cita o **componente/arquivo EXATO a reusar** — ex.: "reusa o padrão do `src/components/app-sidebar.tsx`", nunca "reusa o que temos" genérico. Task de UI sem referência = mal escopada, não sai.
+2. **Prova de reuso na DoD (quem entrega):** o agente cita na PR **qual componente/padrão reusou** (caminho do arquivo) — ou justifica explicitamente por que inventou (nada equivalente existia). **Sem citação de reuso nem justificativa, não integra.**
+3. **Design-review antes de integrar:** PR de UI passa por um olhar de UX/convenção **antes** de QA ("reusou o primitivo? bate com a convenção do app? não inventou?"). PR grande de UI → subagente design-reviewer dedicado (ver §3.1). Isso ataca o "headless confirma estrutura, não intenção visual" — casar com QA visual/screenshots quando houver (#602).
+
 ## 6. Segurança
 - `CLIENT_ID` `214d735e-eb9b-4052-8851-578d3bd91627` é **público por design** (public client + PKCE).
 - Rodar varredura de segredos antes de subir. Não comitar tokens/segredos.
