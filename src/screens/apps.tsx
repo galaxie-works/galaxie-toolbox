@@ -9,6 +9,7 @@ import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -285,7 +286,9 @@ export function AppsScreen({
           SettingsNavigation/app-sidebar (roda no SidebarProvider do App). */}
       <div className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
         <AppsNavigation
-          itens={itens}
+          recomendado={itens[0]}
+          categorias={itens.slice(1)}
+          labelCategorias={t.apps.explorar}
           selecionado={selecionado}
           onSelecionar={setSelecionado}
         />
@@ -344,12 +347,44 @@ export function AppsScreen({
  * `SidebarProvider` do App (o mesmo que serve o AppSidebar). Itens flat (sem
  * subitens) — cada um seleciona uma categoria/Recommended; ícone anima no hover.
  */
-function AppsNavigation({
-  itens,
+type ItemNav = {
+  id: string;
+  label: string;
+  Icon: ComponentType<{ className?: string }>;
+};
+
+function ItemSidebar({
+  it,
   selecionado,
   onSelecionar,
 }: {
-  itens: { id: string; label: string; Icon: ComponentType<{ className?: string }> }[];
+  it: ItemNav;
+  selecionado: string;
+  onSelecionar: (id: string) => void;
+}) {
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={selecionado === it.id}
+        onClick={() => onSelecionar(it.id)}
+      >
+        <it.Icon />
+        <span>{it.label}</span>
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
+
+function AppsNavigation({
+  recomendado,
+  categorias,
+  labelCategorias,
+  selecionado,
+  onSelecionar,
+}: {
+  recomendado: ItemNav;
+  categorias: ItemNav[];
+  labelCategorias: string;
   selecionado: string;
   onSelecionar: (id: string) => void;
 }) {
@@ -360,18 +395,28 @@ function AppsNavigation({
         className="h-full w-full bg-transparent text-foreground"
       >
         <SidebarContent>
+          {/* Recommended sozinho no topo. */}
           <SidebarGroup>
             <SidebarMenu>
-              {itens.map((it) => (
-                <SidebarMenuItem key={it.id}>
-                  <SidebarMenuButton
-                    isActive={selecionado === it.id}
-                    onClick={() => onSelecionar(it.id)}
-                  >
-                    <it.Icon />
-                    <span>{it.label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
+              <ItemSidebar
+                it={recomendado}
+                selecionado={selecionado}
+                onSelecionar={onSelecionar}
+              />
+            </SidebarMenu>
+          </SidebarGroup>
+
+          {/* #622: grupo "Explore by category" com as 8 categorias. */}
+          <SidebarGroup>
+            <SidebarGroupLabel>{labelCategorias}</SidebarGroupLabel>
+            <SidebarMenu>
+              {categorias.map((it) => (
+                <ItemSidebar
+                  key={it.id}
+                  it={it}
+                  selecionado={selecionado}
+                  onSelecionar={onSelecionar}
+                />
               ))}
             </SidebarMenu>
           </SidebarGroup>
