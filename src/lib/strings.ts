@@ -276,7 +276,15 @@ const pt = {
     // Achatado (uma string de apelidos por app) — o strings.ts é 2 níveis.
     grupoIrPara: "Ir para",
     irParaApp: "Ir para {app}",
-    aliasControlRoom: "bridge email e-mail mail e-mails correio agenda calendário calendar",
+    // #657: deep-link nas sub-views do Bridge (People/Agenda). agenda/calendário
+    // saíram do aliasControlRoom (agora donos do sub-view Agenda).
+    irParaContatos: "Ir para Contatos",
+    irParaAgenda: "Ir para Agenda",
+    // União pt+en (AC pede que contacts/contatos/pessoas/people casem em qualquer
+    // idioma; mesmo padrão cross-language do aliasControlRoom).
+    aliasPeople: "contatos contato pessoas people contacts contact",
+    aliasAgenda: "agenda calendário calendario eventos evento compromissos calendar events event schedule",
+    aliasControlRoom: "bridge email e-mail mail e-mails correio",
     aliasApps: "apps aplicativos aplicações",
     aliasOnedrive: "onedrive arquivos drive",
     aliasOutlook: "outlook",
@@ -1995,7 +2003,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #656: "Go to {app}" — per-app aliases (accent-insensitive / prefix match).
     grupoIrPara: "Go to",
     irParaApp: "Go to {app}",
-    aliasControlRoom: "bridge email e-mail mail inbox agenda calendar",
+    irParaContatos: "Go to Contacts",
+    irParaAgenda: "Go to Calendar",
+    aliasPeople: "contacts contact people contatos contato pessoas",
+    aliasAgenda: "agenda calendar events event schedule calendário calendario eventos compromissos",
+    aliasControlRoom: "bridge email e-mail mail inbox",
     aliasApps: "apps applications",
     aliasOnedrive: "onedrive files drive",
     aliasOutlook: "outlook",

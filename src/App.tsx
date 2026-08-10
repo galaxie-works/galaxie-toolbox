@@ -96,6 +96,7 @@ import { KeyRound } from "lucide-react";
 function AppInner() {
   const { idioma, t } = useIdioma();
   const bridgeView = useAppStore((state) => state.bridgeView);
+  const setBridgeView = useAppStore((state) => state.setBridgeView);
   const reauthMissingScopes = useAppStore(
     (state) => state.reauthMissingScopes,
   );
@@ -1055,6 +1056,11 @@ function AppInner() {
               onReabrirFechada={reabrirFechada}
               onNavegar={abrirUrlLivre}
               onNavegarTela={setTela}
+              onIrParaBridgeView={(view) => {
+                // #657: deep-link — seta a sub-view do Bridge e abre o control-room.
+                setBridgeView(view);
+                setTela("control-room");
+              }}
               onRestaurarAbas={restaurarAbas}
               sessaoAnteriorQtd={sessaoDispensada ? 0 : sessaoAnterior.length}
               onRestaurarSessao={restaurarSessao}

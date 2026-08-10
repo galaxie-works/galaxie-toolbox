@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { appsQueCasam, normalizarTermo, TELAS_IR_PARA } from "./aliases-nav.ts";
+import {
+  appsQueCasam,
+  normalizarTermo,
+  subviewsQueCasam,
+  SUBVIEWS_BRIDGE,
+  TELAS_IR_PARA,
+  type SubviewBridge,
+} from "./aliases-nav.ts";
 import type { Tela } from "./navegacao.ts";
 
 // Apelidos e rótulos mínimos (espelham a intenção do strings.ts, sem depender dele).
@@ -87,4 +94,36 @@ test("só casa telas na lista de candidatos (respeita oculto do #663)", () => {
   assert.deepEqual(casar("comms", visiveis), []);
   assert.equal(casar("bridge", visiveis)[0], "control-room");
   assert.equal(casar("onedrive", visiveis)[0], "onedrive");
+});
+
+// #657: deep-link nas sub-views do Bridge (People/Agenda).
+const ALIAS_SUB: Record<SubviewBridge, string> = {
+  people: "contatos contato pessoas people contacts contact",
+  agenda: "agenda calendário calendario eventos evento compromissos calendar events event schedule",
+};
+const ROTULO_SUB: Record<SubviewBridge, string> = {
+  people: "Contatos",
+  agenda: "Calendário",
+};
+const casarSub = (termo: string) =>
+  subviewsQueCasam(termo, ALIAS_SUB, (v) => ROTULO_SUB[v]);
+
+test("sub-views: contacts/contatos/pessoas/people → people", () => {
+  for (const termo of ["contacts", "contatos", "pessoas", "people"]) {
+    assert.equal(casarSub(termo)[0], "people", `termo=${termo}`);
+  }
+});
+
+test("sub-views: agenda/calendário/calendario/eventos/calendar → agenda", () => {
+  for (const termo of ["agenda", "calendário", "calendario", "eventos", "calendar"]) {
+    assert.equal(casarSub(termo)[0], "agenda", `termo=${termo}`);
+  }
+});
+
+test("sub-views: prefixo e no-match", () => {
+  assert.ok(casarSub("contat").includes("people")); // prefixo
+  assert.ok(casarSub("event").includes("agenda")); // prefixo
+  assert.deepEqual(casarSub("github.com"), []);
+  assert.deepEqual(casarSub(""), []);
+  assert.equal(SUBVIEWS_BRIDGE.length, 2);
 });
