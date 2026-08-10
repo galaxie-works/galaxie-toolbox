@@ -1054,6 +1054,7 @@ function AppInner() {
               onNovaAbaPrivada={novaAbaPrivada}
               onReabrirFechada={reabrirFechada}
               onNavegar={abrirUrlLivre}
+              onNavegarTela={setTela}
               onRestaurarAbas={restaurarAbas}
               sessaoAnteriorQtd={sessaoDispensada ? 0 : sessaoAnterior.length}
               onRestaurarSessao={restaurarSessao}
