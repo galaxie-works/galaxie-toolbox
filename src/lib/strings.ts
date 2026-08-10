@@ -277,9 +277,10 @@ const pt = {
     grupoIrPara: "Ir para",
     irParaApp: "Ir para {app}",
     // #657: deep-link nas sub-views do Bridge (People/Agenda). agenda/calendário
-    // saíram do aliasControlRoom (agora donos do sub-view Agenda).
-    irParaContatos: "Ir para Contatos",
-    irParaAgenda: "Ir para Agenda",
+    // saíram do aliasControlRoom (agora donos do sub-view Agenda). O label é o
+    // breadcrumb completo (Bridge › view) — deixa claro que a view mora no Bridge.
+    irParaContatos: "Ir para Bridge › Contatos",
+    irParaAgenda: "Ir para Bridge › Agenda",
     // União pt+en (AC pede que contacts/contatos/pessoas/people casem em qualquer
     // idioma; mesmo padrão cross-language do aliasControlRoom).
     aliasPeople: "contatos contato pessoas people contacts contact",
@@ -2003,8 +2004,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #656: "Go to {app}" — per-app aliases (accent-insensitive / prefix match).
     grupoIrPara: "Go to",
     irParaApp: "Go to {app}",
-    irParaContatos: "Go to Contacts",
-    irParaAgenda: "Go to Calendar",
+    irParaContatos: "Go to Bridge › Contacts",
+    irParaAgenda: "Go to Bridge › Calendar",
     aliasPeople: "contacts contact people contatos contato pessoas",
     aliasAgenda: "agenda calendar events event schedule calendário calendario eventos compromissos",
     aliasControlRoom: "bridge email e-mail mail inbox",
