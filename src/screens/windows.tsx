@@ -11,7 +11,7 @@ import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import * as api from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
 import { toast } from "sonner";
-import { MonitorCog } from "lucide-react";
+import { WindowsIcon } from "@/components/ui/icons/marca/windows";
 
 /**
  * Tela Windows (#665) — página de opções no estilo **Settings > System**: uma
@@ -25,10 +25,15 @@ export function WindowsScreen() {
   const { t } = useIdioma();
   return (
     <div className="flex h-full flex-col gap-4">
-      {/* Hero — mesmo padrão do Settings/Apps: ícone + título animado. */}
+      {/* Hero — mesmo padrão do Settings/Apps: ícone + título animado. #665
+          follow-up: o hero usa o LOGO do Windows (`WindowsIcon`, #664/Vega),
+          igual ao item de nav e ao breadcrumb — coerência da marca. */}
       <div className="flex shrink-0 items-center gap-3">
-        <div className="flex size-11 items-center justify-center rounded-lg bg-secondary text-secondary-foreground">
-          <MonitorCog className="size-5" aria-hidden="true" />
+        <div
+          aria-hidden="true"
+          className="flex size-11 items-center justify-center rounded-lg bg-secondary"
+        >
+          <WindowsIcon className="size-5" />
         </div>
         <h1 className="text-xl font-semibold tracking-tight">
           <SoftBlurIn delay={80} stagger={16}>
