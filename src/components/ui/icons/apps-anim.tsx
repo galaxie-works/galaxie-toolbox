@@ -1,5 +1,5 @@
 import { BlocksIcon } from "@/components/ui/blocks";
-import { IconeAnim, type AnimIcon } from "@/components/ui/icons/marca-anim";
+import { IconeItemAnim, type AnimIcon } from "@/components/ui/icons/marca-anim";
 import { HandMetalIcon } from "@/components/ui/hand-metal";
 import { GaugeIcon } from "@/components/ui/gauge";
 import { WrenchIcon } from "@/components/ui/wrench";
@@ -27,29 +27,29 @@ export function AppsIcon({ className }: { className?: string }) {
  * por item: Recommended + as 8 categorias (mapa no épico #619).
  */
 export function RecommendedIcon({ className }: { className?: string }) {
-  return <IconeAnim Comp={HandMetalIcon as unknown as AnimIcon} className={className} />;
+  return <IconeItemAnim Comp={HandMetalIcon as unknown as AnimIcon} className={className} />;
 }
 export function ProdutividadeIcon({ className }: { className?: string }) {
-  return <IconeAnim Comp={GaugeIcon as unknown as AnimIcon} className={className} />;
+  return <IconeItemAnim Comp={GaugeIcon as unknown as AnimIcon} className={className} />;
 }
 export function UtilitariosIcon({ className }: { className?: string }) {
-  return <IconeAnim Comp={WrenchIcon as unknown as AnimIcon} className={className} />;
+  return <IconeItemAnim Comp={WrenchIcon as unknown as AnimIcon} className={className} />;
 }
 export function EducacaoIcon({ className }: { className?: string }) {
-  return <IconeAnim Comp={BookTextIcon as unknown as AnimIcon} className={className} />;
+  return <IconeItemAnim Comp={BookTextIcon as unknown as AnimIcon} className={className} />;
 }
 export function ComunicacaoIcon({ className }: { className?: string }) {
-  return <IconeAnim Comp={MessageCircleIcon as unknown as AnimIcon} className={className} />;
+  return <IconeItemAnim Comp={MessageCircleIcon as unknown as AnimIcon} className={className} />;
 }
 export function ConteudoIcon({ className }: { className?: string }) {
-  return <IconeAnim Comp={ArchiveIcon as unknown as AnimIcon} className={className} />;
+  return <IconeItemAnim Comp={ArchiveIcon as unknown as AnimIcon} className={className} />;
 }
 export function ProjetosIcon({ className }: { className?: string }) {
-  return <IconeAnim Comp={WorkflowIcon as unknown as AnimIcon} className={className} />;
+  return <IconeItemAnim Comp={WorkflowIcon as unknown as AnimIcon} className={className} />;
 }
 export function ExperienciaIcon({ className }: { className?: string }) {
-  return <IconeAnim Comp={UsersIcon as unknown as AnimIcon} className={className} />;
+  return <IconeItemAnim Comp={UsersIcon as unknown as AnimIcon} className={className} />;
 }
 export function DesenvolvimentoIcon({ className }: { className?: string }) {
-  return <IconeAnim Comp={TerminalIcon as unknown as AnimIcon} className={className} />;
+  return <IconeItemAnim Comp={TerminalIcon as unknown as AnimIcon} className={className} />;
 }
