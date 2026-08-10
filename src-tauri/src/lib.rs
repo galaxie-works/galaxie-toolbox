@@ -1514,13 +1514,11 @@ async fn cr_anexo_link(
 
 // --- #635 Salvar como… / Imprimir — comandos por formato --------------------
 // A casca de UI (kebab "...", menu de contexto) chama um comando POR FORMATO;
-// contrato congelado no S1 (#636): `{ ids, pasta, mailbox }` →
-// `SalvarEmailResultado`. Estado atual:
-//   · .eml (S2 #637) → REAL (Graph $value → RFC822), acima.
-//   · PDF  (S4 #639) → REAL (WebView2 PrintToPdf), logo abaixo.
-//   · .msg (S3 #638) → STUB abaixo (finge sucesso) até a engine nativa.
-// Imprimir (S5 #640) NÃO tem backend: é o `print()` do WebView2 escopado ao
-// iframe do corpo, 100% no front.
+// contrato: `{ ids, pasta, mailbox }` → `SalvarEmailResultado`. Estado atual:
+//   · .eml (#637) → REAL (Graph $value → RFC822), acima.
+//   · PDF  (#639) → REAL (WebView2 PrintToPdf), logo abaixo.
+//   · .msg → DESCARTADO pelo PO (#638 cancelado → #651 removeu a opção da UI).
+// Imprimir (#640) → `cr_imprimir_email` abaixo (ShowPrintUI(BROWSER) do WebView2).
 
 /// Control room: salvar como PDF (S4 #639, real). Renderiza o corpo via WebView2
 /// PrintToPdf numa webview oculta. Corre em spawn_blocking (Graph + impressão
@@ -1539,21 +1537,6 @@ async fn cr_salvar_email_pdf(
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-/// STUB (S1 #636): salvar como `.msg`. Real (ou drop) em S3 (#638, em avaliação).
-/// **Retorna `Err` "não disponível"** de propósito — NUNCA `salvos: ids` (fingir
-/// sucesso com IDs no lugar de paths causava toast-OK + nenhum arquivo + reveal
-/// no Home do Explorer; foi a raiz do falso-bug do #639). Enquanto o formato não
-/// existe de verdade, um erro honesto é a UX certa.
-#[tauri::command]
-async fn cr_salvar_email_msg(
-    ids: Vec<String>,
-    pasta: String,
-    mailbox: Option<String>,
-) -> Result<graph::SalvarEmailResultado, String> {
-    let _ = (&ids, &pasta, &mailbox);
-    Err("Salvar como arquivo do Outlook (.msg) ainda não está disponível.".to_string())
 }
 
 /// Control room: imprime o e-mail ativo abrindo o **preview do Chromium**
@@ -2033,7 +2016,6 @@ pub fn run() {
             cr_ler_anexo_email,
             cr_anexo_link,
             cr_salvar_email_pdf,
-            cr_salvar_email_msg,
             cr_imprimir_email,
             abrir_caminho,
             revelar_no_explorer,

@@ -231,7 +231,6 @@ import {
   ExternalLink,
   Eye,
   FileText,
-  FileType2,
   Flag,
   FlagOff,
   FunnelX,
@@ -2820,10 +2819,6 @@ function ItensMenuEmail({
             <Mail />
             {t.controlRoom.salvarEml}
           </ContextMenuItem>
-          <ContextMenuItem className="gap-2" onClick={() => onSalvarComo(alvos, "msg")}>
-            <FileType2 />
-            {t.controlRoom.salvarMsg}
-          </ContextMenuItem>
         </ContextMenuSubContent>
       </ContextMenuSub>
       <ContextMenuItem
@@ -2906,7 +2901,7 @@ const ATALHO_SALVAR_COMO: ShortcutDefinition = { key: "F12" };
 const ATALHO_IMPRIMIR: ShortcutDefinition = { key: "P", primary: true };
 
 /** #636: formatos de "Salvar como…". Um comando por formato (S2–S5). */
-export type FormatoSalvar = "pdf" | "eml" | "msg";
+export type FormatoSalvar = "pdf" | "eml";
 
 function MessageList({
   titulo,
@@ -5418,13 +5413,6 @@ const MessageDetail = forwardRef<
                     <Mail />
                     {t.controlRoom.salvarEml}
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="gap-2"
-                    onClick={() => id && onSalvarComo([id], "msg")}
-                  >
-                    <FileType2 />
-                    {t.controlRoom.salvarMsg}
-                  </DropdownMenuItem>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
               <DropdownMenuItem
@@ -7040,9 +7028,7 @@ export function ControlRoomScreen({
       const res =
         formato === "eml"
           ? await api.crSalvarEmailEml(ids, pasta, caixaAtiva)
-          : formato === "pdf"
-            ? await api.crSalvarEmailPdf(ids, pasta, caixaAtiva)
-            : await api.crSalvarEmailMsg(ids, pasta, caixaAtiva);
+          : await api.crSalvarEmailPdf(ids, pasta, caixaAtiva);
       if (res.salvos.length > 0) {
         toast.success(
           preencher(t.controlRoom.salvarSucesso, {
