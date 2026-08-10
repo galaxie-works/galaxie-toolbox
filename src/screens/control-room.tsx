@@ -5216,9 +5216,16 @@ const MessageDetail = forwardRef<
   );
 
   return (
-    <section className="flex h-full min-w-0 flex-col rounded-xl border bg-card">
+    // #640: `data-print-area` = alvo do `@media print` (index.css). Ao imprimir
+    // (ShowPrintUI na main), a UI do app some e só este painel (cabeçalho + corpo)
+    // sai — sem sidebar/lista/toolbar. A toolbar e a barra de resize levam
+    // `print:hidden` (não são conteúdo do e-mail).
+    <section
+      data-print-area
+      className="flex h-full min-w-0 flex-col rounded-xl border bg-card"
+    >
       {/* Toolbar */}
-      <div className="flex items-center gap-1 border-b px-3 py-2">
+      <div className="flex items-center gap-1 border-b px-3 py-2 print:hidden">
         <DicaSomenteLeitura
           ativo={envioBloqueado}
           texto={t.controlRoom.caixaEnvioRelogin}
@@ -5532,7 +5539,7 @@ const MessageDetail = forwardRef<
           <>
             <ResizableHandle
               withHandle
-              className="mx-1.5 bg-transparent hover:bg-border"
+              className="mx-1.5 bg-transparent hover:bg-border print:hidden"
             />
             <ResizablePanel
               order={2}
@@ -5542,7 +5549,8 @@ const MessageDetail = forwardRef<
               // dava altura DEFINIDA ao card (h-full), então o corpo do preview
               // (flex-1 overflow-auto) crescia até o conteúdo e o overflow-hidden
               // do painel cortava embaixo (PDF/xlsx/imagem). Espelha o order=1.
-              className="flex min-h-0 min-w-0 flex-col overflow-hidden"
+              // #640: `print:hidden` — o preview de anexo não entra no impresso.
+              className="flex min-h-0 min-w-0 flex-col overflow-hidden print:hidden"
             >
               {/* #496: preview num card à direita, fora do corpo do e-mail. */}
               <PreviewAnexo
