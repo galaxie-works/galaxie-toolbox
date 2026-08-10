@@ -97,12 +97,20 @@ pub fn abrir_caminho(path: &str) -> Result<(), String> {
         .map_err(|e| format!("falha ao abrir o arquivo: {e}"))
 }
 
-/// Abre o Explorer com o arquivo selecionado. O `/select,<path>` (sem espaco
-/// apos a virgula) abre a pasta e destaca o arquivo.
+/// Abre o Explorer com o arquivo selecionado e a pasta em foco.
+///
+/// #639: o `path` do "Salvar como…" (nome = assunto sanitizado) quase sempre TEM
+/// ESPAÇO. Com `.arg("/select,{path}")` o Rust quota o TOKEN INTEIRO —
+/// `explorer "/select,C:\...\Fatura de julho.pdf"` — e o Explorer não reconhece o
+/// `/select,` dentro das aspas → ignora e abre o Documentos. Correção: `raw_arg`
+/// com o `/select,` FORA das aspas e só o PATH entre aspas
+/// (`explorer /select,"C:\...\arquivo.pdf"`), a forma que o Explorer aceita. O
+/// nome é sanitizado (sem `"`) e caminho do Windows não tem `"`, então é seguro.
 #[cfg(windows)]
 pub fn revelar_no_explorer(path: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
     std::process::Command::new("explorer")
-        .arg(format!("/select,{path}"))
+        .raw_arg(format!("/select,\"{path}\""))
         .spawn()
         .map(|_| ())
         .map_err(|e| format!("falha ao abrir o Explorer: {e}"))
