@@ -45,6 +45,13 @@ export interface ItemFilho {
   id: Tela;
   titulo: ChaveNav;
   icone?: IconeNav;
+  /**
+   * #663 (RC): item escondido do sidebar no release-candidate. A `Tela` e a
+   * tela continuam existindo (deep-link/atalho seguem funcionando); só o item
+   * de menu não renderiza. Reversível: é só remover/flipar o flag — produtos
+   * não-prontos não são deletados.
+   */
+  oculto?: boolean;
 }
 
 export interface ItemNav {
@@ -67,12 +74,14 @@ export const NAV: GrupoNav[] = [
         titulo: "galaxie",
         icone: GalaxieSymbol,
         filhos: [
-          { id: "atoms", titulo: "atoms", icone: AtomIcon },
+          // #663 (RC): Atoms/Comms/Astro/Pulsar ocultos — sobram Bridge +
+          // Navigator (os prontos). Ocultos por flag, nada deletado.
+          { id: "atoms", titulo: "atoms", icone: AtomIcon, oculto: true },
           { id: "control-room", titulo: "controlRoom", icone: BridgeIcon },
           { id: "navegador", titulo: "navegador", icone: NavigatorIcon },
-          { id: "comms", titulo: "comms", icone: CommsIcon },
-          { id: "astro", titulo: "astro", icone: AstroIcon },
-          { id: "pulsar", titulo: "pulsar", icone: Radar },
+          { id: "comms", titulo: "comms", icone: CommsIcon, oculto: true },
+          { id: "astro", titulo: "astro", icone: AstroIcon, oculto: true },
+          { id: "pulsar", titulo: "pulsar", icone: Radar, oculto: true },
         ],
       },
       {
@@ -80,7 +89,8 @@ export const NAV: GrupoNav[] = [
         icone: CopilotIcon,
         filhos: [
           { id: "apps", titulo: "apps", icone: AppsIcon },
-          { id: "outlook", titulo: "outlook", icone: OutlookIcon },
+          // #663 (RC): Outlook oculto — sobram Apps + OneDrive.
+          { id: "outlook", titulo: "outlook", icone: OutlookIcon, oculto: true },
           { id: "onedrive", titulo: "onedrive", icone: OneDriveIcon },
         ],
       },
