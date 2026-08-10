@@ -100,6 +100,13 @@ export function AppSidebar({
             <SidebarMenuButton
               size="lg"
               tooltip={user.organizacao ?? t.nav.organizacao}
+              // #659: no colapsado (icon) o botão vira `size-8 rounded-md
+              // overflow-hidden` e o logo do tenant (`size-8`) preenche o
+              // quadrado exato → o rounded+overflow cortava as pontas. No
+              // icon-mode deixamos `overflow-visible` (cantos do logo inteiros);
+              // o texto ao lado é escondido explicitamente abaixo, então não
+              // depende mais do overflow pra sumir.
+              className="group-data-[collapsible=icon]:overflow-visible!"
             >
               {/* #541: com branding do tenant, o logo aparece LIMPO — sem box,
                   sem contorno, sem círculo (requisito do PO). Sem branding, cai
@@ -115,7 +122,7 @@ export function AppSidebar({
                   <ClienteMark className="size-4" />
                 </div>
               )}
-              <div className="grid flex-1 text-left text-sm leading-tight">
+              <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                 <span className="truncate font-semibold">
                   {user.organizacao ?? t.nav.organizacao}
                 </span>
