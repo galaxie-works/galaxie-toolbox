@@ -1070,6 +1070,15 @@ function AppInner() {
           <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
             <ConfiguracoesScreen />
           </div>
+        ) : tela === "apps" ? (
+          /* Fora do ScrollArea: altura cheia, sidebar do Apps 100% e o grid de
+             conteúdo rola por dentro — mesmo padrão do Bridge/Configurações. */
+          <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
+            <AppsScreen
+              onAbrirAqui={abrirAppAqui}
+              onAbrirNavegador={(a) => abrirUrl(a.url)}
+            />
+          </div>
         ) : tela === "control-room" ? null : (
         /* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
             design system em vez da nativa do sistema.
@@ -1094,12 +1103,6 @@ function AppInner() {
               onOpen={openSite}
               onDisconnect={disconnect}
               onAbrirUrl={abrirUrl}
-            />
-          )}
-          {tela === "apps" && (
-            <AppsScreen
-              onAbrirAqui={abrirAppAqui}
-              onAbrirNavegador={(a) => abrirUrl(a.url)}
             />
           )}
           {tela === "comms" && (

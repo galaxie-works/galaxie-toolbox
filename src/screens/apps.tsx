@@ -1,6 +1,5 @@
 import {
   Frame,
-  FrameFooter,
   FrameHeader,
   FramePanel,
   FrameTitle,
@@ -44,11 +43,51 @@ import { useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import {
   ExternalLink,
-  Info,
   MoreHorizontal,
   SquareArrowOutUpRight,
 } from "lucide-react";
-import { useState, type ComponentType } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentType,
+} from "react";
+
+/**
+ * Descrição do app em NO MÁXIMO 1 linha (#620 polish): trunca com reticências e,
+ * só quando o texto não cabe, mostra o resumo completo num tooltip no hover. O
+ * `ResizeObserver` re-mede quando o card muda de largura (grid responsivo). O
+ * span fica SEMPRE dentro do `TooltipTrigger` (não remonta ao alternar), então o
+ * observer permanece ligado ao nó atual.
+ */
+function DescricaoApp({ texto }: { texto: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [truncado, setTruncado] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const medir = () => setTruncado(el.scrollWidth > el.clientWidth);
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [texto]);
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          ref={ref}
+          className="mt-0.5 block truncate text-xs text-muted-foreground"
+        >
+          {texto}
+        </span>
+      </TooltipTrigger>
+      {truncado && <TooltipContent>{texto}</TooltipContent>}
+    </Tooltip>
+  );
+}
 
 /**
  * Card de aplicativo. O corpo inteiro abre o app na janela interna; as
@@ -87,11 +126,7 @@ function AppCard({
         />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium">{app.nome}</span>
-          {!compacto && (
-            <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">
-              {app.resumo[idioma]}
-            </span>
-          )}
+          {!compacto && <DescricaoApp texto={app.resumo[idioma]} />}
         </span>
       </button>
 
@@ -218,10 +253,6 @@ export function AppsScreen({
                 ))}
               </div>
             </FramePanel>
-            <FrameFooter className="flex-row items-center gap-2">
-              <Info className="size-4 shrink-0 text-blue-500 dark:text-blue-400" />
-              <p className="text-muted-foreground text-sm">{t.apps.avisoSessao}</p>
-            </FrameFooter>
           </Frame>
         </div>
       </div>

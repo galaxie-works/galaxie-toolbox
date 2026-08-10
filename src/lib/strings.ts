@@ -247,8 +247,6 @@ const pt = {
     projetos: "Gestão de projetos",
     experiencia: "Experiência do funcionário",
     desenvolvimento: "Ferramentas de desenvolvimento",
-    avisoSessao:
-      "Os aplicativos abrem aqui dentro. Na primeira vez a Microsoft pede o seu login nesta janela; depois a sessão fica guardada.",
   },
 
   meusArquivos: {
@@ -1945,8 +1943,6 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     projetos: "Project management",
     experiencia: "Employee Experience",
     desenvolvimento: "Developer tools",
-    avisoSessao:
-      "Apps open right here. The first time, Microsoft asks you to sign in inside this window; after that the session is kept.",
   },
 
   meusArquivos: {
