@@ -29,7 +29,7 @@ import {
   type PeriodoLimpeza,
 } from "@/lib/navigator-history";
 import * as browser from "@/lib/browser";
-import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
+import { WindowsScreen } from "@/screens/windows";
 import { ConfiguracoesScreen } from "@/screens/configuracoes";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -1150,7 +1150,10 @@ function AppInner() {
               ]}
             />
           )}
-          {tela === "caminhos-longos" && <CaminhosLongosScreen />}
+          {/* #665: a antiga CaminhosLongosScreen virou a tela Windows (página de
+              opções estilo Settings>System); o slot de nav "caminhos-longos"
+              segue (label/rota são do S2/Vega). */}
+          {tela === "caminhos-longos" && <WindowsScreen />}
           </main>
         </ScrollArea>
         )}

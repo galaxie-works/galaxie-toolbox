@@ -1329,6 +1329,16 @@ const pt = {
     aplicando: "Aplicando...",
   },
 
+  // #665: tela Windows (estilo Settings > System). Reusa `caminhosLongos.ativar`
+  // (aria) e o backend long_paths_status/enable_long_paths.
+  windows: {
+    titulo: "Windows",
+    longPathsTitulo: "Caminhos longos",
+    longPathsDesc:
+      "Permite que o Windows use caminhos de arquivo com mais de 260 caracteres.",
+    erroAtivar: "Não foi possível ativar os caminhos longos.",
+  },
+
   tema: {
     alternar: "Alternar tema claro e escuro",
   },
@@ -3010,6 +3020,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     nadaAFazer: "Nothing to do — this computer already accepts long paths.",
     ativar: "Enable long paths",
     aplicando: "Applying...",
+  },
+
+  // #665: Windows screen (Settings > System style).
+  windows: {
+    titulo: "Windows",
+    longPathsTitulo: "Long paths",
+    longPathsDesc: "Let Windows use file paths longer than 260 characters.",
+    erroAtivar: "Couldn't enable long paths.",
   },
 
   tema: {
