@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.38.8"
+version = "0.39.0"
 description = "GALAXIE"
 authors = ["Galaxie Works"]
 license = ""
