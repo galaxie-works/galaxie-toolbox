@@ -143,6 +143,24 @@ export function AppSidebar({
                 // ficar sem nenhum filho visível, não renderiza (evita grupo
                 // vazio no sidebar).
                 const filhos = item.filhos.filter((f) => !f.oculto);
+                // #664 (RC): ItemNav navegável direto (`id`) e sem filhos
+                // visíveis → item ÚNICO (folha) que abre a Tela, em vez de grupo
+                // colapsável (ex.: Windows → tela de utilidades).
+                if (item.id && filhos.length === 0) {
+                  const idTela = item.id;
+                  return (
+                    <SidebarMenuItem key={item.titulo}>
+                      <SidebarMenuButton
+                        tooltip={t.nav[item.titulo]}
+                        isActive={tela === idTela}
+                        onClick={() => onNavegar(idTela)}
+                      >
+                        <item.icone className="size-5!" />
+                        <span>{t.nav[item.titulo]}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                }
                 if (filhos.length === 0) return null;
                 return colapsada ? (
                   // #359: em icon-mode o submenu inline (`SidebarMenuSub`) é
