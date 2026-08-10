@@ -213,22 +213,6 @@ pub fn cr_salvar_email_pdf(
     Ok(SalvarEmailResultado { salvos, falhas })
 }
 
-/// Imprime um e-mail (#640): busca o corpo, compõe o HTML e abre o **preview de
-/// impressão do Chromium** (`ShowPrintUI(BROWSER)`) numa janela visível dedicada.
-/// Single — o e-mail em leitura (multi fora de escopo). Fire-and-forget: retorna
-/// após abrir o preview; a janela vive até o usuário fechar.
-pub fn cr_imprimir_email(
-    app: &tauri::AppHandle,
-    store: &TokenStore,
-    ids: &[String],
-    mailbox: Option<&str>,
-) -> Result<(), String> {
-    let id = ids.first().ok_or("nenhum e-mail para imprimir")?;
-    let detalhe = graph::cr_email_corpo(store, id, mailbox)?;
-    let html = compor_html(&detalhe);
-    imprimir_email_html(app, &html)
-}
-
 // ----------------------------------------------------------------------------
 // Engine de render — WebView2 PrintToPdf numa janela Tauri oculta (#639).
 // ----------------------------------------------------------------------------
@@ -361,108 +345,6 @@ fn imprimir_pdf(janela: &tauri::WebviewWindow, destino: &std::path::Path) -> Res
         Ok(Err(e)) => Err(e),
         Err(_) => Err("tempo esgotado ao gerar o PDF".to_string()),
     }
-}
-
-/// Abre o preview de impressão do Chromium (`ShowPrintUI(BROWSER)`) numa janela
-/// Tauri **visível** carregando o `html` do e-mail (#640). A janela precisa ser
-/// visível (o preview é UI) e vive até o usuário fechar — o `ShowPrintUI` é
-/// fire-and-forget (sem completion handler). Limpa o temp no fechamento.
-#[cfg(windows)]
-fn imprimir_email_html(app: &tauri::AppHandle, html: &str) -> Result<(), String> {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::mpsc;
-    use std::time::Duration;
-    use tauri::{WebviewUrl, WebviewWindowBuilder};
-
-    static SEQ: AtomicU32 = AtomicU32::new(0);
-    let n = SEQ.fetch_add(1, Ordering::Relaxed);
-
-    // Temp HTML — MANTIDO enquanto a janela mostra (limpo no fechamento).
-    let temp = std::env::temp_dir().join(format!("gx-imprimir-{n}.html"));
-    std::fs::write(&temp, html).map_err(|e| format!("falha ao preparar o HTML: {e}"))?;
-    let temp_url = url_de_arquivo(&temp)?;
-    let rotulo = format!("gx-print-{n}");
-
-    let (tx_load, rx_load) = mpsc::channel::<()>();
-    let janela = WebviewWindowBuilder::new(app, &rotulo, WebviewUrl::External(
-        temp_url.parse().map_err(|_| "URL de arquivo invalida".to_string())?,
-    ))
-    .title("Imprimir")
-    .inner_size(900.0, 1100.0)
-    .visible(true)
-    .on_page_load(move |_w, payload| {
-        if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
-            let _ = tx_load.send(());
-        }
-    })
-    .build()
-    .map_err(|e| format!("falha ao criar a janela de impressao: {e}"))?;
-
-    // Limpa o temp quando a janela fechar.
-    let temp_ev = temp.clone();
-    janela.on_window_event(move |ev| {
-        if matches!(
-            ev,
-            tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-        ) {
-            let _ = std::fs::remove_file(&temp_ev);
-        }
-    });
-
-    travar_webview(&janela);
-
-    // Espera carregar antes do preview (senão imprime em branco).
-    if rx_load.recv_timeout(Duration::from_secs(20)).is_err() {
-        let _ = janela.close();
-        let _ = std::fs::remove_file(&temp);
-        return Err("tempo esgotado ao carregar o e-mail para impressao".to_string());
-    }
-
-    // Abre o preview do Chromium (fire-and-forget). Na falha, fecha e limpa.
-    let resultado = mostrar_print_ui(&janela);
-    if resultado.is_err() {
-        let _ = janela.close();
-        let _ = std::fs::remove_file(&temp);
-    }
-    resultado
-}
-
-/// Chama `ICoreWebView2_16::ShowPrintUI(BROWSER)` na webview já carregada.
-#[cfg(windows)]
-fn mostrar_print_ui(janela: &tauri::WebviewWindow) -> Result<(), String> {
-    use std::sync::mpsc;
-    use std::time::Duration;
-    use webview2_com::Microsoft::Web::WebView2::Win32::{
-        ICoreWebView2_16, COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER,
-    };
-    use windows::core::Interface;
-
-    let (tx, rx) = mpsc::channel::<Result<(), String>>();
-    let enviou = janela.with_webview(move |pw| {
-        let r = (|| -> Result<(), String> {
-            let core = unsafe { pw.controller().CoreWebView2() }
-                .map_err(|e| format!("CoreWebView2 indisponivel: {e}"))?;
-            let core16: ICoreWebView2_16 = core
-                .cast()
-                .map_err(|e| format!("ICoreWebView2_16 (ShowPrintUI) indisponivel: {e}"))?;
-            unsafe { core16.ShowPrintUI(COREWEBVIEW2_PRINT_DIALOG_KIND_BROWSER) }
-                .map_err(|e| format!("ShowPrintUI falhou: {e}"))?;
-            Ok(())
-        })();
-        let _ = tx.send(r);
-    });
-    if enviou.is_err() {
-        return Err("nao consegui acessar a webview de impressao".to_string());
-    }
-    match rx.recv_timeout(Duration::from_secs(10)) {
-        Ok(r) => r,
-        Err(_) => Err("tempo esgotado ao abrir o preview de impressao".to_string()),
-    }
-}
-
-#[cfg(not(windows))]
-fn imprimir_email_html(_app: &tauri::AppHandle, _html: &str) -> Result<(), String> {
-    Err("imprimir disponivel apenas no Windows".into())
 }
 
 /// Desliga JavaScript na webview oculta (defesa em profundidade). Best-effort.
