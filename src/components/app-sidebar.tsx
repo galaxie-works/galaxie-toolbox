@@ -138,8 +138,13 @@ export function AppSidebar({
           <SidebarGroup key={grupo.titulo}>
             <SidebarGroupLabel>{t.nav[grupo.titulo]}</SidebarGroupLabel>
             <SidebarMenu>
-              {grupo.itens.map((item) =>
-                colapsada ? (
+              {grupo.itens.map((item) => {
+                // #663 (RC): esconde os filhos marcados `oculto`; se o item
+                // ficar sem nenhum filho visível, não renderiza (evita grupo
+                // vazio no sidebar).
+                const filhos = item.filhos.filter((f) => !f.oculto);
+                if (filhos.length === 0) return null;
+                return colapsada ? (
                   // #359: em icon-mode o submenu inline (`SidebarMenuSub`) é
                   // escondido por CSS (`group-data-[collapsible=icon]:hidden`),
                   // então clicar o ícone-pai não mostrava nada. Abrimos as opções
@@ -162,7 +167,7 @@ export function AppSidebar({
                         <TooltipTrigger asChild>
                           <DropdownMenuTrigger asChild>
                             <SidebarMenuButton
-                              isActive={item.filhos.some((f) => f.id === tela)}
+                              isActive={filhos.some((f) => f.id === tela)}
                               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                             >
                               <item.icone className="size-5!" />
@@ -184,7 +189,7 @@ export function AppSidebar({
                           {t.nav[item.titulo]}
                         </DropdownMenuLabel>
                         <DropdownMenuSeparator />
-                        {item.filhos.map((filho) => (
+                        {filhos.map((filho) => (
                           <DropdownMenuItem
                             key={filho.id}
                             onClick={() => onNavegar(filho.id)}
@@ -207,7 +212,7 @@ export function AppSidebar({
                   <Collapsible
                     key={item.titulo}
                     asChild
-                    defaultOpen={item.filhos.some((f) => f.id === tela)}
+                    defaultOpen={filhos.some((f) => f.id === tela)}
                     className="group/collapsible"
                   >
                     <SidebarMenuItem>
@@ -220,7 +225,7 @@ export function AppSidebar({
                       </CollapsibleTrigger>
                       <CollapsibleContent>
                         <SidebarMenuSub>
-                          {item.filhos.map((filho) => (
+                          {filhos.map((filho) => (
                             <SidebarMenuSubItem key={filho.id}>
                               <SidebarMenuSubButton
                                 asChild
@@ -245,8 +250,8 @@ export function AppSidebar({
                       </CollapsibleContent>
                     </SidebarMenuItem>
                   </Collapsible>
-                ),
-              )}
+                );
+              })}
             </SidebarMenu>
           </SidebarGroup>
         ))}
