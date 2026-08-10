@@ -119,7 +119,14 @@ import {
 import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import { NAV, TELAS, type Tela } from "@/lib/navegacao";
-import { appsQueCasam, TELAS_IR_PARA } from "@/lib/aliases-nav";
+import {
+  appsQueCasam,
+  subviewsQueCasam,
+  TELAS_IR_PARA,
+  type SubviewBridge,
+} from "@/lib/aliases-nav";
+import { UsersIcon } from "@/components/ui/users";
+import { CalendarDaysIcon } from "@/components/ui/calendar-days";
 import {
   BedDouble,
   ChevronDown,
@@ -263,6 +270,8 @@ type AcoesPaleta = {
   onDormir: (id: string) => void;
   /** #656: navega pra outra Tela do app (canvas), pro grupo "Ir para". */
   onNavegarTela: (tela: Tela) => void;
+  /** #657: deep-link numa sub-view do Bridge (abre control-room já em People/Agenda). */
+  onIrParaBridgeView: (view: SubviewBridge) => void;
 };
 
 /** Mapeia uma url visitada de volta ao app M365 do catalogo (a url gravada pode
@@ -307,6 +316,7 @@ function ConteudoPaleta({
   onAlternarFixada,
   onDormir,
   onNavegarTela,
+  onIrParaBridgeView,
 }: AcoesPaleta & {
   className?: string;
   autoFocus?: boolean;
@@ -382,6 +392,23 @@ function ConteudoPaleta({
         )
       : [];
 
+  // #657: sub-views do Bridge (People/Agenda) — só se o Bridge estiver visível
+  // (respeita o `oculto` do #663) e no modo omni com texto.
+  const subviewsIrPara =
+    modo === "omni" && termo && !OCULTOS_NAV.has("control-room")
+      ? subviewsQueCasam(
+          termo,
+          {
+            people: t.navegador.aliasPeople,
+            agenda: t.navegador.aliasAgenda,
+          },
+          (view) =>
+            view === "people"
+              ? t.controlRoom.peopleTitulo
+              : t.controlRoom.agendaTitulo,
+        )
+      : [];
+
   const abaAtivaObj = abas.find((a) => a.id === ativa);
   const favoritosLinks = favoritosParaPalette(favoritos);
   const mostrarAcoes = modo === "omni" || modo === "acoes";
@@ -408,7 +435,7 @@ function ConteudoPaleta({
       <CommandList className="scrollbar-fina max-h-[380px]">
         {modo !== "historico" && <CommandEmpty>{t.navegador.vazio}</CommandEmpty>}
 
-        {telasIrPara.length > 0 && (
+        {(telasIrPara.length > 0 || subviewsIrPara.length > 0) && (
           <>
             <CommandGroup heading={t.navegador.grupoIrPara}>
               {telasIrPara.map((tela) => {
@@ -427,6 +454,25 @@ function ConteudoPaleta({
                     <span className="truncate">
                       {preencher(t.navegador.irParaApp, { app: nome })}
                     </span>
+                  </CommandItem>
+                );
+              })}
+              {/* #657: deep-link nas sub-views do Bridge (People/Agenda). */}
+              {subviewsIrPara.map((view) => {
+                const Icone = view === "people" ? UsersIcon : CalendarDaysIcon;
+                const rotulo =
+                  view === "people"
+                    ? t.navegador.irParaContatos
+                    : t.navegador.irParaAgenda;
+                return (
+                  <CommandItem
+                    key={`bridge-${view}`}
+                    value={`irpara-bridge-${view} ${termo}`}
+                    onSelect={() => executar(() => onIrParaBridgeView(view))}
+                    className="gap-2.5"
+                  >
+                    <Icone size={16} className="shrink-0 text-primary" />
+                    <span className="truncate">{rotulo}</span>
                   </CommandItem>
                 );
               })}
@@ -851,6 +897,7 @@ export function NavegadorScreen({
   onReabrirFechada,
   onNavegar,
   onNavegarTela,
+  onIrParaBridgeView,
   historico,
   onRestaurarAbas,
   sessaoAnteriorQtd,
@@ -882,6 +929,8 @@ export function NavegadorScreen({
   onNavegar: (url: string, nome: string) => void;
   /** #656: navega pra outra Tela do app (canvas) — grupo "Ir para" do command. */
   onNavegarTela: (tela: Tela) => void;
+  /** #657: deep-link numa sub-view do Bridge (People/Agenda) — grupo "Ir para". */
+  onIrParaBridgeView: (view: SubviewBridge) => void;
   historico: HistoryEntry[];
   onRestaurarAbas: (entradas: { url: string; nome: string }[]) => void;
   sessaoAnteriorQtd: number;
@@ -2031,6 +2080,7 @@ export function NavegadorScreen({
             onAlternarFixada={onAlternarFixada}
             onDormir={onDormir}
             onNavegarTela={onNavegarTela}
+            onIrParaBridgeView={onIrParaBridgeView}
           />
         </div>
       ) : (
@@ -2073,6 +2123,7 @@ export function NavegadorScreen({
         onAlternarFixada={onAlternarFixada}
         onDormir={onDormir}
         onNavegarTela={onNavegarTela}
+        onIrParaBridgeView={onIrParaBridgeView}
       />
 
       {/* Histórico: view pesquisável + limpar por período (Story 5). */}
