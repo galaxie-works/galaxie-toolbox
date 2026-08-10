@@ -1,5 +1,11 @@
 import type { IconeNav } from "@/lib/navegacao";
-import SoftBlurIn from "@/components/smoothui/soft-blur-in";
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from "@/components/ui/empty";
 
 /** Placeholder das telas que ainda vao ser construidas. */
 export function EmBreveScreen({
@@ -15,22 +21,16 @@ export function EmBreveScreen({
 }) {
   return (
     <div className="max-w-3xl">
-      <div className="rounded-xl border border-dashed border-border bg-card/40 p-10 text-center">
-        <div className="mx-auto grid size-12 place-items-center rounded-lg bg-muted text-muted-foreground">
-          <Icone className="size-6" />
-        </div>
-        <SoftBlurIn
-          className="mt-4 block text-lg font-semibold"
-          delay={120}
-          stagger={16}
-        >
-          {titulo}
-        </SoftBlurIn>
-        <p className="mx-auto mt-1.5 max-w-md text-sm text-muted-foreground">
-          {descricao}
-        </p>
+      <Empty className="border border-border bg-card/40 p-10">
+        <EmptyHeader>
+          <EmptyMedia variant="icon">
+            <Icone className="size-6" />
+          </EmptyMedia>
+          <EmptyTitle>{titulo}</EmptyTitle>
+          <EmptyDescription>{descricao}</EmptyDescription>
+        </EmptyHeader>
         {itens && itens.length > 0 && (
-          <ul className="mx-auto mt-5 grid max-w-sm gap-2 text-left">
+          <ul className="grid w-full max-w-sm gap-2 text-left">
             {itens.map((i) => (
               <li
                 key={i}
@@ -42,7 +42,7 @@ export function EmBreveScreen({
             ))}
           </ul>
         )}
-      </div>
+      </Empty>
     </div>
   );
 }

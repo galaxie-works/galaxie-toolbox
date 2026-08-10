@@ -88,7 +88,7 @@ Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pr
 - **projId**: `PVT_kwHOD_4JN84BedaN`
 - **Status** (`PVTSSF_lAHOD_4JN84BedaNzhY3dus`): Backlog `f75ad846` · Ready `61e4505c` · In progress `47fc9ee4` · In review `df73e18b` · Rejected `7389544e` · QA Approved `33a59ba9` · PO Approved `9ef1bdac` · Done - Released `98236657`
 - **Sprint #** (Number): `PVTF_lAHOD_4JN84BedaNzhY3pCE`
-- **Priority** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0o`): P0 `79628723` · P1 `0a877460` · P2 `da944a9c`
+- **Priority** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0o`): Low `79628723` · Normal `0a877460` · High `da944a9c` · Highest `c94b4958`
 - **Size** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0s`): XS `6c6483d2` · S `f784b110` · M `7515a9f1` · L `817d0097` · XL `db339eb2`
 - **Estimate** (Number): `PVTF_lAHOD_4JN84BedaNzhY3d0w`
 
@@ -112,7 +112,7 @@ Use o skill **`/agile-product-owner`** (INVEST + AC + pontos + prioridade). **Re
 
 Mapeamentos para os campos do board:
 - **pts → Size**: 1→XS · 2/3→S · 5→M · 8→L · 13→XL. Setar também **Estimate** = pts.
-- **MoSCoW → Priority**: Must→P0 · Should→P1 · Could→P2.
+- **MoSCoW → Priority**: Must→Highest · Should→High · Could→Normal · Won't→Low.
 - **Sprint** conforme o roadmap.
 
 ## 3.1 Dúvidas de UI/UX/design → subagente de UX Research
@@ -130,6 +130,13 @@ Para **dúvidas de design** (padrão de componente, comportamento de interação
 **Gate de build (necessário, NÃO suficiente):** `tsc -b` (build mode — o `--noEmit` deixa passar erro que o build de release pega) + `cargo check`/`cargo test` (se Rust) + `oxlint` + `node --test` verdes · tema **claro/escuro** ok · **sem regressão** em teclado/multi-seleção/virtualização · feedback/toast presente · escopo **mínimo** de permissão (re-consent sinalizado em escopo novo) · **componentes reui usados literalmente** (regra "não inventar UI") · **conforme [`Rules.md`](./Rules.md)**.
 
 **Gate de realidade (o que FECHA — ver o callout 🔴 MÉTODO no topo):** cada AC verificado **no app REAL com dado REAL** (não mock). Se auth-gate impede o agente de validar, a entrega declara **"NÃO verificado com dado real"** e o **Polaris faz o live-QA** antes de QA Approved. AC experienciais (skeleton/erro-que-recupera/vazio/dado real/transições), não estruturais. **Build verde não fecha item.**
+
+### 5.1 Anti-UI-inventada (do #597/#601)
+Três travas pra a UI caseira não nascer de novo quando já existe primitivo pronto (`components/ui`, `components/reui`, ou um padrão do próprio app como `app-sidebar.tsx` / o grid de `PeopleCard`):
+
+1. **Referência interna na task (Polaris ao escopar):** toda task de UI cita o **componente/arquivo EXATO a reusar** — ex.: "reusa o padrão do `src/components/app-sidebar.tsx`", nunca "reusa o que temos" genérico. Task de UI sem referência = mal escopada, não sai.
+2. **Prova de reuso na DoD (quem entrega):** o agente cita na PR **qual componente/padrão reusou** (caminho do arquivo) — ou justifica explicitamente por que inventou (nada equivalente existia). **Sem citação de reuso nem justificativa, não integra.**
+3. **Design-review antes de integrar:** PR de UI passa por um olhar de UX/convenção **antes** de QA ("reusou o primitivo? bate com a convenção do app? não inventou?"). PR grande de UI → subagente design-reviewer dedicado (ver §3.1). Isso ataca o "headless confirma estrutura, não intenção visual" — casar com QA visual/screenshots quando houver (#602).
 
 ## 6. Segurança
 - `CLIENT_ID` `214d735e-eb9b-4052-8851-578d3bd91627` é **público por design** (public client + PKCE).

@@ -1,5 +1,6 @@
 import AnimatedTabs from "@/components/smoothui/animated-tabs";
-import { Badge } from "@/components/reui/badge";
+import { MetricaChip } from "@/components/metrica-chip";
+import { Alert, AlertDescription } from "@/components/reui/alert";
 import {
   Frame,
   FrameDescription,
@@ -50,40 +51,6 @@ const abas = (t: Dicionario) => [
   { id: "problemas", label: t.abas.problemas, icon: <HammerIcon size={17} /> },
 ];
 
-/**
- * Chip de metrica. Enquanto o Graph responde, mostra um spinner no lugar do
- * numero; se a consulta terminar sem valor, o chip some (nao fica girando).
- */
-function Metrica({
-  icone,
-  valor,
-  titulo,
-  consultando,
-  carregando,
-}: {
-  icone: React.ReactNode;
-  valor?: string;
-  titulo: string;
-  consultando: string;
-  carregando?: boolean;
-}) {
-  if (!valor) {
-    if (!carregando) return null;
-    return (
-      <Badge variant="secondary" size="lg" title={consultando}>
-        <Spinner data-icon="inline-start" />
-        {icone}
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="secondary" size="lg" title={titulo}>
-      {icone}
-      {valor}
-    </Badge>
-  );
-}
-
 function BibliotecaPanel({
   site,
   onAlternar,
@@ -126,14 +93,14 @@ function BibliotecaPanel({
           {site.description || t.bibliotecas.descricaoPadrao}
         </p>
         <div className="flex flex-wrap items-center gap-1.5">
-          <Metrica
+          <MetricaChip
             icone={<SquareActivityIcon size={13} />}
             valor={site.bytes != null ? formatBytes(site.bytes) : undefined}
             titulo={t.bibliotecas.tamanho}
             consultando={preencher(t.bibliotecas.consultando, { o: t.bibliotecas.tamanho })}
             carregando={carregandoDetalhes}
           />
-          <Metrica
+          <MetricaChip
             icone={<FoldersIcon size={13} />}
             valor={
               site.folders != null
@@ -144,7 +111,7 @@ function BibliotecaPanel({
             consultando={preencher(t.bibliotecas.consultando, { o: t.confirmar.cartaoPastas })}
             carregando={carregandoDetalhes}
           />
-          <Metrica
+          <MetricaChip
             icone={<FileStackIcon size={13} />}
             valor={
               site.files != null
@@ -304,15 +271,15 @@ export function SitesScreen({
       ) : (
         <>
           {error && (
-            <div className="mb-4 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3.5">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-              <p data-selecionavel className="text-[12.5px] leading-relaxed text-destructive">{error}</p>
-            </div>
+            <Alert variant="destructive" className="mb-4">
+              <AlertTriangle />
+              <AlertDescription data-selecionavel>{error}</AlertDescription>
+            </Alert>
           )}
 
           {loading && sites.length === 0 ? (
             <div className="mt-16 flex flex-col items-center gap-3 text-muted-foreground">
-              <Loader2 className="size-6 animate-spin" />
+              <Spinner className="size-6" />
               <p className="text-sm">{t.bibliotecas.carregando}</p>
             </div>
           ) : sites.length === 0 ? (

@@ -1,13 +1,14 @@
 {
   "name": "galaxie-toolbox",
   "private": true,
-  "version": "0.38.8",
+  "version": "0.39.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "qa:visual": "pwsh -NoProfile -File scripts/Capturar-QA-Visual.ps1",
     "test": "node --test --experimental-strip-types \"src/**/*.test.ts\"",
     "test:watch": "node --test --watch --experimental-strip-types \"src/**/*.test.ts\""
   },

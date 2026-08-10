@@ -7,6 +7,7 @@ mod favicon;
 mod graph;
 mod lock_screen;
 mod onedrive;
+mod salvar_pdf;
 mod system;
 mod telemetry;
 
@@ -1407,6 +1408,23 @@ async fn cr_baixar_anexo(
     .map_err(|e| e.to_string())?
 }
 
+/// Control room: salva um ou vários e-mails como `.eml` (MIME íntegro) na pasta
+/// escolhida. Lote resiliente — devolve caminhos salvos + falhas por item (#637).
+#[tauri::command]
+async fn cr_salvar_email_eml(
+    state: State<'_, Store>,
+    ids: Vec<String>,
+    pasta: String,
+    mailbox: Option<String>,
+) -> Result<graph::SalvarEmailResultado, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_salvar_email_eml(&store, &ids, &pasta, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Control room: lê um anexo em memória (base64) para pré-visualização, sem
 /// gravar em Downloads (#188).
 #[tauri::command]
@@ -1492,6 +1510,44 @@ async fn cr_anexo_link(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+// --- #635 Salvar como… / Imprimir — comandos por formato --------------------
+// A casca de UI (kebab "...", menu de contexto) chama um comando POR FORMATO;
+// contrato: `{ ids, pasta, mailbox }` → `SalvarEmailResultado`. Estado atual:
+//   · .eml (#637) → REAL (Graph $value → RFC822), acima.
+//   · PDF  (#639) → REAL (WebView2 PrintToPdf), logo abaixo.
+//   · .msg → DESCARTADO pelo PO (#638 cancelado → #651 removeu a opção da UI).
+// Imprimir (#640) → `cr_imprimir_email` abaixo: ShowPrintUI(BROWSER) IN-PLACE na
+//   webview principal (+ `@media print` no front escopando pro leitor).
+
+/// Control room: salvar como PDF (S4 #639, real). Renderiza o corpo via WebView2
+/// PrintToPdf numa webview oculta. Corre em spawn_blocking (Graph + impressão
+/// síncronas). Contrato do S1: `{ids,pasta,mailbox}` → `SalvarEmailResultado`.
+#[tauri::command]
+async fn cr_salvar_email_pdf(
+    app: tauri::AppHandle,
+    state: State<'_, Store>,
+    ids: Vec<String>,
+    pasta: String,
+    mailbox: Option<String>,
+) -> Result<graph::SalvarEmailResultado, String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        salvar_pdf::cr_salvar_email_pdf(&app, &store, &ids, &pasta, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Control room: imprime o e-mail ativo abrindo o **preview do Chromium**
+/// (WebView2 `ShowPrintUI(BROWSER)`) **in-place na webview principal** (#640); o
+/// `@media print` do front escopa a impressão pro leitor. Fire-and-forget.
+#[tauri::command]
+async fn cr_imprimir_email(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || salvar_pdf::cr_imprimir_email(&app))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// Abre um arquivo local com o aplicativo padrao do Windows.
@@ -1947,10 +2003,13 @@ pub fn run() {
             cr_excluir_pasta,
             cr_mover_pasta,
             cr_baixar_anexo,
+            cr_salvar_email_eml,
             cr_ler_anexo,
             cr_anexo_para_pdf,
             cr_ler_anexo_email,
             cr_anexo_link,
+            cr_salvar_email_pdf,
+            cr_imprimir_email,
             abrir_caminho,
             revelar_no_explorer,
             connect_site,

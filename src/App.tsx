@@ -29,7 +29,7 @@ import {
   type PeriodoLimpeza,
 } from "@/lib/navigator-history";
 import * as browser from "@/lib/browser";
-import { CaminhosLongosScreen } from "@/screens/caminhos-longos";
+import { WindowsScreen } from "@/screens/windows";
 import { ConfiguracoesScreen } from "@/screens/configuracoes";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -96,6 +96,7 @@ import { KeyRound } from "lucide-react";
 function AppInner() {
   const { idioma, t } = useIdioma();
   const bridgeView = useAppStore((state) => state.bridgeView);
+  const setBridgeView = useAppStore((state) => state.setBridgeView);
   const reauthMissingScopes = useAppStore(
     (state) => state.reauthMissingScopes,
   );
@@ -1054,6 +1055,12 @@ function AppInner() {
               onNovaAbaPrivada={novaAbaPrivada}
               onReabrirFechada={reabrirFechada}
               onNavegar={abrirUrlLivre}
+              onNavegarTela={setTela}
+              onIrParaBridgeView={(view) => {
+                // #657: deep-link — seta a sub-view do Bridge e abre o control-room.
+                setBridgeView(view);
+                setTela("control-room");
+              }}
               onRestaurarAbas={restaurarAbas}
               sessaoAnteriorQtd={sessaoDispensada ? 0 : sessaoAnterior.length}
               onRestaurarSessao={restaurarSessao}
@@ -1069,6 +1076,15 @@ function AppInner() {
              rola por dentro — mesmo padrão do Bridge. */
           <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
             <ConfiguracoesScreen />
+          </div>
+        ) : tela === "apps" ? (
+          /* Fora do ScrollArea: altura cheia, sidebar do Apps 100% e o grid de
+             conteúdo rola por dentro — mesmo padrão do Bridge/Configurações. */
+          <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
+            <AppsScreen
+              onAbrirAqui={abrirAppAqui}
+              onAbrirNavegador={(a) => abrirUrl(a.url)}
+            />
           </div>
         ) : tela === "control-room" ? null : (
         /* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
@@ -1094,12 +1110,6 @@ function AppInner() {
               onOpen={openSite}
               onDisconnect={disconnect}
               onAbrirUrl={abrirUrl}
-            />
-          )}
-          {tela === "apps" && (
-            <AppsScreen
-              onAbrirAqui={abrirAppAqui}
-              onAbrirNavegador={(a) => abrirUrl(a.url)}
             />
           )}
           {tela === "comms" && (
@@ -1147,7 +1157,10 @@ function AppInner() {
               ]}
             />
           )}
-          {tela === "caminhos-longos" && <CaminhosLongosScreen />}
+          {/* #665: a antiga CaminhosLongosScreen virou a tela Windows (página de
+              opções estilo Settings>System); o slot de nav "caminhos-longos"
+              segue (label/rota são do S2/Vega). */}
+          {tela === "caminhos-longos" && <WindowsScreen />}
           </main>
         </ScrollArea>
         )}

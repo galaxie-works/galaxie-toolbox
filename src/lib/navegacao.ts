@@ -1,10 +1,4 @@
-import {
-  MonitorCog,
-  Gauge,
-  FolderTree,
-  Settings,
-  Radar,
-} from "lucide-react";
+import { Gauge, Settings, Radar } from "lucide-react";
 import type { ComponentType } from "react";
 import {
   AtomIcon,
@@ -18,6 +12,7 @@ import { GalaxieSymbol } from "@/components/brand";
 import { CopilotIcon } from "@/components/ui/icons/marca/copilot";
 import { OneDriveIcon } from "@/components/ui/icons/marca/onedrive";
 import { OutlookIcon } from "@/components/ui/icons/marca/outlook";
+import { WindowsIcon } from "@/components/ui/icons/marca/windows";
 import type { Dicionario } from "@/lib/strings";
 
 /** Aceita icone do lucide e os SVGs de marca — os dois so precisam de className. */
@@ -45,12 +40,26 @@ export interface ItemFilho {
   id: Tela;
   titulo: ChaveNav;
   icone?: IconeNav;
+  /**
+   * #663 (RC): item escondido do sidebar no release-candidate. A `Tela` e a
+   * tela continuam existindo (deep-link/atalho seguem funcionando); só o item
+   * de menu não renderiza. Reversível: é só remover/flipar o flag — produtos
+   * não-prontos não são deletados.
+   */
+  oculto?: boolean;
 }
 
 export interface ItemNav {
   titulo: ChaveNav;
   icone: IconeNav;
   filhos: ItemFilho[];
+  /**
+   * #664 (RC): item de nav navegável DIRETO (folha), em vez de grupo
+   * colapsável. Quando presente e sem filhos visíveis, o sidebar renderiza um
+   * item único que abre esta `Tela` (ex.: Windows → a tela de utilidades, que
+   * roda no slot `caminhos-longos`).
+   */
+  id?: Tela;
 }
 
 export interface GrupoNav {
@@ -67,12 +76,14 @@ export const NAV: GrupoNav[] = [
         titulo: "galaxie",
         icone: GalaxieSymbol,
         filhos: [
-          { id: "atoms", titulo: "atoms", icone: AtomIcon },
+          // #663 (RC): Atoms/Comms/Astro/Pulsar ocultos — sobram Bridge +
+          // Navigator (os prontos). Ocultos por flag, nada deletado.
+          { id: "atoms", titulo: "atoms", icone: AtomIcon, oculto: true },
           { id: "control-room", titulo: "controlRoom", icone: BridgeIcon },
           { id: "navegador", titulo: "navegador", icone: NavigatorIcon },
-          { id: "comms", titulo: "comms", icone: CommsIcon },
-          { id: "astro", titulo: "astro", icone: AstroIcon },
-          { id: "pulsar", titulo: "pulsar", icone: Radar },
+          { id: "comms", titulo: "comms", icone: CommsIcon, oculto: true },
+          { id: "astro", titulo: "astro", icone: AstroIcon, oculto: true },
+          { id: "pulsar", titulo: "pulsar", icone: Radar, oculto: true },
         ],
       },
       {
@@ -80,16 +91,23 @@ export const NAV: GrupoNav[] = [
         icone: CopilotIcon,
         filhos: [
           { id: "apps", titulo: "apps", icone: AppsIcon },
-          { id: "outlook", titulo: "outlook", icone: OutlookIcon },
+          // #663 (RC): Outlook oculto — sobram Apps + OneDrive.
+          { id: "outlook", titulo: "outlook", icone: OutlookIcon, oculto: true },
           { id: "onedrive", titulo: "onedrive", icone: OneDriveIcon },
         ],
       },
       {
+        // #664 (RC): Windows vira item ÚNICO (folha) com o logo do Windows,
+        // abrindo a tela de utilidades. A tela real (WindowsScreen, #665/Sirius)
+        // roda no slot `caminhos-longos`, então o item navega pra lá.
+        // Performance e o antigo Caminhos-longos saem do sidebar (ocultos por
+        // flag do #663); as `Tela`s deles seguem existindo.
         titulo: "windows",
-        icone: MonitorCog,
+        icone: WindowsIcon,
+        id: "caminhos-longos",
         filhos: [
-          { id: "performance", titulo: "performance" },
-          { id: "caminhos-longos", titulo: "caminhosLongos" },
+          { id: "performance", titulo: "performance", oculto: true },
+          { id: "caminhos-longos", titulo: "caminhosLongos", oculto: true },
         ],
       },
     ],
@@ -114,6 +132,8 @@ export const TELAS: Record<
   onedrive: { titulo: "onedrive", secao: "copilot", icone: OneDriveIcon },
   // Windows
   performance: { titulo: "performance", secao: "windows", icone: Gauge },
-  "caminhos-longos": { titulo: "caminhosLongos", secao: "windows", icone: FolderTree },
+  // #664: o slot `caminhos-longos` agora renderiza a tela Windows (#665) — então
+  // o cabeçalho/breadcrumb vira "Platform > Windows" com o logo do Windows.
+  "caminhos-longos": { titulo: "windows", secao: "plataforma", icone: WindowsIcon },
   configuracoes: { titulo: "configuracoes", secao: "conta", icone: Settings },
 };

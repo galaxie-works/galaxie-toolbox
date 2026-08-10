@@ -2308,6 +2308,44 @@ export async function crBaixarAnexo(
 }
 
 /**
+ * Resultado de "Salvar como… .eml" (#637): caminhos gravados + falhas por item
+ * (assunto + motivo). O front deriva o toast de sucesso a partir de `salvos`.
+ */
+export interface SalvarEmailResultado {
+  /** Caminhos absolutos dos `.eml` gravados (um por e-mail bem-sucedido). */
+  salvos: string[];
+  /** Itens que falharam, com assunto e motivo legível. */
+  falhas: { assunto: string; erro: string }[];
+}
+
+/**
+ * Salva um ou vários e-mails como `.eml` (MIME íntegro do Graph via `$value`)
+ * na `pasta` escolhida. Lote resiliente: a falha de um item não aborta os
+ * demais — veja `resultado.falhas`. O nome do arquivo é o assunto sanitizado,
+ * com sufixo ` (2)`… em caso de colisão (#637).
+ */
+export async function crSalvarEmailEml(
+  ids: string[],
+  pasta: string,
+  mailbox?: string
+): Promise<SalvarEmailResultado> {
+  if (!inTauri()) {
+    await sleep(600);
+    return {
+      salvos: ids.map(
+        (_, i) => `${pasta}\\exemplo${i > 0 ? ` (${i + 1})` : ""}.eml`
+      ),
+      falhas: [],
+    };
+  }
+  return invoke<SalvarEmailResultado>("cr_salvar_email_eml", {
+    ids,
+    pasta,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
+/**
  * Lê um anexo em memória (base64) para pré-visualização, sem gravar em
  * Downloads (#188). Só trata `fileAttachment`; item/reference vêm em fatias
  * posteriores do épico (#178 §5).
@@ -2403,6 +2441,46 @@ export async function crAnexoLink(
     attachmentId,
     mailbox: mailboxArg(mailbox),
   });
+}
+
+// --- #636 (épico #635): "Salvar como…" (PDF) --------------------------------
+// Comando POR FORMATO, mesma forma do `crSalvarEmailEml` (#637): `(ids, pasta,
+// mailbox?)` → `SalvarEmailResultado`. O `.eml` (crSalvarEmailEml) e o PDF (real,
+// #639) vivem aqui. O `.msg` foi descartado pelo PO (#638 cancelado → #651).
+// Imprimir (#640) tem comando próprio (`cr_imprimir_email`, ShowPrintUI) — abaixo.
+
+/** Salva N e-mails como PDF na pasta escolhida. (real: #639) */
+export async function crSalvarEmailPdf(
+  ids: string[],
+  pasta: string,
+  mailbox?: string
+): Promise<SalvarEmailResultado> {
+  if (!inTauri()) {
+    await sleep(400);
+    return { salvos: ids.map((_, i) => `${pasta}\\exemplo${i > 0 ? ` (${i + 1})` : ""}.pdf`), falhas: [] };
+  }
+  return invoke<SalvarEmailResultado>("cr_salvar_email_pdf", {
+    ids,
+    pasta,
+    mailbox: mailboxArg(mailbox),
+  });
+}
+
+/**
+ * #640: abre o PREVIEW de impressão do Chromium (não o diálogo legado Win32) para
+ * o e-mail em leitura. O backend (`cr_imprimir_email`) renderiza o e-mail numa
+ * janela visível e chama `ICoreWebView2_16::ShowPrintUI(BROWSER)`. Escopo = 1
+ * e-mail (o do leitor); `ids` mantém a forma da família salvar-como.
+ */
+export async function crImprimirEmail(
+  ids: string[],
+  mailbox?: string
+): Promise<void> {
+  if (!inTauri()) {
+    await sleep(200);
+    return; // no mock não há WebView2 — no-op
+  }
+  return invoke<void>("cr_imprimir_email", { ids, mailbox: mailboxArg(mailbox) });
 }
 
 /** Abre um arquivo local com o aplicativo padrao. */

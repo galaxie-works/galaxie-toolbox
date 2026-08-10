@@ -263,3 +263,34 @@
     background: transparent;
   }
 }
+
+/* #640 Imprimir: o print (Ctrl+P nativo do iframe OU ShowPrintUI na webview main)
+   é escopado ao painel do leitor via `data-print-area`. Esconde toda a UI do app
+   e mostra só o e-mail (cabeçalho + corpo). Uso `visibility` (não `display:none`)
+   pra preservar o layout e o iframe do corpo no impresso; a toolbar/handle/preview
+   levam `print:hidden` (display:none) à parte. Validação visual = passe do PO. */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  [data-print-area],
+  [data-print-area] * {
+    visibility: visible !important;
+  }
+  [data-print-area] {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+  html,
+  body {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+}

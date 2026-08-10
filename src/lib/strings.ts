@@ -75,7 +75,7 @@ const pt = {
     microsoft365: "Microsoft 365",
     // Grupo da sidebar. Separado do "Microsoft 365" acima, que e a legenda da
     // organizacao no topo e continua sendo o nome da plataforma.
-    galaxie: "Galaxie",
+    galaxie: "GALAXIE",
     copilot: "M365 Copilot",
     comms: "Comms",
     astro: "Astro",
@@ -230,9 +230,12 @@ const pt = {
   },
 
   apps: {
+    // #620: hero + item "Recomendados" do sidebar (shell da tela Apps).
+    heroTitulo: "Apps",
+    heroSubtitulo: "Seus apps do Microsoft 365, num lugar só.",
+    recomendados: "Recomendados",
     maisUsados: "Mais utilizados",
-    doSeuTenant: "Disponíveis no seu tenant",
-    explorar: "Explore por categoria",
+    explorar: "Explorar por categoria",
     abrirAqui: "Abrir aqui",
     abrirNavegador: "Abrir no navegador padrão",
     maisOpcoes: "Mais opções",
@@ -244,8 +247,6 @@ const pt = {
     projetos: "Gestão de projetos",
     experiencia: "Experiência do funcionário",
     desenvolvimento: "Ferramentas de desenvolvimento",
-    avisoSessao:
-      "Os aplicativos abrem aqui dentro. Na primeira vez a Microsoft pede o seu login nesta janela; depois a sessão fica guardada.",
   },
 
   meusArquivos: {
@@ -271,6 +272,29 @@ const pt = {
     navegar: "Traçar rota",
     irPara: "Ir para {nome}",
     pesquisar: "Pesquisar “{q}” na web",
+    // #656: "Ir para {app}" — apelidos por app (casa sem acento/por prefixo).
+    // Achatado (uma string de apelidos por app) — o strings.ts é 2 níveis.
+    grupoIrPara: "Ir para",
+    irParaApp: "Ir para {app}",
+    // #657: deep-link nas sub-views do Bridge (People/Agenda). agenda/calendário
+    // saíram do aliasControlRoom (agora donos do sub-view Agenda). O label é o
+    // breadcrumb completo (Bridge › view) — deixa claro que a view mora no Bridge.
+    irParaContatos: "Ir para Bridge › Contatos",
+    irParaAgenda: "Ir para Bridge › Agenda",
+    // União pt+en (AC pede que contacts/contatos/pessoas/people casem em qualquer
+    // idioma; mesmo padrão cross-language do aliasControlRoom).
+    aliasPeople: "contatos contato pessoas people contacts contact",
+    aliasAgenda: "agenda calendário calendario eventos evento compromissos calendar events event schedule",
+    aliasControlRoom: "bridge email e-mail mail e-mails correio",
+    aliasApps: "apps aplicativos aplicações",
+    aliasOnedrive: "onedrive arquivos drive",
+    aliasOutlook: "outlook",
+    aliasAtoms: "atoms atenção foco",
+    aliasNavegador: "navegador navigator cruiser browser",
+    aliasComms: "comms chat comunicação",
+    aliasAstro: "astro ia assistente",
+    aliasPulsar: "pulsar notificações alertas",
+    aliasConfiguracoes: "configurações ajustes preferências settings",
     novaAba: "Nova aba",
     novaAbaPrivada: "Nova aba privada",
     sessaoAnterior: "Restaurar {n} abas da sessão anterior?",
@@ -1161,10 +1185,25 @@ const pt = {
     atalhosAtualizar: "Atualizar lista",
     atalhosOrdenar: "Ordenar",
     atalhosFecharPreview: "Fechar preview de anexo",
+    // #636: catálogo da ajuda "?" (épico #635 Salvar como…/Imprimir).
+    atalhosSalvarComo: "Salvar como…",
+    atalhosImprimir: "Imprimir",
+    atalhosMaisAcoes: "Mais ações",
     atalhosLink: "Inserir link",
     atalhosLista: "Lista com marcadores",
     atalhosAjuda: "Mostrar esta ajuda",
     abrirOutlook: "Abrir no Outlook",
+    // Salvar como… / Imprimir (épico #635). `salvarSucesso`/`salvarErroItem`
+    // vieram da S2 (#637, .eml); o #636 adiciona a casca de UI (kebab "..." +
+    // menu de contexto) e os rótulos abaixo. Reusa `abrirPasta` no toast.
+    salvarSucesso: "{n} e-mail(s) salvos em {pasta}",
+    salvarErroItem: 'Falha ao salvar "{assunto}"',
+    maisAcoes: "Mais ações",
+    salvarComo: "Salvar como…",
+    salvarPdf: "Arquivo PDF (.pdf)",
+    salvarEml: "Arquivo de e-mail (.eml)",
+    imprimir: "Imprimir",
+    escolherPasta: "Escolha a pasta para salvar",
     semCorpo: "(sem conteúdo)",
     conteudoAparado: "Mostrar conteúdo aparado",
     zoomResetar: "Restaurar zoom (Ctrl+0)",
@@ -1313,6 +1352,16 @@ const pt = {
     aplicando: "Aplicando...",
   },
 
+  // #665: tela Windows (estilo Settings > System). Reusa `caminhosLongos.ativar`
+  // (aria) e o backend long_paths_status/enable_long_paths.
+  windows: {
+    titulo: "Windows",
+    longPathsTitulo: "Caminhos longos",
+    longPathsDesc:
+      "Permite que o Windows use caminhos de arquivo com mais de 260 caracteres.",
+    erroAtivar: "Não foi possível ativar os caminhos longos.",
+  },
+
   tema: {
     alternar: "Alternar tema claro e escuro",
   },
@@ -1334,7 +1383,7 @@ const pt = {
     // Startup
     startupLabel: "Abrir na inicialização",
     startupDesc:
-      "Abrir o GALAXIE automaticamente ao entrar no Windows.",
+      "Abrir a GALAXIE automaticamente ao entrar no Windows.",
     startupErro:
       "Não foi possível atualizar a inicialização automática. Tente novamente.",
     // Background (#474: fundos animados dentro do Appearance)
@@ -1403,11 +1452,11 @@ const pt = {
     cfgGeneralLabel: "Configurações gerais",
     cfgAppsLabel: "Apps",
     cfgAccountsLabel: "Contas",
-    cfgAccountsDesc: "Gerencie as contas conectadas ao GALAXIE.",
+    cfgAccountsDesc: "Gerencie as contas conectadas à GALAXIE.",
     cfgAccountsEmptyTitulo: "Contas",
     cfgAccountsEmptyDesc: "Múltiplas contas chegam em breve.",
     cfgPersonalizationLabel: "Personalização",
-    cfgPersonalizationDesc: "Deixe o GALAXIE com a sua cara.",
+    cfgPersonalizationDesc: "Deixe a GALAXIE com a sua cara.",
     cfgSoundTitulo: "Som e notificações",
     cfgSoundSubtitulo: "Escolha quais eventos tocam um som.",
     cfgAppearanceTitulo: "Aparência",
@@ -1426,7 +1475,7 @@ const pt = {
     termsLerBtn: "Ler",
     termsFecharBtn: "Fechar",
     termsIntro:
-      "O GALAXIE foi feito pra ser o seu companheiro de trabalho — rápido, no seu idioma e do seu jeito. Aqui está, sem letras miúdas, como a gente cuida das suas informações.",
+      "A GALAXIE foi feita pra ser a sua companheira de trabalho — rápida, no seu idioma e do seu jeito. Aqui está, sem letras miúdas, como a gente cuida das suas informações.",
     termsSec1Titulo: "Suas informações são suas",
     termsSec1Corpo:
       "A gente não coleta nada que identifique você. Nem nome, nem e-mail, nem suas mensagens, contatos, arquivos ou o que você escreve. Nada disso sai da sua máquina pra gente.",
@@ -1443,7 +1492,7 @@ const pt = {
       "Você está no controle: pode ajustar o que compartilha em Settings › System › Telemetria e diagnósticos quando quiser.",
     cfgSystemLabel: "Sistema",
     cfgSystemDesc:
-      "Escolha como o GALAXIE funciona com o seu dispositivo.",
+      "Escolha como a GALAXIE funciona com o seu dispositivo.",
     cfgLanguageTitulo: "Idioma",
     cfgLanguageSubtitulo: "Escolha o idioma do app.",
     cfgStartupTitulo: "Inicialização",
@@ -1626,8 +1675,8 @@ const pt = {
     themeAccessAria: "Alto contraste",
     // Lock screen (#122) — "GALAXIE" (nome do produto) NÃO traduz.
     lockTitulo: "Bloqueio do app",
-    lockDescAtivo: "É necessário um PIN para abrir o GALAXIE.",
-    lockDescInativo: "Exige um PIN toda vez que o GALAXIE abrir.",
+    lockDescAtivo: "É necessário um PIN para abrir a GALAXIE.",
+    lockDescInativo: "Exige um PIN toda vez que a GALAXIE abrir.",
     lockChangeBtn: "Alterar PIN",
     lockRemoveBtn: "Remover PIN",
     lockSetBtn: "Definir PIN",
@@ -1757,7 +1806,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     organizacao: "Organization",
     plataforma: "Platform",
     microsoft365: "Microsoft 365",
-    galaxie: "Galaxie",
+    galaxie: "GALAXIE",
     copilot: "M365 Copilot",
     comms: "Comms",
     astro: "Astro",
@@ -1910,8 +1959,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   },
 
   apps: {
+    // #620: hero + "Recommended" sidebar item (Apps screen shell).
+    heroTitulo: "Apps",
+    heroSubtitulo: "Your Microsoft 365 apps, all in one place.",
+    recomendados: "Recommended",
     maisUsados: "Most used",
-    doSeuTenant: "Available in your tenant",
     explorar: "Explore by category",
     abrirAqui: "Open here",
     abrirNavegador: "Open in default browser",
@@ -1924,8 +1976,6 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     projetos: "Project management",
     experiencia: "Employee Experience",
     desenvolvimento: "Developer tools",
-    avisoSessao:
-      "Apps open right here. The first time, Microsoft asks you to sign in inside this window; after that the session is kept.",
   },
 
   meusArquivos: {
@@ -1951,6 +2001,23 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     navegar: "Set a course",
     irPara: "Go to {nome}",
     pesquisar: "Search the web for “{q}”",
+    // #656: "Go to {app}" — per-app aliases (accent-insensitive / prefix match).
+    grupoIrPara: "Go to",
+    irParaApp: "Go to {app}",
+    irParaContatos: "Go to Bridge › Contacts",
+    irParaAgenda: "Go to Bridge › Calendar",
+    aliasPeople: "contacts contact people contatos contato pessoas",
+    aliasAgenda: "agenda calendar events event schedule calendário calendario eventos compromissos",
+    aliasControlRoom: "bridge email e-mail mail inbox",
+    aliasApps: "apps applications",
+    aliasOnedrive: "onedrive files drive",
+    aliasOutlook: "outlook",
+    aliasAtoms: "atoms attention focus",
+    aliasNavegador: "navigator browser cruiser",
+    aliasComms: "comms chat",
+    aliasAstro: "astro ai assistant",
+    aliasPulsar: "pulsar notifications alerts",
+    aliasConfiguracoes: "settings preferences",
     novaAba: "New tab",
     novaAbaPrivada: "New private tab",
     sessaoAnterior: "Restore {n} tabs from the previous session?",
@@ -2832,10 +2899,25 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     atalhosAtualizar: "Refresh list",
     atalhosOrdenar: "Sort",
     atalhosFecharPreview: "Close attachment preview",
+    // #636: help "?" catalog (epic #635 Save as…/Print).
+    atalhosSalvarComo: "Save as…",
+    atalhosImprimir: "Print",
+    atalhosMaisAcoes: "More actions",
     atalhosLink: "Insert link",
     atalhosLista: "Bulleted list",
     atalhosAjuda: "Show this help",
     abrirOutlook: "Open in Outlook",
+    // Save as… / Print (epic #635). `salvarSucesso`/`salvarErroItem` came from
+    // S2 (#637, .eml); #636 adds the UI shell (kebab "..." + context menu) and
+    // the labels below. Reuses the existing `abrirPasta` toast key.
+    salvarSucesso: "{n} email(s) saved to {pasta}",
+    salvarErroItem: 'Failed to save "{assunto}"',
+    maisAcoes: "More actions",
+    salvarComo: "Save as…",
+    salvarPdf: "PDF file (.pdf)",
+    salvarEml: "Email file (.eml)",
+    imprimir: "Print",
+    escolherPasta: "Choose a folder to save to",
     semCorpo: "(no content)",
     conteudoAparado: "Show trimmed content",
     zoomResetar: "Reset zoom (Ctrl+0)",
@@ -2978,6 +3060,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     nadaAFazer: "Nothing to do — this computer already accepts long paths.",
     ativar: "Enable long paths",
     aplicando: "Applying...",
+  },
+
+  // #665: Windows screen (Settings > System style).
+  windows: {
+    titulo: "Windows",
+    longPathsTitulo: "Long paths",
+    longPathsDesc: "Let Windows use file paths longer than 260 characters.",
+    erroAtivar: "Couldn't enable long paths.",
   },
 
   tema: {

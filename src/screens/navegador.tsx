@@ -118,6 +118,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
+import { NAV, TELAS, type Tela } from "@/lib/navegacao";
+import {
+  appsQueCasam,
+  subviewsQueCasam,
+  TELAS_IR_PARA,
+  type SubviewBridge,
+} from "@/lib/aliases-nav";
+import { UsersIcon } from "@/components/ui/users";
+import { CalendarDaysIcon } from "@/components/ui/calendar-days";
 import {
   BedDouble,
   ChevronDown,
@@ -156,6 +165,19 @@ import { Kbd } from "@/components/ui/kbd";
 import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
 import { formatShortcut } from "@/components/ui/shortcut";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
+
+// #656 × #663 (RC): "Ir para" só oferece produtos VISÍVEIS no sidebar — filtra
+// os `oculto` do NAV (atoms/comms/astro/pulsar/outlook no RC). Reversível junto
+// com o flag: flipou o produto de volta no NAV, ele reaparece aqui também.
+const OCULTOS_NAV = new Set<Tela>(
+  NAV.flatMap((g) => g.itens)
+    .flatMap((i) => i.filhos)
+    .filter((f) => f.oculto)
+    .map((f) => f.id),
+);
+const TELAS_IR_PARA_VISIVEIS: Tela[] = TELAS_IR_PARA.filter(
+  (tela) => !OCULTOS_NAV.has(tela),
+);
 
 /**
  * Hero da aba vazia do Navigator (#74): a nave (lucide-animated) balançando em
@@ -246,6 +268,10 @@ type AcoesPaleta = {
   onNovaAba: () => void;
   onAlternarFixada: (id: string) => void;
   onDormir: (id: string) => void;
+  /** #656: navega pra outra Tela do app (canvas), pro grupo "Ir para". */
+  onNavegarTela: (tela: Tela) => void;
+  /** #657: deep-link numa sub-view do Bridge (abre control-room já em People/Agenda). */
+  onIrParaBridgeView: (view: SubviewBridge) => void;
 };
 
 /** Mapeia uma url visitada de volta ao app M365 do catalogo (a url gravada pode
@@ -289,6 +315,8 @@ function ConteudoPaleta({
   onNovaAba,
   onAlternarFixada,
   onDormir,
+  onNavegarTela,
+  onIrParaBridgeView,
 }: AcoesPaleta & {
   className?: string;
   autoFocus?: boolean;
@@ -341,6 +369,46 @@ function ConteudoPaleta({
       : preencher(t.navegador.pesquisar, { q: termo })
     : "";
 
+  // #656: apps da Galaxie/M365 que casam com o termo (apelidos + rótulo),
+  // pro grupo "Ir para" — só no modo omni com texto.
+  const telasIrPara =
+    modo === "omni" && termo
+      ? appsQueCasam(
+          termo,
+          TELAS_IR_PARA_VISIVEIS,
+          {
+            "control-room": t.navegador.aliasControlRoom,
+            apps: t.navegador.aliasApps,
+            onedrive: t.navegador.aliasOnedrive,
+            outlook: t.navegador.aliasOutlook,
+            atoms: t.navegador.aliasAtoms,
+            navegador: t.navegador.aliasNavegador,
+            comms: t.navegador.aliasComms,
+            astro: t.navegador.aliasAstro,
+            pulsar: t.navegador.aliasPulsar,
+            configuracoes: t.navegador.aliasConfiguracoes,
+          },
+          (tela) => t.nav[TELAS[tela].titulo],
+        )
+      : [];
+
+  // #657: sub-views do Bridge (People/Agenda) — só se o Bridge estiver visível
+  // (respeita o `oculto` do #663) e no modo omni com texto.
+  const subviewsIrPara =
+    modo === "omni" && termo && !OCULTOS_NAV.has("control-room")
+      ? subviewsQueCasam(
+          termo,
+          {
+            people: t.navegador.aliasPeople,
+            agenda: t.navegador.aliasAgenda,
+          },
+          (view) =>
+            view === "people"
+              ? t.controlRoom.peopleTitulo
+              : t.controlRoom.agendaTitulo,
+        )
+      : [];
+
   const abaAtivaObj = abas.find((a) => a.id === ativa);
   const favoritosLinks = favoritosParaPalette(favoritos);
   const mostrarAcoes = modo === "omni" || modo === "acoes";
@@ -366,6 +434,52 @@ function ConteudoPaleta({
       />
       <CommandList className="scrollbar-fina max-h-[380px]">
         {modo !== "historico" && <CommandEmpty>{t.navegador.vazio}</CommandEmpty>}
+
+        {(telasIrPara.length > 0 || subviewsIrPara.length > 0) && (
+          <>
+            <CommandGroup heading={t.navegador.grupoIrPara}>
+              {telasIrPara.map((tela) => {
+                const Icone = TELAS[tela].icone;
+                const nome = t.nav[TELAS[tela].titulo];
+                return (
+                  <CommandItem
+                    // Inclui o termo pra passar pelo filtro do cmdk (que casa por
+                    // `termo`); o match real já foi feito por `appsQueCasam`.
+                    key={tela}
+                    value={`irpara-${tela} ${termo}`}
+                    onSelect={() => executar(() => onNavegarTela(tela))}
+                    className="gap-2.5"
+                  >
+                    <Icone className="size-4 shrink-0 text-primary" />
+                    <span className="truncate">
+                      {preencher(t.navegador.irParaApp, { app: nome })}
+                    </span>
+                  </CommandItem>
+                );
+              })}
+              {/* #657: deep-link nas sub-views do Bridge (People/Agenda). */}
+              {subviewsIrPara.map((view) => {
+                const Icone = view === "people" ? UsersIcon : CalendarDaysIcon;
+                const rotulo =
+                  view === "people"
+                    ? t.navegador.irParaContatos
+                    : t.navegador.irParaAgenda;
+                return (
+                  <CommandItem
+                    key={`bridge-${view}`}
+                    value={`irpara-bridge-${view} ${termo}`}
+                    onSelect={() => executar(() => onIrParaBridgeView(view))}
+                    className="gap-2.5"
+                  >
+                    <Icone size={16} className="shrink-0 text-primary" />
+                    <span className="truncate">{rotulo}</span>
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+            <CommandSeparator />
+          </>
+        )}
 
         {rota && (
           <>
@@ -782,6 +896,8 @@ export function NavegadorScreen({
   onNovaAbaPrivada,
   onReabrirFechada,
   onNavegar,
+  onNavegarTela,
+  onIrParaBridgeView,
   historico,
   onRestaurarAbas,
   sessaoAnteriorQtd,
@@ -811,6 +927,10 @@ export function NavegadorScreen({
   onNovaAbaPrivada: () => void;
   onReabrirFechada: () => void;
   onNavegar: (url: string, nome: string) => void;
+  /** #656: navega pra outra Tela do app (canvas) — grupo "Ir para" do command. */
+  onNavegarTela: (tela: Tela) => void;
+  /** #657: deep-link numa sub-view do Bridge (People/Agenda) — grupo "Ir para". */
+  onIrParaBridgeView: (view: SubviewBridge) => void;
   historico: HistoryEntry[];
   onRestaurarAbas: (entradas: { url: string; nome: string }[]) => void;
   sessaoAnteriorQtd: number;
@@ -1959,6 +2079,8 @@ export function NavegadorScreen({
             onNovaAba={onNovaAba}
             onAlternarFixada={onAlternarFixada}
             onDormir={onDormir}
+            onNavegarTela={onNavegarTela}
+            onIrParaBridgeView={onIrParaBridgeView}
           />
         </div>
       ) : (
@@ -2000,6 +2122,8 @@ export function NavegadorScreen({
         onNovaAba={onNovaAba}
         onAlternarFixada={onAlternarFixada}
         onDormir={onDormir}
+        onNavegarTela={onNavegarTela}
+        onIrParaBridgeView={onIrParaBridgeView}
       />
 
       {/* Histórico: view pesquisável + limpar por período (Story 5). */}

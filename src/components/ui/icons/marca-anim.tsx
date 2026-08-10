@@ -8,7 +8,7 @@ import { BotMessageSquareIcon } from "@/components/ui/bot-message-square";
 
 /** Handle comum dos ícones lucide-animated (todos têm o mesmo formato). */
 type AnimHandle = { startAnimation: () => void; stopAnimation: () => void };
-type AnimIcon = React.ForwardRefExoticComponent<
+export type AnimIcon = React.ForwardRefExoticComponent<
   { className?: string; size?: number } & React.RefAttributes<AnimHandle>
 >;
 
@@ -23,7 +23,7 @@ type AnimIcon = React.ForwardRefExoticComponent<
  * `<a>`/`<button>` ancestral e disparamos start/stop nele. Assim o ícone anima
  * quando o mouse passa por qualquer ponto da linha (ícone + texto).
  */
-function IconeAnim({ Comp, className }: { Comp: AnimIcon; className?: string }) {
+export function IconeAnim({ Comp, className }: { Comp: AnimIcon; className?: string }) {
   const spanRef = useRef<HTMLSpanElement>(null);
   const handle = useRef<AnimHandle>(null);
 
@@ -50,6 +50,43 @@ function IconeAnim({ Comp, className }: { Comp: AnimIcon; className?: string }) 
       )}
     >
       <Comp ref={handle} className="flex size-full items-center justify-center" size={20} />
+    </span>
+  );
+}
+
+/**
+ * Ícone de ITEM de sidebar (tela Apps) — renderiza o lucide-animated do MESMO
+ * jeito que o Bridge renderiza os ícones de pasta (`<Ico size={16}
+ * className="shrink-0 text-muted-foreground" />`, control-room.tsx): 16px, cor
+ * `muted`, `currentColor`. Ao contrário do `IconeAnim` da app-rail (span
+ * `size-5` + ícone `size={20}`, que saía MAIOR), aqui o box é `display:contents`
+ * — some do layout e o ícone fica pixel-idêntico ao do Bridge. Anima no hover da
+ * LINHA inteira: acha o `<a>/<button>` ancestral e comanda start/stop via ref.
+ */
+export function IconeItemAnim({ Comp, className }: { Comp: AnimIcon; className?: string }) {
+  const ancoraRef = useRef<HTMLSpanElement>(null);
+  const handle = useRef<AnimHandle>(null);
+
+  useEffect(() => {
+    const linha = ancoraRef.current?.closest("a,button");
+    if (!linha) return;
+    const entrar = () => handle.current?.startAnimation();
+    const sair = () => handle.current?.stopAnimation();
+    linha.addEventListener("mouseenter", entrar);
+    linha.addEventListener("mouseleave", sair);
+    return () => {
+      linha.removeEventListener("mouseenter", entrar);
+      linha.removeEventListener("mouseleave", sair);
+    };
+  }, []);
+
+  return (
+    <span ref={ancoraRef} className="contents">
+      <Comp
+        ref={handle}
+        size={16}
+        className={cn("shrink-0 text-muted-foreground", className)}
+      />
     </span>
   );
 }

@@ -1,11 +1,10 @@
-import { Badge } from "@/components/reui/badge";
+import { MetricaChip } from "@/components/metrica-chip";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import {
   Frame,
@@ -25,32 +24,6 @@ import { ChevronDown, Folder } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 const fmt = (n: number, i: string) => n.toLocaleString(i);
-
-function Metrica({
-  icone,
-  valor,
-  carregando,
-}: {
-  icone: React.ReactNode;
-  valor?: string;
-  carregando?: boolean;
-}) {
-  if (!valor) {
-    if (!carregando) return null;
-    return (
-      <Badge variant="secondary" size="lg">
-        <Spinner data-icon="inline-start" />
-        {icone}
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="secondary" size="lg">
-      {icone}
-      {valor}
-    </Badge>
-  );
-}
 
 /**
  * Card de uso do OneDrive (usado x limite), expansível — na expansão mostra os
@@ -74,13 +47,18 @@ function CardUso({ uso }: { uso: UsoOneDrive | null }) {
   const estourou = uso.total > 0 && uso.used > uso.total;
 
   return (
-    <Card className="relative w-full max-w-md gap-5 overflow-visible pb-2">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-sm font-medium">{t.meusArquivos.usoTitulo}</CardTitle>
+    <Frame
+      className="relative w-full max-w-md gap-5 overflow-visible pb-2"
+      stacked
+    >
+      <FrameHeader className="flex flex-row items-center justify-between space-y-0">
+        <FrameTitle className="text-sm font-medium">
+          {t.meusArquivos.usoTitulo}
+        </FrameTitle>
         <span className="text-xs text-muted-foreground">{pct}%</span>
-      </CardHeader>
+      </FrameHeader>
 
-      <CardContent
+      <FramePanel
         className={cn(
           "relative space-y-4 overflow-hidden transition-all duration-500 ease-in-out",
           aberto ? "max-h-[520px]" : "max-h-[128px]"
@@ -132,7 +110,7 @@ function CardUso({ uso }: { uso: UsoOneDrive | null }) {
             aberto ? "opacity-0" : "opacity-100"
           )}
         />
-      </CardContent>
+      </FramePanel>
 
       {/* Botao circular que abre/fecha, na base do card */}
       <div className="absolute -bottom-4 left-1/2 -translate-x-1/2">
@@ -153,7 +131,7 @@ function CardUso({ uso }: { uso: UsoOneDrive | null }) {
           <TooltipContent>{t.meusArquivos.usoTitulo}</TooltipContent>
         </Tooltip>
       </div>
-    </Card>
+    </Frame>
   );
 }
 
@@ -239,11 +217,11 @@ export function MeusArquivosScreen() {
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold">{pasta.name}</div>
                     <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                      <Metrica
+                      <MetricaChip
                         icone={<SquareActivityIcon size={13} />}
                         valor={formatBytes(pasta.bytes)}
                       />
-                      <Metrica
+                      <MetricaChip
                         icone={<FoldersIcon size={13} />}
                         valor={
                           pasta.folders != null
@@ -252,7 +230,7 @@ export function MeusArquivosScreen() {
                         }
                         carregando={carregandoDet}
                       />
-                      <Metrica
+                      <MetricaChip
                         icone={<FileStackIcon size={13} />}
                         valor={
                           pasta.files != null
