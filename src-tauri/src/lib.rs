@@ -1556,6 +1556,24 @@ async fn cr_salvar_email_msg(
     Err("Salvar como arquivo do Outlook (.msg) ainda não está disponível.".to_string())
 }
 
+/// Control room: imprime o e-mail ativo abrindo o **preview do Chromium**
+/// (WebView2 `ShowPrintUI(BROWSER)`) numa janela visível (#640). Single — o
+/// e-mail em leitura. Fire-and-forget: retorna após abrir o preview.
+#[tauri::command]
+async fn cr_imprimir_email(
+    app: tauri::AppHandle,
+    state: State<'_, Store>,
+    ids: Vec<String>,
+    mailbox: Option<String>,
+) -> Result<(), String> {
+    let store = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        salvar_pdf::cr_imprimir_email(&app, &store, &ids, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Abre um arquivo local com o aplicativo padrao do Windows.
 #[tauri::command]
 async fn abrir_caminho(path: String) -> Result<(), String> {
@@ -2016,6 +2034,7 @@ pub fn run() {
             cr_anexo_link,
             cr_salvar_email_pdf,
             cr_salvar_email_msg,
+            cr_imprimir_email,
             abrir_caminho,
             revelar_no_explorer,
             connect_site,
