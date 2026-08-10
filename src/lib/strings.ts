@@ -75,7 +75,7 @@ const pt = {
     microsoft365: "Microsoft 365",
     // Grupo da sidebar. Separado do "Microsoft 365" acima, que e a legenda da
     // organizacao no topo e continua sendo o nome da plataforma.
-    galaxie: "Galaxie",
+    galaxie: "GALAXIE",
     copilot: "M365 Copilot",
     comms: "Comms",
     astro: "Astro",
@@ -1773,7 +1773,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     organizacao: "Organization",
     plataforma: "Platform",
     microsoft365: "Microsoft 365",
-    galaxie: "Galaxie",
+    galaxie: "GALAXIE",
     copilot: "M365 Copilot",
     comms: "Comms",
     astro: "Astro",
