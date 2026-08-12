@@ -22,6 +22,8 @@ import {
   type OrgSettingsResult,
 } from "@/lib/api";
 import { useIdioma } from "@/lib/idioma";
+import { useTier } from "@/lib/tier-context";
+import { RecursoOrgEmpty } from "@/components/recurso-org-empty";
 import { Switch } from "@/components/ui/switch";
 import {
   AlertDialog,
@@ -205,6 +207,10 @@ function Cartao({
 export function OrganizationSettings() {
   const { t } = useIdioma();
   const s = t.settings;
+  // #699 (PS6): governança/Org Admin é feature de ORG — nos tiers pessoal/
+  // uncontracted degrada pro empty-state de tier (não o gate de escopo, que soa
+  // como "faltou permissão"). Na org contratada segue o gate de escopo abaixo.
+  const { recursoOrgDisponivel } = useTier();
   // null = ainda verificando; true/false = tem/ não tem os escopos admin.
   const [disponivel, setDisponivel] = useState<boolean | null>(null);
   const [dados, setDados] = useState<OrgSettingsResult | null>(null);
@@ -212,6 +218,8 @@ export function OrganizationSettings() {
   const [carregando, setCarregando] = useState(false);
 
   useEffect(() => {
+    // Tier pessoal/uncontracted nem sonda o backend — é empty-state de tier.
+    if (!recursoOrgDisponivel) return;
     let vivo = true;
     crOrgAdminAvailable()
       .then((ok) => {
@@ -223,7 +231,7 @@ export function OrganizationSettings() {
     return () => {
       vivo = false;
     };
-  }, []);
+  }, [recursoOrgDisponivel]);
 
   // Só busca os settings quando o gating confirma o acesso (S1).
   useEffect(() => {
@@ -254,6 +262,16 @@ export function OrganizationSettings() {
       vivo = false;
     };
   }, [disponivel]);
+
+  // #699: gate de tier ANTES do gate de escopo — feature de org num tier não-org
+  // é empty-state de tier, não "faltou permissão".
+  if (!recursoOrgDisponivel) {
+    return (
+      <FramePanel>
+        <RecursoOrgEmpty />
+      </FramePanel>
+    );
+  }
 
   if (disponivel === null) {
     return (

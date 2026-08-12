@@ -4,6 +4,7 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { registrarHandlersGlobais } from "@/lib/log";
 import { LoginScreen } from "@/screens/login";
 import { OnboardingEmpresaScreen } from "@/screens/onboarding-empresa";
+import { TierProvider } from "@/lib/tier-context";
 import { SitesScreen } from "@/screens/sites";
 import { AppsScreen } from "@/screens/apps";
 import { AtomsScreen } from "@/screens/atoms";
@@ -912,10 +913,12 @@ function AppInner() {
         : null;
 
   return (
-    /* O wrapper do sidebar e min-h-svh: cresce com o conteudo. Numa pagina web
-       quem rola e o documento, mas aqui o body e overflow:hidden (janela de
-       app), entao ninguem rolava. Travando a altura em h-svh, quem passa a
-       rolar e o <main> abaixo. */
+    /* #699 (PS6): TierProvider expõe o tier da conta (capabilities/orgStatus do
+       PS0) pra qualquer feature checar sem prop-drill. O wrapper do sidebar é
+       min-h-svh: cresce com o conteudo. Numa pagina web quem rola e o documento,
+       mas aqui o body e overflow:hidden (janela de app), entao ninguem rolava.
+       Travando a altura em h-svh, quem passa a rolar e o <main> abaixo. */
+    <TierProvider user={user}>
     <SidebarProvider className="h-svh">
       <Atualizacao />
       <BarraJanela />
@@ -1199,6 +1202,7 @@ function AppInner() {
         )}
       </SidebarInset>
     </SidebarProvider>
+    </TierProvider>
   );
 }
 

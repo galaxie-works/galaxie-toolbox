@@ -55,6 +55,13 @@ const pt = {
       "Pedido registrado. Avisaremos você e o seu administrador quando a sua empresa entrar.",
   },
 
+  // #699 (PS6, app público): empty-state das features de organização nos tiers
+  // pessoal/uncontracted. {app} recebe o nome do produto.
+  tier: {
+    recursoOrg: "Recurso de organização",
+    upgradeOrg: "Disponível quando sua empresa ativar o {app}",
+  },
+
   carregando: {
     preparando: "Alinhando os astros...",
   },
@@ -1839,6 +1846,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     continuarMesmoAssim: "Continue anyway",
     leadRegistrado:
       "Request received. We'll let you and your admin know when your company joins.",
+  },
+
+  // #699 (PS6, public app): org-feature empty-state on personal/uncontracted tiers.
+  tier: {
+    recursoOrg: "Organization feature",
+    upgradeOrg: "Available when your company enables {app}",
   },
 
   carregando: {

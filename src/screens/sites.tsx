@@ -36,6 +36,8 @@ import {
 } from "@/components/confirmar-biblioteca";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { MeusArquivosScreen } from "@/screens/meus-arquivos";
+import { RecursoOrgEmpty } from "@/components/recurso-org-empty";
+import { useTier } from "@/lib/tier-context";
 import { formatBytes } from "@/lib/utils";
 import { preencher, useIdioma } from "@/lib/idioma";
 import type { Dicionario } from "@/lib/strings";
@@ -201,6 +203,9 @@ export function SitesScreen({
   onAbrirUrl: (url: string) => void;
 }) {
   const { t } = useIdioma();
+  // #699 (PS6): SharePoint Sites é feature de ORG — degrada pra empty-state nos
+  // tiers pessoal/uncontracted. A aba "meusArquivos" (OneDrive próprio) fica.
+  const { recursoOrgDisponivel } = useTier();
   const [aba, setAba] = useState("bibliotecas");
   // Biblioteca aguardando confirmacao, e o que sera feito com ela.
   const [confirmando, setConfirmando] = useState<Site | null>(null);
@@ -268,6 +273,9 @@ export function SitesScreen({
         />
       ) : aba === "meusArquivos" ? (
         <MeusArquivosScreen />
+      ) : !recursoOrgDisponivel ? (
+        // #699: SharePoint Sites gateado por tier — empty-state, nunca erro.
+        <RecursoOrgEmpty className="mt-10 border border-border bg-card/40 p-10" />
       ) : (
         <>
           {error && (
