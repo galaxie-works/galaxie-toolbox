@@ -45,6 +45,9 @@ jwalk = "0.8"
 dirs = "5"
 # #679 (Explorer S3): manda pra Lixeira do SO em vez de apagar (delete reversível).
 trash = "5"
+# #680 (Explorer S4): file watcher com reconciliação de rename (debouncer-full).
+notify = "7"
+notify-debouncer-full = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

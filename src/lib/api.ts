@@ -4,8 +4,11 @@ import type {
   AppUser,
   DirSize,
   DriveInfo,
+  FsChange,
+  FsConflict,
   FsDirBatch,
   FsEntry,
+  FsOpProgress,
   CaixaEntrada,
   Calendario,
   CategoriaCor,
@@ -3055,4 +3058,76 @@ export async function excluirPermanente(paths: string[]): Promise<void> {
     paths,
     confirmToken: TOKEN_EXCLUSAO_PERMANENTE,
   });
+}
+
+// --- Progresso + conflito + watcher (#680 S4) -------------------------------
+
+/** Copia com progresso — devolve o `opId` (acompanhe via `onProgressoOp`). */
+export async function copiarComProgresso(
+  from: string,
+  to: string,
+): Promise<number> {
+  if (!inTauri()) return 0;
+  return invoke<number>("fs_copy_with_progress", { from, to });
+}
+
+/** Move com progresso (rename rápido; senão copy+delete) — devolve o `opId`. */
+export async function moverComProgresso(
+  from: string,
+  to: string,
+): Promise<number> {
+  if (!inTauri()) return 0;
+  return invoke<number>("fs_move_with_progress", { from, to });
+}
+
+/** Cancela uma op de copy/move em andamento. */
+export async function cancelarOp(opId: number): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_cancel", { opId });
+}
+
+/** Conflitos de nome no destino, ANTES da op (pro diálogo de resolução). */
+export async function checarConflitos(
+  sources: string[],
+  destDir: string,
+): Promise<FsConflict[]> {
+  if (!inTauri()) return [];
+  return invoke<FsConflict[]>("fs_check_conflicts", { sources, destDir });
+}
+
+/** Assina o progresso das ops (`fs-op-progress`); devolve o unsubscribe. */
+export async function onProgressoOp(
+  cb: (p: FsOpProgress) => void,
+): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<FsOpProgress>("fs-op-progress", (ev) => cb(ev.payload));
+}
+
+/**
+ * Observa uma pasta e chama `cb` a cada mudança no disco (live refresh). O
+ * listener é registrado ANTES do `fs_watch` e filtra pelo `watcherId`. `parar`
+ * desliga o listener E solta o watcher no backend (sem vazar).
+ */
+export async function observarPasta(
+  path: string,
+  recursive: boolean,
+  cb: (c: FsChange) => void,
+): Promise<{ watcherId: number; parar: () => Promise<void> }> {
+  if (!inTauri()) {
+    return { watcherId: 0, parar: async () => {} };
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  let watcherId = -1;
+  const desligar = await listen<FsChange>("fs-change", (ev) => {
+    if (ev.payload.watcherId === watcherId) cb(ev.payload);
+  });
+  watcherId = await invoke<number>("fs_watch", { path, recursive });
+  return {
+    watcherId,
+    parar: async () => {
+      desligar();
+      await invoke<void>("fs_unwatch", { watcherId });
+    },
+  };
 }
