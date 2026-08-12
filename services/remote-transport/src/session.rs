@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::ChannelId;
-use str0m::media::{Direction, MediaKind, MediaTime, Mid};
+use str0m::media::{Direction, Frequency, MediaKind, MediaTime, Mid};
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc};
 
@@ -121,7 +121,7 @@ impl Transport {
             Papel::Host => Direction::SendOnly,
             Papel::Controlador => Direction::RecvOnly,
         };
-        let mid = api.add_media(MediaKind::Video, dir, None, None, None);
+        let mid = api.add_media(MediaKind::Video, dir, None, None);
         let canal = api.add_channel("controle".to_string());
         let (offer, pending) = api.apply().ok_or(TransportError::SemMudanca)?;
         self.mid_video = Some(mid);
@@ -181,13 +181,13 @@ impl Transport {
     /// `timestamp_us` vira RTP time de 90 kHz.
     pub fn escrever_frame(&mut self, frame: &CodedFrame) -> Result<(), TransportError> {
         let mid = self.mid_video.ok_or(TransportError::SemVideo)?;
-        let mut writer = self.rtc.writer(mid).ok_or(TransportError::SemVideo)?;
+        let writer = self.rtc.writer(mid).ok_or(TransportError::SemVideo)?;
         let pt = writer
             .payload_params()
             .next()
             .map(|p| p.pt())
             .ok_or(TransportError::SemVideo)?;
-        let rtp_time = MediaTime::new(frame.timestamp_us as i64 * 90 / 1000, 90_000);
+        let rtp_time = MediaTime::new(frame.timestamp_us * 90 / 1000, Frequency::NINETY_KHZ);
         writer
             .write(pt, Instant::now(), rtp_time, frame.data.clone())
             .map_err(|e| TransportError::Rtc(e.to_string()))?;
