@@ -1474,6 +1474,23 @@ const pt = {
     renomearConflito: "Já existe um item com esse nome.",
     renomearInvalido: "Nome inválido.",
     erroOperacao: "Não foi possível concluir a operação.",
+    // #724 — progresso de copiar/mover + diálogo de conflito + watcher
+    copiando: "Copiando…",
+    movendo: "Movendo…",
+    conflitoTitulo: "Já existe um item com esse nome",
+    conflitoDescricao:
+      "{n} item(ns) com o mesmo nome já existem em “{pasta}”. O que deseja fazer?",
+    substituir: "Substituir",
+    pular: "Pular",
+    manterAmbos: "Manter ambos",
+    etaSeg: "s",
+    etaMin: "min",
+    etaHora: "h",
+    etaRestante: "{eta} restantes",
+    velocidade: "{v}/s",
+    opConcluida: "Operação concluída.",
+    opCancelada: "Operação cancelada.",
+    opFalhou: "A operação falhou.",
   },
 
   tema: {
@@ -3292,6 +3309,23 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     renomearConflito: "An item with that name already exists.",
     renomearInvalido: "Invalid name.",
     erroOperacao: "Couldn't complete the operation.",
+    // #724 — copy/move progress + conflict dialog + watcher
+    copiando: "Copying…",
+    movendo: "Moving…",
+    conflitoTitulo: "An item with this name already exists",
+    conflitoDescricao:
+      "{n} item(s) with the same name already exist in “{pasta}”. What do you want to do?",
+    substituir: "Replace",
+    pular: "Skip",
+    manterAmbos: "Keep both",
+    etaSeg: "s",
+    etaMin: "min",
+    etaHora: "h",
+    etaRestante: "{eta} left",
+    velocidade: "{v}/s",
+    opConcluida: "Operation complete.",
+    opCancelada: "Operation canceled.",
+    opFalhou: "The operation failed.",
   },
 
   tema: {
