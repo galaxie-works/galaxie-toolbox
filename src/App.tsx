@@ -30,6 +30,7 @@ import {
 } from "@/lib/navigator-history";
 import * as browser from "@/lib/browser";
 import { WindowsScreen } from "@/screens/windows";
+import { ArquivosScreen } from "@/screens/arquivos";
 import { ConfiguracoesScreen } from "@/screens/configuracoes";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -1089,6 +1090,12 @@ function AppInner() {
               onAbrirAqui={abrirAppAqui}
               onAbrirNavegador={(a) => abrirUrl(a.url)}
             />
+          </div>
+        ) : tela === "arquivos" ? (
+          /* #677: Explorer de arquivos — altura cheia (árvore + conteúdo rolam por
+             dentro), mesmo padrão de tela cheia do Bridge/Apps/Configurações. */
+          <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
+            <ArquivosScreen />
           </div>
         ) : tela === "control-room" ? null : (
         /* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
