@@ -22,18 +22,9 @@ import {
   CollapsibleContent as NavCollapsibleContent,
   CollapsibleTrigger as NavCollapsibleTrigger,
 } from "@/components/animate-ui/primitives/radix/collapsible";
-import {
-  Sidebar,
-  SidebarContent,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-} from "@/components/animate-ui/components/radix/sidebar";
+import { SidebarNavItem } from "@/components/sidebar-nav-item";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 import {
   Frame,
   FrameDescription,
@@ -393,85 +384,81 @@ function SettingsNavigation({
 }) {
   const { t } = useIdioma();
   return (
+    // #634: COPIA o sidebar de pastas do Bridge (padrão-ouro do PO), igual ao
+    // Apps (#620). Painel em card (`rounded-xl border bg-card p-3`) — o card do
+    // NAV é o MESMO do Bridge/Apps; o "flat" é a área de CONTEÚDO à direita, não
+    // o nav. Itens = `SidebarNavItem` (markup verbatim do `Linha` do Bridge);
+    // ícone `size-4 muted`, rótulo de seção `text-xs`, subitem indentado `pl-5`
+    // e chevron — tudo espelhando o control-room (troca só os primitivos do
+    // animate-ui, que fugiam da tipografia/ícone do Bridge).
     <aside
       aria-label={t.settings.cfgNavAriaLabel}
-      className="w-full shrink-0 rounded-xl border bg-card md:h-full md:w-64"
+      className="flex w-full shrink-0 flex-col rounded-xl border bg-card p-3 md:h-full md:w-64"
     >
-      {/* #597 rework: reusa os primitivos do reui Sidebar — o MESMO conjunto do
-          `app-sidebar.tsx` (regra de ouro: reusar, não inventar). O
-          `SidebarGroupLabel` é o rótulo de grupo estático (sem chevron); o item
-          COM children colapsa via Collapsible + SidebarMenuButton (chevron no
-          próprio item) + SidebarMenuSub. `Sidebar collapsible="none"` provê o
-          contexto de Highlight que o SidebarMenuButton usa (senão quebra) e vira
-          um flex simples; roda no SidebarProvider do App. Override bg/width pra
-          herdar a moldura do painel (bg-card do <aside>). */}
-      <Sidebar
-        collapsible="none"
-        className="h-full w-full bg-transparent text-foreground"
-      >
-        <SidebarContent className="gap-0 overflow-y-auto p-2">
-          {sections.map((section) => (
-            <SidebarGroup key={section.label} className="p-0 pb-2">
-              <SidebarGroupLabel>{section.label}</SidebarGroupLabel>
-              <SidebarMenu>
+      <ScrollArea className="min-h-0 w-full flex-1">
+        <div className="pr-2">
+          {sections.map((section, si) => (
+            <div key={section.label} className={cn(si > 0 && "pt-2")}>
+              <p className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">
+                {section.label}
+              </p>
+              <div className="flex flex-col gap-0.5">
                 {section.items.map((item) =>
                   item.children && item.children.length > 0 ? (
                     <NavCollapsible
                       key={item.id}
-                      asChild
                       defaultOpen={item.children.some((c) => c.id === selected)}
                       className="group/collapsible"
                     >
-                      <SidebarMenuItem>
-                        <NavCollapsibleTrigger asChild>
-                          <SidebarMenuButton>
-                            <item.icon />
-                            <span>{item.label}</span>
-                            <ChevronRight className="ml-auto transition-transform duration-300 group-data-[state=open]/collapsible:rotate-90" />
-                          </SidebarMenuButton>
-                        </NavCollapsibleTrigger>
-                        <NavCollapsibleContent>
-                          <SidebarMenuSub>
-                            {item.children.map((child) => (
-                              <SidebarMenuSubItem key={child.id}>
-                                <SidebarMenuSubButton
-                                  asChild
-                                  isActive={selected === child.id}
-                                >
-                                  <a
-                                    href="#"
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      onSelect(child.id);
-                                    }}
-                                  >
-                                    <child.icon />
-                                    <span>{child.label}</span>
-                                  </a>
-                                </SidebarMenuSubButton>
-                              </SidebarMenuSubItem>
-                            ))}
-                          </SidebarMenuSub>
-                        </NavCollapsibleContent>
-                      </SidebarMenuItem>
+                      {/* Trigger: MESMO visual do `SidebarNavItem` + chevron. O
+                          grupo colapsa; o próprio pai não seleciona. */}
+                      <NavCollapsibleTrigger asChild>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-sm transition-colors hover:bg-accent/50"
+                        >
+                          <item.icon className="size-4 shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 flex-1 truncate text-left">
+                            {item.label}
+                          </span>
+                          <ChevronRight className="size-4 shrink-0 text-muted-foreground transition-transform duration-300 group-data-[state=open]/collapsible:rotate-90" />
+                        </button>
+                      </NavCollapsibleTrigger>
+                      <NavCollapsibleContent>
+                        <div className="flex flex-col gap-0.5 pt-0.5">
+                          {item.children.map((child) => (
+                            <SidebarNavItem
+                              key={child.id}
+                              // Subitem indentado como o Bridge (`ehFilho && pl-5`).
+                              className="pl-5"
+                              icone={
+                                <child.icon className="size-4 shrink-0 text-muted-foreground" />
+                              }
+                              label={child.label}
+                              ativo={selected === child.id}
+                              onClick={() => onSelect(child.id)}
+                            />
+                          ))}
+                        </div>
+                      </NavCollapsibleContent>
                     </NavCollapsible>
                   ) : (
-                    <SidebarMenuItem key={item.id}>
-                      <SidebarMenuButton
-                        isActive={selected === item.id}
-                        onClick={() => onSelect(item.id)}
-                      >
-                        <item.icon />
-                        <span>{item.label}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
+                    <SidebarNavItem
+                      key={item.id}
+                      icone={
+                        <item.icon className="size-4 shrink-0 text-muted-foreground" />
+                      }
+                      label={item.label}
+                      ativo={selected === item.id}
+                      onClick={() => onSelect(item.id)}
+                    />
                   ),
                 )}
-              </SidebarMenu>
-            </SidebarGroup>
+              </div>
+            </div>
           ))}
-        </SidebarContent>
-      </Sidebar>
+        </div>
+      </ScrollArea>
     </aside>
   );
 }
