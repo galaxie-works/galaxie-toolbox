@@ -25,6 +25,9 @@ export interface Site {
 
 export type Provider = "microsoft" | "google";
 export type AccountKind = "work" | "personal";
+// #698 (PS5): vocabulário canônico do PS0 — `uncontracted` = funcionário de
+// empresa NÃO contratada (vê o onboarding de lead-gen); `none` = conta pessoal;
+// `contracted` = org contratada (fluxo/tier atual).
 export type OrgStatus = "contracted" | "uncontracted" | "none";
 
 /** Capabilities de produto (a UI checa capability, não scope cru). Espelha o
@@ -53,6 +56,7 @@ export interface AppUser {
   // #693: eixos de identidade multi-provider.
   provider: Provider;
   accountKind: AccountKind;
+  // #698 (PS5): roteia os 3 estados de onboarding (ver App.tsx).
   orgStatus: OrgStatus;
   /** Domínio da org (só work). */
   domain?: string | null;
