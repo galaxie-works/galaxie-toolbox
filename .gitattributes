@@ -1,0 +1,3 @@
+infra/remote/*.sh text eol=lf
+infra/remote/*.service text eol=lf
+infra/remote/*.yml text eol=lf
