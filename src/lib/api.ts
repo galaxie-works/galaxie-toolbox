@@ -63,6 +63,23 @@ const MOCK_USER: AppUser = {
   email: "wagner@voaz.builders",
   initials: "WC",
   organizacao: "Voaz",
+  // #693: conta de trabalho contratada (o mock espelha o login org atual).
+  provider: "microsoft",
+  accountKind: "work",
+  orgStatus: "contracted",
+  domain: "voaz.builders",
+  tenantId: "mock-tenant",
+  capabilities: [
+    "identity",
+    "mailRead",
+    "mailReadWrite",
+    "mailSend",
+    "calendar",
+    "contacts",
+    "tasks",
+    "filePicker",
+    "filesReadAll",
+  ],
 };
 
 const MOCK_LOCK_PIN = "galaxie-mock-lock-pin";

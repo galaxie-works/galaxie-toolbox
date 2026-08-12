@@ -15,6 +15,57 @@ use crate::config;
 const GRAPH_ME: &str =
     "https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName,companyName";
 
+// ── Identidade multi-provider (#693, épico #692 App público) ─────────────────
+// PS0: os EIXOS da identidade (provider/tipo de conta/status org) + capabilities
+// derivadas dos scopes. Só a impl Microsoft está ativa; Google entra no PS3.
+
+/// Provedor de identidade da conta.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Provider {
+    Microsoft,
+    Google,
+}
+
+/// Conta de trabalho (org/tenant) ou pessoal (live/hotmail/gmail).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountKind {
+    Work,
+    Personal,
+}
+
+/// Situação da org perante a GALAXIE: cliente contratado, org não-cliente, ou
+/// conta pessoal (sem org).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OrgStatus {
+    Contracted,
+    /// Org que ainda não é cliente. O onboarding público (PS8/#701) constrói
+    /// este estado quando detectar o não-cliente; PS0 só define o eixo.
+    #[allow(dead_code)]
+    Uncontracted,
+    None,
+}
+
+/// O que uma conta PODE fazer, em termos de produto — a UI checa capability, não
+/// scope cru. Cada provider mapeia seus scopes pra este vocabulário comum.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Capability {
+    Identity,
+    MailRead,
+    MailReadWrite,
+    MailSend,
+    Calendar,
+    Contacts,
+    Tasks,
+    FilePicker,
+    FilesReadAll,
+    DirectoryRead,
+    OrgAdmin,
+}
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
@@ -26,6 +77,16 @@ pub struct Account {
     /// Nome da organizacao, pro topo da sidebar. Vem do companyName do perfil;
     /// sem ele, cai no dominio do e-mail (nao exige escopo extra).
     pub organizacao: Option<String>,
+    // #693: eixos de identidade multi-provider.
+    pub provider: Provider,
+    pub account_kind: AccountKind,
+    pub org_status: OrgStatus,
+    /// Domínio da org (só work). None em conta pessoal.
+    pub domain: Option<String>,
+    /// Tenant do Entra (só work). None em conta pessoal.
+    pub tenant_id: Option<String>,
+    /// Capabilities concedidas neste token (derivadas dos scopes).
+    pub capabilities: Vec<Capability>,
 }
 
 #[derive(Clone)]
@@ -43,6 +104,152 @@ pub struct Tokens {
     /// app pede "faca login novamente" em vez de tratar o 403 como falta de
     /// acesso a caixa.
     pub scopes: String,
+}
+
+/// Classifica a conta a partir do tenant + e-mail: tipo (work/personal), status
+/// da org e domínio/tenant (só work). MS pessoal = tenant sintético fixo.
+///
+/// PS0: toda conta de TRABALHO é tratada como `Contracted` — os usuários de hoje
+/// são clientes contratados e o login org atual não pode mudar de comportamento.
+/// O onboarding público (PS8/#701) refina pra `Uncontracted` quando detectar uma
+/// org que ainda não é cliente.
+fn classificar(
+    tenant: &str,
+    email: &str,
+) -> (AccountKind, OrgStatus, Option<String>, Option<String>) {
+    let pessoal = tenant.eq_ignore_ascii_case(config::MS_PERSONAL_TENANT)
+        || tenant.eq_ignore_ascii_case("consumers");
+    if pessoal {
+        (AccountKind::Personal, OrgStatus::None, None, None)
+    } else {
+        let domain = email
+            .rsplit('@')
+            .next()
+            .filter(|d| !d.is_empty())
+            .map(|d| d.to_lowercase());
+        (
+            AccountKind::Work,
+            OrgStatus::Contracted,
+            domain,
+            Some(tenant.to_string()),
+        )
+    }
+}
+
+/// Mapeia os scopes concedidos da Microsoft pras capabilities de produto. `scope`
+/// é o campo cru da resposta OAuth (lista separada por espaço).
+fn ms_capabilities(scopes: &str) -> Vec<Capability> {
+    let s = scopes.to_ascii_lowercase();
+    let tem = |needle: &str| s.contains(needle);
+    let mut caps = vec![Capability::Identity]; // openid/User.Read sempre presentes
+    if tem("mail.send") {
+        caps.push(Capability::MailSend);
+    }
+    if tem("mail.readwrite") {
+        caps.push(Capability::MailReadWrite);
+    }
+    if tem("mail.read") {
+        caps.push(Capability::MailRead);
+    }
+    if tem("calendars.") {
+        caps.push(Capability::Calendar);
+    }
+    if tem("contacts.") || tem("people.read") {
+        caps.push(Capability::Contacts);
+    }
+    if tem("tasks.") {
+        caps.push(Capability::Tasks);
+    }
+    if tem("files.readwrite") || tem("files.read") {
+        caps.push(Capability::FilePicker);
+    }
+    if tem("files.read.all") || tem("sites.read.all") {
+        caps.push(Capability::FilesReadAll);
+    }
+    if tem("directory.read.all") {
+        caps.push(Capability::DirectoryRead);
+    }
+    if tem("orgsettings") || tem("application.read.all") {
+        caps.push(Capability::OrgAdmin);
+    }
+    caps
+}
+
+/// Abstração comum de provedor de identidade. Um `impl` por provider esconde os
+/// detalhes (endpoints, scopes, formato do token) atrás desta interface — a UI e
+/// o resto do app falam com capabilities, não com MS/Google direto.
+pub trait IdentityProvider {
+    /// Login interativo. No MS é o loopback (begin+complete fundidos num passo).
+    fn authenticate(&self, tenant: &str, login_hint: &str, idioma: &str)
+        -> Result<Tokens, String>;
+    /// Refresh silencioso a partir do refresh token (escolhe o endpoint certo).
+    fn access_token(&self, tenant: &str, refresh_token: &str) -> Result<Tokens, String>;
+    /// Capabilities concedidas, derivadas dos scopes do token.
+    fn capabilities(&self, scopes: &str) -> Vec<Capability>;
+    /// Revoga/limpa a sessão local desta conta.
+    fn revoke(&self);
+}
+
+pub struct MicrosoftProvider;
+
+impl IdentityProvider for MicrosoftProvider {
+    fn authenticate(
+        &self,
+        tenant: &str,
+        login_hint: &str,
+        idioma: &str,
+    ) -> Result<Tokens, String> {
+        interactive_login(tenant, login_hint, idioma)
+    }
+    fn access_token(&self, tenant: &str, refresh_token: &str) -> Result<Tokens, String> {
+        refresh(tenant, refresh_token)
+    }
+    fn capabilities(&self, scopes: &str) -> Vec<Capability> {
+        ms_capabilities(scopes)
+    }
+    fn revoke(&self) {
+        limpar_refresh();
+    }
+}
+
+/// Stub do Google — a impl real entra no PS3 (#693 é fundação). Existe pra provar
+/// a abstração (2 providers) e pro `provider_de` ser total.
+pub struct GoogleProvider;
+
+impl IdentityProvider for GoogleProvider {
+    fn authenticate(&self, _t: &str, _h: &str, _i: &str) -> Result<Tokens, String> {
+        Err("login Google entra no PS3".into())
+    }
+    fn access_token(&self, _t: &str, _r: &str) -> Result<Tokens, String> {
+        Err("Google entra no PS3".into())
+    }
+    fn capabilities(&self, _scopes: &str) -> Vec<Capability> {
+        vec![Capability::Identity]
+    }
+    fn revoke(&self) {}
+}
+
+/// Fábrica: provider ativo por enum. Total (nunca entra em pânico).
+pub fn provider_de(p: Provider) -> Box<dyn IdentityProvider> {
+    match p {
+        Provider::Microsoft => Box::new(MicrosoftProvider),
+        Provider::Google => Box::new(GoogleProvider),
+    }
+}
+
+fn provider_str(p: Provider) -> &'static str {
+    match p {
+        Provider::Microsoft => "microsoft",
+        Provider::Google => "google",
+    }
+}
+
+fn provider_de_str(s: &str) -> Provider {
+    if s.eq_ignore_ascii_case("google") {
+        Provider::Google
+    } else {
+        Provider::Microsoft
+    }
 }
 
 /// Escopos Graph pedidos pela versão atual mas ausentes no token em memória.
@@ -159,8 +366,9 @@ fn initials_from(name: &str) -> String {
     }
 }
 
-/// Le displayName/email do usuario logado.
-fn fetch_account(access_token: &str) -> Result<Account, String> {
+/// Le displayName/email do usuario logado. `tenant`/`scopes` alimentam os eixos
+/// de identidade (#693): tipo de conta, status da org e capabilities.
+fn fetch_account(access_token: &str, tenant: &str, scopes: &str) -> Result<Account, String> {
     let client = reqwest::blocking::Client::new();
     let resp = client
         .get(GRAPH_ME)
@@ -197,7 +405,21 @@ fn fetch_account(access_token: &str) -> Result<Account, String> {
         }
     };
 
-    let conta = Account { display_name, email, initials, photo, organizacao };
+    let (account_kind, org_status, domain, tenant_id) = classificar(tenant, &email);
+    let capabilities = MicrosoftProvider.capabilities(scopes);
+    let conta = Account {
+        display_name,
+        email,
+        initials,
+        photo,
+        organizacao,
+        provider: Provider::Microsoft,
+        account_kind,
+        org_status,
+        domain,
+        tenant_id,
+        capabilities,
+    };
     crate::estado::salvar_identidade(&conta.display_name, &conta.initials);
     Ok(conta)
 }
@@ -380,13 +602,19 @@ mod dpapi {
     pub fn decifrar(d: &[u8]) -> Option<Vec<u8>> { Some(d.to_vec()) }
 }
 
-/// Guarda {tenant, refresh}: sem o tenant nao da pra renovar.
-pub fn salvar_sessao(tenant: &str, token: &str) {
+/// Guarda {provider, tenant, refresh} — a chave do vault é (provider, conta).
+/// Sem o tenant nao da pra renovar; o provider decide o endpoint no restore.
+pub fn salvar_sessao(provider: Provider, tenant: &str, token: &str) {
     let Some(caminho) = caminho_sessao() else {
         log::error!("[sessao] sem LOCALAPPDATA - nao da pra persistir");
         return;
     };
-    let payload = serde_json::json!({ "tenant": tenant, "refresh": token }).to_string();
+    let payload = serde_json::json!({
+        "provider": provider_str(provider),
+        "tenant": tenant,
+        "refresh": token,
+    })
+    .to_string();
     match dpapi::cifrar(payload.as_bytes()) {
         Some(cifrado) => match std::fs::write(&caminho, &cifrado) {
             Ok(_) => log::info!(
@@ -399,14 +627,16 @@ pub fn salvar_sessao(tenant: &str, token: &str) {
     }
 }
 
-pub fn ler_sessao() -> Option<(String, String)> {
+pub fn ler_sessao() -> Option<(Provider, String, String)> {
     let caminho = caminho_sessao()?;
     let cifrado = std::fs::read(&caminho).ok()?;
     let claro = dpapi::decifrar(&cifrado)?;
     let v: serde_json::Value = serde_json::from_slice(&claro).ok()?;
+    // Backward-compat: sessão gravada antes do #693 não tem "provider" → Microsoft.
+    let provider = v["provider"].as_str().map(provider_de_str).unwrap_or(Provider::Microsoft);
     let tenant = v["tenant"].as_str()?.to_string();
     let refresh = v["refresh"].as_str()?.to_string();
-    Some((tenant, refresh))
+    Some((provider, tenant, refresh))
 }
 
 pub fn limpar_refresh() {
@@ -417,9 +647,9 @@ pub fn limpar_refresh() {
 
 /// Retoma a sessao a partir do que esta no cofre. Sem interacao.
 pub fn restaurar() -> Result<Tokens, String> {
-    let (tenant, rt) = match ler_sessao() {
+    let (provider, tenant, rt) = match ler_sessao() {
         Some(x) => {
-            log::info!("[sessao] encontrada em disco (tenant={})", x.0);
+            log::info!("[sessao] encontrada em disco (provider={}, tenant={})", provider_str(x.0), x.1);
             x
         }
         None => {
@@ -427,7 +657,8 @@ pub fn restaurar() -> Result<Tokens, String> {
             return Err("sem sessao salva".into());
         }
     };
-    match refresh(&tenant, &rt) {
+    // Roteia o refresh pelo provider persistido (#693) — MS agora, Google no PS3.
+    match provider_de(provider).access_token(&tenant, &rt) {
         Ok(t) => {
             log::info!("[sessao] restaurada com sucesso");
             Ok(t)
@@ -455,10 +686,10 @@ fn build_tokens(v: serde_json::Value, tenant: &str) -> Result<Tokens, String> {
             "[sessao] SEM refresh_token na resposta - offline_access nao concedido? scope={escopos}"
         ),
     }
-    let account = fetch_account(&access_token)?;
-    // guarda o refresh mais recente (rotativo) junto do tenant
+    let account = fetch_account(&access_token, tenant, escopos)?;
+    // guarda o refresh mais recente (rotativo) junto do tenant + provider (#693).
     if let Some(rt) = refresh_token.as_deref() {
-        salvar_sessao(tenant, rt);
+        salvar_sessao(Provider::Microsoft, tenant, rt);
     }
     Ok(Tokens {
         access_token,
@@ -639,6 +870,62 @@ fn html_page(idioma: &str, titulo: &str, msg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::required_resource_scopes_missing;
+    use super::*;
+
+    #[test]
+    fn classifica_conta_pessoal_pelo_tenant_sintetico() {
+        let (kind, org, dom, tid) = classificar(config::MS_PERSONAL_TENANT, "alguem@outlook.com");
+        assert_eq!(kind, AccountKind::Personal);
+        assert_eq!(org, OrgStatus::None);
+        assert!(dom.is_none() && tid.is_none());
+        // "consumers" também é pessoal.
+        assert_eq!(classificar("consumers", "x@live.com").0, AccountKind::Personal);
+    }
+
+    #[test]
+    fn classifica_conta_trabalho_com_dominio_e_tenant() {
+        let (kind, org, dom, tid) =
+            classificar("029575b8-d93d-49e3-8017-56a3eb414f48", "Wagner@Voaz.Builders");
+        assert_eq!(kind, AccountKind::Work);
+        assert_eq!(org, OrgStatus::Contracted);
+        assert_eq!(dom.as_deref(), Some("voaz.builders")); // minúsculo
+        assert_eq!(tid.as_deref(), Some("029575b8-d93d-49e3-8017-56a3eb414f48"));
+    }
+
+    #[test]
+    fn capabilities_mapeiam_scopes() {
+        let caps = ms_capabilities("openid profile Mail.Send Mail.ReadWrite Calendars.ReadWrite Contacts.ReadWrite Files.ReadWrite");
+        assert!(caps.contains(&Capability::Identity));
+        assert!(caps.contains(&Capability::MailSend));
+        assert!(caps.contains(&Capability::MailReadWrite));
+        assert!(caps.contains(&Capability::MailRead)); // readwrite implica read
+        assert!(caps.contains(&Capability::Calendar));
+        assert!(caps.contains(&Capability::Contacts));
+        assert!(caps.contains(&Capability::FilePicker));
+        // Sem esses scopes, sem essas capabilities.
+        assert!(!caps.contains(&Capability::DirectoryRead));
+        assert!(!caps.contains(&Capability::OrgAdmin));
+
+        // Token magro (só login) → só Identity.
+        let magro = ms_capabilities("openid profile offline_access");
+        assert_eq!(magro, vec![Capability::Identity]);
+    }
+
+    #[test]
+    fn provider_serializa_e_round_trip() {
+        assert_eq!(
+            serde_json::to_value(Provider::Microsoft).unwrap(),
+            serde_json::json!("microsoft")
+        );
+        assert_eq!(serde_json::to_value(OrgStatus::None).unwrap(), serde_json::json!("none"));
+        assert_eq!(
+            serde_json::to_value(Capability::MailReadWrite).unwrap(),
+            serde_json::json!("mailReadWrite")
+        );
+        assert_eq!(provider_de_str("google"), Provider::Google);
+        assert_eq!(provider_de_str("desconhecido"), Provider::Microsoft); // default seguro
+        assert_eq!(provider_str(Provider::Google), "google");
+    }
 
     #[test]
     fn compara_escopos_de_recurso_sem_diferenciar_caixa() {

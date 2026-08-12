@@ -63,7 +63,9 @@ async fn login(
     let store = state.inner().clone();
     let account = tauri::async_runtime::spawn_blocking(move || {
         let info = auth::detectar_tenant(&email)?;
-        let tokens = auth::interactive_login(&info.tenant_id, &email, &idioma)?;
+        // #693: login pela abstração de provider (MS agora; Google no PS3).
+        let tokens = auth::provider_de(auth::Provider::Microsoft)
+            .authenticate(&info.tenant_id, &email, &idioma)?;
         let account = tokens.account.clone();
         *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = Some(tokens);
         Ok::<Account, String>(account)
@@ -79,7 +81,8 @@ async fn login(
 async fn logout(state: State<'_, Store>) -> Result<(), String> {
     let store = state.inner().clone();
     *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = None;
-    auth::limpar_refresh();
+    // #693: revoga/limpa a sessão pela abstração de provider.
+    auth::provider_de(auth::Provider::Microsoft).revoke();
     estado::limpar_identidade();
     lock_screen::resetar()?;
     Ok(())
