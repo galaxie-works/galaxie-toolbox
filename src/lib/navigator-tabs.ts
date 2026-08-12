@@ -1,8 +1,18 @@
 export type NavigatorTabLifecycle = "ativa" | "fundo" | "dormindo";
 
+/**
+ * #719 (SH1): telas internas do app que uma aba do Navigator pode hospedar —
+ * React, NÃO webview (Bridge/Files/Remote). Independente do union `Tela` do app
+ * (que inclui coisas que nunca viram aba). O `navegador.tsx` mapeia cada uma
+ * pro componente correspondente (ControlRoomScreen / ArquivosScreen / Remote).
+ */
+export type TelaInterna = "control-room" | "arquivos" | "remote";
+
 export interface AbaBrowser {
   id: string;
   nome: string;
+  /** URL do site (web) ou, em aba interna, um marcador `galaxie://tela/<tela>`
+   *  só pra identidade/persistência — NUNCA navegado numa webview. */
   url: string;
   favicon?: string;
   estado: NavigatorTabLifecycle;
@@ -14,6 +24,20 @@ export interface AbaBrowser {
   /** Aba privada (Story 5): navegacao nao entra no historico e o chip ganha
    *  tratamento visual distinto. Privadas nunca sao pinadas/persistidas. */
   privada?: boolean;
+  /**
+   * #719 (SH1): tipo de conteúdo. `'web'` = webview (PADRÃO — ausente conta como
+   * web, retrocompat com abas persistidas antes do SH1). `'interna'` = tela React
+   * do app, que NÃO é webview (o webview-host fica escondido enquanto ela é ativa;
+   * gatilho TRANSIENTE pelo tipo da aba ativa, nunca por estado persistente — P0).
+   */
+  tipo?: "web" | "interna";
+  /** #719: qual tela interna a aba hospeda (só quando `tipo === 'interna'`). */
+  tela?: TelaInterna;
+}
+
+/** #719 (SH1): a aba hospeda uma tela React (não é webview)? */
+export function ehAbaInterna(aba: Pick<AbaBrowser, "tipo">): boolean {
+  return aba.tipo === "interna";
 }
 
 export interface NavigatorMemorySettings {
