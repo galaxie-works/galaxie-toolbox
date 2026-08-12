@@ -3062,22 +3062,31 @@ export async function excluirPermanente(paths: string[]): Promise<void> {
 
 // --- Progresso + conflito + watcher (#680 S4) -------------------------------
 
-/** Copia com progresso — devolve o `opId` (acompanhe via `onProgressoOp`). */
+/** Algoritmo de verificação pós-cópia (opt-in). `undefined` = cópia normal. */
+export type VerifyAlg = "xxh3" | "blake3" | "sha256";
+
+/**
+ * Copia com progresso TURBO — devolve o `opId` (acompanhe via `onProgressoOp`).
+ * O engine perfila os discos (SSD/HDD) e paraleliza o mix pequeno+grande.
+ * `verify` liga a checagem de integridade por hash (mais lento).
+ */
 export async function copiarComProgresso(
   from: string,
   to: string,
+  verify?: VerifyAlg,
 ): Promise<number> {
   if (!inTauri()) return 0;
-  return invoke<number>("fs_copy_with_progress", { from, to });
+  return invoke<number>("fs_copy_with_progress", { from, to, verify: verify ?? null });
 }
 
-/** Move com progresso (rename rápido; senão copy+delete) — devolve o `opId`. */
+/** Move com progresso (rename rápido; senão copy+delete turbo) — devolve o `opId`. */
 export async function moverComProgresso(
   from: string,
   to: string,
+  verify?: VerifyAlg,
 ): Promise<number> {
   if (!inTauri()) return 0;
-  return invoke<number>("fs_move_with_progress", { from, to });
+  return invoke<number>("fs_move_with_progress", { from, to, verify: verify ?? null });
 }
 
 /** Cancela uma op de copy/move em andamento. */

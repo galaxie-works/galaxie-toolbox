@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 // ─────────────────────────────── Tipos ──────────────────────────────────────
@@ -35,6 +35,8 @@ pub enum FsError {
     Io(String),
     #[error("caminho inválido: {0}")]
     InvalidPath(String),
+    #[error("verificação falhou (cópia corrompida): {0}")]
+    VerifyMismatch(String),
 }
 
 impl From<std::io::Error> for FsError {
@@ -574,6 +576,12 @@ struct OpProgress {
     total_bytes: u64,
     percent: f64,
     eta_ms: Option<u64>,
+    /// #680 turbo: total/feitos de ARQUIVOS (o mix pequeno+grande) e vazão viva.
+    files_total: u64,
+    files_done: u64,
+    bytes_per_sec: u64,
+    /// Verificação (hash) está ativa nesta op.
+    verifying: bool,
     done: bool,
     canceled: bool,
     error: Option<FsError>,
@@ -602,114 +610,381 @@ struct FsChange {
     timestamp_ms: i64,
 }
 
-/// Emite progresso com throttle (100ms) — pasta grande não afoga a UI de eventos.
-struct Emissor<'a> {
-    app: &'a AppHandle,
-    op_id: u64,
-    total: u64,
-    processados: u64,
-    inicio: Instant,
-    ultimo: Instant,
+// ─── Engine turbo de cópia (#680 rework) ─────────────────────────────────────
+//
+// Substitui a cópia sequencial `std::fs::copy` arquivo-a-arquivo por um pipeline
+// estilo TeraCopy: (1) planeja a árvore (jwalk paralelo) e separa o mix em
+// PEQUENOS vs GRANDES; (2) perfila os discos (mesmo-volume + seek-penalty SSD/HDD)
+// pra escolher workers×buffer; (3) copia num pool rayon com verificação opcional
+// (xxh3/blake3/sha256); (4) um ticker dedicado emite progresso real (%, ETA,
+// bytes/s, arquivos) a cada 100 ms sem afogar a UI. Cancel é checado entre
+// arquivos e entre chunks; no cancel/erro o parcial é limpo.
+
+/// Arquivos menores que isto entram no bucket "pequenos" (paralelizar ajuda —
+/// IOPS-bound); maiores viram streaming com buffer grande.
+const LIMITE_PEQUENO: u64 = 1024 * 1024; // 1 MiB
+const BUF_GRANDE: usize = 4 * 1024 * 1024; // 4 MiB (arquivo grande, sequencial)
+const BUF_PEQUENO: usize = 128 * 1024; // 128 KiB
+
+/// Algoritmo de verificação pós-cópia (opt-in). `None` = cópia normal, sem hash.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VerifyAlg {
+    Xxh3,
+    Blake3,
+    Sha256,
 }
 
-impl<'a> Emissor<'a> {
-    fn novo(app: &'a AppHandle, op_id: u64, total: u64) -> Self {
-        let agora = Instant::now();
-        Self { app, op_id, total, processados: 0, inicio: agora, ultimo: agora }
-    }
-    fn avancar(&mut self, delta: u64, forcar: bool) {
-        self.processados += delta;
-        let agora = Instant::now();
-        if !forcar && agora.duration_since(self.ultimo) < Duration::from_millis(100) {
-            return;
+/// Uma cópia de arquivo planejada. Caminhos LIMPOS — o long-path é aplicado na
+/// hora de abrir.
+struct CopyJob {
+    src: PathBuf,
+    dst: PathBuf,
+    size: u64,
+}
+
+#[derive(Default)]
+struct Plano {
+    dirs: Vec<PathBuf>,
+    pequenos: Vec<CopyJob>,
+    grandes: Vec<CopyJob>,
+    total_bytes: u64,
+    total_arquivos: u64,
+}
+
+/// Enumera a origem (jwalk paralelo), cria a lista de dirs a criar (rasos
+/// primeiro) e classifica os arquivos por tamanho.
+fn planejar(from: &Path, to: &Path) -> Result<Plano, FsError> {
+    let mut plano = Plano::default();
+    let meta = std::fs::symlink_metadata(com_long_path(from))?;
+    if meta.is_file() {
+        let size = meta.len();
+        plano.total_bytes = size;
+        plano.total_arquivos = 1;
+        let job = CopyJob { src: from.to_path_buf(), dst: to.to_path_buf(), size };
+        if size < LIMITE_PEQUENO {
+            plano.pequenos.push(job);
+        } else {
+            plano.grandes.push(job);
         }
-        self.ultimo = agora;
-        let percent = if self.total > 0 {
-            (self.processados as f64 / self.total as f64) * 100.0
-        } else {
-            100.0
+        return Ok(plano);
+    }
+    plano.dirs.push(to.to_path_buf());
+    let raiz = com_long_path(from);
+    for entry in jwalk::WalkDir::new(&raiz).skip_hidden(false).sort(true) {
+        let Ok(entry) = entry else { continue };
+        let p = entry.path();
+        let Ok(rel) = p.strip_prefix(&raiz) else { continue };
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        let dst = to.join(rel);
+        let ft = entry.file_type();
+        if ft.is_dir() {
+            plano.dirs.push(dst);
+        } else if ft.is_file() {
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            plano.total_bytes += size;
+            plano.total_arquivos += 1;
+            let job = CopyJob { src: from.join(rel), dst, size };
+            if size < LIMITE_PEQUENO {
+                plano.pequenos.push(job);
+            } else {
+                plano.grandes.push(job);
+            }
+        }
+        // symlink/outros: pulados (a cópia é de conteúdo real).
+    }
+    Ok(plano)
+}
+
+/// Prefixo de volume (letra no Windows, lowercased) pra decidir mesmo-disco.
+fn raiz_volume(p: &Path) -> Option<String> {
+    use std::path::Component;
+    match p.components().next() {
+        Some(Component::Prefix(pre)) => Some(pre.as_os_str().to_string_lossy().to_lowercase()),
+        _ => None,
+    }
+}
+
+fn mesmo_volume(a: &Path, b: &Path) -> bool {
+    match (raiz_volume(a), raiz_volume(b)) {
+        (Some(x), Some(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// SSD/NVMe (sem penalidade de seek) tolera muito mais paralelismo que HDD.
+/// `IOCTL_STORAGE_QUERY_PROPERTY` com `StorageDeviceSeekPenaltyProperty`. Qualquer
+/// falha → `None` (tratado como HDD, conservador).
+#[cfg(windows)]
+fn tem_seek_penalty(vol: &Path) -> Option<bool> {
+    use std::ffi::c_void;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    };
+    use windows::Win32::System::Ioctl::{
+        PropertyStandardQuery, StorageDeviceSeekPenaltyProperty, DEVICE_SEEK_PENALTY_DESCRIPTOR,
+        IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_PROPERTY_QUERY,
+    };
+    use windows::Win32::System::IO::DeviceIoControl;
+
+    let raiz = raiz_volume(vol)?; // "c:"
+    let dispositivo = format!(r"\\.\{}", raiz.to_uppercase());
+    let wide: Vec<u16> = dispositivo.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let h = CreateFileW(
+            PCWSTR(wide.as_ptr()),
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        )
+        .ok()?;
+        let mut query = STORAGE_PROPERTY_QUERY {
+            PropertyId: StorageDeviceSeekPenaltyProperty,
+            QueryType: PropertyStandardQuery,
+            AdditionalParameters: [0u8; 1],
         };
-        let decorrido = agora.duration_since(self.inicio).as_millis() as f64;
-        let eta_ms = if self.processados > 0 && self.processados < self.total {
-            let restante = (self.total - self.processados) as f64;
-            Some(((decorrido / self.processados as f64) * restante) as u64)
-        } else {
-            None
-        };
-        let _ = self.app.emit(
-            "fs-op-progress",
-            OpProgress {
-                op_id: self.op_id,
-                processed_bytes: self.processados,
-                total_bytes: self.total,
-                percent,
-                eta_ms,
-                done: false,
-                canceled: false,
-                error: None,
-            },
+        let mut desc = DEVICE_SEEK_PENALTY_DESCRIPTOR::default();
+        let mut retornados = 0u32;
+        let r = DeviceIoControl(
+            h,
+            IOCTL_STORAGE_QUERY_PROPERTY,
+            Some(&mut query as *mut _ as *const c_void),
+            std::mem::size_of::<STORAGE_PROPERTY_QUERY>() as u32,
+            Some(&mut desc as *mut _ as *mut c_void),
+            std::mem::size_of::<DEVICE_SEEK_PENALTY_DESCRIPTOR>() as u32,
+            Some(&mut retornados),
+            None,
         );
+        let _ = CloseHandle(h);
+        r.ok()?;
+        Some(desc.IncursSeekPenalty)
     }
 }
 
-/// Fim de uma varredura de cópia: completou ou foi cancelada no meio.
-enum Fim {
-    Completo,
-    Cancelado,
+#[cfg(not(windows))]
+fn tem_seek_penalty(_vol: &Path) -> Option<bool> {
+    None
 }
 
-fn total_bytes(path: &Path) -> u64 {
-    let mut t = 0u64;
-    for e in jwalk::WalkDir::new(com_long_path(path)).skip_hidden(false) {
-        if let Ok(e) = e {
-            if let Ok(m) = std::fs::symlink_metadata(e.path()) {
-                if m.is_file() {
-                    t += m.len();
-                }
-            }
-        }
-    }
-    t
+struct Perfil {
+    workers: usize,
 }
 
-/// Copia recursivo, sequencial (pra checar cancel + acumular progresso). `from`/
-/// `to` são caminhos LIMPOS (o long-path é aplicado em cada op).
-fn copiar_arvore(
-    from: &Path,
-    to: &Path,
-    flag: &AtomicBool,
-    emissor: &mut Emissor,
-) -> Result<Fim, FsError> {
-    if flag.load(Ordering::Relaxed) {
-        return Ok(Fim::Cancelado);
-    }
-    if std::fs::symlink_metadata(com_long_path(from))?.is_dir() {
-        std::fs::create_dir_all(com_long_path(to))?;
-        for entry in std::fs::read_dir(com_long_path(from))?.filter_map(Result::ok) {
-            if flag.load(Ordering::Relaxed) {
-                return Ok(Fim::Cancelado);
-            }
-            let nome = entry.file_name();
-            match copiar_arvore(&from.join(&nome), &to.join(&nome), flag, emissor)? {
-                Fim::Cancelado => return Ok(Fim::Cancelado),
-                Fim::Completo => {}
-            }
-        }
-        Ok(Fim::Completo)
+/// Escolhe o número de workers pela topologia dos discos: SSD ou cross-device
+/// aguenta paralelismo alto; HDD no MESMO disco limita a 2 (evita thrash de seek).
+fn perfilar(from: &Path, to: &Path) -> Perfil {
+    let mesmo = mesmo_volume(from, to);
+    let origem_ssd = tem_seek_penalty(from).map(|p| !p).unwrap_or(false);
+    let destino_ssd = tem_seek_penalty(to).map(|p| !p).unwrap_or(false);
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let workers = if (origem_ssd && destino_ssd) || !mesmo {
+        cpus.clamp(2, 8)
     } else {
-        let n = std::fs::copy(com_long_path(from), com_long_path(to))?;
-        emissor.avancar(n, false);
-        Ok(Fim::Completo)
+        2
+    };
+    Perfil { workers }
+}
+
+/// Hash incremental sobre o algoritmo escolhido.
+enum Hasher {
+    Xxh3(Box<xxhash_rust::xxh3::Xxh3>),
+    Blake3(Box<blake3::Hasher>),
+    Sha256(sha2::Sha256),
+}
+
+impl Hasher {
+    fn novo(alg: VerifyAlg) -> Hasher {
+        match alg {
+            VerifyAlg::Xxh3 => Hasher::Xxh3(Box::new(xxhash_rust::xxh3::Xxh3::new())),
+            VerifyAlg::Blake3 => Hasher::Blake3(Box::new(blake3::Hasher::new())),
+            VerifyAlg::Sha256 => {
+                use sha2::Digest;
+                Hasher::Sha256(sha2::Sha256::new())
+            }
+        }
+    }
+    fn update(&mut self, b: &[u8]) {
+        match self {
+            Hasher::Xxh3(h) => h.update(b),
+            Hasher::Blake3(h) => {
+                h.update(b);
+            }
+            Hasher::Sha256(h) => {
+                use sha2::Digest;
+                h.update(b);
+            }
+        }
+    }
+    fn finalizar(self) -> Vec<u8> {
+        match self {
+            Hasher::Xxh3(h) => h.digest().to_le_bytes().to_vec(),
+            Hasher::Blake3(h) => h.finalize().as_bytes().to_vec(),
+            Hasher::Sha256(h) => {
+                use sha2::Digest;
+                h.finalize().to_vec()
+            }
+        }
     }
 }
 
-/// Executa copy (ou move) com progresso. Retorna `true` se foi cancelada.
+fn hash_arquivo(p: &Path, alg: VerifyAlg) -> Result<Vec<u8>, FsError> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(com_long_path(p))?;
+    let mut h = Hasher::novo(alg);
+    let mut buf = vec![0u8; BUF_GRANDE];
+    loop {
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(h.finalizar())
+}
+
+/// Contexto compartilhado entre os workers (atômicos de progresso + cancel).
+struct Contexto {
+    processados: Arc<AtomicU64>,
+    arquivos_feitos: Arc<AtomicU64>,
+    cancelar: Arc<AtomicBool>,
+    verify: Option<VerifyAlg>,
+}
+
+/// Copia UM arquivo com buffer (grande streaming, pequeno menor), somando bytes no
+/// atômico global. Se `verify`, hasheia a origem durante a leitura e re-hasheia o
+/// destino ao final, comparando (detecta cópia corrompida).
+fn copiar_arquivo(job: &CopyJob, ctx: &Contexto) -> Result<(), FsError> {
+    use std::io::{Read, Write};
+    if ctx.cancelar.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    let src = com_long_path(&job.src);
+    let dst = com_long_path(&job.dst);
+    let mut ent = std::fs::File::open(&src)?;
+    let mut sai = std::fs::File::create(&dst)?;
+    let buf_sz = if job.size >= LIMITE_PEQUENO { BUF_GRANDE } else { BUF_PEQUENO };
+    let mut buf = vec![0u8; buf_sz];
+    let mut hasher = ctx.verify.map(Hasher::novo);
+    loop {
+        if ctx.cancelar.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let n = ent.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        sai.write_all(&buf[..n])?;
+        if let Some(h) = hasher.as_mut() {
+            h.update(&buf[..n]);
+        }
+        ctx.processados.fetch_add(n as u64, Ordering::Relaxed);
+    }
+    sai.flush()?;
+    drop(sai);
+    // Preserva atributos de permissão (readonly etc.).
+    if let Ok(m) = std::fs::metadata(&src) {
+        let _ = std::fs::set_permissions(&dst, m.permissions());
+    }
+    if let (Some(h), Some(alg)) = (hasher, ctx.verify) {
+        let esperado = h.finalizar();
+        let obtido = hash_arquivo(&job.dst, alg)?;
+        if esperado != obtido {
+            return Err(FsError::VerifyMismatch(caminho_limpo(&job.dst)));
+        }
+    }
+    ctx.arquivos_feitos.fetch_add(1, Ordering::Relaxed);
+    Ok(())
+}
+
+/// Ticker que emite progresso real a cada 100 ms lendo os atômicos (não bloqueia
+/// os workers). Para no `parar()`.
+struct Ticker {
+    parar: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Ticker {
+    fn parar(mut self) {
+        self.parar.store(true, Ordering::Relaxed);
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn iniciar_ticker(
+    app: &AppHandle,
+    op_id: u64,
+    total_bytes: u64,
+    total_arquivos: u64,
+    processados: Arc<AtomicU64>,
+    arquivos_feitos: Arc<AtomicU64>,
+    verifying: bool,
+) -> Ticker {
+    let parar = Arc::new(AtomicBool::new(false));
+    let p2 = parar.clone();
+    let app = app.clone();
+    let handle = std::thread::spawn(move || {
+        let mut ultimo_bytes = 0u64;
+        let mut ultimo_t = Instant::now();
+        while !p2.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_millis(100));
+            let proc = processados.load(Ordering::Relaxed);
+            let agora = Instant::now();
+            let dt = agora.duration_since(ultimo_t).as_secs_f64().max(0.001);
+            let bps = ((proc.saturating_sub(ultimo_bytes)) as f64 / dt) as u64;
+            ultimo_bytes = proc;
+            ultimo_t = agora;
+            let percent = if total_bytes > 0 {
+                (proc as f64 / total_bytes as f64) * 100.0
+            } else {
+                0.0
+            };
+            let eta_ms = if bps > 0 && proc < total_bytes {
+                Some((total_bytes - proc) / bps.max(1) * 1000)
+            } else {
+                None
+            };
+            let _ = app.emit(
+                "fs-op-progress",
+                OpProgress {
+                    op_id,
+                    processed_bytes: proc,
+                    total_bytes,
+                    percent,
+                    eta_ms,
+                    files_total: total_arquivos,
+                    files_done: arquivos_feitos.load(Ordering::Relaxed),
+                    bytes_per_sec: bps,
+                    verifying,
+                    done: false,
+                    canceled: false,
+                    error: None,
+                },
+            );
+        }
+    });
+    Ticker { parar, handle: Some(handle) }
+}
+
+/// Executa copy (ou move) TURBO com progresso. Retorna `true` se foi cancelada.
 fn executar_progresso(
     mover: bool,
     from: &str,
     to: &str,
     op_id: u64,
-    flag: &AtomicBool,
+    flag: &Arc<AtomicBool>,
+    verify: Option<VerifyAlg>,
     app: &AppHandle,
 ) -> Result<bool, FsError> {
     validar(from)?;
@@ -719,24 +994,82 @@ fn executar_progresso(
     if com_long_path(dst).exists() {
         return Err(FsError::AlreadyExists(to.to_string()));
     }
-    // Move mesmo-volume: rename é instantâneo, sem varredura.
+    // Move mesmo-volume: rename é instantâneo, sem varredura nem cópia.
     if mover && std::fs::rename(com_long_path(src), com_long_path(dst)).is_ok() {
         return Ok(false);
     }
-    let total = total_bytes(src);
-    let mut emissor = Emissor::novo(app, op_id, total);
-    match copiar_arvore(src, dst, flag, &mut emissor)? {
-        Fim::Cancelado => {
-            let _ = remover(to); // limpa o parcial (best-effort)
-            Ok(true)
-        }
-        Fim::Completo => {
-            emissor.avancar(0, true); // 100% final
-            if mover {
-                remover(from)?; // move = copiou → apaga origem
-            }
-            Ok(false)
-        }
+
+    let plano = planejar(src, dst)?;
+    for d in &plano.dirs {
+        std::fs::create_dir_all(com_long_path(d))?;
+    }
+    let perfil = perfilar(src, dst);
+
+    let ctx = Contexto {
+        processados: Arc::new(AtomicU64::new(0)),
+        arquivos_feitos: Arc::new(AtomicU64::new(0)),
+        cancelar: flag.clone(),
+        verify,
+    };
+    let ticker = iniciar_ticker(
+        app,
+        op_id,
+        plano.total_bytes,
+        plano.total_arquivos,
+        ctx.processados.clone(),
+        ctx.arquivos_feitos.clone(),
+        verify.is_some(),
+    );
+
+    let resultado = copiar_plano(&plano, perfil.workers, &ctx);
+    ticker.parar();
+
+    if let Err(e) = resultado {
+        let _ = remover(to); // limpa o parcial
+        return Err(e);
+    }
+    if flag.load(Ordering::Relaxed) {
+        let _ = remover(to);
+        return Ok(true);
+    }
+    if mover {
+        remover(from)?; // move = copiou tudo → apaga a origem
+    }
+    Ok(false)
+}
+
+/// Copia todos os jobs do plano num pool rayon dimensionado por `workers`.
+/// Grandes primeiro (streaming), depois pequenos (par_iter). O primeiro erro
+/// aborta os demais (seta o cancel) e é retornado. Sem `AppHandle` — testável.
+fn copiar_plano(plano: &Plano, workers: usize, ctx: &Contexto) -> Result<(), FsError> {
+    use rayon::prelude::*;
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers.max(1))
+        .build()
+        .map_err(|e| FsError::Io(e.to_string()))?;
+    let erro: Mutex<Option<FsError>> = Mutex::new(None);
+    pool.install(|| {
+        plano
+            .grandes
+            .par_iter()
+            .chain(plano.pequenos.par_iter())
+            .for_each(|job| {
+                if ctx.cancelar.load(Ordering::Relaxed) {
+                    return;
+                }
+                if let Err(e) = copiar_arquivo(job, ctx) {
+                    let mut g = erro.lock().unwrap();
+                    if g.is_none() {
+                        *g = Some(e);
+                        ctx.cancelar.store(true, Ordering::Relaxed); // aborta os demais
+                    }
+                }
+            });
+    });
+    match erro.into_inner().unwrap() {
+        Some(e) => Err(e),
+        None => Ok(()),
     }
 }
 
@@ -966,10 +1299,11 @@ fn spawn_progresso(
     to: String,
     op_id: u64,
     flag: Arc<AtomicBool>,
+    verify: Option<VerifyAlg>,
     app: AppHandle,
 ) {
     let _ = tauri::async_runtime::spawn_blocking(move || {
-        let resultado = executar_progresso(mover, &from, &to, op_id, &flag, &app);
+        let resultado = executar_progresso(mover, &from, &to, op_id, &flag, verify, &app);
         app.state::<ProgressManager>().finalizar(op_id);
         let (canceled, error) = match resultado {
             Ok(c) => (c, None),
@@ -983,6 +1317,10 @@ fn spawn_progresso(
                 total_bytes: 0,
                 percent: if error.is_some() { 0.0 } else { 100.0 },
                 eta_ms: None,
+                files_total: 0,
+                files_done: 0,
+                bytes_per_sec: 0,
+                verifying: false,
                 done: true,
                 canceled,
                 error,
@@ -995,11 +1333,12 @@ fn spawn_progresso(
 pub async fn fs_copy_with_progress(
     from: String,
     to: String,
+    verify: Option<VerifyAlg>,
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
     let (op_id, flag) = pm.nova_op();
-    spawn_progresso(false, from, to, op_id, flag, app);
+    spawn_progresso(false, from, to, op_id, flag, verify, app);
     Ok(op_id)
 }
 
@@ -1007,11 +1346,12 @@ pub async fn fs_copy_with_progress(
 pub async fn fs_move_with_progress(
     from: String,
     to: String,
+    verify: Option<VerifyAlg>,
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
     let (op_id, flag) = pm.nova_op();
-    spawn_progresso(true, from, to, op_id, flag, app);
+    spawn_progresso(true, from, to, op_id, flag, verify, app);
     Ok(op_id)
 }
 
@@ -1056,6 +1396,130 @@ pub async fn fs_unwatch(watcher_id: u64, wr: State<'_, WatcherRegistry>) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Engine turbo (#680 rework) ──────────────────────────────────────────
+
+    fn dir_temp(tag: &str) -> PathBuf {
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let n = SEQ.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let base = std::env::temp_dir().join(format!("gtb680_{tag}_{pid}_{n}"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        base
+    }
+
+    fn ctx_teste(verify: Option<VerifyAlg>) -> Contexto {
+        Contexto {
+            processados: Arc::new(AtomicU64::new(0)),
+            arquivos_feitos: Arc::new(AtomicU64::new(0)),
+            cancelar: Arc::new(AtomicBool::new(false)),
+            verify,
+        }
+    }
+
+    #[test]
+    fn planejar_classifica_pequeno_e_grande() {
+        let base = dir_temp("plan");
+        let origem = base.join("src");
+        std::fs::create_dir_all(origem.join("sub")).unwrap();
+        std::fs::write(origem.join("pequeno.txt"), vec![7u8; 10]).unwrap();
+        std::fs::write(origem.join("sub").join("grande.bin"), vec![9u8; (LIMITE_PEQUENO + 5) as usize]).unwrap();
+
+        let plano = planejar(&origem, &base.join("dst")).unwrap();
+        assert_eq!(plano.total_arquivos, 2);
+        assert_eq!(plano.total_bytes, 10 + LIMITE_PEQUENO + 5);
+        assert_eq!(plano.pequenos.len(), 1);
+        assert_eq!(plano.grandes.len(), 1);
+        // A raiz + subdir viram dirs a criar.
+        assert!(plano.dirs.len() >= 2);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn copia_plano_replica_arvore_e_conteudo() {
+        let base = dir_temp("tree");
+        let origem = base.join("src");
+        std::fs::create_dir_all(origem.join("a").join("b")).unwrap();
+        std::fs::write(origem.join("raiz.txt"), b"raiz").unwrap();
+        std::fs::write(origem.join("a").join("x.txt"), b"conteudo-x").unwrap();
+        let grande = vec![42u8; (LIMITE_PEQUENO * 2) as usize];
+        std::fs::write(origem.join("a").join("b").join("grande.bin"), &grande).unwrap();
+
+        let destino = base.join("dst");
+        let plano = planejar(&origem, &destino).unwrap();
+        for d in &plano.dirs {
+            std::fs::create_dir_all(com_long_path(d)).unwrap();
+        }
+        let ctx = ctx_teste(None);
+        copiar_plano(&plano, 4, &ctx).unwrap();
+
+        assert_eq!(std::fs::read(destino.join("raiz.txt")).unwrap(), b"raiz");
+        assert_eq!(std::fs::read(destino.join("a").join("x.txt")).unwrap(), b"conteudo-x");
+        assert_eq!(std::fs::read(destino.join("a").join("b").join("grande.bin")).unwrap(), grande);
+        // Progresso somou todos os bytes e contou os 3 arquivos.
+        assert_eq!(ctx.processados.load(Ordering::Relaxed), plano.total_bytes);
+        assert_eq!(ctx.arquivos_feitos.load(Ordering::Relaxed), 3);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn verificacao_hash_bate_nos_tres_algoritmos() {
+        for alg in [VerifyAlg::Xxh3, VerifyAlg::Blake3, VerifyAlg::Sha256] {
+            let base = dir_temp("verify");
+            let origem = base.join("src");
+            std::fs::create_dir_all(&origem).unwrap();
+            std::fs::write(origem.join("f.bin"), vec![3u8; 5000]).unwrap();
+            let destino = base.join("dst");
+            let plano = planejar(&origem, &destino).unwrap();
+            for d in &plano.dirs {
+                std::fs::create_dir_all(com_long_path(d)).unwrap();
+            }
+            let ctx = ctx_teste(Some(alg));
+            // Verify ON: copia + re-hasheia o destino e confere (sem erro = íntegro).
+            copiar_plano(&plano, 2, &ctx).unwrap();
+            assert_eq!(ctx.arquivos_feitos.load(Ordering::Relaxed), 1);
+            // hash_arquivo da origem == do destino.
+            let h_src = hash_arquivo(&origem.join("f.bin"), alg).unwrap();
+            let h_dst = hash_arquivo(&destino.join("f.bin"), alg).unwrap();
+            assert_eq!(h_src, h_dst);
+            std::fs::remove_dir_all(&base).ok();
+        }
+    }
+
+    #[test]
+    fn cancel_interrompe_e_nao_conta_tudo() {
+        let base = dir_temp("cancel");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        for i in 0..5 {
+            std::fs::write(origem.join(format!("f{i}.txt")), vec![1u8; 100]).unwrap();
+        }
+        let destino = base.join("dst");
+        let plano = planejar(&origem, &destino).unwrap();
+        for d in &plano.dirs {
+            std::fs::create_dir_all(com_long_path(d)).unwrap();
+        }
+        let ctx = ctx_teste(None);
+        ctx.cancelar.store(true, Ordering::Relaxed); // já cancelado antes de começar
+        copiar_plano(&plano, 2, &ctx).unwrap();
+        // Nenhum arquivo copiado (cada job vê o cancel e retorna cedo).
+        assert_eq!(ctx.arquivos_feitos.load(Ordering::Relaxed), 0);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn raiz_volume_e_mesmo_volume() {
+        assert_eq!(raiz_volume(Path::new(r"C:\a\b")).as_deref(), Some("c:"));
+        assert!(mesmo_volume(Path::new(r"C:\a"), Path::new(r"c:\z\y")));
+        assert!(!mesmo_volume(Path::new(r"C:\a"), Path::new(r"D:\a")));
+    }
+
+    #[test]
+    fn perfilar_da_pelo_menos_dois_workers() {
+        let p = perfilar(Path::new(r"C:\a"), Path::new(r"C:\b"));
+        assert!(p.workers >= 2);
+    }
 
     #[test]
     fn io_error_vira_variante_certa() {

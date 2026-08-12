@@ -591,7 +591,8 @@ export type FsErrorCode =
   | "AlreadyExists"
   | "NotADirectory"
   | "Io"
-  | "InvalidPath";
+  | "InvalidPath"
+  | "VerifyMismatch";
 
 export interface FsError {
   code: FsErrorCode;
@@ -638,13 +639,18 @@ export interface FsDirBatch {
 
 // ── Explorer S4 (#680) — progresso + conflito + watcher ─────────────────────
 
-/** Progresso de uma op de copy/move (evento `fs-op-progress`). */
+/** Progresso de uma op de copy/move TURBO (evento `fs-op-progress`). */
 export interface FsOpProgress {
   opId: number;
   processedBytes: number;
   totalBytes: number;
   percent: number;
   etaMs: number | null;
+  /** #680 turbo: contagem de arquivos do mix + vazão viva + flag de verificação. */
+  filesTotal: number;
+  filesDone: number;
+  bytesPerSec: number;
+  verifying: boolean;
   done: boolean;
   canceled: boolean;
   error: FsError | null;
