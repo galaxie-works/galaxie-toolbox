@@ -1422,6 +1422,22 @@ const pt = {
     tipoPasta: "Pasta",
     tipoArquivo: "Arquivo",
     erroLer: "Não foi possível ler esta pasta",
+    // #681 — filtro in-folder, ocultos, long paths, inspector
+    filtrar: "Filtrar nesta pasta",
+    limparFiltro: "Limpar filtro",
+    mostrarOcultos: "Mostrar ocultos",
+    detalhes: "Detalhes",
+    tamanhoTotal: "Tamanho total",
+    criadoEm: "Criado em",
+    atributos: "Atributos",
+    longPathAviso:
+      "Este caminho passa de 260 caracteres. Habilitar suporte a caminhos longos?",
+    longPathHabilitar: "Habilitar",
+    longPathErro: "Não foi possível habilitar o suporte a caminhos longos.",
+    inspetorVazio: "Selecione um item para ver os detalhes.",
+    atribOculto: "Oculto",
+    atribSomenteLeitura: "Somente leitura",
+    atribSymlink: "Atalho simbólico",
   },
 
   tema: {
@@ -3188,6 +3204,22 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     tipoPasta: "Folder",
     tipoArquivo: "File",
     erroLer: "Couldn't read this folder",
+    // #681 — in-folder filter, hidden toggle, long paths, inspector
+    filtrar: "Filter in this folder",
+    limparFiltro: "Clear filter",
+    mostrarOcultos: "Show hidden",
+    detalhes: "Details",
+    tamanhoTotal: "Total size",
+    criadoEm: "Created",
+    atributos: "Attributes",
+    longPathAviso:
+      "This path exceeds 260 characters. Enable long path support?",
+    longPathHabilitar: "Enable",
+    longPathErro: "Couldn't enable long path support.",
+    inspetorVazio: "Select an item to see its details.",
+    atribOculto: "Hidden",
+    atribSomenteLeitura: "Read-only",
+    atribSymlink: "Symbolic link",
   },
 
   tema: {
