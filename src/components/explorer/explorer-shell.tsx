@@ -1,5 +1,4 @@
 import { useEffect, useReducer, useState } from "react";
-import { Folder } from "lucide-react";
 
 import {
   ResizableHandle,
@@ -14,6 +13,7 @@ import type { DriveInfo, FsEntry } from "@/lib/types";
 import { LocaisSidebar } from "./locais";
 import { ArvoreArquivos } from "./arvore";
 import { NavBarArquivos } from "./navbar";
+import { ContentPane } from "./content-pane";
 import { pathPai } from "./caminho";
 
 // --- Estado de navegação (histórico back/forward + caminho atual) ----------
@@ -152,22 +152,18 @@ export function ExplorerShell() {
             onUp={() => dispatch({ type: "acima" })}
             onNavegar={navegar}
           />
-          {/* Placeholder do painel de conteúdo — a listagem de arquivos/pastas é
-              de uma story posterior do épico. */}
-          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center">
-            <Folder className="size-8 text-muted-foreground" />
-            <div>
-              <p className="text-sm font-medium">{t.arquivos.conteudoTitulo}</p>
-              {nav.currentPath && (
-                <p className="mt-0.5 font-mono text-xs text-muted-foreground">
-                  {nav.currentPath}
+          {nav.currentPath ? (
+            <ContentPane currentPath={nav.currentPath} onNavegar={navegar} />
+          ) : (
+            // Sem pasta selecionada ainda (antes de os drives caírem no 1º).
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center">
+              <div>
+                <p className="text-sm font-medium">
+                  {t.arquivos.conteudoTitulo}
                 </p>
-              )}
-              <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-                {t.arquivos.conteudoEmBreve}
-              </p>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </ResizablePanel>
     </ResizablePanelGroup>

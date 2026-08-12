@@ -1402,6 +1402,19 @@ const pt = {
     conteudoTitulo: "Selecione uma pasta",
     conteudoEmBreve:
       "A visualização de arquivos e pastas chega em uma próxima etapa.",
+    // #678 — painel de conteúdo (colunas, views, seleção, tipos)
+    colNome: "Nome",
+    colModificado: "Modificado em",
+    colTipo: "Tipo",
+    colTamanho: "Tamanho",
+    viewDetalhes: "Detalhes",
+    viewLista: "Lista",
+    viewGrade: "Grade",
+    itensSelec: "{n} selecionado(s)",
+    total: "{n} item(ns)",
+    tipoPasta: "Pasta",
+    tipoArquivo: "Arquivo",
+    erroLer: "Não foi possível ler esta pasta",
   },
 
   tema: {
@@ -3149,6 +3162,19 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     editarCaminho: "Edit path",
     conteudoTitulo: "Select a folder",
     conteudoEmBreve: "The file and folder view arrives in a later step.",
+    // #678 — content pane (columns, views, selection, types)
+    colNome: "Name",
+    colModificado: "Date modified",
+    colTipo: "Type",
+    colTamanho: "Size",
+    viewDetalhes: "Details",
+    viewLista: "List",
+    viewGrade: "Grid",
+    itensSelec: "{n} selected",
+    total: "{n} items",
+    tipoPasta: "Folder",
+    tipoArquivo: "File",
+    erroLer: "Couldn't read this folder",
   },
 
   tema: {
