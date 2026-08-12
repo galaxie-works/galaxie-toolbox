@@ -11,8 +11,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::input::InputEvent;
+
 const OP_CONTROLE: u8 = 0x01;
 const OP_CHUNK: u8 = 0x02;
+const OP_INPUT: u8 = 0x03;
 
 /// Mensagem de controle (tudo que não é pedaço de arquivo cru). `transfer_id`
 /// correlaciona um envio de arquivo do começo ao fim.
@@ -65,6 +68,8 @@ pub enum Frame {
         offset: u64,
         data: Vec<u8>,
     },
+    /// Evento de input (S3) — controlador→host (ou Screen host→controlador).
+    Input(InputEvent),
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -86,6 +91,15 @@ pub fn encode_control(msg: &ControlMessage) -> Vec<u8> {
     let json = serde_json::to_vec(msg).expect("ControlMessage serializa");
     let mut buf = Vec::with_capacity(1 + json.len());
     buf.push(OP_CONTROLE);
+    buf.extend_from_slice(&json);
+    buf
+}
+
+/// Serializa um evento de input pro fio (opcode 0x03 + JSON).
+pub fn encode_input(ev: &InputEvent) -> Vec<u8> {
+    let json = serde_json::to_vec(ev).expect("InputEvent serializa");
+    let mut buf = Vec::with_capacity(1 + json.len());
+    buf.push(OP_INPUT);
     buf.extend_from_slice(&json);
     buf
 }
@@ -120,6 +134,11 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ControlError> {
                 offset,
                 data: resto[12..].to_vec(),
             })
+        }
+        OP_INPUT => {
+            let ev =
+                serde_json::from_slice(resto).map_err(|e| ControlError::Json(e.to_string()))?;
+            Ok(Frame::Input(ev))
         }
         outro => Err(ControlError::Opcode(outro)),
     }
@@ -196,6 +215,18 @@ mod tests {
             }
             _ => panic!("esperava chunk"),
         }
+    }
+
+    #[test]
+    fn input_round_trip_no_fio() {
+        use crate::input::{BotaoMouse, InputEvent};
+        let ev = InputEvent::MouseButton {
+            botao: BotaoMouse::Left,
+            pressed: true,
+        };
+        let bytes = encode_input(&ev);
+        assert_eq!(bytes[0], OP_INPUT);
+        assert_eq!(decode(&bytes).unwrap(), Frame::Input(ev));
     }
 
     #[test]

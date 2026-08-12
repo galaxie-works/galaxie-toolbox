@@ -12,9 +12,14 @@ pub mod bridge;
 pub mod command;
 pub mod control;
 pub mod frame;
+pub mod input;
 pub mod signaling;
 pub mod stats;
 pub mod transfer;
+
+// Injeção de input (S3) — puxa o enigo; a UI/host liga a feature `input`.
+#[cfg(feature = "input")]
+pub mod injector;
 
 // A sessão str0m depende de OpenSSL (DTLS) — atrás da feature `webrtc` (default).
 // Sem ela, o crate compila só o núcleo (contrato/signaling/stats), útil em
@@ -28,6 +33,10 @@ pub use control::{
     decode, encode_chunk, encode_control, CapabilityPolicy, ControlError, ControlMessage, Frame,
 };
 pub use frame::{canal_de_frames, CodedFrame, CodedFrameSource, DummyFrameSource, FrameSender};
+pub use input::{BotaoMouse, InputEvent, ScreenInfo, Tecla};
+
+#[cfg(feature = "input")]
+pub use injector::{InjectError, Injector};
 pub use signaling::{
     IceServer, RecordingSignaling, SignalMessage, SignalingChannel, SignalingError,
 };
