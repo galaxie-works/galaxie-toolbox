@@ -112,12 +112,38 @@ pub fn scopes_para(tenant: &str) -> String {
     }
 }
 
-pub fn client_id() -> String {
-    // GALAXIE_CLIENT_ID permite apontar para outro registro sem recompilar
-    // (teste). VOAZ_CLIENT_ID fica como alias do nome antigo.
+/// Override de client_id por env (teste, aponta pra outro registro sem
+/// recompilar). `GALAXIE_CLIENT_ID`, com `VOAZ_CLIENT_ID` como alias antigo.
+fn client_id_override() -> Option<String> {
     std::env::var("GALAXIE_CLIENT_ID")
         .or_else(|_| std::env::var("VOAZ_CLIENT_ID"))
-        .unwrap_or_else(|_| CLIENT_ID.to_string())
+        .ok()
+}
+
+pub fn client_id() -> String {
+    client_id_override().unwrap_or_else(|| CLIENT_ID.to_string())
+}
+
+/// Conta PESSOAL (MSA) pro roteamento de registration: caminho comum
+/// (`common`/`consumers`, não-org) OU o tenant GUID reservado do MSA. Pura —
+/// sem env, testável.
+fn eh_conta_pessoal(tenant: &str) -> bool {
+    !eh_org(tenant) || tenant.eq_ignore_ascii_case(MS_PERSONAL_TENANT)
+}
+
+/// Client ID do registration a usar para este tenant (#695, PS2). Conta pessoal
+/// usa o 2º registration (`CLIENT_ID_PESSOAL`, `AzureADandPersonalMicrosoftAccount`);
+/// a org contratada segue no registration de produção (`CLIENT_ID`). O override
+/// por env vence sempre (teste). Espelha o padrão do `scopes_para(tenant)`.
+pub fn client_id_para(tenant: &str) -> String {
+    if let Some(v) = client_id_override() {
+        return v;
+    }
+    if eh_conta_pessoal(tenant) {
+        CLIENT_ID_PESSOAL.to_string()
+    } else {
+        CLIENT_ID.to_string()
+    }
 }
 
 pub fn authority(tenant: &str) -> String {
@@ -135,4 +161,36 @@ pub fn token_endpoint(tenant: &str) -> String {
 /// Documento OIDC do dominio: e ele que revela o tenant real.
 pub fn discovery_url(dominio: &str) -> String {
     format!("https://login.microsoftonline.com/{dominio}/v2.0/.well-known/openid-configuration")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conta_pessoal_no_caminho_comum_e_no_guid_msa() {
+        // Caminho comum (pessoal/genérico) e o tenant GUID reservado do MSA.
+        assert!(eh_conta_pessoal("common"));
+        assert!(eh_conta_pessoal("consumers"));
+        assert!(eh_conta_pessoal(MS_PERSONAL_TENANT));
+        // Org contratada (tenant GUID real) NÃO é pessoal.
+        assert!(!eh_conta_pessoal("1fd6544e-0000-0000-0000-000000000000"));
+    }
+
+    #[test]
+    fn client_id_para_roteia_pessoal_vs_org() {
+        // Sem env override, o roteamento segue o tipo de conta. (Se o ambiente
+        // de teste tiver GALAXIE_CLIENT_ID setado, ele vence — então só afirmo
+        // o mapeamento quando não há override.)
+        if client_id_override().is_none() {
+            assert_eq!(client_id_para("common"), CLIENT_ID_PESSOAL);
+            assert_eq!(client_id_para(MS_PERSONAL_TENANT), CLIENT_ID_PESSOAL);
+            assert_eq!(
+                client_id_para("1fd6544e-0000-0000-0000-000000000000"),
+                CLIENT_ID
+            );
+            // Registrations são distintos (pessoal ≠ org).
+            assert_ne!(CLIENT_ID, CLIENT_ID_PESSOAL);
+        }
+    }
 }
