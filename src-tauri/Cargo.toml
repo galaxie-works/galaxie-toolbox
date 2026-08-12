@@ -38,6 +38,11 @@ tauri-plugin-fs = "2"
 tauri-plugin-autostart = "2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 argon2 = "0.5"
+# Explorer de Arquivos (#676): erro tipado, varredura paralela e pastas do SO.
+thiserror = "2"
+rayon = "1"
+jwalk = "0.8"
+dirs = "5"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
@@ -57,6 +62,9 @@ windows = { version = "0.61", features = [
     "Win32_System_Com",
     # #275 rework: SHCreateMemStream pro CapturePreview (snapshot-to-image).
     "Win32_UI_Shell",
+    # #676 Explorer: GetLogicalDrives/GetDriveTypeW/GetDiskFreeSpaceExW/
+    # GetVolumeInformationW pra listar drives com tipo, label e espaço.
+    "Win32_Storage_FileSystem",
 ] }
 # #272 S2 (accelerators do Navigator): AcceleratorKeyPressed do WebView2. Versao
 # ja resolvida transitivamente pelo wry 2.11 (0.38.2) — dep direta so pra usar as

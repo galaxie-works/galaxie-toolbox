@@ -2,6 +2,10 @@ import type {
   AcaoRsvp,
   AnexoConteudo,
   AppUser,
+  DirSize,
+  DriveInfo,
+  FsDirBatch,
+  FsEntry,
   CaixaEntrada,
   Calendario,
   CategoriaCor,
@@ -2783,5 +2787,162 @@ export async function telemetryDebugDump(): Promise<
     return await invoke<TelemetryEnvelopeCarimbado[]>("telemetry_debug_dump");
   } catch {
     return [];
+  }
+}
+
+// --- Explorer de Arquivos (#676, épico #675) --------------------------------
+// Fachada fina do backend FS read-only. Erros chegam tipados (FsError.code);
+// fora do Tauri (mock) devolve uma árvore de exemplo pro QA visual da UI.
+
+const MOCK_FS_ENTRIES: FsEntry[] = [
+  {
+    name: "Projetos",
+    path: "C:\\Users\\Wagner\\Projetos",
+    isDir: true,
+    isSymlink: false,
+    size: 0,
+    modifiedMs: 1_722_000_000_000,
+    createdMs: 1_700_000_000_000,
+    extension: null,
+    isHidden: false,
+    isReadonly: false,
+  },
+  {
+    name: "Documentos",
+    path: "C:\\Users\\Wagner\\Documentos",
+    isDir: true,
+    isSymlink: false,
+    size: 0,
+    modifiedMs: 1_723_000_000_000,
+    createdMs: 1_700_000_000_000,
+    extension: null,
+    isHidden: false,
+    isReadonly: false,
+  },
+  {
+    name: "relatorio.pdf",
+    path: "C:\\Users\\Wagner\\relatorio.pdf",
+    isDir: false,
+    isSymlink: false,
+    size: 348_112,
+    modifiedMs: 1_723_500_000_000,
+    createdMs: 1_721_000_000_000,
+    extension: "pdf",
+    isHidden: false,
+    isReadonly: false,
+  },
+  {
+    name: "notas.txt",
+    path: "C:\\Users\\Wagner\\notas.txt",
+    isDir: false,
+    isSymlink: false,
+    size: 1_204,
+    modifiedMs: 1_724_000_000_000,
+    createdMs: 1_722_000_000_000,
+    extension: "txt",
+    isHidden: false,
+    isReadonly: false,
+  },
+];
+
+const MOCK_DRIVES: DriveInfo[] = [
+  {
+    path: "C:\\",
+    name: "Windows",
+    kind: "fixed",
+    totalSpace: 512_000_000_000,
+    freeSpace: 128_000_000_000,
+  },
+  {
+    path: "D:\\",
+    name: "Dados",
+    kind: "fixed",
+    totalSpace: 1_000_000_000_000,
+    freeSpace: 640_000_000_000,
+  },
+];
+
+/** Lista um diretório, pastas-primeiro. Caminho primário pra pastas normais. */
+export async function listarDir(path: string): Promise<FsEntry[]> {
+  if (!inTauri()) {
+    await sleep(120);
+    return MOCK_FS_ENTRIES.map((e) => ({ ...e }));
+  }
+  return invoke<FsEntry[]>("fs_read_dir", { path });
+}
+
+/** Metadados de um único item (arquivo ou pasta). */
+export async function statCaminho(path: string): Promise<FsEntry> {
+  if (!inTauri()) {
+    await sleep(60);
+    return { ...MOCK_FS_ENTRIES[0], path };
+  }
+  return invoke<FsEntry>("fs_stat", { path });
+}
+
+/** Tamanho agregado (recursivo) de uma pasta. */
+export async function tamanhoDir(path: string): Promise<DirSize> {
+  if (!inTauri()) {
+    await sleep(200);
+    return { path, totalBytes: 12_345_678, fileCount: 42, dirCount: 7 };
+  }
+  return invoke<DirSize>("fs_dir_size", { path });
+}
+
+/** Drives montados com tipo, label e espaço. */
+export async function listarDrives(): Promise<DriveInfo[]> {
+  if (!inTauri()) {
+    await sleep(80);
+    return MOCK_DRIVES.map((d) => ({ ...d }));
+  }
+  return invoke<DriveInfo[]>("fs_list_drives");
+}
+
+/** Pastas de acesso rápido do SO (home/desktop/documentos/downloads). */
+export async function dirsConhecidos(): Promise<FsEntry[]> {
+  if (!inTauri()) {
+    await sleep(60);
+    return MOCK_FS_ENTRIES.filter((e) => e.isDir).map((e) => ({ ...e }));
+  }
+  return invoke<FsEntry[]>("fs_known_dirs");
+}
+
+/** Revela o item no Explorer do Windows. */
+export async function revelarCaminho(path: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_reveal", { path });
+}
+
+/** Abre o item com o app padrão do Windows. */
+export async function abrirCaminhoFs(path: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_open", { path });
+}
+
+/**
+ * Stream de pasta gigante: registra o listener de `fs-dir-batch`, dispara o
+ * comando e resolve com o total quando o backend sinaliza `done`. `onLote`
+ * recebe cada lote (o último com `done: true`). Filtra pelo `path` pra suportar
+ * duas listagens concorrentes. Sempre desliga o listener no fim.
+ */
+export async function listarDirStreamed(
+  path: string,
+  batch: number,
+  onLote: (lote: FsDirBatch) => void,
+): Promise<number> {
+  if (!inTauri()) {
+    await sleep(120);
+    const entries = MOCK_FS_ENTRIES.map((e) => ({ ...e }));
+    onLote({ path, entries, done: true });
+    return entries.length;
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  const desligar = await listen<FsDirBatch>("fs-dir-batch", (ev) => {
+    if (ev.payload.path === path) onLote(ev.payload);
+  });
+  try {
+    return await invoke<number>("fs_read_dir_streamed", { path, batch });
+  } finally {
+    desligar();
   }
 }
