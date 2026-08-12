@@ -545,3 +545,58 @@ export interface PeopleInteraction {
   occurredAt: string;
   direction: "inbound" | "outbound";
 }
+
+// ── Explorer de Arquivos (#676, épico #675) — backend FS read-only ──────────
+
+/** Erro tipado do FS. O `code` distingue permissão-negada de não-existe; a
+ *  `message` é o detalhe cru. Espelha o `FsError` do Rust (serde tag/content). */
+export type FsErrorCode =
+  | "NotFound"
+  | "PermissionDenied"
+  | "AlreadyExists"
+  | "NotADirectory"
+  | "Io"
+  | "InvalidPath";
+
+export interface FsError {
+  code: FsErrorCode;
+  message: string;
+}
+
+/** Uma entrada de diretório (arquivo ou pasta). Espelha o `FsEntry` do Rust. */
+export interface FsEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  isSymlink: boolean;
+  size: number;
+  modifiedMs: number | null;
+  createdMs: number | null;
+  extension: string | null;
+  isHidden: boolean;
+  isReadonly: boolean;
+}
+
+/** Um drive montado (letra no Windows) com tipo e espaço. */
+export interface DriveInfo {
+  path: string;
+  name: string;
+  kind: "fixed" | "removable" | "network" | "cdrom" | "ramdisk" | "unknown";
+  totalBytes: number;
+  freeBytes: number;
+}
+
+/** Tamanho agregado de uma pasta (varredura recursiva). */
+export interface DirSize {
+  path: string;
+  totalBytes: number;
+  fileCount: number;
+  dirCount: number;
+}
+
+/** Payload do evento `fs-dir-batch` (stream de pasta gigante). */
+export interface FsDirBatch {
+  path: string;
+  entries: FsEntry[];
+  done: boolean;
+}

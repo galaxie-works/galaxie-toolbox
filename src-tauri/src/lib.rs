@@ -4,6 +4,7 @@ mod browser;
 mod config;
 mod estado;
 mod favicon;
+mod fs_explorer;
 mod graph;
 mod lock_screen;
 mod onedrive;
@@ -2037,6 +2038,15 @@ pub fn run() {
             fetch_favicon,
             autostart_status,
             autostart_set,
+            // Explorer de Arquivos (#676) — backend FS read-only.
+            fs_explorer::fs_read_dir,
+            fs_explorer::fs_read_dir_streamed,
+            fs_explorer::fs_stat,
+            fs_explorer::fs_dir_size,
+            fs_explorer::fs_list_drives,
+            fs_explorer::fs_known_dirs,
+            fs_explorer::fs_reveal,
+            fs_explorer::fs_open,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
