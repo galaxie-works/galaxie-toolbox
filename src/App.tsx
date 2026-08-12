@@ -3,6 +3,7 @@ import { telModuloAberto, telSessaoIniciada } from "@/lib/telemetria";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { registrarHandlersGlobais } from "@/lib/log";
 import { LoginScreen } from "@/screens/login";
+import { OnboardingEmpresaScreen } from "@/screens/onboarding-empresa";
 import { SitesScreen } from "@/screens/sites";
 import { AppsScreen } from "@/screens/apps";
 import { AtomsScreen } from "@/screens/atoms";
@@ -117,6 +118,9 @@ function AppInner() {
     (state) => state.resetPeopleSession,
   );
   const [user, setUser] = useState<AppUser | null>(null);
+  // #698 (PS5): funcionário de empresa não-cliente (orgStatus "uncontracted") vê o
+  // onboarding de lead-gen; ao "entrar assim mesmo", segue no tier pessoal.
+  const [entrarComoPessoal, setEntrarComoPessoal] = useState(false);
   const [sites, setSites] = useState<Site[]>([]);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loadingSites, setLoadingSites] = useState(false);
@@ -804,6 +808,7 @@ function AppInner() {
     // reauth, mailbox, agenda, organizations, branding, memos Rust…).
     resetSessaoCompleta();
     setUser(null);
+    setEntrarComoPessoal(false); // #698: não herda o "entrar assim mesmo" pra próxima conta
     setSites([]);
     setError(null);
     // #568: home = Atoms — não deixa o módulo ativo em OneDrive pro próximo login.
@@ -816,6 +821,7 @@ function AppInner() {
     // #555 (P0): recuperação de bloqueio também sai da conta → reset completo.
     resetSessaoCompleta();
     setUser(null);
+    setEntrarComoPessoal(false); // #698: idem — reset da fronteira de conta
     setSites([]);
     setError(null);
     setCache(null);
@@ -873,6 +879,22 @@ function AppInner() {
 
   if (!user) {
     return <LoginScreen onLogin={handleLogin} loading={loginLoading} error={error} />;
+  }
+
+  // #698 (PS5): roteamento dos 3 estados por `orgStatus` (canônico do PS0, vindo do
+  // login real). `none` (pessoal) e `contracted` (org) caem no app; `uncontracted`
+  // — funcionário de empresa NÃO contratada — vê o onboarding de lead-gen, mas não
+  // bloqueia: "entrar assim mesmo" segue no tier pessoal. A degradação graciosa das
+  // features org p/ conta pessoal é o follow-on do PS2, gated no accountKind (já no
+  // AppUser do PS0).
+  if (user.orgStatus === "uncontracted" && !entrarComoPessoal) {
+    return (
+      <OnboardingEmpresaScreen
+        user={user}
+        onContinuar={() => setEntrarComoPessoal(true)}
+        onSair={() => void logout()}
+      />
+    );
   }
 
   // --- Aplicativo ---------------------------------------------------------

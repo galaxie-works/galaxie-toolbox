@@ -39,6 +39,22 @@ const pt = {
     idioma: "Idioma",
   },
 
+  // #698 (PS5, app público): onboarding do funcionário de empresa NÃO contratada.
+  // {app} recebe o nome do produto. As 4 primeiras chaves vêm da issue; as de apoio
+  // (descricao/continuar/leadRegistrado/comConta) são copy nova — revisar com o PO.
+  onboarding: {
+    empresaSemApp: "Sua empresa ainda não usa o {app}",
+    empresaSemAppDesc:
+      "Você pode entrar com o seu acesso pessoal. Quando a sua empresa contratar o {app}, os recursos de organização aparecem aqui automaticamente.",
+    comConta: "Detectamos a conta {email}.",
+    convidarAdmin: "Convidar meu administrador",
+    solicitarSetup: "Solicitar configuração",
+    avisarQuandoEntrar: "Me avise quando minha empresa entrar",
+    continuarMesmoAssim: "Entrar assim mesmo",
+    leadRegistrado:
+      "Pedido registrado. Avisaremos você e o seu administrador quando a sua empresa entrar.",
+  },
+
   carregando: {
     preparando: "Alinhando os astros...",
   },
@@ -1796,6 +1812,20 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
       "Sign-in happens on Microsoft's official page. GALAXIE {senha} — it only gets an access authorization.",
     avisoSenha: "never sees your password",
     idioma: "Language",
+  },
+
+  // #698 (PS5, public app): onboarding for an employee of a non-customer company.
+  onboarding: {
+    empresaSemApp: "Your company doesn't use {app} yet",
+    empresaSemAppDesc:
+      "You can sign in with your personal access. When your company gets {app}, the organization features show up here automatically.",
+    comConta: "We detected the account {email}.",
+    convidarAdmin: "Invite my admin",
+    solicitarSetup: "Request setup",
+    avisarQuandoEntrar: "Notify me when my company joins",
+    continuarMesmoAssim: "Continue anyway",
+    leadRegistrado:
+      "Request received. We'll let you and your admin know when your company joins.",
   },
 
   carregando: {

@@ -18,6 +18,7 @@ import type {
   Identidade,
   InsightsRemetente,
   PastaEmail,
+  OrgStatus,
   PastaOD,
   Pessoa,
   RecorrenciaInput,
@@ -143,9 +144,30 @@ export async function login(
 ): Promise<AppUser> {
   if (!inTauri()) {
     await sleep(800);
-    return { ...MOCK_USER, email: email || MOCK_USER.email };
+    const usado = email || MOCK_USER.email;
+    // No Tauri, o `orgStatus` REAL vem do PS0 (deriva do token). Aqui é mock: só um
+    // override de dev/QA pra exercitar os 3 caminhos sem backend.
+    return { ...MOCK_USER, email: usado, orgStatus: mockOrgStatus() };
   }
   return invoke<AppUser>("login", { email, idioma, provider });
+}
+
+/**
+ * Override de dev/QA do `orgStatus` (#698, PS5) — só no mock (fora do Tauri). No
+ * app real quem deriva isso é o PS0 a partir do TOKEN (`tid` MS / `hd` Google)
+ * contra o registro de orgs contratadas. Aqui, `?mockOrg=contracted|uncontracted|none`
+ * força o estado pro live-QA; sem o param, cai no padrão do MOCK_USER (`contracted`).
+ */
+function mockOrgStatus(): OrgStatus {
+  const forcado = new URLSearchParams(window.location.search).get("mockOrg");
+  if (
+    forcado === "contracted" ||
+    forcado === "uncontracted" ||
+    forcado === "none"
+  ) {
+    return forcado;
+  }
+  return MOCK_USER.orgStatus;
 }
 
 /** Descobre o tenant pelo dominio do e-mail (sem logar). */
