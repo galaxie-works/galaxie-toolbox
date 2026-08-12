@@ -212,21 +212,203 @@ impl IdentityProvider for MicrosoftProvider {
     }
 }
 
-/// Stub do Google — a impl real entra no PS3 (#693 é fundação). Existe pra provar
-/// a abstração (2 providers) e pro `provider_de` ser total.
+/// Provider Google (PS3, #696): Auth Code + PKCE + loopback, scopes sensitive $0.
+/// Client "Desktop app" tratado como público (o secret não é fronteira; o Google
+/// só exige ele no token endpoint do fluxo desktop). Reusa a máquina de loopback.
 pub struct GoogleProvider;
 
 impl IdentityProvider for GoogleProvider {
-    fn authenticate(&self, _t: &str, _h: &str, _i: &str) -> Result<Tokens, String> {
-        Err("login Google entra no PS3".into())
+    fn authenticate(&self, _tenant: &str, login_hint: &str, idioma: &str) -> Result<Tokens, String> {
+        google_interactive_login(login_hint, idioma)
     }
-    fn access_token(&self, _t: &str, _r: &str) -> Result<Tokens, String> {
-        Err("Google entra no PS3".into())
+    fn access_token(&self, _tenant: &str, refresh_token: &str) -> Result<Tokens, String> {
+        google_refresh(refresh_token)
     }
-    fn capabilities(&self, _scopes: &str) -> Vec<Capability> {
-        vec![Capability::Identity]
+    fn capabilities(&self, scopes: &str) -> Vec<Capability> {
+        google_capabilities(scopes)
     }
-    fn revoke(&self) {}
+    fn revoke(&self) {
+        limpar_refresh(); // sessão é single-file (um provider,tenant,refresh)
+    }
+}
+
+/// Capabilities Google: mapeia os scopes concedidos pro vocabulário comum. Sem
+/// Gmail-read (restricted, PS8) → nunca promete MailRead. `gmail.send` = MailSend;
+/// `drive.file` (picker) = FilePicker.
+fn google_capabilities(scopes: &str) -> Vec<Capability> {
+    let s = scopes.to_ascii_lowercase();
+    let tem = |needle: &str| s.contains(needle);
+    let mut caps = vec![Capability::Identity]; // openid/email/profile
+    if tem("auth/calendar") {
+        caps.push(Capability::Calendar);
+    }
+    if tem("auth/contacts") {
+        caps.push(Capability::Contacts);
+    }
+    if tem("directory.readonly") {
+        caps.push(Capability::DirectoryRead);
+    }
+    if tem("gmail.send") {
+        caps.push(Capability::MailSend);
+    }
+    if tem("drive.file") {
+        caps.push(Capability::FilePicker);
+    }
+    caps
+}
+
+/// Login interativo Google: loopback + PKCE (S256), abre a página oficial do
+/// Google e espera o redirect com o code. `access_type=offline` + `prompt=consent`
+/// garantem o refresh_token. Bloqueante — rodar em spawn_blocking.
+fn google_interactive_login(login_hint: &str, idioma: &str) -> Result<Tokens, String> {
+    let cid = config::GOOGLE_CLIENT_ID;
+    let (verifier, challenge) = pkce();
+    let state = random_string(24);
+
+    let server = tiny_http::Server::http("127.0.0.1:0")
+        .map_err(|e| format!("falha ao abrir loopback: {e}"))?;
+    let port = server
+        .server_addr()
+        .to_ip()
+        .map(|a| a.port())
+        .ok_or("sem porta de loopback")?;
+    let redirect_uri = format!("http://localhost:{port}");
+
+    let hint = if login_hint.is_empty() {
+        String::new()
+    } else {
+        format!("&login_hint={}", urlencoding::encode(login_hint))
+    };
+    let auth_url = format!(
+        "{endpoint}?client_id={cid}&response_type=code&redirect_uri={ruri}\
+         &scope={scope}&state={state}&code_challenge={chal}&code_challenge_method=S256\
+         &access_type=offline&prompt=consent{hint}",
+        endpoint = config::GOOGLE_AUTH_ENDPOINT,
+        cid = urlencoding::encode(cid),
+        ruri = urlencoding::encode(&redirect_uri),
+        scope = urlencoding::encode(config::GOOGLE_SCOPES),
+        state = urlencoding::encode(&state),
+        chal = urlencoding::encode(&challenge),
+    );
+
+    open::that(&auth_url).map_err(|e| format!("nao consegui abrir o navegador: {e}"))?;
+
+    let code = esperar_code_loopback(&server, &state, idioma)?;
+    google_exchange_code(&code, &verifier, &redirect_uri)
+}
+
+/// Troca o authorization code por tokens no endpoint do Google (com client_secret,
+/// exigido no fluxo desktop mesmo sendo client público).
+fn google_exchange_code(code: &str, verifier: &str, redirect_uri: &str) -> Result<Tokens, String> {
+    let client = reqwest::blocking::Client::new();
+    let params = [
+        ("client_id", config::GOOGLE_CLIENT_ID),
+        ("client_secret", config::GOOGLE_CLIENT_SECRET),
+        ("code", code),
+        ("grant_type", "authorization_code"),
+        ("redirect_uri", redirect_uri),
+        ("code_verifier", verifier),
+    ];
+    let resp = client
+        .post(config::GOOGLE_TOKEN_ENDPOINT)
+        .form(&params)
+        .send()
+        .map_err(|e| format!("falha na troca de token Google: {e}"))?;
+    let status = resp.status();
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let desc = v["error_description"].as_str().unwrap_or("erro desconhecido");
+        return Err(format!("token endpoint Google {}: {}", status, desc));
+    }
+    build_tokens_google(v, None)
+}
+
+/// Renova a partir do refresh_token. O Google normalmente NÃO devolve um novo
+/// refresh_token no refresh — preservamos o atual.
+fn google_refresh(refresh_token: &str) -> Result<Tokens, String> {
+    let client = reqwest::blocking::Client::new();
+    let params = [
+        ("client_id", config::GOOGLE_CLIENT_ID),
+        ("client_secret", config::GOOGLE_CLIENT_SECRET),
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+    ];
+    let resp = client
+        .post(config::GOOGLE_TOKEN_ENDPOINT)
+        .form(&params)
+        .send()
+        .map_err(|e| format!("falha no refresh Google: {e}"))?;
+    let status = resp.status();
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let desc = v["error_description"].as_str().unwrap_or("erro desconhecido");
+        return Err(format!("refresh Google {}: {}", status, desc));
+    }
+    build_tokens_google(v, Some(refresh_token))
+}
+
+/// Monta os `Tokens` da resposta do Google. `refresh_anterior` cobre o refresh
+/// (Google costuma omitir o refresh_token na renovação).
+fn build_tokens_google(v: serde_json::Value, refresh_anterior: Option<&str>) -> Result<Tokens, String> {
+    let access_token = v["access_token"]
+        .as_str()
+        .ok_or("resposta Google sem access_token")?
+        .to_string();
+    let refresh_token = v["refresh_token"]
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| refresh_anterior.map(|s| s.to_string()));
+    let expires_in = v["expires_in"].as_u64().unwrap_or(3600);
+    let escopos = v["scope"].as_str().unwrap_or(config::GOOGLE_SCOPES).to_string();
+    let account = fetch_account_google(&access_token, &escopos)?;
+    if let Some(rt) = refresh_token.as_deref() {
+        salvar_sessao(Provider::Google, config::GOOGLE_TENANT, rt);
+    } else {
+        log::error!("[sessao] Google sem refresh_token — access_type=offline/prompt=consent?");
+    }
+    Ok(Tokens {
+        access_token,
+        refresh_token,
+        expires_at: now_secs() + expires_in,
+        account,
+        tenant: config::GOOGLE_TENANT.to_string(),
+        scopes: escopos,
+    })
+}
+
+/// Perfil da conta Google via UserInfo OIDC (equivalente ao /me do Graph). Conta
+/// Google = sempre pessoal (accountKind personal, sem org/tenant).
+fn fetch_account_google(access_token: &str, scopes: &str) -> Result<Account, String> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .get(config::GOOGLE_USERINFO)
+        .bearer_auth(access_token)
+        .send()
+        .map_err(|e| format!("falha ao consultar userinfo Google: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("userinfo Google retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let display_name = v["name"].as_str().unwrap_or("").to_string();
+    let email = v["email"].as_str().unwrap_or("").to_string();
+    let initials = initials_from(&display_name);
+    let photo = v["picture"].as_str().map(|s| s.to_string());
+    let organizacao = nome_pelo_dominio(&email);
+    let conta = Account {
+        display_name,
+        email,
+        initials,
+        photo,
+        organizacao,
+        provider: Provider::Google,
+        account_kind: AccountKind::Personal,
+        org_status: OrgStatus::None,
+        domain: None,
+        tenant_id: None,
+        capabilities: google_capabilities(scopes),
+    };
+    crate::estado::salvar_identidade(&conta.display_name, &conta.initials);
+    Ok(conta)
 }
 
 /// Fábrica: provider ativo por enum. Total (nunca entra em pânico).
@@ -757,7 +939,18 @@ pub fn interactive_login(
 
     open::that(&auth_url).map_err(|e| format!("nao consegui abrir o navegador: {e}"))?;
 
-    // Espera o redirect (com timeout total).
+    let code = esperar_code_loopback(&server, &state, idioma)?;
+    exchange_code(tenant, &code, &verifier, &redirect_uri)
+}
+
+/// Aguarda o redirect do OAuth no loopback e devolve o authorization code.
+/// Compartilhado por MS e Google: valida `state` (anti-CSRF), serve a página de
+/// retorno no idioma escolhido e ignora requests de favicon. Timeout total 300s.
+fn esperar_code_loopback(
+    server: &tiny_http::Server,
+    state: &str,
+    idioma: &str,
+) -> Result<String, String> {
     let deadline = SystemTime::now() + Duration::from_secs(300);
     loop {
         let remaining = deadline
@@ -828,7 +1021,7 @@ pub fn interactive_login(
             let _ = req.respond(html_response(&body_err));
             return Err(format!("login negado: {e}"));
         }
-        if got_state.as_deref() != Some(state.as_str()) {
+        if got_state.as_deref() != Some(state) {
             let _ = req.respond(html_response(&body_err));
             return Err("state divergente (possivel CSRF); login abortado".into());
         }
@@ -840,7 +1033,7 @@ pub fn interactive_login(
             }
         };
         let _ = req.respond(html_response(&body_ok));
-        return exchange_code(tenant, &code, &verifier, &redirect_uri);
+        return Ok(code);
     }
 }
 
@@ -889,6 +1082,43 @@ mod tests {
         assert!(dom.is_none() && tid.is_none());
         // "consumers" também é pessoal.
         assert_eq!(classificar("consumers", "x@live.com").0, AccountKind::Personal);
+    }
+
+    // ── PS3 #696: GoogleProvider ────────────────────────────────────────────
+
+    #[test]
+    fn google_capabilities_mapeia_scopes_concedidos() {
+        let caps = google_capabilities(config::GOOGLE_SCOPES);
+        for esperada in [
+            Capability::Identity,
+            Capability::Calendar,
+            Capability::Contacts,
+            Capability::DirectoryRead,
+            Capability::MailSend,
+            Capability::FilePicker,
+        ] {
+            assert!(caps.contains(&esperada), "faltou {esperada:?}");
+        }
+        // Sem Gmail-read → NUNCA promete MailRead (restricted fica no PS8).
+        assert!(!caps.contains(&Capability::MailRead));
+        assert!(!caps.contains(&Capability::MailReadWrite));
+    }
+
+    #[test]
+    fn google_capabilities_so_identity_com_scope_minimo() {
+        let caps = google_capabilities("openid email profile");
+        assert_eq!(caps, vec![Capability::Identity]);
+    }
+
+    #[test]
+    fn google_scopes_nao_pede_restricted() {
+        // $0: nada de Gmail-read nem Drive-browse (restricted → CASA anual, PS8).
+        let s = config::GOOGLE_SCOPES;
+        assert!(!s.contains("gmail.readonly"));
+        assert!(!s.contains("gmail.modify"));
+        assert!(!s.contains("auth/drive "));
+        assert!(!s.ends_with("auth/drive"));
+        assert!(s.contains("drive.file")); // picker non-sensitive
     }
 
     #[test]

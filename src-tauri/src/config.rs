@@ -32,6 +32,28 @@ pub const CLIENT_ID_PESSOAL: &str = "53ddcae4-7368-4072-8ed2-8ee18daa8600";
 pub const GOOGLE_CLIENT_ID: &str = "672866388200-objaoko15r9on8jvrc64m991r3e2act2.apps.googleusercontent.com";
 pub const GOOGLE_CLIENT_SECRET: &str = "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";
 
+/// Endpoints OAuth/OIDC do Google (PS3). Fixos — o Google não tem "tenant".
+pub const GOOGLE_AUTH_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+pub const GOOGLE_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
+/// UserInfo OIDC — email/nome/foto da conta logada (equivalente ao /me do Graph).
+pub const GOOGLE_USERINFO: &str = "https://openidconnect.googleapis.com/v1/userinfo";
+
+/// Sentinela de "tenant" pras sessões Google (o vault por (provider,conta) e o
+/// refresh usam esta string; o Google ignora tenant, endpoint é fixo).
+pub const GOOGLE_TENANT: &str = "google";
+
+/// Scopes SENSITIVE/NON-SENSITIVE ($0, decisão do PO). NADA de restricted
+/// (Gmail-read/Drive-browse ficam no PS8/CASA). `drive.file` (picker) substitui
+/// o browse de Drive. openid/email/profile = identidade; offline via
+/// access_type=offline no authorize (Google não usa o scope offline_access).
+pub const GOOGLE_SCOPES: &str = "openid email profile \
+     https://www.googleapis.com/auth/calendar \
+     https://www.googleapis.com/auth/contacts \
+     https://www.googleapis.com/auth/directory.readonly \
+     https://www.googleapis.com/auth/gmail.send \
+     https://www.googleapis.com/auth/gmail.labels \
+     https://www.googleapis.com/auth/drive.file";
+
 /// Escopos delegados que o app PEDE no login. offline_access garante
 /// refresh_token. So Microsoft Graph — o app tem muito mais permissao concedida
 /// no registro, mas pedimos so o que cada feature usa (token enxuto, tela de
