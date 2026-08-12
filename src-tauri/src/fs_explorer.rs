@@ -7,17 +7,20 @@
 //!
 //! S0 é só leitura — `notify`/`trash`/mutações entram nas próximas stories.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 // ─────────────────────────────── Tipos ──────────────────────────────────────
 
 /// Erro de FS tipado. `#[serde(tag="code", content="message")]` serializa como
 /// `{ "code": "PermissionDenied", "message": "…" }` — o front trata cada caso.
-#[derive(Debug, thiserror::Error, Serialize)]
+#[derive(Debug, Clone, thiserror::Error, Serialize)]
 #[serde(tag = "code", content = "message")]
 pub enum FsError {
     #[error("não encontrado: {0}")]
@@ -240,8 +243,6 @@ fn ordenar(itens: &mut [FsEntry]) {
 /// Não ordena (o front ordena ao receber) — o ponto é não segurar 100k itens
 /// na memória nem travar o boot da listagem. Retorna o total emitido.
 fn ler_dir_streamed(path: &str, batch: usize, app: &AppHandle) -> Result<u64, FsError> {
-    use tauri::Emitter;
-
     validar(path)?;
     let base = Path::new(path);
     let meta = std::fs::metadata(com_long_path(base))?;
@@ -538,6 +539,305 @@ fn excluir_permanente(paths: &[String], confirm_token: &str) -> Result<(), FsErr
     Ok(())
 }
 
+// ──────────────── Progresso + conflito + watcher (S4, #680) ─────────────────
+
+/// Estado gerenciado: rastreia operações em andamento e seus flags de cancel.
+#[derive(Default)]
+pub struct ProgressManager {
+    proximo_id: AtomicU64,
+    cancelados: Mutex<HashMap<u64, Arc<AtomicBool>>>,
+}
+
+impl ProgressManager {
+    fn nova_op(&self) -> (u64, Arc<AtomicBool>) {
+        let id = self.proximo_id.fetch_add(1, Ordering::Relaxed);
+        let flag = Arc::new(AtomicBool::new(false));
+        self.cancelados.lock().unwrap().insert(id, flag.clone());
+        (id, flag)
+    }
+    fn cancelar(&self, id: u64) {
+        if let Some(f) = self.cancelados.lock().unwrap().get(&id) {
+            f.store(true, Ordering::Relaxed);
+        }
+    }
+    fn finalizar(&self, id: u64) {
+        self.cancelados.lock().unwrap().remove(&id);
+    }
+}
+
+/// Progresso de uma op copy/move — emitido no evento `fs-op-progress`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpProgress {
+    op_id: u64,
+    processed_bytes: u64,
+    total_bytes: u64,
+    percent: f64,
+    eta_ms: Option<u64>,
+    done: bool,
+    canceled: bool,
+    error: Option<FsError>,
+}
+
+/// Conflito de nome no destino (pro diálogo Substituir/Pular/Manter ambos).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Conflict {
+    source: String,
+    name: String,
+    dest: String,
+    is_dir: bool,
+}
+
+/// Mudança no disco detectada pelo watcher — evento `fs-change`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FsChange {
+    watcher_id: u64,
+    /// `created` | `deleted` | `modified` | `renamed` | `renamedFrom` | `renamedTo` | `other`.
+    kind: String,
+    path: String,
+    /// Destino no rename (kind `renamed`); None nos demais.
+    to: Option<String>,
+    timestamp_ms: i64,
+}
+
+/// Emite progresso com throttle (100ms) — pasta grande não afoga a UI de eventos.
+struct Emissor<'a> {
+    app: &'a AppHandle,
+    op_id: u64,
+    total: u64,
+    processados: u64,
+    inicio: Instant,
+    ultimo: Instant,
+}
+
+impl<'a> Emissor<'a> {
+    fn novo(app: &'a AppHandle, op_id: u64, total: u64) -> Self {
+        let agora = Instant::now();
+        Self { app, op_id, total, processados: 0, inicio: agora, ultimo: agora }
+    }
+    fn avancar(&mut self, delta: u64, forcar: bool) {
+        self.processados += delta;
+        let agora = Instant::now();
+        if !forcar && agora.duration_since(self.ultimo) < Duration::from_millis(100) {
+            return;
+        }
+        self.ultimo = agora;
+        let percent = if self.total > 0 {
+            (self.processados as f64 / self.total as f64) * 100.0
+        } else {
+            100.0
+        };
+        let decorrido = agora.duration_since(self.inicio).as_millis() as f64;
+        let eta_ms = if self.processados > 0 && self.processados < self.total {
+            let restante = (self.total - self.processados) as f64;
+            Some(((decorrido / self.processados as f64) * restante) as u64)
+        } else {
+            None
+        };
+        let _ = self.app.emit(
+            "fs-op-progress",
+            OpProgress {
+                op_id: self.op_id,
+                processed_bytes: self.processados,
+                total_bytes: self.total,
+                percent,
+                eta_ms,
+                done: false,
+                canceled: false,
+                error: None,
+            },
+        );
+    }
+}
+
+/// Fim de uma varredura de cópia: completou ou foi cancelada no meio.
+enum Fim {
+    Completo,
+    Cancelado,
+}
+
+fn total_bytes(path: &Path) -> u64 {
+    let mut t = 0u64;
+    for e in jwalk::WalkDir::new(com_long_path(path)).skip_hidden(false) {
+        if let Ok(e) = e {
+            if let Ok(m) = std::fs::symlink_metadata(e.path()) {
+                if m.is_file() {
+                    t += m.len();
+                }
+            }
+        }
+    }
+    t
+}
+
+/// Copia recursivo, sequencial (pra checar cancel + acumular progresso). `from`/
+/// `to` são caminhos LIMPOS (o long-path é aplicado em cada op).
+fn copiar_arvore(
+    from: &Path,
+    to: &Path,
+    flag: &AtomicBool,
+    emissor: &mut Emissor,
+) -> Result<Fim, FsError> {
+    if flag.load(Ordering::Relaxed) {
+        return Ok(Fim::Cancelado);
+    }
+    if std::fs::symlink_metadata(com_long_path(from))?.is_dir() {
+        std::fs::create_dir_all(com_long_path(to))?;
+        for entry in std::fs::read_dir(com_long_path(from))?.filter_map(Result::ok) {
+            if flag.load(Ordering::Relaxed) {
+                return Ok(Fim::Cancelado);
+            }
+            let nome = entry.file_name();
+            match copiar_arvore(&from.join(&nome), &to.join(&nome), flag, emissor)? {
+                Fim::Cancelado => return Ok(Fim::Cancelado),
+                Fim::Completo => {}
+            }
+        }
+        Ok(Fim::Completo)
+    } else {
+        let n = std::fs::copy(com_long_path(from), com_long_path(to))?;
+        emissor.avancar(n, false);
+        Ok(Fim::Completo)
+    }
+}
+
+/// Executa copy (ou move) com progresso. Retorna `true` se foi cancelada.
+fn executar_progresso(
+    mover: bool,
+    from: &str,
+    to: &str,
+    op_id: u64,
+    flag: &AtomicBool,
+    app: &AppHandle,
+) -> Result<bool, FsError> {
+    validar(from)?;
+    validar(to)?;
+    let src = Path::new(from);
+    let dst = Path::new(to);
+    if com_long_path(dst).exists() {
+        return Err(FsError::AlreadyExists(to.to_string()));
+    }
+    // Move mesmo-volume: rename é instantâneo, sem varredura.
+    if mover && std::fs::rename(com_long_path(src), com_long_path(dst)).is_ok() {
+        return Ok(false);
+    }
+    let total = total_bytes(src);
+    let mut emissor = Emissor::novo(app, op_id, total);
+    match copiar_arvore(src, dst, flag, &mut emissor)? {
+        Fim::Cancelado => {
+            let _ = remover(to); // limpa o parcial (best-effort)
+            Ok(true)
+        }
+        Fim::Completo => {
+            emissor.avancar(0, true); // 100% final
+            if mover {
+                remover(from)?; // move = copiou → apaga origem
+            }
+            Ok(false)
+        }
+    }
+}
+
+fn checar_conflitos(sources: &[String], dest_dir: &str) -> Result<Vec<Conflict>, FsError> {
+    validar(dest_dir)?;
+    let base = Path::new(dest_dir);
+    let mut conflitos = Vec::new();
+    for src in sources {
+        let sp = Path::new(src);
+        let Some(nome) = sp.file_name() else { continue };
+        let alvo = base.join(nome);
+        if com_long_path(&alvo).exists() {
+            let is_dir = std::fs::symlink_metadata(com_long_path(&alvo))
+                .map(|m| m.is_dir())
+                .unwrap_or(false);
+            conflitos.push(Conflict {
+                source: src.clone(),
+                name: nome.to_string_lossy().into_owned(),
+                dest: caminho_limpo(&alvo),
+                is_dir,
+            });
+        }
+    }
+    Ok(conflitos)
+}
+
+// --- File watcher (notify v7 + debouncer-full) ---
+
+type Watcher =
+    notify_debouncer_full::Debouncer<notify::RecommendedWatcher, notify_debouncer_full::RecommendedCache>;
+
+/// Estado gerenciado: watchers ativos por id (soltos no `fs_unwatch`).
+#[derive(Default)]
+pub struct WatcherRegistry {
+    proximo_id: AtomicU64,
+    watchers: Mutex<HashMap<u64, Watcher>>,
+}
+
+fn emitir_change(app: &AppHandle, watcher_id: u64, ev: &notify_debouncer_full::DebouncedEvent) {
+    use notify::event::{ModifyKind, RenameMode};
+    use notify::EventKind;
+
+    let (kind, path, to): (&str, Option<&PathBuf>, Option<&PathBuf>) = match ev.kind {
+        EventKind::Create(_) => ("created", ev.paths.first(), None),
+        EventKind::Remove(_) => ("deleted", ev.paths.first(), None),
+        EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
+            ("renamed", ev.paths.first(), ev.paths.get(1))
+        }
+        EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
+            ("renamedFrom", ev.paths.first(), None)
+        }
+        EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
+            ("renamedTo", ev.paths.first(), None)
+        }
+        EventKind::Modify(_) => ("modified", ev.paths.first(), None),
+        _ => ("other", ev.paths.first(), None),
+    };
+    let Some(p) = path else { return };
+    let _ = app.emit(
+        "fs-change",
+        FsChange {
+            watcher_id,
+            kind: kind.to_string(),
+            path: caminho_limpo(p),
+            to: to.map(|t| caminho_limpo(t)),
+            timestamp_ms: tempo_ms(Some(SystemTime::now())).unwrap_or(0),
+        },
+    );
+}
+
+fn iniciar_watch(
+    path: &str,
+    recursive: bool,
+    id: u64,
+    app: &AppHandle,
+) -> Result<Watcher, FsError> {
+    validar(path)?;
+    let app2 = app.clone();
+    let mut debouncer = notify_debouncer_full::new_debouncer(
+        Duration::from_millis(200),
+        None,
+        move |res: notify_debouncer_full::DebounceEventResult| {
+            if let Ok(eventos) = res {
+                for ev in &eventos {
+                    emitir_change(&app2, id, ev);
+                }
+            }
+        },
+    )
+    .map_err(|e| FsError::Io(format!("watcher: {e}")))?;
+    let modo = if recursive {
+        notify::RecursiveMode::Recursive
+    } else {
+        notify::RecursiveMode::NonRecursive
+    };
+    debouncer
+        .watch(Path::new(path), modo)
+        .map_err(|e| FsError::Io(format!("watch: {e}")))?;
+    Ok(debouncer)
+}
+
 // ────────────────────────────── Comandos ────────────────────────────────────
 
 fn spawn_err(e: tauri::Error) -> FsError {
@@ -654,6 +954,101 @@ pub async fn fs_delete_permanent(
     tauri::async_runtime::spawn_blocking(move || excluir_permanente(&paths, &confirm_token))
         .await
         .map_err(spawn_err)?
+}
+
+// --- Progresso + conflito + watcher (#680 S4) ---
+
+/// Roda a op em background (spawn_blocking), finaliza a op no manager e emite o
+/// `fs-op-progress` final (done/canceled/error). O comando devolve o `op_id` já.
+fn spawn_progresso(
+    mover: bool,
+    from: String,
+    to: String,
+    op_id: u64,
+    flag: Arc<AtomicBool>,
+    app: AppHandle,
+) {
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let resultado = executar_progresso(mover, &from, &to, op_id, &flag, &app);
+        app.state::<ProgressManager>().finalizar(op_id);
+        let (canceled, error) = match resultado {
+            Ok(c) => (c, None),
+            Err(e) => (false, Some(e)),
+        };
+        let _ = app.emit(
+            "fs-op-progress",
+            OpProgress {
+                op_id,
+                processed_bytes: 0,
+                total_bytes: 0,
+                percent: if error.is_some() { 0.0 } else { 100.0 },
+                eta_ms: None,
+                done: true,
+                canceled,
+                error,
+            },
+        );
+    });
+}
+
+#[tauri::command]
+pub async fn fs_copy_with_progress(
+    from: String,
+    to: String,
+    app: AppHandle,
+    pm: State<'_, ProgressManager>,
+) -> Result<u64, FsError> {
+    let (op_id, flag) = pm.nova_op();
+    spawn_progresso(false, from, to, op_id, flag, app);
+    Ok(op_id)
+}
+
+#[tauri::command]
+pub async fn fs_move_with_progress(
+    from: String,
+    to: String,
+    app: AppHandle,
+    pm: State<'_, ProgressManager>,
+) -> Result<u64, FsError> {
+    let (op_id, flag) = pm.nova_op();
+    spawn_progresso(true, from, to, op_id, flag, app);
+    Ok(op_id)
+}
+
+#[tauri::command]
+pub async fn fs_cancel(op_id: u64, pm: State<'_, ProgressManager>) -> Result<(), FsError> {
+    pm.cancelar(op_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn fs_check_conflicts(
+    sources: Vec<String>,
+    dest_dir: String,
+) -> Result<Vec<Conflict>, FsError> {
+    tauri::async_runtime::spawn_blocking(move || checar_conflitos(&sources, &dest_dir))
+        .await
+        .map_err(spawn_err)?
+}
+
+#[tauri::command]
+pub async fn fs_watch(
+    path: String,
+    recursive: bool,
+    app: AppHandle,
+    wr: State<'_, WatcherRegistry>,
+) -> Result<u64, FsError> {
+    let id = wr.proximo_id.fetch_add(1, Ordering::Relaxed);
+    let w = iniciar_watch(&path, recursive, id, &app)?;
+    wr.watchers.lock().unwrap().insert(id, w);
+    Ok(id)
+}
+
+#[tauri::command]
+pub async fn fs_unwatch(watcher_id: u64, wr: State<'_, WatcherRegistry>) -> Result<(), FsError> {
+    // Dropar o Debouncer solta o watch do SO (sem vazar).
+    wr.watchers.lock().unwrap().remove(&watcher_id);
+    Ok(())
 }
 
 // ─────────────────────────────── Testes ─────────────────────────────────────
@@ -808,5 +1203,35 @@ mod tests {
         assert!(matches!(criar_dir("").unwrap_err(), FsError::InvalidPath(_)));
         assert!(matches!(renomear("", "x").unwrap_err(), FsError::InvalidPath(_)));
         assert!(matches!(copiar("a", "").unwrap_err(), FsError::InvalidPath(_)));
+    }
+
+    #[test]
+    fn conflitos_detectam_so_os_nomes_ja_existentes() {
+        let base = temp_unico();
+        let origem = base.join("origem");
+        let destino = base.join("destino");
+        std::fs::create_dir_all(&origem).unwrap();
+        std::fs::create_dir_all(&destino).unwrap();
+
+        // 3 fontes; 2 já existem no destino, 1 não.
+        for nome in ["a.txt", "b.txt", "novo.txt"] {
+            std::fs::write(origem.join(nome), "x").unwrap();
+        }
+        std::fs::write(destino.join("a.txt"), "y").unwrap();
+        std::fs::create_dir(destino.join("b.txt")).unwrap(); // colide como pasta
+
+        let fontes: Vec<String> = ["a.txt", "b.txt", "novo.txt"]
+            .iter()
+            .map(|n| s(&origem.join(n)))
+            .collect();
+        let confl = checar_conflitos(&fontes, &s(&destino)).unwrap();
+        let nomes: Vec<&str> = confl.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(nomes.len(), 2);
+        assert!(nomes.contains(&"a.txt") && nomes.contains(&"b.txt"));
+        assert!(!nomes.contains(&"novo.txt"));
+        // o tipo (pasta vs arquivo) do destino é reportado
+        assert!(confl.iter().any(|c| c.name == "b.txt" && c.is_dir));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

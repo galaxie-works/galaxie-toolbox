@@ -635,3 +635,42 @@ export interface FsDirBatch {
   entries: FsEntry[];
   done: boolean;
 }
+
+// ── Explorer S4 (#680) — progresso + conflito + watcher ─────────────────────
+
+/** Progresso de uma op de copy/move (evento `fs-op-progress`). */
+export interface FsOpProgress {
+  opId: number;
+  processedBytes: number;
+  totalBytes: number;
+  percent: number;
+  etaMs: number | null;
+  done: boolean;
+  canceled: boolean;
+  error: FsError | null;
+}
+
+/** Conflito de nome no destino (pro diálogo Substituir/Pular/Manter ambos). */
+export interface FsConflict {
+  source: string;
+  name: string;
+  dest: string;
+  isDir: boolean;
+}
+
+/** Mudança no disco detectada pelo watcher (evento `fs-change`). */
+export interface FsChange {
+  watcherId: number;
+  kind:
+    | "created"
+    | "deleted"
+    | "modified"
+    | "renamed"
+    | "renamedFrom"
+    | "renamedTo"
+    | "other";
+  path: string;
+  /** Destino no rename (kind `renamed`); null nos demais. */
+  to: string | null;
+  timestampMs: number;
+}

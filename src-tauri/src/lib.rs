@@ -1807,6 +1807,9 @@ pub fn run() {
         )
         .manage(Arc::new(TokenStore::default()))
         .manage(telemetry::TelemetryState::default())
+        // #680 Explorer S4: progresso de copy/move (cancel) + watchers ativos.
+        .manage(fs_explorer::ProgressManager::default())
+        .manage(fs_explorer::WatcherRegistry::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -2062,6 +2065,13 @@ pub fn run() {
             fs_explorer::fs_move,
             fs_explorer::fs_trash,
             fs_explorer::fs_delete_permanent,
+            // #680 S4: progresso + conflito + watcher.
+            fs_explorer::fs_copy_with_progress,
+            fs_explorer::fs_move_with_progress,
+            fs_explorer::fs_cancel,
+            fs_explorer::fs_check_conflicts,
+            fs_explorer::fs_watch,
+            fs_explorer::fs_unwatch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
