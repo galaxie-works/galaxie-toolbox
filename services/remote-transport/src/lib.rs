@@ -8,6 +8,7 @@
 //! - **transporte ↔ rede:** sans-I/O — o app faz o UDP; o [`Transport`] só diz o
 //!   que transmitir/quando ([`Passo`]).
 
+pub mod bridge;
 pub mod frame;
 pub mod signaling;
 pub mod stats;
@@ -18,6 +19,7 @@ pub mod stats;
 #[cfg(feature = "webrtc")]
 pub mod session;
 
+pub use bridge::{FrameBridge, FrameFim};
 pub use frame::{CodedFrame, CodedFrameSource, DummyFrameSource};
 pub use signaling::{
     IceServer, RecordingSignaling, SignalMessage, SignalingChannel, SignalingError,
