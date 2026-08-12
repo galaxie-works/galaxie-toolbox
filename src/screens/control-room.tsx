@@ -176,6 +176,8 @@ import {
 } from "@/lib/fotos";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
+import { useTier } from "@/lib/tier-context";
+import { recursoOrgDisponivel } from "@/lib/tier";
 import { useTemaEscuro } from "@/lib/tema";
 import { useAppStore } from "@/store";
 import type { BridgeView } from "@/store/ui-slice";
@@ -1590,6 +1592,9 @@ function FolderSidebar({
   onSelectModule: (view: BridgeView) => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
+  // #712 (PS6 follow-on): caixa compartilhada é feature de ORG — no tier pessoal/
+  // uncontracted o seletor de caixa some (só a caixa própria vale).
+  const { recursoOrgDisponivel } = useTier();
   const peopleTab = useAppStore((state) => state.peopleTab);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
   // #578: os grupos M365 seguem carregados aqui (loadPeopleGroups no mount do
@@ -2035,16 +2040,19 @@ function FolderSidebar({
       {bridgeView === "mail" ? (
         <>
           {/* Seletor de caixa (#111): contexto do módulo Mailbox. Minha caixa
-              (/me) é o padrão; caixas compartilhadas ficam abaixo. */}
-          <SeletorCaixa
-            caixas={caixas}
-            ativa={caixaAtiva}
-            emailProprio={emailProprio}
-            onSelecionar={onSelecionarCaixa}
-            onAdicionar={onAbrirAdicionarCaixa}
-            colapsada={colapsada}
-            t={t}
-          />
+              (/me) é o padrão; caixas compartilhadas ficam abaixo.
+              #712: só no tier org — feature de organização. */}
+          {recursoOrgDisponivel && (
+            <SeletorCaixa
+              caixas={caixas}
+              ativa={caixaAtiva}
+              emailProprio={emailProprio}
+              onSelecionar={onSelecionarCaixa}
+              onAdicionar={onAbrirAdicionarCaixa}
+              colapsada={colapsada}
+              t={t}
+            />
+          )}
           {caixaCompartilhada && !colapsada ? (
             <p className="px-1 text-xs text-muted-foreground">
               {t.controlRoom.caixaCompartilhadaDesc}
@@ -6266,9 +6274,11 @@ export function ControlRoomScreen({
   const { idioma, t } = useIdioma();
   // Fotos de contatos (#39): só buscamos avatar de remetente do MESMO domínio do
   // tenant (o do usuário logado). Configura o domínio do cache aqui.
+  // #712 (PS6 follow-on): fotos de remetentes internos são feature de ORG — no
+  // tier pessoal/uncontracted desliga o domínio (null) → tudo cai nas iniciais.
   useEffect(() => {
-    configurarDominioFotos(user.email);
-  }, [user.email]);
+    configurarDominioFotos(recursoOrgDisponivel(user) ? user.email : null);
+  }, [user]);
   const bridgeView = useAppStore((s) => s.bridgeView);
   const setBridgeView = useAppStore((s) => s.setBridgeView);
   // Caixas compartilhadas (#111): lista de endereços adicionados (persistida) +
