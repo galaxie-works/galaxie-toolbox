@@ -1,0 +1,27 @@
+[package]
+name = "galaxie-remote-net"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+argon2 = { version = "0.5.3", default-features = false, features = ["alloc"] }
+base64 = "0.22.1"
+ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
+opaque-ke = { version = "3.0.0", features = ["argon2", "ristretto255", "std"] }
+rand = "0.8.5"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+zeroize = { version = "1.8.2", features = ["derive"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Cryptography",
+  "Win32_System_Memory",
+] }
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
