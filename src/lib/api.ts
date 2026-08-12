@@ -2999,3 +2999,59 @@ export async function listarDirStreamed(
     desligar();
   }
 }
+
+// --- Mutações do Explorer (#679 S3) — delete → Lixeira é o padrão ------------
+// Fora do Tauri (mock) são no-op (a UI é validada no app real). Erros tipados
+// (FsError) chegam do backend.
+
+/** Token interno que autoriza a exclusão PERMANENTE — o gate real é o
+ *  Shift+confirmação na UI, que só então chama `excluirPermanente`. */
+const TOKEN_EXCLUSAO_PERMANENTE = "galaxie-excluir-permanente";
+
+/** Cria uma pasta nova (erra se já existe). */
+export async function criarPasta(path: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_create_dir", { path });
+}
+
+/** Cria um arquivo novo (erra se já existe); `contents` opcional. */
+export async function criarArquivo(
+  path: string,
+  contents?: string,
+): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_create_file", { path, contents: contents ?? null });
+}
+
+/** Renomeia (mesma pasta) — conflito de nome barrado no backend. */
+export async function renomear(from: string, to: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_rename", { from, to });
+}
+
+/** Copia arquivo/pasta (recursivo). */
+export async function copiar(from: string, to: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_copy", { from, to });
+}
+
+/** Move (rename rápido; fallback copy+delete cross-volume). */
+export async function mover(from: string, to: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_move", { from, to });
+}
+
+/** Manda os itens pra Lixeira do SO (reversível). Padrão do delete. */
+export async function paraLixeira(paths: string[]): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_trash", { paths });
+}
+
+/** Apaga PERMANENTEMENTE (sem Lixeira). Só depois do Shift+confirmação na UI. */
+export async function excluirPermanente(paths: string[]): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_delete_permanent", {
+    paths,
+    confirmToken: TOKEN_EXCLUSAO_PERMANENTE,
+  });
+}

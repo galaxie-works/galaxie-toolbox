@@ -408,6 +408,136 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
     }])
 }
 
+// ────────────────────────── Mutações (S3, #679) ─────────────────────────────
+// Delete → Lixeira é o PADRÃO (reversível); permanente só com token de
+// confirmação (o front manda depois do Shift+confirmar). Tudo tipado em FsError.
+
+/// Token que o front envia pra confirmar exclusão PERMANENTE. Sem ele,
+/// `excluir_permanente` recusa — trava contra apagar sem querer.
+pub const TOKEN_EXCLUSAO_PERMANENTE: &str = "galaxie-excluir-permanente";
+
+fn criar_dir(path: &str) -> Result<(), FsError> {
+    validar(path)?;
+    // `create_dir` (não `_all`) → AlreadyExists se a pasta já existe.
+    std::fs::create_dir(com_long_path(Path::new(path)))?;
+    Ok(())
+}
+
+fn criar_arquivo(path: &str, contents: Option<String>) -> Result<(), FsError> {
+    use std::io::Write;
+    validar(path)?;
+    // `create_new` é atômico: erra AlreadyExists sem sobrescrever.
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(com_long_path(Path::new(path)))?;
+    if let Some(c) = contents {
+        f.write_all(c.as_bytes())?;
+    }
+    Ok(())
+}
+
+fn renomear(from: &str, to: &str) -> Result<(), FsError> {
+    validar(from)?;
+    validar(to)?;
+    let dest = com_long_path(Path::new(to));
+    if dest.exists() {
+        return Err(FsError::AlreadyExists(to.to_string()));
+    }
+    std::fs::rename(com_long_path(Path::new(from)), dest)?;
+    Ok(())
+}
+
+/// Copia arquivo (std) ou pasta (recursiva + paralela via rayon). Conflito de
+/// arquivo no destino → AlreadyExists.
+fn copiar(from: &str, to: &str) -> Result<(), FsError> {
+    validar(from)?;
+    validar(to)?;
+    let src = Path::new(from);
+    let dst = Path::new(to);
+    if std::fs::symlink_metadata(com_long_path(src))?.is_dir() {
+        copiar_dir(src, dst)
+    } else {
+        if com_long_path(dst).exists() {
+            return Err(FsError::AlreadyExists(to.to_string()));
+        }
+        std::fs::copy(com_long_path(src), com_long_path(dst))?;
+        Ok(())
+    }
+}
+
+fn copiar_dir(src: &Path, dst: &Path) -> Result<(), FsError> {
+    use rayon::prelude::*;
+    std::fs::create_dir_all(com_long_path(dst))?;
+    let entradas: Vec<std::fs::DirEntry> = std::fs::read_dir(com_long_path(src))?
+        .filter_map(Result::ok)
+        .collect();
+    entradas.par_iter().try_for_each(|e| -> Result<(), FsError> {
+        let origem = e.path();
+        let nome = origem
+            .file_name()
+            .ok_or_else(|| FsError::InvalidPath(caminho_limpo(&origem)))?;
+        let alvo = dst.join(nome);
+        if e.file_type()?.is_dir() {
+            copiar_dir(&origem, &alvo)
+        } else {
+            std::fs::copy(com_long_path(&origem), com_long_path(&alvo))?;
+            Ok(())
+        }
+    })
+}
+
+/// Move: rename rápido (mesmo volume); se falhar (cross-volume), copia+apaga.
+fn mover(from: &str, to: &str) -> Result<(), FsError> {
+    validar(from)?;
+    validar(to)?;
+    let dest = com_long_path(Path::new(to));
+    if dest.exists() {
+        return Err(FsError::AlreadyExists(to.to_string()));
+    }
+    if std::fs::rename(com_long_path(Path::new(from)), &dest).is_ok() {
+        return Ok(());
+    }
+    // Fallback cross-volume: copia recursivo e apaga a origem.
+    copiar(from, to)?;
+    remover(from)
+}
+
+fn remover(path: &str) -> Result<(), FsError> {
+    let p = Path::new(path);
+    if std::fs::symlink_metadata(com_long_path(p))?.is_dir() {
+        std::fs::remove_dir_all(com_long_path(p))?;
+    } else {
+        std::fs::remove_file(com_long_path(p))?;
+    }
+    Ok(())
+}
+
+/// Manda os itens pra Lixeira do SO (batch, reversível pelo usuário).
+fn para_lixeira(paths: &[String]) -> Result<(), FsError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    for p in paths {
+        validar(p)?;
+    }
+    trash::delete_all(paths).map_err(|e| FsError::Io(format!("lixeira: {e}")))
+}
+
+/// Apaga PERMANENTEMENTE (sem Lixeira) — exige o token de confirmação.
+fn excluir_permanente(paths: &[String], confirm_token: &str) -> Result<(), FsError> {
+    if confirm_token != TOKEN_EXCLUSAO_PERMANENTE {
+        return Err(FsError::InvalidPath(
+            "exclusão permanente requer confirmação".into(),
+        ));
+    }
+    for p in paths {
+        validar(p)?;
+        remover(p)?;
+    }
+    Ok(())
+}
+
 // ────────────────────────────── Comandos ────────────────────────────────────
 
 fn spawn_err(e: tauri::Error) -> FsError {
@@ -470,6 +600,60 @@ pub async fn fs_reveal(path: String) -> Result<(), FsError> {
 #[tauri::command]
 pub async fn fs_open(path: String) -> Result<(), FsError> {
     crate::system::abrir_caminho(&path).map_err(FsError::Io)
+}
+
+// --- Mutações (#679 S3) ---
+
+#[tauri::command]
+pub async fn fs_create_dir(path: String) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || criar_dir(&path))
+        .await
+        .map_err(spawn_err)?
+}
+
+#[tauri::command]
+pub async fn fs_create_file(path: String, contents: Option<String>) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || criar_arquivo(&path, contents))
+        .await
+        .map_err(spawn_err)?
+}
+
+#[tauri::command]
+pub async fn fs_rename(from: String, to: String) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || renomear(&from, &to))
+        .await
+        .map_err(spawn_err)?
+}
+
+#[tauri::command]
+pub async fn fs_copy(from: String, to: String) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || copiar(&from, &to))
+        .await
+        .map_err(spawn_err)?
+}
+
+#[tauri::command]
+pub async fn fs_move(from: String, to: String) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || mover(&from, &to))
+        .await
+        .map_err(spawn_err)?
+}
+
+#[tauri::command]
+pub async fn fs_trash(paths: Vec<String>) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || para_lixeira(&paths))
+        .await
+        .map_err(spawn_err)?
+}
+
+#[tauri::command]
+pub async fn fs_delete_permanent(
+    paths: Vec<String>,
+    confirm_token: String,
+) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || excluir_permanente(&paths, &confirm_token))
+        .await
+        .map_err(spawn_err)?
 }
 
 // ─────────────────────────────── Testes ─────────────────────────────────────
@@ -553,5 +737,76 @@ mod tests {
         ordenar(&mut v);
         let ordem: Vec<&str> = v.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(ordem, ["abacaxi", "Zebra", "Ana.doc", "banana.txt"]);
+    }
+
+    // --- Mutações (#679 S3) — em tmpdir real, sem tocar a Lixeira do SO ---
+
+    fn temp_unico() -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("gt-fsx-{}-{}", std::process::id(), n))
+    }
+
+    fn s(p: &std::path::Path) -> String {
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn mutacoes_criam_renomeiam_copiam_movem_e_apagam() {
+        let base = temp_unico();
+        std::fs::create_dir_all(&base).unwrap();
+
+        // create_dir + conflito
+        let d = base.join("pasta");
+        criar_dir(&s(&d)).unwrap();
+        assert!(d.is_dir());
+        assert!(matches!(criar_dir(&s(&d)).unwrap_err(), FsError::AlreadyExists(_)));
+
+        // create_file com conteúdo + conflito (não sobrescreve)
+        let f = base.join("a.txt");
+        criar_arquivo(&s(&f), Some("oi".into())).unwrap();
+        assert_eq!(std::fs::read_to_string(&f).unwrap(), "oi");
+        assert!(matches!(
+            criar_arquivo(&s(&f), Some("outro".into())).unwrap_err(),
+            FsError::AlreadyExists(_)
+        ));
+
+        // rename + conflito
+        let f2 = base.join("b.txt");
+        renomear(&s(&f), &s(&f2)).unwrap();
+        assert!(!f.exists() && f2.exists());
+        let c = base.join("c.txt");
+        criar_arquivo(&s(&c), None).unwrap();
+        assert!(matches!(renomear(&s(&f2), &s(&c)).unwrap_err(), FsError::AlreadyExists(_)));
+
+        // copy de arquivo e de pasta (recursivo)
+        std::fs::write(d.join("dentro.txt"), "x").unwrap();
+        let d2 = base.join("pasta-copia");
+        copiar(&s(&d), &s(&d2)).unwrap();
+        assert!(d2.join("dentro.txt").exists() && d.exists());
+
+        // move: rename mesmo volume
+        let d3 = base.join("pasta-movida");
+        mover(&s(&d2), &s(&d3)).unwrap();
+        assert!(!d2.exists() && d3.join("dentro.txt").exists());
+
+        // delete permanente: recusa sem token, apaga com token
+        assert!(matches!(
+            excluir_permanente(&[s(&f2)], "errado").unwrap_err(),
+            FsError::InvalidPath(_)
+        ));
+        assert!(f2.exists());
+        excluir_permanente(&[s(&f2), s(&d3)], TOKEN_EXCLUSAO_PERMANENTE).unwrap();
+        assert!(!f2.exists() && !d3.exists());
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn caminho_vazio_barra_mutacoes() {
+        assert!(matches!(criar_dir("").unwrap_err(), FsError::InvalidPath(_)));
+        assert!(matches!(renomear("", "x").unwrap_err(), FsError::InvalidPath(_)));
+        assert!(matches!(copiar("a", "").unwrap_err(), FsError::InvalidPath(_)));
     }
 }
