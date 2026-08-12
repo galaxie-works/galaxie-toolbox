@@ -105,12 +105,26 @@ const MOCK_DETALHES: Record<string, { files: number; bytes: number }> = {
  * pelo loopback em Rust, fora do React — sem isso ela sairia sempre em
  * portugues.
  */
-export async function login(email: string, idioma: string): Promise<AppUser> {
+/** Provider de identidade (#692 app público). `microsoft` = org + pessoal (o
+ *  backend PS0/PS1 escolhe o app-registration pelo tipo de conta); `google` = PS3. */
+export type AuthProvider = "microsoft" | "google";
+
+/**
+ * `email` agora é `login_hint` OPCIONAL (#695): o provider é a porta, não o e-mail.
+ * `provider` é passado ao backend, que escolhe o registration certo (org de
+ * produção vs 2º registration pessoal, PS0/PS1); comandos Tauri ignoram extras
+ * até o backend ligar o param.
+ */
+export async function login(
+  email: string,
+  idioma: string,
+  provider: AuthProvider = "microsoft"
+): Promise<AppUser> {
   if (!inTauri()) {
     await sleep(800);
-    return { ...MOCK_USER, email };
+    return { ...MOCK_USER, email: email || MOCK_USER.email };
   }
-  return invoke<AppUser>("login", { email, idioma });
+  return invoke<AppUser>("login", { email, idioma, provider });
 }
 
 /** Descobre o tenant pelo dominio do e-mail (sem logar). */
