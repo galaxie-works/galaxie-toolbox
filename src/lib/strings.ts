@@ -30,6 +30,9 @@ const pt = {
     ajudaEmail: "Usamos o domínio do seu e-mail para identificar a sua organização.",
     entrar: "Entrar com Microsoft",
     entrando: "Abrindo o login da Microsoft...",
+    // #695 (app público): botões de provider — a porta de entrada.
+    continuarMicrosoft: "Continuar com Microsoft",
+    continuarGoogle: "Continuar com Google",
     // {senha} recebe destaque em negrito
     aviso: "O login acontece na página oficial da Microsoft. A GALAXIE {senha} — recebe só a autorização de acesso.",
     avisoSenha: "nunca vê sua senha",
@@ -1763,6 +1766,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     ajudaEmail: "We use your email domain to identify your organization.",
     entrar: "Sign in with Microsoft",
     entrando: "Opening the Microsoft sign-in...",
+    // #695 (public app): provider buttons — the front door.
+    continuarMicrosoft: "Continue with Microsoft",
+    continuarGoogle: "Continue with Google",
     aviso:
       "Sign-in happens on Microsoft's official page. GALAXIE {senha} — it only gets an access authorization.",
     avisoSenha: "never sees your password",

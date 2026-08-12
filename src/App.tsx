@@ -387,7 +387,7 @@ function AppInner() {
     void revelarAppEFecharSplash();
   }, [bootPronto, videoPronto]);
 
-  async function handleLogin(email: string) {
+  async function handleLogin(provider: api.AuthProvider, hint: string) {
     setLoginLoading(true);
     setError(null);
     // #555 (P0): fronteira de conta — zera TODO o estado tenant-scoped (mailbox,
@@ -395,7 +395,9 @@ function AppInner() {
     // conta, pra a conta nova não herdar dado do tenant anterior.
     resetSessaoCompleta();
     try {
-      const u = await api.login(email, idioma);
+      // #695: `hint` = login_hint OPCIONAL; `provider` escolhe a porta (o backend
+      // PS0/PS1 mapeia pro registration certo — org de produção vs pessoal).
+      const u = await api.login(hint, idioma, provider);
       prepararConfiguracaoNuvem(u.email);
       setUser(u);
       void reconciliarConfiguracaoNuvem().catch(() => {
@@ -1018,7 +1020,9 @@ function AppInner() {
             user={user}
             ativo={tela === "control-room"}
             onGrantPeopleAccess={() => {
-              void handleLogin(user.email);
+              // #695: re-login da MESMA conta (já logada) pra conceder People —
+              // provider "microsoft" (org/pessoal; Google é PS3), hint = e-mail atual.
+              void handleLogin("microsoft", user.email);
             }}
             onReauthenticate={() => {
               void logout();

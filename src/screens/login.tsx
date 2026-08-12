@@ -9,10 +9,11 @@ import { BarraJanela, FaixaArrasto } from "@/components/barra-janela";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { Alert, AlertDescription } from "@/components/reui/alert";
 import { Spinner } from "@/components/ui/spinner";
+import type { AuthProvider } from "@/lib/api";
 import { comDestaque, useIdioma } from "@/lib/idioma";
 import { ShieldCheck, AlertTriangle } from "lucide-react";
 
-/** Logo colorido da Microsoft para o botao de entrar. */
+/** Logo colorido da Microsoft (4 quadrados) pro botão de provider. */
 function MsLogo() {
   return (
     <svg viewBox="0 0 21 21" className="size-4" aria-hidden>
@@ -24,25 +25,43 @@ function MsLogo() {
   );
 }
 
-const EMAIL_RX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+/** Logo colorido do Google (o "G" de 4 cores) pro botão de provider (#695/PS3). */
+function GoogleLogo() {
+  return (
+    <svg viewBox="0 0 48 48" className="size-4" aria-hidden>
+      <path
+        fill="#ffc107"
+        d="M43.6 20.5H42V20H24v8h11.3C33.7 32.9 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"
+      />
+      <path
+        fill="#ff3d00"
+        d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34.1 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"
+      />
+      <path
+        fill="#4caf50"
+        d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.1-11.3-7.5l-6.5 5C9.6 39.6 16.2 44 24 44z"
+      />
+      <path
+        fill="#1976d2"
+        d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.6l6.2 5.2C41.2 35.6 44 30.2 44 24c0-1.3-.1-2.4-.4-3.5z"
+      />
+    </svg>
+  );
+}
 
 export function LoginScreen({
   onLogin,
   loading,
   error,
 }: {
-  onLogin: (email: string) => void;
+  onLogin: (provider: AuthProvider, hint: string) => void;
   loading: boolean;
   error?: string | null;
 }) {
   const { t } = useIdioma();
+  // #695: o e-mail agora é `login_hint` OPCIONAL — o provider é a porta, não o
+  // e-mail; sem validação obrigatória (pode logar direto no botão).
   const [email, setEmail] = useState("");
-  const valido = EMAIL_RX.test(email.trim());
-
-  function enviar(e: React.FormEvent) {
-    e.preventDefault();
-    if (valido && !loading) onLogin(email.trim());
-  }
 
   return (
     <div className="relative grid h-full place-items-center overflow-hidden px-6">
@@ -71,14 +90,51 @@ export function LoginScreen({
           </SoftBlurIn>
         </div>
 
-        <form onSubmit={enviar} className="mt-9">
-          <label htmlFor="email" className="mb-1.5 block text-[13px] font-medium">
+        <div className="mt-9">
+          {/* Botões de provider — a porta de entrada (#695). Microsoft cobre org
+              e conta pessoal (o backend escolhe o registration); Google é PS3. */}
+          <div className="flex flex-col gap-2.5">
+            <Button
+              size="lg"
+              className="w-full gap-3 text-[15px]"
+              disabled={loading}
+              onClick={() => onLogin("microsoft", email.trim())}
+            >
+              {loading ? (
+                <>
+                  <Spinner data-icon="inline-start" />
+                  {t.login.entrando}
+                </>
+              ) : (
+                <>
+                  <MsLogo />
+                  {t.login.continuarMicrosoft}
+                </>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              className="w-full gap-3 text-[15px]"
+              disabled={loading}
+              onClick={() => onLogin("google", email.trim())}
+            >
+              <GoogleLogo />
+              {t.login.continuarGoogle}
+            </Button>
+          </div>
+
+          {/* E-mail = `login_hint` OPCIONAL: acelera o provider já sabendo a conta,
+              mas não é mais a porta única. */}
+          <label
+            htmlFor="email"
+            className="mt-6 mb-1.5 block text-[13px] font-medium"
+          >
             {t.login.rotuloEmail}
           </label>
           <Input
             id="email"
             type="email"
-            autoFocus
             autoComplete="username"
             spellCheck={false}
             placeholder={t.login.placeholderEmail}
@@ -89,25 +145,6 @@ export function LoginScreen({
           <p className="mt-1.5 text-[11.5px] text-muted-foreground">
             {t.login.ajudaEmail}
           </p>
-
-          <Button
-            type="submit"
-            size="lg"
-            className="mt-4 w-full gap-3 text-[15px]"
-            disabled={!valido || loading}
-          >
-            {loading ? (
-              <>
-                <Spinner data-icon="inline-start" />
-                {t.login.entrando}
-              </>
-            ) : (
-              <>
-                <MsLogo />
-                {t.login.entrar}
-              </>
-            )}
-          </Button>
 
           <Alert variant="success" className="mt-5">
             <ShieldCheck />
@@ -122,7 +159,7 @@ export function LoginScreen({
               <AlertDescription data-selecionavel>{error}</AlertDescription>
             </Alert>
           )}
-        </form>
+        </div>
       </div>
 
       {/* Idioma e tema no rodape: as duas escolhas ficam salvas e valem para
