@@ -21,6 +21,27 @@ export interface Site {
   files?: number;
 }
 
+// ── Identidade multi-provider (#693, App público PS0) ───────────────────────
+
+export type Provider = "microsoft" | "google";
+export type AccountKind = "work" | "personal";
+export type OrgStatus = "contracted" | "uncontracted" | "none";
+
+/** Capabilities de produto (a UI checa capability, não scope cru). Espelha o
+ *  `Capability` do Rust (camelCase). */
+export type Capability =
+  | "identity"
+  | "mailRead"
+  | "mailReadWrite"
+  | "mailSend"
+  | "calendar"
+  | "contacts"
+  | "tasks"
+  | "filePicker"
+  | "filesReadAll"
+  | "directoryRead"
+  | "orgAdmin";
+
 export interface AppUser {
   displayName: string;
   email: string;
@@ -29,6 +50,16 @@ export interface AppUser {
   photo?: string | null;
   /** Nome da organizacao, exibido no topo da sidebar. */
   organizacao?: string | null;
+  // #693: eixos de identidade multi-provider.
+  provider: Provider;
+  accountKind: AccountKind;
+  orgStatus: OrgStatus;
+  /** Domínio da org (só work). */
+  domain?: string | null;
+  /** Tenant do Entra (só work). */
+  tenantId?: string | null;
+  /** Capabilities concedidas neste token. */
+  capabilities: Capability[];
 }
 
 /** Identidade em cache, usada na tela de carregamento (sem rede). */

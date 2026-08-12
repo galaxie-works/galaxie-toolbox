@@ -16,6 +16,12 @@
 /// publico com PKCE, sem secret.
 pub const CLIENT_ID: &str = "214d735e-eb9b-4052-8851-578d3bd91627";
 
+/// Tenant "sintetico" das contas Microsoft PESSOAIS (live/hotmail/outlook). O
+/// Entra usa este GUID fixo pra distinguir conta pessoal de conta de trabalho
+/// (#693, App publico): tenant == este => accountKind personal. Ver
+/// auth::classificar.
+pub const MS_PERSONAL_TENANT: &str = "9188040d-6c67-4c5b-b112-36a304b66dad";
+
 /// Escopos delegados que o app PEDE no login. offline_access garante
 /// refresh_token. So Microsoft Graph — o app tem muito mais permissao concedida
 /// no registro, mas pedimos so o que cada feature usa (token enxuto, tela de
