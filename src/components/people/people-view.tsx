@@ -160,6 +160,8 @@ import { ContactMergeSheet } from "@/components/people/contact-merge-sheet";
 import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
 import { useIdioma, preencher } from "@/lib/idioma";
+import { useTier } from "@/lib/tier-context";
+import { RecursoOrgEmpty } from "@/components/recurso-org-empty";
 import { type PeopleContact } from "@/lib/people";
 import {
   contactDomain,
@@ -2409,6 +2411,8 @@ export function PeopleView({
   const loaded = useAppStore((state) => state.peopleLoaded);
   const error = useAppStore((state) => state.peopleError);
   const missingScopes = useAppStore((state) => state.peopleMissingScopes);
+  // #712 (PS6 follow-on): diretório da org é feature de ORG — gate por tier.
+  const { recursoOrgDisponivel } = useTier();
   const nextLinks = useAppStore((state) => state.peopleNextLinks);
   const fetchingMore = useAppStore((state) => state.peopleFetchingMore);
   const directory = useAppStore((state) => state.peopleDirectory);
@@ -3127,6 +3131,11 @@ export function PeopleView({
 
       <div className="flex min-h-0 flex-1">
         {(() => {
+          // #712 (PS6 follow-on): o diretório da organização é feature de ORG —
+          // no tier pessoal/uncontracted vira empty-state de tier (não erro).
+          if (peopleTab === "directory" && !recursoOrgDisponivel) {
+            return <RecursoOrgEmpty className="m-4 flex-1" />;
+          }
           const listPane = (
             <Frame
               className="h-full min-h-0 min-w-0 overflow-hidden"
