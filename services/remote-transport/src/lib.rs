@@ -9,6 +9,7 @@
 //!   que transmitir/quando ([`Passo`]).
 
 pub mod bridge;
+pub mod command;
 pub mod frame;
 pub mod signaling;
 pub mod stats;
@@ -20,7 +21,8 @@ pub mod stats;
 pub mod session;
 
 pub use bridge::{FrameBridge, FrameFim};
-pub use frame::{CodedFrame, CodedFrameSource, DummyFrameSource};
+pub use command::{canal_de_comandos, CommandChannel, CommandReceiver, EncoderCommand};
+pub use frame::{canal_de_frames, CodedFrame, CodedFrameSource, DummyFrameSource, FrameSender};
 pub use signaling::{
     IceServer, RecordingSignaling, SignalMessage, SignalingChannel, SignalingError,
 };

@@ -34,11 +34,24 @@ impl CodedFrame {
     }
 }
 
-/// Fonte de frames codificados. O S1 implementa com o encoder real; o S2 testa
-/// com [`DummyFrameSource`]. `next_frame` BLOQUEIA até o próximo frame e devolve
-/// `None` quando a fonte encerra (ex.: captura parou). O transporte roda a fonte
-/// numa thread própria e repassa os frames pro loop sans-I/O do str0m por canal,
-/// pra o ritmo do encoder não travar o loop de rede.
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+
+/// **Contrato de entrega APROVADO (Orion):** o encoder (S1) faz **PUSH** dos
+/// frames num canal BOUNDED. Bounded = backpressure: se o transporte não drena
+/// (rede lenta), o `send` bloqueia em vez de estourar memória. É este o `Sender`
+/// que o encoder recebe.
+pub type FrameSender = SyncSender<CodedFrame>;
+
+/// Cria o par encoder→transporte. `capacidade` = quantos frames o canal segura
+/// antes de aplicar backpressure (ex.: 8–16 frames).
+pub fn canal_de_frames(capacidade: usize) -> (FrameSender, Receiver<CodedFrame>) {
+    sync_channel(capacidade.max(1))
+}
+
+/// Fonte de frames por PULL — alternativa/legado ao PUSH. O S1 usa o `FrameSender`
+/// (push); esta trait serve pra fontes que só sabem entregar por pull, adaptadas
+/// pra push por uma [`crate::bridge::FrameBridge`]. `next_frame` BLOQUEIA até o
+/// próximo frame e devolve `None` quando a fonte encerra.
 pub trait CodedFrameSource: Send {
     fn next_frame(&mut self) -> Option<CodedFrame>;
 }
@@ -123,5 +136,18 @@ mod tests {
         // timestamp avança 1/30s = ~33333us por frame
         assert_eq!(frames[0].timestamp_us, 0);
         assert_eq!(frames[1].timestamp_us, 33_333);
+    }
+
+    #[test]
+    fn canal_push_entrega_frames_bounded() {
+        let (tx, rx) = canal_de_frames(4);
+        tx.send(CodedFrame::new(vec![0, 0, 0, 1, 9], 0, true))
+            .unwrap();
+        tx.send(CodedFrame::new(vec![0, 0, 0, 1, 8], 33_333, false))
+            .unwrap();
+        let a = rx.recv().unwrap();
+        let b = rx.recv().unwrap();
+        assert!(a.keyframe && !b.keyframe);
+        assert_eq!(b.timestamp_us, 33_333);
     }
 }

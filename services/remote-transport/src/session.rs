@@ -16,6 +16,7 @@ use str0m::media::{Direction, MediaKind, MediaTime, Mid};
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc};
 
+use crate::command::CommandChannel;
 use crate::frame::CodedFrame;
 use crate::signaling::{IceServer, SignalMessage};
 use crate::stats::Stats;
@@ -80,12 +81,15 @@ pub struct Transport {
     mid_video: Option<Mid>,
     canal_controle: Option<ChannelId>,
     pending: Option<SdpPendingOffer>,
+    /// Via S2→S1: quando o peer manda PLI, pedimos keyframe ao encoder (coalescido).
+    comando_encoder: CommandChannel,
 }
 
 impl Transport {
     /// Cria a sessão. O str0m já habilita H.264/VP8/Opus por padrão; a mídia de
-    /// vídeo é negociada como H.264 quando os dois lados suportam.
-    pub fn novo(cfg: SessionConfig) -> Self {
+    /// vídeo é negociada como H.264 quando os dois lados suportam. `comando_encoder`
+    /// é o lado-transporte do canal de comandos (o encoder fica com o receiver).
+    pub fn novo(cfg: SessionConfig, comando_encoder: CommandChannel) -> Self {
         // ICE lite off (queremos ICE completo com relay via coturn). Os candidatos
         // (host/srflx/relay) são adicionados pelo app conforme o gathering.
         let rtc = Rtc::new();
@@ -97,6 +101,7 @@ impl Transport {
             mid_video: None,
             canal_controle: None,
             pending: None,
+            comando_encoder,
         }
     }
 
@@ -251,6 +256,11 @@ impl Transport {
                 }
             }
             Event::ChannelData(d) => Passo::Evento(EventoSessao::Controle(d.data)),
+            // PLI/keyframe request do peer → pede IDR ao encoder (coalescido).
+            Event::KeyframeRequest(_) => {
+                self.comando_encoder.pedir_keyframe();
+                Passo::Aguardar(Instant::now())
+            }
             _ => Passo::Aguardar(Instant::now()),
         }
     }
