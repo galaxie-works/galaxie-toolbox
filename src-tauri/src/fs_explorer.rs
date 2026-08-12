@@ -72,8 +72,9 @@ pub struct DriveInfo {
     pub name: String,
     /// `fixed` | `removable` | `network` | `cdrom` | `ramdisk` | `unknown`.
     pub kind: String,
-    pub total_bytes: u64,
-    pub free_bytes: u64,
+    // Contrato congelado com o S1 (#677/Vega): `totalSpace`/`freeSpace`.
+    pub total_space: u64,
+    pub free_space: u64,
 }
 
 /// Tamanho agregado de uma pasta (varredura recursiva com `jwalk`).
@@ -386,8 +387,8 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
             path: raiz,
             name: nome,
             kind: kind.to_string(),
-            total_bytes: total,
-            free_bytes: free,
+            total_space: total,
+            free_space: free,
         });
     }
     Ok(drives)
@@ -402,8 +403,8 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
         path: "/".into(),
         name: String::new(),
         kind: "fixed".into(),
-        total_bytes: 0,
-        free_bytes: 0,
+        total_space: 0,
+        free_space: 0,
     }])
 }
 

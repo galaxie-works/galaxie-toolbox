@@ -582,8 +582,8 @@ export interface DriveInfo {
   path: string;
   name: string;
   kind: "fixed" | "removable" | "network" | "cdrom" | "ramdisk" | "unknown";
-  totalBytes: number;
-  freeBytes: number;
+  totalSpace: number;
+  freeSpace: number;
 }
 
 /** Tamanho agregado de uma pasta (varredura recursiva). */

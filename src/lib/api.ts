@@ -2850,15 +2850,15 @@ const MOCK_DRIVES: DriveInfo[] = [
     path: "C:\\",
     name: "Windows",
     kind: "fixed",
-    totalBytes: 512_000_000_000,
-    freeBytes: 128_000_000_000,
+    totalSpace: 512_000_000_000,
+    freeSpace: 128_000_000_000,
   },
   {
     path: "D:\\",
     name: "Dados",
     kind: "fixed",
-    totalBytes: 1_000_000_000_000,
-    freeBytes: 640_000_000_000,
+    totalSpace: 1_000_000_000_000,
+    freeSpace: 640_000_000_000,
   },
 ];
 
