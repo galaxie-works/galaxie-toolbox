@@ -63,13 +63,44 @@ pub const MS_PERSONAL_TENANT: &str = "9188040d-6c67-4c5b-b112-36a304b66dad";
 // OrganizationalBranding.Read.All (#541): logo do tenant (claro/escuro) do Entra
 // branding pro header do sidebar. Admin consent do tenant JÁ concedido; escopo
 // novo no pedido → entra no MESMO relogin pendente do Org Admin/#424 + shared/#495.
-pub const SCOPES: &str = "openid profile offline_access \
-     User.Read User.Read.All Directory.Read.All Files.ReadWrite Sites.Read.All OrganizationalBranding.Read.All \
-     Calendars.ReadWrite Calendars.ReadWrite.Shared MailboxSettings.ReadWrite Mail.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send Mail.Send.Shared Tasks.ReadWrite \
-     People.Read Contacts.ReadWrite Contacts.ReadWrite.Shared \
+// #694 (App público PS1): SCOPES separados em BASE (user-consentable, sem admin —
+// TODA conta pede) e ORG (admin-consent — só org contratada adiciona). A UNIÃO
+// BASE+ORG é exatamente o pedido org de antes, então o fluxo org não regride.
+//
+// BASE: login pessoal/Google também consegue consentir sem admin do tenant.
+pub const SCOPES_BASE: &str = "openid profile offline_access \
+     User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Tasks.ReadWrite Files.ReadWrite \
+     People.Read Contacts.ReadWrite";
+
+// ORG: exigem admin consent (Sites/Directory/*.Shared/MultiTenant/OrgSettings/…).
+// Admin consent do tenant JÁ concedido (ver comentários acima); só entram no
+// pedido de conta org contratada.
+pub const SCOPES_ORG: &str = "User.Read.All Directory.Read.All Sites.Read.All OrganizationalBranding.Read.All \
+     Calendars.ReadWrite.Shared MailboxSettings.ReadWrite Mail.Read.Shared Mail.ReadWrite.Shared Mail.Send.Shared \
+     Contacts.ReadWrite.Shared \
      MultiTenantOrganization.Read.All Application.Read.All ServicePrincipalEndpoint.Read.All \
      OrgSettings-AppsAndServices.Read.All OrgSettings-Forms.Read.All OrgSettings-Microsoft365Install.Read.All \
      OrgSettings-Todo.Read.All OrgSettings-Todo.ReadWrite.All";
+
+/// Authority de conta pessoal/roteamento genérico (MS não-org). `common` aceita
+/// org E pessoal; `consumers` é só pessoal. Distinto de um tenant GUID (org).
+pub const COMMON_AUTHORITY: &str = "common";
+
+/// A authority `tenant` representa uma ORG (tenant GUID) — não o caminho comum
+/// (`common`/`consumers`) do pessoal? Decide o conjunto de scopes e o endpoint.
+pub fn eh_org(tenant: &str) -> bool {
+    !tenant.eq_ignore_ascii_case("common") && !tenant.eq_ignore_ascii_case("consumers")
+}
+
+/// Scopes a pedir por authority: só BASE no caminho comum (pessoal), BASE+ORG na
+/// org contratada (tenant). Ordem não importa pro Entra.
+pub fn scopes_para(tenant: &str) -> String {
+    if eh_org(tenant) {
+        format!("{SCOPES_BASE} {SCOPES_ORG}")
+    } else {
+        SCOPES_BASE.to_string()
+    }
+}
 
 pub fn client_id() -> String {
     // GALAXIE_CLIENT_ID permite apontar para outro registro sem recompilar

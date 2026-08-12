@@ -252,18 +252,22 @@ fn provider_de_str(s: &str) -> Provider {
     }
 }
 
-/// Escopos Graph pedidos pela versão atual mas ausentes no token em memória.
+/// Escopos Graph do conjunto `wanted` (o pedido desta conta — BASE ou BASE+ORG)
+/// ausentes no token em memória.
 ///
 /// `openid`, `profile` e `offline_access` controlam autenticação/sessão e podem
 /// não aparecer no campo `scope` de um access token mesmo quando o login está
 /// correto. Compará-los como permissões de recurso falso-positivaria o aviso.
-pub fn required_resource_scopes_missing(actual_scopes: &str) -> Vec<String> {
+///
+/// #694: `wanted` vem de `config::scopes_para(tenant)` — org checa BASE+ORG,
+/// conta pessoal (common) checa só BASE, sem falso pedido de relogin de scope org.
+pub fn required_resource_scopes_missing(actual_scopes: &str, wanted: &str) -> Vec<String> {
     let presentes = actual_scopes
         .split_ascii_whitespace()
         .map(str::to_ascii_lowercase)
         .collect::<Vec<_>>();
 
-    config::SCOPES
+    wanted
         .split_ascii_whitespace()
         .filter(|scope| {
             !matches!(
@@ -304,10 +308,12 @@ pub fn detectar_tenant(email: &str) -> Result<TenantInfo, String> {
         .get(config::discovery_url(&dominio))
         .send()
         .map_err(|e| format!("falha ao consultar o dominio: {e}"))?;
+    // #694 (PS1): domínio não-M365 NÃO é mais parede — roteia pro caminho `common`
+    // (pessoal/Google entram por lá; org contratada segue no tenant GUID). Só o
+    // erro de rede acima ainda falha (não dá pra decidir sem consultar).
     if !resp.status().is_success() {
-        return Err(format!(
-            "'{dominio}' nao e um dominio Microsoft 365 (ou nao existe)."
-        ));
+        log::info!("[auth] '{dominio}' não é M365 → roteando pra /common");
+        return Ok(TenantInfo { tenant_id: config::COMMON_AUTHORITY.to_string(), dominio });
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let issuer = v["issuer"].as_str().unwrap_or("");
@@ -319,7 +325,8 @@ pub fn detectar_tenant(email: &str) -> Result<TenantInfo, String> {
         .unwrap_or("")
         .to_string();
     if tenant_id.is_empty() {
-        return Err("nao consegui identificar o tenant desse dominio".into());
+        // Documento OIDC sem tenant reconhecível → também cai no comum.
+        return Ok(TenantInfo { tenant_id: config::COMMON_AUTHORITY.to_string(), dominio });
     }
     Ok(TenantInfo { tenant_id, dominio })
 }
@@ -493,13 +500,14 @@ fn exchange_code(
 ) -> Result<Tokens, String> {
     let client = reqwest::blocking::Client::new();
     let cid = config::client_id();
+    let scopes = config::scopes_para(tenant); // BASE (pessoal) ou BASE+ORG (org)
     let params = [
         ("client_id", cid.as_str()),
         ("grant_type", "authorization_code"),
         ("code", code),
         ("redirect_uri", redirect_uri),
         ("code_verifier", verifier),
-        ("scope", config::SCOPES),
+        ("scope", scopes.as_str()),
     ];
     let resp = client
         .post(config::token_endpoint(tenant))
@@ -519,11 +527,12 @@ fn exchange_code(
 pub fn refresh(tenant: &str, refresh_token: &str) -> Result<Tokens, String> {
     let client = reqwest::blocking::Client::new();
     let cid = config::client_id();
+    let scopes = config::scopes_para(tenant); // #694: BASE (common) ou BASE+ORG (tenant)
     let params = [
         ("client_id", cid.as_str()),
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token),
-        ("scope", config::SCOPES),
+        ("scope", scopes.as_str()),
     ];
     let resp = client
         .post(config::token_endpoint(tenant))
@@ -740,7 +749,7 @@ pub fn interactive_login(
         endpoint = config::authorize_endpoint(tenant),
         cid = urlencoding::encode(&config::client_id()),
         ruri = urlencoding::encode(&redirect_uri),
-        scope = urlencoding::encode(config::SCOPES),
+        scope = urlencoding::encode(&config::scopes_para(tenant)),
         state = urlencoding::encode(&state),
         chal = urlencoding::encode(&challenge),
         hint = urlencoding::encode(login_hint),
@@ -927,41 +936,63 @@ mod tests {
         assert_eq!(provider_str(Provider::Google), "google");
     }
 
+    /// Pedido de uma conta org (BASE+ORG), como o `scopes_para` de um tenant GUID.
+    fn org_scopes() -> String {
+        crate::config::scopes_para("029575b8-d93d-49e3-8017-56a3eb414f48")
+    }
+
+    #[test]
+    fn scopes_por_authority_base_vs_org() {
+        // Comum (pessoal) só pede BASE; org (tenant) pede BASE+ORG.
+        let comum = crate::config::scopes_para("common");
+        assert!(comum.contains("Mail.ReadWrite") && comum.contains("offline_access"));
+        assert!(!comum.contains("Sites.Read.All") && !comum.contains("OrgSettings"));
+        let org = org_scopes();
+        assert!(org.contains("Mail.ReadWrite")); // BASE incluso
+        assert!(org.contains("Sites.Read.All") && org.contains("MultiTenantOrganization.Read.All"));
+        assert!(crate::config::eh_org("029575b8-d93d-49e3-8017-56a3eb414f48"));
+        assert!(!crate::config::eh_org("common"));
+        assert!(!crate::config::eh_org("consumers"));
+    }
+
     #[test]
     fn compara_escopos_de_recurso_sem_diferenciar_caixa() {
-        let atuais = crate::config::SCOPES
+        let alvo = org_scopes();
+        let atuais = alvo
             .split_ascii_whitespace()
             .filter(|scope| !matches!(*scope, "openid" | "profile" | "offline_access"))
             .map(str::to_ascii_uppercase)
             .collect::<Vec<_>>()
             .join(" ");
 
-        assert!(required_resource_scopes_missing(&atuais).is_empty());
+        assert!(required_resource_scopes_missing(&atuais, &alvo).is_empty());
     }
 
     #[test]
     fn devolve_apenas_o_escopo_graph_realmente_ausente() {
-        let atuais = crate::config::SCOPES
+        let alvo = org_scopes();
+        let atuais = alvo
             .split_ascii_whitespace()
             .filter(|scope| *scope != "Contacts.ReadWrite")
             .collect::<Vec<_>>()
             .join(" ");
 
         assert_eq!(
-            required_resource_scopes_missing(&atuais),
+            required_resource_scopes_missing(&atuais, &alvo),
             vec!["Contacts.ReadWrite"]
         );
     }
 
     #[test]
     fn nao_exige_escopos_de_autenticacao_no_access_token() {
-        let atuais = crate::config::SCOPES
+        let alvo = org_scopes();
+        let atuais = alvo
             .split_ascii_whitespace()
             .filter(|scope| !matches!(*scope, "openid" | "profile" | "offline_access"))
             .collect::<Vec<_>>()
             .join(" ");
 
-        let ausentes = required_resource_scopes_missing(&atuais);
+        let ausentes = required_resource_scopes_missing(&atuais, &alvo);
         assert!(!ausentes
             .iter()
             .any(|scope| { matches!(scope.as_str(), "openid" | "profile" | "offline_access") }));
