@@ -1,0 +1,663 @@
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  FolderOpen,
+  LayoutGrid,
+  List,
+  Table as TableIcon,
+} from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
+import { formatBytes } from "@/lib/utils";
+import { preencher, useIdioma } from "@/lib/idioma";
+import { listarDir } from "@/lib/api";
+import type { FsEntry } from "@/lib/types";
+import { useVirtualizer } from "@tanstack/react-virtual";
+
+import { ordenar, type ChaveOrdem, type Ordem } from "./ordenar";
+import {
+  SELECAO_VAZIA,
+  alternar,
+  selecionarFaixa,
+  selecionarTudo,
+  selecionarUnico,
+  type EstadoSelecao,
+} from "./selecao";
+import { ehImagem, iconeParaEntry } from "./icones-arquivo";
+import { formatarDataArquivo, rotuloTipo } from "./format";
+
+type ModoView = "detalhes" | "lista" | "grade";
+
+// Estamos dentro do Tauri? (thumbnails via convertFileSrc só existem lá; no
+// browser/mock degradamos pro ícone). Mesmo gate de `api.ts`.
+const TAURI =
+  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+// --- Virtualização: alturas por view + métricas do grid --------------------
+const ALTURA_DETALHES = 34; // linha de tabela (altura fixa)
+const ALTURA_LISTA = 32; // linha da lista
+const ALTURA_GRADE = 116; // tile (miniatura + nome)
+const MIN_ITEM_W = 132; // largura-alvo do tile (grade)
+const GAP = 8;
+const OVERSCAN = 8;
+
+// Colunas da tabela (Detalhes): nome flexível + 3 fixas.
+const COLS_DETALHES = "minmax(0,1fr) 150px 96px 104px";
+
+// --- Cache LRU + carregador preguiçoso do convertFileSrc -------------------
+let convertFn: ((p: string) => string) | null = null;
+let convertPromise: Promise<void> | null = null;
+function garantirConvert(): Promise<void> {
+  if (convertFn) return Promise.resolve();
+  if (!convertPromise) {
+    convertPromise = import("@tauri-apps/api/core").then((m) => {
+      convertFn = m.convertFileSrc;
+    });
+  }
+  return convertPromise;
+}
+
+const THUMB_MAX = 200;
+const thumbCache = new Map<string, string>();
+function cacheGet(path: string): string | undefined {
+  const v = thumbCache.get(path);
+  if (v !== undefined) {
+    thumbCache.delete(path);
+    thumbCache.set(path, v);
+  }
+  return v;
+}
+function cacheSet(path: string, src: string): void {
+  if (thumbCache.has(path)) thumbCache.delete(path);
+  thumbCache.set(path, src);
+  if (thumbCache.size > THUMB_MAX) {
+    const primeiro = thumbCache.keys().next().value;
+    if (primeiro !== undefined) thumbCache.delete(primeiro);
+  }
+}
+
+/**
+ * Miniatura de imagem carregada só quando visível (IntersectionObserver) e
+ * apenas dentro do Tauri. Fora do Tauri, ou se a imagem falhar, mostra o
+ * `fallback` (o ícone). O src resolvido fica num cache LRU por caminho.
+ */
+function Miniatura({
+  entry,
+  boxClass,
+  fallback,
+}: {
+  entry: FsEntry;
+  boxClass: string;
+  fallback: ReactNode;
+}) {
+  const [src, setSrc] = useState<string | null>(
+    () => cacheGet(entry.path) ?? null,
+  );
+  const [erro, setErro] = useState(false);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!TAURI || src || erro) return;
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        io.disconnect();
+        void garantirConvert().then(() => {
+          if (!convertFn) return;
+          const url = convertFn(entry.path);
+          cacheSet(entry.path, url);
+          setSrc(url);
+        });
+      },
+      { rootMargin: "150px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [entry.path, src, erro]);
+
+  if (!TAURI || erro || !src) {
+    return (
+      <span className={cn("flex items-center justify-center", boxClass)} ref={ref}>
+        {fallback}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt=""
+      loading="lazy"
+      onError={() => setErro(true)}
+      className={cn("rounded object-cover", boxClass)}
+    />
+  );
+}
+
+/** Ícone (ou miniatura, se imagem) de uma entrada. */
+function CelulaIcone({
+  entry,
+  boxClass,
+  iconClass,
+}: {
+  entry: FsEntry;
+  boxClass: string;
+  iconClass: string;
+}) {
+  const { Icon, cor } = iconeParaEntry(entry);
+  const icone = <Icon className={cn(iconClass, cor)} />;
+  if (!ehImagem(entry)) {
+    return (
+      <span className={cn("flex items-center justify-center", boxClass)}>
+        {icone}
+      </span>
+    );
+  }
+  return <Miniatura entry={entry} boxClass={boxClass} fallback={icone} />;
+}
+
+/**
+ * #678: painel de conteúdo do Explorer — lista virtualizada (um único caminho,
+ * sempre virtual) com 3 views (Detalhes / Lista / Grade), ordenação
+ * pastas-primeiro, seleção âncora+faixa e teclado. Carrega via `listarDir` ao
+ * mudar `currentPath` (com guarda de corrida). Pasta abre navegando; arquivo é
+ * hook de S3 (no-op hoje).
+ */
+export function ContentPane({
+  currentPath,
+  onNavegar,
+}: {
+  currentPath: string;
+  onNavegar: (path: string) => void;
+}) {
+  const { t, idioma } = useIdioma();
+  const [entradas, setEntradas] = useState<FsEntry[] | null>(null);
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState(false);
+  const [modo, setModo] = useState<ModoView>("detalhes");
+  const [ordem, setOrdem] = useState<Ordem>({ chave: "nome", direcao: "asc" });
+  const [selecao, setSelecao] = useState<EstadoSelecao>(SELECAO_VAZIA);
+  const [largura, setLargura] = useState(0);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // --- Carga com guarda de corrida (ignora respostas de caminho antigo) -----
+  useEffect(() => {
+    if (!currentPath) {
+      setEntradas(null);
+      return;
+    }
+    let vivo = true;
+    setCarregando(true);
+    setErro(false);
+    setSelecao(SELECAO_VAZIA);
+    void listarDir(currentPath)
+      .then((lista) => {
+        if (!vivo) return;
+        setEntradas(lista);
+      })
+      .catch(() => {
+        if (!vivo) return;
+        setEntradas(null);
+        setErro(true);
+      })
+      .finally(() => {
+        if (vivo) setCarregando(false);
+      });
+    return () => {
+      vivo = false;
+    };
+  }, [currentPath]);
+
+  // Volta ao topo a cada nova pasta.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [currentPath]);
+
+  const itens = useMemo(
+    () => (entradas ? ordenar(entradas, ordem) : []),
+    [entradas, ordem],
+  );
+  const paths = useMemo(() => itens.map((e) => e.path), [itens]);
+
+  // --- Colunas do grid (Grade multi-coluna; Detalhes/Lista = 1) -------------
+  const cols = useMemo(() => {
+    if (modo !== "grade") return 1;
+    if (largura <= 0) return 1;
+    return Math.max(1, Math.floor((largura + GAP) / (MIN_ITEM_W + GAP)));
+  }, [modo, largura]);
+
+  const alturaLinha =
+    modo === "grade"
+      ? ALTURA_GRADE
+      : modo === "lista"
+        ? ALTURA_LISTA
+        : ALTURA_DETALHES;
+
+  const totalLinhas = Math.ceil(itens.length / cols);
+
+  const virtualizer = useVirtualizer({
+    count: totalLinhas,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => alturaLinha,
+    overscan: OVERSCAN,
+  });
+
+  // Remede quando muda a view/colunas (altura de linha diferente).
+  useLayoutEffect(() => {
+    virtualizer.measure();
+  }, [modo, cols, virtualizer]);
+
+  // --- ResizeObserver no parent de scroll → largura (recomputa colunas) -----
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setLargura(el.clientWidth);
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) setLargura(e.contentRect.width);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // --- Interações -----------------------------------------------------------
+  const abrirItem = useCallback(
+    (entry: FsEntry) => {
+      if (entry.isDir) onNavegar(entry.path);
+      // Arquivo: hook de S3 (abrir/preview). No-op por enquanto.
+    },
+    [onNavegar],
+  );
+
+  const aoClicar = useCallback(
+    (index: number, ev: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean }) => {
+      scrollRef.current?.focus({ preventScroll: true });
+      if (ev.shiftKey) {
+        setSelecao((s) => selecionarFaixa(s, paths, index));
+      } else if (ev.ctrlKey || ev.metaKey) {
+        setSelecao((s) => alternar(s, paths, index));
+      } else {
+        setSelecao(selecionarUnico(paths, index));
+      }
+    },
+    [paths],
+  );
+
+  const moverCursor = useCallback(
+    (destino: number, shift: boolean) => {
+      const alvo = Math.max(0, Math.min(paths.length - 1, destino));
+      if (alvo < 0 || paths.length === 0) return;
+      setSelecao((s) =>
+        shift ? selecionarFaixa(s, paths, alvo) : selecionarUnico(paths, alvo),
+      );
+      virtualizer.scrollToIndex(Math.floor(alvo / cols));
+    },
+    [paths, cols, virtualizer],
+  );
+
+  const aoTeclar = useCallback(
+    (ev: React.KeyboardEvent<HTMLDivElement>) => {
+      // Não sequestra o teclado se o foco está num input/editável (ex.: o campo
+      // de endereço da navbar) — só age quando o próprio painel tem o foco.
+      const ativo = document.activeElement;
+      if (
+        ativo instanceof HTMLElement &&
+        (ativo.tagName === "INPUT" ||
+          ativo.tagName === "TEXTAREA" ||
+          ativo.isContentEditable)
+      ) {
+        return;
+      }
+      if (paths.length === 0) return;
+      const atual = selecao.cursor ? paths.indexOf(selecao.cursor) : -1;
+      const base = atual < 0 ? 0 : atual;
+      const shift = ev.shiftKey;
+
+      switch (ev.key) {
+        case "ArrowRight":
+          ev.preventDefault();
+          moverCursor(base + 1, shift);
+          break;
+        case "ArrowLeft":
+          ev.preventDefault();
+          moverCursor(base - 1, shift);
+          break;
+        case "ArrowDown":
+          ev.preventDefault();
+          moverCursor(base + cols, shift);
+          break;
+        case "ArrowUp":
+          ev.preventDefault();
+          moverCursor(base - cols, shift);
+          break;
+        case "Home":
+          ev.preventDefault();
+          moverCursor(0, shift);
+          break;
+        case "End":
+          ev.preventDefault();
+          moverCursor(paths.length - 1, shift);
+          break;
+        case "Enter": {
+          ev.preventDefault();
+          const alvo = atual < 0 ? undefined : itens[atual];
+          if (alvo) abrirItem(alvo);
+          break;
+        }
+        case "a":
+        case "A":
+          if (ev.ctrlKey || ev.metaKey) {
+            ev.preventDefault();
+            setSelecao((s) => selecionarTudo(paths, s));
+          }
+          break;
+        case "F2":
+        case "Delete":
+          // Hooks de S3 (renomear/excluir): no-op hoje.
+          break;
+        default:
+          break;
+      }
+    },
+    [paths, selecao.cursor, cols, moverCursor, itens, abrirItem],
+  );
+
+  const alternarOrdem = useCallback((chave: ChaveOrdem) => {
+    setOrdem((o) =>
+      o.chave === chave
+        ? { chave, direcao: o.direcao === "asc" ? "desc" : "asc" }
+        : { chave, direcao: "asc" },
+    );
+  }, []);
+
+  // --- Render de uma linha virtual (fatia de `cols` itens) ------------------
+  function renderLinha(linhaIndex: number): ReactNode {
+    const fatia = itens.slice(linhaIndex * cols, linhaIndex * cols + cols);
+
+    if (modo === "grade") {
+      return (
+        <div
+          className="grid gap-2 px-1"
+          style={{ gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))` }}
+        >
+          {fatia.map((entry, i) => {
+            const index = linhaIndex * cols + i;
+            const sel = selecao.selecionados.has(entry.path);
+            const cursor = selecao.cursor === entry.path;
+            return (
+              <button
+                key={entry.path}
+                type="button"
+                onClick={(e) => aoClicar(index, e)}
+                onDoubleClick={() => abrirItem(entry)}
+                className={cn(
+                  "flex h-[108px] flex-col items-center gap-1.5 rounded-lg border border-transparent p-2 text-center outline-none transition-colors",
+                  sel ? "bg-accent" : "hover:bg-accent/50",
+                  cursor && "ring-2 ring-ring/60",
+                )}
+              >
+                <CelulaIcone
+                  entry={entry}
+                  boxClass="size-12"
+                  iconClass="size-9"
+                />
+                <span className="line-clamp-2 w-full break-words text-xs leading-tight">
+                  {entry.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // Lista / Detalhes: 1 item por linha.
+    const entry = fatia[0];
+    if (!entry) return null;
+    const index = linhaIndex * cols;
+    const sel = selecao.selecionados.has(entry.path);
+    const cursor = selecao.cursor === entry.path;
+
+    if (modo === "lista") {
+      return (
+        <button
+          type="button"
+          onClick={(e) => aoClicar(index, e)}
+          onDoubleClick={() => abrirItem(entry)}
+          className={cn(
+            "flex h-8 w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
+            sel ? "bg-accent" : "hover:bg-accent/50",
+            cursor && "ring-2 ring-ring/60",
+          )}
+        >
+          <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" />
+          <span className="min-w-0 flex-1 truncate text-sm">{entry.name}</span>
+        </button>
+      );
+    }
+
+    // Detalhes: linha de tabela alinhada ao cabeçalho.
+    return (
+      <button
+        type="button"
+        onClick={(e) => aoClicar(index, e)}
+        onDoubleClick={() => abrirItem(entry)}
+        className={cn(
+          "grid h-[34px] w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
+          sel ? "bg-accent" : "hover:bg-accent/50",
+          cursor && "ring-2 ring-ring/60",
+        )}
+        style={{ gridTemplateColumns: COLS_DETALHES }}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" />
+          <span className="min-w-0 truncate text-sm">{entry.name}</span>
+        </span>
+        <span className="truncate text-xs text-muted-foreground">
+          {formatarDataArquivo(entry.modifiedMs, idioma)}
+        </span>
+        <span className="truncate text-xs text-muted-foreground">
+          {rotuloTipo(entry, {
+            pasta: t.arquivos.tipoPasta,
+            arquivo: t.arquivos.tipoArquivo,
+          })}
+        </span>
+        <span className="truncate text-right text-xs text-muted-foreground tabular-nums">
+          {entry.isDir ? "" : formatBytes(entry.size)}
+        </span>
+      </button>
+    );
+  }
+
+  const selCount = selecao.selecionados.size;
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      {/* Toolbar de views */}
+      <div className="flex shrink-0 items-center justify-between gap-2">
+        <div className="flex items-center gap-1">
+          <BotaoView
+            ativo={modo === "detalhes"}
+            onClick={() => setModo("detalhes")}
+            label={t.arquivos.viewDetalhes}
+            icon={<TableIcon className="size-4" />}
+          />
+          <BotaoView
+            ativo={modo === "lista"}
+            onClick={() => setModo("lista")}
+            label={t.arquivos.viewLista}
+            icon={<List className="size-4" />}
+          />
+          <BotaoView
+            ativo={modo === "grade"}
+            onClick={() => setModo("grade")}
+            label={t.arquivos.viewGrade}
+            icon={<LayoutGrid className="size-4" />}
+          />
+        </div>
+        <span className="text-xs text-muted-foreground">
+          {selCount > 0
+            ? preencher(t.arquivos.itensSelec, { n: selCount })
+            : preencher(t.arquivos.total, { n: itens.length })}
+        </span>
+      </div>
+
+      {/* Cabeçalho da tabela (só em Detalhes) */}
+      {modo === "detalhes" && (
+        <div
+          className="grid shrink-0 items-center gap-2 border-b px-2 pb-1"
+          style={{ gridTemplateColumns: COLS_DETALHES }}
+        >
+          <CabecalhoOrd
+            label={t.arquivos.colNome}
+            chave="nome"
+            ordem={ordem}
+            onClick={alternarOrdem}
+          />
+          <CabecalhoOrd
+            label={t.arquivos.colModificado}
+            chave="modificado"
+            ordem={ordem}
+            onClick={alternarOrdem}
+          />
+          <CabecalhoOrd
+            label={t.arquivos.colTipo}
+            chave="tipo"
+            ordem={ordem}
+            onClick={alternarOrdem}
+          />
+          <CabecalhoOrd
+            label={t.arquivos.colTamanho}
+            chave="tamanho"
+            ordem={ordem}
+            onClick={alternarOrdem}
+            alinharDireita
+          />
+        </div>
+      )}
+
+      {/* Área virtualizada */}
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        onKeyDown={aoTeclar}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setSelecao(SELECAO_VAZIA);
+        }}
+        className="min-h-0 flex-1 overflow-y-auto rounded-md outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+      >
+        {carregando ? (
+          <div className="flex h-full items-center justify-center py-10">
+            <Spinner className="size-5 text-muted-foreground" />
+          </div>
+        ) : erro ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
+            <AlertCircle className="size-8" />
+            <p className="text-sm">{t.arquivos.erroLer}</p>
+          </div>
+        ) : itens.length === 0 ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
+            <FolderOpen className="size-8" />
+            <p className="text-sm">{t.arquivos.vazio}</p>
+          </div>
+        ) : (
+          <div
+            style={{
+              height: virtualizer.getTotalSize(),
+              position: "relative",
+              width: "100%",
+            }}
+          >
+            {virtualizer.getVirtualItems().map((vr) => (
+              <div
+                key={vr.key}
+                data-index={vr.index}
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  transform: `translateY(${vr.start}px)`,
+                }}
+              >
+                {renderLinha(vr.index)}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BotaoView({
+  ativo,
+  onClick,
+  label,
+  icon,
+}: {
+  ativo: boolean;
+  onClick: () => void;
+  label: string;
+  icon: ReactNode;
+}) {
+  return (
+    <Button
+      variant={ativo ? "secondary" : "ghost"}
+      size="sm"
+      className="h-8 gap-1.5"
+      onClick={onClick}
+      aria-pressed={ativo}
+    >
+      {icon}
+      <span className="text-xs">{label}</span>
+    </Button>
+  );
+}
+
+function CabecalhoOrd({
+  label,
+  chave,
+  ordem,
+  onClick,
+  alinharDireita,
+}: {
+  label: string;
+  chave: ChaveOrdem;
+  ordem: Ordem;
+  onClick: (chave: ChaveOrdem) => void;
+  alinharDireita?: boolean;
+}) {
+  const ativo = ordem.chave === chave;
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(chave)}
+      className={cn(
+        "flex items-center gap-1 text-xs font-medium text-muted-foreground outline-none hover:text-foreground",
+        alinharDireita && "justify-end",
+      )}
+    >
+      <span className="truncate">{label}</span>
+      {ativo &&
+        (ordem.direcao === "asc" ? (
+          <ChevronUp className="size-3.5 shrink-0" />
+        ) : (
+          <ChevronDown className="size-3.5 shrink-0" />
+        ))}
+    </button>
+  );
+}
