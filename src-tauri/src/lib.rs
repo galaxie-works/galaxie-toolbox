@@ -2054,6 +2054,14 @@ pub fn run() {
             fs_explorer::fs_known_dirs,
             fs_explorer::fs_reveal,
             fs_explorer::fs_open,
+            // #679 S3: mutações de FS (delete → Lixeira; permanente c/ token).
+            fs_explorer::fs_create_dir,
+            fs_explorer::fs_create_file,
+            fs_explorer::fs_rename,
+            fs_explorer::fs_copy,
+            fs_explorer::fs_move,
+            fs_explorer::fs_trash,
+            fs_explorer::fs_delete_permanent,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
