@@ -499,7 +499,7 @@ fn exchange_code(
     redirect_uri: &str,
 ) -> Result<Tokens, String> {
     let client = reqwest::blocking::Client::new();
-    let cid = config::client_id();
+    let cid = config::client_id_para(tenant);
     let scopes = config::scopes_para(tenant); // BASE (pessoal) ou BASE+ORG (org)
     let params = [
         ("client_id", cid.as_str()),
@@ -526,7 +526,7 @@ fn exchange_code(
 /// Renova os tokens a partir de um refresh_token (mesma authority do login).
 pub fn refresh(tenant: &str, refresh_token: &str) -> Result<Tokens, String> {
     let client = reqwest::blocking::Client::new();
-    let cid = config::client_id();
+    let cid = config::client_id_para(tenant);
     let scopes = config::scopes_para(tenant); // #694: BASE (common) ou BASE+ORG (tenant)
     let params = [
         ("client_id", cid.as_str()),
@@ -719,7 +719,7 @@ pub fn interactive_login(
     login_hint: &str,
     idioma: &str,
 ) -> Result<Tokens, String> {
-    let cid = config::client_id();
+    let cid = config::client_id_para(tenant);
     if cid.is_empty() || cid == "REPLACE_WITH_CLIENT_ID" {
         return Err(
             "App ainda nao registrado: preencha o CLIENT_ID em config.rs. \
@@ -747,7 +747,7 @@ pub fn interactive_login(
          &code_challenge={chal}&code_challenge_method=S256&prompt=select_account\
          &login_hint={hint}",
         endpoint = config::authorize_endpoint(tenant),
-        cid = urlencoding::encode(&config::client_id()),
+        cid = urlencoding::encode(&cid),
         ruri = urlencoding::encode(&redirect_uri),
         scope = urlencoding::encode(&config::scopes_para(tenant)),
         state = urlencoding::encode(&state),
