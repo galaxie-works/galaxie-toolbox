@@ -21,6 +21,12 @@ pub mod transfer;
 #[cfg(feature = "input")]
 pub mod injector;
 
+// Áudio (S6) — encode Opus (puxa audiopus); a captura WASAPI é só Windows.
+#[cfg(feature = "audio")]
+pub mod audio;
+#[cfg(all(feature = "audio", windows))]
+pub mod capture_wasapi;
+
 // A sessão str0m depende de OpenSSL (DTLS) — atrás da feature `webrtc` (default).
 // Sem ela, o crate compila só o núcleo (contrato/signaling/stats), útil em
 // ambiente sem toolchain OpenSSL.
@@ -37,6 +43,9 @@ pub use input::{BotaoMouse, InputEvent, ScreenInfo, Tecla};
 
 #[cfg(feature = "input")]
 pub use injector::{InjectError, Injector};
+
+#[cfg(feature = "audio")]
+pub use audio::{AudioConfig, AudioError, CapturaAudio, CapturaSilencio, OpusEncoder};
 pub use signaling::{
     IceServer, RecordingSignaling, SignalMessage, SignalingChannel, SignalingError,
 };

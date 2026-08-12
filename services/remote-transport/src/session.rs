@@ -43,6 +43,8 @@ pub enum TransportError {
     SemCanal,
     #[error("mídia de vídeo ainda não negociada")]
     SemVideo,
+    #[error("mídia de áudio ainda não negociada")]
+    SemAudio,
     #[error("candidato ICE inválido: {0}")]
     Candidato(String),
 }
@@ -79,6 +81,8 @@ pub struct Transport {
     papel: Papel,
     stats: Stats,
     mid_video: Option<Mid>,
+    /// #689 S6: track de áudio Opus (host envia o loopback WASAPI).
+    mid_audio: Option<Mid>,
     canal_controle: Option<ChannelId>,
     pending: Option<SdpPendingOffer>,
     /// Via S2→S1: quando o peer manda PLI, pedimos keyframe ao encoder (coalescido).
@@ -99,6 +103,7 @@ impl Transport {
             papel: cfg.papel,
             stats: Stats::new(),
             mid_video: None,
+            mid_audio: None,
             canal_controle: None,
             pending: None,
             comando_encoder,
@@ -122,9 +127,11 @@ impl Transport {
             Papel::Controlador => Direction::RecvOnly,
         };
         let mid = api.add_media(MediaKind::Video, dir, None, None);
+        let mid_a = api.add_media(MediaKind::Audio, dir, None, None); // #689 S6: Opus
         let canal = api.add_channel("controle".to_string());
         let (offer, pending) = api.apply().ok_or(TransportError::SemMudanca)?;
         self.mid_video = Some(mid);
+        self.mid_audio = Some(mid_a);
         self.canal_controle = Some(canal);
         self.pending = Some(pending);
         Ok(SignalMessage::Offer {
@@ -192,6 +199,23 @@ impl Transport {
             .write(pt, Instant::now(), rtp_time, frame.data.clone())
             .map_err(|e| TransportError::Rtc(e.to_string()))?;
         self.stats.registrar_frame(frame.len());
+        Ok(())
+    }
+
+    /// Escreve um frame Opus na mídia de áudio (#689 S6). RTP clock de 48 kHz;
+    /// `timestamp_us` → amostras de 48 kHz. Só o host (que captura) escreve.
+    pub fn escrever_audio(&mut self, opus: &[u8], timestamp_us: u64) -> Result<(), TransportError> {
+        let mid = self.mid_audio.ok_or(TransportError::SemAudio)?;
+        let writer = self.rtc.writer(mid).ok_or(TransportError::SemAudio)?;
+        let pt = writer
+            .payload_params()
+            .next()
+            .map(|p| p.pt())
+            .ok_or(TransportError::SemAudio)?;
+        let rtp_time = MediaTime::new(timestamp_us * 48 / 1000, Frequency::FORTY_EIGHT_KHZ);
+        writer
+            .write(pt, Instant::now(), rtp_time, opus.to_vec())
+            .map_err(|e| TransportError::Rtc(e.to_string()))?;
         Ok(())
     }
 

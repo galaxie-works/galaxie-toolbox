@@ -23,10 +23,15 @@ webrtc = ["dep:str0m"]
 # `input` (S3) puxa o `enigo` pra INJETAR input no host (SendInput/Win32). O
 # formato da mensagem de input (input.rs) fica no núcleo; só a injeção é opt-in.
 input = ["dep:enigo"]
+# `audio` (S6) puxa `audiopus` (encode Opus) + `wasapi` (loopback do host, só
+# Windows). Opt-in; compila local (audiopus não precisa de cmake).
+audio = ["dep:audiopus", "dep:wasapi"]
 
 [dependencies]
 str0m = { version = "0.6", optional = true }
 enigo = { version = "0.6", optional = true }
+audiopus = { version = "0.2", optional = true }
+wasapi = { version = "0.23", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
