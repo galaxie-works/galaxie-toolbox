@@ -1,0 +1,35 @@
+[package]
+name = "galaxie-remote-capture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+thiserror = "2.0.18"
+tracing = "0.1.44"
+
+[target.'cfg(windows)'.dependencies]
+openh264 = "0.9.8"
+windows-capture = "2.0.1"
+windows = { version = "0.62.2", features = [
+  "Foundation",
+  "Win32_Foundation",
+  "Win32_Graphics_Direct3D",
+  "Win32_Graphics_Direct3D11",
+  "Win32_Graphics_Dxgi_Common",
+  "Win32_Media_MediaFoundation",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Ole",
+  "Win32_System_Variant",
+] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "fmt"] }
+
+[[example]]
+name = "capture_probe"
+required-features = []
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
