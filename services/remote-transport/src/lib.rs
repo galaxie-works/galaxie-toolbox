@@ -10,9 +10,11 @@
 
 pub mod bridge;
 pub mod command;
+pub mod control;
 pub mod frame;
 pub mod signaling;
 pub mod stats;
+pub mod transfer;
 
 // A sessão str0m depende de OpenSSL (DTLS) — atrás da feature `webrtc` (default).
 // Sem ela, o crate compila só o núcleo (contrato/signaling/stats), útil em
@@ -22,11 +24,15 @@ pub mod session;
 
 pub use bridge::{FrameBridge, FrameFim};
 pub use command::{canal_de_comandos, CommandChannel, CommandReceiver, EncoderCommand};
+pub use control::{
+    decode, encode_chunk, encode_control, CapabilityPolicy, ControlError, ControlMessage, Frame,
+};
 pub use frame::{canal_de_frames, CodedFrame, CodedFrameSource, DummyFrameSource, FrameSender};
 pub use signaling::{
     IceServer, RecordingSignaling, SignalMessage, SignalingChannel, SignalingError,
 };
 pub use stats::{Stats, StatsSnapshot};
+pub use transfer::{resolver_conflito, FileReceiver, FileSender};
 
 #[cfg(feature = "webrtc")]
 pub use session::{EventoSessao, Papel, Passo, SessionConfig, Transport, TransportError};
