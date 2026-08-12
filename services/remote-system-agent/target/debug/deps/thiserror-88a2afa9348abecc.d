@@ -1,0 +1,14 @@
+C:\dev\gt-orion-690\services\remote-system-agent\target\debug\deps\thiserror-88a2afa9348abecc.d: C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\lib.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\aserror.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\display.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\var.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\private.rs C:\dev\gt-orion-690\services\remote-system-agent\target\debug\build\thiserror-522fb8c3d12da1a6\out/private.rs
+
+C:\dev\gt-orion-690\services\remote-system-agent\target\debug\deps\libthiserror-88a2afa9348abecc.rlib: C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\lib.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\aserror.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\display.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\var.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\private.rs C:\dev\gt-orion-690\services\remote-system-agent\target\debug\build\thiserror-522fb8c3d12da1a6\out/private.rs
+
+C:\dev\gt-orion-690\services\remote-system-agent\target\debug\deps\libthiserror-88a2afa9348abecc.rmeta: C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\lib.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\aserror.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\display.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\var.rs C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\private.rs C:\dev\gt-orion-690\services\remote-system-agent\target\debug\build\thiserror-522fb8c3d12da1a6\out/private.rs
+
+C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\lib.rs:
+C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\aserror.rs:
+C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\display.rs:
+C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\var.rs:
+C:\Users\consa\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.20\src\private.rs:
+C:\dev\gt-orion-690\services\remote-system-agent\target\debug\build\thiserror-522fb8c3d12da1a6\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\dev\\gt-orion-690\\services\\remote-system-agent\\target\\debug\\build\\thiserror-522fb8c3d12da1a6\\out

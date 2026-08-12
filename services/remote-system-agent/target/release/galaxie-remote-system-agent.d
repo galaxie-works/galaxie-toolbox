@@ -1,0 +1,1 @@
+C:\dev\gt-orion-690\services\remote-system-agent\target\release\galaxie-remote-system-agent.exe: C:\dev\gt-orion-690\services\remote-system-agent\src\lib.rs C:\dev\gt-orion-690\services\remote-system-agent\src\main.rs
