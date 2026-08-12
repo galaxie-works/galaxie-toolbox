@@ -22,6 +22,16 @@ pub const CLIENT_ID: &str = "214d735e-eb9b-4052-8851-578d3bd91627";
 /// auth::classificar.
 pub const MS_PERSONAL_TENANT: &str = "9188040d-6c67-4c5b-b112-36a304b66dad";
 
+/// PS2: 2o app registration dedicado a conta PESSOAL Microsoft (AzureADandPersonalMicrosoftAccount).
+/// O app escolhe este client_id quando accountKind=personal; a org continua no CLIENT_ID acima.
+pub const CLIENT_ID_PESSOAL: &str = "53ddcae4-7368-4072-8ed2-8ee18daa8600";
+
+/// PS3: OAuth client "Desktop app" do Google (scopes sensitive $0). Public client — o
+/// secret nao e uma fronteira de confianca (PKCE protege), mas o token endpoint do
+/// Google pede ele no exchange do fluxo desktop.
+pub const GOOGLE_CLIENT_ID: &str = "672866388200-objaoko15r9on8jvrc64m991r3e2act2.apps.googleusercontent.com";
+pub const GOOGLE_CLIENT_SECRET: &str = "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";
+
 /// Escopos delegados que o app PEDE no login. offline_access garante
 /// refresh_token. So Microsoft Graph — o app tem muito mais permissao concedida
 /// no registro, mas pedimos so o que cada feature usa (token enxuto, tela de
