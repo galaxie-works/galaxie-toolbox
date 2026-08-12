@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="46px" height="46px" viewBox="0 0 46 46" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 51.2 (57519) - http://www.bohemiancoding.com/sketch -->
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Apps" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="up-to-July-2018-Copy" transform="translate(-205.000000, -1227.000000)">
+            <g id="flipboard-icon" transform="translate(205.000000, 1227.000000)">
+                <path d="M0,43.3362052 L0,2.69709914 C0.00443688887,1.20950381 1.20849761,0.00444058307 2.69485538,0 L43.3056992,0 C44.792057,0.00444058307 45.9961177,1.20950381 46,2.69709914 L46,43.3362052 C45.9964884,44.6817751 45.0110282,45.7961861 43.7229027,46 L2.2776514,46 C0.989521372,45.7961861 0.00401328509,44.6817751 0,43.3362052 Z" id="Clip-5" fill="#F52828"></path>
+                <g id="flipboard" transform="translate(10.000000, 10.000000)" fill="#FFFFFF" fill-rule="nonzero">
+                    <polygon id="Shape-path" points="26 8.66666667 17.3333333 8.66666667 17.3333333 17.3333333 8.66666667 17.3333333 8.66666667 26 0 26 0 0 26 0"></polygon>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

@@ -511,6 +511,28 @@ const pt = {
     remote: "Remoto",
   },
 
+  // #720 (SH2): command com catálogo de apps categorizado (~1795).
+  command: {
+    categorias: "Categorias",
+    recomendados: "Recomendados",
+    recentes: "Recentes",
+    // Rótulos das categorias do catálogo.
+    catAiTools: "Ferramentas de IA",
+    catBanking: "Bancos e finanças",
+    catCloudStorage: "Armazenamento na nuvem",
+    catDeveloperTools: "Ferramentas de desenvolvimento",
+    catEntertainment: "Entretenimento",
+    catHealth: "Saúde e bem-estar",
+    catLearning: "Aprendizado",
+    catNews: "Notícias e clima",
+    catProductivity: "Produtividade",
+    catShopping: "Compras",
+    catSocial: "Redes sociais",
+    catTravel: "Viagens",
+    catWork: "Trabalho e negócios",
+    catMisc: "Diversos",
+  },
+
   controlRoom: {
     saudacao: "Olá, {nome}",
     subtitulo: "Seu dia em um olhar.",
@@ -2359,6 +2381,27 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     bridge: "Bridge",
     files: "Files",
     remote: "Remote",
+  },
+
+  // #720 (SH2): command with a categorized app catalog (~1795).
+  command: {
+    categorias: "Categories",
+    recomendados: "Recommended",
+    recentes: "Recent",
+    catAiTools: "AI Tools",
+    catBanking: "Banking & Finance",
+    catCloudStorage: "Cloud Storage",
+    catDeveloperTools: "Developer Tools",
+    catEntertainment: "Entertainment",
+    catHealth: "Health & Fitness",
+    catLearning: "Learning",
+    catNews: "News & Weather",
+    catProductivity: "Productivity",
+    catShopping: "Shopping",
+    catSocial: "Social",
+    catTravel: "Travel",
+    catWork: "Work & Business",
+    catMisc: "Miscellaneous",
   },
 
   controlRoom: {
