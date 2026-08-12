@@ -1,0 +1,38 @@
+[package]
+name = "galaxie-remote-transport"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+# Transporte WebRTC (S2, épico #682): str0m sans-I/O — ICE via nosso coturn,
+# media track de vídeo H.264 (do encoder S1) + DataChannel de controle, E2E
+# DTLS-SRTP. Este crate é o TRANSPORTE puro: recebe frames JÁ codificados por
+# uma fonte abstrata e não sabe nada de captura/encode (contrato CodedFrame).
+
+[features]
+# O núcleo (contrato de frame + signaling + stats) NÃO depende de nada de rede e
+# compila/testa em qualquer ambiente — é o default.
+#
+# `webrtc` puxa o `str0m`, que depende de OpenSSL (DTLS-SRTP) no build. Ligue-a
+# (`--features webrtc`) num ambiente com toolchain OpenSSL pra compilar o
+# transporte de fato. Opt-in de propósito: assim o crate fica sempre verde onde
+# não há OpenSSL, sem esconder que o transporte precisa dele.
+default = []
+webrtc = ["dep:str0m"]
+
+[dependencies]
+str0m = { version = "0.6", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+rand = "0.8"
+
+[dev-dependencies]
+# testes deterministicos rodam sem rede real (mock de signaling + dummy source).
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
