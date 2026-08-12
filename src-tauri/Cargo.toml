@@ -48,6 +48,10 @@ trash = "5"
 # #680 (Explorer S4): file watcher com reconciliação de rename (debouncer-full).
 notify = "7"
 notify-debouncer-full = "0.4"
+# #680 turbo: verificação opcional pós-cópia. xxh3 = rápido (default), blake3 =
+# forte+rápido, sha256 (já temos) = compatibilidade. Opt-in — cópia normal não hasheia.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+blake3 = "1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
@@ -70,6 +74,12 @@ windows = { version = "0.61", features = [
     # #676 Explorer: GetLogicalDrives/GetDriveTypeW/GetDiskFreeSpaceExW/
     # GetVolumeInformationW pra listar drives com tipo, label e espaço.
     "Win32_Storage_FileSystem",
+    # #680 turbo: DeviceIoControl + IOCTL_STORAGE_QUERY_PROPERTY pra detectar
+    # seek-penalty (SSD vs HDD) e tunar threads×buffer da cópia. Win32_Security
+    # entra porque CreateFileW recebe SECURITY_ATTRIBUTES na assinatura.
+    "Win32_System_Ioctl",
+    "Win32_System_IO",
+    "Win32_Security",
 ] }
 # #272 S2 (accelerators do Navigator): AcceleratorKeyPressed do WebView2. Versao
 # ja resolvida transitivamente pelo wry 2.11 (0.38.2) — dep direta so pra usar as
