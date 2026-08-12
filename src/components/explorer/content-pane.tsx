@@ -44,14 +44,12 @@ import { formatBytes } from "@/lib/utils";
 import { preencher, useIdioma } from "@/lib/idioma";
 import {
   abrirCaminhoFs,
-  copiar,
   criarArquivo,
   criarPasta,
   enableLongPaths,
   excluirPermanente,
   listarDir,
   longPathsStatus,
-  mover,
   paraLixeira,
   renomear,
   revelarCaminho,
@@ -61,7 +59,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { ordenar, type ChaveOrdem, type Ordem } from "./ordenar";
 import { filtrarEntradas } from "./filtro";
-import { juntarCaminho, nomeBase, pathPai } from "./caminho";
+import { juntarCaminho, pathPai } from "./caminho";
 import { ComMenu, RenameInput } from "./menu-contexto";
 import {
   getEmptySpaceContextMenu,
@@ -231,6 +229,8 @@ export function ContentPane({
   onSelecaoChange,
   clipboard,
   onClipboardChange,
+  onTransferir,
+  refreshSignal,
   mostrarInspector,
   onToggleInspector,
 }: {
@@ -241,6 +241,14 @@ export function ContentPane({
   /** #714: área de transferência interna (recortar/copiar/colar), no shell. */
   clipboard?: Clipboard | null;
   onClipboardChange?: (c: Clipboard | null) => void;
+  /** #724: dispara colar/copiar/mover via o fluxo de progresso + conflito (shell). */
+  onTransferir?: (
+    sources: string[],
+    destDir: string,
+    op: Clipboard["op"],
+  ) => void;
+  /** #724: nonce do watcher — bumpar re-lê a MESMA pasta (live refresh). */
+  refreshSignal?: number;
   /** Estado do painel de detalhes (controlado pelo shell) — pro botão de toggle. */
   mostrarInspector?: boolean;
   onToggleInspector?: () => void;
@@ -300,8 +308,9 @@ export function ContentPane({
     return () => {
       vivo = false;
     };
-    // recarregarNonce força a releitura da MESMA pasta após uma operação.
-  }, [currentPath, recarregarNonce]);
+    // recarregarNonce força a releitura da MESMA pasta após uma operação local;
+    // refreshSignal faz o mesmo a partir do watcher de disco do shell (#724).
+  }, [currentPath, recarregarNonce, refreshSignal]);
 
   // Volta ao topo a cada nova pasta.
   useEffect(() => {
@@ -435,20 +444,14 @@ export function ContentPane({
     [recarregar, t.arquivos.erroOperacao],
   );
 
+  // #724: colar delega ao shell — checa conflitos, mostra progresso/cancel e (no
+  // cut) limpa o clipboard. O refresh vem do watcher (não do comRefresh local).
   const colar = useCallback(
     (destDir: string) => {
       if (!clipboard || clipboard.paths.length === 0) return;
-      const { paths, op } = clipboard;
-      void comRefresh(async () => {
-        for (const origem of paths) {
-          const destino = juntarCaminho(destDir, nomeBase(origem));
-          if (op === "copy") await copiar(origem, destino);
-          else await mover(origem, destino);
-        }
-        if (op === "cut") onClipboardChange?.(null);
-      });
+      onTransferir?.(clipboard.paths, destDir, clipboard.op);
     },
-    [clipboard, comRefresh, onClipboardChange],
+    [clipboard, onTransferir],
   );
 
   const iniciarRename = useCallback((entry: FsEntry) => {
