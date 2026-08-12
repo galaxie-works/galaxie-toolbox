@@ -14,6 +14,33 @@ export function pathPai(p: string): string {
   return s.slice(0, i);
 }
 
+/**
+ * Junta um diretório com um nome de filho (separador Windows `\`). Normaliza a
+ * barra final do diretório e cobre o drive-root ("C:\" ou "C:").
+ */
+export function juntarCaminho(dir: string, nome: string): string {
+  const base = dir.replace(/\\+$/, "");
+  return `${base}\\${nome}`;
+}
+
+/** Último componente do caminho (nome do arquivo/pasta). */
+export function nomeBase(p: string): string {
+  const s = p.replace(/\\+$/, "");
+  const i = s.lastIndexOf("\\");
+  return i < 0 ? s : s.slice(i + 1);
+}
+
+/**
+ * Quebra um nome em base + extensão (a extensão inclui o ponto). Dotfiles
+ * (".env") e nomes sem ponto não têm extensão — o nome inteiro é a base. Serve
+ * pra seleção do rename in-place (seleciona só a base).
+ */
+export function separarNomeExt(nome: string): { base: string; ext: string } {
+  const i = nome.lastIndexOf(".");
+  if (i <= 0) return { base: nome, ext: "" };
+  return { base: nome.slice(0, i), ext: nome.slice(i) };
+}
+
 export interface SegmentoCaminho {
   label: string;
   /** Caminho acumulado até este segmento (inclusive), para navegar ao clicar. */
