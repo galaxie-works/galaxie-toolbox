@@ -9,7 +9,6 @@ use windows_capture::dxgi_duplication_api::{
 };
 use windows_capture::frame::Frame;
 use windows_capture::graphics_capture_api::InternalCaptureControl;
-use windows_capture::monitor::Monitor;
 use windows_capture::settings::{
     ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
     MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
@@ -17,10 +16,14 @@ use windows_capture::settings::{
 
 use crate::config::{CaptureBackendPreference, EncoderPreference, PipelineConfig};
 use crate::contract::{CommandReceiver, EncoderCommand, FrameSender};
+use crate::monitor::{MonitorControlMessage, MonitorHostControl, MonitorInfo};
 use crate::software::SoftwareEncoder;
 use crate::stats::{LatencySnapshot, PipelineStats};
 
 use super::media_foundation::{MediaFoundationH264Encoder, probe_hardware_h264_encoders};
+use super::monitors::{
+    CaptureMonitor, MonitorError, enumerate_monitors, initial_monitor, select_monitor,
+};
 
 type HandlerError = Box<dyn StdError + Send + Sync>;
 
@@ -56,6 +59,8 @@ pub enum PipelineError {
     Config(#[from] crate::config::ConfigError),
     #[error("monitor: {0}")]
     Monitor(#[from] windows_capture::monitor::Error),
+    #[error("topologia de monitores: {0}")]
+    MonitorTopology(#[from] MonitorError),
     #[error("captura WGC: {0}")]
     Wgc(String),
     #[error("Desktop Duplication: {0}")]
@@ -74,6 +79,7 @@ struct SharedState {
     encoder_name: String,
     width: u32,
     height: u32,
+    pending_monitor_id: Option<String>,
 }
 
 #[derive(Clone)]
@@ -83,6 +89,19 @@ struct WgcFlags {
     frames: FrameSender,
     commands: Arc<Mutex<CommandReceiver>>,
     state: Arc<Mutex<SharedState>>,
+    monitor_control: Option<Arc<MonitorHostControl>>,
+    active_monitor: MonitorInfo,
+    first_capture_ticks: Arc<Mutex<Option<i64>>>,
+    started: Instant,
+}
+
+struct WgcSession {
+    frames: FrameSender,
+    commands: Arc<Mutex<CommandReceiver>>,
+    state: Arc<Mutex<SharedState>>,
+    monitor_control: Option<Arc<MonitorHostControl>>,
+    first_capture_ticks: Arc<Mutex<Option<i64>>>,
+    started: Instant,
 }
 
 struct WgcCapture {
@@ -90,11 +109,12 @@ struct WgcCapture {
     frames: FrameSender,
     commands: Arc<Mutex<CommandReceiver>>,
     state: Arc<Mutex<SharedState>>,
+    monitor_control: Option<Arc<MonitorHostControl>>,
     encoder: Option<ActiveEncoder>,
     encoder_source_size: Option<(u32, u32)>,
     packed: Vec<u8>,
     started: Instant,
-    first_capture_ticks: Option<i64>,
+    first_capture_ticks: Arc<Mutex<Option<i64>>>,
     next_output_us: Option<u64>,
 }
 
@@ -126,16 +146,23 @@ impl GraphicsCaptureApiHandler for WgcCapture {
             context.flags.source_size.1,
             &context.flags.state,
         )?;
+        if let Some(monitor_control) = &context.flags.monitor_control {
+            monitor_control.publish(MonitorControlMessage::MonitorActive {
+                id: context.flags.active_monitor.id.clone(),
+                info: context.flags.active_monitor.geometry,
+            });
+        }
         Ok(Self {
             config: context.flags.config,
             frames: context.flags.frames,
             commands: context.flags.commands,
             state: context.flags.state,
+            monitor_control: context.flags.monitor_control,
             encoder: Some(encoder),
             encoder_source_size: Some(context.flags.source_size),
             packed: Vec::new(),
-            started: Instant::now(),
-            first_capture_ticks: None,
+            started: context.flags.started,
+            first_capture_ticks: context.flags.first_capture_ticks,
             next_output_us: None,
         })
     }
@@ -145,6 +172,15 @@ impl GraphicsCaptureApiHandler for WgcCapture {
         frame: &mut Frame,
         control: InternalCaptureControl,
     ) -> Result<(), Self::Error> {
+        if let Some(monitor_control) = &self.monitor_control
+            && let Some(id) = monitor_control.take_selection()
+        {
+            if let Ok(mut state) = self.state.lock() {
+                state.pending_monitor_id = Some(id);
+            }
+            control.stop();
+            return Ok(());
+        }
         if self
             .config
             .stop_after
@@ -154,8 +190,12 @@ impl GraphicsCaptureApiHandler for WgcCapture {
             return Ok(());
         }
 
-        let timestamp_us = monotonic_wgc_timestamp(frame, &mut self.first_capture_ticks)
-            .unwrap_or_else(|_| self.started.elapsed().as_micros() as u64);
+        let timestamp_us = self
+            .first_capture_ticks
+            .lock()
+            .ok()
+            .and_then(|mut first_ticks| monotonic_wgc_timestamp(frame, &mut first_ticks).ok())
+            .unwrap_or_else(|| self.started.elapsed().as_micros() as u64);
         let interval_us = 1_000_000u64 / u64::from(self.config.fps);
         // WGC e dirigido pelo compositor. Pedimos updates acima do alvo e
         // fazemos pacing pelos timestamps para nao cair num divisor abaixo de
@@ -321,10 +361,6 @@ fn create_encoder(
     Ok(ActiveEncoder::Software(Box::new(encoder)))
 }
 
-fn monitor(config: &PipelineConfig) -> Result<Monitor, PipelineError> {
-    Ok(Monitor::from_index(config.monitor_index)?)
-}
-
 fn shared_outcome(
     backend: CaptureBackend,
     state: &Arc<Mutex<SharedState>>,
@@ -346,15 +382,27 @@ fn shared_outcome(
     })
 }
 
-fn run_wgc(
+fn publish_monitor_list(control: Option<&MonitorHostControl>, active: &CaptureMonitor) {
+    let Some(control) = control else {
+        return;
+    };
+    match enumerate_monitors() {
+        Ok(monitors) => control.publish(MonitorControlMessage::MonitorList {
+            monitors,
+            active: active.info.id.clone(),
+            virtual_desktop: false,
+        }),
+        Err(error) => tracing::warn!(%error, "nao foi possivel atualizar a lista de monitores"),
+    }
+}
+
+fn run_wgc_once(
     config: &PipelineConfig,
-    frames: FrameSender,
-    commands: Arc<Mutex<CommandReceiver>>,
-    state: Arc<Mutex<SharedState>>,
-) -> Result<PipelineOutcome, PipelineError> {
-    let started = Instant::now();
-    let monitor = monitor(config)?;
-    let source_size = (monitor.width()?, monitor.height()?);
+    selected: &CaptureMonitor,
+    session: &WgcSession,
+) -> Result<(), PipelineError> {
+    let monitor = selected.handle;
+    let source_size = (selected.info.geometry.width, selected.info.geometry.height);
     let cursor = if config.include_cursor {
         CursorCaptureSettings::WithCursor
     } else {
@@ -378,14 +426,55 @@ fn run_wgc(
         WgcFlags {
             config: config.clone(),
             source_size,
-            frames,
-            commands,
-            state: state.clone(),
+            frames: session.frames.clone(),
+            commands: session.commands.clone(),
+            state: session.state.clone(),
+            monitor_control: session.monitor_control.clone(),
+            active_monitor: selected.info.clone(),
+            first_capture_ticks: session.first_capture_ticks.clone(),
+            started: session.started,
         },
     );
     WgcCapture::start(settings).map_err(|error| PipelineError::Wgc(error.to_string()))?;
-    let elapsed = config.stop_after.unwrap_or_else(|| started.elapsed());
-    shared_outcome(CaptureBackend::WindowsGraphicsCapture, &state, elapsed)
+    Ok(())
+}
+
+fn run_wgc(
+    config: &PipelineConfig,
+    frames: FrameSender,
+    commands: Arc<Mutex<CommandReceiver>>,
+    state: Arc<Mutex<SharedState>>,
+    monitor_control: Option<Arc<MonitorHostControl>>,
+) -> Result<PipelineOutcome, PipelineError> {
+    let started = Instant::now();
+    let session = WgcSession {
+        frames,
+        commands,
+        state: state.clone(),
+        monitor_control: monitor_control.clone(),
+        first_capture_ticks: Arc::new(Mutex::new(None)),
+        started,
+    };
+    let mut selected = initial_monitor(config.monitor_index)?;
+    loop {
+        publish_monitor_list(monitor_control.as_deref(), &selected);
+        run_wgc_once(config, &selected, &session)?;
+        let next_id = state
+            .lock()
+            .map_err(|_| PipelineError::Encoder("pipeline state poisoned".to_owned()))?
+            .pending_monitor_id
+            .take();
+        if let Some(id) = next_id {
+            selected = select_monitor(&id)?;
+            continue;
+        }
+        break;
+    }
+    shared_outcome(
+        CaptureBackend::WindowsGraphicsCapture,
+        &state,
+        started.elapsed(),
+    )
 }
 
 fn run_dxgi(
@@ -393,9 +482,12 @@ fn run_dxgi(
     frames: FrameSender,
     commands: Arc<Mutex<CommandReceiver>>,
     state: Arc<Mutex<SharedState>>,
+    monitor_control: Option<Arc<MonitorHostControl>>,
 ) -> Result<PipelineOutcome, PipelineError> {
-    let monitor = monitor(config)?;
-    let mut capture = DxgiDuplicationApi::new_options(monitor, &[DxgiDuplicationFormat::Bgra8])?;
+    let mut selected = initial_monitor(config.monitor_index)?;
+    publish_monitor_list(monitor_control.as_deref(), &selected);
+    let mut capture =
+        DxgiDuplicationApi::new_options(selected.handle, &[DxgiDuplicationFormat::Bgra8])?;
     let mut encoder = create_encoder(
         config,
         capture.device(),
@@ -405,6 +497,12 @@ fn run_dxgi(
         &state,
     )
     .map_err(|error| PipelineError::Encoder(error.to_string()))?;
+    if let Some(control) = monitor_control.as_deref() {
+        control.publish(MonitorControlMessage::MonitorActive {
+            id: selected.info.id.clone(),
+            info: selected.info.geometry,
+        });
+    }
     let started = Instant::now();
     let frame_interval = Duration::from_secs_f64(1.0 / f64::from(config.fps));
     let mut next_frame_at = started;
@@ -417,6 +515,31 @@ fn run_dxgi(
             .is_some_and(|duration| started.elapsed() >= duration)
         {
             break;
+        }
+        if let Some(id) = monitor_control
+            .as_deref()
+            .and_then(MonitorHostControl::take_selection)
+        {
+            selected = select_monitor(&id)?;
+            capture =
+                DxgiDuplicationApi::new_options(selected.handle, &[DxgiDuplicationFormat::Bgra8])?;
+            encoder = create_encoder(
+                config,
+                capture.device(),
+                capture.device_context(),
+                capture.width(),
+                capture.height(),
+                &state,
+            )
+            .map_err(|error| PipelineError::Encoder(error.to_string()))?;
+            publish_monitor_list(monitor_control.as_deref(), &selected);
+            if let Some(control) = monitor_control.as_deref() {
+                control.publish(MonitorControlMessage::MonitorActive {
+                    id: selected.info.id.clone(),
+                    info: selected.info.geometry,
+                });
+            }
+            continue;
         }
         if let Ok(commands) = commands.lock() {
             while let Some(EncoderCommand::RequestKeyframe) = commands.try_receive() {
@@ -541,6 +664,25 @@ pub fn run_pipeline(
     frames: FrameSender,
     commands: CommandReceiver,
 ) -> Result<PipelineOutcome, PipelineError> {
+    run_pipeline_inner(config, frames, commands, None)
+}
+
+/// Executa a captura com control-plane de enumeração e troca de monitor.
+pub fn run_pipeline_with_monitors(
+    config: PipelineConfig,
+    frames: FrameSender,
+    commands: CommandReceiver,
+    monitor_control: MonitorHostControl,
+) -> Result<PipelineOutcome, PipelineError> {
+    run_pipeline_inner(config, frames, commands, Some(Arc::new(monitor_control)))
+}
+
+fn run_pipeline_inner(
+    config: PipelineConfig,
+    frames: FrameSender,
+    commands: CommandReceiver,
+    monitor_control: Option<Arc<MonitorHostControl>>,
+) -> Result<PipelineOutcome, PipelineError> {
     config.validate()?;
     let commands = Arc::new(Mutex::new(commands));
     let state = Arc::new(Mutex::new(SharedState {
@@ -548,15 +690,24 @@ pub fn run_pipeline(
         encoder_name: select_encoder(&config)?,
         width: 0,
         height: 0,
+        pending_monitor_id: None,
     }));
 
     match config.capture_backend {
         CaptureBackendPreference::WindowsGraphicsCapture => {
-            run_wgc(&config, frames, commands, state)
+            run_wgc(&config, frames, commands, state, monitor_control)
         }
-        CaptureBackendPreference::DesktopDuplication => run_dxgi(&config, frames, commands, state),
+        CaptureBackendPreference::DesktopDuplication => {
+            run_dxgi(&config, frames, commands, state, monitor_control)
+        }
         CaptureBackendPreference::Auto => {
-            match run_wgc(&config, frames.clone(), commands.clone(), state.clone()) {
+            match run_wgc(
+                &config,
+                frames.clone(),
+                commands.clone(),
+                state.clone(),
+                monitor_control.clone(),
+            ) {
                 Ok(outcome) => Ok(outcome),
                 Err(error) => {
                     let emitted_frames = state
@@ -565,7 +716,7 @@ pub fn run_pipeline(
                         .unwrap_or(1);
                     if emitted_frames == 0 {
                         tracing::warn!(%error, "WGC nao iniciou; alternando para Desktop Duplication");
-                        run_dxgi(&config, frames, commands, state)
+                        run_dxgi(&config, frames, commands, state, monitor_control)
                     } else {
                         Err(error)
                     }

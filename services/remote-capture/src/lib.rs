@@ -7,6 +7,7 @@
 pub mod annexb;
 pub mod config;
 pub mod contract;
+pub mod monitor;
 pub mod stats;
 
 #[cfg(windows)]
@@ -16,4 +17,8 @@ pub mod windows;
 
 pub use config::{CaptureBackendPreference, EncoderPreference, PipelineConfig};
 pub use contract::{CodedFrame, EncoderCommand, FrameSender};
+pub use monitor::{
+    MONITOR_TODOS, MonitorControlMessage, MonitorController, MonitorHostControl, MonitorInfo,
+    MonitorSelectionError, ScreenInfo, canal_de_monitores, monitor_control_channel,
+};
 pub use stats::{LatencySnapshot, PipelineStats};
