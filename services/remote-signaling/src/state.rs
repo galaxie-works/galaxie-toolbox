@@ -1,0 +1,329 @@
+use std::{
+    collections::{HashMap, VecDeque},
+    net::IpAddr,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use ed25519_dalek::{Signer, SigningKey};
+use hmac::{Hmac, Mac};
+use rand::{rngs::OsRng, Rng};
+use sha1::Sha1;
+use sha2::{Digest, Sha256};
+use thiserror::Error;
+use tokio::sync::{mpsc, Mutex, RwLock};
+use uuid::Uuid;
+
+use crate::protocol::{IceServer, KeyAttestation, ServerMessage, PROTOCOL_VERSION};
+
+type HmacSha1 = Hmac<Sha1>;
+
+#[derive(Clone)]
+pub struct AppState {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
+    signer: SigningKey,
+    turn_secret: Vec<u8>,
+    turn_urls: Vec<String>,
+    turn_credential_ttl: Duration,
+    code_ttl: Duration,
+    max_code_ttl: Duration,
+    devices: RwLock<HashMap<String, ConnectedDevice>>,
+    codes: Mutex<HashMap<[u8; 32], AssistedCode>>,
+    pairings: RwLock<HashMap<String, String>>,
+    limiter: SlidingWindowLimiter,
+}
+
+#[derive(Clone)]
+pub struct ConnectedDevice {
+    pub connection_id: Uuid,
+    pub outbound: mpsc::Sender<ServerMessage>,
+    pub public_key: [u8; 32],
+    pub last_seen: Instant,
+}
+
+struct AssistedCode {
+    creator_device_id: String,
+    expires_at: Instant,
+    expires_at_unix_seconds: u64,
+}
+
+struct SlidingWindowLimiter {
+    max_events: usize,
+    window: Duration,
+    events: Mutex<HashMap<IpAddr, VecDeque<Instant>>>,
+}
+
+impl AppState {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        signer: SigningKey,
+        turn_secret: impl Into<Vec<u8>>,
+        turn_urls: Vec<String>,
+        turn_credential_ttl: Duration,
+        code_ttl: Duration,
+        max_code_ttl: Duration,
+        rate_limit_messages: usize,
+        rate_limit_window: Duration,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Inner {
+                signer,
+                turn_secret: turn_secret.into(),
+                turn_urls,
+                turn_credential_ttl,
+                code_ttl,
+                max_code_ttl,
+                devices: RwLock::new(HashMap::new()),
+                codes: Mutex::new(HashMap::new()),
+                pairings: RwLock::new(HashMap::new()),
+                limiter: SlidingWindowLimiter {
+                    max_events: rate_limit_messages.max(1),
+                    window: rate_limit_window,
+                    events: Mutex::new(HashMap::new()),
+                },
+            }),
+        }
+    }
+
+    pub fn server_public_key_base64(&self) -> String {
+        BASE64.encode(self.inner.signer.verifying_key().as_bytes())
+    }
+
+    pub async fn allow_message(&self, ip: IpAddr) -> bool {
+        self.inner.limiter.allow(ip).await
+    }
+
+    pub async fn register(
+        &self,
+        device_id: String,
+        public_key: [u8; 32],
+        connection_id: Uuid,
+        outbound: mpsc::Sender<ServerMessage>,
+    ) -> Option<mpsc::Sender<ServerMessage>> {
+        let mut devices = self.inner.devices.write().await;
+        devices
+            .insert(
+                device_id,
+                ConnectedDevice {
+                    connection_id,
+                    outbound,
+                    public_key,
+                    last_seen: Instant::now(),
+                },
+            )
+            .map(|previous| previous.outbound)
+    }
+
+    pub async fn unregister(&self, device_id: &str, connection_id: Uuid) {
+        let should_remove = {
+            let devices = self.inner.devices.read().await;
+            devices
+                .get(device_id)
+                .is_some_and(|device| device.connection_id == connection_id)
+        };
+        if should_remove {
+            self.inner.devices.write().await.remove(device_id);
+            let peer = self.inner.pairings.write().await.remove(device_id);
+            if let Some(peer) = peer {
+                self.inner.pairings.write().await.remove(&peer);
+            }
+        }
+    }
+
+    pub async fn touch(&self, device_id: &str, connection_id: Uuid) {
+        let mut devices = self.inner.devices.write().await;
+        if let Some(device) = devices.get_mut(device_id) {
+            if device.connection_id == connection_id {
+                device.last_seen = Instant::now();
+            }
+        }
+    }
+
+    pub async fn is_online(&self, device_id: &str) -> bool {
+        self.inner.devices.read().await.contains_key(device_id)
+    }
+
+    pub async fn outbound_for(&self, device_id: &str) -> Option<mpsc::Sender<ServerMessage>> {
+        self.inner
+            .devices
+            .read()
+            .await
+            .get(device_id)
+            .map(|device| device.outbound.clone())
+    }
+
+    pub async fn public_key_for(&self, device_id: &str) -> Option<[u8; 32]> {
+        self.inner
+            .devices
+            .read()
+            .await
+            .get(device_id)
+            .map(|device| device.public_key)
+    }
+
+    pub fn attest_key(
+        &self,
+        device_id: &str,
+        peer_public_key: [u8; 32],
+    ) -> Result<KeyAttestation, std::time::SystemTimeError> {
+        let issued_at_unix_seconds = unix_seconds()?;
+        let payload = attestation_payload(device_id, &peer_public_key, issued_at_unix_seconds);
+        let signature = self.inner.signer.sign(&payload);
+        Ok(KeyAttestation {
+            algorithm: "Ed25519".to_owned(),
+            device_id: device_id.to_owned(),
+            peer_public_key: BASE64.encode(peer_public_key),
+            issued_at_unix_seconds,
+            server_public_key: self.server_public_key_base64(),
+            signature: BASE64.encode(signature.to_bytes()),
+        })
+    }
+
+    pub fn ice_servers(&self, device_id: &str) -> Result<Vec<IceServer>, TurnCredentialError> {
+        let expires_at = unix_seconds()?.saturating_add(self.inner.turn_credential_ttl.as_secs());
+        let username = format!("{expires_at}:{device_id}");
+        let mut mac = HmacSha1::new_from_slice(&self.inner.turn_secret)
+            .map_err(|_| TurnCredentialError::InvalidSecret)?;
+        mac.update(username.as_bytes());
+        let credential = BASE64.encode(mac.finalize().into_bytes());
+        Ok(vec![IceServer {
+            urls: self.inner.turn_urls.clone(),
+            username,
+            credential,
+            expires_at_unix_seconds: expires_at,
+        }])
+    }
+
+    pub async fn create_code(
+        &self,
+        creator_device_id: &str,
+        requested_ttl_seconds: Option<u64>,
+    ) -> Result<(String, u64), std::time::SystemTimeError> {
+        let ttl = requested_ttl_seconds.map_or_else(
+            || self.inner.code_ttl.min(self.inner.max_code_ttl),
+            |requested| {
+                Duration::from_secs(requested)
+                    .clamp(Duration::from_secs(30), self.inner.max_code_ttl)
+            },
+        );
+        let expires_at_unix_seconds = unix_seconds()?.saturating_add(ttl.as_secs());
+        let expires_at = Instant::now() + ttl;
+        let mut rng = OsRng;
+
+        let mut codes = self.inner.codes.lock().await;
+        codes.retain(|_, entry| entry.expires_at > Instant::now());
+        loop {
+            let code = format!("{:08}", rng.gen_range(0_u32..100_000_000_u32));
+            let hash = hash_code(&code);
+            if let std::collections::hash_map::Entry::Vacant(entry) = codes.entry(hash) {
+                entry.insert(AssistedCode {
+                    creator_device_id: creator_device_id.to_owned(),
+                    expires_at,
+                    expires_at_unix_seconds,
+                });
+                return Ok((code, expires_at_unix_seconds));
+            }
+        }
+    }
+
+    pub async fn redeem_code(&self, code: &str) -> RedeemResult {
+        if code.len() != 8 || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+            return RedeemResult::Invalid;
+        }
+
+        let hash = hash_code(code);
+        let mut codes = self.inner.codes.lock().await;
+        let Some(entry) = codes.remove(&hash) else {
+            return RedeemResult::Invalid;
+        };
+        if entry.expires_at <= Instant::now() {
+            return RedeemResult::Expired;
+        }
+        RedeemResult::Ready {
+            creator_device_id: entry.creator_device_id,
+            expires_at_unix_seconds: entry.expires_at_unix_seconds,
+        }
+    }
+
+    pub async fn pair(&self, first: &str, second: &str) {
+        let mut pairings = self.inner.pairings.write().await;
+        if let Some(old_peer) = pairings.insert(first.to_owned(), second.to_owned()) {
+            pairings.remove(&old_peer);
+        }
+        if let Some(old_peer) = pairings.insert(second.to_owned(), first.to_owned()) {
+            pairings.remove(&old_peer);
+        }
+    }
+
+    pub async fn is_paired(&self, first: &str, second: &str) -> bool {
+        self.inner
+            .pairings
+            .read()
+            .await
+            .get(first)
+            .is_some_and(|peer| peer == second)
+    }
+}
+
+pub enum RedeemResult {
+    Invalid,
+    Expired,
+    Ready {
+        creator_device_id: String,
+        #[allow(dead_code)]
+        expires_at_unix_seconds: u64,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum TurnCredentialError {
+    #[error("relogio do servidor invalido")]
+    Clock(#[from] std::time::SystemTimeError),
+    #[error("segredo TURN invalido")]
+    InvalidSecret,
+}
+
+impl SlidingWindowLimiter {
+    async fn allow(&self, ip: IpAddr) -> bool {
+        let now = Instant::now();
+        let threshold = now.checked_sub(self.window).unwrap_or(now);
+        let mut all_events = self.events.lock().await;
+        let events = all_events.entry(ip).or_default();
+        while events.front().is_some_and(|event| *event <= threshold) {
+            events.pop_front();
+        }
+        if events.len() >= self.max_events {
+            return false;
+        }
+        events.push_back(now);
+        true
+    }
+}
+
+pub fn attestation_payload(
+    device_id: &str,
+    peer_public_key: &[u8; 32],
+    issued_at_unix_seconds: u64,
+) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(2 + device_id.len() + 1 + 32 + 8);
+    payload.extend_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+    payload.extend_from_slice(device_id.as_bytes());
+    payload.push(0);
+    payload.extend_from_slice(peer_public_key);
+    payload.extend_from_slice(&issued_at_unix_seconds.to_be_bytes());
+    payload
+}
+
+fn hash_code(code: &str) -> [u8; 32] {
+    Sha256::digest(code.as_bytes()).into()
+}
+
+fn unix_seconds() -> Result<u64, std::time::SystemTimeError> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+}

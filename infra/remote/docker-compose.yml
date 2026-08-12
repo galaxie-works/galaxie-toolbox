@@ -1,0 +1,76 @@
+name: galaxie-remote
+
+services:
+  signaling:
+    build:
+      context: ${GALAXIE_REMOTE_BUILD_CONTEXT:-../../services/remote-signaling}
+    image: ${GALAXIE_REMOTE_IMAGE:-galaxie-remote-signaling:local}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop:
+      - ALL
+    group_add:
+      - "20000"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      GALAXIE_REMOTE_BIND: 0.0.0.0:8787
+      GALAXIE_REMOTE_SIGNING_KEY_FILE: /run/secrets/signing_key
+      GALAXIE_REMOTE_TURN_SECRET_FILE: /run/secrets/turn_secret
+      GALAXIE_REMOTE_TURN_URLS: >-
+        stun:${GALAXIE_REMOTE_REALM:-telemetry.thegalaxie.cloud}:3478,
+        turn:${GALAXIE_REMOTE_REALM:-telemetry.thegalaxie.cloud}:3478?transport=udp,
+        turn:${GALAXIE_REMOTE_REALM:-telemetry.thegalaxie.cloud}:3478?transport=tcp
+      GALAXIE_REMOTE_CODE_TTL_SECONDS: 600
+      GALAXIE_REMOTE_MAX_CODE_TTL_SECONDS: 900
+      GALAXIE_REMOTE_TURN_TTL_SECONDS: 3600
+      GALAXIE_REMOTE_RATE_LIMIT_MESSAGES: 120
+      GALAXIE_REMOTE_RATE_LIMIT_WINDOW_SECONDS: 60
+      RUST_LOG: galaxie_remote_signaling=info
+    secrets:
+      - signing_key
+      - turn_secret
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.galaxie-remote.rule=Host(`${GALAXIE_REMOTE_REALM:-telemetry.thegalaxie.cloud}`) && PathPrefix(`/remote`)
+      - traefik.http.routers.galaxie-remote.priority=100
+      - traefik.http.routers.galaxie-remote.entrypoints=websecure
+      - traefik.http.routers.galaxie-remote.tls.certresolver=letsencrypt
+      - traefik.http.routers.galaxie-remote.middlewares=galaxie-remote-strip
+      - traefik.http.middlewares.galaxie-remote-strip.stripprefix.prefixes=/remote
+      - traefik.http.services.galaxie-remote.loadbalancer.server.port=8787
+
+  coturn:
+    image: coturn/coturn:4.15.0-r0-alpine
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    tmpfs:
+      - /run/coturn:size=1m,noexec,nosuid,nodev,uid=65534,gid=65533,mode=0700
+      - /var/lib/coturn:size=8m,noexec,nosuid,nodev,uid=65534,gid=65533
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    group_add:
+      - "20000"
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      GALAXIE_REMOTE_PUBLIC_IP: ${GALAXIE_REMOTE_PUBLIC_IP:?configure o IP publico}
+      GALAXIE_REMOTE_REALM: ${GALAXIE_REMOTE_REALM:-telemetry.thegalaxie.cloud}
+    entrypoint:
+      - /opt/galaxie/coturn-entrypoint.sh
+    volumes:
+      - ./coturn-entrypoint.sh:/opt/galaxie/coturn-entrypoint.sh:ro
+      - ./turnserver.conf:/opt/galaxie/turnserver.conf:ro
+    secrets:
+      - turn_secret
+
+secrets:
+  signing_key:
+    file: ./secrets/signing_key
+  turn_secret:
+    file: ./secrets/turn_secret
