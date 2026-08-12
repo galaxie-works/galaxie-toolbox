@@ -18,7 +18,6 @@ import type {
   Identidade,
   InsightsRemetente,
   PastaEmail,
-  OrgStatus,
   PastaOD,
   Pessoa,
   RecorrenciaInput,
@@ -145,29 +144,31 @@ export async function login(
   if (!inTauri()) {
     await sleep(800);
     const usado = email || MOCK_USER.email;
-    // No Tauri, o `orgStatus` REAL vem do PS0 (deriva do token). Aqui é mock: só um
-    // override de dev/QA pra exercitar os 3 caminhos sem backend.
-    return { ...MOCK_USER, email: usado, orgStatus: mockOrgStatus() };
+    // No Tauri, o tier REAL (accountKind/orgStatus/capabilities) vem do PS0 (deriva
+    // do token). Aqui é mock: só um override de dev/QA pra exercitar os tiers.
+    return { ...MOCK_USER, email: usado, ...mockTier() };
   }
   return invoke<AppUser>("login", { email, idioma, provider });
 }
 
 /**
- * Override de dev/QA do `orgStatus` (#698, PS5) — só no mock (fora do Tauri). No
- * app real quem deriva isso é o PS0 a partir do TOKEN (`tid` MS / `hd` Google)
- * contra o registro de orgs contratadas. Aqui, `?mockOrg=contracted|uncontracted|none`
- * força o estado pro live-QA; sem o param, cai no padrão do MOCK_USER (`contracted`).
+ * Override de dev/QA do TIER (#698/#699) — só no mock (fora do Tauri). No app real
+ * quem deriva isso é o PS0 a partir do TOKEN (`tid` MS / `hd` Google) contra o
+ * registro de orgs. Aqui, `?mockOrg=contracted|uncontracted|none` força o tier pro
+ * live-QA do gating; sem o param, cai no padrão do MOCK_USER (org contratada).
+ * - `contracted`   → org: mantém as capabilities/accountKind do MOCK_USER.
+ * - `uncontracted` → funcionário de empresa não-cliente: conta work, sem features org.
+ * - `none`         → conta pessoal: accountKind personal, só "minhas coisas".
  */
-function mockOrgStatus(): OrgStatus {
+function mockTier(): Partial<AppUser> {
   const forcado = new URLSearchParams(window.location.search).get("mockOrg");
-  if (
-    forcado === "contracted" ||
-    forcado === "uncontracted" ||
-    forcado === "none"
-  ) {
-    return forcado;
+  if (forcado === "uncontracted") {
+    return { orgStatus: "uncontracted", accountKind: "work", organizacao: null };
   }
-  return MOCK_USER.orgStatus;
+  if (forcado === "none") {
+    return { orgStatus: "none", accountKind: "personal", organizacao: null };
+  }
+  return { orgStatus: "contracted" };
 }
 
 /** Descobre o tenant pelo dominio do e-mail (sem logar). */
