@@ -16,6 +16,7 @@ import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
 import { InspectorPane } from "./inspector";
 import { pathPai } from "./caminho";
+import type { Clipboard } from "./menu-arquivo";
 
 // --- Estado de navegação (histórico back/forward + caminho atual) ----------
 // Local ao shell (useReducer): é estado de UI efêmero, não tenant-scoped — não
@@ -88,6 +89,9 @@ export function ExplorerShell() {
   // detalhes começa VISÍVEL (o usuário esconde pelo toggle da toolbar).
   const [selecionados, setSelecionados] = useState<FsEntry[]>([]);
   const [mostrarInspector, setMostrarInspector] = useState(true);
+  // #714: área de transferência interna (recortar/copiar/colar). Vive no shell
+  // pra sobreviver à navegação entre pastas.
+  const [clipboard, setClipboard] = useState<Clipboard | null>(null);
 
   // Carrega drives + acesso rápido uma vez; ao ter os drives, cai no 1º drive.
   useEffect(() => {
@@ -162,6 +166,8 @@ export function ExplorerShell() {
               currentPath={nav.currentPath}
               onNavegar={navegar}
               onSelecaoChange={setSelecionados}
+              clipboard={clipboard}
+              onClipboardChange={setClipboard}
               mostrarInspector={mostrarInspector}
               onToggleInspector={() => setMostrarInspector((v) => !v)}
             />

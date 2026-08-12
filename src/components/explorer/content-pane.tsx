@@ -29,15 +29,50 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertAction, AlertTitle } from "@/components/reui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { formatBytes } from "@/lib/utils";
 import { preencher, useIdioma } from "@/lib/idioma";
-import { enableLongPaths, listarDir, longPathsStatus } from "@/lib/api";
+import {
+  abrirCaminhoFs,
+  copiar,
+  criarArquivo,
+  criarPasta,
+  enableLongPaths,
+  excluirPermanente,
+  listarDir,
+  longPathsStatus,
+  mover,
+  paraLixeira,
+  renomear,
+  revelarCaminho,
+} from "@/lib/api";
 import type { FsEntry } from "@/lib/types";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { ordenar, type ChaveOrdem, type Ordem } from "./ordenar";
 import { filtrarEntradas } from "./filtro";
+import { juntarCaminho, nomeBase, pathPai } from "./caminho";
+import { ComMenu, RenameInput } from "./menu-contexto";
+import {
+  getEmptySpaceContextMenu,
+  getFileContextMenu,
+  nomeEmConflito,
+  nomeUnico,
+  nomeValido,
+  type AcoesMenu,
+  type Clipboard,
+  type RotulosMenu,
+} from "./menu-arquivo";
 import {
   SELECAO_VAZIA,
   alternar,
@@ -194,6 +229,8 @@ export function ContentPane({
   currentPath,
   onNavegar,
   onSelecaoChange,
+  clipboard,
+  onClipboardChange,
   mostrarInspector,
   onToggleInspector,
 }: {
@@ -201,6 +238,9 @@ export function ContentPane({
   onNavegar: (path: string) => void;
   /** #681: reporta a seleção (FsEntry[]) pro shell alimentar o InspectorPane. */
   onSelecaoChange?: (itensSelecionados: FsEntry[]) => void;
+  /** #714: área de transferência interna (recortar/copiar/colar), no shell. */
+  clipboard?: Clipboard | null;
+  onClipboardChange?: (c: Clipboard | null) => void;
   /** Estado do painel de detalhes (controlado pelo shell) — pro botão de toggle. */
   mostrarInspector?: boolean;
   onToggleInspector?: () => void;
@@ -209,6 +249,17 @@ export function ContentPane({
   const [entradas, setEntradas] = useState<FsEntry[] | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState(false);
+  // #714: nonce de recarga — bumpar re-dispara o `listarDir` do currentPath
+  // (refresh pós-operação sem mexer no loader do S2).
+  const [recarregarNonce, setRecarregarNonce] = useState(0);
+  const recarregar = useCallback(() => setRecarregarNonce((n) => n + 1), []);
+  // #714: rename in-place (path em edição), gate de exclusão permanente (Shift no
+  // clique direito) e o dialog de confirmação da exclusão permanente.
+  const [renomeando, setRenomeando] = useState<string | null>(null);
+  const [shiftDelete, setShiftDelete] = useState(false);
+  const [confirmarPerm, setConfirmarPerm] = useState<string[] | null>(null);
+  // Path recém-criado que deve entrar em rename assim que aparecer na listagem.
+  const renomearAoAparecer = useRef<string | null>(null);
   const [modo, setModo] = useState<ModoView>("detalhes");
   const [ordem, setOrdem] = useState<Ordem>({ chave: "nome", direcao: "asc" });
   const [selecao, setSelecao] = useState<EstadoSelecao>(SELECAO_VAZIA);
@@ -249,11 +300,18 @@ export function ContentPane({
     return () => {
       vivo = false;
     };
-  }, [currentPath]);
+    // recarregarNonce força a releitura da MESMA pasta após uma operação.
+  }, [currentPath, recarregarNonce]);
 
   // Volta ao topo a cada nova pasta.
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 0 });
+  }, [currentPath]);
+
+  // #714: troca de pasta cancela rename em curso e o pending de criar→renomear.
+  useEffect(() => {
+    renomearAoAparecer.current = null;
+    setRenomeando(null);
   }, [currentPath]);
 
   // Pipeline: FILTRA (nome + ocultos) → ORDENA → virtualiza. A seleção/teclado
@@ -282,6 +340,17 @@ export function ContentPane({
     if (!onSelecaoChange) return;
     onSelecaoChange(itens.filter((e) => selecao.selecionados.has(e.path)));
   }, [selecao, itens, onSelecaoChange]);
+
+  // #714: após criar pasta/arquivo, entra em rename assim que o item aparece na
+  // listagem recarregada (mock é no-op → simplesmente não dispara).
+  useEffect(() => {
+    const alvo = renomearAoAparecer.current;
+    if (!alvo || !entradas) return;
+    if (entradas.some((e) => e.path === alvo)) {
+      renomearAoAparecer.current = null;
+      setRenomeando(alvo);
+    }
+  }, [entradas]);
 
   const mostrarLongPathCta =
     longPathsOn === false && currentPath.length > MAX_PATH;
@@ -345,9 +414,158 @@ export function ContentPane({
   const abrirItem = useCallback(
     (entry: FsEntry) => {
       if (entry.isDir) onNavegar(entry.path);
-      // Arquivo: hook de S3 (abrir/preview). No-op por enquanto.
+      else void abrirCaminhoFs(entry.path).catch(() => {
+        toast.error(t.arquivos.erroOperacao);
+      });
     },
-    [onNavegar],
+    [onNavegar, t.arquivos.erroOperacao],
+  );
+
+  // --- #714: operações de arquivo (recortar/copiar/colar/renomear/excluir) ----
+  // Envolve uma mutação: roda, dá refresh e mostra toast de erro tipado.
+  const comRefresh = useCallback(
+    async (fn: () => Promise<void>) => {
+      try {
+        await fn();
+        recarregar();
+      } catch (e) {
+        toast.error(t.arquivos.erroOperacao, { description: String(e) });
+      }
+    },
+    [recarregar, t.arquivos.erroOperacao],
+  );
+
+  const colar = useCallback(
+    (destDir: string) => {
+      if (!clipboard || clipboard.paths.length === 0) return;
+      const { paths, op } = clipboard;
+      void comRefresh(async () => {
+        for (const origem of paths) {
+          const destino = juntarCaminho(destDir, nomeBase(origem));
+          if (op === "copy") await copiar(origem, destino);
+          else await mover(origem, destino);
+        }
+        if (op === "cut") onClipboardChange?.(null);
+      });
+    },
+    [clipboard, comRefresh, onClipboardChange],
+  );
+
+  const iniciarRename = useCallback((entry: FsEntry) => {
+    setRenomeando(entry.path);
+  }, []);
+
+  const criarPastaNova = useCallback(
+    (destDir: string) => {
+      const base = nomeUnico(t.arquivos.novaPastaNome, entradas ?? []);
+      const alvo = juntarCaminho(destDir, base);
+      renomearAoAparecer.current = alvo; // entra em rename quando aparecer
+      void comRefresh(() => criarPasta(alvo));
+    },
+    [comRefresh, entradas, t.arquivos.novaPastaNome],
+  );
+
+  const criarArquivoNovo = useCallback(
+    (destDir: string) => {
+      const base = nomeUnico(t.arquivos.novoArquivoNome, entradas ?? []);
+      const alvo = juntarCaminho(destDir, base);
+      renomearAoAparecer.current = alvo;
+      void comRefresh(() => criarArquivo(alvo));
+    },
+    [comRefresh, entradas, t.arquivos.novoArquivoNome],
+  );
+
+  const acoesMenu = useMemo<AcoesMenu>(
+    () => ({
+      abrir: abrirItem,
+      abrirCom: (entry) =>
+        void abrirCaminhoFs(entry.path).catch(() =>
+          toast.error(t.arquivos.erroOperacao),
+        ),
+      recortar: (paths) => onClipboardChange?.({ paths, op: "cut" }),
+      copiar: (paths) => onClipboardChange?.({ paths, op: "copy" }),
+      colar,
+      renomear: iniciarRename,
+      paraLixeira: (paths) => void comRefresh(() => paraLixeira(paths)),
+      // Exclusão permanente NUNCA chama a api direto: passa pelo dialog.
+      excluirPerm: (paths) => setConfirmarPerm(paths),
+      novaPasta: criarPastaNova,
+      novoArquivo: criarArquivoNovo,
+      copiarCaminho: (paths) =>
+        void navigator.clipboard
+          ?.writeText(paths.join("\n"))
+          .catch(() => toast.error(t.arquivos.erroOperacao)),
+      revelar: (path) =>
+        void revelarCaminho(path).catch(() =>
+          toast.error(t.arquivos.erroOperacao),
+        ),
+      // Propriedades (v1): seleciona o item pra o InspectorPane (S5) mostrá-lo.
+      propriedades: (entry) => {
+        const idx = paths.indexOf(entry.path);
+        if (idx >= 0) setSelecao(selecionarUnico(paths, idx));
+      },
+    }),
+    [
+      abrirItem,
+      colar,
+      iniciarRename,
+      criarPastaNova,
+      criarArquivoNovo,
+      comRefresh,
+      onClipboardChange,
+      paths,
+      t.arquivos.erroOperacao,
+    ],
+  );
+
+  const rotulosMenu = useMemo<RotulosMenu>(
+    () => ({
+      abrir: t.arquivos.abrir,
+      abrirCom: t.arquivos.abrirCom,
+      abrirComPadrao: t.arquivos.abrirComPadrao,
+      recortar: t.arquivos.recortar,
+      copiar: t.arquivos.copiar,
+      colar: t.arquivos.colar,
+      renomear: t.arquivos.renomear,
+      excluir: t.arquivos.excluir,
+      excluirPerm: t.arquivos.excluirPerm,
+      novaPasta: t.arquivos.novaPasta,
+      novoArquivo: t.arquivos.novoArquivo,
+      copiarCaminho: t.arquivos.copiarCaminho,
+      revelar: t.arquivos.revelar,
+      propriedades: t.arquivos.propriedades,
+    }),
+    [t.arquivos],
+  );
+
+  // Confirma um rename: valida vazio/inválido/conflito e chama `renomear`. Vindo
+  // do blur, nome ruim cancela em silêncio; via teclado, mostra toast e segura.
+  const confirmarRename = useCallback(
+    (
+      entry: FsEntry,
+      novoNome: string,
+      { viaBlur }: { mover: boolean; viaBlur: boolean },
+    ) => {
+      const nome = novoNome.trim();
+      if (nome === entry.name || nome === "") {
+        setRenomeando(null);
+        return;
+      }
+      if (!nomeValido(nome)) {
+        if (viaBlur) setRenomeando(null);
+        else toast.error(t.arquivos.renomearInvalido);
+        return;
+      }
+      if (nomeEmConflito(nome, entradas ?? [], entry.path)) {
+        if (viaBlur) setRenomeando(null);
+        else toast.error(t.arquivos.renomearConflito);
+        return;
+      }
+      setRenomeando(null);
+      const destino = juntarCaminho(pathPai(entry.path), nome);
+      void comRefresh(() => renomear(entry.path, destino));
+    },
+    [entradas, comRefresh, t.arquivos.renomearInvalido, t.arquivos.renomearConflito],
   );
 
   const aoClicar = useCallback(
@@ -432,15 +650,34 @@ export function ContentPane({
             setSelecao((s) => selecionarTudo(paths, s));
           }
           break;
-        case "F2":
-        case "Delete":
-          // Hooks de S3 (renomear/excluir): no-op hoje.
+        case "F2": {
+          ev.preventDefault();
+          const alvo = atual < 0 ? undefined : itens[atual];
+          if (alvo) setRenomeando(alvo.path);
           break;
+        }
+        case "Delete": {
+          ev.preventDefault();
+          const alvos = Array.from(selecao.selecionados);
+          if (alvos.length === 0) break;
+          if (ev.shiftKey) setConfirmarPerm(alvos);
+          else void comRefresh(() => paraLixeira(alvos));
+          break;
+        }
         default:
           break;
       }
     },
-    [paths, selecao.cursor, cols, moverCursor, itens, abrirItem],
+    [
+      paths,
+      selecao.cursor,
+      selecao.selecionados,
+      cols,
+      moverCursor,
+      itens,
+      abrirItem,
+      comRefresh,
+    ],
   );
 
   const alternarOrdem = useCallback((chave: ChaveOrdem) => {
@@ -450,6 +687,46 @@ export function ContentPane({
         : { chave, direcao: "asc" },
     );
   }, []);
+
+  // #714: itens do menu de contexto de um item (com o gate de Shift atual) +
+  // handler de abertura (Shift → exclusão permanente; right-click seleciona o
+  // item quando ele não faz parte da seleção corrente).
+  const menuDe = useCallback(
+    (entry: FsEntry) =>
+      getFileContextMenu(
+        entry,
+        Array.from(selecao.selecionados),
+        clipboard ?? null,
+        acoesMenu,
+        rotulosMenu,
+        { permanente: shiftDelete },
+      ),
+    [selecao.selecionados, clipboard, acoesMenu, rotulosMenu, shiftDelete],
+  );
+  const aoAbrirMenu = useCallback(
+    (entry: FsEntry, shift: boolean) => {
+      setShiftDelete(shift);
+      if (!selecao.selecionados.has(entry.path)) {
+        const idx = paths.indexOf(entry.path);
+        if (idx >= 0) setSelecao(selecionarUnico(paths, idx));
+      }
+    },
+    [selecao.selecionados, paths],
+  );
+
+  // Rótulo do nome (ou o campo de rename in-place, quando este item é o alvo).
+  function nomeOuRename(entry: FsEntry, spanClass: string): ReactNode {
+    if (renomeando !== entry.path) {
+      return <span className={spanClass}>{entry.name}</span>;
+    }
+    return (
+      <RenameInput
+        inicial={entry.name}
+        onConfirmar={(nome, opts) => confirmarRename(entry, nome, opts)}
+        onCancelar={() => setRenomeando(null)}
+      />
+    );
+  }
 
   // --- Render de uma linha virtual (fatia de `cols` itens) ------------------
   function renderLinha(linhaIndex: number): ReactNode {
@@ -465,27 +742,40 @@ export function ContentPane({
             const index = linhaIndex * cols + i;
             const sel = selecao.selecionados.has(entry.path);
             const cursor = selecao.cursor === entry.path;
-            return (
-              <button
-                key={entry.path}
-                type="button"
-                onClick={(e) => aoClicar(index, e)}
-                onDoubleClick={() => abrirItem(entry)}
-                className={cn(
-                  "flex h-[108px] flex-col items-center gap-1.5 rounded-lg border border-transparent p-2 text-center outline-none transition-colors",
-                  sel ? "bg-accent" : "hover:bg-accent/50",
-                  cursor && "ring-2 ring-ring/60",
+            const editando = renomeando === entry.path;
+            const classe = cn(
+              "flex h-[108px] w-full flex-col items-center gap-1.5 rounded-lg border border-transparent p-2 text-center outline-none transition-colors",
+              sel ? "bg-accent" : "hover:bg-accent/50",
+              cursor && "ring-2 ring-ring/60",
+            );
+            const conteudo = (
+              <>
+                <CelulaIcone entry={entry} boxClass="size-12" iconClass="size-9" />
+                {nomeOuRename(
+                  entry,
+                  "line-clamp-2 w-full break-words text-xs leading-tight",
                 )}
+              </>
+            );
+            return (
+              <ComMenu
+                key={entry.path}
+                itens={menuDe(entry)}
+                onOpen={(shift) => aoAbrirMenu(entry, shift)}
               >
-                <CelulaIcone
-                  entry={entry}
-                  boxClass="size-12"
-                  iconClass="size-9"
-                />
-                <span className="line-clamp-2 w-full break-words text-xs leading-tight">
-                  {entry.name}
-                </span>
-              </button>
+                {editando ? (
+                  <div className={classe}>{conteudo}</div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={(e) => aoClicar(index, e)}
+                    onDoubleClick={() => abrirItem(entry)}
+                    className={classe}
+                  >
+                    {conteudo}
+                  </button>
+                )}
+              </ComMenu>
             );
           })}
         </div>
@@ -498,41 +788,53 @@ export function ContentPane({
     const index = linhaIndex * cols;
     const sel = selecao.selecionados.has(entry.path);
     const cursor = selecao.cursor === entry.path;
+    const editando = renomeando === entry.path;
 
     if (modo === "lista") {
-      return (
-        <button
-          type="button"
-          onClick={(e) => aoClicar(index, e)}
-          onDoubleClick={() => abrirItem(entry)}
-          className={cn(
-            "flex h-8 w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
-            sel ? "bg-accent" : "hover:bg-accent/50",
-            cursor && "ring-2 ring-ring/60",
-          )}
-        >
+      const classe = cn(
+        "flex h-8 w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
+        sel ? "bg-accent" : "hover:bg-accent/50",
+        cursor && "ring-2 ring-ring/60",
+      );
+      const conteudo = (
+        <>
           <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" />
-          <span className="min-w-0 flex-1 truncate text-sm">{entry.name}</span>
-        </button>
+          {nomeOuRename(entry, "min-w-0 flex-1 truncate text-sm")}
+        </>
+      );
+      return (
+        <ComMenu
+          className="w-full"
+          itens={menuDe(entry)}
+          onOpen={(shift) => aoAbrirMenu(entry, shift)}
+        >
+          {editando ? (
+            <div className={classe}>{conteudo}</div>
+          ) : (
+            <button
+              type="button"
+              onClick={(e) => aoClicar(index, e)}
+              onDoubleClick={() => abrirItem(entry)}
+              className={classe}
+            >
+              {conteudo}
+            </button>
+          )}
+        </ComMenu>
       );
     }
 
     // Detalhes: linha de tabela alinhada ao cabeçalho.
-    return (
-      <button
-        type="button"
-        onClick={(e) => aoClicar(index, e)}
-        onDoubleClick={() => abrirItem(entry)}
-        className={cn(
-          "grid h-[34px] w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
-          sel ? "bg-accent" : "hover:bg-accent/50",
-          cursor && "ring-2 ring-ring/60",
-        )}
-        style={{ gridTemplateColumns: COLS_DETALHES }}
-      >
+    const classe = cn(
+      "grid h-[34px] w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
+      sel ? "bg-accent" : "hover:bg-accent/50",
+      cursor && "ring-2 ring-ring/60",
+    );
+    const conteudo = (
+      <>
         <span className="flex min-w-0 items-center gap-2">
           <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" />
-          <span className="min-w-0 truncate text-sm">{entry.name}</span>
+          {nomeOuRename(entry, "min-w-0 truncate text-sm")}
         </span>
         <span className="truncate text-xs text-muted-foreground">
           {formatarDataArquivo(entry.modifiedMs, idioma)}
@@ -546,7 +848,30 @@ export function ContentPane({
         <span className="truncate text-right text-xs text-muted-foreground tabular-nums">
           {entry.isDir ? "" : formatBytes(entry.size)}
         </span>
-      </button>
+      </>
+    );
+    return (
+      <ComMenu
+        className="w-full"
+        itens={menuDe(entry)}
+        onOpen={(shift) => aoAbrirMenu(entry, shift)}
+      >
+        {editando ? (
+          <div className={classe} style={{ gridTemplateColumns: COLS_DETALHES }}>
+            {conteudo}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => aoClicar(index, e)}
+            onDoubleClick={() => abrirItem(entry)}
+            className={classe}
+            style={{ gridTemplateColumns: COLS_DETALHES }}
+          >
+            {conteudo}
+          </button>
+        )}
+      </ComMenu>
     );
   }
 
@@ -697,56 +1022,106 @@ export function ContentPane({
         </div>
       )}
 
-      {/* Área virtualizada */}
+      {/* Área virtualizada. O menu de contexto do ESPAÇO VAZIO (Colar / Nova
+          pasta / Novo arquivo) envolve o conteúdo; menus de item (linhas/tiles)
+          ficam aninhados e têm precedência. */}
       <div
         ref={scrollRef}
         tabIndex={0}
         onKeyDown={aoTeclar}
-        onClick={(e) => {
-          if (e.target === e.currentTarget) setSelecao(SELECAO_VAZIA);
-        }}
         className="min-h-0 flex-1 overflow-y-auto rounded-md outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
       >
-        {carregando ? (
-          <div className="flex h-full items-center justify-center py-10">
-            <Spinner className="size-5 text-muted-foreground" />
-          </div>
-        ) : erro ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
-            <AlertCircle className="size-8" />
-            <p className="text-sm">{t.arquivos.erroLer}</p>
-          </div>
-        ) : itens.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
-            <FolderOpen className="size-8" />
-            <p className="text-sm">{t.arquivos.vazio}</p>
-          </div>
-        ) : (
-          <div
-            style={{
-              height: virtualizer.getTotalSize(),
-              position: "relative",
-              width: "100%",
-            }}
-          >
-            {virtualizer.getVirtualItems().map((vr) => (
-              <div
-                key={vr.key}
-                data-index={vr.index}
-                style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  transform: `translateY(${vr.start}px)`,
-                }}
-              >
-                {renderLinha(vr.index)}
-              </div>
-            ))}
-          </div>
-        )}
+        <ComMenu
+          className="block min-h-full"
+          itens={getEmptySpaceContextMenu(
+            currentPath,
+            clipboard ?? null,
+            acoesMenu,
+            rotulosMenu,
+          )}
+          onOpen={() => setShiftDelete(false)}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setSelecao(SELECAO_VAZIA);
+          }}
+        >
+          {carregando ? (
+            <div className="flex h-full items-center justify-center py-10">
+              <Spinner className="size-5 text-muted-foreground" />
+            </div>
+          ) : erro ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
+              <AlertCircle className="size-8" />
+              <p className="text-sm">{t.arquivos.erroLer}</p>
+            </div>
+          ) : itens.length === 0 ? (
+            <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
+              <FolderOpen className="size-8" />
+              <p className="text-sm">{t.arquivos.vazio}</p>
+            </div>
+          ) : (
+            <div
+              style={{
+                height: virtualizer.getTotalSize(),
+                position: "relative",
+                width: "100%",
+              }}
+            >
+              {virtualizer.getVirtualItems().map((vr) => (
+                <div
+                  key={vr.key}
+                  data-index={vr.index}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${vr.start}px)`,
+                  }}
+                >
+                  {renderLinha(vr.index)}
+                </div>
+              ))}
+            </div>
+          )}
+        </ComMenu>
       </div>
+
+      {/* #714: confirmação da exclusão PERMANENTE (Shift+Delete / item do menu).
+          A Lixeira não confirma; só a permanente passa por aqui. */}
+      <AlertDialog
+        open={confirmarPerm !== null}
+        onOpenChange={(aberto) => {
+          if (!aberto) setConfirmarPerm(null);
+        }}
+      >
+        <AlertDialogContent className="max-w-sm!">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t.arquivos.confirmarExclusaoPermTitulo}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {preencher(t.arquivos.confirmarExclusaoPerm, {
+                n: confirmarPerm?.length ?? 0,
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t.arquivos.cancelar}</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                const alvos = confirmarPerm;
+                setConfirmarPerm(null);
+                if (alvos && alvos.length > 0) {
+                  void comRefresh(() => excluirPermanente(alvos));
+                }
+              }}
+            >
+              {t.arquivos.excluirPerm}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
