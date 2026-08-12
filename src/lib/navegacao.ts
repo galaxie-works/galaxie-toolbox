@@ -1,4 +1,4 @@
-import { Gauge, Settings, Radar, FolderTree } from "lucide-react";
+import { Gauge, Settings, Radar, FolderTree, MonitorSmartphone } from "lucide-react";
 import type { ComponentType } from "react";
 import {
   AtomIcon,
@@ -32,6 +32,7 @@ export type Tela =
   | "performance"
   | "caminhos-longos"
   | "arquivos"
+  | "remote"
   | "configuracoes";
 
 /** Chave dentro de `t.nav` — o texto sai do dicionario, nao daqui. */
@@ -143,5 +144,7 @@ export const TELAS: Record<
   "caminhos-longos": { titulo: "windows", secao: "plataforma", icone: WindowsIcon },
   // #677: Explorer de arquivos local.
   arquivos: { titulo: "arquivos", secao: "plataforma", icone: FolderTree },
+  // #718 (SH0): GALAXIE Remote — item fixo do rail (tela placeholder até o #682).
+  remote: { titulo: "remote", secao: "plataforma", icone: MonitorSmartphone },
   configuracoes: { titulo: "configuracoes", secao: "conta", icone: Settings },
 };

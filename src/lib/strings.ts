@@ -116,6 +116,7 @@ const pt = {
     performance: "Performance",
     caminhosLongos: "Caminhos longos",
     arquivos: "Arquivos",
+    remote: "Remoto",
     configuracoes: "Configurações",
     conta: "Conta",
     // Calendário vive no rodapé do sidebar, seção separada da caixa de entrada (#50).
@@ -503,6 +504,11 @@ const pt = {
   sidebar: {
     collapse: "Recolher barra lateral",
     expand: "Expandir barra lateral",
+    // #718 (SH0): rótulos dos itens fixos do rail GALAXIE.
+    navigator: "Navigator",
+    bridge: "Bridge",
+    files: "Arquivos",
+    remote: "Remoto",
   },
 
   controlRoom: {
@@ -1365,6 +1371,12 @@ const pt = {
     descricao: "Suas notificações e alertas, todos num sinal só.",
   },
 
+  // #718 (SH0): placeholder do item fixo Remote (GALAXIE Remote, épico #682).
+  emBreveRemote: {
+    titulo: "GALAXIE Remote está a caminho",
+    descricao: "Acesso e suporte remoto, direto do seu espaço GALAXIE.",
+  },
+
   caminhosLongos: {
     titulo: "Caminhos longos",
     descricao:
@@ -1946,6 +1958,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     performance: "Performance",
     caminhosLongos: "Long paths",
     arquivos: "Files",
+    remote: "Remote",
     configuracoes: "Settings",
     conta: "Account",
     // Calendar lives at the bottom of the sidebar, a section apart from the inbox (#50).
@@ -2324,6 +2337,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   sidebar: {
     collapse: "Collapse sidebar",
     expand: "Expand sidebar",
+    // #718 (SH0): fixed GALAXIE rail item labels.
+    navigator: "Navigator",
+    bridge: "Bridge",
+    files: "Files",
+    remote: "Remote",
   },
 
   controlRoom: {
@@ -3172,6 +3190,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   emBrevePulsar: {
     titulo: "Pulsar enters orbit soon",
     descricao: "Your notifications and alerts, all in one signal.",
+  },
+
+  // #718 (SH0): Remote fixed-item placeholder (GALAXIE Remote, epic #682).
+  emBreveRemote: {
+    titulo: "GALAXIE Remote is on its way",
+    descricao: "Remote access and support, right from your GALAXIE space.",
   },
 
   caminhosLongos: {
