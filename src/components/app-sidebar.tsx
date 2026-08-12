@@ -38,6 +38,7 @@ import { ClienteMark, TenantLogo } from "@/components/brand";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { AppUser } from "@/lib/types";
 import { crOrgBranding } from "@/lib/api";
+import { recursoOrgDisponivel } from "@/lib/tier";
 import { NAV, type Tela } from "@/lib/navegacao";
 import { useIdioma } from "@/lib/idioma";
 import {
@@ -76,6 +77,10 @@ export function AppSidebar({
     escuro: string;
   } | null>(null);
   useEffect(() => {
+    // #712 (PS6 follow-on): branding do tenant é feature de ORG — nos tiers
+    // pessoal/uncontracted nem busca; cai no ClienteMark estático (fallback
+    // gracioso, sem logo de tenant).
+    if (!recursoOrgDisponivel(user)) return;
     let vivo = true;
     crOrgBranding()
       .then((b) => {
@@ -89,7 +94,7 @@ export function AppSidebar({
     return () => {
       vivo = false;
     };
-  }, []);
+  }, [user]);
 
   return (
     <Sidebar collapsible="icon">
