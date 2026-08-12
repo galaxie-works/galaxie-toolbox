@@ -182,7 +182,11 @@ async fn required_scopes_status(state: State<'_, Store>) -> Result<RequiredScope
         .map_err(|_| "estado de token corrompido".to_string())?;
     let missing_scopes = guard
         .as_ref()
-        .map(|tokens| auth::required_resource_scopes_missing(&tokens.scopes))
+        .map(|tokens| {
+            // #694: o pedido depende da authority da conta (org=BASE+ORG, pessoal=BASE).
+            let wanted = config::scopes_para(&tokens.tenant);
+            auth::required_resource_scopes_missing(&tokens.scopes, &wanted)
+        })
         .unwrap_or_default();
     Ok(RequiredScopesStatus { missing_scopes })
 }
