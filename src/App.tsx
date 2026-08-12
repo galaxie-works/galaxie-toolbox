@@ -54,15 +54,8 @@ import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import {
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
 } from "@/components/animate-ui/components/radix/sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -135,7 +128,8 @@ function AppInner() {
   // #183 (Atoms): a nova tela inicial. O usuário cai no dashboard Atoms ao
   // logar/restaurar; o Bridge segue keep-alive (montado/escondido) pra voltar
   // instantâneo.
-  const [tela, setTela] = useState<Tela>("atoms");
+  // #718 (SH0): o app abre no Navigator (era Atoms) — estado inicial do shell.
+  const [tela, setTela] = useState<Tela>("navegador");
   // #498 rework: quando o composer pede a config de assinaturas (bumpa o nonce),
   // troca pra tela de Settings (a ação de store já selecionou Bridge > Envio).
   useEffect(() => {
@@ -409,9 +403,9 @@ function AppInner() {
       void reconciliarConfiguracaoNuvem().catch(() => {
         // Login não falha por indisponibilidade temporária da configuração.
       });
-      // #568: home = Atoms. Login (nova conta ou re-login) sempre cai no Atoms,
-      // nunca herda o último módulo (o resetSessaoCompleta já zerou o nav do store).
-      setTela("atoms");
+      // #718 (SH0): home = Navigator. Login (nova conta ou re-login) sempre cai no
+      // Navigator, nunca herda o último módulo (o resetSessaoCompleta já zerou o nav).
+      setTela("navegador");
       void hydratePeopleM365({ force: true });
       const permissions = await api.requiredScopesStatus();
       setReauthMissingScopes(permissions.missingScopes);
@@ -812,8 +806,8 @@ function AppInner() {
     setEntrarComoPessoal(false); // #698: não herda o "entrar assim mesmo" pra próxima conta
     setSites([]);
     setError(null);
-    // #568: home = Atoms — não deixa o módulo ativo em OneDrive pro próximo login.
-    setTela("atoms");
+    // #718 (SH0): home = Navigator — não deixa o módulo anterior ativo pro próximo login.
+    setTela("navegador");
   }
 
   async function recuperarBloqueio() {
@@ -919,7 +913,10 @@ function AppInner() {
        mas aqui o body e overflow:hidden (janela de app), entao ninguem rolava.
        Travando a altura em h-svh, quem passa a rolar e o <main> abaixo. */
     <TierProvider user={user}>
-    <SidebarProvider className="h-svh">
+    {/* #718 (SH0): rail SEMPRE colapsado — sidebar controlado em `open={false}` e
+        `onOpenChange` no-op, então nem o atalho (Ctrl/Cmd+B) nem trigger algum
+        expandem. O toggle do header foi removido. */}
+    <SidebarProvider className="h-svh" open={false} onOpenChange={() => {}}>
       <Atualizacao />
       <BarraJanela />
       <AppSidebar
@@ -939,21 +936,7 @@ function AppInner() {
           {/* pr-[150px]: os tres controles de janela ocupam o canto superior
               direito e o tema ficaria embaixo deles. */}
           <div data-tauri-drag-region className="flex flex-1 items-center gap-2 px-4 pr-[150px]">
-            {/* Tooltip canônico (#160). O aria-label localizado sobrepõe o
-                sr-only "Toggle Sidebar" fixo do primitivo compartilhado, sem
-                editá-lo. */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <SidebarTrigger
-                  className="-ml-1"
-                  aria-label={t.nav.alternarMenu}
-                />
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {t.nav.alternarMenu}
-              </TooltipContent>
-            </Tooltip>
-            <Separator orientation="vertical" className="mr-2 h-4" />
+            {/* #718 (SH0): o toggle de sidebar saiu — o rail é fixo colapsado. */}
             <Breadcrumb>
               <BreadcrumbList>
                 <BreadcrumbItem className="hidden md:block">
@@ -1153,6 +1136,14 @@ function AppInner() {
               titulo={t.emBreveComms.titulo}
               icone={TELAS.comms.icone}
               descricao={t.emBreveComms.descricao}
+            />
+          )}
+          {/* #718 (SH0): item fixo Remote — tela placeholder até o épico #682. */}
+          {tela === "remote" && (
+            <EmBreveScreen
+              titulo={t.emBreveRemote.titulo}
+              icone={TELAS.remote.icone}
+              descricao={t.emBreveRemote.descricao}
             />
           )}
           {tela === "astro" && (
