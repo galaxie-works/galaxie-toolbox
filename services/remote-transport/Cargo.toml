@@ -20,9 +20,13 @@ publish = false
 # não há OpenSSL, sem esconder que o transporte precisa dele.
 default = []
 webrtc = ["dep:str0m"]
+# `input` (S3) puxa o `enigo` pra INJETAR input no host (SendInput/Win32). O
+# formato da mensagem de input (input.rs) fica no núcleo; só a injeção é opt-in.
+input = ["dep:enigo"]
 
 [dependencies]
 str0m = { version = "0.6", optional = true }
+enigo = { version = "0.6", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
