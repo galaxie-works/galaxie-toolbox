@@ -92,6 +92,7 @@ const pt = {
     navegador: "Navigator",
     performance: "Performance",
     caminhosLongos: "Caminhos longos",
+    arquivos: "Arquivos",
     configuracoes: "Configurações",
     conta: "Conta",
     // Calendário vive no rodapé do sidebar, seção separada da caixa de entrada (#50).
@@ -1365,6 +1366,28 @@ const pt = {
     erroAtivar: "Não foi possível ativar os caminhos longos.",
   },
 
+  // #677: Explorer de arquivos local.
+  arquivos: {
+    titulo: "Arquivos",
+    endereco: "Caminho",
+    voltar: "Voltar",
+    avancar: "Avançar",
+    acima: "Acima",
+    drives: "Este computador",
+    acessoRapido: "Acesso rápido",
+    carregando: "Carregando…",
+    documentos: "Documentos",
+    downloads: "Downloads",
+    desktop: "Área de trabalho",
+    pastas: "Pastas",
+    vazio: "Pasta vazia",
+    enderecoInvalido: "Caminho inválido",
+    editarCaminho: "Editar caminho",
+    conteudoTitulo: "Selecione uma pasta",
+    conteudoEmBreve:
+      "A visualização de arquivos e pastas chega em uma próxima etapa.",
+  },
+
   tema: {
     alternar: "Alternar tema claro e escuro",
   },
@@ -1826,6 +1849,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     navegador: "Navigator",
     performance: "Performance",
     caminhosLongos: "Long paths",
+    arquivos: "Files",
     configuracoes: "Settings",
     conta: "Account",
     // Calendar lives at the bottom of the sidebar, a section apart from the inbox (#50).
@@ -3074,6 +3098,27 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     longPathsTitulo: "Long paths",
     longPathsDesc: "Let Windows use file paths longer than 260 characters.",
     erroAtivar: "Couldn't enable long paths.",
+  },
+
+  // #677: local file explorer.
+  arquivos: {
+    titulo: "Files",
+    endereco: "Path",
+    voltar: "Back",
+    avancar: "Forward",
+    acima: "Up",
+    drives: "This PC",
+    acessoRapido: "Quick access",
+    carregando: "Loading…",
+    documentos: "Documents",
+    downloads: "Downloads",
+    desktop: "Desktop",
+    pastas: "Folders",
+    vazio: "Empty folder",
+    enderecoInvalido: "Invalid path",
+    editarCaminho: "Edit path",
+    conteudoTitulo: "Select a folder",
+    conteudoEmBreve: "The file and folder view arrives in a later step.",
   },
 
   tema: {
