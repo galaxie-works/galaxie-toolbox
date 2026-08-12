@@ -14,6 +14,7 @@ import { LocaisSidebar } from "./locais";
 import { ArvoreArquivos } from "./arvore";
 import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
+import { InspectorPane } from "./inspector";
 import { pathPai } from "./caminho";
 
 // --- Estado de navegação (histórico back/forward + caminho atual) ----------
@@ -83,6 +84,10 @@ export function ExplorerShell() {
   const [nav, dispatch] = useReducer(navReducer, NAV_INICIAL);
   const [drives, setDrives] = useState<DriveInfo[] | null>(null);
   const [acessoRapido, setAcessoRapido] = useState<FsEntry[] | null>(null);
+  // #681: seleção liftada do ContentPane → alimenta o InspectorPane. Painel de
+  // detalhes começa VISÍVEL (o usuário esconde pelo toggle da toolbar).
+  const [selecionados, setSelecionados] = useState<FsEntry[]>([]);
+  const [mostrarInspector, setMostrarInspector] = useState(true);
 
   // Carrega drives + acesso rápido uma vez; ao ter os drives, cai no 1º drive.
   useEffect(() => {
@@ -108,7 +113,7 @@ export function ExplorerShell() {
 
   return (
     <ResizablePanelGroup direction="horizontal" className="h-full">
-      <ResizablePanel defaultSize={26} minSize={16} maxSize={42}>
+      <ResizablePanel id="tree" order={1} defaultSize={22} minSize={16} maxSize={42}>
         <aside className="flex h-full flex-col rounded-xl border bg-card p-3">
           {drives === null ? (
             <div className="flex flex-1 items-center justify-center py-6">
@@ -141,7 +146,7 @@ export function ExplorerShell() {
 
       <ResizableHandle withHandle className="mx-1.5 bg-transparent" />
 
-      <ResizablePanel defaultSize={74} minSize={40}>
+      <ResizablePanel id="content" order={2} defaultSize={53} minSize={30}>
         <div className="flex h-full flex-col gap-3 rounded-xl border bg-card p-3">
           <NavBarArquivos
             currentPath={nav.currentPath}
@@ -153,7 +158,13 @@ export function ExplorerShell() {
             onNavegar={navegar}
           />
           {nav.currentPath ? (
-            <ContentPane currentPath={nav.currentPath} onNavegar={navegar} />
+            <ContentPane
+              currentPath={nav.currentPath}
+              onNavegar={navegar}
+              onSelecaoChange={setSelecionados}
+              mostrarInspector={mostrarInspector}
+              onToggleInspector={() => setMostrarInspector((v) => !v)}
+            />
           ) : (
             // Sem pasta selecionada ainda (antes de os drives caírem no 1º).
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center">
@@ -166,6 +177,21 @@ export function ExplorerShell() {
           )}
         </div>
       </ResizablePanel>
+
+      {mostrarInspector && (
+        <>
+          <ResizableHandle withHandle className="mx-1.5 bg-transparent" />
+          <ResizablePanel
+            id="inspector"
+            order={3}
+            defaultSize={25}
+            minSize={16}
+            maxSize={40}
+          >
+            <InspectorPane itens={selecionados} />
+          </ResizablePanel>
+        </>
+      )}
     </ResizablePanelGroup>
   );
 }

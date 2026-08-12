@@ -11,22 +11,33 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
+  Eye,
+  EyeOff,
   FolderOpen,
   LayoutGrid,
   List,
+  PanelRight,
+  PanelRightClose,
+  Search,
   Table as TableIcon,
+  TriangleAlert,
+  X,
 } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { Alert, AlertAction, AlertTitle } from "@/components/reui/alert";
 import { cn } from "@/lib/utils";
 import { formatBytes } from "@/lib/utils";
 import { preencher, useIdioma } from "@/lib/idioma";
-import { listarDir } from "@/lib/api";
+import { enableLongPaths, listarDir, longPathsStatus } from "@/lib/api";
 import type { FsEntry } from "@/lib/types";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { ordenar, type ChaveOrdem, type Ordem } from "./ordenar";
+import { filtrarEntradas } from "./filtro";
 import {
   SELECAO_VAZIA,
   alternar,
@@ -176,12 +187,23 @@ function CelulaIcone({
  * mudar `currentPath` (com guarda de corrida). Pasta abre navegando; arquivo é
  * hook de S3 (no-op hoje).
  */
+// Windows MAX_PATH: acima disso o caminho precisa do suporte a caminhos longos.
+const MAX_PATH = 260;
+
 export function ContentPane({
   currentPath,
   onNavegar,
+  onSelecaoChange,
+  mostrarInspector,
+  onToggleInspector,
 }: {
   currentPath: string;
   onNavegar: (path: string) => void;
+  /** #681: reporta a seleção (FsEntry[]) pro shell alimentar o InspectorPane. */
+  onSelecaoChange?: (itensSelecionados: FsEntry[]) => void;
+  /** Estado do painel de detalhes (controlado pelo shell) — pro botão de toggle. */
+  mostrarInspector?: boolean;
+  onToggleInspector?: () => void;
 }) {
   const { t, idioma } = useIdioma();
   const [entradas, setEntradas] = useState<FsEntry[] | null>(null);
@@ -191,6 +213,12 @@ export function ContentPane({
   const [ordem, setOrdem] = useState<Ordem>({ chave: "nome", direcao: "asc" });
   const [selecao, setSelecao] = useState<EstadoSelecao>(SELECAO_VAZIA);
   const [largura, setLargura] = useState(0);
+  // #681: filtro in-folder (as-you-type) + toggle de ocultos (off por padrão).
+  const [filtro, setFiltro] = useState("");
+  const [mostrarOcultos, setMostrarOcultos] = useState(false);
+  // #681: suporte a caminhos longos — checado 1x no mount, re-checado após habilitar.
+  const [longPathsOn, setLongPathsOn] = useState<boolean | null>(null);
+  const [habilitandoLong, setHabilitandoLong] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -204,6 +232,7 @@ export function ContentPane({
     setCarregando(true);
     setErro(false);
     setSelecao(SELECAO_VAZIA);
+    setFiltro(""); // filtro é por-pasta: zera ao trocar de caminho
     void listarDir(currentPath)
       .then((lista) => {
         if (!vivo) return;
@@ -227,11 +256,50 @@ export function ContentPane({
     scrollRef.current?.scrollTo({ top: 0 });
   }, [currentPath]);
 
-  const itens = useMemo(
-    () => (entradas ? ordenar(entradas, ordem) : []),
-    [entradas, ordem],
-  );
+  // Pipeline: FILTRA (nome + ocultos) → ORDENA → virtualiza. A seleção/teclado
+  // operam sobre a lista VISÍVEL (filtrada+ordenada).
+  const itens = useMemo(() => {
+    if (!entradas) return [];
+    return ordenar(filtrarEntradas(entradas, filtro, mostrarOcultos), ordem);
+  }, [entradas, filtro, mostrarOcultos, ordem]);
   const paths = useMemo(() => itens.map((e) => e.path), [itens]);
+
+  // #681: status de caminhos longos — 1x no mount (cacheado). Re-checa após enable.
+  useEffect(() => {
+    let vivo = true;
+    void longPathsStatus()
+      .then((on) => vivo && setLongPathsOn(on))
+      .catch(() => vivo && setLongPathsOn(true)); // erro → não incomoda com o CTA
+    return () => {
+      vivo = false;
+    };
+  }, []);
+
+  // #681: reporta a seleção como FsEntry[] pro shell (InspectorPane). Recalcula a
+  // partir do Set sobre a lista visível — some da seleção reportada o que o filtro
+  // esconder.
+  useEffect(() => {
+    if (!onSelecaoChange) return;
+    onSelecaoChange(itens.filter((e) => selecao.selecionados.has(e.path)));
+  }, [selecao, itens, onSelecaoChange]);
+
+  const mostrarLongPathCta =
+    longPathsOn === false && currentPath.length > MAX_PATH;
+
+  const habilitarLongPaths = useCallback(async () => {
+    if (habilitandoLong) return;
+    setHabilitandoLong(true);
+    try {
+      await enableLongPaths(); // dispara UAC no Tauri
+      setLongPathsOn(await longPathsStatus());
+    } catch (e) {
+      toast.error(t.arquivos.longPathErro, { description: String(e) });
+      // Elevação negada não muda o registro → volta pro estado REAL.
+      setLongPathsOn(await longPathsStatus().catch(() => false));
+    } finally {
+      setHabilitandoLong(false);
+    }
+  }, [habilitandoLong, t.arquivos.longPathErro]);
 
   // --- Colunas do grid (Grade multi-coluna; Detalhes/Lista = 1) -------------
   const cols = useMemo(() => {
@@ -486,8 +554,8 @@ export function ContentPane({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
-      {/* Toolbar de views */}
-      <div className="flex shrink-0 items-center justify-between gap-2">
+      {/* Toolbar: views + filtro in-folder + ocultos + toggle do inspector */}
+      <div className="flex shrink-0 items-center gap-2">
         <div className="flex items-center gap-1">
           <BotaoView
             ativo={modo === "detalhes"}
@@ -508,12 +576,92 @@ export function ContentPane({
             icon={<LayoutGrid className="size-4" />}
           />
         </div>
-        <span className="text-xs text-muted-foreground">
-          {selCount > 0
-            ? preencher(t.arquivos.itensSelec, { n: selCount })
-            : preencher(t.arquivos.total, { n: itens.length })}
-        </span>
+
+        {/* Filtro in-folder (as-you-type) */}
+        <div className="relative min-w-0 flex-1">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={filtro}
+            onChange={(e) => setFiltro(e.target.value)}
+            placeholder={t.arquivos.filtrar}
+            aria-label={t.arquivos.filtrar}
+            className="h-8 pl-8 pr-8"
+          />
+          {filtro && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute right-0.5 top-1/2 size-7 -translate-y-1/2"
+              onClick={() => setFiltro("")}
+              aria-label={t.arquivos.limparFiltro}
+            >
+              <X className="size-3.5" />
+            </Button>
+          )}
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant={mostrarOcultos ? "secondary" : "ghost"}
+            size="icon"
+            className="size-8"
+            onClick={() => setMostrarOcultos((v) => !v)}
+            aria-pressed={mostrarOcultos}
+            aria-label={t.arquivos.mostrarOcultos}
+            title={t.arquivos.mostrarOcultos}
+          >
+            {mostrarOcultos ? (
+              <Eye className="size-4" />
+            ) : (
+              <EyeOff className="size-4" />
+            )}
+          </Button>
+          {onToggleInspector && (
+            <Button
+              variant={mostrarInspector ? "secondary" : "ghost"}
+              size="icon"
+              className="size-8"
+              onClick={onToggleInspector}
+              aria-pressed={mostrarInspector}
+              aria-label={t.arquivos.detalhes}
+              title={t.arquivos.detalhes}
+            >
+              {mostrarInspector ? (
+                <PanelRightClose className="size-4" />
+              ) : (
+                <PanelRight className="size-4" />
+              )}
+            </Button>
+          )}
+          <span className="whitespace-nowrap text-xs text-muted-foreground">
+            {selCount > 0
+              ? preencher(t.arquivos.itensSelec, { n: selCount })
+              : preencher(t.arquivos.total, { n: itens.length })}
+          </span>
+        </div>
       </div>
+
+      {/* CTA de caminhos longos (#681): só quando o caminho passa de MAX_PATH e o
+          suporte está desligado. Habilitar dispara UAC (Tauri) e re-checa. */}
+      {mostrarLongPathCta && (
+        <Alert variant="warning" className="shrink-0">
+          <TriangleAlert />
+          <AlertTitle>{t.arquivos.longPathAviso}</AlertTitle>
+          <AlertAction>
+            <Button
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => void habilitarLongPaths()}
+              disabled={habilitandoLong}
+            >
+              {habilitandoLong && (
+                <Spinner className="size-3.5" />
+              )}
+              {t.arquivos.longPathHabilitar}
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
 
       {/* Cabeçalho da tabela (só em Detalhes) */}
       {modo === "detalhes" && (
