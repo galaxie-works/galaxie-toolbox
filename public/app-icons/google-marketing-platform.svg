@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+	 x="0px" y="0px" width="48px" height="48px" viewBox="0 0 192 192" enable-background="new 0 0 192 192" xml:space="preserve">
+<g>
+	<g>
+		<g>
+			<g>
+				<g>
+					<g>
+						<g>
+							<path fill="#EA4335" d="M127.11,64.89c17.18,17.18,17.18,45.03,0.01,62.21l-0.01,0.01c-8.59,8.59-8.59,22.52,0,31.11
+								c8.59,8.59,22.52,8.59,31.11,0l0,0l0,0c34.37-34.37,34.36-90.09,0-124.45L127.11,64.89z"/>
+							<linearGradient id="SVGID_1_" gradientUnits="userSpaceOnUse" x1="8" y1="83.1127" x2="164.6697" y2="83.1127">
+								<stop  offset="0" style="stop-color:#246FDB"/>
+								<stop  offset="0.0552" style="stop-color:#2973DF"/>
+								<stop  offset="0.2781" style="stop-color:#377DEB"/>
+								<stop  offset="0.5491" style="stop-color:#3F83F2"/>
+								<stop  offset="1" style="stop-color:#4285F4"/>
+							</linearGradient>
+							<path fill="url(#SVGID_1_)" d="M158.23,33.77c-34.36-34.36-90.08-34.37-124.45,0s-34.36,90.09,0,124.45l31.11-31.11
+								c-17.18-17.18-17.18-45.04,0-62.23c17.18-17.18,45.04-17.18,62.23,0c8.59,8.59,22.52,8.59,31.11,0
+								C166.82,56.3,166.82,42.37,158.23,33.77z"/>
+							<path fill="#FBBC04" d="M158.23,158.23L158.23,158.23l-31.11-31.11l0,0c-17.18,17.18-45.04,17.18-62.23,0l0,0l-31.11,31.11
+								l0,0C68.14,192.59,123.86,192.59,158.23,158.23z"/>
+								<ellipse transform="matrix(0.7071 -0.7071 0.7071 0.7071 -59.0962 142.6695)" fill="#EA4335" cx="142.67" cy="142.67" rx="22" ry="22"/>
+								<ellipse transform="matrix(0.7071 -0.7071 0.7071 0.7071 -86.4335 76.6691)" fill="#34A853" cx="49.33" cy="142.67" rx="22" ry="22"/>
+						</g>
+					</g>
+				</g>
+			</g>
+		</g>
+	</g>
+	<rect fill="none" width="192" height="192"/>
+</g>
+</svg>

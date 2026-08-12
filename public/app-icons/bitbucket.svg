@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="46px" height="46px" viewBox="0 0 46 46" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 50.2 (55047) - http://www.bohemiancoding.com/sketch -->
+    <desc>Created with Sketch.</desc>
+    <defs>
+        <linearGradient x1="97.5261587%" y1="25.5104834%" x2="46.9265964%" y2="78.7761408%" id="linearGradient-1">
+            <stop stop-color="#CCCCCC" offset="0%"></stop>
+            <stop stop-color="#FFFFFF" offset="100%"></stop>
+        </linearGradient>
+    </defs>
+    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="all-app-icons-for-left-bar" transform="translate(-584.000000, -80.000000)">
+            <g id="bitbucket-icon" transform="translate(584.000000, 80.000000)">
+                <rect id="Rectangle-7" fill="#2684FF" x="0" y="0" width="46" height="46" rx="2"></rect>
+                <g id="bitbucket" transform="translate(10.000000, 11.000000)">
+                    <polygon id="Shape" points="10.440625 15.7936842 15.7421875 15.7936842 17.021875 8.05052632 9.0309375 8.05052632"></polygon>
+                    <path d="M1.21875,0.109473684 C0.978723094,0.106265126 0.749612137,0.213226336 0.592876025,0.401665023 C0.436139913,0.59010371 0.367822538,0.840730832 0.40625,1.08631579 L3.8553125,22.7873684 C3.94401723,23.3355349 4.39967387,23.7385533 4.9359375,23.7431579 L21.4825,23.7431579 C21.8850066,23.7485272 22.2306269,23.4476276 22.295,23.0357895 L25.7440625,1.09052632 C25.78249,0.844941358 25.7141726,0.594314237 25.5574365,0.405875549 C25.4007004,0.217436862 25.1715894,0.110475653 24.9315625,0.113684211 L1.21875,0.109473684 Z M15.7421875,15.7936842 L10.4609375,15.7936842 L9.0309375,8.05052632 L17.021875,8.05052632 L15.7421875,15.7936842 Z" id="Shape" fill="#FFFFFF" fill-rule="nonzero"></path>
+                    <path d="M24.6471875,8.05052632 L17.021875,8.05052632 L15.7421875,15.7936842 L10.4609375,15.7936842 L4.225,23.4652632 C4.42265167,23.6424011 4.67464872,23.7409029 4.9359375,23.7431579 L21.4865625,23.7431579 C21.8890691,23.7485272 22.2346894,23.4476276 22.2990625,23.0357895 L24.6471875,8.05052632 Z" id="Shape" fill="url(#linearGradient-1)" fill-rule="nonzero"></path>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

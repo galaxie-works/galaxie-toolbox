@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="46px" height="46px" viewBox="0 0 46 46" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 50.2 (55047) - http://www.bohemiancoding.com/sketch -->
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="all-app-icons-for-left-bar" transform="translate(-206.000000, -656.000000)">
+            <g id="jira-icon" transform="translate(206.000000, 656.000000)">
+                <rect id="Rectangle-7" fill="#2684FF" x="0" y="0" width="46" height="46" rx="2"></rect>
+                <g id="jira" transform="translate(10.000000, 10.000000)" fill="#FFFFFF" fill-rule="nonzero">
+                    <path d="M13.0116515,0 C4.60474773,8.18886509 0.323080869,12.3648119 0.166650889,12.5278405 C-0.0679940809,12.7723834 -0.0427482561,13.3996196 0.166650889,13.5586321 C0.306250319,13.6646404 4.58791718,17.811763 13.0116515,26 C21.3902904,17.8679535 25.6576936,13.7208309 25.8138608,13.5586321 C26.0481117,13.3153339 26.074342,12.8282014 25.8174248,12.5278405 C25.6461467,12.3275999 21.3775556,8.15165306 13.0116515,0 Z M9.1198876,12.998282 L12.9777864,9.10532576 L16.8339834,12.998282 L12.9777864,16.8929563 L9.1198876,12.998282 Z" id="Page-1"></path>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

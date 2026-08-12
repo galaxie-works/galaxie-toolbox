@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="46px" height="46px" viewBox="0 0 46 46" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 50.2 (55047) - http://www.bohemiancoding.com/sketch -->
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="up-to-July-2018-Copy" transform="translate(-710.000000, -273.000000)">
+            <g id="patreon-icon" transform="translate(710.000000, 273.000000)">
+                <path d="M2.27603234,45.9290602 C0.988817977,45.7255607 0.00401043227,44.6128683 0,43.2693735 L0,2.69293976 C0.00443373494,1.20763855 1.20763855,0.00443373494 2.69293976,0 L43.2749157,0 C44.7602169,0.00443373494 45.9634217,1.20763855 45.9673012,2.69293976 L45.9673012,43.2693735 C45.9637921,44.6128683 44.9790324,45.7255607 43.6918226,45.9290602 L2.27603234,45.9290602 Z" id="Clip-5" fill="#FF6658"></path>
+                <g id="patreon" transform="translate(10.000000, 10.000000)" fill-rule="nonzero">
+                    <circle id="Oval" fill="#FFFFFF" cx="16.5" cy="9.5" r="9.5"></circle>
+                    <rect id="Rectangle" fill="#002E47" x="0" y="0" width="5" height="25"></rect>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>

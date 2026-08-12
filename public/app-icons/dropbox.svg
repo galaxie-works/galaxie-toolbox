@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="46px" height="46px" viewBox="0 0 46 46" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 50.2 (55047) - http://www.bohemiancoding.com/sketch -->
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="all-app-icons-for-left-bar" transform="translate(-332.000000, -272.000000)">
+            <g id="dropbox-icon" transform="translate(332.000000, 272.000000)">
+                <rect id="Rectangle-7" fill="#0070E0" x="0" y="0" width="46" height="46" rx="2"></rect>
+                <g id="dropbox" transform="translate(10.000000, 10.000000)" fill="#FFFFFF" fill-rule="nonzero">
+                    <polygon id="Shape" points="7.64821417 0.90857 0 5.90226 5.28838917 10.1371508 12.9998808 5.37538083"></polygon>
+                    <polygon id="Shape" points="0 14.3723017 7.64821417 19.36597 12.9998808 14.89891 5.28838917 10.1371508"></polygon>
+                    <polygon id="Shape" points="12.9998808 14.89891 18.3517858 19.36597 26 14.3723017 20.7116108 10.1371508"></polygon>
+                    <polygon id="Shape" points="26 5.90226 18.3517858 0.90857 12.9998808 5.37538083 20.7116108 10.1371508"></polygon>
+                    <polygon id="Shape" points="13.0156975 15.859935 7.64821417 20.3138433 5.3514175 18.8142933 5.3514175 20.49541 13.0156975 25.09143 20.6799667 20.49541 20.6799667 18.8142933 18.3831592 20.3138433"></polygon>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>
