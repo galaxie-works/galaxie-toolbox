@@ -2099,6 +2099,8 @@ pub fn run() {
             fs_explorer::fs_list_drives,
             fs_explorer::fs_thumbnail,
             fs_explorer::fs_thumb_cache_limits,
+            fs_explorer::fs_thumb_metrics,
+            fs_explorer::fs_thumb_metrics_reset,
             fs_explorer::fs_known_dirs,
             fs_explorer::fs_reveal,
             fs_explorer::fs_open,

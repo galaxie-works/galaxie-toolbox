@@ -630,6 +630,22 @@ export interface DirSize {
   dirCount: number;
 }
 
+/** Métricas de perf do gerador de thumbnail (#740 F5): hit-rate + geração + caps. */
+export interface ThumbMetrics {
+  hitMem: number;
+  hitDisco: number;
+  geradas: number;
+  total: number;
+  /** Fração de hits (mem+disco) sobre o total, 0..1. */
+  hitRate: number;
+  /** Tempo médio de geração de um thumb (miss), em ms. */
+  genMedioMs: number;
+  poolThreads: number;
+  diskCapMb: number;
+  memCapMb: number;
+  memBytes: number;
+}
+
 /** Thumbnail gerado no backend (#736): webp como data URI, nunca o original. */
 export interface ThumbRef {
   dataUri: string;
