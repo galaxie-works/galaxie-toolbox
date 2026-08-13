@@ -89,6 +89,36 @@ test("planejarTransferencia: manter ambos gera nomes únicos sem colidir no lote
   ]);
 });
 
+test("planejarTransferencia: manter ambos evita sufixo já ocupado no destino (#680)", () => {
+  // Destino real tem a.txt E a (2).txt; só a.txt conflita com a fonte. O sufixo
+  // (2) já está ocupado → tem de saltar pra (3), não sobrescrever a (2).txt.
+  const plano = planejarTransferencia(
+    ["C:\\origem\\a.txt"],
+    "C:\\destino",
+    [conflito("a.txt")],
+    "manterAmbos",
+    ["a.txt", "a (2).txt"],
+  );
+  assert.deepEqual(plano, [
+    { from: "C:\\origem\\a.txt", to: "C:\\destino\\a (3).txt" },
+  ]);
+});
+
+test("planejarTransferencia: ocupados do destino não afetam substituir/pular", () => {
+  // A listagem só importa pro manterAmbos; substituir mantém o nome original
+  // mesmo com o destino cheio.
+  const plano = planejarTransferencia(
+    ["C:\\origem\\a.txt"],
+    "C:\\destino",
+    [conflito("a.txt")],
+    "substituir",
+    ["a.txt", "a (2).txt"],
+  );
+  assert.deepEqual(plano, [
+    { from: "C:\\origem\\a.txt", to: "C:\\destino\\a.txt" },
+  ]);
+});
+
 test("formatarEta cobre s / min / h e casos inválidos", () => {
   assert.equal(formatarEta(45_000, UNID), "45 s");
   assert.equal(formatarEta(120_000, UNID), "2 min");
