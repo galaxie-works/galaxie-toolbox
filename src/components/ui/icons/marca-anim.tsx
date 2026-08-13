@@ -23,7 +23,16 @@ export type AnimIcon = React.ForwardRefExoticComponent<
  * `<a>`/`<button>` ancestral e disparamos start/stop nele. Assim o ícone anima
  * quando o mouse passa por qualquer ponto da linha (ícone + texto).
  */
-export function IconeAnim({ Comp, className }: { Comp: AnimIcon; className?: string }) {
+export function IconeAnim({
+  Comp,
+  className,
+  size = 20,
+}: {
+  Comp: AnimIcon;
+  className?: string;
+  /** #718: o rail GALAXIE pede 24px (Wagner); a nav antiga usa 20 (default). */
+  size?: number;
+}) {
   const spanRef = useRef<HTMLSpanElement>(null);
   const handle = useRef<AnimHandle>(null);
 
@@ -45,11 +54,11 @@ export function IconeAnim({ Comp, className }: { Comp: AnimIcon; className?: str
       ref={spanRef}
       className={cn(
         "inline-flex items-center justify-center [&_svg]:size-full",
-        "size-5",
         className
       )}
+      style={{ width: size, height: size }}
     >
-      <Comp ref={handle} className="flex size-full items-center justify-center" size={20} />
+      <Comp ref={handle} className="flex size-full items-center justify-center" size={size} />
     </span>
   );
 }
