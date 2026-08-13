@@ -11,6 +11,18 @@ export interface PeopleOrg {
   excludedIds: string[];
   createdAt: number;
   updatedAt: number;
+  /**
+   * #700 2b (App público): a org é CLIENTE contratada? Flag/allowlist setada pelo
+   * service admin (Wagner) — sem integração de pagamento nesta fase. É a FONTE
+   * ÚNICA da qual o gating público (JIT absorção, "Work exige ser cliente") deriva.
+   * Sincroniza pela mesma projeção do config-nuvem (#560). Ausente = não-contratada.
+   */
+  contratada?: boolean;
+  /**
+   * #700 2b: domínios com POSSE provada (domain-claim, slice 2a). A absorção é
+   * gateada em domínio VERIFICADO, nunca pelo sufixo cru do e-mail.
+   */
+  dominiosVerificados?: string[];
 }
 
 export interface PeopleOrgInput {
@@ -33,6 +45,32 @@ export function contactDomain(contact: PeopleContact): string | null {
   const email = contact.emails[0]?.address.trim().toLocaleLowerCase();
   const separator = email?.lastIndexOf("@") ?? -1;
   return separator > 0 ? email!.slice(separator + 1) : null;
+}
+
+/**
+ * #700 2b: o domínio pertence a uma org CLIENTE contratada? DERIVA da fonte única
+ * (a flag `contratada` do config, setada pelo admin) E exige que o domínio esteja
+ * VERIFICADO (domain-claim) na org — nunca pelo sufixo cru. É o gate do público:
+ * a absorção JIT e o "Work account exige ser cliente" (#781) consultam isto.
+ */
+export function orgContratadaDoDominio(
+  orgs: PeopleOrg[],
+  dominio: string,
+): PeopleOrg | null {
+  const alvo = normalizeDomain(dominio);
+  if (!alvo) return null;
+  return (
+    orgs.find(
+      (o) =>
+        o.contratada === true &&
+        (o.dominiosVerificados ?? []).some((d) => normalizeDomain(d) === alvo),
+    ) ?? null
+  );
+}
+
+/** Atalho booleano do [`orgContratadaDoDominio`]. */
+export function dominioEhCliente(orgs: PeopleOrg[], dominio: string): boolean {
+  return orgContratadaDoDominio(orgs, dominio) !== null;
 }
 
 function normalizeOrganizationName(value: string | null | undefined): string {
