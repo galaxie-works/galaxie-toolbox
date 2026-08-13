@@ -121,7 +121,11 @@ pub const COMMON_AUTHORITY: &str = "common";
 /// A authority `tenant` representa uma ORG (tenant GUID) — não o caminho comum
 /// (`common`/`consumers`) do pessoal? Decide o conjunto de scopes e o endpoint.
 pub fn eh_org(tenant: &str) -> bool {
-    !tenant.eq_ignore_ascii_case("common") && !tenant.eq_ignore_ascii_case("consumers")
+    // #695: o tenant SINTÉTICO das contas Microsoft pessoais (MSA) é um GUID, mas
+    // NÃO é uma org — não pode receber os scopes exclusivos de organização.
+    !tenant.eq_ignore_ascii_case("common")
+        && !tenant.eq_ignore_ascii_case("consumers")
+        && !tenant.eq_ignore_ascii_case(MS_PERSONAL_TENANT)
 }
 
 /// Scopes a pedir por authority: só BASE no caminho comum (pessoal), BASE+ORG na
@@ -214,5 +218,19 @@ mod tests {
             // Registrations são distintos (pessoal ≠ org).
             assert_ne!(CLIENT_ID, CLIENT_ID_PESSOAL);
         }
+    }
+
+    #[test]
+    fn tenant_msa_nao_recebe_scopes_de_organizacao() {
+        let scopes = scopes_para(MS_PERSONAL_TENANT);
+
+        assert!(
+            scopes.contains("Mail.ReadWrite"),
+            "a conta pessoal perdeu os scopes base"
+        );
+        assert!(
+            !scopes.contains("Sites.Read.All") && !scopes.contains("OrgSettings"),
+            "a conta pessoal recebeu scopes exclusivos de organizacao: {scopes}"
+        );
     }
 }
