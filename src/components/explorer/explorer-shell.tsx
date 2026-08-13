@@ -9,6 +9,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { useIdioma } from "@/lib/idioma";
+import { usePersistedState } from "@/lib/persist";
 import {
   cancelarOp,
   checarConflitos,
@@ -109,7 +110,13 @@ export function ExplorerShell() {
   // #681: seleção liftada do ContentPane → alimenta o InspectorPane. Painel de
   // detalhes começa VISÍVEL (o usuário esconde pelo toggle da toolbar).
   const [selecionados, setSelecionados] = useState<FsEntry[]>([]);
-  const [mostrarInspector, setMostrarInspector] = useState(true);
+  // #819: visibilidade do painel de detalhes PERSISTE entre sessões (local, como
+  // os demais prefs de painel). As larguras dos painéis persistem pelo
+  // `autoSaveId` do ResizablePanelGroup abaixo.
+  const [mostrarInspector, setMostrarInspector] = usePersistedState(
+    "explorer.inspector.v1",
+    true,
+  );
   // #714: área de transferência interna (recortar/copiar/colar). Vive no shell
   // pra sobreviver à navegação entre pastas.
   const [clipboard, setClipboard] = useState<Clipboard | null>(null);
@@ -321,7 +328,15 @@ export function ExplorerShell() {
 
   return (
     <div className="relative h-full">
-      <ResizablePanelGroup direction="horizontal" className="h-full">
+      {/* #819: `autoSaveId` persiste as larguras dos painéis (árvore/conteúdo/
+          inspector) em localStorage entre sessões. O react-resizable-panels
+          guarda um layout por configuração de painéis (com/sem inspector, via
+          os `id`+`order` estáveis), então casa com o toggle persistido acima. */}
+      <ResizablePanelGroup
+        direction="horizontal"
+        autoSaveId="explorer.layout.v1"
+        className="h-full"
+      >
         <ResizablePanel id="tree" order={1} defaultSize={22} minSize={16} maxSize={42}>
           <aside className="flex h-full flex-col rounded-xl border bg-card p-3">
             {drives === null ? (
