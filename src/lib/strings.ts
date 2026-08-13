@@ -304,6 +304,9 @@ const pt = {
     // Achatado (uma string de apelidos por app) — o strings.ts é 2 níveis.
     grupoIrPara: "Ir para",
     irParaApp: "Ir para {app}",
+    // #719 (SH1): rótulo da ação de abrir um app como aba interna do Navigator
+    // (Bridge/Files/Remote e web apps) — foca a aba se já aberta, senão cria.
+    novaAbaInterna: "Abrir {app}",
     // #657: deep-link nas sub-views do Bridge (People/Agenda). agenda/calendário
     // saíram do aliasControlRoom (agora donos do sub-view Agenda). O label é o
     // breadcrumb completo (Bridge › view) — deixa claro que a view mora no Bridge.
@@ -2182,6 +2185,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #656: "Go to {app}" — per-app aliases (accent-insensitive / prefix match).
     grupoIrPara: "Go to",
     irParaApp: "Go to {app}",
+    // #719 (SH1): label for opening an app as an internal Navigator tab
+    // (Bridge/Files/Remote and web apps) — focuses the tab if already open.
+    novaAbaInterna: "Open {app}",
     irParaContatos: "Go to Bridge › Contacts",
     irParaAgenda: "Go to Bridge › Calendar",
     aliasPeople: "contacts contact people contatos contato pessoas",
