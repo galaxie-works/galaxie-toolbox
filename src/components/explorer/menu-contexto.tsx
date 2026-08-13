@@ -5,6 +5,7 @@
 import {
   Fragment,
   useEffect,
+  useReducer,
   useRef,
   useState,
   type ComponentType,
@@ -92,8 +93,15 @@ function renderItens(itens: ItemMenu[]): ReactNode {
 /**
  * Wrapper que envolve uma linha/tile num `ContextMenu` Radix (mesmo aninhamento
  * do `comMenu` do Bridge). `onOpen(shift)` reporta se o Shift estava pressionado
- * no clique direito (pro gate de exclusão permanente). Itens são função pra
- * montar sob demanda com o estado (Shift) já atualizado.
+ * no clique direito (pro gate de exclusão permanente).
+ *
+ * #739/#778: `itens` é uma thunk `(shift) => ItemMenu[]`, avaliada DURANTE o
+ * render (itens presentes como filhos EAGER — o Radix precisa dos itens já
+ * montados quando abre o conteúdo, senão o clique/fechamento quebram, era o
+ * #778). O custo de montar por-render fica baixo porque o `ComMenu` vive dentro
+ * do `<ItemArquivo>` MEMOIZADO (não re-renderiza no scroll/seleção). Ao ABRIR,
+ * `forcar()` re-renderiza pra a thunk reler a seleção/Shift ATUAIS (via ref) —
+ * assim o menu reflete a seleção corrente mesmo em item que não re-renderizou.
  */
 export function ComMenu({
   itens,
@@ -102,9 +110,6 @@ export function ComMenu({
   className,
   children,
 }: {
-  /** #739: thunk — os itens são montados só ao ABRIR o menu (recebe o Shift do
-   *  clique pro gate de exclusão permanente), não um objeto por-linha a cada
-   *  render. O Shift do contextmenu é capturado num ref antes do Radix abrir. */
   itens: (shift: boolean) => ItemMenu[];
   onOpen?: (shift: boolean) => void;
   onClick?: (e: ReactMouseEvent<HTMLDivElement>) => void;
@@ -112,12 +117,13 @@ export function ComMenu({
   children: ReactNode;
 }) {
   const shiftRef = useRef(false);
-  const [abertos, setAbertos] = useState<ItemMenu[] | null>(null);
+  const [, forcar] = useReducer((n: number) => n + 1, 0);
   return (
     <ContextMenu
-      onOpenChange={(aberto) =>
-        setAbertos(aberto ? itens(shiftRef.current) : null)
-      }
+      onOpenChange={(aberto) => {
+        // No open, re-renderiza pra a thunk reler seleção/Shift atuais.
+        if (aberto) forcar();
+      }}
     >
       <ContextMenuTrigger asChild>
         <div
@@ -132,7 +138,7 @@ export function ComMenu({
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-56">
-        {abertos && renderItens(abertos)}
+        {renderItens(itens(shiftRef.current))}
       </ContextMenuContent>
     </ContextMenu>
   );
