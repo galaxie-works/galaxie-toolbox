@@ -1071,6 +1071,7 @@ function AppInner() {
         onNavegar={navegarPara}
         onLogout={logout}
         onAbrirUrl={abrirUrl}
+        onAbrirApp={abrirUrlLivre}
       />
       <SidebarInset className="relative overflow-hidden">
         <FundoApp className="pointer-events-none" />
