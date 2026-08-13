@@ -108,7 +108,7 @@
 "id": "facebook-pages-inbox",
 "name": "Facebook Pages Inbox",
 "category": "Work and Business",
-"url": "https://business.facebook.com/",
+"url": "https://business.facebook.com/latest/inbox",
 "icon": true
 },
 {
@@ -297,7 +297,7 @@
 "id": "companyhub",
 "name": "CompanyHub",
 "category": "Work and Business",
-"url": ".companyhub.com",
+"url": "https://companyhub.com",
 "icon": true
 },
 {
@@ -455,13 +455,6 @@
 "icon": true
 },
 {
-"id": "shift-templates",
-"name": "Templates",
-"category": "Productivity",
-"url": "https://shift-templates.integrated-apps.tryshift.com/",
-"icon": true
-},
-{
 "id": "surfer-seo",
 "name": "Surfer SEO",
 "category": "Work and Business",
@@ -577,7 +570,7 @@
 "id": "facebook-business",
 "name": "Facebook Business",
 "category": "Social",
-"url": "https://business.facebook.com/",
+"url": "https://business.facebook.com/latest/home",
 "icon": true
 },
 {
@@ -612,7 +605,7 @@
 "id": "brightspace",
 "name": "Brightspace",
 "category": "Learning",
-"url": ".brightspace.com/",
+"url": "https://brightspace.com/",
 "icon": true
 },
 {
@@ -647,7 +640,7 @@
 "id": "lattice",
 "name": "Lattice",
 "category": "Work and Business",
-"url": ".latticehq.com",
+"url": "https://latticehq.com",
 "icon": true
 },
 {
@@ -752,7 +745,7 @@
 "id": "thinkific",
 "name": "Thinkific",
 "category": "Work and Business",
-"url": ".thinkific.com/",
+"url": "https://thinkific.com/",
 "icon": true
 },
 {
@@ -913,7 +906,7 @@
 "id": "microsoft-sharepoint",
 "name": "Microsoft Sharepoint",
 "category": "Cloud Storage",
-"url": ".sharepoint.com",
+"url": "https://sharepoint.com",
 "icon": true
 },
 {
@@ -1431,7 +1424,7 @@
 "id": "hcl",
 "name": "HCL",
 "category": "Work and Business",
-"url": ".hcl.com",
+"url": "https://hcl.com",
 "icon": true
 },
 {
@@ -1617,13 +1610,6 @@
 "icon": true
 },
 {
-"id": "shift-people-search",
-"name": "People Search",
-"category": "Social",
-"url": "https://shift-people-search.integrated-apps.tryshift.com/",
-"icon": true
-},
-{
 "id": "agantty",
 "name": "Agantty",
 "category": "Work and Business",
@@ -1718,7 +1704,7 @@
 "id": "procurify",
 "name": "Procurify",
 "category": "Banking and Finance",
-"url": ".procurify.com",
+"url": "https://procurify.com",
 "icon": true
 },
 {
@@ -2061,7 +2047,7 @@
 "id": "freshdesk",
 "name": "Freshdesk",
 "category": "Work and Business",
-"url": ".freshdesk.com",
+"url": "https://freshdesk.com",
 "icon": true
 },
 {
@@ -2177,13 +2163,6 @@
 "icon": true
 },
 {
-"id": "shift-speed-test",
-"name": "Speed Test",
-"category": "Miscellaneous",
-"url": "https://shift-speed-test.integrated-apps.tryshift.com/",
-"icon": true
-},
-{
 "id": "product-hunt",
 "name": "Product Hunt",
 "category": "Work and Business",
@@ -2275,17 +2254,10 @@
 "icon": true
 },
 {
-"id": "shift-business-directory",
-"name": "Business Directory",
-"category": "Work and Business",
-"url": "https://shift-business-directory.integrated-apps.tryshift.com/",
-"icon": true
-},
-{
 "id": "proworkflow",
 "name": "ProWorkFlow",
 "category": "Work and Business",
-"url": ".proworkflow.com/",
+"url": "https://proworkflow.com/",
 "icon": true
 },
 {
@@ -2922,7 +2894,7 @@
 "id": "supportbench",
 "name": "Supportbench",
 "category": "Work and Business",
-"url": ".supportbench.net/agent",
+"url": "https://supportbench.net/agent",
 "icon": true
 },
 {
@@ -2950,7 +2922,7 @@
 "id": "kayako",
 "name": "Kayako",
 "category": "Work and Business",
-"url": ".kayako.com/",
+"url": "https://kayako.com/",
 "icon": true
 },
 {
@@ -3055,7 +3027,7 @@
 "id": "enchant",
 "name": "Enchant",
 "category": "Work and Business",
-"url": ".enchant.com",
+"url": "https://enchant.com",
 "icon": true
 },
 {
@@ -3195,7 +3167,7 @@
 "id": "freshsales",
 "name": "Freshsales",
 "category": "Work and Business",
-"url": ".freshsales.io",
+"url": "https://freshsales.io",
 "icon": true
 },
 {
@@ -3293,7 +3265,7 @@
 "id": "slite",
 "name": "Slite",
 "category": "Work and Business",
-"url": ".slite.com",
+"url": "https://slite.com",
 "icon": true
 },
 {
@@ -3307,7 +3279,7 @@
 "id": "follow-up-boss",
 "name": "Follow Up Boss",
 "category": "Work and Business",
-"url": ".followupboss.com",
+"url": "https://followupboss.com",
 "icon": true
 },
 {
@@ -3517,7 +3489,7 @@
 "id": "facebook-pages",
 "name": "Facebook Pages",
 "category": "Work and Business",
-"url": "https://business.facebook.com/",
+"url": "https://www.facebook.com/pages/",
 "icon": true
 },
 {
@@ -3525,13 +3497,6 @@
 "name": "Benchmark",
 "category": "Work and Business",
 "url": "https://ui.benchmarkemail.com/Login",
-"icon": true
-},
-{
-"id": "shift-maps",
-"name": "Maps",
-"category": "Travel",
-"url": "https://shift-maps.integrated-apps.tryshift.com/",
 "icon": true
 },
 {
@@ -3594,7 +3559,7 @@
 "id": "uservoice",
 "name": "UserVoice",
 "category": "Work and Business",
-"url": ".uservoice.com/admin",
+"url": "https://uservoice.com/admin",
 "icon": true
 },
 {
@@ -3629,7 +3594,7 @@
 "id": "cyberark-cora-ai",
 "name": "CyberArk CORA AI",
 "category": "Work and Business",
-"url": ".cyberark.cloud/",
+"url": "https://cyberark.cloud/",
 "icon": true
 },
 {
@@ -3678,7 +3643,7 @@
 "id": "freeagent",
 "name": "FreeAgent",
 "category": "Banking and Finance",
-"url": ".freeagent.com",
+"url": "https://freeagent.com",
 "icon": true
 },
 {
@@ -4280,7 +4245,7 @@
 "id": "platformly",
 "name": "Platformly",
 "category": "Work and Business",
-"url": ".platform.ly",
+"url": "https://platform.ly",
 "icon": true
 },
 {
@@ -4413,7 +4378,7 @@
 "id": "mighty-networks",
 "name": "Mighty Networks",
 "category": "Productivity",
-"url": ".mn.co",
+"url": "https://mn.co",
 "icon": true
 },
 {
@@ -4448,7 +4413,7 @@
 "id": "odoo",
 "name": "Odoo",
 "category": "Productivity",
-"url": ".odoo.com/web/login",
+"url": "https://odoo.com/web/login",
 "icon": true
 },
 {
@@ -4553,7 +4518,7 @@
 "id": "zendesk-chat",
 "name": "Zendesk Chat",
 "category": "Work and Business",
-"url": ".zendesk.com/chat/agent",
+"url": "https://zendesk.com/chat/agent",
 "icon": true
 },
 {
@@ -4574,7 +4539,7 @@
 "id": "shopify",
 "name": "Shopify",
 "category": "Work and Business",
-"url": ".myshopify.com/admin",
+"url": "https://myshopify.com/admin",
 "icon": true
 },
 {
@@ -4651,7 +4616,7 @@
 "id": "fogbugz",
 "name": "FogBugz",
 "category": "Developer Tools",
-"url": ".fogbugz.com",
+"url": "https://fogbugz.com",
 "icon": true
 },
 {
@@ -4700,7 +4665,7 @@
 "id": "fellow",
 "name": "Fellow",
 "category": "Productivity",
-"url": ".fellow.app/",
+"url": "https://fellow.app/",
 "icon": true
 },
 {
@@ -4763,7 +4728,7 @@
 "id": "checkfront",
 "name": "Checkfront",
 "category": "Work and Business",
-"url": ".checkfront.com",
+"url": "https://checkfront.com",
 "icon": true
 },
 {
@@ -4784,7 +4749,7 @@
 "id": "kintone",
 "name": "Kintone",
 "category": "Productivity",
-"url": ".kintone.com/login",
+"url": "https://kintone.com/login",
 "icon": true
 },
 {
@@ -5023,13 +4988,6 @@
 "name": "Fitbit",
 "category": "Health and Fitness",
 "url": "https://www.fitbit.com/login",
-"icon": true
-},
-{
-"id": "shift-shopping",
-"name": "Shopping Hub",
-"category": "Shopping",
-"url": "https://shift-shopping.integrated-apps.tryshift.com/",
 "icon": true
 },
 {
@@ -5540,7 +5498,7 @@
 "id": "capsule",
 "name": "Capsule",
 "category": "Work and Business",
-"url": ".capsulecrm.com",
+"url": "https://capsulecrm.com",
 "icon": true
 },
 {
@@ -5603,7 +5561,7 @@
 "id": "okta",
 "name": "Okta",
 "category": "Cloud Storage",
-"url": ".okta.com/",
+"url": "https://okta.com/",
 "icon": true
 },
 {
@@ -6198,7 +6156,7 @@
 "id": "freshcaller",
 "name": "FreshCaller",
 "category": "Work and Business",
-"url": ".freshcaller.com",
+"url": "https://freshcaller.com",
 "icon": true
 },
 {
@@ -6373,7 +6331,7 @@
 "id": "teamable",
 "name": "Teamable",
 "category": "Work and Business",
-"url": ".teamable.com",
+"url": "https://teamable.com",
 "icon": true
 },
 {
@@ -6534,7 +6492,7 @@
 "id": "pictime",
 "name": "Pic-Time",
 "category": "Productivity",
-"url": ".pic-time.com/professional?#dash",
+"url": "https://pic-time.com/professional?#dash",
 "icon": true
 },
 {
@@ -6583,7 +6541,7 @@
 "id": "slack",
 "name": "Slack",
 "category": "Work and Business",
-"url": ".slack.com",
+"url": "https://slack.com",
 "icon": true
 },
 {
@@ -6835,7 +6793,7 @@
 "id": "teamwork",
 "name": "Teamwork",
 "category": "Productivity",
-"url": ".teamwork.com/#/dashboard",
+"url": "https://teamwork.com/#/dashboard",
 "icon": true
 },
 {
@@ -7143,7 +7101,7 @@
 "id": "outlook-tasks",
 "name": "Outlook Tasks",
 "category": "Productivity",
-"url": "https://tasks.office.com/",
+"url": "https://to-do.office.com/",
 "icon": true
 },
 {
@@ -7311,7 +7269,7 @@
 "id": "happyfox",
 "name": "HappyFox",
 "category": "Work and Business",
-"url": ".happyfox.com/staff",
+"url": "https://happyfox.com/staff",
 "icon": true
 },
 {
@@ -7486,7 +7444,7 @@
 "id": "twingate",
 "name": "Twingate",
 "category": "Work and Business",
-"url": ".twingate.com",
+"url": "https://twingate.com",
 "icon": true
 },
 {
@@ -7620,13 +7578,6 @@
 "name": "Google Messages",
 "category": "Social",
 "url": "https://messages.google.com/web",
-"icon": true
-},
-{
-"id": "shift-email",
-"name": "Email",
-"category": "Productivity",
-"url": "https://shift-email.integrated-apps.tryshift.com/",
 "icon": true
 },
 {
@@ -7777,13 +7728,6 @@
 "icon": true
 },
 {
-"id": "shift-pdf",
-"name": "PDF",
-"category": "Productivity",
-"url": "https://shift-pdf.integrated-apps.tryshift.com/",
-"icon": true
-},
-{
 "id": "saleshandy",
 "name": "SalesHandy",
 "category": "Work and Business",
@@ -7830,13 +7774,6 @@
 "name": "ABC7NY",
 "category": "News and Weather",
 "url": "https://abc7ny.com",
-"icon": true
-},
-{
-"id": "shift-calculator",
-"name": "Calculator",
-"category": "Miscellaneous",
-"url": "https://shift-calculator.integrated-apps.tryshift.com/",
 "icon": true
 },
 {
@@ -7913,7 +7850,7 @@
 "id": "jira",
 "name": "Jira",
 "category": "Productivity",
-"url": ".atlassian.net",
+"url": "https://atlassian.net",
 "icon": true
 },
 {
@@ -8067,7 +8004,7 @@
 "id": "tapclicks",
 "name": "TapClicks",
 "category": "Work and Business",
-"url": ".tapclicks.com",
+"url": "https://tapclicks.com",
 "icon": true
 },
 {
@@ -8214,7 +8151,7 @@
 "id": "bigcommerce",
 "name": "BigCommerce",
 "category": "Shopping",
-"url": ".bigcommerce.com/manage",
+"url": "https://bigcommerce.com/manage",
 "icon": true
 },
 {
@@ -8284,7 +8221,7 @@
 "id": "wild-apricot",
 "name": "Wild Apricot",
 "category": "Work and Business",
-"url": ".wildapricot.org/admin/",
+"url": "https://wildapricot.org/admin/",
 "icon": true
 },
 {
@@ -8470,13 +8407,6 @@
 "icon": true
 },
 {
-"id": "shift-recipes",
-"name": "Recipes",
-"category": "Productivity",
-"url": "https://ia-recipes.shiftium.com/",
-"icon": true
-},
-{
 "id": "threatlabz",
 "name": "ThreatLabz",
 "category": "Work and Business",
@@ -8582,13 +8512,6 @@
 "icon": true
 },
 {
-"id": "shift-package-tracker",
-"name": "Package Tracker",
-"category": "Shopping",
-"url": "https://shift-package-tracker.integrated-apps.tryshift.com/",
-"icon": true
-},
-{
 "id": "connecteam",
 "name": "Connecteam",
 "category": "Work and Business",
@@ -8687,13 +8610,6 @@
 "icon": true
 },
 {
-"id": "shift-manuals",
-"name": "Manuals",
-"category": "Learning",
-"url": "https://shift-manuals.integrated-apps.tryshift.com/",
-"icon": true
-},
-{
 "id": "cursor",
 "name": "Cursor",
 "category": "Developer Tools",
@@ -8711,7 +8627,7 @@
 "id": "float-schedule",
 "name": "Float Schedule",
 "category": "Productivity",
-"url": ".float.com",
+"url": "https://float.com",
 "icon": true
 },
 {
@@ -9068,7 +8984,7 @@
 "id": "1crm",
 "name": "1CRM",
 "category": "Work and Business",
-"url": ".1crmcloud.com",
+"url": "https://1crmcloud.com",
 "icon": true
 },
 {
@@ -9159,14 +9075,7 @@
 "id": "agile-crm",
 "name": "Agile CRM",
 "category": "Work and Business",
-"url": ".agilecrm.com",
-"icon": true
-},
-{
-"id": "shift-games",
-"name": "Games",
-"category": "Entertainment",
-"url": "https://shift-games.integrated-apps.tryshift.com/",
+"url": "https://agilecrm.com",
 "icon": true
 },
 {
@@ -9348,7 +9257,7 @@
 "id": "freshservice",
 "name": "Freshservice",
 "category": "Work and Business",
-"url": ".freshservice.com/",
+"url": "https://freshservice.com/",
 "icon": true
 },
 {
@@ -9503,13 +9412,6 @@
 "name": "Buildium",
 "category": "Work and Business",
 "url": "https://signin.managebuilding.com/Manager/public/authentication/login",
-"icon": true
-},
-{
-"id": "shift-weather",
-"name": "Weather",
-"category": "News and Weather",
-"url": "https://shift-weather.integrated-apps.tryshift.com/",
 "icon": true
 },
 {
@@ -9712,7 +9614,7 @@
 "id": "egnyte",
 "name": "Egnyte",
 "category": "Productivity",
-"url": ".egnyte.com/",
+"url": "https://egnyte.com/",
 "icon": true
 },
 {
@@ -9817,14 +9719,14 @@
 "id": "nocrm",
 "name": "NoCRM",
 "category": "Work and Business",
-"url": ".nocrm.io",
+"url": "https://nocrm.io",
 "icon": true
 },
 {
 "id": "xmatters",
 "name": "xMatters",
 "category": "Developer Tools",
-"url": ".xmatters.com",
+"url": "https://xmatters.com",
 "icon": true
 },
 {
@@ -9901,7 +9803,7 @@
 "id": "activecampaign",
 "name": "ActiveCampaign",
 "category": "Work and Business",
-"url": ".activehosted.com",
+"url": "https://activehosted.com",
 "icon": true
 },
 {
@@ -10083,14 +9985,14 @@
 "id": "accelo",
 "name": "Accelo",
 "category": "Work and Business",
-"url": ".accelo.com",
+"url": "https://accelo.com",
 "icon": true
 },
 {
 "id": "monday",
 "name": "Monday",
 "category": "Productivity",
-"url": ".monday.com",
+"url": "https://monday.com",
 "icon": true
 },
 {
@@ -10300,7 +10202,7 @@
 "id": "veeam",
 "name": "Veeam",
 "category": "Work and Business",
-"url": "https://command.verkada.com/",
+"url": "https://www.veeam.com/",
 "icon": true
 },
 {
@@ -10685,7 +10587,7 @@
 "id": "mindtickle",
 "name": "MindTickle",
 "category": "Work and Business",
-"url": ".mindtickle.com",
+"url": "https://mindtickle.com",
 "icon": true
 },
 {
@@ -10755,7 +10657,7 @@
 "id": "questionpro",
 "name": "QuestionPro",
 "category": "Work and Business",
-"url": ".questionpro.com",
+"url": "https://questionpro.com",
 "icon": true
 },
 {
@@ -10812,13 +10714,6 @@
 "name": "NotebookLM",
 "category": "AI Tools",
 "url": "https://notebooklm.google.com",
-"icon": true
-},
-{
-"id": "shiftboard",
-"name": "Shiftboard",
-"category": "Work and Business",
-"url": "https://www.shiftboard.com/log-in/",
 "icon": true
 },
 {
@@ -10994,13 +10889,6 @@
 "name": "Fiserv",
 "category": "Banking and Finance",
 "url": "https://admin.fiserv.com",
-"icon": true
-},
-{
-"id": "shift-dictionary",
-"name": "Dictionary",
-"category": "Learning",
-"url": "https://shift-dictionary.integrated-apps.tryshift.com/",
 "icon": true
 },
 {
@@ -11308,7 +11196,7 @@
 "id": "confluence",
 "name": "Confluence",
 "category": "Work and Business",
-"url": ".atlassian.net/wiki",
+"url": "https://atlassian.net/wiki",
 "icon": true
 },
 {
@@ -11322,7 +11210,7 @@
 "id": "xai",
 "name": "X.ai",
 "category": "AI Tools",
-"url": "http://my.x.ai/",
+"url": "https://x.ai/",
 "icon": true
 },
 {
@@ -11343,14 +11231,14 @@
 "id": "pulseway",
 "name": "Pulseway",
 "category": "Developer Tools",
-"url": ".pulseway.com",
+"url": "https://pulseway.com",
 "icon": true
 },
 {
 "id": "freshworks-crm",
 "name": "Freshworks CRM",
 "category": "Work and Business",
-"url": ".myfreshworks.com/crm/sales/",
+"url": "https://myfreshworks.com/crm/sales/",
 "icon": true
 },
 {
@@ -11574,7 +11462,7 @@
 "id": "freshteam",
 "name": "Freshteam",
 "category": "Work and Business",
-"url": ".freshteam.com/",
+"url": "https://freshteam.com/",
 "icon": true
 },
 {
@@ -11756,7 +11644,7 @@
 "id": "kanban-tool",
 "name": "Kanban Tool",
 "category": "Productivity",
-"url": ".kanbantool.com/dashboard",
+"url": "https://kanbantool.com/dashboard",
 "icon": true
 },
 {
@@ -11938,7 +11826,7 @@
 "id": "bamboo-hr",
 "name": "Bamboo HR",
 "category": "Work and Business",
-"url": ".bamboohr.com",
+"url": "https://bamboohr.com",
 "icon": true
 },
 {
@@ -12449,7 +12337,7 @@
 "id": "talkdesk",
 "name": "Talkdesk",
 "category": "Work and Business",
-"url": ".mytalkdesk.com",
+"url": "https://mytalkdesk.com",
 "icon": true
 },
 {
