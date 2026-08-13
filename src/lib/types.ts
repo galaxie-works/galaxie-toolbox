@@ -630,6 +630,14 @@ export interface DirSize {
   dirCount: number;
 }
 
+/** Desafio de posse de domínio (PS7 #700): o que o admin publica pra provar posse. */
+export interface DesafioDominio {
+  dominio: string;
+  token: string;
+  /** Valor exato a publicar (DNS TXT do domínio ou arquivo well-known). */
+  registro: string;
+}
+
 /** Métricas de perf do gerador de thumbnail (#740 F5): hit-rate + geração + caps. */
 export interface ThumbMetrics {
   hitMem: number;

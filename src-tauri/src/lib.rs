@@ -2,6 +2,7 @@ mod auth;
 mod bookmarks;
 mod browser;
 mod config;
+mod domain_claim;
 mod estado;
 mod favicon;
 mod fs_explorer;
@@ -95,6 +96,13 @@ async fn login(
     // Conta pode ter mudado: alinha o cookie jar do navegador interno.
     sincronizar_navegador(&app, &account.email);
     Ok(account)
+}
+
+/// Domain-claim (PS7 #700, slice 1): cria o desafio de posse de domínio (token +
+/// registro TXT esperado). Puro; a checagem real da prova é a slice 2.
+#[tauri::command]
+fn dominio_iniciar_verificacao(dominio: String) -> Result<domain_claim::DesafioDominio, String> {
+    domain_claim::iniciar_desafio(&dominio)
 }
 
 #[tauri::command]
@@ -2031,6 +2039,7 @@ pub fn run() {
             onedrive_settings_write,
             gdrive_settings_read,
             gdrive_settings_write,
+            dominio_iniciar_verificacao,
             cr_salvar_contatos,
             cr_subpastas,
             cr_mail_folders,
