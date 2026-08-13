@@ -1120,6 +1120,20 @@ mod tests {
     }
 
     #[test]
+    fn google_capabilities_nao_aceita_nomes_de_scope_apenas_parecidos() {
+        let caps = google_capabilities(
+            "openid https://www.googleapis.com/auth/gmail.send.extra \
+             https://www.googleapis.com/auth/drive.file.backup",
+        );
+
+        assert_eq!(
+            caps,
+            vec![Capability::Identity],
+            "capabilities devem vir de tokens de scope exatos, nao de substring"
+        );
+    }
+
+    #[test]
     fn google_scopes_nao_pede_restricted() {
         // $0: nada de Gmail-read nem Drive-browse (restricted → CASA anual, PS8).
         let s = config::GOOGLE_SCOPES;
