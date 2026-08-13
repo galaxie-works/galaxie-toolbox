@@ -7784,6 +7784,25 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
     if q.is_empty() {
         return Ok(Vec::new());
     }
+    // #803: gate por provider/conta (interno, provider-aware). Google não tem MS
+    // Graph people → [] sem tocar Graph. MS PESSOAL não tem diretório da org
+    // (/users) → busca só em /me/contacts. Evita o 401 spam e o Err do fim.
+    let (eh_google, eh_org) = {
+        let guard = store
+            .inner
+            .lock()
+            .map_err(|_| "estado de token corrompido".to_string())?;
+        match guard.as_ref() {
+            Some(t) => (
+                t.account.provider == crate::auth::Provider::Google,
+                crate::config::eh_org(&t.tenant),
+            ),
+            None => (false, true), // sem sessão em memória: comporta como antes.
+        }
+    };
+    if eh_google {
+        return Ok(Vec::new());
+    }
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
     let enc = urlencoding::encode(q);
@@ -7823,7 +7842,9 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
         Err(e) => log::warn!("[pessoas] /me/contacts falhou: {e}"),
     }
 
-    // 2) Diretorio da organizacao. $search em /users exige ConsistencyLevel.
+    // 2) Diretorio da organizacao (/users) — ORG-ONLY (#803): MS pessoal não tem
+    // diretório, então só a conta work bate aqui. $search exige ConsistencyLevel.
+    if eh_org {
     let url = format!(
         "{GRAPH}/users?$search=\"displayName:{enc}\"&$top=8&$select=displayName,mail,userPrincipalName,jobTitle"
     );
@@ -7860,7 +7881,10 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
         Ok(resp) => log::warn!("[pessoas] /users retornou {}", resp.status()),
         Err(e) => log::warn!("[pessoas] /users falhou: {e}"),
     }
+    } // fim do gate eh_org (#803)
 
+    // #803: conta MS pessoal só busca /me/contacts — se ele respondeu (mesmo
+    // vazio), é sucesso; não é "falha" por não ter diretório de org.
     if !algum_ok {
         return Err("falha ao buscar pessoas".into());
     }
