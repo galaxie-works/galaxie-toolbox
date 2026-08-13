@@ -8,7 +8,21 @@
 // backend devolve só o webp pequeno.
 import { gerarThumbnail } from "@/lib/api";
 
-const MAX_CONCORRENTES = 6;
+// #834 (P0): a concorrência casa com os cores FÍSICOS da máquina pra o backend
+// async (spawn_blocking, 1 imagem por thread) saturar todos os cores no modo
+// Grid sem sobre-subscrever. `hardwareConcurrency` é lógico (conta SMT/HT) →
+// ~metade ≈ físico. Piso 4 (máquinas pequenas), teto 16 (não estourar o IPC).
+// ATENÇÃO: só rende COM o fix backend async do #834 (`fs_thumbnail` off-main);
+// antes dele, mais invokes SÍNCRONOS só pioram a serialização na main thread —
+// integrar SEMPRE no mesmo bloco que o backend.
+function concorrenciaThumb(): number {
+  const logicos =
+    typeof navigator !== "undefined" && navigator.hardwareConcurrency
+      ? navigator.hardwareConcurrency
+      : 8;
+  return Math.max(4, Math.min(16, Math.round(logicos / 2)));
+}
+const MAX_CONCORRENTES = concorrenciaThumb();
 const LRU_MAX = 400;
 // #820 (P0): teto da fila. A fila prioriza o viewport com LIFO (`pop`), mas os
 // pedidos que saíram de tela ficam no FUNDO (`push`) e nunca drenam enquanto a
