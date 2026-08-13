@@ -935,6 +935,13 @@ export function ContentPane({
   }, []);
   const cancelarRename = useCallback(() => setRenomeando(null), []);
 
+  // #777: com TUDO selecionado (Ctrl+A) o anel do cursor sobra num único item
+  // (o que estava selecionado antes) e destoa da seleção uniforme. Nesse caso
+  // some o anel — a seleção (bg) já cobre todos; o cursor segue valendo pro
+  // teclado, só não pinta o anel destoante.
+  const todosSelec =
+    itens.length > 0 && selecao.selecionados.size >= itens.length;
+
   // --- Render de uma linha virtual (fatia de `cols` itens) ------------------
   // #739 (F4): cada item é um `<ItemArquivo>` MEMOIZADO; esta função só monta os
   // elementos (props estáveis + sel/cursor/editando por item). No scroll/seleção,
@@ -944,7 +951,7 @@ export function ContentPane({
     index,
     modo: m,
     sel: selecao.selecionados.has(entry.path),
-    cursor: selecao.cursor === entry.path,
+    cursor: selecao.cursor === entry.path && !todosSelec,
     editando: renomeando === entry.path,
     idioma,
     labelTipoPasta: t.arquivos.tipoPasta,
