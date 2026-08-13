@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { IdiomaProvider } from "@/lib/idioma";
 import type { Pessoa } from "@/lib/types";
@@ -20,11 +20,14 @@ import type { Pessoa } from "@/lib/types";
 // Simula o Graph retornando um contato "por relevância" pra QUALQUER query —
 // inclusive enquanto se digita um endereço externo. Era o gatilho do auto-select
 // do Base UI que limpava o input (o repro real da recorrência).
-const crPessoasMock = vi.fn<(q: string) => Promise<Pessoa[]>>();
+// Tipagem via a implementação (sem type-arg em `vi.fn`) pra não depender da
+// assinatura genérica do vitest entre versões.
+const crPessoasMock = vi.fn(async (_q: string): Promise<Pessoa[]> => []);
 // Mock PARCIAL: mantém os demais exports reais (o grafo do módulo — store/agenda
-// — importa `@/lib/api`), sobrescrevendo só a busca de pessoas.
+// — importa `@/lib/api`), sobrescrevendo só a busca de pessoas. `importOriginal`
+// via cast (sem type-arg) pela mesma razão.
 vi.mock("@/lib/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/api")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/api");
   return { ...actual, crPessoas: (q: string) => crPessoasMock(q) };
 });
 
@@ -35,7 +38,7 @@ vi.mock("@/lib/fotos", () => ({
 
 // PersonHoverCard puxa dados/estado que não interessam ao teste do input.
 vi.mock("@/components/people/person-hover-card", () => ({
-  PersonHoverCard: ({ children }: { children: React.ReactNode }) => children,
+  PersonHoverCard: ({ children }: { children: ReactNode }) => children,
 }));
 
 import { CampoPessoas } from "./campo-pessoas";
