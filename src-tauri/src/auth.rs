@@ -976,7 +976,8 @@ fn esperar_code_loopback(
         let url = req.url().to_string();
         // Ignora pedidos de favicon etc.
         if !url.contains("code=") && !url.contains("error=") {
-            let _ = req.respond(tiny_http::Response::from_string("aguardando..."));
+            let espera = if idioma.starts_with("en") { "waiting..." } else { "aguardando..." };
+            let _ = req.respond(tiny_http::Response::from_string(espera));
             continue;
         }
 
