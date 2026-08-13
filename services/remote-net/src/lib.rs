@@ -4,10 +4,13 @@
 //! carries enrollment/authentication/session control only. Media and input stay
 //! on the existing WebRTC/DataChannel path.
 
+pub mod authority;
 pub mod identity;
 pub mod opaque;
 pub mod protocol;
 pub mod ticket;
+pub mod transport;
+pub mod worker;
 
 #[cfg(windows)]
 pub mod windows_secret;

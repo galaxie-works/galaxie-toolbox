@@ -100,6 +100,11 @@ pub struct DeviceHeartbeat {
 pub struct AuthBegin {
     pub device_id: String,
     pub controller_id: String,
+    pub owner_id: String,
+    pub org_id: String,
+    pub device_nonce: String,
+    pub controller_nonce: String,
+    pub requested_capabilities: Capabilities,
     pub opaque_request: String,
 }
 
@@ -151,8 +156,10 @@ pub enum ProtocolError {
     Json(String),
     #[error("unsupported protocol version")]
     Version,
-    #[error("request id must contain 1..64 characters")]
+    #[error("request id must contain 1..64 safe ASCII characters")]
     RequestId,
+    #[error("method is not allowed for this payload")]
+    Method,
 }
 
 pub fn decode_envelope<T>(bytes: &[u8]) -> Result<Envelope<T>, ProtocolError>
@@ -167,10 +174,41 @@ where
     if envelope.v != PROTOCOL_VERSION {
         return Err(ProtocolError::Version);
     }
-    if envelope.id.is_empty() || envelope.id.len() > 64 {
+    if !is_safe_identifier(&envelope.id, 64) {
         return Err(ProtocolError::RequestId);
     }
     Ok(envelope)
+}
+
+pub fn decode_net_message(bytes: &[u8]) -> Result<Envelope<serde_json::Value>, ProtocolError> {
+    let envelope = decode_envelope::<serde_json::Value>(bytes)?;
+    if !ALLOWED_METHODS.contains(&envelope.method.as_str()) {
+        return Err(ProtocolError::Method);
+    }
+    Ok(envelope)
+}
+
+pub const ALLOWED_METHODS: &[&str] = &[
+    "device.enroll.begin",
+    "device.enroll.finish",
+    "device.register",
+    "device.heartbeat",
+    "unattended.auth.begin",
+    "unattended.auth.finish",
+    "session.request",
+    "session.accept",
+    "session.reject",
+    "session.revoke",
+    "session.end",
+    "session.signal",
+];
+
+fn is_safe_identifier(value: &str, max_len: usize) -> bool {
+    !value.is_empty()
+        && value.len() <= max_len
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
 }
 
 #[cfg(test)]
@@ -202,5 +240,13 @@ mod tests {
                 audio: false,
             }
         );
+    }
+
+    #[test]
+    fn request_id_and_method_fail_closed() {
+        let nul = b"{\"v\":2,\"id\":\"x\\u0000y\",\"type\":\"request\",\"method\":\"device.register\",\"payload\":{}}";
+        assert_eq!(decode_net_message(nul), Err(ProtocolError::RequestId));
+        let unknown = b"{\"v\":2,\"id\":\"x\",\"type\":\"request\",\"method\":\"device.destroyEverything\",\"payload\":{}}";
+        assert_eq!(decode_net_message(unknown), Err(ProtocolError::Method));
     }
 }
