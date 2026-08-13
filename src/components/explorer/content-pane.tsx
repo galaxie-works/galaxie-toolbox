@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -69,6 +70,7 @@ import {
   nomeValido,
   type AcoesMenu,
   type Clipboard,
+  type ItemMenu,
   type RotulosMenu,
 } from "./menu-arquivo";
 import {
@@ -174,8 +176,11 @@ function Miniatura({
   );
 }
 
-/** Ícone (ou miniatura, se imagem) de uma entrada. */
-function CelulaIcone({
+/**
+ * Ícone (ou miniatura, se imagem) de uma entrada. #739 (F4): memoizada — não
+ * re-renderiza no scroll/seleção enquanto `entry`/classes forem os mesmos.
+ */
+const CelulaIcone = memo(function CelulaIcone({
   entry,
   boxClass,
   iconClass,
@@ -194,7 +199,174 @@ function CelulaIcone({
     );
   }
   return <Miniatura entry={entry} boxClass={boxClass} fallback={icone} />;
-}
+});
+
+type ItemArquivoProps = {
+  entry: FsEntry;
+  index: number;
+  modo: ModoView;
+  sel: boolean;
+  cursor: boolean;
+  editando: boolean;
+  idioma: string;
+  labelTipoPasta: string;
+  labelTipoArquivo: string;
+  onClicar: (
+    index: number,
+    ev: { shiftKey: boolean; ctrlKey: boolean; metaKey: boolean },
+  ) => void;
+  onAbrir: (entry: FsEntry) => void;
+  onAbrirMenu: (entry: FsEntry) => void;
+  construirMenu: (entry: FsEntry, shift: boolean) => ItemMenu[];
+  onConfirmarRename: (
+    entry: FsEntry,
+    nome: string,
+    opts: { mover: boolean; viaBlur: boolean },
+  ) => void;
+  onCancelarRename: () => void;
+};
+
+/**
+ * #739 (F4): UMA linha/tile do Explorer, MEMOIZADO. Só re-renderiza quando o
+ * próprio `entry`/`sel`/`cursor`/`editando` muda — os callbacks chegam ESTÁVEIS
+ * do ContentPane (useCallback + refs). No scroll/seleção, as linhas que não
+ * mudaram são puladas (era o gargalo de main-thread do #739). O menu de contexto
+ * é montado sob demanda (thunk), não por-linha a cada render.
+ */
+const ItemArquivo = memo(function ItemArquivo({
+  entry,
+  index,
+  modo,
+  sel,
+  cursor,
+  editando,
+  idioma,
+  labelTipoPasta,
+  labelTipoArquivo,
+  onClicar,
+  onAbrir,
+  onAbrirMenu,
+  construirMenu,
+  onConfirmarRename,
+  onCancelarRename,
+}: ItemArquivoProps) {
+  const menuThunk = (shift: boolean) => construirMenu(entry, shift);
+  const abrirMenu = () => onAbrirMenu(entry);
+  const nome = (spanClass: string): ReactNode =>
+    editando ? (
+      <RenameInput
+        inicial={entry.name}
+        ehPasta={entry.isDir}
+        onConfirmar={(n, opts) => onConfirmarRename(entry, n, opts)}
+        onCancelar={onCancelarRename}
+      />
+    ) : (
+      <span className={spanClass}>{entry.name}</span>
+    );
+
+  if (modo === "grade") {
+    const classe = cn(
+      "flex h-[108px] w-full flex-col items-center gap-1.5 rounded-lg border border-transparent p-2 text-center outline-none transition-colors",
+      sel ? "bg-accent" : "hover:bg-accent/50",
+      cursor && "ring-2 ring-ring/60",
+    );
+    const conteudo = (
+      <>
+        <CelulaIcone entry={entry} boxClass="size-12" iconClass="size-9" />
+        {nome("line-clamp-2 w-full break-words text-xs leading-tight")}
+      </>
+    );
+    return (
+      <ComMenu itens={menuThunk} onOpen={abrirMenu}>
+        {editando ? (
+          <div className={classe}>{conteudo}</div>
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => onClicar(index, e)}
+            onDoubleClick={() => onAbrir(entry)}
+            className={classe}
+          >
+            {conteudo}
+          </button>
+        )}
+      </ComMenu>
+    );
+  }
+
+  if (modo === "lista") {
+    const classe = cn(
+      "flex h-8 w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
+      sel ? "bg-accent" : "hover:bg-accent/50",
+      cursor && "ring-2 ring-ring/60",
+    );
+    const conteudo = (
+      <>
+        <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" />
+        {nome("min-w-0 flex-1 truncate text-sm")}
+      </>
+    );
+    return (
+      <ComMenu className="w-full" itens={menuThunk} onOpen={abrirMenu}>
+        {editando ? (
+          <div className={classe}>{conteudo}</div>
+        ) : (
+          <button
+            type="button"
+            onClick={(e) => onClicar(index, e)}
+            onDoubleClick={() => onAbrir(entry)}
+            className={classe}
+          >
+            {conteudo}
+          </button>
+        )}
+      </ComMenu>
+    );
+  }
+
+  // Detalhes: linha de tabela alinhada ao cabeçalho.
+  const classe = cn(
+    "grid h-[34px] w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
+    sel ? "bg-accent" : "hover:bg-accent/50",
+    cursor && "ring-2 ring-ring/60",
+  );
+  const conteudo = (
+    <>
+      <span className="flex min-w-0 items-center gap-2">
+        <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" />
+        {nome("min-w-0 truncate text-sm")}
+      </span>
+      <span className="truncate text-xs text-muted-foreground">
+        {formatarDataArquivo(entry.modifiedMs, idioma)}
+      </span>
+      <span className="truncate text-xs text-muted-foreground">
+        {rotuloTipo(entry, { pasta: labelTipoPasta, arquivo: labelTipoArquivo })}
+      </span>
+      <span className="truncate text-right text-xs text-muted-foreground tabular-nums">
+        {entry.isDir ? "" : formatBytes(entry.size)}
+      </span>
+    </>
+  );
+  return (
+    <ComMenu className="w-full" itens={menuThunk} onOpen={abrirMenu}>
+      {editando ? (
+        <div className={classe} style={{ gridTemplateColumns: COLS_DETALHES }}>
+          {conteudo}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={(e) => onClicar(index, e)}
+          onDoubleClick={() => onAbrir(entry)}
+          className={classe}
+          style={{ gridTemplateColumns: COLS_DETALHES }}
+        >
+          {conteudo}
+        </button>
+      )}
+    </ComMenu>
+  );
+});
 
 /**
  * #678: painel de conteúdo do Explorer — lista virtualizada (um único caminho,
@@ -244,10 +416,10 @@ export function ContentPane({
   // (refresh pós-operação sem mexer no loader do S2).
   const [recarregarNonce, setRecarregarNonce] = useState(0);
   const recarregar = useCallback(() => setRecarregarNonce((n) => n + 1), []);
-  // #714: rename in-place (path em edição), gate de exclusão permanente (Shift no
-  // clique direito) e o dialog de confirmação da exclusão permanente.
+  // #714: rename in-place (path em edição) e o dialog de confirmação da exclusão
+  // permanente. #739: o gate de Shift do delete permanente saiu do state e vai
+  // direto na thunk do menu (o ComMenu captura o Shift do clique).
   const [renomeando, setRenomeando] = useState<string | null>(null);
-  const [shiftDelete, setShiftDelete] = useState(false);
   const [confirmarPerm, setConfirmarPerm] = useState<string[] | null>(null);
   // Path recém-criado que deve entrar em rename assim que aparecer na listagem.
   const renomearAoAparecer = useRef<string | null>(null);
@@ -313,6 +485,22 @@ export function ContentPane({
     return ordenar(filtrarEntradas(entradas, filtro, mostrarOcultos), ordem);
   }, [entradas, filtro, mostrarOcultos, ordem]);
   const paths = useMemo(() => itens.map((e) => e.path), [itens]);
+  // #739 (F4): índice path→entry pra reportar a seleção em O(nº selecionados),
+  // não O(n) filtrando a lista inteira a cada tecla (jank em 5000 itens).
+  const porPath = useMemo(() => {
+    const m = new Map<string, FsEntry>();
+    for (const e of itens) m.set(e.path, e);
+    return m;
+  }, [itens]);
+  // #739 (F4): refs sempre-atuais de seleção/clipboard/paths pra os callbacks do
+  // menu de contexto e do right-click ficarem ESTÁVEIS (deps só do que muda raro),
+  // sem re-render por-linha a cada mudança de seleção — a chave da memoização.
+  const selecaoRef = useRef(selecao);
+  selecaoRef.current = selecao;
+  const clipboardRef = useRef(clipboard);
+  clipboardRef.current = clipboard;
+  const pathsRef = useRef(paths);
+  pathsRef.current = paths;
 
   // #681: status de caminhos longos — 1x no mount (cacheado). Re-checa após enable.
   useEffect(() => {
@@ -325,13 +513,19 @@ export function ContentPane({
     };
   }, []);
 
-  // #681: reporta a seleção como FsEntry[] pro shell (InspectorPane). Recalcula a
-  // partir do Set sobre a lista visível — some da seleção reportada o que o filtro
-  // esconder.
+  // #681: reporta a seleção como FsEntry[] pro shell (InspectorPane). #739 (F4):
+  // itera o Set de selecionados (pequeno no caso comum) resolvendo via `porPath`,
+  // em vez de filtrar a lista visível inteira — o que o filtro esconder não está
+  // no índice, então some da seleção reportada, igual antes.
   useEffect(() => {
     if (!onSelecaoChange) return;
-    onSelecaoChange(itens.filter((e) => selecao.selecionados.has(e.path)));
-  }, [selecao, itens, onSelecaoChange]);
+    const out: FsEntry[] = [];
+    for (const p of selecao.selecionados) {
+      const e = porPath.get(p);
+      if (e) out.push(e);
+    }
+    onSelecaoChange(out);
+  }, [selecao, porPath, onSelecaoChange]);
 
   // #714: após criar pasta/arquivo, entra em rename assim que o item aparece na
   // listagem recarregada (mock é no-op → simplesmente não dispara).
@@ -711,48 +905,58 @@ export function ContentPane({
     );
   }, []);
 
-  // #714: itens do menu de contexto de um item (com o gate de Shift atual) +
-  // handler de abertura (Shift → exclusão permanente; right-click seleciona o
-  // item quando ele não faz parte da seleção corrente).
-  const menuDe = useCallback(
-    (entry: FsEntry) =>
-      getFileContextMenu(
+  // #714/#739: monta os itens do menu de contexto de um item SOB DEMANDA (o
+  // ComMenu chama esta thunk só ao abrir, passando o Shift do clique pro gate de
+  // exclusão permanente) — não mais um objeto por-linha a cada render. Lê
+  // seleção/clipboard por ref (estável), e os alvos consideram o item clicado
+  // mesmo que o setSelecao do right-click ainda não tenha aplicado.
+  const construirMenuItem = useCallback(
+    (entry: FsEntry, shift: boolean): ItemMenu[] => {
+      const sel = selecaoRef.current.selecionados;
+      const alvos = sel.has(entry.path) ? Array.from(sel) : [entry.path];
+      return getFileContextMenu(
         entry,
-        Array.from(selecao.selecionados),
-        clipboard ?? null,
+        alvos,
+        clipboardRef.current ?? null,
         acoesMenu,
         rotulosMenu,
-        { permanente: shiftDelete },
-      ),
-    [selecao.selecionados, clipboard, acoesMenu, rotulosMenu, shiftDelete],
-  );
-  const aoAbrirMenu = useCallback(
-    (entry: FsEntry, shift: boolean) => {
-      setShiftDelete(shift);
-      if (!selecao.selecionados.has(entry.path)) {
-        const idx = paths.indexOf(entry.path);
-        if (idx >= 0) setSelecao(selecionarUnico(paths, idx));
-      }
+        { permanente: shift },
+      );
     },
-    [selecao.selecionados, paths],
+    [acoesMenu, rotulosMenu],
   );
-
-  // Rótulo do nome (ou o campo de rename in-place, quando este item é o alvo).
-  function nomeOuRename(entry: FsEntry, spanClass: string): ReactNode {
-    if (renomeando !== entry.path) {
-      return <span className={spanClass}>{entry.name}</span>;
+  // Right-click num item FORA da seleção corrente passa a selecioná-lo (pra o
+  // menu agir sobre ele). Estável (lê refs) → não quebra a memoização das linhas.
+  const aoAbrirMenu = useCallback((entry: FsEntry) => {
+    if (!selecaoRef.current.selecionados.has(entry.path)) {
+      const idx = pathsRef.current.indexOf(entry.path);
+      if (idx >= 0) setSelecao(selecionarUnico(pathsRef.current, idx));
     }
-    return (
-      <RenameInput
-        inicial={entry.name}
-        ehPasta={entry.isDir}
-        onConfirmar={(nome, opts) => confirmarRename(entry, nome, opts)}
-        onCancelar={() => setRenomeando(null)}
-      />
-    );
-  }
+  }, []);
+  const cancelarRename = useCallback(() => setRenomeando(null), []);
 
   // --- Render de uma linha virtual (fatia de `cols` itens) ------------------
+  // #739 (F4): cada item é um `<ItemArquivo>` MEMOIZADO; esta função só monta os
+  // elementos (props estáveis + sel/cursor/editando por item). No scroll/seleção,
+  // os itens que não mudaram não re-renderizam.
+  const itemProps = (entry: FsEntry, index: number, m: ModoView) => ({
+    entry,
+    index,
+    modo: m,
+    sel: selecao.selecionados.has(entry.path),
+    cursor: selecao.cursor === entry.path,
+    editando: renomeando === entry.path,
+    idioma,
+    labelTipoPasta: t.arquivos.tipoPasta,
+    labelTipoArquivo: t.arquivos.tipoArquivo,
+    onClicar: aoClicar,
+    onAbrir: abrirItem,
+    onAbrirMenu: aoAbrirMenu,
+    construirMenu: construirMenuItem,
+    onConfirmarRename: confirmarRename,
+    onCancelarRename: cancelarRename,
+  });
+
   function renderLinha(linhaIndex: number): ReactNode {
     const fatia = itens.slice(linhaIndex * cols, linhaIndex * cols + cols);
 
@@ -762,46 +966,12 @@ export function ContentPane({
           className="grid gap-2 px-1"
           style={{ gridTemplateColumns: `repeat(${cols}, minmax(0,1fr))` }}
         >
-          {fatia.map((entry, i) => {
-            const index = linhaIndex * cols + i;
-            const sel = selecao.selecionados.has(entry.path);
-            const cursor = selecao.cursor === entry.path;
-            const editando = renomeando === entry.path;
-            const classe = cn(
-              "flex h-[108px] w-full flex-col items-center gap-1.5 rounded-lg border border-transparent p-2 text-center outline-none transition-colors",
-              sel ? "bg-accent" : "hover:bg-accent/50",
-              cursor && "ring-2 ring-ring/60",
-            );
-            const conteudo = (
-              <>
-                <CelulaIcone entry={entry} boxClass="size-12" iconClass="size-9" />
-                {nomeOuRename(
-                  entry,
-                  "line-clamp-2 w-full break-words text-xs leading-tight",
-                )}
-              </>
-            );
-            return (
-              <ComMenu
-                key={entry.path}
-                itens={menuDe(entry)}
-                onOpen={(shift) => aoAbrirMenu(entry, shift)}
-              >
-                {editando ? (
-                  <div className={classe}>{conteudo}</div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={(e) => aoClicar(index, e)}
-                    onDoubleClick={() => abrirItem(entry)}
-                    className={classe}
-                  >
-                    {conteudo}
-                  </button>
-                )}
-              </ComMenu>
-            );
-          })}
+          {fatia.map((entry, i) => (
+            <ItemArquivo
+              key={entry.path}
+              {...itemProps(entry, linhaIndex * cols + i, "grade")}
+            />
+          ))}
         </div>
       );
     }
@@ -809,93 +979,11 @@ export function ContentPane({
     // Lista / Detalhes: 1 item por linha.
     const entry = fatia[0];
     if (!entry) return null;
-    const index = linhaIndex * cols;
-    const sel = selecao.selecionados.has(entry.path);
-    const cursor = selecao.cursor === entry.path;
-    const editando = renomeando === entry.path;
-
-    if (modo === "lista") {
-      const classe = cn(
-        "flex h-8 w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
-        sel ? "bg-accent" : "hover:bg-accent/50",
-        cursor && "ring-2 ring-ring/60",
-      );
-      const conteudo = (
-        <>
-          <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" />
-          {nomeOuRename(entry, "min-w-0 flex-1 truncate text-sm")}
-        </>
-      );
-      return (
-        <ComMenu
-          className="w-full"
-          itens={menuDe(entry)}
-          onOpen={(shift) => aoAbrirMenu(entry, shift)}
-        >
-          {editando ? (
-            <div className={classe}>{conteudo}</div>
-          ) : (
-            <button
-              type="button"
-              onClick={(e) => aoClicar(index, e)}
-              onDoubleClick={() => abrirItem(entry)}
-              className={classe}
-            >
-              {conteudo}
-            </button>
-          )}
-        </ComMenu>
-      );
-    }
-
-    // Detalhes: linha de tabela alinhada ao cabeçalho.
-    const classe = cn(
-      "grid h-[34px] w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
-      sel ? "bg-accent" : "hover:bg-accent/50",
-      cursor && "ring-2 ring-ring/60",
-    );
-    const conteudo = (
-      <>
-        <span className="flex min-w-0 items-center gap-2">
-          <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" />
-          {nomeOuRename(entry, "min-w-0 truncate text-sm")}
-        </span>
-        <span className="truncate text-xs text-muted-foreground">
-          {formatarDataArquivo(entry.modifiedMs, idioma)}
-        </span>
-        <span className="truncate text-xs text-muted-foreground">
-          {rotuloTipo(entry, {
-            pasta: t.arquivos.tipoPasta,
-            arquivo: t.arquivos.tipoArquivo,
-          })}
-        </span>
-        <span className="truncate text-right text-xs text-muted-foreground tabular-nums">
-          {entry.isDir ? "" : formatBytes(entry.size)}
-        </span>
-      </>
-    );
     return (
-      <ComMenu
-        className="w-full"
-        itens={menuDe(entry)}
-        onOpen={(shift) => aoAbrirMenu(entry, shift)}
-      >
-        {editando ? (
-          <div className={classe} style={{ gridTemplateColumns: COLS_DETALHES }}>
-            {conteudo}
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={(e) => aoClicar(index, e)}
-            onDoubleClick={() => abrirItem(entry)}
-            className={classe}
-            style={{ gridTemplateColumns: COLS_DETALHES }}
-          >
-            {conteudo}
-          </button>
-        )}
-      </ComMenu>
+      <ItemArquivo
+        key={entry.path}
+        {...itemProps(entry, linhaIndex * cols, modo)}
+      />
     );
   }
 
@@ -1069,13 +1157,14 @@ export function ContentPane({
       >
         <ComMenu
           className="block min-h-full"
-          itens={getEmptySpaceContextMenu(
-            currentPath,
-            clipboard ?? null,
-            acoesMenu,
-            rotulosMenu,
-          )}
-          onOpen={() => setShiftDelete(false)}
+          itens={() =>
+            getEmptySpaceContextMenu(
+              currentPath,
+              clipboard ?? null,
+              acoesMenu,
+              rotulosMenu,
+            )
+          }
           onClick={(e) => {
             // #748: um arrasto REAL de marquee já ajustou a seleção — não deixa o
             // clique-solto que o encerra limpar tudo em seguida. Clique simples no

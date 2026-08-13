@@ -102,25 +102,37 @@ export function ComMenu({
   className,
   children,
 }: {
-  itens: ItemMenu[];
+  /** #739: thunk — os itens são montados só ao ABRIR o menu (recebe o Shift do
+   *  clique pro gate de exclusão permanente), não um objeto por-linha a cada
+   *  render. O Shift do contextmenu é capturado num ref antes do Radix abrir. */
+  itens: (shift: boolean) => ItemMenu[];
   onOpen?: (shift: boolean) => void;
   onClick?: (e: ReactMouseEvent<HTMLDivElement>) => void;
   className?: string;
   children: ReactNode;
 }) {
+  const shiftRef = useRef(false);
+  const [abertos, setAbertos] = useState<ItemMenu[] | null>(null);
   return (
-    <ContextMenu>
+    <ContextMenu
+      onOpenChange={(aberto) =>
+        setAbertos(aberto ? itens(shiftRef.current) : null)
+      }
+    >
       <ContextMenuTrigger asChild>
         <div
           className={className}
           onClick={onClick}
-          onContextMenu={(e) => onOpen?.(e.shiftKey)}
+          onContextMenu={(e) => {
+            shiftRef.current = e.shiftKey;
+            onOpen?.(e.shiftKey);
+          }}
         >
           {children}
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent className="w-56">
-        {renderItens(itens)}
+        {abertos && renderItens(abertos)}
       </ContextMenuContent>
     </ContextMenu>
   );
