@@ -461,9 +461,10 @@ fn copiar(from: &str, to: &str) -> Result<(), FsError> {
     if std::fs::symlink_metadata(com_long_path(src))?.is_dir() {
         copiar_dir(src, dst)
     } else {
-        if com_long_path(dst).exists() {
-            return Err(FsError::AlreadyExists(to.to_string()));
-        }
+        // #680: a UI já detecta conflito (`fs_check_conflicts`) e o usuário decide.
+        // "Substituir" chega como o MESMO destino — o backend HONRA a decisão e
+        // sobrescreve (std::fs::copy trunca). "Manter ambos" chega com nome livre;
+        // "Pular" nem chama. (Casa com `copiar_arquivo` do pipeline, que já trunca.)
         std::fs::copy(com_long_path(src), com_long_path(dst))?;
         Ok(())
     }
@@ -495,9 +496,9 @@ fn mover(from: &str, to: &str) -> Result<(), FsError> {
     validar(from)?;
     validar(to)?;
     let dest = com_long_path(Path::new(to));
-    if dest.exists() {
-        return Err(FsError::AlreadyExists(to.to_string()));
-    }
+    // #680: paridade com o copy — "Substituir" honra a decisão da UI e sobrescreve.
+    // std::fs::rename troca um arquivo existente (REPLACE_EXISTING no Windows;
+    // rename atômico no Unix). "Manter ambos" chega com nome livre; "Pular" não chama.
     if std::fs::rename(com_long_path(Path::new(from)), &dest).is_ok() {
         return Ok(());
     }
