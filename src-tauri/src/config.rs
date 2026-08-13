@@ -121,7 +121,11 @@ pub const COMMON_AUTHORITY: &str = "common";
 /// A authority `tenant` representa uma ORG (tenant GUID) — não o caminho comum
 /// (`common`/`consumers`) do pessoal? Decide o conjunto de scopes e o endpoint.
 pub fn eh_org(tenant: &str) -> bool {
-    !tenant.eq_ignore_ascii_case("common") && !tenant.eq_ignore_ascii_case("consumers")
+    // #695: o tenant SINTÉTICO das contas Microsoft pessoais (MSA) é um GUID, mas
+    // NÃO é uma org — não pode receber os scopes exclusivos de organização.
+    !tenant.eq_ignore_ascii_case("common")
+        && !tenant.eq_ignore_ascii_case("consumers")
+        && !tenant.eq_ignore_ascii_case(MS_PERSONAL_TENANT)
 }
 
 /// Scopes a pedir por authority: só BASE no caminho comum (pessoal), BASE+ORG na

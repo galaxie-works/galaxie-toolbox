@@ -60,13 +60,18 @@ async fn login(
     state: State<'_, Store>,
     email: String,
     idioma: String,
+    provider: Option<String>,
 ) -> Result<Account, String> {
     let store = state.inner().clone();
     let account = tauri::async_runtime::spawn_blocking(move || {
+        // #696: o provider escolhido pelo frontend ROTEIA o login — Google não pode
+        // cair no Microsoft. Ausente/desconhecido = Microsoft (default seguro).
+        let prov = match provider.as_deref() {
+            Some(p) if p.eq_ignore_ascii_case("google") => auth::Provider::Google,
+            _ => auth::Provider::Microsoft,
+        };
         let info = auth::detectar_tenant(&email)?;
-        // #693: login pela abstração de provider (MS agora; Google no PS3).
-        let tokens = auth::provider_de(auth::Provider::Microsoft)
-            .authenticate(&info.tenant_id, &email, &idioma)?;
+        let tokens = auth::provider_de(prov).authenticate(&info.tenant_id, &email, &idioma)?;
         let account = tokens.account.clone();
         *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = Some(tokens);
         Ok::<Account, String>(account)

@@ -235,23 +235,27 @@ impl IdentityProvider for GoogleProvider {
 /// Capabilities Google: mapeia os scopes concedidos pro vocabulário comum. Sem
 /// Gmail-read (restricted, PS8) → nunca promete MailRead. `gmail.send` = MailSend;
 /// `drive.file` (picker) = FilePicker.
+///
+/// #696: casa por TOKEN EXATO (o campo `scope` é separado por espaço), NÃO por
+/// substring — `gmail.send.extra`/`drive.file.backup` não podem conceder MailSend
+/// nem FilePicker por conterem o nome de um scope válido.
 fn google_capabilities(scopes: &str) -> Vec<Capability> {
-    let s = scopes.to_ascii_lowercase();
-    let tem = |needle: &str| s.contains(needle);
+    let concedidos: std::collections::HashSet<&str> = scopes.split_whitespace().collect();
+    let tem = |scope: &str| concedidos.contains(scope);
     let mut caps = vec![Capability::Identity]; // openid/email/profile
-    if tem("auth/calendar") {
+    if tem("https://www.googleapis.com/auth/calendar") {
         caps.push(Capability::Calendar);
     }
-    if tem("auth/contacts") {
+    if tem("https://www.googleapis.com/auth/contacts") {
         caps.push(Capability::Contacts);
     }
-    if tem("directory.readonly") {
+    if tem("https://www.googleapis.com/auth/directory.readonly") {
         caps.push(Capability::DirectoryRead);
     }
-    if tem("gmail.send") {
+    if tem("https://www.googleapis.com/auth/gmail.send") {
         caps.push(Capability::MailSend);
     }
-    if tem("drive.file") {
+    if tem("https://www.googleapis.com/auth/drive.file") {
         caps.push(Capability::FilePicker);
     }
     caps
@@ -477,13 +481,21 @@ pub struct TenantInfo {
 /// Descobre o tenant pelo dominio do e-mail, lendo o documento OIDC publico.
 /// O `issuer` devolvido contem o GUID real do tenant.
 pub fn detectar_tenant(email: &str) -> Result<TenantInfo, String> {
-    let dominio = email
+    // #695: o e-mail/login_hint é OPCIONAL. Vazio (ou sem domínio válido) NÃO é
+    // erro — segue pelo caminho comum (pessoal/Google entram por /common; o
+    // usuário digita o e-mail na própria página do provider).
+    let Some(dominio) = email
         .rsplit('@')
         .next()
+        .map(str::trim)
         .filter(|d| !d.is_empty() && d.contains('.'))
-        .ok_or("e-mail invalido")?
-        .trim()
-        .to_lowercase();
+        .map(str::to_lowercase)
+    else {
+        return Ok(TenantInfo {
+            tenant_id: config::COMMON_AUTHORITY.to_string(),
+            dominio: String::new(),
+        });
+    };
 
     let client = reqwest::blocking::Client::new();
     let resp = client
