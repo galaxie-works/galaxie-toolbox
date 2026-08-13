@@ -134,26 +134,36 @@ function Miniatura({
     const el = ref.current;
     if (!el) return;
     let cancelado = false;
+    let timer: number | undefined;
     const io = new IntersectionObserver(
       (entries) => {
         if (!entries.some((e) => e.isIntersecting)) return;
         io.disconnect();
-        void solicitarThumb(
-          entry.path,
-          entry.modifiedMs ?? 0,
-          THUMB_MAX_LADO,
-          () => cancelado,
-        ).then((uri) => {
-          if (!cancelado && uri) setSrc(uri);
-        });
+        // #820 (P0): só pede o thumb depois que o tile ASSENTA ~120ms na
+        // viewport. No scroll rápido de pasta densa os tiles que só passam
+        // voando desmontam antes disso → o timer é cancelado no cleanup e
+        // NENHUM pedido é enfileirado nem gerado no backend (era o que floodava
+        // a fila e os cores 5/6/9 com thumbs que já saíram de tela).
+        timer = window.setTimeout(() => {
+          void solicitarThumb(
+            entry.path,
+            entry.modifiedMs ?? 0,
+            THUMB_MAX_LADO,
+            () => cancelado,
+          ).then((uri) => {
+            if (!cancelado && uri) setSrc(uri);
+          });
+        }, 120);
       },
       { rootMargin: "150px" },
     );
     io.observe(el);
-    // Saiu de tela / trocou de pasta → cancela o pedido pendente (a fila o
-    // descarta antes de começar, ou ignoramos o resultado).
+    // Saiu de tela / trocou de pasta → cancela o timer de assentamento e o
+    // pedido pendente (a fila o descarta antes de começar, ou ignoramos o
+    // resultado).
     return () => {
       cancelado = true;
+      if (timer !== undefined) clearTimeout(timer);
       io.disconnect();
     };
   }, [entry.path, entry.modifiedMs, erro]);
