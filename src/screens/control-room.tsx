@@ -161,6 +161,7 @@ import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
 import { podeGerenciarEvento } from "@/lib/agenda-permissions";
+import { surfaceSuportada } from "@/lib/capabilities-surface";
 import {
   CAIXA_PROPRIA,
   descricaoErroEnvio,
@@ -6467,6 +6468,14 @@ export function ControlRoomScreen({
   useEffect(() => {
     let vivo = true;
     setPastas(null);
+    // #803: conta sem Outlook mail (ex.: Google) NÃO bate no MS Graph — mostra
+    // vazio limpo em vez de martelar /me/mailFolders e tomar 401 em toda pasta.
+    if (!surfaceSuportada(user, "mail")) {
+      setPastas([]);
+      return () => {
+        vivo = false;
+      };
+    }
     api
       .crMailFolders(caixaAtiva)
       .then((p) => vivo && setPastas(p))
@@ -6474,7 +6483,7 @@ export function ControlRoomScreen({
     return () => {
       vivo = false;
     };
-  }, [caixaAtiva, recarga, recargaPastas, setPastas]);
+  }, [caixaAtiva, recarga, recargaPastas, setPastas, user]);
 
   // Cache de SUBPASTAS (childFolders), compartilhado pelo sidebar (expandir) e
   // pelo submenu "Mover para pasta…" (#88). Carrega sob demanda e memoriza; o
