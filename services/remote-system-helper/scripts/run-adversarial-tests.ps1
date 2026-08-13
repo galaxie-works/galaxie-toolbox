@@ -17,13 +17,15 @@ if (-not (Test-Path -LiteralPath $dcc32)) {
 New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
 $projects = @(
     'AdversarialProtocolTests.dpr',
-    'AdversarialSecurityTests.dpr'
+    'AdversarialSecurityTests.dpr',
+    'PipeIntegrationTests.dpr'
 )
 
 $failed = $false
 foreach ($projectName in $projects) {
     $project = Join-Path $testDirectory $projectName
-    $compile = "call `"$rsvars`" && `"$dcc32`" -B -Q -E`"$outputDirectory`" -N0`"$outputDirectory`" -U`"$sourceDirectory`" `"$project`""
+    $defines = if ($projectName -eq 'PipeIntegrationTests.dpr') { '-DREMOTE_TESTING' } else { '' }
+    $compile = "call `"$rsvars`" && `"$dcc32`" -B -Q $defines -E`"$outputDirectory`" -N0`"$outputDirectory`" -U`"$sourceDirectory`" `"$project`""
     & $env:ComSpec /d /s /c $compile
     if ($LASTEXITCODE -ne 0) {
         throw "Delphi compile failed: $projectName"

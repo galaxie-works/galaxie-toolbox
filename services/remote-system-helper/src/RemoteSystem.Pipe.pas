@@ -8,6 +8,12 @@ uses
   Winapi.Windows;
 
 type
+{$IFDEF REMOTE_TESTING}
+  TPipeClientValidator = function(Pipe: THandle;
+    ClaimedPid, ClaimedSession: Cardinal; const InstallDirectory: string;
+    out ErrorText: string): Boolean;
+{$ENDIF}
+
   TPipeServerThread = class(TThread)
   private
     FAgent: TAgentState;
@@ -19,7 +25,14 @@ type
   public
     constructor Create(Agent: TAgentState; const InstallDirectory: string);
     procedure RequestStop;
+{$IFDEF REMOTE_TESTING}
+    procedure ServeClientForTest(Pipe: THandle);
+{$ENDIF}
   end;
+
+{$IFDEF REMOTE_TESTING}
+procedure SetPipeClientValidatorForTest(Validator: TPipeClientValidator);
+{$ENDIF}
 
 implementation
 
@@ -32,6 +45,28 @@ uses
 
 const
   PIPE_REJECT_REMOTE_CLIENTS = $00000008;
+
+{$IFDEF REMOTE_TESTING}
+var
+  TestPipeClientValidator: TPipeClientValidator;
+
+procedure SetPipeClientValidatorForTest(Validator: TPipeClientValidator);
+begin
+  TestPipeClientValidator := Validator;
+end;
+{$ENDIF}
+
+function ValidateClient(Pipe: THandle; ClaimedPid, ClaimedSession: Cardinal;
+  const InstallDirectory: string; out ErrorText: string): Boolean;
+begin
+{$IFDEF REMOTE_TESTING}
+  if Assigned(TestPipeClientValidator) then
+    Exit(TestPipeClientValidator(Pipe, ClaimedPid, ClaimedSession,
+      InstallDirectory, ErrorText));
+{$ENDIF}
+  Result := ValidatePipeClient(Pipe, ClaimedPid, ClaimedSession,
+    InstallDirectory, ErrorText);
+end;
 
 function ReadPipeMessage(Pipe: THandle; out Data: TBytes): Boolean;
 var
@@ -111,6 +146,13 @@ begin
     CancelSynchronousIo(Handle);
 end;
 
+{$IFDEF REMOTE_TESTING}
+procedure TPipeServerThread.ServeClientForTest(Pipe: THandle);
+begin
+  ServeClient(Pipe);
+end;
+{$ENDIF}
+
 procedure TPipeServerThread.ServeClient(Pipe: THandle);
 var
   Handshaken: Boolean;
@@ -170,7 +212,7 @@ begin
               'hello requires clientPid, sessionId and nonce', False));
             Break;
           end;
-          if not ValidatePipeClient(Pipe, ClaimedPid, ClaimedSession,
+          if not ValidateClient(Pipe, ClaimedPid, ClaimedSession,
             FInstallDirectory, ErrorText) then
           begin
             WritePipeMessage(Pipe, BuildError(Envelope.Id, 'client_rejected',
