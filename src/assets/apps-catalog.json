@@ -3137,7 +3137,7 @@
 },
 {
 "id": "1password",
-"name": "1password",
+"name": "1Password",
 "category": "Productivity",
 "url": "https://start.1password.com",
 "icon": true
@@ -3340,7 +3340,7 @@
 },
 {
 "id": "4thewords",
-"name": "4THEWORDS",
+"name": "4thewords",
 "category": "Learning",
 "url": "https://4thewords.com/",
 "icon": true
@@ -6889,7 +6889,7 @@
 },
 {
 "id": "compass-education-sfx-act",
-"name": "Compass Education ",
+"name": "Compass Education",
 "category": "Learning",
 "url": "https://schools.compass.education/",
 "icon": true
@@ -9549,7 +9549,7 @@
 },
 {
 "id": "carro",
-"name": "CARRO",
+"name": "Carro",
 "category": "Shopping",
 "url": "https://carro.sg/",
 "icon": true
@@ -9955,7 +9955,7 @@
 },
 {
 "id": "float-login",
-"name": "Float ",
+"name": "Float",
 "category": "Banking and Finance",
 "url": "https://app.floatfinancial.com/",
 "icon": true
@@ -10844,7 +10844,7 @@
 },
 {
 "id": "unum",
-"name": "UNUM",
+"name": "Unum",
 "category": "Social",
 "url": "https://dashboard.unum.la/",
 "icon": true
@@ -11908,7 +11908,7 @@
 },
 {
 "id": "comdata",
-"name": "COMDATA",
+"name": "Comdata",
 "category": "Work and Business",
 "url": "https://w6.iconnectdata.com/",
 "icon": true
