@@ -1163,8 +1163,20 @@ fn ext_raster_suportada(path: &str) -> bool {
     )
 }
 
+/// #834 (P0): comando ASSÍNCRONO — roda no pool blocking do `async_runtime`, NUNCA
+/// na main thread. Como `pub fn` SÍNCRONO (o bug), o Tauri o executava na MAIN: cada
+/// thumbnail bloqueava a UI, os invokes concorrentes serializavam na main e o
+/// `thumb_pool` engolia 1 imagem por vez esperando ali (o pool de N threads era
+/// inútil). Agora cada thumbnail é off-main; o `thumb_pool` (rayon) interno segue
+/// boundando a CPU do decode a ~3/4 dos cores, e os invokes rodam de fato em paralelo.
 #[tauri::command]
-pub fn fs_thumbnail(path: String, max_size: u32) -> Result<ThumbRef, FsError> {
+pub async fn fs_thumbnail(path: String, max_size: u32) -> Result<ThumbRef, FsError> {
+    tauri::async_runtime::spawn_blocking(move || fs_thumbnail_sync(path, max_size))
+        .await
+        .map_err(spawn_err)?
+}
+
+fn fs_thumbnail_sync(path: String, max_size: u32) -> Result<ThumbRef, FsError> {
     validar(&path)?;
     let max = max_size.clamp(16, 1024);
     // #820 (P0): guard O(1) ANTES de ler/decodificar. Vetor (svg) e tipos não-raster
