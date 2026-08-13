@@ -37,6 +37,10 @@ pub enum FsError {
     InvalidPath(String),
     #[error("verificação falhou (cópia corrompida): {0}")]
     VerifyMismatch(String),
+    /// #820 (P0): o arquivo não é raster thumbnailável (vetor/svg, tipo não
+    /// suportado, ou grande demais). Não é falha — o front usa ícone de TIPO.
+    #[error("sem thumbnail raster: {0}")]
+    NaoRasterizavel(String),
 }
 
 impl From<std::io::Error> for FsError {
@@ -1140,11 +1144,42 @@ fn thumb_pool() -> &'static rayon::ThreadPool {
 ///   1. memória (LRU) → 2. disco (`appdata/thumbnails/<hash>.webp`) → 3. gera no
 /// pool. Chave = `blake3(path | mtime | size | maxSize)`: mexer no arquivo (mtime
 /// novo) invalida a chave; o órfão é coletado pelo GC de disco.
+/// Teto de bytes para gerar thumbnail: acima disso o decode/rasterização custa
+/// caro e trava a UI (#820). 48 MiB cobre fotos legítimas e barra pixel-bombs.
+const MAX_THUMB_BYTES: u64 = 48 * 1024 * 1024;
+
+/// Extensões RASTER que o decoder aceita (espelha o `EXT_IMAGEM` do front + os
+/// formatos que o `image` decodifica). Vetor (svg) e o resto NUNCA entram (#820).
+fn ext_raster_suportada(path: &str) -> bool {
+    matches!(
+        Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some(
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "tif" | "tiff"
+        )
+    )
+}
+
 #[tauri::command]
 pub fn fs_thumbnail(path: String, max_size: u32) -> Result<ThumbRef, FsError> {
     validar(&path)?;
     let max = max_size.clamp(16, 1024);
+    // #820 (P0): guard O(1) ANTES de ler/decodificar. Vetor (svg) e tipos não-raster
+    // recebem ícone de TIPO — rasterizar um SVG grande (repro do Wagner: 23 MB) trava
+    // a UI. Defesa autoritativa do backend (o front já filtra por EXT_IMAGEM).
+    if !ext_raster_suportada(&path) {
+        return Err(FsError::NaoRasterizavel(path));
+    }
     let (mtime, size) = arquivo_mtime_size(&path)?;
+    // #820: arquivo raster gigante também trava no decode — barra pelo tamanho.
+    if size > MAX_THUMB_BYTES {
+        return Err(FsError::NaoRasterizavel(format!(
+            "{path} ({size} bytes > {MAX_THUMB_BYTES})"
+        )));
+    }
     let key = cache_key(&path, mtime, size, max);
 
     // 1) memória — thumb quente, hit instantâneo.
@@ -2115,6 +2150,18 @@ mod tests {
         // PNG (não começa com FFD8) → sem fast-path.
         assert!(exif_thumbnail(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0]).is_none());
         assert!(exif_thumbnail(&[]).is_none());
+    }
+
+    #[test]
+    fn ext_raster_so_aceita_raster_real() {
+        // #820: raster real entra.
+        for p in ["a.png", "b.JPG", "c.jpeg", "d.gif", "e.bmp", "f.webp", "g.ico", "h.tiff"] {
+            assert!(ext_raster_suportada(p), "{p} devia ser raster");
+        }
+        // Vetor e não-imagem NUNCA (o SVG de 23MB do repro cai aqui → ícone de tipo).
+        for p in ["logo.svg", "doc.pdf", "video.mp4", "sem-ext", "a.svgz", "x.eps"] {
+            assert!(!ext_raster_suportada(p), "{p} NÃO devia ser raster");
+        }
     }
 
     // --- Cache de thumbnail (#737 F2) ---
