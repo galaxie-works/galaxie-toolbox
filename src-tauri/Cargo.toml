@@ -52,6 +52,14 @@ notify-debouncer-full = "0.4"
 # forte+rápido, sha256 (já temos) = compatibilidade. Opt-in — cópia normal não hasheia.
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 blake3 = "1"
+# #736 (Explorer perf F1): gerador de thumbnail. `image` decodifica os formatos
+# comuns; `fast_image_resize` faz o downscale SIMD (Lanczos3); `kamadak-exif` lê a
+# thumb embutida do JPEG (fast-path, pula o decode full-res); `webp` codifica o
+# resultado (leve pro DOM). Cache em disco é F2 — aqui só gera em memória.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "webp", "ico", "tiff"] }
+fast_image_resize = "5"
+kamadak-exif = "0.5"
+webp = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
