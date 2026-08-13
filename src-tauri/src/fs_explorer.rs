@@ -1813,6 +1813,65 @@ mod tests {
     }
 
     #[test]
+    fn cancel_interrompe_no_meio_de_arquivo_real() {
+        let base = dir_temp("cancel-mid-copy");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        let arquivo = origem.join("grande.bin");
+        let tamanho = 128 * 1024 * 1024u64;
+        std::fs::File::create(&arquivo).unwrap().set_len(tamanho).unwrap();
+
+        let destino = base.join("dst");
+        let plano = planejar(&origem, &destino).unwrap();
+        for d in &plano.dirs {
+            std::fs::create_dir_all(com_long_path(d)).unwrap();
+        }
+        let ctx = ctx_teste(None);
+        let processados = ctx.processados.clone();
+        let cancelar = ctx.cancelar.clone();
+        let gatilho = std::thread::spawn(move || {
+            while processados.load(Ordering::Relaxed) == 0 {
+                std::thread::yield_now();
+            }
+            cancelar.store(true, Ordering::Relaxed);
+        });
+
+        copiar_plano(&plano, 1, &ctx).unwrap();
+        gatilho.join().unwrap();
+        let copiados = ctx.processados.load(Ordering::Relaxed);
+        assert!(copiados > 0, "o cancel ocorreu antes do primeiro chunk");
+        assert!(copiados < tamanho, "o cancel não interrompeu a cópia em andamento");
+        assert_eq!(ctx.arquivos_feitos.load(Ordering::Relaxed), 0);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// A UI do S4 traduz "Substituir" para o mesmo caminho de destino. O
+    /// backend precisa aceitar essa decisão e trocar o conteúdo existente.
+    #[test]
+    fn substituir_sobrescreve_destino_existente() {
+        let base = dir_temp("replace");
+        let origem = base.join("origem.txt");
+        let destino = base.join("destino.txt");
+        std::fs::write(&origem, b"novo").unwrap();
+        std::fs::write(&destino, b"antigo").unwrap();
+
+        let resultado = copiar(&origem.to_string_lossy(), &destino.to_string_lossy());
+        assert!(
+            resultado.is_ok(),
+            "a decisão Substituir foi recusada pelo backend: {resultado:?}"
+        );
+        assert_eq!(std::fs::read(&destino).unwrap(), b"novo");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn perfil_de_disco_real_responde_no_volume_do_qa() {
+        let resultado = tem_seek_penalty(Path::new(r"C:\"));
+        assert!(resultado.is_some(), "IOCTL não classificou o volume C: {resultado:?}");
+    }
+
+    #[test]
     fn raiz_volume_e_mesmo_volume() {
         assert_eq!(raiz_volume(Path::new(r"C:\a\b")).as_deref(), Some("c:"));
         assert!(mesmo_volume(Path::new(r"C:\a"), Path::new(r"c:\z\y")));
