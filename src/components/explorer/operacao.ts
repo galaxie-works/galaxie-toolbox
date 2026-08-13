@@ -40,22 +40,28 @@ export function nomeManterAmbos(nome: string, usadosLower: Set<string>): string 
  * conflito entram com o nome original. Nos conflitos:
  *  - `substituir` → mesmo destino (o backend sobrescreve);
  *  - `pular`      → sai do plano;
- *  - `manterAmbos`→ novo nome único ( (n) ), sem colidir com o destino conhecido
- *    nem com nomes já reservados neste lote.
+ *  - `manterAmbos`→ novo nome único ( (n) ), sem colidir com NENHUM nome já
+ *    presente no destino nem com nomes já reservados neste lote.
  *
- * Limite conhecido (v1): "manter ambos" só conhece os nomes que o
- * `checarConflitos` reportou — se o destino tiver um "foo (2).txt" que NÃO
- * colidia com nenhuma fonte, ele não entra no conjunto e o (2) pode reincidir. O
- * caminho comum (colar N itens de uma vez) está coberto.
+ * #680: "manter ambos" precisa evitar TODOS os nomes reais do destino, não só os
+ * que `checarConflitos` reportou como colisão. Ex.: colar `a.txt` num destino que
+ * já tem `a.txt` E `a (2).txt` (este último sem conflitar com fonte alguma) tem
+ * de gerar `a (3).txt` — senão reescolhe `a (2).txt` e sobrescreve um arquivo. O
+ * caller passa a listagem real do destino (`listarDir`) em `ocupadosDestino`;
+ * como o helper é PURO (roda no webview, sem fs), a verdade-de-disco vem de fora.
  */
 export function planejarTransferencia(
   sources: string[],
   destDir: string,
   conflitos: FsConflict[],
   resolucao: ResolucaoConflito,
+  ocupadosDestino: Iterable<string> = [],
 ): PlanoItem[] {
   const conflitantes = new Set(conflitos.map((c) => c.name.toLowerCase()));
+  // `usados` (evita colisão do "manter ambos") = conflitos conhecidos ∪ TODOS os
+  // nomes reais do destino ∪ nomes já reservados neste lote (adicionados abaixo).
   const usados = new Set(conflitantes);
+  for (const nome of ocupadosDestino) usados.add(nome.toLowerCase());
   const plano: PlanoItem[] = [];
   for (const from of sources) {
     const nome = nomeBase(from);

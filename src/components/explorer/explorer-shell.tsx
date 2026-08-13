@@ -14,6 +14,7 @@ import {
   checarConflitos,
   copiarComProgresso,
   dirsConhecidos,
+  listarDir,
   listarDrives,
   moverComProgresso,
   observarPasta,
@@ -255,7 +256,25 @@ export function ExplorerShell() {
       conflitos: FsConflict[],
       resolucao: ResolucaoConflito,
     ) => {
-      const plano = planejarTransferencia(sources, destDir, conflitos, resolucao);
+      // #680: "manter ambos" precisa da listagem REAL do destino pra não
+      // reescolher um sufixo já ocupado (o helper é puro, não lê disco). Só
+      // listamos quando é manterAmbos — as outras resoluções não precisam.
+      let ocupadosDestino: string[] = [];
+      if (resolucao === "manterAmbos") {
+        try {
+          ocupadosDestino = (await listarDir(destDir)).map((e) => e.name);
+        } catch {
+          // Sem listagem → degrada pro comportamento antigo (evita só os
+          // conflitos conhecidos); o backend ainda barra sobrescrita acidental.
+        }
+      }
+      const plano = planejarTransferencia(
+        sources,
+        destDir,
+        conflitos,
+        resolucao,
+        ocupadosDestino,
+      );
       for (const item of plano) {
         try {
           const opId =
