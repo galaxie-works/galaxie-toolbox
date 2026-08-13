@@ -38,6 +38,10 @@ tauri-plugin-fs = "2"
 tauri-plugin-autostart = "2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 argon2 = "0.5"
+# #700 (App público PS7): verificação de posse de domínio por DNS TXT (resolver
+# nativo, API segura; tokio já está na árvore via tauri). Lookup do TXT do domínio
+# pra conferir galaxie-verify=<token>.
+hickory-resolver = "0.24"
 # Explorer de Arquivos (#676): erro tipado, varredura paralela e pastas do SO.
 thiserror = "2"
 rayon = "1"

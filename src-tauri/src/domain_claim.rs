@@ -64,6 +64,40 @@ pub fn registro_confere(publicados: &[String], esperado: &str) -> bool {
         .any(|r| r.trim().trim_matches('"').trim() == esperado)
 }
 
+/// Consulta os registros TXT do domínio (I/O de rede — live-QA). Cada TXT é
+/// remontado das suas character-strings. Devolve os valores crus pra
+/// [`registro_confere`] comparar.
+pub fn resolver_txt(dominio: &str) -> Result<Vec<String>, String> {
+    use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+    use hickory_resolver::Resolver;
+
+    let resolver = Resolver::new(ResolverConfig::default(), ResolverOpts::default())
+        .map_err(|e| format!("falha ao criar resolver DNS: {e}"))?;
+    let lookup = resolver
+        .txt_lookup(dominio)
+        .map_err(|e| format!("falha no TXT lookup de '{dominio}': {e}"))?;
+    Ok(lookup
+        .iter()
+        .map(|txt| {
+            txt.txt_data()
+                .iter()
+                .map(|bytes| String::from_utf8_lossy(bytes))
+                .collect::<String>()
+        })
+        .collect())
+}
+
+/// Verifica a POSSE do domínio: lê os TXT e confere o registro esperado
+/// (`galaxie-verify=<token>` = `DesafioDominio.registro`). `Ok(true)` = provado.
+pub fn verificar_dominio(dominio: &str, registro_esperado: &str) -> Result<bool, String> {
+    let dominio = normalizar_dominio(dominio);
+    if dominio.is_empty() || !dominio.contains('.') {
+        return Err("domínio inválido".into());
+    }
+    let txt = resolver_txt(&dominio)?;
+    Ok(registro_confere(&txt, registro_esperado))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
