@@ -4,6 +4,7 @@
 pub mod config;
 pub mod protocol;
 pub mod state;
+pub mod v2;
 
 use std::net::SocketAddr;
 
@@ -39,7 +40,17 @@ pub fn state_from_config(config: &AppConfig) -> Result<AppState> {
     let key_array: [u8; 32] = key_bytes.try_into().map_err(|_| {
         anyhow::anyhow!("GALAXIE_REMOTE_SIGNING_KEY precisa decodificar para 32 bytes")
     })?;
-    Ok(AppState::new(
+    let opaque_bytes = BASE64
+        .decode(config.opaque_setup_base64.as_bytes())
+        .context("GALAXIE_REMOTE_OPAQUE_SETUP precisa ser base64")?;
+    let opaque = galaxie_remote_net::opaque::ServerSecrets::deserialize(&opaque_bytes)
+        .context("GALAXIE_REMOTE_OPAQUE_SETUP invalido")?;
+    let snapshot = match std::fs::read(&config.unattended_state_file) {
+        Ok(snapshot) => Some(snapshot),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error).context("falha ao ler estado unattended v2"),
+    };
+    AppState::new_with_opaque_snapshot(
         SigningKey::from_bytes(&key_array),
         config.turn_secret.as_bytes().to_vec(),
         config.turn_urls.clone(),
@@ -48,7 +59,11 @@ pub fn state_from_config(config: &AppConfig) -> Result<AppState> {
         config.max_code_ttl,
         config.rate_limit_messages,
         config.rate_limit_window,
-    ))
+        opaque,
+        snapshot.as_deref(),
+        Some(config.unattended_state_file.clone()),
+    )
+    .context("estado unattended v2 invalido")
 }
 
 pub fn app(state: AppState) -> Router {
@@ -56,6 +71,7 @@ pub fn app(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/v1/server-key", get(server_key))
         .route("/v1/ws", get(websocket_upgrade))
+        .route("/v2/ws", get(v2::websocket_upgrade))
         .with_state(state)
 }
 

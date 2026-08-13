@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub turn_credential_ttl: Duration,
     pub rate_limit_messages: usize,
     pub rate_limit_window: Duration,
+    pub opaque_setup_base64: String,
+    pub unattended_state_file: PathBuf,
 }
 
 impl AppConfig {
@@ -31,6 +33,10 @@ impl AppConfig {
         let turn_secret = read_secret(
             "GALAXIE_REMOTE_TURN_SECRET",
             "GALAXIE_REMOTE_TURN_SECRET_FILE",
+        )?;
+        let opaque_setup_base64 = read_secret(
+            "GALAXIE_REMOTE_OPAQUE_SETUP",
+            "GALAXIE_REMOTE_OPAQUE_SETUP_FILE",
         )?;
 
         let turn_urls = env::var("GALAXIE_REMOTE_TURN_URLS")
@@ -63,6 +69,10 @@ impl AppConfig {
                 "GALAXIE_REMOTE_RATE_LIMIT_WINDOW_SECONDS",
                 60,
             )?),
+            opaque_setup_base64,
+            unattended_state_file: env::var("GALAXIE_REMOTE_UNATTENDED_STATE_FILE")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("/var/lib/galaxie-remote/unattended-v2.json")),
         })
     }
 }
