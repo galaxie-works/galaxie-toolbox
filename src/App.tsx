@@ -1209,6 +1209,7 @@ function AppInner() {
             ativa={abaAtiva}
             launcherNonce={launcherNonce}
             visivel={tela === "navegador"}
+            user={user}
             renderTelaInterna={renderTelaInterna}
             onTrocar={trocarAba}
             onFechar={fecharAba}
