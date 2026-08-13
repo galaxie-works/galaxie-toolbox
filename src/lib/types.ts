@@ -635,8 +635,11 @@ export interface ThumbRef {
   dataUri: string;
   width: number;
   height: number;
-  /** "exif" = thumb embutida (fast-path); "decode" = decode full-res + resize. */
-  source: "exif" | "decode";
+  /**
+   * De onde veio: "exif"/"decode" = gerado agora; "cacheMem"/"cacheDisk" = hit do
+   * cache (#737, sem re-decode).
+   */
+  source: "exif" | "decode" | "cacheMem" | "cacheDisk";
 }
 
 /** Payload do evento `fs-dir-batch` (stream de pasta gigante). */

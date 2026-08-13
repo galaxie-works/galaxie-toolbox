@@ -1112,7 +1112,8 @@ pub struct ThumbRef {
     pub data_uri: String,
     pub width: u32,
     pub height: u32,
-    /// "exif" = thumb embutida (fast-path); "decode" = decode full-res + resize.
+    /// De onde veio: "exif"/"decode" = gerado agora; "cacheMem"/"cacheDisk" = hit
+    /// do cache (#737, sem re-decode).
     pub source: String,
 }
 
@@ -1132,29 +1133,205 @@ fn thumb_pool() -> &'static rayon::ThreadPool {
     })
 }
 
-/// Gera o thumbnail de `path` com o maior lado <= `max_size` (16..=1024). Roda no
-/// pool de thumbnails (bounda CPU). Erro tipado.
+/// Gera o thumbnail de `path` com o maior lado <= `max_size` (16..=1024).
+///
+/// #737 — cache transparente (a assinatura NÃO muda; o F3/front só ganha hits):
+///   1. memória (LRU) → 2. disco (`appdata/thumbnails/<hash>.webp`) → 3. gera no
+/// pool. Chave = `blake3(path | mtime | size | maxSize)`: mexer no arquivo (mtime
+/// novo) invalida a chave; o órfão é coletado pelo GC de disco.
 #[tauri::command]
 pub fn fs_thumbnail(path: String, max_size: u32) -> Result<ThumbRef, FsError> {
     validar(&path)?;
     let max = max_size.clamp(16, 1024);
-    thumb_pool().install(move || gerar_thumb(&path, max))
+    let (mtime, size) = arquivo_mtime_size(&path)?;
+    let key = cache_key(&path, mtime, size, max);
+
+    // 1) memória — thumb quente, hit instantâneo.
+    if let Some((bytes, w, h)) = mem_get(&key) {
+        return Ok(ThumbRef { data_uri: data_uri_webp(&bytes), width: w, height: h, source: "cacheMem".into() });
+    }
+    // 2) disco — sobrevive a re-scroll/reabrir o app; re-popula a memória.
+    if let Some(bytes) = disco_get(&key) {
+        let (w, h) = webp_dims(&bytes);
+        let arc = std::sync::Arc::new(bytes);
+        mem_put(&key, arc.clone(), w, h);
+        return Ok(ThumbRef { data_uri: data_uri_webp(&arc), width: w, height: h, source: "cacheDisk".into() });
+    }
+    // 3) miss — gera no pool (bounda CPU) e persiste nos dois níveis.
+    let (webp, w, h, source) = thumb_pool().install(|| gerar_webp(&path, max))?;
+    disco_put(&key, &webp);
+    let arc = std::sync::Arc::new(webp);
+    mem_put(&key, arc.clone(), w, h);
+    Ok(ThumbRef { data_uri: data_uri_webp(&arc), width: w, height: h, source: source.into() })
 }
 
-fn gerar_thumb(path: &str, max: u32) -> Result<ThumbRef, FsError> {
+/// Gera os bytes webp do thumbnail (sem cache). Fast-path EXIF → senão decode+resize.
+fn gerar_webp(path: &str, max: u32) -> Result<(Vec<u8>, u32, u32, &'static str), FsError> {
     let bytes = std::fs::read(com_long_path(Path::new(path)))?;
     // Fast-path: thumbnail EXIF embutida (só JPEG). Pula o decode full-res.
     if let Some(thumb) = exif_thumbnail(&bytes) {
         if let Ok(img) = image::load_from_memory(&thumb) {
             let (w, h, webp) = resize_encode(&img, max)?;
-            return Ok(ThumbRef { data_uri: data_uri_webp(&webp), width: w, height: h, source: "exif".into() });
+            return Ok((webp, w, h, "exif"));
         }
     }
     // Caminho robusto: decodifica o formato (png/jpg/gif/bmp/webp/ico/tiff) e reduz.
     let img = image::load_from_memory(&bytes)
         .map_err(|e| FsError::Io(format!("decode de imagem falhou: {e}")))?;
     let (w, h, webp) = resize_encode(&img, max)?;
-    Ok(ThumbRef { data_uri: data_uri_webp(&webp), width: w, height: h, source: "decode".into() })
+    Ok((webp, w, h, "decode"))
+}
+
+// ── Cache de thumbnail (#737 F2): memória (LRU byte-limitada) + disco (GC) ────
+
+/// Tetos configuráveis (via `fs_thumb_cache_limits`). Disco default 1 GB, memória 96 MB.
+static DISK_CAP_MB: AtomicU64 = AtomicU64::new(1024);
+static MEM_CAP_MB: AtomicU64 = AtomicU64::new(96);
+
+/// Ajusta os tetos do cache (MB). Disco mín. 16, memória mín. 8.
+#[tauri::command]
+pub fn fs_thumb_cache_limits(disk_mb: u64, mem_mb: u64) {
+    DISK_CAP_MB.store(disk_mb.max(16), Ordering::Relaxed);
+    MEM_CAP_MB.store(mem_mb.max(8), Ordering::Relaxed);
+}
+
+/// Chave do cache: blake3(path | mtime_nanos | size | maxSize). `maxSize` entra
+/// pra não colidir thumbs de tamanhos diferentes; `mtime`/`size` = invalidação.
+fn cache_key(path: &str, mtime_nanos: u128, size: u64, max: u32) -> String {
+    let mut h = blake3::Hasher::new();
+    h.update(path.as_bytes());
+    h.update(&[0]);
+    h.update(&mtime_nanos.to_le_bytes());
+    h.update(&size.to_le_bytes());
+    h.update(&max.to_le_bytes());
+    h.finalize().to_hex().to_string()
+}
+
+fn arquivo_mtime_size(path: &str) -> Result<(u128, u64), FsError> {
+    let m = std::fs::metadata(com_long_path(Path::new(path)))?;
+    let mtime = m
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Ok((mtime, m.len()))
+}
+
+/// Dimensões de um webp sem decodificar os pixels (lê só o header).
+fn webp_dims(bytes: &[u8]) -> (u32, u32) {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok())
+        .unwrap_or((0, 0))
+}
+
+// -- disco --
+
+fn thumb_dir() -> Option<PathBuf> {
+    let d = dirs::cache_dir()?.join("GALAXIE").join("thumbnails");
+    std::fs::create_dir_all(&d).ok()?;
+    Some(d)
+}
+
+fn disco_get(key: &str) -> Option<Vec<u8>> {
+    std::fs::read(thumb_dir()?.join(format!("{key}.webp"))).ok()
+}
+
+fn disco_put(key: &str, bytes: &[u8]) {
+    let Some(dir) = thumb_dir() else { return };
+    if std::fs::write(dir.join(format!("{key}.webp")), bytes).is_ok() {
+        // GC amortizado: confere o teto a cada 128 escritas (não a cada thumb).
+        static N: AtomicU64 = AtomicU64::new(0);
+        if N.fetch_add(1, Ordering::Relaxed) % 128 == 0 {
+            gc_disco(&dir);
+        }
+    }
+}
+
+/// Coleta o cache de disco se passar do teto: remove os mais ANTIGOS por atime
+/// (fallback modified) até voltar pra baixo do cap.
+fn gc_disco(dir: &Path) {
+    let cap = DISK_CAP_MB.load(Ordering::Relaxed).saturating_mul(1024 * 1024);
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut arquivos: Vec<(PathBuf, u64, SystemTime)> = Vec::new();
+    let mut total = 0u64;
+    for e in rd.flatten() {
+        let Ok(m) = e.metadata() else { continue };
+        if !m.is_file() {
+            continue;
+        }
+        total += m.len();
+        let at = m.accessed().or_else(|_| m.modified()).unwrap_or(UNIX_EPOCH);
+        arquivos.push((e.path(), m.len(), at));
+    }
+    if total <= cap {
+        return;
+    }
+    arquivos.sort_by_key(|(_, _, at)| *at); // mais antigo primeiro
+    for (p, sz, _) in arquivos {
+        if total <= cap {
+            break;
+        }
+        if std::fs::remove_file(&p).is_ok() {
+            total = total.saturating_sub(sz);
+        }
+    }
+}
+
+// -- memória (LRU byte-limitada) --
+
+type EntradaMem = (std::sync::Arc<Vec<u8>>, u32, u32);
+
+struct CacheMem {
+    lru: lru::LruCache<String, EntradaMem>,
+    bytes: usize,
+}
+
+impl CacheMem {
+    fn novo(teto_itens: usize) -> Self {
+        // Cap por BYTES é o limitador real; o teto de itens é só uma trava alta.
+        CacheMem {
+            lru: lru::LruCache::new(std::num::NonZeroUsize::new(teto_itens.max(1)).unwrap()),
+            bytes: 0,
+        }
+    }
+
+    fn obter(&mut self, key: &str) -> Option<EntradaMem> {
+        self.lru.get(key).cloned()
+    }
+
+    /// Insere e faz eviction LRU até caber em `cap_bytes`.
+    fn inserir(&mut self, key: &str, bytes: std::sync::Arc<Vec<u8>>, w: u32, h: u32, cap_bytes: usize) {
+        let novo = bytes.len();
+        if let Some((old, _, _)) = self.lru.put(key.to_string(), (bytes, w, h)) {
+            self.bytes = self.bytes.saturating_sub(old.len());
+        }
+        self.bytes += novo;
+        while self.bytes > cap_bytes {
+            match self.lru.pop_lru() {
+                Some((_, (v, _, _))) => self.bytes = self.bytes.saturating_sub(v.len()),
+                None => break,
+            }
+        }
+    }
+}
+
+fn cache_mem() -> &'static Mutex<CacheMem> {
+    static C: std::sync::OnceLock<Mutex<CacheMem>> = std::sync::OnceLock::new();
+    C.get_or_init(|| Mutex::new(CacheMem::novo(100_000)))
+}
+
+fn mem_get(key: &str) -> Option<EntradaMem> {
+    cache_mem().lock().ok()?.obter(key)
+}
+
+fn mem_put(key: &str, bytes: std::sync::Arc<Vec<u8>>, w: u32, h: u32) {
+    let cap = (MEM_CAP_MB.load(Ordering::Relaxed) as usize).saturating_mul(1024 * 1024);
+    if let Ok(mut c) = cache_mem().lock() {
+        c.inserir(key, bytes, w, h, cap);
+    }
 }
 
 /// Downscale SIMD (Lanczos3) pro maior lado = `max` (nunca faz upscale) + encode
@@ -1764,6 +1941,62 @@ mod tests {
         // PNG (não começa com FFD8) → sem fast-path.
         assert!(exif_thumbnail(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0]).is_none());
         assert!(exif_thumbnail(&[]).is_none());
+    }
+
+    // --- Cache de thumbnail (#737 F2) ---
+
+    #[test]
+    fn cache_key_determinista_e_sensivel_a_cada_campo() {
+        let base = cache_key("C:/foto.jpg", 1000, 2048, 256);
+        // determinístico
+        assert_eq!(base, cache_key("C:/foto.jpg", 1000, 2048, 256));
+        // mtime muda → chave nova (invalidação ao editar o arquivo)
+        assert_ne!(base, cache_key("C:/foto.jpg", 1001, 2048, 256));
+        // size muda → chave nova
+        assert_ne!(base, cache_key("C:/foto.jpg", 1000, 4096, 256));
+        // maxSize muda → chave nova (não colide thumbs de tamanhos diferentes)
+        assert_ne!(base, cache_key("C:/foto.jpg", 1000, 2048, 128));
+        // path muda → chave nova
+        assert_ne!(base, cache_key("C:/outra.jpg", 1000, 2048, 256));
+    }
+
+    #[test]
+    fn cache_mem_hit_miss_e_eviction_por_bytes() {
+        use std::sync::Arc;
+        let mut c = CacheMem::novo(100);
+        let cap = 1000; // bytes
+        c.inserir("a", Arc::new(vec![0u8; 600]), 10, 10, cap);
+        assert!(c.obter("a").is_some()); // hit
+        assert!(c.obter("z").is_none()); // miss
+        // "a"(600) + "b"(600) = 1200 > cap(1000) → evicta o LRU ("a").
+        c.inserir("b", Arc::new(vec![0u8; 600]), 10, 10, cap);
+        assert!(c.obter("a").is_none(), "o mais antigo devia ter sido evictado");
+        assert!(c.obter("b").is_some());
+        assert!(c.bytes <= cap);
+    }
+
+    #[test]
+    fn cache_mem_get_promove_no_lru() {
+        use std::sync::Arc;
+        let mut c = CacheMem::novo(100);
+        let cap = 1000;
+        c.inserir("a", Arc::new(vec![0u8; 400]), 1, 1, cap);
+        c.inserir("b", Arc::new(vec![0u8; 400]), 1, 1, cap);
+        let _ = c.obter("a"); // toca "a" → "b" vira o mais frio
+        c.inserir("d", Arc::new(vec![0u8; 400]), 1, 1, cap); // 1200 > cap → evicta o LRU ("b")
+        assert!(c.obter("a").is_some(), "'a' foi promovido, não devia sair");
+        assert!(c.obter("b").is_none(), "'b' era o mais frio");
+    }
+
+    #[test]
+    fn webp_dims_le_dimensoes() {
+        let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            300,
+            200,
+            image::Rgba([1, 2, 3, 255]),
+        ));
+        let (_, _, webp) = resize_encode(&img, 256).unwrap();
+        assert_eq!(webp_dims(&webp), (256, 171)); // 300×200 → maior lado 256
     }
 
     // --- Mutações (#679 S3) — em tmpdir real, sem tocar a Lixeira do SO ---
