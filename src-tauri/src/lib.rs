@@ -64,13 +64,27 @@ async fn login(
 ) -> Result<Account, String> {
     let store = state.inner().clone();
     let account = tauri::async_runtime::spawn_blocking(move || {
-        // #696: o provider escolhido pelo frontend ROTEIA o login — Google não pode
-        // cair no Microsoft. Ausente/desconhecido = Microsoft (default seguro).
-        let prov = match provider.as_deref() {
-            Some(p) if p.eq_ignore_ascii_case("google") => auth::Provider::Google,
-            _ => auth::Provider::Microsoft,
+        // #696/#746: o provider escolhido pelo frontend ROTEIA o login. Contrato:
+        // "microsoft" | "microsoft-personal" | "google". Google não cai em MS;
+        // "microsoft-personal" FORÇA a conta pessoal (botão explícito não pode
+        // depender do usuário digitar um e-mail hotmail/live). Ausente/desconhecido
+        // = Microsoft org-por-e-mail (default seguro).
+        let escolha = provider.as_deref().unwrap_or("microsoft");
+        let (prov, info) = if escolha.eq_ignore_ascii_case("google") {
+            (auth::Provider::Google, auth::detectar_tenant(&email)?)
+        } else if escolha.eq_ignore_ascii_case("microsoft-personal") {
+            // Authority "consumers" = endpoint SÓ pessoal; client_id_para/scopes_para
+            // já roteiam pro registration pessoal + scopes base.
+            (
+                auth::Provider::Microsoft,
+                auth::TenantInfo {
+                    tenant_id: "consumers".to_string(),
+                    dominio: String::new(),
+                },
+            )
+        } else {
+            (auth::Provider::Microsoft, auth::detectar_tenant(&email)?)
         };
-        let info = auth::detectar_tenant(&email)?;
         let tokens = auth::provider_de(prov).authenticate(&info.tenant_id, &email, &idioma)?;
         let account = tokens.account.clone();
         *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = Some(tokens);
