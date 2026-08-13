@@ -1,4 +1,3 @@
-import { type ReactNode } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,19 +24,17 @@ import {
 } from "@/components/ui/tooltip";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { GalaxieLogo } from "@/components/ui/icons/marca/galaxie-logo";
-import { NavigatorIcon, BridgeIcon } from "@/components/ui/icons/marca-anim";
+import { IconeAnim, type AnimIcon } from "@/components/ui/icons/marca-anim";
+import { ShipIcon } from "@/components/ui/ship";
+import { ShipWheelIcon } from "@/components/ui/ship-wheel";
+import { FoldersIcon } from "@/components/ui/folders";
+import { AirplayIcon } from "@/components/ui/airplay";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { AppUser } from "@/lib/types";
 import { type Tela } from "@/lib/navegacao";
 import { useIdioma } from "@/lib/idioma";
-import {
-  ChevronsUpDown,
-  ExternalLink,
-  FolderTree,
-  LogOut,
-  MonitorSmartphone,
-  Settings,
-} from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ChevronsUpDown, ExternalLink, LogOut, Settings } from "lucide-react";
 
 /**
  * #718 (SH0 · épico #717 GALAXIE Shell): o sidebar virou um RAIL fixo da marca
@@ -66,56 +63,65 @@ export function AppSidebar({
   const isMobile = useIsMobile();
   const { t } = useIdioma();
 
-  // Itens fixos do rail. O roteamento como aba do Navigator é o SH1; aqui cada
-  // item existe e dispara a navegação pra sua Tela.
-  const itens: { id: Tela; label: string; icone: ReactNode }[] = [
-    { id: "navegador", label: t.sidebar.navigator, icone: <NavigatorIcon className="size-5!" /> },
-    { id: "control-room", label: t.sidebar.bridge, icone: <BridgeIcon className="size-5!" /> },
-    { id: "arquivos", label: t.sidebar.files, icone: <FolderTree className="size-5!" /> },
-    { id: "remote", label: t.sidebar.remote, icone: <MonitorSmartphone className="size-5!" /> },
+  // Itens fixos do rail. Ícones lucide-animated (24px), animam no hover da linha
+  // (IconeAnim acha o <button> ancestral). O roteamento como aba do Navigator é
+  // o SH1; aqui cada item dispara a navegação pra sua Tela.
+  const itens: { id: Tela; label: string; Comp: AnimIcon }[] = [
+    { id: "navegador", label: t.sidebar.navigator, Comp: ShipIcon as unknown as AnimIcon },
+    { id: "control-room", label: t.sidebar.bridge, Comp: ShipWheelIcon as unknown as AnimIcon },
+    { id: "arquivos", label: t.sidebar.files, Comp: FoldersIcon as unknown as AnimIcon },
+    { id: "remote", label: t.sidebar.remote, Comp: AirplayIcon as unknown as AnimIcon },
   ];
 
   return (
     <Sidebar collapsible="icon">
-      {/* Marca GALAXIE — substitui o logo/nome do tenant + "Microsoft 365". Clicar
-          leva ao Navigator (home). */}
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <SidebarMenuButton
-                  size="lg"
-                  onClick={() => onNavegar("navegador")}
-                  className="group-data-[collapsible=icon]:overflow-visible!"
-                >
-                  <GalaxieLogo className="size-8 shrink-0" />
-                </SidebarMenuButton>
-              </TooltipTrigger>
-              <TooltipContent side="right" align="center">
-                GALAXIE
-              </TooltipContent>
-            </Tooltip>
-          </SidebarMenuItem>
-        </SidebarMenu>
+      {/* #718 (fix visual): a marca GALAXIE OCUPA a largura do rail (só o padding
+          do header a limita) — não mais um logo minúsculo. Clicar leva ao Navigator. */}
+      <SidebarHeader className="items-center px-1 pt-1.5 pb-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="GALAXIE"
+              onClick={() => onNavegar("navegador")}
+              className="grid w-full place-items-center rounded-xl transition-colors hover:bg-sidebar-accent"
+            >
+              <GalaxieLogo className="w-full" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right" align="center">
+            GALAXIE
+          </TooltipContent>
+        </Tooltip>
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarMenu>
-            {itens.map((item) => (
-              <SidebarMenuItem key={item.id}>
-                <SidebarMenuButton
-                  tooltip={item.label}
-                  isActive={tela === item.id}
+        {/* #718 (fix visual): itens icon-only 24×24 CENTRALIZADOS (sem o texto que
+            cortava). Botão quadrado que preenche a largura do rail; ícone animado. */}
+        <SidebarGroup className="items-center gap-1 px-1.5 py-1">
+          {itens.map((item) => (
+            <Tooltip key={item.id}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={item.label}
+                  aria-current={tela === item.id ? "page" : undefined}
                   onClick={() => onNavegar(item.id)}
+                  className={cn(
+                    "grid aspect-square w-full place-items-center rounded-xl transition-colors",
+                    tela === item.id
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent/60"
+                  )}
                 >
-                  {item.icone}
-                  <span>{item.label}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            ))}
-          </SidebarMenu>
+                  <IconeAnim Comp={item.Comp} size={24} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" align="center">
+                {item.label}
+              </TooltipContent>
+            </Tooltip>
+          ))}
         </SidebarGroup>
 
         {/* #718: slot de apps PINADOS — populado no SH3. Reservado aqui pra o
