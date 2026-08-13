@@ -1096,6 +1096,132 @@ fn checar_conflitos(sources: &[String], dest_dir: &str) -> Result<Vec<Conflict>,
     Ok(conflitos)
 }
 
+// ───────────────────── Thumbnails (#736, Explorer perf F1) ──────────────────
+//
+// `fs_thumbnail` gera um thumbnail PEQUENO (webp) sem NUNCA devolver o original
+// pro DOM (hoje o WebView decodifica o arquivo full-res só pra pintar 48px — o
+// gargalo). Roda num pool rayon dimensionado aos cores. Fast-path: se o JPEG tem
+// thumbnail EXIF embutida (a maioria das fotos de celular/câmera tem), usa ela e
+// pula o decode full-res. Cache em disco é a F2 — aqui só gera em memória.
+
+/// Referência de thumbnail pro front: webp como data URI (o DOM pinta direto, sem
+/// tocar o arquivo original) + dimensões + de onde veio.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThumbRef {
+    pub data_uri: String,
+    pub width: u32,
+    pub height: u32,
+    /// "exif" = thumb embutida (fast-path); "decode" = decode full-res + resize.
+    pub source: String,
+}
+
+/// Pool rayon dedicado a thumbnails, criado uma vez. Dimensionado a ~3/4 dos
+/// núcleos lógicos (headroom pra UI/OS; hyperthreading não ajuda decode SIMD),
+/// mínimo 1. Bounda a paralelização mesmo com N chamadas simultâneas do front.
+fn thumb_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let n = (logical * 3 / 4).max(1);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .thread_name(|i| format!("thumb-{i}"))
+            .build()
+            .expect("pool de thumbnail")
+    })
+}
+
+/// Gera o thumbnail de `path` com o maior lado <= `max_size` (16..=1024). Roda no
+/// pool de thumbnails (bounda CPU). Erro tipado.
+#[tauri::command]
+pub fn fs_thumbnail(path: String, max_size: u32) -> Result<ThumbRef, FsError> {
+    validar(&path)?;
+    let max = max_size.clamp(16, 1024);
+    thumb_pool().install(move || gerar_thumb(&path, max))
+}
+
+fn gerar_thumb(path: &str, max: u32) -> Result<ThumbRef, FsError> {
+    let bytes = std::fs::read(com_long_path(Path::new(path)))?;
+    // Fast-path: thumbnail EXIF embutida (só JPEG). Pula o decode full-res.
+    if let Some(thumb) = exif_thumbnail(&bytes) {
+        if let Ok(img) = image::load_from_memory(&thumb) {
+            let (w, h, webp) = resize_encode(&img, max)?;
+            return Ok(ThumbRef { data_uri: data_uri_webp(&webp), width: w, height: h, source: "exif".into() });
+        }
+    }
+    // Caminho robusto: decodifica o formato (png/jpg/gif/bmp/webp/ico/tiff) e reduz.
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| FsError::Io(format!("decode de imagem falhou: {e}")))?;
+    let (w, h, webp) = resize_encode(&img, max)?;
+    Ok(ThumbRef { data_uri: data_uri_webp(&webp), width: w, height: h, source: "decode".into() })
+}
+
+/// Downscale SIMD (Lanczos3) pro maior lado = `max` (nunca faz upscale) + encode
+/// webp q80. Devolve (w, h, bytes webp).
+fn resize_encode(img: &image::DynamicImage, max: u32) -> Result<(u32, u32, Vec<u8>), FsError> {
+    use fast_image_resize as fr;
+    let src = img.to_rgba8();
+    let (sw, sh) = (src.width(), src.height());
+    let (dw, dh) = escala(sw, sh, max);
+    let src_img = fr::images::Image::from_vec_u8(sw, sh, src.into_raw(), fr::PixelType::U8x4)
+        .map_err(|e| FsError::Io(e.to_string()))?;
+    let mut dst_img = fr::images::Image::new(dw, dh, fr::PixelType::U8x4);
+    let opts = fr::ResizeOptions::new().resize_alg(fr::ResizeAlg::Convolution(fr::FilterType::Lanczos3));
+    fr::Resizer::new()
+        .resize(&src_img, &mut dst_img, &opts)
+        .map_err(|e| FsError::Io(e.to_string()))?;
+    let enc = webp::Encoder::from_rgba(dst_img.buffer(), dw, dh);
+    let mem = enc.encode(80.0);
+    Ok((dw, dh, mem.to_vec()))
+}
+
+/// Dimensão-alvo: maior lado = `max`, mantém aspecto, NUNCA faz upscale.
+fn escala(w: u32, h: u32, max: u32) -> (u32, u32) {
+    if w.max(h) <= max {
+        return (w.max(1), h.max(1));
+    }
+    let s = max as f64 / w.max(h) as f64;
+    (((w as f64 * s).round() as u32).max(1), ((h as f64 * s).round() as u32).max(1))
+}
+
+fn data_uri_webp(bytes: &[u8]) -> String {
+    use base64::Engine;
+    format!(
+        "data:image/webp;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
+}
+
+/// Extrai a thumbnail JPEG embutida na EXIF (IFD1), se houver. O offset da EXIF é
+/// relativo ao header TIFF, que começa logo após `Exif\0\0` no segmento APP1 —
+/// achamos essa base no arquivo e fatiamos `[offset .. offset+len]`. Só JPEG.
+fn exif_thumbnail(bytes: &[u8]) -> Option<Vec<u8>> {
+    // JPEG começa com SOI (0xFFD8); sem isso nem tem APP1/EXIF.
+    if bytes.len() < 4 || bytes[0] != 0xFF || bytes[1] != 0xD8 {
+        return None;
+    }
+    let exif = exif::Reader::new()
+        .read_from_container(&mut std::io::Cursor::new(bytes))
+        .ok()?;
+    let off = exif
+        .get_field(exif::Tag::JPEGInterchangeFormat, exif::In::THUMBNAIL)?
+        .value
+        .get_uint(0)? as usize;
+    let len = exif
+        .get_field(exif::Tag::JPEGInterchangeFormatLength, exif::In::THUMBNAIL)?
+        .value
+        .get_uint(0)? as usize;
+    let marcador = b"Exif\x00\x00";
+    let pos = bytes.windows(marcador.len()).position(|w| w == marcador)?;
+    let tiff_base = pos + marcador.len();
+    let inicio = tiff_base.checked_add(off)?;
+    let fim = inicio.checked_add(len)?;
+    let thumb = bytes.get(inicio..fim)?;
+    // Confere que é mesmo um JPEG (SOI) antes de confiar.
+    (thumb.len() >= 2 && thumb[0] == 0xFF && thumb[1] == 0xD8).then(|| thumb.to_vec())
+}
+
 // --- File watcher (notify v7 + debouncer-full) ---
 
 type Watcher =
@@ -1596,6 +1722,48 @@ mod tests {
         ordenar(&mut v);
         let ordem: Vec<&str> = v.iter().map(|e| e.name.as_str()).collect();
         assert_eq!(ordem, ["abacaxi", "Zebra", "Ana.doc", "banana.txt"]);
+    }
+
+    // --- Thumbnails (#736 F1) ---
+
+    #[test]
+    fn escala_downscale_mantem_aspecto_e_nao_faz_upscale() {
+        // 4000×3000 → maior lado 256 → 256×192.
+        assert_eq!(escala(4000, 3000, 256), (256, 192));
+        // paisagem
+        assert_eq!(escala(1000, 500, 100), (100, 50));
+        // menor que o alvo: NUNCA faz upscale.
+        assert_eq!(escala(120, 80, 256), (120, 80));
+        // nunca zera.
+        assert_eq!(escala(1, 1, 256), (1, 1));
+    }
+
+    #[test]
+    fn resize_encode_produz_webp_valido_e_reduzido() {
+        // imagem sintética 800×600 → thumb 256 → 256×192, bytes webp (RIFF…WEBP).
+        let img = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            800,
+            600,
+            image::Rgba([10, 120, 200, 255]),
+        ));
+        let (w, h, webp) = resize_encode(&img, 256).unwrap();
+        assert_eq!((w, h), (256, 192));
+        assert!(webp.len() > 12);
+        assert_eq!(&webp[0..4], b"RIFF");
+        assert_eq!(&webp[8..12], b"WEBP");
+    }
+
+    #[test]
+    fn data_uri_webp_prefixa_certo() {
+        let u = data_uri_webp(&[1, 2, 3]);
+        assert!(u.starts_with("data:image/webp;base64,"));
+    }
+
+    #[test]
+    fn exif_thumbnail_ignora_nao_jpeg() {
+        // PNG (não começa com FFD8) → sem fast-path.
+        assert!(exif_thumbnail(&[0x89, b'P', b'N', b'G', 0, 0, 0, 0]).is_none());
+        assert!(exif_thumbnail(&[]).is_none());
     }
 
     // --- Mutações (#679 S3) — em tmpdir real, sem tocar a Lixeira do SO ---

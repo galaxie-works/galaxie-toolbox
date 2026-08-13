@@ -630,6 +630,15 @@ export interface DirSize {
   dirCount: number;
 }
 
+/** Thumbnail gerado no backend (#736): webp como data URI, nunca o original. */
+export interface ThumbRef {
+  dataUri: string;
+  width: number;
+  height: number;
+  /** "exif" = thumb embutida (fast-path); "decode" = decode full-res + resize. */
+  source: "exif" | "decode";
+}
+
 /** Payload do evento `fs-dir-batch` (stream de pasta gigante). */
 export interface FsDirBatch {
   path: string;

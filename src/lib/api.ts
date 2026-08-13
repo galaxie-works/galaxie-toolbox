@@ -9,6 +9,7 @@ import type {
   FsDirBatch,
   FsEntry,
   FsOpProgress,
+  ThumbRef,
   CaixaEntrada,
   Calendario,
   CategoriaCor,
@@ -2962,6 +2963,21 @@ export async function dirsConhecidos(): Promise<FsEntry[]> {
     return MOCK_FS_ENTRIES.filter((e) => e.isDir).map((e) => ({ ...e }));
   }
   return invoke<FsEntry[]>("fs_known_dirs");
+}
+
+/**
+ * Thumbnail webp (data URI) gerado no backend (#736): pool rayon + fast-path EXIF
+ * + downscale. NUNCA decodifica o arquivo original no DOM. `maxSize` = maior lado.
+ */
+export async function gerarThumbnail(
+  path: string,
+  maxSize = 256,
+): Promise<ThumbRef> {
+  if (!inTauri()) {
+    await sleep(40);
+    return { dataUri: "", width: maxSize, height: maxSize, source: "decode" };
+  }
+  return invoke<ThumbRef>("fs_thumbnail", { path, maxSize });
 }
 
 /** Revela o item no Explorer do Windows. */
