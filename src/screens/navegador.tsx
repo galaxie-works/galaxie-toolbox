@@ -9,15 +9,18 @@ import {
 } from "@/components/ui/command";
 import {
   APPS,
-  CATEGORIAS,
   MAIS_USADOS,
-  porCategoria,
   porId,
   urlIcone,
   type AppM365,
 } from "@/lib/apps";
 // #720 (SH2): catálogo grande (~1795 apps) categorizado + ícones lazy.
-import { appsPorCategoria, chaveCategoria } from "@/lib/apps-catalog";
+import { chaveCategoria } from "@/lib/apps-catalog";
+// #827 (SU1): fonte + render ÚNICOS do command (M365 curado + catálogo fundidos).
+import {
+  appsUnificadosPorCategoria,
+  type AppUnificado,
+} from "@/lib/apps-unificado";
 import { AppIcon } from "@/components/app-icon";
 // #721 (SH3): fixar/desafixar app no rail — estado no store, lógica pura.
 import { useAppStore } from "@/store";
@@ -395,7 +398,6 @@ function ConteudoPaleta({
   // para nao renderizar milhares de itens no cmdk.
   const historicoLista =
     modo === "historico" ? buscarHistorico(historico, termo).slice(0, 50) : [];
-  const alfabetica = (a: AppM365, b: AppM365) => a.nome.localeCompare(b.nome);
 
   // Roda a ação e, no overlay, fecha a paleta em seguida.
   const executar = (fn: () => void) => {
@@ -457,14 +459,28 @@ function ConteudoPaleta({
   const mostrarAbas = (modo === "omni" || modo === "abas") && abas.length > 0;
   const mostrarFavoritos = modo === "omni" && favoritosLinks.length > 0;
   const mostrarApps = modo === "omni";
-  // #720 (SH2): catálogo grande por categoria. Sem busca, mostra uma prévia por
-  // categoria (perf: não monta os ~1795 de uma vez); ao buscar, filtra o catálogo
-  // inteiro por nome/categoria e mostra todos os matches.
+  // #827 (SU1): LISTA ÚNICA (M365 curado + catálogo) por categoria, taxonomia
+  // única. Sem busca = prévia por categoria (perf: não monta os ~1788 de uma vez);
+  // ao buscar, filtra tudo por nome/categoria e mostra todos os matches.
   const PREVIA_POR_CATEGORIA = 6;
-  const catalogoGrupos = useMemo(
-    () => appsPorCategoria(termo || undefined),
+  const gruposUnificados = useMemo(
+    () => appsUnificadosPorCategoria(termo || undefined),
     [termo],
   );
+
+  // Abre um app da lista única. M365 curado passa pelo `onAbrir` (login-hint +
+  // histórico do App.tsx); o resto abre como aba web pela URL. O roteamento pra
+  // tela interna (Outlook→Bridge etc, via `app.nativo`) é o SU2.
+  const abrirUnificado = (app: AppUnificado) => {
+    if (app.m365) {
+      const m = porId(app.id);
+      if (m) {
+        onAbrir(m);
+        return;
+      }
+    }
+    onNavegar(app.url, app.name);
+  };
 
   return (
     <Command
@@ -687,27 +703,12 @@ function ConteudoPaleta({
             </CommandGroup>
             <CommandSeparator />
 
-            {CATEGORIAS.map((cat) => (
-              <CommandGroup key={cat} heading={t.apps[cat]}>
-                {porCategoria(cat)
-                  .slice()
-                  .sort(alfabetica)
-                  .map((app) => (
-                    <ItemApp
-                      key={`${cat}-${app.id}`}
-                      app={app}
-                      idioma={idioma}
-                      onAbrir={(a) => executar(() => onAbrir(a))}
-                    />
-                  ))}
-              </CommandGroup>
-            ))}
-
-            {/* #720 (SH2): catálogo grande (~1795) por categoria. Sem busca =
-                prévia por categoria; ao buscar, todos os matches. Abrir = aba no
-                Navigator (URL do app). Ícone lazy (IntersectionObserver). */}
-            {catalogoGrupos.length > 0 && <CommandSeparator />}
-            {catalogoGrupos.map((grupo) => {
+            {/* #827 (SU1): UMA seção por categoria, taxonomia única (14 cats).
+                Cada categoria 1x, cada app 1x (M365 curado + catálogo, deduped).
+                Sem busca = prévia por categoria; ao buscar, todos os matches.
+                Um só `ItemUnificado` → negrito/espaçamento consistente. */}
+            {gruposUnificados.length > 0 && <CommandSeparator />}
+            {gruposUnificados.map((grupo) => {
               const apps = termo
                 ? grupo.apps
                 : grupo.apps.slice(0, PREVIA_POR_CATEGORIA);
@@ -716,55 +717,16 @@ function ConteudoPaleta({
                   key={`cat-${grupo.categoria}`}
                   heading={t.command[chaveCategoria(grupo.categoria)]}
                 >
-                  {apps.map((app) => {
-                    const fixado = estaPinado(appsFixados, app.id);
-                    return (
-                      <CommandItem
-                        key={`catalogo-${app.id}`}
-                        value={`catalogo-${app.id} ${termo}`}
-                        onSelect={() =>
-                          executar(() => onNavegar(app.url, app.name))
-                        }
-                        className="group gap-2.5"
-                      >
-                        <AppIcon id={app.id} name={app.name} />
-                        <span className="min-w-0 flex-1 truncate">
-                          {app.name}
-                        </span>
-                        {/* Fixar/desafixar no rail. Pinado = sempre visível; não
-                            pinado = aparece no hover/seleção da linha. */}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <button
-                              type="button"
-                              aria-label={
-                                fixado ? t.command.desafixar : t.command.pinar
-                              }
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                alternarFixado(app.id);
-                              }}
-                              className={cn(
-                                "grid size-6 shrink-0 place-items-center rounded transition-colors hover:bg-foreground/10",
-                                fixado
-                                  ? "text-primary"
-                                  : "text-muted-foreground opacity-0 group-hover:opacity-100 group-data-[selected=true]:opacity-100",
-                              )}
-                            >
-                              {fixado ? (
-                                <PinOff className="size-3.5" />
-                              ) : (
-                                <Pin className="size-3.5" />
-                              )}
-                            </button>
-                          </TooltipTrigger>
-                          <TooltipContent side="left">
-                            {fixado ? t.command.desafixar : t.command.pinar}
-                          </TooltipContent>
-                        </Tooltip>
-                      </CommandItem>
-                    );
-                  })}
+                  {apps.map((app) => (
+                    <ItemUnificado
+                      key={`app-${app.id}`}
+                      app={app}
+                      termo={termo}
+                      fixado={estaPinado(appsFixados, app.id)}
+                      onSelecionar={() => executar(() => abrirUnificado(app))}
+                      onAlternarPin={() => alternarFixado(app.id)}
+                    />
+                  ))}
                 </CommandGroup>
               );
             })}
@@ -855,6 +817,81 @@ function PaletaOverlay({
         />
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * #827 (SU1): item ÚNICO da lista de apps do command — serve o M365 curado E o
+ * catálogo. Ícone Fluent (`fluentIcon`) OU `<AppIcon>` lazy; nome sempre
+ * `font-medium` + resumo opcional (M365) → altura/espaçamento consistentes (o
+ * bug de render que o Wagner viu). O botão de fixar (#721) mora aqui, um lugar só.
+ */
+function ItemUnificado({
+  app,
+  termo,
+  fixado,
+  onSelecionar,
+  onAlternarPin,
+}: {
+  app: AppUnificado;
+  termo: string;
+  fixado: boolean;
+  onSelecionar: () => void;
+  onAlternarPin: () => void;
+}) {
+  const { idioma, t } = useIdioma();
+  return (
+    <CommandItem
+      // Inclui o termo pra passar pelo filtro do cmdk (o match real já foi feito
+      // por `appsUnificadosPorCategoria(termo)`).
+      value={`app-${app.id} ${termo}`}
+      onSelect={onSelecionar}
+      className="group gap-2.5"
+    >
+      {app.fluentIcon ? (
+        <img
+          src={app.fluentIcon}
+          alt=""
+          className="size-5 shrink-0"
+          draggable={false}
+        />
+      ) : (
+        <AppIcon id={app.id} name={app.name} />
+      )}
+      <span className="min-w-0 flex-1 truncate font-medium">{app.name}</span>
+      {app.resumo && (
+        <span className="hidden shrink-0 truncate text-xs text-muted-foreground sm:inline">
+          {app.resumo[idioma]}
+        </span>
+      )}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={fixado ? t.command.desafixar : t.command.pinar}
+            onClick={(e) => {
+              e.stopPropagation();
+              onAlternarPin();
+            }}
+            className={cn(
+              "grid size-6 shrink-0 place-items-center rounded transition-colors hover:bg-foreground/10",
+              fixado
+                ? "text-primary"
+                : "text-muted-foreground opacity-0 group-hover:opacity-100 group-data-[selected=true]:opacity-100",
+            )}
+          >
+            {fixado ? (
+              <PinOff className="size-3.5" />
+            ) : (
+              <Pin className="size-3.5" />
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="left">
+          {fixado ? t.command.desafixar : t.command.pinar}
+        </TooltipContent>
+      </Tooltip>
+    </CommandItem>
   );
 }
 
