@@ -2,6 +2,7 @@ import type {
   AcaoRsvp,
   AnexoConteudo,
   AppUser,
+  DesafioDominio,
   DirSize,
   DriveInfo,
   FsChange,
@@ -3022,6 +3023,24 @@ export async function gerarThumbnail(
     return { dataUri: "", width: maxSize, height: maxSize, source: "decode" };
   }
   return invoke<ThumbRef>("fs_thumbnail", { path, maxSize });
+}
+
+/**
+ * Domain-claim (PS7 #700, slice 1): cria o desafio de posse de domínio (token +
+ * registro a publicar). A checagem real da prova (DNS/well-known) é a slice 2.
+ */
+export async function iniciarVerificacaoDominio(
+  dominio: string,
+): Promise<DesafioDominio> {
+  if (!inTauri()) {
+    const token = "mock".padEnd(32, "0");
+    return {
+      dominio: dominio.trim().replace(/^@/, "").toLowerCase(),
+      token,
+      registro: `galaxie-verify=${token}`,
+    };
+  }
+  return invoke<DesafioDominio>("dominio_iniciar_verificacao", { dominio });
 }
 
 /** Ajusta os tetos do cache de thumbnail (#737): disco/memória em MB. */
