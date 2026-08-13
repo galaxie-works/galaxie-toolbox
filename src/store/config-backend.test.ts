@@ -259,6 +259,7 @@ test("matriz do grupo A + organizations (#560) fica explícita e completa", () =
     "idioma",
     "atomsPrefs",
     "pularConfirmacaoConexao",
+    "appsFixados",
   ]);
 });
 

@@ -41,6 +41,8 @@ export const CHAVES_CONFIG_NUVEM = [
   "idioma",
   "atomsPrefs",
   "pularConfirmacaoConexao",
+  // #721: apps fixados no rail — cloud-sync aditivo sobre o local-first do SH3.
+  "appsFixados",
 ] as const satisfies readonly (keyof AppPersistido)[];
 
 export type ChaveConfigNuvem = (typeof CHAVES_CONFIG_NUVEM)[number];
