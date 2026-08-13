@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useIdioma } from "@/lib/idioma";
 import { statCaminho } from "@/lib/api";
 import { segmentosCaminho } from "./caminho";
+import { AtalhosLegenda } from "./atalhos-legenda";
 
 /**
  * #677: barra de navegação no topo do painel de conteúdo — voltar/avançar/acima +
@@ -158,6 +159,9 @@ export function NavBarArquivos({
           </Button>
         </div>
       )}
+
+      {/* #733: legenda de atalhos (cheatsheet) — lê do catálogo central. */}
+      <AtalhosLegenda />
     </div>
   );
 }
