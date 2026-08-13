@@ -1,4 +1,6 @@
 import type { AppM365 } from "./apps.ts";
+import type { AppUser } from "./types.ts";
+import { surfaceSuportada, type Surface } from "./capabilities-surface.ts";
 import {
   ORDEM_CATEGORIAS,
   type AppCatalogo,
@@ -73,6 +75,31 @@ export const NATIVO_M365: Record<string, TelaNativa> = {
   calendario: "agenda",
   pessoas: "people",
 };
+
+/**
+ * #827 (SU2b): gate por capability. Cada M365 curado é mapeado à Surface (#803)
+ * que representa seu requisito de acesso — o app só aparece se `surfaceSuportada`
+ * for true pro provider/conta. Conservador (produto): ORG-ONLY (SharePoint, admin,
+ * Viva) → `sites` (só microsoft work); o RESTO do M365 → `mail` (= microsoft org
+ * OU pessoal, escondido pro Google). Apps do catálogo (não-M365) NUNCA são gateados.
+ */
+const SURFACE_GATE_M365: Record<string, Surface> = {
+  sharepoint: "sites",
+  admin: "sites",
+  connections: "sites",
+  engage: "sites",
+  insights: "sites",
+  learning: "sites",
+};
+
+/** Um app é visível pra conta? Catálogo = sempre; M365 = pela Surface gateada. */
+export function appVisivelPara(
+  app: AppUnificado,
+  user: Pick<AppUser, "provider" | "accountKind"> | null | undefined,
+): boolean {
+  if (!app.m365) return true;
+  return surfaceSuportada(user, SURFACE_GATE_M365[app.id] ?? "mail");
+}
 
 /**
  * Ids do catálogo Shift que DUPLICAM um app M365 curado — descartados na fusão
@@ -169,12 +196,21 @@ export interface GrupoUnificado extends Omit<GrupoCategoria, "apps"> {
   apps: AppUnificado[];
 }
 
-/** Agrupa por categoria na ordem canônica das 14. `filtro` opcional restringe. */
+/**
+ * Agrupa por categoria na ordem canônica das 14. `filtro` opcional restringe por
+ * texto; `user` opcional aplica o gate por capability (#827 SU2b) — M365 não
+ * suportado pela conta some. Sem `user` = sem gate (todos).
+ */
 export function agruparUnificado(
   apps: readonly AppUnificado[],
   filtro?: string,
+  user?: Pick<AppUser, "provider" | "accountKind"> | null,
 ): GrupoUnificado[] {
-  const base = filtro ? buscarUnificado(apps, filtro) : apps;
+  const filtrada = filtro ? buscarUnificado(apps, filtro) : apps;
+  const base =
+    user === undefined
+      ? filtrada
+      : filtrada.filter((a) => appVisivelPara(a, user));
   const porCat = new Map<CategoriaApp, AppUnificado[]>();
   for (const app of base) {
     const lista = porCat.get(app.category);

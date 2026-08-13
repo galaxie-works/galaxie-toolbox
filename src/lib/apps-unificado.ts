@@ -14,6 +14,8 @@ import {
  * uma lista, uma taxonomia (14 categorias), um componente de item.
  */
 
+import type { AppUser } from "@/lib/types";
+
 export type {
   AppUnificado,
   GrupoUnificado,
@@ -27,7 +29,13 @@ export const APPS_UNIFICADOS: readonly AppUnificado[] = unificar(
   urlIcone,
 );
 
-/** Agrupa a lista única por categoria (ordem canônica). `filtro` = busca opcional. */
-export function appsUnificadosPorCategoria(filtro?: string): GrupoUnificado[] {
-  return agruparUnificado(APPS_UNIFICADOS, filtro);
+/**
+ * Agrupa a lista única por categoria (ordem canônica). `filtro` = busca opcional;
+ * `user` = gate por capability (#827 SU2b) — M365 não suportado pela conta some.
+ */
+export function appsUnificadosPorCategoria(
+  filtro?: string,
+  user?: Pick<AppUser, "provider" | "accountKind"> | null,
+): GrupoUnificado[] {
+  return agruparUnificado(APPS_UNIFICADOS, filtro, user);
 }

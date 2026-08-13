@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   agruparUnificado,
+  appVisivelPara,
   unificar,
   IDS_DUP_M365,
   CATEGORIA_M365,
@@ -26,6 +27,14 @@ const m365: AppM365[] = [
     resumo: { "pt-BR": "Arquivos", en: "Files" },
     url: "https://www.office.com/launch/onedrive",
     icone: "onedrive",
+    categorias: ["conteudo"],
+  },
+  {
+    id: "sharepoint",
+    nome: "SharePoint",
+    resumo: { "pt-BR": "Sites", en: "Sites" },
+    url: "https://www.office.com/launch/sharepoint",
+    icone: "sharepoint",
     categorias: ["conteudo"],
   },
 ];
@@ -71,6 +80,38 @@ test("unificar: nativo mapeado (onedrive → arquivos), sem fluentIcon vira null
   assert.equal(out.find((a) => a.id === "onedrive")!.nativo, "arquivos");
   assert.equal(out.find((a) => a.id === "figma")!.fluentIcon, null);
   assert.equal(out.find((a) => a.id === "figma")!.nativo, null);
+});
+
+test("appVisivelPara: Google esconde TODO M365, mantém catálogo", () => {
+  const out = unificar(m365, catalogo, resolver);
+  const g = { provider: "google" as const, accountKind: "personal" as const };
+  assert.equal(appVisivelPara(out.find((a) => a.id === "outlook")!, g), false);
+  assert.equal(appVisivelPara(out.find((a) => a.id === "sharepoint")!, g), false);
+  assert.equal(appVisivelPara(out.find((a) => a.id === "figma")!, g), true);
+});
+
+test("appVisivelPara: MS pessoal esconde só org-only (SharePoint), mantém Outlook", () => {
+  const out = unificar(m365, catalogo, resolver);
+  const p = { provider: "microsoft" as const, accountKind: "personal" as const };
+  assert.equal(appVisivelPara(out.find((a) => a.id === "outlook")!, p), true);
+  assert.equal(appVisivelPara(out.find((a) => a.id === "sharepoint")!, p), false);
+});
+
+test("appVisivelPara: MS org (work) vê tudo", () => {
+  const out = unificar(m365, catalogo, resolver);
+  const w = { provider: "microsoft" as const, accountKind: "work" as const };
+  assert.equal(appVisivelPara(out.find((a) => a.id === "outlook")!, w), true);
+  assert.equal(appVisivelPara(out.find((a) => a.id === "sharepoint")!, w), true);
+});
+
+test("agruparUnificado: user=google filtra M365 do agrupamento", () => {
+  const out = unificar(m365, catalogo, resolver);
+  const g = { provider: "google" as const, accountKind: "personal" as const };
+  const nomes = agruparUnificado(out, undefined, g).flatMap((gr) =>
+    gr.apps.map((a: AppUnificado) => a.id),
+  );
+  assert.equal(nomes.includes("outlook"), false);
+  assert.equal(nomes.includes("figma"), true);
 });
 
 test("agruparUnificado: agrupa nas 14 cats em ordem, omite vazias, filtra", () => {

@@ -130,6 +130,7 @@ import {
 import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import { NAV, TELAS, type Tela } from "@/lib/navegacao";
+import type { AppUser } from "@/lib/types";
 import {
   appsQueCasam,
   subviewsQueCasam,
@@ -301,6 +302,8 @@ type AcoesPaleta = {
   ativa: string | null;
   favoritos: Favorito[];
   historico: HistoryEntry[];
+  /** #827 SU2b: conta ativa — gate por capability esconde M365 não-suportado. */
+  user: Pick<AppUser, "provider" | "accountKind"> | null;
   onAbrir: (app: AppM365) => void;
   onNavegar: (url: string, nome: string) => void;
   onTrocar: (id: string) => void;
@@ -345,6 +348,7 @@ function ConteudoPaleta({
   ativa,
   favoritos,
   historico,
+  user,
   className,
   autoFocus,
   onExecutou,
@@ -464,8 +468,8 @@ function ConteudoPaleta({
   // ao buscar, filtra tudo por nome/categoria e mostra todos os matches.
   const PREVIA_POR_CATEGORIA = 6;
   const gruposUnificados = useMemo(
-    () => appsUnificadosPorCategoria(termo || undefined),
-    [termo],
+    () => appsUnificadosPorCategoria(termo || undefined, user),
+    [termo, user],
   );
 
   // Abre um app da lista única (#827 SU1/SU2). Prioridade:
@@ -1063,6 +1067,7 @@ export function NavegadorScreen({
   onNavegar,
   onNavegarTela,
   onIrParaBridgeView,
+  user,
   historico,
   onRestaurarAbas,
   sessaoAnteriorQtd,
@@ -1098,6 +1103,8 @@ export function NavegadorScreen({
   onNavegarTela: (tela: Tela) => void;
   /** #657: deep-link numa sub-view do Bridge (People/Agenda) — grupo "Ir para". */
   onIrParaBridgeView: (view: SubviewBridge) => void;
+  /** #827 SU2b: conta ativa — gate por capability na lista de apps do command. */
+  user: Pick<AppUser, "provider" | "accountKind"> | null;
   historico: HistoryEntry[];
   onRestaurarAbas: (entradas: { url: string; nome: string }[]) => void;
   sessaoAnteriorQtd: number;
@@ -2263,6 +2270,7 @@ export function NavegadorScreen({
                 ativa={ativa}
                 favoritos={favoritos}
                 historico={historico}
+                user={user}
                 privada={modoPrivado}
                 onAbrir={onAbrir}
                 onNavegar={onNavegar}
@@ -2331,6 +2339,7 @@ export function NavegadorScreen({
         ativa={ativa}
         favoritos={favoritos}
         historico={historico}
+        user={user}
         onAbrir={onAbrir}
         onNavegar={onNavegar}
         onTrocar={onTrocar}
