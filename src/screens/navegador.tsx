@@ -19,6 +19,9 @@ import {
 // #720 (SH2): catálogo grande (~1795 apps) categorizado + ícones lazy.
 import { appsPorCategoria, chaveCategoria } from "@/lib/apps-catalog";
 import { AppIcon } from "@/components/app-icon";
+// #721 (SH3): fixar/desafixar app no rail — estado no store, lógica pura.
+import { useAppStore } from "@/store";
+import { estaPinado } from "@/lib/pinned-apps";
 import * as browser from "@/lib/browser";
 import { fetchFavicon } from "@/lib/api";
 import {
@@ -359,6 +362,11 @@ function ConteudoPaleta({
   const { idioma, t } = useIdioma();
   const [q, setQ] = useState("");
   const { modo, termo } = lerPrefixo(q);
+  // #721 (SH3): fixar/desafixar app do catálogo no rail. O estado vem do store;
+  // o botão vive dentro do CommandItem, então para o clique de propagar (senão
+  // abriria o app em vez de (des)fixar).
+  const appsFixados = useAppStore((s) => s.appsFixados);
+  const alternarFixado = useAppStore((s) => s.alternarFixado);
 
   // #271: quando a paleta pede foco (overlay Ctrl+K OU Launcher da aba vazia),
   // foca o input ao montar. O `autoFocus` do overlay já vinha do Radix Dialog; o
@@ -708,19 +716,55 @@ function ConteudoPaleta({
                   key={`cat-${grupo.categoria}`}
                   heading={t.command[chaveCategoria(grupo.categoria)]}
                 >
-                  {apps.map((app) => (
-                    <CommandItem
-                      key={`catalogo-${app.id}`}
-                      value={`catalogo-${app.id} ${termo}`}
-                      onSelect={() =>
-                        executar(() => onNavegar(app.url, app.name))
-                      }
-                      className="gap-2.5"
-                    >
-                      <AppIcon id={app.id} name={app.name} />
-                      <span className="truncate">{app.name}</span>
-                    </CommandItem>
-                  ))}
+                  {apps.map((app) => {
+                    const fixado = estaPinado(appsFixados, app.id);
+                    return (
+                      <CommandItem
+                        key={`catalogo-${app.id}`}
+                        value={`catalogo-${app.id} ${termo}`}
+                        onSelect={() =>
+                          executar(() => onNavegar(app.url, app.name))
+                        }
+                        className="group gap-2.5"
+                      >
+                        <AppIcon id={app.id} name={app.name} />
+                        <span className="min-w-0 flex-1 truncate">
+                          {app.name}
+                        </span>
+                        {/* Fixar/desafixar no rail. Pinado = sempre visível; não
+                            pinado = aparece no hover/seleção da linha. */}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              aria-label={
+                                fixado ? t.command.desafixar : t.command.pinar
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                alternarFixado(app.id);
+                              }}
+                              className={cn(
+                                "grid size-6 shrink-0 place-items-center rounded transition-colors hover:bg-foreground/10",
+                                fixado
+                                  ? "text-primary"
+                                  : "text-muted-foreground opacity-0 group-hover:opacity-100 group-data-[selected=true]:opacity-100",
+                              )}
+                            >
+                              {fixado ? (
+                                <PinOff className="size-3.5" />
+                              ) : (
+                                <Pin className="size-3.5" />
+                              )}
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="left">
+                            {fixado ? t.command.desafixar : t.command.pinar}
+                          </TooltipContent>
+                        </Tooltip>
+                      </CommandItem>
+                    );
+                  })}
                 </CommandGroup>
               );
             })}

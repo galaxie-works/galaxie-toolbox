@@ -22,6 +22,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { GalaxieLogo } from "@/components/ui/icons/marca/galaxie-logo";
 import { IconeAnim, type AnimIcon } from "@/components/ui/icons/marca-anim";
@@ -29,12 +35,17 @@ import { ShipIcon } from "@/components/ui/ship";
 import { ShipWheelIcon } from "@/components/ui/ship-wheel";
 import { FoldersIcon } from "@/components/ui/folders";
 import { AirplayIcon } from "@/components/ui/airplay";
+import { AppIcon } from "@/components/app-icon";
 import { useIsMobile } from "@/hooks/use-mobile";
 import type { AppUser } from "@/lib/types";
 import { type Tela } from "@/lib/navegacao";
 import { useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
-import { ChevronsUpDown, ExternalLink, LogOut, Settings } from "lucide-react";
+import { useAppStore } from "@/store";
+import { resolverPinados } from "@/lib/pinned-apps";
+import { APPS_CATALOGO } from "@/lib/apps-catalog";
+import { useMemo } from "react";
+import { ChevronsUpDown, ExternalLink, LogOut, PinOff, Settings } from "lucide-react";
 
 /**
  * #718 (SH0 · épico #717 GALAXIE Shell): o sidebar virou um RAIL fixo da marca
@@ -47,18 +58,85 @@ import { ChevronsUpDown, ExternalLink, LogOut, Settings } from "lucide-react";
  * → `galaxie:webview-ceder`); os itens do rail são navegação direta com tooltip
  * simples (mesmo padrão dos itens-folha atuais).
  */
+/**
+ * #721 (SH3): seção de apps FIXADOS do rail. Lê os ids do store, resolve contra
+ * o catálogo (#720) — ids órfãos (app sumiu do catálogo) somem — e renderiza cada
+ * um como um botão ícone-only que abre a aba no Navigator. Desafixar via menu de
+ * contexto. Vazio = não renderiza (o rail fica só com fixos + avatar).
+ */
+function PinnedApps({
+  onAbrirApp,
+}: {
+  onAbrirApp: (url: string, nome: string) => void;
+}) {
+  const { t } = useIdioma();
+  const appsFixados = useAppStore((s) => s.appsFixados);
+  const desafixarApp = useAppStore((s) => s.desafixarApp);
+  const fixados = useMemo(
+    () => resolverPinados(appsFixados, APPS_CATALOGO),
+    [appsFixados],
+  );
+  if (fixados.length === 0) return null;
+  return (
+    <SidebarGroup className="mt-1 items-center gap-1 border-t border-sidebar-border/50 px-1.5 pt-2">
+      {fixados.map((app) => (
+        <ContextMenu
+          key={app.id}
+          // #358: o menu abre à direita, sobre a webview do Navigator — avisa pra
+          // ela ceder enquanto aberto (TRANSIENTE; fora do Navigator é no-op).
+          onOpenChange={(aberto) =>
+            window.dispatchEvent(
+              new CustomEvent("galaxie:webview-ceder", { detail: aberto }),
+            )
+          }
+        >
+          <Tooltip>
+            <ContextMenuTrigger asChild>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={app.name}
+                  onClick={() => onAbrirApp(app.url, app.name)}
+                  className="grid aspect-square w-full place-items-center rounded-xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60"
+                >
+                  <AppIcon id={app.id} name={app.name} className="size-6" />
+                </button>
+              </TooltipTrigger>
+            </ContextMenuTrigger>
+            <TooltipContent side="right" align="center">
+              {app.name}
+            </TooltipContent>
+          </Tooltip>
+          <ContextMenuContent>
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => desafixarApp(app.id)}
+            >
+              <PinOff className="size-4" />
+              {t.command.desafixar}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      ))}
+    </SidebarGroup>
+  );
+}
+
 export function AppSidebar({
   user,
   tela,
   onNavegar,
   onLogout,
   onAbrirUrl,
+  onAbrirApp,
 }: {
   user: AppUser;
   tela: Tela;
   onNavegar: (t: Tela) => void;
   onLogout: () => void;
   onAbrirUrl: (url: string) => void;
+  /** #721: abre um app FIXADO como aba do Navigator (mesma ponte da omnibox). */
+  onAbrirApp: (url: string, nome: string) => void;
 }) {
   const isMobile = useIsMobile();
   const { t } = useIdioma();
@@ -124,9 +202,9 @@ export function AppSidebar({
           ))}
         </SidebarGroup>
 
-        {/* #718: slot de apps PINADOS — populado no SH3. Reservado aqui pra o
-            layout já contemplar (fixos em cima, pinados no meio, avatar embaixo). */}
-        <SidebarGroup data-slot="pinned-apps" />
+        {/* #721 (SH3): apps FIXADOS pelo command — ícone-only, abrem como aba do
+            Navigator; menu de contexto pra desafixar. Vazio → não renderiza nada. */}
+        <PinnedApps onAbrirApp={onAbrirApp} />
       </SidebarContent>
 
       {/* Usuário */}

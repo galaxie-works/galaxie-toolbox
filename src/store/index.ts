@@ -61,6 +61,10 @@ import {
   createCloudPrefsSlice,
   type CloudPrefsSlice,
 } from "./cloud-prefs-slice";
+import {
+  createPinnedSlice,
+  type PinnedSlice,
+} from "./pinned-slice";
 
 /**
  * ============================================================================
@@ -106,7 +110,8 @@ export type AppStore =
   & PeopleSlice
   & OrganizationsSlice
   & AuthSlice
-  & CloudPrefsSlice;
+  & CloudPrefsSlice
+  & PinnedSlice;
 
 // #697: a camada cloud é roteada por provider. MS→OneDrive, Google→Drive
 // appDataFolder. A troca de conta seleciona o alvo antes de reativar.
@@ -173,6 +178,8 @@ export const useAppStore = create<AppStore>()(
       ...createAuthSlice(...a),
       // Idioma, layout do Atoms e confirmação também são config acionável.
       ...createCloudPrefsSlice(...a),
+      // #721: apps fixados no rail — config comum, persistida local (+cloud aditiva).
+      ...createPinnedSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",
@@ -209,6 +216,7 @@ export const useAppStore = create<AppStore>()(
         idioma: s.idioma,
         atomsPrefs: s.atomsPrefs,
         pularConfirmacaoConexao: s.pularConfirmacaoConexao,
+        appsFixados: s.appsFixados,
       }),
     }
   )

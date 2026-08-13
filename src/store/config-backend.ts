@@ -8,6 +8,7 @@ import type { PersonalizationPersistido } from "./personalization-slice";
 import type { SettingsUiPersistido } from "./settings-ui-slice";
 import type { UiPersistido } from "./ui-slice";
 import type { CloudPrefsPersistido } from "./cloud-prefs-slice";
+import type { PinnedPersistido } from "./pinned-slice";
 
 /** Estado durável do app, compartilhado pelos backends de configuração. */
 export type AppPersistido = UiPersistido &
@@ -19,7 +20,8 @@ export type AppPersistido = UiPersistido &
   BridgePersistido &
   AgendaPersistido &
   OrganizationsPersistido &
-  CloudPrefsPersistido;
+  CloudPrefsPersistido &
+  PinnedPersistido;
 
 /** Seam assíncrono para persistência e reconciliação da configuração. */
 export interface ConfigBackend {
