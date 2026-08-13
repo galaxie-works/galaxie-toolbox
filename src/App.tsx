@@ -311,18 +311,29 @@ function AppInner() {
           void reconciliarConfiguracaoNuvem().catch(() => {
             // Offline/Graph indisponível: mantém o cache local desta conta.
           });
-          // #783 (P0): conta Google não fala MS Graph — pular People/scopes/sites
-          // (dariam 401). A nuvem do Google é Drive/appData (reconciliar acima).
+          // #783: conta Google não fala MS Graph. A nuvem do Google é Drive/appData
+          // (reconciliar acima). Mail/Calendar/Contacts/OneDrive pessoal existem no
+          // MS pessoal, então People+scopes seguem pra qualquer conta MS.
           if (u.provider !== "google") {
             void hydratePeopleM365({ force: true });
             const permissions = await api.requiredScopesStatus();
             if (!vivo) return;
             setReauthMissingScopes(permissions.missingScopes);
-            setLoadingSites(true);
-            const lista = await api.listSites();
-            if (!vivo) return;
-            setSites(lista);
-            carregarDetalhes(lista);
+            // #802 (P0): /sites (+sonda children+expand) é ORG-ONLY — conta MS
+            // PESSOAL não tem SharePoint. Só chama em conta work; e um 400/403 aqui
+            // NÃO é falha de auth → degrada (sites vazio), NUNCA desloga.
+            if (u.accountKind === "work") {
+              setLoadingSites(true);
+              try {
+                const lista = await api.listSites();
+                if (!vivo) return;
+                setSites(lista);
+                carregarDetalhes(lista);
+              } catch (e) {
+                console.warn("[boot] listSites falhou — degradando sem deslogar:", e);
+                setSites([]);
+              }
+            }
           }
         }
       } catch {
@@ -411,17 +422,26 @@ function AppInner() {
       // #718 (SH0): home = Navigator. Login (nova conta ou re-login) sempre cai no
       // Navigator, nunca herda o último módulo (o resetSessaoCompleta já zerou o nav).
       setTela("navegador");
-      // #783 (P0): conta Google NÃO tem MS Graph — People/scopes/sites dariam 401
-      // e travam o login. A carga de nuvem do Google é Drive/appData, já feita pelo
-      // reconciliarConfiguracaoNuvem (provider-aware). Só dispara o MS Graph no MS.
+      // #783: Google não fala MS Graph (nuvem = Drive/appData). Mail/Cal/Contacts/
+      // OneDrive pessoal existem no MS pessoal → People+scopes seguem pra qualquer MS.
       if (u.provider !== "google") {
         void hydratePeopleM365({ force: true });
         const permissions = await api.requiredScopesStatus();
         setReauthMissingScopes(permissions.missingScopes);
-        setLoadingSites(true);
-        const lista = await api.listSites();
-        setSites(lista);
-        carregarDetalhes(lista);
+        // #802 (P0): /sites é ORG-ONLY — conta MS PESSOAL não tem SharePoint. Só em
+        // conta work; e um 400/403 aqui NÃO é falha de auth → degrada, NUNCA desloga
+        // (era o catch abaixo com setUser(null) chutando o usuário pro login).
+        if (u.accountKind === "work") {
+          setLoadingSites(true);
+          try {
+            const lista = await api.listSites();
+            setSites(lista);
+            carregarDetalhes(lista);
+          } catch (e) {
+            console.warn("[login] listSites falhou — degradando sem deslogar:", e);
+            setSites([]);
+          }
+        }
       }
     } catch (e) {
       setError(String(e));
