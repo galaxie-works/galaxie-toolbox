@@ -66,13 +66,10 @@ export function LoginScreen({
   const [passo, setPasso] = useState<"provedor" | "microsoft">("provedor");
   const [contaTrabalho, setContaTrabalho] = useState(false);
   // #782: lembra QUAL provedor iniciou o login pra o status refletir o certo
-  // (o bug era mostrar "Abrindo o login da Microsoft" ao clicar no Google).
+  // (o bug era mostrar "Abrindo o login da Microsoft" ao clicar no Google). Cada
+  // handler seta isto ANTES do onLogin — inline, preservando a chamada literal.
   const [provedorCarregando, setProvedorCarregando] =
     useState<AuthProvider | null>(null);
-  const iniciar = (provider: AuthProvider, hint: string) => {
-    setProvedorCarregando(provider);
-    onLogin(provider, hint);
-  };
 
   return (
     <div className="relative grid h-full place-items-center overflow-hidden px-6">
@@ -127,7 +124,7 @@ export function LoginScreen({
                 variant="outline"
                 size="lg"
                 className="w-full gap-3 text-[15px]"
-                onClick={() => iniciar("google", "")}
+                onClick={() => { setProvedorCarregando("google"); onLogin("google", ""); }}
               >
                 <GoogleLogo />
                 {t.login.continuarGoogle}
@@ -139,7 +136,7 @@ export function LoginScreen({
             <div className="flex flex-col gap-2.5">
               <button
                 type="button"
-                onClick={() => iniciar("microsoft-personal", "")}
+                onClick={() => { setProvedorCarregando("microsoft-personal"); onLogin("microsoft-personal", ""); }}
                 className="flex flex-col gap-0.5 rounded-lg border border-border p-3.5 text-left transition-colors hover:bg-accent/50"
               >
                 <span className="text-[15px] font-medium">
@@ -191,14 +188,14 @@ export function LoginScreen({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") iniciar("microsoft", email.trim());
+                    if (e.key === "Enter") { setProvedorCarregando("microsoft"); onLogin("microsoft", email.trim()); }
                   }}
                 />
               </div>
               <Button
                 size="lg"
                 className="w-full gap-3 text-[15px]"
-                onClick={() => iniciar("microsoft", email.trim())}
+                onClick={() => { setProvedorCarregando("microsoft"); onLogin("microsoft", email.trim()); }}
               >
                 <MsLogo />
                 {t.login.continuarMicrosoft}
