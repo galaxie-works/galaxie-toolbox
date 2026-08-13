@@ -311,15 +311,19 @@ function AppInner() {
           void reconciliarConfiguracaoNuvem().catch(() => {
             // Offline/Graph indisponível: mantém o cache local desta conta.
           });
-          void hydratePeopleM365({ force: true });
-          const permissions = await api.requiredScopesStatus();
-          if (!vivo) return;
-          setReauthMissingScopes(permissions.missingScopes);
-          setLoadingSites(true);
-          const lista = await api.listSites();
-          if (!vivo) return;
-          setSites(lista);
-          carregarDetalhes(lista);
+          // #783 (P0): conta Google não fala MS Graph — pular People/scopes/sites
+          // (dariam 401). A nuvem do Google é Drive/appData (reconciliar acima).
+          if (u.provider !== "google") {
+            void hydratePeopleM365({ force: true });
+            const permissions = await api.requiredScopesStatus();
+            if (!vivo) return;
+            setReauthMissingScopes(permissions.missingScopes);
+            setLoadingSites(true);
+            const lista = await api.listSites();
+            if (!vivo) return;
+            setSites(lista);
+            carregarDetalhes(lista);
+          }
         }
       } catch {
         // sessao invalida: cai no login normal
@@ -407,13 +411,18 @@ function AppInner() {
       // #718 (SH0): home = Navigator. Login (nova conta ou re-login) sempre cai no
       // Navigator, nunca herda o último módulo (o resetSessaoCompleta já zerou o nav).
       setTela("navegador");
-      void hydratePeopleM365({ force: true });
-      const permissions = await api.requiredScopesStatus();
-      setReauthMissingScopes(permissions.missingScopes);
-      setLoadingSites(true);
-      const lista = await api.listSites();
-      setSites(lista);
-      carregarDetalhes(lista);
+      // #783 (P0): conta Google NÃO tem MS Graph — People/scopes/sites dariam 401
+      // e travam o login. A carga de nuvem do Google é Drive/appData, já feita pelo
+      // reconciliarConfiguracaoNuvem (provider-aware). Só dispara o MS Graph no MS.
+      if (u.provider !== "google") {
+        void hydratePeopleM365({ force: true });
+        const permissions = await api.requiredScopesStatus();
+        setReauthMissingScopes(permissions.missingScopes);
+        setLoadingSites(true);
+        const lista = await api.listSites();
+        setSites(lista);
+        carregarDetalhes(lista);
+      }
     } catch (e) {
       setError(String(e));
       setUser(null);
