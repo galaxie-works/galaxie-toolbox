@@ -16,6 +16,9 @@ import {
   urlIcone,
   type AppM365,
 } from "@/lib/apps";
+// #720 (SH2): catálogo grande (~1795 apps) categorizado + ícones lazy.
+import { appsPorCategoria, chaveCategoria } from "@/lib/apps-catalog";
+import { AppIcon } from "@/components/app-icon";
 import * as browser from "@/lib/browser";
 import { fetchFavicon } from "@/lib/api";
 import {
@@ -446,6 +449,14 @@ function ConteudoPaleta({
   const mostrarAbas = (modo === "omni" || modo === "abas") && abas.length > 0;
   const mostrarFavoritos = modo === "omni" && favoritosLinks.length > 0;
   const mostrarApps = modo === "omni";
+  // #720 (SH2): catálogo grande por categoria. Sem busca, mostra uma prévia por
+  // categoria (perf: não monta os ~1795 de uma vez); ao buscar, filtra o catálogo
+  // inteiro por nome/categoria e mostra todos os matches.
+  const PREVIA_POR_CATEGORIA = 6;
+  const catalogoGrupos = useMemo(
+    () => appsPorCategoria(termo || undefined),
+    [termo],
+  );
 
   return (
     <Command
@@ -683,6 +694,36 @@ function ConteudoPaleta({
                   ))}
               </CommandGroup>
             ))}
+
+            {/* #720 (SH2): catálogo grande (~1795) por categoria. Sem busca =
+                prévia por categoria; ao buscar, todos os matches. Abrir = aba no
+                Navigator (URL do app). Ícone lazy (IntersectionObserver). */}
+            {catalogoGrupos.length > 0 && <CommandSeparator />}
+            {catalogoGrupos.map((grupo) => {
+              const apps = termo
+                ? grupo.apps
+                : grupo.apps.slice(0, PREVIA_POR_CATEGORIA);
+              return (
+                <CommandGroup
+                  key={`cat-${grupo.categoria}`}
+                  heading={t.command[chaveCategoria(grupo.categoria)]}
+                >
+                  {apps.map((app) => (
+                    <CommandItem
+                      key={`catalogo-${app.id}`}
+                      value={`catalogo-${app.id} ${termo}`}
+                      onSelect={() =>
+                        executar(() => onNavegar(app.url, app.name))
+                      }
+                      className="gap-2.5"
+                    >
+                      <AppIcon id={app.id} name={app.name} />
+                      <span className="truncate">{app.name}</span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              );
+            })}
           </>
         )}
 
