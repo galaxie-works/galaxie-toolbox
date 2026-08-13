@@ -215,4 +215,18 @@ mod tests {
             assert_ne!(CLIENT_ID, CLIENT_ID_PESSOAL);
         }
     }
+
+    #[test]
+    fn tenant_msa_nao_recebe_scopes_de_organizacao() {
+        let scopes = scopes_para(MS_PERSONAL_TENANT);
+
+        assert!(
+            scopes.contains("Mail.ReadWrite"),
+            "a conta pessoal perdeu os scopes base"
+        );
+        assert!(
+            !scopes.contains("Sites.Read.All") && !scopes.contains("OrgSettings"),
+            "a conta pessoal recebeu scopes exclusivos de organizacao: {scopes}"
+        );
+    }
 }

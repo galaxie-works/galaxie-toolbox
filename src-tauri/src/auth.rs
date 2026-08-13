@@ -1084,6 +1084,15 @@ mod tests {
         assert_eq!(classificar("consumers", "x@live.com").0, AccountKind::Personal);
     }
 
+    #[test]
+    fn login_hint_vazio_rota_para_authority_comum() {
+        let info = detectar_tenant("")
+            .expect("o e-mail e login_hint opcional; vazio deve seguir pelo caminho comum");
+
+        assert_eq!(info.tenant_id, config::COMMON_AUTHORITY);
+        assert!(info.dominio.is_empty());
+    }
+
     // ── PS3 #696: GoogleProvider ────────────────────────────────────────────
 
     #[test]
