@@ -17,6 +17,13 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 
+[features]
+# `remote` liga o backend do GALAXIE Remote (str0m/WebRTC + captura + input). OFF
+# por default pra o build padrão não precisar de OpenSSL. Os comandos `remote_*`
+# viram stubs (erro claro) quando OFF — o front degrada gracioso (#687-UI).
+default = []
+remote = ["dep:galaxie-remote-transport", "dep:galaxie-remote-capture"]
+
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
@@ -68,6 +75,14 @@ webp = "0.3"
 # O cache em disco usa blake3 (já acima) pra chavear por path|mtime|size. `lru` é
 # o LRU byte-limitado da camada de memória.
 lru = "0.12"
+# Remote S4 (#687): wiring do transporte/captura existente para o app Tauri.
+# O vídeo chega ao WebView por IPC raw; input usa o contrato congelado do S3.
+# #809/#834: o transporte Remote (str0m→OpenSSL, WASAPI, enigo) fica atrás da
+# feature `remote` (OFF por default). O build padrão (Wagner, CI) NÃO compila
+# OpenSSL — foi o que quebrou no #809 original (feature ligada incondicional).
+# Ligar só onde há toolchain OpenSSL: `cargo build --features remote`.
+galaxie-remote-transport = { path = "../services/remote-transport", features = ["webrtc", "input"], optional = true }
+galaxie-remote-capture = { path = "../services/remote-capture", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
