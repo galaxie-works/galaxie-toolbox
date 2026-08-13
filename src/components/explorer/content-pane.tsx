@@ -79,6 +79,8 @@ import {
   selecionarUnico,
   type EstadoSelecao,
 } from "./selecao";
+import { type GridMetrica } from "./marquee";
+import { useMarqueeSelecao } from "./use-marquee";
 import { ehImagem, iconeParaEntry } from "./icones-arquivo";
 import { formatarDataArquivo, rotuloTipo } from "./format";
 
@@ -406,6 +408,30 @@ export function ContentPane({
   useLayoutEffect(() => {
     virtualizer.measure();
   }, [modo, cols, virtualizer]);
+
+  // #748: marquee/rubber-band. A métrica espelha o layout virtualizado (linha ×
+  // coluna) pra selecionar por índice — itens fora do viewport entram também. O
+  // `px-1` do container da grade = 4px de padding lateral.
+  const metricaGrid = useMemo<GridMetrica>(
+    () => ({
+      cols,
+      alturaLinha,
+      largura,
+      alturaTotal: virtualizer.getTotalSize(),
+      count: itens.length,
+      gap: GAP,
+      padX: 4,
+      modoGrade: modo === "grade",
+    }),
+    [cols, alturaLinha, largura, virtualizer, itens.length, modo],
+  );
+  const marquee = useMarqueeSelecao({
+    scrollRef,
+    metrica: metricaGrid,
+    paths,
+    selecao,
+    setSelecao,
+  });
 
   // --- ResizeObserver no parent de scroll → largura (recomputa colunas) -----
   useLayoutEffect(() => {
@@ -1046,7 +1072,13 @@ export function ContentPane({
         ref={scrollRef}
         tabIndex={0}
         onKeyDown={aoTeclar}
-        className="min-h-0 flex-1 overflow-y-auto rounded-md outline-none focus-visible:ring-1 focus-visible:ring-ring/40"
+        onPointerDown={marquee.onPointerDown}
+        onPointerMove={marquee.onPointerMove}
+        onPointerUp={marquee.onPointerUp}
+        className={cn(
+          "min-h-0 flex-1 overflow-y-auto rounded-md outline-none focus-visible:ring-1 focus-visible:ring-ring/40",
+          marquee.arrastando && "select-none",
+        )}
       >
         <ComMenu
           className="block min-h-full"
@@ -1058,6 +1090,13 @@ export function ContentPane({
           )}
           onOpen={() => setShiftDelete(false)}
           onClick={(e) => {
+            // #748: um arrasto REAL de marquee já ajustou a seleção — não deixa o
+            // clique-solto que o encerra limpar tudo em seguida. Clique simples no
+            // vazio (sem arrasto) segue limpando.
+            if (marquee.arrastouRef.current) {
+              marquee.arrastouRef.current = false;
+              return;
+            }
             if (e.target === e.currentTarget) setSelecao(SELECAO_VAZIA);
           }}
         >
@@ -1098,6 +1137,18 @@ export function ContentPane({
                   {renderLinha(vr.index)}
                 </div>
               ))}
+              {/* #748: retângulo do marquee — coords de conteúdo (rola junto). */}
+              {marquee.rect && (
+                <div
+                  className="pointer-events-none absolute z-10 rounded-[2px] border border-primary/70 bg-primary/15"
+                  style={{
+                    left: marquee.rect.x1,
+                    top: marquee.rect.y1,
+                    width: marquee.rect.x2 - marquee.rect.x1,
+                    height: marquee.rect.y2 - marquee.rect.y1,
+                  }}
+                />
+              )}
             </div>
           )}
         </ComMenu>
