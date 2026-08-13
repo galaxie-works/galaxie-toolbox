@@ -1,19 +1,43 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import { playwright } from "@vitest/browser-playwright";
 import path from "node:path";
 
-// #786: runner de teste de COMPONENTE (happy-dom + @testing-library/react) pra
-// exercitar a INTERAÇÃO real com o Base UI (Combobox do compose), que o
-// `node --test` não cobre (só função pura + não transforma JSX). Roda os
-// `*.component.test.tsx`; o `node --test` segue nos `*.test.ts` puros.
+// #786: dois projetos de teste de componente.
+//  - `component` (happy-dom): rápido, exercita render/lógica/wiring dos
+//    `*.component.test.tsx`. NÃO reproduz interações de foco/ponteiro do Base UI.
+//  - `browser` (Playwright/chromium REAL): roda os `*.browser.test.tsx` num
+//    navegador de verdade — é o único jeito de reproduzir o auto-select/erase do
+//    Combobox do compose (a recorrência crônica #268/#298/#606/#786) e travar o fix.
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },
   test: {
-    globals: true,
-    environment: "happy-dom",
-    include: ["src/**/*.component.test.tsx"],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "component",
+          environment: "happy-dom",
+          globals: true,
+          include: ["src/**/*.component.test.tsx"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "browser",
+          include: ["src/**/*.browser.test.tsx"],
+          browser: {
+            enabled: true,
+            provider: playwright(),
+            headless: true,
+            instances: [{ browser: "chromium" }],
+          },
+        },
+      },
+    ],
   },
 });

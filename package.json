@@ -11,8 +11,9 @@
     "qa:visual": "pwsh -NoProfile -File scripts/Capturar-QA-Visual.ps1",
     "test": "node --test --experimental-strip-types \"src/**/*.test.ts\"",
     "test:watch": "node --test --watch --experimental-strip-types \"src/**/*.test.ts\"",
-    "test:component": "vitest run",
-    "test:component:watch": "vitest"
+    "test:component": "vitest run --project component",
+    "test:component:watch": "vitest --project component",
+    "test:browser": "vitest run --project browser"
   },
   "dependencies": {
     "@ai-sdk/react": "^4.0.40",
@@ -135,12 +136,16 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "@vitest/browser": "^4.1.10",
+    "@vitest/browser-playwright": "^4.1.10",
     "happy-dom": "^20.11.2",
     "oxlint": "^1.71.0",
+    "playwright": "^1.62.1",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "vitest-browser-react": "^2.2.0"
   },
   "description": "Acesso aos arquivos da empresa no SharePoint e ferramentas de auto-ajuda do Microsoft 365.",
   "packageManager": "pnpm@11.5.0"
