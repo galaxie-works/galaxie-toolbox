@@ -41,6 +41,16 @@ begin
   end;
 end;
 
+function ContainsControlCharacter(const Value: string): Boolean;
+var
+  Ch: Char;
+begin
+  for Ch in Value do
+    if (Ord(Ch) < $20) or ((Ord(Ch) >= $7F) and (Ord(Ch) <= $9F)) then
+      Exit(True);
+  Result := False;
+end;
+
 function JsonObjectOrEmpty(Value: TJSONValue): TJSONObject;
 begin
   if Value is TJSONObject then
@@ -55,6 +65,7 @@ var
   Root: TJSONValue;
   Obj: TJSONObject;
   PayloadValue, PayloadCopy: TJSONValue;
+  JsonText: string;
 begin
   Result := False;
   Envelope := Default(TRemoteEnvelope);
@@ -68,7 +79,27 @@ begin
     Exit;
   end;
 
-  Root := TJSONObject.ParseJSONValue(TEncoding.UTF8.GetString(Raw), False, True);
+  try
+    JsonText := TEncoding.UTF8.GetString(Raw);
+  except
+    on E: EEncodingError do
+    begin
+      ErrorCode := 'invalid_utf8';
+      ErrorMessage := 'Message is not valid UTF-8';
+      Exit;
+    end;
+  end;
+
+  try
+    Root := TJSONObject.ParseJSONValue(JsonText, False, True);
+  except
+    on E: Exception do
+    begin
+      ErrorCode := 'invalid_json';
+      ErrorMessage := 'Message is not valid JSON';
+      Exit;
+    end;
+  end;
   if not (Root is TJSONObject) then
   begin
     Root.Free;
@@ -88,15 +119,17 @@ begin
     end;
 
     if not Obj.TryGetValue<string>('id', Envelope.Id) or
-       (Envelope.Id = '') or (Length(Envelope.Id) > 64) then
+       (Envelope.Id = '') or (Length(Envelope.Id) > 64) or
+       ContainsControlCharacter(Envelope.Id) then
     begin
       ErrorCode := 'request_id';
-      ErrorMessage := 'Request id is required and must be at most 64 characters';
+      ErrorMessage :=
+        'Request id is required, must be at most 64 characters and contain no controls';
       Exit;
     end;
 
     if not Obj.TryGetValue<string>('type', Envelope.MessageType) or
-       not SameText(Envelope.MessageType, 'request') then
+       (Envelope.MessageType <> 'request') then
     begin
       ErrorCode := 'message_type';
       ErrorMessage := 'Only request envelopes are accepted';
@@ -114,6 +147,12 @@ begin
     PayloadValue := Obj.GetValue('payload');
     if PayloadValue <> nil then
     begin
+      if not (PayloadValue is TJSONObject) then
+      begin
+        ErrorCode := 'invalid_payload';
+        ErrorMessage := 'Payload must be a JSON object';
+        Exit;
+      end;
       PayloadCopy := TJSONObject.ParseJSONValue(PayloadValue.ToJSON, False, True);
       Envelope.Payload := JsonObjectOrEmpty(PayloadCopy);
     end
@@ -132,10 +171,10 @@ end;
 
 function IsAllowedMethod(const Method: string): Boolean;
 begin
-  Result := SameText(Method, 'service.status') or
-    SameText(Method, 'agent.ensure') or
-    SameText(Method, 'agent.stop') or
-    SameText(Method, 'desktop.setMode');
+  Result := (Method = 'service.status') or
+    (Method = 'agent.ensure') or
+    (Method = 'agent.stop') or
+    (Method = 'desktop.setMode');
 end;
 
 function BuildResult(const Id: string; ResultValue: TJSONValue): TBytes;
