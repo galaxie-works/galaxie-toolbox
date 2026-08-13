@@ -523,6 +523,8 @@ const pt = {
     bridge: "Bridge",
     files: "Arquivos",
     remote: "Remoto",
+    // #721 (SH3): grupo dos apps fixados no rail.
+    pinados: "Fixados",
   },
 
   // #720 (SH2): command com catálogo de apps categorizado (~1795).
@@ -545,6 +547,9 @@ const pt = {
     catTravel: "Viagens",
     catWork: "Trabalho e negócios",
     catMisc: "Diversos",
+    // #721 (SH3): pin/unpin de apps no rail.
+    pinar: "Fixar no menu",
+    desafixar: "Desafixar",
   },
 
   // #733: catálogo central de atalhos do Explorer (título + categorias + rótulos).
@@ -2444,6 +2449,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     bridge: "Bridge",
     files: "Files",
     remote: "Remote",
+    // #721 (SH3): pinned-apps group on the rail.
+    pinados: "Pinned",
   },
 
   // #720 (SH2): command with a categorized app catalog (~1795).
@@ -2465,6 +2472,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     catTravel: "Travel",
     catWork: "Work & Business",
     catMisc: "Miscellaneous",
+    // #721 (SH3): pin/unpin apps on the rail.
+    pinar: "Pin to sidebar",
+    desafixar: "Unpin",
   },
 
   // #733: Explorer central keyboard-shortcut catalog.
