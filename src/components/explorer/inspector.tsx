@@ -9,9 +9,10 @@ import type { FsEntry } from "@/lib/types";
 import { ehImagem, iconeParaEntry } from "./icones-arquivo";
 import { formatarDataArquivo, rotuloTipo } from "./format";
 import { atributosAtivos, type AtributoArquivo } from "./filtro";
+import { solicitarThumb } from "./thumb-fila";
 
-// Mesmo gate do painel de conteúdo (S2): thumbnails via convertFileSrc só
-// existem dentro do Tauri; no browser/mock degrada pro ícone grande.
+// Mesmo gate do painel de conteúdo (S2): thumbnails só existem dentro do Tauri;
+// no browser/mock degrada pro ícone grande.
 const TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /**
@@ -165,14 +166,21 @@ function PreviewGrande({ entry }: { entry: FsEntry }) {
     setSrc(null);
     setErro(false);
     if (!TAURI || !ehImagem(entry)) return;
-    let vivo = true;
-    void import("@tauri-apps/api/core").then((m) => {
-      if (vivo) setSrc(m.convertFileSrc(entry.path));
+    // #738: aponta pro thumb webp cacheado (mesma fila/cache das Miniaturas —
+    // maxSize 256 → hit instantâneo se o tile já carregou), nunca o original.
+    let cancelado = false;
+    void solicitarThumb(
+      entry.path,
+      entry.modifiedMs ?? 0,
+      256,
+      () => cancelado,
+    ).then((uri) => {
+      if (!cancelado && uri) setSrc(uri);
     });
     return () => {
-      vivo = false;
+      cancelado = true;
     };
-  }, [entry, entry.path]);
+  }, [entry, entry.path, entry.modifiedMs]);
 
   if (TAURI && ehImagem(entry) && src && !erro) {
     return (
