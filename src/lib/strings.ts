@@ -30,6 +30,8 @@ const pt = {
     ajudaEmail: "Usamos o domínio do seu e-mail para identificar a sua organização.",
     entrar: "Entrar com Microsoft",
     entrando: "Abrindo o login da Microsoft...",
+    // #782: status por-provedor (Google não pode dizer "Microsoft").
+    entrandoGoogle: "Abrindo o login do Google...",
     // #695/#781: passo 1 — botões de provedor.
     continuarMicrosoft: "Continuar com a Microsoft",
     continuarGoogle: "Continuar com o Google",
@@ -1963,6 +1965,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     ajudaEmail: "We use your email domain to identify your organization.",
     entrar: "Sign in with Microsoft",
     entrando: "Opening the Microsoft sign-in...",
+    // #782: per-provider status (Google must not say "Microsoft").
+    entrandoGoogle: "Opening the Google sign-in...",
     // #695/#781: step 1 — provider buttons.
     continuarMicrosoft: "Continue with Microsoft",
     continuarGoogle: "Continue with Google",

@@ -65,6 +65,14 @@ export function LoginScreen({
   const [email, setEmail] = useState("");
   const [passo, setPasso] = useState<"provedor" | "microsoft">("provedor");
   const [contaTrabalho, setContaTrabalho] = useState(false);
+  // #782: lembra QUAL provedor iniciou o login pra o status refletir o certo
+  // (o bug era mostrar "Abrindo o login da Microsoft" ao clicar no Google).
+  const [provedorCarregando, setProvedorCarregando] =
+    useState<AuthProvider | null>(null);
+  const iniciar = (provider: AuthProvider, hint: string) => {
+    setProvedorCarregando(provider);
+    onLogin(provider, hint);
+  };
 
   return (
     <div className="relative grid h-full place-items-center overflow-hidden px-6">
@@ -95,10 +103,14 @@ export function LoginScreen({
 
         <div className="mt-9">
           {loading ? (
-            // #781/AC8: status de login. (#782 — texto por-provider — é bundle à parte.)
+            // #781/AC8 + #782: status reflete o provedor que iniciou o login.
             <div className="flex flex-col items-center gap-3 py-4 text-muted-foreground">
               <Spinner className="size-6" />
-              <span className="text-sm">{t.login.entrando}</span>
+              <span className="text-sm">
+                {provedorCarregando === "google"
+                  ? t.login.entrandoGoogle
+                  : t.login.entrando}
+              </span>
             </div>
           ) : passo === "provedor" ? (
             // Passo 1: provedor. Microsoft abre o passo 2; Google loga direto.
@@ -115,7 +127,7 @@ export function LoginScreen({
                 variant="outline"
                 size="lg"
                 className="w-full gap-3 text-[15px]"
-                onClick={() => onLogin("google", "")}
+                onClick={() => iniciar("google", "")}
               >
                 <GoogleLogo />
                 {t.login.continuarGoogle}
@@ -127,7 +139,7 @@ export function LoginScreen({
             <div className="flex flex-col gap-2.5">
               <button
                 type="button"
-                onClick={() => onLogin("microsoft-personal", "")}
+                onClick={() => iniciar("microsoft-personal", "")}
                 className="flex flex-col gap-0.5 rounded-lg border border-border p-3.5 text-left transition-colors hover:bg-accent/50"
               >
                 <span className="text-[15px] font-medium">
@@ -179,14 +191,14 @@ export function LoginScreen({
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") onLogin("microsoft", email.trim());
+                    if (e.key === "Enter") iniciar("microsoft", email.trim());
                   }}
                 />
               </div>
               <Button
                 size="lg"
                 className="w-full gap-3 text-[15px]"
-                onClick={() => onLogin("microsoft", email.trim())}
+                onClick={() => iniciar("microsoft", email.trim())}
               >
                 <MsLogo />
                 {t.login.continuarMicrosoft}
