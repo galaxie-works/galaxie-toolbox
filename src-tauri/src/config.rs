@@ -44,15 +44,18 @@ pub const GOOGLE_TENANT: &str = "google";
 
 /// Scopes SENSITIVE/NON-SENSITIVE ($0, decisão do PO). NADA de restricted
 /// (Gmail-read/Drive-browse ficam no PS8/CASA). `drive.file` (picker) substitui
-/// o browse de Drive. openid/email/profile = identidade; offline via
-/// access_type=offline no authorize (Google não usa o scope offline_access).
+/// o browse de Drive; `drive.appdata` (#697) autoriza a pasta OCULTA do app
+/// (appDataFolder) onde a config sincroniza — ambos non-sensitive ($0).
+/// openid/email/profile = identidade; offline via access_type=offline no
+/// authorize (Google não usa o scope offline_access).
 pub const GOOGLE_SCOPES: &str = "openid email profile \
      https://www.googleapis.com/auth/calendar \
      https://www.googleapis.com/auth/contacts \
      https://www.googleapis.com/auth/directory.readonly \
      https://www.googleapis.com/auth/gmail.send \
      https://www.googleapis.com/auth/gmail.labels \
-     https://www.googleapis.com/auth/drive.file";
+     https://www.googleapis.com/auth/drive.file \
+     https://www.googleapis.com/auth/drive.appdata";
 
 /// Escopos delegados que o app PEDE no login. offline_access garante
 /// refresh_token. So Microsoft Graph — o app tem muito mais permissao concedida
@@ -231,6 +234,16 @@ mod tests {
         assert!(
             !scopes.contains("Sites.Read.All") && !scopes.contains("OrgSettings"),
             "a conta pessoal recebeu scopes exclusivos de organizacao: {scopes}"
+        );
+    }
+
+    #[test]
+    fn google_scopes_autorizam_a_pasta_de_dados_do_app() {
+        assert!(
+            GOOGLE_SCOPES
+                .split_ascii_whitespace()
+                .any(|scope| scope == "https://www.googleapis.com/auth/drive.appdata"),
+            "o backend usa appDataFolder, mas o fluxo Google nao pede drive.appdata"
         );
     }
 }
