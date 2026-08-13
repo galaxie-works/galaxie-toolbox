@@ -47,6 +47,10 @@ export function useMarqueeSelecao(params: {
   const clientRef = useRef({ x: 0, y: 0 }); // último ponteiro (viewport)
   const clientStartRef = useRef({ x: 0, y: 0 });
   const movedRef = useRef(false);
+  // #680: id do ponteiro do gesto em curso — a captura é ADIADA pro 1º arrasto
+  // real (não em todo pointerdown), pra um clique nunca prender os pointer-events.
+  const pointerIdRef = useRef<number | null>(null);
+  const capturadoRef = useRef(false);
   const rafRef = useRef<number | null>(null);
 
   const recomputar = useCallback(() => {
@@ -114,7 +118,19 @@ export function useMarqueeSelecao(params: {
     ativoRef.current = false;
     pararRaf();
     setRect(null);
-  }, [pararRaf]);
+    // #680: solta a captura (se foi pega no arrasto) — centralizado aqui pra o
+    // pointerup do elemento E a rede de segurança de window liberarem igual.
+    const el = scrollRef.current;
+    if (el && capturadoRef.current && pointerIdRef.current != null) {
+      try {
+        el.releasePointerCapture(pointerIdRef.current);
+      } catch {
+        // já solto / sem suporte
+      }
+    }
+    capturadoRef.current = false;
+    pointerIdRef.current = null;
+  }, [pararRaf, scrollRef]);
 
   const onPointerDown = useCallback(
     (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -148,13 +164,15 @@ export function useMarqueeSelecao(params: {
       clientRef.current = { x: e.clientX, y: e.clientY };
       clientStartRef.current = { x: e.clientX, y: e.clientY };
       movedRef.current = false;
+      pointerIdRef.current = e.pointerId;
+      capturadoRef.current = false;
       el.focus({ preventScroll: true });
-      try {
-        el.setPointerCapture(e.pointerId);
-      } catch {
-        // Sem pointer capture (ambiente sem suporte): degrada — o pointerup de
-        // window (rede de segurança abaixo) ainda finaliza.
-      }
+      // #680: NÃO captura o ponteiro aqui. Capturar em todo pointerdown deixava
+      // o `scrollRef` com pointer-capture ativo e, com o menu de contexto Radix
+      // aberto (portado no body), os pointer-events do item do menu eram
+      // redirecionados pro container → o `onSelect` nunca disparava e o menu não
+      // fechava (a regressão do #680). A captura é adiada pro 1º arrasto REAL
+      // (>3px) no `onPointerMove` — um clique simples nunca prende o ponteiro.
     },
     [scrollRef],
   );
@@ -168,24 +186,35 @@ export function useMarqueeSelecao(params: {
         const dy = e.clientY - clientStartRef.current.y;
         if (dx * dx + dy * dy >= 9) movedRef.current = true; // > 3px = arrasto
       }
+      // #680: captura o ponteiro só quando o arrasto REALMENTE começou (>3px) —
+      // aí o marquee precisa dos eventos mesmo fora do container. Um clique (sem
+      // arrasto) nunca chega aqui, então nunca prende os pointer-events (o que
+      // matava o clique nos itens do menu de contexto).
+      const el = scrollRef.current;
+      if (el && movedRef.current && !capturadoRef.current) {
+        capturadoRef.current = true;
+        const pid = pointerIdRef.current;
+        if (pid != null) {
+          try {
+            el.setPointerCapture(pid);
+          } catch {
+            // Sem pointer capture (ambiente sem suporte): o pointerup de window
+            // (rede de segurança) ainda finaliza.
+          }
+        }
+      }
       recomputar();
       talvezAutoscroll();
     },
-    [recomputar, talvezAutoscroll],
+    [recomputar, talvezAutoscroll, scrollRef],
   );
 
-  const onPointerUp = useCallback(
-    (e: ReactPointerEvent<HTMLDivElement>) => {
-      if (!ativoRef.current) return;
-      try {
-        scrollRef.current?.releasePointerCapture(e.pointerId);
-      } catch {
-        // ok
-      }
-      finalizar();
-    },
-    [scrollRef, finalizar],
-  );
+  const onPointerUp = useCallback(() => {
+    if (!ativoRef.current) return;
+    // #680: a liberação da captura (se houve arrasto) é centralizada no
+    // `finalizar` — mesmo caminho pro pointerup do elemento e o de window.
+    finalizar();
+  }, [finalizar]);
 
   // ESC cancela o arrasto e RESTAURA a seleção anterior (base). Só enquanto ativo.
   useEffect(() => {
