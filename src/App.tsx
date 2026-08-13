@@ -75,6 +75,7 @@ import {
 } from "@/store";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
+import { resolverOrgStatus } from "@/lib/organizations";
 import { useIdioma } from "@/lib/idioma";
 import { cn, comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
@@ -112,6 +113,9 @@ function AppInner() {
   const resetPeopleSession = useAppStore(
     (state) => state.resetPeopleSession,
   );
+  // #700 2b (parte 2): registro de orgs (fonte da flag `contratada` +
+  // `dominiosVerificados`) — alimenta a derivação reativa do OrgStatus abaixo.
+  const organizations = useAppStore((state) => state.organizations);
   const [user, setUser] = useState<AppUser | null>(null);
   // #698 (PS5): funcionário de empresa não-cliente (orgStatus "uncontracted") vê o
   // onboarding de lead-gen; ao "entrar assim mesmo", segue no tier pessoal.
@@ -354,6 +358,22 @@ function AppInner() {
     resetPeopleSession,
     setReauthMissingScopes,
   ]);
+
+  // #700 2b (parte 2): deriva o OrgStatus canônico (#698/PS5) do REGISTRO DE ORGS
+  // assim que ele assenta. As orgs (CHAVES_CONFIG_NUVEM #560) hidratam ASSÍNCRONO
+  // — depois do setUser, pela reconciliação de nuvem — então a derivação tem que
+  // ser REATIVA, não inline no login: inline veria orgs vazias e daria
+  // none/uncontracted errado. Refina o provisório que o PS0 dá do token:
+  // work-cliente→contracted, work-não-cliente→uncontracted, personal do domínio
+  // do cliente→contracted (absorção JIT), resto→none. Só no app real (Tauri);
+  // no mock/web o tier vem do ?mockOrg de QA (não sobrescreve).
+  useEffect(() => {
+    if (!api.inTauri() || !user) return;
+    const derivado = resolverOrgStatus(user, organizations);
+    if (derivado !== user.orgStatus) {
+      setUser((atual) => (atual ? { ...atual, orgStatus: derivado } : atual));
+    }
+  }, [user, organizations]);
 
   // --- Splash de boot (#164) ---------------------------------------------
   // Dois gates para revelar a main: o app só aparece depois que a animação
