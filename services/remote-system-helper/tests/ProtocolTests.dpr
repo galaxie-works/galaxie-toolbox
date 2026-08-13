@@ -50,7 +50,25 @@ begin
   Check(IsAllowedMethod('agent.ensure'), 'ensure');
   Check(IsAllowedMethod('agent.stop'), 'stop');
   Check(IsAllowedMethod('desktop.setMode'), 'desktop');
+  Check(not IsAllowedMethod('Service.Status'), 'case variant accepted');
   Check(not IsAllowedMethod('shell.exec'), 'generic shell accepted');
+end;
+
+procedure TestRejectsMalformedEnvelope;
+var
+  Envelope: TRemoteEnvelope;
+  Code, MessageText: string;
+  Raw: TBytes;
+begin
+  Check(not ParseRequest(TEncoding.UTF8.GetBytes(
+    '{"v":1,"id":"abc","type":"request","method":"service.status","payload":[]}'),
+    Envelope, Code, MessageText), 'array payload accepted');
+  Check(Code = 'invalid_payload', 'wrong payload error code');
+
+  Raw := TBytes.Create($F0, $28, $8C, $28);
+  Check(not ParseRequest(Raw, Envelope, Code, MessageText),
+    'invalid UTF-8 accepted');
+  Check(Code = 'invalid_utf8', 'wrong UTF-8 error code');
 end;
 
 begin
@@ -58,6 +76,7 @@ begin
     TestHello;
     TestRejectsUnknownVersion;
     TestAllowlist;
+    TestRejectsMalformedEnvelope;
     Writeln('ProtocolTests: PASS');
   except
     on E: Exception do

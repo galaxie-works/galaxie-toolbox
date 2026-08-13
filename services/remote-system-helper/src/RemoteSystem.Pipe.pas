@@ -131,10 +131,19 @@ begin
   try
     while not Terminated and ReadPipeMessage(Pipe, Raw) do
     begin
-      if not ParseRequest(Raw, Envelope, ErrorCode, ErrorText) then
-      begin
-        WritePipeMessage(Pipe, BuildError('', ErrorCode, ErrorText, False));
-        Break;
+      try
+        if not ParseRequest(Raw, Envelope, ErrorCode, ErrorText) then
+        begin
+          WritePipeMessage(Pipe, BuildError('', ErrorCode, ErrorText, False));
+          Break;
+        end;
+      except
+        on E: Exception do
+        begin
+          WritePipeMessage(Pipe, BuildError('', 'invalid_request',
+            'Malformed request', False));
+          Break;
+        end;
       end;
       try
         if Cache.TryGetValue(Envelope.Id, Response) then
@@ -146,7 +155,7 @@ begin
 
         if not Handshaken then
         begin
-          if not SameText(Envelope.Method, 'hello') then
+          if Envelope.Method <> 'hello' then
           begin
             WritePipeMessage(Pipe, BuildError(Envelope.Id, 'handshake_required',
               'hello must be the first request', False));
@@ -173,15 +182,15 @@ begin
           LastActiveSession := FAgent.ResolveActiveSession;
           Handshaken := True;
         end
-        else if SameText(Envelope.Method, 'hello') then
+        else if Envelope.Method = 'hello' then
           Response := BuildError(Envelope.Id, 'already_handshaken',
             'hello is accepted only once', False)
         else if not IsAllowedMethod(Envelope.Method) then
           Response := BuildError(Envelope.Id, 'method_not_allowed',
             'Method is not in the v1 allowlist', False)
-        else if SameText(Envelope.Method, 'service.status') then
+        else if Envelope.Method = 'service.status' then
           Response := BuildResult(Envelope.Id, FAgent.Snapshot)
-        else if SameText(Envelope.Method, 'agent.ensure') then
+        else if Envelope.Method = 'agent.ensure' then
         begin
           HasSession := RequiredCardinal(Envelope.Payload, 'sessionId', SessionId);
           if FAgent.EnsureAgent(SessionId, HasSession, ErrorText) then
@@ -189,7 +198,7 @@ begin
           else
             Response := BuildError(Envelope.Id, 'agent_start_failed', ErrorText, True);
         end
-        else if SameText(Envelope.Method, 'agent.stop') then
+        else if Envelope.Method = 'agent.stop' then
         begin
           if not RequiredCardinal(Envelope.Payload, 'sessionId', SessionId) then
             Response := BuildError(Envelope.Id, 'invalid_payload',
@@ -232,11 +241,11 @@ begin
           LastActiveSession := CurrentActiveSession;
         end;
 
-        if Handshaken and (not SameText(Envelope.Method, 'service.status')) and
-           (not SameText(Envelope.Method, 'hello')) then
+        if Handshaken and (Envelope.Method <> 'service.status') and
+           (Envelope.Method <> 'hello') then
         begin
           StatePayload := FAgent.Snapshot;
-          if SameText(Envelope.Method, 'desktop.setMode') then
+          if Envelope.Method = 'desktop.setMode' then
             EventName := 'desktop.changed'
           else
             EventName := 'agent.state';
