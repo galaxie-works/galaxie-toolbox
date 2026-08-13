@@ -72,6 +72,40 @@ export function selecionarFaixa(
   return { selecionados, ancora: estado.ancora, cursor: paths[index] };
 }
 
+/**
+ * #748 (marquee): aplica a seleção do retângulo de arrasto. `indices` = itens
+ * sob o retângulo, na ORDEM VISÍVEL (ascendente). `base` = seleção de ANTES do
+ * arrasto — no modo `aditivo` (Ctrl/Shift durante o drag) o retângulo SOMA à
+ * base em vez de substituir; senão, a seleção passa a ser só o retângulo. Âncora
+ * vai pro 1º item do retângulo (ou preserva a da base, no aditivo); cursor vai
+ * pro último. Retângulo vazio + não-aditivo → limpa (clique-arrasto no vazio).
+ */
+export function selecionarRetangulo(
+  base: EstadoSelecao,
+  paths: string[],
+  indices: number[],
+  opts?: { aditivo?: boolean },
+): EstadoSelecao {
+  const aditivo = opts?.aditivo ?? false;
+  const selecionados = aditivo
+    ? new Set(base.selecionados)
+    : new Set<string>();
+  let primeiro: string | null = null;
+  let ultimo: string | null = null;
+  for (const i of indices) {
+    if (!dentro(paths, i)) continue;
+    const path = paths[i];
+    selecionados.add(path);
+    if (primeiro === null) primeiro = path;
+    ultimo = path;
+  }
+  return {
+    selecionados,
+    ancora: aditivo ? (base.ancora ?? primeiro) : primeiro,
+    cursor: ultimo ?? (aditivo ? base.cursor : null),
+  };
+}
+
 /** Seleção total (Ctrl+A): todos entram; âncora/cursor no primeiro item. */
 export function selecionarTudo(
   paths: string[],
