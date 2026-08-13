@@ -189,19 +189,27 @@ function Miniatura({
 /**
  * Ícone (ou miniatura, se imagem) de uma entrada. #739 (F4): memoizada — não
  * re-renderiza no scroll/seleção enquanto `entry`/classes forem os mesmos.
+ *
+ * #820 (P0, causa-raiz): miniatura SÓ no Grid (`thumb`). Em Detalhes/Lista o
+ * ícone é o de TIPO (extensão) — zero thumbnail, como todo file manager. Gerar
+ * thumbnail por-linha em Detalhes floodava a fila e rasterizava arquivos
+ * gigantes (o SVG de 23MB do Wagner) → freeze; nesses modos a `Miniatura` nem
+ * monta (sem IntersectionObserver, sem `solicitarThumb`).
  */
 const CelulaIcone = memo(function CelulaIcone({
   entry,
   boxClass,
   iconClass,
+  thumb,
 }: {
   entry: FsEntry;
   boxClass: string;
   iconClass: string;
+  thumb: boolean;
 }) {
   const { Icon, cor } = iconeParaEntry(entry);
   const icone = <Icon className={cn(iconClass, cor)} />;
-  if (!ehImagem(entry)) {
+  if (!thumb || !ehImagem(entry)) {
     return (
       <span className={cn("flex items-center justify-center", boxClass)}>
         {icone}
@@ -282,7 +290,7 @@ const ItemArquivo = memo(function ItemArquivo({
     );
     const conteudo = (
       <>
-        <CelulaIcone entry={entry} boxClass="size-12" iconClass="size-9" />
+        <CelulaIcone entry={entry} boxClass="size-12" iconClass="size-9" thumb />
         {nome("line-clamp-2 w-full break-words text-xs leading-tight")}
       </>
     );
@@ -312,7 +320,7 @@ const ItemArquivo = memo(function ItemArquivo({
     );
     const conteudo = (
       <>
-        <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" />
+        <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" thumb={false} />
         {nome("min-w-0 flex-1 truncate text-sm")}
       </>
     );
@@ -343,7 +351,7 @@ const ItemArquivo = memo(function ItemArquivo({
   const conteudo = (
     <>
       <span className="flex min-w-0 items-center gap-2">
-        <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" />
+        <CelulaIcone entry={entry} boxClass="size-5" iconClass="size-4" thumb={false} />
         {nome("min-w-0 truncate text-sm")}
       </span>
       <span className="truncate text-xs text-muted-foreground">
