@@ -14,13 +14,15 @@ import type { Pessoa } from "@/lib/types";
 
 // O Graph devolve um contato "por relevância" pra QUALQUER query — inclusive
 // enquanto se digita um endereço externo. É o gatilho do auto-select do Base UI.
-const crPessoasMock = vi.fn<(q: string) => Promise<Pessoa[]>>();
+// Tipagem via implementação / cast (sem type-arg em `vi.fn`/`importOriginal`)
+// pra não depender da assinatura genérica do vitest entre versões.
+const crPessoasMock = vi.fn(async (_q: string): Promise<Pessoa[]> => []);
 vi.mock("@/lib/api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/api")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/api");
   return { ...actual, crPessoas: (q: string) => crPessoasMock(q) };
 });
 vi.mock("@/lib/fotos", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/fotos")>();
+  const actual = (await importOriginal()) as typeof import("@/lib/fotos");
   return {
     ...actual,
     useFotos: () => ({ getFoto: () => undefined, pedirFotos: () => {} }),
