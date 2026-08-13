@@ -10,12 +10,14 @@
     "preview": "vite preview",
     "qa:visual": "pwsh -NoProfile -File scripts/Capturar-QA-Visual.ps1",
     "test": "node --test --experimental-strip-types \"src/**/*.test.ts\"",
-    "test:watch": "node --test --watch --experimental-strip-types \"src/**/*.test.ts\""
+    "test:watch": "node --test --watch --experimental-strip-types \"src/**/*.test.ts\"",
+    "test:component": "vitest run",
+    "test:component:watch": "vitest"
   },
   "dependencies": {
     "@ai-sdk/react": "^4.0.40",
     "@ariakit/react": "^0.4.35",
-    "@base-ui/react": "^1.6.0",
+    "@base-ui/react": "1.6.0",
     "@date-fns/tz": "^1.5.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
@@ -125,15 +127,20 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
     "@tauri-apps/cli": "^2.11.4",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.4",
     "@types/lodash": "^4.17.24",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "happy-dom": "^20.11.2",
     "oxlint": "^1.71.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "vite": "^8.1.1",
+    "vitest": "^4.1.10"
   },
   "description": "Acesso aos arquivos da empresa no SharePoint e ferramentas de auto-ajuda do Microsoft 365.",
   "packageManager": "pnpm@11.5.0"

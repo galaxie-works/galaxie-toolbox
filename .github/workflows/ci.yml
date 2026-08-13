@@ -55,6 +55,11 @@ jobs:
       - name: Testes (node:test)
         run: pnpm test
 
+      # #786: testes de COMPONENTE (vitest + happy-dom) — exercitam a interação
+      # real com o Base UI (Combobox do compose) que o node:test não cobre.
+      - name: Testes de componente (vitest)
+        run: pnpm test:component
+
   # Rust/Tauri: cargo check + testes. Roda no windows-latest (mesma plataforma do
   # release, evita as libs de sistema que o Tauri exige no Linux). O rust-cache
   # deixa rápido quando o Rust não mudou.
