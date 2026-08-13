@@ -29,3 +29,16 @@ test("o comando Tauri login nao fixa Microsoft ao escolher o provider", () => {
     "a selecao do frontend e ignorada e o backend fixa Microsoft",
   );
 });
+
+test("provider microsoft-personal forca a conta pessoal (nao depende do e-mail)", () => {
+  assert.match(
+    loginCommand,
+    /microsoft-personal/,
+    "o backend nao reconhece o provider microsoft-personal (#746)",
+  );
+  assert.match(
+    loginCommand,
+    /consumers/,
+    "microsoft-personal deve forcar a authority pessoal (consumers), nao derivar do e-mail",
+  );
+});
