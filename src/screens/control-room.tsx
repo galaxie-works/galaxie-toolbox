@@ -6703,6 +6703,12 @@ export function ControlRoomScreen({
     const aviso = toast.loading(t.controlRoom.esvaziandoPasta);
     try {
       const n = await api.crEsvaziarPasta(folderId, caixaAtiva);
+      // #788: INVALIDA o cache da pasta esvaziada — senão a lista serve as
+      // mensagens velhas (não atualiza) e, ao revisitar a pasta com IDs de
+      // mensagens já deletadas, uma request falha e cai no toast de erro
+      // ("That didn't go through"). Mesmo caminho que o Refresh manual usa; agora
+      // a lista fica vazia na hora e a revisita rebusca do zero, sem erro.
+      limparCachePasta(chaveCache(folderId));
       toast.success(preencher(t.controlRoom.pastaEsvaziada, { n }), { id: aviso });
       recarregarAposPasta(folderId);
     } catch (e) {
