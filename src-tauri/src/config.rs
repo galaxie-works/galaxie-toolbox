@@ -30,7 +30,14 @@ pub const CLIENT_ID_PESSOAL: &str = "53ddcae4-7368-4072-8ed2-8ee18daa8600";
 /// secret nao e uma fronteira de confianca (PKCE protege), mas o token endpoint do
 /// Google pede ele no exchange do fluxo desktop.
 pub const GOOGLE_CLIENT_ID: &str = "672866388200-objaoko15r9on8jvrc64m991r3e2act2.apps.googleusercontent.com";
-pub const GOOGLE_CLIENT_SECRET: &str = "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";
+// #release: injetado em compile-time via `option_env!` (mesmo padrão dos secrets
+// de telemetria — ver build.rs). Ausente no build de dev (`tauri dev`) => "" =>
+// login Google desligado localmente (usa-se Microsoft no dev). No CI/release o
+// Actions secret GOOGLE_CLIENT_SECRET preenche. NUNCA literal no source (repo publico).
+pub const GOOGLE_CLIENT_SECRET: &str = match option_env!("GOOGLE_CLIENT_SECRET") {
+    Some(s) => s,
+    None => "",
+};
 
 /// Endpoints OAuth/OIDC do Google (PS3). Fixos — o Google não tem "tenant".
 pub const GOOGLE_AUTH_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
