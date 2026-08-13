@@ -10,6 +10,13 @@ import { gerarThumbnail } from "@/lib/api";
 
 const MAX_CONCORRENTES = 6;
 const LRU_MAX = 400;
+// #820 (P0): teto da fila. A fila prioriza o viewport com LIFO (`pop`), mas os
+// pedidos que saíram de tela ficam no FUNDO (`push`) e nunca drenam enquanto a
+// rolagem alimenta o topo — em pasta densa (Downloads 5000+) isso empilha
+// Tarefas + Promises + closures sem limite, o heap cresce com a rolagem e o GC
+// longo congela a UI (piora quanto mais rola; trava até parado). O teto descarta
+// a MAIS ANTIGA (fundo = já fora de tela, menor prioridade) resolvendo `null`.
+const FILA_MAX = 128;
 
 const cache = new Map<string, string>(); // `${path}|${mtime}|${maxSize}` → dataUri
 function cacheGet(chave: string): string | undefined {
@@ -87,6 +94,13 @@ export function solicitarThumb(
   if (doCache !== undefined) return Promise.resolve(doCache);
   return new Promise((resolve) => {
     fila.push({ path, chave, maxSize, cancelado, resolve });
+    // #820 (P0): impõe o teto — descarta as MAIS ANTIGAS (fundo, já fora de
+    // tela) resolvendo `null`, pra a fila não crescer sem limite no scroll longo
+    // e vazar Promises/closures (o que estourava o GC e travava a UI).
+    while (fila.length > FILA_MAX) {
+      const velha = fila.shift();
+      velha?.resolve(null);
+    }
     bombear();
   });
 }
