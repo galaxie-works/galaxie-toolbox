@@ -81,6 +81,7 @@ import {
 } from "./selecao";
 import { type GridMetrica } from "./marquee";
 import { useMarqueeSelecao } from "./use-marquee";
+import { solicitarThumb } from "./thumb-fila";
 import { ehImagem, iconeParaEntry } from "./icones-arquivo";
 import { formatarDataArquivo, rotuloTipo } from "./format";
 
@@ -102,42 +103,16 @@ const OVERSCAN = 8;
 // Colunas da tabela (Detalhes): nome flexível + 3 fixas.
 const COLS_DETALHES = "minmax(0,1fr) 150px 96px 104px";
 
-// --- Cache LRU + carregador preguiçoso do convertFileSrc -------------------
-let convertFn: ((p: string) => string) | null = null;
-let convertPromise: Promise<void> | null = null;
-function garantirConvert(): Promise<void> {
-  if (convertFn) return Promise.resolve();
-  if (!convertPromise) {
-    convertPromise = import("@tauri-apps/api/core").then((m) => {
-      convertFn = m.convertFileSrc;
-    });
-  }
-  return convertPromise;
-}
-
-const THUMB_MAX = 200;
-const thumbCache = new Map<string, string>();
-function cacheGet(path: string): string | undefined {
-  const v = thumbCache.get(path);
-  if (v !== undefined) {
-    thumbCache.delete(path);
-    thumbCache.set(path, v);
-  }
-  return v;
-}
-function cacheSet(path: string, src: string): void {
-  if (thumbCache.has(path)) thumbCache.delete(path);
-  thumbCache.set(path, src);
-  if (thumbCache.size > THUMB_MAX) {
-    const primeiro = thumbCache.keys().next().value;
-    if (primeiro !== undefined) thumbCache.delete(primeiro);
-  }
-}
+// #738 (F3): maior lado do thumbnail. ~256px = 2× o maior tile (grade, 48px)
+// cobrindo HiDPI; casa com o default do `gerarThumbnail`.
+const THUMB_MAX_LADO = 256;
 
 /**
  * Miniatura de imagem carregada só quando visível (IntersectionObserver) e
- * apenas dentro do Tauri. Fora do Tauri, ou se a imagem falhar, mostra o
- * `fallback` (o ícone). O src resolvido fica num cache LRU por caminho.
+ * apenas dentro do Tauri. #738: aponta o `<img>` pro thumb webp (data URI)
+ * gerado/cacheado no backend — o ORIGINAL nunca é decodificado no DOM. A fila
+ * (`solicitarThumb`) prioriza o viewport e cancela o que sai de tela. Fora do
+ * Tauri, ou se a imagem falhar, mostra o `fallback` (o ícone).
  */
 function Miniatura({
   entry,
@@ -148,32 +123,38 @@ function Miniatura({
   boxClass: string;
   fallback: ReactNode;
 }) {
-  const [src, setSrc] = useState<string | null>(
-    () => cacheGet(entry.path) ?? null,
-  );
+  const [src, setSrc] = useState<string | null>(null);
   const [erro, setErro] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    if (!TAURI || src || erro) return;
+    if (!TAURI || erro) return;
     const el = ref.current;
     if (!el) return;
+    let cancelado = false;
     const io = new IntersectionObserver(
       (entries) => {
         if (!entries.some((e) => e.isIntersecting)) return;
         io.disconnect();
-        void garantirConvert().then(() => {
-          if (!convertFn) return;
-          const url = convertFn(entry.path);
-          cacheSet(entry.path, url);
-          setSrc(url);
+        void solicitarThumb(
+          entry.path,
+          entry.modifiedMs ?? 0,
+          THUMB_MAX_LADO,
+          () => cancelado,
+        ).then((uri) => {
+          if (!cancelado && uri) setSrc(uri);
         });
       },
       { rootMargin: "150px" },
     );
     io.observe(el);
-    return () => io.disconnect();
-  }, [entry.path, src, erro]);
+    // Saiu de tela / trocou de pasta → cancela o pedido pendente (a fila o
+    // descarta antes de começar, ou ignoramos o resultado).
+    return () => {
+      cancelado = true;
+      io.disconnect();
+    };
+  }, [entry.path, entry.modifiedMs, erro]);
 
   if (!TAURI || erro || !src) {
     return (
