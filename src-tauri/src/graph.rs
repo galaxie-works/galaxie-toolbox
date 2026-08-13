@@ -6075,7 +6075,10 @@ mod org_settings_testes {
     #[test]
     fn tenant_app_cai_em_loginurl_sem_homepage() {
         let sp: serde_json::Value = serde_json::from_str(
-            r#"{"appId":"x","displayName":"App","accountEnabled":true,"servicePrincipalType":"Application","loginUrl":"https://login.app.com"}"#,
+            // #747: pós-#618 o SP PRECISA da tag `WindowsAzureActiveDirectoryIntegratedApp`
+            // pra ser tile de app (senão `tenant_app_do_sp` retorna None antes da URL). O
+            // teste é do FALLBACK homepage→loginUrl, então o SP tem a tag + só loginUrl.
+            r#"{"appId":"x","displayName":"App","accountEnabled":true,"servicePrincipalType":"Application","loginUrl":"https://login.app.com","tags":["WindowsAzureActiveDirectoryIntegratedApp"]}"#,
         )
         .unwrap();
         assert_eq!(tenant_app_do_sp(&sp).unwrap().url, "https://login.app.com");
