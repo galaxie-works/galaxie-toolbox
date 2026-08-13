@@ -60,6 +60,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 fast_image_resize = "5"
 kamadak-exif = "0.5"
 webp = "0.3"
+# #737 (Explorer perf F2): cache de thumbnail em memória (LRU pros thumbs quentes).
+# O cache em disco usa blake3 (já acima) pra chavear por path|mtime|size. `lru` é
+# o LRU byte-limitado da camada de memória.
+lru = "0.12"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

@@ -2980,6 +2980,15 @@ export async function gerarThumbnail(
   return invoke<ThumbRef>("fs_thumbnail", { path, maxSize });
 }
 
+/** Ajusta os tetos do cache de thumbnail (#737): disco/memória em MB. */
+export async function configurarCacheThumbnail(
+  diskMb: number,
+  memMb: number,
+): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("fs_thumb_cache_limits", { diskMb, memMb });
+}
+
 /** Revela o item no Explorer do Windows. */
 export async function revelarCaminho(path: string): Promise<void> {
   if (!inTauri()) return;
