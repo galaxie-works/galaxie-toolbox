@@ -26,12 +26,12 @@ test("AC2 e AC6: Microsoft abre passo 2 e Voltar retorna ao provedor", () => {
 });
 
 test("AC3: conta pessoal envia microsoft-personal sem login hint", () => {
-  assert.match(loginSource, /onLogin\("microsoft-personal", ""\)/);
+  assert.match(loginSource, /iniciar\("microsoft-personal", ""\)/);
 });
 
 test("AC4: conta de trabalho envia microsoft com email normalizado", () => {
   assert.match(loginSource, /setContaTrabalho\(true\)/);
-  assert.match(loginSource, /onLogin\("microsoft", email\.trim\(\)\)/);
+  assert.match(loginSource, /iniciar\("microsoft", email\.trim\(\)\)/);
 });
 
 test("AC5: Google envia provider google sem passar pelo passo Microsoft", () => {
@@ -39,8 +39,15 @@ test("AC5: Google envia provider google sem passar pelo passo Microsoft", () => 
     loginSource.indexOf('passo === "provedor"'),
     loginSource.indexOf(': !contaTrabalho'),
   );
-  assert.match(providerStep, /onLogin\("google", ""\)/);
+  assert.match(providerStep, /iniciar\("google", ""\)/);
   assert.doesNotMatch(providerStep, /setPasso\("google"\)/);
+});
+
+test("helper iniciar preserva provider e hint antes de encaminhar ao backend", () => {
+  assert.match(
+    loginSource,
+    /const iniciar = \(provider: AuthProvider, hint: string\) => \{\s*setProvedorCarregando\(provider\);\s*onLogin\(provider, hint\);\s*\}/,
+  );
 });
 
 test("AC7: strings novas existem em pt-BR e en sem copy hardcoded no JSX", () => {
