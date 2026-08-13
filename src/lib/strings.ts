@@ -1482,6 +1482,8 @@ const pt = {
     novaSessao: "Nova sessão",
     // Vídeo (WebCodecs) sem suporte no dispositivo.
     codecNaoSuportado: "Vídeo não suportado neste dispositivo.",
+    // #839: build sem a feature `remote` (comandos stubados) — degrade gracioso.
+    remoteIndisponivel: "O Remote não está disponível nesta versão do app.",
   },
 
   caminhosLongos: {
@@ -3429,6 +3431,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     novaSessao: "New session",
     // Video (WebCodecs) not supported on this device.
     codecNaoSuportado: "Video not supported on this device.",
+    // #839: build without the `remote` feature (stubbed commands) — graceful degrade.
+    remoteIndisponivel: "Remote isn't available in this build of the app.",
   },
 
   caminhosLongos: {

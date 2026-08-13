@@ -159,7 +159,7 @@ export function RemoteScreen() {
     setConectandoS0(false);
     setEstado("connecting");
     try {
-      await iniciarSessaoRemota(
+      const resp = await iniciarSessaoRemota(
         {
           role,
           sessionId,
@@ -172,9 +172,22 @@ export function RemoteScreen() {
           ? (buf) => videoRef.current?.alimentar(buf)
           : undefined,
       );
+      // #687/#839: no build DEFAULT o backend Remote é `#[cfg(feature="remote")]`
+      // OFF → os comandos `remote_*` são stubs que devolvem erro (ou fora do Tauri
+      // o wrapper devolve state:"error" sem lançar). Degrada gracioso: mensagem
+      // clara de "indisponível neste build" em vez de "connecting" preso.
+      if (resp.state === "error") {
+        setEstado("error");
+        setErro(t.remote.remoteIndisponivel);
+      }
     } catch (e) {
+      // Rejeição do invoke = comando stubado/ausente (Remote não compilado).
+      console.warn(
+        "[remote] iniciar sessão falhou (Remote não compilado neste build?):",
+        e,
+      );
       setEstado("error");
-      setErro(String(e));
+      setErro(t.remote.remoteIndisponivel);
     }
   }
 
