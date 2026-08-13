@@ -502,10 +502,12 @@ export function ContentPane({
         void revelarCaminho(path).catch(() =>
           toast.error(t.arquivos.erroOperacao),
         ),
-      // Propriedades (v1): seleciona o item pra o InspectorPane (S5) mostrá-lo.
-      propriedades: (entry) => {
-        const idx = paths.indexOf(entry.path);
-        if (idx >= 0) setSelecao(selecionarUnico(paths, idx));
+      // Propriedades (#749): RESPEITA a seleção múltipla. O `aoAbrirMenu` (no
+      // open do menu) já deixou a seleção certa — preserva o conjunto se o item
+      // clicado já estava selecionado, ou vira single se estava fora. Aqui só
+      // garante o InspectorPane visível; NÃO força single (era o bug).
+      propriedades: () => {
+        if (!mostrarInspector) onToggleInspector?.();
       },
     }),
     [
@@ -518,6 +520,8 @@ export function ContentPane({
       onClipboardChange,
       paths,
       t.arquivos.erroOperacao,
+      mostrarInspector,
+      onToggleInspector,
     ],
   );
 

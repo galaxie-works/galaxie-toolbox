@@ -1462,6 +1462,9 @@ const pt = {
     mostrarOcultos: "Mostrar ocultos",
     detalhes: "Detalhes",
     tamanhoTotal: "Tamanho total",
+    // #749: agregado da seleção múltipla no inspector.
+    conteudo: "Conteúdo",
+    arquivosPastas: "{a} arquivos, {p} pastas",
     criadoEm: "Criado em",
     atributos: "Atributos",
     longPathAviso:
@@ -3318,6 +3321,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     mostrarOcultos: "Show hidden",
     detalhes: "Details",
     tamanhoTotal: "Total size",
+    // #749: multi-selection aggregate in the inspector.
+    conteudo: "Contents",
+    arquivosPastas: "{a} files, {p} folders",
     criadoEm: "Created",
     atributos: "Attributes",
     longPathAviso:

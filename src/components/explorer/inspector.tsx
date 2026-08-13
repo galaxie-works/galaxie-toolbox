@@ -119,10 +119,20 @@ function InspetorUnico({ entry }: { entry: FsEntry }) {
 /** Multi-seleção: nº de itens + tamanho total (soma dos `size`). */
 function InspetorMulti({ itens }: { itens: FsEntry[] }) {
   const { t } = useIdioma();
-  const total = useMemo(
-    () => itens.reduce((acc, e) => acc + (e.isDir ? 0 : e.size), 0),
-    [itens],
-  );
+  // #749: agregado — tamanho total (só arquivos) + contagem arquivos/pastas.
+  const { total, arquivos, pastas } = useMemo(() => {
+    let bytes = 0;
+    let a = 0;
+    let p = 0;
+    for (const e of itens) {
+      if (e.isDir) p++;
+      else {
+        a++;
+        bytes += e.size;
+      }
+    }
+    return { total: bytes, arquivos: a, pastas: p };
+  }, [itens]);
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col items-center gap-2 py-2 text-center">
@@ -135,6 +145,9 @@ function InspetorMulti({ itens }: { itens: FsEntry[] }) {
       </div>
       <Divisor />
       <Secao>
+        <LinhaInfo rotulo={t.arquivos.conteudo}>
+          {preencher(t.arquivos.arquivosPastas, { a: arquivos, p: pastas })}
+        </LinhaInfo>
         <LinhaInfo rotulo={t.arquivos.tamanhoTotal}>
           {formatBytes(total)}
         </LinhaInfo>
