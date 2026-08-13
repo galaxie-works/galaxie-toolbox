@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../App.tsx", import.meta.url), "utf8").split(String.fromCharCode(13)).join("");
 const authSource = readFileSync(
   new URL("../../src-tauri/src/auth.rs", import.meta.url),
   "utf8",
-);
+).split(String.fromCharCode(13)).join("");
 
 const msCalls = [
   "hydratePeopleM365(",
