@@ -306,7 +306,7 @@ function AppInner() {
         if (!vivo) return;
         if (u) {
           resetPeopleSession();
-          prepararConfiguracaoNuvem(u.email);
+          prepararConfiguracaoNuvem(u.email, u.provider);
           setUser(u);
           void reconciliarConfiguracaoNuvem().catch(() => {
             // Offline/Graph indisponível: mantém o cache local desta conta.
@@ -399,7 +399,7 @@ function AppInner() {
       // #695: `hint` = login_hint OPCIONAL; `provider` escolhe a porta (o backend
       // PS0/PS1 mapeia pro registration certo — org de produção vs pessoal).
       const u = await api.login(hint, idioma, provider);
-      prepararConfiguracaoNuvem(u.email);
+      prepararConfiguracaoNuvem(u.email, u.provider);
       setUser(u);
       void reconciliarConfiguracaoNuvem().catch(() => {
         // Login não falha por indisponibilidade temporária da configuração.

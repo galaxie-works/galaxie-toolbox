@@ -8,9 +8,11 @@ import {
   purgarChavesTenant,
 } from "./local-cache-backend";
 import {
+  GoogleDriveJsonBackend,
   LayeredBackend,
   LocalStorageConfigPatchQueue,
   OneDriveJsonBackend,
+  RoteadorCloudBackend,
   projetarConfigNuvem,
 } from "./onedrive-config-backend";
 import {
@@ -106,9 +108,15 @@ export type AppStore =
   & AuthSlice
   & CloudPrefsSlice;
 
+// #697: a camada cloud é roteada por provider. MS→OneDrive, Google→Drive
+// appDataFolder. A troca de conta seleciona o alvo antes de reativar.
+const onedriveCloud = new OneDriveJsonBackend();
+const googleCloud = new GoogleDriveJsonBackend();
+const cloudRouter = new RoteadorCloudBackend(onedriveCloud);
+
 const layeredConfigBackend = new LayeredBackend(
   localCacheBackend,
-  new OneDriveJsonBackend(),
+  cloudRouter,
   {
     baseline: () => projetarConfigNuvem(useAppStore.getState()),
     queue: new LocalStorageConfigPatchQueue(localStorage),
@@ -211,9 +219,16 @@ export const useAppStore = create<AppStore>()(
  * cache legado; em troca real de conta elimina o seed da conta anterior antes
  * de qualquer tela autenticada ser mostrada.
  */
-export function prepararConfiguracaoNuvem(accountEmail: string): void {
+export function prepararConfiguracaoNuvem(
+  accountEmail: string,
+  provider: string = "microsoft",
+): void {
   layeredConfigBackend.deactivate();
-  const account = accountEmail.trim().toLowerCase();
+  // #697: roteia a camada cloud e prefixa o owner pelo provider — Google e MS
+  // com o mesmo prefixo de e-mail NÃO colidem cache/fila.
+  const prov = provider.trim().toLowerCase() === "google" ? "google" : "microsoft";
+  cloudRouter.usar(prov === "google" ? googleCloud : onedriveCloud);
+  const account = `${prov}:${accountEmail.trim().toLowerCase()}`;
   let owner: string | null = null;
   try {
     owner = localStorage.getItem(CONFIG_CACHE_OWNER_KEY);

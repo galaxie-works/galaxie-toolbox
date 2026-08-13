@@ -280,6 +280,46 @@ export async function onedriveSettingsWrite(
   });
 }
 
+/** Config Google no Drive appDataFolder (PS4 #697). `revision` = headRevisionId. */
+export interface GoogleDriveSettingsReadResult {
+  content: string | null;
+  revision: string | null;
+}
+
+export interface GoogleDriveSettingsWriteResult {
+  revision: string | null;
+}
+
+let mockGDriveSettings: string | null = null;
+let mockGDriveRevision = 0;
+
+/** Lê o toolbox.json privado no appDataFolder do Google Drive. */
+export async function gdriveSettingsRead(): Promise<GoogleDriveSettingsReadResult> {
+  if (!inTauri()) {
+    return {
+      content: mockGDriveSettings,
+      revision: mockGDriveSettings === null ? null : `mock-${mockGDriveRevision}`,
+    };
+  }
+  return invoke<GoogleDriveSettingsReadResult>("gdrive_settings_read");
+}
+
+/** Grava o toolbox.json no appDataFolder. `revision` é bookkeeping (single-user). */
+export async function gdriveSettingsWrite(
+  content: string,
+  _revision: string | null,
+): Promise<GoogleDriveSettingsWriteResult> {
+  if (!inTauri()) {
+    mockGDriveSettings = content;
+    mockGDriveRevision += 1;
+    return { revision: `mock-${mockGDriveRevision}` };
+  }
+  return invoke<GoogleDriveSettingsWriteResult>("gdrive_settings_write", {
+    content,
+    revision: _revision,
+  });
+}
+
 export interface LockStatus {
   enabled: boolean;
 }
