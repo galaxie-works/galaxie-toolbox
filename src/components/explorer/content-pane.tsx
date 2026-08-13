@@ -1057,7 +1057,11 @@ export function ContentPane({
         onPointerMove={marquee.onPointerMove}
         onPointerUp={marquee.onPointerUp}
         className={cn(
-          "min-h-0 flex-1 overflow-y-auto rounded-md outline-none focus-visible:ring-1 focus-visible:ring-ring/40",
+          // #767: scrollbar padrão do app (fina, como o CommandList do Navigator),
+          // em vez da nativa do SO. #770: sem `focus-visible:ring` — o anel em
+          // volta da lista (ao focar via clique/shift) virava uma "borda extra"
+          // sobre a borda do card externo; o card já delimita a área.
+          "min-h-0 flex-1 overflow-y-auto scrollbar-fina rounded-md outline-none",
           marquee.arrastando && "select-none",
         )}
       >
