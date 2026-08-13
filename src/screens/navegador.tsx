@@ -468,10 +468,22 @@ function ConteudoPaleta({
     [termo],
   );
 
-  // Abre um app da lista única. M365 curado passa pelo `onAbrir` (login-hint +
-  // histórico do App.tsx); o resto abre como aba web pela URL. O roteamento pra
-  // tela interna (Outlook→Bridge etc, via `app.nativo`) é o SU2.
+  // Abre um app da lista única (#827 SU1/SU2). Prioridade:
+  // 1) core M365 que o app já faz NATIVO → abre a tela interna, não aba web
+  //    (Outlook→Bridge, OneDrive/SharePoint→Files via Tela; Calendar→Agenda,
+  //    People→People via sub-view do Bridge). A tela alvo já degrada por provider
+  //    (#803), então roteia certo pra qualquer conta.
+  // 2) M365 curado (sem nativo) → `onAbrir` (login-hint + histórico do App.tsx).
+  // 3) resto → aba web pela URL.
   const abrirUnificado = (app: AppUnificado) => {
+    if (app.nativo === "control-room" || app.nativo === "arquivos") {
+      onNavegarTela(app.nativo);
+      return;
+    }
+    if (app.nativo === "agenda" || app.nativo === "people") {
+      onIrParaBridgeView(app.nativo);
+      return;
+    }
     if (app.m365) {
       const m = porId(app.id);
       if (m) {
