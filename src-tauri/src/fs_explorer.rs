@@ -1864,6 +1864,26 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
+    /// Paridade do #680: "Substituir" também vale pro MOVE (mesmo diálogo). O
+    /// move honra a decisão e troca o destino existente (rename REPLACE_EXISTING).
+    #[test]
+    fn mover_substitui_destino_existente() {
+        let base = dir_temp("move-replace");
+        let origem = base.join("origem.txt");
+        let destino = base.join("destino.txt");
+        std::fs::write(&origem, b"novo").unwrap();
+        std::fs::write(&destino, b"antigo").unwrap();
+
+        let resultado = mover(&origem.to_string_lossy(), &destino.to_string_lossy());
+        assert!(
+            resultado.is_ok(),
+            "o move recusou a decisão Substituir: {resultado:?}"
+        );
+        assert_eq!(std::fs::read(&destino).unwrap(), b"novo");
+        assert!(!origem.exists(), "o move deixou a origem pra trás");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
     #[cfg(windows)]
     #[test]
     fn perfil_de_disco_real_responde_no_volume_do_qa() {
