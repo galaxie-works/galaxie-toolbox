@@ -70,6 +70,11 @@ export function formatarCombo(combo: string[]): string {
   return combo.join("+");
 }
 
+/** Um atalho por id (pro tooltip da própria ação mostrar o `<kbd>`, #733 rework). */
+export function atalhoPorId(id: string): Atalho | undefined {
+  return ATALHOS.find((a) => a.id === id);
+}
+
 /** Atalhos de uma categoria, na ordem de definição. */
 export function atalhosDe(categoria: CategoriaAtalho): Atalho[] {
   return ATALHOS.filter((a) => a.categoria === categoria);

@@ -1,14 +1,56 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ArrowLeft, ArrowRight, ArrowUp, Pencil } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useIdioma } from "@/lib/idioma";
 import { statCaminho } from "@/lib/api";
 import { segmentosCaminho } from "./caminho";
-import { AtalhosLegenda } from "./atalhos-legenda";
+import { atalhoPorId } from "./atalhos";
+
+/**
+ * #733 (rework): cada ação com atalho mostra a tecla no PRÓPRIO tooltip
+ * (Tooltip + `<kbd>`, padrão-ouro do app) — em vez de um ícone de teclado com
+ * modal separado (rejeitado pelo Wagner). Lê o combo do catálogo central
+ * (`atalhos.ts`, fonte única) pelo id da ação. Sem `atalhoId` = tooltip só com o
+ * rótulo (ação sem atalho, ex.: editar caminho).
+ */
+function TooltipAcao({
+  label,
+  atalhoId,
+  children,
+}: {
+  label: string;
+  atalhoId?: string;
+  children: ReactNode;
+}) {
+  const combo = atalhoId ? atalhoPorId(atalhoId)?.combos[0] : undefined;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side="bottom">
+        <span className="flex items-center gap-2">
+          {label}
+          {combo && (
+            <KbdGroup>
+              {combo.map((tecla) => (
+                <Kbd key={tecla}>{tecla}</Kbd>
+              ))}
+            </KbdGroup>
+          )}
+        </span>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 /**
  * #677: barra de navegação no topo do painel de conteúdo — voltar/avançar/acima +
@@ -70,35 +112,41 @@ export function NavBarArquivos({
 
   return (
     <div className="flex shrink-0 items-center gap-1">
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-8"
-        disabled={!canBack}
-        onClick={onBack}
-        aria-label={t.arquivos.voltar}
-      >
-        <ArrowLeft className="size-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-8"
-        disabled={!canForward}
-        onClick={onForward}
-        aria-label={t.arquivos.avancar}
-      >
-        <ArrowRight className="size-4" />
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="size-8"
-        onClick={onUp}
-        aria-label={t.arquivos.acima}
-      >
-        <ArrowUp className="size-4" />
-      </Button>
+      <TooltipAcao label={t.arquivos.voltar} atalhoId="voltar">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          disabled={!canBack}
+          onClick={onBack}
+          aria-label={t.arquivos.voltar}
+        >
+          <ArrowLeft className="size-4" />
+        </Button>
+      </TooltipAcao>
+      <TooltipAcao label={t.arquivos.avancar} atalhoId="avancar">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          disabled={!canForward}
+          onClick={onForward}
+          aria-label={t.arquivos.avancar}
+        >
+          <ArrowRight className="size-4" />
+        </Button>
+      </TooltipAcao>
+      <TooltipAcao label={t.arquivos.acima} atalhoId="pastaAcima">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          onClick={onUp}
+          aria-label={t.arquivos.acima}
+        >
+          <ArrowUp className="size-4" />
+        </Button>
+      </TooltipAcao>
 
       {editando ? (
         <div className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -148,20 +196,19 @@ export function NavBarArquivos({
               </span>
             ))}
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-8 shrink-0"
-            onClick={() => setEditando(true)}
-            aria-label={t.arquivos.editarCaminho}
-          >
-            <Pencil className="size-4" />
-          </Button>
+          <TooltipAcao label={t.arquivos.editarCaminho}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              onClick={() => setEditando(true)}
+              aria-label={t.arquivos.editarCaminho}
+            >
+              <Pencil className="size-4" />
+            </Button>
+          </TooltipAcao>
         </div>
       )}
-
-      {/* #733: legenda de atalhos (cheatsheet) — lê do catálogo central. */}
-      <AtalhosLegenda />
     </div>
   );
 }
