@@ -9,6 +9,7 @@ import type {
   FsDirBatch,
   FsEntry,
   FsOpProgress,
+  ThumbMetrics,
   ThumbRef,
   CaixaEntrada,
   Calendario,
@@ -3030,6 +3031,23 @@ export async function configurarCacheThumbnail(
 ): Promise<void> {
   if (!inTauri()) return;
   await invoke("fs_thumb_cache_limits", { diskMb, memMb });
+}
+
+/** Métricas de perf do gerador de thumbnail (#740): hit-rate, geração, pool/caps. */
+export async function obterMetricasThumbnail(): Promise<ThumbMetrics> {
+  if (!inTauri()) {
+    return {
+      hitMem: 0, hitDisco: 0, geradas: 0, total: 0, hitRate: 0,
+      genMedioMs: 0, poolThreads: 0, diskCapMb: 1024, memCapMb: 96, memBytes: 0,
+    };
+  }
+  return invoke<ThumbMetrics>("fs_thumb_metrics");
+}
+
+/** Zera os contadores de métrica (baseline limpo antes de medir). */
+export async function resetarMetricasThumbnail(): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("fs_thumb_metrics_reset");
 }
 
 /** Revela o item no Explorer do Windows. */

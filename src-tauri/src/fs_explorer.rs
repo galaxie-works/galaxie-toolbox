@@ -1149,17 +1149,23 @@ pub fn fs_thumbnail(path: String, max_size: u32) -> Result<ThumbRef, FsError> {
 
     // 1) memória — thumb quente, hit instantâneo.
     if let Some((bytes, w, h)) = mem_get(&key) {
+        MET_HIT_MEM.fetch_add(1, Ordering::Relaxed); // #740
         return Ok(ThumbRef { data_uri: data_uri_webp(&bytes), width: w, height: h, source: "cacheMem".into() });
     }
     // 2) disco — sobrevive a re-scroll/reabrir o app; re-popula a memória.
     if let Some(bytes) = disco_get(&key) {
+        MET_HIT_DISCO.fetch_add(1, Ordering::Relaxed); // #740
         let (w, h) = webp_dims(&bytes);
         let arc = std::sync::Arc::new(bytes);
         mem_put(&key, arc.clone(), w, h);
         return Ok(ThumbRef { data_uri: data_uri_webp(&arc), width: w, height: h, source: "cacheDisk".into() });
     }
-    // 3) miss — gera no pool (bounda CPU) e persiste nos dois níveis.
+    // 3) miss — gera no pool (bounda CPU) e persiste nos dois níveis. #740: mede o
+    // tempo de geração (pro avg/throughput do relatório de perf).
+    let t0 = Instant::now();
     let (webp, w, h, source) = thumb_pool().install(|| gerar_webp(&path, max))?;
+    MET_GEN_NS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
+    MET_GERADAS.fetch_add(1, Ordering::Relaxed);
     disco_put(&key, &webp);
     let arc = std::sync::Arc::new(webp);
     mem_put(&key, arc.clone(), w, h);
@@ -1194,6 +1200,94 @@ static MEM_CAP_MB: AtomicU64 = AtomicU64::new(96);
 pub fn fs_thumb_cache_limits(disk_mb: u64, mem_mb: u64) {
     DISK_CAP_MB.store(disk_mb.max(16), Ordering::Relaxed);
     MEM_CAP_MB.store(mem_mb.max(8), Ordering::Relaxed);
+}
+
+// ── Métricas de perf do gerador de thumbnail (#740 F5) ───────────────────────
+// Contadores globais pro relatório baseline vs pós-F1-F3 (hit-rate + geração).
+// A validação real (5000 imgs no 5900X, TTF/throughput sob carga) é do Wagner.
+
+static MET_HIT_MEM: AtomicU64 = AtomicU64::new(0);
+static MET_HIT_DISCO: AtomicU64 = AtomicU64::new(0);
+static MET_GERADAS: AtomicU64 = AtomicU64::new(0);
+static MET_GEN_NS: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThumbMetrics {
+    pub hit_mem: u64,
+    pub hit_disco: u64,
+    pub geradas: u64,
+    pub total: u64,
+    /// Fração de hits (mem+disco) sobre o total de pedidos, 0..1.
+    pub hit_rate: f64,
+    /// Tempo médio de geração de UM thumb (só miss), em ms.
+    pub gen_medio_ms: f64,
+    /// Threads do pool + tetos atuais (MB) + uso de memória do cache (bytes).
+    pub pool_threads: usize,
+    pub disk_cap_mb: u64,
+    pub mem_cap_mb: u64,
+    pub mem_bytes: u64,
+}
+
+/// Monta as métricas derivadas dos contadores crus. Pura → testável sem estado.
+fn montar_metrics(
+    hit_mem: u64,
+    hit_disco: u64,
+    geradas: u64,
+    gen_ns: u64,
+    pool_threads: usize,
+    disk_cap_mb: u64,
+    mem_cap_mb: u64,
+    mem_bytes: u64,
+) -> ThumbMetrics {
+    let total = hit_mem + hit_disco + geradas;
+    let hit_rate = if total == 0 {
+        0.0
+    } else {
+        (hit_mem + hit_disco) as f64 / total as f64
+    };
+    let gen_medio_ms = if geradas == 0 {
+        0.0
+    } else {
+        (gen_ns as f64 / geradas as f64) / 1_000_000.0
+    };
+    ThumbMetrics {
+        hit_mem,
+        hit_disco,
+        geradas,
+        total,
+        hit_rate,
+        gen_medio_ms,
+        pool_threads,
+        disk_cap_mb,
+        mem_cap_mb,
+        mem_bytes,
+    }
+}
+
+/// Snapshot das métricas do gerador de thumbnail (pro painel/relatório de perf).
+#[tauri::command]
+pub fn fs_thumb_metrics() -> ThumbMetrics {
+    let mem_bytes = cache_mem().lock().map(|c| c.bytes as u64).unwrap_or(0);
+    montar_metrics(
+        MET_HIT_MEM.load(Ordering::Relaxed),
+        MET_HIT_DISCO.load(Ordering::Relaxed),
+        MET_GERADAS.load(Ordering::Relaxed),
+        MET_GEN_NS.load(Ordering::Relaxed),
+        thumb_pool().current_num_threads(),
+        DISK_CAP_MB.load(Ordering::Relaxed),
+        MEM_CAP_MB.load(Ordering::Relaxed),
+        mem_bytes,
+    )
+}
+
+/// Zera os contadores (pra rodar um baseline limpo antes de medir).
+#[tauri::command]
+pub fn fs_thumb_metrics_reset() {
+    MET_HIT_MEM.store(0, Ordering::Relaxed);
+    MET_HIT_DISCO.store(0, Ordering::Relaxed);
+    MET_GERADAS.store(0, Ordering::Relaxed);
+    MET_GEN_NS.store(0, Ordering::Relaxed);
 }
 
 /// Chave do cache: blake3(path | mtime_nanos | size | maxSize). `maxSize` entra
@@ -2077,6 +2171,28 @@ mod tests {
         ));
         let (_, _, webp) = resize_encode(&img, 256).unwrap();
         assert_eq!(webp_dims(&webp), (256, 171)); // 300×200 → maior lado 256
+    }
+
+    // --- Métricas de perf (#740 F5) ---
+
+    #[test]
+    fn metrics_calcula_hit_rate_e_gen_medio() {
+        // 6 hits mem + 2 disco + 2 geradas = 10 total → hit_rate 0.8.
+        // gen_ns = 2 geradas * 30ms = 60_000_000 ns → gen_medio 30ms.
+        let m = montar_metrics(6, 2, 2, 60_000_000, 8, 1024, 96, 12345);
+        assert_eq!(m.total, 10);
+        assert!((m.hit_rate - 0.8).abs() < 1e-9);
+        assert!((m.gen_medio_ms - 30.0).abs() < 1e-9);
+        assert_eq!(m.pool_threads, 8);
+        assert_eq!(m.mem_bytes, 12345);
+    }
+
+    #[test]
+    fn metrics_sem_pedidos_nao_divide_por_zero() {
+        let m = montar_metrics(0, 0, 0, 0, 4, 1024, 96, 0);
+        assert_eq!(m.total, 0);
+        assert_eq!(m.hit_rate, 0.0);
+        assert_eq!(m.gen_medio_ms, 0.0);
     }
 
     // --- Mutações (#679 S3) — em tmpdir real, sem tocar a Lixeira do SO ---
