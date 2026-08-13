@@ -32,7 +32,7 @@ impl ScreenInfo {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BotaoMouse {
     Left,
@@ -42,7 +42,7 @@ pub enum BotaoMouse {
 
 /// Tecla: caractere Unicode OU tecla nomeada (subconjunto comum + modificadores).
 /// O injetor mapeia pro `enigo::Key`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "k", rename_all = "camelCase")]
 pub enum Tecla {
     Char { c: char },

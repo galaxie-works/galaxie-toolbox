@@ -36,7 +36,8 @@ pub mod session;
 pub use bridge::{FrameBridge, FrameFim};
 pub use command::{canal_de_comandos, CommandChannel, CommandReceiver, EncoderCommand};
 pub use control::{
-    decode, encode_chunk, encode_control, CapabilityPolicy, ControlError, ControlMessage, Frame,
+    decode, encode_chunk, encode_control, encode_input, CapabilityPolicy, ControlError,
+    ControlMessage, Frame,
 };
 pub use frame::{canal_de_frames, CodedFrame, CodedFrameSource, DummyFrameSource, FrameSender};
 pub use input::{BotaoMouse, InputEvent, ScreenInfo, Tecla};

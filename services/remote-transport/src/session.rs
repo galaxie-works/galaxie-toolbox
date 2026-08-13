@@ -12,7 +12,8 @@ use std::time::Instant;
 
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::ChannelId;
-use str0m::media::{Direction, Frequency, MediaKind, MediaTime, Mid};
+use str0m::format::CodecExtra;
+use str0m::media::{Direction, Frequency, KeyframeRequestKind, MediaKind, MediaTime, Mid};
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc};
 
@@ -72,8 +73,23 @@ pub enum Passo {
 pub enum EventoSessao {
     Conectada,
     Desconectada,
+    /// O DataChannel `controle` terminou o handshake e já aceita escrita.
+    ControleAberto,
     /// Dado recebido pelo datachannel de controle (input/clipboard/arquivo).
     Controle(Vec<u8>),
+    /// Access unit H.264 Annex-B completa recebida do peer.
+    Video(CodedFrame),
+}
+
+fn frame_h264_recebido(d: str0m::media::MediaData) -> Option<CodedFrame> {
+    let CodecExtra::H264(extra) = d.codec_extra else {
+        return None;
+    };
+    Some(CodedFrame::new(
+        d.data,
+        d.time.as_micros(),
+        extra.is_keyframe,
+    ))
 }
 
 pub struct Transport {
@@ -116,6 +132,10 @@ impl Transport {
 
     pub fn stats(&self) -> &Stats {
         &self.stats
+    }
+
+    pub fn video_pronto(&self) -> bool {
+        self.mid_video.is_some()
     }
 
     /// (Offerer) monta o SDP offer com uma mídia de vídeo (envio, no host) + o
@@ -176,11 +196,26 @@ impl Transport {
         Ok(())
     }
 
+    /// Forma SDP do candidato local para o signaling trickle-ICE do app.
+    pub fn candidato_local_sdp(addr: SocketAddr) -> Result<String, TransportError> {
+        Candidate::host(addr, Protocol::Udp)
+            .map(|candidate| candidate.to_sdp_string())
+            .map_err(|e| TransportError::Candidato(e.to_string()))
+    }
+
     /// Adiciona um candidato ICE REMOTO recebido via signaling.
     pub fn candidato_remoto(&mut self, addr: SocketAddr) -> Result<(), TransportError> {
         let c = Candidate::host(addr, Protocol::Udp)
             .map_err(|e| TransportError::Candidato(e.to_string()))?;
         self.rtc.add_remote_candidate(c);
+        Ok(())
+    }
+
+    /// Adiciona o candidato remoto na forma SDP produzida por `str0m`.
+    pub fn candidato_remoto_sdp(&mut self, candidate: &str) -> Result<(), TransportError> {
+        let candidate = Candidate::from_sdp_string(candidate)
+            .map_err(|e| TransportError::Candidato(e.to_string()))?;
+        self.rtc.add_remote_candidate(candidate);
         Ok(())
     }
 
@@ -229,6 +264,15 @@ impl Transport {
         Ok(())
     }
 
+    /// Pede um novo IDR ao host depois de perda/atraso no consumidor local.
+    pub fn pedir_keyframe_remoto(&mut self) -> Result<(), TransportError> {
+        let mid = self.mid_video.ok_or(TransportError::SemVideo)?;
+        let mut writer = self.rtc.writer(mid).ok_or(TransportError::SemVideo)?;
+        writer
+            .request_keyframe(None, KeyframeRequestKind::Pli)
+            .map_err(|e| TransportError::Rtc(e.to_string()))
+    }
+
     /// Entrega um datagrama UDP recebido pra dentro do str0m.
     pub fn receber_udp(
         &mut self,
@@ -271,15 +315,39 @@ impl Transport {
 
     fn traduzir_evento(&mut self, ev: Event) -> Passo {
         match ev {
+            Event::Connected => Passo::Evento(EventoSessao::Conectada),
+            Event::MediaAdded(media) => {
+                match media.kind {
+                    MediaKind::Video => self.mid_video = Some(media.mid),
+                    MediaKind::Audio => self.mid_audio = Some(media.mid),
+                }
+                Passo::Aguardar(Instant::now())
+            }
+            Event::ChannelOpen(id, label) if label == "controle" => {
+                self.canal_controle = Some(id);
+                Passo::Evento(EventoSessao::ControleAberto)
+            }
+            Event::ChannelClose(id) if Some(id) == self.canal_controle => {
+                self.canal_controle = None;
+                Passo::Evento(EventoSessao::Desconectada)
+            }
             Event::IceConnectionStateChange(estado) => {
                 use str0m::IceConnectionState::*;
                 match estado {
                     Connected | Completed => Passo::Evento(EventoSessao::Conectada),
                     Disconnected => Passo::Evento(EventoSessao::Desconectada),
-                    _ => Passo::Evento(EventoSessao::Conectada),
+                    _ => Passo::Aguardar(Instant::now()),
                 }
             }
             Event::ChannelData(d) => Passo::Evento(EventoSessao::Controle(d.data)),
+            Event::MediaData(d) if Some(d.mid) == self.mid_video => {
+                if let Some(frame) = frame_h264_recebido(d) {
+                    self.stats.registrar_frame(frame.len());
+                    Passo::Evento(EventoSessao::Video(frame))
+                } else {
+                    Passo::Aguardar(Instant::now())
+                }
+            }
             // PLI/keyframe request do peer → pede IDR ao encoder (coalescido).
             Event::KeyframeRequest(_) => {
                 self.comando_encoder.pedir_keyframe();
