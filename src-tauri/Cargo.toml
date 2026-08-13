@@ -68,10 +68,6 @@ webp = "0.3"
 # O cache em disco usa blake3 (já acima) pra chavear por path|mtime|size. `lru` é
 # o LRU byte-limitado da camada de memória.
 lru = "0.12"
-# Remote S4 (#687): wiring do transporte/captura existente para o app Tauri.
-# O vídeo chega ao WebView por IPC raw; input usa o contrato congelado do S3.
-galaxie-remote-transport = { path = "../services/remote-transport", features = ["webrtc", "input"] }
-galaxie-remote-capture = { path = "../services/remote-capture" }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"

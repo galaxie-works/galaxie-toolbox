@@ -10,7 +10,6 @@ mod gdrive;
 mod graph;
 mod lock_screen;
 mod onedrive;
-mod remote;
 mod salvar_pdf;
 mod system;
 mod telemetry;
@@ -1866,7 +1865,6 @@ pub fn run() {
         )
         .manage(Arc::new(TokenStore::default()))
         .manage(telemetry::TelemetryState::default())
-        .manage(remote::RemoteRuntime::default())
         // #680 Explorer S4: progresso de copy/move (cancel) + watchers ativos.
         .manage(fs_explorer::ProgressManager::default())
         .manage(fs_explorer::WatcherRegistry::default())
@@ -1974,10 +1972,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            remote::remote_session_start,
-            remote::remote_session_signal,
-            remote::remote_session_input,
-            remote::remote_session_end,
             login,
             logout,
             current_account,
