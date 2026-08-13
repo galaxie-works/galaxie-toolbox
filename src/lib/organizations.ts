@@ -1,4 +1,5 @@
 import type { PeopleContact } from "./people";
+import type { AppUser, OrgStatus } from "./types";
 
 export interface PeopleOrg {
   id: string;
@@ -71,6 +72,61 @@ export function orgContratadaDoDominio(
 /** Atalho booleano do [`orgContratadaDoDominio`]. */
 export function dominioEhCliente(orgs: PeopleOrg[], dominio: string): boolean {
   return orgContratadaDoDominio(orgs, dominio) !== null;
+}
+
+/**
+ * Domínio efetivo de um login: o `domain` do token (só work) tem prioridade;
+ * senão deriva do sufixo do e-mail. Normalizado (case/scheme/www-insensível).
+ */
+function dominioDoLogin(
+  user: Pick<AppUser, "email"> & { domain?: string | null },
+): string {
+  if (user.domain) return normalizeDomain(user.domain);
+  const email = user.email?.trim().toLocaleLowerCase() ?? "";
+  const arroba = email.lastIndexOf("@");
+  return arroba > 0 ? normalizeDomain(email.slice(arroba + 1)) : "";
+}
+
+/**
+ * #700 2b (parte 2): deriva o `OrgStatus` CANÔNICO (#698/PS5) de um login já
+ * autenticado a partir do REGISTRO DE ORGS — a fonte única (`contratada` +
+ * `dominiosVerificados`, slices 2a/2b-parte1). É o "deriva do registro de orgs"
+ * que o api.ts:156 promete: o Rust/PS0 entrega provider + accountKind do token; a
+ * refinação contracted/uncontracted/none (que precisa da flag do config, TS-side)
+ * mora aqui e alimenta o roteamento dos 3 estados no App.tsx.
+ *
+ * - **work** de org CONTRATADA+VERIFICADA → `contracted` (tier org).
+ * - **work** de empresa não-cliente → `uncontracted` (onboarding lead-gen #698).
+ * - **personal** cujo domínio bate numa org contratada+verificada → `contracted`
+ *   (ABSORÇÃO JIT: quem logou pessoal mas é do domínio do cliente entra no tier org).
+ * - **personal** sem match → `none` (só "minhas coisas").
+ *
+ * Gateado em domínio VERIFICADO (nunca sufixo cru) e na flag do admin — sem isso,
+ * qualquer um com e-mail `@cliente.com` se auto-promoveria a org.
+ */
+export function resolverOrgStatus(
+  user: Pick<AppUser, "email" | "accountKind"> & { domain?: string | null },
+  orgs: PeopleOrg[],
+): OrgStatus {
+  const cliente = dominioEhCliente(orgs, dominioDoLogin(user));
+  if (user.accountKind === "work") {
+    return cliente ? "contracted" : "uncontracted";
+  }
+  return cliente ? "contracted" : "none";
+}
+
+/**
+ * #700 2b (parte 2): a org na qual uma conta PESSOAL é absorvida (JIT), ou `null`.
+ * Só conta `personal` é absorvida — a `work` já É a org (é gateada pelo #781, não
+ * absorvida). É o alvo que o passo de migração de config pessoal→org (seam #555)
+ * consome para saber PARA ONDE mover o estado do usuário.
+ */
+export function orgAbsorvente(
+  user: Pick<AppUser, "email" | "accountKind"> & { domain?: string | null },
+  orgs: PeopleOrg[],
+): PeopleOrg | null {
+  if (user.accountKind !== "personal") return null;
+  return orgContratadaDoDominio(orgs, dominioDoLogin(user));
 }
 
 function normalizeOrganizationName(value: string | null | undefined): string {
