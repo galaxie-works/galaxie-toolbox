@@ -105,6 +105,15 @@ fn dominio_iniciar_verificacao(dominio: String) -> Result<domain_claim::DesafioD
     domain_claim::iniciar_desafio(&dominio)
 }
 
+/// Domain-claim (PS7 #700, slice 2): verifica a posse lendo o TXT do domínio e
+/// conferindo `galaxie-verify=<token>`. DNS é bloqueante → spawn_blocking.
+#[tauri::command]
+async fn dominio_verificar(dominio: String, registro: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || domain_claim::verificar_dominio(&dominio, &registro))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn logout(state: State<'_, Store>) -> Result<(), String> {
     let store = state.inner().clone();
@@ -2040,6 +2049,7 @@ pub fn run() {
             gdrive_settings_read,
             gdrive_settings_write,
             dominio_iniciar_verificacao,
+            dominio_verificar,
             cr_salvar_contatos,
             cr_subpastas,
             cr_mail_folders,

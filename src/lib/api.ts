@@ -3043,6 +3043,18 @@ export async function iniciarVerificacaoDominio(
   return invoke<DesafioDominio>("dominio_iniciar_verificacao", { dominio });
 }
 
+/**
+ * Domain-claim slice 2 (#700): verifica a posse lendo o TXT do domínio e
+ * conferindo o `registro` (`galaxie-verify=<token>`). `true` = posse provada.
+ */
+export async function verificarDominio(
+  dominio: string,
+  registro: string,
+): Promise<boolean> {
+  if (!inTauri()) return false;
+  return invoke<boolean>("dominio_verificar", { dominio, registro });
+}
+
 /** Ajusta os tetos do cache de thumbnail (#737): disco/memória em MB. */
 export async function configurarCacheThumbnail(
   diskMb: number,
