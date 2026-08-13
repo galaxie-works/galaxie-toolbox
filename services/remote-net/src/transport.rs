@@ -295,4 +295,38 @@ mod tests {
         assert!(pin.verifies(&certificate));
         assert!(!CertificatePin([7; 32]).verifies(&certificate));
     }
+
+    #[test]
+    fn matching_pin_cannot_replace_web_pki_validation() {
+        let invalid_der = b"not a valid X.509 certificate";
+        let pin = CertificatePin(Sha256::digest(invalid_der).into());
+        let certificate = CertificateDer::from(invalid_der.as_slice());
+        assert!(
+            pin.verifies(&certificate),
+            "test precondition: pin must match"
+        );
+
+        let mut roots = RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let web_pki =
+            rustls::client::WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider)
+                .build()
+                .unwrap();
+        let verifier = PinnedServerVerifier { web_pki, pin };
+        let server_name = ServerName::try_from("remote.example").unwrap();
+
+        assert!(
+            verifier
+                .verify_server_cert(
+                    &certificate,
+                    &[],
+                    &server_name,
+                    &[],
+                    UnixTime::since_unix_epoch(Duration::from_secs(1_700_000_000)),
+                )
+                .is_err(),
+            "matching leaf pin bypassed invalid PKI"
+        );
+    }
 }
