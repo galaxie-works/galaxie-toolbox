@@ -10,6 +10,14 @@ mod gdrive;
 mod graph;
 mod lock_screen;
 mod onedrive;
+// #809/#834: o backend Remote real (str0m→OpenSSL) só compila com a feature
+// `remote`. Sem ela (build default do Wagner/CI, sem OpenSSL), carrega o stub:
+// mesmos comandos `remote_*`, mas retornam "não compilado" → o front degrada.
+#[cfg(feature = "remote")]
+mod remote;
+#[cfg(not(feature = "remote"))]
+#[path = "remote_stub.rs"]
+mod remote;
 mod salvar_pdf;
 mod system;
 mod telemetry;
@@ -1865,6 +1873,7 @@ pub fn run() {
         )
         .manage(Arc::new(TokenStore::default()))
         .manage(telemetry::TelemetryState::default())
+        .manage(remote::RemoteRuntime::default())
         // #680 Explorer S4: progresso de copy/move (cancel) + watchers ativos.
         .manage(fs_explorer::ProgressManager::default())
         .manage(fs_explorer::WatcherRegistry::default())
@@ -1972,6 +1981,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            remote::remote_session_start,
+            remote::remote_session_signal,
+            remote::remote_session_input,
+            remote::remote_session_end,
             login,
             logout,
             current_account,
