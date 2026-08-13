@@ -876,6 +876,32 @@ export function ContentPane({
             setSelecao((s) => selecionarTudo(paths, s));
           }
           break;
+        // #680: Ctrl+C/X/V ligam nos MESMOS handlers do menu (área de
+        // transferência interna do shell) — copiar/recortar a seleção, colar na
+        // pasta atual (o colar já passa pelo fluxo de conflito/progresso).
+        case "c":
+        case "C":
+          if (ev.ctrlKey || ev.metaKey) {
+            ev.preventDefault();
+            const alvos = Array.from(selecao.selecionados);
+            if (alvos.length > 0) acoesMenu.copiar(alvos);
+          }
+          break;
+        case "x":
+        case "X":
+          if (ev.ctrlKey || ev.metaKey) {
+            ev.preventDefault();
+            const alvos = Array.from(selecao.selecionados);
+            if (alvos.length > 0) acoesMenu.recortar(alvos);
+          }
+          break;
+        case "v":
+        case "V":
+          if (ev.ctrlKey || ev.metaKey) {
+            ev.preventDefault();
+            acoesMenu.colar(currentPath);
+          }
+          break;
         case "F2": {
           ev.preventDefault();
           const alvo = atual < 0 ? undefined : itens[atual];
@@ -912,6 +938,8 @@ export function ContentPane({
       abrirItem,
       comRefresh,
       renomeando,
+      acoesMenu,
+      currentPath,
     ],
   );
 
