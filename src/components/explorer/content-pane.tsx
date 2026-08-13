@@ -1045,6 +1045,19 @@ export function ContentPane({
           <Input
             value={filtro}
             onChange={(e) => setFiltro(e.target.value)}
+            onKeyDown={(e) => {
+              // ESC no filtro: com texto, LIMPA e não propaga (senão o ESC da
+              // lista limparia a seleção junto); vazio, só tira o foco do campo.
+              if (e.key === "Escape") {
+                if (filtro) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setFiltro("");
+                } else {
+                  e.currentTarget.blur();
+                }
+              }
+            }}
             placeholder={t.arquivos.filtrar}
             aria-label={t.arquivos.filtrar}
             className="h-8 pl-8 pr-8"
