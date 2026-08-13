@@ -30,11 +30,18 @@ const pt = {
     ajudaEmail: "Usamos o domínio do seu e-mail para identificar a sua organização.",
     entrar: "Entrar com Microsoft",
     entrando: "Abrindo o login da Microsoft...",
-    // #695 (app público): botões de provider — a porta de entrada.
-    continuarMicrosoft: "Continuar com Microsoft",
-    // #746: 2º caminho Microsoft — conta pessoal (Outlook/Hotmail/Live).
+    // #695/#781: passo 1 — botões de provedor.
+    continuarMicrosoft: "Continuar com a Microsoft",
+    continuarGoogle: "Continuar com o Google",
+    // #746: legado (conta pessoal flat) — superado pelo passo 2 do #781.
     continuarMicrosoftPessoal: "Conta pessoal Microsoft",
-    continuarGoogle: "Continuar com Google",
+    // #781: passo 2 (Microsoft) — tipo de conta + voltar.
+    contaPessoalTitulo: "Conta pessoal",
+    contaPessoalDesc: "Para Outlook, Hotmail, Live ou MSN.",
+    contaTrabalhoTitulo: "Conta de trabalho",
+    contaTrabalhoDesc:
+      "Para e-mail profissional. Requer que sua empresa seja cliente da gestão Microsoft 365 Copilot da GALAXIE.",
+    voltar: "Voltar",
     // {senha} recebe destaque em negrito
     aviso: "O login acontece na página oficial da Microsoft. A GALAXIE {senha} — recebe só a autorização de acesso.",
     avisoSenha: "nunca vê sua senha",
@@ -1956,11 +1963,18 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     ajudaEmail: "We use your email domain to identify your organization.",
     entrar: "Sign in with Microsoft",
     entrando: "Opening the Microsoft sign-in...",
-    // #695 (public app): provider buttons — the front door.
+    // #695/#781: step 1 — provider buttons.
     continuarMicrosoft: "Continue with Microsoft",
-    // #746: 2nd Microsoft path — personal account (Outlook/Hotmail/Live).
-    continuarMicrosoftPessoal: "Personal Microsoft account",
     continuarGoogle: "Continue with Google",
+    // #746: legacy (flat personal) — superseded by #781 step 2.
+    continuarMicrosoftPessoal: "Personal Microsoft account",
+    // #781: step 2 (Microsoft) — account type + back.
+    contaPessoalTitulo: "Personal account",
+    contaPessoalDesc: "For Outlook, Hotmail, Live or MSN.",
+    contaTrabalhoTitulo: "Work account",
+    contaTrabalhoDesc:
+      "For your work email. Requires your company to be a GALAXIE Microsoft 365 Copilot management client.",
+    voltar: "Back",
     aviso:
       "Sign-in happens on Microsoft's official page. GALAXIE {senha} — it only gets an access authorization.",
     avisoSenha: "never sees your password",
