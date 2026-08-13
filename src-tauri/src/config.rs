@@ -215,4 +215,14 @@ mod tests {
             assert_ne!(CLIENT_ID, CLIENT_ID_PESSOAL);
         }
     }
+
+    #[test]
+    fn google_scopes_autorizam_a_pasta_de_dados_do_app() {
+        assert!(
+            GOOGLE_SCOPES
+                .split_ascii_whitespace()
+                .any(|scope| scope == "https://www.googleapis.com/auth/drive.appdata"),
+            "o backend usa appDataFolder, mas o fluxo Google nao pede drive.appdata"
+        );
+    }
 }
