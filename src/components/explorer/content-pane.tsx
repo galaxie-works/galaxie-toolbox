@@ -1015,7 +1015,9 @@ export function ContentPane({
       {/* Cabeçalho da tabela (só em Detalhes) */}
       {modo === "detalhes" && (
         <div
-          className="grid shrink-0 items-center gap-2 border-b px-2 pb-1"
+          // #768: alinha com o recuo das linhas (px-1.5 do wrapper + px-2 do
+          // conteúdo da linha = 14px) pra as colunas do cabeçalho baterem.
+          className="grid shrink-0 items-center gap-2 border-b px-3.5 pb-1"
           style={{ gridTemplateColumns: COLS_DETALHES }}
         >
           <CabecalhoOrd
@@ -1111,6 +1113,12 @@ export function ContentPane({
                 <div
                   key={vr.key}
                   data-index={vr.index}
+                  // #768: nas views de 1 item por linha (detalhes/lista) a linha
+                  // vai edge-to-edge; um respiro lateral (px-1.5) impede que o
+                  // realce da seleção (bg + cantos arredondados) seja cortado
+                  // rente à borda/scrollbar. Grade fica sem — os tiles já vêm
+                  // recuados pelo grid, e o marquee da grade depende do padX=4.
+                  className={modo === "grade" ? undefined : "px-1.5"}
                   style={{
                     position: "absolute",
                     top: 0,
