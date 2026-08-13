@@ -1450,6 +1450,20 @@ const pt = {
     descricao: "Acesso e suporte remoto, direto do seu espaço GALAXIE.",
   },
 
+  // #687: tela GALAXIE Remote (sessão assistida) — host + controlador.
+  remote: {
+    titulo: "Acesso remoto",
+    permitirSuporte: "Permitir suporte",
+    seuCodigo: "Seu código de sessão",
+    digiteCodigo: "Digite o código da sessão",
+    conectar: "Conectar",
+    conectando: "Conectando…",
+    sessaoAtiva: "Sessão ativa",
+    encerrar: "Encerrar sessão",
+    telaCheia: "Tela cheia",
+    codigoInvalido: "Código inválido ou expirado",
+  },
+
   caminhosLongos: {
     titulo: "Caminhos longos",
     descricao:
@@ -3361,6 +3375,20 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   emBreveRemote: {
     titulo: "GALAXIE Remote is on its way",
     descricao: "Remote access and support, right from your GALAXIE space.",
+  },
+
+  // #687: GALAXIE Remote screen (assisted session) — host + controller.
+  remote: {
+    titulo: "Remote access",
+    permitirSuporte: "Allow support",
+    seuCodigo: "Your session code",
+    digiteCodigo: "Enter session code",
+    conectar: "Connect",
+    conectando: "Connecting…",
+    sessaoAtiva: "Session active",
+    encerrar: "End session",
+    telaCheia: "Fullscreen",
+    codigoInvalido: "Invalid or expired code",
   },
 
   caminhosLongos: {
