@@ -60,6 +60,15 @@ jobs:
       - name: Testes de componente (vitest)
         run: pnpm test:component
 
+      # #786: testes em NAVEGADOR REAL (vitest browser-mode / Playwright chromium)
+      # — foco/ponteiro de verdade, o único jeito de guardar a recorrência do
+      # erase do compose. Precisa do browser instalado no runner.
+      - name: Instalar chromium (Playwright)
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Testes em navegador (vitest browser-mode)
+        run: pnpm test:browser
+
   # Rust/Tauri: cargo check + testes. Roda no windows-latest (mesma plataforma do
   # release, evita as libs de sistema que o Tauri exige no Linux). O rust-cache
   # deixa rápido quando o Rust não mudou.
