@@ -423,6 +423,21 @@ function AppInner() {
     void revelarAppEFecharSplash();
   }, [bootPronto, videoPronto]);
 
+  // #821 (P0): a fronteira de conta (resetSessaoCompleta) zera o STORE
+  // tenant-scoped, mas as abas do Navigator vivem em useState LOCAL do App — que
+  // NÃO desmonta no logout→login. Sem isto a conta nova herda as abas da anterior
+  // (a aba Bridge que vazou pra conta Google). Zera o estado in-memory do
+  // Navegador: abas, aba ativa e a pilha de fechadas (senão Ctrl+Shift+T
+  // reabriria aba da conta anterior). O disco é purgado pelo resetSessaoNavegador
+  // (dentro do resetSessaoCompleta, parte do #821); as abas internas
+  // (Bridge/Files/Remote) reabrem sob demanda pelo rail, já gateadas pela
+  // capability da conta nova.
+  function resetNavegadorSessao() {
+    setAbas([]);
+    setAbaAtiva(null);
+    setFechadas([]);
+  }
+
   async function handleLogin(provider: api.AuthProvider, hint: string) {
     setLoginLoading(true);
     setError(null);
@@ -430,6 +445,7 @@ function AppInner() {
     // agenda, organizations, branding, memos Rust, fotos…) antes de trocar de
     // conta, pra a conta nova não herdar dado do tenant anterior.
     resetSessaoCompleta();
+    resetNavegadorSessao(); // #821: zera as abas in-memory da conta anterior
     try {
       // #695: `hint` = login_hint OPCIONAL; `provider` escolhe a porta (o backend
       // PS0/PS1 mapeia pro registration certo — org de produção vs pessoal).
@@ -920,6 +936,7 @@ function AppInner() {
     // #555 (P0): fronteira de conta — reset completo de sessão (inclui fotos,
     // reauth, mailbox, agenda, organizations, branding, memos Rust…).
     resetSessaoCompleta();
+    resetNavegadorSessao(); // #821: zera as abas in-memory da conta que saiu
     setUser(null);
     setEntrarComoPessoal(false); // #698: não herda o "entrar assim mesmo" pra próxima conta
     setSites([]);
@@ -933,6 +950,7 @@ function AppInner() {
     await api.logout();
     // #555 (P0): recuperação de bloqueio também sai da conta → reset completo.
     resetSessaoCompleta();
+    resetNavegadorSessao(); // #821: zera as abas in-memory da conta que saiu
     setUser(null);
     setEntrarComoPessoal(false); // #698: idem — reset da fronteira de conta
     setSites([]);
