@@ -52,7 +52,7 @@ import type {
 } from "./types";
 
 /** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
-function inTauri(): boolean {
+export function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
