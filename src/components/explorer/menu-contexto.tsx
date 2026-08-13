@@ -134,11 +134,14 @@ export function ComMenu({
  */
 export function RenameInput({
   inicial,
+  ehPasta = false,
   onConfirmar,
   onCancelar,
   className,
 }: {
   inicial: string;
+  /** #714: pasta seleciona o nome TODO; arquivo, só a base (antes da extensão). */
+  ehPasta?: boolean;
   onConfirmar: (nome: string, opts: { mover: boolean; viaBlur: boolean }) => void;
   onCancelar: () => void;
   className?: string;
@@ -150,10 +153,25 @@ export function RenameInput({
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    el.focus();
-    const { base } = separarNomeExt(inicial);
-    el.setSelectionRange(0, base.length || inicial.length);
-  }, [inicial]);
+    // #714 (Wagner): quando o rename vem do ContextMenu do Radix, o menu ao FECHAR
+    // devolve o foco ao trigger — roubando o foco do input recém-montado. rAF
+    // dobrado foca DEPOIS desse restore, então o cursor cai no campo sem clique.
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        el.focus();
+        // Pasta: nome todo. Arquivo: só a base (dotfiles/sem-ponto = nome todo).
+        const fim = ehPasta
+          ? inicial.length
+          : separarNomeExt(inicial).base.length || inicial.length;
+        el.setSelectionRange(0, fim);
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      cancelAnimationFrame(raf2);
+    };
+  }, [inicial, ehPasta]);
 
   return (
     <input

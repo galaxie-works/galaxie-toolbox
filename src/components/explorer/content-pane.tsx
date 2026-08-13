@@ -667,6 +667,14 @@ export function ContentPane({
           else void comRefresh(() => paraLixeira(alvos));
           break;
         }
+        case "Escape": {
+          // #714 (Wagner): ESC na lista LIMPA a seleção. Se algo ficou "renomeando"
+          // sem o input focado (foco escapou), cancela o rename também.
+          ev.preventDefault();
+          if (renomeando) setRenomeando(null);
+          setSelecao(SELECAO_VAZIA);
+          break;
+        }
         default:
           break;
       }
@@ -680,6 +688,7 @@ export function ContentPane({
       itens,
       abrirItem,
       comRefresh,
+      renomeando,
     ],
   );
 
@@ -725,6 +734,7 @@ export function ContentPane({
     return (
       <RenameInput
         inicial={entry.name}
+        ehPasta={entry.isDir}
         onConfirmar={(nome, opts) => confirmarRename(entry, nome, opts)}
         onCancelar={() => setRenomeando(null)}
       />
