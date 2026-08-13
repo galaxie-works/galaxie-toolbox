@@ -5,6 +5,7 @@ mod config;
 mod estado;
 mod favicon;
 mod fs_explorer;
+mod gdrive;
 mod graph;
 mod lock_screen;
 mod onedrive;
@@ -723,6 +724,27 @@ async fn onedrive_settings_write(
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         graph::onedrive_settings_write(&store, &content, e_tag.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Config privada do usuário Google no Drive `appDataFolder` (PS4 #697). Não usa
+/// o Store do MS: o token vem da sessão Google (PS3).
+#[tauri::command]
+async fn gdrive_settings_read() -> Result<gdrive::GDriveSettingsReadResult, String> {
+    tauri::async_runtime::spawn_blocking(gdrive::gdrive_settings_read)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn gdrive_settings_write(
+    content: String,
+    revision: Option<String>,
+) -> Result<gdrive::GDriveSettingsWriteResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        gdrive::gdrive_settings_write(&content, revision.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1988,6 +2010,8 @@ pub fn run() {
             cr_compartilhar_onedrive,
             onedrive_settings_read,
             onedrive_settings_write,
+            gdrive_settings_read,
+            gdrive_settings_write,
             cr_salvar_contatos,
             cr_subpastas,
             cr_mail_folders,
