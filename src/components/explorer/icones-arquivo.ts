@@ -89,7 +89,12 @@ const POR_EXTENSAO: Map<string, IconeArquivo> = new Map([
 const PASTA: IconeArquivo = { Icon: Folder, cor: "text-sky-500" };
 const GENERICO: IconeArquivo = { Icon: File, cor: "text-muted-foreground" };
 
-/** Extensões que ganham miniatura (thumbnail) via `convertFileSrc`. */
+/**
+ * Extensões RASTER que ganham miniatura (thumbnail). #820 (P0): `svg` (e qualquer
+ * vetor) SAIU — rasterizar um SVG grande (o repro do Wagner era de 23 MB) trava a
+ * UI. Vetor recebe ícone de TIPO (como o Explorer do Windows), nunca thumbnail. Só
+ * formato raster real entra no pipeline (casa com o allowlist do `fs_thumbnail`).
+ */
 const EXT_IMAGEM = new Set([
   "png",
   "jpg",
@@ -98,7 +103,6 @@ const EXT_IMAGEM = new Set([
   "bmp",
   "webp",
   "ico",
-  "svg",
 ]);
 
 function extDe(e: FsEntry): string {
