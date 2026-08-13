@@ -32,6 +32,8 @@ const pt = {
     entrando: "Abrindo o login da Microsoft...",
     // #695 (app público): botões de provider — a porta de entrada.
     continuarMicrosoft: "Continuar com Microsoft",
+    // #746: 2º caminho Microsoft — conta pessoal (Outlook/Hotmail/Live).
+    continuarMicrosoftPessoal: "Conta pessoal Microsoft",
     continuarGoogle: "Continuar com Google",
     // {senha} recebe destaque em negrito
     aviso: "O login acontece na página oficial da Microsoft. A GALAXIE {senha} — recebe só a autorização de acesso.",
@@ -1924,6 +1926,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     entrando: "Opening the Microsoft sign-in...",
     // #695 (public app): provider buttons — the front door.
     continuarMicrosoft: "Continue with Microsoft",
+    // #746: 2nd Microsoft path — personal account (Outlook/Hotmail/Live).
+    continuarMicrosoftPessoal: "Personal Microsoft account",
     continuarGoogle: "Continue with Google",
     aviso:
       "Sign-in happens on Microsoft's official page. GALAXIE {senha} — it only gets an access authorization.",

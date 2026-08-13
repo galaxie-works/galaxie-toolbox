@@ -91,8 +91,9 @@ export function LoginScreen({
         </div>
 
         <div className="mt-9">
-          {/* Botões de provider — a porta de entrada (#695). Microsoft cobre org
-              e conta pessoal (o backend escolhe o registration); Google é PS3. */}
+          {/* Botões de provider — a porta de entrada (#695/#746). 3 caminhos:
+              Microsoft organização, Microsoft conta pessoal (Outlook/Hotmail/Live)
+              e Google. O backend escolhe o registration pelo provider/tenant. */}
           <div className="flex flex-col gap-2.5">
             <Button
               size="lg"
@@ -111,6 +112,16 @@ export function LoginScreen({
                   {t.login.continuarMicrosoft}
                 </>
               )}
+            </Button>
+            <Button
+              variant="outline"
+              size="lg"
+              className="w-full gap-3 text-[15px]"
+              disabled={loading}
+              onClick={() => onLogin("microsoft-personal", email.trim())}
+            >
+              <MsLogo />
+              {t.login.continuarMicrosoftPessoal}
             </Button>
             <Button
               variant="outline"

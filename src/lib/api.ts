@@ -132,7 +132,10 @@ const MOCK_DETALHES: Record<string, { files: number; bytes: number }> = {
  */
 /** Provider de identidade (#692 app público). `microsoft` = org + pessoal (o
  *  backend PS0/PS1 escolhe o app-registration pelo tipo de conta); `google` = PS3. */
-export type AuthProvider = "microsoft" | "google";
+// #746: `microsoft-personal` força a conta pessoal (tenant "consumers") — o
+// backend (hook do Confucius) mapeia pro registration pessoal via client_id_para.
+// `microsoft` = org (o backend deriva o tenant do e-mail). `google` = PS3.
+export type AuthProvider = "microsoft" | "microsoft-personal" | "google";
 
 /**
  * `email` agora é `login_hint` OPCIONAL (#695): o provider é a porta, não o e-mail.
