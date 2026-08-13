@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { telModuloAberto, telSessaoIniciada } from "@/lib/telemetria";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { registrarHandlersGlobais } from "@/lib/log";
@@ -21,6 +21,7 @@ import {
   persistLastSession,
   tabsToSleep,
   type AbaBrowser,
+  type TelaInterna,
 } from "@/lib/navigator-tabs";
 import {
   loadHistorico,
@@ -550,6 +551,74 @@ function AppInner() {
     setTela("navegador");
   }
 
+  /**
+   * #719 (SH1): abre (ou foca, se já aberta) a tela interna Bridge/Files/Remote
+   * como ABA do Navigator. Foca-se-já-aberto por `tela` (não duplica). Sempre
+   * aterrissa no Navigator (é onde a aba vive). A tela React é montada dentro do
+   * slot de conteúdo do Navigator (keep-alive), não é webview.
+   */
+  function abrirTelaInterna(telaInterna: TelaInterna) {
+    const now = Date.now();
+    const nome =
+      telaInterna === "control-room"
+        ? t.sidebar.bridge
+        : telaInterna === "arquivos"
+          ? t.sidebar.files
+          : t.sidebar.remote;
+    const existente = abas.find(
+      (a) => a.tipo === "interna" && a.tela === telaInterna,
+    );
+    const id = existente ? existente.id : `interna-${telaInterna}-${now}`;
+    setAbas((prev) => {
+      const rebaixadas = prev.map((tab) =>
+        tab.estado === "dormindo"
+          ? tab
+          : { ...tab, estado: "fundo" as const, reativando: false },
+      );
+      // Foca a existente (não duplica) ou anexa a nova aba interna.
+      if (prev.some((a) => a.id === id)) {
+        return orderPinnedFirst(
+          rebaixadas.map((tab) =>
+            tab.id === id
+              ? { ...tab, estado: "ativa" as const, ultimoAcesso: now }
+              : tab,
+          ),
+        );
+      }
+      return orderPinnedFirst([
+        ...rebaixadas,
+        {
+          id,
+          nome,
+          url: `galaxie://tela/${telaInterna}`,
+          estado: "ativa",
+          ultimoAcesso: now,
+          tipo: "interna",
+          tela: telaInterna,
+        },
+      ]);
+    });
+    setAbaAtiva(id);
+    setTela("navegador");
+  }
+
+  /**
+   * #719 (SH1): roteia navegação de tela. Bridge/Files/Remote viram ABAS do
+   * Navigator (foca-se-aberto); todo o resto continua troca de tela top-level.
+   * Ponto único usado pelo rail (SH0), pelo Atoms e pelo command "Ir para".
+   */
+  function navegarPara(destino: Tela) {
+    if (
+      destino === "control-room" ||
+      destino === "arquivos" ||
+      destino === "remote"
+    ) {
+      abrirTelaInterna(destino);
+    } else {
+      setTela(destino);
+    }
+  }
+
   /** Restaura várias entradas de histórico como abas novas (#177). Ids únicos
    *  (Date.now pode repetir num mesmo tick); a última vira ativa. */
   function restaurarAbas(entradas: { url: string; nome: string }[]) {
@@ -906,6 +975,54 @@ function AppInner() {
           }[bridgeView]
         : null;
 
+  // #719 (SH1): renderiza a tela interna (Bridge/Files/Remote) de uma aba do
+  // Navigator. `user` já está estreitado a não-nulo aqui (passou o gate de auth).
+  // O App é dono das telas + props + keep-alive; o Navigator só encaixa o
+  // elemento no slot da aba. `ativa` = a aba é a atual (dá foco/polling à tela).
+  const renderTelaInterna = (
+    telaInterna: TelaInterna,
+    ativaTela: boolean,
+  ): ReactNode => {
+    switch (telaInterna) {
+      case "control-room":
+        return (
+          <ControlRoomScreen
+            // #555 (P0): key por conta — remonta a subárvore na troca de tenant,
+            // zerando estado local (preview/scroll/pastas). Só na troca de conta.
+            key={user.email}
+            user={user}
+            ativo={ativaTela}
+            onGrantPeopleAccess={() => {
+              // #695: re-login da MESMA conta pra conceder People (org/pessoal).
+              void handleLogin("microsoft", user.email);
+            }}
+            onReauthenticate={() => {
+              void logout();
+            }}
+            onAbrirLink={(url) => {
+              let nome = url;
+              try {
+                nome = new URL(url).hostname || url;
+              } catch {
+                /* url estranha: usa a própria string */
+              }
+              abrirUrlLivre(url, nome);
+            }}
+          />
+        );
+      case "arquivos":
+        return <ArquivosScreen />;
+      case "remote":
+        return (
+          <EmBreveScreen
+            titulo={t.emBreveRemote.titulo}
+            icone={TELAS.remote.icone}
+            descricao={t.emBreveRemote.descricao}
+          />
+        );
+    }
+  };
+
   return (
     /* #699 (PS6): TierProvider expõe o tier da conta (capabilities/orgStatus do
        PS0) pra qualquer feature checar sem prop-drill. O wrapper do sidebar é
@@ -922,7 +1039,7 @@ function AppInner() {
       <AppSidebar
         user={user}
         tela={tela}
-        onNavegar={setTela}
+        onNavegar={navegarPara}
         onLogout={logout}
         onAbrirUrl={abrirUrl}
       />
@@ -1006,85 +1123,58 @@ function AppInner() {
         {/* O navegador fica FORA do ScrollArea, em tela cheia e sem padding: o
             webview nativo ocupa toda a area medida, e quem rola e a propria
             pagina web, nao o nosso ScrollArea. */}
-        {/* Control room = cliente de e-mail: fica SEMPRE montado (keep-alive) e
-            apenas escondido quando não é a tela ativa. Antes ele desmontava ao
-            trocar de área e remontava ao voltar, recarregando tudo do Graph (e
-            vazando listeners/intervals a cada volta — "cada vez mais lento").
-            Mantendo montado, o estado (pastas, mensagens, scroll, iframes)
-            persiste e o retorno é instantâneo (#25). Fora do ScrollArea externo,
-            altura cheia, cada painel rola por dentro (como o navegador). */}
+        {/* #719 (SH1): o Navigator é o SHELL keep-alive — SEMPRE montado, só
+            escondido quando outra tela top-level (Settings/Apps/…) está ativa.
+            Bridge/Files/Remote agora vivem como ABAS INTERNAS aqui dentro; o
+            control-room mantém o keep-alive (#25) dentro do slot da aba (montado
+            enquanto a aba existir; retorno instantâneo entre trocas de aba). Fora
+            do ScrollArea: tela cheia, a webview/o conteúdo da aba ocupa a área
+            medida. `visivel=false` esconde todas as webviews (P0). */}
         <div
           className={cn(
-            "relative z-10 min-h-0 flex-1 p-4 pt-0",
-            tela !== "control-room" && "hidden"
+            "relative z-10 min-h-0 flex-1",
+            tela !== "navegador" && "hidden",
           )}
         >
-          <ControlRoomScreen
-            // #555 (P0): key por conta — na troca de tenant o email muda e o
-            // React REMONTA a subárvore, zerando TODO estado LOCAL de componente
-            // (preview/anexoEmail/scroll da lista/pastas expandidas/zoom/página do
-            // PDF) que não vive no store. Catch-all: complementa o reset de store
-            // sem enumerar useState. Só remonta na troca de conta, não de aba.
-            key={user.email}
-            user={user}
-            ativo={tela === "control-room"}
-            onGrantPeopleAccess={() => {
-              // #695: re-login da MESMA conta (já logada) pra conceder People —
-              // provider "microsoft" (org/pessoal; Google é PS3), hint = e-mail atual.
-              void handleLogin("microsoft", user.email);
+          <NavegadorScreen
+            abas={abas}
+            ativa={abaAtiva}
+            launcherNonce={launcherNonce}
+            visivel={tela === "navegador"}
+            renderTelaInterna={renderTelaInterna}
+            onTrocar={trocarAba}
+            onFechar={fecharAba}
+            onFecharOutras={fecharOutras}
+            onDormir={dormirAba}
+            onDormirOutras={dormirOutras}
+            onAlternarFixada={alternarFixada}
+            onAlternarManterAcordada={alternarManterAcordada}
+            onReativada={concluirReativacao}
+            onReordenar={reordenarAbas}
+            onAbrir={abrirAppAqui}
+            onNovaAba={novaAba}
+            onNovaAbaPrivada={novaAbaPrivada}
+            onReabrirFechada={reabrirFechada}
+            onNavegar={abrirUrlLivre}
+            onNavegarTela={navegarPara}
+            onIrParaBridgeView={(view) => {
+              // #657: deep-link — seta a sub-view do Bridge e abre a ABA do
+              // Bridge no Navigator (#719: era setTela("control-room")).
+              setBridgeView(view);
+              abrirTelaInterna("control-room");
             }}
-            onReauthenticate={() => {
-              void logout();
-            }}
-            onAbrirLink={(url) => {
-              let nome = url;
-              try {
-                nome = new URL(url).hostname || url;
-              } catch {
-                /* url estranha: usa a própria string */
-              }
-              abrirUrlLivre(url, nome);
-            }}
+            onRestaurarAbas={restaurarAbas}
+            sessaoAnteriorQtd={sessaoDispensada ? 0 : sessaoAnterior.length}
+            onRestaurarSessao={restaurarSessao}
+            onDispensarSessao={dispensarSessao}
+            historico={historico}
+            onLimparHistorico={limparHistoricoPeriodo}
+            modoPrivado={modoPrivado}
+            onAlternarModoPrivado={() => setModoPrivado((v) => !v)}
           />
         </div>
 
-        {tela === "navegador" ? (
-          <div className="relative z-10 min-h-0 flex-1">
-            <NavegadorScreen
-              abas={abas}
-              ativa={abaAtiva}
-              launcherNonce={launcherNonce}
-              onTrocar={trocarAba}
-              onFechar={fecharAba}
-              onFecharOutras={fecharOutras}
-              onDormir={dormirAba}
-              onDormirOutras={dormirOutras}
-              onAlternarFixada={alternarFixada}
-              onAlternarManterAcordada={alternarManterAcordada}
-              onReativada={concluirReativacao}
-              onReordenar={reordenarAbas}
-              onAbrir={abrirAppAqui}
-              onNovaAba={novaAba}
-              onNovaAbaPrivada={novaAbaPrivada}
-              onReabrirFechada={reabrirFechada}
-              onNavegar={abrirUrlLivre}
-              onNavegarTela={setTela}
-              onIrParaBridgeView={(view) => {
-                // #657: deep-link — seta a sub-view do Bridge e abre o control-room.
-                setBridgeView(view);
-                setTela("control-room");
-              }}
-              onRestaurarAbas={restaurarAbas}
-              sessaoAnteriorQtd={sessaoDispensada ? 0 : sessaoAnterior.length}
-              onRestaurarSessao={restaurarSessao}
-              onDispensarSessao={dispensarSessao}
-              historico={historico}
-              onLimparHistorico={limparHistoricoPeriodo}
-              modoPrivado={modoPrivado}
-              onAlternarModoPrivado={() => setModoPrivado((v) => !v)}
-            />
-          </div>
-        ) : tela === "configuracoes" ? (
+        {tela === "configuracoes" ? (
           /* Fora do ScrollArea: altura cheia, sidebar 100% e a área de contexto
              rola por dentro — mesmo padrão do Bridge. */
           <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
@@ -1099,13 +1189,10 @@ function AppInner() {
               onAbrirNavegador={(a) => abrirUrl(a.url)}
             />
           </div>
-        ) : tela === "arquivos" ? (
-          /* #677: Explorer de arquivos — altura cheia (árvore + conteúdo rolam por
-             dentro), mesmo padrão de tela cheia do Bridge/Apps/Configurações. */
-          <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
-            <ArquivosScreen />
-          </div>
-        ) : tela === "control-room" ? null : (
+        ) : tela === "navegador" ||
+          tela === "control-room" ||
+          tela === "arquivos" ||
+          tela === "remote" ? null : (
         /* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
             design system em vez da nativa do sistema.
             min-h-0: sem isso o flex-1 nao encolhe abaixo do conteudo e nao
@@ -1115,7 +1202,7 @@ function AppInner() {
           {tela === "atoms" && (
             <AtomsScreen
               user={user}
-              onNavegar={setTela}
+              onNavegar={navegarPara}
               onAbrirUrl={abrirUrl}
               onAbrirApp={abrirAppAqui}
             />
@@ -1138,14 +1225,8 @@ function AppInner() {
               descricao={t.emBreveComms.descricao}
             />
           )}
-          {/* #718 (SH0): item fixo Remote — tela placeholder até o épico #682. */}
-          {tela === "remote" && (
-            <EmBreveScreen
-              titulo={t.emBreveRemote.titulo}
-              icone={TELAS.remote.icone}
-              descricao={t.emBreveRemote.descricao}
-            />
-          )}
+          {/* #719 (SH1): Remote virou ABA INTERNA do Navigator (renderTelaInterna);
+              o placeholder #682 é renderizado lá dentro, não mais como tela top-level. */}
           {tela === "astro" && (
             <EmBreveScreen
               titulo={t.emBreveAstro.titulo}

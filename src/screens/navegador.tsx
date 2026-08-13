@@ -33,10 +33,12 @@ import {
   persistFaviconCache,
   NAVIGATOR_GROUP_COLORS,
   NAVIGATOR_GROUP_COLOR_ORDER,
+  ehAbaInterna,
   type AbaBrowser,
   type NavigatorGroup,
   type NavigatorGroupColor,
   type NavigatorMembership,
+  type TelaInterna,
 } from "@/lib/navigator-tabs";
 import {
   BarraFavoritos,
@@ -137,11 +139,13 @@ import {
   Compass,
   FolderMinus,
   FolderPlus,
+  FolderTree,
   Globe,
   GripHorizontal,
   GripVertical,
   History,
   Loader2,
+  MonitorSmartphone,
   Moon,
   Pencil,
   Pin,
@@ -153,7 +157,15 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { BridgeIcon } from "@/components/ui/icons/marca-anim";
 import {
   OcultarWebviewContext,
   useOcultarWebviewEnquantoAberto,
@@ -178,6 +190,25 @@ const OCULTOS_NAV = new Set<Tela>(
 const TELAS_IR_PARA_VISIVEIS: Tela[] = TELAS_IR_PARA.filter(
   (tela) => !OCULTOS_NAV.has(tela),
 );
+
+/**
+ * #719 (SH1): ícone da aba interna (Bridge/Files/Remote) na strip e no rail —
+ * mesmos glifos do rail do shell (SH0) pra fidelidade visual. Fallback = globo.
+ */
+function iconeTelaInterna(tela: TelaInterna | undefined): ReactNode {
+  switch (tela) {
+    case "control-room":
+      return <BridgeIcon className="size-4 shrink-0" />;
+    case "arquivos":
+      return <FolderTree className="size-4 shrink-0 text-muted-foreground" />;
+    case "remote":
+      return (
+        <MonitorSmartphone className="size-4 shrink-0 text-muted-foreground" />
+      );
+    default:
+      return <Globe className="size-4 shrink-0 text-muted-foreground" />;
+  }
+}
 
 /**
  * Hero da aba vazia do Navigator (#74): a nave (lucide-animated) balançando em
@@ -907,6 +938,8 @@ export function NavegadorScreen({
   modoPrivado,
   onAlternarModoPrivado,
   launcherNonce,
+  visivel,
+  renderTelaInterna,
 }: {
   abas: AbaBrowser[];
   ativa: string | null;
@@ -939,6 +972,13 @@ export function NavegadorScreen({
   onLimparHistorico: (periodo: PeriodoLimpeza) => void;
   modoPrivado: boolean;
   onAlternarModoPrivado: () => void;
+  /** #719 (SH1): o Navigator é o shell keep-alive (sempre montado). `visivel`
+   *  = ele é a tela ativa do app; quando false, esconde TODAS as webviews. */
+  visivel: boolean;
+  /** #719 (SH1): renderiza a tela React (Bridge/Files/Remote) de uma aba
+   *  interna. `ativa` = a aba é a atual (dá foco/polling à tela certa). O App é
+   *  dono das telas e do keep-alive; o Navigator só as encaixa no slot. */
+  renderTelaInterna: (tela: TelaInterna, ativa: boolean) => ReactNode;
 }) {
   const { t } = useIdioma();
   const area = useRef<HTMLDivElement>(null);
@@ -1205,6 +1245,8 @@ export function NavegadorScreen({
                 <Moon className="size-4 shrink-0" aria-hidden="true" />
               ) : privada ? (
                 <PirateSkullIcon className="size-4 shrink-0 text-info" />
+              ) : ehAbaInterna(aba) ? (
+                iconeTelaInterna(aba.tela)
               ) : app ? (
                 <img
                   src={urlIcone(app)}
@@ -1571,6 +1613,17 @@ export function NavegadorScreen({
   // aparecer; ao fechar, este mesmo efeito reroda e revela/reposiciona a aba
   // ativa atual — restaurando a página por baixo.
   useEffect(() => {
+    // #719 (SH1) P0: o Navigator é keep-alive (sempre montado). Quando NÃO é a
+    // tela visível do app, ou a aba ativa é INTERNA (React, sem webview), toda
+    // webview some. Gatilho TRANSIENTE — pelo `visivel` e pelo TIPO da aba ativa,
+    // nunca por estado persistente (senão a webview nunca reabre). Sem snapshot:
+    // aba interna não tem webview pra congelar, e escondida-por-tela é instantânea.
+    const abaInterna = activeTab != null && ehAbaInterna(activeTab);
+    if (!visivel || abaInterna) {
+      if (snapshotOverlay) setSnapshotOverlay(null);
+      browser.esconderTodas();
+      return;
+    }
     const overlayAtivo =
       paletaAberta ||
       overlaysWebview > 0 ||
@@ -1608,7 +1661,7 @@ export function NavegadorScreen({
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview, menuAbertoId, chromeOverlays, snapshotOverlay]);
+  }, [ativa, activeTab?.url, activeTab?.tipo, visivel, paletaAberta, overlaysWebview, menuAbertoId, chromeOverlays, snapshotOverlay]);
 
   // Auto-cura do menu de contexto (#275): se o dono do menu aberto (aba/grupo)
   // sumiu — chip desmontou com o menu aberto, sem disparar o fechamento — limpa a
@@ -1652,6 +1705,7 @@ export function NavegadorScreen({
     if (pinadas.length === 0) return null;
 
     const iconeDaAba = (aba: AbaBrowser) => {
+      if (ehAbaInterna(aba)) return iconeTelaInterna(aba.tela);
       const app = porId(aba.id);
       if (app)
         return (
@@ -2059,52 +2113,80 @@ export function NavegadorScreen({
         />
       )}
 
-      {/* #318 S2: rail das pinned tabs à esquerda + o conteúdo (Launcher/webview).
-          O rail encolhe a área; o ResizeObserver da `area` reposiciona a webview. */}
+      {/* #318 S2: rail das pinned tabs à esquerda + o conteúdo. #719 (SH1): o
+          conteúdo passa a ser um stack de camadas absolutas — Launcher (aba
+          vazia), telas internas (React, keep-alive: uma por aba interna, só a
+          ativa visível) e o host da webview (aba web). O rail encolhe a área; o
+          ResizeObserver da `area` reposiciona a webview. */}
       <div className="flex min-h-0 flex-1">
         {renderPinRail()}
-        {ativa === null ? (
-        <div className="flex-1 overflow-hidden">
-          <Launcher
-            key={launcherNonce}
-            abas={abas}
-            ativa={ativa}
-            favoritos={favoritos}
-            historico={historico}
-            privada={modoPrivado}
-            onAbrir={onAbrir}
-            onNavegar={onNavegar}
-            onTrocar={onTrocar}
-            onFechar={onFechar}
-            onNovaAba={onNovaAba}
-            onAlternarFixada={onAlternarFixada}
-            onDormir={onDormir}
-            onNavegarTela={onNavegarTela}
-            onIrParaBridgeView={onIrParaBridgeView}
-          />
-        </div>
-      ) : (
-        <div ref={area} className="relative flex-1 bg-background">
-          {/* #275 rework: snapshot da webview por baixo do overlay (conteúdo
-              congela em vez de sumir quando a webview nativa é escondida). */}
-          {snapshotOverlay && (
-            <img
-              src={snapshotOverlay}
-              alt=""
-              draggable={false}
-              className="pointer-events-none absolute inset-0 h-full w-full object-cover object-left-top"
-            />
-          )}
-          <div className="pointer-events-none absolute inset-0 grid place-items-center text-muted-foreground">
-            <div className="flex flex-col items-center gap-2">
-              <Loader2 className="size-6 animate-spin opacity-40" />
-              {activeTab?.reativando && (
-                <span className="text-xs">{t.navegador.reativando}</span>
-              )}
+        <div className="relative min-h-0 flex-1">
+          {ativa === null && (
+            <div className="absolute inset-0 overflow-hidden">
+              <Launcher
+                key={launcherNonce}
+                abas={abas}
+                ativa={ativa}
+                favoritos={favoritos}
+                historico={historico}
+                privada={modoPrivado}
+                onAbrir={onAbrir}
+                onNavegar={onNavegar}
+                onTrocar={onTrocar}
+                onFechar={onFechar}
+                onNovaAba={onNovaAba}
+                onAlternarFixada={onAlternarFixada}
+                onDormir={onDormir}
+                onNavegarTela={onNavegarTela}
+                onIrParaBridgeView={onIrParaBridgeView}
+              />
             </div>
-          </div>
+          )}
+
+          {/* #719 (SH1): telas internas keep-alive. Cada aba interna aberta
+              mantém sua tela MONTADA (só escondida por CSS quando não é a ativa),
+              preservando o estado do Bridge/Files entre trocas de aba (#25). A
+              tela recebe `ativa` pra pausar/retomar polling (control-room). */}
+          {abas.filter((aba) => ehAbaInterna(aba)).map((aba) => {
+            const ativaAba = aba.id === ativa;
+            return (
+              <div
+                key={aba.id}
+                className={cn(
+                  "absolute inset-0 min-h-0 p-4 pt-0",
+                  ativaAba ? "flex flex-col" : "hidden",
+                )}
+              >
+                {renderTelaInterna(aba.tela as TelaInterna, ativaAba)}
+              </div>
+            );
+          })}
+
+          {/* Host da webview: só quando a aba ativa é WEB (edge-to-edge, sem
+              padding). Aba interna esconde a webview (P0, efeito acima). */}
+          {ativa !== null && (!activeTab || !ehAbaInterna(activeTab)) && (
+            <div ref={area} className="absolute inset-0 bg-background">
+              {/* #275 rework: snapshot da webview por baixo do overlay (conteúdo
+                  congela em vez de sumir quando a webview nativa é escondida). */}
+              {snapshotOverlay && (
+                <img
+                  src={snapshotOverlay}
+                  alt=""
+                  draggable={false}
+                  className="pointer-events-none absolute inset-0 h-full w-full object-cover object-left-top"
+                />
+              )}
+              <div className="pointer-events-none absolute inset-0 grid place-items-center text-muted-foreground">
+                <div className="flex flex-col items-center gap-2">
+                  <Loader2 className="size-6 animate-spin opacity-40" />
+                  {activeTab?.reativando && (
+                    <span className="text-xs">{t.navegador.reativando}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
-        )}
       </div>
 
       {/* Overlay global (Ctrl/Cmd+K) por cima da aba viva. */}

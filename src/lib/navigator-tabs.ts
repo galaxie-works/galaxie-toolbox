@@ -64,7 +64,10 @@ function isBrowserTab(value: unknown): value is Partial<AbaBrowser> {
     typeof tab.id === "string" &&
     typeof tab.nome === "string" &&
     typeof tab.url === "string" &&
-    tab.url.startsWith("https://")
+    // #719: só abas WEB (https) persistem/restauram; abas internas
+    // (galaxie://tela/…) são sempre reabertas do rail, nunca persistidas.
+    tab.url.startsWith("https://") &&
+    tab.tipo !== "interna"
   );
 }
 
