@@ -3206,6 +3206,39 @@ export async function moverComProgresso(
   return invoke<number>("fs_move_with_progress", { from, to, verify: verify ?? null });
 }
 
+/**
+ * #850 (fatia B): copia VÁRIAS origens pra `destDir` numa OP/plano só (modelo
+ * TeraCopy). Prefira isto a N `copiarComProgresso` numa multi-seleção — enumera
+ * tudo antes, é uma fase de cópia (mata o "2 pastas sequenciais") e o benchmark
+ * (START/PROGRESS/END no log) é global. Devolve um único `opId`.
+ */
+export async function copiarVariasComProgresso(
+  sources: string[],
+  destDir: string,
+  verify?: VerifyAlg,
+): Promise<number> {
+  if (!inTauri()) return 0;
+  return invoke<number>("fs_copy_many_with_progress", {
+    sources,
+    destDir,
+    verify: verify ?? null,
+  });
+}
+
+/** #850 (fatia B): move VÁRIAS origens pra `destDir` numa op só. Devolve o `opId`. */
+export async function moverVariasComProgresso(
+  sources: string[],
+  destDir: string,
+  verify?: VerifyAlg,
+): Promise<number> {
+  if (!inTauri()) return 0;
+  return invoke<number>("fs_move_many_with_progress", {
+    sources,
+    destDir,
+    verify: verify ?? null,
+  });
+}
+
 /** Cancela uma op de copy/move em andamento. */
 export async function cancelarOp(opId: number): Promise<void> {
   if (!inTauri()) return;

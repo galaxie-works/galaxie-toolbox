@@ -748,6 +748,23 @@ fn planejar(from: &Path, to: &Path) -> Result<Plano, FsError> {
     Ok(plano)
 }
 
+/// #850 (fatia B): enumeração GLOBAL — varre TODAS as origens e funde num único
+/// Plano (um total de bytes/arquivos, uma classificação pequenos/grandes, uma lista
+/// de dirs). Vira UMA fase de cópia (modelo TeraCopy), matando o "2 pastas
+/// sequenciais". Reusa o `planejar` por-origem, então herda a mesma varredura.
+fn planejar_muitas(pares: &[(PathBuf, PathBuf)]) -> Result<Plano, FsError> {
+    let mut global = Plano::default();
+    for (src, dst) in pares {
+        let p = planejar(src, dst)?;
+        global.dirs.extend(p.dirs);
+        global.pequenos.extend(p.pequenos);
+        global.grandes.extend(p.grandes);
+        global.total_bytes += p.total_bytes;
+        global.total_arquivos += p.total_arquivos;
+    }
+    Ok(global)
+}
+
 /// Prefixo de volume (letra no Windows, lowercased) pra decidir mesmo-disco.
 fn raiz_volume(p: &Path) -> Option<String> {
     use std::path::Component;
@@ -1116,6 +1133,106 @@ fn executar_progresso(
         remover(from)?; // move = copiou tudo → apaga a origem
     }
     // #850: END com MB/s médio + arquivos/s — a linha de benchmark comparável.
+    let elapsed = t0.elapsed().as_secs_f64().max(0.001);
+    let mib = plano.total_bytes as f64 / 1_048_576.0;
+    log::info!(
+        "fs_{rotulo} END op={op_id}: {elapsed:.2}s, {:.1} MiB/s medio, {:.0} arquivo(s)/s, {} arquivo(s), {mib:.1} MiB",
+        mib / elapsed,
+        plano.total_arquivos as f64 / elapsed,
+        plano.total_arquivos
+    );
+    Ok(false)
+}
+
+/// #850 (fatia B): copy/move de MÚLTIPLAS origens pra um destino, em UMA fase só.
+/// Move mesmo-volume tenta rename por-origem (instantâneo); o resto entra num Plano
+/// GLOBAL (`planejar_muitas`) → uma varredura + uma cópia (modelo TeraCopy), matando
+/// o "2 pastas sequenciais". Loga START/END com MB/s médio (#850). `true` = cancelada.
+fn executar_progresso_muitas(
+    mover: bool,
+    pares: Vec<(String, String)>,
+    op_id: u64,
+    flag: &Arc<AtomicBool>,
+    verify: Option<VerifyAlg>,
+    app: &AppHandle,
+) -> Result<bool, FsError> {
+    for (from, to) in &pares {
+        validar(from)?;
+        validar(to)?;
+        if com_long_path(Path::new(to)).exists() {
+            return Err(FsError::AlreadyExists(to.clone()));
+        }
+    }
+    let rotulo = if mover { "move" } else { "copy" };
+    let t0 = Instant::now();
+    // Move mesmo-volume: rename por-origem (instantâneo); o resto vai pro Plano.
+    let mut a_planejar: Vec<(String, String)> = Vec::new();
+    let mut renomeados = 0usize;
+    for (from, to) in &pares {
+        if mover
+            && std::fs::rename(com_long_path(Path::new(from)), com_long_path(Path::new(to))).is_ok()
+        {
+            renomeados += 1;
+            continue;
+        }
+        a_planejar.push((from.clone(), to.clone()));
+    }
+    if a_planejar.is_empty() {
+        log::info!("fs_{rotulo} END op={op_id}: {renomeados} rename(s) mesmo-volume instantâneo(s)");
+        return Ok(false);
+    }
+    let pares_path: Vec<(PathBuf, PathBuf)> = a_planejar
+        .iter()
+        .map(|(s, d)| (PathBuf::from(s), PathBuf::from(d)))
+        .collect();
+    let plano = planejar_muitas(&pares_path)?;
+    for d in &plano.dirs {
+        std::fs::create_dir_all(com_long_path(d))?;
+    }
+    let perfil = perfilar(&pares_path[0].0, &pares_path[0].1);
+    log::info!(
+        "fs_{rotulo} START op={op_id}: {} origem(ns) ({renomeados} rename), {} arquivo(s), {:.1} MiB, {} dir(s), {} worker(s)",
+        pares.len(),
+        plano.total_arquivos,
+        plano.total_bytes as f64 / 1_048_576.0,
+        plano.dirs.len(),
+        perfil.workers
+    );
+    let ctx = Contexto {
+        processados: Arc::new(AtomicU64::new(0)),
+        arquivos_feitos: Arc::new(AtomicU64::new(0)),
+        cancelar: flag.clone(),
+        verify,
+    };
+    let ticker = iniciar_ticker(
+        app,
+        op_id,
+        plano.total_bytes,
+        plano.total_arquivos,
+        ctx.processados.clone(),
+        ctx.arquivos_feitos.clone(),
+        verify.is_some(),
+    );
+    let resultado = copiar_plano(&plano, perfil.workers, &ctx);
+    ticker.parar();
+    if let Err(e) = resultado {
+        log::error!("fs_{rotulo} ERRO op={op_id}: {e}");
+        for (_, dst) in &a_planejar {
+            let _ = remover(dst);
+        }
+        return Err(e);
+    }
+    if flag.load(Ordering::Relaxed) {
+        for (_, dst) in &a_planejar {
+            let _ = remover(dst);
+        }
+        return Ok(true);
+    }
+    if mover {
+        for (src, _) in &a_planejar {
+            remover(src)?;
+        }
+    }
     let elapsed = t0.elapsed().as_secs_f64().max(0.001);
     let mib = plano.total_bytes as f64 / 1_048_576.0;
     log::info!(
@@ -1858,6 +1975,57 @@ fn spawn_progresso(
     });
 }
 
+/// #850 (fatia B): versão multi-origem do [`spawn_progresso`] — UMA op/op_id pro
+/// batch inteiro (não uma por origem), então o front acompanha um progresso só.
+fn spawn_progresso_muitas(
+    mover: bool,
+    pares: Vec<(String, String)>,
+    op_id: u64,
+    flag: Arc<AtomicBool>,
+    verify: Option<VerifyAlg>,
+    app: AppHandle,
+) {
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let resultado = executar_progresso_muitas(mover, pares, op_id, &flag, verify, &app);
+        app.state::<ProgressManager>().finalizar(op_id);
+        let (canceled, error) = match resultado {
+            Ok(c) => (c, None),
+            Err(e) => (false, Some(e)),
+        };
+        let _ = app.emit(
+            "fs-op-progress",
+            OpProgress {
+                op_id,
+                processed_bytes: 0,
+                total_bytes: 0,
+                percent: if error.is_some() { 0.0 } else { 100.0 },
+                eta_ms: None,
+                files_total: 0,
+                files_done: 0,
+                bytes_per_sec: 0,
+                verifying: false,
+                done: true,
+                canceled,
+                error,
+            },
+        );
+    });
+}
+
+/// #850 (fatia B): monta os pares (origem, destino) resolvendo o nome de cada
+/// origem contra o diretório destino. Origem sem nome de arquivo é ignorada.
+fn pares_para_destino(sources: Vec<String>, dest_dir: &str) -> Vec<(String, String)> {
+    let base = Path::new(dest_dir);
+    sources
+        .into_iter()
+        .filter_map(|s| {
+            let nome = Path::new(&s).file_name()?;
+            let dst = base.join(nome).to_string_lossy().into_owned();
+            Some((s, dst))
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn fs_copy_with_progress(
     from: String,
@@ -1881,6 +2049,39 @@ pub async fn fs_move_with_progress(
 ) -> Result<u64, FsError> {
     let (op_id, flag) = pm.nova_op();
     spawn_progresso(true, from, to, op_id, flag, verify, app);
+    Ok(op_id)
+}
+
+/// #850 (fatia B): copia VÁRIAS origens pra `dest_dir` numa op/plano só (modelo
+/// TeraCopy). O front chama este no lugar de N `fs_copy_with_progress` — mata o
+/// "2 pastas sequenciais" e dá um progresso/benchmark global.
+#[tauri::command]
+pub async fn fs_copy_many_with_progress(
+    sources: Vec<String>,
+    dest_dir: String,
+    verify: Option<VerifyAlg>,
+    app: AppHandle,
+    pm: State<'_, ProgressManager>,
+) -> Result<u64, FsError> {
+    let pares = pares_para_destino(sources, &dest_dir);
+    let (op_id, flag) = pm.nova_op();
+    spawn_progresso_muitas(false, pares, op_id, flag, verify, app);
+    Ok(op_id)
+}
+
+/// #850 (fatia B): move VÁRIAS origens pra `dest_dir` numa op só (rename por-origem
+/// no mesmo-volume; o resto num plano global).
+#[tauri::command]
+pub async fn fs_move_many_with_progress(
+    sources: Vec<String>,
+    dest_dir: String,
+    verify: Option<VerifyAlg>,
+    app: AppHandle,
+    pm: State<'_, ProgressManager>,
+) -> Result<u64, FsError> {
+    let pares = pares_para_destino(sources, &dest_dir);
+    let (op_id, flag) = pm.nova_op();
+    spawn_progresso_muitas(true, pares, op_id, flag, verify, app);
     Ok(op_id)
 }
 
@@ -1990,6 +2191,42 @@ mod tests {
         assert_eq!(ctx.processados.load(Ordering::Relaxed), plano.total_bytes);
         assert_eq!(ctx.arquivos_feitos.load(Ordering::Relaxed), 3);
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn planejar_muitas_funde_origens_num_plano_global() {
+        // #850 fatia B: 2 origens → UM plano (totais somados, um só pequenos/grandes/dirs).
+        let base = dir_temp("muitas");
+        let o1 = base.join("o1");
+        std::fs::create_dir_all(&o1).unwrap();
+        std::fs::write(o1.join("a.txt"), vec![1u8; 20]).unwrap();
+        let o2 = base.join("o2");
+        std::fs::create_dir_all(o2.join("sub")).unwrap();
+        std::fs::write(o2.join("b.txt"), vec![2u8; 5]).unwrap();
+        std::fs::write(o2.join("sub").join("g.bin"), vec![3u8; (LIMITE_PEQUENO + 1) as usize]).unwrap();
+
+        let pares = vec![
+            (o1.clone(), base.join("dst").join("o1")),
+            (o2.clone(), base.join("dst").join("o2")),
+        ];
+        let plano = planejar_muitas(&pares).unwrap();
+        assert_eq!(plano.total_arquivos, 3, "3 arquivos somando as 2 origens");
+        assert_eq!(plano.total_bytes, 20 + 5 + LIMITE_PEQUENO + 1);
+        assert_eq!(plano.grandes.len(), 1);
+        assert_eq!(plano.pequenos.len(), 2);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn pares_para_destino_resolve_nome_no_destino() {
+        let pares = pares_para_destino(
+            vec!["C:/x/a.txt".to_string(), "C:/y/pasta".to_string()],
+            "D:/dest",
+        );
+        assert_eq!(pares.len(), 2);
+        assert_eq!(pares[0].0, "C:/x/a.txt");
+        assert!(pares[0].1.ends_with("a.txt"), "destino resolve o nome da origem");
+        assert!(pares[1].1.ends_with("pasta"));
     }
 
     #[test]
