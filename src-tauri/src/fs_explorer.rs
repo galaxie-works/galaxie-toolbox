@@ -635,6 +635,19 @@ struct OpProgress {
     done: bool,
     canceled: bool,
     error: Option<FsError>,
+    // #875 (Status Center): payload rico pra fila persistente + card + badge.
+    /// Tipo da op — ícone por tipo no painel. `copy` | `move`.
+    op_kind: &'static str,
+    /// Fase — `discovering` (varredura, indeterminada) | `processing` | `done`.
+    phase: &'static str,
+    /// Estado agregado (1 enum, não 3 flags): `inProgress` | `success` | `error`
+    /// | `canceled` | `partial`. O front retém as terminais na fila por isto.
+    status: &'static str,
+    /// Nome do arquivo sendo processado agora (via `Mutex` lido pelo ticker).
+    current_file: Option<String>,
+    /// Epoch ms do início/fim da op (duração no card; `None` até terminar).
+    started_at_ms: u64,
+    completed_at_ms: Option<u64>,
 }
 
 /// Conflito de nome no destino (pro diálogo Substituir/Pular/Manter ambos).
@@ -918,12 +931,23 @@ fn hash_arquivo(p: &Path, alg: VerifyAlg) -> Result<Vec<u8>, FsError> {
     Ok(h.finalizar())
 }
 
+/// #875: epoch em ms (pro started/completed do Status Center).
+fn agora_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// Contexto compartilhado entre os workers (atômicos de progresso + cancel).
 struct Contexto {
     processados: Arc<AtomicU64>,
     arquivos_feitos: Arc<AtomicU64>,
     cancelar: Arc<AtomicBool>,
     verify: Option<VerifyAlg>,
+    /// #875: nome do arquivo em processamento agora — os workers escrevem, o ticker
+    /// lê pro `current_file` do evento (o card mostra "copiando X").
+    atual: Arc<Mutex<String>>,
 }
 
 /// Copia UM arquivo com buffer (grande streaming, pequeno menor), somando bytes no
@@ -933,6 +957,14 @@ fn copiar_arquivo(job: &CopyJob, ctx: &Contexto) -> Result<(), FsError> {
     use std::io::{Read, Write};
     if ctx.cancelar.load(Ordering::Relaxed) {
         return Ok(());
+    }
+    // #875: publica o arquivo atual pro ticker (o card do Status Center mostra o nome).
+    if let Ok(mut a) = ctx.atual.lock() {
+        *a = job
+            .dst
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
     }
     let src = com_long_path(&job.src);
     let dst = com_long_path(&job.dst);
@@ -988,6 +1020,34 @@ impl Ticker {
     }
 }
 
+/// #875: um evento único de fase `discovering` (varredura), fora do throttle do
+/// ticker — o card mostra "Descobrindo itens…" enquanto o `planejar` roda.
+fn emitir_descobrindo(app: &AppHandle, op_id: u64, op_kind: &'static str, started_at_ms: u64) {
+    let _ = app.emit(
+        "fs-op-progress",
+        OpProgress {
+            op_id,
+            processed_bytes: 0,
+            total_bytes: 0,
+            percent: 0.0,
+            eta_ms: None,
+            files_total: 0,
+            files_done: 0,
+            bytes_per_sec: 0,
+            verifying: false,
+            done: false,
+            canceled: false,
+            error: None,
+            op_kind,
+            phase: "discovering",
+            status: "inProgress",
+            current_file: None,
+            started_at_ms,
+            completed_at_ms: None,
+        },
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn iniciar_ticker(
     app: &AppHandle,
@@ -997,6 +1057,9 @@ fn iniciar_ticker(
     processados: Arc<AtomicU64>,
     arquivos_feitos: Arc<AtomicU64>,
     verifying: bool,
+    op_kind: &'static str,
+    started_at_ms: u64,
+    atual: Arc<Mutex<String>>,
 ) -> Ticker {
     let parar = Arc::new(AtomicBool::new(false));
     let p2 = parar.clone();
@@ -1037,6 +1100,13 @@ fn iniciar_ticker(
             } else {
                 None
             };
+            let atual_nome = atual.lock().ok().and_then(|a| {
+                if a.is_empty() {
+                    None
+                } else {
+                    Some(a.clone())
+                }
+            });
             let _ = app.emit(
                 "fs-op-progress",
                 OpProgress {
@@ -1052,6 +1122,12 @@ fn iniciar_ticker(
                     done: false,
                     canceled: false,
                     error: None,
+                    op_kind,
+                    phase: "processing",
+                    status: "inProgress",
+                    current_file: atual_nome,
+                    started_at_ms,
+                    completed_at_ms: None,
                 },
             );
         }
@@ -1068,6 +1144,7 @@ fn executar_progresso(
     flag: &Arc<AtomicBool>,
     verify: Option<VerifyAlg>,
     app: &AppHandle,
+    started_at_ms: u64,
 ) -> Result<bool, FsError> {
     validar(from)?;
     validar(to)?;
@@ -1087,6 +1164,9 @@ fn executar_progresso(
         return Ok(false);
     }
 
+    // #875: fase Discovering — a varredura (jwalk) pode demorar; o front mostra
+    // "Descobrindo itens…" (indeterminado) antes do ticker de bytes ligar.
+    emitir_descobrindo(app, op_id, rotulo, started_at_ms);
     let plano = planejar(src, dst)?;
     for d in &plano.dirs {
         std::fs::create_dir_all(com_long_path(d))?;
@@ -1105,6 +1185,7 @@ fn executar_progresso(
         arquivos_feitos: Arc::new(AtomicU64::new(0)),
         cancelar: flag.clone(),
         verify,
+        atual: Arc::new(Mutex::new(String::new())),
     };
     let ticker = iniciar_ticker(
         app,
@@ -1114,6 +1195,9 @@ fn executar_progresso(
         ctx.processados.clone(),
         ctx.arquivos_feitos.clone(),
         verify.is_some(),
+        rotulo,
+        started_at_ms,
+        ctx.atual.clone(),
     );
 
     let resultado = copiar_plano(&plano, perfil.workers, &ctx);
@@ -1155,6 +1239,7 @@ fn executar_progresso_muitas(
     flag: &Arc<AtomicBool>,
     verify: Option<VerifyAlg>,
     app: &AppHandle,
+    started_at_ms: u64,
 ) -> Result<bool, FsError> {
     for (from, to) in &pares {
         validar(from)?;
@@ -1181,6 +1266,7 @@ fn executar_progresso_muitas(
         log::info!("fs_{rotulo} END op={op_id}: {renomeados} rename(s) mesmo-volume instantâneo(s)");
         return Ok(false);
     }
+    emitir_descobrindo(app, op_id, rotulo, started_at_ms); // #875: fase Discovering
     let pares_path: Vec<(PathBuf, PathBuf)> = a_planejar
         .iter()
         .map(|(s, d)| (PathBuf::from(s), PathBuf::from(d)))
@@ -1203,6 +1289,7 @@ fn executar_progresso_muitas(
         arquivos_feitos: Arc::new(AtomicU64::new(0)),
         cancelar: flag.clone(),
         verify,
+        atual: Arc::new(Mutex::new(String::new())),
     };
     let ticker = iniciar_ticker(
         app,
@@ -1212,6 +1299,9 @@ fn executar_progresso_muitas(
         ctx.processados.clone(),
         ctx.arquivos_feitos.clone(),
         verify.is_some(),
+        rotulo,
+        started_at_ms,
+        ctx.atual.clone(),
     );
     let resultado = copiar_plano(&plano, perfil.workers, &ctx);
     ticker.parar();
@@ -1948,31 +2038,60 @@ fn spawn_progresso(
     verify: Option<VerifyAlg>,
     app: AppHandle,
 ) {
+    let op_kind = if mover { "move" } else { "copy" };
+    let started_at_ms = agora_ms();
     let _ = tauri::async_runtime::spawn_blocking(move || {
-        let resultado = executar_progresso(mover, &from, &to, op_id, &flag, verify, &app);
+        let resultado =
+            executar_progresso(mover, &from, &to, op_id, &flag, verify, &app, started_at_ms);
         app.state::<ProgressManager>().finalizar(op_id);
         let (canceled, error) = match resultado {
             Ok(c) => (c, None),
             Err(e) => (false, Some(e)),
         };
-        let _ = app.emit(
-            "fs-op-progress",
-            OpProgress {
-                op_id,
-                processed_bytes: 0,
-                total_bytes: 0,
-                percent: if error.is_some() { 0.0 } else { 100.0 },
-                eta_ms: None,
-                files_total: 0,
-                files_done: 0,
-                bytes_per_sec: 0,
-                verifying: false,
-                done: true,
-                canceled,
-                error,
-            },
-        );
+        emitir_final(&app, op_id, op_kind, started_at_ms, canceled, error);
     });
+}
+
+/// #875: evento terminal (`phase=done`) — status agregado (success/canceled/error),
+/// `completed_at_ms`. O front RETÉM a op na fila por isto (não descarta no terminal).
+fn emitir_final(
+    app: &AppHandle,
+    op_id: u64,
+    op_kind: &'static str,
+    started_at_ms: u64,
+    canceled: bool,
+    error: Option<FsError>,
+) {
+    let status = if error.is_some() {
+        "error"
+    } else if canceled {
+        "canceled"
+    } else {
+        "success"
+    };
+    let _ = app.emit(
+        "fs-op-progress",
+        OpProgress {
+            op_id,
+            processed_bytes: 0,
+            total_bytes: 0,
+            percent: if error.is_some() { 0.0 } else { 100.0 },
+            eta_ms: None,
+            files_total: 0,
+            files_done: 0,
+            bytes_per_sec: 0,
+            verifying: false,
+            done: true,
+            canceled,
+            error,
+            op_kind,
+            phase: "done",
+            status,
+            current_file: None,
+            started_at_ms,
+            completed_at_ms: Some(agora_ms()),
+        },
+    );
 }
 
 /// #850 (fatia B): versão multi-origem do [`spawn_progresso`] — UMA op/op_id pro
@@ -1985,30 +2104,17 @@ fn spawn_progresso_muitas(
     verify: Option<VerifyAlg>,
     app: AppHandle,
 ) {
+    let op_kind = if mover { "move" } else { "copy" };
+    let started_at_ms = agora_ms();
     let _ = tauri::async_runtime::spawn_blocking(move || {
-        let resultado = executar_progresso_muitas(mover, pares, op_id, &flag, verify, &app);
+        let resultado =
+            executar_progresso_muitas(mover, pares, op_id, &flag, verify, &app, started_at_ms);
         app.state::<ProgressManager>().finalizar(op_id);
         let (canceled, error) = match resultado {
             Ok(c) => (c, None),
             Err(e) => (false, Some(e)),
         };
-        let _ = app.emit(
-            "fs-op-progress",
-            OpProgress {
-                op_id,
-                processed_bytes: 0,
-                total_bytes: 0,
-                percent: if error.is_some() { 0.0 } else { 100.0 },
-                eta_ms: None,
-                files_total: 0,
-                files_done: 0,
-                bytes_per_sec: 0,
-                verifying: false,
-                done: true,
-                canceled,
-                error,
-            },
-        );
+        emitir_final(&app, op_id, op_kind, started_at_ms, canceled, error);
     });
 }
 
@@ -2145,6 +2251,7 @@ mod tests {
             arquivos_feitos: Arc::new(AtomicU64::new(0)),
             cancelar: Arc::new(AtomicBool::new(false)),
             verify,
+            atual: Arc::new(Mutex::new(String::new())),
         }
     }
 
