@@ -212,9 +212,11 @@ export function NavBarArquivos({
         </ContextMenu>
       )}
 
-      {/* #871 (fatia 2b): busca recursiva na pasta atual. No This PC
-          (`!podeBuscar`) o campo fica desabilitado — a busca multi-drive é uma
-          fatia futura. Enter dispara; Esc limpa e sai da busca. */}
+      {/* #871 (fatia 2b/2c): busca recursiva. Numa pasta = a pasta atual; no This PC
+          (`currentPath` vazio) = fan-out sobre TODOS os drives. O campo só fica
+          desabilitado quando `!podeBuscar` (This PC antes dos drives carregarem). O
+          placeholder é pelo caminho: vazio → "Buscar Este PC"; senão → a pasta.
+          Enter dispara; Esc limpa e sai da busca. */}
       <div className="relative w-56 shrink-0">
         <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -231,12 +233,12 @@ export function NavBarArquivos({
             }
           }}
           placeholder={
-            podeBuscar
+            currentPath
               ? preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) })
               : t.arquivos.buscarThisPc
           }
           aria-label={
-            podeBuscar
+            currentPath
               ? preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) })
               : t.arquivos.buscarThisPc
           }
