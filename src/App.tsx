@@ -433,10 +433,17 @@ function AppInner() {
   // (dentro do resetSessaoCompleta, parte do #821); as abas internas
   // (Bridge/Files/Remote) reabrem sob demanda pelo rail, já gateadas pela
   // capability da conta nova.
+  //
+  // #821 deeper: o HISTÓRICO de navegação também é tenant-scoped (privacidade — a
+  // conta nova não pode ver os sites que a anterior visitou). Ele vive em useState
+  // + localStorage (`galaxie.navigator.history.v1`), fora do store, então escapava
+  // do reset. Zera in-memory E no disco (explícito, não confia na ordem do effect).
   function resetNavegadorSessao() {
     setAbas([]);
     setAbaAtiva(null);
     setFechadas([]);
+    setHistorico([]);
+    persistHistorico([]);
   }
 
   async function handleLogin(provider: api.AuthProvider, hint: string) {
