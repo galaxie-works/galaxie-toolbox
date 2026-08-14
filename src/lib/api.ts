@@ -2996,6 +2996,17 @@ export async function tamanhoDir(path: string): Promise<DirSize> {
   return invoke<DirSize>("fs_dir_size", { path });
 }
 
+/**
+ * #873: bytes de um arquivo local em **base64** pro preview do Files (sem
+ * asset-protocol — o `convertFileSrc→fetch` falhava com "failed to fetch").
+ * Cap 25MB no backend: `code === "ArquivoGrande"` → fallback com metadados.
+ * O caller monta o data URI com o mime que já conhece: `data:${mime};base64,${b64}`.
+ */
+export async function lerBytesArquivo(path: string): Promise<string> {
+  if (!inTauri()) return "";
+  return invoke<string>("fs_read_file_bytes", { path });
+}
+
 /** Drives montados com tipo, label e espaço. */
 export async function listarDrives(): Promise<DriveInfo[]> {
   if (!inTauri()) {

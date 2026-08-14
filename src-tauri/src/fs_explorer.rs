@@ -41,6 +41,10 @@ pub enum FsError {
     /// suportado, ou grande demais). Não é falha — o front usa ícone de TIPO.
     #[error("sem thumbnail raster: {0}")]
     NaoRasterizavel(String),
+    /// #873: arquivo grande demais pro preview (acima do teto de bytes). O front
+    /// mostra fallback com metadados (não é erro fatal).
+    #[error("arquivo grande demais: {0}")]
+    ArquivoGrande(String),
 }
 
 impl From<std::io::Error> for FsError {
@@ -304,6 +308,32 @@ fn stat(path: &str) -> Result<FsEntry, FsError> {
         sm
     };
     Ok(entry_de(p, &meta, is_symlink))
+}
+
+/// #873: teto pra leitura de bytes de arquivo local pro preview (Wagner: 25MB).
+const MAX_PREVIEW_BYTES: u64 = 25 * 1024 * 1024;
+
+/// #873: lê os bytes de um arquivo local e devolve em **base64** — pro preview do
+/// Files consumir SEM asset-protocol (o `convertFileSrc→fetch` falhava com
+/// "failed to fetch" porque o `assetProtocol` não está habilitado no
+/// tauri.conf). Guards: caminho válido, é ARQUIVO (não dir), ≤ 25MB. `metadata`
+/// (segue symlink) pra o teto valer sobre o conteúdo real.
+fn ler_bytes_arquivo(path: &str) -> Result<String, FsError> {
+    use base64::Engine;
+    validar(path)?;
+    let p = com_long_path(Path::new(path));
+    let meta = std::fs::metadata(&p)?; // NotFound se não existe/broken symlink
+    if meta.is_dir() {
+        return Err(FsError::NotADirectory(format!("{path} é um diretório")));
+    }
+    let size = meta.len();
+    if size > MAX_PREVIEW_BYTES {
+        return Err(FsError::ArquivoGrande(format!(
+            "{path} ({size} bytes > {MAX_PREVIEW_BYTES})"
+        )));
+    }
+    let bytes = std::fs::read(&p)?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
 fn tamanho_dir(path: &str) -> Result<DirSize, FsError> {
@@ -2472,6 +2502,15 @@ pub async fn fs_stat(path: String) -> Result<FsEntry, FsError> {
         .map_err(spawn_err)?
 }
 
+/// #873: bytes de um arquivo local em base64 pro preview (sem asset-protocol).
+/// Cap 25MB + validação de path; `ArquivoGrande`/`NotADirectory` = fallback do front.
+#[tauri::command]
+pub async fn fs_read_file_bytes(path: String) -> Result<String, FsError> {
+    tauri::async_runtime::spawn_blocking(move || ler_bytes_arquivo(&path))
+        .await
+        .map_err(spawn_err)?
+}
+
 #[tauri::command]
 pub async fn fs_dir_size(path: String) -> Result<DirSize, FsError> {
     tauri::async_runtime::spawn_blocking(move || tamanho_dir(&path))
@@ -2934,6 +2973,43 @@ mod tests {
         for fs in ["NTFS", "FAT32", "exFAT", "ReFS", ""] {
             assert!(!eh_cloud_fs(fs), "{fs} não é cloud");
         }
+    }
+
+    #[test]
+    fn ler_bytes_arquivo_base64_e_guards() {
+        use base64::Engine;
+        let base = dir_temp("read-bytes");
+        std::fs::create_dir_all(&base).unwrap();
+        let f = base.join("a.bin");
+        let conteudo = vec![1u8, 2, 3, 4, 250, 0, 255];
+        std::fs::write(&f, &conteudo).unwrap();
+
+        // Arquivo → base64 exato do conteúdo (round-trip).
+        let b64 = ler_bytes_arquivo(&f.to_string_lossy()).unwrap();
+        let dec = base64::engine::general_purpose::STANDARD.decode(b64.as_bytes()).unwrap();
+        assert_eq!(dec, conteudo);
+
+        // Diretório → NotADirectory (não é arquivo).
+        assert!(matches!(
+            ler_bytes_arquivo(&base.to_string_lossy()),
+            Err(FsError::NotADirectory(_))
+        ));
+        // Inexistente → NotFound.
+        assert!(matches!(
+            ler_bytes_arquivo(&base.join("naoexiste").to_string_lossy()),
+            Err(FsError::NotFound(_))
+        ));
+        // Vazio → InvalidPath.
+        assert!(matches!(ler_bytes_arquivo(""), Err(FsError::InvalidPath(_))));
+
+        // > 25MB → ArquivoGrande, SEM ler (arquivo esparso via set_len).
+        let grande = base.join("grande.bin");
+        std::fs::File::create(&grande).unwrap().set_len(MAX_PREVIEW_BYTES + 1).unwrap();
+        assert!(matches!(
+            ler_bytes_arquivo(&grande.to_string_lossy()),
+            Err(FsError::ArquivoGrande(_))
+        ));
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
