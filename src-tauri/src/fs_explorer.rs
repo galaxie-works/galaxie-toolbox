@@ -729,6 +729,159 @@ struct FsChange {
     timestamp_ms: i64,
 }
 
+// ─── #899 U0: journal de operações (pro undo) ────────────────────────────────
+//
+// Registra UM manifesto por op mutante (copy/move) no END, num arquivo
+// append-only `explorer-journal.jsonl` no appDataDir. Alimenta o `fs_undo_op`
+// (U1) + o "Desfazer" do Status Center (#898). Estado EFÊMERO — poda pras
+// últimas N ops; FS local, fora do seam de nuvem (#555/#560). Sobrescrita fica
+// FORA do v1 (o motor recusa `AlreadyExists` no fluxo normal → nenhum item
+// sobrescrito aqui; decisão do spike #899). `hashAtEnd` é opcional — size+mtime
+// é o fallback documentado pra detectar modificação externa no undo.
+
+/// Um item do manifesto — um caminho que a op criou (ou moveu).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct JournalItem {
+    /// Origem (só `move`; vazio em `copy` puro).
+    from: String,
+    /// O caminho que a op criou no destino — chave do undo.
+    to: String,
+    is_dir: bool,
+    /// A op criou este caminho → candidato a reverter no undo.
+    created_by_op: bool,
+    /// Substituiu algo pré-existente? (⛔ pro undo). Sempre `false` no fluxo
+    /// normal, que recusa `AlreadyExists` antes de copiar.
+    overwritten: bool,
+    size_at_end: u64,
+    /// mtime no fim da op (epoch ms) → detecta modificação externa no undo.
+    mtime_at_end: u64,
+    hash_at_end: Option<String>,
+    hash_alg: Option<String>,
+}
+
+/// Um registro por operação mutante — serializado como 1 linha JSON no journal.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct OperationJournalEntry {
+    op_id: u64,
+    /// `copy` | `move` (rename/trash/delete: fatias futuras do #899).
+    kind: String,
+    started_at_ms: u64,
+    ended_at_ms: u64,
+    /// `success` | `partial` (nunca `error` puro).
+    status: String,
+    resolucao: Option<String>,
+    items: Vec<JournalItem>,
+    /// Handles do SO pra restaurar da Lixeira (kind=trash; vazio aqui).
+    trash_record_ids: Vec<String>,
+}
+
+/// Máximo de ops retidas (§7 do spike: journal efêmero, poda o excesso).
+const JOURNAL_MAX: usize = 50;
+/// Serializa as escritas concorrentes no arquivo do journal.
+static JOURNAL_LOCK: Mutex<()> = Mutex::new(());
+
+fn caminho_journal(app: &AppHandle) -> Option<PathBuf> {
+    app.path()
+        .app_data_dir()
+        .ok()
+        .map(|d| d.join("explorer-journal.jsonl"))
+}
+
+/// mtime de uma `Metadata` em epoch ms (0 se indisponível).
+fn mtime_ms(m: &std::fs::Metadata) -> u64 {
+    m.modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Monta um item statando o `to` (já existe no END) pra size/mtime. `from`
+/// vazio = copy puro; preenchido = move (undo faz `to`→`from`).
+fn journal_item(from: &Path, to: &Path, mover: bool) -> JournalItem {
+    let meta = std::fs::symlink_metadata(com_long_path(to)).ok();
+    JournalItem {
+        from: if mover { caminho_limpo(from) } else { String::new() },
+        to: caminho_limpo(to),
+        is_dir: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+        created_by_op: true,
+        overwritten: false,
+        size_at_end: meta.as_ref().map(|m| m.len()).unwrap_or(0),
+        mtime_at_end: meta.as_ref().map(mtime_ms).unwrap_or(0),
+        hash_at_end: None,
+        hash_alg: None,
+    }
+}
+
+/// Constrói o manifesto de uma op copy/move a partir do Plano executado: os dirs
+/// criados + todos os arquivos (pequenos+grandes). Pura (só stat) → testável.
+fn montar_entrada(
+    op_id: u64,
+    mover: bool,
+    started_at_ms: u64,
+    ended_at_ms: u64,
+    plano: &Plano,
+) -> OperationJournalEntry {
+    let mut items = Vec::with_capacity(plano.dirs.len() + plano.total_arquivos as usize);
+    for d in &plano.dirs {
+        // dir: o undo remove o vazio (copy) ou é recriado pelos moves (move).
+        items.push(journal_item(d, d, false));
+    }
+    for job in plano.pequenos.iter().chain(plano.grandes.iter()) {
+        items.push(journal_item(&job.src, &job.dst, mover));
+    }
+    OperationJournalEntry {
+        op_id,
+        kind: if mover { "move".into() } else { "copy".into() },
+        started_at_ms,
+        ended_at_ms,
+        status: "success".into(),
+        resolucao: None,
+        items,
+        trash_record_ids: Vec::new(),
+    }
+}
+
+/// Poda a lista pras últimas `max` linhas (o fim = ops mais recentes).
+fn podar_journal(mut linhas: Vec<String>, max: usize) -> Vec<String> {
+    if linhas.len() > max {
+        linhas.drain(0..linhas.len() - max);
+    }
+    linhas
+}
+
+/// Grava (append + poda) o manifesto no journal. **Best-effort**: falha de I/O
+/// do journal NUNCA quebra a op de arquivo — só loga.
+fn registrar_journal(app: &AppHandle, entry: &OperationJournalEntry) {
+    let Some(path) = caminho_journal(app) else {
+        log::warn!("journal: appDataDir indisponível, op {} não registrada", entry.op_id);
+        return;
+    };
+    let json = match serde_json::to_string(entry) {
+        Ok(j) => j,
+        Err(e) => {
+            log::error!("journal: serialização falhou (op {}): {e}", entry.op_id);
+            return;
+        }
+    };
+    let _g = JOURNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let mut linhas: Vec<String> = std::fs::read_to_string(&path)
+        .map(|s| s.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect())
+        .unwrap_or_default();
+    linhas.push(json);
+    let linhas = podar_journal(linhas, JOURNAL_MAX);
+    let conteudo = linhas.join("\n") + "\n";
+    if let Err(e) = std::fs::write(&path, conteudo) {
+        log::error!("journal: gravação falhou ({}): {e}", path.display());
+    }
+    log::info!("journal: op {} registrada ({} item(s))", entry.op_id, entry.items.len());
+}
+
 // ─── Engine turbo de cópia (#680 rework) ─────────────────────────────────────
 //
 // Substitui a cópia sequencial `std::fs::copy` arquivo-a-arquivo por um pipeline
@@ -1278,6 +1431,21 @@ fn executar_progresso(
     // Move mesmo-volume: rename é instantâneo, sem varredura nem cópia.
     if mover && std::fs::rename(com_long_path(src), com_long_path(dst)).is_ok() {
         log::info!("fs_move END op={op_id}: rename mesmo-volume instantâneo");
+        // #899 U0: manifesto de 1 item (undo = rename inverso to→from).
+        let item = journal_item(src, dst, true);
+        registrar_journal(
+            app,
+            &OperationJournalEntry {
+                op_id,
+                kind: "move".into(),
+                started_at_ms,
+                ended_at_ms: agora_ms(),
+                status: "success".into(),
+                resolucao: None,
+                items: vec![item],
+                trash_record_ids: Vec::new(),
+            },
+        );
         return Ok(false);
     }
 
@@ -1344,6 +1512,8 @@ fn executar_progresso(
         plano.total_arquivos as f64 / elapsed,
         plano.total_arquivos
     );
+    // #899 U0: manifesto da op (dirs+arquivos criados) pro undo.
+    registrar_journal(app, &montar_entrada(op_id, mover, started_at_ms, agora_ms(), &plano));
     Ok(false)
 }
 
@@ -1373,18 +1543,41 @@ fn executar_progresso_muitas(
     let t0 = Instant::now();
     // Move mesmo-volume: rename por-origem (instantâneo); o resto vai pro Plano.
     let mut a_planejar: Vec<(String, String)> = Vec::new();
-    let mut renomeados = 0usize;
+    // #899 U0: pares renomeados (undo = rename inverso to→from), pro manifesto.
+    let mut renomeados_pares: Vec<(String, String)> = Vec::new();
     for (from, to) in &pares {
         if mover
             && std::fs::rename(com_long_path(Path::new(from)), com_long_path(Path::new(to))).is_ok()
         {
-            renomeados += 1;
+            renomeados_pares.push((from.clone(), to.clone()));
             continue;
         }
         a_planejar.push((from.clone(), to.clone()));
     }
+    let renomeados = renomeados_pares.len();
+    // #899 U0: itens dos renames (comuns aos dois caminhos de saída).
+    let itens_renome: Vec<JournalItem> = renomeados_pares
+        .iter()
+        .map(|(f, t)| journal_item(Path::new(f), Path::new(t), true))
+        .collect();
     if a_planejar.is_empty() {
         log::info!("fs_{rotulo} END op={op_id}: {renomeados} rename(s) mesmo-volume instantâneo(s)");
+        // #899 U0: só renames — manifesto move com os itens invertíveis.
+        if !itens_renome.is_empty() {
+            registrar_journal(
+                app,
+                &OperationJournalEntry {
+                    op_id,
+                    kind: "move".into(),
+                    started_at_ms,
+                    ended_at_ms: agora_ms(),
+                    status: "success".into(),
+                    resolucao: None,
+                    items: itens_renome,
+                    trash_record_ids: Vec::new(),
+                },
+            );
+        }
         return Ok(false);
     }
     emitir_descobrindo(app, op_id, rotulo, started_at_ms); // #875: fase Discovering
@@ -1454,6 +1647,10 @@ fn executar_progresso_muitas(
         plano.total_arquivos as f64 / elapsed,
         plano.total_arquivos
     );
+    // #899 U0: manifesto do plano global + os renames por-origem (mesmo op_id).
+    let mut entrada = montar_entrada(op_id, mover, started_at_ms, agora_ms(), &plano);
+    entrada.items.extend(itens_renome);
+    registrar_journal(app, &entrada);
     Ok(false)
 }
 
@@ -2846,6 +3043,108 @@ mod tests {
         );
         // Lista vazia também é no-op.
         assert!(para_lixeira(&[]).is_ok());
+    }
+
+    // --- #899 U0: journal de operações (pro undo) ---
+
+    #[test]
+    fn podar_journal_mantem_as_ultimas_n() {
+        let linhas: Vec<String> = (0..60).map(|i| i.to_string()).collect();
+        let podado = podar_journal(linhas, JOURNAL_MAX); // 50
+        assert_eq!(podado.len(), JOURNAL_MAX);
+        assert_eq!(podado.first().unwrap(), "10"); // dropou as 10 mais velhas
+        assert_eq!(podado.last().unwrap(), "59"); // manteve a mais nova
+        // Abaixo do limite: intacto.
+        let poucas: Vec<String> = vec!["a".into(), "b".into()];
+        assert_eq!(podar_journal(poucas.clone(), JOURNAL_MAX), poucas);
+    }
+
+    #[test]
+    fn montar_entrada_copy_lista_criados_sem_from() {
+        let base = dir_temp("journal-copy");
+        let origem = base.join("src");
+        std::fs::create_dir_all(origem.join("sub")).unwrap();
+        std::fs::write(origem.join("a.txt"), vec![7u8; 10]).unwrap();
+        std::fs::write(origem.join("sub").join("b.bin"), vec![9u8; 20]).unwrap();
+        let destino = base.join("dst");
+        let plano = planejar(&origem, &destino).unwrap();
+        for d in &plano.dirs {
+            std::fs::create_dir_all(com_long_path(d)).unwrap();
+        }
+        copiar_plano(&plano, 2, &ctx_teste(None)).unwrap();
+
+        let e = montar_entrada(7, false, 100, 200, &plano);
+        assert_eq!(e.op_id, 7);
+        assert_eq!(e.kind, "copy");
+        assert_eq!(e.status, "success");
+        // Os 2 arquivos aparecem como criados no destino, size correto, from vazio (copy).
+        let arquivos: Vec<&JournalItem> = e.items.iter().filter(|i| !i.is_dir).collect();
+        assert_eq!(arquivos.len(), 2);
+        for it in &arquivos {
+            assert!(it.created_by_op, "cópia cria o destino");
+            assert!(!it.overwritten, "fluxo normal nunca sobrescreve");
+            assert!(it.from.is_empty(), "copy não grava origem");
+            assert!(it.to.contains("dst"));
+        }
+        let total: u64 = arquivos.iter().map(|i| i.size_at_end).sum();
+        assert_eq!(total, 30, "size_at_end statado do destino");
+        // Ao menos os dirs criados entram (raiz + sub).
+        assert!(e.items.iter().any(|i| i.is_dir), "dirs criados no manifesto");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn montar_entrada_move_preenche_from() {
+        let base = dir_temp("journal-move");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        std::fs::write(origem.join("c.txt"), vec![1u8; 5]).unwrap();
+        let destino = base.join("dst");
+        let plano = planejar(&origem, &destino).unwrap();
+        for d in &plano.dirs {
+            std::fs::create_dir_all(com_long_path(d)).unwrap();
+        }
+        copiar_plano(&plano, 1, &ctx_teste(None)).unwrap();
+
+        let e = montar_entrada(9, true, 0, 1, &plano);
+        assert_eq!(e.kind, "move");
+        let arq = e.items.iter().find(|i| !i.is_dir).unwrap();
+        assert!(!arq.from.is_empty(), "move grava a origem (undo = to→from)");
+        assert!(arq.from.contains("src"));
+        assert!(arq.to.contains("dst"));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn journal_entry_roundtrip_serde_camelcase() {
+        let e = OperationJournalEntry {
+            op_id: 42,
+            kind: "copy".into(),
+            started_at_ms: 1,
+            ended_at_ms: 2,
+            status: "success".into(),
+            resolucao: Some("manterAmbos".into()),
+            items: vec![JournalItem {
+                from: String::new(),
+                to: "C:\\b\\f (2).png".into(),
+                is_dir: false,
+                created_by_op: true,
+                overwritten: false,
+                size_at_end: 2048,
+                mtime_at_end: 1734200004000,
+                hash_at_end: None,
+                hash_alg: None,
+            }],
+            trash_record_ids: Vec::new(),
+        };
+        let json = serde_json::to_string(&e).unwrap();
+        // camelCase no wire (casa com types.ts).
+        assert!(json.contains("\"opId\":42"));
+        assert!(json.contains("\"createdByOp\":true"));
+        assert!(json.contains("\"trashRecordIds\":[]"));
+        // Round-trip preserva tudo.
+        let de: OperationJournalEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(de, e);
     }
 
     // --- Cache de thumbnail (#737 F2) ---
