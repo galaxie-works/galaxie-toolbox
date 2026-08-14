@@ -12,22 +12,12 @@ import {
   AlertCircle,
   ChevronDown,
   ChevronUp,
-  Eye,
-  EyeOff,
   FolderOpen,
-  LayoutGrid,
-  List,
-  PanelRight,
-  PanelRightClose,
-  Search,
-  Table as TableIcon,
   TriangleAlert,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { Alert, AlertAction, AlertTitle } from "@/components/reui/alert";
 import {
@@ -86,7 +76,7 @@ import { useMarqueeSelecao } from "./use-marquee";
 import { solicitarThumb } from "./thumb-fila";
 import { ehImagem, iconeParaEntry } from "./icones-arquivo";
 import { formatarDataArquivo, rotuloTipo } from "./format";
-import { TooltipAcao } from "./tooltip-acao";
+import { RibbonComandos } from "./ribbon-comandos";
 
 type ModoView = "detalhes" | "lista" | "grade";
 
@@ -1152,117 +1142,38 @@ export function ContentPane({
     );
   }
 
-  const selCount = selecao.selecionados.size;
+  // #871: a ÚNICA entrada selecionada (pro botão Renomear do ribbon) — só quando
+  // exatamente 1 item está selecionado; senão null.
+  const entradaUnica = useMemo(() => {
+    if (selecao.selecionados.size !== 1) return null;
+    const [p] = selecao.selecionados;
+    return porPath.get(p) ?? null;
+  }, [selecao.selecionados, porPath]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
-      {/* Toolbar: views + filtro in-folder + ocultos + toggle do inspector */}
-      <div className="flex shrink-0 items-center gap-2">
-        <div className="flex items-center gap-1">
-          <BotaoView
-            ativo={modo === "detalhes"}
-            onClick={() => setModo("detalhes")}
-            label={t.arquivos.viewDetalhes}
-            icon={<TableIcon className="size-4" />}
-          />
-          <BotaoView
-            ativo={modo === "lista"}
-            onClick={() => setModo("lista")}
-            label={t.arquivos.viewLista}
-            icon={<List className="size-4" />}
-          />
-          <BotaoView
-            ativo={modo === "grade"}
-            onClick={() => setModo("grade")}
-            label={t.arquivos.viewGrade}
-            icon={<LayoutGrid className="size-4" />}
-          />
-        </div>
-
-        {/* Filtro in-folder (as-you-type) */}
-        <div className="relative min-w-0 flex-1">
-          <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            ref={filtroRef}
-            value={filtro}
-            onChange={(e) => setFiltro(e.target.value)}
-            onKeyDown={(e) => {
-              // ESC no filtro: com texto, LIMPA e não propaga (senão o ESC da
-              // lista limparia a seleção junto); vazio, só tira o foco do campo.
-              if (e.key === "Escape") {
-                if (filtro) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setFiltro("");
-                } else {
-                  e.currentTarget.blur();
-                }
-              }
-            }}
-            placeholder={t.arquivos.filtrar}
-            aria-label={t.arquivos.filtrar}
-            className="h-8 pl-8 pr-8"
-          />
-          {filtro && (
-            // #862: gap real (não tinha tooltip nenhum) — Tooltip do app.
-            <TooltipAcao label={t.arquivos.limparFiltro}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-0.5 top-1/2 size-7 -translate-y-1/2"
-                onClick={() => setFiltro("")}
-                aria-label={t.arquivos.limparFiltro}
-              >
-                <X className="size-3.5" />
-              </Button>
-            </TooltipAcao>
-          )}
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1">
-          {/* #862: `title` nativo → Tooltip do app (+ Kbd Ctrl+H, cabeado no #863). */}
-          <TooltipAcao label={t.arquivos.mostrarOcultos} atalhoId="ocultos">
-            <Button
-              variant={mostrarOcultos ? "secondary" : "ghost"}
-              size="icon"
-              className="size-8"
-              onClick={() => setMostrarOcultos((v) => !v)}
-              aria-pressed={mostrarOcultos}
-              aria-label={t.arquivos.mostrarOcultos}
-            >
-              {mostrarOcultos ? (
-                <Eye className="size-4" />
-              ) : (
-                <EyeOff className="size-4" />
-              )}
-            </Button>
-          </TooltipAcao>
-          {onToggleInspector && (
-            // #862: `title` nativo → Tooltip do app.
-            <TooltipAcao label={t.arquivos.detalhes}>
-              <Button
-                variant={mostrarInspector ? "secondary" : "ghost"}
-                size="icon"
-                className="size-8"
-                onClick={onToggleInspector}
-                aria-pressed={mostrarInspector}
-                aria-label={t.arquivos.detalhes}
-              >
-                {mostrarInspector ? (
-                  <PanelRightClose className="size-4" />
-                ) : (
-                  <PanelRight className="size-4" />
-                )}
-              </Button>
-            </TooltipAcao>
-          )}
-          <span className="whitespace-nowrap text-xs text-muted-foreground">
-            {selCount > 0
-              ? preencher(t.arquivos.itensSelec, { n: selCount })
-              : preencher(t.arquivos.total, { n: itens.length })}
-          </span>
-        </div>
-      </div>
+      {/* #871: LINHA 2 — ribbon de comandos estilo Win11 (Novo · clipboard ·
+          Classificar · Exibir · Mais · filtro · inspector · contagem). Extraído
+          pro `ribbon-comandos.tsx`; absorve o antigo grupo de views (#867). */}
+      <RibbonComandos
+        currentPath={currentPath}
+        modo={modo}
+        onModo={setModo}
+        ordem={ordem}
+        onOrdem={setOrdem}
+        acoes={acoesMenu}
+        clipboard={clipboard ?? null}
+        selecionados={[...selecao.selecionados]}
+        entradaUnica={entradaUnica}
+        filtro={filtro}
+        onFiltro={setFiltro}
+        filtroRef={filtroRef}
+        mostrarOcultos={mostrarOcultos}
+        onOcultos={() => setMostrarOcultos((v) => !v)}
+        mostrarInspector={mostrarInspector ?? false}
+        onToggleInspector={onToggleInspector}
+        totalItens={itens.length}
+      />
 
       {/* CTA de caminhos longos (#681): só quando o caminho passa de MAX_PATH e o
           suporte está desligado. Habilitar dispara UAC (Tauri) e re-checa. */}
@@ -1463,31 +1374,6 @@ export function ContentPane({
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-function BotaoView({
-  ativo,
-  onClick,
-  label,
-  icon,
-}: {
-  ativo: boolean;
-  onClick: () => void;
-  label: string;
-  icon: ReactNode;
-}) {
-  return (
-    <Button
-      variant={ativo ? "secondary" : "ghost"}
-      size="sm"
-      className="h-8 gap-1.5"
-      onClick={onClick}
-      aria-pressed={ativo}
-    >
-      {icon}
-      <span className="text-xs">{label}</span>
-    </Button>
   );
 }
 

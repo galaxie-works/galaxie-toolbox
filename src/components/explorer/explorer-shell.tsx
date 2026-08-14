@@ -456,6 +456,9 @@ export function ExplorerShell() {
               onBack={() => dispatch({ type: "voltar" })}
               onForward={() => dispatch({ type: "avancar" })}
               onUp={() => dispatch({ type: "acima" })}
+              // #871: refresh da linha 1 — bumpa o nonce do watcher, que o
+              // ContentPane recebe como `refreshSignal` e re-lê a MESMA pasta.
+              onRefresh={() => setWatcherNonce((n) => n + 1)}
               onNavegar={navegar}
             />
             {nav.currentPath ? (

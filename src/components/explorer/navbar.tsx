@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowUp } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUp, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,7 @@ export function NavBarArquivos({
   onBack,
   onForward,
   onUp,
+  onRefresh,
   onNavegar,
 }: {
   currentPath: string;
@@ -38,6 +39,7 @@ export function NavBarArquivos({
   onBack: () => void;
   onForward: () => void;
   onUp: () => void;
+  onRefresh: () => void;
   onNavegar: (path: string) => void;
 }) {
   const { t } = useIdioma();
@@ -109,6 +111,18 @@ export function NavBarArquivos({
           aria-label={t.arquivos.acima}
         >
           <ArrowUp className="size-4" />
+        </Button>
+      </TooltipAcao>
+      {/* #871: atualizar (F5) — recarrega a pasta atual via o nonce do watcher. */}
+      <TooltipAcao label={t.arquivos.atualizar} atalhoId="atualizar">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          onClick={onRefresh}
+          aria-label={t.arquivos.atualizar}
+        >
+          <RefreshCw className="size-4" />
         </Button>
       </TooltipAcao>
 
