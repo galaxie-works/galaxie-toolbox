@@ -6,10 +6,15 @@ import { ExplorerShell } from "@/components/explorer/explorer-shell";
  * ícone), então repetir o título/ícone aqui dentro é redundante. O Explorer
  * ocupa a altura toda da content-area.
  */
-export function ArquivosScreen() {
+export function ArquivosScreen({
+  onLocalChange,
+}: {
+  /** #872: repassa o local atual do Explorer pro host da aba (label + tooltip). */
+  onLocalChange?: (info: { rotulo: string; caminho: string }) => void;
+} = {}) {
   return (
     <div className="h-full">
-      <ExplorerShell />
+      <ExplorerShell onLocalChange={onLocalChange} />
     </div>
   );
 }

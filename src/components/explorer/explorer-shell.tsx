@@ -33,7 +33,7 @@ import { InspectorPane } from "./inspector";
 import { ProgressoPanel, type OpAtiva } from "./progresso-panel";
 import { ConflitoDialog } from "./conflito-dialog";
 import { calcVelocidade, planejarTransferencia, type ResolucaoConflito } from "./operacao";
-import { pathPai } from "./caminho";
+import { CAMINHO_ESTE_PC, nomeBase, pathPai } from "./caminho";
 import type { Clipboard, OperacaoClipboard } from "./menu-arquivo";
 
 // --- Estado de navegação (histórico back/forward + caminho atual) ----------
@@ -105,9 +105,21 @@ interface ConflitoPendente {
  * painel da árvore = card no estilo do sidebar de Apps/Bridge; painel de
  * conteúdo = NavBar + ContentPane virtualizado.
  */
-export function ExplorerShell() {
+export function ExplorerShell({
+  onLocalChange,
+}: {
+  /** #872: reporta o local atual pra o host da aba (Navigator) mostrar
+   *  "Files - <local>" + tooltip do caminho completo. `rotulo` = pasta atual (ou
+   *  "Este computador" no This PC); `caminho` = caminho completo (ou o mesmo
+   *  rótulo no This PC, que não tem caminho real). */
+  onLocalChange?: (info: { rotulo: string; caminho: string }) => void;
+} = {}) {
   const { t } = useIdioma();
   const [nav, dispatch] = useReducer(navReducer, NAV_INICIAL);
+  // #872: via ref pra o efeito de report depender SÓ do caminho (o callback do
+  // App é recriado a cada render; sem a ref, o efeito dispararia todo render).
+  const onLocalChangeRef = useRef(onLocalChange);
+  onLocalChangeRef.current = onLocalChange;
   const [drives, setDrives] = useState<DriveInfo[] | null>(null);
   const [acessoRapido, setAcessoRapido] = useState<FsEntry[] | null>(null);
   // #681: seleção liftada do ContentPane → alimenta o InspectorPane.
@@ -163,6 +175,16 @@ export function ExplorerShell() {
       vivo = false;
     };
   }, []);
+
+  // #872: reporta o local atual pro host da aba (label "Files - <local>" +
+  // tooltip do caminho). Dispara no mount (This PC) e a cada navegação. Deps só
+  // no caminho + no rótulo do This PC (i18n) — o callback vai por ref.
+  useEffect(() => {
+    const p = nav.currentPath;
+    const rotulo = p === CAMINHO_ESTE_PC ? t.arquivos.drives : nomeBase(p);
+    const caminho = p === CAMINHO_ESTE_PC ? t.arquivos.drives : p;
+    onLocalChangeRef.current?.({ rotulo, caminho });
+  }, [nav.currentPath, t.arquivos.drives]);
 
   // #724: assina o progresso das ops UMA vez (no mount). Deriva a velocidade
   // entre eventos, remove a op no evento terminal (done/cancelado/erro) e mostra

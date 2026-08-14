@@ -757,6 +757,30 @@ function AppInner() {
     setAbaAtiva(id);
   }
 
+  // #872: a aba de Files reporta seu local atual (via ExplorerShell → renderTela
+  // Interna) e aqui viramos "Files - <local>" no nome + guardamos o caminho
+  // completo pro tooltip do chip. GUARD de no-op (retorna o mesmo array quando
+  // nada mudou) — o callback do shell é recriado a cada render, então sem o guard
+  // isso entraria em loop de setstate.
+  function atualizarLocalAba(
+    abaId: string,
+    info: { rotulo: string; caminho: string },
+  ) {
+    const nome = `${t.sidebar.files} - ${info.rotulo}`;
+    setAbas((prev) => {
+      const alvo = prev.find((a) => a.id === abaId);
+      if (
+        !alvo ||
+        (alvo.nome === nome && alvo.caminhoLocal === info.caminho)
+      ) {
+        return prev;
+      }
+      return prev.map((a) =>
+        a.id === abaId ? { ...a, nome, caminhoLocal: info.caminho } : a,
+      );
+    });
+  }
+
   function abrirAbaVazia() {
     setAbas((prev) =>
       prev.map((tab) =>
@@ -1049,6 +1073,7 @@ function AppInner() {
   const renderTelaInterna = (
     telaInterna: TelaInterna,
     ativaTela: boolean,
+    abaId: string,
   ): ReactNode => {
     switch (telaInterna) {
       case "control-room":
@@ -1081,7 +1106,13 @@ function AppInner() {
           />
         );
       case "arquivos":
-        return <ArquivosScreen />;
+        // #872: a aba mostra "Files - <local>" — o shell reporta o local atual e
+        // o App atualiza o nome/caminho DESTA aba (por id).
+        return (
+          <ArquivosScreen
+            onLocalChange={(info) => atualizarLocalAba(abaId, info)}
+          />
+        );
       case "remote":
         return (
           <EmBreveScreen

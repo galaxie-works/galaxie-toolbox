@@ -33,6 +33,10 @@ export interface AbaBrowser {
   tipo?: "web" | "interna";
   /** #719: qual tela interna a aba hospeda (só quando `tipo === 'interna'`). */
   tela?: TelaInterna;
+  /** #872: caminho local COMPLETO da aba de Files (tooltip do chip). O `nome` da
+   *  aba mostra "Files - <local>" (truncado); este guarda o caminho inteiro pro
+   *  hover. Só populado em aba de Files, atualizado conforme o usuário navega. */
+  caminhoLocal?: string;
 }
 
 /** #719 (SH1): a aba hospeda uma tela React (não é webview)? */

@@ -1162,7 +1162,11 @@ export function NavegadorScreen({
   /** #719 (SH1): renderiza a tela React (Bridge/Files/Remote) de uma aba
    *  interna. `ativa` = a aba é a atual (dá foco/polling à tela certa). O App é
    *  dono das telas e do keep-alive; o Navigator só as encaixa no slot. */
-  renderTelaInterna: (tela: TelaInterna, ativa: boolean) => ReactNode;
+  renderTelaInterna: (
+    tela: TelaInterna,
+    ativa: boolean,
+    abaId: string,
+  ) => ReactNode;
 }) {
   const { t } = useIdioma();
   const area = useRef<HTMLDivElement>(null);
@@ -1406,6 +1410,12 @@ export function NavegadorScreen({
         : aba.fixada
           ? preencher(t.navegador.fixadaNome, { nome: aba.nome })
           : aba.nome;
+    // #872: aba de Files → o hover mostra o CAMINHO completo (o chip já traz
+    // "Files - <local>" truncado). As outras abas mantêm o próprio label.
+    const tabTooltip =
+      ehAbaInterna(aba) && aba.tela === "arquivos" && aba.caminhoLocal
+        ? aba.caminhoLocal
+        : tabLabel;
     return (
       <SortableItem
         key={aba.id}
@@ -1471,7 +1481,7 @@ export function NavegadorScreen({
                     <TooltipTrigger asChild>
                       <span className="min-w-0 flex-1 truncate">{aba.nome}</span>
                     </TooltipTrigger>
-                    <TooltipContent>{tabLabel}</TooltipContent>
+                    <TooltipContent>{tabTooltip}</TooltipContent>
                   </Tooltip>
                   {aba.manterAcordada && (
                     <Coffee
@@ -2400,7 +2410,7 @@ export function NavegadorScreen({
                   ativaAba ? "flex flex-col" : "hidden",
                 )}
               >
-                {renderTelaInterna(aba.tela as TelaInterna, ativaAba)}
+                {renderTelaInterna(aba.tela as TelaInterna, ativaAba, aba.id)}
               </div>
             );
           })}
