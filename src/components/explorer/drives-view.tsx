@@ -28,10 +28,44 @@ export function DrivesView({
   onNavegar: (path: string) => void;
 }) {
   const { t } = useIdioma();
+  // #855 refino: 2 seções, estilo Win11 — "Dispositivos e drives" (locais /
+  // removíveis / cd / etc.) e "Locais de rede" (kind `network`). A seção de rede
+  // só aparece quando há drive de rede. (Cloud drives dedicados = #869.)
+  const dispositivos = drives.filter((d) => d.kind !== "network");
+  const rede = drives.filter((d) => d.kind === "network");
 
   return (
-    <div className="min-h-0 flex-1 overflow-auto rounded-xl border bg-card p-4">
-      <p className="px-1 pb-3 text-sm font-medium">{t.arquivos.drives}</p>
+    <div className="min-h-0 flex-1 space-y-4 overflow-auto rounded-xl border bg-card p-4">
+      <SecaoDrives
+        titulo={t.arquivos.driveSecaoDispositivos}
+        drives={dispositivos}
+        onNavegar={onNavegar}
+      />
+      <SecaoDrives
+        titulo={t.arquivos.driveSecaoRede}
+        drives={rede}
+        onNavegar={onNavegar}
+      />
+    </div>
+  );
+}
+
+/** Uma seção de drives (título + grade). Some quando não há drive na categoria. */
+function SecaoDrives({
+  titulo,
+  drives,
+  onNavegar,
+}: {
+  titulo: string;
+  drives: DriveInfo[];
+  onNavegar: (path: string) => void;
+}) {
+  if (drives.length === 0) return null;
+  return (
+    <div>
+      <p className="px-1 pb-2 text-xs font-medium text-muted-foreground">
+        {titulo}
+      </p>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {drives.map((d) => (
           <DriveCard key={d.path} drive={d} onNavegar={onNavegar} />
@@ -70,12 +104,10 @@ function DriveCard({
   const corBarra =
     pct > 90 ? "bg-destructive" : pct >= 75 ? "bg-warning" : "bg-success";
 
-  const usadoDeTotal = preencher(t.arquivos.driveUsados, {
-    usado: formatBytes(usado),
-    total: formatBytes(total),
-  });
-  const livreTxt = preencher(t.arquivos.driveLivre, {
+  // #855 refino: linha estilo Win11 "X livre de Y".
+  const livreDeTotal = preencher(t.arquivos.driveLivreDeTotal, {
     livre: formatBytes(livre),
+    total: formatBytes(total),
   });
   const tooltip = preencher(t.arquivos.driveTooltip, {
     usado: formatBytes(usado),
@@ -107,7 +139,7 @@ function DriveCard({
                     aria-valuenow={pctArredondado}
                     aria-valuemin={0}
                     aria-valuemax={100}
-                    aria-valuetext={usadoDeTotal}
+                    aria-valuetext={livreDeTotal}
                   >
                     <div
                       className={cn(
@@ -117,10 +149,9 @@ function DriveCard({
                       style={{ width: `${pct}%` }}
                     />
                   </div>
-                  <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground tabular-nums">
-                    <span className="truncate">{usadoDeTotal}</span>
-                    <span className="shrink-0">{livreTxt}</span>
-                  </div>
+                  <p className="truncate text-xs text-muted-foreground tabular-nums">
+                    {livreDeTotal}
+                  </p>
                 </>
               )}
             </CardContent>
