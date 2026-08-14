@@ -490,6 +490,18 @@ function ConteudoPaleta({
     () => appsUnificadosPorCategoria(termo || undefined, user),
     [termo, user],
   );
+  // #877 (decisão do Wagner, 14/08): os apps do PRÓPRIO GALAXIE (Bridge/Files/
+  // Remote) vêm ANTES do "Mais usados" — são a 1ª coisa que aparece ao abrir o
+  // command (o "sempre primeiro" literal, acima da seção curada M365). Separo o
+  // grupo "From GALAXIE" do resto das categorias (que seguem depois do topo).
+  const grupoGalaxie = useMemo(
+    () => gruposUnificados.find((g) => g.categoria === "From GALAXIE"),
+    [gruposUnificados],
+  );
+  const gruposResto = useMemo(
+    () => gruposUnificados.filter((g) => g.categoria !== "From GALAXIE"),
+    [gruposUnificados],
+  );
 
   // Abre um app da lista única (#827 SU1/SU2). Prioridade:
   // 1) core M365 que o app já faz NATIVO → abre a tela interna, não aba web
@@ -519,6 +531,41 @@ function ConteudoPaleta({
       }
     }
     onNavegar(app.url, app.name);
+  };
+
+  // Render de UMA categoria do command — reusado pelo grupo "From GALAXIE" (no
+  // topo, #877) e pelas demais categorias. Extraído p/ não duplicar o corpo.
+  const renderCategoria = (grupo: (typeof gruposUnificados)[number]) => {
+    // #824: na busca, capa em MAX_BUSCA_POR_CATEGORIA (perf); sem busca, a prévia
+    // curada. `ocultos` alimenta a linha "+N mais".
+    const apps = termo
+      ? grupo.apps.slice(0, MAX_BUSCA_POR_CATEGORIA)
+      : grupo.apps.slice(0, PREVIA_POR_CATEGORIA);
+    const ocultos = termo ? grupo.apps.length - apps.length : 0;
+    return (
+      <CommandGroup
+        key={`cat-${grupo.categoria}`}
+        heading={t.command[chaveCategoria(grupo.categoria)]}
+      >
+        {apps.map((app) => (
+          <ItemUnificado
+            key={`app-${app.id}`}
+            app={app}
+            termo={termo}
+            fixado={estaPinado(appsFixados, app.id)}
+            onSelecionar={() => executar(() => abrirUnificado(app))}
+            onAlternarPin={() => alternarFixado(app.id)}
+          />
+        ))}
+        {ocultos > 0 && (
+          // #824: afordância honesta — mostra quantos ficaram de fora (não trunca
+          // em silêncio). Não é CommandItem (não navegável).
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+            {preencher(t.navegador.maisResultados, { n: ocultos })}
+          </div>
+        )}
+      </CommandGroup>
+    );
   };
 
   return (
@@ -710,6 +757,16 @@ function ConteudoPaleta({
 
         {mostrarApps && (
           <>
+            {/* #877 (decisão do Wagner, 14/08): os apps do GALAXIE (Bridge/Files/
+                Remote) ANTES do "Mais usados" — os produtos do app são a 1ª coisa
+                ao abrir o command. Só renderiza se o grupo casa (na busca pode
+                não existir). */}
+            {grupoGalaxie && (
+              <>
+                {renderCategoria(grupoGalaxie)}
+                <CommandSeparator />
+              </>
+            )}
             <CommandGroup
               heading={
                 topAcessados.length > 0
@@ -742,43 +799,11 @@ function ConteudoPaleta({
             </CommandGroup>
             <CommandSeparator />
 
-            {/* #827 (SU1): UMA seção por categoria, taxonomia única (14 cats).
-                Cada categoria 1x, cada app 1x (M365 curado + catálogo, deduped).
-                Sem busca = prévia por categoria; ao buscar, todos os matches.
-                Um só `ItemUnificado` → negrito/espaçamento consistente. */}
-            {gruposUnificados.length > 0 && <CommandSeparator />}
-            {gruposUnificados.map((grupo) => {
-              // #824: na busca, capa em MAX_BUSCA_POR_CATEGORIA (perf); sem busca,
-              // a prévia curada. `ocultos` alimenta a linha "+N mais".
-              const apps = termo
-                ? grupo.apps.slice(0, MAX_BUSCA_POR_CATEGORIA)
-                : grupo.apps.slice(0, PREVIA_POR_CATEGORIA);
-              const ocultos = termo ? grupo.apps.length - apps.length : 0;
-              return (
-                <CommandGroup
-                  key={`cat-${grupo.categoria}`}
-                  heading={t.command[chaveCategoria(grupo.categoria)]}
-                >
-                  {apps.map((app) => (
-                    <ItemUnificado
-                      key={`app-${app.id}`}
-                      app={app}
-                      termo={termo}
-                      fixado={estaPinado(appsFixados, app.id)}
-                      onSelecionar={() => executar(() => abrirUnificado(app))}
-                      onAlternarPin={() => alternarFixado(app.id)}
-                    />
-                  ))}
-                  {ocultos > 0 && (
-                    // #824: afordância honesta — mostra quantos ficaram de fora
-                    // (não trunca em silêncio). Não é CommandItem (não navegável).
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      {preencher(t.navegador.maisResultados, { n: ocultos })}
-                    </div>
-                  )}
-                </CommandGroup>
-              );
-            })}
+            {/* #827 (SU1): UMA seção por categoria, taxonomia única. Cada
+                categoria 1x, cada app 1x (deduped). O grupo "From GALAXIE" já foi
+                renderizado ACIMA do "Mais usados" (#877) — aqui vão as demais. */}
+            {gruposResto.length > 0 && <CommandSeparator />}
+            {gruposResto.map((grupo) => renderCategoria(grupo))}
           </>
         )}
 
