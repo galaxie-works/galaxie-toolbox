@@ -705,7 +705,7 @@ export interface FsOpProgress {
   opKind: string;
   /** #875: fase — "discovering" (varredura, indeterminada) | "processing" | "done". */
   phase: string;
-  /** #875: estado agregado (1 enum): "inProgress" | "success" | "error" | "canceled" | "partial". */
+  /** #875: estado agregado (1 enum): "inProgress" | "paused" (#898) | "success" | "error" | "canceled" | "partial". */
   status: string;
   /** #875: nome do arquivo sendo processado agora (null até ter). */
   currentFile: string | null;

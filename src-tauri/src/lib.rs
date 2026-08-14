@@ -2151,6 +2151,9 @@ pub fn run() {
             fs_explorer::fs_copy_many_with_progress,
             fs_explorer::fs_move_many_with_progress,
             fs_explorer::fs_cancel,
+            // #898: pause/resume do motor de cópia (net-new além do cancel).
+            fs_explorer::fs_op_pause,
+            fs_explorer::fs_op_resume,
             fs_explorer::fs_check_conflicts,
             fs_explorer::fs_watch,
             fs_explorer::fs_unwatch,
