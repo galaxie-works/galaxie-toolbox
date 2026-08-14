@@ -701,6 +701,17 @@ export interface FsOpProgress {
   done: boolean;
   canceled: boolean;
   error: FsError | null;
+  /** #875: tipo da op (ícone por tipo). "copy" | "move". */
+  opKind: string;
+  /** #875: fase — "discovering" (varredura, indeterminada) | "processing" | "done". */
+  phase: string;
+  /** #875: estado agregado (1 enum): "inProgress" | "success" | "error" | "canceled" | "partial". */
+  status: string;
+  /** #875: nome do arquivo sendo processado agora (null até ter). */
+  currentFile: string | null;
+  /** #875: epoch ms do início; fim (null até terminar). */
+  startedAtMs: number;
+  completedAtMs: number | null;
 }
 
 /** Conflito de nome no destino (pro diálogo Substituir/Pular/Manter ambos). */

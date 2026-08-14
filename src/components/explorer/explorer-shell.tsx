@@ -190,9 +190,21 @@ export function ExplorerShell() {
             toast.success(arquivos.opConcluida);
           }
         }
+        // #875: RETÉM a op na fila marcada como terminal (não remove mais) — vira
+        // card revisável no Status Center. Erro fica vermelho até dispensar; a
+        // limpeza dos refs (tiposRef/terminadosRef) mora em dismissOp/clearCompleted.
+        // Sem mais progresso → velocidade 0; só o ultimoRef (delta de bytes) sai.
         ultimoRef.current.delete(p.opId);
-        tiposRef.current.delete(p.opId);
-        setOps((prev) => prev.filter((o) => o.opId !== p.opId));
+        setOps((prev) => {
+          const tipo =
+            tiposRef.current.get(p.opId) ??
+            prev.find((o) => o.opId === p.opId)?.tipo ??
+            "copy";
+          const novo: OpAtiva = { opId: p.opId, tipo, progresso: p, velocidade: 0 };
+          return prev.some((o) => o.opId === p.opId)
+            ? prev.map((o) => (o.opId === p.opId ? novo : o))
+            : [...prev, novo];
+        });
         return;
       }
 
@@ -355,6 +367,35 @@ export function ExplorerShell() {
     void cancelarOp(opId).catch(() => {});
   }, []);
 
+  // #875: dispensa UMA op terminal do Status Center (guard: nunca uma op ainda
+  // "inProgress" — essa é cancelável, não dispensável). Limpa os refs de
+  // bookkeeping pra não vazar entre ops de mesmo opId futuro.
+  const dispensarOp = useCallback((opId: number) => {
+    setOps((prev) => {
+      const alvo = prev.find((o) => o.opId === opId);
+      if (!alvo || alvo.progresso.status === "inProgress") return prev;
+      return prev.filter((o) => o.opId !== opId);
+    });
+    ultimoRef.current.delete(opId);
+    tiposRef.current.delete(opId);
+    terminadosRef.current.delete(opId);
+  }, []);
+
+  // #875: limpa TODAS as ops não-inProgress (concluídas/erro/canceladas/parciais),
+  // mantendo as ativas. Limpa os refs das removidas.
+  const limparConcluidas = useCallback(() => {
+    setOps((prev) => {
+      for (const o of prev) {
+        if (o.progresso.status !== "inProgress") {
+          ultimoRef.current.delete(o.opId);
+          tiposRef.current.delete(o.opId);
+          terminadosRef.current.delete(o.opId);
+        }
+      }
+      return prev.filter((o) => o.progresso.status === "inProgress");
+    });
+  }, []);
+
   return (
     <div className="relative h-full">
       {/* #819: `autoSaveId` persiste as larguras dos painéis (árvore/conteúdo/
@@ -464,7 +505,12 @@ export function ExplorerShell() {
 
       {/* #724: painel flutuante de progresso (canto inferior direito) + diálogo
           de conflito controlado pelo shell. */}
-      <ProgressoPanel ops={ops} onCancelar={cancelarTransferencia} />
+      <ProgressoPanel
+        ops={ops}
+        onCancelar={cancelarTransferencia}
+        onDispensar={dispensarOp}
+        onLimparConcluidas={limparConcluidas}
+      />
       <ConflitoDialog
         aberto={conflito !== null}
         conflitos={conflito?.conflitos ?? []}
