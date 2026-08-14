@@ -1166,6 +1166,10 @@ export function ContentPane({
         </Alert>
       )}
 
+      {/* #854: a LISTA (cabeçalho + área virtualizada) mora no seu PRÓPRIO card —
+          a toolbar (navbar + views/filtro) acima fica bare no topo da
+          content-area, separada da lista. */}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card">
       {/* Cabeçalho da tabela (só em Detalhes) */}
       {modo === "detalhes" && (
         <div
@@ -1300,6 +1304,7 @@ export function ContentPane({
             </div>
           )}
         </ComMenu>
+      </div>
       </div>
 
       {/* #714: confirmação da exclusão PERMANENTE (Shift+Delete / item do menu).

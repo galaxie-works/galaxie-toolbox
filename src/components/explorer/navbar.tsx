@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, ArrowUp, Pencil } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUp } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
 import { useIdioma } from "@/lib/idioma";
 import { statCaminho } from "@/lib/api";
@@ -155,6 +161,9 @@ export function NavBarArquivos({
             value={valor}
             aria-label={t.arquivos.endereco}
             aria-invalid={erro || undefined}
+            // #854: entra em edição com TUDO selecionado (Ctrl+A implícito) —
+            // digitar substitui o caminho na hora.
+            onFocus={(e) => e.target.select()}
             onChange={(e) => {
               setValor(e.target.value);
               setErro(false);
@@ -178,36 +187,41 @@ export function NavBarArquivos({
           )}
         </div>
       ) : (
-        <div className="flex min-w-0 flex-1 items-center gap-1">
-          <div className="flex min-w-0 flex-1 items-center overflow-x-auto rounded-md border bg-background/40 px-1 py-0.5">
-            {segmentos.map((seg, i) => (
-              <span key={seg.path} className="flex shrink-0 items-center">
-                {i > 0 && (
-                  <span className="px-0.5 text-muted-foreground">\</span>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-1.5 text-xs font-normal"
-                  onClick={() => onNavegar(seg.path)}
-                >
-                  {seg.label}
-                </Button>
-              </span>
-            ))}
-          </div>
-          <TooltipAcao label={t.arquivos.editarCaminho}>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-8 shrink-0"
-              onClick={() => setEditando(true)}
-              aria-label={t.arquivos.editarCaminho}
+        // #854: SEM lápis. Clicar no ESPAÇO VAZIO (depois do último segmento) ou
+        // botão-direito > "Editar caminho" libera o campo. Clique num segmento
+        // navega (onClick do botão, que não é o alvo do container).
+        <ContextMenu>
+          <ContextMenuTrigger asChild>
+            <div
+              className="flex min-w-0 flex-1 cursor-text items-center overflow-x-auto rounded-md border bg-background/40 px-1 py-0.5"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setEditando(true);
+              }}
+              title={t.arquivos.editarCaminho}
             >
-              <Pencil className="size-4" />
-            </Button>
-          </TooltipAcao>
-        </div>
+              {segmentos.map((seg, i) => (
+                <span key={seg.path} className="flex shrink-0 items-center">
+                  {i > 0 && (
+                    <span className="px-0.5 text-muted-foreground">\</span>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1.5 text-xs font-normal"
+                    onClick={() => onNavegar(seg.path)}
+                  >
+                    {seg.label}
+                  </Button>
+                </span>
+              ))}
+            </div>
+          </ContextMenuTrigger>
+          <ContextMenuContent>
+            <ContextMenuItem onSelect={() => setEditando(true)}>
+              {t.arquivos.editarCaminho}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
       )}
     </div>
   );

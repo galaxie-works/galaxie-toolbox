@@ -107,15 +107,16 @@ export function ExplorerShell() {
   const [nav, dispatch] = useReducer(navReducer, NAV_INICIAL);
   const [drives, setDrives] = useState<DriveInfo[] | null>(null);
   const [acessoRapido, setAcessoRapido] = useState<FsEntry[] | null>(null);
-  // #681: seleção liftada do ContentPane → alimenta o InspectorPane. Painel de
-  // detalhes começa VISÍVEL (o usuário esconde pelo toggle da toolbar).
+  // #681: seleção liftada do ContentPane → alimenta o InspectorPane.
   const [selecionados, setSelecionados] = useState<FsEntry[]>([]);
-  // #819: visibilidade do painel de detalhes PERSISTE entre sessões (local, como
-  // os demais prefs de painel). As larguras dos painéis persistem pelo
-  // `autoSaveId` do ResizablePanelGroup abaixo.
+  // #819/#854: visibilidade do painel de detalhes PERSISTE entre sessões (local).
+  // #854: default = FECHADO (Wagner) — só abre se o usuário ligar. O
+  // `usePersistedState` lê o localStorage no mount (init lazy) e grava a cada
+  // troca, então o "fechado" que o usuário deixou sobrevive ao restart. As
+  // larguras dos painéis persistem pelo `autoSaveId` do ResizablePanelGroup.
   const [mostrarInspector, setMostrarInspector] = usePersistedState(
     "explorer.inspector.v1",
-    true,
+    false,
   );
   // #714: área de transferência interna (recortar/copiar/colar). Vive no shell
   // pra sobreviver à navegação entre pastas.
@@ -371,7 +372,11 @@ export function ExplorerShell() {
         <ResizableHandle withHandle className="mx-1.5 bg-transparent" />
 
         <ResizablePanel id="content" order={2} defaultSize={53} minSize={30}>
-          <div className="flex h-full flex-col gap-3 rounded-xl border bg-card p-3">
+          {/* #854: a toolbar (navbar + views/filtro) fica no TOPO da content-area,
+              largura cheia e FORA do card da lista; a lista mora no seu próprio
+              card (dentro do ContentPane). Sem o card externo que boxeava os dois
+              juntos. */}
+          <div className="flex h-full min-h-0 flex-col gap-2">
             <NavBarArquivos
               currentPath={nav.currentPath}
               canBack={nav.historyIndex > 0}
@@ -395,7 +400,7 @@ export function ExplorerShell() {
               />
             ) : (
               // Sem pasta selecionada ainda (antes de os drives caírem no 1º).
-              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center">
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-card text-center">
                 <div>
                   <p className="text-sm font-medium">
                     {t.arquivos.conteudoTitulo}
