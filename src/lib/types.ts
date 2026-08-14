@@ -617,7 +617,18 @@ export interface FsEntry {
 export interface DriveInfo {
   path: string;
   name: string;
-  kind: "fixed" | "removable" | "network" | "cdrom" | "ramdisk" | "unknown";
+  /** #869: `network` = Network location (W:); `cloud` = mount de nuvem (heurística
+   *  por `fsName`) → ícone dedicado no sidebar do Files. */
+  kind:
+    | "fixed"
+    | "removable"
+    | "network"
+    | "cdrom"
+    | "ramdisk"
+    | "cloud"
+    | "unknown";
+  /** #869: nome do filesystem (NTFS/FAT32/DriveFS…) — sinal cru pro front refinar. */
+  fsName: string;
   totalSpace: number;
   freeSpace: number;
 }
