@@ -2129,6 +2129,9 @@ pub fn run() {
             fs_explorer::fs_stat,
             fs_explorer::fs_dir_size,
             fs_explorer::fs_list_drives,
+            // #871: mapear/desconectar network drive (menu "New" do ribbon).
+            fs_explorer::fs_map_network_drive,
+            fs_explorer::fs_disconnect_network_drive,
             fs_explorer::fs_thumbnail,
             fs_explorer::fs_thumb_cache_limits,
             fs_explorer::fs_thumb_metrics,

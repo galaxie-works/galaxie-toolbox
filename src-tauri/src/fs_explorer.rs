@@ -445,6 +445,96 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
     }])
 }
 
+// ─── #871: mapear/desconectar network drive (menu "New → Network drive") ─────
+//
+// Backend do item "Network drive" do `New ▾` do ribbon (#871, UI = Sirius). Usa
+// WNet (WNetAddConnection2W/WNetCancelConnection2W) — sem credenciais explícitas
+// (usa a sessão atual; prompt de credencial fica pra follow-up). "Add network
+// location" (atalho nethood sem letra) é mecanismo de shell diferente → outra fatia.
+
+/// Normaliza uma letra de drive pra "Z:" (aceita "z", "Z", "Z:", "Z:\").
+fn normalizar_letra_drive(s: &str) -> Result<String, FsError> {
+    let t = s.trim().trim_end_matches(['\\', '/']).trim_end_matches(':');
+    let mut chars = t.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_alphabetic() => Ok(format!("{}:", c.to_ascii_uppercase())),
+        _ => Err(FsError::InvalidPath(format!("letra de drive inválida: {s}"))),
+    }
+}
+
+/// Valida um caminho UNC de rede (`\\server\share`): 2 barras iniciais + server
+/// + separador + share.
+fn validar_unc(p: &str) -> Result<(), FsError> {
+    let t = p.trim();
+    let dupla = t.starts_with("\\\\") || t.starts_with("//");
+    let tem_share = t.len() > 2 && t[2..].contains(['\\', '/']);
+    if dupla && tem_share {
+        Ok(())
+    } else {
+        Err(FsError::InvalidPath(format!(
+            "caminho de rede inválido (esperado \\\\server\\share): {p}"
+        )))
+    }
+}
+
+#[cfg(windows)]
+fn mapear_network_drive(letra: &str, remoto: &str, persistente: bool) -> Result<(), FsError> {
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::NetworkManagement::WNet::{
+        WNetAddConnection2W, CONNECT_TEMPORARY, CONNECT_UPDATE_PROFILE, NETRESOURCEW,
+        RESOURCETYPE_DISK,
+    };
+
+    let letra = normalizar_letra_drive(letra)?;
+    validar_unc(remoto)?;
+    let mut local: Vec<u16> = letra.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut rem: Vec<u16> = remoto.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let nr = NETRESOURCEW {
+        dwType: RESOURCETYPE_DISK,
+        lpLocalName: PWSTR(local.as_mut_ptr()),
+        lpRemoteName: PWSTR(rem.as_mut_ptr()),
+        ..Default::default()
+    };
+    let flags = if persistente { CONNECT_UPDATE_PROFILE } else { CONNECT_TEMPORARY };
+    // Sem password/username → usa as credenciais da sessão atual.
+    let rc = unsafe { WNetAddConnection2W(&nr, PCWSTR::null(), PCWSTR::null(), flags) };
+    if rc.is_ok() {
+        log::info!("fs_map_network_drive: {letra} → {remoto} (persistente={persistente}) OK");
+        Ok(())
+    } else {
+        log::error!("fs_map_network_drive: {letra} → {remoto} falhou (WNet {})", rc.0);
+        Err(FsError::Io(format!("mapear network drive falhou (código WNet {})", rc.0)))
+    }
+}
+
+#[cfg(windows)]
+fn desconectar_network_drive(letra: &str, forcar: bool) -> Result<(), FsError> {
+    use windows::core::PCWSTR;
+    use windows::Win32::NetworkManagement::WNet::{WNetCancelConnection2W, CONNECT_UPDATE_PROFILE};
+
+    let letra = normalizar_letra_drive(letra)?;
+    let nome: Vec<u16> = letra.encode_utf16().chain(std::iter::once(0)).collect();
+    let rc = unsafe { WNetCancelConnection2W(PCWSTR(nome.as_ptr()), CONNECT_UPDATE_PROFILE, forcar) };
+    if rc.is_ok() {
+        log::info!("fs_disconnect_network_drive: {letra} desconectado (forçado={forcar})");
+        Ok(())
+    } else {
+        log::error!("fs_disconnect_network_drive: {letra} falhou (WNet {})", rc.0);
+        Err(FsError::Io(format!("desconectar network drive falhou (código WNet {})", rc.0)))
+    }
+}
+
+#[cfg(not(windows))]
+fn mapear_network_drive(_letra: &str, _remoto: &str, _persistente: bool) -> Result<(), FsError> {
+    Err(FsError::Io("network drive só é suportado no Windows".into()))
+}
+
+#[cfg(not(windows))]
+fn desconectar_network_drive(_letra: &str, _forcar: bool) -> Result<(), FsError> {
+    Err(FsError::Io("network drive só é suportado no Windows".into()))
+}
+
 // ────────────────────────── Mutações (S3, #679) ─────────────────────────────
 // Delete → Lixeira é o PADRÃO (reversível); permanente só com token de
 // confirmação (o front manda depois do Shift+confirmar). Tudo tipado em FsError.
@@ -2486,6 +2576,29 @@ pub async fn fs_list_drives() -> Result<Vec<DriveInfo>, FsError> {
         .map_err(spawn_err)?
 }
 
+/// #871: mapeia um network drive (menu "New → Network drive" do ribbon).
+/// `letter` = letra livre ("Z:"), `remote` = UNC (`\\server\share`),
+/// `persistent` = reconecta no login.
+#[tauri::command]
+pub async fn fs_map_network_drive(
+    letter: String,
+    remote: String,
+    persistent: bool,
+) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || mapear_network_drive(&letter, &remote, persistent))
+        .await
+        .map_err(spawn_err)?
+}
+
+/// #871: desconecta um network drive mapeado. `force` derruba mesmo com arquivos
+/// abertos.
+#[tauri::command]
+pub async fn fs_disconnect_network_drive(letter: String, force: bool) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || desconectar_network_drive(&letter, force))
+        .await
+        .map_err(spawn_err)?
+}
+
 #[tauri::command]
 pub async fn fs_known_dirs() -> Result<Vec<FsEntry>, FsError> {
     tauri::async_runtime::spawn_blocking(|| Ok(dirs_conhecidos()))
@@ -2933,6 +3046,26 @@ mod tests {
         // Filesystems reais NUNCA são cloud (sem mislabel).
         for fs in ["NTFS", "FAT32", "exFAT", "ReFS", ""] {
             assert!(!eh_cloud_fs(fs), "{fs} não é cloud");
+        }
+    }
+
+    #[test]
+    fn normalizar_letra_drive_aceita_formatos_e_rejeita_lixo() {
+        for s in ["z", "Z", "Z:", "Z:\\", "z:/"] {
+            assert_eq!(normalizar_letra_drive(s).unwrap(), "Z:", "entrada {s}");
+        }
+        for ruim in ["", "  ", "ZZ", "1", "::", "\\\\"] {
+            assert!(normalizar_letra_drive(ruim).is_err(), "{ruim:?} devia falhar");
+        }
+    }
+
+    #[test]
+    fn validar_unc_exige_server_e_share() {
+        assert!(validar_unc("\\\\server\\share").is_ok());
+        assert!(validar_unc("//server/share").is_ok());
+        assert!(validar_unc("\\\\srv\\dir\\sub").is_ok());
+        for ruim in ["\\\\server", "C:\\local", "\\\\", "", "server\\share"] {
+            assert!(validar_unc(ruim).is_err(), "{ruim:?} devia falhar");
         }
     }
 
