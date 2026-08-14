@@ -467,6 +467,14 @@ function ConteudoPaleta({
   // única. Sem busca = prévia por categoria (perf: não monta os ~1788 de uma vez);
   // ao buscar, filtra tudo por nome/categoria e mostra todos os matches.
   const PREVIA_POR_CATEGORIA = 6;
+  // #824 (SU3): teto de resultados por categoria na BUSCA. Sem isto, um termo
+  // amplo ("a") casa milhares de apps → milhares de CommandItem no DOM de uma vez
+  // → lag ao digitar (mesma classe do #820, no command). O teto + a linha
+  // "+N mais" bounda os nós ao viewport SEM quebrar a navegação por teclado do
+  // cmdk (que precisa dos itens montados) — o DoD aceita capar em vez de
+  // virtualizar. Com o teto, o double-filter do `value`+`termo` também passa a
+  // operar em ≤14×N itens, deixando de ser furo.
+  const MAX_BUSCA_POR_CATEGORIA = 10;
   const gruposUnificados = useMemo(
     () => appsUnificadosPorCategoria(termo || undefined, user),
     [termo, user],
@@ -725,9 +733,12 @@ function ConteudoPaleta({
                 Um só `ItemUnificado` → negrito/espaçamento consistente. */}
             {gruposUnificados.length > 0 && <CommandSeparator />}
             {gruposUnificados.map((grupo) => {
+              // #824: na busca, capa em MAX_BUSCA_POR_CATEGORIA (perf); sem busca,
+              // a prévia curada. `ocultos` alimenta a linha "+N mais".
               const apps = termo
-                ? grupo.apps
+                ? grupo.apps.slice(0, MAX_BUSCA_POR_CATEGORIA)
                 : grupo.apps.slice(0, PREVIA_POR_CATEGORIA);
+              const ocultos = termo ? grupo.apps.length - apps.length : 0;
               return (
                 <CommandGroup
                   key={`cat-${grupo.categoria}`}
@@ -743,6 +754,13 @@ function ConteudoPaleta({
                       onAlternarPin={() => alternarFixado(app.id)}
                     />
                   ))}
+                  {ocultos > 0 && (
+                    // #824: afordância honesta — mostra quantos ficaram de fora
+                    // (não trunca em silêncio). Não é CommandItem (não navegável).
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                      {preencher(t.navegador.maisResultados, { n: ocultos })}
+                    </div>
+                  )}
                 </CommandGroup>
               );
             })}

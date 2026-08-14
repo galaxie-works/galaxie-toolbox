@@ -374,6 +374,8 @@ const pt = {
     historicoBuscar: "Buscar no histórico…",
     historicoVazio: "Nenhuma página no histórico ainda.",
     historicoSelecionar: "Selecionar {nome}",
+    // #824: linha ao pé de uma categoria quando a busca capa os resultados.
+    maisResultados: "+{n} mais — refine a busca",
     historicoRestaurar: "Restaurar {n} abas",
     historicoRestaurarVazio: "Marque itens para restaurar como abas",
     limparHistorico: "Limpar histórico",
@@ -2309,6 +2311,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     historicoBuscar: "Search history…",
     historicoVazio: "No pages in your history yet.",
     historicoSelecionar: "Select {nome}",
+    // #824: line at the foot of a category when search caps the results.
+    maisResultados: "+{n} more — refine your search",
     historicoRestaurar: "Restore {n} tabs",
     historicoRestaurarVazio: "Check items to restore as tabs",
     limparHistorico: "Clear history",
