@@ -45,6 +45,12 @@ impl CommandReceiver {
     pub fn tentar_receber(&self) -> Option<EncoderCommand> {
         self.rx.try_recv().ok()
     }
+
+    /// Alias em inglês de [`Self::tentar_receber`] — o pipeline de captura (#684)
+    /// consome por este nome quando reexporta este tipo (fim da cópia 1:1).
+    pub fn try_receive(&self) -> Option<EncoderCommand> {
+        self.tentar_receber()
+    }
 }
 
 #[cfg(test)]

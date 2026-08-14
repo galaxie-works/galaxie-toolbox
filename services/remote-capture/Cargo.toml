@@ -8,6 +8,11 @@ publish = false
 serde = { version = "1.0.228", features = ["derive"] }
 thiserror = "2.0.18"
 tracing = "0.1.44"
+# Contrato congelado S1↔S2: agora que o S2 (#685) está integrado, o capture
+# reexporta os tipos de `remote-transport` em vez da cópia 1:1. `default-features
+# = false` = SÓ o núcleo (frame/command/stats) — NÃO puxa `str0m`/OpenSSL (a
+# feature `webrtc` fica desligada), então não vaza pro build do app/Wagner.
+galaxie-remote-transport = { path = "../remote-transport", default-features = false }
 
 [target.'cfg(windows)'.dependencies]
 openh264 = "0.9.8"
