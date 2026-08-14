@@ -399,6 +399,9 @@ const MAX_PATH = 260;
 export function ContentPane({
   currentPath,
   onNavegar,
+  onVoltar,
+  onAvancar,
+  onAcima,
   onSelecaoChange,
   clipboard,
   onClipboardChange,
@@ -409,6 +412,11 @@ export function ContentPane({
 }: {
   currentPath: string;
   onNavegar: (path: string) => void;
+  /** #863: navegação por teclado com foco na lista (Alt+←/Backspace = voltar,
+   *  Alt+→ = avançar, Alt+↑ = pasta acima) — os handlers vêm do shell. */
+  onVoltar?: () => void;
+  onAvancar?: () => void;
+  onAcima?: () => void;
   /** #681: reporta a seleção (FsEntry[]) pro shell alimentar o InspectorPane. */
   onSelecaoChange?: (itensSelecionados: FsEntry[]) => void;
   /** #714: área de transferência interna (recortar/copiar/colar), no shell. */
@@ -453,6 +461,8 @@ export function ContentPane({
   const [habilitandoLong, setHabilitandoLong] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  // #863: Ctrl+F foca o filtro in-folder (ref pro Input abaixo).
+  const filtroRef = useRef<HTMLInputElement>(null);
 
   // --- Carga com guarda de corrida (ignora respostas de caminho antigo) -----
   useEffect(() => {
@@ -883,6 +893,51 @@ export function ContentPane({
       ) {
         return;
       }
+      // #863: atalhos que NÃO dependem de haver itens (navegação / view / ocultos
+      // / filtro / refresh) — ANTES do guard de lista vazia. Casam com o catálogo
+      // `atalhos.ts` (sem entrada morta) e não disparam com foco em input (guard
+      // acima). Alt+seta é tratado aqui pra não cair no mover-cursor da seta pura.
+      const ctrl = ev.ctrlKey || ev.metaKey;
+      if ((ev.altKey && ev.key === "ArrowLeft") || ev.key === "Backspace") {
+        ev.preventDefault();
+        onVoltar?.();
+        return;
+      }
+      if (ev.altKey && ev.key === "ArrowRight") {
+        ev.preventDefault();
+        onAvancar?.();
+        return;
+      }
+      if (ev.altKey && ev.key === "ArrowUp") {
+        ev.preventDefault();
+        onAcima?.();
+        return;
+      }
+      if (ev.key === "F5") {
+        ev.preventDefault();
+        recarregar();
+        return;
+      }
+      if (ctrl && ev.shiftKey && (ev.key === "N" || ev.key === "n")) {
+        ev.preventDefault();
+        criarPastaNova(currentPath);
+        return;
+      }
+      if (ctrl && (ev.key === "1" || ev.key === "2" || ev.key === "3")) {
+        ev.preventDefault();
+        setModo(ev.key === "1" ? "detalhes" : ev.key === "2" ? "lista" : "grade");
+        return;
+      }
+      if (ctrl && (ev.key === "h" || ev.key === "H")) {
+        ev.preventDefault();
+        setMostrarOcultos((v) => !v);
+        return;
+      }
+      if (ctrl && (ev.key === "f" || ev.key === "F")) {
+        ev.preventDefault();
+        filtroRef.current?.focus();
+        return;
+      }
       if (paths.length === 0) return;
       const atual = selecao.cursor ? paths.indexOf(selecao.cursor) : -1;
       const base = atual < 0 ? 0 : atual;
@@ -991,6 +1046,11 @@ export function ContentPane({
       renomeando,
       acoesMenu,
       currentPath,
+      onVoltar,
+      onAvancar,
+      onAcima,
+      recarregar,
+      criarPastaNova,
     ],
   );
 
@@ -1122,6 +1182,7 @@ export function ContentPane({
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            ref={filtroRef}
             value={filtro}
             onChange={(e) => setFiltro(e.target.value)}
             onKeyDown={(e) => {

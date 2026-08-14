@@ -418,6 +418,9 @@ export function ExplorerShell() {
               <ContentPane
                 currentPath={nav.currentPath}
                 onNavegar={navegar}
+                onVoltar={() => dispatch({ type: "voltar" })}
+                onAvancar={() => dispatch({ type: "avancar" })}
+                onAcima={() => dispatch({ type: "acima" })}
                 onSelecaoChange={setSelecionados}
                 clipboard={clipboard}
                 onClipboardChange={setClipboard}
