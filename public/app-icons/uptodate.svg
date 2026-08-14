@@ -1,0 +1,33 @@
+<svg width="26" height="27" viewBox="0 0 26 27" fill="none" xmlns="http://www.w3.org/2000/svg">
+<circle cx="13" cy="13.0034" r="13" fill="#D8D8D8"/>
+<mask id="mask0_59_1036" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="0" width="26" height="27">
+<circle cx="13" cy="13.0034" r="13" fill="white"/>
+</mask>
+<g mask="url(#mask0_59_1036)">
+<rect x="10" y="10.0034" width="6" height="6" fill="#EF3E42"/>
+<rect x="10" y="4.00342" width="6" height="6" fill="#CAE3B2"/>
+<rect x="4" y="4.00342" width="6" height="6" fill="#9ACD6E"/>
+<rect x="-2" y="4.00342" width="6" height="6" fill="#429ED6"/>
+<rect x="-2" y="-1.99658" width="6" height="6" fill="#429ED6"/>
+<rect x="4" y="-1.99658" width="6" height="6" fill="#429ED6"/>
+<rect x="10" y="-1.99658" width="6" height="6" fill="#A0C4E6"/>
+<rect x="16" y="-1.99658" width="6" height="6" fill="#007BC6"/>
+<rect x="22" y="-1.99658" width="6" height="6" fill="#007BC6"/>
+<rect x="22" y="4.00342" width="6" height="6" fill="#007BC6"/>
+<rect x="22" y="10.0034" width="6" height="6" fill="#429ED6"/>
+<rect x="22" y="16.0034" width="6" height="6" fill="#007BC6"/>
+<rect x="22" y="22.0034" width="6" height="6" fill="#007BC6"/>
+<rect x="16" y="22.0034" width="6" height="6" fill="#007BC6"/>
+<rect x="10" y="22.0034" width="6" height="6" fill="#429ED6"/>
+<rect x="4" y="22.0034" width="6" height="6" fill="#007BC6"/>
+<rect x="-2" y="22.0034" width="6" height="6" fill="#007BC6"/>
+<rect x="-2" y="16.0034" width="6" height="6" fill="#007BC6"/>
+<rect x="-2" y="10.0034" width="6" height="6" fill="#A0C4E6"/>
+<rect x="4" y="10.0034" width="6" height="6" fill="#CAE3B2"/>
+<rect x="16" y="4.00342" width="6" height="6" fill="#7AC143"/>
+<rect x="16" y="10.0034" width="6" height="6" fill="#9ACD6E"/>
+<rect x="16" y="16.0034" width="6" height="6" fill="#7AC143"/>
+<rect x="10" y="16.0034" width="6" height="6" fill="#9ACD6E"/>
+<rect x="4" y="16.0034" width="6" height="6" fill="#7AC143"/>
+</g>
+</svg>

@@ -1907,6 +1907,26 @@ pub fn cr_evento_recorrencia(
 // Rodar: cargo test --lib graph::testes_recorrencia
 // ---------------------------------------------------------------------------
 #[cfg(test)]
+mod testes_mail {
+    use super::*;
+
+    #[test]
+    fn delete_status_ok_trata_404_410_como_sucesso() {
+        // apagou de fato
+        assert!(delete_status_ok(200));
+        assert!(delete_status_ok(204));
+        // já não existia → idempotente (não pode abortar o empty)
+        assert!(delete_status_ok(404));
+        assert!(delete_status_ok(410));
+        // erros reais NÃO contam
+        assert!(!delete_status_ok(403));
+        assert!(!delete_status_ok(429));
+        assert!(!delete_status_ok(500));
+        assert!(!delete_status_ok(0));
+    }
+}
+
+#[cfg(test)]
 mod testes_recorrencia {
     use super::*;
 
@@ -4255,6 +4275,13 @@ const CR_PASTA_LIMITE: u64 = 1000;
 ///
 /// Não usa `$skip`: cada volta relê a PRIMEIRA página, porque os itens da volta
 /// anterior já saíram da pasta — paginar por offset puliria mensagens.
+/// #788: no esvaziar em lote, um DELETE conta como sucesso se apagou (2xx) OU se
+/// o item já não existia (404/410) — idempotente, pra um item já removido não
+/// abortar o resto do "empty".
+fn delete_status_ok(status: u64) -> bool {
+    (200..300).contains(&status) || status == 404 || status == 410
+}
+
 pub fn cr_esvaziar_pasta(
     store: &TokenStore,
     folder_id: &str,
@@ -4265,6 +4292,11 @@ pub fn cr_esvaziar_pasta(
     let prefix = mailbox_prefix(mailbox);
 
     let mut apagados: u64 = 0;
+    // #788: logar o ciclo da mutação (antes não aparecia no GALAXIE.log).
+    log::info!(
+        "[mail] esvaziar '{folder_id}' (mailbox={}): iniciando",
+        mailbox.unwrap_or("me")
+    );
 
     loop {
         let url =
@@ -4292,23 +4324,55 @@ pub fn cr_esvaziar_pasta(
             break;
         }
 
-        // deletar_msg trata 404 como sucesso (item já saiu) e tem retry no 429 —
-        // era o 404 num item da lixeira que abortava o "Empty trash" inteiro.
+        // #788: apaga em LOTE ($batch, 20 DELETEs por request) — o 1-a-1 era o
+        // gargalo (esvaziar "demorou muito"). 404/410 = item já saiu (idempotente,
+        // conta como sucesso); assim um item já removido não aborta o resto.
         let mut progrediu = false;
-        for id in ids {
-            match deletar_msg(&client, &token, &prefix, &id) {
-                Ok(()) => {
+        for chunk in ids.chunks(20) {
+            let requests: Vec<serde_json::Value> = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    serde_json::json!({
+                        "id": i.to_string(),
+                        "method": "DELETE",
+                        "url": format!("/{prefix}/messages/{}", urlencoding::encode(id)),
+                    })
+                })
+                .collect();
+            let batch_body = serde_json::json!({ "requests": requests });
+            let resp = graph_enviar("mail:esvaziar:batch", GRAPH_TETO_ESPERA_S, || {
+                client
+                    .post(format!("{GRAPH}/$batch"))
+                    .bearer_auth(&token)
+                    .json(&batch_body)
+                    .send()
+            })
+            .map_err(|e| format!("falha no $batch ao esvaziar: {e}"))?;
+            if !resp.status().is_success() {
+                log::error!(
+                    "[mail] esvaziar '{folder_id}': $batch retornou {}",
+                    resp.status()
+                );
+                return Err(erro_escrita(&prefix, "esvaziar pasta (batch)", resp.status()));
+            }
+            let value: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+            for item in value["responses"].as_array().into_iter().flatten() {
+                let status = item["status"].as_u64().unwrap_or_default();
+                if delete_status_ok(status) {
                     apagados += 1;
                     progrediu = true;
-                    if apagados >= CR_PASTA_LIMITE {
-                        log::warn!(
-                            "[mail] esvaziar '{folder_id}': limite de {CR_PASTA_LIMITE} atingido, interrompendo"
-                        );
-                        return Ok(apagados);
-                    }
+                } else {
+                    log::warn!(
+                        "[mail] esvaziar '{folder_id}': item do batch com status {status}"
+                    );
                 }
-                Err(e) if eh_erro_permissao(&e) => return Err(e),
-                Err(e) => log::warn!("[mail] esvaziar '{folder_id}': '{id}' falhou: {e}"),
+            }
+            if apagados >= CR_PASTA_LIMITE {
+                log::warn!(
+                    "[mail] esvaziar '{folder_id}': limite de {CR_PASTA_LIMITE} atingido, interrompendo"
+                );
+                return Ok(apagados);
             }
         }
         // Página inteira sem sair nada: evita reler as mesmas em loop infinito.
@@ -4318,6 +4382,7 @@ pub fn cr_esvaziar_pasta(
         }
     }
 
+    log::info!("[mail] esvaziar '{folder_id}': concluído, {apagados} mensagens apagadas");
     Ok(apagados)
 }
 
@@ -6010,7 +6075,10 @@ mod org_settings_testes {
     #[test]
     fn tenant_app_cai_em_loginurl_sem_homepage() {
         let sp: serde_json::Value = serde_json::from_str(
-            r#"{"appId":"x","displayName":"App","accountEnabled":true,"servicePrincipalType":"Application","loginUrl":"https://login.app.com"}"#,
+            // #747: pós-#618 o SP PRECISA da tag `WindowsAzureActiveDirectoryIntegratedApp`
+            // pra ser tile de app (senão `tenant_app_do_sp` retorna None antes da URL). O
+            // teste é do FALLBACK homepage→loginUrl, então o SP tem a tag + só loginUrl.
+            r#"{"appId":"x","displayName":"App","accountEnabled":true,"servicePrincipalType":"Application","loginUrl":"https://login.app.com","tags":["WindowsAzureActiveDirectoryIntegratedApp"]}"#,
         )
         .unwrap();
         assert_eq!(tenant_app_do_sp(&sp).unwrap().url, "https://login.app.com");
@@ -7719,6 +7787,25 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
     if q.is_empty() {
         return Ok(Vec::new());
     }
+    // #803: gate por provider/conta (interno, provider-aware). Google não tem MS
+    // Graph people → [] sem tocar Graph. MS PESSOAL não tem diretório da org
+    // (/users) → busca só em /me/contacts. Evita o 401 spam e o Err do fim.
+    let (eh_google, eh_org) = {
+        let guard = store
+            .inner
+            .lock()
+            .map_err(|_| "estado de token corrompido".to_string())?;
+        match guard.as_ref() {
+            Some(t) => (
+                t.account.provider == crate::auth::Provider::Google,
+                crate::config::eh_org(&t.tenant),
+            ),
+            None => (false, true), // sem sessão em memória: comporta como antes.
+        }
+    };
+    if eh_google {
+        return Ok(Vec::new());
+    }
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
     let enc = urlencoding::encode(q);
@@ -7758,7 +7845,9 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
         Err(e) => log::warn!("[pessoas] /me/contacts falhou: {e}"),
     }
 
-    // 2) Diretorio da organizacao. $search em /users exige ConsistencyLevel.
+    // 2) Diretorio da organizacao (/users) — ORG-ONLY (#803): MS pessoal não tem
+    // diretório, então só a conta work bate aqui. $search exige ConsistencyLevel.
+    if eh_org {
     let url = format!(
         "{GRAPH}/users?$search=\"displayName:{enc}\"&$top=8&$select=displayName,mail,userPrincipalName,jobTitle"
     );
@@ -7795,7 +7884,10 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
         Ok(resp) => log::warn!("[pessoas] /users retornou {}", resp.status()),
         Err(e) => log::warn!("[pessoas] /users falhou: {e}"),
     }
+    } // fim do gate eh_org (#803)
 
+    // #803: conta MS pessoal só busca /me/contacts — se ele respondeu (mesmo
+    // vazio), é sucesso; não é "falha" por não ter diretório de org.
     if !algum_ok {
         return Err("falha ao buscar pessoas".into());
     }

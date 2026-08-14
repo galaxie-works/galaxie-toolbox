@@ -43,3 +43,7 @@ artifacts/qa-visual/
 # Scripts locais de validacao (nao portaveis)
 _run-feat.bat
 
+
+# vitest browser-mode (#786): artefatos de teste, não versionar
+__screenshots__/
+.vitest-attachments/

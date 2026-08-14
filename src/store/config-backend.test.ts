@@ -12,9 +12,11 @@ import {
 import {
   CHAVES_CONFIG_NUVEM,
   CloudConflictError,
+  GoogleDriveJsonBackend,
   LayeredBackend,
   LocalStorageConfigPatchQueue,
   OneDriveJsonBackend,
+  RoteadorCloudBackend,
   mergeCloudConfigDocuments,
   parseCloudConfigDocument,
   projetarConfigNuvem,
@@ -257,6 +259,7 @@ test("matriz do grupo A + organizations (#560) fica explícita e completa", () =
     "idioma",
     "atomsPrefs",
     "pularConfirmacaoConexao",
+    "appsFixados",
   ]);
 });
 
@@ -281,6 +284,62 @@ test("OneDriveJsonBackend trata arquivo ausente e rejeita JSON não objeto", asy
     write: async () => ({ eTag: "v2", cTag: "c2" }),
   });
   await assert.rejects(invalid.load(), /não contém um objeto/);
+});
+
+test("GoogleDriveJsonBackend faz round-trip no appDataFolder (revision como eTag)", async () => {
+  const writes: Array<{ content: string; revision: string | null }> = [];
+  const absent = new GoogleDriveJsonBackend({
+    read: async () => ({ content: null, revision: null }),
+    write: async (content, revision) => {
+      writes.push({ content, revision });
+      return { revision: "r1" };
+    },
+  });
+  assert.deepEqual(await absent.load(), {});
+  await absent.save({ zoom: 1.4, organizations: [] });
+  const written = JSON.parse(writes[0].content) as CloudConfigDocument;
+  assert.deepEqual(written.values, { zoom: 1.4, organizations: [] });
+
+  // Arquivo existente: o headRevisionId vira o eTag da reconciliação.
+  const existing = new GoogleDriveJsonBackend({
+    read: async () => ({
+      content: JSON.stringify({
+        schemaVersion: 2,
+        values: { zoom: 2 },
+        updatedAt: { zoom: 10 },
+      }),
+      revision: "r5",
+    }),
+    write: async () => ({ revision: "r6" }),
+  });
+  const snap = await existing.loadVersioned();
+  assert.equal(snap.exists, true);
+  assert.equal(snap.eTag, "r5");
+  assert.equal(snap.cTag, null);
+  assert.equal(snap.values.zoom, 2);
+});
+
+test("RoteadorCloudBackend delega ao alvo selecionado (troca de provider)", async () => {
+  const alvo = (zoom: number): VersionedConfigBackend => ({
+    loadVersioned: async () => ({
+      schemaVersion: 2,
+      values: { zoom },
+      updatedAt: {},
+      exists: true,
+      eTag: null,
+      cTag: null,
+    }),
+    saveVersioned: async (document) => ({
+      ...document,
+      exists: true,
+      eTag: null,
+      cTag: null,
+    }),
+  });
+  const roteador = new RoteadorCloudBackend(alvo(1)); // MS
+  assert.equal((await roteador.loadVersioned()).values.zoom, 1);
+  roteador.usar(alvo(9)); // troca pra Google
+  assert.equal((await roteador.loadVersioned()).values.zoom, 9);
 });
 
 test("LayeredBackend semeia nuvem vazia a partir do cache normalizado", async () => {

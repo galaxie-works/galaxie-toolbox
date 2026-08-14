@@ -10,6 +10,7 @@ import type { AnexoEmail } from "./types";
 export type TipoPreview =
   | "pdf"
   | "txt"
+  | "html"
   | "docx"
   | "xlsx"
   | "pptx"
@@ -55,21 +56,38 @@ const EXT_AUDIO = /\.(mp3|wav|m4a|aac|ogg|oga|weba)$/;
 const CT_VIDEO = new Set(["video/mp4", "video/webm", "video/ogg"]);
 const EXT_VIDEO = /\.(mp4|m4v|webm|ogv)$/;
 
-/** Decide o renderer pelo `contentType` (preferido) e cai no sufixo do nome. */
-export function classificarAnexo(anexo: AnexoEmail): TipoPreview {
-  const ct = anexo.contentType.toLowerCase();
-  const nome = anexo.nome.toLowerCase();
-  if (ct === "application/pdf" || nome.endsWith(".pdf")) return "pdf";
+/**
+ * Núcleo da classificação: decide o renderer pelo `contentType` (preferido) e
+ * cai no sufixo do nome. Serve tanto o anexo do Bridge (contentType do Graph)
+ * quanto o arquivo LOCAL do Explorer (#873), que costuma chegar só com o nome
+ * (sem MIME) — daí `contentType` opcional.
+ */
+export function classificarPorNome(
+  nome: string,
+  contentType?: string,
+): TipoPreview {
+  const ct = (contentType ?? "").toLowerCase();
+  const n = nome.toLowerCase();
+  if (ct === "application/pdf" || n.endsWith(".pdf")) return "pdf";
   // CSV antes de txt: um `.csv` pode chegar como `text/plain` no contentType.
-  if (ct === "text/csv" || nome.endsWith(".csv")) return "csv";
-  if (ct.startsWith("text/plain") || nome.endsWith(".txt")) return "txt";
-  if (ct === CT_DOCX || nome.endsWith(".docx")) return "docx";
-  if (ct === CT_XLSX || nome.endsWith(".xlsx")) return "xlsx";
-  if (ct === CT_PPTX || nome.endsWith(".pptx")) return "pptx";
-  if (CT_IMAGEM.has(ct) || EXT_IMAGEM.test(nome)) return "imagem";
-  if (CT_AUDIO.has(ct) || EXT_AUDIO.test(nome)) return "audio";
-  if (CT_VIDEO.has(ct) || EXT_VIDEO.test(nome)) return "video";
+  if (ct === "text/csv" || n.endsWith(".csv")) return "csv";
+  // #873 fix: HTML renderiza SANITIZADO (DOMPurify) no iframe sandbox+CSP, igual
+  // ao docx/xlsx. Antes de txt: um `.html` pode vir como `text/plain` no ct.
+  if (ct === "text/html" || n.endsWith(".html") || n.endsWith(".htm"))
+    return "html";
+  if (ct.startsWith("text/plain") || n.endsWith(".txt")) return "txt";
+  if (ct === CT_DOCX || n.endsWith(".docx")) return "docx";
+  if (ct === CT_XLSX || n.endsWith(".xlsx")) return "xlsx";
+  if (ct === CT_PPTX || n.endsWith(".pptx")) return "pptx";
+  if (CT_IMAGEM.has(ct) || EXT_IMAGEM.test(n)) return "imagem";
+  if (CT_AUDIO.has(ct) || EXT_AUDIO.test(n)) return "audio";
+  if (CT_VIDEO.has(ct) || EXT_VIDEO.test(n)) return "video";
   return "nao-suportado";
+}
+
+/** Decide o renderer de um anexo do Bridge (delega para `classificarPorNome`). */
+export function classificarAnexo(anexo: AnexoEmail): TipoPreview {
+  return classificarPorNome(anexo.nome, anexo.contentType);
 }
 
 /** Formatos que docx/xlsx podem re-renderizar em alta fidelidade via Path C. */

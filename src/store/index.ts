@@ -8,11 +8,14 @@ import {
   purgarChavesTenant,
 } from "./local-cache-backend";
 import {
+  GoogleDriveJsonBackend,
   LayeredBackend,
   LocalStorageConfigPatchQueue,
   OneDriveJsonBackend,
+  RoteadorCloudBackend,
   projetarConfigNuvem,
 } from "./onedrive-config-backend";
+import { resetSessaoNavegador } from "@/lib/navigator-tabs";
 import {
   aplicarAltoContraste,
   aplicarModoTema,
@@ -59,6 +62,10 @@ import {
   createCloudPrefsSlice,
   type CloudPrefsSlice,
 } from "./cloud-prefs-slice";
+import {
+  createPinnedSlice,
+  type PinnedSlice,
+} from "./pinned-slice";
 
 /**
  * ============================================================================
@@ -104,11 +111,18 @@ export type AppStore =
   & PeopleSlice
   & OrganizationsSlice
   & AuthSlice
-  & CloudPrefsSlice;
+  & CloudPrefsSlice
+  & PinnedSlice;
+
+// #697: a camada cloud é roteada por provider. MS→OneDrive, Google→Drive
+// appDataFolder. A troca de conta seleciona o alvo antes de reativar.
+const onedriveCloud = new OneDriveJsonBackend();
+const googleCloud = new GoogleDriveJsonBackend();
+const cloudRouter = new RoteadorCloudBackend(onedriveCloud);
 
 const layeredConfigBackend = new LayeredBackend(
   localCacheBackend,
-  new OneDriveJsonBackend(),
+  cloudRouter,
   {
     baseline: () => projetarConfigNuvem(useAppStore.getState()),
     queue: new LocalStorageConfigPatchQueue(localStorage),
@@ -165,6 +179,8 @@ export const useAppStore = create<AppStore>()(
       ...createAuthSlice(...a),
       // Idioma, layout do Atoms e confirmação também são config acionável.
       ...createCloudPrefsSlice(...a),
+      // #721: apps fixados no rail — config comum, persistida local (+cloud aditiva).
+      ...createPinnedSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",
@@ -201,6 +217,7 @@ export const useAppStore = create<AppStore>()(
         idioma: s.idioma,
         atomsPrefs: s.atomsPrefs,
         pularConfirmacaoConexao: s.pularConfirmacaoConexao,
+        appsFixados: s.appsFixados,
       }),
     }
   )
@@ -211,9 +228,16 @@ export const useAppStore = create<AppStore>()(
  * cache legado; em troca real de conta elimina o seed da conta anterior antes
  * de qualquer tela autenticada ser mostrada.
  */
-export function prepararConfiguracaoNuvem(accountEmail: string): void {
+export function prepararConfiguracaoNuvem(
+  accountEmail: string,
+  provider: string = "microsoft",
+): void {
   layeredConfigBackend.deactivate();
-  const account = accountEmail.trim().toLowerCase();
+  // #697: roteia a camada cloud e prefixa o owner pelo provider — Google e MS
+  // com o mesmo prefixo de e-mail NÃO colidem cache/fila.
+  const prov = provider.trim().toLowerCase() === "google" ? "google" : "microsoft";
+  cloudRouter.usar(prov === "google" ? googleCloud : onedriveCloud);
+  const account = `${prov}:${accountEmail.trim().toLowerCase()}`;
   let owner: string | null = null;
   try {
     owner = localStorage.getItem(CONFIG_CACHE_OWNER_KEY);
@@ -277,6 +301,7 @@ export function resetSessaoCompleta(): void {
   s.resetNavegacao(); // #568: nav (bridgeView→mail, peopleTab→contacts)
   s.clearReauth(); // auth (#235): escopos ausentes do token
   // Vetores FORA do store.
+  resetSessaoNavegador(); // #821: abas web/pins/grupos do Navigator (localStorage)
   limparFotos(); // cache de fotos (módulo + localStorage)
   invalidarBrandingCache(); // memo do logo do tenant (#541)
   void resetSessionMemo(); // memo curto do Graph no Rust (best-effort)

@@ -1,4 +1,4 @@
-import { Gauge, Settings, Radar } from "lucide-react";
+import { Gauge, Settings, Radar, FolderTree, MonitorSmartphone } from "lucide-react";
 import type { ComponentType } from "react";
 import {
   AtomIcon,
@@ -31,6 +31,8 @@ export type Tela =
   | "outlook"
   | "performance"
   | "caminhos-longos"
+  | "arquivos"
+  | "remote"
   | "configuracoes";
 
 /** Chave dentro de `t.nav` — o texto sai do dicionario, nao daqui. */
@@ -108,6 +110,11 @@ export const NAV: GrupoNav[] = [
         filhos: [
           { id: "performance", titulo: "performance", oculto: true },
           { id: "caminhos-longos", titulo: "caminhosLongos", oculto: true },
+          // #677: Explorer de arquivos local — oculto do sidebar por ora (S1),
+          // mas a `Tela`/rota já existe (navegável direto por onNavegar/deep-link).
+          // Fica como filho oculto: `filhos` visíveis continua vazio, então o
+          // item Windows segue renderizando como folha (não muda o sidebar).
+          { id: "arquivos", titulo: "arquivos", icone: FolderTree, oculto: true },
         ],
       },
     ],
@@ -135,5 +142,9 @@ export const TELAS: Record<
   // #664: o slot `caminhos-longos` agora renderiza a tela Windows (#665) — então
   // o cabeçalho/breadcrumb vira "Platform > Windows" com o logo do Windows.
   "caminhos-longos": { titulo: "windows", secao: "plataforma", icone: WindowsIcon },
+  // #677: Explorer de arquivos local.
+  arquivos: { titulo: "arquivos", secao: "plataforma", icone: FolderTree },
+  // #718 (SH0): GALAXIE Remote — item fixo do rail (tela placeholder até o #682).
+  remote: { titulo: "remote", secao: "plataforma", icone: MonitorSmartphone },
   configuracoes: { titulo: "configuracoes", secao: "conta", icone: Settings },
 };

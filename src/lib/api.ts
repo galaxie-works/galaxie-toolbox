@@ -2,6 +2,20 @@ import type {
   AcaoRsvp,
   AnexoConteudo,
   AppUser,
+  DesafioDominio,
+  CloudLocation,
+  DirSize,
+  DriveInfo,
+  FsChange,
+  FsConflict,
+  FsDirBatch,
+  FsSearchBatch,
+  FsEntry,
+  FsOpProgress,
+  UndoPlan,
+  UndoReport,
+  ThumbMetrics,
+  ThumbRef,
   CaixaEntrada,
   Calendario,
   CategoriaCor,
@@ -42,7 +56,7 @@ import type {
 } from "./types";
 
 /** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
-function inTauri(): boolean {
+export function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
@@ -59,6 +73,23 @@ const MOCK_USER: AppUser = {
   email: "wagner@voaz.builders",
   initials: "WC",
   organizacao: "Voaz",
+  // #693: conta de trabalho contratada (o mock espelha o login org atual).
+  provider: "microsoft",
+  accountKind: "work",
+  orgStatus: "contracted",
+  domain: "voaz.builders",
+  tenantId: "mock-tenant",
+  capabilities: [
+    "identity",
+    "mailRead",
+    "mailReadWrite",
+    "mailSend",
+    "calendar",
+    "contacts",
+    "tasks",
+    "filePicker",
+    "filesReadAll",
+  ],
 };
 
 const MOCK_LOCK_PIN = "galaxie-mock-lock-pin";
@@ -105,12 +136,52 @@ const MOCK_DETALHES: Record<string, { files: number; bytes: number }> = {
  * pelo loopback em Rust, fora do React — sem isso ela sairia sempre em
  * portugues.
  */
-export async function login(email: string, idioma: string): Promise<AppUser> {
+/** Provider de identidade (#692 app público). `microsoft` = org + pessoal (o
+ *  backend PS0/PS1 escolhe o app-registration pelo tipo de conta); `google` = PS3. */
+// #746: `microsoft-personal` força a conta pessoal (tenant "consumers") — o
+// backend (hook do Confucius) mapeia pro registration pessoal via client_id_para.
+// `microsoft` = org (o backend deriva o tenant do e-mail). `google` = PS3.
+export type AuthProvider = "microsoft" | "microsoft-personal" | "google";
+
+/**
+ * `email` agora é `login_hint` OPCIONAL (#695): o provider é a porta, não o e-mail.
+ * `provider` é passado ao backend, que escolhe o registration certo (org de
+ * produção vs 2º registration pessoal, PS0/PS1); comandos Tauri ignoram extras
+ * até o backend ligar o param.
+ */
+export async function login(
+  email: string,
+  idioma: string,
+  provider: AuthProvider = "microsoft"
+): Promise<AppUser> {
   if (!inTauri()) {
     await sleep(800);
-    return { ...MOCK_USER, email };
+    const usado = email || MOCK_USER.email;
+    // No Tauri, o tier REAL (accountKind/orgStatus/capabilities) vem do PS0 (deriva
+    // do token). Aqui é mock: só um override de dev/QA pra exercitar os tiers.
+    return { ...MOCK_USER, email: usado, ...mockTier() };
   }
-  return invoke<AppUser>("login", { email, idioma });
+  return invoke<AppUser>("login", { email, idioma, provider });
+}
+
+/**
+ * Override de dev/QA do TIER (#698/#699) — só no mock (fora do Tauri). No app real
+ * quem deriva isso é o PS0 a partir do TOKEN (`tid` MS / `hd` Google) contra o
+ * registro de orgs. Aqui, `?mockOrg=contracted|uncontracted|none` força o tier pro
+ * live-QA do gating; sem o param, cai no padrão do MOCK_USER (org contratada).
+ * - `contracted`   → org: mantém as capabilities/accountKind do MOCK_USER.
+ * - `uncontracted` → funcionário de empresa não-cliente: conta work, sem features org.
+ * - `none`         → conta pessoal: accountKind personal, só "minhas coisas".
+ */
+function mockTier(): Partial<AppUser> {
+  const forcado = new URLSearchParams(window.location.search).get("mockOrg");
+  if (forcado === "uncontracted") {
+    return { orgStatus: "uncontracted", accountKind: "work", organizacao: null };
+  }
+  if (forcado === "none") {
+    return { orgStatus: "none", accountKind: "personal", organizacao: null };
+  }
+  return { orgStatus: "contracted" };
 }
 
 /** Descobre o tenant pelo dominio do e-mail (sem logar). */
@@ -215,6 +286,46 @@ export async function onedriveSettingsWrite(
   return invoke<OneDriveSettingsWriteResult>("onedrive_settings_write", {
     content,
     eTag,
+  });
+}
+
+/** Config Google no Drive appDataFolder (PS4 #697). `revision` = headRevisionId. */
+export interface GoogleDriveSettingsReadResult {
+  content: string | null;
+  revision: string | null;
+}
+
+export interface GoogleDriveSettingsWriteResult {
+  revision: string | null;
+}
+
+let mockGDriveSettings: string | null = null;
+let mockGDriveRevision = 0;
+
+/** Lê o toolbox.json privado no appDataFolder do Google Drive. */
+export async function gdriveSettingsRead(): Promise<GoogleDriveSettingsReadResult> {
+  if (!inTauri()) {
+    return {
+      content: mockGDriveSettings,
+      revision: mockGDriveSettings === null ? null : `mock-${mockGDriveRevision}`,
+    };
+  }
+  return invoke<GoogleDriveSettingsReadResult>("gdrive_settings_read");
+}
+
+/** Grava o toolbox.json no appDataFolder. `revision` é bookkeeping (single-user). */
+export async function gdriveSettingsWrite(
+  content: string,
+  _revision: string | null,
+): Promise<GoogleDriveSettingsWriteResult> {
+  if (!inTauri()) {
+    mockGDriveSettings = content;
+    mockGDriveRevision += 1;
+    return { revision: `mock-${mockGDriveRevision}` };
+  }
+  return invoke<GoogleDriveSettingsWriteResult>("gdrive_settings_write", {
+    content,
+    revision: _revision,
   });
 }
 
@@ -2784,4 +2895,550 @@ export async function telemetryDebugDump(): Promise<
   } catch {
     return [];
   }
+}
+
+// --- Explorer de Arquivos (#676, épico #675) --------------------------------
+// Fachada fina do backend FS read-only. Erros chegam tipados (FsError.code);
+// fora do Tauri (mock) devolve uma árvore de exemplo pro QA visual da UI.
+
+const MOCK_FS_ENTRIES: FsEntry[] = [
+  {
+    name: "Projetos",
+    path: "C:\\Users\\Wagner\\Projetos",
+    isDir: true,
+    isSymlink: false,
+    size: 0,
+    modifiedMs: 1_722_000_000_000,
+    createdMs: 1_700_000_000_000,
+    extension: null,
+    isHidden: false,
+    isReadonly: false,
+  },
+  {
+    name: "Documentos",
+    path: "C:\\Users\\Wagner\\Documentos",
+    isDir: true,
+    isSymlink: false,
+    size: 0,
+    modifiedMs: 1_723_000_000_000,
+    createdMs: 1_700_000_000_000,
+    extension: null,
+    isHidden: false,
+    isReadonly: false,
+  },
+  {
+    name: "relatorio.pdf",
+    path: "C:\\Users\\Wagner\\relatorio.pdf",
+    isDir: false,
+    isSymlink: false,
+    size: 348_112,
+    modifiedMs: 1_723_500_000_000,
+    createdMs: 1_721_000_000_000,
+    extension: "pdf",
+    isHidden: false,
+    isReadonly: false,
+  },
+  {
+    name: "notas.txt",
+    path: "C:\\Users\\Wagner\\notas.txt",
+    isDir: false,
+    isSymlink: false,
+    size: 1_204,
+    modifiedMs: 1_724_000_000_000,
+    createdMs: 1_722_000_000_000,
+    extension: "txt",
+    isHidden: false,
+    isReadonly: false,
+  },
+];
+
+const MOCK_DRIVES: DriveInfo[] = [
+  {
+    path: "C:\\",
+    name: "Windows",
+    kind: "fixed",
+    fsName: "NTFS",
+    totalSpace: 512_000_000_000,
+    freeSpace: 128_000_000_000,
+  },
+  {
+    path: "D:\\",
+    name: "Dados",
+    kind: "fixed",
+    fsName: "NTFS",
+    totalSpace: 1_000_000_000_000,
+    freeSpace: 640_000_000_000,
+  },
+];
+
+/** Lista um diretório, pastas-primeiro. Caminho primário pra pastas normais. */
+export async function listarDir(path: string): Promise<FsEntry[]> {
+  if (!inTauri()) {
+    await sleep(120);
+    return MOCK_FS_ENTRIES.map((e) => ({ ...e }));
+  }
+  return invoke<FsEntry[]>("fs_read_dir", { path });
+}
+
+/** Metadados de um único item (arquivo ou pasta). */
+export async function statCaminho(path: string): Promise<FsEntry> {
+  if (!inTauri()) {
+    await sleep(60);
+    return { ...MOCK_FS_ENTRIES[0], path };
+  }
+  return invoke<FsEntry>("fs_stat", { path });
+}
+
+/** Tamanho agregado (recursivo) de uma pasta. */
+export async function tamanhoDir(path: string): Promise<DirSize> {
+  if (!inTauri()) {
+    await sleep(200);
+    return { path, totalBytes: 12_345_678, fileCount: 42, dirCount: 7 };
+  }
+  return invoke<DirSize>("fs_dir_size", { path });
+}
+
+/** Drives montados com tipo, label e espaço. */
+export async function listarDrives(): Promise<DriveInfo[]> {
+  if (!inTauri()) {
+    await sleep(80);
+    return MOCK_DRIVES.map((d) => ({ ...d }));
+  }
+  return invoke<DriveInfo[]>("fs_list_drives");
+}
+
+/** #869: mounts de nuvem locais (OneDrive pasta + Google Drive letra) pra seção
+ *  "Cloud drives" do sidebar. Vazio se nenhum cliente de nuvem está instalado. */
+export async function listarCloudLocations(): Promise<CloudLocation[]> {
+  if (!inTauri()) return [];
+  return invoke<CloudLocation[]>("fs_cloud_locations");
+}
+
+/** #871: mapeia um network drive ("New → Network drive"). `letter`="Z:",
+ *  `remote`="\\\\server\\share", `persistent`=reconecta no login. */
+export async function mapearNetworkDrive(
+  letter: string,
+  remote: string,
+  persistent: boolean,
+): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_map_network_drive", { letter, remote, persistent });
+}
+
+/** #871: desconecta um network drive mapeado (`force` derruba com arquivos abertos). */
+export async function desconectarNetworkDrive(letter: string, force: boolean): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_disconnect_network_drive", { letter, force });
+}
+
+/** Pastas de acesso rápido do SO (home/desktop/documentos/downloads). */
+export async function dirsConhecidos(): Promise<FsEntry[]> {
+  if (!inTauri()) {
+    await sleep(60);
+    return MOCK_FS_ENTRIES.filter((e) => e.isDir).map((e) => ({ ...e }));
+  }
+  return invoke<FsEntry[]>("fs_known_dirs");
+}
+
+/**
+ * Thumbnail webp (data URI) gerado no backend (#736): pool rayon + fast-path EXIF
+ * + downscale. NUNCA decodifica o arquivo original no DOM. `maxSize` = maior lado.
+ */
+export async function gerarThumbnail(
+  path: string,
+  maxSize = 256,
+): Promise<ThumbRef> {
+  if (!inTauri()) {
+    await sleep(40);
+    return { dataUri: "", width: maxSize, height: maxSize, source: "decode" };
+  }
+  return invoke<ThumbRef>("fs_thumbnail", { path, maxSize });
+}
+
+/**
+ * Domain-claim (PS7 #700, slice 1): cria o desafio de posse de domínio (token +
+ * registro a publicar). A checagem real da prova (DNS/well-known) é a slice 2.
+ */
+export async function iniciarVerificacaoDominio(
+  dominio: string,
+): Promise<DesafioDominio> {
+  if (!inTauri()) {
+    const token = "mock".padEnd(32, "0");
+    return {
+      dominio: dominio.trim().replace(/^@/, "").toLowerCase(),
+      token,
+      registro: `galaxie-verify=${token}`,
+    };
+  }
+  return invoke<DesafioDominio>("dominio_iniciar_verificacao", { dominio });
+}
+
+/**
+ * Domain-claim slice 2 (#700): verifica a posse lendo o TXT do domínio e
+ * conferindo o `registro` (`galaxie-verify=<token>`). `true` = posse provada.
+ */
+export async function verificarDominio(
+  dominio: string,
+  registro: string,
+): Promise<boolean> {
+  if (!inTauri()) return false;
+  return invoke<boolean>("dominio_verificar", { dominio, registro });
+}
+
+/** Ajusta os tetos do cache de thumbnail (#737): disco/memória em MB. */
+export async function configurarCacheThumbnail(
+  diskMb: number,
+  memMb: number,
+): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("fs_thumb_cache_limits", { diskMb, memMb });
+}
+
+/** Métricas de perf do gerador de thumbnail (#740): hit-rate, geração, pool/caps. */
+export async function obterMetricasThumbnail(): Promise<ThumbMetrics> {
+  if (!inTauri()) {
+    return {
+      hitMem: 0, hitDisco: 0, geradas: 0, total: 0, hitRate: 0,
+      genMedioMs: 0, poolThreads: 0, diskCapMb: 1024, memCapMb: 96, memBytes: 0,
+    };
+  }
+  return invoke<ThumbMetrics>("fs_thumb_metrics");
+}
+
+/** Zera os contadores de métrica (baseline limpo antes de medir). */
+export async function resetarMetricasThumbnail(): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("fs_thumb_metrics_reset");
+}
+
+/** Revela o item no Explorer do Windows. */
+export async function revelarCaminho(path: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_reveal", { path });
+}
+
+/** Abre o item com o app padrão do Windows. */
+export async function abrirCaminhoFs(path: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_open", { path });
+}
+
+/**
+ * #873: lê um arquivo LOCAL em memória (base64) para a pré-visualização do
+ * Explorer — mesma forma do `crLerAnexo` (`{ bytesB64, contentType, nome }`) para
+ * reusar os MESMOS decodificadores dos viewers (pdf/docx/xlsx/csv/imagem/mídia).
+ *
+ * #873 fix (reprovado no runtime): o `convertFileSrc → fetch` NÃO funciona — o
+ * `assetProtocol` não está habilitado no `tauri.conf.json`, então o fetch dava
+ * "failed to fetch" pra TODO tipo. Voltamos a ler pelo BACKEND (`fs_read_file_bytes`,
+ * do Confucius): cap de 25 MB + validação de path no Rust, sem abrir o
+ * asset-protocol amplo. Mesma forma do `crLerAnexo` (bytes do Graph em memória).
+ * Fora do Tauri (mock/dev) devolve um exemplo curto.
+ */
+export async function lerArquivoBytes(
+  path: string,
+  maxBytes?: number,
+): Promise<AnexoConteudo> {
+  if (!inTauri()) {
+    await sleep(200);
+    return {
+      bytesB64: "RXhlbXBsbyBkZSBwcmV2aWV3Lg==",
+      contentType: "text/plain",
+      nome: path.split(/[\\/]/).pop() ?? path,
+    };
+  }
+  // Contrato (Confucius): args `{ path, maxBytes }` → `{ bytesB64, contentType,
+  // nome }`. O backend barra >maxBytes e valida o path (mesmos guards do preview).
+  return invoke<AnexoConteudo>("fs_read_file_bytes", { path, maxBytes });
+}
+
+/**
+ * Stream de pasta gigante: registra o listener de `fs-dir-batch`, dispara o
+ * comando e resolve com o total quando o backend sinaliza `done`. `onLote`
+ * recebe cada lote (o último com `done: true`). Filtra pelo `path` pra suportar
+ * duas listagens concorrentes. Sempre desliga o listener no fim.
+ */
+export async function listarDirStreamed(
+  path: string,
+  batch: number,
+  onLote: (lote: FsDirBatch) => void,
+): Promise<number> {
+  if (!inTauri()) {
+    await sleep(120);
+    const entries = MOCK_FS_ENTRIES.map((e) => ({ ...e }));
+    onLote({ path, entries, done: true });
+    return entries.length;
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  const desligar = await listen<FsDirBatch>("fs-dir-batch", (ev) => {
+    if (ev.payload.path === path) onLote(ev.payload);
+  });
+  try {
+    return await invoke<number>("fs_read_dir_streamed", { path, batch });
+  } finally {
+    desligar();
+  }
+}
+
+/** Handle de uma busca em andamento (#871). `cancelar` para a varredura. */
+export interface BuscaHandle {
+  searchId: number;
+  cancelar: () => Promise<void>;
+}
+
+/**
+ * #871: busca recursiva streaming. `root` vazio = "This PC" (todos os drives);
+ * `query` = substring no nome. Registra o listener de `fs-search-result` ANTES
+ * de invocar (bufferiza lotes que cheguem antes do `searchId` ser conhecido —
+ * evita corrida), filtra pelo `searchId`, e desliga no lote `done`. Devolve um
+ * handle pra cancelar (reusa `fs_cancel`).
+ */
+export async function buscarArquivos(
+  root: string,
+  query: string,
+  onLote: (lote: FsSearchBatch) => void,
+  opts?: { maxResults?: number; batch?: number },
+): Promise<BuscaHandle> {
+  if (!inTauri()) {
+    onLote({ searchId: 0, entries: [], done: true, truncated: false });
+    return { searchId: 0, cancelar: async () => {} };
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  const buffer: FsSearchBatch[] = [];
+  let searchId = -1;
+  let desligar: (() => void) | null = null;
+  const entregar = (p: FsSearchBatch) => {
+    onLote(p);
+    if (p.done) desligar?.();
+  };
+  desligar = await listen<FsSearchBatch>("fs-search-result", (ev) => {
+    const p = ev.payload;
+    if (searchId === -1) {
+      buffer.push(p); // ainda não sei o id → segura
+      return;
+    }
+    if (p.searchId === searchId) entregar(p);
+  });
+  searchId = await invoke<number>("fs_search", {
+    root,
+    query,
+    maxResults: opts?.maxResults ?? 1000,
+    batch: opts?.batch ?? 200,
+  });
+  // Flush do que chegou na janela pré-id (filtrado pelo searchId real).
+  for (const p of buffer.splice(0)) {
+    if (p.searchId === searchId) entregar(p);
+  }
+  return {
+    searchId,
+    cancelar: async () => {
+      await cancelarOp(searchId);
+      desligar?.();
+    },
+  };
+}
+
+// --- Mutações do Explorer (#679 S3) — delete → Lixeira é o padrão ------------
+// Fora do Tauri (mock) são no-op (a UI é validada no app real). Erros tipados
+// (FsError) chegam do backend.
+
+/** Token interno que autoriza a exclusão PERMANENTE — o gate real é o
+ *  Shift+confirmação na UI, que só então chama `excluirPermanente`. */
+const TOKEN_EXCLUSAO_PERMANENTE = "galaxie-excluir-permanente";
+
+/** Cria uma pasta nova (erra se já existe). */
+export async function criarPasta(path: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_create_dir", { path });
+}
+
+/** Cria um arquivo novo (erra se já existe); `contents` opcional. */
+export async function criarArquivo(
+  path: string,
+  contents?: string,
+): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_create_file", { path, contents: contents ?? null });
+}
+
+/** Renomeia (mesma pasta) — conflito de nome barrado no backend. */
+export async function renomear(from: string, to: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_rename", { from, to });
+}
+
+/** Copia arquivo/pasta (recursivo). */
+export async function copiar(from: string, to: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_copy", { from, to });
+}
+
+/** Move (rename rápido; fallback copy+delete cross-volume). */
+export async function mover(from: string, to: string): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_move", { from, to });
+}
+
+/** Manda os itens pra Lixeira do SO (reversível). Padrão do delete. */
+export async function paraLixeira(paths: string[]): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_trash", { paths });
+}
+
+/** Apaga PERMANENTEMENTE (sem Lixeira). Só depois do Shift+confirmação na UI. */
+export async function excluirPermanente(paths: string[]): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_delete_permanent", {
+    paths,
+    confirmToken: TOKEN_EXCLUSAO_PERMANENTE,
+  });
+}
+
+// --- Progresso + conflito + watcher (#680 S4) -------------------------------
+
+/** Algoritmo de verificação pós-cópia (opt-in). `undefined` = cópia normal. */
+export type VerifyAlg = "xxh3" | "blake3" | "sha256";
+
+/**
+ * Copia com progresso TURBO — devolve o `opId` (acompanhe via `onProgressoOp`).
+ * O engine perfila os discos (SSD/HDD) e paraleliza o mix pequeno+grande.
+ * `verify` liga a checagem de integridade por hash (mais lento).
+ */
+export async function copiarComProgresso(
+  from: string,
+  to: string,
+  verify?: VerifyAlg,
+): Promise<number> {
+  if (!inTauri()) return 0;
+  return invoke<number>("fs_copy_with_progress", { from, to, verify: verify ?? null });
+}
+
+/** Move com progresso (rename rápido; senão copy+delete turbo) — devolve o `opId`. */
+export async function moverComProgresso(
+  from: string,
+  to: string,
+  verify?: VerifyAlg,
+): Promise<number> {
+  if (!inTauri()) return 0;
+  return invoke<number>("fs_move_with_progress", { from, to, verify: verify ?? null });
+}
+
+/**
+ * #850 (fatia B): copia VÁRIAS origens pra `destDir` numa OP/plano só (modelo
+ * TeraCopy). Prefira isto a N `copiarComProgresso` numa multi-seleção — enumera
+ * tudo antes, é uma fase de cópia (mata o "2 pastas sequenciais") e o benchmark
+ * (START/PROGRESS/END no log) é global. Devolve um único `opId`.
+ */
+export async function copiarVariasComProgresso(
+  sources: string[],
+  destDir: string,
+  verify?: VerifyAlg,
+): Promise<number> {
+  if (!inTauri()) return 0;
+  return invoke<number>("fs_copy_many_with_progress", {
+    sources,
+    destDir,
+    verify: verify ?? null,
+  });
+}
+
+/** #850 (fatia B): move VÁRIAS origens pra `destDir` numa op só. Devolve o `opId`. */
+export async function moverVariasComProgresso(
+  sources: string[],
+  destDir: string,
+  verify?: VerifyAlg,
+): Promise<number> {
+  if (!inTauri()) return 0;
+  return invoke<number>("fs_move_many_with_progress", {
+    sources,
+    destDir,
+    verify: verify ?? null,
+  });
+}
+
+/** Cancela uma op de copy/move em andamento. */
+export async function cancelarOp(opId: number): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_cancel", { opId });
+}
+
+/**
+ * #898: pausa uma op de copy/move em andamento — os workers travam no próximo
+ * arquivo/chunk e o evento `fs-op-progress` passa a reportar `status: "paused"`.
+ */
+export async function pausarOp(opId: number): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_op_pause", { opId });
+}
+
+/** #898: retoma uma op pausada — os workers continuam do ponto exato. */
+export async function resumirOp(opId: number): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_op_resume", { opId });
+}
+
+/**
+ * #899 U1: pré-visualiza o undo de uma op (classifica em seguros/pulados/
+ * não-reversíveis, SEM efeito) pro diálogo de resumo. `null` = op não está mais
+ * no journal (fora da janela de undo).
+ */
+export async function previewUndo(opId: number): Promise<UndoPlan | null> {
+  if (!inTauri()) return null;
+  return invoke<UndoPlan | null>("fs_undo_preview", { opId });
+}
+
+/**
+ * #899 U1: executa o undo de uma op — reverte só os itens seguros (cópia →
+ * Lixeira; move → volta origem). Best-effort; devolve o relatório do que foi
+ * feito/pulado.
+ */
+export async function desfazerOp(opId: number): Promise<UndoReport | null> {
+  if (!inTauri()) return null;
+  return invoke<UndoReport>("fs_undo_op", { opId });
+}
+
+/** Conflitos de nome no destino, ANTES da op (pro diálogo de resolução). */
+export async function checarConflitos(
+  sources: string[],
+  destDir: string,
+): Promise<FsConflict[]> {
+  if (!inTauri()) return [];
+  return invoke<FsConflict[]>("fs_check_conflicts", { sources, destDir });
+}
+
+/** Assina o progresso das ops (`fs-op-progress`); devolve o unsubscribe. */
+export async function onProgressoOp(
+  cb: (p: FsOpProgress) => void,
+): Promise<() => void> {
+  if (!inTauri()) return () => {};
+  const { listen } = await import("@tauri-apps/api/event");
+  return listen<FsOpProgress>("fs-op-progress", (ev) => cb(ev.payload));
+}
+
+/**
+ * Observa uma pasta e chama `cb` a cada mudança no disco (live refresh). O
+ * listener é registrado ANTES do `fs_watch` e filtra pelo `watcherId`. `parar`
+ * desliga o listener E solta o watcher no backend (sem vazar).
+ */
+export async function observarPasta(
+  path: string,
+  recursive: boolean,
+  cb: (c: FsChange) => void,
+): Promise<{ watcherId: number; parar: () => Promise<void> }> {
+  if (!inTauri()) {
+    return { watcherId: 0, parar: async () => {} };
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  let watcherId = -1;
+  const desligar = await listen<FsChange>("fs-change", (ev) => {
+    if (ev.payload.watcherId === watcherId) cb(ev.payload);
+  });
+  watcherId = await invoke<number>("fs_watch", { path, recursive });
+  return {
+    watcherId,
+    parar: async () => {
+      desligar();
+      await invoke<void>("fs_unwatch", { watcherId });
+    },
+  };
 }

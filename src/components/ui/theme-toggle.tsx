@@ -46,8 +46,10 @@ const MoonIcon = () => (
   </svg>
 );
 
-/** Alterna claro/escuro. Ligado = tema escuro. A escolha fica salva. */
-export function ThemeToggle() {
+/** Alterna claro/escuro. Ligado = tema escuro. A escolha fica salva.
+ *  #876: `size` deixa o switcher caber na altura de uma tab na title bar
+ *  (default "lg" preserva o tamanho antigo de onde já era usado). */
+export function ThemeToggle({ size = "lg" }: { size?: "sm" | "md" | "lg" }) {
   const { t } = useIdioma();
   const dark = useTemaEscuro();
   const setModoTema = useAppStore((state) => state.setModoTema);
@@ -65,7 +67,7 @@ export function ThemeToggle() {
             onChange={(escuro) => setModoTema(escuro ? "dark" : "light")}
             label={t.tema.alternar}
             icons={{ on: <MoonIcon />, off: <SunIcon /> }}
-            size="lg"
+            size={size}
             variant="icon"
           />
         </span>

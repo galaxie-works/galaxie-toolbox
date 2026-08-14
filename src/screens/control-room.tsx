@@ -161,6 +161,7 @@ import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
 import { podeGerenciarEvento } from "@/lib/agenda-permissions";
+import { surfaceSuportada } from "@/lib/capabilities-surface";
 import {
   CAIXA_PROPRIA,
   descricaoErroEnvio,
@@ -176,6 +177,8 @@ import {
 } from "@/lib/fotos";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { preencher, useIdioma } from "@/lib/idioma";
+import { useTier } from "@/lib/tier-context";
+import { recursoOrgDisponivel } from "@/lib/tier";
 import { useTemaEscuro } from "@/lib/tema";
 import { useAppStore } from "@/store";
 import type { BridgeView } from "@/store/ui-slice";
@@ -1590,6 +1593,9 @@ function FolderSidebar({
   onSelectModule: (view: BridgeView) => void;
   t: ReturnType<typeof useIdioma>["t"];
 }) {
+  // #712 (PS6 follow-on): caixa compartilhada é feature de ORG — no tier pessoal/
+  // uncontracted o seletor de caixa some (só a caixa própria vale).
+  const { recursoOrgDisponivel } = useTier();
   const peopleTab = useAppStore((state) => state.peopleTab);
   const setPeopleTab = useAppStore((state) => state.setPeopleTab);
   // #578: os grupos M365 seguem carregados aqui (loadPeopleGroups no mount do
@@ -2035,16 +2041,19 @@ function FolderSidebar({
       {bridgeView === "mail" ? (
         <>
           {/* Seletor de caixa (#111): contexto do módulo Mailbox. Minha caixa
-              (/me) é o padrão; caixas compartilhadas ficam abaixo. */}
-          <SeletorCaixa
-            caixas={caixas}
-            ativa={caixaAtiva}
-            emailProprio={emailProprio}
-            onSelecionar={onSelecionarCaixa}
-            onAdicionar={onAbrirAdicionarCaixa}
-            colapsada={colapsada}
-            t={t}
-          />
+              (/me) é o padrão; caixas compartilhadas ficam abaixo.
+              #712: só no tier org — feature de organização. */}
+          {recursoOrgDisponivel && (
+            <SeletorCaixa
+              caixas={caixas}
+              ativa={caixaAtiva}
+              emailProprio={emailProprio}
+              onSelecionar={onSelecionarCaixa}
+              onAdicionar={onAbrirAdicionarCaixa}
+              colapsada={colapsada}
+              t={t}
+            />
+          )}
           {caixaCompartilhada && !colapsada ? (
             <p className="px-1 text-xs text-muted-foreground">
               {t.controlRoom.caixaCompartilhadaDesc}
@@ -6253,6 +6262,7 @@ export function ControlRoomScreen({
   onGrantPeopleAccess,
   onReauthenticate,
   ativo = true,
+  emAba = false,
 }: {
   user: AppUser;
   onAbrirLink: (url: string) => void;
@@ -6262,13 +6272,20 @@ export function ControlRoomScreen({
    * atalho global de teclado quando o Bridge está em primeiro plano (ele fica
    * montado/escondido em keep-alive). */
   ativo?: boolean;
+  /** #868: hospedada numa ABA interna do Navigator? A aba já dá a identidade
+   * (ícone + nome "Bridge"), então o hero redundante (ícone + título + subtítulo)
+   * do content area some — regra do host de aba, generaliza o que o #854 fez no
+   * Files. Render standalone (default `false`) mantém o hero do #490. */
+  emAba?: boolean;
 }) {
   const { idioma, t } = useIdioma();
   // Fotos de contatos (#39): só buscamos avatar de remetente do MESMO domínio do
   // tenant (o do usuário logado). Configura o domínio do cache aqui.
+  // #712 (PS6 follow-on): fotos de remetentes internos são feature de ORG — no
+  // tier pessoal/uncontracted desliga o domínio (null) → tudo cai nas iniciais.
   useEffect(() => {
-    configurarDominioFotos(user.email);
-  }, [user.email]);
+    configurarDominioFotos(recursoOrgDisponivel(user) ? user.email : null);
+  }, [user]);
   const bridgeView = useAppStore((s) => s.bridgeView);
   const setBridgeView = useAppStore((s) => s.setBridgeView);
   // Caixas compartilhadas (#111): lista de endereços adicionados (persistida) +
@@ -6457,6 +6474,14 @@ export function ControlRoomScreen({
   useEffect(() => {
     let vivo = true;
     setPastas(null);
+    // #803: conta sem Outlook mail (ex.: Google) NÃO bate no MS Graph — mostra
+    // vazio limpo em vez de martelar /me/mailFolders e tomar 401 em toda pasta.
+    if (!surfaceSuportada(user, "mail")) {
+      setPastas([]);
+      return () => {
+        vivo = false;
+      };
+    }
     api
       .crMailFolders(caixaAtiva)
       .then((p) => vivo && setPastas(p))
@@ -6464,7 +6489,7 @@ export function ControlRoomScreen({
     return () => {
       vivo = false;
     };
-  }, [caixaAtiva, recarga, recargaPastas, setPastas]);
+  }, [caixaAtiva, recarga, recargaPastas, setPastas, user]);
 
   // Cache de SUBPASTAS (childFolders), compartilhado pelo sidebar (expandir) e
   // pelo submenu "Mover para pasta…" (#88). Carrega sob demanda e memoriza; o
@@ -6693,6 +6718,12 @@ export function ControlRoomScreen({
     const aviso = toast.loading(t.controlRoom.esvaziandoPasta);
     try {
       const n = await api.crEsvaziarPasta(folderId, caixaAtiva);
+      // #788: INVALIDA o cache da pasta esvaziada — senão a lista serve as
+      // mensagens velhas (não atualiza) e, ao revisitar a pasta com IDs de
+      // mensagens já deletadas, uma request falha e cai no toast de erro
+      // ("That didn't go through"). Mesmo caminho que o Refresh manual usa; agora
+      // a lista fica vazia na hora e a revisita rebusca do zero, sem erro.
+      limparCachePasta(chaveCache(folderId));
       toast.success(preencher(t.controlRoom.pastaEsvaziada, { n }), { id: aviso });
       recarregarAposPasta(folderId);
     } catch (e) {
@@ -7487,16 +7518,21 @@ export function ControlRoomScreen({
 
   return (
     <div className="flex h-full flex-col gap-4">
-      {/* Cabeçalho — ícone animado do Bridge + título do módulo ativo (#231). */}
-      <div className="flex shrink-0 items-center gap-3">
-        <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
-          <BridgeHeaderIcon className="size-6" />
-        </span>
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">{tituloModulo}</h1>
-          <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
+      {/* Cabeçalho — ícone animado do Bridge + título do módulo ativo (#231).
+          #868: escondido quando hospedado em aba interna (a própria aba já
+          identifica o Bridge com ícone + nome) → o content area começa direto no
+          conteúdo. Standalone (fora de aba) mantém o hero pedido pelo PO no #490. */}
+      {!emAba && (
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+            <BridgeHeaderIcon className="size-6" />
+          </span>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">{tituloModulo}</h1>
+            <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Sidebar de módulos + conteúdo do módulo ativo. */}
       <div className="flex min-h-0 flex-1 gap-4">

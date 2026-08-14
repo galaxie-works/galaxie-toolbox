@@ -9,13 +9,23 @@ import {
 } from "@/components/ui/command";
 import {
   APPS,
-  CATEGORIAS,
   MAIS_USADOS,
-  porCategoria,
   porId,
   urlIcone,
   type AppM365,
 } from "@/lib/apps";
+// #720 (SH2): catálogo grande (~1795 apps) categorizado + ícones lazy.
+import { chaveCategoria } from "@/lib/apps-catalog";
+// #827 (SU1): fonte + render ÚNICOS do command (M365 curado + catálogo fundidos).
+import {
+  appsUnificadosPorCategoria,
+  m365VisivelPara,
+  type AppUnificado,
+} from "@/lib/apps-unificado";
+import { AppIcon } from "@/components/app-icon";
+// #721 (SH3): fixar/desafixar app no rail — estado no store, lógica pura.
+import { useAppStore } from "@/store";
+import { estaPinado } from "@/lib/pinned-apps";
 import * as browser from "@/lib/browser";
 import { fetchFavicon } from "@/lib/api";
 import {
@@ -33,10 +43,12 @@ import {
   persistFaviconCache,
   NAVIGATOR_GROUP_COLORS,
   NAVIGATOR_GROUP_COLOR_ORDER,
+  ehAbaInterna,
   type AbaBrowser,
   type NavigatorGroup,
   type NavigatorGroupColor,
   type NavigatorMembership,
+  type TelaInterna,
 } from "@/lib/navigator-tabs";
 import {
   BarraFavoritos,
@@ -96,14 +108,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -119,6 +123,7 @@ import {
 import { preencher, useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
 import { NAV, TELAS, type Tela } from "@/lib/navegacao";
+import type { AppUser } from "@/lib/types";
 import {
   appsQueCasam,
   subviewsQueCasam,
@@ -129,6 +134,7 @@ import { UsersIcon } from "@/components/ui/users";
 import { CalendarDaysIcon } from "@/components/ui/calendar-days";
 import {
   BedDouble,
+  Bookmark,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -137,11 +143,13 @@ import {
   Compass,
   FolderMinus,
   FolderPlus,
+  FolderTree,
   Globe,
   GripHorizontal,
   GripVertical,
   History,
   Loader2,
+  MonitorSmartphone,
   Moon,
   Pencil,
   Pin,
@@ -153,7 +161,16 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
+import { BridgeIcon } from "@/components/ui/icons/marca-anim";
 import {
   OcultarWebviewContext,
   useOcultarWebviewEnquantoAberto,
@@ -178,6 +195,25 @@ const OCULTOS_NAV = new Set<Tela>(
 const TELAS_IR_PARA_VISIVEIS: Tela[] = TELAS_IR_PARA.filter(
   (tela) => !OCULTOS_NAV.has(tela),
 );
+
+/**
+ * #719 (SH1): ícone da aba interna (Bridge/Files/Remote) na strip e no rail —
+ * mesmos glifos do rail do shell (SH0) pra fidelidade visual. Fallback = globo.
+ */
+function iconeTelaInterna(tela: TelaInterna | undefined): ReactNode {
+  switch (tela) {
+    case "control-room":
+      return <BridgeIcon className="size-4 shrink-0" />;
+    case "arquivos":
+      return <FolderTree className="size-4 shrink-0 text-muted-foreground" />;
+    case "remote":
+      return (
+        <MonitorSmartphone className="size-4 shrink-0 text-muted-foreground" />
+      );
+    default:
+      return <Globe className="size-4 shrink-0 text-muted-foreground" />;
+  }
+}
 
 /**
  * Hero da aba vazia do Navigator (#74): a nave (lucide-animated) balançando em
@@ -261,11 +297,15 @@ type AcoesPaleta = {
   ativa: string | null;
   favoritos: Favorito[];
   historico: HistoryEntry[];
+  /** #827 SU2b: conta ativa — gate por capability esconde M365 não-suportado. */
+  user: Pick<AppUser, "provider" | "accountKind"> | null;
   onAbrir: (app: AppM365) => void;
   onNavegar: (url: string, nome: string) => void;
   onTrocar: (id: string) => void;
   onFechar: (id: string) => void;
   onNovaAba: () => void;
+  /** #922: abre uma aba nova em modo PRIVADO (mesma ação da tab strip / #273). */
+  onNovaAbaPrivada: () => void;
   onAlternarFixada: (id: string) => void;
   onDormir: (id: string) => void;
   /** #656: navega pra outra Tela do app (canvas), pro grupo "Ir para". */
@@ -305,6 +345,7 @@ function ConteudoPaleta({
   ativa,
   favoritos,
   historico,
+  user,
   className,
   autoFocus,
   onExecutou,
@@ -313,6 +354,7 @@ function ConteudoPaleta({
   onTrocar,
   onFechar,
   onNovaAba,
+  onNovaAbaPrivada,
   onAlternarFixada,
   onDormir,
   onNavegarTela,
@@ -325,6 +367,11 @@ function ConteudoPaleta({
   const { idioma, t } = useIdioma();
   const [q, setQ] = useState("");
   const { modo, termo } = lerPrefixo(q);
+  // #721 (SH3): fixar/desafixar app do catálogo no rail. O estado vem do store;
+  // o botão vive dentro do CommandItem, então para o clique de propagar (senão
+  // abriria o app em vez de (des)fixar).
+  const appsFixados = useAppStore((s) => s.appsFixados);
+  const alternarFixado = useAppStore((s) => s.alternarFixado);
 
   // #271: quando a paleta pede foco (overlay Ctrl+K OU Launcher da aba vazia),
   // foca o input ao montar. O `autoFocus` do overlay já vinha do Radix Dialog; o
@@ -345,15 +392,22 @@ function ConteudoPaleta({
 
   // "Mais acessados" REAL: contagem derivada do historico (spec §8.3). Sem
   // historico ainda (instalacao nova), cai na lista M365 curada — sem regressao.
-  const topAcessados = maisAcessados(historico, 9);
+  // #866: o "Mais usados"/"Mais acessados" também é gateado por provider — Google/
+  // MS-pessoal não vê atalho M365 que não pode usar (ex.: SharePoint/OneDrive),
+  // coerente com a lista unificada de baixo. Item web não-M365 não é gateado.
+  const topAcessados = maisAcessados(historico, 9).filter((item) => {
+    const app = appPorUrl(item.url);
+    return !app || m365VisivelPara(app.id, user);
+  });
   const maisUsadosFallback = MAIS_USADOS.map((id) =>
     APPS.find((a) => a.id === id),
-  ).filter((a): a is AppM365 => a != null);
+  )
+    .filter((a): a is AppM365 => a != null)
+    .filter((a) => m365VisivelPara(a.id, user));
   // Grupo `#`: historico filtrado pelo termo, ja ordenado por recencia. Fatiado
   // para nao renderizar milhares de itens no cmdk.
   const historicoLista =
     modo === "historico" ? buscarHistorico(historico, termo).slice(0, 50) : [];
-  const alfabetica = (a: AppM365, b: AppM365) => a.nome.localeCompare(b.nome);
 
   // Roda a ação e, no overlay, fecha a paleta em seguida.
   const executar = (fn: () => void) => {
@@ -415,6 +469,99 @@ function ConteudoPaleta({
   const mostrarAbas = (modo === "omni" || modo === "abas") && abas.length > 0;
   const mostrarFavoritos = modo === "omni" && favoritosLinks.length > 0;
   const mostrarApps = modo === "omni";
+  // #827 (SU1): LISTA ÚNICA (M365 curado + catálogo) por categoria, taxonomia
+  // única. Sem busca = prévia por categoria (perf: não monta os ~1788 de uma vez);
+  // ao buscar, filtra tudo por nome/categoria e mostra todos os matches.
+  const PREVIA_POR_CATEGORIA = 6;
+  // #824 (SU3): teto de resultados por categoria na BUSCA. Sem isto, um termo
+  // amplo ("a") casa milhares de apps → milhares de CommandItem no DOM de uma vez
+  // → lag ao digitar (mesma classe do #820, no command). O teto + a linha
+  // "+N mais" bounda os nós ao viewport SEM quebrar a navegação por teclado do
+  // cmdk (que precisa dos itens montados) — o DoD aceita capar em vez de
+  // virtualizar. Com o teto, o double-filter do `value`+`termo` também passa a
+  // operar em ≤14×N itens, deixando de ser furo.
+  const MAX_BUSCA_POR_CATEGORIA = 10;
+  const gruposUnificados = useMemo(
+    () => appsUnificadosPorCategoria(termo || undefined, user),
+    [termo, user],
+  );
+  // #877 (decisão do Wagner, 14/08): os apps do PRÓPRIO GALAXIE (Bridge/Files/
+  // Remote) vêm ANTES do "Mais usados" — são a 1ª coisa que aparece ao abrir o
+  // command (o "sempre primeiro" literal, acima da seção curada M365). Separo o
+  // grupo "From GALAXIE" do resto das categorias (que seguem depois do topo).
+  const grupoGalaxie = useMemo(
+    () => gruposUnificados.find((g) => g.categoria === "From GALAXIE"),
+    [gruposUnificados],
+  );
+  const gruposResto = useMemo(
+    () => gruposUnificados.filter((g) => g.categoria !== "From GALAXIE"),
+    [gruposUnificados],
+  );
+
+  // Abre um app da lista única (#827 SU1/SU2). Prioridade:
+  // 1) core M365 que o app já faz NATIVO → abre a tela interna, não aba web
+  //    (Outlook→Bridge, OneDrive/SharePoint→Files via Tela; Calendar→Agenda,
+  //    People→People via sub-view do Bridge). A tela alvo já degrada por provider
+  //    (#803), então roteia certo pra qualquer conta.
+  // 2) M365 curado (sem nativo) → `onAbrir` (login-hint + histórico do App.tsx).
+  // 3) resto → aba web pela URL.
+  const abrirUnificado = (app: AppUnificado) => {
+    if (
+      app.nativo === "control-room" ||
+      app.nativo === "arquivos" ||
+      app.nativo === "remote"
+    ) {
+      onNavegarTela(app.nativo);
+      return;
+    }
+    if (app.nativo === "agenda" || app.nativo === "people") {
+      onIrParaBridgeView(app.nativo);
+      return;
+    }
+    if (app.m365) {
+      const m = porId(app.id);
+      if (m) {
+        onAbrir(m);
+        return;
+      }
+    }
+    onNavegar(app.url, app.name);
+  };
+
+  // Render de UMA categoria do command — reusado pelo grupo "From GALAXIE" (no
+  // topo, #877) e pelas demais categorias. Extraído p/ não duplicar o corpo.
+  const renderCategoria = (grupo: (typeof gruposUnificados)[number]) => {
+    // #824: na busca, capa em MAX_BUSCA_POR_CATEGORIA (perf); sem busca, a prévia
+    // curada. `ocultos` alimenta a linha "+N mais".
+    const apps = termo
+      ? grupo.apps.slice(0, MAX_BUSCA_POR_CATEGORIA)
+      : grupo.apps.slice(0, PREVIA_POR_CATEGORIA);
+    const ocultos = termo ? grupo.apps.length - apps.length : 0;
+    return (
+      <CommandGroup
+        key={`cat-${grupo.categoria}`}
+        heading={t.command[chaveCategoria(grupo.categoria)]}
+      >
+        {apps.map((app) => (
+          <ItemUnificado
+            key={`app-${app.id}`}
+            app={app}
+            termo={termo}
+            fixado={estaPinado(appsFixados, app.id)}
+            onSelecionar={() => executar(() => abrirUnificado(app))}
+            onAlternarPin={() => alternarFixado(app.id)}
+          />
+        ))}
+        {ocultos > 0 && (
+          // #824: afordância honesta — mostra quantos ficaram de fora (não trunca
+          // em silêncio). Não é CommandItem (não navegável).
+          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+            {preencher(t.navegador.maisResultados, { n: ocultos })}
+          </div>
+        )}
+      </CommandGroup>
+    );
+  };
 
   return (
     <Command
@@ -512,6 +659,16 @@ function ConteudoPaleta({
                 <Plus className="size-4 shrink-0" />
                 <span>{t.navegador.novaAba}</span>
               </CommandItem>
+              {/* #922: aba privada, ao lado da normal — reusa a ação #273 (mesmo
+                  ícone pirata do menu da tab strip). */}
+              <CommandItem
+                value={t.navegador.novaAbaPrivada}
+                onSelect={() => executar(onNovaAbaPrivada)}
+                className="gap-2.5"
+              >
+                <PirateSkullIcon className="size-4 shrink-0" />
+                <span>{t.navegador.novaAbaPrivada}</span>
+              </CommandItem>
               {abaAtivaObj && (
                 <>
                   <CommandItem
@@ -605,6 +762,16 @@ function ConteudoPaleta({
 
         {mostrarApps && (
           <>
+            {/* #877 (decisão do Wagner, 14/08): os apps do GALAXIE (Bridge/Files/
+                Remote) ANTES do "Mais usados" — os produtos do app são a 1ª coisa
+                ao abrir o command. Só renderiza se o grupo casa (na busca pode
+                não existir). */}
+            {grupoGalaxie && (
+              <>
+                {renderCategoria(grupoGalaxie)}
+                <CommandSeparator />
+              </>
+            )}
             <CommandGroup
               heading={
                 topAcessados.length > 0
@@ -637,21 +804,11 @@ function ConteudoPaleta({
             </CommandGroup>
             <CommandSeparator />
 
-            {CATEGORIAS.map((cat) => (
-              <CommandGroup key={cat} heading={t.apps[cat]}>
-                {porCategoria(cat)
-                  .slice()
-                  .sort(alfabetica)
-                  .map((app) => (
-                    <ItemApp
-                      key={`${cat}-${app.id}`}
-                      app={app}
-                      idioma={idioma}
-                      onAbrir={(a) => executar(() => onAbrir(a))}
-                    />
-                  ))}
-              </CommandGroup>
-            ))}
+            {/* #827 (SU1): UMA seção por categoria, taxonomia única. Cada
+                categoria 1x, cada app 1x (deduped). O grupo "From GALAXIE" já foi
+                renderizado ACIMA do "Mais usados" (#877) — aqui vão as demais. */}
+            {gruposResto.length > 0 && <CommandSeparator />}
+            {gruposResto.map((grupo) => renderCategoria(grupo))}
           </>
         )}
 
@@ -739,6 +896,86 @@ function PaletaOverlay({
         />
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * #827 (SU1): item ÚNICO da lista de apps do command — serve o M365 curado E o
+ * catálogo. Ícone Fluent (`fluentIcon`) OU `<AppIcon>` lazy; nome sempre
+ * `font-medium` + resumo opcional (M365) → altura/espaçamento consistentes (o
+ * bug de render que o Wagner viu). O botão de fixar (#721) mora aqui, um lugar só.
+ */
+function ItemUnificado({
+  app,
+  termo,
+  fixado,
+  onSelecionar,
+  onAlternarPin,
+}: {
+  app: AppUnificado;
+  termo: string;
+  fixado: boolean;
+  onSelecionar: () => void;
+  onAlternarPin: () => void;
+}) {
+  const { idioma, t } = useIdioma();
+  // #877: as telas do GALAXIE (id `galaxie-<x>`) têm nome LOCALIZADO via
+  // `t.sidebar.<x>` (Files→Arquivos, Remote→Remoto); o resto usa o nome do app.
+  const nome = app.id.startsWith("galaxie-")
+    ? t.sidebar[app.id.slice(8) as "bridge" | "files" | "remote"]
+    : app.name;
+  return (
+    <CommandItem
+      // Inclui o termo pra passar pelo filtro do cmdk (o match real já foi feito
+      // por `appsUnificadosPorCategoria(termo)`).
+      value={`app-${app.id} ${nome} ${termo}`}
+      onSelect={onSelecionar}
+      className="group gap-2.5"
+    >
+      {app.fluentIcon ? (
+        <img
+          src={app.fluentIcon}
+          alt=""
+          className="size-5 shrink-0"
+          draggable={false}
+        />
+      ) : (
+        <AppIcon id={app.id} name={nome} />
+      )}
+      <span className="min-w-0 flex-1 truncate font-medium">{nome}</span>
+      {app.resumo && (
+        <span className="hidden shrink-0 truncate text-xs text-muted-foreground sm:inline">
+          {app.resumo[idioma]}
+        </span>
+      )}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={fixado ? t.command.desafixar : t.command.pinar}
+            onClick={(e) => {
+              e.stopPropagation();
+              onAlternarPin();
+            }}
+            className={cn(
+              "grid size-6 shrink-0 place-items-center rounded transition-colors hover:bg-foreground/10",
+              fixado
+                ? "text-primary"
+                : "text-muted-foreground opacity-0 group-hover:opacity-100 group-data-[selected=true]:opacity-100",
+            )}
+          >
+            {fixado ? (
+              <PinOff className="size-3.5" />
+            ) : (
+              <Pin className="size-3.5" />
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="left">
+          {fixado ? t.command.desafixar : t.command.pinar}
+        </TooltipContent>
+      </Tooltip>
+    </CommandItem>
   );
 }
 
@@ -893,11 +1130,13 @@ export function NavegadorScreen({
   onReordenar,
   onAbrir,
   onNovaAba,
+  onNovaAbaFiles,
   onNovaAbaPrivada,
   onReabrirFechada,
   onNavegar,
   onNavegarTela,
   onIrParaBridgeView,
+  user,
   historico,
   onRestaurarAbas,
   sessaoAnteriorQtd,
@@ -907,6 +1146,9 @@ export function NavegadorScreen({
   modoPrivado,
   onAlternarModoPrivado,
   launcherNonce,
+  visivel,
+  tabStripSlot,
+  renderTelaInterna,
 }: {
   abas: AbaBrowser[];
   ativa: string | null;
@@ -924,6 +1166,8 @@ export function NavegadorScreen({
   onReordenar: (ids: string[]) => void;
   onAbrir: (app: AppM365) => void;
   onNovaAba: () => void;
+  /** #872: abre uma aba de Files NOVA (para o menu de contexto da aba de Files). */
+  onNovaAbaFiles: () => void;
   onNovaAbaPrivada: () => void;
   onReabrirFechada: () => void;
   onNavegar: (url: string, nome: string) => void;
@@ -931,6 +1175,8 @@ export function NavegadorScreen({
   onNavegarTela: (tela: Tela) => void;
   /** #657: deep-link numa sub-view do Bridge (People/Agenda) — grupo "Ir para". */
   onIrParaBridgeView: (view: SubviewBridge) => void;
+  /** #827 SU2b: conta ativa — gate por capability na lista de apps do command. */
+  user: Pick<AppUser, "provider" | "accountKind"> | null;
   historico: HistoryEntry[];
   onRestaurarAbas: (entradas: { url: string; nome: string }[]) => void;
   sessaoAnteriorQtd: number;
@@ -939,6 +1185,21 @@ export function NavegadorScreen({
   onLimparHistorico: (periodo: PeriodoLimpeza) => void;
   modoPrivado: boolean;
   onAlternarModoPrivado: () => void;
+  /** #719 (SH1): o Navigator é o shell keep-alive (sempre montado). `visivel`
+   *  = ele é a tela ativa do app; quando false, esconde TODAS as webviews. */
+  visivel: boolean;
+  /** #876: nó da title bar (App.tsx) onde a barra de abas é teleportada (portal).
+   *  Null enquanto o header não montou / em mock/teste → a barra cai inline. O
+   *  estado + os efeitos de webview z-order ficam AQUI; só o DOM viaja. */
+  tabStripSlot?: HTMLElement | null;
+  /** #719 (SH1): renderiza a tela React (Bridge/Files/Remote) de uma aba
+   *  interna. `ativa` = a aba é a atual (dá foco/polling à tela certa). O App é
+   *  dono das telas e do keep-alive; o Navigator só as encaixa no slot. */
+  renderTelaInterna: (
+    tela: TelaInterna,
+    ativa: boolean,
+    abaId: string,
+  ) => ReactNode;
 }) {
   const { t } = useIdioma();
   const area = useRef<HTMLDivElement>(null);
@@ -1024,9 +1285,24 @@ export function NavegadorScreen({
   const [favicons, setFavicons] = useState<Record<string, string>>(
     loadFaviconCache,
   );
-  // #307: visibilidade da barra de favoritos (Settings>Navigator>Favorites).
-  // Lida no mount; a tela remonta ao voltar do Settings, então reflete a pref.
-  const [mostrarBarraFav] = useState(() => loadNavigatorPrefs().mostrarBarraFav);
+  // #307 + #856: visibilidade da barra de favoritos. Agora togglada por um ÍCONE
+  // dedicado na toolbar do Navigator (+ Ctrl/Cmd+Shift+B, convenção de browser) e
+  // pela pref do Settings>Navigator>Favorites — as duas escrevem a MESMA pref,
+  // então ficam em sync. Escondida por padrão (o default da pref). O toggle da
+  // toolbar persiste na hora (mesmo padrão do `railColapsado`).
+  const [mostrarBarraFav, setMostrarBarraFav] = useState(
+    () => loadNavigatorPrefs().mostrarBarraFav,
+  );
+  const alternarBarraFav = useCallback(() => {
+    setMostrarBarraFav((v) => {
+      const proximo = !v;
+      persistNavigatorPrefs({
+        ...loadNavigatorPrefs(),
+        mostrarBarraFav: proximo,
+      });
+      return proximo;
+    });
+  }, []);
   // #318 S2: rail lateral de pinned tabs; colapso persistido em NavigatorPrefs.
   const [railColapsado, setRailColapsado] = useState(
     () => loadNavigatorPrefs().railPinsColapsado,
@@ -1167,6 +1443,12 @@ export function NavegadorScreen({
         : aba.fixada
           ? preencher(t.navegador.fixadaNome, { nome: aba.nome })
           : aba.nome;
+    // #872: aba de Files → o hover mostra o CAMINHO completo (o chip já traz
+    // "Files - <local>" truncado). As outras abas mantêm o próprio label.
+    const tabTooltip =
+      ehAbaInterna(aba) && aba.tela === "arquivos" && aba.caminhoLocal
+        ? aba.caminhoLocal
+        : tabLabel;
     return (
       <SortableItem
         key={aba.id}
@@ -1205,6 +1487,8 @@ export function NavegadorScreen({
                 <Moon className="size-4 shrink-0" aria-hidden="true" />
               ) : privada ? (
                 <PirateSkullIcon className="size-4 shrink-0 text-info" />
+              ) : ehAbaInterna(aba) ? (
+                iconeTelaInterna(aba.tela)
               ) : app ? (
                 <img
                   src={urlIcone(app)}
@@ -1230,7 +1514,7 @@ export function NavegadorScreen({
                     <TooltipTrigger asChild>
                       <span className="min-w-0 flex-1 truncate">{aba.nome}</span>
                     </TooltipTrigger>
-                    <TooltipContent>{tabLabel}</TooltipContent>
+                    <TooltipContent>{tabTooltip}</TooltipContent>
                   </Tooltip>
                   {aba.manterAcordada && (
                     <Coffee
@@ -1264,6 +1548,18 @@ export function NavegadorScreen({
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent className="w-56">
+            {/* #872: menu POR TIPO de aba — a aba de Files ganha "Nova guia do
+                Files" no topo (abre outra aba de Files no This PC). As ações
+                comuns de aba (fixar/dormir/fechar…) seguem abaixo pra todas. */}
+            {ehAbaInterna(aba) && aba.tela === "arquivos" && (
+              <>
+                <ContextMenuItem className="gap-2" onClick={onNovaAbaFiles}>
+                  <FolderTree />
+                  {t.navegador.novaGuiaFiles}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+              </>
+            )}
             <ContextMenuItem
               className="gap-2"
               onClick={() => onAlternarFixada(aba.id)}
@@ -1479,6 +1775,12 @@ export function NavegadorScreen({
         onNovaAbaPrivada();
         return;
       }
+      // #856: Ctrl/Cmd+Shift+B — liga/desliga a barra de favoritos.
+      if (mod && e.shiftKey && tecla === "b") {
+        e.preventDefault();
+        alternarBarraFav();
+        return;
+      }
       // Ctrl+W — fechar a aba atual.
       if (mod && tecla === "w") {
         e.preventDefault();
@@ -1511,6 +1813,7 @@ export function NavegadorScreen({
   }, [
     abas,
     ativa,
+    alternarBarraFav,
     focarComandoInline,
     focarOmnibox,
     onNovaAba,
@@ -1571,6 +1874,17 @@ export function NavegadorScreen({
   // aparecer; ao fechar, este mesmo efeito reroda e revela/reposiciona a aba
   // ativa atual — restaurando a página por baixo.
   useEffect(() => {
+    // #719 (SH1) P0: o Navigator é keep-alive (sempre montado). Quando NÃO é a
+    // tela visível do app, ou a aba ativa é INTERNA (React, sem webview), toda
+    // webview some. Gatilho TRANSIENTE — pelo `visivel` e pelo TIPO da aba ativa,
+    // nunca por estado persistente (senão a webview nunca reabre). Sem snapshot:
+    // aba interna não tem webview pra congelar, e escondida-por-tela é instantânea.
+    const abaInterna = activeTab != null && ehAbaInterna(activeTab);
+    if (!visivel || abaInterna) {
+      if (snapshotOverlay) setSnapshotOverlay(null);
+      browser.esconderTodas();
+      return;
+    }
     const overlayAtivo =
       paletaAberta ||
       overlaysWebview > 0 ||
@@ -1608,7 +1922,7 @@ export function NavegadorScreen({
         });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ativa, activeTab?.url, paletaAberta, overlaysWebview, menuAbertoId, chromeOverlays, snapshotOverlay]);
+  }, [ativa, activeTab?.url, activeTab?.tipo, visivel, paletaAberta, overlaysWebview, menuAbertoId, chromeOverlays, snapshotOverlay]);
 
   // Auto-cura do menu de contexto (#275): se o dono do menu aberto (aba/grupo)
   // sumiu — chip desmontou com o menu aberto, sem disparar o fechamento — limpa a
@@ -1652,6 +1966,7 @@ export function NavegadorScreen({
     if (pinadas.length === 0) return null;
 
     const iconeDaAba = (aba: AbaBrowser) => {
+      if (ehAbaInterna(aba)) return iconeTelaInterna(aba.tela);
       const app = porId(aba.id);
       if (app)
         return (
@@ -1785,8 +2100,13 @@ export function NavegadorScreen({
   return (
     <OcultarWebviewContext.Provider value={registrarOverlayWebview}>
     <div className="flex h-full w-full flex-col">
-      {/* Barra de abas: rola na horizontal; o "+" fica fora da rolagem. */}
-      <div className="flex items-stretch border-b border-border">
+      {/* #876: a barra de abas vive na TITLE BAR — teleportada pro `tabStripSlot`
+          (App.tsx). Sem slot (mock/teste/web) cai inline aqui, comportamento
+          antigo. O estado (grupos/menus/favicons) e os efeitos de webview z-order
+          seguem neste componente; só o DOM da barra viaja pelo portal. */}
+      {(() => {
+        const barraAbas = (
+      <div className="flex min-w-0 flex-1 items-stretch">
         <div
           className="scrollbar-fina flex min-w-0 items-stretch gap-2 overflow-x-auto px-2 pt-2"
           role="tablist"
@@ -1963,7 +2283,8 @@ export function NavegadorScreen({
           </DropdownMenuContent>
         </DropdownMenu>
         )}
-        <div className="flex-1" aria-hidden="true" />
+        {/* #876: a faixa vazia entre as tabs e os ícones arrasta a janela. */}
+        <div className="flex-1" aria-hidden="true" data-tauri-drag-region />
         {sleepingCount > 0 && (
           <Badge variant="info-light" className="my-2 shrink-0">
             <Moon />
@@ -1976,15 +2297,42 @@ export function NavegadorScreen({
             {t.navegador.modoPrivadoAtivo}
           </Badge>
         )}
+        {/* #856: ícone dedicado que liga/desliga a barra de favoritos (padrão de
+            browser · Ctrl/Cmd+Shift+B). Ativo = barra visível (bg-accent). */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={t.navegador.barraFavoritosToggle}
+              aria-pressed={mostrarBarraFav}
+              onClick={alternarBarraFav}
+              className={cn(
+                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
+                "hover:bg-accent hover:text-foreground",
+                mostrarBarraFav && "bg-accent text-foreground",
+              )}
+            >
+              <Bookmark className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <ShortcutTooltip
+              label={t.navegador.barraFavoritosToggle}
+              shortcut={{ key: "B", primary: true, shift: true }}
+            />
+          </TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
               aria-label={t.navegador.historicoTitulo}
-              onClick={() => setHistoricoAberto(true)}
+              aria-pressed={historicoAberto}
+              onClick={() => setHistoricoAberto((v) => !v)}
               className={cn(
                 "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
-                "hover:bg-accent hover:text-foreground"
+                "hover:bg-accent hover:text-foreground",
+                historicoAberto && "bg-accent text-foreground",
               )}
             >
               <History className="size-4" />
@@ -2016,6 +2364,11 @@ export function NavegadorScreen({
           </TooltipContent>
         </Tooltip>
       </div>
+        );
+        return tabStripSlot
+          ? createPortal(barraAbas, tabStripSlot)
+          : barraAbas;
+      })()}
 
       {/* Oferecer restaurar a sessão anterior (#274) — banner discreto, sem
           restaurar automático; some ao restaurar ou dispensar. */}
@@ -2059,51 +2412,94 @@ export function NavegadorScreen({
         />
       )}
 
-      {/* #318 S2: rail das pinned tabs à esquerda + o conteúdo (Launcher/webview).
-          O rail encolhe a área; o ResizeObserver da `area` reposiciona a webview. */}
+      {/* #318 S2: rail das pinned tabs à esquerda + o conteúdo. #719 (SH1): o
+          conteúdo passa a ser um stack de camadas absolutas — Launcher (aba
+          vazia), telas internas (React, keep-alive: uma por aba interna, só a
+          ativa visível) e o host da webview (aba web). O rail encolhe a área; o
+          ResizeObserver da `area` reposiciona a webview. */}
       <div className="flex min-h-0 flex-1">
         {renderPinRail()}
-        {ativa === null ? (
-        <div className="flex-1 overflow-hidden">
-          <Launcher
-            key={launcherNonce}
-            abas={abas}
-            ativa={ativa}
-            favoritos={favoritos}
-            historico={historico}
-            privada={modoPrivado}
-            onAbrir={onAbrir}
-            onNavegar={onNavegar}
-            onTrocar={onTrocar}
-            onFechar={onFechar}
-            onNovaAba={onNovaAba}
-            onAlternarFixada={onAlternarFixada}
-            onDormir={onDormir}
-            onNavegarTela={onNavegarTela}
-            onIrParaBridgeView={onIrParaBridgeView}
-          />
-        </div>
-      ) : (
-        <div ref={area} className="relative flex-1 bg-background">
-          {/* #275 rework: snapshot da webview por baixo do overlay (conteúdo
-              congela em vez de sumir quando a webview nativa é escondida). */}
-          {snapshotOverlay && (
-            <img
-              src={snapshotOverlay}
-              alt=""
-              draggable={false}
-              className="pointer-events-none absolute inset-0 h-full w-full object-cover object-left-top"
-            />
-          )}
-          <div className="pointer-events-none absolute inset-0 grid place-items-center text-muted-foreground">
-            <div className="flex flex-col items-center gap-2">
-              <Loader2 className="size-6 animate-spin opacity-40" />
-              {activeTab?.reativando && (
-                <span className="text-xs">{t.navegador.reativando}</span>
-              )}
+        <div className="relative min-h-0 flex-1">
+          {ativa === null && (
+            <div className="absolute inset-0 overflow-hidden">
+              <Launcher
+                key={launcherNonce}
+                abas={abas}
+                ativa={ativa}
+                favoritos={favoritos}
+                historico={historico}
+                user={user}
+                privada={modoPrivado}
+                onAbrir={onAbrir}
+                onNavegar={onNavegar}
+                onTrocar={onTrocar}
+                onFechar={onFechar}
+                onNovaAba={onNovaAba}
+                onNovaAbaPrivada={onNovaAbaPrivada}
+                onAlternarFixada={onAlternarFixada}
+                onDormir={onDormir}
+                onNavegarTela={onNavegarTela}
+                onIrParaBridgeView={onIrParaBridgeView}
+              />
             </div>
-          </div>
+          )}
+
+          {/* #719 (SH1): telas internas keep-alive. Cada aba interna aberta
+              mantém sua tela MONTADA (só escondida por CSS quando não é a ativa),
+              preservando o estado do Bridge/Files entre trocas de aba (#25). A
+              tela recebe `ativa` pra pausar/retomar polling (control-room). */}
+          {abas.filter((aba) => ehAbaInterna(aba)).map((aba) => {
+            const ativaAba = aba.id === ativa;
+            return (
+              <div
+                key={aba.id}
+                className={cn(
+                  "absolute inset-0 min-h-0 p-4 pt-0",
+                  ativaAba ? "flex flex-col" : "hidden",
+                )}
+              >
+                {renderTelaInterna(aba.tela as TelaInterna, ativaAba, aba.id)}
+              </div>
+            );
+          })}
+
+          {/* Host da webview: só quando a aba ativa é WEB (edge-to-edge, sem
+              padding). Aba interna esconde a webview (P0, efeito acima). */}
+          {ativa !== null && (!activeTab || !ehAbaInterna(activeTab)) && (
+            <div ref={area} className="absolute inset-0 bg-background">
+              {/* #275 rework: snapshot da webview por baixo do overlay (conteúdo
+                  congela em vez de sumir quando a webview nativa é escondida). */}
+              {snapshotOverlay && (
+                <img
+                  src={snapshotOverlay}
+                  alt=""
+                  draggable={false}
+                  className="pointer-events-none absolute inset-0 h-full w-full object-cover object-left-top"
+                />
+              )}
+              <div className="pointer-events-none absolute inset-0 grid place-items-center text-muted-foreground">
+                <div className="flex flex-col items-center gap-2">
+                  <Loader2 className="size-6 animate-spin opacity-40" />
+                  {activeTab?.reativando && (
+                    <span className="text-xs">{t.navegador.reativando}</span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
+        {/* #874: History DOCADO à direita (não Sheet/scrim) — como um irmão da
+            área de conteúdo, encolhe o `area` → o ResizeObserver reposiciona a
+            webview, sem sobrepor com overlay escuro. Resto da UI segue interativo.
+            Mesmo padrão do Details/InspectorPane (#854) e do pin rail (à esq). */}
+        {historicoAberto && (
+          <PainelHistorico
+            onFechar={() => setHistoricoAberto(false)}
+            historico={historico}
+            onNavegar={onNavegar}
+            onRestaurar={onRestaurarAbas}
+            onLimpar={onLimparHistorico}
+          />
         )}
       </div>
 
@@ -2115,25 +2511,17 @@ export function NavegadorScreen({
         ativa={ativa}
         favoritos={favoritos}
         historico={historico}
+        user={user}
         onAbrir={onAbrir}
         onNavegar={onNavegar}
         onTrocar={onTrocar}
         onFechar={onFechar}
         onNovaAba={onNovaAba}
+        onNovaAbaPrivada={onNovaAbaPrivada}
         onAlternarFixada={onAlternarFixada}
         onDormir={onDormir}
         onNavegarTela={onNavegarTela}
         onIrParaBridgeView={onIrParaBridgeView}
-      />
-
-      {/* Histórico: view pesquisável + limpar por período (Story 5). */}
-      <SheetHistorico
-        aberto={historicoAberto}
-        onFechar={() => setHistoricoAberto(false)}
-        historico={historico}
-        onNavegar={onNavegar}
-        onRestaurar={onRestaurarAbas}
-        onLimpar={onLimparHistorico}
       />
 
       {/* Diálogo de edição de grupo (nome + cor + excluir). */}
@@ -2280,15 +2668,13 @@ function DialogEditarGrupo({
  * View de histórico (Story 5): busca pesquisável + lista por recência + limpar
  * por período. A query é estado local do input; navegar/limpar sobem por props.
  */
-function SheetHistorico({
-  aberto,
+function PainelHistorico({
   onFechar,
   historico,
   onNavegar,
   onRestaurar,
   onLimpar,
 }: {
-  aberto: boolean;
   onFechar: () => void;
   historico: HistoryEntry[];
   onNavegar: (url: string, nome: string) => void;
@@ -2300,8 +2686,10 @@ function SheetHistorico({
   // #177: itens selecionáveis para restaurar abas + período de limpeza via Select.
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [periodo, setPeriodo] = useState<PeriodoLimpeza>("ultima-hora");
-  // z-order (#275): esconde a webview enquanto o histórico estiver aberto.
-  useOcultarWebviewEnquantoAberto(aberto);
+  // #874: painel DOCADO — NÃO esconde a webview (o próprio layout a encolhe via o
+  // ResizeObserver do `area`). Nada de `useOcultarWebviewEnquantoAberto` aqui:
+  // aquilo era o comportamento modal/scrim que a issue removeu. O pai monta/
+  // desmonta este painel pelo toggle (por isso não há mais estado `aberto`).
   const lista = useMemo(() => buscarHistorico(historico, q), [historico, q]);
   // #177 rework: sem NENHUM histórico gravado, esconder Search + botões e mostrar
   // o empty state padrão do app (Empty/reui). Busca sem resultado (mas com
@@ -2316,11 +2704,8 @@ function SheetHistorico({
     [idioma],
   );
 
-  // Limpa a seleção sempre que o Sheet fecha.
-  useEffect(() => {
-    if (!aberto) setSelecionados(new Set());
-  }, [aberto]);
-
+  // #874: o pai desmonta o painel ao fechar (toggle), então a seleção zera
+  // sozinha no unmount — sem efeito de limpar-ao-fechar.
   const alternar = (id: string) =>
     setSelecionados((prev) => {
       const proximo = new Set(prev);
@@ -2344,17 +2729,18 @@ function SheetHistorico({
   };
 
   return (
-    <Sheet open={aberto} onOpenChange={(a) => !a && onFechar()}>
-      <SheetContent
-        side="right"
-        className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
-      >
-        <SheetHeader className="border-b border-border">
-          <SheetTitle>{t.navegador.historicoTitulo}</SheetTitle>
-          <SheetDescription className="sr-only">
-            {t.navegador.historicoBuscar}
-          </SheetDescription>
-        </SheetHeader>
+    <div className="flex w-96 shrink-0 flex-col border-l border-border bg-background">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <h2 className="text-sm font-semibold">{t.navegador.historicoTitulo}</h2>
+        <button
+          type="button"
+          aria-label={t.navegador.historicoFechar}
+          onClick={onFechar}
+          className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
 
         {!semHistorico && (
           <div className="p-4 pb-2">
@@ -2453,7 +2839,7 @@ function SheetHistorico({
         )}
 
         {!semHistorico && (
-        <SheetFooter className="gap-3 border-t border-border">
+        <div className="flex shrink-0 flex-col gap-3 border-t border-border p-4">
           <Button
             type="button"
             disabled={selecionados.size === 0}
@@ -2494,9 +2880,8 @@ function SheetHistorico({
               {t.navegador.limparHistorico}
             </Button>
           </div>
-        </SheetFooter>
+        </div>
         )}
-      </SheetContent>
-    </Sheet>
+    </div>
   );
 }

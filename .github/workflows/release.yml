@@ -76,6 +76,7 @@ jobs:
           GALAXIE_TELEMETRY_STREAM_NAME: ${{ vars.GALAXIE_TELEMETRY_STREAM_NAME }}
           GALAXIE_TELEMETRY_INGEST_EMAIL: ${{ secrets.GALAXIE_TELEMETRY_INGEST_EMAIL }}
           GALAXIE_TELEMETRY_INGEST_TOKEN: ${{ secrets.GALAXIE_TELEMETRY_INGEST_TOKEN }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: pnpm tauri build
 
       # A assinatura é o ponto do processo inteiro: sem o .sig o aplicativo

@@ -1,391 +1,191 @@
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/animate-ui/primitives/radix/collapsible";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/animate-ui/components/radix/dropdown-menu";
-import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  SidebarRail,
-  useSidebar,
 } from "@/components/animate-ui/components/radix/sidebar";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ClienteMark, TenantLogo } from "@/components/brand";
-import { useIsMobile } from "@/hooks/use-mobile";
-import type { AppUser } from "@/lib/types";
-import { crOrgBranding } from "@/lib/api";
-import { NAV, type Tela } from "@/lib/navegacao";
-import { useIdioma } from "@/lib/idioma";
 import {
-  ChevronRight,
-  ChevronsUpDown,
-  ExternalLink,
-  LogOut,
-  Settings,
-} from "lucide-react";
-import { useEffect, useState } from "react";
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { GalaxieLogo } from "@/components/ui/icons/marca/galaxie-logo";
+import { IconeAnim, type AnimIcon } from "@/components/ui/icons/marca-anim";
+import { ShipIcon } from "@/components/ui/ship";
+import { ShipWheelIcon } from "@/components/ui/ship-wheel";
+import { FoldersIcon } from "@/components/ui/folders";
+import { AirplayIcon } from "@/components/ui/airplay";
+import { AppIcon } from "@/components/app-icon";
+import { type Tela } from "@/lib/navegacao";
+import { useIdioma } from "@/lib/idioma";
+import { cn } from "@/lib/utils";
+import { useAppStore } from "@/store";
+import { resolverPinados } from "@/lib/pinned-apps";
+import { APPS_CATALOGO } from "@/lib/apps-catalog";
+import { useMemo } from "react";
+import { PinOff } from "lucide-react";
+
+/**
+ * #718 (SH0 · épico #717 GALAXIE Shell): o sidebar virou um RAIL fixo da marca
+ * GALAXIE — logo no topo, itens fixos (Navigator · Bridge · Files · Remote) e
+ * slot de pinados (SH3). Sem seções M365 e sem toggle de abrir: o
+ * `SidebarProvider` fica controlado colapsado (`open={false}`) no App. (#876: o
+ * avatar do usuário migrou pra a title bar — `MenuUsuario`.)
+ *
+ * ⚠️ P0 (webview): NÃO amarrar esconder a webview do Navigator ao estado
+ * PERSISTENTE `collapsed` (ver #650). O esconder segue só TRANSIENTE (flyout/menu
+ * → `galaxie:webview-ceder`); os itens do rail são navegação direta com tooltip
+ * simples (mesmo padrão dos itens-folha atuais).
+ */
+/**
+ * #721 (SH3): seção de apps FIXADOS do rail. Lê os ids do store, resolve contra
+ * o catálogo (#720) — ids órfãos (app sumiu do catálogo) somem — e renderiza cada
+ * um como um botão ícone-only que abre a aba no Navigator. Desafixar via menu de
+ * contexto. Vazio = não renderiza (o rail fica só com fixos + avatar).
+ */
+function PinnedApps({
+  onAbrirApp,
+}: {
+  onAbrirApp: (url: string, nome: string) => void;
+}) {
+  const { t } = useIdioma();
+  const appsFixados = useAppStore((s) => s.appsFixados);
+  const desafixarApp = useAppStore((s) => s.desafixarApp);
+  const fixados = useMemo(
+    () => resolverPinados(appsFixados, APPS_CATALOGO),
+    [appsFixados],
+  );
+  if (fixados.length === 0) return null;
+  return (
+    <SidebarGroup className="mt-1 items-center gap-1 border-t border-sidebar-border/50 px-1.5 pt-2">
+      {fixados.map((app) => (
+        <ContextMenu
+          key={app.id}
+          // #358: o menu abre à direita, sobre a webview do Navigator — avisa pra
+          // ela ceder enquanto aberto (TRANSIENTE; fora do Navigator é no-op).
+          onOpenChange={(aberto) =>
+            window.dispatchEvent(
+              new CustomEvent("galaxie:webview-ceder", { detail: aberto }),
+            )
+          }
+        >
+          <Tooltip>
+            <ContextMenuTrigger asChild>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={app.name}
+                  onClick={() => onAbrirApp(app.url, app.name)}
+                  className="grid aspect-square w-full place-items-center rounded-xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60"
+                >
+                  <AppIcon id={app.id} name={app.name} className="size-6" />
+                </button>
+              </TooltipTrigger>
+            </ContextMenuTrigger>
+            <TooltipContent side="right" align="center">
+              {app.name}
+            </TooltipContent>
+          </Tooltip>
+          <ContextMenuContent>
+            <ContextMenuItem
+              className="gap-2"
+              onClick={() => desafixarApp(app.id)}
+            >
+              <PinOff className="size-4" />
+              {t.command.desafixar}
+            </ContextMenuItem>
+          </ContextMenuContent>
+        </ContextMenu>
+      ))}
+    </SidebarGroup>
+  );
+}
 
 export function AppSidebar({
-  user,
   tela,
   onNavegar,
-  onLogout,
-  onAbrirUrl,
+  onAbrirApp,
 }: {
-  user: AppUser;
   tela: Tela;
   onNavegar: (t: Tela) => void;
-  onLogout: () => void;
-  onAbrirUrl: (url: string) => void;
+  /** #721: abre um app FIXADO como aba do Navigator (mesma ponte da omnibox). */
+  onAbrirApp: (url: string, nome: string) => void;
 }) {
-  const isMobile = useIsMobile();
   const { t } = useIdioma();
-  const { state } = useSidebar();
-  // Tooltip só faz sentido na sidebar colapsada (icon-only) e fora do mobile —
-  // mesma regra do SidebarMenuButton dos itens de navegação (#98).
-  const colapsada = state === "collapsed" && !isMobile;
 
-  // #541: logo do tenant (Entra branding), theme-aware. Busca uma vez (memoizado
-  // no api.ts); sem branding/sem permissão → null → cai no ClienteMark estático.
-  const [branding, setBranding] = useState<{
-    claro: string;
-    escuro: string;
-  } | null>(null);
-  useEffect(() => {
-    let vivo = true;
-    crOrgBranding()
-      .then((b) => {
-        const claro = b.squareLogo ?? b.squareLogoDark;
-        const escuro = b.squareLogoDark ?? b.squareLogo;
-        if (vivo && claro && escuro) setBranding({ claro, escuro });
-      })
-      .catch(() => {
-        /* degrada pro fallback */
-      });
-    return () => {
-      vivo = false;
-    };
-  }, []);
+  // Itens fixos do rail. Ícones lucide-animated (24px), animam no hover da linha
+  // (IconeAnim acha o <button> ancestral). O roteamento como aba do Navigator é
+  // o SH1; aqui cada item dispara a navegação pra sua Tela.
+  const itens: { id: Tela; label: string; Comp: AnimIcon }[] = [
+    { id: "navegador", label: t.sidebar.navigator, Comp: ShipIcon as unknown as AnimIcon },
+    { id: "control-room", label: t.sidebar.bridge, Comp: ShipWheelIcon as unknown as AnimIcon },
+    { id: "arquivos", label: t.sidebar.files, Comp: FoldersIcon as unknown as AnimIcon },
+    { id: "remote", label: t.sidebar.remote, Comp: AirplayIcon as unknown as AnimIcon },
+  ];
 
   return (
     <Sidebar collapsible="icon">
-      {/* Organizacao do cliente */}
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              size="lg"
-              tooltip={user.organizacao ?? t.nav.organizacao}
-              // #659: no colapsado (icon) o botão vira `size-8 rounded-md
-              // overflow-hidden` e o logo do tenant (`size-8`) preenche o
-              // quadrado exato → o rounded+overflow cortava as pontas. No
-              // icon-mode deixamos `overflow-visible` (cantos do logo inteiros);
-              // o texto ao lado é escondido explicitamente abaixo, então não
-              // depende mais do overflow pra sumir.
-              className="group-data-[collapsible=icon]:overflow-visible!"
+      {/* #718 (fix visual): a marca GALAXIE OCUPA a largura do rail (só o padding
+          do header a limita) — não mais um logo minúsculo. Clicar leva ao Navigator. */}
+      <SidebarHeader className="items-center px-1 pt-1.5 pb-1">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="GALAXIE"
+              onClick={() => onNavegar("navegador")}
+              className="grid w-full place-items-center rounded-xl transition-colors hover:bg-sidebar-accent"
             >
-              {/* #541: com branding do tenant, o logo aparece LIMPO — sem box,
-                  sem contorno, sem círculo (requisito do PO). Sem branding, cai
-                  no ClienteMark estático dentro do box de sempre. */}
-              {branding ? (
-                <TenantLogo
-                  claro={branding.claro}
-                  escuro={branding.escuro}
-                  className="size-8 shrink-0"
-                />
-              ) : (
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <ClienteMark className="size-4" />
-                </div>
-              )}
-              <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
-                <span className="truncate font-semibold">
-                  {user.organizacao ?? t.nav.organizacao}
-                </span>
-                <span className="truncate text-xs">{t.nav.microsoft365}</span>
-              </div>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+              <GalaxieLogo className="w-full" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right" align="center">
+            GALAXIE
+          </TooltipContent>
+        </Tooltip>
       </SidebarHeader>
 
       <SidebarContent>
-        {NAV.map((grupo) => (
-          <SidebarGroup key={grupo.titulo}>
-            <SidebarGroupLabel>{t.nav[grupo.titulo]}</SidebarGroupLabel>
-            <SidebarMenu>
-              {grupo.itens.map((item) => {
-                // #663 (RC): esconde os filhos marcados `oculto`; se o item
-                // ficar sem nenhum filho visível, não renderiza (evita grupo
-                // vazio no sidebar).
-                const filhos = item.filhos.filter((f) => !f.oculto);
-                // #664 (RC): ItemNav navegável direto (`id`) e sem filhos
-                // visíveis → item ÚNICO (folha) que abre a Tela, em vez de grupo
-                // colapsável (ex.: Windows → tela de utilidades).
-                if (item.id && filhos.length === 0) {
-                  const idTela = item.id;
-                  return (
-                    <SidebarMenuItem key={item.titulo}>
-                      <SidebarMenuButton
-                        tooltip={t.nav[item.titulo]}
-                        isActive={tela === idTela}
-                        onClick={() => onNavegar(idTela)}
-                      >
-                        <item.icone className="size-5!" />
-                        <span>{t.nav[item.titulo]}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                }
-                if (filhos.length === 0) return null;
-                return colapsada ? (
-                  // #359: em icon-mode o submenu inline (`SidebarMenuSub`) é
-                  // escondido por CSS (`group-data-[collapsible=icon]:hidden`),
-                  // então clicar o ícone-pai não mostrava nada. Abrimos as opções
-                  // num flyout à direita (DropdownMenu, como o menu do usuário).
-                  <SidebarMenuItem key={item.titulo}>
-                    <DropdownMenu
-                      // Sobre a webview do Navigator (que pinta acima do DOM), a
-                      // webview cede (esconder+snapshot) enquanto o flyout está
-                      // aberto — gatilho TRANSIENTE, reusa o do #358. Fora do
-                      // Navigator não faz nada.
-                      onOpenChange={(aberto) =>
-                        window.dispatchEvent(
-                          new CustomEvent("galaxie:webview-ceder", {
-                            detail: aberto,
-                          }),
-                        )
-                      }
-                    >
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <DropdownMenuTrigger asChild>
-                            <SidebarMenuButton
-                              isActive={filhos.some((f) => f.id === tela)}
-                              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-                            >
-                              <item.icone className="size-5!" />
-                              <span>{t.nav[item.titulo]}</span>
-                            </SidebarMenuButton>
-                          </DropdownMenuTrigger>
-                        </TooltipTrigger>
-                        <TooltipContent side="right" align="center">
-                          {t.nav[item.titulo]}
-                        </TooltipContent>
-                      </Tooltip>
-                      <DropdownMenuContent
-                        side="right"
-                        align="start"
-                        sideOffset={4}
-                        className="min-w-48"
-                      >
-                        <DropdownMenuLabel>
-                          {t.nav[item.titulo]}
-                        </DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        {filhos.map((filho) => (
-                          <DropdownMenuItem
-                            key={filho.id}
-                            onClick={() => onNavegar(filho.id)}
-                            className={
-                              tela === filho.id
-                                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                                : undefined
-                            }
-                          >
-                            {filho.icone && (
-                              <filho.icone className="size-5!" />
-                            )}
-                            <span>{t.nav[filho.titulo]}</span>
-                          </DropdownMenuItem>
-                        ))}
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </SidebarMenuItem>
-                ) : (
-                  <Collapsible
-                    key={item.titulo}
-                    asChild
-                    defaultOpen={filhos.some((f) => f.id === tela)}
-                    className="group/collapsible"
-                  >
-                    <SidebarMenuItem>
-                      <CollapsibleTrigger asChild>
-                        <SidebarMenuButton tooltip={t.nav[item.titulo]}>
-                          <item.icone className="size-5!" />
-                          <span>{t.nav[item.titulo]}</span>
-                          <ChevronRight className="ml-auto transition-transform duration-300 group-data-[state=open]/collapsible:rotate-90" />
-                        </SidebarMenuButton>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent>
-                        <SidebarMenuSub>
-                          {filhos.map((filho) => (
-                            <SidebarMenuSubItem key={filho.id}>
-                              <SidebarMenuSubButton
-                                asChild
-                                isActive={tela === filho.id}
-                              >
-                                <a
-                                  href="#"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    onNavegar(filho.id);
-                                  }}
-                                >
-                                  {filho.icone && (
-                                    <filho.icone className="size-5!" />
-                                  )}
-                                  <span>{t.nav[filho.titulo]}</span>
-                                </a>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          ))}
-                        </SidebarMenuSub>
-                      </CollapsibleContent>
-                    </SidebarMenuItem>
-                  </Collapsible>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroup>
-        ))}
+        {/* #718 (fix visual): itens icon-only 24×24 CENTRALIZADOS (sem o texto que
+            cortava). Botão quadrado que preenche a largura do rail; ícone animado. */}
+        <SidebarGroup className="items-center gap-1 px-1.5 py-1">
+          {itens.map((item) => (
+            <Tooltip key={item.id}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={item.label}
+                  aria-current={tela === item.id ? "page" : undefined}
+                  onClick={() => onNavegar(item.id)}
+                  className={cn(
+                    "grid aspect-square w-full place-items-center rounded-xl transition-colors",
+                    tela === item.id
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent/60"
+                  )}
+                >
+                  <IconeAnim Comp={item.Comp} size={24} />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right" align="center">
+                {item.label}
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </SidebarGroup>
+
+        {/* #721 (SH3): apps FIXADOS pelo command — ícone-only, abrem como aba do
+            Navigator; menu de contexto pra desafixar. Vazio → não renderiza nada. */}
+        <PinnedApps onAbrirApp={onAbrirApp} />
       </SidebarContent>
-
-      {/* Usuario */}
-      <SidebarFooter>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <DropdownMenu
-              // #358: este menu abre à direita, SOBRE a área da webview do
-              // Navigator (que pinta acima do DOM). Avisa o Navigator pra a
-              // webview ceder (esconder+snapshot) enquanto o menu está aberto —
-              // fora do Navigator não faz nada.
-              onOpenChange={(aberto) =>
-                window.dispatchEvent(
-                  new CustomEvent("galaxie:webview-ceder", { detail: aberto }),
-                )
-              }
-            >
-              {/* Tooltip > DropdownMenu: os dois gatilhos com asChild no mesmo
-                  botão. Só aparece na sidebar colapsada, onde sobra só o avatar. */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <DropdownMenuTrigger asChild>
-                    <SidebarMenuButton
-                      size="lg"
-                      className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-                    >
-                      <Avatar className="h-8 w-8 rounded-full">
-                        {user.photo && (
-                          <AvatarImage src={user.photo} alt={user.displayName} />
-                        )}
-                        <AvatarFallback className="rounded-full">
-                          {user.initials}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="grid flex-1 text-left text-sm leading-tight">
-                        <span className="truncate font-semibold">
-                          {user.displayName}
-                        </span>
-                        <span className="truncate text-xs">{user.email}</span>
-                      </div>
-                      <ChevronsUpDown className="ml-auto size-4" />
-                    </SidebarMenuButton>
-                  </DropdownMenuTrigger>
-                </TooltipTrigger>
-                {colapsada && (
-                  <TooltipContent side="right" align="center">
-                    {user.displayName}
-                  </TooltipContent>
-                )}
-              </Tooltip>
-              <DropdownMenuContent
-                className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
-                side={isMobile ? "bottom" : "right"}
-                align="end"
-                sideOffset={4}
-              >
-                <DropdownMenuLabel className="p-0 font-normal">
-                  <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
-                    <Avatar className="h-8 w-8 rounded-full">
-                      {user.photo && (
-                        <AvatarImage src={user.photo} alt={user.displayName} />
-                      )}
-                      <AvatarFallback className="rounded-full">
-                        {user.initials}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="grid flex-1 text-left text-sm leading-tight">
-                      <span className="truncate font-semibold">
-                        {user.displayName}
-                      </span>
-                      <span className="truncate text-xs">{user.email}</span>
-                    </div>
-                  </div>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuItem
-                    onClick={() => onAbrirUrl("https://www.microsoft365.com")}
-                  >
-                    <ExternalLink />
-                    {t.nav.irPara365}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() =>
-                      onAbrirUrl("https://www.office.com/launch/sharepoint")
-                    }
-                  >
-                    <ExternalLink />
-                    {t.nav.sharepoint}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onNavegar("configuracoes")}>
-                    <Settings />
-                    {t.nav.configuracoes}
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={onLogout}>
-                  <LogOut />
-                  {t.nav.sair}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarFooter>
-
-      {/* Rail é a faixa de redimensionar (tabIndex=-1, não focável): seu
-          "tooltip" é o title nativo. Localizamos aqui — aria-label + title
-          sobrepõem o "Toggle Sidebar" fixo em inglês do primitivo (#160). */}
-      <SidebarRail
-        aria-label={t.nav.alternarMenu}
-        title={t.nav.alternarMenu}
-      />
+      {/* #876: o avatar/menu do usuário SAIU do rodapé do rail pra a title bar
+          (à direita do switcher) — ver `MenuUsuario` em `user-menu.tsx`. */}
     </Sidebar>
   );
 }

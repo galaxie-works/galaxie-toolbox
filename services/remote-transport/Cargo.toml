@@ -1,0 +1,54 @@
+[package]
+name = "galaxie-remote-transport"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+# Transporte WebRTC (S2, épico #682): str0m sans-I/O — ICE via nosso coturn,
+# media track de vídeo H.264 (do encoder S1) + DataChannel de controle, E2E
+# DTLS-SRTP. Este crate é o TRANSPORTE puro: recebe frames JÁ codificados por
+# uma fonte abstrata e não sabe nada de captura/encode (contrato CodedFrame).
+
+[features]
+# O núcleo (contrato de frame + signaling + stats) NÃO depende de nada de rede e
+# compila/testa em qualquer ambiente — é o default.
+#
+# `webrtc` puxa o `str0m`, que depende de OpenSSL (DTLS-SRTP) no build. Ligue-a
+# (`--features webrtc`) num ambiente com toolchain OpenSSL pra compilar o
+# transporte de fato. Opt-in de propósito: assim o crate fica sempre verde onde
+# não há OpenSSL, sem esconder que o transporte precisa dele.
+default = []
+webrtc = ["dep:str0m"]
+# `input` (S3) puxa o `enigo` pra INJETAR input no host (SendInput/Win32). O
+# formato da mensagem de input (input.rs) fica no núcleo; só a injeção é opt-in.
+input = ["dep:enigo"]
+# `audio` (S6) puxa `audiopus` (encode Opus) + `wasapi` (loopback do host, só
+# Windows). Opt-in; compila local (audiopus não precisa de cmake).
+audio = ["dep:audiopus", "dep:wasapi"]
+
+[dependencies]
+str0m = { version = "0.6", optional = true }
+enigo = { version = "0.6", optional = true }
+audiopus = { version = "0.2", optional = true }
+wasapi = { version = "0.23", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+rand = "0.8"
+
+[dev-dependencies]
+# testes deterministicos rodam sem rede real (mock de signaling + dummy source).
+
+# O harness E2E usa o `IoDriver`/`session` (str0m) — só existe com `webrtc`. Gatear
+# aqui pra o `cargo test`/`cargo build` SEM a feature não tentar compilá-lo (senão
+# quebra o build padrão, que é o do CI).
+[[example]]
+name = "e2e_dummy"
+required-features = ["webrtc"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

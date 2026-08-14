@@ -41,6 +41,8 @@ export const CHAVES_CONFIG_NUVEM = [
   "idioma",
   "atomsPrefs",
   "pularConfirmacaoConexao",
+  // #721: apps fixados no rail — cloud-sync aditivo sobre o local-first do SH3.
+  "appsFixados",
 ] as const satisfies readonly (keyof AppPersistido)[];
 
 export type ChaveConfigNuvem = (typeof CHAVES_CONFIG_NUVEM)[number];
@@ -262,6 +264,104 @@ export class OneDriveJsonBackend implements ConfigBackend, VersionedConfigBacken
   async clear(): Promise<void> {
     const remote = await this.loadVersioned();
     await this.saveVersioned(emptyDocument(), remote.eTag);
+  }
+}
+
+interface GoogleDriveSettingsPort {
+  read(): Promise<api.GoogleDriveSettingsReadResult>;
+  write(
+    content: string,
+    revision: string | null,
+  ): Promise<api.GoogleDriveSettingsWriteResult>;
+}
+
+const googleApiPort: GoogleDriveSettingsPort = {
+  read: api.gdriveSettingsRead,
+  write: api.gdriveSettingsWrite,
+};
+
+/**
+ * Config privada no `appDataFolder` do Google Drive (PS4 #697). Espelha o
+ * OneDrive; usa `headRevisionId` como eTag (o Drive não tem cTag). appDataFolder
+ * é single-user → sem If-Match/CloudConflictError (o OneDrive é quem mantém a
+ * concorrência otimista estrita).
+ */
+export class GoogleDriveJsonBackend implements ConfigBackend, VersionedConfigBackend {
+  private readonly port: GoogleDriveSettingsPort;
+
+  constructor(port: GoogleDriveSettingsPort = googleApiPort) {
+    this.port = port;
+  }
+
+  async loadVersioned(): Promise<VersionedCloudSnapshot> {
+    const result = await this.port.read();
+    return {
+      ...parseCloudConfigDocument(result.content),
+      exists: result.content !== null,
+      eTag: result.revision,
+      cTag: null,
+    };
+  }
+
+  async saveVersioned(
+    document: CloudConfigDocument,
+    eTag: string | null,
+  ): Promise<VersionedCloudSnapshot> {
+    const result = await this.port.write(JSON.stringify(document), eTag);
+    return {
+      ...cloneDocument(document),
+      exists: true,
+      eTag: result.revision,
+      cTag: null,
+    };
+  }
+
+  async load(): Promise<Partial<AppPersistido>> {
+    return (await this.loadVersioned()).values;
+  }
+
+  async save(patch: Partial<AppPersistido>): Promise<void> {
+    const remote = await this.loadVersioned();
+    const values = { ...remote.values, ...projetarConfigNuvem(patch) };
+    const updatedAt = { ...remote.updatedAt };
+    const timestamp = Date.now();
+    for (const key of CHAVES_CONFIG_NUVEM) {
+      if (hasValue(patch, key)) updatedAt[key] = timestamp;
+    }
+    await this.saveVersioned({ schemaVersion: 2, values, updatedAt }, remote.eTag);
+  }
+
+  async clear(): Promise<void> {
+    const remote = await this.loadVersioned();
+    await this.saveVersioned(emptyDocument(), remote.eTag);
+  }
+}
+
+/**
+ * Roteia a camada cloud por provider (#697): Microsoft → OneDrive, Google →
+ * Drive appDataFolder. `prepararConfiguracaoNuvem` chama `usar(...)` na troca de
+ * conta antes de reativar o LayeredBackend, então o backend certo já está de pé.
+ */
+export class RoteadorCloudBackend implements VersionedConfigBackend {
+  private alvo: VersionedConfigBackend;
+
+  constructor(inicial: VersionedConfigBackend) {
+    this.alvo = inicial;
+  }
+
+  usar(alvo: VersionedConfigBackend): void {
+    this.alvo = alvo;
+  }
+
+  loadVersioned(): Promise<VersionedCloudSnapshot> {
+    return this.alvo.loadVersioned();
+  }
+
+  saveVersioned(
+    document: CloudConfigDocument,
+    eTag: string | null,
+  ): Promise<VersionedCloudSnapshot> {
+    return this.alvo.saveVersioned(document, eTag);
   }
 }
 

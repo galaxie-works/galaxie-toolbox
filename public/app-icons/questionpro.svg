@@ -1,0 +1,20 @@
+<svg version="1.1" id="Layer_1" xmlns:x="ns_extend;" xmlns:i="ns_ai;" xmlns:graph="ns_graphs;" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 65 65" style="enable-background:new 0 0 65 65;" xml:space="preserve">
+ <style type="text/css">
+  .st0{fill:#1B3380;}
+ </style>
+ <metadata>
+  <sfw xmlns="ns_sfw;">
+   <slices>
+   </slices>
+   <sliceSourceBounds bottomLeftOrigin="true" height="65" width="65" x="-171.6" y="0">
+   </sliceSourceBounds>
+  </sfw>
+ </metadata>
+ <g id="Logo_QuestionPro" transform="translate(0)">
+  <path class="st0" d="M57.8,0H7.2C3.2,0,0,3.2,0,7.2v50.6c0,4,3.2,7.2,7.2,7.2h50.6c4,0,7.2-3.2,7.2-7.2V7.2C65,3.2,61.8,0,57.8,0z
+		 M28.3,51.6c0,2.1-1.7,3.8-3.8,3.8c-2.1,0-3.8-1.7-3.8-3.8c0-2.1,1.7-3.8,3.8-3.8C26.6,47.8,28.3,49.5,28.3,51.6
+		C28.3,51.6,28.3,51.6,28.3,51.6z M39,36.5H28.2v7.2h-7.2v-7.2v-7.2H39c0.1,0,0.1,0,0.2,0c3-0.1,5.4-2.5,5.3-5.5
+		c-0.1-3-2.5-5.4-5.5-5.3H20.9v-7.2H39c7,0,12.6,5.7,12.6,12.6C51.6,30.8,46,36.5,39,36.5z">
+  </path>
+ </g>
+</svg>

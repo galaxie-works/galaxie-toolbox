@@ -15,6 +15,57 @@ use crate::config;
 const GRAPH_ME: &str =
     "https://graph.microsoft.com/v1.0/me?$select=displayName,mail,userPrincipalName,companyName";
 
+// ── Identidade multi-provider (#693, épico #692 App público) ─────────────────
+// PS0: os EIXOS da identidade (provider/tipo de conta/status org) + capabilities
+// derivadas dos scopes. Só a impl Microsoft está ativa; Google entra no PS3.
+
+/// Provedor de identidade da conta.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Provider {
+    Microsoft,
+    Google,
+}
+
+/// Conta de trabalho (org/tenant) ou pessoal (live/hotmail/gmail).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountKind {
+    Work,
+    Personal,
+}
+
+/// Situação da org perante a GALAXIE: cliente contratado, org não-cliente, ou
+/// conta pessoal (sem org).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OrgStatus {
+    Contracted,
+    /// Org que ainda não é cliente. O onboarding público (PS8/#701) constrói
+    /// este estado quando detectar o não-cliente; PS0 só define o eixo.
+    #[allow(dead_code)]
+    Uncontracted,
+    None,
+}
+
+/// O que uma conta PODE fazer, em termos de produto — a UI checa capability, não
+/// scope cru. Cada provider mapeia seus scopes pra este vocabulário comum.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Capability {
+    Identity,
+    MailRead,
+    MailReadWrite,
+    MailSend,
+    Calendar,
+    Contacts,
+    Tasks,
+    FilePicker,
+    FilesReadAll,
+    DirectoryRead,
+    OrgAdmin,
+}
+
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
@@ -26,6 +77,16 @@ pub struct Account {
     /// Nome da organizacao, pro topo da sidebar. Vem do companyName do perfil;
     /// sem ele, cai no dominio do e-mail (nao exige escopo extra).
     pub organizacao: Option<String>,
+    // #693: eixos de identidade multi-provider.
+    pub provider: Provider,
+    pub account_kind: AccountKind,
+    pub org_status: OrgStatus,
+    /// Domínio da org (só work). None em conta pessoal.
+    pub domain: Option<String>,
+    /// Tenant do Entra (só work). None em conta pessoal.
+    pub tenant_id: Option<String>,
+    /// Capabilities concedidas neste token (derivadas dos scopes).
+    pub capabilities: Vec<Capability>,
 }
 
 #[derive(Clone)]
@@ -45,18 +106,354 @@ pub struct Tokens {
     pub scopes: String,
 }
 
-/// Escopos Graph pedidos pela versão atual mas ausentes no token em memória.
+/// Classifica a conta a partir do tenant + e-mail: tipo (work/personal), status
+/// da org e domínio/tenant (só work). MS pessoal = tenant sintético fixo.
+///
+/// PS0: toda conta de TRABALHO é tratada como `Contracted` — os usuários de hoje
+/// são clientes contratados e o login org atual não pode mudar de comportamento.
+/// O onboarding público (PS8/#701) refina pra `Uncontracted` quando detectar uma
+/// org que ainda não é cliente.
+fn classificar(
+    tenant: &str,
+    email: &str,
+) -> (AccountKind, OrgStatus, Option<String>, Option<String>) {
+    let pessoal = tenant.eq_ignore_ascii_case(config::MS_PERSONAL_TENANT)
+        || tenant.eq_ignore_ascii_case("consumers");
+    if pessoal {
+        (AccountKind::Personal, OrgStatus::None, None, None)
+    } else {
+        let domain = email
+            .rsplit('@')
+            .next()
+            .filter(|d| !d.is_empty())
+            .map(|d| d.to_lowercase());
+        (
+            AccountKind::Work,
+            OrgStatus::Contracted,
+            domain,
+            Some(tenant.to_string()),
+        )
+    }
+}
+
+/// Mapeia os scopes concedidos da Microsoft pras capabilities de produto. `scope`
+/// é o campo cru da resposta OAuth (lista separada por espaço).
+fn ms_capabilities(scopes: &str) -> Vec<Capability> {
+    let s = scopes.to_ascii_lowercase();
+    let tem = |needle: &str| s.contains(needle);
+    let mut caps = vec![Capability::Identity]; // openid/User.Read sempre presentes
+    if tem("mail.send") {
+        caps.push(Capability::MailSend);
+    }
+    if tem("mail.readwrite") {
+        caps.push(Capability::MailReadWrite);
+    }
+    if tem("mail.read") {
+        caps.push(Capability::MailRead);
+    }
+    if tem("calendars.") {
+        caps.push(Capability::Calendar);
+    }
+    if tem("contacts.") || tem("people.read") {
+        caps.push(Capability::Contacts);
+    }
+    if tem("tasks.") {
+        caps.push(Capability::Tasks);
+    }
+    if tem("files.readwrite") || tem("files.read") {
+        caps.push(Capability::FilePicker);
+    }
+    if tem("files.read.all") || tem("sites.read.all") {
+        caps.push(Capability::FilesReadAll);
+    }
+    if tem("directory.read.all") {
+        caps.push(Capability::DirectoryRead);
+    }
+    if tem("orgsettings") || tem("application.read.all") {
+        caps.push(Capability::OrgAdmin);
+    }
+    caps
+}
+
+/// Abstração comum de provedor de identidade. Um `impl` por provider esconde os
+/// detalhes (endpoints, scopes, formato do token) atrás desta interface — a UI e
+/// o resto do app falam com capabilities, não com MS/Google direto.
+pub trait IdentityProvider {
+    /// Login interativo. No MS é o loopback (begin+complete fundidos num passo).
+    fn authenticate(&self, tenant: &str, login_hint: &str, idioma: &str)
+        -> Result<Tokens, String>;
+    /// Refresh silencioso a partir do refresh token (escolhe o endpoint certo).
+    fn access_token(&self, tenant: &str, refresh_token: &str) -> Result<Tokens, String>;
+    /// Capabilities concedidas, derivadas dos scopes do token.
+    fn capabilities(&self, scopes: &str) -> Vec<Capability>;
+    /// Revoga/limpa a sessão local desta conta.
+    fn revoke(&self);
+}
+
+pub struct MicrosoftProvider;
+
+impl IdentityProvider for MicrosoftProvider {
+    fn authenticate(
+        &self,
+        tenant: &str,
+        login_hint: &str,
+        idioma: &str,
+    ) -> Result<Tokens, String> {
+        interactive_login(tenant, login_hint, idioma)
+    }
+    fn access_token(&self, tenant: &str, refresh_token: &str) -> Result<Tokens, String> {
+        refresh(tenant, refresh_token)
+    }
+    fn capabilities(&self, scopes: &str) -> Vec<Capability> {
+        ms_capabilities(scopes)
+    }
+    fn revoke(&self) {
+        limpar_refresh();
+    }
+}
+
+/// Provider Google (PS3, #696): Auth Code + PKCE + loopback, scopes sensitive $0.
+/// Client "Desktop app" tratado como público (o secret não é fronteira; o Google
+/// só exige ele no token endpoint do fluxo desktop). Reusa a máquina de loopback.
+pub struct GoogleProvider;
+
+impl IdentityProvider for GoogleProvider {
+    fn authenticate(&self, _tenant: &str, login_hint: &str, idioma: &str) -> Result<Tokens, String> {
+        google_interactive_login(login_hint, idioma)
+    }
+    fn access_token(&self, _tenant: &str, refresh_token: &str) -> Result<Tokens, String> {
+        google_refresh(refresh_token)
+    }
+    fn capabilities(&self, scopes: &str) -> Vec<Capability> {
+        google_capabilities(scopes)
+    }
+    fn revoke(&self) {
+        limpar_refresh(); // sessão é single-file (um provider,tenant,refresh)
+    }
+}
+
+/// Capabilities Google: mapeia os scopes concedidos pro vocabulário comum. Sem
+/// Gmail-read (restricted, PS8) → nunca promete MailRead. `gmail.send` = MailSend;
+/// `drive.file` (picker) = FilePicker.
+///
+/// #696: casa por TOKEN EXATO (o campo `scope` é separado por espaço), NÃO por
+/// substring — `gmail.send.extra`/`drive.file.backup` não podem conceder MailSend
+/// nem FilePicker por conterem o nome de um scope válido.
+fn google_capabilities(scopes: &str) -> Vec<Capability> {
+    let concedidos: std::collections::HashSet<&str> = scopes.split_whitespace().collect();
+    let tem = |scope: &str| concedidos.contains(scope);
+    let mut caps = vec![Capability::Identity]; // openid/email/profile
+    if tem("https://www.googleapis.com/auth/calendar") {
+        caps.push(Capability::Calendar);
+    }
+    if tem("https://www.googleapis.com/auth/contacts") {
+        caps.push(Capability::Contacts);
+    }
+    if tem("https://www.googleapis.com/auth/directory.readonly") {
+        caps.push(Capability::DirectoryRead);
+    }
+    if tem("https://www.googleapis.com/auth/gmail.send") {
+        caps.push(Capability::MailSend);
+    }
+    if tem("https://www.googleapis.com/auth/drive.file") {
+        caps.push(Capability::FilePicker);
+    }
+    caps
+}
+
+/// Login interativo Google: loopback + PKCE (S256), abre a página oficial do
+/// Google e espera o redirect com o code. `access_type=offline` + `prompt=consent`
+/// garantem o refresh_token. Bloqueante — rodar em spawn_blocking.
+fn google_interactive_login(login_hint: &str, idioma: &str) -> Result<Tokens, String> {
+    let cid = config::GOOGLE_CLIENT_ID;
+    let (verifier, challenge) = pkce();
+    let state = random_string(24);
+
+    let server = tiny_http::Server::http("127.0.0.1:0")
+        .map_err(|e| format!("falha ao abrir loopback: {e}"))?;
+    let port = server
+        .server_addr()
+        .to_ip()
+        .map(|a| a.port())
+        .ok_or("sem porta de loopback")?;
+    let redirect_uri = format!("http://localhost:{port}");
+
+    let hint = if login_hint.is_empty() {
+        String::new()
+    } else {
+        format!("&login_hint={}", urlencoding::encode(login_hint))
+    };
+    let auth_url = format!(
+        "{endpoint}?client_id={cid}&response_type=code&redirect_uri={ruri}\
+         &scope={scope}&state={state}&code_challenge={chal}&code_challenge_method=S256\
+         &access_type=offline&prompt=consent{hint}",
+        endpoint = config::GOOGLE_AUTH_ENDPOINT,
+        cid = urlencoding::encode(cid),
+        ruri = urlencoding::encode(&redirect_uri),
+        scope = urlencoding::encode(config::GOOGLE_SCOPES),
+        state = urlencoding::encode(&state),
+        chal = urlencoding::encode(&challenge),
+    );
+
+    open::that(&auth_url).map_err(|e| format!("nao consegui abrir o navegador: {e}"))?;
+
+    let code = esperar_code_loopback(&server, &state, idioma)?;
+    google_exchange_code(&code, &verifier, &redirect_uri)
+}
+
+/// Troca o authorization code por tokens no endpoint do Google (com client_secret,
+/// exigido no fluxo desktop mesmo sendo client público).
+fn google_exchange_code(code: &str, verifier: &str, redirect_uri: &str) -> Result<Tokens, String> {
+    let client = reqwest::blocking::Client::new();
+    let params = [
+        ("client_id", config::GOOGLE_CLIENT_ID),
+        ("client_secret", config::GOOGLE_CLIENT_SECRET),
+        ("code", code),
+        ("grant_type", "authorization_code"),
+        ("redirect_uri", redirect_uri),
+        ("code_verifier", verifier),
+    ];
+    let resp = client
+        .post(config::GOOGLE_TOKEN_ENDPOINT)
+        .form(&params)
+        .send()
+        .map_err(|e| format!("falha na troca de token Google: {e}"))?;
+    let status = resp.status();
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let desc = v["error_description"].as_str().unwrap_or("erro desconhecido");
+        return Err(format!("token endpoint Google {}: {}", status, desc));
+    }
+    build_tokens_google(v, None)
+}
+
+/// Renova a partir do refresh_token. O Google normalmente NÃO devolve um novo
+/// refresh_token no refresh — preservamos o atual.
+fn google_refresh(refresh_token: &str) -> Result<Tokens, String> {
+    let client = reqwest::blocking::Client::new();
+    let params = [
+        ("client_id", config::GOOGLE_CLIENT_ID),
+        ("client_secret", config::GOOGLE_CLIENT_SECRET),
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+    ];
+    let resp = client
+        .post(config::GOOGLE_TOKEN_ENDPOINT)
+        .form(&params)
+        .send()
+        .map_err(|e| format!("falha no refresh Google: {e}"))?;
+    let status = resp.status();
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    if !status.is_success() {
+        let desc = v["error_description"].as_str().unwrap_or("erro desconhecido");
+        return Err(format!("refresh Google {}: {}", status, desc));
+    }
+    build_tokens_google(v, Some(refresh_token))
+}
+
+/// Monta os `Tokens` da resposta do Google. `refresh_anterior` cobre o refresh
+/// (Google costuma omitir o refresh_token na renovação).
+fn build_tokens_google(v: serde_json::Value, refresh_anterior: Option<&str>) -> Result<Tokens, String> {
+    let access_token = v["access_token"]
+        .as_str()
+        .ok_or("resposta Google sem access_token")?
+        .to_string();
+    let refresh_token = v["refresh_token"]
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| refresh_anterior.map(|s| s.to_string()));
+    let expires_in = v["expires_in"].as_u64().unwrap_or(3600);
+    let escopos = v["scope"].as_str().unwrap_or(config::GOOGLE_SCOPES).to_string();
+    let account = fetch_account_google(&access_token, &escopos)?;
+    if let Some(rt) = refresh_token.as_deref() {
+        salvar_sessao(Provider::Google, config::GOOGLE_TENANT, rt);
+    } else {
+        log::error!("[sessao] Google sem refresh_token — access_type=offline/prompt=consent?");
+    }
+    Ok(Tokens {
+        access_token,
+        refresh_token,
+        expires_at: now_secs() + expires_in,
+        account,
+        tenant: config::GOOGLE_TENANT.to_string(),
+        scopes: escopos,
+    })
+}
+
+/// Perfil da conta Google via UserInfo OIDC (equivalente ao /me do Graph). Conta
+/// Google = sempre pessoal (accountKind personal, sem org/tenant).
+fn fetch_account_google(access_token: &str, scopes: &str) -> Result<Account, String> {
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .get(config::GOOGLE_USERINFO)
+        .bearer_auth(access_token)
+        .send()
+        .map_err(|e| format!("falha ao consultar userinfo Google: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("userinfo Google retornou {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
+    let display_name = v["name"].as_str().unwrap_or("").to_string();
+    let email = v["email"].as_str().unwrap_or("").to_string();
+    let initials = initials_from(&display_name);
+    let photo = v["picture"].as_str().map(|s| s.to_string());
+    let organizacao = nome_pelo_dominio(&email);
+    let conta = Account {
+        display_name,
+        email,
+        initials,
+        photo,
+        organizacao,
+        provider: Provider::Google,
+        account_kind: AccountKind::Personal,
+        org_status: OrgStatus::None,
+        domain: None,
+        tenant_id: None,
+        capabilities: google_capabilities(scopes),
+    };
+    crate::estado::salvar_identidade(&conta.display_name, &conta.initials);
+    Ok(conta)
+}
+
+/// Fábrica: provider ativo por enum. Total (nunca entra em pânico).
+pub fn provider_de(p: Provider) -> Box<dyn IdentityProvider> {
+    match p {
+        Provider::Microsoft => Box::new(MicrosoftProvider),
+        Provider::Google => Box::new(GoogleProvider),
+    }
+}
+
+fn provider_str(p: Provider) -> &'static str {
+    match p {
+        Provider::Microsoft => "microsoft",
+        Provider::Google => "google",
+    }
+}
+
+fn provider_de_str(s: &str) -> Provider {
+    if s.eq_ignore_ascii_case("google") {
+        Provider::Google
+    } else {
+        Provider::Microsoft
+    }
+}
+
+/// Escopos Graph do conjunto `wanted` (o pedido desta conta — BASE ou BASE+ORG)
+/// ausentes no token em memória.
 ///
 /// `openid`, `profile` e `offline_access` controlam autenticação/sessão e podem
 /// não aparecer no campo `scope` de um access token mesmo quando o login está
 /// correto. Compará-los como permissões de recurso falso-positivaria o aviso.
-pub fn required_resource_scopes_missing(actual_scopes: &str) -> Vec<String> {
+///
+/// #694: `wanted` vem de `config::scopes_para(tenant)` — org checa BASE+ORG,
+/// conta pessoal (common) checa só BASE, sem falso pedido de relogin de scope org.
+pub fn required_resource_scopes_missing(actual_scopes: &str, wanted: &str) -> Vec<String> {
     let presentes = actual_scopes
         .split_ascii_whitespace()
         .map(str::to_ascii_lowercase)
         .collect::<Vec<_>>();
 
-    config::SCOPES
+    wanted
         .split_ascii_whitespace()
         .filter(|scope| {
             !matches!(
@@ -84,23 +481,33 @@ pub struct TenantInfo {
 /// Descobre o tenant pelo dominio do e-mail, lendo o documento OIDC publico.
 /// O `issuer` devolvido contem o GUID real do tenant.
 pub fn detectar_tenant(email: &str) -> Result<TenantInfo, String> {
-    let dominio = email
+    // #695: o e-mail/login_hint é OPCIONAL. Vazio (ou sem domínio válido) NÃO é
+    // erro — segue pelo caminho comum (pessoal/Google entram por /common; o
+    // usuário digita o e-mail na própria página do provider).
+    let Some(dominio) = email
         .rsplit('@')
         .next()
+        .map(str::trim)
         .filter(|d| !d.is_empty() && d.contains('.'))
-        .ok_or("e-mail invalido")?
-        .trim()
-        .to_lowercase();
+        .map(str::to_lowercase)
+    else {
+        return Ok(TenantInfo {
+            tenant_id: config::COMMON_AUTHORITY.to_string(),
+            dominio: String::new(),
+        });
+    };
 
     let client = reqwest::blocking::Client::new();
     let resp = client
         .get(config::discovery_url(&dominio))
         .send()
         .map_err(|e| format!("falha ao consultar o dominio: {e}"))?;
+    // #694 (PS1): domínio não-M365 NÃO é mais parede — roteia pro caminho `common`
+    // (pessoal/Google entram por lá; org contratada segue no tenant GUID). Só o
+    // erro de rede acima ainda falha (não dá pra decidir sem consultar).
     if !resp.status().is_success() {
-        return Err(format!(
-            "'{dominio}' nao e um dominio Microsoft 365 (ou nao existe)."
-        ));
+        log::info!("[auth] '{dominio}' não é M365 → roteando pra /common");
+        return Ok(TenantInfo { tenant_id: config::COMMON_AUTHORITY.to_string(), dominio });
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     let issuer = v["issuer"].as_str().unwrap_or("");
@@ -112,7 +519,8 @@ pub fn detectar_tenant(email: &str) -> Result<TenantInfo, String> {
         .unwrap_or("")
         .to_string();
     if tenant_id.is_empty() {
-        return Err("nao consegui identificar o tenant desse dominio".into());
+        // Documento OIDC sem tenant reconhecível → também cai no comum.
+        return Ok(TenantInfo { tenant_id: config::COMMON_AUTHORITY.to_string(), dominio });
     }
     Ok(TenantInfo { tenant_id, dominio })
 }
@@ -159,8 +567,9 @@ fn initials_from(name: &str) -> String {
     }
 }
 
-/// Le displayName/email do usuario logado.
-fn fetch_account(access_token: &str) -> Result<Account, String> {
+/// Le displayName/email do usuario logado. `tenant`/`scopes` alimentam os eixos
+/// de identidade (#693): tipo de conta, status da org e capabilities.
+fn fetch_account(access_token: &str, tenant: &str, scopes: &str) -> Result<Account, String> {
     let client = reqwest::blocking::Client::new();
     let resp = client
         .get(GRAPH_ME)
@@ -197,7 +606,21 @@ fn fetch_account(access_token: &str) -> Result<Account, String> {
         }
     };
 
-    let conta = Account { display_name, email, initials, photo, organizacao };
+    let (account_kind, org_status, domain, tenant_id) = classificar(tenant, &email);
+    let capabilities = MicrosoftProvider.capabilities(scopes);
+    let conta = Account {
+        display_name,
+        email,
+        initials,
+        photo,
+        organizacao,
+        provider: Provider::Microsoft,
+        account_kind,
+        org_status,
+        domain,
+        tenant_id,
+        capabilities,
+    };
     crate::estado::salvar_identidade(&conta.display_name, &conta.initials);
     Ok(conta)
 }
@@ -270,14 +693,15 @@ fn exchange_code(
     redirect_uri: &str,
 ) -> Result<Tokens, String> {
     let client = reqwest::blocking::Client::new();
-    let cid = config::client_id();
+    let cid = config::client_id_para(tenant);
+    let scopes = config::scopes_para(tenant); // BASE (pessoal) ou BASE+ORG (org)
     let params = [
         ("client_id", cid.as_str()),
         ("grant_type", "authorization_code"),
         ("code", code),
         ("redirect_uri", redirect_uri),
         ("code_verifier", verifier),
-        ("scope", config::SCOPES),
+        ("scope", scopes.as_str()),
     ];
     let resp = client
         .post(config::token_endpoint(tenant))
@@ -296,12 +720,13 @@ fn exchange_code(
 /// Renova os tokens a partir de um refresh_token (mesma authority do login).
 pub fn refresh(tenant: &str, refresh_token: &str) -> Result<Tokens, String> {
     let client = reqwest::blocking::Client::new();
-    let cid = config::client_id();
+    let cid = config::client_id_para(tenant);
+    let scopes = config::scopes_para(tenant); // #694: BASE (common) ou BASE+ORG (tenant)
     let params = [
         ("client_id", cid.as_str()),
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token),
-        ("scope", config::SCOPES),
+        ("scope", scopes.as_str()),
     ];
     let resp = client
         .post(config::token_endpoint(tenant))
@@ -380,13 +805,19 @@ mod dpapi {
     pub fn decifrar(d: &[u8]) -> Option<Vec<u8>> { Some(d.to_vec()) }
 }
 
-/// Guarda {tenant, refresh}: sem o tenant nao da pra renovar.
-pub fn salvar_sessao(tenant: &str, token: &str) {
+/// Guarda {provider, tenant, refresh} — a chave do vault é (provider, conta).
+/// Sem o tenant nao da pra renovar; o provider decide o endpoint no restore.
+pub fn salvar_sessao(provider: Provider, tenant: &str, token: &str) {
     let Some(caminho) = caminho_sessao() else {
         log::error!("[sessao] sem LOCALAPPDATA - nao da pra persistir");
         return;
     };
-    let payload = serde_json::json!({ "tenant": tenant, "refresh": token }).to_string();
+    let payload = serde_json::json!({
+        "provider": provider_str(provider),
+        "tenant": tenant,
+        "refresh": token,
+    })
+    .to_string();
     match dpapi::cifrar(payload.as_bytes()) {
         Some(cifrado) => match std::fs::write(&caminho, &cifrado) {
             Ok(_) => log::info!(
@@ -399,14 +830,16 @@ pub fn salvar_sessao(tenant: &str, token: &str) {
     }
 }
 
-pub fn ler_sessao() -> Option<(String, String)> {
+pub fn ler_sessao() -> Option<(Provider, String, String)> {
     let caminho = caminho_sessao()?;
     let cifrado = std::fs::read(&caminho).ok()?;
     let claro = dpapi::decifrar(&cifrado)?;
     let v: serde_json::Value = serde_json::from_slice(&claro).ok()?;
+    // Backward-compat: sessão gravada antes do #693 não tem "provider" → Microsoft.
+    let provider = v["provider"].as_str().map(provider_de_str).unwrap_or(Provider::Microsoft);
     let tenant = v["tenant"].as_str()?.to_string();
     let refresh = v["refresh"].as_str()?.to_string();
-    Some((tenant, refresh))
+    Some((provider, tenant, refresh))
 }
 
 pub fn limpar_refresh() {
@@ -417,9 +850,9 @@ pub fn limpar_refresh() {
 
 /// Retoma a sessao a partir do que esta no cofre. Sem interacao.
 pub fn restaurar() -> Result<Tokens, String> {
-    let (tenant, rt) = match ler_sessao() {
+    let (provider, tenant, rt) = match ler_sessao() {
         Some(x) => {
-            log::info!("[sessao] encontrada em disco (tenant={})", x.0);
+            log::info!("[sessao] encontrada em disco (provider={}, tenant={})", provider_str(x.0), x.1);
             x
         }
         None => {
@@ -427,7 +860,8 @@ pub fn restaurar() -> Result<Tokens, String> {
             return Err("sem sessao salva".into());
         }
     };
-    match refresh(&tenant, &rt) {
+    // Roteia o refresh pelo provider persistido (#693) — MS agora, Google no PS3.
+    match provider_de(provider).access_token(&tenant, &rt) {
         Ok(t) => {
             log::info!("[sessao] restaurada com sucesso");
             Ok(t)
@@ -455,10 +889,10 @@ fn build_tokens(v: serde_json::Value, tenant: &str) -> Result<Tokens, String> {
             "[sessao] SEM refresh_token na resposta - offline_access nao concedido? scope={escopos}"
         ),
     }
-    let account = fetch_account(&access_token)?;
-    // guarda o refresh mais recente (rotativo) junto do tenant
+    let account = fetch_account(&access_token, tenant, escopos)?;
+    // guarda o refresh mais recente (rotativo) junto do tenant + provider (#693).
     if let Some(rt) = refresh_token.as_deref() {
-        salvar_sessao(tenant, rt);
+        salvar_sessao(Provider::Microsoft, tenant, rt);
     }
     Ok(Tokens {
         access_token,
@@ -479,7 +913,7 @@ pub fn interactive_login(
     login_hint: &str,
     idioma: &str,
 ) -> Result<Tokens, String> {
-    let cid = config::client_id();
+    let cid = config::client_id_para(tenant);
     if cid.is_empty() || cid == "REPLACE_WITH_CLIENT_ID" {
         return Err(
             "App ainda nao registrado: preencha o CLIENT_ID em config.rs. \
@@ -507,9 +941,9 @@ pub fn interactive_login(
          &code_challenge={chal}&code_challenge_method=S256&prompt=select_account\
          &login_hint={hint}",
         endpoint = config::authorize_endpoint(tenant),
-        cid = urlencoding::encode(&config::client_id()),
+        cid = urlencoding::encode(&cid),
         ruri = urlencoding::encode(&redirect_uri),
-        scope = urlencoding::encode(config::SCOPES),
+        scope = urlencoding::encode(&config::scopes_para(tenant)),
         state = urlencoding::encode(&state),
         chal = urlencoding::encode(&challenge),
         hint = urlencoding::encode(login_hint),
@@ -517,7 +951,18 @@ pub fn interactive_login(
 
     open::that(&auth_url).map_err(|e| format!("nao consegui abrir o navegador: {e}"))?;
 
-    // Espera o redirect (com timeout total).
+    let code = esperar_code_loopback(&server, &state, idioma)?;
+    exchange_code(tenant, &code, &verifier, &redirect_uri)
+}
+
+/// Aguarda o redirect do OAuth no loopback e devolve o authorization code.
+/// Compartilhado por MS e Google: valida `state` (anti-CSRF), serve a página de
+/// retorno no idioma escolhido e ignora requests de favicon. Timeout total 300s.
+fn esperar_code_loopback(
+    server: &tiny_http::Server,
+    state: &str,
+    idioma: &str,
+) -> Result<String, String> {
     let deadline = SystemTime::now() + Duration::from_secs(300);
     loop {
         let remaining = deadline
@@ -531,7 +976,8 @@ pub fn interactive_login(
         let url = req.url().to_string();
         // Ignora pedidos de favicon etc.
         if !url.contains("code=") && !url.contains("error=") {
-            let _ = req.respond(tiny_http::Response::from_string("aguardando..."));
+            let espera = if idioma.starts_with("en") { "waiting..." } else { "aguardando..." };
+            let _ = req.respond(tiny_http::Response::from_string(espera));
             continue;
         }
 
@@ -588,7 +1034,7 @@ pub fn interactive_login(
             let _ = req.respond(html_response(&body_err));
             return Err(format!("login negado: {e}"));
         }
-        if got_state.as_deref() != Some(state.as_str()) {
+        if got_state.as_deref() != Some(state) {
             let _ = req.respond(html_response(&body_err));
             return Err("state divergente (possivel CSRF); login abortado".into());
         }
@@ -600,7 +1046,7 @@ pub fn interactive_login(
             }
         };
         let _ = req.respond(html_response(&body_ok));
-        return exchange_code(tenant, &code, &verifier, &redirect_uri);
+        return Ok(code);
     }
 }
 
@@ -639,42 +1085,180 @@ fn html_page(idioma: &str, titulo: &str, msg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::required_resource_scopes_missing;
+    use super::*;
+
+    #[test]
+    fn classifica_conta_pessoal_pelo_tenant_sintetico() {
+        let (kind, org, dom, tid) = classificar(config::MS_PERSONAL_TENANT, "alguem@outlook.com");
+        assert_eq!(kind, AccountKind::Personal);
+        assert_eq!(org, OrgStatus::None);
+        assert!(dom.is_none() && tid.is_none());
+        // "consumers" também é pessoal.
+        assert_eq!(classificar("consumers", "x@live.com").0, AccountKind::Personal);
+    }
+
+    #[test]
+    fn login_hint_vazio_rota_para_authority_comum() {
+        let info = detectar_tenant("")
+            .expect("o e-mail e login_hint opcional; vazio deve seguir pelo caminho comum");
+
+        assert_eq!(info.tenant_id, config::COMMON_AUTHORITY);
+        assert!(info.dominio.is_empty());
+    }
+
+    // ── PS3 #696: GoogleProvider ────────────────────────────────────────────
+
+    #[test]
+    fn google_capabilities_mapeia_scopes_concedidos() {
+        let caps = google_capabilities(config::GOOGLE_SCOPES);
+        for esperada in [
+            Capability::Identity,
+            Capability::Calendar,
+            Capability::Contacts,
+            Capability::DirectoryRead,
+            Capability::MailSend,
+            Capability::FilePicker,
+        ] {
+            assert!(caps.contains(&esperada), "faltou {esperada:?}");
+        }
+        // Sem Gmail-read → NUNCA promete MailRead (restricted fica no PS8).
+        assert!(!caps.contains(&Capability::MailRead));
+        assert!(!caps.contains(&Capability::MailReadWrite));
+    }
+
+    #[test]
+    fn google_capabilities_so_identity_com_scope_minimo() {
+        let caps = google_capabilities("openid email profile");
+        assert_eq!(caps, vec![Capability::Identity]);
+    }
+
+    #[test]
+    fn google_capabilities_nao_aceita_nomes_de_scope_apenas_parecidos() {
+        let caps = google_capabilities(
+            "openid https://www.googleapis.com/auth/gmail.send.extra \
+             https://www.googleapis.com/auth/drive.file.backup",
+        );
+
+        assert_eq!(
+            caps,
+            vec![Capability::Identity],
+            "capabilities devem vir de tokens de scope exatos, nao de substring"
+        );
+    }
+
+    #[test]
+    fn google_scopes_nao_pede_restricted() {
+        // $0: nada de Gmail-read nem Drive-browse (restricted → CASA anual, PS8).
+        let s = config::GOOGLE_SCOPES;
+        assert!(!s.contains("gmail.readonly"));
+        assert!(!s.contains("gmail.modify"));
+        assert!(!s.contains("auth/drive "));
+        assert!(!s.ends_with("auth/drive"));
+        assert!(s.contains("drive.file")); // picker non-sensitive
+    }
+
+    #[test]
+    fn classifica_conta_trabalho_com_dominio_e_tenant() {
+        let (kind, org, dom, tid) =
+            classificar("029575b8-d93d-49e3-8017-56a3eb414f48", "Wagner@Voaz.Builders");
+        assert_eq!(kind, AccountKind::Work);
+        assert_eq!(org, OrgStatus::Contracted);
+        assert_eq!(dom.as_deref(), Some("voaz.builders")); // minúsculo
+        assert_eq!(tid.as_deref(), Some("029575b8-d93d-49e3-8017-56a3eb414f48"));
+    }
+
+    #[test]
+    fn capabilities_mapeiam_scopes() {
+        let caps = ms_capabilities("openid profile Mail.Send Mail.ReadWrite Calendars.ReadWrite Contacts.ReadWrite Files.ReadWrite");
+        assert!(caps.contains(&Capability::Identity));
+        assert!(caps.contains(&Capability::MailSend));
+        assert!(caps.contains(&Capability::MailReadWrite));
+        assert!(caps.contains(&Capability::MailRead)); // readwrite implica read
+        assert!(caps.contains(&Capability::Calendar));
+        assert!(caps.contains(&Capability::Contacts));
+        assert!(caps.contains(&Capability::FilePicker));
+        // Sem esses scopes, sem essas capabilities.
+        assert!(!caps.contains(&Capability::DirectoryRead));
+        assert!(!caps.contains(&Capability::OrgAdmin));
+
+        // Token magro (só login) → só Identity.
+        let magro = ms_capabilities("openid profile offline_access");
+        assert_eq!(magro, vec![Capability::Identity]);
+    }
+
+    #[test]
+    fn provider_serializa_e_round_trip() {
+        assert_eq!(
+            serde_json::to_value(Provider::Microsoft).unwrap(),
+            serde_json::json!("microsoft")
+        );
+        assert_eq!(serde_json::to_value(OrgStatus::None).unwrap(), serde_json::json!("none"));
+        assert_eq!(
+            serde_json::to_value(Capability::MailReadWrite).unwrap(),
+            serde_json::json!("mailReadWrite")
+        );
+        assert_eq!(provider_de_str("google"), Provider::Google);
+        assert_eq!(provider_de_str("desconhecido"), Provider::Microsoft); // default seguro
+        assert_eq!(provider_str(Provider::Google), "google");
+    }
+
+    /// Pedido de uma conta org (BASE+ORG), como o `scopes_para` de um tenant GUID.
+    fn org_scopes() -> String {
+        crate::config::scopes_para("029575b8-d93d-49e3-8017-56a3eb414f48")
+    }
+
+    #[test]
+    fn scopes_por_authority_base_vs_org() {
+        // Comum (pessoal) só pede BASE; org (tenant) pede BASE+ORG.
+        let comum = crate::config::scopes_para("common");
+        assert!(comum.contains("Mail.ReadWrite") && comum.contains("offline_access"));
+        assert!(!comum.contains("Sites.Read.All") && !comum.contains("OrgSettings"));
+        let org = org_scopes();
+        assert!(org.contains("Mail.ReadWrite")); // BASE incluso
+        assert!(org.contains("Sites.Read.All") && org.contains("MultiTenantOrganization.Read.All"));
+        assert!(crate::config::eh_org("029575b8-d93d-49e3-8017-56a3eb414f48"));
+        assert!(!crate::config::eh_org("common"));
+        assert!(!crate::config::eh_org("consumers"));
+    }
 
     #[test]
     fn compara_escopos_de_recurso_sem_diferenciar_caixa() {
-        let atuais = crate::config::SCOPES
+        let alvo = org_scopes();
+        let atuais = alvo
             .split_ascii_whitespace()
             .filter(|scope| !matches!(*scope, "openid" | "profile" | "offline_access"))
             .map(str::to_ascii_uppercase)
             .collect::<Vec<_>>()
             .join(" ");
 
-        assert!(required_resource_scopes_missing(&atuais).is_empty());
+        assert!(required_resource_scopes_missing(&atuais, &alvo).is_empty());
     }
 
     #[test]
     fn devolve_apenas_o_escopo_graph_realmente_ausente() {
-        let atuais = crate::config::SCOPES
+        let alvo = org_scopes();
+        let atuais = alvo
             .split_ascii_whitespace()
             .filter(|scope| *scope != "Contacts.ReadWrite")
             .collect::<Vec<_>>()
             .join(" ");
 
         assert_eq!(
-            required_resource_scopes_missing(&atuais),
+            required_resource_scopes_missing(&atuais, &alvo),
             vec!["Contacts.ReadWrite"]
         );
     }
 
     #[test]
     fn nao_exige_escopos_de_autenticacao_no_access_token() {
-        let atuais = crate::config::SCOPES
+        let alvo = org_scopes();
+        let atuais = alvo
             .split_ascii_whitespace()
             .filter(|scope| !matches!(*scope, "openid" | "profile" | "offline_access"))
             .collect::<Vec<_>>()
             .join(" ");
 
-        let ausentes = required_resource_scopes_missing(&atuais);
+        let ausentes = required_resource_scopes_missing(&atuais, &alvo);
         assert!(!ausentes
             .iter()
             .any(|scope| { matches!(scope.as_str(), "openid" | "profile" | "offline_access") }));

@@ -1,8 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { telModuloAberto, telSessaoIniciada } from "@/lib/telemetria";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { registrarHandlersGlobais } from "@/lib/log";
 import { LoginScreen } from "@/screens/login";
+import { OnboardingEmpresaScreen } from "@/screens/onboarding-empresa";
+import { TierProvider } from "@/lib/tier-context";
 import { SitesScreen } from "@/screens/sites";
 import { AppsScreen } from "@/screens/apps";
 import { AtomsScreen } from "@/screens/atoms";
@@ -19,6 +21,7 @@ import {
   persistLastSession,
   tabsToSleep,
   type AbaBrowser,
+  type TelaInterna,
 } from "@/lib/navigator-tabs";
 import {
   loadHistorico,
@@ -30,6 +33,7 @@ import {
 } from "@/lib/navigator-history";
 import * as browser from "@/lib/browser";
 import { WindowsScreen } from "@/screens/windows";
+import { ArquivosScreen } from "@/screens/arquivos";
 import { ConfiguracoesScreen } from "@/screens/configuracoes";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -40,7 +44,7 @@ import { FundoApp } from "@/components/fundo-app";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { UniversalSearch } from "@/components/universal-search";
+import { MenuUsuario } from "@/components/user-menu";
 import {
   Alert,
   AlertAction,
@@ -51,23 +55,8 @@ import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import {
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
 } from "@/components/animate-ui/components/radix/sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
 import { TELAS, type Tela } from "@/lib/navegacao";
 import {
   useAppStore,
@@ -78,6 +67,8 @@ import {
 } from "@/store";
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
+import { resolverOrgStatus } from "@/lib/organizations";
+import { surfaceSuportada } from "@/lib/capabilities-surface";
 import { useIdioma } from "@/lib/idioma";
 import { cn, comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
@@ -95,7 +86,6 @@ import { KeyRound } from "lucide-react";
  */
 function AppInner() {
   const { idioma, t } = useIdioma();
-  const bridgeView = useAppStore((state) => state.bridgeView);
   const setBridgeView = useAppStore((state) => state.setBridgeView);
   const reauthMissingScopes = useAppStore(
     (state) => state.reauthMissingScopes,
@@ -115,7 +105,13 @@ function AppInner() {
   const resetPeopleSession = useAppStore(
     (state) => state.resetPeopleSession,
   );
+  // #700 2b (parte 2): registro de orgs (fonte da flag `contratada` +
+  // `dominiosVerificados`) — alimenta a derivação reativa do OrgStatus abaixo.
+  const organizations = useAppStore((state) => state.organizations);
   const [user, setUser] = useState<AppUser | null>(null);
+  // #698 (PS5): funcionário de empresa não-cliente (orgStatus "uncontracted") vê o
+  // onboarding de lead-gen; ao "entrar assim mesmo", segue no tier pessoal.
+  const [entrarComoPessoal, setEntrarComoPessoal] = useState(false);
   const [sites, setSites] = useState<Site[]>([]);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loadingSites, setLoadingSites] = useState(false);
@@ -129,7 +125,8 @@ function AppInner() {
   // #183 (Atoms): a nova tela inicial. O usuário cai no dashboard Atoms ao
   // logar/restaurar; o Bridge segue keep-alive (montado/escondido) pra voltar
   // instantâneo.
-  const [tela, setTela] = useState<Tela>("atoms");
+  // #718 (SH0): o app abre no Navigator (era Atoms) — estado inicial do shell.
+  const [tela, setTela] = useState<Tela>("navegador");
   // #498 rework: quando o composer pede a config de assinaturas (bumpa o nonce),
   // troca pra tela de Settings (a ação de store já selecionou Bridge > Envio).
   useEffect(() => {
@@ -141,6 +138,11 @@ function AppInner() {
   // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
   const [abas, setAbas] = useState<AbaBrowser[]>(loadPinnedNavigatorTabs);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
+  // #876: alvo (na title bar) pro portal da tab strip do Navigator. Callback-ref
+  // por estado pra o NavegadorScreen re-renderizar quando o nó existir e então
+  // teleportar a strip pra cá. Null enquanto o header não montou (ou telas sem
+  // title bar) → a strip cai no fallback inline.
+  const [tabSlot, setTabSlot] = useState<HTMLElement | null>(null);
   // #454: bump a cada nova aba pra REMONTAR o Launcher (key) e re-focar o command
   // mesmo quando já estávamos na aba vazia (setAbaAtiva(null) seria no-op).
   const [launcherNonce, setLauncherNonce] = useState(0);
@@ -305,20 +307,35 @@ function AppInner() {
         if (!vivo) return;
         if (u) {
           resetPeopleSession();
-          prepararConfiguracaoNuvem(u.email);
+          prepararConfiguracaoNuvem(u.email, u.provider);
           setUser(u);
           void reconciliarConfiguracaoNuvem().catch(() => {
             // Offline/Graph indisponível: mantém o cache local desta conta.
           });
-          void hydratePeopleM365({ force: true });
-          const permissions = await api.requiredScopesStatus();
-          if (!vivo) return;
-          setReauthMissingScopes(permissions.missingScopes);
-          setLoadingSites(true);
-          const lista = await api.listSites();
-          if (!vivo) return;
-          setSites(lista);
-          carregarDetalhes(lista);
+          // #783: conta Google não fala MS Graph. A nuvem do Google é Drive/appData
+          // (reconciliar acima). Mail/Calendar/Contacts/OneDrive pessoal existem no
+          // MS pessoal, então People+scopes seguem pra qualquer conta MS.
+          if (u.provider !== "google") {
+            void hydratePeopleM365({ force: true });
+            const permissions = await api.requiredScopesStatus();
+            if (!vivo) return;
+            setReauthMissingScopes(permissions.missingScopes);
+            // #802 (P0): /sites (+sonda children+expand) é ORG-ONLY — conta MS
+            // PESSOAL não tem SharePoint. Só chama em conta work; e um 400/403 aqui
+            // NÃO é falha de auth → degrada (sites vazio), NUNCA desloga.
+            if (u.accountKind === "work") {
+              setLoadingSites(true);
+              try {
+                const lista = await api.listSites();
+                if (!vivo) return;
+                setSites(lista);
+                carregarDetalhes(lista);
+              } catch (e) {
+                console.warn("[boot] listSites falhou — degradando sem deslogar:", e);
+                setSites([]);
+              }
+            }
+          }
         }
       } catch {
         // sessao invalida: cai no login normal
@@ -338,6 +355,22 @@ function AppInner() {
     resetPeopleSession,
     setReauthMissingScopes,
   ]);
+
+  // #700 2b (parte 2): deriva o OrgStatus canônico (#698/PS5) do REGISTRO DE ORGS
+  // assim que ele assenta. As orgs (CHAVES_CONFIG_NUVEM #560) hidratam ASSÍNCRONO
+  // — depois do setUser, pela reconciliação de nuvem — então a derivação tem que
+  // ser REATIVA, não inline no login: inline veria orgs vazias e daria
+  // none/uncontracted errado. Refina o provisório que o PS0 dá do token:
+  // work-cliente→contracted, work-não-cliente→uncontracted, personal do domínio
+  // do cliente→contracted (absorção JIT), resto→none. Só no app real (Tauri);
+  // no mock/web o tier vem do ?mockOrg de QA (não sobrescreve).
+  useEffect(() => {
+    if (!api.inTauri() || !user) return;
+    const derivado = resolverOrgStatus(user, organizations);
+    if (derivado !== user.orgStatus) {
+      setUser((atual) => (atual ? { ...atual, orgStatus: derivado } : atual));
+    }
+  }, [user, organizations]);
 
   // --- Splash de boot (#164) ---------------------------------------------
   // Dois gates para revelar a main: o app só aparece depois que a animação
@@ -387,30 +420,69 @@ function AppInner() {
     void revelarAppEFecharSplash();
   }, [bootPronto, videoPronto]);
 
-  async function handleLogin(email: string) {
+  // #821 (P0): a fronteira de conta (resetSessaoCompleta) zera o STORE
+  // tenant-scoped, mas as abas do Navigator vivem em useState LOCAL do App — que
+  // NÃO desmonta no logout→login. Sem isto a conta nova herda as abas da anterior
+  // (a aba Bridge que vazou pra conta Google). Zera o estado in-memory do
+  // Navegador: abas, aba ativa e a pilha de fechadas (senão Ctrl+Shift+T
+  // reabriria aba da conta anterior). O disco é purgado pelo resetSessaoNavegador
+  // (dentro do resetSessaoCompleta, parte do #821); as abas internas
+  // (Bridge/Files/Remote) reabrem sob demanda pelo rail, já gateadas pela
+  // capability da conta nova.
+  //
+  // #821 deeper: o HISTÓRICO de navegação também é tenant-scoped (privacidade — a
+  // conta nova não pode ver os sites que a anterior visitou). Ele vive em useState
+  // + localStorage (`galaxie.navigator.history.v1`), fora do store, então escapava
+  // do reset. Zera in-memory E no disco (explícito, não confia na ordem do effect).
+  function resetNavegadorSessao() {
+    setAbas([]);
+    setAbaAtiva(null);
+    setFechadas([]);
+    setHistorico([]);
+    persistHistorico([]);
+  }
+
+  async function handleLogin(provider: api.AuthProvider, hint: string) {
     setLoginLoading(true);
     setError(null);
     // #555 (P0): fronteira de conta — zera TODO o estado tenant-scoped (mailbox,
     // agenda, organizations, branding, memos Rust, fotos…) antes de trocar de
     // conta, pra a conta nova não herdar dado do tenant anterior.
     resetSessaoCompleta();
+    resetNavegadorSessao(); // #821: zera as abas in-memory da conta anterior
     try {
-      const u = await api.login(email, idioma);
-      prepararConfiguracaoNuvem(u.email);
+      // #695: `hint` = login_hint OPCIONAL; `provider` escolhe a porta (o backend
+      // PS0/PS1 mapeia pro registration certo — org de produção vs pessoal).
+      const u = await api.login(hint, idioma, provider);
+      prepararConfiguracaoNuvem(u.email, u.provider);
       setUser(u);
       void reconciliarConfiguracaoNuvem().catch(() => {
         // Login não falha por indisponibilidade temporária da configuração.
       });
-      // #568: home = Atoms. Login (nova conta ou re-login) sempre cai no Atoms,
-      // nunca herda o último módulo (o resetSessaoCompleta já zerou o nav do store).
-      setTela("atoms");
-      void hydratePeopleM365({ force: true });
-      const permissions = await api.requiredScopesStatus();
-      setReauthMissingScopes(permissions.missingScopes);
-      setLoadingSites(true);
-      const lista = await api.listSites();
-      setSites(lista);
-      carregarDetalhes(lista);
+      // #718 (SH0): home = Navigator. Login (nova conta ou re-login) sempre cai no
+      // Navigator, nunca herda o último módulo (o resetSessaoCompleta já zerou o nav).
+      setTela("navegador");
+      // #783: Google não fala MS Graph (nuvem = Drive/appData). Mail/Cal/Contacts/
+      // OneDrive pessoal existem no MS pessoal → People+scopes seguem pra qualquer MS.
+      if (u.provider !== "google") {
+        void hydratePeopleM365({ force: true });
+        const permissions = await api.requiredScopesStatus();
+        setReauthMissingScopes(permissions.missingScopes);
+        // #802 (P0): /sites é ORG-ONLY — conta MS PESSOAL não tem SharePoint. Só em
+        // conta work; e um 400/403 aqui NÃO é falha de auth → degrada, NUNCA desloga
+        // (era o catch abaixo com setUser(null) chutando o usuário pro login).
+        if (u.accountKind === "work") {
+          setLoadingSites(true);
+          try {
+            const lista = await api.listSites();
+            setSites(lista);
+            carregarDetalhes(lista);
+          } catch (e) {
+            console.warn("[login] listSites falhou — degradando sem deslogar:", e);
+            setSites([]);
+          }
+        }
+      }
     } catch (e) {
       setError(String(e));
       setUser(null);
@@ -548,6 +620,113 @@ function AppInner() {
     setTela("navegador");
   }
 
+  /**
+   * #719 (SH1): abre (ou foca, se já aberta) a tela interna Bridge/Files/Remote
+   * como ABA do Navigator. Foca-se-já-aberto por `tela` (não duplica). Sempre
+   * aterrissa no Navigator (é onde a aba vive). A tela React é montada dentro do
+   * slot de conteúdo do Navigator (keep-alive), não é webview.
+   */
+  function abrirTelaInterna(telaInterna: TelaInterna) {
+    // #821 (P0) parte 2: gate de capability por SUPERFÍCIE. O Bridge (control-room)
+    // bate em MS mail — conta sem essa superfície (Google, ou MS sem mail) NÃO pode
+    // abri-lo. Backstop AUTORITATIVO: o rail já esconde o botão, mas command/atalho/
+    // deep-link (#657) também funilam aqui, então o gate mora no choke-point. Files/
+    // Remote são universais (locais), seguem livres.
+    if (telaInterna === "control-room" && !surfaceSuportada(user, "mail")) {
+      return;
+    }
+    const now = Date.now();
+    const nome =
+      telaInterna === "control-room"
+        ? t.sidebar.bridge
+        : telaInterna === "arquivos"
+          ? t.sidebar.files
+          : t.sidebar.remote;
+    const existente = abas.find(
+      (a) => a.tipo === "interna" && a.tela === telaInterna,
+    );
+    const id = existente ? existente.id : `interna-${telaInterna}-${now}`;
+    setAbas((prev) => {
+      const rebaixadas = prev.map((tab) =>
+        tab.estado === "dormindo"
+          ? tab
+          : { ...tab, estado: "fundo" as const, reativando: false },
+      );
+      // Foca a existente (não duplica) ou anexa a nova aba interna.
+      if (prev.some((a) => a.id === id)) {
+        return orderPinnedFirst(
+          rebaixadas.map((tab) =>
+            tab.id === id
+              ? { ...tab, estado: "ativa" as const, ultimoAcesso: now }
+              : tab,
+          ),
+        );
+      }
+      return orderPinnedFirst([
+        ...rebaixadas,
+        {
+          id,
+          nome,
+          url: `galaxie://tela/${telaInterna}`,
+          estado: "ativa",
+          ultimoAcesso: now,
+          tipo: "interna",
+          tela: telaInterna,
+        },
+      ]);
+    });
+    setAbaAtiva(id);
+    setTela("navegador");
+  }
+
+  // #872 parte 2: "Nova guia do Files" — SEMPRE abre uma aba de Files NOVA (ao
+  // contrário do `abrirTelaInterna`, que é singleton e foca a existente). Cada
+  // aba é uma instância própria do ExplorerShell (key por id no Navigator) e
+  // nasce no This PC (#870). Id com sufixo aleatório pra nunca colidir com uma
+  // aba criada no mesmo ms.
+  function novaAbaFiles() {
+    const now = Date.now();
+    const id = `interna-arquivos-${now}-${Math.floor(Math.random() * 1e6)}`;
+    setAbas((prev) => {
+      const rebaixadas = prev.map((tab) =>
+        tab.estado === "dormindo"
+          ? tab
+          : { ...tab, estado: "fundo" as const, reativando: false },
+      );
+      return orderPinnedFirst([
+        ...rebaixadas,
+        {
+          id,
+          nome: t.sidebar.files,
+          url: `galaxie://tela/arquivos`,
+          estado: "ativa",
+          ultimoAcesso: now,
+          tipo: "interna",
+          tela: "arquivos",
+        },
+      ]);
+    });
+    setAbaAtiva(id);
+    setTela("navegador");
+  }
+
+  /**
+   * #719 (SH1): roteia navegação de tela. Bridge/Files/Remote viram ABAS do
+   * Navigator (foca-se-aberto); todo o resto continua troca de tela top-level.
+   * Ponto único usado pelo rail (SH0), pelo Atoms e pelo command "Ir para".
+   */
+  function navegarPara(destino: Tela) {
+    if (
+      destino === "control-room" ||
+      destino === "arquivos" ||
+      destino === "remote"
+    ) {
+      abrirTelaInterna(destino);
+    } else {
+      setTela(destino);
+    }
+  }
+
   /** Restaura várias entradas de histórico como abas novas (#177). Ids únicos
    *  (Date.now pode repetir num mesmo tick); a última vira ativa. */
   function restaurarAbas(entradas: { url: string; nome: string }[]) {
@@ -607,6 +786,30 @@ function AppInner() {
       ),
     );
     setAbaAtiva(id);
+  }
+
+  // #872: a aba de Files reporta seu local atual (via ExplorerShell → renderTela
+  // Interna) e aqui viramos "Files - <local>" no nome + guardamos o caminho
+  // completo pro tooltip do chip. GUARD de no-op (retorna o mesmo array quando
+  // nada mudou) — o callback do shell é recriado a cada render, então sem o guard
+  // isso entraria em loop de setstate.
+  function atualizarLocalAba(
+    abaId: string,
+    info: { rotulo: string; caminho: string },
+  ) {
+    const nome = `${t.sidebar.files} - ${info.rotulo}`;
+    setAbas((prev) => {
+      const alvo = prev.find((a) => a.id === abaId);
+      if (
+        !alvo ||
+        (alvo.nome === nome && alvo.caminhoLocal === info.caminho)
+      ) {
+        return prev;
+      }
+      return prev.map((a) =>
+        a.id === abaId ? { ...a, nome, caminhoLocal: info.caminho } : a,
+      );
+    });
   }
 
   function abrirAbaVazia() {
@@ -800,11 +1003,13 @@ function AppInner() {
     // #555 (P0): fronteira de conta — reset completo de sessão (inclui fotos,
     // reauth, mailbox, agenda, organizations, branding, memos Rust…).
     resetSessaoCompleta();
+    resetNavegadorSessao(); // #821: zera as abas in-memory da conta que saiu
     setUser(null);
+    setEntrarComoPessoal(false); // #698: não herda o "entrar assim mesmo" pra próxima conta
     setSites([]);
     setError(null);
-    // #568: home = Atoms — não deixa o módulo ativo em OneDrive pro próximo login.
-    setTela("atoms");
+    // #718 (SH0): home = Navigator — não deixa o módulo anterior ativo pro próximo login.
+    setTela("navegador");
   }
 
   async function recuperarBloqueio() {
@@ -812,7 +1017,9 @@ function AppInner() {
     await api.logout();
     // #555 (P0): recuperação de bloqueio também sai da conta → reset completo.
     resetSessaoCompleta();
+    resetNavegadorSessao(); // #821: zera as abas in-memory da conta que saiu
     setUser(null);
+    setEntrarComoPessoal(false); // #698: idem — reset da fronteira de conta
     setSites([]);
     setError(null);
     setCache(null);
@@ -872,101 +1079,129 @@ function AppInner() {
     return <LoginScreen onLogin={handleLogin} loading={loginLoading} error={error} />;
   }
 
+  // #698 (PS5): roteamento dos 3 estados por `orgStatus` (canônico do PS0, vindo do
+  // login real). `none` (pessoal) e `contracted` (org) caem no app; `uncontracted`
+  // — funcionário de empresa NÃO contratada — vê o onboarding de lead-gen, mas não
+  // bloqueia: "entrar assim mesmo" segue no tier pessoal. A degradação graciosa das
+  // features org p/ conta pessoal é o follow-on do PS2, gated no accountKind (já no
+  // AppUser do PS0).
+  if (user.orgStatus === "uncontracted" && !entrarComoPessoal) {
+    return (
+      <OnboardingEmpresaScreen
+        user={user}
+        onContinuar={() => setEntrarComoPessoal(true)}
+        onSair={() => void logout()}
+      />
+    );
+  }
+
   // --- Aplicativo ---------------------------------------------------------
-  const info = TELAS[tela];
-  const abaAtivaObj = abas.find((a) => a.id === abaAtiva);
-  const breadcrumbDetail =
-    tela === "navegador" && abaAtivaObj
-      ? abaAtivaObj.nome
-      : tela === "control-room"
-        ? {
-            mail: t.controlRoom.grupoMail,
-            people: t.controlRoom.peopleTitulo,
-            agenda: t.controlRoom.agendaTitulo,
-          }[bridgeView]
-        : null;
+
+  // #719 (SH1): renderiza a tela interna (Bridge/Files/Remote) de uma aba do
+  // Navigator. `user` já está estreitado a não-nulo aqui (passou o gate de auth).
+  // O App é dono das telas + props + keep-alive; o Navigator só encaixa o
+  // elemento no slot da aba. `ativa` = a aba é a atual (dá foco/polling à tela).
+  const renderTelaInterna = (
+    telaInterna: TelaInterna,
+    ativaTela: boolean,
+    abaId: string,
+  ): ReactNode => {
+    switch (telaInterna) {
+      case "control-room":
+        return (
+          <ControlRoomScreen
+            // #555 (P0): key por conta — remonta a subárvore na troca de tenant,
+            // zerando estado local (preview/scroll/pastas). Só na troca de conta.
+            key={user.email}
+            user={user}
+            ativo={ativaTela}
+            // #868: renderizado aqui = hospedado numa aba interna do Navigator →
+            // esconde o hero redundante (a aba já identifica o Bridge).
+            emAba
+            onGrantPeopleAccess={() => {
+              // #695: re-login da MESMA conta pra conceder People (org/pessoal).
+              void handleLogin("microsoft", user.email);
+            }}
+            onReauthenticate={() => {
+              void logout();
+            }}
+            onAbrirLink={(url) => {
+              let nome = url;
+              try {
+                nome = new URL(url).hostname || url;
+              } catch {
+                /* url estranha: usa a própria string */
+              }
+              abrirUrlLivre(url, nome);
+            }}
+          />
+        );
+      case "arquivos":
+        // #872: a aba mostra "Files - <local>" — o shell reporta o local atual e
+        // o App atualiza o nome/caminho DESTA aba (por id).
+        return (
+          <ArquivosScreen
+            onLocalChange={(info) => atualizarLocalAba(abaId, info)}
+          />
+        );
+      case "remote":
+        return (
+          <EmBreveScreen
+            titulo={t.emBreveRemote.titulo}
+            icone={TELAS.remote.icone}
+            descricao={t.emBreveRemote.descricao}
+          />
+        );
+    }
+  };
 
   return (
-    /* O wrapper do sidebar e min-h-svh: cresce com o conteudo. Numa pagina web
-       quem rola e o documento, mas aqui o body e overflow:hidden (janela de
-       app), entao ninguem rolava. Travando a altura em h-svh, quem passa a
-       rolar e o <main> abaixo. */
-    <SidebarProvider className="h-svh">
+    /* #699 (PS6): TierProvider expõe o tier da conta (capabilities/orgStatus do
+       PS0) pra qualquer feature checar sem prop-drill. O wrapper do sidebar é
+       min-h-svh: cresce com o conteudo. Numa pagina web quem rola e o documento,
+       mas aqui o body e overflow:hidden (janela de app), entao ninguem rolava.
+       Travando a altura em h-svh, quem passa a rolar e o <main> abaixo. */
+    <TierProvider user={user}>
+    {/* #718 (SH0): rail SEMPRE colapsado — sidebar controlado em `open={false}` e
+        `onOpenChange` no-op, então nem o atalho (Ctrl/Cmd+B) nem trigger algum
+        expandem. O toggle do header foi removido. */}
+    <SidebarProvider className="h-svh" open={false} onOpenChange={() => {}}>
       <Atualizacao />
       <BarraJanela />
       <AppSidebar
-        user={user}
         tela={tela}
-        onNavegar={setTela}
-        onLogout={logout}
-        onAbrirUrl={abrirUrl}
+        onNavegar={navegarPara}
+        onAbrirApp={abrirUrlLivre}
       />
       <SidebarInset className="relative overflow-hidden">
         <FundoApp className="pointer-events-none" />
 
+        {/* #876: title bar estilo browser em UMA linha — sem breadcrumb nem busca
+            global. As tabs do Navigator entram no `tabSlot` (portal, ver
+            navegador.tsx); à direita ficam o switcher (menor) + o avatar/menu do
+            usuário; os controles de janela seguem fixos (BarraJanela) no canto,
+            daí o `pr-[140px]`. A faixa vazia entre as tabs e o cluster é
+            arrastável (data-tauri-drag-region) sem tirar o clique de tabs/avatar. */}
         <header
           data-tauri-drag-region
-          className="relative z-10 flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12"
+          className="relative z-10 flex h-11 shrink-0 items-stretch border-b border-border"
         >
-          {/* pr-[150px]: os tres controles de janela ocupam o canto superior
-              direito e o tema ficaria embaixo deles. */}
-          <div data-tauri-drag-region className="flex flex-1 items-center gap-2 px-4 pr-[150px]">
-            {/* Tooltip canônico (#160). O aria-label localizado sobrepõe o
-                sr-only "Toggle Sidebar" fixo do primitivo compartilhado, sem
-                editá-lo. */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <SidebarTrigger
-                  className="-ml-1"
-                  aria-label={t.nav.alternarMenu}
-                />
-              </TooltipTrigger>
-              <TooltipContent side="bottom">
-                {t.nav.alternarMenu}
-              </TooltipContent>
-            </Tooltip>
-            <Separator orientation="vertical" className="mr-2 h-4" />
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <span>{t.nav[info.secao]}</span>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  {/* Com detalhe ativo (aba do Navigator ou módulo do Bridge),
-                      a tela deixa de ser a página final e vira o 2º nível. */}
-                  {breadcrumbDetail ? (
-                    <span className="text-muted-foreground">
-                      {t.nav[info.titulo]}
-                    </span>
-                  ) : (
-                    <BreadcrumbPage>{t.nav[info.titulo]}</BreadcrumbPage>
-                  )}
-                </BreadcrumbItem>
-                {breadcrumbDetail && (
-                  <>
-                    <BreadcrumbSeparator />
-                    <BreadcrumbItem>
-                      <BreadcrumbPage className="max-w-40 truncate">
-                        {breadcrumbDetail}
-                      </BreadcrumbPage>
-                    </BreadcrumbItem>
-                  </>
-                )}
-              </BreadcrumbList>
-            </Breadcrumb>
-            <div className="mx-auto min-w-24 flex-1 px-2 sm:max-w-sm lg:max-w-md">
-              <UniversalSearch
-                tela={tela}
-                screenLabel={t.nav[info.titulo]}
-                bridgeView={bridgeView}
-              />
-            </div>
-            <div className="ml-auto">
-              <ThemeToggle />
-            </div>
+          <div
+            ref={setTabSlot}
+            data-tauri-drag-region
+            className="flex min-w-0 flex-1 items-stretch"
+          />
+          <div
+            data-tauri-drag-region
+            className="flex shrink-0 items-center gap-1.5 pr-[140px] pl-2"
+          >
+            <ThemeToggle size="md" />
+            <MenuUsuario
+              user={user}
+              onNavegar={navegarPara}
+              onLogout={logout}
+              onAbrirUrl={abrirUrl}
+            />
           </div>
         </header>
 
@@ -995,83 +1230,65 @@ function AppInner() {
         {/* O navegador fica FORA do ScrollArea, em tela cheia e sem padding: o
             webview nativo ocupa toda a area medida, e quem rola e a propria
             pagina web, nao o nosso ScrollArea. */}
-        {/* Control room = cliente de e-mail: fica SEMPRE montado (keep-alive) e
-            apenas escondido quando não é a tela ativa. Antes ele desmontava ao
-            trocar de área e remontava ao voltar, recarregando tudo do Graph (e
-            vazando listeners/intervals a cada volta — "cada vez mais lento").
-            Mantendo montado, o estado (pastas, mensagens, scroll, iframes)
-            persiste e o retorno é instantâneo (#25). Fora do ScrollArea externo,
-            altura cheia, cada painel rola por dentro (como o navegador). */}
+        {/* #719 (SH1): o Navigator é o SHELL keep-alive — SEMPRE montado, só
+            escondido quando outra tela top-level (Settings/Apps/…) está ativa.
+            Bridge/Files/Remote agora vivem como ABAS INTERNAS aqui dentro; o
+            control-room mantém o keep-alive (#25) dentro do slot da aba (montado
+            enquanto a aba existir; retorno instantâneo entre trocas de aba). Fora
+            do ScrollArea: tela cheia, a webview/o conteúdo da aba ocupa a área
+            medida. `visivel=false` esconde todas as webviews (P0). */}
         <div
           className={cn(
-            "relative z-10 min-h-0 flex-1 p-4 pt-0",
-            tela !== "control-room" && "hidden"
+            "relative z-10 min-h-0 flex-1",
+            tela !== "navegador" && "hidden",
           )}
         >
-          <ControlRoomScreen
-            // #555 (P0): key por conta — na troca de tenant o email muda e o
-            // React REMONTA a subárvore, zerando TODO estado LOCAL de componente
-            // (preview/anexoEmail/scroll da lista/pastas expandidas/zoom/página do
-            // PDF) que não vive no store. Catch-all: complementa o reset de store
-            // sem enumerar useState. Só remonta na troca de conta, não de aba.
-            key={user.email}
+          <NavegadorScreen
+            abas={abas}
+            ativa={abaAtiva}
+            launcherNonce={launcherNonce}
+            visivel={tela === "navegador"}
             user={user}
-            ativo={tela === "control-room"}
-            onGrantPeopleAccess={() => {
-              void handleLogin(user.email);
+            // #876: a barra de abas só ocupa a title bar quando o Navigator é a
+            // tela ativa; em Settings/Apps ela cai inline (dentro do Navigator
+            // escondido) → nenhuma aba na title bar dessas telas, e clicar aba
+            // não fica dessincronizado com a tela mostrada.
+            tabStripSlot={tela === "navegador" ? tabSlot : null}
+            renderTelaInterna={renderTelaInterna}
+            onTrocar={trocarAba}
+            onFechar={fecharAba}
+            onFecharOutras={fecharOutras}
+            onDormir={dormirAba}
+            onDormirOutras={dormirOutras}
+            onAlternarFixada={alternarFixada}
+            onAlternarManterAcordada={alternarManterAcordada}
+            onReativada={concluirReativacao}
+            onReordenar={reordenarAbas}
+            onAbrir={abrirAppAqui}
+            onNovaAba={novaAba}
+            onNovaAbaFiles={novaAbaFiles}
+            onNovaAbaPrivada={novaAbaPrivada}
+            onReabrirFechada={reabrirFechada}
+            onNavegar={abrirUrlLivre}
+            onNavegarTela={navegarPara}
+            onIrParaBridgeView={(view) => {
+              // #657: deep-link — seta a sub-view do Bridge e abre a ABA do
+              // Bridge no Navigator (#719: era setTela("control-room")).
+              setBridgeView(view);
+              abrirTelaInterna("control-room");
             }}
-            onReauthenticate={() => {
-              void logout();
-            }}
-            onAbrirLink={(url) => {
-              let nome = url;
-              try {
-                nome = new URL(url).hostname || url;
-              } catch {
-                /* url estranha: usa a própria string */
-              }
-              abrirUrlLivre(url, nome);
-            }}
+            onRestaurarAbas={restaurarAbas}
+            sessaoAnteriorQtd={sessaoDispensada ? 0 : sessaoAnterior.length}
+            onRestaurarSessao={restaurarSessao}
+            onDispensarSessao={dispensarSessao}
+            historico={historico}
+            onLimparHistorico={limparHistoricoPeriodo}
+            modoPrivado={modoPrivado}
+            onAlternarModoPrivado={() => setModoPrivado((v) => !v)}
           />
         </div>
 
-        {tela === "navegador" ? (
-          <div className="relative z-10 min-h-0 flex-1">
-            <NavegadorScreen
-              abas={abas}
-              ativa={abaAtiva}
-              launcherNonce={launcherNonce}
-              onTrocar={trocarAba}
-              onFechar={fecharAba}
-              onFecharOutras={fecharOutras}
-              onDormir={dormirAba}
-              onDormirOutras={dormirOutras}
-              onAlternarFixada={alternarFixada}
-              onAlternarManterAcordada={alternarManterAcordada}
-              onReativada={concluirReativacao}
-              onReordenar={reordenarAbas}
-              onAbrir={abrirAppAqui}
-              onNovaAba={novaAba}
-              onNovaAbaPrivada={novaAbaPrivada}
-              onReabrirFechada={reabrirFechada}
-              onNavegar={abrirUrlLivre}
-              onNavegarTela={setTela}
-              onIrParaBridgeView={(view) => {
-                // #657: deep-link — seta a sub-view do Bridge e abre o control-room.
-                setBridgeView(view);
-                setTela("control-room");
-              }}
-              onRestaurarAbas={restaurarAbas}
-              sessaoAnteriorQtd={sessaoDispensada ? 0 : sessaoAnterior.length}
-              onRestaurarSessao={restaurarSessao}
-              onDispensarSessao={dispensarSessao}
-              historico={historico}
-              onLimparHistorico={limparHistoricoPeriodo}
-              modoPrivado={modoPrivado}
-              onAlternarModoPrivado={() => setModoPrivado((v) => !v)}
-            />
-          </div>
-        ) : tela === "configuracoes" ? (
+        {tela === "configuracoes" ? (
           /* Fora do ScrollArea: altura cheia, sidebar 100% e a área de contexto
              rola por dentro — mesmo padrão do Bridge. */
           <div className="relative z-10 min-h-0 flex-1 p-4 pt-0">
@@ -1086,7 +1303,10 @@ function AppInner() {
               onAbrirNavegador={(a) => abrirUrl(a.url)}
             />
           </div>
-        ) : tela === "control-room" ? null : (
+        ) : tela === "navegador" ||
+          tela === "control-room" ||
+          tela === "arquivos" ||
+          tela === "remote" ? null : (
         /* ScrollArea no lugar do overflow-y-auto: a barra passa a ser a do
             design system em vez da nativa do sistema.
             min-h-0: sem isso o flex-1 nao encolhe abaixo do conteudo e nao
@@ -1096,7 +1316,7 @@ function AppInner() {
           {tela === "atoms" && (
             <AtomsScreen
               user={user}
-              onNavegar={setTela}
+              onNavegar={navegarPara}
               onAbrirUrl={abrirUrl}
               onAbrirApp={abrirAppAqui}
             />
@@ -1119,6 +1339,8 @@ function AppInner() {
               descricao={t.emBreveComms.descricao}
             />
           )}
+          {/* #719 (SH1): Remote virou ABA INTERNA do Navigator (renderTelaInterna);
+              o placeholder #682 é renderizado lá dentro, não mais como tela top-level. */}
           {tela === "astro" && (
             <EmBreveScreen
               titulo={t.emBreveAstro.titulo}
@@ -1166,6 +1388,7 @@ function AppInner() {
         )}
       </SidebarInset>
     </SidebarProvider>
+    </TierProvider>
   );
 }
 

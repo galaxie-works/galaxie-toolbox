@@ -8,6 +8,7 @@ fn main() {
     "GALAXIE_TELEMETRY_STREAM_NAME",
     "GALAXIE_TELEMETRY_INGEST_EMAIL",
     "GALAXIE_TELEMETRY_INGEST_TOKEN",
+    "GOOGLE_CLIENT_SECRET",
   ] {
     println!("cargo:rerun-if-env-changed={var}");
   }

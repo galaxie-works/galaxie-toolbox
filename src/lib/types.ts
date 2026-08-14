@@ -21,6 +21,30 @@ export interface Site {
   files?: number;
 }
 
+// ── Identidade multi-provider (#693, App público PS0) ───────────────────────
+
+export type Provider = "microsoft" | "google";
+export type AccountKind = "work" | "personal";
+// #698 (PS5): vocabulário canônico do PS0 — `uncontracted` = funcionário de
+// empresa NÃO contratada (vê o onboarding de lead-gen); `none` = conta pessoal;
+// `contracted` = org contratada (fluxo/tier atual).
+export type OrgStatus = "contracted" | "uncontracted" | "none";
+
+/** Capabilities de produto (a UI checa capability, não scope cru). Espelha o
+ *  `Capability` do Rust (camelCase). */
+export type Capability =
+  | "identity"
+  | "mailRead"
+  | "mailReadWrite"
+  | "mailSend"
+  | "calendar"
+  | "contacts"
+  | "tasks"
+  | "filePicker"
+  | "filesReadAll"
+  | "directoryRead"
+  | "orgAdmin";
+
 export interface AppUser {
   displayName: string;
   email: string;
@@ -29,6 +53,17 @@ export interface AppUser {
   photo?: string | null;
   /** Nome da organizacao, exibido no topo da sidebar. */
   organizacao?: string | null;
+  // #693: eixos de identidade multi-provider.
+  provider: Provider;
+  accountKind: AccountKind;
+  // #698 (PS5): roteia os 3 estados de onboarding (ver App.tsx).
+  orgStatus: OrgStatus;
+  /** Domínio da org (só work). */
+  domain?: string | null;
+  /** Tenant do Entra (só work). */
+  tenantId?: string | null;
+  /** Capabilities concedidas neste token. */
+  capabilities: Capability[];
 }
 
 /** Identidade em cache, usada na tela de carregamento (sem rede). */
@@ -544,4 +579,217 @@ export interface PeopleInteraction {
   subject: string;
   occurredAt: string;
   direction: "inbound" | "outbound";
+}
+
+// ── Explorer de Arquivos (#676, épico #675) — backend FS read-only ──────────
+
+/** Erro tipado do FS. O `code` distingue permissão-negada de não-existe; a
+ *  `message` é o detalhe cru. Espelha o `FsError` do Rust (serde tag/content). */
+export type FsErrorCode =
+  | "NotFound"
+  | "PermissionDenied"
+  | "AlreadyExists"
+  | "NotADirectory"
+  | "Io"
+  | "InvalidPath"
+  | "VerifyMismatch"
+  | "NaoRasterizavel"
+  | "ArquivoGrande"; // #873: arquivo > 25MB pro preview → fallback com metadados
+
+export interface FsError {
+  code: FsErrorCode;
+  message: string;
+}
+
+/** Uma entrada de diretório (arquivo ou pasta). Espelha o `FsEntry` do Rust. */
+export interface FsEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+  isSymlink: boolean;
+  size: number;
+  modifiedMs: number | null;
+  createdMs: number | null;
+  extension: string | null;
+  isHidden: boolean;
+  isReadonly: boolean;
+}
+
+/** Um drive montado (letra no Windows) com tipo e espaço. */
+export interface DriveInfo {
+  path: string;
+  name: string;
+  /** #869: `network` = Network location (W:); `cloud` = mount de nuvem (heurística
+   *  por `fsName`) → ícone dedicado no sidebar do Files. */
+  kind:
+    | "fixed"
+    | "removable"
+    | "network"
+    | "cdrom"
+    | "ramdisk"
+    | "cloud"
+    | "unknown";
+  /** #869: nome do filesystem (NTFS/FAT32/DriveFS…) — sinal cru pro front refinar. */
+  fsName: string;
+  totalSpace: number;
+  freeSpace: number;
+}
+
+/** #869: um mount de nuvem local — OneDrive (pasta) ou Google Drive (letra) — pra
+ *  seção "Cloud drives" do sidebar. `provider` escolhe o logo. */
+export interface CloudLocation {
+  path: string;
+  name: string;
+  provider: "onedrive" | "onedriveCommercial" | "googledrive";
+  /** `folder` = OneDrive (pasta no perfil); `drive` = letra montada (Google Drive). */
+  kind: "folder" | "drive";
+}
+
+/** Tamanho agregado de uma pasta (varredura recursiva). */
+export interface DirSize {
+  path: string;
+  totalBytes: number;
+  fileCount: number;
+  dirCount: number;
+}
+
+/** Desafio de posse de domínio (PS7 #700): o que o admin publica pra provar posse. */
+export interface DesafioDominio {
+  dominio: string;
+  token: string;
+  /** Valor exato a publicar (DNS TXT do domínio ou arquivo well-known). */
+  registro: string;
+}
+
+/** Métricas de perf do gerador de thumbnail (#740 F5): hit-rate + geração + caps. */
+export interface ThumbMetrics {
+  hitMem: number;
+  hitDisco: number;
+  geradas: number;
+  total: number;
+  /** Fração de hits (mem+disco) sobre o total, 0..1. */
+  hitRate: number;
+  /** Tempo médio de geração de um thumb (miss), em ms. */
+  genMedioMs: number;
+  poolThreads: number;
+  diskCapMb: number;
+  memCapMb: number;
+  memBytes: number;
+}
+
+/** Thumbnail gerado no backend (#736): webp como data URI, nunca o original. */
+export interface ThumbRef {
+  dataUri: string;
+  width: number;
+  height: number;
+  /**
+   * De onde veio: "exif"/"decode" = gerado agora; "cacheMem"/"cacheDisk" = hit do
+   * cache (#737, sem re-decode).
+   */
+  source: "exif" | "decode" | "cacheMem" | "cacheDisk";
+}
+
+/** Payload do evento `fs-dir-batch` (stream de pasta gigante). */
+export interface FsDirBatch {
+  path: string;
+  entries: FsEntry[];
+  done: boolean;
+}
+
+/** #871: lote de resultados de busca (evento `fs-search-result`). O front filtra
+ *  pelo `searchId`. `done` fecha o loading; `truncated` = atingiu o teto. */
+export interface FsSearchBatch {
+  searchId: number;
+  entries: FsEntry[];
+  done: boolean;
+  truncated: boolean;
+}
+
+// ── Explorer S4 (#680) — progresso + conflito + watcher ─────────────────────
+
+/** Progresso de uma op de copy/move TURBO (evento `fs-op-progress`). */
+export interface FsOpProgress {
+  opId: number;
+  processedBytes: number;
+  totalBytes: number;
+  percent: number;
+  etaMs: number | null;
+  /** #680 turbo: contagem de arquivos do mix + vazão viva + flag de verificação. */
+  filesTotal: number;
+  filesDone: number;
+  bytesPerSec: number;
+  verifying: boolean;
+  done: boolean;
+  canceled: boolean;
+  error: FsError | null;
+  /** #875: tipo da op (ícone por tipo). "copy" | "move". */
+  opKind: string;
+  /** #875: fase — "discovering" (varredura, indeterminada) | "processing" | "done". */
+  phase: string;
+  /** #875: estado agregado (1 enum): "inProgress" | "paused" (#898) | "success" | "error" | "canceled" | "partial". */
+  status: string;
+  /** #875: nome do arquivo sendo processado agora (null até ter). */
+  currentFile: string | null;
+  /** #875: epoch ms do início; fim (null até terminar). */
+  startedAtMs: number;
+  completedAtMs: number | null;
+}
+
+/** Conflito de nome no destino (pro diálogo Substituir/Pular/Manter ambos). */
+export interface FsConflict {
+  source: string;
+  name: string;
+  dest: string;
+  isDir: boolean;
+}
+
+// ── #899 U1: undo verificado de copy/move ───────────────────────────────────
+
+/** Estado de reversibilidade de um item no preview de undo. */
+export type UndoEstado = "seguro" | "pulado" | "naoReversivel";
+/** Código do motivo (o front mapeia pra copy i18n — nunca texto do backend). */
+export type UndoMotivo = "sumiu" | "modificado" | "origemReocupada" | "sobrescrita";
+
+/** Um item classificado no preview de undo (`path` = o que a op criou). */
+export interface UndoItemPlan {
+  path: string;
+  estado: UndoEstado;
+  motivo?: UndoMotivo | null;
+}
+
+/** Resumo do undo ANTES de executar — os 3 baldes do §5 (pro diálogo da U2). */
+export interface UndoPlan {
+  opId: number;
+  kind: string; // "copy" | "move"
+  itens: UndoItemPlan[];
+  seguros: number;
+  pulados: number;
+  naoReversiveis: number;
+}
+
+/** Relatório do undo DEPOIS de executar (best-effort por item). */
+export interface UndoReport {
+  opId: number;
+  kind: string;
+  executados: number;
+  pulados: number;
+  naoReversiveis: number;
+  erros: string[];
+}
+
+/** Mudança no disco detectada pelo watcher (evento `fs-change`). */
+export interface FsChange {
+  watcherId: number;
+  kind:
+    | "created"
+    | "deleted"
+    | "modified"
+    | "renamed"
+    | "renamedFrom"
+    | "renamedTo"
+    | "other";
+  path: string;
+  /** Destino no rename (kind `renamed`); null nos demais. */
+  to: string | null;
+  timestampMs: number;
 }

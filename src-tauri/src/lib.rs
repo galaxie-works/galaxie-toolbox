@@ -2,11 +2,22 @@ mod auth;
 mod bookmarks;
 mod browser;
 mod config;
+mod domain_claim;
 mod estado;
 mod favicon;
+mod fs_explorer;
+mod gdrive;
 mod graph;
 mod lock_screen;
 mod onedrive;
+// #809/#834: o backend Remote real (str0m→OpenSSL) só compila com a feature
+// `remote`. Sem ela (build default do Wagner/CI, sem OpenSSL), carrega o stub:
+// mesmos comandos `remote_*`, mas retornam "não compilado" → o front degrada.
+#[cfg(feature = "remote")]
+mod remote;
+#[cfg(not(feature = "remote"))]
+#[path = "remote_stub.rs"]
+mod remote;
 mod salvar_pdf;
 mod system;
 mod telemetry;
@@ -58,11 +69,32 @@ async fn login(
     state: State<'_, Store>,
     email: String,
     idioma: String,
+    provider: Option<String>,
 ) -> Result<Account, String> {
     let store = state.inner().clone();
     let account = tauri::async_runtime::spawn_blocking(move || {
-        let info = auth::detectar_tenant(&email)?;
-        let tokens = auth::interactive_login(&info.tenant_id, &email, &idioma)?;
+        // #696/#746: o provider escolhido pelo frontend ROTEIA o login. Contrato:
+        // "microsoft" | "microsoft-personal" | "google". Google não cai em MS;
+        // "microsoft-personal" FORÇA a conta pessoal (botão explícito não pode
+        // depender do usuário digitar um e-mail hotmail/live). Ausente/desconhecido
+        // = Microsoft org-por-e-mail (default seguro).
+        let escolha = provider.as_deref().unwrap_or("microsoft");
+        let (prov, info) = if escolha.eq_ignore_ascii_case("google") {
+            (auth::Provider::Google, auth::detectar_tenant(&email)?)
+        } else if escolha.eq_ignore_ascii_case("microsoft-personal") {
+            // Authority "consumers" = endpoint SÓ pessoal; client_id_para/scopes_para
+            // já roteiam pro registration pessoal + scopes base.
+            (
+                auth::Provider::Microsoft,
+                auth::TenantInfo {
+                    tenant_id: "consumers".to_string(),
+                    dominio: String::new(),
+                },
+            )
+        } else {
+            (auth::Provider::Microsoft, auth::detectar_tenant(&email)?)
+        };
+        let tokens = auth::provider_de(prov).authenticate(&info.tenant_id, &email, &idioma)?;
         let account = tokens.account.clone();
         *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = Some(tokens);
         Ok::<Account, String>(account)
@@ -74,11 +106,28 @@ async fn login(
     Ok(account)
 }
 
+/// Domain-claim (PS7 #700, slice 1): cria o desafio de posse de domínio (token +
+/// registro TXT esperado). Puro; a checagem real da prova é a slice 2.
+#[tauri::command]
+fn dominio_iniciar_verificacao(dominio: String) -> Result<domain_claim::DesafioDominio, String> {
+    domain_claim::iniciar_desafio(&dominio)
+}
+
+/// Domain-claim (PS7 #700, slice 2): verifica a posse lendo o TXT do domínio e
+/// conferindo `galaxie-verify=<token>`. DNS é bloqueante → spawn_blocking.
+#[tauri::command]
+async fn dominio_verificar(dominio: String, registro: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || domain_claim::verificar_dominio(&dominio, &registro))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn logout(state: State<'_, Store>) -> Result<(), String> {
     let store = state.inner().clone();
     *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = None;
-    auth::limpar_refresh();
+    // #693: revoga/limpa a sessão pela abstração de provider.
+    auth::provider_de(auth::Provider::Microsoft).revoke();
     estado::limpar_identidade();
     lock_screen::resetar()?;
     Ok(())
@@ -178,7 +227,11 @@ async fn required_scopes_status(state: State<'_, Store>) -> Result<RequiredScope
         .map_err(|_| "estado de token corrompido".to_string())?;
     let missing_scopes = guard
         .as_ref()
-        .map(|tokens| auth::required_resource_scopes_missing(&tokens.scopes))
+        .map(|tokens| {
+            // #694: o pedido depende da authority da conta (org=BASE+ORG, pessoal=BASE).
+            let wanted = config::scopes_para(&tokens.tenant);
+            auth::required_resource_scopes_missing(&tokens.scopes, &wanted)
+        })
         .unwrap_or_default();
     Ok(RequiredScopesStatus { missing_scopes })
 }
@@ -715,6 +768,27 @@ async fn onedrive_settings_write(
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         graph::onedrive_settings_write(&store, &content, e_tag.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Config privada do usuário Google no Drive `appDataFolder` (PS4 #697). Não usa
+/// o Store do MS: o token vem da sessão Google (PS3).
+#[tauri::command]
+async fn gdrive_settings_read() -> Result<gdrive::GDriveSettingsReadResult, String> {
+    tauri::async_runtime::spawn_blocking(gdrive::gdrive_settings_read)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn gdrive_settings_write(
+    content: String,
+    revision: Option<String>,
+) -> Result<gdrive::GDriveSettingsWriteResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        gdrive::gdrive_settings_write(&content, revision.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1799,6 +1873,10 @@ pub fn run() {
         )
         .manage(Arc::new(TokenStore::default()))
         .manage(telemetry::TelemetryState::default())
+        .manage(remote::RemoteRuntime::default())
+        // #680 Explorer S4: progresso de copy/move (cancel) + watchers ativos.
+        .manage(fs_explorer::ProgressManager::default())
+        .manage(fs_explorer::WatcherRegistry::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -1903,6 +1981,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            remote::remote_session_start,
+            remote::remote_session_signal,
+            remote::remote_session_input,
+            remote::remote_session_end,
             login,
             logout,
             current_account,
@@ -1977,6 +2059,10 @@ pub fn run() {
             cr_compartilhar_onedrive,
             onedrive_settings_read,
             onedrive_settings_write,
+            gdrive_settings_read,
+            gdrive_settings_write,
+            dominio_iniciar_verificacao,
+            dominio_verificar,
             cr_salvar_contatos,
             cr_subpastas,
             cr_mail_folders,
@@ -2037,6 +2123,52 @@ pub fn run() {
             fetch_favicon,
             autostart_status,
             autostart_set,
+            // Explorer de Arquivos (#676) — backend FS read-only.
+            fs_explorer::fs_read_dir,
+            fs_explorer::fs_read_dir_streamed,
+            // #871: busca recursiva streaming ("Search This PC"/pasta) do ribbon.
+            fs_explorer::fs_search,
+            fs_explorer::fs_stat,
+            // #873: bytes de arquivo local em base64 pro preview (sem asset-protocol).
+            fs_explorer::fs_read_file_bytes,
+            fs_explorer::fs_dir_size,
+            fs_explorer::fs_list_drives,
+            // #869: mounts de nuvem locais (OneDrive pasta + Google Drive letra).
+            fs_explorer::fs_cloud_locations,
+            // #871: mapear/desconectar network drive (menu "New" do ribbon).
+            fs_explorer::fs_map_network_drive,
+            fs_explorer::fs_disconnect_network_drive,
+            fs_explorer::fs_thumbnail,
+            fs_explorer::fs_thumb_cache_limits,
+            fs_explorer::fs_thumb_metrics,
+            fs_explorer::fs_thumb_metrics_reset,
+            fs_explorer::fs_known_dirs,
+            fs_explorer::fs_reveal,
+            fs_explorer::fs_open,
+            // #679 S3: mutações de FS (delete → Lixeira; permanente c/ token).
+            fs_explorer::fs_create_dir,
+            fs_explorer::fs_create_file,
+            fs_explorer::fs_rename,
+            fs_explorer::fs_copy,
+            fs_explorer::fs_move,
+            fs_explorer::fs_trash,
+            fs_explorer::fs_delete_permanent,
+            // #680 S4: progresso + conflito + watcher.
+            fs_explorer::fs_copy_with_progress,
+            fs_explorer::fs_move_with_progress,
+            // #850 fatia B: copy/move multi-origem em UMA fase (modelo TeraCopy).
+            fs_explorer::fs_copy_many_with_progress,
+            fs_explorer::fs_move_many_with_progress,
+            fs_explorer::fs_cancel,
+            // #898: pause/resume do motor de cópia (net-new além do cancel).
+            fs_explorer::fs_op_pause,
+            fs_explorer::fs_op_resume,
+            // #899 U1: undo verificado de copy/move (preview + executa).
+            fs_explorer::fs_undo_preview,
+            fs_explorer::fs_undo_op,
+            fs_explorer::fs_check_conflicts,
+            fs_explorer::fs_watch,
+            fs_explorer::fs_unwatch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

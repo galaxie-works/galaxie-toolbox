@@ -40,6 +40,7 @@ import { LIST_KEYS } from "./list-slice";
 import { MAILBOX_KEYS } from "./mailbox-slice";
 import { CLOUD_PREFS_KEYS } from "./cloud-prefs-slice";
 import { ORGANIZATIONS_KEYS } from "./organizations-slice";
+import { PINNED_KEYS } from "./pinned-slice";
 import {
   PERSONALIZATION_KEYS,
   TIPOS_FUNDO_ANIMADO,
@@ -179,6 +180,7 @@ const TODAS_CHAVES = [
   ...Object.values(AGENDA_KEYS),
   ...Object.values(ORGANIZATIONS_KEYS),
   ...Object.values(CLOUD_PREFS_KEYS),
+  ...Object.values(PINNED_KEYS),
   // Chave legada da assinatura única (pré-#135): limpa no reset junto do resto.
   "bridge.assinatura",
 ];
@@ -217,6 +219,7 @@ const CHAVES_CONFIG_NUVEM_LOCAL: readonly string[] = [
   ...Object.values(AGENDA_KEYS),
   ...Object.values(CLOUD_PREFS_KEYS),
   ORGANIZATIONS_KEYS.organizations,
+  PINNED_KEYS.appsFixados,
 ];
 
 /** Remove do localStorage as chaves tenant-scoped (troca de conta). */
@@ -456,6 +459,12 @@ const localCacheCodec: LocalCacheCodec = {
       /* ausente/indisponível: mantém o default */
     }
 
+    // #721: apps fixados no rail (só ids string, ordem preservada).
+    const appsFixados = lerChave<string[]>(storage, PINNED_KEYS.appsFixados);
+    if (Array.isArray(appsFixados)) {
+      state.appsFixados = appsFixados.filter((id) => typeof id === "string");
+    }
+
     return state;
   },
 
@@ -538,6 +547,7 @@ const localCacheCodec: LocalCacheCodec = {
         /* localStorage indisponível: mantém somente o estado em memória */
       }
     }
+    gravarChave(storage, PINNED_KEYS.appsFixados, state.appsFixados);
   },
 
   clear(storage) {

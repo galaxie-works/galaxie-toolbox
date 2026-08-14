@@ -30,10 +30,47 @@ const pt = {
     ajudaEmail: "Usamos o domínio do seu e-mail para identificar a sua organização.",
     entrar: "Entrar com Microsoft",
     entrando: "Abrindo o login da Microsoft...",
+    // #782: status por-provedor (Google não pode dizer "Microsoft").
+    entrandoGoogle: "Abrindo o login do Google...",
+    // #695/#781: passo 1 — botões de provedor.
+    continuarMicrosoft: "Continuar com a Microsoft",
+    continuarGoogle: "Continuar com o Google",
+    // #746: legado (conta pessoal flat) — superado pelo passo 2 do #781.
+    continuarMicrosoftPessoal: "Conta pessoal Microsoft",
+    // #781: passo 2 (Microsoft) — tipo de conta + voltar.
+    contaPessoalTitulo: "Conta pessoal",
+    contaPessoalDesc: "Para Outlook, Hotmail, Live ou MSN.",
+    contaTrabalhoTitulo: "Conta de trabalho",
+    contaTrabalhoDesc:
+      "Para e-mail profissional. Requer que sua empresa seja cliente da gestão Microsoft 365 Copilot da GALAXIE.",
+    voltar: "Voltar",
     // {senha} recebe destaque em negrito
     aviso: "O login acontece na página oficial da Microsoft. A GALAXIE {senha} — recebe só a autorização de acesso.",
     avisoSenha: "nunca vê sua senha",
     idioma: "Idioma",
+  },
+
+  // #698 (PS5, app público): onboarding do funcionário de empresa NÃO contratada.
+  // {app} recebe o nome do produto. As 4 primeiras chaves vêm da issue; as de apoio
+  // (descricao/continuar/leadRegistrado/comConta) são copy nova — revisar com o PO.
+  onboarding: {
+    empresaSemApp: "Sua empresa ainda não usa o {app}",
+    empresaSemAppDesc:
+      "Você pode entrar com o seu acesso pessoal. Quando a sua empresa contratar o {app}, os recursos de organização aparecem aqui automaticamente.",
+    comConta: "Detectamos a conta {email}.",
+    convidarAdmin: "Convidar meu administrador",
+    solicitarSetup: "Solicitar configuração",
+    avisarQuandoEntrar: "Me avise quando minha empresa entrar",
+    continuarMesmoAssim: "Entrar assim mesmo",
+    leadRegistrado:
+      "Pedido registrado. Avisaremos você e o seu administrador quando a sua empresa entrar.",
+  },
+
+  // #699 (PS6, app público): empty-state das features de organização nos tiers
+  // pessoal/uncontracted. {app} recebe o nome do produto.
+  tier: {
+    recursoOrg: "Recurso de organização",
+    upgradeOrg: "Disponível quando sua empresa ativar o {app}",
   },
 
   carregando: {
@@ -89,6 +126,8 @@ const pt = {
     navegador: "Navigator",
     performance: "Performance",
     caminhosLongos: "Caminhos longos",
+    arquivos: "Arquivos",
+    remote: "Remoto",
     configuracoes: "Configurações",
     conta: "Conta",
     // Calendário vive no rodapé do sidebar, seção separada da caixa de entrada (#50).
@@ -276,6 +315,9 @@ const pt = {
     // Achatado (uma string de apelidos por app) — o strings.ts é 2 níveis.
     grupoIrPara: "Ir para",
     irParaApp: "Ir para {app}",
+    // #719 (SH1): rótulo da ação de abrir um app como aba interna do Navigator
+    // (Bridge/Files/Remote e web apps) — foca a aba se já aberta, senão cria.
+    novaAbaInterna: "Abrir {app}",
     // #657: deep-link nas sub-views do Bridge (People/Agenda). agenda/calendário
     // saíram do aliasControlRoom (agora donos do sub-view Agenda). O label é o
     // breadcrumb completo (Bridge › view) — deixa claro que a view mora no Bridge.
@@ -297,6 +339,7 @@ const pt = {
     aliasConfiguracoes: "configurações ajustes preferências settings",
     novaAba: "Nova aba",
     novaAbaPrivada: "Nova aba privada",
+    novaGuiaFiles: "Nova guia do Files",
     sessaoAnterior: "Restaurar {n} abas da sessão anterior?",
     sessaoRestaurar: "Restaurar",
     sessaoDispensar: "Dispensar",
@@ -329,9 +372,13 @@ const pt = {
     historicoEmBreve: "O histórico chega em breve.",
     grupoMaisAcessados: "Mais acessados",
     historicoTitulo: "Histórico",
+    historicoFechar: "Fechar histórico",
+    barraFavoritosToggle: "Barra de favoritos",
     historicoBuscar: "Buscar no histórico…",
     historicoVazio: "Nenhuma página no histórico ainda.",
     historicoSelecionar: "Selecionar {nome}",
+    // #824: linha ao pé de uma categoria quando a busca capa os resultados.
+    maisResultados: "+{n} mais — refine a busca",
     historicoRestaurar: "Restaurar {n} abas",
     historicoRestaurarVazio: "Marque itens para restaurar como abas",
     limparHistorico: "Limpar histórico",
@@ -476,6 +523,71 @@ const pt = {
   sidebar: {
     collapse: "Recolher barra lateral",
     expand: "Expandir barra lateral",
+    // #718 (SH0): rótulos dos itens fixos do rail GALAXIE.
+    navigator: "Navigator",
+    bridge: "Bridge",
+    files: "Arquivos",
+    remote: "Remoto",
+    // #721 (SH3): grupo dos apps fixados no rail.
+    pinados: "Fixados",
+  },
+
+  // #720 (SH2): command com catálogo de apps categorizado (~1795).
+  command: {
+    categorias: "Categorias",
+    recomendados: "Recomendados",
+    recentes: "Recentes",
+    // Rótulos das categorias do catálogo.
+    catFromGalaxie: "Do GALAXIE",
+    catAiTools: "Ferramentas de IA",
+    catBanking: "Bancos e finanças",
+    catCloudStorage: "Armazenamento na nuvem",
+    catDeveloperTools: "Ferramentas de desenvolvimento",
+    catEntertainment: "Entretenimento",
+    catHealth: "Saúde e bem-estar",
+    catLearning: "Aprendizado",
+    catNews: "Notícias e clima",
+    catProductivity: "Produtividade",
+    catShopping: "Compras",
+    catSocial: "Redes sociais",
+    catTravel: "Viagens",
+    catWork: "Trabalho e negócios",
+    catMisc: "Diversos",
+    // #721 (SH3): pin/unpin de apps no rail.
+    pinar: "Fixar no menu",
+    desafixar: "Desafixar",
+  },
+
+  // #733: catálogo central de atalhos do Explorer (título + categorias + rótulos).
+  atalhos: {
+    titulo: "Atalhos de teclado",
+    catNavegacao: "Navegação",
+    catSelecao: "Seleção",
+    catOperacoes: "Operações",
+    catVisualizacao: "Visualização",
+    abrir: "Abrir",
+    voltar: "Voltar",
+    avancar: "Avançar",
+    pastaAcima: "Pasta acima",
+    mover: "Mover o cursor",
+    extremos: "Primeiro / último",
+    selecionarTudo: "Selecionar tudo",
+    alternarItem: "Alternar item",
+    intervalo: "Selecionar intervalo",
+    limparSelecao: "Limpar seleção",
+    renomear: "Renomear",
+    lixeira: "Mover para a Lixeira",
+    excluirPerm: "Excluir permanentemente",
+    copiar: "Copiar",
+    recortar: "Recortar",
+    colar: "Colar",
+    novaPasta: "Nova pasta",
+    atualizar: "Atualizar",
+    verDetalhes: "Ver em detalhes",
+    verLista: "Ver em lista",
+    verGrade: "Ver em grade",
+    ocultos: "Mostrar ocultos",
+    filtro: "Filtrar",
   },
 
   controlRoom: {
@@ -1338,6 +1450,12 @@ const pt = {
     descricao: "Suas notificações e alertas, todos num sinal só.",
   },
 
+  // #718 (SH0): placeholder do item fixo Remote (GALAXIE Remote, épico #682).
+  emBreveRemote: {
+    titulo: "GALAXIE Remote está a caminho",
+    descricao: "Acesso e suporte remoto, direto do seu espaço GALAXIE.",
+  },
+
   caminhosLongos: {
     titulo: "Caminhos longos",
     descricao:
@@ -1360,6 +1478,160 @@ const pt = {
     longPathsDesc:
       "Permite que o Windows use caminhos de arquivo com mais de 260 caracteres.",
     erroAtivar: "Não foi possível ativar os caminhos longos.",
+  },
+
+  // #677: Explorer de arquivos local.
+  arquivos: {
+    titulo: "Arquivos",
+    endereco: "Caminho",
+    voltar: "Voltar",
+    avancar: "Avançar",
+    acima: "Acima",
+    drives: "Este computador",
+    acessoRapido: "Acesso rápido",
+    // #869 — itens do menu de contexto (fixar/desafixar pasta no Acesso rápido)
+    fixarAcessoRapido: "Fixar no Acesso rápido",
+    desafixarAcessoRapido: "Desafixar do Acesso rápido",
+    carregando: "Carregando…",
+    documentos: "Documentos",
+    downloads: "Downloads",
+    desktop: "Área de trabalho",
+    pastas: "Pastas",
+    vazio: "Pasta vazia",
+    enderecoInvalido: "Caminho inválido",
+    editarCaminho: "Editar caminho",
+    conteudoTitulo: "Selecione uma pasta",
+    conteudoEmBreve:
+      "A visualização de arquivos e pastas chega em uma próxima etapa.",
+    // #678 — painel de conteúdo (colunas, views, seleção, tipos)
+    colNome: "Nome",
+    colModificado: "Modificado em",
+    colTipo: "Tipo",
+    colTamanho: "Tamanho",
+    viewDetalhes: "Detalhes",
+    viewLista: "Lista",
+    viewGrade: "Grade",
+    // #871 — ribbon de comandos (Win11): Novo ▾ / Classificar ▾ / Exibir ▾ / ⋯
+    novoMenu: "Novo",
+    novoAtalho: "Atalho",
+    novaUnidadeRede: "Unidade de rede",
+    // #871 — diálogo "Mapear unidade de rede"
+    redeTitulo: "Mapear unidade de rede",
+    redeDesc: "Conecte uma pasta de rede como uma unidade com letra.",
+    redeLetra: "Letra da unidade",
+    redeCaminho: "Pasta",
+    redePlaceholder: "\\\\servidor\\pasta",
+    redePersistir: "Reconectar ao entrar",
+    redeConectar: "Conectar",
+    redeOk: "Unidade de rede conectada.",
+    redeErro: "Não foi possível conectar a unidade de rede.",
+    ordenarMenu: "Classificar",
+    ordNome: "Nome",
+    ordModificado: "Data de modificação",
+    ordTipo: "Tipo",
+    ordTamanho: "Tamanho",
+    ordAsc: "Crescente",
+    ordDesc: "Decrescente",
+    viewMenu: "Exibir",
+    mais: "Mais",
+    compartilhar: "Compartilhar",
+    atualizar: "Atualizar",
+    itensSelec: "{n} selecionado(s)",
+    total: "{n} item(ns)",
+    tipoPasta: "Pasta",
+    tipoArquivo: "Arquivo",
+    erroLer: "Não foi possível ler esta pasta",
+    // #681 — filtro in-folder, ocultos, long paths, inspector
+    filtrar: "Filtrar nesta pasta",
+    limparFiltro: "Limpar filtro",
+    mostrarOcultos: "Mostrar ocultos",
+    detalhes: "Detalhes",
+    tamanhoTotal: "Tamanho total",
+    // #749: agregado da seleção múltipla no inspector.
+    conteudo: "Conteúdo",
+    arquivosPastas: "{a} arquivos, {p} pastas",
+    criadoEm: "Criado em",
+    atributos: "Atributos",
+    longPathAviso:
+      "Este caminho passa de 260 caracteres. Habilitar suporte a caminhos longos?",
+    longPathHabilitar: "Habilitar",
+    longPathErro: "Não foi possível habilitar o suporte a caminhos longos.",
+    inspetorVazio: "Selecione um item para ver os detalhes.",
+    previewSelecione: "Selecione um arquivo para pré-visualizar.",
+    atribOculto: "Oculto",
+    atribSomenteLeitura: "Somente leitura",
+    atribSymlink: "Atalho simbólico",
+    // #714 — menu de contexto (operações de arquivo) + rename in-place
+    abrir: "Abrir",
+    abrirCom: "Abrir com",
+    abrirComPadrao: "Aplicativo padrão",
+    recortar: "Recortar",
+    copiar: "Copiar",
+    colar: "Colar",
+    renomear: "Renomear",
+    excluir: "Excluir (Lixeira)",
+    excluirPerm: "Excluir permanentemente",
+    novaPasta: "Nova pasta",
+    novoArquivo: "Novo arquivo",
+    copiarCaminho: "Copiar caminho",
+    revelar: "Revelar no Explorer",
+    propriedades: "Propriedades",
+    novaPastaNome: "Nova pasta",
+    novoArquivoNome: "Novo arquivo.txt",
+    confirmarExclusaoPermTitulo: "Excluir permanentemente",
+    confirmarExclusaoPerm:
+      "Excluir {n} item(ns) permanentemente? Não dá pra desfazer.",
+    cancelar: "Cancelar",
+    renomearConflito: "Já existe um item com esse nome.",
+    renomearInvalido: "Nome inválido.",
+    erroOperacao: "Não foi possível concluir a operação.",
+    // #849 — feedback imediato da exclusão (guard por caminho).
+    movendoLixeira: "Movendo para a Lixeira…",
+    movidoLixeira: "Movido para a Lixeira",
+    excluindoPerm: "Excluindo permanentemente…",
+    excluidoPerm: "Excluído",
+    // #724 — progresso de copiar/mover + diálogo de conflito + watcher
+    copiando: "Copiando…",
+    movendo: "Movendo…",
+    conflitoTitulo: "Já existe um item com esse nome",
+    conflitoDescricao:
+      "{n} item(ns) com o mesmo nome já existem em “{pasta}”. O que deseja fazer?",
+    substituir: "Substituir",
+    pular: "Pular",
+    manterAmbos: "Manter ambos",
+    etaSeg: "s",
+    etaMin: "min",
+    etaHora: "h",
+    etaRestante: "{eta} restantes",
+    velocidade: "{v}/s",
+    opConcluida: "Operação concluída.",
+    opCancelada: "Operação cancelada.",
+    opFalhou: "A operação falhou.",
+    // #875 — Status Center: fila revisável + agregado + cards expansíveis
+    statusCenterOps: "{n} operações",
+    limparConcluidas: "Limpar concluídas",
+    descobrindoItens: "Descobrindo itens…",
+    dispensar: "Dispensar",
+    detalhesOp: "Detalhes",
+    statusConcluido: "Concluído",
+    statusFalhou: "Falhou",
+    statusCancelado: "Cancelado",
+    statusParcial: "Parcial",
+    // #855 — grade de drives (Este computador)
+    driveLivreDeTotal: "{livre} livre de {total}",
+    driveSecaoDispositivos: "Dispositivos e drives",
+    driveSecaoRede: "Locais de rede",
+    // #869 — seção de nuvem no sidebar do Explorer (OneDrive/Google Drive)
+    driveSecaoCloud: "Drives na nuvem",
+    driveTooltip: "{usado} usados de {total} ({livre} livre)",
+    // #871 (fatia 2b) — busca recursiva na pasta atual
+    buscarPasta: "Buscar em {pasta}",
+    buscarThisPc: "Buscar em Este computador",
+    buscaCabecalho: "{n} resultado(s) para “{query}”",
+    buscando: "Buscando…",
+    buscaVazia: "Nenhum resultado.",
+    buscaTruncada: "Mostrando os primeiros 1000 resultados.",
+    limparBusca: "Limpar busca",
   },
 
   tema: {
@@ -1763,10 +2035,44 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     ajudaEmail: "We use your email domain to identify your organization.",
     entrar: "Sign in with Microsoft",
     entrando: "Opening the Microsoft sign-in...",
+    // #782: per-provider status (Google must not say "Microsoft").
+    entrandoGoogle: "Opening the Google sign-in...",
+    // #695/#781: step 1 — provider buttons.
+    continuarMicrosoft: "Continue with Microsoft",
+    continuarGoogle: "Continue with Google",
+    // #746: legacy (flat personal) — superseded by #781 step 2.
+    continuarMicrosoftPessoal: "Personal Microsoft account",
+    // #781: step 2 (Microsoft) — account type + back.
+    contaPessoalTitulo: "Personal account",
+    contaPessoalDesc: "For Outlook, Hotmail, Live or MSN.",
+    contaTrabalhoTitulo: "Work account",
+    contaTrabalhoDesc:
+      "For your work email. Requires your company to be a GALAXIE Microsoft 365 Copilot management client.",
+    voltar: "Back",
     aviso:
       "Sign-in happens on Microsoft's official page. GALAXIE {senha} — it only gets an access authorization.",
     avisoSenha: "never sees your password",
     idioma: "Language",
+  },
+
+  // #698 (PS5, public app): onboarding for an employee of a non-customer company.
+  onboarding: {
+    empresaSemApp: "Your company doesn't use {app} yet",
+    empresaSemAppDesc:
+      "You can sign in with your personal access. When your company gets {app}, the organization features show up here automatically.",
+    comConta: "We detected the account {email}.",
+    convidarAdmin: "Invite my admin",
+    solicitarSetup: "Request setup",
+    avisarQuandoEntrar: "Notify me when my company joins",
+    continuarMesmoAssim: "Continue anyway",
+    leadRegistrado:
+      "Request received. We'll let you and your admin know when your company joins.",
+  },
+
+  // #699 (PS6, public app): org-feature empty-state on personal/uncontracted tiers.
+  tier: {
+    recursoOrg: "Organization feature",
+    upgradeOrg: "Available when your company enables {app}",
   },
 
   carregando: {
@@ -1820,6 +2126,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     navegador: "Navigator",
     performance: "Performance",
     caminhosLongos: "Long paths",
+    arquivos: "Files",
+    remote: "Remote",
     configuracoes: "Settings",
     conta: "Account",
     // Calendar lives at the bottom of the sidebar, a section apart from the inbox (#50).
@@ -2004,6 +2312,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #656: "Go to {app}" — per-app aliases (accent-insensitive / prefix match).
     grupoIrPara: "Go to",
     irParaApp: "Go to {app}",
+    // #719 (SH1): label for opening an app as an internal Navigator tab
+    // (Bridge/Files/Remote and web apps) — focuses the tab if already open.
+    novaAbaInterna: "Open {app}",
     irParaContatos: "Go to Bridge › Contacts",
     irParaAgenda: "Go to Bridge › Calendar",
     aliasPeople: "contacts contact people contatos contato pessoas",
@@ -2020,6 +2331,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     aliasConfiguracoes: "settings preferences",
     novaAba: "New tab",
     novaAbaPrivada: "New private tab",
+    novaGuiaFiles: "New Files tab",
     sessaoAnterior: "Restore {n} tabs from the previous session?",
     sessaoRestaurar: "Restore",
     sessaoDispensar: "Dismiss",
@@ -2051,9 +2363,13 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     historicoEmBreve: "History is coming soon.",
     grupoMaisAcessados: "Most visited",
     historicoTitulo: "History",
+    historicoFechar: "Close history",
+    barraFavoritosToggle: "Bookmarks bar",
     historicoBuscar: "Search history…",
     historicoVazio: "No pages in your history yet.",
     historicoSelecionar: "Select {nome}",
+    // #824: line at the foot of a category when search caps the results.
+    maisResultados: "+{n} more — refine your search",
     historicoRestaurar: "Restore {n} tabs",
     historicoRestaurarVazio: "Check items to restore as tabs",
     limparHistorico: "Clear history",
@@ -2198,6 +2514,70 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   sidebar: {
     collapse: "Collapse sidebar",
     expand: "Expand sidebar",
+    // #718 (SH0): fixed GALAXIE rail item labels.
+    navigator: "Navigator",
+    bridge: "Bridge",
+    files: "Files",
+    remote: "Remote",
+    // #721 (SH3): pinned-apps group on the rail.
+    pinados: "Pinned",
+  },
+
+  // #720 (SH2): command with a categorized app catalog (~1795).
+  command: {
+    categorias: "Categories",
+    recomendados: "Recommended",
+    recentes: "Recent",
+    catFromGalaxie: "From GALAXIE",
+    catAiTools: "AI Tools",
+    catBanking: "Banking & Finance",
+    catCloudStorage: "Cloud Storage",
+    catDeveloperTools: "Developer Tools",
+    catEntertainment: "Entertainment",
+    catHealth: "Health & Fitness",
+    catLearning: "Learning",
+    catNews: "News & Weather",
+    catProductivity: "Productivity",
+    catShopping: "Shopping",
+    catSocial: "Social",
+    catTravel: "Travel",
+    catWork: "Work & Business",
+    catMisc: "Miscellaneous",
+    // #721 (SH3): pin/unpin apps on the rail.
+    pinar: "Pin to sidebar",
+    desafixar: "Unpin",
+  },
+
+  // #733: Explorer central keyboard-shortcut catalog.
+  atalhos: {
+    titulo: "Keyboard shortcuts",
+    catNavegacao: "Navigation",
+    catSelecao: "Selection",
+    catOperacoes: "Operations",
+    catVisualizacao: "View",
+    abrir: "Open",
+    voltar: "Back",
+    avancar: "Forward",
+    pastaAcima: "Up a folder",
+    mover: "Move cursor",
+    extremos: "First / last",
+    selecionarTudo: "Select all",
+    alternarItem: "Toggle item",
+    intervalo: "Select range",
+    limparSelecao: "Clear selection",
+    renomear: "Rename",
+    lixeira: "Move to Recycle Bin",
+    excluirPerm: "Delete permanently",
+    copiar: "Copy",
+    recortar: "Cut",
+    colar: "Paste",
+    novaPasta: "New folder",
+    atualizar: "Refresh",
+    verDetalhes: "Details view",
+    verLista: "List view",
+    verGrade: "Grid view",
+    ocultos: "Show hidden",
+    filtro: "Filter",
   },
 
   controlRoom: {
@@ -3048,6 +3428,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     descricao: "Your notifications and alerts, all in one signal.",
   },
 
+  // #718 (SH0): Remote fixed-item placeholder (GALAXIE Remote, epic #682).
+  emBreveRemote: {
+    titulo: "GALAXIE Remote is on its way",
+    descricao: "Remote access and support, right from your GALAXIE space.",
+  },
+
   caminhosLongos: {
     titulo: "Long paths",
     descricao:
@@ -3068,6 +3454,159 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     longPathsTitulo: "Long paths",
     longPathsDesc: "Let Windows use file paths longer than 260 characters.",
     erroAtivar: "Couldn't enable long paths.",
+  },
+
+  // #677: local file explorer.
+  arquivos: {
+    titulo: "Files",
+    endereco: "Path",
+    voltar: "Back",
+    avancar: "Forward",
+    acima: "Up",
+    drives: "This PC",
+    acessoRapido: "Quick access",
+    // #869 — context menu items (pin/unpin a folder to Quick access)
+    fixarAcessoRapido: "Pin to Quick access",
+    desafixarAcessoRapido: "Unpin from Quick access",
+    carregando: "Loading…",
+    documentos: "Documents",
+    downloads: "Downloads",
+    desktop: "Desktop",
+    pastas: "Folders",
+    vazio: "Empty folder",
+    enderecoInvalido: "Invalid path",
+    editarCaminho: "Edit path",
+    conteudoTitulo: "Select a folder",
+    conteudoEmBreve: "The file and folder view arrives in a later step.",
+    // #678 — content pane (columns, views, selection, types)
+    colNome: "Name",
+    colModificado: "Date modified",
+    colTipo: "Type",
+    colTamanho: "Size",
+    viewDetalhes: "Details",
+    viewLista: "List",
+    viewGrade: "Grid",
+    // #871 — Win11 command ribbon: New ▾ / Sort ▾ / View ▾ / ⋯
+    novoMenu: "New",
+    novoAtalho: "Shortcut",
+    novaUnidadeRede: "Network drive",
+    // #871 — "Map network drive" dialog
+    redeTitulo: "Map network drive",
+    redeDesc: "Connect a shared network folder as a lettered drive.",
+    redeLetra: "Drive letter",
+    redeCaminho: "Folder",
+    redePlaceholder: "\\\\server\\share",
+    redePersistir: "Reconnect at sign-in",
+    redeConectar: "Connect",
+    redeOk: "Network drive connected.",
+    redeErro: "Couldn't connect the network drive.",
+    ordenarMenu: "Sort",
+    ordNome: "Name",
+    ordModificado: "Date modified",
+    ordTipo: "Type",
+    ordTamanho: "Size",
+    ordAsc: "Ascending",
+    ordDesc: "Descending",
+    viewMenu: "View",
+    mais: "More",
+    compartilhar: "Share",
+    atualizar: "Refresh",
+    itensSelec: "{n} selected",
+    total: "{n} items",
+    tipoPasta: "Folder",
+    tipoArquivo: "File",
+    erroLer: "Couldn't read this folder",
+    // #681 — in-folder filter, hidden toggle, long paths, inspector
+    filtrar: "Filter in this folder",
+    limparFiltro: "Clear filter",
+    mostrarOcultos: "Show hidden",
+    detalhes: "Details",
+    tamanhoTotal: "Total size",
+    // #749: multi-selection aggregate in the inspector.
+    conteudo: "Contents",
+    arquivosPastas: "{a} files, {p} folders",
+    criadoEm: "Created",
+    atributos: "Attributes",
+    longPathAviso:
+      "This path exceeds 260 characters. Enable long path support?",
+    longPathHabilitar: "Enable",
+    longPathErro: "Couldn't enable long path support.",
+    inspetorVazio: "Select an item to see its details.",
+    previewSelecione: "Select a file to preview.",
+    atribOculto: "Hidden",
+    atribSomenteLeitura: "Read-only",
+    atribSymlink: "Symbolic link",
+    // #714 — context menu (file operations) + in-place rename
+    abrir: "Open",
+    abrirCom: "Open with",
+    abrirComPadrao: "Default app",
+    recortar: "Cut",
+    copiar: "Copy",
+    colar: "Paste",
+    renomear: "Rename",
+    excluir: "Delete (Recycle Bin)",
+    excluirPerm: "Delete permanently",
+    novaPasta: "New folder",
+    novoArquivo: "New file",
+    copiarCaminho: "Copy path",
+    revelar: "Reveal in Explorer",
+    propriedades: "Properties",
+    novaPastaNome: "New folder",
+    novoArquivoNome: "New file.txt",
+    confirmarExclusaoPermTitulo: "Delete permanently",
+    confirmarExclusaoPerm:
+      "Permanently delete {n} item(s)? This can't be undone.",
+    cancelar: "Cancel",
+    renomearConflito: "An item with that name already exists.",
+    renomearInvalido: "Invalid name.",
+    erroOperacao: "Couldn't complete the operation.",
+    // #849 — immediate delete feedback (per-path guard).
+    movendoLixeira: "Moving to Recycle Bin…",
+    movidoLixeira: "Moved to Recycle Bin",
+    excluindoPerm: "Deleting permanently…",
+    excluidoPerm: "Deleted",
+    // #724 — copy/move progress + conflict dialog + watcher
+    copiando: "Copying…",
+    movendo: "Moving…",
+    conflitoTitulo: "An item with this name already exists",
+    conflitoDescricao:
+      "{n} item(s) with the same name already exist in “{pasta}”. What do you want to do?",
+    substituir: "Replace",
+    pular: "Skip",
+    manterAmbos: "Keep both",
+    etaSeg: "s",
+    etaMin: "min",
+    etaHora: "h",
+    etaRestante: "{eta} left",
+    velocidade: "{v}/s",
+    opConcluida: "Operation complete.",
+    opCancelada: "Operation canceled.",
+    opFalhou: "The operation failed.",
+    // #875 — Status Center: reviewable queue + aggregate + expandable cards
+    statusCenterOps: "{n} operations",
+    limparConcluidas: "Clear completed",
+    descobrindoItens: "Discovering items…",
+    dispensar: "Dismiss",
+    detalhesOp: "Details",
+    statusConcluido: "Completed",
+    statusFalhou: "Failed",
+    statusCancelado: "Canceled",
+    statusParcial: "Partial",
+    // #855 — drives grid (This PC)
+    driveLivreDeTotal: "{livre} free of {total}",
+    driveSecaoDispositivos: "Devices and drives",
+    driveSecaoRede: "Network locations",
+    // #869 — cloud section in the Explorer sidebar (OneDrive/Google Drive)
+    driveSecaoCloud: "Cloud drives",
+    driveTooltip: "{usado} used of {total} ({livre} free)",
+    // #871 (slice 2b) — recursive search in the current folder
+    buscarPasta: "Search {pasta}",
+    buscarThisPc: "Search This PC",
+    buscaCabecalho: "{n} result(s) for “{query}”",
+    buscando: "Searching…",
+    buscaVazia: "No results.",
+    buscaTruncada: "Showing the first 1000 results.",
+    limparBusca: "Clear search",
   },
 
   tema: {

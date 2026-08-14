@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="46px" height="46px" viewBox="0 0 46 46" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <!-- Generator: Sketch 50.2 (55047) - http://www.bohemiancoding.com/sketch -->
+    <desc>Created with Sketch.</desc>
+    <defs></defs>
+    <g id="Page-1" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <g id="all-app-icons-for-left-bar" transform="translate(-80.000000, -1234.000000)">
+            <g id="trello-icon" transform="translate(80.000000, 1234.000000)">
+                <rect id="Rectangle-7" fill="#0085D2" x="0" y="0" width="46" height="46" rx="2"></rect>
+                <g id="trello" transform="translate(10.000000, 11.000000)" fill="#FFFFFF">
+                    <rect id="Right-List" x="15" y="0" width="11" height="15.9090909" rx="2.16393443"></rect>
+                    <rect id="Left-List" x="0" y="0" width="11" height="25.9057971" rx="2.16393443"></rect>
+                </g>
+            </g>
+        </g>
+    </g>
+</svg>
