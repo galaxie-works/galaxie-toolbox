@@ -983,6 +983,23 @@ struct Contexto {
 /// Copia UM arquivo com buffer (grande streaming, pequeno menor), somando bytes no
 /// atômico global. Se `verify`, hasheia a origem durante a leitura e re-hasheia o
 /// destino ao final, comparando (detecta cópia corrompida).
+/// #850 throughput: abre a origem com `FILE_FLAG_SEQUENTIAL_SCAN` (Windows) — dica
+/// ao cache manager pra readahead agressivo + evict-behind numa leitura sequencial
+/// (o padrão da cópia). Fora do Windows, open normal.
+#[cfg(windows)]
+fn abrir_leitura_seq(p: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    const FILE_FLAG_SEQUENTIAL_SCAN: u32 = 0x0800_0000;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_SEQUENTIAL_SCAN)
+        .open(p)
+}
+#[cfg(not(windows))]
+fn abrir_leitura_seq(p: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::open(p)
+}
+
 fn copiar_arquivo(job: &CopyJob, ctx: &Contexto) -> Result<(), FsError> {
     use std::io::{Read, Write};
     if ctx.cancelar.load(Ordering::Relaxed) {
@@ -998,11 +1015,20 @@ fn copiar_arquivo(job: &CopyJob, ctx: &Contexto) -> Result<(), FsError> {
     }
     let src = com_long_path(&job.src);
     let dst = com_long_path(&job.dst);
-    let mut ent = std::fs::File::open(&src)?;
+    let mut ent = abrir_leitura_seq(&src)?;
     let mut sai = std::fs::File::create(&dst)?;
+    // #850 throughput: pré-aloca o destino do tamanho planejado em arquivo GRANDE —
+    // reserva extents contíguos no NTFS (menos fragmentação + menos churn de metadata
+    // durante o write). Corrigido no fim se o arquivo mudou de tamanho entre planejar
+    // e copiar. Cancel remove o destino parcial (executar_progresso), sem sobra.
+    let prealoc = job.size >= LIMITE_PEQUENO;
+    if prealoc {
+        let _ = sai.set_len(job.size);
+    }
     let buf_sz = if job.size >= LIMITE_PEQUENO { BUF_GRANDE } else { BUF_PEQUENO };
     let mut buf = vec![0u8; buf_sz];
     let mut hasher = ctx.verify.map(Hasher::novo);
+    let mut escritos = 0u64;
     loop {
         if ctx.cancelar.load(Ordering::Relaxed) {
             return Ok(());
@@ -1012,12 +1038,17 @@ fn copiar_arquivo(job: &CopyJob, ctx: &Contexto) -> Result<(), FsError> {
             break;
         }
         sai.write_all(&buf[..n])?;
+        escritos += n as u64;
         if let Some(h) = hasher.as_mut() {
             h.update(&buf[..n]);
         }
         ctx.processados.fetch_add(n as u64, Ordering::Relaxed);
     }
     sai.flush()?;
+    // #850: arquivo encolheu entre planejar e copiar → corta o excesso pré-alocado.
+    if prealoc && escritos != job.size {
+        let _ = sai.set_len(escritos);
+    }
     drop(sai);
     // Preserva atributos de permissão (readonly etc.).
     if let Ok(m) = std::fs::metadata(&src) {
