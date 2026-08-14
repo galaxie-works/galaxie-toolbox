@@ -3096,6 +3096,31 @@ export async function abrirCaminhoFs(path: string): Promise<void> {
 }
 
 /**
+ * #873: lê um arquivo LOCAL em memória (base64) para a pré-visualização do
+ * Explorer — mesma forma do `crLerAnexo` (bytes em memória, sem handler de OS no
+ * caminho de preview). `maxBytes` limita a leitura no backend (o front já corta
+ * em 25 MB antes de chamar). Devolve `{ bytesB64, contentType, nome }` para
+ * reusar os MESMOS decodificadores dos viewers (pdf/docx/xlsx/csv/imagem/mídia).
+ *
+ * Backend: comando NOVO `fs_read_file_bytes` (raia do Confucius) — ainda não
+ * existe no `src-tauri`. Fora do Tauri (mock/dev) devolve um exemplo curto.
+ */
+export async function lerArquivoBytes(
+  path: string,
+  maxBytes?: number,
+): Promise<AnexoConteudo> {
+  if (!inTauri()) {
+    await sleep(200);
+    return {
+      bytesB64: "RXhlbXBsbyBkZSBwcmV2aWV3Lg==",
+      contentType: "text/plain",
+      nome: path.split(/[\\/]/).pop() ?? path,
+    };
+  }
+  return invoke<AnexoConteudo>("fs_read_file_bytes", { path, maxBytes });
+}
+
+/**
  * Stream de pasta gigante: registra o listener de `fs-dir-batch`, dispara o
  * comando e resolve com o total quando o backend sinaliza `done`. `onLote`
  * recebe cada lote (o último com `done: true`). Filtra pelo `path` pra suportar
