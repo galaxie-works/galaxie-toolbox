@@ -2126,11 +2126,18 @@ pub fn run() {
             // Explorer de Arquivos (#676) — backend FS read-only.
             fs_explorer::fs_read_dir,
             fs_explorer::fs_read_dir_streamed,
+            // #871: busca recursiva streaming ("Search This PC"/pasta) do ribbon.
+            fs_explorer::fs_search,
             fs_explorer::fs_stat,
+            // #873: bytes de arquivo local em base64 pro preview (sem asset-protocol).
+            fs_explorer::fs_read_file_bytes,
             fs_explorer::fs_dir_size,
             fs_explorer::fs_list_drives,
             // #869: mounts de nuvem locais (OneDrive pasta + Google Drive letra).
             fs_explorer::fs_cloud_locations,
+            // #871: mapear/desconectar network drive (menu "New" do ribbon).
+            fs_explorer::fs_map_network_drive,
+            fs_explorer::fs_disconnect_network_drive,
             fs_explorer::fs_thumbnail,
             fs_explorer::fs_thumb_cache_limits,
             fs_explorer::fs_thumb_metrics,

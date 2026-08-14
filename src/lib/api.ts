@@ -9,6 +9,7 @@ import type {
   FsChange,
   FsConflict,
   FsDirBatch,
+  FsSearchBatch,
   FsEntry,
   FsOpProgress,
   UndoPlan,
@@ -3013,6 +3014,23 @@ export async function listarCloudLocations(): Promise<CloudLocation[]> {
   return invoke<CloudLocation[]>("fs_cloud_locations");
 }
 
+/** #871: mapeia um network drive ("New → Network drive"). `letter`="Z:",
+ *  `remote`="\\\\server\\share", `persistent`=reconecta no login. */
+export async function mapearNetworkDrive(
+  letter: string,
+  remote: string,
+  persistent: boolean,
+): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_map_network_drive", { letter, remote, persistent });
+}
+
+/** #871: desconecta um network drive mapeado (`force` derruba com arquivos abertos). */
+export async function desconectarNetworkDrive(letter: string, force: boolean): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_disconnect_network_drive", { letter, force });
+}
+
 /** Pastas de acesso rápido do SO (home/desktop/documentos/downloads). */
 export async function dirsConhecidos(): Promise<FsEntry[]> {
   if (!inTauri()) {
@@ -3179,6 +3197,64 @@ export async function listarDirStreamed(
   } finally {
     desligar();
   }
+}
+
+/** Handle de uma busca em andamento (#871). `cancelar` para a varredura. */
+export interface BuscaHandle {
+  searchId: number;
+  cancelar: () => Promise<void>;
+}
+
+/**
+ * #871: busca recursiva streaming. `root` vazio = "This PC" (todos os drives);
+ * `query` = substring no nome. Registra o listener de `fs-search-result` ANTES
+ * de invocar (bufferiza lotes que cheguem antes do `searchId` ser conhecido —
+ * evita corrida), filtra pelo `searchId`, e desliga no lote `done`. Devolve um
+ * handle pra cancelar (reusa `fs_cancel`).
+ */
+export async function buscarArquivos(
+  root: string,
+  query: string,
+  onLote: (lote: FsSearchBatch) => void,
+  opts?: { maxResults?: number; batch?: number },
+): Promise<BuscaHandle> {
+  if (!inTauri()) {
+    onLote({ searchId: 0, entries: [], done: true, truncated: false });
+    return { searchId: 0, cancelar: async () => {} };
+  }
+  const { listen } = await import("@tauri-apps/api/event");
+  const buffer: FsSearchBatch[] = [];
+  let searchId = -1;
+  let desligar: (() => void) | null = null;
+  const entregar = (p: FsSearchBatch) => {
+    onLote(p);
+    if (p.done) desligar?.();
+  };
+  desligar = await listen<FsSearchBatch>("fs-search-result", (ev) => {
+    const p = ev.payload;
+    if (searchId === -1) {
+      buffer.push(p); // ainda não sei o id → segura
+      return;
+    }
+    if (p.searchId === searchId) entregar(p);
+  });
+  searchId = await invoke<number>("fs_search", {
+    root,
+    query,
+    maxResults: opts?.maxResults ?? 1000,
+    batch: opts?.batch ?? 200,
+  });
+  // Flush do que chegou na janela pré-id (filtrado pelo searchId real).
+  for (const p of buffer.splice(0)) {
+    if (p.searchId === searchId) entregar(p);
+  }
+  return {
+    searchId,
+    cancelar: async () => {
+      await cancelarOp(searchId);
+      desligar?.();
+    },
+  };
 }
 
 // --- Mutações do Explorer (#679 S3) — delete → Lixeira é o padrão ------------

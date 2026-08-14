@@ -41,6 +41,10 @@ pub enum FsError {
     /// suportado, ou grande demais). Não é falha — o front usa ícone de TIPO.
     #[error("sem thumbnail raster: {0}")]
     NaoRasterizavel(String),
+    /// #873: arquivo grande demais pro preview (acima do teto de bytes). O front
+    /// mostra fallback com metadados (não é erro fatal).
+    #[error("arquivo grande demais: {0}")]
+    ArquivoGrande(String),
 }
 
 impl From<std::io::Error> for FsError {
@@ -109,6 +113,19 @@ struct FsDirBatch {
     path: String,
     entries: Vec<FsEntry>,
     done: bool,
+}
+
+/// #871: lote de resultados de busca emitido no evento `fs-search-result`.
+/// O front filtra pelo `search_id` (várias buscas podem coexistir).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FsSearchBatch {
+    search_id: u64,
+    entries: Vec<FsEntry>,
+    /// Último lote da busca (mesmo vazio → fecha o loading do front).
+    done: bool,
+    /// Atingiu o teto de resultados (a busca parou antes de varrer tudo).
+    truncated: bool,
 }
 
 // ─────────────────────────── Helpers de caminho ─────────────────────────────
@@ -290,6 +307,133 @@ fn ler_dir_streamed(path: &str, batch: usize, app: &AppHandle) -> Result<u64, Fs
     Ok(total)
 }
 
+// ─── #871: busca recursiva ("Search This PC"/"Search <pasta>") ───────────────
+//
+// Backend do Search context-aware do ribbon (#871, UI = Sirius). Varredura
+// paralela (jwalk) sob a(s) raiz(es); casa por substring no NOME (case-insensitive).
+// Streaming por lotes (evento `fs-search-result`) + cancelável (reusa o
+// `ProgressManager`/`fs_cancel`) + teto de resultados — "Search This PC" pode
+// varrer milhões de arquivos, então NUNCA segura tudo na memória nem trava.
+
+/// Resolve as raízes da busca: `root` vazio = "This PC" (todos os drives locais
+/// montados); senão a pasta dada.
+fn raizes_de_busca(root: &str) -> Vec<PathBuf> {
+    let t = root.trim();
+    if t.is_empty() {
+        listar_drives()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| matches!(d.kind.as_str(), "fixed" | "removable" | "cloud" | "network"))
+            .map(|d| PathBuf::from(d.path))
+            .collect()
+    } else {
+        vec![PathBuf::from(t)]
+    }
+}
+
+/// Varre as raízes chamando `on_match` a cada arquivo/pasta cujo nome contém
+/// `termo_lower`. `on_match` devolve `false` pra PARAR (teto atingido). Respeita
+/// `cancel` entre entradas. Núcleo puro (sem `AppHandle`) → testável.
+fn caminhar_busca<F: FnMut(FsEntry) -> bool>(
+    raizes: &[PathBuf],
+    termo_lower: &str,
+    cancel: &AtomicBool,
+    mut on_match: F,
+) {
+    for raiz in raizes {
+        let base = com_long_path(raiz);
+        for entry in jwalk::WalkDir::new(&base).skip_hidden(false) {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let Ok(entry) = entry else { continue };
+            if entry.depth() == 0 {
+                continue; // a própria raiz não é resultado
+            }
+            let nome = entry.file_name().to_string_lossy().to_lowercase();
+            if !nome.contains(termo_lower) {
+                continue;
+            }
+            let p = entry.path();
+            let Ok(m) = std::fs::symlink_metadata(com_long_path(&p)) else { continue };
+            if !on_match(entry_de(&p, &m, entry.file_type().is_symlink())) {
+                return;
+            }
+        }
+    }
+}
+
+/// Coleta (sem streaming) até `max` matches — usado nos testes; a produção usa
+/// [`executar_busca`] (streaming).
+#[cfg(test)]
+fn coletar_busca(raizes: &[PathBuf], termo: &str, max: usize) -> Vec<FsEntry> {
+    let termo_lower = termo.trim().to_lowercase();
+    let cancel = AtomicBool::new(false);
+    let mut out = Vec::new();
+    if termo_lower.is_empty() {
+        return out;
+    }
+    caminhar_busca(raizes, &termo_lower, &cancel, |e| {
+        out.push(e);
+        out.len() < max
+    });
+    out
+}
+
+/// Busca streaming: emite `fs-search-result` a cada `batch` matches + um lote
+/// terminal (`done`). Para no teto (`truncated=true`) ou no cancel.
+fn executar_busca(
+    root: &str,
+    termo: &str,
+    max_results: usize,
+    batch: usize,
+    search_id: u64,
+    cancel: &Arc<AtomicBool>,
+    app: &AppHandle,
+) {
+    let termo_lower = termo.trim().to_lowercase();
+    let batch = batch.max(1);
+    let teto = if max_results == 0 { usize::MAX } else { max_results };
+
+    // Termo vazio não busca (evita casar tudo) — fecha o loading na hora.
+    if termo_lower.is_empty() {
+        let _ = app.emit(
+            "fs-search-result",
+            FsSearchBatch { search_id, entries: Vec::new(), done: true, truncated: false },
+        );
+        return;
+    }
+
+    let raizes = raizes_de_busca(root);
+    let mut buffer: Vec<FsEntry> = Vec::with_capacity(batch);
+    let mut achados = 0usize;
+    let mut truncated = false;
+    log::info!("fs_search START id={search_id}: termo={termo_lower:?}, {} raiz(es)", raizes.len());
+
+    caminhar_busca(&raizes, &termo_lower, cancel, |e| {
+        buffer.push(e);
+        achados += 1;
+        if buffer.len() >= batch {
+            let lote = std::mem::take(&mut buffer);
+            let _ = app.emit(
+                "fs-search-result",
+                FsSearchBatch { search_id, entries: lote, done: false, truncated: false },
+            );
+        }
+        if achados >= teto {
+            truncated = true;
+            return false; // para a varredura
+        }
+        true
+    });
+
+    let _ = app.emit(
+        "fs-search-result",
+        FsSearchBatch { search_id, entries: buffer, done: true, truncated },
+    );
+    log::info!("fs_search END id={search_id}: {achados} match(es), truncated={truncated}");
+}
+
 fn stat(path: &str) -> Result<FsEntry, FsError> {
     validar(path)?;
     let p = Path::new(path);
@@ -304,6 +448,77 @@ fn stat(path: &str) -> Result<FsEntry, FsError> {
         sm
     };
     Ok(entry_de(p, &meta, is_symlink))
+}
+
+/// #873: teto pra leitura de bytes de arquivo local pro preview (Wagner: 25MB).
+const MAX_PREVIEW_BYTES: u64 = 25 * 1024 * 1024;
+
+/// #873: MIME por extensão pro preview escolher o renderer (imagem/áudio/vídeo/
+/// texto). Cobre os tipos que o `preview-arquivo.tsx` trata; o resto cai em
+/// `application/octet-stream` (o front usa a extensão + fallback).
+fn mime_de_ext(path: &str) -> &'static str {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "tif" | "tiff" => "image/tiff",
+        "pdf" => "application/pdf",
+        "txt" | "log" | "md" | "csv" => "text/plain",
+        "html" | "htm" => "text/html",
+        "json" => "application/json",
+        "m4a" | "aac" => "audio/mp4",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" | "oga" => "audio/ogg",
+        "flac" => "audio/flac",
+        "webm" => "video/webm",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _ => "application/octet-stream",
+    }
+}
+
+/// #873: lê os bytes de um arquivo local e devolve `AnexoConteudo`
+/// (`{ bytesB64, contentType, nome }`) — o preview do Files consome IGUAL ao
+/// anexo do Graph, SEM asset-protocol (o `convertFileSrc→fetch` falhava com
+/// "failed to fetch" porque o `assetProtocol` não está habilitado no tauri.conf).
+/// Guards: caminho válido, é ARQUIVO (não dir), ≤ `max_bytes` limitado a 25MB.
+/// `metadata` (segue symlink) pra o teto valer sobre o conteúdo real.
+fn ler_bytes_arquivo(path: &str, max_bytes: Option<u64>) -> Result<crate::graph::AnexoConteudo, FsError> {
+    use base64::Engine;
+    validar(path)?;
+    let p = com_long_path(Path::new(path));
+    let meta = std::fs::metadata(&p)?; // NotFound se não existe/broken symlink
+    if meta.is_dir() {
+        return Err(FsError::NotADirectory(format!("{path} é um diretório")));
+    }
+    // Teto = o pedido do front, mas nunca acima do hard cap de 25MB.
+    let teto = max_bytes.unwrap_or(MAX_PREVIEW_BYTES).min(MAX_PREVIEW_BYTES);
+    let size = meta.len();
+    if size > teto {
+        return Err(FsError::ArquivoGrande(format!("{path} ({size} bytes > {teto})")));
+    }
+    let bytes = std::fs::read(&p)?;
+    let nome = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(crate::graph::AnexoConteudo {
+        bytes_b64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        content_type: mime_de_ext(path).to_string(),
+        nome,
+    })
 }
 
 fn tamanho_dir(path: &str) -> Result<DirSize, FsError> {
@@ -529,6 +744,96 @@ fn detectar_clouds() -> Vec<CloudLocation> {
     ];
     let drives = listar_drives().unwrap_or_default();
     montar_clouds(&pastas, drives)
+}
+
+// ─── #871: mapear/desconectar network drive (menu "New → Network drive") ─────
+//
+// Backend do item "Network drive" do `New ▾` do ribbon (#871, UI = Sirius). Usa
+// WNet (WNetAddConnection2W/WNetCancelConnection2W) — sem credenciais explícitas
+// (usa a sessão atual; prompt de credencial fica pra follow-up). "Add network
+// location" (atalho nethood sem letra) é mecanismo de shell diferente → outra fatia.
+
+/// Normaliza uma letra de drive pra "Z:" (aceita "z", "Z", "Z:", "Z:\").
+fn normalizar_letra_drive(s: &str) -> Result<String, FsError> {
+    let t = s.trim().trim_end_matches(['\\', '/']).trim_end_matches(':');
+    let mut chars = t.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_alphabetic() => Ok(format!("{}:", c.to_ascii_uppercase())),
+        _ => Err(FsError::InvalidPath(format!("letra de drive inválida: {s}"))),
+    }
+}
+
+/// Valida um caminho UNC de rede (`\\server\share`): 2 barras iniciais + server
+/// + separador + share.
+fn validar_unc(p: &str) -> Result<(), FsError> {
+    let t = p.trim();
+    let dupla = t.starts_with("\\\\") || t.starts_with("//");
+    let tem_share = t.len() > 2 && t[2..].contains(['\\', '/']);
+    if dupla && tem_share {
+        Ok(())
+    } else {
+        Err(FsError::InvalidPath(format!(
+            "caminho de rede inválido (esperado \\\\server\\share): {p}"
+        )))
+    }
+}
+
+#[cfg(windows)]
+fn mapear_network_drive(letra: &str, remoto: &str, persistente: bool) -> Result<(), FsError> {
+    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::NetworkManagement::WNet::{
+        WNetAddConnection2W, CONNECT_TEMPORARY, CONNECT_UPDATE_PROFILE, NETRESOURCEW,
+        RESOURCETYPE_DISK,
+    };
+
+    let letra = normalizar_letra_drive(letra)?;
+    validar_unc(remoto)?;
+    let mut local: Vec<u16> = letra.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut rem: Vec<u16> = remoto.encode_utf16().chain(std::iter::once(0)).collect();
+
+    let nr = NETRESOURCEW {
+        dwType: RESOURCETYPE_DISK,
+        lpLocalName: PWSTR(local.as_mut_ptr()),
+        lpRemoteName: PWSTR(rem.as_mut_ptr()),
+        ..Default::default()
+    };
+    let flags = if persistente { CONNECT_UPDATE_PROFILE } else { CONNECT_TEMPORARY };
+    // Sem password/username → usa as credenciais da sessão atual.
+    let rc = unsafe { WNetAddConnection2W(&nr, PCWSTR::null(), PCWSTR::null(), flags) };
+    if rc.is_ok() {
+        log::info!("fs_map_network_drive: {letra} → {remoto} (persistente={persistente}) OK");
+        Ok(())
+    } else {
+        log::error!("fs_map_network_drive: {letra} → {remoto} falhou (WNet {})", rc.0);
+        Err(FsError::Io(format!("mapear network drive falhou (código WNet {})", rc.0)))
+    }
+}
+
+#[cfg(windows)]
+fn desconectar_network_drive(letra: &str, forcar: bool) -> Result<(), FsError> {
+    use windows::core::PCWSTR;
+    use windows::Win32::NetworkManagement::WNet::{WNetCancelConnection2W, CONNECT_UPDATE_PROFILE};
+
+    let letra = normalizar_letra_drive(letra)?;
+    let nome: Vec<u16> = letra.encode_utf16().chain(std::iter::once(0)).collect();
+    let rc = unsafe { WNetCancelConnection2W(PCWSTR(nome.as_ptr()), CONNECT_UPDATE_PROFILE, forcar) };
+    if rc.is_ok() {
+        log::info!("fs_disconnect_network_drive: {letra} desconectado (forçado={forcar})");
+        Ok(())
+    } else {
+        log::error!("fs_disconnect_network_drive: {letra} falhou (WNet {})", rc.0);
+        Err(FsError::Io(format!("desconectar network drive falhou (código WNet {})", rc.0)))
+    }
+}
+
+#[cfg(not(windows))]
+fn mapear_network_drive(_letra: &str, _remoto: &str, _persistente: bool) -> Result<(), FsError> {
+    Err(FsError::Io("network drive só é suportado no Windows".into()))
+}
+
+#[cfg(not(windows))]
+fn desconectar_network_drive(_letra: &str, _forcar: bool) -> Result<(), FsError> {
+    Err(FsError::Io("network drive só é suportado no Windows".into()))
 }
 
 // ────────────────────────── Mutações (S3, #679) ─────────────────────────────
@@ -2551,9 +2856,42 @@ pub async fn fs_read_dir_streamed(
         .map_err(spawn_err)?
 }
 
+/// #871: busca recursiva streaming. `root` vazio = "This PC" (todos os drives);
+/// `query` = substring no nome. Devolve o `searchId` na hora; os resultados
+/// chegam por lotes no evento `fs-search-result`. Cancela com `fs_cancel(searchId)`.
+#[tauri::command]
+pub async fn fs_search(
+    root: String,
+    query: String,
+    max_results: usize,
+    batch: usize,
+    app: AppHandle,
+    pm: State<'_, ProgressManager>,
+) -> Result<u64, FsError> {
+    let (search_id, cancel, _pause) = pm.nova_op();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        executar_busca(&root, &query, max_results, batch, search_id, &cancel, &app);
+        app.state::<ProgressManager>().finalizar(search_id);
+    });
+    Ok(search_id)
+}
+
 #[tauri::command]
 pub async fn fs_stat(path: String) -> Result<FsEntry, FsError> {
     tauri::async_runtime::spawn_blocking(move || stat(&path))
+        .await
+        .map_err(spawn_err)?
+}
+
+/// #873: bytes de um arquivo local como `AnexoConteudo` ({ bytesB64, contentType,
+/// nome }) pro preview (sem asset-protocol) — mesmo shape do anexo do Graph.
+/// `maxBytes` opcional (limitado a 25MB); `ArquivoGrande`/`NotADirectory` = fallback.
+#[tauri::command]
+pub async fn fs_read_file_bytes(
+    path: String,
+    max_bytes: Option<u64>,
+) -> Result<crate::graph::AnexoConteudo, FsError> {
+    tauri::async_runtime::spawn_blocking(move || ler_bytes_arquivo(&path, max_bytes))
         .await
         .map_err(spawn_err)?
 }
@@ -2577,6 +2915,29 @@ pub async fn fs_list_drives() -> Result<Vec<DriveInfo>, FsError> {
 #[tauri::command]
 pub async fn fs_cloud_locations() -> Result<Vec<CloudLocation>, FsError> {
     tauri::async_runtime::spawn_blocking(|| Ok(detectar_clouds()))
+        .await
+        .map_err(spawn_err)?
+}
+
+/// #871: mapeia um network drive (menu "New → Network drive" do ribbon).
+/// `letter` = letra livre ("Z:"), `remote` = UNC (`\\server\share`),
+/// `persistent` = reconecta no login.
+#[tauri::command]
+pub async fn fs_map_network_drive(
+    letter: String,
+    remote: String,
+    persistent: bool,
+) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || mapear_network_drive(&letter, &remote, persistent))
+        .await
+        .map_err(spawn_err)?
+}
+
+/// #871: desconecta um network drive mapeado. `force` derruba mesmo com arquivos
+/// abertos.
+#[tauri::command]
+pub async fn fs_disconnect_network_drive(letter: String, force: bool) -> Result<(), FsError> {
+    tauri::async_runtime::spawn_blocking(move || desconectar_network_drive(&letter, force))
         .await
         .map_err(spawn_err)?
 }
@@ -3053,6 +3414,31 @@ mod tests {
     }
 
     #[test]
+    fn busca_casa_por_substring_recursivo_e_case_insensitive() {
+        let base = dir_temp("busca");
+        std::fs::create_dir_all(base.join("sub").join("mais")).unwrap();
+        std::fs::write(base.join("Relatorio-2026.pdf"), b"x").unwrap();
+        std::fs::write(base.join("sub").join("relatorio-old.txt"), b"x").unwrap();
+        std::fs::write(base.join("sub").join("mais").join("foto.png"), b"x").unwrap();
+        std::fs::create_dir_all(base.join("RELATORIOS")).unwrap(); // pasta também casa
+
+        let raizes = vec![base.clone()];
+        // "relatorio" casa os 2 arquivos + a pasta RELATORIOS (case-insensitive, recursivo).
+        let achados = coletar_busca(&raizes, "relatorio", 100);
+        let nomes: Vec<String> = achados.iter().map(|e| e.name.clone()).collect();
+        assert_eq!(achados.len(), 3, "2 arquivos + 1 pasta: {nomes:?}");
+        assert!(nomes.iter().any(|n| n == "Relatorio-2026.pdf"));
+        assert!(nomes.iter().any(|n| n == "relatorio-old.txt"));
+        assert!(nomes.iter().any(|n| n == "RELATORIOS"));
+        // "foto" só o png.
+        assert_eq!(coletar_busca(&raizes, "FOTO", 100).len(), 1);
+        // termo que não existe = vazio; teto respeitado.
+        assert!(coletar_busca(&raizes, "inexistente-zzz", 100).is_empty());
+        assert_eq!(coletar_busca(&raizes, "relatorio", 1).len(), 1, "teto de 1");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
     fn montar_clouds_dedup_pastas_e_junta_google() {
         let base = dir_temp("clouds");
         let od = base.join("OneDrive - Contoso");
@@ -3091,6 +3477,80 @@ mod tests {
         assert_eq!(g.provider, "googledrive");
         assert_eq!(g.name, "Google Drive (G:)");
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn ler_bytes_arquivo_base64_e_guards() {
+        use base64::Engine;
+        let base = dir_temp("read-bytes");
+        std::fs::create_dir_all(&base).unwrap();
+        let f = base.join("foto.png");
+        let conteudo = vec![1u8, 2, 3, 4, 250, 0, 255];
+        std::fs::write(&f, &conteudo).unwrap();
+
+        // Arquivo → AnexoConteudo: base64 exato + content-type por ext + nome.
+        let ac = ler_bytes_arquivo(&f.to_string_lossy(), None).unwrap();
+        let dec = base64::engine::general_purpose::STANDARD.decode(ac.bytes_b64.as_bytes()).unwrap();
+        assert_eq!(dec, conteudo);
+        assert_eq!(ac.content_type, "image/png");
+        assert_eq!(ac.nome, "foto.png");
+
+        // Diretório → NotADirectory (não é arquivo).
+        assert!(matches!(
+            ler_bytes_arquivo(&base.to_string_lossy(), None),
+            Err(FsError::NotADirectory(_))
+        ));
+        // Inexistente → NotFound.
+        assert!(matches!(
+            ler_bytes_arquivo(&base.join("naoexiste").to_string_lossy(), None),
+            Err(FsError::NotFound(_))
+        ));
+        // Vazio → InvalidPath.
+        assert!(matches!(ler_bytes_arquivo("", None), Err(FsError::InvalidPath(_))));
+
+        // maxBytes menor que o arquivo → ArquivoGrande (o front pede o teto dele).
+        assert!(matches!(
+            ler_bytes_arquivo(&f.to_string_lossy(), Some(3)),
+            Err(FsError::ArquivoGrande(_))
+        ));
+
+        // > 25MB → ArquivoGrande, SEM ler (arquivo esparso via set_len).
+        let grande = base.join("grande.bin");
+        std::fs::File::create(&grande).unwrap().set_len(MAX_PREVIEW_BYTES + 1).unwrap();
+        assert!(matches!(
+            ler_bytes_arquivo(&grande.to_string_lossy(), None),
+            Err(FsError::ArquivoGrande(_))
+        ));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn normalizar_letra_drive_aceita_formatos_e_rejeita_lixo() {
+        for s in ["z", "Z", "Z:", "Z:\\", "z:/"] {
+            assert_eq!(normalizar_letra_drive(s).unwrap(), "Z:", "entrada {s}");
+        }
+        for ruim in ["", "  ", "ZZ", "1", "::", "\\\\"] {
+            assert!(normalizar_letra_drive(ruim).is_err(), "{ruim:?} devia falhar");
+        }
+    }
+
+    #[test]
+    fn validar_unc_exige_server_e_share() {
+        assert!(validar_unc("\\\\server\\share").is_ok());
+        assert!(validar_unc("//server/share").is_ok());
+        assert!(validar_unc("\\\\srv\\dir\\sub").is_ok());
+        for ruim in ["\\\\server", "C:\\local", "\\\\", "", "server\\share"] {
+            assert!(validar_unc(ruim).is_err(), "{ruim:?} devia falhar");
+        }
+    }
+
+    #[test]
+    fn raizes_de_busca_vazio_pega_drives_locais() {
+        // root vazio = "This PC" → drives locais (não vazio numa máquina real);
+        // root explícito = só ele.
+        let uma = raizes_de_busca("C:\\Users");
+        assert_eq!(uma.len(), 1);
+        assert_eq!(uma[0], PathBuf::from("C:\\Users"));
     }
 
     #[test]

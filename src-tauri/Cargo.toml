@@ -111,6 +111,9 @@ windows = { version = "0.61", features = [
     "Win32_System_Ioctl",
     "Win32_System_IO",
     "Win32_Security",
+    # #871: mapear/desconectar network drive (menu "New → Network drive" do ribbon)
+    # via WNetAddConnection2W/WNetCancelConnection2W.
+    "Win32_NetworkManagement_WNet",
 ] }
 # #272 S2 (accelerators do Navigator): AcceleratorKeyPressed do WebView2. Versao
 # ja resolvida transitivamente pelo wry 2.11 (0.38.2) — dep direta so pra usar as

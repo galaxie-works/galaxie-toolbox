@@ -592,7 +592,9 @@ export type FsErrorCode =
   | "NotADirectory"
   | "Io"
   | "InvalidPath"
-  | "VerifyMismatch";
+  | "VerifyMismatch"
+  | "NaoRasterizavel"
+  | "ArquivoGrande"; // #873: arquivo > 25MB pro preview → fallback com metadados
 
 export interface FsError {
   code: FsErrorCode;
@@ -692,6 +694,15 @@ export interface FsDirBatch {
   path: string;
   entries: FsEntry[];
   done: boolean;
+}
+
+/** #871: lote de resultados de busca (evento `fs-search-result`). O front filtra
+ *  pelo `searchId`. `done` fecha o loading; `truncated` = atingiu o teto. */
+export interface FsSearchBatch {
+  searchId: number;
+  entries: FsEntry[];
+  done: boolean;
+  truncated: boolean;
 }
 
 // ── Explorer S4 (#680) — progresso + conflito + watcher ─────────────────────
