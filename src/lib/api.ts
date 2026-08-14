@@ -3097,13 +3097,14 @@ export async function abrirCaminhoFs(path: string): Promise<void> {
 
 /**
  * #873: lê um arquivo LOCAL em memória (base64) para a pré-visualização do
- * Explorer — mesma forma do `crLerAnexo` (bytes em memória, sem handler de OS no
- * caminho de preview). `maxBytes` limita a leitura no backend (o front já corta
- * em 25 MB antes de chamar). Devolve `{ bytesB64, contentType, nome }` para
+ * Explorer — mesma forma do `crLerAnexo` (`{ bytesB64, contentType, nome }`) para
  * reusar os MESMOS decodificadores dos viewers (pdf/docx/xlsx/csv/imagem/mídia).
  *
- * Backend: comando NOVO `fs_read_file_bytes` (raia do Confucius) — ainda não
- * existe no `src-tauri`. Fora do Tauri (mock/dev) devolve um exemplo curto.
+ * #873: SEM comando de backend novo — lê o arquivo local pelo asset protocol do
+ * Tauri (`convertFileSrc` → `fetch`), como o Polaris confirmou (carrega
+ * imagem/pdf). O `grande` (>25 MB) já é barrado no `PreviewArquivo` ANTES de
+ * chamar; `maxBytes` é só rede de segurança. Fora do Tauri (mock/dev) devolve um
+ * exemplo curto.
  */
 export async function lerArquivoBytes(
   path: string,
@@ -3117,7 +3118,29 @@ export async function lerArquivoBytes(
       nome: path.split(/[\\/]/).pop() ?? path,
     };
   }
-  return invoke<AnexoConteudo>("fs_read_file_bytes", { path, maxBytes });
+  const core = await import("@tauri-apps/api/core");
+  const resp = await fetch(core.convertFileSrc(path));
+  if (!resp.ok) throw new Error(`preview: fetch ${resp.status}`);
+  const buf = new Uint8Array(await resp.arrayBuffer());
+  if (maxBytes != null && buf.byteLength > maxBytes) {
+    throw new Error("preview: arquivo grande demais");
+  }
+  return {
+    bytesB64: bytesParaBase64(buf),
+    contentType: resp.headers.get("content-type") ?? "",
+    nome: path.split(/[\\/]/).pop() ?? path,
+  };
+}
+
+/** Uint8Array → base64 (em blocos, pra não estourar o call-stack em arquivos
+ *  grandes com `String.fromCharCode(...arr)`). */
+function bytesParaBase64(bytes: Uint8Array): string {
+  let bin = "";
+  const bloco = 0x8000;
+  for (let i = 0; i < bytes.length; i += bloco) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + bloco));
+  }
+  return btoa(bin);
 }
 
 /**
