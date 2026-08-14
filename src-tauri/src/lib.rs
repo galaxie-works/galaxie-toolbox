@@ -2129,6 +2129,8 @@ pub fn run() {
             fs_explorer::fs_stat,
             fs_explorer::fs_dir_size,
             fs_explorer::fs_list_drives,
+            // #869: mounts de nuvem locais (OneDrive pasta + Google Drive letra).
+            fs_explorer::fs_cloud_locations,
             fs_explorer::fs_thumbnail,
             fs_explorer::fs_thumb_cache_limits,
             fs_explorer::fs_thumb_metrics,

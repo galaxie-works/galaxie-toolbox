@@ -3,6 +3,7 @@ import type {
   AnexoConteudo,
   AppUser,
   DesafioDominio,
+  CloudLocation,
   DirSize,
   DriveInfo,
   FsChange,
@@ -3003,6 +3004,13 @@ export async function listarDrives(): Promise<DriveInfo[]> {
     return MOCK_DRIVES.map((d) => ({ ...d }));
   }
   return invoke<DriveInfo[]>("fs_list_drives");
+}
+
+/** #869: mounts de nuvem locais (OneDrive pasta + Google Drive letra) pra seção
+ *  "Cloud drives" do sidebar. Vazio se nenhum cliente de nuvem está instalado. */
+export async function listarCloudLocations(): Promise<CloudLocation[]> {
+  if (!inTauri()) return [];
+  return invoke<CloudLocation[]>("fs_cloud_locations");
 }
 
 /** Pastas de acesso rápido do SO (home/desktop/documentos/downloads). */

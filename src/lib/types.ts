@@ -633,6 +633,16 @@ export interface DriveInfo {
   freeSpace: number;
 }
 
+/** #869: um mount de nuvem local — OneDrive (pasta) ou Google Drive (letra) — pra
+ *  seção "Cloud drives" do sidebar. `provider` escolhe o logo. */
+export interface CloudLocation {
+  path: string;
+  name: string;
+  provider: "onedrive" | "onedriveCommercial" | "googledrive";
+  /** `folder` = OneDrive (pasta no perfil); `drive` = letra montada (Google Drive). */
+  kind: "folder" | "drive";
+}
+
 /** Tamanho agregado de uma pasta (varredura recursiva). */
 export interface DirSize {
   path: string;
