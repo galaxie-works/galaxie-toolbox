@@ -1,4 +1,4 @@
-import type { Ref } from "react";
+import { useState, type Ref } from "react";
 import {
   ArrowDownUp,
   ChevronDown,
@@ -39,6 +39,7 @@ import { preencher, useIdioma } from "@/lib/idioma";
 import type { FsEntry } from "@/lib/types";
 
 import { TooltipAcao } from "./tooltip-acao";
+import { NetworkDriveDialog } from "./network-drive-dialog";
 import type { Ordem } from "./ordenar";
 import type { AcoesMenu, Clipboard } from "./menu-arquivo";
 
@@ -71,6 +72,8 @@ export interface RibbonComandosProps {
   mostrarInspector: boolean;
   onToggleInspector?: () => void;
   totalItens: number;
+  /** #871: chamado após mapear uma unidade de rede (o shell navega até ela). */
+  onMapeado?: (letter: string) => void;
 }
 
 /** Separador vertical fininho entre grupos do ribbon. */
@@ -97,13 +100,17 @@ export function RibbonComandos(props: RibbonComandosProps) {
     mostrarInspector,
     onToggleInspector,
     totalItens,
+    onMapeado,
   } = props;
   const { t } = useIdioma();
+
+  const [redeAberta, setRedeAberta] = useState(false);
 
   const semSelecao = selecionados.length === 0;
   const semClipboard = !clipboard || clipboard.paths.length === 0;
 
   return (
+    <>
     <div className="flex shrink-0 items-center gap-1">
       {/* Novo ▾ */}
       <DropdownMenu>
@@ -129,8 +136,8 @@ export function RibbonComandos(props: RibbonComandosProps) {
             <Link className="size-4" />
             {t.arquivos.novoAtalho}
           </DropdownMenuItem>
-          {/* Só faz sentido em "Este computador"; backend do Confucius pendente. */}
-          <DropdownMenuItem disabled>
+          {/* #871: mapeia unidade de rede (backend fs_map_network_drive pronto). */}
+          <DropdownMenuItem onSelect={() => setRedeAberta(true)}>
             <Network className="size-4" />
             {t.arquivos.novaUnidadeRede}
           </DropdownMenuItem>
@@ -393,5 +400,13 @@ export function RibbonComandos(props: RibbonComandosProps) {
           : preencher(t.arquivos.total, { n: totalItens })}
       </span>
     </div>
+
+      {/* #871: diálogo "Mapear unidade de rede" (aberto pelo item do Novo ▾). */}
+      <NetworkDriveDialog
+        open={redeAberta}
+        onOpenChange={setRedeAberta}
+        onMapeado={onMapeado}
+      />
+    </>
   );
 }

@@ -1173,6 +1173,7 @@ export function ContentPane({
         mostrarInspector={mostrarInspector ?? false}
         onToggleInspector={onToggleInspector}
         totalItens={itens.length}
+        onMapeado={(letter) => onNavegar(letter + "\\")}
       />
 
       {/* CTA de caminhos longos (#681): só quando o caminho passa de MAX_PATH e o
