@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 
 /**
  * #822: integridade dos DADOS do catálogo de apps (`src/assets/apps-catalog.json`,
@@ -15,7 +15,15 @@ const raw = readFileSync(
   new URL("../assets/apps-catalog.json", import.meta.url),
   "utf8",
 );
-const catalogo = JSON.parse(raw) as { id: string; name: string; url: string }[];
+const catalogo = JSON.parse(raw) as {
+  id: string;
+  name: string;
+  url: string;
+  icon: boolean;
+}[];
+
+/** #827 SU4: diretório dos ícones estáticos (servidos de `public/app-icons`). */
+const iconesDir = new URL("../../public/app-icons/", import.meta.url);
 
 test("#822: nenhuma URL começa com '.' (subdomínio de tenant perdido no scrape)", () => {
   const ruins = catalogo.filter((a) => a.url.startsWith("."));
@@ -52,4 +60,22 @@ test("#822: todos os ids do catálogo são únicos", () => {
     vistos.add(a.id);
   }
   assert.deepEqual(repetidos, []);
+});
+
+test("#827 SU4: nenhum ícone SVG 0-byte em public/app-icons (asset quebrado)", () => {
+  const zeros = readdirSync(iconesDir)
+    .filter((f) => f.endsWith(".svg"))
+    .filter((f) => statSync(new URL(f, iconesDir)).size === 0);
+  assert.deepEqual(zeros, []);
+});
+
+test("#827 SU4: todo app com icon:true tem arquivo de ícone não-vazio", () => {
+  const quebrados = catalogo
+    .filter((a) => a.icon)
+    .filter((a) => {
+      const p = new URL(`${a.id}.svg`, iconesDir);
+      return !existsSync(p) || statSync(p).size === 0;
+    })
+    .map((a) => a.id);
+  assert.deepEqual(quebrados, []);
 });
