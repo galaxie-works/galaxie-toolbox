@@ -304,6 +304,8 @@ type AcoesPaleta = {
   onTrocar: (id: string) => void;
   onFechar: (id: string) => void;
   onNovaAba: () => void;
+  /** #922: abre uma aba nova em modo PRIVADO (mesma ação da tab strip / #273). */
+  onNovaAbaPrivada: () => void;
   onAlternarFixada: (id: string) => void;
   onDormir: (id: string) => void;
   /** #656: navega pra outra Tela do app (canvas), pro grupo "Ir para". */
@@ -352,6 +354,7 @@ function ConteudoPaleta({
   onTrocar,
   onFechar,
   onNovaAba,
+  onNovaAbaPrivada,
   onAlternarFixada,
   onDormir,
   onNavegarTela,
@@ -655,6 +658,16 @@ function ConteudoPaleta({
               >
                 <Plus className="size-4 shrink-0" />
                 <span>{t.navegador.novaAba}</span>
+              </CommandItem>
+              {/* #922: aba privada, ao lado da normal — reusa a ação #273 (mesmo
+                  ícone pirata do menu da tab strip). */}
+              <CommandItem
+                value={t.navegador.novaAbaPrivada}
+                onSelect={() => executar(onNovaAbaPrivada)}
+                className="gap-2.5"
+              >
+                <PirateSkullIcon className="size-4 shrink-0" />
+                <span>{t.navegador.novaAbaPrivada}</span>
               </CommandItem>
               {abaAtivaObj && (
                 <>
@@ -2422,6 +2435,7 @@ export function NavegadorScreen({
                 onTrocar={onTrocar}
                 onFechar={onFechar}
                 onNovaAba={onNovaAba}
+                onNovaAbaPrivada={onNovaAbaPrivada}
                 onAlternarFixada={onAlternarFixada}
                 onDormir={onDormir}
                 onNavegarTela={onNavegarTela}
@@ -2503,6 +2517,7 @@ export function NavegadorScreen({
         onTrocar={onTrocar}
         onFechar={onFechar}
         onNovaAba={onNovaAba}
+        onNovaAbaPrivada={onNovaAbaPrivada}
         onAlternarFixada={onAlternarFixada}
         onDormir={onDormir}
         onNavegarTela={onNavegarTela}
