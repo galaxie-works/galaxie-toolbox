@@ -141,14 +141,17 @@ export function ExplorerShell() {
   const tRef = useRef(t);
   tRef.current = t;
 
-  // Carrega drives + acesso rápido uma vez; ao ter os drives, cai no 1º drive.
+  // Carrega drives + acesso rápido uma vez. #870: NÃO auto-navega pro 1º drive —
+  // a aba nasce no This PC (sentinel `currentPath: ""` → DrivesView com os cards
+  // do #855). Como cada aba de Files é uma instância própria do shell (key por
+  // aba no Navigator), toda aba nova começa no This PC, sem herdar caminho de
+  // outra nem cair em C:.
   useEffect(() => {
     let vivo = true;
     void listarDrives()
       .then((lista) => {
         if (!vivo) return;
         setDrives(lista);
-        if (lista.length > 0) dispatch({ type: "navegar", path: lista[0].path });
       })
       .catch(() => vivo && setDrives([]));
     void dirsConhecidos()
@@ -475,7 +478,8 @@ export function ExplorerShell() {
               // e drives carregados → grade de cards de drives no lugar da lista.
               <DrivesView drives={drives} onNavegar={navegar} />
             ) : (
-              // Sem pasta selecionada ainda (antes de os drives caírem no 1º).
+              // No This PC (#870) enquanto os drives ainda não caíram (loading) ou
+              // se não houver nenhum — some assim que o DrivesView pode aparecer.
               <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-card text-center">
                 <div>
                   <p className="text-sm font-medium">
