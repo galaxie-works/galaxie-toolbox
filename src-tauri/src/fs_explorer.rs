@@ -882,6 +882,220 @@ fn registrar_journal(app: &AppHandle, entry: &OperationJournalEntry) {
     log::info!("journal: op {} registrada ({} item(s))", entry.op_id, entry.items.len());
 }
 
+// ─── #899 U1: undo verificado (lê o journal, classifica, executa) ────────────
+//
+// `fs_undo_preview(opId)` classifica cada item (§5 do spike) em 3 baldes SEM
+// efeito colateral — alimenta o diálogo de resumo (U2, raia Vega). `fs_undo_op`
+// RE-classifica imediatamente antes de agir (anti-TOCTOU) e executa só os
+// seguros: cópia → Lixeira dos criados; move → volta `to`→`from`. Best-effort
+// por item (erro num item não aborta os outros). Motivos são CÓDIGOS estáveis
+// (o front resolve i18n — regra `i18n-copy-na-task`), não texto pt-BR.
+
+/// Plano de undo de um item (o `path` é o `to` que a op criou).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoItemPlan {
+    path: String,
+    /// `seguro` | `pulado` | `naoReversivel`.
+    estado: String,
+    /// Código do motivo (só pulado/naoReversível): `sumiu` | `modificado` |
+    /// `origemReocupada` | `sobrescrita`. O front mapeia pra copy i18n.
+    motivo: Option<String>,
+}
+
+/// Resumo do undo ANTES de executar — os 3 baldes do §5 (pro preview da U2).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoPlan {
+    op_id: u64,
+    kind: String,
+    itens: Vec<UndoItemPlan>,
+    seguros: usize,
+    pulados: usize,
+    nao_reversiveis: usize,
+}
+
+/// Relatório do undo DEPOIS de executar (best-effort por item).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoReport {
+    op_id: u64,
+    kind: String,
+    executados: usize,
+    pulados: usize,
+    nao_reversiveis: usize,
+    /// Caminhos que falharam na execução (não abortam os demais).
+    erros: Vec<String>,
+}
+
+/// Lê todos os manifestos do journal (linhas inválidas são ignoradas).
+fn ler_journal(app: &AppHandle) -> Vec<OperationJournalEntry> {
+    let Some(path) = caminho_journal(app) else {
+        return Vec::new();
+    };
+    let _g = JOURNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(conteudo) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    conteudo
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str::<OperationJournalEntry>(l).ok())
+        .collect()
+}
+
+/// A entrada mais recente de uma op (o journal pode ter mais de uma? não — 1/op).
+fn entrada_por_op(app: &AppHandle, op_id: u64) -> Option<OperationJournalEntry> {
+    ler_journal(app).into_iter().rev().find(|e| e.op_id == op_id)
+}
+
+/// Remove a entrada de uma op do journal (pós-undo: não desfaz duas vezes; redo
+/// é backlog U4).
+fn remover_entrada_journal(app: &AppHandle, op_id: u64) {
+    let Some(path) = caminho_journal(app) else {
+        return;
+    };
+    let _g = JOURNAL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Ok(conteudo) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let restantes: Vec<&str> = conteudo
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter(|l| {
+            serde_json::from_str::<OperationJournalEntry>(l)
+                .map(|e| e.op_id != op_id)
+                .unwrap_or(true) // linha ilegível: preserva (não é a nossa op)
+        })
+        .collect();
+    let conteudo = if restantes.is_empty() {
+        String::new()
+    } else {
+        restantes.join("\n") + "\n"
+    };
+    let _ = std::fs::write(&path, conteudo);
+}
+
+/// Um arquivo do manifesto mudou desde a op? v1: size+mtime (hash é fallback
+/// forte quando gravado — hoje None). `to` sumido/erro conta como modificado
+/// (por precaução: não mexer).
+fn item_modificado(item: &JournalItem) -> bool {
+    let Ok(m) = std::fs::symlink_metadata(com_long_path(Path::new(&item.to))) else {
+        return true;
+    };
+    m.len() != item.size_at_end || mtime_ms(&m) != item.mtime_at_end
+}
+
+/// Classifica um item (§5) → (estado, código-de-motivo). Puro em relação ao
+/// journal; stata o disco pro estado atual.
+fn classificar_item(item: &JournalItem, mover: bool) -> (String, Option<String>) {
+    if !caminho_existe(&item.to) {
+        return ("pulado".into(), Some("sumiu".into()));
+    }
+    if item.overwritten {
+        // sobrescrita: o original não volta (§3) → fora do plano.
+        return ("naoReversivel".into(), Some("sobrescrita".into()));
+    }
+    if item_modificado(item) {
+        return ("pulado".into(), Some("modificado".into()));
+    }
+    if mover && caminho_existe(&item.from) {
+        // undo de move precisa do caminho de retorno livre.
+        return ("pulado".into(), Some("origemReocupada".into()));
+    }
+    ("seguro".into(), None)
+}
+
+/// Monta o plano de undo (só arquivos; dirs são detalhe da execução).
+fn montar_plano_undo(entry: &OperationJournalEntry) -> UndoPlan {
+    let mover = entry.kind == "move";
+    let mut itens = Vec::new();
+    let (mut seguros, mut pulados, mut nao_reversiveis) = (0usize, 0usize, 0usize);
+    for it in entry.items.iter().filter(|i| !i.is_dir) {
+        let (estado, motivo) = classificar_item(it, mover);
+        match estado.as_str() {
+            "seguro" => seguros += 1,
+            "naoReversivel" => nao_reversiveis += 1,
+            _ => pulados += 1,
+        }
+        itens.push(UndoItemPlan { path: it.to.clone(), estado, motivo });
+    }
+    UndoPlan { op_id: entry.op_id, kind: entry.kind.clone(), itens, seguros, pulados, nao_reversiveis }
+}
+
+/// Executa o undo (re-classificando cada item na hora = anti-TOCTOU). Cópia:
+/// junta os seguros e manda em batch pra Lixeira. Move: volta `to`→`from`
+/// (recria o pai do retorno se sumiu). Depois limpa dirs vazios criados.
+fn executar_undo(entry: &OperationJournalEntry) -> UndoReport {
+    let eh_move = entry.kind == "move";
+    let (mut executados, mut pulados, mut nao_reversiveis) = (0usize, 0usize, 0usize);
+    let mut erros = Vec::new();
+    let mut trash_alvos: Vec<String> = Vec::new();
+
+    for it in entry.items.iter().filter(|i| !i.is_dir) {
+        // re-verifica IMEDIATAMENTE antes de agir (§8 anti-TOCTOU).
+        let (estado, _motivo) = classificar_item(it, eh_move);
+        match estado.as_str() {
+            "naoReversivel" => {
+                nao_reversiveis += 1;
+                continue;
+            }
+            "pulado" => {
+                pulados += 1;
+                continue;
+            }
+            _ => {}
+        }
+        if eh_move {
+            // recria o diretório-pai do retorno (a op removeu a origem).
+            if let Some(pai) = Path::new(&it.from).parent() {
+                let _ = std::fs::create_dir_all(com_long_path(pai));
+            }
+            match mover(&it.to, &it.from) {
+                Ok(()) => executados += 1,
+                Err(e) => {
+                    log::error!("undo move {} → {}: {e}", it.to, it.from);
+                    erros.push(it.to.clone());
+                }
+            }
+        } else {
+            trash_alvos.push(it.to.clone());
+        }
+    }
+
+    // Cópia: os criados vão pra Lixeira em batch (undo revogável — §8).
+    if !eh_move && !trash_alvos.is_empty() {
+        let n = trash_alvos.len();
+        match para_lixeira(&trash_alvos) {
+            Ok(()) => executados += n,
+            Err(e) => {
+                log::error!("undo trash ({n} alvo(s)): {e}");
+                erros.push(format!("lixeira: {e}"));
+            }
+        }
+    }
+
+    // Limpa os diretórios criados que ficaram VAZIOS (mais fundos primeiro).
+    let mut dirs: Vec<&String> = entry.items.iter().filter(|i| i.is_dir).map(|i| &i.to).collect();
+    dirs.sort_by_key(|d| std::cmp::Reverse(d.len()));
+    for d in dirs {
+        let p = com_long_path(Path::new(d));
+        let vazio = std::fs::read_dir(&p).map(|mut r| r.next().is_none()).unwrap_or(false);
+        if vazio {
+            let _ = std::fs::remove_dir(&p);
+        }
+    }
+
+    UndoReport {
+        op_id: entry.op_id,
+        kind: entry.kind.clone(),
+        executados,
+        pulados,
+        nao_reversiveis,
+        erros,
+    }
+}
+
 // ─── Engine turbo de cópia (#680 rework) ─────────────────────────────────────
 //
 // Substitui a cópia sequencial `std::fs::copy` arquivo-a-arquivo por um pipeline
@@ -2536,6 +2750,40 @@ pub async fn fs_op_resume(op_id: u64, pm: State<'_, ProgressManager>) -> Result<
     Ok(())
 }
 
+/// #899 U1: PRÉ-visualiza o undo de uma op (§5) — classifica os itens em
+/// seguros/pulados/não-reversíveis SEM efeito colateral (pro diálogo de resumo
+/// da U2). `None` = a op não está mais no journal.
+#[tauri::command]
+pub async fn fs_undo_preview(op_id: u64, app: AppHandle) -> Result<Option<UndoPlan>, FsError> {
+    tauri::async_runtime::spawn_blocking(move || Ok(entrada_por_op(&app, op_id).map(|e| montar_plano_undo(&e))))
+        .await
+        .map_err(spawn_err)?
+}
+
+/// #899 U1: EXECUTA o undo de uma op — re-verifica cada item na hora
+/// (anti-TOCTOU) e reverte só os seguros (cópia → Lixeira; move → `to`→`from`).
+/// Best-effort por item; remove a entrada do journal ao fim (sem redo — U4).
+#[tauri::command]
+pub async fn fs_undo_op(op_id: u64, app: AppHandle) -> Result<UndoReport, FsError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(entry) = entrada_por_op(&app, op_id) else {
+            return Err(FsError::InvalidPath(format!("op {op_id} não está no journal")));
+        };
+        let report = executar_undo(&entry);
+        remover_entrada_journal(&app, op_id);
+        log::info!(
+            "fs_undo_op op={op_id}: {} revertido(s), {} pulado(s), {} não-reversível(is), {} erro(s)",
+            report.executados,
+            report.pulados,
+            report.nao_reversiveis,
+            report.erros.len()
+        );
+        Ok(report)
+    })
+    .await
+    .map_err(spawn_err)?
+}
+
 #[tauri::command]
 pub async fn fs_check_conflicts(
     sources: Vec<String>,
@@ -3145,6 +3393,114 @@ mod tests {
         // Round-trip preserva tudo.
         let de: OperationJournalEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(de, e);
+    }
+
+    // --- #899 U1: undo verificado (classificação + execução) ---
+
+    #[test]
+    fn classificar_copy_seguro_depois_sumiu() {
+        let base = dir_temp("undo-classif");
+        let f = base.join("x.txt");
+        std::fs::write(&f, vec![1u8; 8]).unwrap();
+        let it = journal_item(&f, &f, false); // copy: to=f, from vazio
+        assert_eq!(classificar_item(&it, false), ("seguro".into(), None));
+        // Some o arquivo → pulado/sumiu.
+        std::fs::remove_file(&f).unwrap();
+        let (estado, motivo) = classificar_item(&it, false);
+        assert_eq!(estado, "pulado");
+        assert_eq!(motivo.as_deref(), Some("sumiu"));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn classificar_modificado_pula() {
+        let base = dir_temp("undo-mod");
+        let f = base.join("y.txt");
+        std::fs::write(&f, vec![2u8; 10]).unwrap();
+        let mut it = journal_item(&f, &f, false);
+        it.size_at_end = 999; // diverge do disco → modificado
+        let (estado, motivo) = classificar_item(&it, false);
+        assert_eq!(estado, "pulado");
+        assert_eq!(motivo.as_deref(), Some("modificado"));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn classificar_move_origem_reocupada_pula() {
+        let base = dir_temp("undo-reocup");
+        let origem = base.join("o.txt");
+        let destino = base.join("d.txt");
+        std::fs::write(&destino, vec![3u8; 6]).unwrap();
+        std::fs::write(&origem, vec![9u8; 6]).unwrap(); // caminho de retorno OCUPADO
+        let it = journal_item(&origem, &destino, true); // move: from=o, to=d
+        let (estado, motivo) = classificar_item(&it, true);
+        assert_eq!(estado, "pulado");
+        assert_eq!(motivo.as_deref(), Some("origemReocupada"));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn montar_plano_undo_conta_os_baldes() {
+        let base = dir_temp("undo-plano");
+        std::fs::create_dir_all(&base).unwrap();
+        let seg = base.join("s.txt");
+        std::fs::write(&seg, vec![1u8; 4]).unwrap();
+        let it_seg = journal_item(&seg, &seg, false); // seguro
+        let mut it_mod = journal_item(&seg, &seg, false);
+        it_mod.size_at_end = 123; // pulado/modificado
+        let mut it_ovr = journal_item(&seg, &seg, false);
+        it_ovr.overwritten = true; // naoReversivel/sobrescrita
+        let entry = OperationJournalEntry {
+            op_id: 7,
+            kind: "copy".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "success".into(),
+            resolucao: None,
+            items: vec![it_seg, it_mod, it_ovr],
+            trash_record_ids: Vec::new(),
+        };
+        let plano = montar_plano_undo(&entry);
+        assert_eq!(plano.seguros, 1);
+        assert_eq!(plano.pulados, 1);
+        assert_eq!(plano.nao_reversiveis, 1);
+        assert_eq!(plano.itens.len(), 3);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn executar_undo_move_volta_para_origem() {
+        let base = dir_temp("undo-move");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        std::fs::write(origem.join("a.txt"), vec![5u8; 12]).unwrap();
+        let destino = base.join("dst");
+        // move real (rename mesmo-volume).
+        mover(&origem.to_string_lossy(), &destino.to_string_lossy()).unwrap();
+        assert!(destino.join("a.txt").exists());
+        assert!(!origem.join("a.txt").exists());
+
+        let entry = OperationJournalEntry {
+            op_id: 1,
+            kind: "move".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "success".into(),
+            resolucao: None,
+            items: vec![
+                journal_item(&destino, &destino, false), // dir dst (is_dir via stat)
+                journal_item(&origem.join("a.txt"), &destino.join("a.txt"), true),
+            ],
+            trash_record_ids: Vec::new(),
+        };
+        let rep = executar_undo(&entry);
+        assert_eq!(rep.executados, 1, "o arquivo voltou pra origem");
+        assert!(rep.erros.is_empty());
+        assert!(origem.join("a.txt").exists(), "de volta na origem");
+        assert!(!destino.join("a.txt").exists(), "saiu do destino");
+        // o dir dst vazio foi limpo.
+        assert!(!destino.exists(), "dir criado e esvaziado foi removido");
+        std::fs::remove_dir_all(&base).ok();
     }
 
     // --- Cache de thumbnail (#737 F2) ---

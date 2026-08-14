@@ -2154,6 +2154,9 @@ pub fn run() {
             // #898: pause/resume do motor de cópia (net-new além do cancel).
             fs_explorer::fs_op_pause,
             fs_explorer::fs_op_resume,
+            // #899 U1: undo verificado de copy/move (preview + executa).
+            fs_explorer::fs_undo_preview,
+            fs_explorer::fs_undo_op,
             fs_explorer::fs_check_conflicts,
             fs_explorer::fs_watch,
             fs_explorer::fs_unwatch,

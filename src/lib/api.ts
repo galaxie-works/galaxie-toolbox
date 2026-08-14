@@ -10,6 +10,8 @@ import type {
   FsDirBatch,
   FsEntry,
   FsOpProgress,
+  UndoPlan,
+  UndoReport,
   ThumbMetrics,
   ThumbRef,
   CaixaEntrada,
@@ -3308,6 +3310,26 @@ export async function pausarOp(opId: number): Promise<void> {
 export async function resumirOp(opId: number): Promise<void> {
   if (!inTauri()) return;
   return invoke<void>("fs_op_resume", { opId });
+}
+
+/**
+ * #899 U1: pré-visualiza o undo de uma op (classifica em seguros/pulados/
+ * não-reversíveis, SEM efeito) pro diálogo de resumo. `null` = op não está mais
+ * no journal (fora da janela de undo).
+ */
+export async function previewUndo(opId: number): Promise<UndoPlan | null> {
+  if (!inTauri()) return null;
+  return invoke<UndoPlan | null>("fs_undo_preview", { opId });
+}
+
+/**
+ * #899 U1: executa o undo de uma op — reverte só os itens seguros (cópia →
+ * Lixeira; move → volta origem). Best-effort; devolve o relatório do que foi
+ * feito/pulado.
+ */
+export async function desfazerOp(opId: number): Promise<UndoReport | null> {
+  if (!inTauri()) return null;
+  return invoke<UndoReport>("fs_undo_op", { opId });
 }
 
 /** Conflitos de nome no destino, ANTES da op (pro diálogo de resolução). */

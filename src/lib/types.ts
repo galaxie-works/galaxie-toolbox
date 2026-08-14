@@ -722,6 +722,40 @@ export interface FsConflict {
   isDir: boolean;
 }
 
+// ── #899 U1: undo verificado de copy/move ───────────────────────────────────
+
+/** Estado de reversibilidade de um item no preview de undo. */
+export type UndoEstado = "seguro" | "pulado" | "naoReversivel";
+/** Código do motivo (o front mapeia pra copy i18n — nunca texto do backend). */
+export type UndoMotivo = "sumiu" | "modificado" | "origemReocupada" | "sobrescrita";
+
+/** Um item classificado no preview de undo (`path` = o que a op criou). */
+export interface UndoItemPlan {
+  path: string;
+  estado: UndoEstado;
+  motivo?: UndoMotivo | null;
+}
+
+/** Resumo do undo ANTES de executar — os 3 baldes do §5 (pro diálogo da U2). */
+export interface UndoPlan {
+  opId: number;
+  kind: string; // "copy" | "move"
+  itens: UndoItemPlan[];
+  seguros: number;
+  pulados: number;
+  naoReversiveis: number;
+}
+
+/** Relatório do undo DEPOIS de executar (best-effort por item). */
+export interface UndoReport {
+  opId: number;
+  kind: string;
+  executados: number;
+  pulados: number;
+  naoReversiveis: number;
+  erros: string[];
+}
+
 /** Mudança no disco detectada pelo watcher (evento `fs-change`). */
 export interface FsChange {
   watcherId: number;
