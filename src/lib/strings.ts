@@ -1574,6 +1574,16 @@ const pt = {
     opConcluida: "Operação concluída.",
     opCancelada: "Operação cancelada.",
     opFalhou: "A operação falhou.",
+    // #875 — Status Center: fila revisável + agregado + cards expansíveis
+    statusCenterOps: "{n} operações",
+    limparConcluidas: "Limpar concluídas",
+    descobrindoItens: "Descobrindo itens…",
+    dispensar: "Dispensar",
+    detalhesOp: "Detalhes",
+    statusConcluido: "Concluído",
+    statusFalhou: "Falhou",
+    statusCancelado: "Cancelado",
+    statusParcial: "Parcial",
     // #855 — grade de drives (Este computador)
     driveUsados: "{usado} de {total}",
     driveLivre: "{livre} livre",
@@ -3495,6 +3505,16 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     opConcluida: "Operation complete.",
     opCancelada: "Operation canceled.",
     opFalhou: "The operation failed.",
+    // #875 — Status Center: reviewable queue + aggregate + expandable cards
+    statusCenterOps: "{n} operations",
+    limparConcluidas: "Clear completed",
+    descobrindoItens: "Discovering items…",
+    dispensar: "Dismiss",
+    detalhesOp: "Details",
+    statusConcluido: "Completed",
+    statusFalhou: "Failed",
+    statusCancelado: "Canceled",
+    statusParcial: "Partial",
     // #855 — drives grid (This PC)
     driveUsados: "{usado} of {total}",
     driveLivre: "{livre} free",
