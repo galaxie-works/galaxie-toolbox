@@ -23,6 +23,7 @@ import {
 } from "@/lib/api";
 import type { DriveInfo, FsConflict, FsEntry } from "@/lib/types";
 import { LocaisSidebar } from "./locais";
+import { DrivesView } from "./drives-view";
 import { ArvoreArquivos } from "./arvore";
 import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
@@ -393,6 +394,10 @@ export function ExplorerShell() {
                 mostrarInspector={mostrarInspector}
                 onToggleInspector={() => setMostrarInspector((v) => !v)}
               />
+            ) : drives && drives.length > 0 ? (
+              // #855: "Este computador" selecionado (sentinel de caminho vazio)
+              // e drives carregados → grade de cards de drives no lugar da lista.
+              <DrivesView drives={drives} onNavegar={navegar} />
             ) : (
               // Sem pasta selecionada ainda (antes de os drives caírem no 1º).
               <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center">
