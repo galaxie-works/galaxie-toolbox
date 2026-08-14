@@ -1370,6 +1370,7 @@ dependencies = [
 name = "galaxie-remote-capture"
 version = "0.1.0"
 dependencies = [
+ "galaxie-remote-transport",
  "openh264",
  "serde",
  "thiserror 2.0.19",
