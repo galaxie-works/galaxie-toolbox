@@ -10,6 +10,7 @@ import type { AnexoEmail } from "./types";
 export type TipoPreview =
   | "pdf"
   | "txt"
+  | "html"
   | "docx"
   | "xlsx"
   | "pptx"
@@ -70,6 +71,10 @@ export function classificarPorNome(
   if (ct === "application/pdf" || n.endsWith(".pdf")) return "pdf";
   // CSV antes de txt: um `.csv` pode chegar como `text/plain` no contentType.
   if (ct === "text/csv" || n.endsWith(".csv")) return "csv";
+  // #873 fix: HTML renderiza SANITIZADO (DOMPurify) no iframe sandbox+CSP, igual
+  // ao docx/xlsx. Antes de txt: um `.html` pode vir como `text/plain` no ct.
+  if (ct === "text/html" || n.endsWith(".html") || n.endsWith(".htm"))
+    return "html";
   if (ct.startsWith("text/plain") || n.endsWith(".txt")) return "txt";
   if (ct === CT_DOCX || n.endsWith(".docx")) return "docx";
   if (ct === CT_XLSX || n.endsWith(".xlsx")) return "xlsx";

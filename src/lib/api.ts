@@ -3102,11 +3102,12 @@ export async function abrirCaminhoFs(path: string): Promise<void> {
  * Explorer — mesma forma do `crLerAnexo` (`{ bytesB64, contentType, nome }`) para
  * reusar os MESMOS decodificadores dos viewers (pdf/docx/xlsx/csv/imagem/mídia).
  *
- * #873: SEM comando de backend novo — lê o arquivo local pelo asset protocol do
- * Tauri (`convertFileSrc` → `fetch`), como o Polaris confirmou (carrega
- * imagem/pdf). O `grande` (>25 MB) já é barrado no `PreviewArquivo` ANTES de
- * chamar; `maxBytes` é só rede de segurança. Fora do Tauri (mock/dev) devolve um
- * exemplo curto.
+ * #873 fix (reprovado no runtime): o `convertFileSrc → fetch` NÃO funciona — o
+ * `assetProtocol` não está habilitado no `tauri.conf.json`, então o fetch dava
+ * "failed to fetch" pra TODO tipo. Voltamos a ler pelo BACKEND (`fs_read_file_bytes`,
+ * do Confucius): cap de 25 MB + validação de path no Rust, sem abrir o
+ * asset-protocol amplo. Mesma forma do `crLerAnexo` (bytes do Graph em memória).
+ * Fora do Tauri (mock/dev) devolve um exemplo curto.
  */
 export async function lerArquivoBytes(
   path: string,
@@ -3120,29 +3121,9 @@ export async function lerArquivoBytes(
       nome: path.split(/[\\/]/).pop() ?? path,
     };
   }
-  const core = await import("@tauri-apps/api/core");
-  const resp = await fetch(core.convertFileSrc(path));
-  if (!resp.ok) throw new Error(`preview: fetch ${resp.status}`);
-  const buf = new Uint8Array(await resp.arrayBuffer());
-  if (maxBytes != null && buf.byteLength > maxBytes) {
-    throw new Error("preview: arquivo grande demais");
-  }
-  return {
-    bytesB64: bytesParaBase64(buf),
-    contentType: resp.headers.get("content-type") ?? "",
-    nome: path.split(/[\\/]/).pop() ?? path,
-  };
-}
-
-/** Uint8Array → base64 (em blocos, pra não estourar o call-stack em arquivos
- *  grandes com `String.fromCharCode(...arr)`). */
-function bytesParaBase64(bytes: Uint8Array): string {
-  let bin = "";
-  const bloco = 0x8000;
-  for (let i = 0; i < bytes.length; i += bloco) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + bloco));
-  }
-  return btoa(bin);
+  // Contrato (Confucius): args `{ path, maxBytes }` → `{ bytesB64, contentType,
+  // nome }`. O backend barra >maxBytes e valida o path (mesmos guards do preview).
+  return invoke<AnexoConteudo>("fs_read_file_bytes", { path, maxBytes });
 }
 
 /**
