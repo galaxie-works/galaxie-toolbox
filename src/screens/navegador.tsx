@@ -488,7 +488,11 @@ function ConteudoPaleta({
   // 2) M365 curado (sem nativo) → `onAbrir` (login-hint + histórico do App.tsx).
   // 3) resto → aba web pela URL.
   const abrirUnificado = (app: AppUnificado) => {
-    if (app.nativo === "control-room" || app.nativo === "arquivos") {
+    if (
+      app.nativo === "control-room" ||
+      app.nativo === "arquivos" ||
+      app.nativo === "remote"
+    ) {
       onNavegarTela(app.nativo);
       return;
     }
@@ -874,11 +878,16 @@ function ItemUnificado({
   onAlternarPin: () => void;
 }) {
   const { idioma, t } = useIdioma();
+  // #877: as telas do GALAXIE (id `galaxie-<x>`) têm nome LOCALIZADO via
+  // `t.sidebar.<x>` (Files→Arquivos, Remote→Remoto); o resto usa o nome do app.
+  const nome = app.id.startsWith("galaxie-")
+    ? t.sidebar[app.id.slice(8) as "bridge" | "files" | "remote"]
+    : app.name;
   return (
     <CommandItem
       // Inclui o termo pra passar pelo filtro do cmdk (o match real já foi feito
       // por `appsUnificadosPorCategoria(termo)`).
-      value={`app-${app.id} ${termo}`}
+      value={`app-${app.id} ${nome} ${termo}`}
       onSelect={onSelecionar}
       className="group gap-2.5"
     >
@@ -890,9 +899,9 @@ function ItemUnificado({
           draggable={false}
         />
       ) : (
-        <AppIcon id={app.id} name={app.name} />
+        <AppIcon id={app.id} name={nome} />
       )}
-      <span className="min-w-0 flex-1 truncate font-medium">{app.name}</span>
+      <span className="min-w-0 flex-1 truncate font-medium">{nome}</span>
       {app.resumo && (
         <span className="hidden shrink-0 truncate text-xs text-muted-foreground sm:inline">
           {app.resumo[idioma]}

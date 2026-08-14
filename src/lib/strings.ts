@@ -535,6 +535,7 @@ const pt = {
     recomendados: "Recomendados",
     recentes: "Recentes",
     // Rótulos das categorias do catálogo.
+    catFromGalaxie: "Do GALAXIE",
     catAiTools: "Ferramentas de IA",
     catBanking: "Bancos e finanças",
     catCloudStorage: "Armazenamento na nuvem",
@@ -2481,6 +2482,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     categorias: "Categories",
     recomendados: "Recommended",
     recentes: "Recent",
+    catFromGalaxie: "From GALAXIE",
     catAiTools: "AI Tools",
     catBanking: "Banking & Finance",
     catCloudStorage: "Cloud Storage",
