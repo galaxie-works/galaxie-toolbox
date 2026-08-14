@@ -6262,6 +6262,7 @@ export function ControlRoomScreen({
   onGrantPeopleAccess,
   onReauthenticate,
   ativo = true,
+  emAba = false,
 }: {
   user: AppUser;
   onAbrirLink: (url: string) => void;
@@ -6271,6 +6272,11 @@ export function ControlRoomScreen({
    * atalho global de teclado quando o Bridge está em primeiro plano (ele fica
    * montado/escondido em keep-alive). */
   ativo?: boolean;
+  /** #868: hospedada numa ABA interna do Navigator? A aba já dá a identidade
+   * (ícone + nome "Bridge"), então o hero redundante (ícone + título + subtítulo)
+   * do content area some — regra do host de aba, generaliza o que o #854 fez no
+   * Files. Render standalone (default `false`) mantém o hero do #490. */
+  emAba?: boolean;
 }) {
   const { idioma, t } = useIdioma();
   // Fotos de contatos (#39): só buscamos avatar de remetente do MESMO domínio do
@@ -7512,16 +7518,21 @@ export function ControlRoomScreen({
 
   return (
     <div className="flex h-full flex-col gap-4">
-      {/* Cabeçalho — ícone animado do Bridge + título do módulo ativo (#231). */}
-      <div className="flex shrink-0 items-center gap-3">
-        <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
-          <BridgeHeaderIcon className="size-6" />
-        </span>
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">{tituloModulo}</h1>
-          <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
+      {/* Cabeçalho — ícone animado do Bridge + título do módulo ativo (#231).
+          #868: escondido quando hospedado em aba interna (a própria aba já
+          identifica o Bridge com ícone + nome) → o content area começa direto no
+          conteúdo. Standalone (fora de aba) mantém o hero pedido pelo PO no #490. */}
+      {!emAba && (
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="grid size-11 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+            <BridgeHeaderIcon className="size-6" />
+          </span>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">{tituloModulo}</h1>
+            <p className="text-sm text-muted-foreground">{subtituloModulo}</p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Sidebar de módulos + conteúdo do módulo ativo. */}
       <div className="flex min-h-0 flex-1 gap-4">

@@ -1075,6 +1075,9 @@ function AppInner() {
             key={user.email}
             user={user}
             ativo={ativaTela}
+            // #868: renderizado aqui = hospedado numa aba interna do Navigator →
+            // esconde o hero redundante (a aba já identifica o Bridge).
+            emAba
             onGrantPeopleAccess={() => {
               // #695: re-login da MESMA conta pra conceder People (org/pessoal).
               void handleLogin("microsoft", user.email);
