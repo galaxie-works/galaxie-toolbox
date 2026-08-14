@@ -142,6 +142,7 @@ import { UsersIcon } from "@/components/ui/users";
 import { CalendarDaysIcon } from "@/components/ui/calendar-days";
 import {
   BedDouble,
+  Bookmark,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -1247,9 +1248,24 @@ export function NavegadorScreen({
   const [favicons, setFavicons] = useState<Record<string, string>>(
     loadFaviconCache,
   );
-  // #307: visibilidade da barra de favoritos (Settings>Navigator>Favorites).
-  // Lida no mount; a tela remonta ao voltar do Settings, então reflete a pref.
-  const [mostrarBarraFav] = useState(() => loadNavigatorPrefs().mostrarBarraFav);
+  // #307 + #856: visibilidade da barra de favoritos. Agora togglada por um ÍCONE
+  // dedicado na toolbar do Navigator (+ Ctrl/Cmd+Shift+B, convenção de browser) e
+  // pela pref do Settings>Navigator>Favorites — as duas escrevem a MESMA pref,
+  // então ficam em sync. Escondida por padrão (o default da pref). O toggle da
+  // toolbar persiste na hora (mesmo padrão do `railColapsado`).
+  const [mostrarBarraFav, setMostrarBarraFav] = useState(
+    () => loadNavigatorPrefs().mostrarBarraFav,
+  );
+  const alternarBarraFav = useCallback(() => {
+    setMostrarBarraFav((v) => {
+      const proximo = !v;
+      persistNavigatorPrefs({
+        ...loadNavigatorPrefs(),
+        mostrarBarraFav: proximo,
+      });
+      return proximo;
+    });
+  }, []);
   // #318 S2: rail lateral de pinned tabs; colapso persistido em NavigatorPrefs.
   const [railColapsado, setRailColapsado] = useState(
     () => loadNavigatorPrefs().railPinsColapsado,
@@ -1704,6 +1720,12 @@ export function NavegadorScreen({
         onNovaAbaPrivada();
         return;
       }
+      // #856: Ctrl/Cmd+Shift+B — liga/desliga a barra de favoritos.
+      if (mod && e.shiftKey && tecla === "b") {
+        e.preventDefault();
+        alternarBarraFav();
+        return;
+      }
       // Ctrl+W — fechar a aba atual.
       if (mod && tecla === "w") {
         e.preventDefault();
@@ -1736,6 +1758,7 @@ export function NavegadorScreen({
   }, [
     abas,
     ativa,
+    alternarBarraFav,
     focarComandoInline,
     focarOmnibox,
     onNovaAba,
@@ -2219,6 +2242,31 @@ export function NavegadorScreen({
             {t.navegador.modoPrivadoAtivo}
           </Badge>
         )}
+        {/* #856: ícone dedicado que liga/desliga a barra de favoritos (padrão de
+            browser · Ctrl/Cmd+Shift+B). Ativo = barra visível (bg-accent). */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label={t.navegador.barraFavoritosToggle}
+              aria-pressed={mostrarBarraFav}
+              onClick={alternarBarraFav}
+              className={cn(
+                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
+                "hover:bg-accent hover:text-foreground",
+                mostrarBarraFav && "bg-accent text-foreground",
+              )}
+            >
+              <Bookmark className="size-4" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent>
+            <ShortcutTooltip
+              label={t.navegador.barraFavoritosToggle}
+              shortcut={{ key: "B", primary: true, shift: true }}
+            />
+          </TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <button

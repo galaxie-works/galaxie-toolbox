@@ -609,7 +609,9 @@ export interface NavigatorPrefs {
 }
 
 export const NAVIGATOR_PREFS_DEFAULTS: NavigatorPrefs = {
-  mostrarBarraFav: true,
+  // #856: escondida por padrão — agora é togglada por ícone dedicado na toolbar
+  // do Navigator (+ Ctrl/Cmd+Shift+B). A pref persiste a escolha do usuário.
+  mostrarBarraFav: false,
   salvarHistorico: true,
   retencaoDias: 0,
   semprePrivado: false,
