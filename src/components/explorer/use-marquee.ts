@@ -136,8 +136,16 @@ export function useMarqueeSelecao(params: {
     (e: ReactPointerEvent<HTMLDivElement>) => {
       if (e.button !== 0) return;
       const alvo = e.target as HTMLElement;
-      // Só inicia no VAZIO: sobre item/input/menu, deixa o gesto normal (clique,
-      // e — futuro — o drag-para-mover) rolar. Regra anti-conflito da issue.
+      // #865 (P1): o React propaga o pointerdown de itens PORTADOS (o item do
+      // menu de contexto Radix vive no `body`) por ESTA árvore de componentes —
+      // o handler dispara mesmo com o nó DOM FORA do scrollRef. O guard por
+      // tag-name não pega `role=menuitem` (é div, não button), então o marquee
+      // começava, capturava o ponteiro num drag >3px e roubava o clique do menu
+      // (o #680 que o audit pegou de volta). Só inicia se o alvo REAL do DOM está
+      // DENTRO do container — item portado no body nunca passa.
+      if (!scrollRef.current?.contains(alvo)) return;
+      // Só inicia no VAZIO: sobre item/input/menu dentro da lista, deixa o gesto
+      // normal (clique, e — futuro — o drag-para-mover) rolar. Anti-conflito.
       if (
         alvo.closest(
           "button, input, textarea, a, [contenteditable='true'], [data-sem-marquee]",
