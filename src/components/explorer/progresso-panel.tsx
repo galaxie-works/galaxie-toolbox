@@ -13,6 +13,7 @@ import { preencher, useIdioma } from "@/lib/idioma";
 import type { FsOpProgress } from "@/lib/types";
 
 import { formatarEta } from "./operacao";
+import { TooltipAcao } from "./tooltip-acao";
 
 /** Uma op de copy/move em andamento, rastreada por opId no shell. */
 export interface OpAtiva {
@@ -97,16 +98,18 @@ function LinhaOp({
           <span className="text-xs tabular-nums text-muted-foreground">
             {percent}%
           </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="size-6"
-            onClick={() => onCancelar(op.opId)}
-            aria-label={t.arquivos.cancelar}
-            title={t.arquivos.cancelar}
-          >
-            <X className="size-3.5" />
-          </Button>
+          {/* #862: `title` nativo → Tooltip do app (padrão-ouro). */}
+          <TooltipAcao label={t.arquivos.cancelar}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              onClick={() => onCancelar(op.opId)}
+              aria-label={t.arquivos.cancelar}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </TooltipAcao>
         </div>
       </div>
       <Progress value={percent} className="mt-2" />

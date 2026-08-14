@@ -86,6 +86,7 @@ import { useMarqueeSelecao } from "./use-marquee";
 import { solicitarThumb } from "./thumb-fila";
 import { ehImagem, iconeParaEntry } from "./icones-arquivo";
 import { formatarDataArquivo, rotuloTipo } from "./format";
+import { TooltipAcao } from "./tooltip-acao";
 
 type ModoView = "detalhes" | "lista" | "grade";
 
@@ -1203,50 +1204,57 @@ export function ContentPane({
             className="h-8 pl-8 pr-8"
           />
           {filtro && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="absolute right-0.5 top-1/2 size-7 -translate-y-1/2"
-              onClick={() => setFiltro("")}
-              aria-label={t.arquivos.limparFiltro}
-            >
-              <X className="size-3.5" />
-            </Button>
+            // #862: gap real (não tinha tooltip nenhum) — Tooltip do app.
+            <TooltipAcao label={t.arquivos.limparFiltro}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-0.5 top-1/2 size-7 -translate-y-1/2"
+                onClick={() => setFiltro("")}
+                aria-label={t.arquivos.limparFiltro}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </TooltipAcao>
           )}
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
-          <Button
-            variant={mostrarOcultos ? "secondary" : "ghost"}
-            size="icon"
-            className="size-8"
-            onClick={() => setMostrarOcultos((v) => !v)}
-            aria-pressed={mostrarOcultos}
-            aria-label={t.arquivos.mostrarOcultos}
-            title={t.arquivos.mostrarOcultos}
-          >
-            {mostrarOcultos ? (
-              <Eye className="size-4" />
-            ) : (
-              <EyeOff className="size-4" />
-            )}
-          </Button>
-          {onToggleInspector && (
+          {/* #862: `title` nativo → Tooltip do app (+ Kbd Ctrl+H, cabeado no #863). */}
+          <TooltipAcao label={t.arquivos.mostrarOcultos} atalhoId="ocultos">
             <Button
-              variant={mostrarInspector ? "secondary" : "ghost"}
+              variant={mostrarOcultos ? "secondary" : "ghost"}
               size="icon"
               className="size-8"
-              onClick={onToggleInspector}
-              aria-pressed={mostrarInspector}
-              aria-label={t.arquivos.detalhes}
-              title={t.arquivos.detalhes}
+              onClick={() => setMostrarOcultos((v) => !v)}
+              aria-pressed={mostrarOcultos}
+              aria-label={t.arquivos.mostrarOcultos}
             >
-              {mostrarInspector ? (
-                <PanelRightClose className="size-4" />
+              {mostrarOcultos ? (
+                <Eye className="size-4" />
               ) : (
-                <PanelRight className="size-4" />
+                <EyeOff className="size-4" />
               )}
             </Button>
+          </TooltipAcao>
+          {onToggleInspector && (
+            // #862: `title` nativo → Tooltip do app.
+            <TooltipAcao label={t.arquivos.detalhes}>
+              <Button
+                variant={mostrarInspector ? "secondary" : "ghost"}
+                size="icon"
+                className="size-8"
+                onClick={onToggleInspector}
+                aria-pressed={mostrarInspector}
+                aria-label={t.arquivos.detalhes}
+              >
+                {mostrarInspector ? (
+                  <PanelRightClose className="size-4" />
+                ) : (
+                  <PanelRight className="size-4" />
+                )}
+              </Button>
+            </TooltipAcao>
           )}
           <span className="whitespace-nowrap text-xs text-muted-foreground">
             {selCount > 0
