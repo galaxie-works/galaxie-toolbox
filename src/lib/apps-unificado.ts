@@ -2,6 +2,7 @@ import { APPS, urlIcone } from "@/lib/apps";
 import { APPS_CATALOGO } from "@/lib/apps-catalog";
 import {
   agruparUnificado,
+  m365VisivelPara,
   unificar,
   type AppUnificado,
   type GrupoUnificado,
@@ -21,6 +22,9 @@ export type {
   GrupoUnificado,
   TelaNativa,
 } from "@/lib/apps-unificado-core";
+
+/** #866: gate por-id do M365 (pro "Mais usados" do command, que usa AppM365). */
+export { m365VisivelPara };
 
 /** Lista única (M365 curado primeiro, catálogo sem as duplicatas canônicas). */
 export const APPS_UNIFICADOS: readonly AppUnificado[] = unificar(

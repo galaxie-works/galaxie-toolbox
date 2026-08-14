@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   agruparUnificado,
   appVisivelPara,
+  m365VisivelPara,
   unificar,
   IDS_DUP_M365,
   CATEGORIA_M365,
@@ -112,6 +113,16 @@ test("agruparUnificado: user=google filtra M365 do agrupamento", () => {
   );
   assert.equal(nomes.includes("outlook"), false);
   assert.equal(nomes.includes("figma"), true);
+});
+
+test("#866: m365VisivelPara gateia por id (Google esconde; org-only só work)", () => {
+  const google = { provider: "google" as const, accountKind: "personal" as const };
+  const pessoal = { provider: "microsoft" as const, accountKind: "personal" as const };
+  const work = { provider: "microsoft" as const, accountKind: "work" as const };
+  assert.equal(m365VisivelPara("outlook", google), false); // Google não vê M365
+  assert.equal(m365VisivelPara("outlook", pessoal), true); // MS pessoal vê Outlook
+  assert.equal(m365VisivelPara("sharepoint", pessoal), false); // org-only escondido
+  assert.equal(m365VisivelPara("sharepoint", work), true); // work vê tudo
 });
 
 test("#877: unificar inclui as 3 telas do GALAXIE (Bridge/Files/Remote nativas)", () => {
