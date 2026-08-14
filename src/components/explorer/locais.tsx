@@ -1,8 +1,9 @@
-import { HardDrive, Folder } from "lucide-react";
+import { HardDrive, Folder, MonitorSmartphone } from "lucide-react";
 
 import { SidebarNavItem } from "@/components/sidebar-nav-item";
 import { useIdioma } from "@/lib/idioma";
 import type { DriveInfo, FsEntry } from "@/lib/types";
+import { CAMINHO_ESTE_PC } from "./caminho";
 
 /**
  * #677: sidebar de LOCAIS no topo do painel da árvore — "Este computador" (os
@@ -10,6 +11,10 @@ import type { DriveInfo, FsEntry } from "@/lib/types";
  * trabalho). Reusa o `SidebarNavItem` canônico (padrão-ouro do Bridge) e os
  * rótulos de seção no mesmo tratamento do sidebar de pastas do Bridge. Clicar
  * navega a árvore/conteúdo pro caminho.
+ *
+ * #855: "Este computador" vira um item SELECIONÁVEL — clicar abre a grade de
+ * drives (sentinel `CAMINHO_ESTE_PC`) na área de conteúdo; os drives seguem
+ * listados logo abaixo, indentados.
  */
 export function LocaisSidebar({
   drives,
@@ -27,10 +32,15 @@ export function LocaisSidebar({
   return (
     <div className="space-y-3">
       <div>
-        <p className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">
-          {t.arquivos.drives}
-        </p>
-        <div className="flex flex-col gap-0.5">
+        <SidebarNavItem
+          icone={
+            <MonitorSmartphone className="size-4 shrink-0 text-muted-foreground" />
+          }
+          label={t.arquivos.drives}
+          ativo={currentPath === CAMINHO_ESTE_PC}
+          onClick={() => onNavegar(CAMINHO_ESTE_PC)}
+        />
+        <div className="mt-0.5 flex flex-col gap-0.5 pl-2">
           {drives.map((d) => (
             <SidebarNavItem
               key={d.path}

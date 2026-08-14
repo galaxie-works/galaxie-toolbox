@@ -2,6 +2,15 @@
 // propósito — funções puras, testáveis e sem dependência de React.
 
 /**
+ * #855: sentinel de caminho para "Este computador" (a grade de drives). Caminho
+ * vazio = nenhuma pasta real selecionada; o shell mostra a `DrivesView` quando
+ * `currentPath` é este sentinel e os drives já carregaram, e o item "Este
+ * computador" no sidebar fica ativo. Vazio é seguro: nenhum caminho real do FS é
+ * "", e o watcher/ContentPane do shell já ignoram caminho vazio.
+ */
+export const CAMINHO_ESTE_PC = "";
+
+/**
  * Caminho pai (sobe um nível). O drive-root ("C:\") não tem pai — devolve ele
  * mesmo, então `up()` no topo vira no-op.
  */
