@@ -1,5 +1,13 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowUp, RefreshCw, Search, X } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  Monitor,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useIdioma, preencher } from "@/lib/idioma";
 import { statCaminho } from "@/lib/api";
-import { nomeBase, segmentosCaminho } from "./caminho";
+import { CAMINHO_ESTE_PC, nomeBase, segmentosCaminho } from "./caminho";
 import { TooltipAcao } from "./tooltip-acao";
 
 /**
@@ -187,11 +195,23 @@ export function NavBarArquivos({
               }}
               title={t.arquivos.editarCaminho}
             >
-              {segmentos.map((seg, i) => (
+              {/* #911: "This PC" é SEMPRE a raiz do breadcrumb (ícone + rótulo).
+                  No This PC (caminho vazio) é o único segmento → o campo nunca
+                  fica vazio/colapsado; num drive vira "This PC \ C: \ …". */}
+              <span className="flex shrink-0 items-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 gap-1 px-1.5 text-xs font-normal"
+                  onClick={() => onNavegar(CAMINHO_ESTE_PC)}
+                >
+                  <Monitor className="size-3.5 shrink-0" />
+                  {t.arquivos.drives}
+                </Button>
+              </span>
+              {segmentos.map((seg) => (
                 <span key={seg.path} className="flex shrink-0 items-center">
-                  {i > 0 && (
-                    <span className="px-0.5 text-muted-foreground">\</span>
-                  )}
+                  <span className="px-0.5 text-muted-foreground">\</span>
                   <Button
                     variant="ghost"
                     size="sm"
