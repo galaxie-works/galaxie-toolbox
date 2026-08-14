@@ -521,7 +521,16 @@ fn remover(path: &str) -> Result<(), FsError> {
     Ok(())
 }
 
-/// Manda os itens pra Lixeira do SO (batch, reversível pelo usuário).
+/// #849: o caminho ainda existe no disco? `symlink_metadata` não segue link, então
+/// testa a PRÓPRIA entrada (não o alvo). Usado pra tornar o delete IDEMPOTENTE — um
+/// caminho que já sumiu (2º/3º clique concorrente) não vira erro barulhento.
+fn caminho_existe(p: &str) -> bool {
+    std::fs::symlink_metadata(com_long_path(Path::new(p))).is_ok()
+}
+
+/// Manda os itens pra Lixeira do SO (batch, reversível pelo usuário). #849: loga
+/// (START/END/ERRO, "como o Delphero" no GALAXIE.log) e é IDEMPOTENTE — filtra os
+/// caminhos que já sumiram (delete concorrente do 3x-clique); todos já idos = no-op.
 fn para_lixeira(paths: &[String]) -> Result<(), FsError> {
     if paths.is_empty() {
         return Ok(());
@@ -529,20 +538,56 @@ fn para_lixeira(paths: &[String]) -> Result<(), FsError> {
     for p in paths {
         validar(p)?;
     }
-    trash::delete_all(paths).map_err(|e| FsError::Io(format!("lixeira: {e}")))
+    let alvos: Vec<&str> = paths
+        .iter()
+        .filter(|p| caminho_existe(p))
+        .map(String::as_str)
+        .collect();
+    let ja_idos = paths.len() - alvos.len();
+    log::info!(
+        "fs_trash START: {} para a Lixeira, {ja_idos} já removido(s)/ignorado(s)",
+        alvos.len()
+    );
+    if alvos.is_empty() {
+        return Ok(());
+    }
+    let total = alvos.len();
+    match trash::delete_all(alvos) {
+        Ok(()) => {
+            log::info!("fs_trash END: {total} item(ns) na Lixeira OK");
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("fs_trash ERRO: {e} ({total} alvo(s))");
+            Err(FsError::Io(format!("lixeira: {e}")))
+        }
+    }
 }
 
-/// Apaga PERMANENTEMENTE (sem Lixeira) — exige o token de confirmação.
+/// Apaga PERMANENTEMENTE (sem Lixeira) — exige o token de confirmação. #849: loga
+/// (Delphero) e é IDEMPOTENTE (caminho já sumido não vira erro; conta e segue).
 fn excluir_permanente(paths: &[String], confirm_token: &str) -> Result<(), FsError> {
     if confirm_token != TOKEN_EXCLUSAO_PERMANENTE {
         return Err(FsError::InvalidPath(
             "exclusão permanente requer confirmação".into(),
         ));
     }
+    log::info!("fs_delete_permanent START: {} alvo(s)", paths.len());
+    let mut removidos = 0usize;
+    let mut ja_idos = 0usize;
     for p in paths {
         validar(p)?;
-        remover(p)?;
+        if !caminho_existe(p) {
+            ja_idos += 1;
+            continue;
+        }
+        if let Err(e) = remover(p) {
+            log::error!("fs_delete_permanent ERRO em {p}: {e}");
+            return Err(e);
+        }
+        removidos += 1;
     }
+    log::info!("fs_delete_permanent END: {removidos} removido(s), {ja_idos} já idos");
     Ok(())
 }
 
@@ -2174,6 +2219,22 @@ mod tests {
         for p in ["logo.svg", "doc.pdf", "video.mp4", "sem-ext", "a.svgz", "x.eps"] {
             assert!(!ext_raster_suportada(p), "{p} NÃO devia ser raster");
         }
+    }
+
+    #[test]
+    fn para_lixeira_idempotente_ignora_caminho_ja_sumido() {
+        // #849: um caminho bem-formado mas INEXISTENTE (o 2º/3º clique do delete
+        // concorrente, alvo já removido) NÃO pode virar erro — para_lixeira filtra
+        // e vira no-op (não chama a Lixeira, não retorna Err).
+        let inexistente = std::env::temp_dir().join("galaxie-inexistente-849-zzz");
+        let p = inexistente.to_string_lossy().into_owned();
+        assert!(!caminho_existe(&p), "o alvo do teste não pode existir");
+        assert!(
+            para_lixeira(&[p]).is_ok(),
+            "delete de caminho já sumido deve ser no-op idempotente, não erro"
+        );
+        // Lista vazia também é no-op.
+        assert!(para_lixeira(&[]).is_ok());
     }
 
     // --- Cache de thumbnail (#737 F2) ---
