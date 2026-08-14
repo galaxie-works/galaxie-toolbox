@@ -98,13 +98,24 @@ const SURFACE_GATE_M365: Record<string, Surface> = {
   learning: "sites",
 };
 
+/**
+ * #866: um M365 curado (por id) é visível pra conta? Reusa a Surface gateada.
+ * Pro "Mais usados" do command, que renderiza `AppM365` (não `AppUnificado`).
+ */
+export function m365VisivelPara(
+  id: string,
+  user: Pick<AppUser, "provider" | "accountKind"> | null | undefined,
+): boolean {
+  return surfaceSuportada(user, SURFACE_GATE_M365[id] ?? "mail");
+}
+
 /** Um app é visível pra conta? Catálogo = sempre; M365 = pela Surface gateada. */
 export function appVisivelPara(
   app: AppUnificado,
   user: Pick<AppUser, "provider" | "accountKind"> | null | undefined,
 ): boolean {
   if (!app.m365) return true;
-  return surfaceSuportada(user, SURFACE_GATE_M365[app.id] ?? "mail");
+  return m365VisivelPara(app.id, user);
 }
 
 /**

@@ -19,6 +19,7 @@ import { chaveCategoria } from "@/lib/apps-catalog";
 // #827 (SU1): fonte + render ÚNICOS do command (M365 curado + catálogo fundidos).
 import {
   appsUnificadosPorCategoria,
+  m365VisivelPara,
   type AppUnificado,
 } from "@/lib/apps-unificado";
 import { AppIcon } from "@/components/app-icon";
@@ -394,10 +395,18 @@ function ConteudoPaleta({
 
   // "Mais acessados" REAL: contagem derivada do historico (spec §8.3). Sem
   // historico ainda (instalacao nova), cai na lista M365 curada — sem regressao.
-  const topAcessados = maisAcessados(historico, 9);
+  // #866: o "Mais usados"/"Mais acessados" também é gateado por provider — Google/
+  // MS-pessoal não vê atalho M365 que não pode usar (ex.: SharePoint/OneDrive),
+  // coerente com a lista unificada de baixo. Item web não-M365 não é gateado.
+  const topAcessados = maisAcessados(historico, 9).filter((item) => {
+    const app = appPorUrl(item.url);
+    return !app || m365VisivelPara(app.id, user);
+  });
   const maisUsadosFallback = MAIS_USADOS.map((id) =>
     APPS.find((a) => a.id === id),
-  ).filter((a): a is AppM365 => a != null);
+  )
+    .filter((a): a is AppM365 => a != null)
+    .filter((a) => m365VisivelPara(a.id, user));
   // Grupo `#`: historico filtrado pelo termo, ja ordenado por recencia. Fatiado
   // para nao renderizar milhares de itens no cmdk.
   const historicoLista =
