@@ -24,7 +24,6 @@ import {
   onProgressoOp,
 } from "@/lib/api";
 import type { DriveInfo, FsConflict, FsEntry } from "@/lib/types";
-import { LocaisSidebar } from "./locais";
 import { DrivesView } from "./drives-view";
 import { ArvoreArquivos } from "./arvore";
 import { NavBarArquivos } from "./navbar";
@@ -440,23 +439,16 @@ export function ExplorerShell({
               </div>
             ) : (
               <ScrollArea className="min-h-0 w-full flex-1">
-                <div className="space-y-3 pr-2">
-                  <LocaisSidebar
+                {/* #869: árvore ÚNICA — Este computador → drives → pastas (lazy) e
+                    Acesso rápido como raiz-irmã. Substitui o `LocaisSidebar` flat
+                    + a seção "Pastas" separada. */}
+                <div className="pr-2">
+                  <ArvoreArquivos
                     drives={drives}
                     acessoRapido={acessoRapido}
                     currentPath={nav.currentPath}
                     onNavegar={navegar}
                   />
-                  <div>
-                    <p className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">
-                      {t.arquivos.pastas}
-                    </p>
-                    <ArvoreArquivos
-                      drives={drives}
-                      currentPath={nav.currentPath}
-                      onNavegar={navegar}
-                    />
-                  </div>
                 </div>
               </ScrollArea>
             )}
