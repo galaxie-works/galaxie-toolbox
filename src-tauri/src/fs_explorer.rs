@@ -79,8 +79,14 @@ pub struct FsEntry {
 pub struct DriveInfo {
     pub path: String,
     pub name: String,
-    /// `fixed` | `removable` | `network` | `cdrom` | `ramdisk` | `unknown`.
+    /// #869: `fixed` | `removable` | `network` | `cdrom` | `ramdisk` | `cloud` |
+    /// `unknown`. `network` (DRIVE_REMOTE) já dava as Network locations (W:); `cloud`
+    /// é a heurística nova por filesystem name (Google DriveFS etc.) → ícone de nuvem
+    /// no sidebar do #869.
     pub kind: String,
+    /// #869: nome do filesystem (NTFS/FAT32/exFAT/DriveFS…) — sinal cru pro front
+    /// classificar/refinar (a detecção de cloud parte daqui).
+    pub fs_name: String,
     // Contrato congelado com o S1 (#677/Vega): `totalSpace`/`freeSpace`.
     pub total_space: u64,
     pub free_space: u64,
@@ -382,23 +388,46 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
             GetDiskFreeSpaceExW(pcw, None, Some(&mut total as *mut u64), Some(&mut free as *mut u64))
         };
 
-        // Label do volume (best-effort — drive vazio/sem mídia fica sem nome).
+        // Label do volume + filesystem name (#869) — best-effort (drive vazio fica sem).
         let mut label = [0u16; 261];
+        let mut fsbuf = [0u16; 261];
         let mut nome = String::new();
-        if unsafe { GetVolumeInformationW(pcw, Some(&mut label), None, None, None, None) }.is_ok() {
+        let mut fs_name = String::new();
+        if unsafe {
+            GetVolumeInformationW(pcw, Some(&mut label), None, None, None, Some(&mut fsbuf))
+        }
+        .is_ok()
+        {
             let fim = label.iter().position(|&c| c == 0).unwrap_or(label.len());
             nome = String::from_utf16_lossy(&label[..fim]);
+            let ff = fsbuf.iter().position(|&c| c == 0).unwrap_or(fsbuf.len());
+            fs_name = String::from_utf16_lossy(&fsbuf[..ff]);
         }
+
+        // #869: mount de nuvem vira `cloud` (ícone dedicado no sidebar). Heurística
+        // CONSERVADORA pelo filesystem name — só marca provedores conhecidos; qualquer
+        // dúvida cai no tipo do `GetDriveTypeW`, nunca rotula um NTFS real como cloud.
+        let kind_final = if eh_cloud_fs(&fs_name) { "cloud" } else { kind };
 
         drives.push(DriveInfo {
             path: raiz,
             name: nome,
-            kind: kind.to_string(),
+            kind: kind_final.to_string(),
+            fs_name,
             total_space: total,
             free_space: free,
         });
     }
     Ok(drives)
+}
+
+/// #869: o filesystem name é de um provedor de nuvem montado como drive? Conservador
+/// — só nomes documentados (Google Drive File Stream = `DriveFS`); o resto NÃO é
+/// cloud (evita mislabel de NTFS/exFAT reais). O front refina com o `fs_name` cru.
+#[cfg(windows)]
+fn eh_cloud_fs(fs_name: &str) -> bool {
+    let f = fs_name.trim().to_ascii_lowercase();
+    matches!(f.as_str(), "drivefs")
 }
 
 #[cfg(not(windows))]
@@ -410,6 +439,7 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
         path: "/".into(),
         name: String::new(),
         kind: "fixed".into(),
+        fs_name: String::new(),
         total_space: 0,
         free_space: 0,
     }])
@@ -2334,6 +2364,18 @@ mod tests {
         assert_eq!(pares[0].0, "C:/x/a.txt");
         assert!(pares[0].1.ends_with("a.txt"), "destino resolve o nome da origem");
         assert!(pares[1].1.ends_with("pasta"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn eh_cloud_fs_so_marca_provedor_conhecido() {
+        // #869: conservador — só provedor de nuvem documentado vira cloud.
+        assert!(eh_cloud_fs("DriveFS"));
+        assert!(eh_cloud_fs("drivefs")); // case-insensitive
+        // Filesystems reais NUNCA são cloud (sem mislabel).
+        for fs in ["NTFS", "FAT32", "exFAT", "ReFS", ""] {
+            assert!(!eh_cloud_fs(fs), "{fs} não é cloud");
+        }
     }
 
     #[test]
