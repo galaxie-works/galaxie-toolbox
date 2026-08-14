@@ -76,6 +76,7 @@ import {
 import type { AppUser, Identidade, Site } from "@/lib/types";
 import * as api from "@/lib/api";
 import { resolverOrgStatus } from "@/lib/organizations";
+import { surfaceSuportada } from "@/lib/capabilities-surface";
 import { useIdioma } from "@/lib/idioma";
 import { cn, comLoginHint } from "@/lib/utils";
 import type { AppM365 } from "@/lib/apps";
@@ -623,6 +624,14 @@ function AppInner() {
    * slot de conteúdo do Navigator (keep-alive), não é webview.
    */
   function abrirTelaInterna(telaInterna: TelaInterna) {
+    // #821 (P0) parte 2: gate de capability por SUPERFÍCIE. O Bridge (control-room)
+    // bate em MS mail — conta sem essa superfície (Google, ou MS sem mail) NÃO pode
+    // abri-lo. Backstop AUTORITATIVO: o rail já esconde o botão, mas command/atalho/
+    // deep-link (#657) também funilam aqui, então o gate mora no choke-point. Files/
+    // Remote são universais (locais), seguem livres.
+    if (telaInterna === "control-room" && !surfaceSuportada(user, "mail")) {
+      return;
+    }
     const now = Date.now();
     const nome =
       telaInterna === "control-room"

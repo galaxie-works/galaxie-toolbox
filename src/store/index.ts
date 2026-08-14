@@ -15,6 +15,7 @@ import {
   RoteadorCloudBackend,
   projetarConfigNuvem,
 } from "./onedrive-config-backend";
+import { resetSessaoNavegador } from "@/lib/navigator-tabs";
 import {
   aplicarAltoContraste,
   aplicarModoTema,
@@ -300,6 +301,7 @@ export function resetSessaoCompleta(): void {
   s.resetNavegacao(); // #568: nav (bridgeView→mail, peopleTab→contacts)
   s.clearReauth(); // auth (#235): escopos ausentes do token
   // Vetores FORA do store.
+  resetSessaoNavegador(); // #821: abas web/pins/grupos do Navigator (localStorage)
   limparFotos(); // cache de fotos (módulo + localStorage)
   invalidarBrandingCache(); // memo do logo do tenant (#541)
   void resetSessionMemo(); // memo curto do Graph no Rust (best-effort)

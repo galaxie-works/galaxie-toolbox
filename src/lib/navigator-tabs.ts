@@ -499,6 +499,33 @@ export function persistLastSession(tabs: AbaBrowser[]): void {
   }
 }
 
+/**
+ * #821 (P0): purga do disco o estado do Navigator que é TENANT-SCOPED, na troca
+ * de conta — senão as abas web (last-session), pins e grupos do usuário anterior
+ * reidratam na conta nova. Chamado pelo `resetSessaoCompleta` (seam #555).
+ *
+ * TENANT (some): abas da última sessão, pins, grupos e a membership de grupo.
+ * DEVICE/pref (fica, não vaza identidade): favicon-cache, provedor de busca,
+ * prefs e memory-settings. As abas INTERNAS (Bridge etc.) não persistem aqui
+ * (`isBrowserTab` exige https) — o reset delas é do state in-memory do App.
+ */
+export function resetSessaoNavegador(
+  storage: Pick<Storage, "removeItem"> = localStorage,
+): void {
+  for (const chave of [
+    PINNED_TABS_KEY,
+    NAVIGATOR_LAST_SESSION_KEY,
+    NAVIGATOR_GROUPS_KEY,
+    NAVIGATOR_MEMBERSHIP_KEY,
+  ]) {
+    try {
+      storage.removeItem(chave);
+    } catch {
+      // best-effort.
+    }
+  }
+}
+
 // --- Provedor de pesquisa (#305) ---------------------------------------------
 // Provedor padrão do omnibox. O `browser.interpretar` usa `urlDeBusca` no lugar
 // do Bing fixo (#174). "custom" usa uma URL com %s no lugar do termo.
