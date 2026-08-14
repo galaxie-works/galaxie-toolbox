@@ -41,6 +41,10 @@ pub enum FsError {
     /// suportado, ou grande demais). Não é falha — o front usa ícone de TIPO.
     #[error("sem thumbnail raster: {0}")]
     NaoRasterizavel(String),
+    /// #873: arquivo grande demais pro preview (acima do teto de bytes). O front
+    /// mostra fallback com metadados (não é erro fatal).
+    #[error("arquivo grande demais: {0}")]
+    ArquivoGrande(String),
 }
 
 impl From<std::io::Error> for FsError {
@@ -304,6 +308,77 @@ fn stat(path: &str) -> Result<FsEntry, FsError> {
         sm
     };
     Ok(entry_de(p, &meta, is_symlink))
+}
+
+/// #873: teto pra leitura de bytes de arquivo local pro preview (Wagner: 25MB).
+const MAX_PREVIEW_BYTES: u64 = 25 * 1024 * 1024;
+
+/// #873: MIME por extensão pro preview escolher o renderer (imagem/áudio/vídeo/
+/// texto). Cobre os tipos que o `preview-arquivo.tsx` trata; o resto cai em
+/// `application/octet-stream` (o front usa a extensão + fallback).
+fn mime_de_ext(path: &str) -> &'static str {
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "ico" => "image/x-icon",
+        "tif" | "tiff" => "image/tiff",
+        "pdf" => "application/pdf",
+        "txt" | "log" | "md" | "csv" => "text/plain",
+        "html" | "htm" => "text/html",
+        "json" => "application/json",
+        "m4a" | "aac" => "audio/mp4",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" | "oga" => "audio/ogg",
+        "flac" => "audio/flac",
+        "webm" => "video/webm",
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        _ => "application/octet-stream",
+    }
+}
+
+/// #873: lê os bytes de um arquivo local e devolve `AnexoConteudo`
+/// (`{ bytesB64, contentType, nome }`) — o preview do Files consome IGUAL ao
+/// anexo do Graph, SEM asset-protocol (o `convertFileSrc→fetch` falhava com
+/// "failed to fetch" porque o `assetProtocol` não está habilitado no tauri.conf).
+/// Guards: caminho válido, é ARQUIVO (não dir), ≤ `max_bytes` limitado a 25MB.
+/// `metadata` (segue symlink) pra o teto valer sobre o conteúdo real.
+fn ler_bytes_arquivo(path: &str, max_bytes: Option<u64>) -> Result<crate::graph::AnexoConteudo, FsError> {
+    use base64::Engine;
+    validar(path)?;
+    let p = com_long_path(Path::new(path));
+    let meta = std::fs::metadata(&p)?; // NotFound se não existe/broken symlink
+    if meta.is_dir() {
+        return Err(FsError::NotADirectory(format!("{path} é um diretório")));
+    }
+    // Teto = o pedido do front, mas nunca acima do hard cap de 25MB.
+    let teto = max_bytes.unwrap_or(MAX_PREVIEW_BYTES).min(MAX_PREVIEW_BYTES);
+    let size = meta.len();
+    if size > teto {
+        return Err(FsError::ArquivoGrande(format!("{path} ({size} bytes > {teto})")));
+    }
+    let bytes = std::fs::read(&p)?;
+    let nome = Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    Ok(crate::graph::AnexoConteudo {
+        bytes_b64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        content_type: mime_de_ext(path).to_string(),
+        nome,
+    })
 }
 
 fn tamanho_dir(path: &str) -> Result<DirSize, FsError> {
@@ -2558,6 +2633,19 @@ pub async fn fs_stat(path: String) -> Result<FsEntry, FsError> {
         .map_err(spawn_err)?
 }
 
+/// #873: bytes de um arquivo local como `AnexoConteudo` ({ bytesB64, contentType,
+/// nome }) pro preview (sem asset-protocol) — mesmo shape do anexo do Graph.
+/// `maxBytes` opcional (limitado a 25MB); `ArquivoGrande`/`NotADirectory` = fallback.
+#[tauri::command]
+pub async fn fs_read_file_bytes(
+    path: String,
+    max_bytes: Option<u64>,
+) -> Result<crate::graph::AnexoConteudo, FsError> {
+    tauri::async_runtime::spawn_blocking(move || ler_bytes_arquivo(&path, max_bytes))
+        .await
+        .map_err(spawn_err)?
+}
+
 #[tauri::command]
 pub async fn fs_dir_size(path: String) -> Result<DirSize, FsError> {
     tauri::async_runtime::spawn_blocking(move || tamanho_dir(&path))
@@ -3090,6 +3178,51 @@ mod tests {
         let g = cl.iter().find(|c| c.kind == "drive").unwrap();
         assert_eq!(g.provider, "googledrive");
         assert_eq!(g.name, "Google Drive (G:)");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn ler_bytes_arquivo_base64_e_guards() {
+        use base64::Engine;
+        let base = dir_temp("read-bytes");
+        std::fs::create_dir_all(&base).unwrap();
+        let f = base.join("foto.png");
+        let conteudo = vec![1u8, 2, 3, 4, 250, 0, 255];
+        std::fs::write(&f, &conteudo).unwrap();
+
+        // Arquivo → AnexoConteudo: base64 exato + content-type por ext + nome.
+        let ac = ler_bytes_arquivo(&f.to_string_lossy(), None).unwrap();
+        let dec = base64::engine::general_purpose::STANDARD.decode(ac.bytes_b64.as_bytes()).unwrap();
+        assert_eq!(dec, conteudo);
+        assert_eq!(ac.content_type, "image/png");
+        assert_eq!(ac.nome, "foto.png");
+
+        // Diretório → NotADirectory (não é arquivo).
+        assert!(matches!(
+            ler_bytes_arquivo(&base.to_string_lossy(), None),
+            Err(FsError::NotADirectory(_))
+        ));
+        // Inexistente → NotFound.
+        assert!(matches!(
+            ler_bytes_arquivo(&base.join("naoexiste").to_string_lossy(), None),
+            Err(FsError::NotFound(_))
+        ));
+        // Vazio → InvalidPath.
+        assert!(matches!(ler_bytes_arquivo("", None), Err(FsError::InvalidPath(_))));
+
+        // maxBytes menor que o arquivo → ArquivoGrande (o front pede o teto dele).
+        assert!(matches!(
+            ler_bytes_arquivo(&f.to_string_lossy(), Some(3)),
+            Err(FsError::ArquivoGrande(_))
+        ));
+
+        // > 25MB → ArquivoGrande, SEM ler (arquivo esparso via set_len).
+        let grande = base.join("grande.bin");
+        std::fs::File::create(&grande).unwrap().set_len(MAX_PREVIEW_BYTES + 1).unwrap();
+        assert!(matches!(
+            ler_bytes_arquivo(&grande.to_string_lossy(), None),
+            Err(FsError::ArquivoGrande(_))
+        ));
         std::fs::remove_dir_all(&base).ok();
     }
 

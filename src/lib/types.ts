@@ -592,7 +592,9 @@ export type FsErrorCode =
   | "NotADirectory"
   | "Io"
   | "InvalidPath"
-  | "VerifyMismatch";
+  | "VerifyMismatch"
+  | "NaoRasterizavel"
+  | "ArquivoGrande"; // #873: arquivo > 25MB pro preview → fallback com metadados
 
 export interface FsError {
   code: FsErrorCode;

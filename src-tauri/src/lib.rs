@@ -2127,6 +2127,8 @@ pub fn run() {
             fs_explorer::fs_read_dir,
             fs_explorer::fs_read_dir_streamed,
             fs_explorer::fs_stat,
+            // #873: bytes de arquivo local em base64 pro preview (sem asset-protocol).
+            fs_explorer::fs_read_file_bytes,
             fs_explorer::fs_dir_size,
             fs_explorer::fs_list_drives,
             // #869: mounts de nuvem locais (OneDrive pasta + Google Drive letra).
