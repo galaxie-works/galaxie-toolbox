@@ -679,6 +679,37 @@ function AppInner() {
     setTela("navegador");
   }
 
+  // #872 parte 2: "Nova guia do Files" — SEMPRE abre uma aba de Files NOVA (ao
+  // contrário do `abrirTelaInterna`, que é singleton e foca a existente). Cada
+  // aba é uma instância própria do ExplorerShell (key por id no Navigator) e
+  // nasce no This PC (#870). Id com sufixo aleatório pra nunca colidir com uma
+  // aba criada no mesmo ms.
+  function novaAbaFiles() {
+    const now = Date.now();
+    const id = `interna-arquivos-${now}-${Math.floor(Math.random() * 1e6)}`;
+    setAbas((prev) => {
+      const rebaixadas = prev.map((tab) =>
+        tab.estado === "dormindo"
+          ? tab
+          : { ...tab, estado: "fundo" as const, reativando: false },
+      );
+      return orderPinnedFirst([
+        ...rebaixadas,
+        {
+          id,
+          nome: t.sidebar.files,
+          url: `galaxie://tela/arquivos`,
+          estado: "ativa",
+          ultimoAcesso: now,
+          tipo: "interna",
+          tela: "arquivos",
+        },
+      ]);
+    });
+    setAbaAtiva(id);
+    setTela("navegador");
+  }
+
   /**
    * #719 (SH1): roteia navegação de tela. Bridge/Files/Remote viram ABAS do
    * Navigator (foca-se-aberto); todo o resto continua troca de tela top-level.
@@ -1235,6 +1266,7 @@ function AppInner() {
             onReordenar={reordenarAbas}
             onAbrir={abrirAppAqui}
             onNovaAba={novaAba}
+            onNovaAbaFiles={novaAbaFiles}
             onNovaAbaPrivada={novaAbaPrivada}
             onReabrirFechada={reabrirFechada}
             onNavegar={abrirUrlLivre}

@@ -1100,6 +1100,7 @@ export function NavegadorScreen({
   onReordenar,
   onAbrir,
   onNovaAba,
+  onNovaAbaFiles,
   onNovaAbaPrivada,
   onReabrirFechada,
   onNavegar,
@@ -1135,6 +1136,8 @@ export function NavegadorScreen({
   onReordenar: (ids: string[]) => void;
   onAbrir: (app: AppM365) => void;
   onNovaAba: () => void;
+  /** #872: abre uma aba de Files NOVA (para o menu de contexto da aba de Files). */
+  onNovaAbaFiles: () => void;
   onNovaAbaPrivada: () => void;
   onReabrirFechada: () => void;
   onNavegar: (url: string, nome: string) => void;
@@ -1515,6 +1518,18 @@ export function NavegadorScreen({
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent className="w-56">
+            {/* #872: menu POR TIPO de aba — a aba de Files ganha "Nova guia do
+                Files" no topo (abre outra aba de Files no This PC). As ações
+                comuns de aba (fixar/dormir/fechar…) seguem abaixo pra todas. */}
+            {ehAbaInterna(aba) && aba.tela === "arquivos" && (
+              <>
+                <ContextMenuItem className="gap-2" onClick={onNovaAbaFiles}>
+                  <FolderTree />
+                  {t.navegador.novaGuiaFiles}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+              </>
+            )}
             <ContextMenuItem
               className="gap-2"
               onClick={() => onAlternarFixada(aba.id)}
