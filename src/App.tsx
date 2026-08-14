@@ -679,6 +679,37 @@ function AppInner() {
     setTela("navegador");
   }
 
+  // #872 parte 2: "Nova guia do Files" — SEMPRE abre uma aba de Files NOVA (ao
+  // contrário do `abrirTelaInterna`, que é singleton e foca a existente). Cada
+  // aba é uma instância própria do ExplorerShell (key por id no Navigator) e
+  // nasce no This PC (#870). Id com sufixo aleatório pra nunca colidir com uma
+  // aba criada no mesmo ms.
+  function novaAbaFiles() {
+    const now = Date.now();
+    const id = `interna-arquivos-${now}-${Math.floor(Math.random() * 1e6)}`;
+    setAbas((prev) => {
+      const rebaixadas = prev.map((tab) =>
+        tab.estado === "dormindo"
+          ? tab
+          : { ...tab, estado: "fundo" as const, reativando: false },
+      );
+      return orderPinnedFirst([
+        ...rebaixadas,
+        {
+          id,
+          nome: t.sidebar.files,
+          url: `galaxie://tela/arquivos`,
+          estado: "ativa",
+          ultimoAcesso: now,
+          tipo: "interna",
+          tela: "arquivos",
+        },
+      ]);
+    });
+    setAbaAtiva(id);
+    setTela("navegador");
+  }
+
   /**
    * #719 (SH1): roteia navegação de tela. Bridge/Files/Remote viram ABAS do
    * Navigator (foca-se-aberto); todo o resto continua troca de tela top-level.
@@ -755,6 +786,30 @@ function AppInner() {
       ),
     );
     setAbaAtiva(id);
+  }
+
+  // #872: a aba de Files reporta seu local atual (via ExplorerShell → renderTela
+  // Interna) e aqui viramos "Files - <local>" no nome + guardamos o caminho
+  // completo pro tooltip do chip. GUARD de no-op (retorna o mesmo array quando
+  // nada mudou) — o callback do shell é recriado a cada render, então sem o guard
+  // isso entraria em loop de setstate.
+  function atualizarLocalAba(
+    abaId: string,
+    info: { rotulo: string; caminho: string },
+  ) {
+    const nome = `${t.sidebar.files} - ${info.rotulo}`;
+    setAbas((prev) => {
+      const alvo = prev.find((a) => a.id === abaId);
+      if (
+        !alvo ||
+        (alvo.nome === nome && alvo.caminhoLocal === info.caminho)
+      ) {
+        return prev;
+      }
+      return prev.map((a) =>
+        a.id === abaId ? { ...a, nome, caminhoLocal: info.caminho } : a,
+      );
+    });
   }
 
   function abrirAbaVazia() {
@@ -1049,6 +1104,7 @@ function AppInner() {
   const renderTelaInterna = (
     telaInterna: TelaInterna,
     ativaTela: boolean,
+    abaId: string,
   ): ReactNode => {
     switch (telaInterna) {
       case "control-room":
@@ -1081,7 +1137,13 @@ function AppInner() {
           />
         );
       case "arquivos":
-        return <ArquivosScreen />;
+        // #872: a aba mostra "Files - <local>" — o shell reporta o local atual e
+        // o App atualiza o nome/caminho DESTA aba (por id).
+        return (
+          <ArquivosScreen
+            onLocalChange={(info) => atualizarLocalAba(abaId, info)}
+          />
+        );
       case "remote":
         return (
           <EmBreveScreen
@@ -1204,6 +1266,7 @@ function AppInner() {
             onReordenar={reordenarAbas}
             onAbrir={abrirAppAqui}
             onNovaAba={novaAba}
+            onNovaAbaFiles={novaAbaFiles}
             onNovaAbaPrivada={novaAbaPrivada}
             onReabrirFechada={reabrirFechada}
             onNavegar={abrirUrlLivre}

@@ -1100,6 +1100,7 @@ export function NavegadorScreen({
   onReordenar,
   onAbrir,
   onNovaAba,
+  onNovaAbaFiles,
   onNovaAbaPrivada,
   onReabrirFechada,
   onNavegar,
@@ -1135,6 +1136,8 @@ export function NavegadorScreen({
   onReordenar: (ids: string[]) => void;
   onAbrir: (app: AppM365) => void;
   onNovaAba: () => void;
+  /** #872: abre uma aba de Files NOVA (para o menu de contexto da aba de Files). */
+  onNovaAbaFiles: () => void;
   onNovaAbaPrivada: () => void;
   onReabrirFechada: () => void;
   onNavegar: (url: string, nome: string) => void;
@@ -1162,7 +1165,11 @@ export function NavegadorScreen({
   /** #719 (SH1): renderiza a tela React (Bridge/Files/Remote) de uma aba
    *  interna. `ativa` = a aba é a atual (dá foco/polling à tela certa). O App é
    *  dono das telas e do keep-alive; o Navigator só as encaixa no slot. */
-  renderTelaInterna: (tela: TelaInterna, ativa: boolean) => ReactNode;
+  renderTelaInterna: (
+    tela: TelaInterna,
+    ativa: boolean,
+    abaId: string,
+  ) => ReactNode;
 }) {
   const { t } = useIdioma();
   const area = useRef<HTMLDivElement>(null);
@@ -1406,6 +1413,12 @@ export function NavegadorScreen({
         : aba.fixada
           ? preencher(t.navegador.fixadaNome, { nome: aba.nome })
           : aba.nome;
+    // #872: aba de Files → o hover mostra o CAMINHO completo (o chip já traz
+    // "Files - <local>" truncado). As outras abas mantêm o próprio label.
+    const tabTooltip =
+      ehAbaInterna(aba) && aba.tela === "arquivos" && aba.caminhoLocal
+        ? aba.caminhoLocal
+        : tabLabel;
     return (
       <SortableItem
         key={aba.id}
@@ -1471,7 +1484,7 @@ export function NavegadorScreen({
                     <TooltipTrigger asChild>
                       <span className="min-w-0 flex-1 truncate">{aba.nome}</span>
                     </TooltipTrigger>
-                    <TooltipContent>{tabLabel}</TooltipContent>
+                    <TooltipContent>{tabTooltip}</TooltipContent>
                   </Tooltip>
                   {aba.manterAcordada && (
                     <Coffee
@@ -1505,6 +1518,18 @@ export function NavegadorScreen({
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent className="w-56">
+            {/* #872: menu POR TIPO de aba — a aba de Files ganha "Nova guia do
+                Files" no topo (abre outra aba de Files no This PC). As ações
+                comuns de aba (fixar/dormir/fechar…) seguem abaixo pra todas. */}
+            {ehAbaInterna(aba) && aba.tela === "arquivos" && (
+              <>
+                <ContextMenuItem className="gap-2" onClick={onNovaAbaFiles}>
+                  <FolderTree />
+                  {t.navegador.novaGuiaFiles}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+              </>
+            )}
             <ContextMenuItem
               className="gap-2"
               onClick={() => onAlternarFixada(aba.id)}
@@ -2400,7 +2425,7 @@ export function NavegadorScreen({
                   ativaAba ? "flex flex-col" : "hidden",
                 )}
               >
-                {renderTelaInterna(aba.tela as TelaInterna, ativaAba)}
+                {renderTelaInterna(aba.tela as TelaInterna, ativaAba, aba.id)}
               </div>
             );
           })}
