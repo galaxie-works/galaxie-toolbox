@@ -14,10 +14,12 @@ import {
   cancelarOp,
   checarConflitos,
   copiarComProgresso,
+  copiarVariasComProgresso,
   dirsConhecidos,
   listarDir,
   listarDrives,
   moverComProgresso,
+  moverVariasComProgresso,
   observarPasta,
   onProgressoOp,
 } from "@/lib/api";
@@ -302,6 +304,29 @@ export function ExplorerShell() {
     [],
   );
 
+  // #850 (fatia B): transferência MULTI-ORIGEM numa op só (um opId, uma fase,
+  // progresso global) — mata o "2 pastas sequenciais". As origens vão pro destino
+  // com o nome ORIGINAL, então serve o caminho SEM rename por-origem (sem
+  // conflito). O caso "manter ambos" (rename por-origem) continua no
+  // `executarPlano` por-item, que a op multi não expressa.
+  const executarMulti = useCallback(
+    async (sources: string[], destDir: string, op: OperacaoClipboard) => {
+      try {
+        const opId =
+          op === "copy"
+            ? await copiarVariasComProgresso(sources, destDir)
+            : await moverVariasComProgresso(sources, destDir);
+        tiposRef.current.set(opId, op === "copy" ? "copy" : "move");
+      } catch (e) {
+        toast.error(tRef.current.arquivos.erroOperacao, {
+          description: String(e),
+        });
+      }
+      if (op === "cut") setClipboard(null);
+    },
+    [],
+  );
+
   // #724: ponto de entrada do colar/copiar/mover — checa conflitos ANTES; abre o
   // diálogo se houver, senão executa direto.
   const iniciarTransferencia = useCallback(
@@ -315,13 +340,15 @@ export function ExplorerShell() {
           // Falha ao checar → segue sem diálogo (o backend ainda barra/decide).
         }
         if (conflitos.length === 0) {
-          await executarPlano(sources, destDir, op, [], "substituir");
+          // #850: sem conflito → UMA op multi-origem (progresso global), não N
+          // ops sequenciais.
+          await executarMulti(sources, destDir, op);
           return;
         }
         setConflito({ sources, destDir, op, conflitos });
       })();
     },
-    [executarPlano],
+    [executarMulti],
   );
 
   const cancelarTransferencia = useCallback((opId: number) => {
