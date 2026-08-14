@@ -1489,6 +1489,9 @@ const pt = {
     acima: "Acima",
     drives: "Este computador",
     acessoRapido: "Acesso rápido",
+    // #869 — itens do menu de contexto (fixar/desafixar pasta no Acesso rápido)
+    fixarAcessoRapido: "Fixar no Acesso rápido",
+    desafixarAcessoRapido: "Desafixar do Acesso rápido",
     carregando: "Carregando…",
     documentos: "Documentos",
     downloads: "Downloads",
@@ -3454,6 +3457,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     acima: "Up",
     drives: "This PC",
     acessoRapido: "Quick access",
+    // #869 — context menu items (pin/unpin a folder to Quick access)
+    fixarAcessoRapido: "Pin to Quick access",
+    desafixarAcessoRapido: "Unpin from Quick access",
     carregando: "Loading…",
     documentos: "Documents",
     downloads: "Downloads",

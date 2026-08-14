@@ -35,6 +35,14 @@ import { ConflitoDialog } from "./conflito-dialog";
 import { calcVelocidade, planejarTransferencia, type ResolucaoConflito } from "./operacao";
 import { CAMINHO_ESTE_PC, nomeBase, pathPai } from "./caminho";
 import type { Clipboard, OperacaoClipboard } from "./menu-arquivo";
+import {
+  CHAVE_PINS_ACESSO_RAPIDO,
+  adicionarPin,
+  estaFixado,
+  mesclarAcessoRapido,
+  removerPin,
+  type PinAcessoRapido,
+} from "./quick-access";
 
 // --- Estado de navegação (histórico back/forward + caminho atual) ----------
 // Local ao shell (useReducer): é estado de UI efêmero, não tenant-scoped — não
@@ -127,6 +135,14 @@ export function ExplorerShell({
     null,
   );
   const [acessoRapido, setAcessoRapido] = useState<FsEntry[] | null>(null);
+  // #869 (Quick access pin/sort): pins do usuário PERSISTIDOS (localStorage puro
+  // via usePersistedState — conveniência de UI local, não tenant-scoped). A seção
+  // "Acesso rápido" da árvore = pins + dirs conhecidos do sistema, dedupados e
+  // ordenados por nome (mesclarAcessoRapido).
+  const [pins, setPins] = usePersistedState<PinAcessoRapido[]>(
+    CHAVE_PINS_ACESSO_RAPIDO,
+    [],
+  );
   // #681: seleção liftada do ContentPane → alimenta o InspectorPane.
   const [selecionados, setSelecionados] = useState<FsEntry[]>([]);
   // #819/#854: visibilidade do painel de detalhes PERSISTE entre sessões (local).
@@ -304,6 +320,24 @@ export function ExplorerShell({
 
   const navegar = (path: string) => dispatch({ type: "navegar", path });
 
+  // #869: fixa/desafixa a pasta no Acesso rápido (toggle pelo estado atual do
+  // pin). Guardamos o `name` junto pra rotular o nó sem reler o disco.
+  const alternarFixar = useCallback(
+    (entry: FsEntry) => {
+      setPins((prev) =>
+        estaFixado(prev, entry.path)
+          ? removerPin(prev, entry.path)
+          : adicionarPin(prev, { path: entry.path, name: entry.name }),
+      );
+    },
+    [setPins],
+  );
+
+  // #869: lista final do Acesso rápido (pins + sistema, dedupada e ordenada por
+  // nome). `acessoRapido` pode ser null enquanto carrega — os pins ainda
+  // aparecem. Array vazio → a árvore omite a seção (como hoje).
+  const acessoRapidoMesclado = mesclarAcessoRapido(pins, acessoRapido ?? []);
+
   // #724: executa o plano de destinos (após resolver conflitos, se houver). Cada
   // op devolve um opId — o tipo é registrado pro painel; os eventos de progresso
   // chegam pela assinatura única. `cut` limpa o clipboard após disparar.
@@ -458,7 +492,9 @@ export function ExplorerShell({
                   <ArvoreArquivos
                     drives={drives}
                     cloudLocations={cloudLocations}
-                    acessoRapido={acessoRapido}
+                    acessoRapido={acessoRapidoMesclado}
+                    pins={pins}
+                    onAlternarFixar={alternarFixar}
                     currentPath={nav.currentPath}
                     onNavegar={navegar}
                   />

@@ -1,5 +1,5 @@
 import { useCallback, useState, type ElementType, type ReactNode } from "react";
-import { Cloud, Disc, HardDrive, Network, Usb } from "lucide-react";
+import { Cloud, Disc, HardDrive, Network, Pin, PinOff, Usb } from "lucide-react";
 
 import {
   Files,
@@ -7,12 +7,19 @@ import {
   FolderTrigger,
   FolderContent,
 } from "@/components/animate-ui/components/radix/files";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { useIdioma } from "@/lib/idioma";
 import { listarDir } from "@/lib/api";
 import type { CloudLocation, DriveInfo, FsEntry } from "@/lib/types";
 import { CAMINHO_ESTE_PC } from "./caminho";
+import { estaFixado, type PinAcessoRapido } from "./quick-access";
 
 // #869: valores-sentinela dos nós-RAIZ do accordion (This PC / Acesso rápido).
 // Não são caminhos reais — o prefixo "::" nunca colide com um caminho Windows (só
@@ -104,12 +111,18 @@ export function ArvoreArquivos({
   drives,
   cloudLocations,
   acessoRapido,
+  pins,
+  onAlternarFixar,
   currentPath,
   onNavegar,
 }: {
   drives: DriveInfo[];
   cloudLocations: CloudLocation[] | null;
   acessoRapido: FsEntry[] | null;
+  // #869: pins do usuário (persistidos) — cada `NoArvore` checa `estaFixado` de
+  // forma SÍNCRONA pra rotular o item do menu; e `onAlternarFixar` fixa/desafixa.
+  pins: PinAcessoRapido[];
+  onAlternarFixar: (entry: FsEntry) => void;
   currentPath: string;
   onNavegar: (path: string) => void;
 }) {
@@ -192,6 +205,10 @@ export function ArvoreArquivos({
             carregando={carregando}
             currentPath={currentPath}
             onNavegar={onNavegar}
+            pins={pins}
+            onAlternarFixar={onAlternarFixar}
+            fixarLabel={t.arquivos.fixarAcessoRapido}
+            desafixarLabel={t.arquivos.desafixarAcessoRapido}
             carregandoLabel={t.arquivos.carregando}
             vazioLabel={t.arquivos.vazio}
           />
@@ -217,6 +234,10 @@ export function ArvoreArquivos({
               carregando={carregando}
               currentPath={currentPath}
               onNavegar={onNavegar}
+              pins={pins}
+              onAlternarFixar={onAlternarFixar}
+              fixarLabel={t.arquivos.fixarAcessoRapido}
+              desafixarLabel={t.arquivos.desafixarAcessoRapido}
               carregandoLabel={t.arquivos.carregando}
               vazioLabel={t.arquivos.vazio}
             />
@@ -242,6 +263,10 @@ export function ArvoreArquivos({
               carregando={carregando}
               currentPath={currentPath}
               onNavegar={onNavegar}
+              pins={pins}
+              onAlternarFixar={onAlternarFixar}
+              fixarLabel={t.arquivos.fixarAcessoRapido}
+              desafixarLabel={t.arquivos.desafixarAcessoRapido}
               carregandoLabel={t.arquivos.carregando}
               vazioLabel={t.arquivos.vazio}
             />
@@ -267,6 +292,10 @@ export function ArvoreArquivos({
               carregando={carregando}
               currentPath={currentPath}
               onNavegar={onNavegar}
+              pins={pins}
+              onAlternarFixar={onAlternarFixar}
+              fixarLabel={t.arquivos.fixarAcessoRapido}
+              desafixarLabel={t.arquivos.desafixarAcessoRapido}
               carregandoLabel={t.arquivos.carregando}
               vazioLabel={t.arquivos.vazio}
             />
@@ -324,6 +353,10 @@ function NoArvore({
   carregando,
   currentPath,
   onNavegar,
+  pins,
+  onAlternarFixar,
+  fixarLabel,
+  desafixarLabel,
   carregandoLabel,
   vazioLabel,
 }: {
@@ -335,26 +368,48 @@ function NoArvore({
   carregando: Set<string>;
   currentPath: string;
   onNavegar: (path: string) => void;
+  pins: PinAcessoRapido[];
+  onAlternarFixar: (entry: FsEntry) => void;
+  fixarLabel: string;
+  desafixarLabel: string;
   carregandoLabel: string;
   vazioLabel: string;
 }) {
   const filhos = filhosPorPath.get(entry.path);
   const estaCarregando = carregando.has(entry.path);
   const ativo = currentPath === entry.path;
+  // #869: pin é checado de forma SÍNCRONA a cada render (lê o array persistido) —
+  // o item do ContextMenu já sabe o rótulo certo no ATO de abrir, sem estado
+  // async (lição do P0 #778: conteúdo de menu Radix presente/decidido na abertura).
+  const fixado = estaFixado(pins, entry.path);
 
   return (
     <FolderItem value={entry.path}>
-      {/* O conteúdo do `FolderTrigger` do animate-ui é `pointer-events-none`: o
-          clique cai no botão do acordeão (expande/colapsa). Envolvemos num
-          container que captura o MESMO clique por bubbling pra também NAVEGAR até
-          a pasta. Sem lint de a11y no projeto; o gatilho por baixo é um <button>
-          real (teclado cobre via `aoAbrir`). */}
-      <div
-        onClick={() => onNavegar(entry.path)}
-        className={cn("rounded-md", ativo && "bg-secondary")}
-      >
-        <FolderTrigger icon={icone}>{entry.name}</FolderTrigger>
-      </div>
+      {/* #869: menu de contexto (Radix) pra fixar/desafixar do Acesso rápido. O
+          ContextMenuTrigger é `asChild` no MESMO container que já navega ao
+          clicar (o clique-esquerdo navega; o direito abre o menu). O item é
+          renderizado EAGER no open — `fixado` é sync, então não há gate async. */}
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          {/* O conteúdo do `FolderTrigger` do animate-ui é `pointer-events-none`:
+              o clique cai no botão do acordeão (expande/colapsa). Envolvemos num
+              container que captura o MESMO clique por bubbling pra também NAVEGAR
+              até a pasta. Sem lint de a11y no projeto; o gatilho por baixo é um
+              <button> real (teclado cobre via `aoAbrir`). */}
+          <div
+            onClick={() => onNavegar(entry.path)}
+            className={cn("rounded-md", ativo && "bg-secondary")}
+          >
+            <FolderTrigger icon={icone}>{entry.name}</FolderTrigger>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onSelect={() => onAlternarFixar(entry)}>
+            {fixado ? <PinOff /> : <Pin />}
+            {fixado ? desafixarLabel : fixarLabel}
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
       <FolderContent>
         {estaCarregando ? (
           <div className="flex items-center gap-2 p-2">
@@ -372,6 +427,10 @@ function NoArvore({
               carregando={carregando}
               currentPath={currentPath}
               onNavegar={onNavegar}
+              pins={pins}
+              onAlternarFixar={onAlternarFixar}
+              fixarLabel={fixarLabel}
+              desafixarLabel={desafixarLabel}
               carregandoLabel={carregandoLabel}
               vazioLabel={vazioLabel}
             />
