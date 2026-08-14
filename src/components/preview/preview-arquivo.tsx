@@ -23,6 +23,7 @@
  *   (ver `lib/pdf-preview.ts`). xlsx nunca avalia fórmula. Sem rede.
  */
 import { useEffect, useRef, useState } from "react";
+import DOMPurify from "dompurify";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   ChevronLeft,
@@ -150,6 +151,8 @@ export function PreviewArquivo({
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [txt, setTxt] = useState<string | null>(null);
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
+  // #873 fix: HTML de arquivo local/anexo, já sanitizado, pro HtmlSandboxViewer.
+  const [htmlDoc, setHtmlDoc] = useState<string | null>(null);
   const [xlsxDados, setXlsxDados] = useState<XlsxRender | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [csv, setCsv] = useState<CsvTabela | null>(null);
@@ -189,6 +192,11 @@ export function PreviewArquivo({
         const bytes = base64ParaBytes(conteudo.bytesB64);
         if (tipo === "txt") {
           if (vivo) setTxt(new TextDecoder("utf-8").decode(bytes));
+        } else if (tipo === "html") {
+          // #873 fix: sanitiza o HTML cru (mata scripts/handlers) ANTES de injetar
+          // no iframe sandbox+CSP — mesma caixa segura do docx/xlsx.
+          const cru = new TextDecoder("utf-8").decode(bytes);
+          if (vivo) setHtmlDoc(DOMPurify.sanitize(cru));
         } else if (tipo === "docx") {
           const html = await renderDocxParaHtml(bytes);
           if (vivo) setDocxHtml(html);
@@ -353,6 +361,12 @@ export function PreviewArquivo({
         ) : tipo === "docx" && docxHtml !== null ? (
           <HtmlSandboxViewer
             html={docxHtml}
+            rotulo={nome}
+            vazioTexto={tp.previewVazio}
+          />
+        ) : tipo === "html" && htmlDoc !== null ? (
+          <HtmlSandboxViewer
+            html={htmlDoc}
             rotulo={nome}
             vazioTexto={tp.previewVazio}
           />
