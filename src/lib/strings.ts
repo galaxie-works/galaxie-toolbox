@@ -1624,6 +1624,14 @@ const pt = {
     // #869 — seção de nuvem no sidebar do Explorer (OneDrive/Google Drive)
     driveSecaoCloud: "Drives na nuvem",
     driveTooltip: "{usado} usados de {total} ({livre} livre)",
+    // #871 (fatia 2b) — busca recursiva na pasta atual
+    buscarPasta: "Buscar em {pasta}",
+    buscarThisPc: "Buscar em Este computador",
+    buscaCabecalho: "{n} resultado(s) para “{query}”",
+    buscando: "Buscando…",
+    buscaVazia: "Nenhum resultado.",
+    buscaTruncada: "Mostrando os primeiros 1000 resultados.",
+    limparBusca: "Limpar busca",
   },
 
   tema: {
@@ -3591,6 +3599,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #869 — cloud section in the Explorer sidebar (OneDrive/Google Drive)
     driveSecaoCloud: "Cloud drives",
     driveTooltip: "{usado} used of {total} ({livre} free)",
+    // #871 (slice 2b) — recursive search in the current folder
+    buscarPasta: "Search {pasta}",
+    buscarThisPc: "Search This PC",
+    buscaCabecalho: "{n} result(s) for “{query}”",
+    buscando: "Searching…",
+    buscaVazia: "No results.",
+    buscaTruncada: "Showing the first 1000 results.",
+    limparBusca: "Clear search",
   },
 
   tema: {
