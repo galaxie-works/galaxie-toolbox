@@ -176,6 +176,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { BridgeIcon } from "@/components/ui/icons/marca-anim";
 import {
   OcultarWebviewContext,
@@ -1114,6 +1115,7 @@ export function NavegadorScreen({
   onAlternarModoPrivado,
   launcherNonce,
   visivel,
+  tabStripSlot,
   renderTelaInterna,
 }: {
   abas: AbaBrowser[];
@@ -1152,6 +1154,10 @@ export function NavegadorScreen({
   /** #719 (SH1): o Navigator é o shell keep-alive (sempre montado). `visivel`
    *  = ele é a tela ativa do app; quando false, esconde TODAS as webviews. */
   visivel: boolean;
+  /** #876: nó da title bar (App.tsx) onde a barra de abas é teleportada (portal).
+   *  Null enquanto o header não montou / em mock/teste → a barra cai inline. O
+   *  estado + os efeitos de webview z-order ficam AQUI; só o DOM viaja. */
+  tabStripSlot?: HTMLElement | null;
   /** #719 (SH1): renderiza a tela React (Bridge/Files/Remote) de uma aba
    *  interna. `ativa` = a aba é a atual (dá foco/polling à tela certa). O App é
    *  dono das telas e do keep-alive; o Navigator só as encaixa no slot. */
@@ -2016,8 +2022,13 @@ export function NavegadorScreen({
   return (
     <OcultarWebviewContext.Provider value={registrarOverlayWebview}>
     <div className="flex h-full w-full flex-col">
-      {/* Barra de abas: rola na horizontal; o "+" fica fora da rolagem. */}
-      <div className="flex items-stretch border-b border-border">
+      {/* #876: a barra de abas vive na TITLE BAR — teleportada pro `tabStripSlot`
+          (App.tsx). Sem slot (mock/teste/web) cai inline aqui, comportamento
+          antigo. O estado (grupos/menus/favicons) e os efeitos de webview z-order
+          seguem neste componente; só o DOM da barra viaja pelo portal. */}
+      {(() => {
+        const barraAbas = (
+      <div className="flex min-w-0 flex-1 items-stretch">
         <div
           className="scrollbar-fina flex min-w-0 items-stretch gap-2 overflow-x-auto px-2 pt-2"
           role="tablist"
@@ -2194,7 +2205,8 @@ export function NavegadorScreen({
           </DropdownMenuContent>
         </DropdownMenu>
         )}
-        <div className="flex-1" aria-hidden="true" />
+        {/* #876: a faixa vazia entre as tabs e os ícones arrasta a janela. */}
+        <div className="flex-1" aria-hidden="true" data-tauri-drag-region />
         {sleepingCount > 0 && (
           <Badge variant="info-light" className="my-2 shrink-0">
             <Moon />
@@ -2247,6 +2259,11 @@ export function NavegadorScreen({
           </TooltipContent>
         </Tooltip>
       </div>
+        );
+        return tabStripSlot
+          ? createPortal(barraAbas, tabStripSlot)
+          : barraAbas;
+      })()}
 
       {/* Oferecer restaurar a sessão anterior (#274) — banner discreto, sem
           restaurar automático; some ao restaurar ou dispensar. */}
