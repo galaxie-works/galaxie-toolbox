@@ -108,14 +108,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -2297,10 +2289,12 @@ export function NavegadorScreen({
             <button
               type="button"
               aria-label={t.navegador.historicoTitulo}
-              onClick={() => setHistoricoAberto(true)}
+              aria-pressed={historicoAberto}
+              onClick={() => setHistoricoAberto((v) => !v)}
               className={cn(
                 "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
-                "hover:bg-accent hover:text-foreground"
+                "hover:bg-accent hover:text-foreground",
+                historicoAberto && "bg-accent text-foreground",
               )}
             >
               <History className="size-4" />
@@ -2455,6 +2449,19 @@ export function NavegadorScreen({
             </div>
           )}
         </div>
+        {/* #874: History DOCADO à direita (não Sheet/scrim) — como um irmão da
+            área de conteúdo, encolhe o `area` → o ResizeObserver reposiciona a
+            webview, sem sobrepor com overlay escuro. Resto da UI segue interativo.
+            Mesmo padrão do Details/InspectorPane (#854) e do pin rail (à esq). */}
+        {historicoAberto && (
+          <PainelHistorico
+            onFechar={() => setHistoricoAberto(false)}
+            historico={historico}
+            onNavegar={onNavegar}
+            onRestaurar={onRestaurarAbas}
+            onLimpar={onLimparHistorico}
+          />
+        )}
       </div>
 
       {/* Overlay global (Ctrl/Cmd+K) por cima da aba viva. */}
@@ -2475,16 +2482,6 @@ export function NavegadorScreen({
         onDormir={onDormir}
         onNavegarTela={onNavegarTela}
         onIrParaBridgeView={onIrParaBridgeView}
-      />
-
-      {/* Histórico: view pesquisável + limpar por período (Story 5). */}
-      <SheetHistorico
-        aberto={historicoAberto}
-        onFechar={() => setHistoricoAberto(false)}
-        historico={historico}
-        onNavegar={onNavegar}
-        onRestaurar={onRestaurarAbas}
-        onLimpar={onLimparHistorico}
       />
 
       {/* Diálogo de edição de grupo (nome + cor + excluir). */}
@@ -2631,15 +2628,13 @@ function DialogEditarGrupo({
  * View de histórico (Story 5): busca pesquisável + lista por recência + limpar
  * por período. A query é estado local do input; navegar/limpar sobem por props.
  */
-function SheetHistorico({
-  aberto,
+function PainelHistorico({
   onFechar,
   historico,
   onNavegar,
   onRestaurar,
   onLimpar,
 }: {
-  aberto: boolean;
   onFechar: () => void;
   historico: HistoryEntry[];
   onNavegar: (url: string, nome: string) => void;
@@ -2651,8 +2646,10 @@ function SheetHistorico({
   // #177: itens selecionáveis para restaurar abas + período de limpeza via Select.
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [periodo, setPeriodo] = useState<PeriodoLimpeza>("ultima-hora");
-  // z-order (#275): esconde a webview enquanto o histórico estiver aberto.
-  useOcultarWebviewEnquantoAberto(aberto);
+  // #874: painel DOCADO — NÃO esconde a webview (o próprio layout a encolhe via o
+  // ResizeObserver do `area`). Nada de `useOcultarWebviewEnquantoAberto` aqui:
+  // aquilo era o comportamento modal/scrim que a issue removeu. O pai monta/
+  // desmonta este painel pelo toggle (por isso não há mais estado `aberto`).
   const lista = useMemo(() => buscarHistorico(historico, q), [historico, q]);
   // #177 rework: sem NENHUM histórico gravado, esconder Search + botões e mostrar
   // o empty state padrão do app (Empty/reui). Busca sem resultado (mas com
@@ -2667,11 +2664,8 @@ function SheetHistorico({
     [idioma],
   );
 
-  // Limpa a seleção sempre que o Sheet fecha.
-  useEffect(() => {
-    if (!aberto) setSelecionados(new Set());
-  }, [aberto]);
-
+  // #874: o pai desmonta o painel ao fechar (toggle), então a seleção zera
+  // sozinha no unmount — sem efeito de limpar-ao-fechar.
   const alternar = (id: string) =>
     setSelecionados((prev) => {
       const proximo = new Set(prev);
@@ -2695,17 +2689,18 @@ function SheetHistorico({
   };
 
   return (
-    <Sheet open={aberto} onOpenChange={(a) => !a && onFechar()}>
-      <SheetContent
-        side="right"
-        className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
-      >
-        <SheetHeader className="border-b border-border">
-          <SheetTitle>{t.navegador.historicoTitulo}</SheetTitle>
-          <SheetDescription className="sr-only">
-            {t.navegador.historicoBuscar}
-          </SheetDescription>
-        </SheetHeader>
+    <div className="flex w-96 shrink-0 flex-col border-l border-border bg-background">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-3">
+        <h2 className="text-sm font-semibold">{t.navegador.historicoTitulo}</h2>
+        <button
+          type="button"
+          aria-label={t.navegador.historicoFechar}
+          onClick={onFechar}
+          className="grid size-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
 
         {!semHistorico && (
           <div className="p-4 pb-2">
@@ -2804,7 +2799,7 @@ function SheetHistorico({
         )}
 
         {!semHistorico && (
-        <SheetFooter className="gap-3 border-t border-border">
+        <div className="flex shrink-0 flex-col gap-3 border-t border-border p-4">
           <Button
             type="button"
             disabled={selecionados.size === 0}
@@ -2845,9 +2840,8 @@ function SheetHistorico({
               {t.navegador.limparHistorico}
             </Button>
           </div>
-        </SheetFooter>
+        </div>
         )}
-      </SheetContent>
-    </Sheet>
+    </div>
   );
 }
