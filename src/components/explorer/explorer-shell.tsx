@@ -162,16 +162,18 @@ export function ExplorerShell({
   // pra sobreviver à navegação entre pastas.
   const [clipboard, setClipboard] = useState<Clipboard | null>(null);
 
-  // #871 (fatia 2b): busca recursiva na PASTA atual. `null` = sem busca (mostra a
-  // lista/DrivesView normal). O handle vivo fica na ref pra cancelar ao re-buscar,
-  // limpar ou navegar. A busca é por-pasta: trocar de caminho a zera (efeito abaixo).
+  // #871 (fatia 2b/2c): busca recursiva. `null` = sem busca (mostra a
+  // lista/DrivesView normal). Na PASTA (fatia 2b) = uma raiz; no This PC (fatia 2c)
+  // = fan-out sobre TODOS os drives. Os handles vivos ficam na ref (LISTA — um por
+  // raiz) pra cancelar TODOS ao re-buscar, limpar ou navegar. A busca é por-local:
+  // trocar de caminho a zera (efeito abaixo).
   const [busca, setBusca] = useState<{
     query: string;
     resultados: FsEntry[];
     buscando: boolean;
     truncado: boolean;
   } | null>(null);
-  const buscaHandleRef = useRef<BuscaHandle | null>(null);
+  const buscaHandlesRef = useRef<BuscaHandle[]>([]);
 
   // #724: ops de copy/move ativas (rastreadas por opId) + diálogo de conflito +
   // nonce do watcher (bump → ContentPane recarrega a MESMA pasta).
@@ -353,55 +355,74 @@ export function ExplorerShell({
   // aparecem. Array vazio → a árvore omite a seção (como hoje).
   const acessoRapidoMesclado = mesclarAcessoRapido(pins, acessoRapido ?? []);
 
-  // #871 (fatia 2b): dispara a busca recursiva na pasta atual. Cancela o handle
-  // anterior, zera os resultados e consome o stream (`buscarArquivos`), acumulando
-  // os lotes até `done`. Guard: só com caminho real (This PC = multi-drive, fatia
-  // futura). Cada lote pode marcar `truncated` ao bater o teto.
+  // #871 (fatia 2b/2c): dispara a busca recursiva. Numa PASTA (2b) = uma raiz; no
+  // This PC (2c) = fan-out sobre TODOS os drives. Cancela os handles anteriores,
+  // zera os resultados e consome os streams (`buscarArquivos`), MESCLANDO os lotes
+  // de todas as raízes (ordem de chegada — sem sort no v1). Cada lote pode marcar
+  // `truncated` ao bater o teto (`maxResults` é POR drive). Um contador `pendentes`
+  // (closure compartilhado entre os N streams) mantém o spinner vivo até TODAS as
+  // raízes terminarem: decrementa no lote `done` de cada raiz E no `.catch` de
+  // início; só ao zerar vira `buscando:false`. Uma raiz que falha ao iniciar só
+  // decrementa — não derruba a busca das outras.
   const onBuscar = useCallback(
     (query: string) => {
-      const root = nav.currentPath;
-      if (!root) return;
-      void buscaHandleRef.current?.cancelar();
+      const roots = nav.currentPath
+        ? [nav.currentPath]
+        : (drives ?? []).map((d) => d.path); // This PC: raiz de cada drive
+      if (roots.length === 0) return;
+      buscaHandlesRef.current.forEach((h) => void h.cancelar());
+      buscaHandlesRef.current = [];
       setBusca({ query, resultados: [], buscando: true, truncado: false });
-      void buscarArquivos(
-        root,
-        query,
-        (lote) => {
-          setBusca((b) =>
-            b
-              ? {
-                  ...b,
-                  resultados: [...b.resultados, ...lote.entries],
-                  buscando: !lote.done,
-                  truncado: b.truncado || lote.truncated,
-                }
-              : b,
-          );
-        },
-        { maxResults: 1000 },
-      )
-        .then((h) => {
-          buscaHandleRef.current = h;
-        })
-        .catch(() => {
-          // Falha ao iniciar → sai do estado de busca (volta pra lista normal).
-          setBusca(null);
-        });
+      let pendentes = roots.length;
+      for (const root of roots) {
+        void buscarArquivos(
+          root,
+          query,
+          (lote) => {
+            setBusca((b) =>
+              b
+                ? {
+                    ...b,
+                    resultados: [...b.resultados, ...lote.entries],
+                    truncado: b.truncado || lote.truncated,
+                  }
+                : b,
+            );
+            if (lote.done) {
+              pendentes -= 1;
+              if (pendentes <= 0)
+                setBusca((b) => (b ? { ...b, buscando: false } : b));
+            }
+          },
+          { maxResults: 1000 },
+        )
+          .then((h) => {
+            buscaHandlesRef.current.push(h);
+          })
+          .catch(() => {
+            // Falha ao iniciar UMA raiz → só decrementa (não derruba as outras).
+            pendentes -= 1;
+            if (pendentes <= 0)
+              setBusca((b) => (b ? { ...b, buscando: false } : b));
+          });
+      }
     },
-    [nav.currentPath],
+    [nav.currentPath, drives],
   );
 
-  // #871 (fatia 2b): sai da busca — cancela o stream vivo e volta pra lista normal.
+  // #871 (fatia 2b/2c): sai da busca — cancela TODOS os streams vivos e volta pra
+  // lista/DrivesView normal.
   const onLimparBusca = useCallback(() => {
-    void buscaHandleRef.current?.cancelar();
-    buscaHandleRef.current = null;
+    buscaHandlesRef.current.forEach((h) => void h.cancelar());
+    buscaHandlesRef.current = [];
     setBusca(null);
   }, []);
 
-  // #871 (fatia 2b): busca é POR-PASTA — navegar limpa a busca (e cancela o stream).
+  // #871 (fatia 2b/2c): busca é POR-LOCAL — navegar limpa a busca (e cancela os
+  // streams de todas as raízes).
   useEffect(() => {
-    void buscaHandleRef.current?.cancelar();
-    buscaHandleRef.current = null;
+    buscaHandlesRef.current.forEach((h) => void h.cancelar());
+    buscaHandlesRef.current = [];
     setBusca(null);
   }, [nav.currentPath]);
 
@@ -594,7 +615,9 @@ export function ExplorerShell({
               buscaAtiva={busca !== null}
               onBuscar={onBuscar}
               onLimparBusca={onLimparBusca}
-              podeBuscar={nav.currentPath !== ""}
+              // #871 (fatia 2c): busca habilitada numa pasta OU no This PC assim
+              // que houver ao menos um drive carregado (fan-out multi-drive).
+              podeBuscar={nav.currentPath !== "" || (drives?.length ?? 0) > 0}
             />
             {busca !== null ? (
               // #871 (fatia 2b): busca ativa → resultados no lugar da lista/DrivesView.
