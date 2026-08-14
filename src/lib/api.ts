@@ -3295,6 +3295,21 @@ export async function cancelarOp(opId: number): Promise<void> {
   return invoke<void>("fs_cancel", { opId });
 }
 
+/**
+ * #898: pausa uma op de copy/move em andamento — os workers travam no próximo
+ * arquivo/chunk e o evento `fs-op-progress` passa a reportar `status: "paused"`.
+ */
+export async function pausarOp(opId: number): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_op_pause", { opId });
+}
+
+/** #898: retoma uma op pausada — os workers continuam do ponto exato. */
+export async function resumirOp(opId: number): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_op_resume", { opId });
+}
+
 /** Conflitos de nome no destino, ANTES da op (pro diálogo de resolução). */
 export async function checarConflitos(
   sources: string[],

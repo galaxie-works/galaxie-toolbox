@@ -623,27 +623,53 @@ fn excluir_permanente(paths: &[String], confirm_token: &str) -> Result<(), FsErr
 
 // ──────────────── Progresso + conflito + watcher (S4, #680) ─────────────────
 
-/// Estado gerenciado: rastreia operações em andamento e seus flags de cancel.
+/// Estado gerenciado: rastreia operações em andamento e seus flags de cancel/pause.
+/// #898: cada op tem DOIS flags atômicos — `cancelar` (encerra e limpa o parcial) e
+/// `pausar` (o loop de cópia BLOQUEIA entre arquivos/chunks até resumir). Cancel vence
+/// pause: cancelar durante uma pausa sai na hora (o helper `esperar_se_pausado`).
 #[derive(Default)]
 pub struct ProgressManager {
     proximo_id: AtomicU64,
     cancelados: Mutex<HashMap<u64, Arc<AtomicBool>>>,
+    pausados: Mutex<HashMap<u64, Arc<AtomicBool>>>,
 }
 
 impl ProgressManager {
-    fn nova_op(&self) -> (u64, Arc<AtomicBool>) {
+    /// Cria uma op nova e devolve `(id, cancelar, pausar)` — os dois flags começam
+    /// em `false` e são compartilhados com os workers via [`Contexto`].
+    fn nova_op(&self) -> (u64, Arc<AtomicBool>, Arc<AtomicBool>) {
         let id = self.proximo_id.fetch_add(1, Ordering::Relaxed);
-        let flag = Arc::new(AtomicBool::new(false));
-        self.cancelados.lock().unwrap().insert(id, flag.clone());
-        (id, flag)
+        let cancelar = Arc::new(AtomicBool::new(false));
+        let pausar = Arc::new(AtomicBool::new(false));
+        self.cancelados.lock().unwrap().insert(id, cancelar.clone());
+        self.pausados.lock().unwrap().insert(id, pausar.clone());
+        (id, cancelar, pausar)
     }
     fn cancelar(&self, id: u64) {
         if let Some(f) = self.cancelados.lock().unwrap().get(&id) {
             f.store(true, Ordering::Relaxed);
         }
+        // Um op pausado precisa ser destravado pra ver o cancel e encerrar.
+        if let Some(p) = self.pausados.lock().unwrap().get(&id) {
+            p.store(false, Ordering::Relaxed);
+        }
+    }
+    /// #898: sinaliza pause — os workers bloqueiam no próximo check (entre arquivos ou
+    /// entre chunks). No-op se a op não existe (já terminou).
+    fn pausar(&self, id: u64) {
+        if let Some(p) = self.pausados.lock().unwrap().get(&id) {
+            p.store(true, Ordering::Relaxed);
+        }
+    }
+    /// #898: destrava a op pausada — os workers retomam do ponto exato.
+    fn resumir(&self, id: u64) {
+        if let Some(p) = self.pausados.lock().unwrap().get(&id) {
+            p.store(false, Ordering::Relaxed);
+        }
     }
     fn finalizar(&self, id: u64) {
         self.cancelados.lock().unwrap().remove(&id);
+        self.pausados.lock().unwrap().remove(&id);
     }
 }
 
@@ -969,15 +995,34 @@ fn agora_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// Contexto compartilhado entre os workers (atômicos de progresso + cancel).
+/// Contexto compartilhado entre os workers (atômicos de progresso + cancel/pause).
 struct Contexto {
     processados: Arc<AtomicU64>,
     arquivos_feitos: Arc<AtomicU64>,
     cancelar: Arc<AtomicBool>,
+    /// #898: pause por op — quando `true`, os workers BLOQUEIAM no próximo check (entre
+    /// arquivos e entre chunks) até resumir. Cancel vence pause.
+    pausar: Arc<AtomicBool>,
     verify: Option<VerifyAlg>,
     /// #875: nome do arquivo em processamento agora — os workers escrevem, o ticker
     /// lê pro `current_file` do evento (o card mostra "copiando X").
     atual: Arc<Mutex<String>>,
+}
+
+/// #898: bloqueia enquanto a op estiver pausada; retorna `true` se ela foi CANCELADA
+/// (o worker deve abortar). Cancel vence pause — cancelar durante a pausa sai na hora.
+/// Poll de 50 ms: barato (só quando pausado) e responde rápido ao resume/cancel.
+fn esperar_se_pausado(ctx: &Contexto) -> bool {
+    if ctx.cancelar.load(Ordering::Relaxed) {
+        return true;
+    }
+    while ctx.pausar.load(Ordering::Relaxed) {
+        if ctx.cancelar.load(Ordering::Relaxed) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    false
 }
 
 /// Copia UM arquivo com buffer (grande streaming, pequeno menor), somando bytes no
@@ -1002,7 +1047,9 @@ fn abrir_leitura_seq(p: &Path) -> std::io::Result<std::fs::File> {
 
 fn copiar_arquivo(job: &CopyJob, ctx: &Contexto) -> Result<(), FsError> {
     use std::io::{Read, Write};
-    if ctx.cancelar.load(Ordering::Relaxed) {
+    // #898: pausa/cancel ANTES de abrir o arquivo — pausado bloqueia aqui; cancelado
+    // (ou cancel durante a pausa) retorna sem tocar o destino.
+    if esperar_se_pausado(ctx) {
         return Ok(());
     }
     // #875: publica o arquivo atual pro ticker (o card do Status Center mostra o nome).
@@ -1030,7 +1077,8 @@ fn copiar_arquivo(job: &CopyJob, ctx: &Contexto) -> Result<(), FsError> {
     let mut hasher = ctx.verify.map(Hasher::novo);
     let mut escritos = 0u64;
     loop {
-        if ctx.cancelar.load(Ordering::Relaxed) {
+        // #898: entre chunks — pausa BLOQUEIA (arquivo grande pausa no meio); cancel sai.
+        if esperar_se_pausado(ctx) {
             return Ok(());
         }
         let n = ent.read(&mut buf)?;
@@ -1121,6 +1169,7 @@ fn iniciar_ticker(
     op_kind: &'static str,
     started_at_ms: u64,
     atual: Arc<Mutex<String>>,
+    pausar: Arc<AtomicBool>,
 ) -> Ticker {
     let parar = Arc::new(AtomicBool::new(false));
     let p2 = parar.clone();
@@ -1168,6 +1217,11 @@ fn iniciar_ticker(
                     Some(a.clone())
                 }
             });
+            // #898: reflete o estado de pausa no evento (o card mostra "Pausado" +
+            // habilita Retomar). Pausado zera a vazão/ETA (nada avança).
+            let pausado = pausar.load(Ordering::Relaxed);
+            let (status, bps, eta_ms) =
+                if pausado { ("paused", 0, None) } else { ("inProgress", bps, eta_ms) };
             let _ = app.emit(
                 "fs-op-progress",
                 OpProgress {
@@ -1185,7 +1239,7 @@ fn iniciar_ticker(
                     error: None,
                     op_kind,
                     phase: "processing",
-                    status: "inProgress",
+                    status,
                     current_file: atual_nome,
                     started_at_ms,
                     completed_at_ms: None,
@@ -1197,12 +1251,14 @@ fn iniciar_ticker(
 }
 
 /// Executa copy (ou move) TURBO com progresso. Retorna `true` se foi cancelada.
+#[allow(clippy::too_many_arguments)]
 fn executar_progresso(
     mover: bool,
     from: &str,
     to: &str,
     op_id: u64,
     flag: &Arc<AtomicBool>,
+    pausar: &Arc<AtomicBool>,
     verify: Option<VerifyAlg>,
     app: &AppHandle,
     started_at_ms: u64,
@@ -1245,6 +1301,7 @@ fn executar_progresso(
         processados: Arc::new(AtomicU64::new(0)),
         arquivos_feitos: Arc::new(AtomicU64::new(0)),
         cancelar: flag.clone(),
+        pausar: pausar.clone(),
         verify,
         atual: Arc::new(Mutex::new(String::new())),
     };
@@ -1259,6 +1316,7 @@ fn executar_progresso(
         rotulo,
         started_at_ms,
         ctx.atual.clone(),
+        pausar.clone(),
     );
 
     let resultado = copiar_plano(&plano, perfil.workers, &ctx);
@@ -1293,11 +1351,13 @@ fn executar_progresso(
 /// Move mesmo-volume tenta rename por-origem (instantâneo); o resto entra num Plano
 /// GLOBAL (`planejar_muitas`) → uma varredura + uma cópia (modelo TeraCopy), matando
 /// o "2 pastas sequenciais". Loga START/END com MB/s médio (#850). `true` = cancelada.
+#[allow(clippy::too_many_arguments)]
 fn executar_progresso_muitas(
     mover: bool,
     pares: Vec<(String, String)>,
     op_id: u64,
     flag: &Arc<AtomicBool>,
+    pausar: &Arc<AtomicBool>,
     verify: Option<VerifyAlg>,
     app: &AppHandle,
     started_at_ms: u64,
@@ -1349,6 +1409,7 @@ fn executar_progresso_muitas(
         processados: Arc::new(AtomicU64::new(0)),
         arquivos_feitos: Arc::new(AtomicU64::new(0)),
         cancelar: flag.clone(),
+        pausar: pausar.clone(),
         verify,
         atual: Arc::new(Mutex::new(String::new())),
     };
@@ -1363,6 +1424,7 @@ fn executar_progresso_muitas(
         rotulo,
         started_at_ms,
         ctx.atual.clone(),
+        pausar.clone(),
     );
     let resultado = copiar_plano(&plano, perfil.workers, &ctx);
     ticker.parar();
@@ -2090,12 +2152,14 @@ pub async fn fs_delete_permanent(
 
 /// Roda a op em background (spawn_blocking), finaliza a op no manager e emite o
 /// `fs-op-progress` final (done/canceled/error). O comando devolve o `op_id` já.
+#[allow(clippy::too_many_arguments)]
 fn spawn_progresso(
     mover: bool,
     from: String,
     to: String,
     op_id: u64,
     flag: Arc<AtomicBool>,
+    pausar: Arc<AtomicBool>,
     verify: Option<VerifyAlg>,
     app: AppHandle,
 ) {
@@ -2103,7 +2167,7 @@ fn spawn_progresso(
     let started_at_ms = agora_ms();
     let _ = tauri::async_runtime::spawn_blocking(move || {
         let resultado =
-            executar_progresso(mover, &from, &to, op_id, &flag, verify, &app, started_at_ms);
+            executar_progresso(mover, &from, &to, op_id, &flag, &pausar, verify, &app, started_at_ms);
         app.state::<ProgressManager>().finalizar(op_id);
         let (canceled, error) = match resultado {
             Ok(c) => (c, None),
@@ -2157,11 +2221,13 @@ fn emitir_final(
 
 /// #850 (fatia B): versão multi-origem do [`spawn_progresso`] — UMA op/op_id pro
 /// batch inteiro (não uma por origem), então o front acompanha um progresso só.
+#[allow(clippy::too_many_arguments)]
 fn spawn_progresso_muitas(
     mover: bool,
     pares: Vec<(String, String)>,
     op_id: u64,
     flag: Arc<AtomicBool>,
+    pausar: Arc<AtomicBool>,
     verify: Option<VerifyAlg>,
     app: AppHandle,
 ) {
@@ -2169,7 +2235,7 @@ fn spawn_progresso_muitas(
     let started_at_ms = agora_ms();
     let _ = tauri::async_runtime::spawn_blocking(move || {
         let resultado =
-            executar_progresso_muitas(mover, pares, op_id, &flag, verify, &app, started_at_ms);
+            executar_progresso_muitas(mover, pares, op_id, &flag, &pausar, verify, &app, started_at_ms);
         app.state::<ProgressManager>().finalizar(op_id);
         let (canceled, error) = match resultado {
             Ok(c) => (c, None),
@@ -2201,8 +2267,8 @@ pub async fn fs_copy_with_progress(
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
-    let (op_id, flag) = pm.nova_op();
-    spawn_progresso(false, from, to, op_id, flag, verify, app);
+    let (op_id, flag, pausar) = pm.nova_op();
+    spawn_progresso(false, from, to, op_id, flag, pausar, verify, app);
     Ok(op_id)
 }
 
@@ -2214,8 +2280,8 @@ pub async fn fs_move_with_progress(
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
-    let (op_id, flag) = pm.nova_op();
-    spawn_progresso(true, from, to, op_id, flag, verify, app);
+    let (op_id, flag, pausar) = pm.nova_op();
+    spawn_progresso(true, from, to, op_id, flag, pausar, verify, app);
     Ok(op_id)
 }
 
@@ -2231,8 +2297,8 @@ pub async fn fs_copy_many_with_progress(
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
     let pares = pares_para_destino(sources, &dest_dir);
-    let (op_id, flag) = pm.nova_op();
-    spawn_progresso_muitas(false, pares, op_id, flag, verify, app);
+    let (op_id, flag, pausar) = pm.nova_op();
+    spawn_progresso_muitas(false, pares, op_id, flag, pausar, verify, app);
     Ok(op_id)
 }
 
@@ -2247,14 +2313,29 @@ pub async fn fs_move_many_with_progress(
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
     let pares = pares_para_destino(sources, &dest_dir);
-    let (op_id, flag) = pm.nova_op();
-    spawn_progresso_muitas(true, pares, op_id, flag, verify, app);
+    let (op_id, flag, pausar) = pm.nova_op();
+    spawn_progresso_muitas(true, pares, op_id, flag, pausar, verify, app);
     Ok(op_id)
 }
 
 #[tauri::command]
 pub async fn fs_cancel(op_id: u64, pm: State<'_, ProgressManager>) -> Result<(), FsError> {
     pm.cancelar(op_id);
+    Ok(())
+}
+
+/// #898: pausa uma op de copy/move em andamento — os workers bloqueiam no próximo
+/// arquivo/chunk e o card mostra "Pausado". No-op se a op já terminou.
+#[tauri::command]
+pub async fn fs_op_pause(op_id: u64, pm: State<'_, ProgressManager>) -> Result<(), FsError> {
+    pm.pausar(op_id);
+    Ok(())
+}
+
+/// #898: retoma uma op pausada — os workers continuam do ponto exato.
+#[tauri::command]
+pub async fn fs_op_resume(op_id: u64, pm: State<'_, ProgressManager>) -> Result<(), FsError> {
+    pm.resumir(op_id);
     Ok(())
 }
 
@@ -2311,6 +2392,7 @@ mod tests {
             processados: Arc::new(AtomicU64::new(0)),
             arquivos_feitos: Arc::new(AtomicU64::new(0)),
             cancelar: Arc::new(AtomicBool::new(false)),
+            pausar: Arc::new(AtomicBool::new(false)),
             verify,
             atual: Arc::new(Mutex::new(String::new())),
         }
@@ -2483,6 +2565,79 @@ mod tests {
         let copiados = ctx.processados.load(Ordering::Relaxed);
         assert!(copiados > 0, "o cancel ocorreu antes do primeiro chunk");
         assert!(copiados < tamanho, "o cancel não interrompeu a cópia em andamento");
+        assert_eq!(ctx.arquivos_feitos.load(Ordering::Relaxed), 0);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// #898: pausar no meio de um arquivo grande SEGURA o worker (o progresso
+    /// congela) e resumir COMPLETA a cópia do ponto exato — nenhum byte perdido.
+    #[test]
+    fn pause_segura_worker_e_resume_completa() {
+        let base = dir_temp("pause-mid-copy");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        let arquivo = origem.join("grande.bin");
+        let tamanho = 128 * 1024 * 1024u64;
+        std::fs::File::create(&arquivo).unwrap().set_len(tamanho).unwrap();
+
+        let destino = base.join("dst");
+        let plano = planejar(&origem, &destino).unwrap();
+        for d in &plano.dirs {
+            std::fs::create_dir_all(com_long_path(d)).unwrap();
+        }
+        let ctx = ctx_teste(None);
+        let processados = ctx.processados.clone();
+        let pausar = ctx.pausar.clone();
+        let gatilho = std::thread::spawn(move || {
+            // pausa assim que o primeiro chunk saiu (op em andamento).
+            while processados.load(Ordering::Relaxed) == 0 {
+                std::thread::yield_now();
+            }
+            pausar.store(true, Ordering::Relaxed);
+            // deixa o worker assentar na espera + amostra o progresso 2x.
+            std::thread::sleep(Duration::from_millis(250));
+            let snap1 = processados.load(Ordering::Relaxed);
+            std::thread::sleep(Duration::from_millis(200));
+            let snap2 = processados.load(Ordering::Relaxed);
+            pausar.store(false, Ordering::Relaxed); // resume
+            (snap1, snap2)
+        });
+
+        copiar_plano(&plano, 1, &ctx).unwrap();
+        let (snap1, snap2) = gatilho.join().unwrap();
+        assert!(snap1 > 0, "pausou antes do primeiro chunk");
+        assert!(snap1 < tamanho, "pausou só depois de copiar tudo (janela curta demais)");
+        assert_eq!(snap1, snap2, "o progresso avançou DURANTE a pausa");
+        // Resumido: a cópia terminou inteira e íntegra.
+        assert_eq!(ctx.processados.load(Ordering::Relaxed), tamanho);
+        assert_eq!(ctx.arquivos_feitos.load(Ordering::Relaxed), 1);
+        assert_eq!(std::fs::metadata(destino.join("grande.bin")).unwrap().len(), tamanho);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// #898: cancel vence pause — com os dois flags ligados, o worker NÃO trava na
+    /// espera: `esperar_se_pausado` retorna `true` (abortar) na hora.
+    #[test]
+    fn cancel_vence_pause() {
+        let ctx = ctx_teste(None);
+        ctx.pausar.store(true, Ordering::Relaxed);
+        ctx.cancelar.store(true, Ordering::Relaxed);
+        // Não bloqueia: cancel é visto antes/dentro do laço de pausa.
+        assert!(esperar_se_pausado(&ctx), "cancel durante a pausa deve abortar");
+
+        // E o plano inteiro sai cedo sem copiar nada.
+        let base = dir_temp("cancel-vence-pause");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        for i in 0..4 {
+            std::fs::write(origem.join(format!("f{i}.txt")), vec![2u8; 100]).unwrap();
+        }
+        let destino = base.join("dst");
+        let plano = planejar(&origem, &destino).unwrap();
+        for d in &plano.dirs {
+            std::fs::create_dir_all(com_long_path(d)).unwrap();
+        }
+        copiar_plano(&plano, 2, &ctx).unwrap();
         assert_eq!(ctx.arquivos_feitos.load(Ordering::Relaxed), 0);
         std::fs::remove_dir_all(&base).ok();
     }
