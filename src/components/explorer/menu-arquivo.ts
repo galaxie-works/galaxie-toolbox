@@ -76,7 +76,9 @@ export interface AcoesMenu {
   novoArquivo: (destDir: string) => void;
   copiarCaminho: (paths: string[]) => void;
   revelar: (path: string) => void;
-  propriedades: (entry: FsEntry) => void;
+  // #871: o entry é opcional — o menu de contexto passa o item clicado; o ribbon
+  // (⋯ › Propriedades) só garante o inspector visível, sem alvo.
+  propriedades: (entry?: FsEntry) => void;
 }
 
 /**
