@@ -1568,8 +1568,9 @@ const pt = {
     opCancelada: "Operação cancelada.",
     opFalhou: "A operação falhou.",
     // #855 — grade de drives (Este computador)
-    driveUsados: "{usado} de {total}",
-    driveLivre: "{livre} livre",
+    driveLivreDeTotal: "{livre} livre de {total}",
+    driveSecaoDispositivos: "Dispositivos e drives",
+    driveSecaoRede: "Locais de rede",
     driveTooltip: "{usado} usados de {total} ({livre} livre)",
   },
 
@@ -3482,8 +3483,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     opCancelada: "Operation canceled.",
     opFalhou: "The operation failed.",
     // #855 — drives grid (This PC)
-    driveUsados: "{usado} of {total}",
-    driveLivre: "{livre} free",
+    driveLivreDeTotal: "{livre} free of {total}",
+    driveSecaoDispositivos: "Devices and drives",
+    driveSecaoRede: "Network locations",
     driveTooltip: "{usado} used of {total} ({livre} free)",
   },
 
