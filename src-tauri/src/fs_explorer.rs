@@ -445,6 +445,92 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
     }])
 }
 
+// ─── #869: detecção de Cloud drives (opção A do Wagner) ──────────────────────
+//
+// OneDrive sincroniza pra uma PASTA (não uma letra) sob o perfil — exposta pelas
+// env vars do cliente (`%OneDriveConsumer%` pessoal, `%OneDriveCommercial%`
+// tenant, `%OneDrive%` primário). Google Drive Desktop monta uma LETRA (fs
+// `DriveFS`), que o `listar_drives` já marca kind=`cloud`. Este comando junta os
+// dois num "Cloud drives" só pro sidebar (#869 do Vega). Multi-org OneDrive
+// (Business2+ via registro) fica pra follow-up — env cobre o primário de cada.
+
+/// Um mount de nuvem — pasta (OneDrive) ou letra (Google Drive Desktop).
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudLocation {
+    pub path: String,
+    pub name: String,
+    /// `onedrive` | `onedriveCommercial` | `googledrive` — o front escolhe o logo.
+    pub provider: String,
+    /// `folder` (OneDrive) | `drive` (letra montada).
+    pub kind: String,
+}
+
+/// Nome de exibição de uma pasta de nuvem = o último componente do caminho
+/// (ex.: "OneDrive - Contoso"); cai pro caminho cru se não houver leaf.
+fn nome_cloud_folder(path: &str) -> String {
+    Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| path.to_string())
+}
+
+/// Monta a `CloudLocation` de um mount de PASTA se o caminho existe de fato
+/// (env var setada mas pasta ausente = conta desconectada → fora).
+fn cloud_pasta(valor: Option<String>, provider: &str) -> Option<CloudLocation> {
+    let p = valor?.trim().to_string();
+    if p.is_empty() || !caminho_existe(&p) {
+        return None;
+    }
+    Some(CloudLocation {
+        name: nome_cloud_folder(&p),
+        path: p,
+        provider: provider.to_string(),
+        kind: "folder".into(),
+    })
+}
+
+/// Junta as pastas de nuvem (dedup por caminho, 1º provider ganha) com os drives
+/// kind=`cloud` (Google Drive por letra). Puro → testável sem env/FS real.
+fn montar_clouds(pastas: &[(Option<String>, &str)], drives: Vec<DriveInfo>) -> Vec<CloudLocation> {
+    let mut out: Vec<CloudLocation> = Vec::new();
+    for (valor, provider) in pastas {
+        if let Some(c) = cloud_pasta(valor.clone(), provider) {
+            if !out.iter().any(|x| x.path.eq_ignore_ascii_case(&c.path)) {
+                out.push(c);
+            }
+        }
+    }
+    for d in drives.into_iter().filter(|d| d.kind == "cloud") {
+        let letra = d.path.trim_end_matches('\\');
+        let nome = if d.name.trim().is_empty() {
+            format!("Google Drive ({letra})")
+        } else {
+            format!("{} ({letra})", d.name.trim())
+        };
+        out.push(CloudLocation {
+            path: d.path,
+            name: nome,
+            provider: "googledrive".into(),
+            kind: "drive".into(),
+        });
+    }
+    out
+}
+
+/// Detecta os mounts de nuvem locais: OneDrive (env) + Google Drive (letra).
+fn detectar_clouds() -> Vec<CloudLocation> {
+    let pastas = [
+        (std::env::var("OneDriveConsumer").ok(), "onedrive"),
+        (std::env::var("OneDriveCommercial").ok(), "onedriveCommercial"),
+        // primário (dedup evita repetir se == a um dos acima).
+        (std::env::var("OneDrive").ok(), "onedrive"),
+    ];
+    let drives = listar_drives().unwrap_or_default();
+    montar_clouds(&pastas, drives)
+}
+
 // ────────────────────────── Mutações (S3, #679) ─────────────────────────────
 // Delete → Lixeira é o PADRÃO (reversível); permanente só com token de
 // confirmação (o front manda depois do Shift+confirmar). Tudo tipado em FsError.
@@ -2486,6 +2572,15 @@ pub async fn fs_list_drives() -> Result<Vec<DriveInfo>, FsError> {
         .map_err(spawn_err)?
 }
 
+/// #869: mounts de nuvem locais (OneDrive pasta + Google Drive letra) pra seção
+/// "Cloud drives" do sidebar. Vazio se nenhum cliente de nuvem está instalado.
+#[tauri::command]
+pub async fn fs_cloud_locations() -> Result<Vec<CloudLocation>, FsError> {
+    tauri::async_runtime::spawn_blocking(|| Ok(detectar_clouds()))
+        .await
+        .map_err(spawn_err)?
+}
+
 #[tauri::command]
 pub async fn fs_known_dirs() -> Result<Vec<FsEntry>, FsError> {
     tauri::async_runtime::spawn_blocking(|| Ok(dirs_conhecidos()))
@@ -2934,6 +3029,68 @@ mod tests {
         for fs in ["NTFS", "FAT32", "exFAT", "ReFS", ""] {
             assert!(!eh_cloud_fs(fs), "{fs} não é cloud");
         }
+    }
+
+    #[test]
+    fn nome_cloud_folder_pega_o_leaf() {
+        assert_eq!(nome_cloud_folder("C:\\Users\\x\\OneDrive - Contoso"), "OneDrive - Contoso");
+        assert_eq!(nome_cloud_folder("C:\\Users\\x\\OneDrive"), "OneDrive");
+    }
+
+    #[test]
+    fn cloud_pasta_ignora_vazio_e_inexistente() {
+        assert_eq!(cloud_pasta(None, "onedrive"), None);
+        assert_eq!(cloud_pasta(Some("   ".into()), "onedrive"), None);
+        assert_eq!(cloud_pasta(Some("Z:\\naoexiste-869-zzz".into()), "onedrive"), None);
+        // Pasta real → CloudLocation folder.
+        let base = dir_temp("cloud-pasta");
+        let p = base.to_string_lossy().into_owned();
+        let c = cloud_pasta(Some(p.clone()), "onedriveCommercial").unwrap();
+        assert_eq!(c.kind, "folder");
+        assert_eq!(c.provider, "onedriveCommercial");
+        assert_eq!(c.path, p);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn montar_clouds_dedup_pastas_e_junta_google() {
+        let base = dir_temp("clouds");
+        let od = base.join("OneDrive - Contoso");
+        std::fs::create_dir_all(&od).unwrap();
+        let odp = od.to_string_lossy().into_owned();
+        let pastas = [
+            (Some(odp.clone()), "onedriveCommercial"), // entra 1º → ganha o provider
+            (Some(odp.clone()), "onedrive"),           // mesmo path → dedup
+            (Some("Z:\\naoexiste-xyz".to_string()), "onedrive"), // inexistente → fora
+            (None, "onedrive"),                        // vazio → fora
+        ];
+        let drives = vec![
+            DriveInfo {
+                path: "G:\\".into(),
+                name: "Google Drive".into(),
+                kind: "cloud".into(),
+                fs_name: "DriveFS".into(),
+                total_space: 0,
+                free_space: 0,
+            },
+            DriveInfo {
+                path: "C:\\".into(),
+                name: String::new(),
+                kind: "fixed".into(), // NTFS real → NÃO entra
+                fs_name: "NTFS".into(),
+                total_space: 0,
+                free_space: 0,
+            },
+        ];
+        let cl = montar_clouds(&pastas, drives);
+        assert_eq!(cl.len(), 2, "1 pasta (dedup) + 1 google");
+        let folder = cl.iter().find(|c| c.kind == "folder").unwrap();
+        assert_eq!(folder.name, "OneDrive - Contoso");
+        assert_eq!(folder.provider, "onedriveCommercial"); // 1º a entrar ganha
+        let g = cl.iter().find(|c| c.kind == "drive").unwrap();
+        assert_eq!(g.provider, "googledrive");
+        assert_eq!(g.name, "Google Drive (G:)");
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]
