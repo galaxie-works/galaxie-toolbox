@@ -114,6 +114,36 @@ test("agruparUnificado: user=google filtra M365 do agrupamento", () => {
   assert.equal(nomes.includes("figma"), true);
 });
 
+test("#877: unificar inclui as 3 telas do GALAXIE (Bridge/Files/Remote nativas)", () => {
+  const out = unificar(m365, catalogo, resolver);
+  const bridge = out.find((a) => a.id === "galaxie-bridge")!;
+  const files = out.find((a) => a.id === "galaxie-files")!;
+  const remote = out.find((a) => a.id === "galaxie-remote")!;
+  assert.equal(bridge.category, "From GALAXIE");
+  assert.equal(bridge.nativo, "control-room");
+  assert.equal(files.nativo, "arquivos");
+  assert.equal(remote.nativo, "remote");
+  assert.equal(bridge.m365, false);
+  assert.equal(out.some((a) => a.id === "galaxie-navigator"), false); // sem Navigator
+});
+
+test("#877: 'From GALAXIE' é a PRIMEIRA categoria do agrupamento", () => {
+  const out = unificar(m365, catalogo, resolver);
+  const grupos = agruparUnificado(out);
+  assert.equal(grupos[0].categoria, "From GALAXIE");
+  assert.deepEqual(
+    grupos[0].apps.map((a: AppUnificado) => a.id).sort(),
+    ["galaxie-bridge", "galaxie-files", "galaxie-remote"],
+  );
+});
+
+test("#877: GALAXIE nunca é gateado (visível pra qualquer provider)", () => {
+  const out = unificar(m365, catalogo, resolver);
+  const g = { provider: "google" as const, accountKind: "personal" as const };
+  const bridge = out.find((a) => a.id === "galaxie-bridge")!;
+  assert.equal(appVisivelPara(bridge, g), true);
+});
+
 test("agruparUnificado: agrupa nas 14 cats em ordem, omite vazias, filtra", () => {
   const out = unificar(m365, catalogo, resolver);
   const grupos = agruparUnificado(out);

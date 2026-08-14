@@ -17,8 +17,14 @@ import {
  * runtime → node-testável). O `apps-unificado.ts` amarra os dados reais.
  */
 
-/** Telas internas que o app JÁ faz nativo — o core M365 abre elas, não aba web. */
-export type TelaNativa = "control-room" | "arquivos" | "agenda" | "people";
+/** Telas internas que o app JÁ faz nativo — o core M365 abre elas, não aba web.
+ *  #877: "remote" entra pro item Remote da categoria "From GALAXIE". */
+export type TelaNativa =
+  | "control-room"
+  | "arquivos"
+  | "agenda"
+  | "people"
+  | "remote";
 
 export interface AppUnificado {
   id: string;
@@ -130,6 +136,55 @@ export const IDS_DUP_M365: ReadonlySet<string> = new Set([
   "clipchamp",
 ]);
 
+/**
+ * #877: as telas PRÓPRIAS do GALAXIE — categoria "From GALAXIE", sempre em 1º no
+ * command (via ORDEM_CATEGORIAS). Abrem a tela interna (nativo), não aba web. NÃO
+ * inclui o Navigator (é o container, não um destino). Ícones estáticos em
+ * `public/app-icons/galaxie-*.svg`; o NOME é localizado no render por `t.sidebar`
+ * (id `galaxie-<x>` → `t.sidebar.<x>`), então `name` aqui é só fallback.
+ */
+export const APPS_GALAXIE: readonly AppUnificado[] = [
+  {
+    id: "galaxie-bridge",
+    name: "Bridge",
+    category: "From GALAXIE",
+    url: "",
+    fluentIcon: null,
+    resumo: {
+      "pt-BR": "E-mail, contatos e agenda.",
+      en: "Email, contacts, and calendar.",
+    },
+    nativo: "control-room",
+    m365: false,
+  },
+  {
+    id: "galaxie-files",
+    name: "Files",
+    category: "From GALAXIE",
+    url: "",
+    fluentIcon: null,
+    resumo: {
+      "pt-BR": "Seus arquivos e drives.",
+      en: "Your files and drives.",
+    },
+    nativo: "arquivos",
+    m365: false,
+  },
+  {
+    id: "galaxie-remote",
+    name: "Remote",
+    category: "From GALAXIE",
+    url: "",
+    fluentIcon: null,
+    resumo: {
+      "pt-BR": "Acesso e suporte remoto.",
+      en: "Remote access and support.",
+    },
+    nativo: "remote",
+    m365: false,
+  },
+];
+
 function m365ParaUnificado(
   a: AppM365,
   resolverIcone: (a: AppM365) => string | undefined,
@@ -170,6 +225,9 @@ export function unificar(
   resolverIcone: (a: AppM365) => string | undefined,
 ): AppUnificado[] {
   return [
+    // #877: telas do GALAXIE primeiro (a ordem final é por ORDEM_CATEGORIAS no
+    // agrupamento; incluídas aqui pra o buscar/agrupar as enxergar).
+    ...APPS_GALAXIE,
     ...m365.map((a) => m365ParaUnificado(a, resolverIcone)),
     ...catalogo
       .filter((a) => !IDS_DUP_M365.has(a.id))

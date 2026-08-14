@@ -18,6 +18,9 @@ export interface AppCatalogo {
 
 /** Categorias canônicas do catálogo (as strings vêm do JSON de origem). */
 export type CategoriaApp =
+  // #877: categoria sintética das telas próprias do GALAXIE (Bridge/Files/Remote),
+  // sempre em 1º no command — NÃO vem do JSON do scrape.
+  | "From GALAXIE"
   | "AI Tools"
   | "Banking and Finance"
   | "Cloud Storage"
@@ -35,6 +38,7 @@ export type CategoriaApp =
 
 /** Ordem de exibição das categorias no command. */
 export const ORDEM_CATEGORIAS: readonly CategoriaApp[] = [
+  "From GALAXIE", // #877: sempre primeiro
   "AI Tools",
   "Productivity",
   "Work and Business",
@@ -53,6 +57,7 @@ export const ORDEM_CATEGORIAS: readonly CategoriaApp[] = [
 
 /** Chave de i18n (em `t.command`) do rótulo de cada categoria. */
 const CHAVE_CATEGORIA: Record<CategoriaApp, keyof Dicionario["command"]> = {
+  "From GALAXIE": "catFromGalaxie",
   "AI Tools": "catAiTools",
   "Banking and Finance": "catBanking",
   "Cloud Storage": "catCloudStorage",
