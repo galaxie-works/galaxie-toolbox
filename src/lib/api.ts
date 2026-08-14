@@ -3013,6 +3013,23 @@ export async function listarCloudLocations(): Promise<CloudLocation[]> {
   return invoke<CloudLocation[]>("fs_cloud_locations");
 }
 
+/** #871: mapeia um network drive ("New → Network drive"). `letter`="Z:",
+ *  `remote`="\\\\server\\share", `persistent`=reconecta no login. */
+export async function mapearNetworkDrive(
+  letter: string,
+  remote: string,
+  persistent: boolean,
+): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_map_network_drive", { letter, remote, persistent });
+}
+
+/** #871: desconecta um network drive mapeado (`force` derruba com arquivos abertos). */
+export async function desconectarNetworkDrive(letter: string, force: boolean): Promise<void> {
+  if (!inTauri()) return;
+  return invoke<void>("fs_disconnect_network_drive", { letter, force });
+}
+
 /** Pastas de acesso rápido do SO (home/desktop/documentos/downloads). */
 export async function dirsConhecidos(): Promise<FsEntry[]> {
   if (!inTauri()) {
