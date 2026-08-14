@@ -1608,6 +1608,8 @@ const pt = {
     driveLivreDeTotal: "{livre} livre de {total}",
     driveSecaoDispositivos: "Dispositivos e drives",
     driveSecaoRede: "Locais de rede",
+    // #869 — seção de nuvem no sidebar do Explorer (OneDrive/Google Drive)
+    driveSecaoCloud: "Drives na nuvem",
     driveTooltip: "{usado} usados de {total} ({livre} livre)",
   },
 
@@ -3560,6 +3562,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     driveLivreDeTotal: "{livre} free of {total}",
     driveSecaoDispositivos: "Devices and drives",
     driveSecaoRede: "Network locations",
+    // #869 — cloud section in the Explorer sidebar (OneDrive/Google Drive)
+    driveSecaoCloud: "Cloud drives",
     driveTooltip: "{usado} used of {total} ({livre} free)",
   },
 
