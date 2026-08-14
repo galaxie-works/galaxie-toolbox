@@ -1,4 +1,5 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useState, type ElementType, type ReactNode } from "react";
+import { Cloud, Disc, HardDrive, Network, Usb } from "lucide-react";
 
 import {
   Files,
@@ -10,7 +11,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { useIdioma } from "@/lib/idioma";
 import { listarDir } from "@/lib/api";
-import type { DriveInfo, FsEntry } from "@/lib/types";
+import type { CloudLocation, DriveInfo, FsEntry } from "@/lib/types";
 import { CAMINHO_ESTE_PC } from "./caminho";
 
 // #869: valores-sentinela dos nós-RAIZ do accordion (This PC / Acesso rápido).
@@ -20,6 +21,10 @@ import { CAMINHO_ESTE_PC } from "./caminho";
 // valor, sem uma flag extra por nó.
 const RAIZ_ESTE_PC = "::este-pc::";
 const RAIZ_ACESSO_RAPIDO = "::acesso-rapido::";
+// #869: seções-irmãs dedicadas — nuvem (OneDrive/Google Drive) e locais de rede
+// (drives `kind==="network"`, tirados do This PC à moda do Explorer do Windows).
+const RAIZ_CLOUD = "::cloud::";
+const RAIZ_REDE = "::locais-rede::";
 
 /** Um valor de accordion é "lazy" (carrega filhos do disco ao abrir) quando é um
  *  caminho real; as raízes estáticas usam o prefixo-sentinela "::". */
@@ -43,6 +48,42 @@ function driveParaEntry(d: DriveInfo): FsEntry {
   };
 }
 
+/** #869: `FsEntry` de pasta para um mount de nuvem (nó da seção "Cloud drives"). */
+function cloudParaEntry(c: CloudLocation): FsEntry {
+  return {
+    name: c.name,
+    path: c.path,
+    isDir: true,
+    isSymlink: false,
+    size: 0,
+    modifiedMs: null,
+    createdMs: null,
+    extension: null,
+    isHidden: false,
+    isReadonly: false,
+  };
+}
+
+/**
+ * #869: ícone lucide por tipo de drive — HardDrive p/ locais (fixed/ramdisk/
+ * unknown), Network p/ rede, Cloud p/ mount de nuvem, Usb p/ removível, Disc p/
+ * CD/DVD. Só os DRIVES/mounts trocam o ícone; pastas comuns seguem no folder.
+ */
+function iconePorKind(kind: DriveInfo["kind"]): ElementType {
+  switch (kind) {
+    case "network":
+      return Network;
+    case "cloud":
+      return Cloud;
+    case "removable":
+      return Usb;
+    case "cdrom":
+      return Disc;
+    default:
+      return HardDrive;
+  }
+}
+
 /**
  * #869: árvore ÚNICA do sidebar do Explorer, renderizada pelo componente `Files`
  * do animate-ui (Radix Accordion `type="multiple"`) em modo CONTROLADO — um único
@@ -61,24 +102,32 @@ function driveParaEntry(d: DriveInfo): FsEntry {
  */
 export function ArvoreArquivos({
   drives,
+  cloudLocations,
   acessoRapido,
   currentPath,
   onNavegar,
 }: {
   drives: DriveInfo[];
+  cloudLocations: CloudLocation[] | null;
   acessoRapido: FsEntry[] | null;
   currentPath: string;
   onNavegar: (path: string) => void;
 }) {
   const { t } = useIdioma();
-  // As raízes começam ABERTAS — drives e acesso rápido ficam visíveis de cara,
-  // como no sidebar antigo; só as PASTAS é que carregam ao expandir. Manter um
-  // sentinela em `open` sem FolderItem correspondente (ex.: acesso rápido ainda
-  // não carregou) é inofensivo — o Radix ignora valores desconhecidos.
+  // As raízes começam ABERTAS — drives, nuvem, rede e acesso rápido ficam visíveis
+  // de cara, como no sidebar antigo; só as PASTAS é que carregam ao expandir.
+  // Manter um sentinela em `open` sem FolderItem correspondente (ex.: seção de
+  // nuvem/rede ausente) é inofensivo — o Radix ignora valores desconhecidos.
   const [open, setOpen] = useState<string[]>(() => [
     RAIZ_ESTE_PC,
+    RAIZ_CLOUD,
+    RAIZ_REDE,
     RAIZ_ACESSO_RAPIDO,
   ]);
+  // #869: separa locais de rede (kind `network`) dos demais — cada grupo vira uma
+  // seção-irmã (This PC só locais/removíveis/etc.; "Locais de rede" à parte).
+  const drivesLocais = drives.filter((d) => d.kind !== "network");
+  const drivesRede = drives.filter((d) => d.kind === "network");
   const [filhosPorPath, setFilhosPorPath] = useState<Map<string, FsEntry[]>>(
     () => new Map(),
   );
@@ -134,10 +183,11 @@ export function ArvoreArquivos({
         currentPath={currentPath}
         onNavegar={onNavegar}
       >
-        {drives.map((d) => (
+        {drivesLocais.map((d) => (
           <NoArvore
             key={d.path}
             entry={driveParaEntry(d)}
+            icone={iconePorKind(d.kind)}
             filhosPorPath={filhosPorPath}
             carregando={carregando}
             currentPath={currentPath}
@@ -147,6 +197,57 @@ export function ArvoreArquivos({
           />
         ))}
       </SecaoRaiz>
+
+      {/* #869: "Cloud drives" — mounts de nuvem locais (OneDrive/Google Drive). Só
+          renderiza quando há ≥1 mount; ícone Cloud pra todos (sem arte por
+          provider, nao-inventar-ui). Cada item é pasta lazy (navega pro `path`). */}
+      {cloudLocations && cloudLocations.length > 0 && (
+        <SecaoRaiz
+          value={RAIZ_CLOUD}
+          label={t.arquivos.driveSecaoCloud}
+          currentPath={currentPath}
+          onNavegar={onNavegar}
+        >
+          {cloudLocations.map((c) => (
+            <NoArvore
+              key={c.path}
+              entry={cloudParaEntry(c)}
+              icone={Cloud}
+              filhosPorPath={filhosPorPath}
+              carregando={carregando}
+              currentPath={currentPath}
+              onNavegar={onNavegar}
+              carregandoLabel={t.arquivos.carregando}
+              vazioLabel={t.arquivos.vazio}
+            />
+          ))}
+        </SecaoRaiz>
+      )}
+
+      {/* #869: "Locais de rede" — drives `kind==="network"` tirados do This PC.
+          Some quando não há drive de rede. Reusa o rótulo do #855 (drives-view). */}
+      {drivesRede.length > 0 && (
+        <SecaoRaiz
+          value={RAIZ_REDE}
+          label={t.arquivos.driveSecaoRede}
+          currentPath={currentPath}
+          onNavegar={onNavegar}
+        >
+          {drivesRede.map((d) => (
+            <NoArvore
+              key={d.path}
+              entry={driveParaEntry(d)}
+              icone={iconePorKind(d.kind)}
+              filhosPorPath={filhosPorPath}
+              carregando={carregando}
+              currentPath={currentPath}
+              onNavegar={onNavegar}
+              carregandoLabel={t.arquivos.carregando}
+              vazioLabel={t.arquivos.vazio}
+            />
+          ))}
+        </SecaoRaiz>
+      )}
 
       {/* #869: "Acesso rápido" como raiz-IRMÃ na MESMA árvore (dados de
           `dirsConhecidos`). Os itens são pastas — expansíveis/lazy como as demais.
@@ -218,6 +319,7 @@ function SecaoRaiz({
 
 function NoArvore({
   entry,
+  icone,
   filhosPorPath,
   carregando,
   currentPath,
@@ -226,6 +328,9 @@ function NoArvore({
   vazioLabel,
 }: {
   entry: FsEntry;
+  // #869: ícone só do nó-raiz do seu grupo (drive/mount de nuvem). Os filhos
+  // recursivos (pastas comuns) NÃO recebem — caem no folder padrão.
+  icone?: ElementType;
   filhosPorPath: Map<string, FsEntry[]>;
   carregando: Set<string>;
   currentPath: string;
@@ -248,7 +353,7 @@ function NoArvore({
         onClick={() => onNavegar(entry.path)}
         className={cn("rounded-md", ativo && "bg-secondary")}
       >
-        <FolderTrigger>{entry.name}</FolderTrigger>
+        <FolderTrigger icon={icone}>{entry.name}</FolderTrigger>
       </div>
       <FolderContent>
         {estaCarregando ? (

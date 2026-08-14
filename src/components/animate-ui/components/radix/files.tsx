@@ -51,12 +51,18 @@ function FolderItem(props: FolderItemProps) {
 
 type FolderTriggerProps = FileLabelPrimitiveProps & {
   gitStatus?: GitStatus;
+  // #869: ícone opcional que SUBSTITUI o ícone de pasta padrão (ex.: HardDrive
+  // pra drives, Cloud pra mounts de nuvem). Aditivo/backward-compat: sem `icon`,
+  // mantém o folder aberto/fechado animado. Quando setado, usa o MESMO ícone em
+  // aberto/fechado (drive não "abre" visualmente), preservando o FolderIconPrimitive.
+  icon?: React.ElementType;
 };
 
 function FolderTrigger({
   children,
   className,
   gitStatus,
+  icon: Icon,
   ...props
 }: FolderTriggerProps) {
   return (
@@ -72,10 +78,17 @@ function FolderTrigger({
                 gitStatus === 'deleted' && 'text-red-400',
               )}
             >
-              <FolderIconPrimitive
-                closeIcon={<FolderIcon className="size-4.5" />}
-                openIcon={<FolderOpenIcon className="size-4.5" />}
-              />
+              {Icon ? (
+                <FolderIconPrimitive
+                  closeIcon={<Icon className="size-4.5" />}
+                  openIcon={<Icon className="size-4.5" />}
+                />
+              ) : (
+                <FolderIconPrimitive
+                  closeIcon={<FolderIcon className="size-4.5" />}
+                  openIcon={<FolderOpenIcon className="size-4.5" />}
+                />
+              )}
               <FileLabelPrimitive
                 className={cn('text-sm', className)}
                 {...props}

@@ -16,6 +16,7 @@ import {
   copiarComProgresso,
   copiarVariasComProgresso,
   dirsConhecidos,
+  listarCloudLocations,
   listarDir,
   listarDrives,
   moverComProgresso,
@@ -23,7 +24,7 @@ import {
   observarPasta,
   onProgressoOp,
 } from "@/lib/api";
-import type { DriveInfo, FsConflict, FsEntry } from "@/lib/types";
+import type { CloudLocation, DriveInfo, FsConflict, FsEntry } from "@/lib/types";
 import { DrivesView } from "./drives-view";
 import { ArvoreArquivos } from "./arvore";
 import { NavBarArquivos } from "./navbar";
@@ -120,6 +121,11 @@ export function ExplorerShell({
   const onLocalChangeRef = useRef(onLocalChange);
   onLocalChangeRef.current = onLocalChange;
   const [drives, setDrives] = useState<DriveInfo[] | null>(null);
+  // #869: mounts de nuvem locais (seção "Cloud drives" do sidebar). Carregados uma
+  // vez no mount, como drives/acesso rápido. `null` = ainda carregando/degradou.
+  const [cloudLocations, setCloudLocations] = useState<CloudLocation[] | null>(
+    null,
+  );
   const [acessoRapido, setAcessoRapido] = useState<FsEntry[] | null>(null);
   // #681: seleção liftada do ContentPane → alimenta o InspectorPane.
   const [selecionados, setSelecionados] = useState<FsEntry[]>([]);
@@ -169,6 +175,12 @@ export function ExplorerShell({
       .then((q) => vivo && setAcessoRapido(q))
       .catch(() => {
         /* acesso rápido é opcional; degrada sem a seção */
+      });
+    // #869: mounts de nuvem (opcional — só aparece se houver cliente instalado).
+    void listarCloudLocations()
+      .then((c) => vivo && setCloudLocations(c))
+      .catch(() => {
+        /* nuvem é opcional; degrada sem a seção */
       });
     return () => {
       vivo = false;
@@ -445,6 +457,7 @@ export function ExplorerShell({
                 <div className="pr-2">
                   <ArvoreArquivos
                     drives={drives}
+                    cloudLocations={cloudLocations}
                     acessoRapido={acessoRapido}
                     currentPath={nav.currentPath}
                     onNavegar={navegar}
