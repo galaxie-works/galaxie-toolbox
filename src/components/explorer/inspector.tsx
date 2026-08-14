@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Info } from "lucide-react";
+import { Eye, Info, SquareArrowOutUpRight } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { formatBytes } from "@/lib/utils";
+import { abrirCaminhoFs } from "@/lib/api";
 import { preencher, useIdioma } from "@/lib/idioma";
 import type { FsEntry } from "@/lib/types";
+import { PreviewArquivo } from "@/components/preview/preview-arquivo";
 
 import { ehImagem, iconeParaEntry } from "./icones-arquivo";
 import { formatarDataArquivo, rotuloTipo } from "./format";
@@ -17,15 +19,23 @@ const TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /**
  * #681: InspectorPane — o 3º painel (direita) do Explorer, dirigido pela seleção
- * LIFTADA do ContentPane (array de `FsEntry`). Três variantes:
- *  - 0 selecionados → dica ("selecione um item");
- *  - 1 → miniatura/ícone grande + metadados (nome, tipo, tamanho, criado,
- *        modificado, caminho, atributos), com refresh autoritativo via `statCaminho`;
- *  - >1 → resumo (nº de itens + tamanho total).
+ * LIFTADA do ContentPane (array de `FsEntry`).
+ *
+ * #873: ganha uma REGIÃO DE PREVIEW no topo, que reusa o MESMO viewer do Bridge
+ * (`PreviewArquivo`, fonte local — pdf/txt/docx/xlsx/csv/imagem/mídia com iframe
+ * `sandbox=""` + CSP). Abaixo do preview ficam os metadados de sempre:
+ *  - 0 ou >1 selecionados, ou 1 pasta → o preview mostra o estado vazio
+ *    ("selecione um arquivo para pré-visualizar"); os metadados abaixo seguem
+ *    (resumo de multi-seleção / detalhes da pasta / nada quando 0);
+ *  - 1 arquivo → preview do arquivo + metadados (nome, tipo, tamanho, datas,
+ *    caminho, atributos). Formato fora do escopo cai no aviso do próprio viewer.
+ * O toggle dedicado do painel (View › Preview pane) é escopo do #871.
  * Estilo de card igual aos painéis da árvore/conteúdo (`rounded-xl border bg-card`).
  */
 export function InspectorPane({ itens }: { itens: FsEntry[] }) {
   const { t } = useIdioma();
+  // Só há preview para UM arquivo (pasta não pré-visualiza).
+  const arquivoUnico = itens.length === 1 && !itens[0].isDir ? itens[0] : null;
 
   return (
     <aside className="flex h-full flex-col rounded-xl border bg-card">
@@ -33,26 +43,45 @@ export function InspectorPane({ itens }: { itens: FsEntry[] }) {
         <Info className="size-4 text-muted-foreground" />
         <span className="text-sm font-medium">{t.arquivos.detalhes}</span>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        {itens.length === 0 ? (
-          <Vazio />
-        ) : itens.length === 1 ? (
-          <InspetorUnico key={itens[0].path} entry={itens[0]} />
+
+      {/* Região de preview (topo) — arquivo único ou estado vazio. */}
+      <div className="min-h-0 flex-1 overflow-hidden p-3">
+        {arquivoUnico ? (
+          <PreviewArquivo
+            key={arquivoUnico.path}
+            fonte={{
+              kind: "local",
+              path: arquivoUnico.path,
+              nome: arquivoUnico.name,
+              tamanho: arquivoUnico.size,
+            }}
+            acaoPrimaria={{
+              onClick: () => {
+                void abrirCaminhoFs(arquivoUnico.path).catch(() => {});
+              },
+              rotulo: t.arquivos.abrir,
+              Icone: SquareArrowOutUpRight,
+            }}
+          />
         ) : (
-          <InspetorMulti itens={itens} />
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
+            <Eye className="size-8" />
+            <p className="text-sm">{t.arquivos.previewSelecione}</p>
+          </div>
         )}
       </div>
-    </aside>
-  );
-}
 
-function Vazio() {
-  const { t } = useIdioma();
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
-      <Info className="size-8" />
-      <p className="text-sm">{t.arquivos.inspetorVazio}</p>
-    </div>
+      {/* Metadados (abaixo do preview) — só quando há seleção. */}
+      {itens.length > 0 && (
+        <div className="max-h-[45%] shrink-0 overflow-y-auto border-t p-3">
+          {itens.length === 1 ? (
+            <InspetorUnico key={itens[0].path} entry={itens[0]} />
+          ) : (
+            <InspetorMulti itens={itens} />
+          )}
+        </div>
+      )}
+    </aside>
   );
 }
 
