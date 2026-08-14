@@ -99,7 +99,12 @@ impl CodedFrameSource for DummyFrameSource {
             self.tamanho
         };
         let mut data = vec![0u8, 0, 0, 1]; // Annex-B start code
-        data.extend(std::iter::repeat(0xAB).take(n));
+        // NAL header VÁLIDO logo após o start code (forbidden_zero_bit=0): IDR
+        // (nal_unit_type=5 → 0x65) no keyframe, non-IDR slice (type=1 → 0x61) no
+        // delta. Sem isso o 0xAB (forbidden-bit=1) é NAL inválido e o depacketizer
+        // do str0m rejeita/segura esperando keyframe (o E2E dummy não recebia nada).
+        data.push(if keyframe { 0x65 } else { 0x61 });
+        data.extend(std::iter::repeat(0xAB).take(n.saturating_sub(1)));
         self.contador += 1;
         Some(CodedFrame {
             data,

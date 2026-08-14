@@ -33,6 +33,11 @@ pub mod capture_wasapi;
 #[cfg(feature = "webrtc")]
 pub mod session;
 
+// Driver de I/O (casa o Transport sans-I/O com um UdpSocket real) — precisa do
+// `session`, logo também atrás de `webrtc`.
+#[cfg(feature = "webrtc")]
+pub mod driver;
+
 pub use bridge::{FrameBridge, FrameFim};
 pub use command::{canal_de_comandos, CommandChannel, CommandReceiver, EncoderCommand};
 pub use control::{

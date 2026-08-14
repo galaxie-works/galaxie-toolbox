@@ -41,6 +41,13 @@ rand = "0.8"
 [dev-dependencies]
 # testes deterministicos rodam sem rede real (mock de signaling + dummy source).
 
+# O harness E2E usa o `IoDriver`/`session` (str0m) — só existe com `webrtc`. Gatear
+# aqui pra o `cargo test`/`cargo build` SEM a feature não tentar compilá-lo (senão
+# quebra o build padrão, que é o do CI).
+[[example]]
+name = "e2e_dummy"
+required-features = ["webrtc"]
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
