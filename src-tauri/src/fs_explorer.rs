@@ -942,6 +942,7 @@ fn iniciar_ticker(
     let handle = std::thread::spawn(move || {
         let mut ultimo_bytes = 0u64;
         let mut ultimo_t = Instant::now();
+        let mut ticks = 0u32;
         while !p2.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(100));
             let proc = processados.load(Ordering::Relaxed);
@@ -950,6 +951,20 @@ fn iniciar_ticker(
             let bps = ((proc.saturating_sub(ultimo_bytes)) as f64 / dt) as u64;
             ultimo_bytes = proc;
             ultimo_t = agora;
+            // #850: PROGRESS no log a cada ~1s (10 ticks) — MB/s pro benchmark, sem
+            // spammar (o evento pro front segue a 100ms).
+            ticks += 1;
+            if ticks % 10 == 0 {
+                let pct = if total_bytes > 0 {
+                    (proc as f64 / total_bytes as f64) * 100.0
+                } else {
+                    0.0
+                };
+                log::info!(
+                    "fs_op PROGRESS op={op_id}: {pct:.0}%, {:.1} MiB/s",
+                    bps as f64 / 1_048_576.0
+                );
+            }
             let percent = if total_bytes > 0 {
                 (proc as f64 / total_bytes as f64) * 100.0
             } else {
@@ -996,11 +1011,17 @@ fn executar_progresso(
     validar(to)?;
     let src = Path::new(from);
     let dst = Path::new(to);
+    // #850: log métrico "Delphero" da op de FS — START/PROGRESS/END com MB/s pro
+    // benchmark vs TeraCopy (formato estável pra grep/planilha). `t0` cobre o
+    // wall-clock inteiro (varredura + cópia).
+    let rotulo = if mover { "move" } else { "copy" };
+    let t0 = Instant::now();
     if com_long_path(dst).exists() {
         return Err(FsError::AlreadyExists(to.to_string()));
     }
     // Move mesmo-volume: rename é instantâneo, sem varredura nem cópia.
     if mover && std::fs::rename(com_long_path(src), com_long_path(dst)).is_ok() {
+        log::info!("fs_move END op={op_id}: rename mesmo-volume instantâneo");
         return Ok(false);
     }
 
@@ -1009,6 +1030,13 @@ fn executar_progresso(
         std::fs::create_dir_all(com_long_path(d))?;
     }
     let perfil = perfilar(src, dst);
+    log::info!(
+        "fs_{rotulo} START op={op_id}: {} arquivo(s), {:.1} MiB, {} dir(s), {} worker(s)",
+        plano.total_arquivos,
+        plano.total_bytes as f64 / 1_048_576.0,
+        plano.dirs.len(),
+        perfil.workers
+    );
 
     let ctx = Contexto {
         processados: Arc::new(AtomicU64::new(0)),
@@ -1030,16 +1058,27 @@ fn executar_progresso(
     ticker.parar();
 
     if let Err(e) = resultado {
+        log::error!("fs_{rotulo} ERRO op={op_id}: {e}");
         let _ = remover(to); // limpa o parcial
         return Err(e);
     }
     if flag.load(Ordering::Relaxed) {
+        log::info!("fs_{rotulo} END op={op_id}: CANCELADO ({:.2}s)", t0.elapsed().as_secs_f64());
         let _ = remover(to);
         return Ok(true);
     }
     if mover {
         remover(from)?; // move = copiou tudo → apaga a origem
     }
+    // #850: END com MB/s médio + arquivos/s — a linha de benchmark comparável.
+    let elapsed = t0.elapsed().as_secs_f64().max(0.001);
+    let mib = plano.total_bytes as f64 / 1_048_576.0;
+    log::info!(
+        "fs_{rotulo} END op={op_id}: {elapsed:.2}s, {:.1} MiB/s medio, {:.0} arquivo(s)/s, {} arquivo(s), {mib:.1} MiB",
+        mib / elapsed,
+        plano.total_arquivos as f64 / elapsed,
+        plano.total_arquivos
+    );
     Ok(false)
 }
 
