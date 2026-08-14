@@ -684,6 +684,15 @@ export interface FsDirBatch {
   done: boolean;
 }
 
+/** #871: lote de resultados de busca (evento `fs-search-result`). O front filtra
+ *  pelo `searchId`. `done` fecha o loading; `truncated` = atingiu o teto. */
+export interface FsSearchBatch {
+  searchId: number;
+  entries: FsEntry[];
+  done: boolean;
+  truncated: boolean;
+}
+
 // ── Explorer S4 (#680) — progresso + conflito + watcher ─────────────────────
 
 /** Progresso de uma op de copy/move TURBO (evento `fs-op-progress`). */

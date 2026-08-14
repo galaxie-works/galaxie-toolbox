@@ -111,6 +111,19 @@ struct FsDirBatch {
     done: bool,
 }
 
+/// #871: lote de resultados de busca emitido no evento `fs-search-result`.
+/// O front filtra pelo `search_id` (várias buscas podem coexistir).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FsSearchBatch {
+    search_id: u64,
+    entries: Vec<FsEntry>,
+    /// Último lote da busca (mesmo vazio → fecha o loading do front).
+    done: bool,
+    /// Atingiu o teto de resultados (a busca parou antes de varrer tudo).
+    truncated: bool,
+}
+
 // ─────────────────────────── Helpers de caminho ─────────────────────────────
 
 /// Prefixa `\\?\` (path *verbatim*) num caminho absoluto do Windows pra vencer o
@@ -288,6 +301,133 @@ fn ler_dir_streamed(path: &str, batch: usize, app: &AppHandle) -> Result<u64, Fs
         FsDirBatch { path: path.to_string(), entries: buffer, done: true },
     );
     Ok(total)
+}
+
+// ─── #871: busca recursiva ("Search This PC"/"Search <pasta>") ───────────────
+//
+// Backend do Search context-aware do ribbon (#871, UI = Sirius). Varredura
+// paralela (jwalk) sob a(s) raiz(es); casa por substring no NOME (case-insensitive).
+// Streaming por lotes (evento `fs-search-result`) + cancelável (reusa o
+// `ProgressManager`/`fs_cancel`) + teto de resultados — "Search This PC" pode
+// varrer milhões de arquivos, então NUNCA segura tudo na memória nem trava.
+
+/// Resolve as raízes da busca: `root` vazio = "This PC" (todos os drives locais
+/// montados); senão a pasta dada.
+fn raizes_de_busca(root: &str) -> Vec<PathBuf> {
+    let t = root.trim();
+    if t.is_empty() {
+        listar_drives()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| matches!(d.kind.as_str(), "fixed" | "removable" | "cloud" | "network"))
+            .map(|d| PathBuf::from(d.path))
+            .collect()
+    } else {
+        vec![PathBuf::from(t)]
+    }
+}
+
+/// Varre as raízes chamando `on_match` a cada arquivo/pasta cujo nome contém
+/// `termo_lower`. `on_match` devolve `false` pra PARAR (teto atingido). Respeita
+/// `cancel` entre entradas. Núcleo puro (sem `AppHandle`) → testável.
+fn caminhar_busca<F: FnMut(FsEntry) -> bool>(
+    raizes: &[PathBuf],
+    termo_lower: &str,
+    cancel: &AtomicBool,
+    mut on_match: F,
+) {
+    for raiz in raizes {
+        let base = com_long_path(raiz);
+        for entry in jwalk::WalkDir::new(&base).skip_hidden(false) {
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let Ok(entry) = entry else { continue };
+            if entry.depth() == 0 {
+                continue; // a própria raiz não é resultado
+            }
+            let nome = entry.file_name().to_string_lossy().to_lowercase();
+            if !nome.contains(termo_lower) {
+                continue;
+            }
+            let p = entry.path();
+            let Ok(m) = std::fs::symlink_metadata(com_long_path(&p)) else { continue };
+            if !on_match(entry_de(&p, &m, entry.file_type().is_symlink())) {
+                return;
+            }
+        }
+    }
+}
+
+/// Coleta (sem streaming) até `max` matches — usado nos testes; a produção usa
+/// [`executar_busca`] (streaming).
+#[cfg(test)]
+fn coletar_busca(raizes: &[PathBuf], termo: &str, max: usize) -> Vec<FsEntry> {
+    let termo_lower = termo.trim().to_lowercase();
+    let cancel = AtomicBool::new(false);
+    let mut out = Vec::new();
+    if termo_lower.is_empty() {
+        return out;
+    }
+    caminhar_busca(raizes, &termo_lower, &cancel, |e| {
+        out.push(e);
+        out.len() < max
+    });
+    out
+}
+
+/// Busca streaming: emite `fs-search-result` a cada `batch` matches + um lote
+/// terminal (`done`). Para no teto (`truncated=true`) ou no cancel.
+fn executar_busca(
+    root: &str,
+    termo: &str,
+    max_results: usize,
+    batch: usize,
+    search_id: u64,
+    cancel: &Arc<AtomicBool>,
+    app: &AppHandle,
+) {
+    let termo_lower = termo.trim().to_lowercase();
+    let batch = batch.max(1);
+    let teto = if max_results == 0 { usize::MAX } else { max_results };
+
+    // Termo vazio não busca (evita casar tudo) — fecha o loading na hora.
+    if termo_lower.is_empty() {
+        let _ = app.emit(
+            "fs-search-result",
+            FsSearchBatch { search_id, entries: Vec::new(), done: true, truncated: false },
+        );
+        return;
+    }
+
+    let raizes = raizes_de_busca(root);
+    let mut buffer: Vec<FsEntry> = Vec::with_capacity(batch);
+    let mut achados = 0usize;
+    let mut truncated = false;
+    log::info!("fs_search START id={search_id}: termo={termo_lower:?}, {} raiz(es)", raizes.len());
+
+    caminhar_busca(&raizes, &termo_lower, cancel, |e| {
+        buffer.push(e);
+        achados += 1;
+        if buffer.len() >= batch {
+            let lote = std::mem::take(&mut buffer);
+            let _ = app.emit(
+                "fs-search-result",
+                FsSearchBatch { search_id, entries: lote, done: false, truncated: false },
+            );
+        }
+        if achados >= teto {
+            truncated = true;
+            return false; // para a varredura
+        }
+        true
+    });
+
+    let _ = app.emit(
+        "fs-search-result",
+        FsSearchBatch { search_id, entries: buffer, done: true, truncated },
+    );
+    log::info!("fs_search END id={search_id}: {achados} match(es), truncated={truncated}");
 }
 
 fn stat(path: &str) -> Result<FsEntry, FsError> {
@@ -2465,6 +2605,26 @@ pub async fn fs_read_dir_streamed(
         .map_err(spawn_err)?
 }
 
+/// #871: busca recursiva streaming. `root` vazio = "This PC" (todos os drives);
+/// `query` = substring no nome. Devolve o `searchId` na hora; os resultados
+/// chegam por lotes no evento `fs-search-result`. Cancela com `fs_cancel(searchId)`.
+#[tauri::command]
+pub async fn fs_search(
+    root: String,
+    query: String,
+    max_results: usize,
+    batch: usize,
+    app: AppHandle,
+    pm: State<'_, ProgressManager>,
+) -> Result<u64, FsError> {
+    let (search_id, cancel, _pause) = pm.nova_op();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        executar_busca(&root, &query, max_results, batch, search_id, &cancel, &app);
+        app.state::<ProgressManager>().finalizar(search_id);
+    });
+    Ok(search_id)
+}
+
 #[tauri::command]
 pub async fn fs_stat(path: String) -> Result<FsEntry, FsError> {
     tauri::async_runtime::spawn_blocking(move || stat(&path))
@@ -2934,6 +3094,40 @@ mod tests {
         for fs in ["NTFS", "FAT32", "exFAT", "ReFS", ""] {
             assert!(!eh_cloud_fs(fs), "{fs} não é cloud");
         }
+    }
+
+    #[test]
+    fn busca_casa_por_substring_recursivo_e_case_insensitive() {
+        let base = dir_temp("busca");
+        std::fs::create_dir_all(base.join("sub").join("mais")).unwrap();
+        std::fs::write(base.join("Relatorio-2026.pdf"), b"x").unwrap();
+        std::fs::write(base.join("sub").join("relatorio-old.txt"), b"x").unwrap();
+        std::fs::write(base.join("sub").join("mais").join("foto.png"), b"x").unwrap();
+        std::fs::create_dir_all(base.join("RELATORIOS")).unwrap(); // pasta também casa
+
+        let raizes = vec![base.clone()];
+        // "relatorio" casa os 2 arquivos + a pasta RELATORIOS (case-insensitive, recursivo).
+        let achados = coletar_busca(&raizes, "relatorio", 100);
+        let nomes: Vec<String> = achados.iter().map(|e| e.name.clone()).collect();
+        assert_eq!(achados.len(), 3, "2 arquivos + 1 pasta: {nomes:?}");
+        assert!(nomes.iter().any(|n| n == "Relatorio-2026.pdf"));
+        assert!(nomes.iter().any(|n| n == "relatorio-old.txt"));
+        assert!(nomes.iter().any(|n| n == "RELATORIOS"));
+        // "foto" só o png.
+        assert_eq!(coletar_busca(&raizes, "FOTO", 100).len(), 1);
+        // termo que não existe = vazio; teto respeitado.
+        assert!(coletar_busca(&raizes, "inexistente-zzz", 100).is_empty());
+        assert_eq!(coletar_busca(&raizes, "relatorio", 1).len(), 1, "teto de 1");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn raizes_de_busca_vazio_pega_drives_locais() {
+        // root vazio = "This PC" → drives locais (não vazio numa máquina real);
+        // root explícito = só ele.
+        let uma = raizes_de_busca("C:\\Users");
+        assert_eq!(uma.len(), 1);
+        assert_eq!(uma[0], PathBuf::from("C:\\Users"));
     }
 
     #[test]
