@@ -44,7 +44,7 @@ import { FundoApp } from "@/components/fundo-app";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
-import { UniversalSearch } from "@/components/universal-search";
+import { MenuUsuario } from "@/components/user-menu";
 import {
   Alert,
   AlertAction,
@@ -57,14 +57,6 @@ import {
   SidebarProvider,
 } from "@/components/animate-ui/components/radix/sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
 import { TELAS, type Tela } from "@/lib/navegacao";
 import {
   useAppStore,
@@ -94,7 +86,6 @@ import { KeyRound } from "lucide-react";
  */
 function AppInner() {
   const { idioma, t } = useIdioma();
-  const bridgeView = useAppStore((state) => state.bridgeView);
   const setBridgeView = useAppStore((state) => state.setBridgeView);
   const reauthMissingScopes = useAppStore(
     (state) => state.reauthMissingScopes,
@@ -147,6 +138,11 @@ function AppInner() {
   // Abas do navegador embutido (cada uma vira um webview nativo no Rust).
   const [abas, setAbas] = useState<AbaBrowser[]>(loadPinnedNavigatorTabs);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
+  // #876: alvo (na title bar) pro portal da tab strip do Navigator. Callback-ref
+  // por estado pra o NavegadorScreen re-renderizar quando o nó existir e então
+  // teleportar a strip pra cá. Null enquanto o header não montou (ou telas sem
+  // title bar) → a strip cai no fallback inline.
+  const [tabSlot, setTabSlot] = useState<HTMLElement | null>(null);
   // #454: bump a cada nova aba pra REMONTAR o Launcher (key) e re-focar o command
   // mesmo quando já estávamos na aba vazia (setAbaAtiva(null) seria no-op).
   const [launcherNonce, setLauncherNonce] = useState(0);
@@ -1045,18 +1041,6 @@ function AppInner() {
   }
 
   // --- Aplicativo ---------------------------------------------------------
-  const info = TELAS[tela];
-  const abaAtivaObj = abas.find((a) => a.id === abaAtiva);
-  const breadcrumbDetail =
-    tela === "navegador" && abaAtivaObj
-      ? abaAtivaObj.nome
-      : tela === "control-room"
-        ? {
-            mail: t.controlRoom.grupoMail,
-            people: t.controlRoom.peopleTitulo,
-            agenda: t.controlRoom.agendaTitulo,
-          }[bridgeView]
-        : null;
 
   // #719 (SH1): renderiza a tela interna (Bridge/Files/Remote) de uma aba do
   // Navigator. `user` já está estreitado a não-nulo aqui (passou o gate de auth).
@@ -1120,65 +1104,39 @@ function AppInner() {
       <Atualizacao />
       <BarraJanela />
       <AppSidebar
-        user={user}
         tela={tela}
         onNavegar={navegarPara}
-        onLogout={logout}
-        onAbrirUrl={abrirUrl}
         onAbrirApp={abrirUrlLivre}
       />
       <SidebarInset className="relative overflow-hidden">
         <FundoApp className="pointer-events-none" />
 
+        {/* #876: title bar estilo browser em UMA linha — sem breadcrumb nem busca
+            global. As tabs do Navigator entram no `tabSlot` (portal, ver
+            navegador.tsx); à direita ficam o switcher (menor) + o avatar/menu do
+            usuário; os controles de janela seguem fixos (BarraJanela) no canto,
+            daí o `pr-[140px]`. A faixa vazia entre as tabs e o cluster é
+            arrastável (data-tauri-drag-region) sem tirar o clique de tabs/avatar. */}
         <header
           data-tauri-drag-region
-          className="relative z-10 flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-[[data-collapsible=icon]]/sidebar-wrapper:h-12"
+          className="relative z-10 flex h-11 shrink-0 items-stretch border-b border-border"
         >
-          {/* pr-[150px]: os tres controles de janela ocupam o canto superior
-              direito e o tema ficaria embaixo deles. */}
-          <div data-tauri-drag-region className="flex flex-1 items-center gap-2 px-4 pr-[150px]">
-            {/* #718 (SH0): o toggle de sidebar saiu — o rail é fixo colapsado. */}
-            <Breadcrumb>
-              <BreadcrumbList>
-                <BreadcrumbItem className="hidden md:block">
-                  <BreadcrumbLink asChild>
-                    <span>{t.nav[info.secao]}</span>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator className="hidden md:block" />
-                <BreadcrumbItem>
-                  {/* Com detalhe ativo (aba do Navigator ou módulo do Bridge),
-                      a tela deixa de ser a página final e vira o 2º nível. */}
-                  {breadcrumbDetail ? (
-                    <span className="text-muted-foreground">
-                      {t.nav[info.titulo]}
-                    </span>
-                  ) : (
-                    <BreadcrumbPage>{t.nav[info.titulo]}</BreadcrumbPage>
-                  )}
-                </BreadcrumbItem>
-                {breadcrumbDetail && (
-                  <>
-                    <BreadcrumbSeparator />
-                    <BreadcrumbItem>
-                      <BreadcrumbPage className="max-w-40 truncate">
-                        {breadcrumbDetail}
-                      </BreadcrumbPage>
-                    </BreadcrumbItem>
-                  </>
-                )}
-              </BreadcrumbList>
-            </Breadcrumb>
-            <div className="mx-auto min-w-24 flex-1 px-2 sm:max-w-sm lg:max-w-md">
-              <UniversalSearch
-                tela={tela}
-                screenLabel={t.nav[info.titulo]}
-                bridgeView={bridgeView}
-              />
-            </div>
-            <div className="ml-auto">
-              <ThemeToggle />
-            </div>
+          <div
+            ref={setTabSlot}
+            data-tauri-drag-region
+            className="flex min-w-0 flex-1 items-stretch"
+          />
+          <div
+            data-tauri-drag-region
+            className="flex shrink-0 items-center gap-1.5 pr-[140px] pl-2"
+          >
+            <ThemeToggle size="md" />
+            <MenuUsuario
+              user={user}
+              onNavegar={navegarPara}
+              onLogout={logout}
+              onAbrirUrl={abrirUrl}
+            />
           </div>
         </header>
 
@@ -1226,6 +1184,11 @@ function AppInner() {
             launcherNonce={launcherNonce}
             visivel={tela === "navegador"}
             user={user}
+            // #876: a barra de abas só ocupa a title bar quando o Navigator é a
+            // tela ativa; em Settings/Apps ela cai inline (dentro do Navigator
+            // escondido) → nenhuma aba na title bar dessas telas, e clicar aba
+            // não fica dessincronizado com a tela mostrada.
+            tabStripSlot={tela === "navegador" ? tabSlot : null}
             renderTelaInterna={renderTelaInterna}
             onTrocar={trocarAba}
             onFechar={fecharAba}
