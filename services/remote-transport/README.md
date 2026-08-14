@@ -21,15 +21,33 @@ S1) + **DataChannel** de controle, E2E **DTLS-SRTP**.
 - **default (núcleo):** contrato de frame + signaling + stats. **Não depende de
   rede** — compila e testa em qualquer ambiente. `cargo test`.
 - **`webrtc`:** puxa o `str0m`, que depende de **OpenSSL** (DTLS) no build. Ligue
-  num ambiente com toolchain OpenSSL: `cargo check --features webrtc`.
+  num ambiente com toolchain OpenSSL: `cargo check --features webrtc`. Local
+  (Windows, sem Visual Studio): use o OpenSSL do PostgreSQL —
+  `$env:OPENSSL_DIR='C:\Program Files\PostgreSQL\16'; $env:OPENSSL_NO_VENDOR='1'`.
+
+## Driver de I/O + harness E2E (S2)
+
+O `Transport` é **sans-I/O** (diz o quê transmitir; o app faz o UDP). O
+[`IoDriver`](src/driver.rs) (feature `webrtc`) casa um `UdpSocket` real com o
+`Transport` e roda o loop `passo()`/`receber_udp()`/`atender_timeout()` — é o que
+o app (S4) e o harness usam pra rodar o transporte de fato.
+
+O [`examples/e2e_dummy.rs`](examples/e2e_dummy.rs) prova o pipe inteiro num
+processo só: dois `IoDriver` em **UDP loopback real**, `offer→answer→ICE→DTLS`,
+`DummyFrameSource` (test-pattern) do Host + ping de controle do Controlador;
+asserta conexão, round-trip de datachannel e vídeo, reporta latência/bitrate.
+
+```text
+$env:OPENSSL_DIR='C:\Program Files\PostgreSQL\16'; $env:OPENSSL_NO_VENDOR='1'
+cargo run --example e2e_dummy --features webrtc
+```
 
 > **Estado de verificação (honesto):** o núcleo está **cargo-test verde** (5
-> testes). O módulo `session` (str0m/`webrtc`) foi escrito contra a API do str0m
-> 0.6 mas **não foi compilado localmente** — esta máquina não tem toolchain
-> OpenSSL (perl presente, mas sem Visual Studio/nmake pro build vendored do
-> `openssl-src`). Precisa de um build com OpenSSL (CI Linux) pra confirmar o
-> compile do transporte. A conectividade real (ICE racing/relay, DTLS, fluxo de
-> mídia) é **live-QA entre 2 máquinas** de qualquer forma (DoD).
+> testes). A feature `webrtc` (str0m 0.6.3 + `session` + `driver`) **compila
+> local** (OpenSSL do PostgreSQL). O harness `e2e_dummy` prova a **lógica do pipe**
+> (SDP/ICE/DTLS/media/datachannel) de forma determinística e rodável em loopback.
+> A conectividade real (ICE racing/relay, NAT simétrico → TURN, DTLS entre hosts
+> distintos) é **live-QA entre 2 máquinas** — DoD explícito do S2.
 
 ## Papéis
 

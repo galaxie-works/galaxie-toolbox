@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::ChannelId;
-use str0m::format::CodecExtra;
+use str0m::format::{Codec, CodecExtra};
 use str0m::media::{Direction, Frequency, KeyframeRequestKind, MediaKind, MediaTime, Mid};
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc};
@@ -224,9 +224,13 @@ impl Transport {
     pub fn escrever_frame(&mut self, frame: &CodedFrame) -> Result<(), TransportError> {
         let mid = self.mid_video.ok_or(TransportError::SemVideo)?;
         let writer = self.rtc.writer(mid).ok_or(TransportError::SemVideo)?;
+        // Selecionar o PT do H.264 explicitamente: o str0m negocia VP8/H264/VP9 e o
+        // VP8 vem PRIMEIRO na lista — `.next()` pegava o PT errado e o receptor (que
+        // filtra por `CodecExtra::H264`) descartava tudo (0 frames no E2E). Nossa
+        // mídia é sempre H.264 (do encoder S1).
         let pt = writer
             .payload_params()
-            .next()
+            .find(|p| p.spec().codec == Codec::H264)
             .map(|p| p.pt())
             .ok_or(TransportError::SemVideo)?;
         let rtp_time = MediaTime::new(frame.timestamp_us * 90 / 1000, Frequency::NINETY_KHZ);
