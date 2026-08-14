@@ -1550,6 +1550,11 @@ const pt = {
     renomearConflito: "Já existe um item com esse nome.",
     renomearInvalido: "Nome inválido.",
     erroOperacao: "Não foi possível concluir a operação.",
+    // #849 — feedback imediato da exclusão (guard por caminho).
+    movendoLixeira: "Movendo para a Lixeira…",
+    movidoLixeira: "Movido para a Lixeira",
+    excluindoPerm: "Excluindo permanentemente…",
+    excluidoPerm: "Excluído",
     // #724 — progresso de copiar/mover + diálogo de conflito + watcher
     copiando: "Copiando…",
     movendo: "Movendo…",
@@ -3460,6 +3465,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     renomearConflito: "An item with that name already exists.",
     renomearInvalido: "Invalid name.",
     erroOperacao: "Couldn't complete the operation.",
+    // #849 — immediate delete feedback (per-path guard).
+    movendoLixeira: "Moving to Recycle Bin…",
+    movidoLixeira: "Moved to Recycle Bin",
+    excluindoPerm: "Deleting permanently…",
+    excluidoPerm: "Deleted",
     // #724 — copy/move progress + conflict dialog + watcher
     copiando: "Copying…",
     movendo: "Moving…",

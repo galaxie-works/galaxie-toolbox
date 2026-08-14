@@ -663,6 +663,55 @@ export function ContentPane({
     [recarregar, t.arquivos.erroOperacao],
   );
 
+  // #849 (P1): guard de exclusão POR CAMINHO. A Lixeira do Windows leva ~10s sem
+  // feedback → o usuário aperta Del 3x → 3 `fs_trash`/`excluirPermanente`
+  // concorrentes na MESMA seleção: o 2º/3º erram (path já sumiu) → toast espúrio
+  // + 3× refresh → a lista enlouquece. O set de pendentes filtra os alvos já em
+  // andamento (todos pendentes = no-op, mata o 3x) e dá FEEDBACK IMEDIATO (toast
+  // que resolve em sucesso/erro) pra matar a sensação de "não funciona".
+  const pendenteExclusaoRef = useRef<Set<string>>(new Set());
+  const excluirComGuard = useCallback(
+    (alvos: string[], permanente: boolean) => {
+      const pend = pendenteExclusaoRef.current;
+      const novos = alvos.filter((p) => !pend.has(p));
+      if (novos.length === 0) return; // tudo já em andamento → no-op
+      for (const p of novos) pend.add(p);
+      const id = `excluir:${novos[0]}:${novos.length}`;
+      toast.loading(
+        permanente ? t.arquivos.excluindoPerm : t.arquivos.movendoLixeira,
+        { id },
+      );
+      void (async () => {
+        try {
+          if (permanente) await excluirPermanente(novos);
+          else await paraLixeira(novos);
+          toast.success(
+            permanente ? t.arquivos.excluidoPerm : t.arquivos.movidoLixeira,
+            { id },
+          );
+          recarregar();
+        } catch (e) {
+          // Erro persiste mais (o usuário precisa ver o que falhou).
+          toast.error(t.arquivos.erroOperacao, {
+            id,
+            description: String(e),
+            duration: 8000,
+          });
+        } finally {
+          for (const p of novos) pend.delete(p);
+        }
+      })();
+    },
+    [
+      recarregar,
+      t.arquivos.movendoLixeira,
+      t.arquivos.excluindoPerm,
+      t.arquivos.movidoLixeira,
+      t.arquivos.excluidoPerm,
+      t.arquivos.erroOperacao,
+    ],
+  );
+
   // #724: colar delega ao shell — checa conflitos, mostra progresso/cancel e (no
   // cut) limpa o clipboard. O refresh vem do watcher (não do comRefresh local).
   const colar = useCallback(
@@ -708,7 +757,8 @@ export function ContentPane({
       copiar: (paths) => onClipboardChange?.({ paths, op: "copy" }),
       colar,
       renomear: iniciarRename,
-      paraLixeira: (paths) => void comRefresh(() => paraLixeira(paths)),
+      // #849: pelo guard (dedup por caminho + feedback), não direto na api.
+      paraLixeira: (paths) => excluirComGuard(paths, false),
       // Exclusão permanente NUNCA chama a api direto: passa pelo dialog.
       excluirPerm: (paths) => setConfirmarPerm(paths),
       novaPasta: criarPastaNova,
@@ -735,7 +785,7 @@ export function ContentPane({
       iniciarRename,
       criarPastaNova,
       criarArquivoNovo,
-      comRefresh,
+      excluirComGuard,
       onClipboardChange,
       paths,
       t.arquivos.erroOperacao,
@@ -912,8 +962,9 @@ export function ContentPane({
           ev.preventDefault();
           const alvos = Array.from(selecao.selecionados);
           if (alvos.length === 0) break;
+          // #849: Del repetido não empilha ops — o guard dedup por caminho.
           if (ev.shiftKey) setConfirmarPerm(alvos);
-          else void comRefresh(() => paraLixeira(alvos));
+          else excluirComGuard(alvos, false);
           break;
         }
         case "Escape": {
@@ -936,7 +987,7 @@ export function ContentPane({
       moverCursor,
       itens,
       abrirItem,
-      comRefresh,
+      excluirComGuard,
       renomeando,
       acoesMenu,
       currentPath,
@@ -1328,9 +1379,8 @@ export function ContentPane({
               onClick={() => {
                 const alvos = confirmarPerm;
                 setConfirmarPerm(null);
-                if (alvos && alvos.length > 0) {
-                  void comRefresh(() => excluirPermanente(alvos));
-                }
+                // #849: mesmo guard (dedup + feedback) da exclusão permanente.
+                if (alvos && alvos.length > 0) excluirComGuard(alvos, true);
               }}
             >
               {t.arquivos.excluirPerm}
