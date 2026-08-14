@@ -11,6 +11,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { useIdioma } from "@/lib/idioma";
 import { usePersistedState } from "@/lib/persist";
 import {
+  abrirCaminhoFs,
+  buscarArquivos,
   cancelarOp,
   checarConflitos,
   copiarComProgresso,
@@ -23,12 +25,14 @@ import {
   moverVariasComProgresso,
   observarPasta,
   onProgressoOp,
+  type BuscaHandle,
 } from "@/lib/api";
 import type { CloudLocation, DriveInfo, FsConflict, FsEntry } from "@/lib/types";
 import { DrivesView } from "./drives-view";
 import { ArvoreArquivos } from "./arvore";
 import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
+import { ResultadosBusca } from "./resultados-busca";
 import { InspectorPane } from "./inspector";
 import { ProgressoPanel, type OpAtiva } from "./progresso-panel";
 import { ConflitoDialog } from "./conflito-dialog";
@@ -157,6 +161,17 @@ export function ExplorerShell({
   // #714: área de transferência interna (recortar/copiar/colar). Vive no shell
   // pra sobreviver à navegação entre pastas.
   const [clipboard, setClipboard] = useState<Clipboard | null>(null);
+
+  // #871 (fatia 2b): busca recursiva na PASTA atual. `null` = sem busca (mostra a
+  // lista/DrivesView normal). O handle vivo fica na ref pra cancelar ao re-buscar,
+  // limpar ou navegar. A busca é por-pasta: trocar de caminho a zera (efeito abaixo).
+  const [busca, setBusca] = useState<{
+    query: string;
+    resultados: FsEntry[];
+    buscando: boolean;
+    truncado: boolean;
+  } | null>(null);
+  const buscaHandleRef = useRef<BuscaHandle | null>(null);
 
   // #724: ops de copy/move ativas (rastreadas por opId) + diálogo de conflito +
   // nonce do watcher (bump → ContentPane recarrega a MESMA pasta).
@@ -337,6 +352,58 @@ export function ExplorerShell({
   // nome). `acessoRapido` pode ser null enquanto carrega — os pins ainda
   // aparecem. Array vazio → a árvore omite a seção (como hoje).
   const acessoRapidoMesclado = mesclarAcessoRapido(pins, acessoRapido ?? []);
+
+  // #871 (fatia 2b): dispara a busca recursiva na pasta atual. Cancela o handle
+  // anterior, zera os resultados e consome o stream (`buscarArquivos`), acumulando
+  // os lotes até `done`. Guard: só com caminho real (This PC = multi-drive, fatia
+  // futura). Cada lote pode marcar `truncated` ao bater o teto.
+  const onBuscar = useCallback(
+    (query: string) => {
+      const root = nav.currentPath;
+      if (!root) return;
+      void buscaHandleRef.current?.cancelar();
+      setBusca({ query, resultados: [], buscando: true, truncado: false });
+      void buscarArquivos(
+        root,
+        query,
+        (lote) => {
+          setBusca((b) =>
+            b
+              ? {
+                  ...b,
+                  resultados: [...b.resultados, ...lote.entries],
+                  buscando: !lote.done,
+                  truncado: b.truncado || lote.truncated,
+                }
+              : b,
+          );
+        },
+        { maxResults: 1000 },
+      )
+        .then((h) => {
+          buscaHandleRef.current = h;
+        })
+        .catch(() => {
+          // Falha ao iniciar → sai do estado de busca (volta pra lista normal).
+          setBusca(null);
+        });
+    },
+    [nav.currentPath],
+  );
+
+  // #871 (fatia 2b): sai da busca — cancela o stream vivo e volta pra lista normal.
+  const onLimparBusca = useCallback(() => {
+    void buscaHandleRef.current?.cancelar();
+    buscaHandleRef.current = null;
+    setBusca(null);
+  }, []);
+
+  // #871 (fatia 2b): busca é POR-PASTA — navegar limpa a busca (e cancela o stream).
+  useEffect(() => {
+    void buscaHandleRef.current?.cancelar();
+    buscaHandleRef.current = null;
+    setBusca(null);
+  }, [nav.currentPath]);
 
   // #724: executa o plano de destinos (após resolver conflitos, se houver). Cada
   // op devolve um opId — o tipo é registrado pro painel; os eventos de progresso
@@ -523,8 +590,30 @@ export function ExplorerShell({
               // ContentPane recebe como `refreshSignal` e re-lê a MESMA pasta.
               onRefresh={() => setWatcherNonce((n) => n + 1)}
               onNavegar={navegar}
+              // #871 (fatia 2b): busca recursiva na pasta atual.
+              buscaAtiva={busca !== null}
+              onBuscar={onBuscar}
+              onLimparBusca={onLimparBusca}
+              podeBuscar={nav.currentPath !== ""}
             />
-            {nav.currentPath ? (
+            {busca !== null ? (
+              // #871 (fatia 2b): busca ativa → resultados no lugar da lista/DrivesView.
+              <ResultadosBusca
+                query={busca.query}
+                resultados={busca.resultados}
+                buscando={busca.buscando}
+                truncado={busca.truncado}
+                onAbrir={(entry) => {
+                  if (entry.isDir) navegar(entry.path);
+                  else
+                    void abrirCaminhoFs(entry.path).catch(() => {
+                      toast.error(t.arquivos.erroOperacao);
+                    });
+                  onLimparBusca();
+                }}
+                onFechar={onLimparBusca}
+              />
+            ) : nav.currentPath ? (
               <ContentPane
                 currentPath={nav.currentPath}
                 onNavegar={navegar}

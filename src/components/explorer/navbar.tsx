@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowUp, RefreshCw } from "lucide-react";
+import { ArrowLeft, ArrowRight, ArrowUp, RefreshCw, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,9 +11,9 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { cn } from "@/lib/utils";
-import { useIdioma } from "@/lib/idioma";
+import { useIdioma, preencher } from "@/lib/idioma";
 import { statCaminho } from "@/lib/api";
-import { segmentosCaminho } from "./caminho";
+import { nomeBase, segmentosCaminho } from "./caminho";
 import { TooltipAcao } from "./tooltip-acao";
 
 /**
@@ -32,6 +32,10 @@ export function NavBarArquivos({
   onUp,
   onRefresh,
   onNavegar,
+  buscaAtiva,
+  onBuscar,
+  onLimparBusca,
+  podeBuscar,
 }: {
   currentPath: string;
   canBack: boolean;
@@ -41,12 +45,24 @@ export function NavBarArquivos({
   onUp: () => void;
   onRefresh: () => void;
   onNavegar: (path: string) => void;
+  // #871 (fatia 2b): busca recursiva na pasta atual.
+  buscaAtiva: boolean;
+  onBuscar: (query: string) => void;
+  onLimparBusca: () => void;
+  podeBuscar: boolean;
 }) {
   const { t } = useIdioma();
   const [editando, setEditando] = useState(false);
   const [valor, setValor] = useState(currentPath);
   const [erro, setErro] = useState(false);
   const [validando, setValidando] = useState(false);
+  // #871 (fatia 2b): campo de busca controlado (local à navbar).
+  const [busca, setBusca] = useState("");
+
+  // Some o termo do campo quando a busca é limpa por fora (ex.: navegação).
+  useEffect(() => {
+    if (!buscaAtiva) setBusca("");
+  }, [buscaAtiva]);
 
   // Some o caminho novo no campo (e limpa erro) sempre que a navegação muda.
   useEffect(() => {
@@ -195,6 +211,54 @@ export function NavBarArquivos({
           </ContextMenuContent>
         </ContextMenu>
       )}
+
+      {/* #871 (fatia 2b): busca recursiva na pasta atual. No This PC
+          (`!podeBuscar`) o campo fica desabilitado — a busca multi-drive é uma
+          fatia futura. Enter dispara; Esc limpa e sai da busca. */}
+      <div className="relative w-56 shrink-0">
+        <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={busca}
+          disabled={!podeBuscar}
+          onChange={(e) => setBusca(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              const q = busca.trim();
+              if (q) onBuscar(q);
+            } else if (e.key === "Escape") {
+              setBusca("");
+              onLimparBusca();
+            }
+          }}
+          placeholder={
+            podeBuscar
+              ? preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) })
+              : t.arquivos.buscarThisPc
+          }
+          aria-label={
+            podeBuscar
+              ? preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) })
+              : t.arquivos.buscarThisPc
+          }
+          className="h-8 pl-8 pr-8"
+        />
+        {busca && (
+          <TooltipAcao label={t.arquivos.limparBusca}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute right-0.5 top-1/2 size-7 -translate-y-1/2"
+              onClick={() => {
+                setBusca("");
+                onLimparBusca();
+              }}
+              aria-label={t.arquivos.limparBusca}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </TooltipAcao>
+        )}
+      </div>
     </div>
   );
 }
