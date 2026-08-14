@@ -156,10 +156,6 @@ fn client_id_override() -> Option<String> {
         .ok()
 }
 
-pub fn client_id() -> String {
-    client_id_override().unwrap_or_else(|| CLIENT_ID.to_string())
-}
-
 /// Conta PESSOAL (MSA) pro roteamento de registration: caminho comum
 /// (`common`/`consumers`, não-org) OU o tenant GUID reservado do MSA. Pura —
 /// sem env, testável.
