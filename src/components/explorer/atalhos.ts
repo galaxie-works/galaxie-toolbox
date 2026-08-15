@@ -63,6 +63,10 @@ export const ATALHOS: readonly Atalho[] = [
   { id: "verGrade", categoria: "visualizacao", combos: [["Ctrl", "3"]], rotulo: "verGrade" },
   { id: "ocultos", categoria: "visualizacao", combos: [["Ctrl", "H"]], rotulo: "ocultos" },
   { id: "filtro", categoria: "visualizacao", combos: [["Ctrl", "F"]], rotulo: "filtro" },
+  // #950 (audit de consistência): abrir/fechar o painel de detalhes (Alt+P, à
+  // moda do Explorer do Windows). A ação já existe (`onToggleInspector`); faltava
+  // só o atalho + tooltip.
+  { id: "preview", categoria: "visualizacao", combos: [["Alt", "P"]], rotulo: "preview" },
 ];
 
 /** Um combo formatado pra exibição: `["Ctrl","C"]` → "Ctrl+C". */

@@ -376,7 +376,7 @@ export function RibbonComandos(props: RibbonComandosProps) {
 
       {/* Toggle do painel de detalhes (inspector) */}
       {onToggleInspector && (
-        <TooltipAcao label={t.arquivos.detalhes}>
+        <TooltipAcao label={t.arquivos.detalhes} atalhoId="preview">
           <Button
             variant={mostrarInspector ? "secondary" : "ghost"}
             size="icon"
