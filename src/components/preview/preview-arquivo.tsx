@@ -743,16 +743,39 @@ function TxtViewer({ texto, rotulo }: { texto: string; rotulo: string }) {
 /** Viewer de PDF: canvas do pdf.js + paginação + zoom. */
 function PdfViewer({ doc, tp }: { doc: PDFDocumentProxy; tp: PreviewStrings }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const areaRef = useRef<HTMLDivElement>(null);
   const [pagina, setPagina] = useState(1);
-  const [escala, setEscala] = useState(1.2);
+  // #957: `zoom` é FATOR relativo ao fit-to-width (1 = página ocupa a largura do
+  // pane). A escala real de render = fit × zoom, onde `fit` vem da largura do
+  // container medida (ResizeObserver) ÷ largura nativa da página. Assim o PDF
+  // encaixa no pane e re-encaixa ao redimensionar (não fica num 1.2 fixo).
+  const [zoom, setZoom] = useState(1);
+  const [larguraPane, setLarguraPane] = useState(0);
   const total = doc.numPages;
+
+  // #957: mede a largura útil do container e reflui ao redimensionar o pane.
+  useEffect(() => {
+    const area = areaRef.current;
+    if (!area) return;
+    const medir = () => setLarguraPane(area.clientWidth);
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(area);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || larguraPane <= 0) return;
     let cancelado = false;
     (async () => {
       try {
+        // Largura nativa da página (escala 1) → fit-to-width no espaço disponível
+        // (menos o padding lateral do container). Clamp pra não explodir.
+        const page = await doc.getPage(pagina);
+        const nativa = page.getViewport({ scale: 1 }).width || 1;
+        const fit = Math.max(0.1, (larguraPane - 24) / nativa);
+        const escala = Math.min(6, Math.max(0.1, fit * zoom));
         if (!cancelado) await renderizarPagina(doc, pagina, canvas, escala);
       } catch {
         /* render cancelado/troca de página — ignora */
@@ -761,11 +784,11 @@ function PdfViewer({ doc, tp }: { doc: PDFDocumentProxy; tp: PreviewStrings }) {
     return () => {
       cancelado = true;
     };
-  }, [doc, pagina, escala]);
+  }, [doc, pagina, zoom, larguraPane]);
 
   const irPara = (n: number) => setPagina(Math.min(total, Math.max(1, n)));
   const ajustarZoom = (delta: number) =>
-    setEscala((e) => Math.min(3, Math.max(0.5, +(e + delta).toFixed(2))));
+    setZoom((z) => Math.min(4, Math.max(0.25, +(z + delta).toFixed(2))));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -808,7 +831,7 @@ function PdfViewer({ doc, tp }: { doc: PDFDocumentProxy; tp: PreviewStrings }) {
           variant="ghost"
           size="icon"
           className="size-7"
-          onClick={() => setEscala(1.2)}
+          onClick={() => setZoom(1)}
           aria-label={tp.previewZoomReset}
         >
           <RotateCcw className="size-3.5" />
@@ -825,7 +848,10 @@ function PdfViewer({ doc, tp }: { doc: PDFDocumentProxy; tp: PreviewStrings }) {
       </div>
       {/* Página */}
       <ScrollArea className="min-h-0 w-full flex-1 bg-muted/20">
-        <div className="flex min-h-full justify-center p-3">
+        {/* #957: `areaRef` mede a largura útil (ResizeObserver) → fit-to-width. No
+            fit (zoom=1) o canvas ocupa a largura do pane (sem scroll horizontal);
+            o zoom-in aumenta e aí o scroll é intencional. */}
+        <div ref={areaRef} className="flex min-h-full justify-center p-3">
           <canvas ref={canvasRef} className="h-fit shadow-sm" />
         </div>
       </ScrollArea>
