@@ -8,7 +8,7 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
-import { useIdioma } from "@/lib/idioma";
+import { preencher, useIdioma } from "@/lib/idioma";
 import { usePersistedState } from "@/lib/persist";
 import {
   abrirCaminhoFs,
@@ -17,6 +17,7 @@ import {
   checarConflitos,
   copiarComProgresso,
   copiarVariasComProgresso,
+  desfazerOp,
   dirsConhecidos,
   listarCloudLocations,
   listarDir,
@@ -26,10 +27,17 @@ import {
   observarPasta,
   onProgressoOp,
   pausarOp,
+  previewUndo,
   resumirOp,
   type BuscaHandle,
 } from "@/lib/api";
-import type { CloudLocation, DriveInfo, FsConflict, FsEntry } from "@/lib/types";
+import type {
+  CloudLocation,
+  DriveInfo,
+  FsConflict,
+  FsEntry,
+  UndoPlan,
+} from "@/lib/types";
 import { DrivesView } from "./drives-view";
 import { ArvoreArquivos } from "./arvore";
 import { NavBarArquivos } from "./navbar";
@@ -41,6 +49,7 @@ import { type OpAtiva } from "./progresso-panel";
 // `ProgressoPanel`, alimentada pelo MESMO modelo `ops`.
 import { ActivityDropdown } from "./activity-dropdown";
 import { ConflitoDialog } from "./conflito-dialog";
+import { UndoPreviewDialog } from "./undo-preview-dialog";
 import { calcVelocidade, planejarTransferencia, type ResolucaoConflito } from "./operacao";
 import { CAMINHO_ESTE_PC, nomeBase, pathPai } from "./caminho";
 import type { Clipboard, OperacaoClipboard } from "./menu-arquivo";
@@ -52,6 +61,11 @@ import {
   removerPin,
   type PinAcessoRapido,
 } from "./quick-access";
+
+/** #967: estado inicial "nada desfeito". Constante de módulo — um só set vazio
+ *  readonly compartilhado (evita re-alocar por render e o gotcha de genérico
+ *  inline do gate #861). */
+const DESFEITOS_VAZIO: ReadonlySet<number> = new Set();
 
 // --- Estado de navegação (histórico back/forward + caminho atual) ----------
 // Local ao shell (useReducer): é estado de UI efêmero, não tenant-scoped — não
@@ -189,6 +203,13 @@ export function ExplorerShell({
   const [ops, setOps] = useState<OpAtiva[]>([]);
   const [conflito, setConflito] = useState<ConflitoPendente | null>(null);
   const [watcherNonce, setWatcherNonce] = useState(0);
+  // #967: preview de undo em aberto (opId + plano; plan=null = fora da janela do
+  // journal) + opIds já desfeitos (marca a linha como "Desfeito" na dropdown).
+  const [undoPreview, setUndoPreview] = useState<{
+    opId: number;
+    plan: UndoPlan | null;
+  } | null>(null);
+  const [desfeitos, setDesfeitos] = useState<ReadonlySet<number>>(DESFEITOS_VAZIO);
 
   // Refs de bookkeeping das ops: último byte/tempo (velocidade), tipo por opId
   // (o payload de progresso não carrega copy/move), e dedupe do evento terminal.
@@ -581,6 +602,41 @@ export function ExplorerShell({
     terminadosRef.current.delete(opId);
   }, []);
 
+  // #967 (#898 fatia 4): abre o preview de undo de uma op terminal — busca o
+  // plano (classificação seguros/pulados/não-reversíveis, sem efeito). Abre o
+  // diálogo MESMO com `plan=null` (op fora da janela do journal → empty state).
+  const onDesfazer = useCallback(async (opId: number) => {
+    const plan = await previewUndo(opId).catch(() => null);
+    setUndoPreview({ opId, plan });
+  }, []);
+
+  // #967: confirma o undo — executa (best-effort, só os itens seguros) e marca a
+  // op como desfeita. Toast pelo relatório: sucesso / parcial (algo pulado) /
+  // erro (falhas). i18n via tRef (idioma atual, sem re-subscribe).
+  const confirmarUndo = useCallback(async () => {
+    const alvo = undoPreview;
+    if (!alvo) return;
+    setUndoPreview(null);
+    const rep = await desfazerOp(alvo.opId).catch(() => null);
+    if (!rep) return;
+    setDesfeitos((prev) => new Set(prev).add(alvo.opId));
+    const arquivos = tRef.current.arquivos;
+    if (rep.erros.length > 0) {
+      toast.error(preencher(arquivos.undoErro, { n: rep.erros.length }), {
+        description: rep.erros[0],
+      });
+    } else if (rep.pulados > 0 || rep.naoReversiveis > 0) {
+      toast.info(
+        preencher(arquivos.undoParcial, {
+          ok: rep.executados,
+          pulados: rep.pulados + rep.naoReversiveis,
+        }),
+      );
+    } else {
+      toast.success(preencher(arquivos.undoOk, { n: rep.executados }));
+    }
+  }, [undoPreview]);
+
   // #875/#898: limpa TODAS as ops terminais (concluídas/erro/canceladas/parciais),
   // mantendo as ATIVAS (em curso OU pausadas). Limpa os refs das removidas.
   const ehAtiva = (status: string) =>
@@ -756,7 +812,15 @@ export function ExplorerShell({
         onPausar={pausarTransferencia}
         onResumir={resumirTransferencia}
         onDispensar={dispensarOp}
+        onDesfazer={onDesfazer}
+        desfeitos={desfeitos}
         onLimparConcluidas={limparConcluidas}
+      />
+      <UndoPreviewDialog
+        aberto={undoPreview !== null}
+        plan={undoPreview?.plan ?? null}
+        onConfirmar={confirmarUndo}
+        onCancelar={() => setUndoPreview(null)}
       />
       <ConflitoDialog
         aberto={conflito !== null}

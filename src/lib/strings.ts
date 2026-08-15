@@ -1709,6 +1709,25 @@ const pt = {
     resumoParaDestino: "→ {destino}",
     arquivoUm: "arquivo",
     arquivosMuitos: "arquivos",
+    // #967 (#898 fatia 4) — diálogo de "Desfazer" (undo) por op no histórico da
+    // activity-dropdown. Baldes (seguros/pulados/não-reversíveis) + motivos (o
+    // código do backend mapeia pra estas copies) + toasts do relatório.
+    undoTitulo: "Desfazer operação",
+    undoDescricao:
+      "{seguros} serão revertidos · {pulados} pulados · {naoReversiveis} não-reversíveis",
+    undoSeguro: "Serão revertidos",
+    undoPulado: "Pulados",
+    undoNaoReversivel: "Não reversíveis",
+    undoMotivoSumiu: "O arquivo não existe mais",
+    undoMotivoModificado: "Modificado desde a operação",
+    undoMotivoOrigemReocupada: "A origem foi reocupada",
+    undoMotivoSobrescrita: "O original foi sobrescrito",
+    undoForaJanela: "Fora da janela de histórico — nada a desfazer",
+    undoNadaSeguro: "Nada pode ser revertido com segurança",
+    undoDesfeito: "Desfeito",
+    undoOk: "{n} revertidos",
+    undoParcial: "{ok} revertidos · {pulados} pulados",
+    undoErro: "Falha ao reverter {n}",
   },
 
   tema: {
@@ -3795,6 +3814,25 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     resumoParaDestino: "→ {destino}",
     arquivoUm: "file",
     arquivosMuitos: "files",
+    // #967 (#898 slice 4) — per-op "Undo" dialog in the activity-dropdown session
+    // history. Buckets (safe/skipped/not-reversible) + reasons (backend code maps
+    // to these copies) + report toasts.
+    undoTitulo: "Undo operation",
+    undoDescricao:
+      "{seguros} will be reverted · {pulados} skipped · {naoReversiveis} not reversible",
+    undoSeguro: "Will be reverted",
+    undoPulado: "Skipped",
+    undoNaoReversivel: "Not reversible",
+    undoMotivoSumiu: "File no longer exists",
+    undoMotivoModificado: "Modified since the operation",
+    undoMotivoOrigemReocupada: "The source was re-occupied",
+    undoMotivoSobrescrita: "The original was overwritten",
+    undoForaJanela: "Outside the history window — nothing to undo",
+    undoNadaSeguro: "Nothing can be safely reverted",
+    undoDesfeito: "Undone",
+    undoOk: "{n} reverted",
+    undoParcial: "{ok} reverted · {pulados} skipped",
+    undoErro: "Failed to revert {n}",
   },
 
   tema: {
