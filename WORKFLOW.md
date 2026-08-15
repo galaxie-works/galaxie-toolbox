@@ -44,12 +44,14 @@
 
 **Fluxo:** `Backlog → Ready → In progress → In review → QA Approved → PO Approved → Done → Released to Production` (+ `Rejected`).
 
+> ⚠️ **Cair no feat ≠ Done.** Quando o Polaris integra um PR, o item **NÃO** pula pra Done — ele **segue em In review** (agora a Lúmen consegue gatar, porque o código está no feat). O caminho é: In review → (Lúmen) QA Approved → (Wagner) PO Approved → **Done** (aprovado+completo, fora de versão) → (release cortado) **Released to Production**. "Integrado no feat" só **dispara o gate**, não conclui nada.
+
 | Coluna | Significado | Quem move pra cá |
 |---|---|---|
 | **Backlog** | Não priorizado. | PO/Polaris |
 | **Ready** | Escopado, pronto pra pegar (US com AC). | PO/Polaris |
 | **In progress** | Sendo trabalhado. | Dev ao começar |
-| **In review** | Entregue, precisa de gate. | **Polaris ao integrar um item completo** |
+| **In review** | **Entregue** (PR aberto), aguardando **(1) integração do Polaris no feat + (2) gate da Lúmen**. A Lúmen só gata **DEPOIS de cair no feat** (não é dela até integrar). | **Dev ao entregar o PR** |
 | **Rejected** | Reprovado (QA ou PO). | Lúmen ou Wagner |
 | **QA Approved** | Lúmen aprovou; **aguardando o olho do PO**. | **Lúmen** (In review → aqui) |
 | **PO Approved** | Wagner validou em runtime. | **Wagner** |
