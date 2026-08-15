@@ -194,6 +194,44 @@ nas mensagens do canal**; a resposta do **broker**, ao contrário, é lida
   Authenticode no gate de release, e o build do worker com as mesmas features
   do app (nada de `default-features` novo entrando por transitividade).
 
+### D1-bis — `remote-net` ganha **feature-gates**; o binário SYSTEM consome só o núcleo leve
+*(decisão de 2026-08-15, provocada pelo @Confucius no passo 2: o §4.3 manda o canal
+usar `Capabilities`/`TicketClaims` do `remote-net`, mas o crate **não tem features** —
+depender dele hoje arrasta tokio + tokio-tungstenite + rustls + opaque-ke + argon2
+pra dentro do worker SYSTEM.)*
+
+**Decisão: feature-gate o `remote-net`, com `default` = núcleo leve.** Não duplicar
+os tipos (isso violaria a lição do #684, que é a base do §4.3) e não engolir a
+árvore inteira.
+
+| Feature | Módulos | Deps que entram | Quem liga |
+|---|---|---|---|
+| `default` (núcleo) | `protocol`, `ticket`, `identity`, `windows_secret` | `base64`, `ed25519-dalek`, `rand`, `serde`, `serde_json`, `thiserror`, `zeroize`, `windows-sys` | **worker SYSTEM** (`remote-system-agent`) |
+| `client` | `worker`, `transport` | `tokio`, `tokio-tungstenite`, `rustls`, `webpki-roots`, `url`, `futures-util`, `sha2` | **daemon** `galaxie-remote-device` (#691) |
+| `authority` | `authority`, `opaque` | `opaque-ke`, `argon2` | **S0** (`remote-signaling`) |
+
+Anotações que sustentam a decisão:
+
+- **É o padrão da casa, não invenção:** o `remote-transport` já faz exatamente isso —
+  `default = []` com `webrtc`/`input`/`audio` opt-in, justamente pra "o crate ficar
+  sempre verde onde não há OpenSSL" (`services/remote-transport/Cargo.toml`, bloco
+  `[features]`).
+- **O corte é limpo** (verificado importe a importe): `protocol.rs` usa só `serde`;
+  `ticket.rs` e `identity.rs` só `base64`/`ed25519-dalek`/`rand`/`zeroize`;
+  `transport.rs`/`worker.rs` concentram `tokio`/`rustls`/`tungstenite`;
+  `opaque.rs`/`authority.rs` concentram `opaque-ke`/`argon2`. Nenhum módulo leve
+  importa módulo pesado.
+- **Ganho fora do S7:** o `remote-signaling` (servidor) usa **só** `authority` +
+  `protocol` + constantes (`services/remote-signaling/src/v2.rs:12-20`) — hoje ele
+  arrasta a pilha WSS **cliente** sem usar nada dela. O gate limpa o servidor junto.
+- **Torna a mitigação do D1 verificável:** "nada de `default-features` novo entrando
+  por transitividade" deixa de ser recomendação e vira algo que o CI checa com um
+  `cargo check -p galaxie-remote-system-agent` (sem tokio, sem OpenSSL no caminho).
+- **Consequência prática pro passo 2b:** depois do gate, verificar o ticket **dentro
+  do worker** custa `ed25519-dalek` — não custa runtime async. O plano do @Confucius
+  (handshake puro no passo 2, `verify_and_consume` + `Capabilities` no 2b) fica
+  **certo e barato**; não precisa duplicar tipo nenhum.
+
 ### D2 — **Um pipe só, de controle** (sem pipe irmão de mídia)
 - É consequência direta de D1: se mídia não cruza o canal, a pergunta
   "mesmo pipe ou irmão" **deixa de existir**. O canal fica **JSON puro, 64 KiB**,

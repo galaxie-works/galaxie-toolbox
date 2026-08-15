@@ -154,6 +154,11 @@ Já está no crate; o daemon só hospeda:
 
 ## 10. Ordem de implementação (pro @Confucius, depois dos passos 1-3 do S7)
 
+0. **Feature-gate do `remote-net`** (D1-bis do doc do S7): `default` = núcleo leve
+   (`protocol`/`ticket`/`identity`/`windows_secret`), `client` = `worker`+`transport`,
+   `authority` = `authority`+`opaque`. O daemon liga **`features = ["client"]`**; o
+   worker SYSTEM fica no `default`; o `remote-signaling` passa a
+   **`features = ["authority"]`** (hoje arrasta a pilha WSS cliente sem usar).
 1. **`galaxie-remote-device`** (crate binário novo): esqueleto SYSTEM + carga/geração
    da identidade (DPAPI-NG + ACL do §7) + `--provision-file` de teste. Sem rede.
 2. **Pipe `Galaxie.Remote.Device.v1`** (`provision`/`status`/`unenroll`) + testes
