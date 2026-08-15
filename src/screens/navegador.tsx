@@ -2454,7 +2454,10 @@ export function NavegadorScreen({
               <div
                 key={aba.id}
                 className={cn(
-                  "absolute inset-0 min-h-0 p-4 pt-0",
+                  // #913: respiro no topo do content area da aba interna (era
+                  // `pt-0` → a tela embutida colava na title bar/tabs). Padding
+                  // uniforme (p-4) resolvido NO HOST → vale pra Bridge/Files/Remote.
+                  "absolute inset-0 min-h-0 p-4",
                   ativaAba ? "flex flex-col" : "hidden",
                 )}
               >
