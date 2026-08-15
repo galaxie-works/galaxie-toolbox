@@ -11,6 +11,10 @@ thiserror = "2.0.18"
 # Núcleo LEVE do remote-net (default = protocol/ticket/identity — gate do #971):
 # Capabilities + TicketVerifier sem arrastar tokio/opaque pro binário SYSTEM.
 galaxie-remote-net = { path = "../remote-net" }
+# Núcleo do remote-transport SEM webrtc (`default-features = false`): dá `Frame`/
+# `ControlMessage`/`InputEvent` pro `autorizar` (passo 3) sem puxar str0m/OpenSSL —
+# o pump com str0m liga a feature `webrtc` numa fatia posterior.
+galaxie-remote-transport = { path = "../remote-transport", default-features = false }
 
 [dev-dependencies]
 # só pra o teste do 2b-verify montar um ticket assinado real (SigningKey).

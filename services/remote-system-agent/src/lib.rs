@@ -14,6 +14,9 @@ pub mod session_channel;
 /// Servidor do named pipe de sessão + DACL + presença local (S7 #690, passo 2b-io).
 pub mod pipe_server;
 
+/// Enforcement de capability por-frame, fail-closed (S7 #690, passo 3 — porteiro).
+pub mod autorizacao;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DesktopMode {
     Auto,
