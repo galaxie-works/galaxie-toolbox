@@ -30,7 +30,8 @@
  *   (fórmula não é reavaliada), sem web worker (`workerURL` ausente) e sem rede.
  *   Como nada do arquivo é executado, o conteúdo é inerte. Ver `lib/univer-xlsx.ts`.
  */
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import DOMPurify from "dompurify";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
@@ -65,7 +66,12 @@ const UniverXlsxViewer = lazy(() =>
     default: m.UniverXlsxViewer,
   })),
 );
-import { parseCsv, type CsvTabela } from "@/lib/csv-render";
+import {
+  parseCsv,
+  decodificarTexto,
+  calcularColunasCsv,
+  type CsvTabela,
+} from "@/lib/csv-render";
 import type { AnexoEmail } from "@/lib/types";
 import {
   Alert,
@@ -220,7 +226,8 @@ export function PreviewArquivo({
           // #942: guarda os bytes; o UniverXlsxViewer (lazy) parseia e renderiza.
           if (vivo) setXlsxBytes(bytes);
         } else if (tipo === "csv") {
-          if (vivo) setCsv(parseCsv(new TextDecoder("utf-8").decode(bytes)));
+          // #941: decodifica com fallback Latin-1 (Excel pt-BR) antes do parse.
+          if (vivo) setCsv(parseCsv(decodificarTexto(bytes)));
         } else if (tipo === "imagem") {
           // Object URL do blob (não data URL gigante). SVG entra como `<img>`,
           // que roda a imagem em "modo imagem" — scripts embutidos NÃO executam.
@@ -477,8 +484,15 @@ function MidiaViewer({
   );
 }
 
-/** CSV: tabela com header fixo + scroll H/V. Header = 1ª linha; cap com aviso
- *  "mostrando N de M". Valores como texto (sem HTML) — seguro (#451). */
+/** Altura fixa da linha do grid CSV (`text-xs` + py-1). Uniforme → virtualização
+ *  com `estimateSize` constante, como o content-pane do Explorer (#941). */
+const ALTURA_LINHA_CSV = 28;
+
+/** CSV/TSV/PSV: GRID VIRTUALIZADO (#941). Só as linhas visíveis vão ao DOM
+ *  (`@tanstack/react-virtual`, mesmo padrão do `content-pane.tsx`), então não
+ *  trava em arquivo grande. Header fixo (sticky top) + coluna de nº fixa (sticky
+ *  left) coexistem com a virtualização; colunas alinham por tipo (numérica → à
+ *  direita, `tabular-nums`). Valores como texto puro (sem HTML) — seguro (#451). */
 function CsvViewer({
   tabela,
   vazioTexto,
@@ -488,49 +502,106 @@ function CsvViewer({
   vazioTexto: string;
   tp: PreviewStrings;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const cabecalho = tabela.linhas[0] ?? [];
+  const corpo = useMemo(() => tabela.linhas.slice(1), [tabela.linhas]);
+  const meta = useMemo(() => calcularColunasCsv(tabela.linhas), [tabela.linhas]);
+
+  // Coluna de nº: largura pela contagem de dígitos do total exibido.
+  const larguraRownum = Math.max(44, String(corpo.length).length * 8 + 20);
+  const larguraTotal =
+    larguraRownum + meta.larguras.reduce((s, w) => s + w, 0);
+
+  // Virtualização vertical: conta só o corpo; header é linha fixa fora do spacer.
+  const virtualizer = useVirtualizer({
+    count: corpo.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ALTURA_LINHA_CSV,
+    overscan: 12,
+  });
+
   if (tabela.linhas.length === 0) return <PreviewVazio texto={vazioTexto} />;
-  const [cabecalho, ...corpo] = tabela.linhas;
+
+  const colWidth = (j: number) => meta.larguras[j] ?? 96;
+  const alinharDir = (j: number) => meta.alinhamentos[j] === "num";
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {tabela.truncado && (
         <p className="border-b bg-muted/30 px-3 py-1 text-[11px] text-muted-foreground">
           {preencher(tp.previewCsvTruncado, {
-            n: tabela.linhas.length,
-            m: tabela.total,
+            n: corpo.length,
+            m: tabela.total - 1,
           })}
         </p>
       )}
-      <ScrollArea className="min-h-0 w-full flex-1">
-        <table className="w-max border-collapse text-xs">
-          <thead className="sticky top-0 z-10 bg-muted">
-            <tr>
-              <th className="border px-2 py-1" />
-              {(cabecalho ?? []).map((celula, j) => (
-                <th
-                  key={j}
-                  className="whitespace-nowrap border px-2 py-1 text-left font-medium"
-                >
-                  {celula}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {corpo.map((linha, i) => (
-              <tr key={i}>
-                <td className="sticky left-0 z-10 border bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground">
-                  {i + 1}
-                </td>
-                {linha.map((celula, j) => (
-                  <td key={j} className="whitespace-nowrap border px-2 py-1">
-                    {celula}
-                  </td>
-                ))}
-              </tr>
+      {/* Único container de scroll (H e V) — a virtualização mede este elemento. */}
+      <div ref={scrollRef} className="min-h-0 w-full flex-1 overflow-auto">
+        <div style={{ width: larguraTotal }} className="text-xs">
+          {/* Header: sticky top; a célula-canto é sticky nos dois eixos. */}
+          <div className="sticky top-0 z-20 flex bg-muted font-medium">
+            <div
+              className="sticky left-0 z-10 shrink-0 border-r border-b bg-muted px-2 py-1"
+              style={{ width: larguraRownum }}
+            />
+            {meta.larguras.map((_, j) => (
+              <div
+                key={j}
+                className={`shrink-0 truncate border-r border-b px-2 py-1 ${
+                  alinharDir(j) ? "text-right" : "text-left"
+                }`}
+                style={{ width: colWidth(j) }}
+                title={cabecalho[j] ?? ""}
+              >
+                {cabecalho[j] ?? ""}
+              </div>
             ))}
-          </tbody>
-        </table>
-      </ScrollArea>
+          </div>
+          {/* Corpo virtualizado: spacer com a altura total + linhas absolutas. */}
+          <div
+            style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+          >
+            {virtualizer.getVirtualItems().map((vr) => {
+              const linha = corpo[vr.index];
+              return (
+                <div
+                  key={vr.key}
+                  data-index={vr.index}
+                  className="flex"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    height: ALTURA_LINHA_CSV,
+                    transform: `translateY(${vr.start}px)`,
+                  }}
+                >
+                  <div
+                    className="sticky left-0 z-10 shrink-0 border-r border-b bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground"
+                    style={{ width: larguraRownum }}
+                  >
+                    {vr.index + 1}
+                  </div>
+                  {meta.larguras.map((_, j) => (
+                    <div
+                      key={j}
+                      className={`shrink-0 truncate border-r border-b px-2 py-1 ${
+                        alinharDir(j)
+                          ? "text-right tabular-nums"
+                          : "text-left"
+                      }`}
+                      style={{ width: colWidth(j) }}
+                      title={linha[j] ?? ""}
+                    >
+                      {linha[j] ?? ""}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
