@@ -66,6 +66,15 @@ const UniverXlsxViewer = lazy(() =>
     default: m.UniverXlsxViewer,
   })),
 );
+// #956 (SPIKE, Path B): viewer de docx com MOLDURA endurecida (fit-to-width +
+// tema), carregado sob demanda espelhando o padrão do xlsx. O `docx-preview` em
+// si já é code-split dentro de `renderDocxParaHtml`; aqui a lazy é por paridade
+// de padrão e pra manter a moldura fora do chunk `index`.
+const DocxPreviewViewer = lazy(() =>
+  import("@/components/preview/docx-preview-viewer").then((m) => ({
+    default: m.DocxPreviewViewer,
+  })),
+);
 import {
   parseCsv,
   decodificarTexto,
@@ -382,11 +391,25 @@ export function PreviewArquivo({
         ) : tipo === "pdf" && pdf ? (
           <PdfViewer doc={pdf} tp={tp} />
         ) : tipo === "docx" && docxHtml !== null ? (
-          <HtmlSandboxViewer
-            html={docxHtml}
-            rotulo={nome}
-            vazioTexto={tp.previewVazio}
-          />
+          // #956 (Path B): o docx-preview (fiel) num viewer com moldura endurecida
+          // — fit-to-width reader-mode + tema-aware, mantendo sandbox=""+CSP. Trocou
+          // o `HtmlSandboxViewer` genérico (que ficava "zoado": página física A4
+          // estourando o pane + wrapper cinza + sem tema). Univer Docs seria overkill
+          // (documento é HTML fluido, não grid — ver o spike do #942).
+          <Suspense
+            fallback={
+              <div className="space-y-2 p-4">
+                <Skeleton className="h-4 w-1/3" />
+                <Skeleton className="h-40 w-full" />
+              </div>
+            }
+          >
+            <DocxPreviewViewer
+              html={docxHtml}
+              rotulo={nome}
+              vazioTexto={tp.previewVazio}
+            />
+          </Suspense>
         ) : tipo === "html" && htmlDoc !== null ? (
           <HtmlSandboxViewer
             html={htmlDoc}
