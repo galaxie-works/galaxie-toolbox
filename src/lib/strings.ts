@@ -588,6 +588,7 @@ const pt = {
     verGrade: "Ver em grade",
     ocultos: "Mostrar ocultos",
     filtro: "Filtrar",
+    preview: "Abrir/fechar painel de detalhes",
   },
 
   controlRoom: {
@@ -2579,6 +2580,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     verGrade: "Grid view",
     ocultos: "Show hidden",
     filtro: "Filter",
+    preview: "Toggle details pane",
   },
 
   controlRoom: {

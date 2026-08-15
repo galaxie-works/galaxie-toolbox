@@ -929,6 +929,12 @@ export function ContentPane({
         filtroRef.current?.focus();
         return;
       }
+      // #950: Alt+P abre/fecha o painel de detalhes (Explorer do Windows).
+      if (ev.altKey && (ev.key === "p" || ev.key === "P")) {
+        ev.preventDefault();
+        onToggleInspector?.();
+        return;
+      }
       if (paths.length === 0) return;
       const atual = selecao.cursor ? paths.indexOf(selecao.cursor) : -1;
       const base = atual < 0 ? 0 : atual;
@@ -1042,6 +1048,7 @@ export function ContentPane({
       onAcima,
       recarregar,
       criarPastaNova,
+      onToggleInspector,
     ],
   );
 
