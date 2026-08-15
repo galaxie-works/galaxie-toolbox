@@ -12,6 +12,12 @@
 
 use serde::{Deserialize, Serialize};
 
+// Núcleo LEVE do `remote-net` (default, sem tokio/opaque — gate do #971): o tipo
+// congelado de capabilities (§4.3, sem duplicar — lição #684) + o verificador de
+// ticket Ed25519 do S8.
+use galaxie_remote_net::protocol::Capabilities;
+use galaxie_remote_net::ticket::{ExpectedTicket, TicketVerifier};
+
 pub const CHANNEL_PROTOCOL_VERSION: u16 = 1;
 pub const MAX_MESSAGE_BYTES: usize = 64 * 1024;
 /// TTL do nonce de bootstrap (§4.2): coordenada de uso único, janela curta.
@@ -99,26 +105,31 @@ pub struct PresencaLocal {
     pub authenticode_ok: bool,
 }
 
-/// Resultado da verificação do ticket do S8 — resolvida pelo passo 2b
-/// (`remote_net::ticket::verify_and_consume`). O núcleo só decide a autoridade.
+/// Resultado da verificação do ticket do S8 — produzida por [`verificar_ticket`]
+/// (2b-verify), que chama o `remote_net::ticket::TicketVerifier::verify_and_consume`.
+/// `Valido` carrega as **capabilities autoritativas** do `TicketClaims` (§4.3).
+#[derive(Debug)]
 pub enum ResultadoTicket {
     Ausente,
-    Valido,
+    Valido(Capabilities),
     Invalido(String),
 }
 
 /// De onde a sessão tira autoridade sobre capabilities (§4.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FonteAutoridade {
-    /// Ticket assinado do S8 — capabilities derivam do `TicketClaims` (passo 2b).
+    /// Ticket assinado do S8 — capabilities derivam do `TicketClaims`.
     Ticket,
     /// Presença local provada (nonce+PID+Authenticode) — só no attended.
     PresencaLocal,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Autoridade {
     pub fonte: FonteAutoridade,
+    /// Capabilities autoritativas. `Some` do ticket (não-supervisionado); `None`
+    /// no attended, onde vêm do `session.start` do owner (limitadas à presença).
+    pub capabilities: Option<Capabilities>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -164,16 +175,39 @@ pub fn validar_hello(
         return Err(RejeicaoHandshake::AuthenticodeInvalido);
     }
     match (ctx.modo, ticket) {
-        (_, ResultadoTicket::Valido) => Ok(Autoridade {
+        (_, ResultadoTicket::Valido(caps)) => Ok(Autoridade {
             fonte: FonteAutoridade::Ticket,
+            capabilities: Some(caps.clone()),
         }),
         (_, ResultadoTicket::Invalido(m)) => Err(RejeicaoHandshake::Ticket(m.clone())),
         (ModoSessao::Attended, ResultadoTicket::Ausente) => Ok(Autoridade {
             fonte: FonteAutoridade::PresencaLocal,
+            capabilities: None,
         }),
         (ModoSessao::Unattended, ResultadoTicket::Ausente) => Err(RejeicaoHandshake::Ticket(
             "modo não-supervisionado exige ticket assinado do S8".to_owned(),
         )),
+    }
+}
+
+/// **2b-verify:** verifica o ticket do S8 e produz o [`ResultadoTicket`] pro
+/// [`validar_hello`]. `token` é o do `hello`; `None` ⇒ `Ausente` (só passa no
+/// attended). Assinatura Ed25519 + binding + expiração são do
+/// `remote_net::ticket::TicketVerifier` (núcleo leve do `remote-net`, sem async);
+/// em sucesso, as capabilities saem do `TicketClaims` — autoridade do S8, não do
+/// owner. Fail-closed: qualquer erro vira `Invalido`.
+pub fn verificar_ticket(
+    verifier: &mut TicketVerifier,
+    expected: &ExpectedTicket<'_>,
+    agora_epoch_s: u64,
+    token: Option<&str>,
+) -> ResultadoTicket {
+    match token {
+        None => ResultadoTicket::Ausente,
+        Some(t) => match verifier.verify_and_consume(t, agora_epoch_s, expected) {
+            Ok(claims) => ResultadoTicket::Valido(claims.capabilities),
+            Err(e) => ResultadoTicket::Invalido(e.to_string()),
+        },
     }
 }
 
@@ -233,14 +267,84 @@ mod tests {
 
     #[test]
     fn unattended_com_ticket_valido_usa_autoridade_do_ticket() {
+        let caps = Capabilities {
+            screen: true,
+            input: true,
+            ..Default::default()
+        };
         let a = validar_hello(
             &hello("nonce-bom", Some("tk")),
             &ctx(ModoSessao::Unattended),
             &presenca_ok(),
-            &ResultadoTicket::Valido,
+            &ResultadoTicket::Valido(caps.clone()),
         )
         .unwrap();
         assert_eq!(a.fonte, FonteAutoridade::Ticket);
+        // capabilities autoritativas vêm do ticket, não do owner.
+        assert_eq!(a.capabilities, Some(caps));
+    }
+
+    #[test]
+    fn verificar_ticket_assinado_real_deriva_capabilities_e_fecha_no_erro() {
+        use ed25519_dalek::SigningKey;
+        use galaxie_remote_net::ticket::{issue_ticket, TicketClaims};
+
+        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let vk = sk.verifying_key();
+        let caps = Capabilities {
+            screen: true,
+            input: true,
+            clipboard: true,
+            ..Default::default()
+        };
+        let claims = TicketClaims {
+            jti: "jti-1".into(),
+            session_id: "sess-1".into(),
+            device_id: "dev-1".into(),
+            controller_id: "ctrl-1".into(),
+            owner_id: "own-1".into(),
+            org_id: "org-1".into(),
+            device_nonce: "dn".into(),
+            controller_nonce: "cn".into(),
+            capabilities: caps.clone(),
+            issued_at: 1_000_000,
+            expires_at: 1_000_060, // janela de 60 s (≤ MAX_TTL de 120 s do remote-net)
+        };
+        let token = issue_ticket(&sk, &claims).expect("emite ticket");
+        let expected = ExpectedTicket {
+            device_id: "dev-1",
+            controller_id: "ctrl-1",
+            owner_id: "own-1",
+            org_id: "org-1",
+            device_nonce: "dn",
+            controller_nonce: "cn",
+            capabilities: &caps,
+        };
+
+        // válido, dentro da janela → Valido com as capabilities do ticket.
+        let mut v = TicketVerifier::new(vk);
+        match verificar_ticket(&mut v, &expected, 1_000_030, Some(&token)) {
+            ResultadoTicket::Valido(c) => assert_eq!(c, caps),
+            outro => panic!("esperava Valido, veio {outro:?}"),
+        }
+
+        // adulterado → Invalido (fail-closed). Verifier fresco (o de cima consumiu o jti).
+        let mut v2 = TicketVerifier::new(vk);
+        assert!(matches!(
+            verificar_ticket(&mut v2, &expected, 1_000_030, Some(&format!("{token}x"))),
+            ResultadoTicket::Invalido(_)
+        ));
+        // expirado (agora > expires_at) → Invalido.
+        let mut v3 = TicketVerifier::new(vk);
+        assert!(matches!(
+            verificar_ticket(&mut v3, &expected, 1_000_100, Some(&token)),
+            ResultadoTicket::Invalido(_)
+        ));
+        // ausente → Ausente.
+        assert!(matches!(
+            verificar_ticket(&mut v2, &expected, 1_000_030, None),
+            ResultadoTicket::Ausente
+        ));
     }
 
     #[test]
