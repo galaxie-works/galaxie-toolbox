@@ -34,6 +34,7 @@ import { cn, formatBytes } from "@/lib/utils";
 import { preencher, useIdioma } from "@/lib/idioma";
 
 import type { OpAtiva } from "./progresso-panel";
+import { montarResumoOp, type RotulosResumo } from "./resumo-op";
 import { formatarTempoRelativo, type RotulosTempo } from "./tempo-relativo";
 import { TooltipAcao } from "./tooltip-acao";
 
@@ -106,6 +107,23 @@ export function ActivityDropdown({
     horasAtras: t.arquivos.tempoHorasAtras,
     ontem: t.arquivos.tempoOntem,
     diasAtras: t.arquivos.tempoDiasAtras,
+  };
+
+  // #898 fatia 2: rótulos do resumo terminal (histórico de sessão). Montados uma
+  // vez aqui e passados às linhas — cada linha TERMINAL vira um resumo imutável.
+  const rotulosResumo: RotulosResumo = {
+    copiados: t.arquivos.resumoCopiados,
+    copiadoUm: t.arquivos.resumoCopiadoUm,
+    movidos: t.arquivos.resumoMovidos,
+    movidoUm: t.arquivos.resumoMovidoUm,
+    canceladoCopia: t.arquivos.resumoCanceladoCopia,
+    canceladoMove: t.arquivos.resumoCanceladoMove,
+    falhaCopia: t.arquivos.resumoFalhaCopia,
+    falhaMove: t.arquivos.resumoFalhaMove,
+    parcial: t.arquivos.resumoParcial,
+    paraDestino: t.arquivos.resumoParaDestino,
+    arquivoUm: t.arquivos.arquivoUm,
+    arquivos: t.arquivos.arquivosMuitos,
   };
 
   // Agregado (reusa a lógica do `ProgressoPanel`): contagem + cor pelo estado
@@ -219,6 +237,7 @@ export function ActivityDropdown({
                   aberto={aberto}
                   agoraMs={agoraMs}
                   rotulosTempo={rotulosTempo}
+                  rotulosResumo={rotulosResumo}
                   onCancelar={onCancelar}
                   onPausar={onPausar}
                   onResumir={onResumir}
@@ -239,6 +258,7 @@ function LinhaAtividade({
   aberto,
   agoraMs,
   rotulosTempo,
+  rotulosResumo,
   onCancelar,
   onPausar,
   onResumir,
@@ -249,6 +269,7 @@ function LinhaAtividade({
   aberto: boolean;
   agoraMs: number;
   rotulosTempo: RotulosTempo;
+  rotulosResumo: RotulosResumo;
   onCancelar: (opId: number) => void;
   onPausar: (opId: number) => void;
   onResumir: (opId: number) => void;
@@ -261,27 +282,30 @@ function LinhaAtividade({
   const pausada = s === "paused";
   const descobrindo = !terminal && !pausada && p.phase === "discovering";
 
-  // Título por estado (curto). Reusa a mesma família de rótulos do painel.
-  const titulo = pausada
-    ? t.arquivos.statusPausado
-    : descobrindo
-      ? t.arquivos.descobrindoItens
-      : s === "success"
-        ? t.arquivos.statusConcluido
-        : s === "error"
-          ? t.arquivos.statusFalhou
-          : s === "canceled"
-            ? t.arquivos.statusCancelado
-            : s === "partial"
-              ? t.arquivos.statusParcial
-              : op.tipo === "copy"
-                ? t.arquivos.copiando
-                : t.arquivos.movendo;
+  // #898 fatia 2: linha TERMINAL (concluída/erro/cancelada/parcial) vira um RESUMO
+  // imutável e legível (histórico de sessão) via `montarResumoOp` (puro, testado
+  // por node --test). Linha ATIVA (em curso/pausada) mantém o render de sempre —
+  // rótulo de estado + arquivo atual.
+  const resumo = terminal ? montarResumoOp(op, rotulosResumo) : null;
 
-  // Subtítulo: arquivo atual (ativo) ou o resumo de bytes (histórico).
-  const subtitulo =
-    p.currentFile ??
-    `${formatBytes(p.processedBytes)} / ${formatBytes(p.totalBytes)}`;
+  // Título: resumo terminal, ou rótulo curto de estado ativo (pausada/descobrindo/
+  // copiando/movendo — os terminais já saem pelo `resumo`).
+  const titulo = resumo
+    ? resumo.titulo
+    : pausada
+      ? t.arquivos.statusPausado
+      : descobrindo
+        ? t.arquivos.descobrindoItens
+        : op.tipo === "copy"
+          ? t.arquivos.copiando
+          : t.arquivos.movendo;
+
+  // Subtítulo: resumo terminal ("→ destino" / bytes) ou o arquivo atual (ativo,
+  // com o resumo de bytes como fallback).
+  const subtitulo = resumo
+    ? resumo.subtitulo
+    : (p.currentFile ??
+      `${formatBytes(p.processedBytes)} / ${formatBytes(p.totalBytes)}`);
 
   // Timestamp relativo: fim (se terminou) senão início.
   const quando = formatarTempoRelativo(

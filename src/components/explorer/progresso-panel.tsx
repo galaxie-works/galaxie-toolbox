@@ -34,6 +34,8 @@ export interface OpAtiva {
   progresso: FsOpProgress;
   /** Velocidade instantânea (bytes/s) derivada entre eventos de progresso. */
   velocidade: number;
+  /** #898 fatia 2: basename do destino pra o resumo terminal (histórico de sessão). */
+  destino?: string;
 }
 
 /** Uma op é terminal (não-cancelável, dispensável) quando não está mais em curso. */

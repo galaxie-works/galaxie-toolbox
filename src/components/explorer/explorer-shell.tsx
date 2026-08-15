@@ -192,6 +192,9 @@ export function ExplorerShell({
   // (o payload de progresso não carrega copy/move), e dedupe do evento terminal.
   const ultimoRef = useRef<Map<number, { bytes: number; ms: number }>>(new Map());
   const tiposRef = useRef<Map<number, "copy" | "move">>(new Map());
+  // #898 fatia 2: basename do destino por opId (o payload de progresso não o
+  // carrega) → alimenta o resumo terminal ("→ Downloads") na activity-dropdown.
+  const destinosRef = useRef<Map<number, string>>(new Map());
   const terminadosRef = useRef<Set<number>>(new Set());
   // t via ref → a assinatura de progresso é registrada UMA vez (sem re-subscribe
   // a cada troca de idioma), mas os toasts saem no idioma atual.
@@ -276,7 +279,13 @@ export function ExplorerShell({
             tiposRef.current.get(p.opId) ??
             prev.find((o) => o.opId === p.opId)?.tipo ??
             "copy";
-          const novo: OpAtiva = { opId: p.opId, tipo, progresso: p, velocidade: 0 };
+          const novo: OpAtiva = {
+            opId: p.opId,
+            tipo,
+            progresso: p,
+            velocidade: 0,
+            destino: destinosRef.current.get(p.opId),
+          };
           return prev.some((o) => o.opId === p.opId)
             ? prev.map((o) => (o.opId === p.opId ? novo : o))
             : [...prev, novo];
@@ -286,7 +295,13 @@ export function ExplorerShell({
 
       setOps((prev) => {
         const tipo = tiposRef.current.get(p.opId) ?? "copy";
-        const novo: OpAtiva = { opId: p.opId, tipo, progresso: p, velocidade };
+        const novo: OpAtiva = {
+          opId: p.opId,
+          tipo,
+          progresso: p,
+          velocidade,
+          destino: destinosRef.current.get(p.opId),
+        };
         return prev.some((o) => o.opId === p.opId)
           ? prev.map((o) => (o.opId === p.opId ? novo : o))
           : [...prev, novo];
@@ -470,6 +485,7 @@ export function ExplorerShell({
               ? await copiarComProgresso(item.from, item.to)
               : await moverComProgresso(item.from, item.to);
           tiposRef.current.set(opId, op === "copy" ? "copy" : "move");
+          destinosRef.current.set(opId, nomeBase(destDir));
         } catch (e) {
           toast.error(tRef.current.arquivos.erroOperacao, {
             description: String(e),
@@ -494,6 +510,7 @@ export function ExplorerShell({
             ? await copiarVariasComProgresso(sources, destDir)
             : await moverVariasComProgresso(sources, destDir);
         tiposRef.current.set(opId, op === "copy" ? "copy" : "move");
+        destinosRef.current.set(opId, nomeBase(destDir));
       } catch (e) {
         toast.error(tRef.current.arquivos.erroOperacao, {
           description: String(e),
@@ -558,6 +575,7 @@ export function ExplorerShell({
     });
     ultimoRef.current.delete(opId);
     tiposRef.current.delete(opId);
+    destinosRef.current.delete(opId);
     terminadosRef.current.delete(opId);
   }, []);
 
@@ -571,6 +589,7 @@ export function ExplorerShell({
         if (!ehAtiva(o.progresso.status)) {
           ultimoRef.current.delete(o.opId);
           tiposRef.current.delete(o.opId);
+          destinosRef.current.delete(o.opId);
           terminadosRef.current.delete(o.opId);
         }
       }
