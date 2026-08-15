@@ -25,6 +25,8 @@ import {
   moverVariasComProgresso,
   observarPasta,
   onProgressoOp,
+  pausarOp,
+  resumirOp,
   type BuscaHandle,
 } from "@/lib/api";
 import type { CloudLocation, DriveInfo, FsConflict, FsEntry } from "@/lib/types";
@@ -34,7 +36,10 @@ import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
 import { ResultadosBusca } from "./resultados-busca";
 import { InspectorPane } from "./inspector";
-import { ProgressoPanel, type OpAtiva } from "./progresso-panel";
+import { type OpAtiva } from "./progresso-panel";
+// #898 (fatia 1): o Status Center É a activity-dropdown — substitui o
+// `ProgressoPanel`, alimentada pelo MESMO modelo `ops`.
+import { ActivityDropdown } from "./activity-dropdown";
 import { ConflitoDialog } from "./conflito-dialog";
 import { calcVelocidade, planejarTransferencia, type ResolucaoConflito } from "./operacao";
 import { CAMINHO_ESTE_PC, nomeBase, pathPai } from "./caminho";
@@ -525,13 +530,28 @@ export function ExplorerShell({
     void cancelarOp(opId).catch(() => {});
   }, []);
 
-  // #875: dispensa UMA op terminal do Status Center (guard: nunca uma op ainda
-  // "inProgress" — essa é cancelável, não dispensável). Limpa os refs de
-  // bookkeeping pra não vazar entre ops de mesmo opId futuro.
+  // #898 (fatia 1): pausa/retoma uma op de copy/move em curso. O backend trava/
+  // continua os workers e o stream de progresso passa a reportar `status: "paused"`
+  // (op fica ATIVA, progresso congelado — não é terminal, ver `onProgressoOp`).
+  const pausarTransferencia = useCallback((opId: number) => {
+    void pausarOp(opId).catch(() => {});
+  }, []);
+  const resumirTransferencia = useCallback((opId: number) => {
+    void resumirOp(opId).catch(() => {});
+  }, []);
+
+  // #875/#898: dispensa UMA op terminal do Status Center (guard: nunca uma op
+  // ATIVA — "inProgress" OU "paused" — essa é cancelável/retomável, não
+  // dispensável). Limpa os refs de bookkeeping pra não vazar entre ops futuras.
   const dispensarOp = useCallback((opId: number) => {
     setOps((prev) => {
       const alvo = prev.find((o) => o.opId === opId);
-      if (!alvo || alvo.progresso.status === "inProgress") return prev;
+      if (
+        !alvo ||
+        alvo.progresso.status === "inProgress" ||
+        alvo.progresso.status === "paused"
+      )
+        return prev;
       return prev.filter((o) => o.opId !== opId);
     });
     ultimoRef.current.delete(opId);
@@ -539,19 +559,29 @@ export function ExplorerShell({
     terminadosRef.current.delete(opId);
   }, []);
 
-  // #875: limpa TODAS as ops não-inProgress (concluídas/erro/canceladas/parciais),
-  // mantendo as ativas. Limpa os refs das removidas.
+  // #875/#898: limpa TODAS as ops terminais (concluídas/erro/canceladas/parciais),
+  // mantendo as ATIVAS (em curso OU pausadas). Limpa os refs das removidas.
+  const ehAtiva = (status: string) =>
+    status === "inProgress" || status === "paused";
   const limparConcluidas = useCallback(() => {
     setOps((prev) => {
       for (const o of prev) {
-        if (o.progresso.status !== "inProgress") {
+        if (!ehAtiva(o.progresso.status)) {
           ultimoRef.current.delete(o.opId);
           tiposRef.current.delete(o.opId);
           terminadosRef.current.delete(o.opId);
         }
       }
-      return prev.filter((o) => o.progresso.status === "inProgress");
+      return prev.filter((o) => ehAtiva(o.progresso.status));
     });
+  }, []);
+
+  // #898 (fatia 1): relógio (Date.now, tick de 30s) pros timestamps relativos da
+  // activity-dropdown re-renderizarem.
+  const [agoraMs, setAgoraMs] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setAgoraMs(Date.now()), 30_000);
+    return () => clearInterval(id);
   }, []);
 
   return (
@@ -685,11 +715,15 @@ export function ExplorerShell({
         )}
       </ResizablePanelGroup>
 
-      {/* #724: painel flutuante de progresso (canto inferior direito) + diálogo
-          de conflito controlado pelo shell. */}
-      <ProgressoPanel
+      {/* #898 (fatia 1): Status Center = activity-dropdown flutuante (canto inferior
+          direito), alimentada pelo `ops`. Substitui o `ProgressoPanel`. Linhas
+          ativas trazem Pausar/Retomar + Cancelar; terminais, Dispensar. */}
+      <ActivityDropdown
         ops={ops}
+        agoraMs={agoraMs}
         onCancelar={cancelarTransferencia}
+        onPausar={pausarTransferencia}
+        onResumir={resumirTransferencia}
         onDispensar={dispensarOp}
         onLimparConcluidas={limparConcluidas}
       />
