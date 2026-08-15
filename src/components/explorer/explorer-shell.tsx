@@ -179,6 +179,8 @@ export function ExplorerShell({
     truncado: boolean;
   } | null>(null);
   const buscaHandlesRef = useRef<BuscaHandle[]>([]);
+  // #968: ref do input de busca da navbar — Ctrl+E (aoTeclar do ContentPane) foca.
+  const buscaInputRef = useRef<HTMLInputElement>(null);
 
   // #724: ops de copy/move ativas (rastreadas por opId) + diálogo de conflito +
   // nonce do watcher (bump → ContentPane recarrega a MESMA pasta).
@@ -648,6 +650,8 @@ export function ExplorerShell({
               // #871 (fatia 2c): busca habilitada numa pasta OU no This PC assim
               // que houver ao menos um drive carregado (fan-out multi-drive).
               podeBuscar={nav.currentPath !== "" || (drives?.length ?? 0) > 0}
+              // #968: Ctrl+E (no aoTeclar do ContentPane) foca este input.
+              buscaRef={buscaInputRef}
             />
             {busca !== null ? (
               // #871 (fatia 2b): busca ativa → resultados no lugar da lista/DrivesView.
@@ -680,6 +684,8 @@ export function ExplorerShell({
                 refreshSignal={watcherNonce}
                 mostrarInspector={mostrarInspector}
                 onToggleInspector={() => setMostrarInspector((v) => !v)}
+                // #968: Ctrl+E foca a busca da navbar (ref compartilhada).
+                buscaRef={buscaInputRef}
               />
             ) : drives && drives.length > 0 ? (
               // #855: "Este computador" selecionado (sentinel de caminho vazio)

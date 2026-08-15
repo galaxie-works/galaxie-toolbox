@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type Ref } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -44,6 +44,7 @@ export function NavBarArquivos({
   onBuscar,
   onLimparBusca,
   podeBuscar,
+  buscaRef,
 }: {
   currentPath: string;
   canBack: boolean;
@@ -58,6 +59,8 @@ export function NavBarArquivos({
   onBuscar: (query: string) => void;
   onLimparBusca: () => void;
   podeBuscar: boolean;
+  /** #968: ref do input de busca — Ctrl+E (no `aoTeclar` do ContentPane) foca-o. */
+  buscaRef?: Ref<HTMLInputElement>;
 }) {
   const { t } = useIdioma();
   const [editando, setEditando] = useState(false);
@@ -240,6 +243,7 @@ export function NavBarArquivos({
       <div className="relative w-56 shrink-0">
         <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
+          ref={buscaRef}
           value={busca}
           disabled={!podeBuscar}
           onChange={(e) => setBusca(e.target.value)}

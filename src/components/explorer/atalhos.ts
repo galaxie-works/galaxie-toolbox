@@ -67,6 +67,9 @@ export const ATALHOS: readonly Atalho[] = [
   // moda do Explorer do Windows). A ação já existe (`onToggleInspector`); faltava
   // só o atalho + tooltip.
   { id: "preview", categoria: "visualizacao", combos: [["Alt", "P"]], rotulo: "preview" },
+  // #968: foco na busca recursiva (Ctrl+E, à moda do Explorer do Windows). O
+  // Ctrl+F fica com o FILTRO in-folder; o Ctrl+E com a BUSCA recursiva da navbar.
+  { id: "focoBusca", categoria: "visualizacao", combos: [["Ctrl", "E"]], rotulo: "focoBusca" },
 ];
 
 /** Um combo formatado pra exibição: `["Ctrl","C"]` → "Ctrl+C". */
