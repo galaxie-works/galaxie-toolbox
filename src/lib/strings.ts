@@ -1647,6 +1647,20 @@ const pt = {
     tempoHorasAtras: "{n} h atrás",
     tempoOntem: "ontem",
     tempoDiasAtras: "{n} dias atrás",
+    // #898 (fatia 2) — resumo terminal (histórico de sessão) na activity-dropdown.
+    // Participios em pt flexionam em numero → forma singular e plural por tipo.
+    resumoCopiados: "Copiados {n} {arq}",
+    resumoCopiadoUm: "Copiado {n} {arq}",
+    resumoMovidos: "Movidos {n} {arq}",
+    resumoMovidoUm: "Movido {n} {arq}",
+    resumoCanceladoCopia: "Cancelado: cópia de {n} {arq}",
+    resumoCanceladoMove: "Cancelado: movimentação de {n} {arq}",
+    resumoFalhaCopia: "Falha ao copiar {n} {arq}",
+    resumoFalhaMove: "Falha ao mover {n} {arq}",
+    resumoParcial: "Parcial: {done} de {total} {arq}",
+    resumoParaDestino: "→ {destino}",
+    arquivoUm: "arquivo",
+    arquivosMuitos: "arquivos",
   },
 
   tema: {
@@ -3637,6 +3651,20 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     tempoHorasAtras: "{n} h ago",
     tempoOntem: "yesterday",
     tempoDiasAtras: "{n} days ago",
+    // #898 (slice 2) — terminal summary (session history) in the activity-dropdown.
+    // English participles don't inflect for number → singular == plural form.
+    resumoCopiados: "Copied {n} {arq}",
+    resumoCopiadoUm: "Copied {n} {arq}",
+    resumoMovidos: "Moved {n} {arq}",
+    resumoMovidoUm: "Moved {n} {arq}",
+    resumoCanceladoCopia: "Canceled: copy of {n} {arq}",
+    resumoCanceladoMove: "Canceled: move of {n} {arq}",
+    resumoFalhaCopia: "Failed to copy {n} {arq}",
+    resumoFalhaMove: "Failed to move {n} {arq}",
+    resumoParcial: "Partial: {done} of {total} {arq}",
+    resumoParaDestino: "→ {destino}",
+    arquivoUm: "file",
+    arquivosMuitos: "files",
   },
 
   tema: {
