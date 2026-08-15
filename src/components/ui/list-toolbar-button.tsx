@@ -166,7 +166,7 @@ export function NumberedListToolbarButton() {
       <Tooltip>
         <TooltipTrigger asChild>
           <ToolbarSplitButtonPrimary
-            aria-label="Numbered list"
+            aria-label={plateLabel('numberedList')}
             className="data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
             onClick={() =>
               toggleList(editor, {
@@ -185,7 +185,7 @@ export function NumberedListToolbarButton() {
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
-              <ToolbarSplitButtonSecondary aria-label="Numbered list options" />
+              <ToolbarSplitButtonSecondary aria-label={plateLabel('numberedListOptions')} />
             </DropdownMenuTrigger>
           </TooltipTrigger>
           <TooltipContent>Numbered list options</TooltipContent>
@@ -252,7 +252,7 @@ export function TodoListToolbarButton(
   const { props: buttonProps } = useIndentTodoToolBarButton(state);
 
   return (
-    <ToolbarButton {...props} {...buttonProps} tooltip="Todo">
+    <ToolbarButton {...props} {...buttonProps} tooltip={plateLabel('todo')}>
       <ListTodoIcon />
     </ToolbarButton>
   );
