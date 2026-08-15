@@ -17,6 +17,7 @@ import {
 import { KEYS } from 'platejs';
 import { useEditorReadOnly } from 'platejs/react';
 
+import { plateLabel } from '@/lib/plate-labels';
 import { AIToolbarButton } from './ai-toolbar-button';
 import { AlignToolbarButton } from './align-toolbar-button';
 import { CommentToolbarButton } from './comment-toolbar-button';
@@ -61,7 +62,7 @@ export function FixedToolbarButtons() {
           </ToolbarGroup>
 
           <ToolbarGroup>
-            <AIToolbarButton tooltip="AI commands">
+            <AIToolbarButton tooltip={plateLabel('aiCommands')}>
               <WandSparklesIcon />
             </AIToolbarButton>
           </ToolbarGroup>
@@ -121,13 +122,13 @@ export function FixedToolbarButtons() {
               <Code2Icon />
             </ShortcutMarkToolbarButton>
 
-            <FontColorToolbarButton nodeType={KEYS.color} tooltip="Text color">
+            <FontColorToolbarButton nodeType={KEYS.color} tooltip={plateLabel('textColor')}>
               <BaselineIcon />
             </FontColorToolbarButton>
 
             <FontColorToolbarButton
               nodeType={KEYS.backgroundColor}
-              tooltip="Background color"
+              tooltip={plateLabel('backgroundColor')}
             >
               <PaintBucketIcon />
             </FontColorToolbarButton>
@@ -170,7 +171,7 @@ export function FixedToolbarButtons() {
       <div className="grow" />
 
       <ToolbarGroup>
-        <MarkToolbarButton nodeType={KEYS.highlight} tooltip="Highlight">
+        <MarkToolbarButton nodeType={KEYS.highlight} tooltip={plateLabel('highlight')}>
           <HighlighterIcon />
         </MarkToolbarButton>
         <CommentToolbarButton />

@@ -6,6 +6,7 @@ import { Redo2Icon, Undo2Icon } from 'lucide-react';
 import { useEditorRef, useEditorSelector } from 'platejs/react';
 
 import { ToolbarButton } from './toolbar';
+import { plateLabel } from '@/lib/plate-labels';
 
 export function RedoToolbarButton(
   props: React.ComponentProps<typeof ToolbarButton>
@@ -22,7 +23,7 @@ export function RedoToolbarButton(
       disabled={disabled}
       onClick={() => editor.redo()}
       onMouseDown={(e) => e.preventDefault()}
-      tooltip="Redo"
+      tooltip={plateLabel('redo')}
     >
       <Redo2Icon />
     </ToolbarButton>
@@ -44,7 +45,7 @@ export function UndoToolbarButton(
       disabled={disabled}
       onClick={() => editor.undo()}
       onMouseDown={(e) => e.preventDefault()}
-      tooltip="Undo"
+      tooltip={plateLabel('undo')}
     >
       <Undo2Icon />
     </ToolbarButton>

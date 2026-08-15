@@ -39,6 +39,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
+import { plateLabel } from '@/lib/plate-labels';
 import { ToolbarButton } from '@/components/ui/toolbar';
 
 export function EmojiToolbarButton({
@@ -53,7 +54,7 @@ export function EmojiToolbarButton({
   return (
     <EmojiPopover
       control={
-        <ToolbarButton pressed={isOpen} tooltip="Emoji" isDropdown {...props}>
+        <ToolbarButton pressed={isOpen} tooltip={plateLabel('emoji')} isDropdown {...props}>
           <SmileIcon />
         </ToolbarButton>
       }
@@ -374,7 +375,7 @@ function EmojiPickerSearchBar({
           value={searchValue}
           onChange={(event) => setSearch(event.target.value)}
           placeholder={i18n.search}
-          aria-label="Search"
+          aria-label={plateLabel('emojiSearch')}
           autoComplete="off"
           type="text"
           autoFocus
@@ -408,7 +409,7 @@ function EmojiPickerSearchAndClear({
           )}
           onClick={clearSearch}
           title={i18n.clear}
-          aria-label="Clear"
+          aria-label={plateLabel('emojiClear')}
           type="button"
         >
           {emojiSearchIcons.delete}
