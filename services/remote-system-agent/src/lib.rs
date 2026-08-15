@@ -11,6 +11,9 @@ use std::str::FromStr;
 /// Canal de sessão worker↔owner (S7 #690, passo 2 §9) — handshake + autoridade.
 pub mod session_channel;
 
+/// Servidor do named pipe de sessão + DACL + presença local (S7 #690, passo 2b-io).
+pub mod pipe_server;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DesktopMode {
     Auto,
