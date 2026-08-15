@@ -4,8 +4,9 @@
  * Extraído do `preview-anexo.tsx` do Bridge (#178 · #188 · #189 · #450 · #451 ·
  * #452 · #496 · #532 · #552) para ser REUSADO — não copiado — pelo Explorer de
  * Arquivos (#675). Renderiza **PDF** (pdf.js, canvas), **TXT** (`<pre>`), **docx**
- * (docx-preview → HTML sanitizado), **xlsx** (SheetJS → grid), **csv**, **imagem**
- * e **áudio/vídeo** direto no app, sem sair dele. Formatos fora do escopo e
+ * (docx-preview → HTML sanitizado), **xlsx** (Univer → grid canvas nativo, #942),
+ * **csv**, **imagem** e **áudio/vídeo** direto no app, sem sair dele. Formatos
+ * fora do escopo e
  * arquivos grandes caem para a ação primária (Salvar no Bridge / Abrir no Files).
  *
  * A fonte dos bytes é parametrizada (`FontePreview`):
@@ -20,9 +21,16 @@
  *   same-origin), o docx ainda com **CSP** (`default-src 'none'`). HTML
  *   sanitizado (DOMPurify) antes do `srcDoc` (nos módulos de render).
  * - PDF roda no pdf.js sem `PDFScriptingManager` e o v6 não usa `eval`
- *   (ver `lib/pdf-preview.ts`). xlsx nunca avalia fórmula. Sem rede.
+ *   (ver `lib/pdf-preview.ts`). Sem rede.
+ * - **xlsx (mudança de postura, #942):** desde a troca do render legado
+ *   (xlsx-preview/exceljs → HTML) pelo **Univer**, o xlsx NÃO passa mais pela
+ *   moldura `<iframe sandbox="">`+CSP que docx/txt/html ainda usam — o Univer
+ *   desenha num grid canvas/DOM DENTRO do app. A garantia passa a ser de DADO:
+ *   só valores/estilos JÁ PARSEADOS chegam ao Univer — nunca o campo `f`
+ *   (fórmula não é reavaliada), sem web worker (`workerURL` ausente) e sem rede.
+ *   Como nada do arquivo é executado, o conteúdo é inerte. Ver `lib/univer-xlsx.ts`.
  */
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import DOMPurify from "dompurify";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
@@ -48,8 +56,15 @@ import {
 import { renderDocxParaHtml } from "@/lib/docx-render";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { carregarPdf, renderizarPagina } from "@/lib/pdf-preview";
-import { renderXlsxParaHtml, type XlsxRender } from "@/lib/xlsx-render";
-import { cn } from "@/lib/utils";
+// #942: viewer read-only do Univer carregado SOB DEMANDA (React.lazy). O Univer
+// + exceljs (~1.6 MB) só entram num chunk lazy separado quando o usuário abre um
+// xlsx — nunca no chunk `index` do boot (mesma falha do #873: chunk dinâmico que
+// não baixava no app empacotado; aqui o Univer é ESM e chunka limpo).
+const UniverXlsxViewer = lazy(() =>
+  import("@/components/preview/univer-xlsx-viewer").then((m) => ({
+    default: m.UniverXlsxViewer,
+  })),
+);
 import { parseCsv, type CsvTabela } from "@/lib/csv-render";
 import type { AnexoEmail } from "@/lib/types";
 import {
@@ -153,7 +168,8 @@ export function PreviewArquivo({
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
   // #873 fix: HTML de arquivo local/anexo, já sanitizado, pro HtmlSandboxViewer.
   const [htmlDoc, setHtmlDoc] = useState<string | null>(null);
-  const [xlsxDados, setXlsxDados] = useState<XlsxRender | null>(null);
+  // #942: bytes crus do xlsx p/ o viewer Univer (parsing/render no viewer lazy).
+  const [xlsxBytes, setXlsxBytes] = useState<Uint8Array | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [csv, setCsv] = useState<CsvTabela | null>(null);
   const [midiaUrl, setMidiaUrl] = useState<string | null>(null);
@@ -201,8 +217,8 @@ export function PreviewArquivo({
           const html = await renderDocxParaHtml(bytes);
           if (vivo) setDocxHtml(html);
         } else if (tipo === "xlsx") {
-          const dados = await renderXlsxParaHtml(bytes);
-          if (vivo) setXlsxDados(dados);
+          // #942: guarda os bytes; o UniverXlsxViewer (lazy) parseia e renderiza.
+          if (vivo) setXlsxBytes(bytes);
         } else if (tipo === "csv") {
           if (vivo) setCsv(parseCsv(new TextDecoder("utf-8").decode(bytes)));
         } else if (tipo === "imagem") {
@@ -370,12 +386,23 @@ export function PreviewArquivo({
             rotulo={nome}
             vazioTexto={tp.previewVazio}
           />
-        ) : tipo === "xlsx" && xlsxDados !== null ? (
-          <XlsxViewer
-            dados={xlsxDados}
-            rotulo={nome}
-            vazioTexto={tp.previewVazio}
-          />
+        ) : tipo === "xlsx" && xlsxBytes !== null ? (
+          // #942: render read-only via Univer (grid canvas nativo, offline),
+          // carregado sob demanda (lazy). Fallback = skeleton enquanto o chunk chega.
+          <Suspense
+            fallback={
+              <div className="space-y-2 p-4">
+                <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  {tp.previewCarregandoPlanilha}
+                </p>
+                <Skeleton className="h-4 w-1/3" />
+                <Skeleton className="h-40 w-full" />
+              </div>
+            }
+          >
+            <UniverXlsxViewer bytes={xlsxBytes} vazioTexto={tp.previewVazio} />
+          </Suspense>
         ) : tipo === "imagem" && imgUrl ? (
           <ImagemViewer url={imgUrl} rotulo={nome} tp={tp} />
         ) : tipo === "csv" && csv ? (
@@ -712,7 +739,7 @@ function PdfViewer({ doc, tp }: { doc: PDFDocumentProxy; tp: PreviewStrings }) {
   );
 }
 
-/** Estado vazio (docx/xlsx sem conteúdo renderável). */
+/** Estado vazio (docx/html sem conteúdo renderável). */
 function PreviewVazio({ texto }: { texto: string }) {
   return (
     <div className="p-6 text-center text-xs text-muted-foreground">{texto}</div>
@@ -720,11 +747,12 @@ function PreviewVazio({ texto }: { texto: string }) {
 }
 
 /**
- * Viewer de HTML não-confiável (docx e xlsx) — injeta o HTML **já sanitizado**
- * (DOMPurify, nos módulos `docx-render`/`xlsx-render`) num `<iframe sandbox="">`
+ * Viewer de HTML não-confiável (docx e html) — injeta o HTML **já sanitizado**
+ * (DOMPurify, no módulo `docx-render` / no fetch de html) num `<iframe sandbox="">`
  * com **CSP** estrita: `default-src 'none'` mata rede/script; `img-src data:`
  * deixa só as imagens embutidas (base64); `style-src 'unsafe-inline'` mantém a
- * folha do docx-preview / xlsx-preview. Nenhum script do documento executa.
+ * folha do docx-preview. Nenhum script do documento executa. (xlsx migrou para o
+ * Univer em canvas, #942 — não usa mais esta moldura.)
  */
 function HtmlSandboxViewer({
   html,
@@ -747,57 +775,5 @@ function HtmlSandboxViewer({
       title={rotulo}
       className="min-h-0 w-full flex-1 border-0 bg-white"
     />
-  );
-}
-
-/**
- * Preview de xlsx (#552): as ABAS de planilha ficam em React (fora do iframe) e
- * só a planilha ATIVA é injetada como HTML estático no `HtmlSandboxViewer`.
- * Evita o modo multi-sheet do xlsx-preview (`<object data=blob:>` + `<script>`),
- * que o `iframe sandbox=""` + CSP `default-src 'none'` BLOQUEIA (grid em branco).
- * Barra de abas embaixo (estilo Excel); some quando há só uma planilha.
- */
-function XlsxViewer({
-  dados,
-  rotulo,
-  vazioTexto,
-}: {
-  dados: XlsxRender;
-  rotulo: string;
-  vazioTexto: string;
-}) {
-  const [aba, setAba] = useState(0);
-  // Novo arquivo (dados troca) → volta pra 1ª planilha.
-  useEffect(() => setAba(0), [dados]);
-  if (dados.sheets.length === 0) return <PreviewVazio texto={vazioTexto} />;
-  const idx = Math.min(aba, dados.sheets.length - 1);
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <HtmlSandboxViewer
-        html={dados.sheets[idx]}
-        rotulo={`${rotulo} — ${dados.nomes[idx] ?? ""}`}
-        vazioTexto={vazioTexto}
-      />
-      {dados.sheets.length > 1 && (
-        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t bg-muted/30 px-2 py-1">
-          {dados.nomes.map((nome, i) => (
-            <button
-              key={`${nome}-${i}`}
-              type="button"
-              onClick={() => setAba(i)}
-              aria-current={i === idx ? "true" : undefined}
-              className={cn(
-                "shrink-0 rounded px-2 py-0.5 text-xs transition-colors",
-                i === idx
-                  ? "bg-background font-medium shadow-sm"
-                  : "text-muted-foreground hover:bg-background/60"
-              )}
-            >
-              {nome}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
