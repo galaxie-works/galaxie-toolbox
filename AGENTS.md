@@ -3,6 +3,8 @@
 Instruções operacionais para agentes (Claude e afins) que trabalham neste repositório.
 Escopo atual em foco: **Bridge** (cliente de e-mail dentro do app) + track paralelo de migração.
 
+> 🧭 **[`WORKFLOW.md`](./WORKFLOW.md) é a FONTE DE VERDADE do processo** (time/raias, hierarquia Épico→US→Task, board/colunas, gate de QA por coluna, regras de PR `Closes`/`Ref` + integração, DoD, release). Ele **supersede as seções de processo deste AGENTS.md (§2–§5)** e qualquer outro doc de workflow. Divergiu → o `WORKFLOW.md` vence. Leia primeiro.
+
 > 📐 **[`Rules.md`](./Rules.md) é OBRIGATÓRIO** — regras de UI/UX, uso de componentes (não inventar UI), scrollbar/tema/persistência e **custo/eficiência do agente**. Leia antes de produzir UI ou entregar. Violou uma regra de lá → o PO reprova.
 
 > 🔴 **MÉTODO — atualizado 03/ago/2026 (aprendido na marra: o épico Atoms saiu MEDÍOCRE por "verde = pronto").** Leitura obrigatória de todos os agentes:
