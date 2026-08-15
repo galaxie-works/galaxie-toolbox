@@ -402,6 +402,7 @@ export function ContentPane({
   mostrarInspector,
   onToggleInspector,
   buscaRef,
+  listaRef,
 }: {
   currentPath: string;
   onNavegar: (path: string) => void;
@@ -428,6 +429,8 @@ export function ContentPane({
   onToggleInspector?: () => void;
   /** #968: ref do input de busca (navbar) — Ctrl+E foca-o daqui. */
   buscaRef?: RefObject<HTMLInputElement | null>;
+  /** #968: ref do container da lista — a navbar foca-o ao SAIR da busca (ESC). */
+  listaRef?: RefObject<HTMLDivElement | null>;
 }) {
   const { t, idioma } = useIdioma();
   const [entradas, setEntradas] = useState<FsEntry[] | null>(null);
@@ -1261,7 +1264,12 @@ export function ContentPane({
           pasta / Novo arquivo) envolve o conteúdo; menus de item (linhas/tiles)
           ficam aninhados e têm precedência. */}
       <div
-        ref={scrollRef}
+        ref={(el) => {
+          // #968: ref mesclado — mantém o scrollRef interno (virtualizador,
+          // scroll, foco) e espelha no listaRef externo pra navbar focar no ESC.
+          scrollRef.current = el;
+          if (listaRef) listaRef.current = el;
+        }}
         tabIndex={0}
         onKeyDown={aoTeclar}
         onPointerDown={marquee.onPointerDown}
