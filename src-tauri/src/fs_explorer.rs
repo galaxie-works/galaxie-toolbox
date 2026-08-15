@@ -2020,7 +2020,7 @@ fn executar_progresso(
     verify: Option<VerifyAlg>,
     app: &AppHandle,
     started_at_ms: u64,
-) -> Result<bool, FsError> {
+) -> Result<ResumoOp, FsError> {
     validar(from)?;
     validar(to)?;
     let src = Path::new(from);
@@ -2051,7 +2051,8 @@ fn executar_progresso(
                 trash_record_ids: Vec::new(),
             },
         );
-        return Ok(false);
+        // rename mesmo-volume: 1 item movido (não varre pra contar os arquivos internos).
+        return Ok(ResumoOp { canceled: false, files_total: 1, files_done: 1 });
     }
 
     // #875: fase Discovering — a varredura (jwalk) pode demorar; o front mostra
@@ -2103,7 +2104,11 @@ fn executar_progresso(
     if flag.load(Ordering::Relaxed) {
         log::info!("fs_{rotulo} END op={op_id}: CANCELADO ({:.2}s)", t0.elapsed().as_secs_f64());
         let _ = remover(to);
-        return Ok(true);
+        return Ok(ResumoOp {
+            canceled: true,
+            files_total: plano.total_arquivos,
+            files_done: ctx.arquivos_feitos.load(Ordering::Relaxed),
+        });
     }
     if mover {
         remover(from)?; // move = copiou tudo → apaga a origem
@@ -2119,7 +2124,11 @@ fn executar_progresso(
     );
     // #899 U0: manifesto da op (dirs+arquivos criados) pro undo.
     registrar_journal(app, &montar_entrada(op_id, mover, started_at_ms, agora_ms(), &plano));
-    Ok(false)
+    Ok(ResumoOp {
+        canceled: false,
+        files_total: plano.total_arquivos,
+        files_done: ctx.arquivos_feitos.load(Ordering::Relaxed),
+    })
 }
 
 /// #850 (fatia B): copy/move de MÚLTIPLAS origens pra um destino, em UMA fase só.
@@ -2136,7 +2145,7 @@ fn executar_progresso_muitas(
     verify: Option<VerifyAlg>,
     app: &AppHandle,
     started_at_ms: u64,
-) -> Result<bool, FsError> {
+) -> Result<ResumoOp, FsError> {
     for (from, to) in &pares {
         validar(from)?;
         validar(to)?;
@@ -2183,7 +2192,9 @@ fn executar_progresso_muitas(
                 },
             );
         }
-        return Ok(false);
+        // só renames mesmo-volume: conta os itens renomeados.
+        let n = renomeados as u64;
+        return Ok(ResumoOp { canceled: false, files_total: n, files_done: n });
     }
     emitir_descobrindo(app, op_id, rotulo, started_at_ms); // #875: fase Discovering
     let pares_path: Vec<(PathBuf, PathBuf)> = a_planejar
@@ -2237,7 +2248,11 @@ fn executar_progresso_muitas(
         for (_, dst) in &a_planejar {
             let _ = remover(dst);
         }
-        return Ok(true);
+        return Ok(ResumoOp {
+            canceled: true,
+            files_total: renomeados as u64 + plano.total_arquivos,
+            files_done: renomeados as u64 + ctx.arquivos_feitos.load(Ordering::Relaxed),
+        });
     }
     if mover {
         for (src, _) in &a_planejar {
@@ -2256,7 +2271,11 @@ fn executar_progresso_muitas(
     let mut entrada = montar_entrada(op_id, mover, started_at_ms, agora_ms(), &plano);
     entrada.items.extend(itens_renome);
     registrar_journal(app, &entrada);
-    Ok(false)
+    Ok(ResumoOp {
+        canceled: false,
+        files_total: renomeados as u64 + plano.total_arquivos,
+        files_done: renomeados as u64 + ctx.arquivos_feitos.load(Ordering::Relaxed),
+    })
 }
 
 /// Copia todos os jobs do plano num pool rayon dimensionado por `workers`.
@@ -3036,22 +3055,43 @@ fn spawn_progresso(
         let resultado =
             executar_progresso(mover, &from, &to, op_id, &flag, &pausar, verify, &app, started_at_ms);
         app.state::<ProgressManager>().finalizar(op_id);
-        let (canceled, error) = match resultado {
-            Ok(c) => (c, None),
-            Err(e) => (false, Some(e)),
+        let (canceled, files_total, files_done, error) = match resultado {
+            Ok(r) => (r.canceled, r.files_total, r.files_done, None),
+            Err(e) => (false, 0, 0, Some(e)),
         };
-        emitir_final(&app, op_id, op_kind, started_at_ms, canceled, error);
+        emitir_final(
+            &app,
+            op_id,
+            op_kind,
+            started_at_ms,
+            canceled,
+            files_total,
+            files_done,
+            error,
+        );
     });
+}
+
+/// Resumo do fim de uma op de cópia/move: cancelamento + contagem REAL de arquivos
+/// (#989: o terminal hardcodava 0 → o front mostrava "Moved 0 files"). No sucesso,
+/// `files_done == files_total`. Renames instantâneos contam os ITENS renomeados.
+struct ResumoOp {
+    canceled: bool,
+    files_total: u64,
+    files_done: u64,
 }
 
 /// #875: evento terminal (`phase=done`) — status agregado (success/canceled/error),
 /// `completed_at_ms`. O front RETÉM a op na fila por isto (não descarta no terminal).
+/// #989: emite a contagem REAL de arquivos (não mais 0 hardcoded).
 fn emitir_final(
     app: &AppHandle,
     op_id: u64,
     op_kind: &'static str,
     started_at_ms: u64,
     canceled: bool,
+    files_total: u64,
+    files_done: u64,
     error: Option<FsError>,
 ) {
     let status = if error.is_some() {
@@ -3069,8 +3109,8 @@ fn emitir_final(
             total_bytes: 0,
             percent: if error.is_some() { 0.0 } else { 100.0 },
             eta_ms: None,
-            files_total: 0,
-            files_done: 0,
+            files_total,
+            files_done,
             bytes_per_sec: 0,
             verifying: false,
             done: true,
@@ -3104,11 +3144,20 @@ fn spawn_progresso_muitas(
         let resultado =
             executar_progresso_muitas(mover, pares, op_id, &flag, &pausar, verify, &app, started_at_ms);
         app.state::<ProgressManager>().finalizar(op_id);
-        let (canceled, error) = match resultado {
-            Ok(c) => (c, None),
-            Err(e) => (false, Some(e)),
+        let (canceled, files_total, files_done, error) = match resultado {
+            Ok(r) => (r.canceled, r.files_total, r.files_done, None),
+            Err(e) => (false, 0, 0, Some(e)),
         };
-        emitir_final(&app, op_id, op_kind, started_at_ms, canceled, error);
+        emitir_final(
+            &app,
+            op_id,
+            op_kind,
+            started_at_ms,
+            canceled,
+            files_total,
+            files_done,
+            error,
+        );
     });
 }
 
