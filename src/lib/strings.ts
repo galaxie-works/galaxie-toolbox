@@ -1633,6 +1633,19 @@ const pt = {
     buscaVazia: "Nenhum resultado.",
     buscaTruncada: "Mostrando os primeiros 1000 resultados.",
     limparBusca: "Limpar busca",
+    // #898 (spike) — Status Center como activity-dropdown + histórico de sessão
+    atividadesTitulo: "{n} novas atividades",
+    atividadesSubtitulo: "O que aconteceu nos seus arquivos",
+    desfazer: "Desfazer",
+    // #898 (fatia 1) — controles de linha ATIVA no Status Center (pausar/retomar)
+    pausar: "Pausar",
+    retomar: "Retomar",
+    statusPausado: "Pausado",
+    tempoAgora: "agora",
+    tempoMinAtras: "{n} min atrás",
+    tempoHorasAtras: "{n} h atrás",
+    tempoOntem: "ontem",
+    tempoDiasAtras: "{n} dias atrás",
   },
 
   tema: {
@@ -3609,6 +3622,19 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     buscaVazia: "No results.",
     buscaTruncada: "Showing the first 1000 results.",
     limparBusca: "Clear search",
+    // #898 (spike) — Status Center as activity-dropdown + session history
+    atividadesTitulo: "{n} new activities",
+    atividadesSubtitulo: "What happened with your files",
+    desfazer: "Undo",
+    // #898 (slice 1) — ACTIVE-row controls in the Status Center (pause/resume)
+    pausar: "Pause",
+    retomar: "Resume",
+    statusPausado: "Paused",
+    tempoAgora: "just now",
+    tempoMinAtras: "{n} min ago",
+    tempoHorasAtras: "{n} h ago",
+    tempoOntem: "yesterday",
+    tempoDiasAtras: "{n} days ago",
   },
 
   tema: {

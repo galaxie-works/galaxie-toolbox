@@ -1,0 +1,372 @@
+// #898 (fatia 1): o Status Center do Explorer virou uma "activity-dropdown" (ref
+// de UX: morphin.dev/components/activity-dropdown, mas reconstruída dos NOSSOS
+// primitivos + tokens do tema, sem dep nova). SUBSTITUI o `ProgressoPanel` — é a
+// ÚNICA superfície de progresso agora. Trigger = sino + "{n} novas atividades" +
+// badge de contagem colorido pelo estado agregado (reusa a lógica do painel) +
+// chevron; expande numa lista com REVELAÇÃO ESCALONADA (`grid-rows-[0fr]→[1fr]` +
+// `transitionDelay: i*60ms`). Cada item = ícone-por-tipo (círculo) + título +
+// subtítulo + timestamp relativo (`tempo-relativo.ts`).
+//
+// Linha ATIVA (em curso OU pausada #898) traz controles: Pausar/Retomar +
+// Cancelar. Linha PAUSADA mostra Retomar; em curso mostra Pausar; ambas Cancelar.
+// Linha TERMINAL (concluída/erro/cancelada/parcial) mostra Dispensar (X), com o
+// "Limpar concluídas" no topo da lista. Presentational: recebe `ops` + handlers do
+// shell. `agoraMs` é um relógio que tiquetaqueia no shell pra os timestamps
+// relativos re-renderizarem. Reusa Badge/Button/Spinner/TooltipAcao + i18n.
+import { useState } from "react";
+import {
+  AlertCircle,
+  Ban,
+  Bell,
+  Check,
+  ChevronUp,
+  Copy,
+  Pause,
+  Play,
+  Scissors,
+  X,
+} from "lucide-react";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
+import { cn, formatBytes } from "@/lib/utils";
+import { preencher, useIdioma } from "@/lib/idioma";
+
+import type { OpAtiva } from "./progresso-panel";
+import { formatarTempoRelativo, type RotulosTempo } from "./tempo-relativo";
+import { TooltipAcao } from "./tooltip-acao";
+
+/** Uma op é ATIVA (cancelável/pausável) enquanto está em curso OU pausada (#898). */
+function estaAtiva(op: OpAtiva): boolean {
+  const s = op.progresso.status;
+  return s === "inProgress" || s === "paused";
+}
+
+/** Terminal = não está mais ativa (concluída/erro/cancelada/parcial). */
+function ehTerminal(op: OpAtiva): boolean {
+  return !estaAtiva(op);
+}
+
+/** Ícone-por-tipo dentro de um círculo (mesma semântica do `IconeOp` do painel). */
+function CirculoIcone({ op }: { op: OpAtiva }) {
+  const s = op.progresso.status;
+  let Icone = op.tipo === "copy" ? Copy : Scissors;
+  let cor = "text-muted-foreground";
+  if (s === "error" || s === "partial") {
+    Icone = AlertCircle;
+    cor = "text-destructive";
+  } else if (s === "canceled") {
+    Icone = Ban;
+  } else if (s === "success") {
+    Icone = Check;
+    cor = "text-success";
+  } else if (s === "paused") {
+    Icone = Pause;
+    cor = "text-warning";
+  }
+  const descobrindo = s === "inProgress" && op.progresso.phase === "discovering";
+  return (
+    <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted">
+      {descobrindo ? (
+        <Spinner className={cn("size-4", cor)} />
+      ) : (
+        <Icone className={cn("size-4", cor)} />
+      )}
+    </div>
+  );
+}
+
+export function ActivityDropdown({
+  ops,
+  agoraMs,
+  onCancelar,
+  onPausar,
+  onResumir,
+  onDispensar,
+  onLimparConcluidas,
+}: {
+  ops: OpAtiva[];
+  /** Relógio (Date.now) pra os timestamps relativos re-renderizarem. */
+  agoraMs: number;
+  onCancelar: (opId: number) => void;
+  onPausar: (opId: number) => void;
+  onResumir: (opId: number) => void;
+  onDispensar: (opId: number) => void;
+  onLimparConcluidas: () => void;
+}) {
+  const { t } = useIdioma();
+  const [aberto, setAberto] = useState(false);
+
+  if (ops.length === 0) return null;
+
+  const rotulosTempo: RotulosTempo = {
+    agora: t.arquivos.tempoAgora,
+    minAtras: t.arquivos.tempoMinAtras,
+    horasAtras: t.arquivos.tempoHorasAtras,
+    ontem: t.arquivos.tempoOntem,
+    diasAtras: t.arquivos.tempoDiasAtras,
+  };
+
+  // Agregado (reusa a lógica do `ProgressoPanel`): contagem + cor pelo estado
+  // agregado (erro > em curso/pausada > tudo concluído) e o percentual médio das
+  // ops AINDA ativas. Ativas = em curso OU pausadas.
+  const ativas = ops.filter(estaAtiva);
+  const temTerminal = ops.some(ehTerminal);
+  const temErro = ops.some(
+    (o) => o.progresso.status === "error" || o.progresso.status === "partial",
+  );
+  const avgPercent =
+    ativas.length > 0
+      ? Math.round(
+          ativas.reduce(
+            (s, o) => s + Math.max(0, Math.min(100, o.progresso.percent)),
+            0,
+          ) / ativas.length,
+        )
+      : null;
+
+  // Badge de contagem colorido pelo estado agregado (mesmas variantes do painel):
+  // erro (vermelho) > em curso (primário) > tudo concluído (verde/success).
+  const badgeVariant = temErro ? "outline" : ativas.length > 0 ? "default" : "success";
+  const badgeExtra = temErro
+    ? "border-transparent bg-destructive/10 text-destructive"
+    : "";
+
+  // Subtítulo do trigger: com ops ativas, o resumo "{n} operações · {X}%" (reusa
+  // `statusCenterOps`); sem nenhuma ativa, a frase de histórico da sessão.
+  const subtitulo =
+    ativas.length > 0
+      ? preencher(t.arquivos.statusCenterOps, { n: ativas.length }) +
+        (avgPercent != null ? ` · ${avgPercent}%` : "")
+      : t.arquivos.atividadesSubtitulo;
+
+  // Mais recentes no topo (histórico de sessão): ordena pelo início desc.
+  const ordenadas = [...ops].sort(
+    (a, b) => b.progresso.startedAtMs - a.progresso.startedAtMs,
+  );
+
+  return (
+    <div className="pointer-events-auto absolute bottom-4 right-4 z-40 w-80 max-w-[calc(100%-2rem)]">
+      <div
+        className={cn(
+          "overflow-hidden rounded-2xl border bg-card shadow-xl",
+          "transition-[border-radius] duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
+        )}
+      >
+        {/* Trigger: sino + "N novas atividades" + subtítulo + badge de contagem +
+            chevron. O subtítulo some ao abrir. */}
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 p-3 text-left"
+          onClick={() => setAberto((v) => !v)}
+          aria-expanded={aberto}
+        >
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
+            <Bell className="size-5 text-muted-foreground" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-sm font-semibold">
+              {preencher(t.arquivos.atividadesTitulo, { n: ops.length })}
+            </h3>
+            <p
+              className={cn(
+                "truncate text-xs text-muted-foreground tabular-nums",
+                "transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
+                aberto ? "mt-0 max-h-0 opacity-0" : "mt-0.5 max-h-5 opacity-100",
+              )}
+            >
+              {subtitulo}
+            </p>
+          </div>
+          <Badge variant={badgeVariant} className={cn("shrink-0 tabular-nums", badgeExtra)}>
+            {ops.length}
+          </Badge>
+          <ChevronUp
+            className={cn(
+              "size-5 shrink-0 text-muted-foreground transition-transform duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
+              aberto ? "rotate-0" : "rotate-180",
+            )}
+          />
+        </button>
+
+        {/* Container animado: grid-rows 0fr→1fr abre a lista com altura fluida. */}
+        <div
+          className={cn(
+            "grid transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
+            aberto ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+          )}
+        >
+          <div className="overflow-hidden">
+            {temTerminal && (
+              <div className="flex justify-end px-3 pb-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={onLimparConcluidas}
+                >
+                  {t.arquivos.limparConcluidas}
+                </Button>
+              </div>
+            )}
+            <div className="max-h-[50vh] space-y-1 overflow-y-auto px-2 pb-3">
+              {ordenadas.map((op, index) => (
+                <LinhaAtividade
+                  key={op.opId}
+                  op={op}
+                  index={index}
+                  aberto={aberto}
+                  agoraMs={agoraMs}
+                  rotulosTempo={rotulosTempo}
+                  onCancelar={onCancelar}
+                  onPausar={onPausar}
+                  onResumir={onResumir}
+                  onDispensar={onDispensar}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LinhaAtividade({
+  op,
+  index,
+  aberto,
+  agoraMs,
+  rotulosTempo,
+  onCancelar,
+  onPausar,
+  onResumir,
+  onDispensar,
+}: {
+  op: OpAtiva;
+  index: number;
+  aberto: boolean;
+  agoraMs: number;
+  rotulosTempo: RotulosTempo;
+  onCancelar: (opId: number) => void;
+  onPausar: (opId: number) => void;
+  onResumir: (opId: number) => void;
+  onDispensar: (opId: number) => void;
+}) {
+  const { t } = useIdioma();
+  const p = op.progresso;
+  const s = p.status;
+  const terminal = ehTerminal(op);
+  const pausada = s === "paused";
+  const descobrindo = !terminal && !pausada && p.phase === "discovering";
+
+  // Título por estado (curto). Reusa a mesma família de rótulos do painel.
+  const titulo = pausada
+    ? t.arquivos.statusPausado
+    : descobrindo
+      ? t.arquivos.descobrindoItens
+      : s === "success"
+        ? t.arquivos.statusConcluido
+        : s === "error"
+          ? t.arquivos.statusFalhou
+          : s === "canceled"
+            ? t.arquivos.statusCancelado
+            : s === "partial"
+              ? t.arquivos.statusParcial
+              : op.tipo === "copy"
+                ? t.arquivos.copiando
+                : t.arquivos.movendo;
+
+  // Subtítulo: arquivo atual (ativo) ou o resumo de bytes (histórico).
+  const subtitulo =
+    p.currentFile ??
+    `${formatBytes(p.processedBytes)} / ${formatBytes(p.totalBytes)}`;
+
+  // Timestamp relativo: fim (se terminou) senão início.
+  const quando = formatarTempoRelativo(
+    p.completedAtMs ?? p.startedAtMs,
+    agoraMs,
+    rotulosTempo,
+  );
+
+  return (
+    <div
+      className={cn(
+        "group flex items-start gap-3 rounded-xl p-2.5",
+        "transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
+        "hover:bg-muted/60",
+        aberto ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0",
+        (s === "error" || s === "partial") && "bg-destructive/5",
+      )}
+      style={{ transitionDelay: aberto ? `${index * 60}ms` : "0ms" }}
+    >
+      <CirculoIcone op={op} />
+      <div className="min-w-0 flex-1">
+        <h4 className="truncate text-sm font-medium">{titulo}</h4>
+        <p className="truncate text-xs text-muted-foreground" title={subtitulo}>
+          {subtitulo}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1 pt-0.5">
+        <span className="text-xs tabular-nums text-muted-foreground">{quando}</span>
+        {/* Linha ATIVA: Pausar (em curso) / Retomar (pausada) + Cancelar. Controles
+            sempre visíveis (ação primária de uma op viva). */}
+        {!terminal && (
+          <>
+            {pausada ? (
+              <TooltipAcao label={t.arquivos.retomar}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6"
+                  onClick={() => onResumir(op.opId)}
+                  aria-label={t.arquivos.retomar}
+                >
+                  <Play className="size-3.5" />
+                </Button>
+              </TooltipAcao>
+            ) : (
+              <TooltipAcao label={t.arquivos.pausar}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6"
+                  onClick={() => onPausar(op.opId)}
+                  aria-label={t.arquivos.pausar}
+                >
+                  <Pause className="size-3.5" />
+                </Button>
+              </TooltipAcao>
+            )}
+            <TooltipAcao label={t.arquivos.cancelar}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6"
+                onClick={() => onCancelar(op.opId)}
+                aria-label={t.arquivos.cancelar}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </TooltipAcao>
+          </>
+        )}
+        {/* Linha TERMINAL: Dispensar (revela no hover). */}
+        {terminal && (
+          <TooltipAcao label={t.arquivos.dispensar}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 opacity-0 transition-opacity group-hover:opacity-100"
+              onClick={() => onDispensar(op.opId)}
+              aria-label={t.arquivos.dispensar}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </TooltipAcao>
+        )}
+      </div>
+    </div>
+  );
+}
