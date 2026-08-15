@@ -116,20 +116,26 @@ pra a lógica de sessão ser **reusada**, não reescrita:
 controle do próprio str0m** (`remote.rs:783-810` já decodifica e injeta) — o owner
 não é rota de input no modo não-supervisionado.
 
-O **owner é a ponte pro S0 apenas no signaling**, e apenas enquanto o device-side
-do S8 não estiver ligado: `services/remote-net/src/worker.rs` (`WorkerClient`) já
-existe mas **ninguém no device o consome** (nenhum `Cargo.toml` fora do
-`remote-signaling` depende do `galaxie-remote-net`). Quando o #691 ligar o
-`WorkerClient` no lado privilegiado, o worker fala com o S0 sozinho e as mensagens
-`signal` deste canal ficam **vestigiais** — o canal continua válido (controle,
-estado, stats). **O design não depende do owner estar vivo** para a mídia.
+O **owner é a ponte pro S0 apenas no signaling**. ⚠️ **Errata (#691, ver
+[`remote-s8-device-agent.md`](./remote-s8-device-agent.md) §6):** eu havia escrito
+que essas mensagens `signal` virariam *vestigiais* quando o S8 ligasse —
+**errado**. Elas continuam sendo o caminho; o que muda é **quem é o owner**: no
+não-supervisionado o papel sai do Tauri e vai pro daemon `galaxie-remote-device`
+(SYSTEM, Sessão 0). O contrato deste canal não muda. **O design não depende do
+processo do usuário estar vivo** para a mídia.
 
 ### 4.5 Ciclo de vida
 - `session.start` → o worker instancia o `Transport` (str0m) sobre o **`IoDriver`**
   (`services/remote-transport/src/driver.rs:31-120`) + liga `remote-capture` (que
   ele já pode capturar do desktop atachado) + injeta input.
-- Troca de desktop (login/UAC) usa o `desktop.setMode` **do broker** (já existe) —
-  o worker re-atacha `winsta0\winlogon` sem derrubar a sessão de transporte.
+- Troca de desktop (login/UAC): ⚠️ **Errata (#691, ver
+  [`remote-s8-device-agent.md`](./remote-s8-device-agent.md) §6.1).** Eu havia
+  escrito que `desktop.setMode` re-atacha "sem derrubar a sessão de transporte" —
+  **o broker não faz isso**: `SetDesktopMode` para e relança o worker
+  (`services/remote-system-helper/src/RemoteSystem.Session.pas:355-378`), matando a
+  sessão. **Correto:** sessão roda com `--desktop auto` e o **worker segue o
+  desktop de input sozinho** (`services/remote-system-agent/src/lib.rs:287-311`),
+  sem reinício; `desktop.setMode` fica **proibido durante sessão ativa**.
 - `session.end`, queda do pipe **ou expiração do ticket** → teardown limpo (com
   release das teclas/botões presos, como o `release_pressed` do `remote.rs:901-917`);
   o worker volta a idle mas segue vivo (o broker decide `agent.stop`).
