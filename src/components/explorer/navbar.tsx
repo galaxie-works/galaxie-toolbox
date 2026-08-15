@@ -43,6 +43,7 @@ export function NavBarArquivos({
   buscaAtiva,
   onBuscar,
   onLimparBusca,
+  onSairBusca,
   podeBuscar,
   buscaRef,
 }: {
@@ -58,6 +59,8 @@ export function NavBarArquivos({
   buscaAtiva: boolean;
   onBuscar: (query: string) => void;
   onLimparBusca: () => void;
+  /** #968: ESC no campo de busca devolve o foco pra lista (round-trip do Ctrl+E). */
+  onSairBusca?: () => void;
   podeBuscar: boolean;
   /** #968: ref do input de busca — Ctrl+E (no `aoTeclar` do ContentPane) foca-o. */
   buscaRef?: Ref<HTMLInputElement>;
@@ -254,6 +257,11 @@ export function NavBarArquivos({
             } else if (e.key === "Escape") {
               setBusca("");
               onLimparBusca();
+              // #968 (Wagner): ESC SAI da busca — devolve o foco pra lista
+              // (round-trip completo do Ctrl+E). Blur de fallback se a lista
+              // não estiver ligada (defensivo).
+              if (onSairBusca) onSairBusca();
+              else e.currentTarget.blur();
             }
           }}
           placeholder={
