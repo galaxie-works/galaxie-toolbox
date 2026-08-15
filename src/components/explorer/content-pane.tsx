@@ -51,6 +51,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { ordenar, type ChaveOrdem, type Ordem } from "./ordenar";
 import { filtrarEntradas } from "./filtro";
+import { passaFiltroTipo } from "./filtro-tipo";
 import { juntarCaminho, pathPai } from "./caminho";
 import { ComMenu, RenameInput } from "./menu-contexto";
 import {
@@ -453,6 +454,9 @@ export function ContentPane({
   const [largura, setLargura] = useState(0);
   // #681: filtro in-folder (as-you-type) + toggle de ocultos (off por padrão).
   const [filtro, setFiltro] = useState("");
+  // #985 (US1): categorias/tipo selecionadas no widget de filtros (ids das
+  // categorias — ver `filtro-tipo.ts`). Vazio = filtro de tipo inativo.
+  const [filtrosTipo, setFiltrosTipo] = useState<string[]>([]);
   const [mostrarOcultos, setMostrarOcultos] = useState(false);
   // #681: suporte a caminhos longos — checado 1x no mount, re-checado após habilitar.
   const [longPathsOn, setLongPathsOn] = useState<boolean | null>(null);
@@ -473,6 +477,7 @@ export function ContentPane({
     setErro(false);
     setSelecao(SELECAO_VAZIA);
     setFiltro(""); // filtro é por-pasta: zera ao trocar de caminho
+    setFiltrosTipo([]); // #985: filtro de tipo também é por-pasta
     void listarDir(currentPath)
       .then((lista) => {
         if (!vivo) return;
@@ -508,8 +513,13 @@ export function ContentPane({
   // operam sobre a lista VISÍVEL (filtrada+ordenada).
   const itens = useMemo(() => {
     if (!entradas) return [];
-    return ordenar(filtrarEntradas(entradas, filtro, mostrarOcultos), ordem);
-  }, [entradas, filtro, mostrarOcultos, ordem]);
+    // #985 (US1): nome (substring/glob) + ocultos → filtro por tipo → ordena.
+    const porNome = filtrarEntradas(entradas, filtro, mostrarOcultos);
+    const filtrados = filtrosTipo.length
+      ? porNome.filter((e) => passaFiltroTipo(e, filtrosTipo))
+      : porNome;
+    return ordenar(filtrados, ordem);
+  }, [entradas, filtro, filtrosTipo, mostrarOcultos, ordem]);
   const paths = useMemo(() => itens.map((e) => e.path), [itens]);
   // #739 (F4): índice path→entry pra reportar a seleção em O(nº selecionados),
   // não O(n) filtrando a lista inteira a cada tecla (jank em 5000 itens).
@@ -1189,6 +1199,8 @@ export function ContentPane({
         entradaUnica={entradaUnica}
         filtro={filtro}
         onFiltro={setFiltro}
+        filtrosTipo={filtrosTipo}
+        onFiltrosTipo={setFiltrosTipo}
         filtroRef={filtroRef}
         mostrarOcultos={mostrarOcultos}
         onOcultos={() => setMostrarOcultos((v) => !v)}

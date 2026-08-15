@@ -1583,6 +1583,16 @@ const pt = {
     // #681 — filtro in-folder, ocultos, long paths, inspector
     filtrar: "Filtrar nesta pasta",
     limparFiltro: "Limpar filtro",
+    // #985 (US1) — filtro por categoria/tipo (widget reui/filters) + glob
+    filtroTipo: "Tipo",
+    filtroTipoOperador: "é um de",
+    filtroSelecionados: "selecionados",
+    filtroSelecione: "Selecionar…",
+    catDocumentos: "Documentos",
+    catImagens: "Imagens",
+    catVideos: "Vídeos",
+    catAudio: "Áudio",
+    catCompactados: "Compactados",
     mostrarOcultos: "Mostrar ocultos",
     detalhes: "Detalhes",
     tamanhoTotal: "Tamanho total",
@@ -3659,6 +3669,16 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #681 — in-folder filter, hidden toggle, long paths, inspector
     filtrar: "Filter in this folder",
     limparFiltro: "Clear filter",
+    // #985 (US1) — category/type filter (reui/filters widget) + glob
+    filtroTipo: "Type",
+    filtroTipoOperador: "is any of",
+    filtroSelecionados: "selected",
+    filtroSelecione: "Select…",
+    catDocumentos: "Documents",
+    catImagens: "Images",
+    catVideos: "Videos",
+    catAudio: "Audio",
+    catCompactados: "Archives",
     mostrarOcultos: "Show hidden",
     detalhes: "Details",
     tamanhoTotal: "Total size",
