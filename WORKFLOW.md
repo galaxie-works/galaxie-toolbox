@@ -45,6 +45,8 @@
 **Fluxo:** `Backlog → Ready → In progress → In review → QA Approved → PO Approved → Done → Released to Production` (+ `Rejected`).
 
 > ⚠️ **Cair no feat ≠ Done.** Quando o Polaris integra um PR, o item **NÃO** pula pra Done — ele **segue em In review** (agora a Lúmen consegue gatar, porque o código está no feat). O caminho é: In review → (Lúmen) QA Approved → (Wagner) PO Approved → **Done** (aprovado+completo, fora de versão) → (release cortado) **Released to Production**. "Integrado no feat" só **dispara o gate**, não conclui nada.
+>
+> 🤖 **Automação do Projects (Wagner, 2026-08-15): "PR merged → In Review".** Quando o merge de integração fecha o PR (os commits caem no feat/default), o Projects **coloca o card em In Review** automaticamente — exatamente onde a Lúmen pega. Antes ele ia pra Done e furava o gate. **NÃO reativar "closed/merged → Done".**
 
 | Coluna | Significado | Quem move pra cá |
 |---|---|---|
