@@ -1459,6 +1459,42 @@ const pt = {
     descricao: "Acesso e suporte remoto, direto do seu espaço GALAXIE.",
   },
 
+  // #687: tela GALAXIE Remote (sessão assistida) — host + controlador.
+  remote: {
+    titulo: "Acesso remoto",
+    permitirSuporte: "Permitir suporte",
+    seuCodigo: "Seu código de sessão",
+    digiteCodigo: "Digite o código da sessão",
+    conectar: "Conectar",
+    conectando: "Conectando…",
+    sessaoAtiva: "Sessão ativa",
+    encerrar: "Encerrar sessão",
+    telaCheia: "Tela cheia",
+    codigoInvalido: "Código inválido ou expirado",
+    // Entrada: escolha de modo (host = pede ajuda / controlador = dá ajuda).
+    escolhaTitulo: "Como podemos ajudar?",
+    modoHost: "Preciso de suporte",
+    modoHostDesc: "Compartilhe sua tela para alguém te ajudar.",
+    modoController: "Vou dar suporte",
+    modoControllerDesc: "Conecte à tela de outra pessoa para ajudar.",
+    voltar: "Voltar",
+    // Host: aviso de consentimento + espera pelo peer.
+    consentNota:
+      "Quem tiver este código pode ver e controlar este computador até você encerrar a sessão. Compartilhe só com alguém de confiança.",
+    aguardandoPeer: "Aguardando a outra pessoa conectar…",
+    copiarCodigo: "Copiar código",
+    codigoCopiado: "Copiado",
+    // Estados da sessão.
+    reconectando: "Reconectando…",
+    sessaoEncerrada: "Sessão encerrada",
+    erroConexao: "Erro de conexão",
+    novaSessao: "Nova sessão",
+    // Vídeo (WebCodecs) sem suporte no dispositivo.
+    codecNaoSuportado: "Vídeo não suportado neste dispositivo.",
+    // #839: build sem a feature `remote` (comandos stubados) — degrade gracioso.
+    remoteIndisponivel: "O Remote não está disponível nesta versão do app.",
+  },
+
   caminhosLongos: {
     titulo: "Caminhos longos",
     descricao:
@@ -3500,6 +3536,42 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   emBreveRemote: {
     titulo: "GALAXIE Remote is on its way",
     descricao: "Remote access and support, right from your GALAXIE space.",
+  },
+
+  // #687: GALAXIE Remote screen (assisted session) — host + controller.
+  remote: {
+    titulo: "Remote access",
+    permitirSuporte: "Allow support",
+    seuCodigo: "Your session code",
+    digiteCodigo: "Enter session code",
+    conectar: "Connect",
+    conectando: "Connecting…",
+    sessaoAtiva: "Session active",
+    encerrar: "End session",
+    telaCheia: "Fullscreen",
+    codigoInvalido: "Invalid or expired code",
+    // Entry: pick a mode (host = ask for help / controller = give help).
+    escolhaTitulo: "How can we help?",
+    modoHost: "I need support",
+    modoHostDesc: "Share your screen so someone can help you.",
+    modoController: "I'll give support",
+    modoControllerDesc: "Connect to another person's screen to help them.",
+    voltar: "Back",
+    // Host: consent note + waiting for the peer.
+    consentNota:
+      "Anyone with this code can see and control this computer until you end the session. Only share it with someone you trust.",
+    aguardandoPeer: "Waiting for the other person to connect…",
+    copiarCodigo: "Copy code",
+    codigoCopiado: "Copied",
+    // Session states.
+    reconectando: "Reconnecting…",
+    sessaoEncerrada: "Session ended",
+    erroConexao: "Connection error",
+    novaSessao: "New session",
+    // Video (WebCodecs) not supported on this device.
+    codecNaoSuportado: "Video not supported on this device.",
+    // #839: build without the `remote` feature (stubbed commands) — graceful degrade.
+    remoteIndisponivel: "Remote isn't available in this build of the app.",
   },
 
   caminhosLongos: {

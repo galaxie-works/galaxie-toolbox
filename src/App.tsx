@@ -34,6 +34,7 @@ import {
 import * as browser from "@/lib/browser";
 import { WindowsScreen } from "@/screens/windows";
 import { ArquivosScreen } from "@/screens/arquivos";
+import { RemoteScreen } from "@/screens/remote";
 import { ConfiguracoesScreen } from "@/screens/configuracoes";
 import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
@@ -1145,13 +1146,7 @@ function AppInner() {
           />
         );
       case "remote":
-        return (
-          <EmBreveScreen
-            titulo={t.emBreveRemote.titulo}
-            icone={TELAS.remote.icone}
-            descricao={t.emBreveRemote.descricao}
-          />
-        );
+        return <RemoteScreen />;
     }
   };
 
