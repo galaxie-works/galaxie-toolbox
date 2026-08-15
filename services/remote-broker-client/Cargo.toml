@@ -1,0 +1,32 @@
+[package]
+name = "galaxie-remote-broker-client"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+# Cliente Rust do broker pipe CONGELADO do S7 (`\\.\pipe\Galaxie.Remote.System.v1`).
+# É o lado OWNER (Tauri) do #690 S7, passo 1 da §9 do design worker↔owner: fala o
+# protocolo v1 (hello/helloAck + service.status/agent.ensure/agent.stop/
+# desktop.setMode) pra o broker Delphi. NÃO implementa mídia/signaling — o broker
+# só faz bootstrap + coordenadas do canal de sessão.
+#
+# Núcleo (protocolo + cliente sobre uma trait de transporte) é platform-agnostic e
+# testável sem broker; o transporte de named pipe real fica atrás de `cfg(windows)`.
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+rand = "0.8"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_Pipes",
+  "Win32_System_Threading",
+  "Win32_System_RemoteDesktop",
+] }
