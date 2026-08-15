@@ -4,12 +4,19 @@
 //! carries enrollment/authentication/session control only. Media and input stay
 //! on the existing WebRTC/DataChannel path.
 
+// Núcleo leve (default): protocol/ticket/identity + windows_secret. O worker
+// SYSTEM consome só isto. authority/opaque atrás de `authority` (S0); worker/
+// transport atrás de `client` (daemon #691) — ver [features] no Cargo.toml (D1-bis).
+#[cfg(feature = "authority")]
 pub mod authority;
 pub mod identity;
+#[cfg(feature = "authority")]
 pub mod opaque;
 pub mod protocol;
 pub mod ticket;
+#[cfg(feature = "client")]
 pub mod transport;
+#[cfg(feature = "client")]
 pub mod worker;
 
 #[cfg(windows)]

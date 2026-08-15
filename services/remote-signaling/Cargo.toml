@@ -11,7 +11,7 @@ axum = { version = "0.8", features = ["json", "ws"] }
 base64 = "0.22"
 ed25519-dalek = "2.2"
 futures-util = "0.3"
-galaxie-remote-net = { path = "../remote-net" }
+galaxie-remote-net = { path = "../remote-net", features = ["authority"] }
 hmac = "0.12"
 rand = "0.8"
 serde = { version = "1.0", features = ["derive"] }
