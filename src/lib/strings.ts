@@ -2297,6 +2297,14 @@ const pt = {
     cancelar: "Cancelar",
     embedYoutubeTitle: "Vídeo do YouTube",
     embedTitle: "Conteúdo incorporado",
+    // #950 US4: família código do editor Plate (bloco de código + code drawing).
+    formatCode: "Formatar código",
+    searchLanguage: "Buscar linguagem...",
+    noLanguageFound: "Nenhuma linguagem encontrada.",
+    exportar: "Exportar",
+    excluir: "Excluir",
+    enterCode: "Digite seu código aqui...",
+    codeDrawing: "Desenho de código",
   },
   // #579: nomes dos sons de notificação (id do arquivo → rótulo). Antes fixos em
   // pt-BR no `sons-notificacao.ts` (vazavam na UI en); agora por idioma, resolvidos
@@ -4529,6 +4537,14 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cancelar: "Cancel",
     embedYoutubeTitle: "YouTube video",
     embedTitle: "Embedded content",
+    // #950 US4: Plate editor code family (code block + code drawing).
+    formatCode: "Format code",
+    searchLanguage: "Search language...",
+    noLanguageFound: "No language found.",
+    exportar: "Export",
+    excluir: "Delete",
+    enterCode: "Enter your code here...",
+    codeDrawing: "Code drawing",
   },
   sons: {
     "mixkit-guitar-stroke-down-slow-2339": "Slow guitar stroke",
