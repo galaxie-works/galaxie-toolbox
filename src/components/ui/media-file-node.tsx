@@ -11,6 +11,8 @@ import { FileUp } from 'lucide-react';
 import { PlateElement, useReadOnly, withHOC } from 'platejs/react';
 
 import { cn } from '@/lib/utils';
+// #950 US3: rótulos i18n da família mídia (acessor não-hook, #529).
+import { plateLabel } from '@/lib/plate-labels';
 import { Caption, CaptionTextarea } from './caption';
 
 export const FileElement = withHOC(
@@ -41,7 +43,7 @@ export const FileElement = withHOC(
             <CaptionTextarea
               className="text-left"
               readOnly={readOnly}
-              placeholder="Write a caption..."
+              placeholder={plateLabel('captionPlaceholder')}
             />
           </Caption>
         </a>
