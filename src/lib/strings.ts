@@ -1637,6 +1637,7 @@ const pt = {
     limparBusca: "Limpar busca",
     // #898 (spike) — Status Center como activity-dropdown + histórico de sessão
     atividadesTitulo: "{n} novas atividades",
+    atividadesTituloVazio: "Atividades",
     atividadesSubtitulo: "O que aconteceu nos seus arquivos",
     desfazer: "Desfazer",
     // #898 (fatia 1) — controles de linha ATIVA no Status Center (pausar/retomar)
@@ -3676,6 +3677,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     limparBusca: "Clear search",
     // #898 (spike) — Status Center as activity-dropdown + session history
     atividadesTitulo: "{n} new activities",
+    atividadesTituloVazio: "Activity",
     atividadesSubtitulo: "What happened with your files",
     desfazer: "Undo",
     // #898 (slice 1) — ACTIVE-row controls in the Status Center (pause/resume)

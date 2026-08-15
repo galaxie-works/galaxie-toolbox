@@ -13,7 +13,7 @@
 // "Limpar concluídas" no topo da lista. Presentational: recebe `ops` + handlers do
 // shell. `agoraMs` é um relógio que tiquetaqueia no shell pra os timestamps
 // relativos re-renderizarem. Reusa Badge/Button/Spinner/TooltipAcao + i18n.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertCircle,
   Ban,
@@ -35,8 +35,13 @@ import { preencher, useIdioma } from "@/lib/idioma";
 
 import type { OpAtiva } from "./progresso-panel";
 import { montarResumoOp, type RotulosResumo } from "./resumo-op";
+import { calcularNaoVistas, marcarTodasVistas } from "./nao-vistas";
 import { formatarTempoRelativo, type RotulosTempo } from "./tempo-relativo";
 import { TooltipAcao } from "./tooltip-acao";
+
+/** Estado inicial "nada visto" (#898 fatia 3). Constante de módulo: um só set
+ *  vazio compartilhado (readonly, nunca mutado) — evita re-alocar por render. */
+const VISTOS_VAZIO: ReadonlySet<number> = new Set();
 
 /** Uma op é ATIVA (cancelável/pausável) enquanto está em curso OU pausada (#898). */
 function estaAtiva(op: OpAtiva): boolean {
@@ -98,8 +103,19 @@ export function ActivityDropdown({
 }) {
   const { t } = useIdioma();
   const [aberto, setAberto] = useState(false);
+  // #898 fatia 3 (#966): opIds já VISTOS. Abrir o painel — e enquanto ele fica
+  // aberto — marca todas as ops atuais como vistas (o contador de "não vistas"
+  // zera). Fechado, ops novas (opId fora do conjunto) voltam a contar.
+  const [vistos, setVistos] = useState<ReadonlySet<number>>(VISTOS_VAZIO);
+  useEffect(() => {
+    if (aberto) setVistos(marcarTodasVistas(ops));
+  }, [aberto, ops]);
 
   if (ops.length === 0) return null;
+
+  // Não-vistas exibidas: 0 enquanto aberto (o usuário está vendo tudo), senão a
+  // contagem real. O efeito acima já converge pra 0, isto evita o flash de 1 frame.
+  const naoVistas = aberto ? 0 : calcularNaoVistas(ops, vistos);
 
   const rotulosTempo: RotulosTempo = {
     agora: t.arquivos.tempoAgora,
@@ -185,7 +201,9 @@ export function ActivityDropdown({
           </div>
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-sm font-semibold">
-              {preencher(t.arquivos.atividadesTitulo, { n: ops.length })}
+              {naoVistas > 0
+                ? preencher(t.arquivos.atividadesTitulo, { n: naoVistas })
+                : t.arquivos.atividadesTituloVazio}
             </h3>
             <p
               className={cn(
@@ -197,9 +215,17 @@ export function ActivityDropdown({
               {subtitulo}
             </p>
           </div>
-          <Badge variant={badgeVariant} className={cn("shrink-0 tabular-nums", badgeExtra)}>
-            {ops.length}
-          </Badge>
+          {/* #898 fatia 3 (#966): badge de NÃO-VISTAS ("N novas") — some quando
+              zero (tudo visto). Cor pelo estado agregado (erro>ativo>concluído). */}
+          {naoVistas > 0 && (
+            <Badge
+              variant={badgeVariant}
+              className={cn("shrink-0 tabular-nums", badgeExtra)}
+              aria-label={preencher(t.arquivos.atividadesTitulo, { n: naoVistas })}
+            >
+              {naoVistas}
+            </Badge>
+          )}
           <ChevronUp
             className={cn(
               "size-5 shrink-0 text-muted-foreground transition-transform duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
