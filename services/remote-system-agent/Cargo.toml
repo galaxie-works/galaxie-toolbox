@@ -8,6 +8,13 @@ publish = false
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
+# Núcleo LEVE do remote-net (default = protocol/ticket/identity — gate do #971):
+# Capabilities + TicketVerifier sem arrastar tokio/opaque pro binário SYSTEM.
+galaxie-remote-net = { path = "../remote-net" }
+
+[dev-dependencies]
+# só pra o teste do 2b-verify montar um ticket assinado real (SigningKey).
+ed25519-dalek = "2.2.0"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
