@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import {
   AlertCircle,
@@ -400,6 +401,7 @@ export function ContentPane({
   refreshSignal,
   mostrarInspector,
   onToggleInspector,
+  buscaRef,
 }: {
   currentPath: string;
   onNavegar: (path: string) => void;
@@ -424,6 +426,8 @@ export function ContentPane({
   /** Estado do painel de detalhes (controlado pelo shell) — pro botão de toggle. */
   mostrarInspector?: boolean;
   onToggleInspector?: () => void;
+  /** #968: ref do input de busca (navbar) — Ctrl+E foca-o daqui. */
+  buscaRef?: RefObject<HTMLInputElement | null>;
 }) {
   const { t, idioma } = useIdioma();
   const [entradas, setEntradas] = useState<FsEntry[] | null>(null);
@@ -935,6 +939,13 @@ export function ContentPane({
         onToggleInspector?.();
         return;
       }
+      // #968: Ctrl+E foca a busca recursiva (navbar), à moda do Windows Explorer.
+      if (ctrl && (ev.key === "e" || ev.key === "E")) {
+        ev.preventDefault();
+        buscaRef?.current?.focus();
+        buscaRef?.current?.select();
+        return;
+      }
       if (paths.length === 0) return;
       const atual = selecao.cursor ? paths.indexOf(selecao.cursor) : -1;
       const base = atual < 0 ? 0 : atual;
@@ -1049,6 +1060,7 @@ export function ContentPane({
       recarregar,
       criarPastaNova,
       onToggleInspector,
+      buscaRef,
     ],
   );
 

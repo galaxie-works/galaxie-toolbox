@@ -589,6 +589,7 @@ const pt = {
     ocultos: "Mostrar ocultos",
     filtro: "Filtrar",
     preview: "Abrir/fechar painel de detalhes",
+    focoBusca: "Buscar (recursivo)",
   },
 
   controlRoom: {
@@ -2594,6 +2595,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     ocultos: "Show hidden",
     filtro: "Filter",
     preview: "Toggle details pane",
+    focoBusca: "Search (recursive)",
   },
 
   controlRoom: {
