@@ -60,6 +60,28 @@
 | **Done** | Concluído/aprovado, **ainda não numa versão cortada**. | Polaris |
 | **Released to Production** | Shipou numa versão publicada. | **Polaris ao cortar release** |
 
+### IDs para automação (`gh project item-edit` / GraphQL)
+
+Fonte única. Recolhidos do board real (Projects **#3**, owner `galaxie-works`) — conferidos em 2026-08-16.
+
+- **Project:** `PVT_kwHOD_4JN84BedaN` · **campo Status:** `PVTSSF_lAHOD_4JN84BedaNzhY3dus`
+
+| Coluna | option-id |
+|---|---|
+| Backlog | `f75ad846` |
+| Ready | `61e4505c` |
+| In progress | `47fc9ee4` |
+| In review | `df73e18b` |
+| Rejected | `7389544e` |
+| QA Approved | `33a59ba9` |
+| PO Approved | `9ef1bdac` |
+| **Done** | `98236657` |
+| **Released to Production** | `a9368698` |
+
+> ⚠️ **`Done` e `Released to Production` são colunas SEPARADAS.** A tabela antiga (no `AGENTS.md`) trazia 8 entradas e chamava o `98236657` de *"Done - Released"* — nome que **não existe** no board. Quem copiasse dali escrevia em `Done` achando que estava publicando, e não tinha id nenhum pra `Released to Production`. Por isso a tabela agora vive **só aqui**.
+>
+> Reconferir com `gh project field-list 3 --owner galaxie-works` se o board mudar.
+
 ---
 
 ## 4. Gate de QA (Lúmen II) — dirigido por COLUNA

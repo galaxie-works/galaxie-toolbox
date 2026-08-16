@@ -43,7 +43,7 @@ Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3
 ### Fluxo de colunas (campo Status) e quem move
 | Coluna | Descrição | Quem move |
 |---|---|---|
-| **Backlog** | não iniciado | — |
+| **Backlog** | não iniciado / não priorizado | PO/Polaris |
 | **Ready** | pronto pra pegar | **agente** puxa de Backlog quando combinado |
 | **In progress** | sendo trabalhado | **agente** ao começar a codar |
 | **In review** | em revisão | **agente** ao terminar → dispara o **subagente QA** |
@@ -93,7 +93,7 @@ Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pr
 
 ### IDs (para automação via `gh`/GraphQL)
 - **projId**: `PVT_kwHOD_4JN84BedaN`
-- **Status** (`PVTSSF_lAHOD_4JN84BedaNzhY3dus`): Backlog `f75ad846` · Ready `61e4505c` · In progress `47fc9ee4` · In review `df73e18b` · Rejected `7389544e` · QA Approved `33a59ba9` · PO Approved `9ef1bdac` · **Done** `98236657` · **Released to Production** `a9368698`
+- **Status**: a tabela de option-ids das 9 colunas vive **só no [`WORKFLOW.md` §3](./WORKFLOW.md)** — fonte única. Duplicar aqui foi o que produziu a versão de 8 entradas com a coluna inexistente "Done - Released".
 - **Sprint #** (Number): `PVTF_lAHOD_4JN84BedaNzhY3pCE`
 - **Priority** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0o`): Low `79628723` · Normal `0a877460` · High `da944a9c` · Highest `c94b4958`
 - **Size** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0s`): XS `6c6483d2` · S `f784b110` · M `7515a9f1` · L `817d0097` · XL `db339eb2`
