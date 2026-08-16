@@ -77,6 +77,13 @@ const pt = {
     preparando: "Alinhando os astros...",
   },
 
+  // #1017: faixa fixa e não-dispensável no shell quando roda fora do Tauri
+  // (pnpm dev no browser). Deixa explícito que nenhum dado é real e que as
+  // ESCRITAS falham de propósito — o modo mock não finge sucesso (VERDE≠PRONTO).
+  mockBanner: {
+    aviso: "MODO MOCK — nenhum dado é real",
+  },
+
   reauth: {
     // #584 copy v2 (cósmica) — padrão-ouro do PO
     titulo: "A GALAXIE está em expansão",
@@ -2188,6 +2195,13 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
 
   carregando: {
     preparando: "Aligning the stars...",
+  },
+
+  // #1017: fixed, non-dismissible shell banner when running outside Tauri
+  // (pnpm dev in the browser). Makes it explicit that no data is real and that
+  // WRITES fail on purpose — mock mode never fakes success (GREEN≠DONE).
+  mockBanner: {
+    aviso: "MOCK MODE — no data is real",
   },
 
   reauth: {

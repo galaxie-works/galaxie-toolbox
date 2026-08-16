@@ -1169,6 +1169,18 @@ function AppInner() {
         onAbrirApp={abrirUrlLivre}
       />
       <SidebarInset className="relative overflow-hidden">
+        {/* #1017: fora do Tauri (browser/pnpm dev) o app roda em MODO MOCK — as
+            leituras devolvem dado fake e as escrituras REJEITAM. Faixa fixa e não
+            dispensável avisa que NADA aqui é real, pra ninguém confundir o dev do
+            browser com o app de verdade (o mecanismo do "VERDE ≠ PRONTO"). */}
+        {!api.inTauri() && (
+          <div
+            role="status"
+            className="relative z-30 flex h-7 shrink-0 items-center justify-center bg-amber-500 px-4 text-center text-xs font-semibold text-amber-950"
+          >
+            {t.mockBanner.aviso}
+          </div>
+        )}
         <FundoApp className="pointer-events-none" />
 
         {/* #876: title bar estilo browser em UMA linha — sem breadcrumb nem busca
