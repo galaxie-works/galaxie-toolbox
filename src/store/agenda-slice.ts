@@ -68,22 +68,26 @@ interface AgendaApi {
   carregarCategorias: () => Promise<CategoriaCor[]>;
   criarCategoria: (nome: string, preset: string) => Promise<CategoriaCor>;
   carregarEvento: (id: string) => Promise<EventoDetalhe>;
-  criarEvento: (input: EventoInput) => Promise<string>;
-  editarEvento: (id: string, input: EventoInput) => Promise<void>;
+  // #1069: as escritas de agenda também são mailbox-aware (própria/compartilhada);
+  // `mailbox` opcional no fim mantém os call-sites/mocks existentes compatíveis.
+  criarEvento: (input: EventoInput, mailbox?: string) => Promise<string>;
+  editarEvento: (id: string, input: EventoInput, mailbox?: string) => Promise<void>;
   reagendarEvento: (
     id: string,
     inicio: string,
     fim: string,
     diaInteiro: boolean,
     timeZone: string,
+    mailbox?: string,
   ) => Promise<void>;
-  excluirEvento: (id: string) => Promise<void>;
-  cancelarEvento: (id: string, comentario: string) => Promise<void>;
+  excluirEvento: (id: string, mailbox?: string) => Promise<void>;
+  cancelarEvento: (id: string, comentario: string, mailbox?: string) => Promise<void>;
   responderEvento: (
     id: string,
     resposta: AcaoRsvp,
     enviarResposta: boolean,
     comentario: string,
+    mailbox?: string,
   ) => Promise<void>;
 }
 
@@ -551,7 +555,8 @@ export function criarAgendaSlice(
       const antes = get().agendaEventosMes ?? [];
       set({ agendaEventosMes: [...antes, otimista] });
       try {
-        const realId = await api.criarEvento(input);
+        // #1069: cria na caixa ATIVA (própria ou compartilhada), como as leituras.
+        const realId = await api.criarEvento(input, get().caixaAtiva);
         set((s) => ({
           agendaEventosMes: (s.agendaEventosMes ?? []).map((e) =>
             e.id === tempId ? { ...e, id: realId || e.id } : e,
@@ -589,7 +594,8 @@ export function criarAgendaSlice(
         ),
       });
       try {
-        await api.editarEvento(id, input);
+        // #1069: edita na caixa ativa (própria ou compartilhada).
+        await api.editarEvento(id, input, get().caixaAtiva);
       } catch (erro) {
         if (original) {
           set((s) => ({
@@ -623,7 +629,8 @@ export function criarAgendaSlice(
         ),
       });
       try {
-        await api.reagendarEvento(id, inicio, fim, diaInteiro, timeZone);
+        // #1069: reagenda na caixa ativa (própria ou compartilhada).
+        await api.reagendarEvento(id, inicio, fim, diaInteiro, timeZone, get().caixaAtiva);
       } catch (erro) {
         if (original) {
           set((s) => ({
@@ -641,7 +648,9 @@ export function criarAgendaSlice(
       const antes = get().agendaEventosMes ?? [];
       set({ agendaEventosMes: antes.filter((e) => e.id !== id) });
       try {
-        await api.excluirEvento(id);
+        // #1069: exclui na caixa ativa — sem isso, excluir evento de caixa
+        // compartilhada dava 404 tratado como sucesso (exclusão fantasma).
+        await api.excluirEvento(id, get().caixaAtiva);
       } catch (erro) {
         set({ agendaEventosMes: antes });
         throw erro;
@@ -655,7 +664,8 @@ export function criarAgendaSlice(
       const antes = get().agendaEventosMes ?? [];
       set({ agendaEventosMes: antes.filter((e) => e.id !== id) });
       try {
-        await api.cancelarEvento(id, comentario);
+        // #1069: cancela na caixa ativa (própria ou compartilhada).
+        await api.cancelarEvento(id, comentario, get().caixaAtiva);
       } catch (erro) {
         set({ agendaEventosMes: antes });
         throw erro;
@@ -680,7 +690,8 @@ export function criarAgendaSlice(
         ),
       }));
       try {
-        await api.responderEvento(id, resposta, enviarResposta, comentario);
+        // #1069: RSVP na caixa ativa (própria ou compartilhada).
+        await api.responderEvento(id, resposta, enviarResposta, comentario, get().caixaAtiva);
       } catch (erro) {
         set({
           agendaEventoDetalhe: detalheAntes,

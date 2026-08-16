@@ -486,11 +486,14 @@ async fn cr_criar_categoria(
 async fn cr_criar_evento(
     state: State<'_, Store>,
     input: graph::EventoInput,
+    mailbox: Option<String>,
 ) -> Result<String, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_criar_evento(&store, input))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_criar_evento(&store, input, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Agenda: edita um evento existente (#211). Calendars.ReadWrite.
@@ -499,11 +502,14 @@ async fn cr_editar_evento(
     state: State<'_, Store>,
     id: String,
     input: graph::EventoInput,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_editar_evento(&store, &id, input))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_editar_evento(&store, &id, input, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Agenda (#213): reagenda um evento arrastando — PATCH só de start/end/isAllDay,
@@ -516,10 +522,11 @@ async fn cr_reagendar_evento(
     fim: String,
     dia_inteiro: bool,
     time_zone: String,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_reagendar_evento(&store, &id, &inicio, &fim, dia_inteiro, &time_zone)
+        graph::cr_reagendar_evento(&store, &id, &inicio, &fim, dia_inteiro, &time_zone, mailbox.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -531,11 +538,14 @@ async fn cr_reagendar_evento(
 async fn cr_evento_recorrencia(
     state: State<'_, Store>,
     id: String,
+    mailbox: Option<String>,
 ) -> Result<Option<graph::Recorrencia>, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_evento_recorrencia(&store, &id))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_evento_recorrencia(&store, &id, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Agenda: exclui um evento (#211). Calendars.ReadWrite.
@@ -543,11 +553,14 @@ async fn cr_evento_recorrencia(
 async fn cr_excluir_evento(
     state: State<'_, Store>,
     id: String,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_evento(&store, &id))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_excluir_evento(&store, &id, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Agenda: cancela um evento organizado pelo usuário (#260), enviando o
@@ -558,11 +571,14 @@ async fn cr_cancelar_evento(
     state: State<'_, Store>,
     id: String,
     comentario: String,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_cancelar_evento(&store, &id, &comentario))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_cancelar_evento(&store, &id, &comentario, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Agenda: responde a um convite de reunião (#287) — RSVP Aceitar/Talvez/Recusar
@@ -574,10 +590,11 @@ async fn cr_responder_evento(
     resposta: String,
     enviar_resposta: bool,
     comentario: String,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_responder_evento(&store, &id, &resposta, enviar_resposta, &comentario)
+        graph::cr_responder_evento(&store, &id, &resposta, enviar_resposta, &comentario, mailbox.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
