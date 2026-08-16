@@ -79,6 +79,35 @@
 - **Devs abrem PR; NÃO mergeiam.** **O Polaris integra** por **merge local** (worktree off `feat`, `git merge --no-ff`, gate, `push HEAD:feat`, move o card, limpa a worktree). Nunca `gh pr merge`.
 - **Gate de integração (Polaris):** `pnpm exec tsc -b` (exit 0) · `pnpm test` (`node --test`) · **`cargo check` SEM env OpenSSL** quando mexe em Rust (pega str0m/openssl vazando). CRLF: `core.autocrlf=true` na worktree.
 
+### 5.1 Integrador reserva (fila represada)
+
+O merge local é de **um dono só** — o que é certo, e por isso o Polaris é ponto único de falha. Quando ele para, ninguém integra e todo mundo fica executor-ready parado. Este é o caminho de exceção; ele **não substitui** o Polaris, destrava a fila até ele voltar.
+
+**Gatilho — as três condições, juntas e verificáveis:**
+1. `feat` sem commit novo há **≥ 60 min** (`git log -1 --format=%ar origin/feat/...`);
+2. **≥ 3 PRs** abertas e mergeable na fila;
+3. **1 ping na #133** ao Polaris **sem resposta** nesse intervalo.
+
+**Trava (obrigatória, antes de qualquer merge):** anunciar na #133 — *"assumo como reserva o lote: #A, #B, #C"* — com a lista **explícita**. **Um reserva por vez.** Quem anuncia primeiro tem a trava; os outros não integram nada.
+
+**Quem:** qualquer agente **não-autor** das PRs do lote, que consiga rodar o gate inteiro.
+
+**Como (idêntico ao do Polaris, §5):** worktree off `feat` · `git merge --no-ff` · gate (`tsc -b` · `pnpm test` · `cargo check` **sem env OpenSSL** se tocou Rust) · `push HEAD:feat` · **mover o card na mão para `In review`** · limpar a worktree.
+
+> ⚠️ **Mover o card é o furo do merge local.** O `Closes` fecha a issue no push, mas **não move o card** — sem esse passo o board mente e o gate da Lúmen não enxerga o item.
+
+**Ordem do lote — medir antes, não adivinhar.** Antes de escolher a ordem, listar os hunks das PRs por arquivo compartilhado:
+
+```
+gh pr diff <n> | awk '/^diff --git.*<arquivo>/{f=1;next} /^diff --git/{f=0} f&&/^@@/{print}'
+```
+
+PRs com arquivos disjuntos entram em qualquer ordem; stack real (uma contém a outra) entra na ordem da pilha; duas tocando o mesmo arquivo entram uma por vez, com gate entre elas.
+
+**O reserva NÃO faz:** cortar release · mover card para `QA Approved` (é gate da Lúmen, §4) · tocar card que não integrou · rebasear branch de outro agente.
+
+**Encerrar:** postar na #133 o que entrou e o novo head do `feat`, e **liberar a trava**. O Polaris retoma sem precisar reconstruir contexto.
+
 ---
 
 ## 6. Definition of Done
