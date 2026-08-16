@@ -7,15 +7,22 @@ import {
 } from "@/components/ui/dialog";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import type { useIdioma } from "@/lib/idioma";
+import {
+  ORDEM_CATEGORIAS_BRIDGE,
+  TITULO_CATEGORIA_BRIDGE,
+  atalhosBridgeDe,
+} from "@/components/atalhos-bridge";
 
 type T = ReturnType<typeof useIdioma>["t"];
 
 /**
  * Modal de ajuda dos atalhos de teclado (#28), aberto por "?".
  *
- * É a DOCUMENTAÇÃO viva dos atalhos: o catálogo abaixo é a fonte única —
- * qualquer atalho novo entra aqui e aparece na ajuda. Usa o `Dialog` da ui
- * (reui, "não inventar UI") e o `Kbd` para as teclas.
+ * É a DOCUMENTAÇÃO viva dos atalhos, montada a partir do catálogo declarativo
+ * `atalhos-bridge.ts` (fonte ÚNICA, #1060) — a mesma que alimenta os tooltips
+ * das ações. Qualquer atalho novo entra no catálogo e aparece aqui; um teste de
+ * cross-check reprova catálogo↔handler divergentes. Usa o `Dialog` da ui (reui,
+ * "não inventar UI") e o `Kbd` para as teclas.
  */
 export interface AtalhoLinha {
   /** Teclas a exibir; cada string vira um <Kbd>. */
@@ -27,58 +34,19 @@ export interface AtalhoCategoria {
   itens: AtalhoLinha[];
 }
 
-/** Catálogo declarativo dos atalhos, montado a partir do dicionário ativo. */
+/**
+ * Catálogo declarativo dos atalhos, projetado do `atalhos-bridge.ts` para a
+ * forma de exibição (título + linhas), resolvendo as chaves i18n no dicionário
+ * ativo. Cada COMBO de um atalho vira uma linha (ex.: navegar = "↑ ↓" e "j k").
+ */
 export function catalogoAtalhos(t: T): AtalhoCategoria[] {
   const c = t.controlRoom;
-  return [
-    {
-      titulo: c.atalhosCatNavegacao,
-      itens: [
-        { teclas: ["↑", "↓"], rotulo: c.atalhosNavegar },
-        { teclas: ["j", "k"], rotulo: c.atalhosNavegar },
-        { teclas: ["/"], rotulo: c.atalhosBuscar },
-        { teclas: ["F9"], rotulo: c.atalhosAtualizar },
-        { teclas: ["O"], rotulo: c.atalhosOrdenar },
-      ],
-    },
-    {
-      titulo: c.atalhosCatSelecao,
-      itens: [
-        { teclas: ["Ctrl", "A"], rotulo: c.atalhosSelecionarTudo },
-        { teclas: [c.atalhosCliqueIntervalo], rotulo: c.atalhosIntervalo },
-        { teclas: ["x"], rotulo: c.atalhosMarcarItem },
-        { teclas: ["Esc"], rotulo: c.atalhosLimpar },
-      ],
-    },
-    {
-      titulo: c.atalhosCatAcoes,
-      itens: [
-        { teclas: ["Ctrl", "R"], rotulo: c.atalhosResponder },
-        { teclas: ["Ctrl", "Shift", "R"], rotulo: c.atalhosResponderTodos },
-        { teclas: ["Ctrl", "Shift", "F"], rotulo: c.atalhosEncaminhar },
-        { teclas: ["c"], rotulo: c.atalhosCompor },
-        { teclas: ["u"], rotulo: c.atalhosLidoNaoLido },
-        { teclas: ["s"], rotulo: c.atalhosSinalizar },
-        { teclas: ["F12"], rotulo: c.atalhosSalvarComo },
-        { teclas: ["Ctrl", "P"], rotulo: c.atalhosImprimir },
-        { teclas: ["Del"], rotulo: c.atalhosExcluir },
-        { teclas: ["Esc"], rotulo: c.atalhosFecharPreview },
-      ],
-    },
-    {
-      // #549: atalhos de formatação que só valem DENTRO do editor de e-mail
-      // (contenteditable — o keymap central do Bridge não os alcança).
-      titulo: c.atalhosCatFormatacao,
-      itens: [
-        { teclas: ["Ctrl", "K"], rotulo: c.atalhosLink },
-        { teclas: ["Ctrl", "Shift", "L"], rotulo: c.atalhosLista },
-      ],
-    },
-    {
-      titulo: c.atalhosCatGeral,
-      itens: [{ teclas: ["?"], rotulo: c.atalhosAjuda }],
-    },
-  ];
+  return ORDEM_CATEGORIAS_BRIDGE.map((categoria) => ({
+    titulo: c[TITULO_CATEGORIA_BRIDGE[categoria]],
+    itens: atalhosBridgeDe(categoria).flatMap((a) =>
+      a.combos.map((combo) => ({ teclas: combo, rotulo: c[a.rotulo] })),
+    ),
+  }));
 }
 
 export function AtalhosAjuda({

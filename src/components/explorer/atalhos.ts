@@ -41,6 +41,10 @@ export const ATALHOS: readonly Atalho[] = [
   { id: "voltar", categoria: "navegacao", combos: [["Alt", "←"], ["Backspace"]], rotulo: "voltar" },
   { id: "avancar", categoria: "navegacao", combos: [["Alt", "→"]], rotulo: "avancar" },
   { id: "pastaAcima", categoria: "navegacao", combos: [["Alt", "↑"]], rotulo: "pastaAcima" },
+  // #1060 (UX21): entra no modo "editar caminho" do breadcrumb via teclado
+  // (Ctrl+L, à moda do Explorer/navegadores). O breadcrumb ganhou role/tabIndex;
+  // o `aoTeclar` do content-pane dispara `onEditarCaminho`.
+  { id: "editarCaminho", categoria: "navegacao", combos: [["Ctrl", "L"]], rotulo: "editarCaminho" },
   { id: "mover", categoria: "navegacao", combos: [["↑"], ["↓"], ["←"], ["→"]], rotulo: "mover" },
   { id: "extremos", categoria: "navegacao", combos: [["Home"], ["End"]], rotulo: "extremos" },
   // Seleção

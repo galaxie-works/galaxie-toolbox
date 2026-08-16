@@ -46,6 +46,8 @@ export function NavBarArquivos({
   onSairBusca,
   podeBuscar,
   buscaRef,
+  editando,
+  onEditandoChange,
 }: {
   currentPath: string;
   canBack: boolean;
@@ -64,9 +66,15 @@ export function NavBarArquivos({
   podeBuscar: boolean;
   /** #968: ref do input de busca — Ctrl+E (no `aoTeclar` do ContentPane) foca-o. */
   buscaRef?: Ref<HTMLInputElement>;
+  /**
+   * #1060 (UX21): modo "editar caminho" CONTROLADO pelo shell — assim o atalho
+   * Ctrl+L (no `aoTeclar` do ContentPane) e o clique/teclado no breadcrumb
+   * compartilham o mesmo estado. O Input de endereço `autoFocus` ao montar.
+   */
+  editando: boolean;
+  onEditandoChange: (v: boolean) => void;
 }) {
   const { t } = useIdioma();
-  const [editando, setEditando] = useState(false);
   const [valor, setValor] = useState(currentPath);
   const [erro, setErro] = useState(false);
   const [validando, setValidando] = useState(false);
@@ -95,7 +103,7 @@ export function NavBarArquivos({
         setErro(true);
         return;
       }
-      setEditando(false);
+      onEditandoChange(false);
       onNavegar(info.path);
     } catch {
       setErro(true);
@@ -173,12 +181,12 @@ export function NavBarArquivos({
             onKeyDown={(e) => {
               if (e.key === "Enter") void confirmar();
               else if (e.key === "Escape") {
-                setEditando(false);
+                onEditandoChange(false);
                 setValor(currentPath);
                 setErro(false);
               }
             }}
-            onBlur={() => setEditando(false)}
+            onBlur={() => onEditandoChange(false)}
             className={cn("h-8", erro && "border-destructive")}
           />
           {validando && <Spinner className="size-4 text-muted-foreground" />}
@@ -195,9 +203,23 @@ export function NavBarArquivos({
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
-              className="flex min-w-0 flex-1 cursor-text items-center overflow-x-auto rounded-md border bg-background/40 px-1 py-0.5"
+              // #1060 (UX21): o breadcrumb agora entra em edição por TECLADO —
+              // `role="button"` + `tabIndex` + Enter/Espaço (além do clique no
+              // espaço vazio e do Ctrl+L global). Só age quando o próprio
+              // container tem foco/alvo (não os botões de segmento aninhados).
+              role="button"
+              tabIndex={0}
+              aria-label={t.arquivos.editarCaminho}
+              className="flex min-w-0 flex-1 cursor-text items-center overflow-x-auto rounded-md border bg-background/40 px-1 py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={(e) => {
-                if (e.target === e.currentTarget) setEditando(true);
+                if (e.target === e.currentTarget) onEditandoChange(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onEditandoChange(true);
+                }
               }}
               title={t.arquivos.editarCaminho}
             >
@@ -231,7 +253,7 @@ export function NavBarArquivos({
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>
-            <ContextMenuItem onSelect={() => setEditando(true)}>
+            <ContextMenuItem onSelect={() => onEditandoChange(true)}>
               {t.arquivos.editarCaminho}
             </ContextMenuItem>
           </ContextMenuContent>
