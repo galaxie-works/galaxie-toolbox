@@ -77,6 +77,7 @@ import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetFooter,
   SheetHeader,
   SheetTitle,
@@ -1411,6 +1412,9 @@ function EventoFormSheet() {
                   ? t.controlRoom.agendaFormEditarOcorrenciaTitulo
                   : t.controlRoom.agendaFormEditarTitulo}
           </SheetTitle>
+          <SheetDescription className="sr-only">
+            {t.controlRoom.agendaFormDescricao}
+          </SheetDescription>
         </SheetHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto scrollbar-fina px-4 py-4">

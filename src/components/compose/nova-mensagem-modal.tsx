@@ -18,6 +18,7 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetFooter,
   SheetHeader,
   SheetTitle,
@@ -218,6 +219,9 @@ export function NovaMensagemModal({
           <SheetTitle className="text-left">
             {t.controlRoom.novaMensagem}
           </SheetTitle>
+          <SheetDescription className="sr-only">
+            {t.controlRoom.novaMensagemDescricao}
+          </SheetDescription>
         </SheetHeader>
         <div
           className={cn(

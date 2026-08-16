@@ -1239,6 +1239,15 @@ const pt = {
     filtroDataDescricao:
       "Escolha um período para filtrar as mensagens por data.",
     filtroDataDica: "Ex.: 2025, Q4, 05/10/2025",
+    // #1059 (a11y Bridge): descrições sr-only de sheets/diálogos (elimina o
+    // warning do Radix e dá contexto ao leitor de tela).
+    composeRespostaDescricao:
+      "Editor de resposta ao e-mail selecionado.",
+    agendaEventoDetalheDescricao: "Detalhes do evento selecionado.",
+    novaMensagemDescricao: "Compositor de nova mensagem de e-mail.",
+    agendaFormDescricao: "Formulário para criar ou editar um evento da agenda.",
+    createFolderDescricao: "Informe o nome da nova pasta.",
+    renameFolderDescricao: "Informe o novo nome da pasta.",
     filtroAplicar: "Aplicar",
     // Detalhe do evento
     organizador: "Organizador",
@@ -1950,6 +1959,8 @@ const pt = {
     bridgeAssinaturaExcluir: "Excluir assinatura",
     bridgeAssinaturaEditarTitulo: "Editar assinatura",
     bridgeAssinaturaNovaTitulo: "Nova assinatura",
+    // #1059 (a11y Bridge): descrição sr-only do sheet de assinatura.
+    bridgeAssinaturaDescricao: "Editor de assinatura de e-mail.",
     bridgeCampoNome: "Nome",
     bridgeAssinaturaNomePlaceholder: "ex.: Assinatura do trabalho",
     bridgeAssinaturaCampo: "Assinatura",
@@ -2061,6 +2072,11 @@ const pt = {
     semResultados: "Sem resultados",
     // #525: SidebarTrigger/SidebarRail (animate-ui) — sr-only/aria-label/title.
     alternarBarra: "Alternar barra lateral",
+    // #1059 (a11y Bridge): aria-label de botões icon-only do reui (autocomplete
+    // clear/trigger, filters remove) — primitivos sem i18n próprio leem o `ui`.
+    limparBusca: "Limpar busca",
+    abrirSeletor: "Abrir seletor",
+    removerFiltro: "Remover filtro",
   },
   // #529 (i18n S4 / fecha o épico #459): rótulos do editor Plate, config-driven
   // (fonte única aqui; acesso via `plateLabel` em plate-labels.ts, padrão não-hook
@@ -3333,6 +3349,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     filtroDataTitulo: "Filter by date",
     filtroDataDescricao: "Choose a period to filter messages by date.",
     filtroDataDica: "Try: 2025, Q4, 05/10/2025",
+    composeRespostaDescricao: "Reply editor for the selected email.",
+    agendaEventoDetalheDescricao: "Details of the selected event.",
+    novaMensagemDescricao: "New email message composer.",
+    agendaFormDescricao: "Form to create or edit an agenda event.",
+    createFolderDescricao: "Enter the name of the new folder.",
+    renameFolderDescricao: "Enter the new folder name.",
     filtroAplicar: "Apply",
     // Detalhe do evento
     organizador: "Organizer",
@@ -4025,6 +4047,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     bridgeAssinaturaExcluir: "Delete signature",
     bridgeAssinaturaEditarTitulo: "Edit signature",
     bridgeAssinaturaNovaTitulo: "New signature",
+    bridgeAssinaturaDescricao: "Email signature editor.",
     bridgeCampoNome: "Name",
     bridgeAssinaturaNomePlaceholder: "e.g. Work signature",
     bridgeAssinaturaCampo: "Signature",
@@ -4127,6 +4150,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     carregando: "Loading",
     semResultados: "No results",
     alternarBarra: "Toggle sidebar",
+    limparBusca: "Clear search",
+    abrirSeletor: "Open selector",
+    removerFiltro: "Remove filter",
   },
   plate: {
     link: "Link",

@@ -1436,7 +1436,7 @@ function CabecalhoOrd({
       type="button"
       onClick={() => onClick(chave)}
       className={cn(
-        "flex items-center gap-1 text-xs font-medium text-muted-foreground outline-none hover:text-foreground",
+        "flex items-center gap-1 rounded-sm text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
         alinharDireita && "justify-end",
       )}
     >
