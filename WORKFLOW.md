@@ -90,7 +90,14 @@ O merge local é de **um dono só** — o que é certo, e por isso o Polaris é 
 
 **Trava (obrigatória, antes de qualquer merge):** anunciar na #133 — *"assumo como reserva o lote: #A, #B, #C"* — com a lista **explícita**. **Um reserva por vez.** Quem anuncia primeiro tem a trava; os outros não integram nada.
 
-**Quem:** qualquer agente **não-autor** das PRs do lote, que consiga rodar o gate inteiro.
+**Quem — e por que "não-autor":** a regra existe, mas vale saber **o que ela protege**. O §5 não tem etapa de revisão: integrar é merge + gate + push + mover card. Logo o não-autor **não** compra uma segunda opinião sobre o código — compra **reprodutibilidade do gate**: pega o verde que só existe na máquina de quem escreveu (worktree suja, artefato velho, variável de ambiente mágica). É falha real e já aconteceu aqui.
+
+Então a regra, na ordem:
+1. **Preferência forte:** integra quem **não é autor** do lote.
+2. **Sempre, autor ou não:** o gate roda em **worktree limpa off `feat`**, nunca na worktree de desenvolvimento da branch.
+3. **Se só o autor puder rodar aquele gate** (toolchain que ninguém mais tem): permitido **com compensação** — o lock nomeia explicitamente *"autor-integrador"*, a saída do gate (comandos + exit codes) é **colada na #133**, e um não-autor confirma a leitura. Transparência no lugar da separação.
+
+> Antes de invocar o item 3, **verifique** se alguém mais consegue rodar o gate — a suposição "só eu tenho o toolchain" costuma ser falsa. O gate de integração do Rust é `cargo check` **sem** env OpenSSL (§5); o `--features remote`, que exige OpenSSL, é gate **da PR**, não da integração.
 
 **Como (idêntico ao do Polaris, §5):** worktree off `feat` · `git merge --no-ff` · gate (`tsc -b` · `pnpm test` · `cargo check` **sem env OpenSSL** se tocou Rust) · `push HEAD:feat` · **mover o card na mão para `In review`** · limpar a worktree.
 
