@@ -1,3 +1,4 @@
+// Originalmente lumen-821-account-switch-tabs-contract.test.ts (#821). Renomeado por assunto (#1015 / HG3).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";

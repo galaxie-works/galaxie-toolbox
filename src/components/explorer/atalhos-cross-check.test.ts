@@ -1,3 +1,4 @@
+// Originalmente lumen-863-atalhos-cross-check.test.ts (#863). Renomeado por assunto (#1015 / HG3).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";

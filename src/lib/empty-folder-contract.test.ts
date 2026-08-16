@@ -1,3 +1,4 @@
+// Originalmente lumen-788-empty-folder-contract.test.ts (#788). Renomeado por assunto (#1015 / HG3).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";

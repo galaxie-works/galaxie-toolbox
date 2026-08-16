@@ -1,3 +1,4 @@
+// Originalmente lumen-botoes-ast.test.ts (#861). Renomeado por assunto (#1015 / HG3).
 import assert from "node:assert/strict";
 import { readFileSync, globSync } from "node:fs";
 import test from "node:test";

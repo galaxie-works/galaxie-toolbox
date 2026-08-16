@@ -1,3 +1,4 @@
+// Originalmente lumen-877-galaxie-render.test.ts (#877). Renomeado por assunto (#1015 / HG3).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
