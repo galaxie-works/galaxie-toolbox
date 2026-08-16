@@ -39,6 +39,10 @@ colateral) e `require('…')`.
 
 **~19% do `src/` não é alcançável a partir do app.**
 
+> 📌 **Este retrato é de `46ede70`, e já mudou.** O **PR #1100** (#1061, Sirius) executou uma fatia da Camada 1 — `plate-editor.tsx`, `editor-kit.tsx`, `plugins/mention-kit.tsx`, `settings-dialog.tsx`. Re-rodei o grafo com ele aplicado: **189 → 185 órfãos** (24.637 → 23.473 linhas), **zero órfão novo criado**, e os alcançáveis seguem **415**. Resta: `editor/` **56** · `ui/` **91** · `examples/` **21** · outros **17**.
+>
+> A conta fecha exata porque apagar de dentro de um subgrafo **já morto** não orfana nada — só encolhe o conjunto. O efeito "apagar A orfana B" exige que A fosse **vivo** e último consumidor de B.
+
 O achado FE9 estimou ~4.600 linhas — e acertou **a cadeia** (meus 4.800 em `editor/`). O
 que ele não contou foi o **rastro**: os 91 arquivos de `components/ui/` que existem só
 para servir aquela cadeia, e que sozinhos pesam **três vezes mais** que ela.
