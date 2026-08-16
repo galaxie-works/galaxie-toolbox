@@ -1063,6 +1063,68 @@ mod tests {
         assert!(!keys.contains(&Tecla::Control));
     }
 
+    /// #1071 (RB2): contrato de shape dos comandos remote_* contra as structs REAIS
+    /// deste módulo (compila só sob `--features remote`, NÃO o remote_stub). O Tauri v2
+    /// desserializa cada parâmetro nomeado a partir da chave homônima no objeto de args
+    /// do invoke; como as 3 assinaturas recebem um único `request: T`, o front TEM que
+    /// enviar `{ "request": {...} }`. O payload ACHATADO que o remote.ts enviava antes
+    /// (`{ "sessionId":.., "signal":.. }`) não tem a chave `request` → o parâmetro não
+    /// desserializa e a sessão trava em "connecting". Reproduz ANTES (achatado = Err) /
+    /// passa DEPOIS (aninhado = Ok).
+    #[test]
+    fn contrato_remote_cmds_exige_payload_aninhado_em_request() {
+        use serde_json::json;
+
+        // Replica o que o Tauri v2 faz: pega args["request"] e desserializa em T.
+        fn param_request<T: serde::de::DeserializeOwned>(
+            args: serde_json::Value,
+        ) -> Result<T, String> {
+            let inner = args
+                .get("request")
+                .ok_or("faltou a chave `request` no objeto de args")?
+                .clone();
+            serde_json::from_value(inner).map_err(|e| e.to_string())
+        }
+
+        // signal
+        assert!(
+            param_request::<RemoteSessionSignalRequest>(
+                json!({ "sessionId": "s1", "signal": { "kind": "answer", "payload": "sdp" } })
+            )
+            .is_err(),
+            "payload achatado (front antigo) tem que FALHAR — reproduz a sessão travada"
+        );
+        let sig: RemoteSessionSignalRequest = param_request(json!({
+            "request": { "sessionId": "s1", "signal": { "kind": "answer", "payload": "sdp" } }
+        }))
+        .expect("shape novo do signal (o que o remote.ts envia agora)");
+        assert_eq!(sig.session_id, "s1");
+        assert!(matches!(sig.signal, RemoteSignal::Answer(_)));
+
+        // input
+        assert!(param_request::<RemoteSessionInputRequest>(
+            json!({ "sessionId": "s1", "event": { "e": "mouseMove", "x": 0.0, "y": 0.0 } })
+        )
+        .is_err());
+        let inp: RemoteSessionInputRequest = param_request(json!({
+            "request": { "sessionId": "s1", "event": { "e": "mouseMove", "x": 0.25, "y": 0.75 } }
+        }))
+        .expect("shape novo do input");
+        assert_eq!(inp.session_id, "s1");
+        assert!(matches!(inp.event, InputEvent::MouseMove { .. }));
+
+        // end
+        assert!(param_request::<RemoteSessionEndRequest>(
+            json!({ "sessionId": "s1", "reason": "requested" })
+        )
+        .is_err());
+        let end: RemoteSessionEndRequest =
+            param_request(json!({ "request": { "sessionId": "s1", "reason": "requested" } }))
+                .expect("shape novo do end");
+        assert_eq!(end.session_id, "s1");
+        assert_eq!(end.reason, "requested");
+    }
+
     #[test]
     fn valida_ids_e_signal_bounded() {
         let request = RemoteSessionStartRequest {
