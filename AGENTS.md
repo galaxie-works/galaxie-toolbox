@@ -50,7 +50,8 @@ Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3
 | **Rejected** | contém problemas | QA ou PO, se reprovar |
 | **QA Approved** | QA aprovou, aguardando PO | **subagente QA** (In review → aqui se passar) |
 | **PO Approved** | aprovado pra release | **usuário/PO** valida QA Approved |
-| **Done - Released** | concluído/lançado | no release |
+| **Done** | Aprovado e completo, **ainda não numa versão cortada** | Polaris |
+| **Released to Production** | Shipou numa versão publicada | Polaris, ao cortar release |
 
 Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pra PO Approved — isso é do usuário (PO), que também **ajusta a Sprint** se necessário.
 
@@ -68,7 +69,11 @@ Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pr
 
 > 📌 **OBRIGATÓRIO ao mover pra QA Approved: postar a EVIDÊNCIA como comentário NA issue** (`gh issue comment N`). Mover o card sem comentar faz o PO abrir a issue, não ver prova, e reprovar com *"Faltam evidências e comentários relativos ao desenvolvimento"* (aconteceu com #31/#76/#94/#96 em 2026-07-27, com código certo). O comentário deve ter: **(1) Desenvolvimento** — o que foi feito, arquivos, decisões, commit hash; **(2) QA** — `tsc`/`cargo` verdes + passos da QA visual e resultado observado + cada AC (Given/When/Then) traçado; **(3) Pro PO validar em runtime** — comportamento dependente de Graph real que o mock não exercita. ⚠️ **Mock ≠ real:** para features de interação (scroll/teclado/hover/tooltip/dados reais), exercitar esses caminhos no mock e listar o que só o PO valida no app — a QA de mock do #40 passou mas o PO achou 5 bugs de interação no app real.
 
-> 🚀 **RELEASE de PO Approved é decisão do agente** (delegado pelo PO em 2026-07-26). Uma vez em **PO Approved**, o agente decide quando **mergear na `main`, cortar release** (bump de versão + tag + notas) e mover pra **Done - Released**, sem cobrar o PO. A autonomia começa em PO Approved (QA Approved→PO Approved continua sendo do PO). Não cortar release com código não-aprovado/rejeitado ainda na `feat` (ex.: rework com `Closes #N` já mergeado) — limpar/reworkar antes.
+> 🚀 **RELEASE não precisa ser cobrado ao PO** (delegado em 2026-07-26): a partir de **PO Approved**, cortar é decisão do time, não do PO. **Quem corta é o Polaris** e o **procedimento canônico é o [`WORKFLOW.md` §7](./WORKFLOW.md)** — bump nos 4 lugares, notas, e **tag `vX.Y.Z` na `feat`** (o `release.yml` dispara no push da tag). Os itens shipados vão pra **Released to Production**.
+>
+> ⚠️ A redação anterior aqui dizia "mergear na `main`" e mover pra "Done - Released". **As duas coisas estão erradas:** a tag nasce na `feat` (a `v0.40.2` está na linha da `feat`, não na `main`) e **não existe coluna "Done - Released"** — o board tem `Done` e `Released to Production` separadas.
+>
+> Não cortar release com código não-aprovado/rejeitado ainda na `feat` (ex.: rework com `Closes #N` já mergeado) — limpar/reworkar antes.
 
 > 🌿 **HIGIENE DE BRANCH E DE `main` (regra do PO, 2026-08-03 — o repo chegou a 138 branches e a `main` 32 commits atrás).** O modelo é **`feat/bridge-email-client` = tronco/develop**, **`main` = release** (o workflow de Release só dispara em **push de tag `v*`** ou dispatch — push na `main` NÃO builda/publica).
 > - **Deletar o branch ao integrar.** Quando o Polaris mergeia teu branch na `feat`, ele **deleta o branch remoto** no mesmo passo (`git push origin --delete <branch>`). Branch mergeado = lixo; não acumular. Worktree de agente: remover ao concluir.
@@ -88,7 +93,7 @@ Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pr
 
 ### IDs (para automação via `gh`/GraphQL)
 - **projId**: `PVT_kwHOD_4JN84BedaN`
-- **Status** (`PVTSSF_lAHOD_4JN84BedaNzhY3dus`): Backlog `f75ad846` · Ready `61e4505c` · In progress `47fc9ee4` · In review `df73e18b` · Rejected `7389544e` · QA Approved `33a59ba9` · PO Approved `9ef1bdac` · Done - Released `98236657`
+- **Status** (`PVTSSF_lAHOD_4JN84BedaNzhY3dus`): Backlog `f75ad846` · Ready `61e4505c` · In progress `47fc9ee4` · In review `df73e18b` · Rejected `7389544e` · QA Approved `33a59ba9` · PO Approved `9ef1bdac` · **Done** `98236657` · **Released to Production** `a9368698`
 - **Sprint #** (Number): `PVTF_lAHOD_4JN84BedaNzhY3pCE`
 - **Priority** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0o`): Low `79628723` · Normal `0a877460` · High `da944a9c` · Highest `c94b4958`
 - **Size** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0s`): XS `6c6483d2` · S `f784b110` · M `7515a9f1` · L `817d0097` · XL `db339eb2`
