@@ -3267,17 +3267,10 @@ export async function renomear(from: string, to: string): Promise<void> {
   return invoke<void>("fs_rename", { from, to });
 }
 
-/** Copia arquivo/pasta (recursivo). */
-export async function copiar(from: string, to: string): Promise<void> {
-  if (!inTauri()) return;
-  return invoke<void>("fs_copy", { from, to });
-}
-
-/** Move (rename rápido; fallback copy+delete cross-volume). */
-export async function mover(from: string, to: string): Promise<void> {
-  if (!inTauri()) return;
-  return invoke<void>("fs_move", { from, to });
-}
+// #1066 (RB21): `copiar`/`mover` (comandos fs_copy/fs_move) removidos — não tinham
+// chamador de UI e sobrescreviam conflito em silêncio (política oposta ao pipeline
+// turbo). O paste do Explorer usa só `copiarComProgresso`/`moverComProgresso` e as
+// variantes `...VariasComProgresso`, que compartilham UMA política de conflito.
 
 /** Manda os itens pra Lixeira do SO (reversível). Padrão do delete. */
 export async function paraLixeira(paths: string[]): Promise<void> {

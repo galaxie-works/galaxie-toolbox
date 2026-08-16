@@ -2149,8 +2149,8 @@ pub fn run() {
             fs_explorer::fs_create_dir,
             fs_explorer::fs_create_file,
             fs_explorer::fs_rename,
-            fs_explorer::fs_copy,
-            fs_explorer::fs_move,
+            // #1066 (RB21): fs_copy/fs_move legados removidos (política de conflito
+            // divergente + sem caller de UI). A UI usa só o pipeline turbo abaixo.
             fs_explorer::fs_trash,
             fs_explorer::fs_delete_permanent,
             // #680 S4: progresso + conflito + watcher.

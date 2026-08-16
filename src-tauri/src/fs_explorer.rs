@@ -898,9 +898,13 @@ fn copiar(from: &str, to: &str) -> Result<(), FsError> {
 fn copiar_dir(src: &Path, dst: &Path) -> Result<(), FsError> {
     use rayon::prelude::*;
     std::fs::create_dir_all(com_long_path(dst))?;
-    let entradas: Vec<std::fs::DirEntry> = std::fs::read_dir(com_long_path(src))?
-        .filter_map(Result::ok)
-        .collect();
+    // #1066: NÃO engolir `DirEntry` com erro. O `filter_map(Result::ok)` antigo
+    // descartava entradas em silêncio → a cópia terminava Ok sem elas e o `mover`
+    // apagava a origem = perda de dado. Agora um erro de enumeração ABORTA a cópia.
+    let mut entradas: Vec<std::fs::DirEntry> = Vec::new();
+    for e in std::fs::read_dir(com_long_path(src))? {
+        entradas.push(e?);
+    }
     entradas.par_iter().try_for_each(|e| -> Result<(), FsError> {
         let origem = e.path();
         let nome = origem
@@ -917,6 +921,9 @@ fn copiar_dir(src: &Path, dst: &Path) -> Result<(), FsError> {
 }
 
 /// Move: rename rápido (mesmo volume); se falhar (cross-volume), copia+apaga.
+/// #1066: hoje é caminho INTERNO (undo em `executar_undo`) — não há mais comando
+/// Tauri paralelo (`fs_copy`/`fs_move` foram removidos); a UI só usa o pipeline
+/// turbo. Mantido pro undo e testes.
 fn mover(from: &str, to: &str) -> Result<(), FsError> {
     validar(from)?;
     validar(to)?;
@@ -927,7 +934,9 @@ fn mover(from: &str, to: &str) -> Result<(), FsError> {
     if std::fs::rename(com_long_path(Path::new(from)), &dest).is_ok() {
         return Ok(());
     }
-    // Fallback cross-volume: copia recursivo e apaga a origem.
+    // Fallback cross-volume: copia recursivo e SÓ apaga a origem se a cópia foi
+    // completa. #1066: `copiar` agora propaga erro de enumeração/I/O (nunca Ok
+    // parcial), então `remover` só roda quando tudo copiou — sem perda de dado.
     copiar(from, to)?;
     remover(from)
 }
@@ -1527,6 +1536,11 @@ struct Plano {
     grandes: Vec<CopyJob>,
     total_bytes: u64,
     total_arquivos: u64,
+    /// #1066: entradas que a enumeração NÃO conseguiu planejar (erro de I/O do
+    /// jwalk, metadata ilegível, symlink não replicável). Nunca descartadas em
+    /// silêncio: os executores abortam a op se isto vier não-vazio (a origem de um
+    /// move NÃO é removida com o plano incompleto).
+    erros: Vec<String>,
 }
 
 /// Enumera a origem (jwalk paralelo), cria a lista de dirs a criar (rasos
@@ -1549,7 +1563,25 @@ fn planejar(from: &Path, to: &Path) -> Result<Plano, FsError> {
     plano.dirs.push(to.to_path_buf());
     let raiz = com_long_path(from);
     for entry in jwalk::WalkDir::new(&raiz).skip_hidden(false).sort(true) {
-        let Ok(entry) = entry else { continue };
+        // #1066: entrada com erro de enumeração NÃO é mais pulada em silêncio —
+        // vira um erro acumulado (o move não apagaria a origem sem tê-la copiado).
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                plano.erros.push(format!("enumeração falhou: {e}"));
+                continue;
+            }
+        };
+        // #1066: o jwalk NÃO propaga erro de LEITURA de subpasta como item `Err` —
+        // ele anexa em `read_children_error` na entrada do próprio diretório e segue.
+        // Sem checar isto, uma subpasta ilegível (permissão negada etc.) sumia calada:
+        // a cópia terminava "Ok" sem o conteúdo dela e o move apagava a origem = perda
+        // de dado. Agora vira erro acumulado (op abortada / origem preservada).
+        if let Some(err) = &entry.read_children_error {
+            plano
+                .erros
+                .push(format!("{}: leitura da subpasta falhou: {err}", caminho_limpo(&entry.path())));
+        }
         let p = entry.path();
         let Ok(rel) = p.strip_prefix(&raiz) else { continue };
         if rel.as_os_str().is_empty() {
@@ -1560,7 +1592,16 @@ fn planejar(from: &Path, to: &Path) -> Result<Plano, FsError> {
         if ft.is_dir() {
             plano.dirs.push(dst);
         } else if ft.is_file() {
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            // #1066: metadata ilegível = não sabemos o tamanho → NÃO planeja como
+            // job (copiaria conteúdo errado/parcial). Registra como erro pra op ficar
+            // incompleta, em vez do `.unwrap_or(0)` antigo que mascarava a falha.
+            let size = match entry.metadata() {
+                Ok(m) => m.len(),
+                Err(e) => {
+                    plano.erros.push(format!("{}: metadata ilegível: {e}", caminho_limpo(&p)));
+                    continue;
+                }
+            };
             plano.total_bytes += size;
             plano.total_arquivos += 1;
             let job = CopyJob { src: from.join(rel), dst, size };
@@ -1569,8 +1610,11 @@ fn planejar(from: &Path, to: &Path) -> Result<Plano, FsError> {
             } else {
                 plano.grandes.push(job);
             }
+        } else if ft.is_symlink() {
+            // #1066: symlink/junction não é replicado (a cópia é de conteúdo real).
+            // Antes sumia calado; agora conta como erro pra não fingir cópia completa.
+            plano.erros.push(format!("{}: symlink/reparse não replicado", caminho_limpo(&p)));
         }
-        // symlink/outros: pulados (a cópia é de conteúdo real).
     }
     Ok(plano)
 }
@@ -1588,6 +1632,7 @@ fn planejar_muitas(pares: &[(PathBuf, PathBuf)]) -> Result<Plano, FsError> {
         global.grandes.extend(p.grandes);
         global.total_bytes += p.total_bytes;
         global.total_arquivos += p.total_arquivos;
+        global.erros.extend(p.erros); // #1066: acumula os pulos de cada origem
     }
     Ok(global)
 }
@@ -1852,8 +1897,16 @@ fn copiar_arquivo(job: &CopyJob, ctx: &Contexto) -> Result<(), FsError> {
     }
     sai.flush()?;
     // #850: arquivo encolheu entre planejar e copiar → corta o excesso pré-alocado.
+    // #1066 (RB23): NÃO engolir o erro do corte — `set_len` que falha deixaria o
+    // destino com padding de zeros (arquivo corrompido). Propaga com `?`.
     if prealoc && escritos != job.size {
-        let _ = sai.set_len(escritos);
+        sai.set_len(escritos)?;
+    }
+    // #1066 (RB22): com verify, o hash tem que sair do DISCO, não da page cache.
+    // `sync_all` força os dados+metadata a persistirem ANTES de reabrir pra hashear —
+    // senão a verificação compara cache com cache e não pega corrupção de gravação.
+    if ctx.verify.is_some() {
+        sai.sync_all()?;
     }
     drop(sai);
     // Preserva atributos de permissão (readonly etc.).
@@ -2059,6 +2112,21 @@ fn executar_progresso(
     // "Descobrindo itens…" (indeterminado) antes do ticker de bytes ligar.
     emitir_descobrindo(app, op_id, rotulo, started_at_ms);
     let plano = planejar(src, dst)?;
+    // #1066: enumeração pulou entrada(s) → o plano é incompleto. Aborta ANTES de
+    // copiar 1 byte (nada criado no destino, origem intocada). Melhor erro barulhento
+    // que um move que apaga a origem depois de uma cópia furada.
+    if !plano.erros.is_empty() {
+        log::error!(
+            "fs_{rotulo} ERRO op={op_id}: enumeração pulou {} entrada(s) — abortando (ex.: {})",
+            plano.erros.len(),
+            plano.erros.first().map(String::as_str).unwrap_or("")
+        );
+        return Err(FsError::Io(format!(
+            "enumeração incompleta: {} entrada(s) inacessível(is) — op abortada (ex.: {})",
+            plano.erros.len(),
+            plano.erros.first().map(String::as_str).unwrap_or("")
+        )));
+    }
     for d in &plano.dirs {
         std::fs::create_dir_all(com_long_path(d))?;
     }
@@ -2111,7 +2179,21 @@ fn executar_progresso(
         });
     }
     if mover {
-        remover(from)?; // move = copiou tudo → apaga a origem
+        // #1066: só apaga a origem se a cópia BATER com o planejado (contagem E bytes).
+        // Cópia incompleta = origem preservada + erro barulhento (nunca Ok mentiroso).
+        let feitos = ctx.arquivos_feitos.load(Ordering::Relaxed);
+        let bytes = ctx.processados.load(Ordering::Relaxed);
+        if !copia_completa(&plano, feitos, bytes) {
+            log::error!(
+                "fs_{rotulo} ERRO op={op_id}: cópia incompleta ({feitos}/{} arq, {bytes}/{} bytes) — origem PRESERVADA",
+                plano.total_arquivos, plano.total_bytes
+            );
+            return Err(FsError::Io(format!(
+                "cópia incompleta: {feitos}/{} arquivo(s), {bytes}/{} byte(s) copiado(s) — origem NÃO removida",
+                plano.total_arquivos, plano.total_bytes
+            )));
+        }
+        remover(from)?; // move = copiou tudo (confirmado) → apaga a origem
     }
     // #850: END com MB/s médio + arquivos/s — a linha de benchmark comparável.
     let elapsed = t0.elapsed().as_secs_f64().max(0.001);
@@ -2202,6 +2284,21 @@ fn executar_progresso_muitas(
         .map(|(s, d)| (PathBuf::from(s), PathBuf::from(d)))
         .collect();
     let plano = planejar_muitas(&pares_path)?;
+    // #1066: alguma origem teve entrada não-enumerável → plano incompleto. Aborta
+    // antes de copiar (as origens de `a_planejar` ficam intactas). Os renames
+    // mesmo-volume já efetivados acima seguem no destino — não são perda de dado.
+    if !plano.erros.is_empty() {
+        log::error!(
+            "fs_{rotulo} ERRO op={op_id}: enumeração pulou {} entrada(s) — abortando (ex.: {})",
+            plano.erros.len(),
+            plano.erros.first().map(String::as_str).unwrap_or("")
+        );
+        return Err(FsError::Io(format!(
+            "enumeração incompleta: {} entrada(s) inacessível(is) — op abortada (ex.: {})",
+            plano.erros.len(),
+            plano.erros.first().map(String::as_str).unwrap_or("")
+        )));
+    }
     for d in &plano.dirs {
         std::fs::create_dir_all(com_long_path(d))?;
     }
@@ -2255,6 +2352,19 @@ fn executar_progresso_muitas(
         });
     }
     if mover {
+        // #1066: gate anti-perda — só remove as origens se a cópia bateu com o plano.
+        let feitos = ctx.arquivos_feitos.load(Ordering::Relaxed);
+        let bytes = ctx.processados.load(Ordering::Relaxed);
+        if !copia_completa(&plano, feitos, bytes) {
+            log::error!(
+                "fs_{rotulo} ERRO op={op_id}: cópia incompleta ({feitos}/{} arq, {bytes}/{} bytes) — origens PRESERVADAS",
+                plano.total_arquivos, plano.total_bytes
+            );
+            return Err(FsError::Io(format!(
+                "cópia incompleta: {feitos}/{} arquivo(s), {bytes}/{} byte(s) copiado(s) — origens NÃO removidas",
+                plano.total_arquivos, plano.total_bytes
+            )));
+        }
         for (src, _) in &a_planejar {
             remover(src)?;
         }
@@ -2276,6 +2386,16 @@ fn executar_progresso_muitas(
         files_total: renomeados as u64 + plano.total_arquivos,
         files_done: renomeados as u64 + ctx.arquivos_feitos.load(Ordering::Relaxed),
     })
+}
+
+/// #1066: a cópia bateu EXATAMENTE com o planejado? Gate anti-perda-de-dado que
+/// decide se um MOVE pode remover a origem: exige contagem de arquivos E bytes
+/// iguais ao plano E nenhum pulo de enumeração. Pura (só compara números) →
+/// testável sem `AppHandle`. `false` = cópia incompleta → NUNCA apagar a origem.
+fn copia_completa(plano: &Plano, arquivos_feitos: u64, bytes_feitos: u64) -> bool {
+    plano.erros.is_empty()
+        && arquivos_feitos == plano.total_arquivos
+        && bytes_feitos == plano.total_bytes
 }
 
 /// Copia todos os jobs do plano num pool rayon dimensionado por `workers`.
@@ -3003,19 +3123,11 @@ pub async fn fs_rename(from: String, to: String) -> Result<(), FsError> {
         .map_err(spawn_err)?
 }
 
-#[tauri::command]
-pub async fn fs_copy(from: String, to: String) -> Result<(), FsError> {
-    tauri::async_runtime::spawn_blocking(move || copiar(&from, &to))
-        .await
-        .map_err(spawn_err)?
-}
-
-#[tauri::command]
-pub async fn fs_move(from: String, to: String) -> Result<(), FsError> {
-    tauri::async_runtime::spawn_blocking(move || mover(&from, &to))
-        .await
-        .map_err(spawn_err)?
-}
+// #1066 (RB21): os comandos `fs_copy`/`fs_move` legados foram REMOVIDOS. Tinham
+// política de conflito OPOSTA ao pipeline turbo (sobrescreviam em silêncio vs. o
+// turbo que recusa com `AlreadyExists`) e nenhum chamador de UI — o Explorer usa
+// só `copiarComProgresso`/`moverComProgresso` (turbo). Sobra UMA política de
+// conflito. As funções internas `copiar`/`mover` continuam (undo + testes).
 
 #[tauri::command]
 pub async fn fs_trash(paths: Vec<String>) -> Result<(), FsError> {
@@ -4346,5 +4458,102 @@ mod tests {
         assert!(confl.iter().any(|c| c.name == "b.txt" && c.is_dir));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ── #1066: perda-de-dado em copy/move ───────────────────────────────────
+
+    #[test]
+    fn copia_completa_reprova_plano_incompleto() {
+        // #1066: o gate que decide se um MOVE pode apagar a origem. Exige contagem
+        // de arquivos E bytes iguais ao plano E zero pulos de enumeração; qualquer
+        // folga = `false` = origem preservada. No código antigo o move removia a
+        // origem SEM esse gate (Ok mentiroso) — este teste encoda o contrato novo.
+        let mut plano = Plano { total_arquivos: 3, total_bytes: 300, ..Default::default() };
+        assert!(copia_completa(&plano, 3, 300), "cópia exata libera a remoção");
+        assert!(!copia_completa(&plano, 2, 300), "faltou arquivo → origem preservada");
+        assert!(!copia_completa(&plano, 3, 299), "faltaram bytes → origem preservada");
+        plano.erros.push("subpasta ilegível".into());
+        assert!(!copia_completa(&plano, 3, 300), "pulo de enumeração → origem preservada");
+    }
+
+    #[test]
+    fn copia_com_verify_confere_hash_do_disco() {
+        // #1066 (RB22/RB23): com verify o `copiar_arquivo` faz `sync_all` antes de
+        // reabrir pra hashear (hash do DISCO, não da page cache) e propaga o corte
+        // final. Este teste prova que o caminho verify segue verde (sem regressão) e
+        // que o gate aprova a remoção só com a cópia batendo exata.
+        let base = dir_temp("verify-sync");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        let grande = vec![7u8; (LIMITE_PEQUENO * 2) as usize]; // exercita prealloc+set_len
+        std::fs::write(origem.join("g.bin"), &grande).unwrap();
+        std::fs::write(origem.join("p.txt"), b"pequeno").unwrap();
+
+        let destino = base.join("dst");
+        let plano = planejar(&origem, &destino).unwrap();
+        for d in &plano.dirs {
+            std::fs::create_dir_all(com_long_path(d)).unwrap();
+        }
+        let ctx = ctx_teste(Some(VerifyAlg::Xxh3));
+        copiar_plano(&plano, 4, &ctx).unwrap();
+
+        assert_eq!(std::fs::read(destino.join("g.bin")).unwrap(), grande);
+        assert_eq!(std::fs::read(destino.join("p.txt")).unwrap(), b"pequeno");
+        let feitos = ctx.arquivos_feitos.load(Ordering::Relaxed);
+        let bytes = ctx.processados.load(Ordering::Relaxed);
+        assert!(copia_completa(&plano, feitos, bytes), "cópia verify bateu com o plano");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn planejar_acumula_erro_de_enumeracao_de_subpasta_ilegivel() {
+        // #1066 (RB19): árvore de origem com uma subpasta que a enumeração NÃO
+        // consegue ler (DACL nega leitura via icacls — enforcement independe de
+        // sharing). O código antigo (`let Ok(entry) = .. else { continue }`) pulava
+        // esse erro do jwalk em SILÊNCIO → o move depois apagaria a origem com a
+        // subpasta inteira não copiada = perda de dado. Agora o erro é ACUMULADO e o
+        // gate reprova a remoção da origem. Ambiente elevado que ignora a DACL
+        // (SeBackupPrivilege) torna a via de I/O real inviável → no-op documentado.
+        use std::process::Command;
+
+        let base = dir_temp("enum-erro");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        std::fs::write(origem.join("ok.txt"), b"enumeravel").unwrap();
+        let travada = origem.join("travada");
+        std::fs::create_dir_all(&travada).unwrap();
+        std::fs::write(travada.join("perdido.txt"), b"seria perdido no move").unwrap();
+
+        let travada_s = travada.to_string_lossy().to_string();
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "Users".into());
+        // Nega leitura/listagem da subpasta (DACL).
+        let _ = Command::new("icacls")
+            .args([travada_s.as_str(), "/deny", &format!("{user}:(RX)")])
+            .output();
+        let bloqueou = std::fs::read_dir(&travada).is_err();
+
+        let plano = planejar(&origem, &base.join("dst")).unwrap();
+
+        // Restaura o acesso ANTES de limpar (senão o remove_dir_all também é negado).
+        let _ = Command::new("icacls")
+            .args([travada_s.as_str(), "/remove:d", &user])
+            .output();
+        let _ = std::fs::remove_dir_all(&base);
+
+        if !bloqueou {
+            eprintln!("SKIP planejar_acumula_erro…: DACL não bloqueou a leitura (ambiente elevado)");
+            return;
+        }
+        // (a) NÃO é Ok silencioso: o erro de enumeração foi acumulado.
+        assert!(
+            !plano.erros.is_empty(),
+            "enumeração da subpasta negada tinha que virar erro (o código antigo pulava calado)"
+        );
+        // (b) o gate anti-perda REPROVA a remoção da origem → no move a origem fica.
+        assert!(
+            !copia_completa(&plano, plano.total_arquivos, plano.total_bytes),
+            "plano com pulo de enumeração não pode liberar a remoção da origem"
+        );
     }
 }
