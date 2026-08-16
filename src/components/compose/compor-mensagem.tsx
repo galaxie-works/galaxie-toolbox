@@ -19,20 +19,22 @@ import {
   FileIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
-  FileType2Icon,
   HeadphonesIcon,
   ImageIcon,
-  StrikethroughIcon,
   Trash2Icon,
   UploadCloudIcon,
   UploadIcon,
   VideoIcon,
   XIcon,
 } from "lucide-react";
-// #500/#499: ícones animados da toolbar do composer (registry) + marca OneDrive.
+// #500/#499/#1062: ícones animados da toolbar do composer (registry) + marca
+// OneDrive. #1062 (UX12): Tachado e templates migrados do lucide cru pros
+// animados do registry, pra família ficar consistente com Bold/Italic/Underline.
 import { BoldIcon } from "@/components/ui/bold";
 import { ItalicIcon } from "@/components/ui/italic";
 import { UnderlineIcon } from "@/components/ui/underline";
+import { StrikethroughIcon } from "@/components/ui/strikethrough";
+import { FileType2Icon } from "@/components/ui/file-type-2";
 import { AttachFileIcon } from "@/components/ui/attach-file";
 import { PenToolIcon } from "@/components/ui/pen-tool";
 import { OneDriveIcon } from "@/components/ui/icons/marca/onedrive";
@@ -257,6 +259,33 @@ async function escolherArquivos(): Promise<{ nome: string; bytes: Uint8Array }[]
   return arquivos;
 }
 
+/**
+ * #1062 (UX12): affordance de teclado nos ícones animados da toolbar. Os ícones
+ * do registry (bold/italic/underline/strikethrough/pen-tool/attach-file/file-type-2)
+ * expõem `startAnimation`/`stopAnimation` via ref (modo controlado). Este hook
+ * devolve [ref, handlers] pra pendurar os handlers NO BOTÃO — assim a mesma
+ * animação do hover dispara também no foco por Tab (o botão, dono do foco, dirige
+ * o ícone filho). Mantém o hover porque o modo controlado delega o mouse do ícone
+ * pros handlers do botão.
+ */
+interface AnimatedIconHandle {
+  startAnimation: () => void;
+  stopAnimation: () => void;
+}
+function useIconAnim() {
+  const ref = useRef<AnimatedIconHandle | null>(null);
+  const handlers = useMemo(
+    () => ({
+      onMouseEnter: () => ref.current?.startAnimation(),
+      onMouseLeave: () => ref.current?.stopAnimation(),
+      onFocus: () => ref.current?.startAnimation(),
+      onBlur: () => ref.current?.stopAnimation(),
+    }),
+    []
+  );
+  return [ref, handlers] as const;
+}
+
 export const ComporMensagem = forwardRef<
   ComporMensagemHandle,
   ComporMensagemProps
@@ -402,6 +431,17 @@ export const ComporMensagem = forwardRef<
     value: (editor) => valorInicialCompose(editor, assinaturaInicial),
   });
   const edRef = useRef<HTMLDivElement>(null);
+
+  // #1062 (UX12): um ref+handlers por ícone animado da toolbar (foco por Tab
+  // dispara a mesma animação do hover). PenTool aparece em 3 caminhos condicionais
+  // mas só 1 renderiza por vez → compartilha o mesmo ref.
+  const [boldRef, boldAnim] = useIconAnim();
+  const [italicRef, italicAnim] = useIconAnim();
+  const [underlineRef, underlineAnim] = useIconAnim();
+  const [strikeRef, strikeAnim] = useIconAnim();
+  const [penRef, penAnim] = useIconAnim();
+  const [fileTypeRef, fileTypeAnim] = useIconAnim();
+  const [attachRef, attachAnim] = useIconAnim();
 
   useImperativeHandle(ref, () => ({
     getPara: () => para,
@@ -590,29 +630,33 @@ export const ComporMensagem = forwardRef<
             nodeType={KEYS.bold}
             label={t.compose.negrito}
             shortcut={{ primary: true, key: "B" }}
+            {...boldAnim}
           >
-            <BoldIcon />
+            <BoldIcon ref={boldRef} />
           </ShortcutMarkToolbarButton>
           <ShortcutMarkToolbarButton
             nodeType={KEYS.italic}
             label={t.compose.italico}
             shortcut={{ primary: true, key: "I" }}
+            {...italicAnim}
           >
-            <ItalicIcon />
+            <ItalicIcon ref={italicRef} />
           </ShortcutMarkToolbarButton>
           <ShortcutMarkToolbarButton
             nodeType={KEYS.underline}
             label={t.compose.sublinhado}
             shortcut={{ primary: true, key: "U" }}
+            {...underlineAnim}
           >
-            <UnderlineIcon />
+            <UnderlineIcon ref={underlineRef} />
           </ShortcutMarkToolbarButton>
           <ShortcutMarkToolbarButton
             nodeType={KEYS.strikethrough}
             label={t.compose.tachado}
             shortcut={{ primary: true, shift: true, key: "M" }}
+            {...strikeAnim}
           >
-            <StrikethroughIcon />
+            <StrikethroughIcon ref={strikeRef} />
           </ShortcutMarkToolbarButton>
           <BulletedListToolbarButton />
           <LinkToolbarButton />
@@ -627,16 +671,18 @@ export const ComporMensagem = forwardRef<
                 fecharCompose();
                 abrirConfigAssinaturas();
               }}
+              {...penAnim}
             >
-              <PenToolIcon />
+              <PenToolIcon ref={penRef} />
             </ToolbarButton>
           ) : assinaturas.length === 1 ? (
             <ToolbarButton
               tooltip={t.compose.inserirAssinatura}
               aria-label={t.compose.inserirAssinatura}
               onClick={() => inserirAssinatura()}
+              {...penAnim}
             >
-              <PenToolIcon />
+              <PenToolIcon ref={penRef} />
             </ToolbarButton>
           ) : (
             <DropdownMenu modal={false}>
@@ -645,8 +691,9 @@ export const ComporMensagem = forwardRef<
                   tooltip={t.compose.assinaturaEscolher}
                   aria-label={t.compose.assinaturaEscolher}
                   isDropdown
+                  {...penAnim}
                 >
-                  <PenToolIcon />
+                  <PenToolIcon ref={penRef} />
                 </ToolbarButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
@@ -671,8 +718,9 @@ export const ComporMensagem = forwardRef<
                 tooltip={t.templates.inserir}
                 aria-label={t.templates.inserir}
                 isDropdown
+                {...fileTypeAnim}
               >
-                <FileType2Icon />
+                <FileType2Icon ref={fileTypeRef} />
               </ToolbarButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -699,8 +747,9 @@ export const ComporMensagem = forwardRef<
             tooltip={t.compose.anexarArquivo}
             aria-label={t.compose.anexarArquivo}
             onClick={anexarArquivo}
+            {...attachAnim}
           >
-            <AttachFileIcon />
+            <AttachFileIcon ref={attachRef} />
           </ToolbarButton>
           <ToolbarButton
             tooltip={t.compose.compartilharOneDrive}
