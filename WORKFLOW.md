@@ -126,6 +126,24 @@ PRs com arquivos disjuntos entram em qualquer ordem; stack real (uma contém a o
 
 **Encerrar:** postar na #133 o que entrou e o novo head do `feat`, e **liberar a trava**. O Polaris retoma sem precisar reconstruir contexto.
 
+### 5.2 Dívida nova nasce **gated** na PR que toca o mesmo arquivo
+
+Quando alguém identifica trabalho novo (dívida, refactor, gate, convergência de tipo) **que edita um arquivo já tocado por PR aberta**, esse trabalho **não começa** antes daquela PR integrar. Constrói-se sobre a forma nova, não sobre a velha.
+
+**Por quê:** construir em paralelo garante conflito de mesmo-arquivo, e o custo não é o conflito — é que **resolver conflito é onde se perde correção em silêncio** (ver o `api.ts` do #1069×#1017: `--ours` revertia um crítico, `--theirs` revertia o outro, e **os dois lados compilavam**).
+
+**Como checar, antes de começar:**
+
+```bash
+gh pr list --state open --limit 100 --json number,files   --jq '.[] | select(.files[].path == "<arquivo alvo>") | .number'
+```
+
+Se voltar alguma PR: a US nova **nasce com a dependência escrita no corpo** (*"gated no #NNN"*), não como descoberta no meio da implementação.
+
+> Casos reais que produziram esta regra (2026-08-16): #1067 gated no #1066 · #1019 gated nas 5 PRs do `control-room.tsx` · o gate do #1017 gated no #1079 · convergência do `Capabilities` gated no #1089.
+
+**Não vale como desculpa pra parar:** se a PR bloqueadora demora, o certo é **cobrar a integração**, não construir em paralelo e pagar no merge.
+
 ---
 
 ## 6. Definition of Done
