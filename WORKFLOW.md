@@ -102,7 +102,7 @@ Então a regra, na ordem:
 > **PR que mexe em código feature-gated precisa de gate extra.** `cargo check` default **não compila** `src-tauri/src/remote.rs` (entra o `remote_stub`; é o buraco que o #1072 fecha), então o gate padrão passaria sem olhar a mudança. Nesse caso, rodar também — receita verificada nesta máquina em 2026-08-16:
 >
 > ```bash
-> export OPENSSL_DIR="C:\Program Files\PostgreSQL"   # OpenSSL do PostgreSQL
+> export OPENSSL_DIR="C:\Program Files\PostgreSQL\16"   # OpenSSL do PostgreSQL
 > export OPENSSL_NO_VENDOR=1
 > export RC="C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/rc.exe"
 > export PATH="$(dirname "$RC"):$PATH"                     # só pro cargo test
