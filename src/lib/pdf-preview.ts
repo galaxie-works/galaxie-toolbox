@@ -15,19 +15,30 @@
  * - Os bytes já são locais (vindos do `cr_ler_anexo`), então desligamos
  *   streaming/auto-fetch.
  */
-import * as pdfjsLib from "pdfjs-dist";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 // Worker como asset local (Vite resolve para um arquivo bundlado). SEM CDN.
+// `?url` é só a string do asset — o worker é chunk próprio, não entra no `index`.
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+// #1025 (FE6): configura o worker uma vez, na primeira carga de PDF (não no topo
+// do módulo) — o `workerSrc` só faz sentido depois que a lib entrou.
+let workerConfigurado = false;
 
 /**
  * Carrega um PDF a partir de bytes locais. Observação: o pdf.js transfere o
  * buffer para o worker (detacha `bytes`); não reutilize o mesmo array depois —
  * o botão "Salvar" usa o `cr_baixar_anexo` (fetch próprio), não estes bytes.
+ *
+ * #1025 (FE6): o `pdfjs-dist` (a maior lib do preview) entra por **import
+ * dinâmico** aqui dentro — mesmo padrão do Univer/docx do #942. Assim o boot não
+ * paga o chunk do pdf.js se o usuário nunca abrir um PDF nesta sessão.
  */
 export async function carregarPdf(bytes: Uint8Array): Promise<PDFDocumentProxy> {
+  const pdfjsLib = await import("pdfjs-dist");
+  if (!workerConfigurado) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
+    workerConfigurado = true;
+  }
   return pdfjsLib.getDocument({
     data: bytes,
     enableXfa: false,
