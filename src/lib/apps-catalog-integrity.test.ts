@@ -52,6 +52,13 @@ test("#822: nenhuma URL duplicada (normalizada por barra final + caixa)", () => 
   assert.deepEqual(dups, []);
 });
 
+test("#822: nenhum nome com espaço nas pontas ou duplo (normalização do scrape)", () => {
+  const ruins = catalogo.filter(
+    (a) => a.name !== a.name.trim() || /\s{2,}/.test(a.name),
+  );
+  assert.deepEqual(ruins.map((a) => JSON.stringify(a.name)), []);
+});
+
 test("#822: todos os ids do catálogo são únicos", () => {
   const vistos = new Set<string>();
   const repetidos: string[] = [];
