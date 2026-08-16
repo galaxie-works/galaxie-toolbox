@@ -62,7 +62,7 @@ import {
   EventCalendarNav,
   EventCalendarToolbar,
 } from "@/components/reui/event-calendar/event-calendar-nav";
-import type { EventCalendarI18nOverrides } from "@/components/reui/event-calendar/event-calendar-i18n";
+import { montarAgendaI18n } from "@/lib/reui-i18n";
 import type {
   CalendarEvent,
   EventCalendarOccurrence,
@@ -122,8 +122,6 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-
-type Dic = ReturnType<typeof useIdioma>["t"];
 
 // Recorrência (#396): ordem dos dias (domingo=0, como o getDay do JS) e rótulo
 // curto localizado via Intl (sem precisar de string por dia no dicionário).
@@ -275,27 +273,6 @@ function somarDias(dataIso: string, dias: number): string {
 
 function localeDe(idioma: Idioma): Locale {
   return idioma === "pt-BR" ? ptBR : enUS;
-}
-
-/** Overrides de i18n do event-calendar a partir do dicionário do app. */
-function montarI18n(t: Dic): EventCalendarI18nOverrides {
-  return {
-    labels: {
-      today: t.controlRoom.agendaHoje,
-      addEvent: t.controlRoom.agendaNovoEvento,
-      allDay: t.controlRoom.diaInteiro,
-      more: (n: number) => `+${n} ${t.controlRoom.agendaCalMais}`,
-      noEvents: t.controlRoom.agendaCalSemEventos,
-      loading: t.controlRoom.agendaCalCarregando,
-    },
-    viewNames: {
-      month: t.controlRoom.agendaViewMes,
-      week: t.controlRoom.agendaViewSemana,
-      day: t.controlRoom.agendaViewDia,
-      agenda: t.controlRoom.agendaViewAgenda,
-      resource: t.controlRoom.agendaViewResource,
-    },
-  };
 }
 
 // --- view principal ---------------------------------------------------------
@@ -515,7 +492,7 @@ export function AgendaView() {
     return lista;
   }, [mesEventos, idioma, t]);
 
-  const i18nCal = useMemo(() => montarI18n(t), [t]);
+  const i18nCal = useMemo(() => montarAgendaI18n(t), [t]);
   const locale = localeDe(idioma);
 
   const aoClicarEvento = (occ: EventCalendarOccurrence) => {
