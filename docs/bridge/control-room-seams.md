@@ -237,13 +237,18 @@ desenho:
 | **#1084** (#1059) | `:50`, `:4035`, `:5594`, `:5889` | **S3**, **S4**, **S6** |
 | **#1081** (#1058) | `:17`, `:2441` (**-66 linhas**), `:2535`, `:3802` | fronteira **S2/S3**, **S3** |
 | **#1004** (#912) | `:1954` | **S2** |
+| **#1088** (#1060) | `:126`, `~:2866-2910` (constantes `ATALHO_*`) | **S3** |
 
-**Todo seam menos o S5 tem PR pendente em cima.** Consequências:
+**Todo seam menos o S5 tem PR pendente em cima**, e o **S3 é disputado por quatro**. Consequências:
 
 1. **As 4 entram antes do PR1 da extração.** Não existe "começo pelo S1 enquanto o resto
    drena" — o S1 já colide com o #1086, e o S3 é disputado por três PRs de dois autores.
 2. **A partir do PR1, o arquivo fica travado para outras raias** até a extração terminar.
    Quem precisar tocar `control-room.tsx` nesse intervalo entra antes do PR1 ou espera.
-3. **Um seam por vez, cada um sobre `feat` já integrado.** Não empilhar os 6. Torre em
+3. **O #1088 encolhe o S3.** Depois dele, os 15 `ShortcutDefinition` inline
+   (`:2866-2910`) viram `shortcutBridge("id")` apontando pro catálogo declarativo — o
+   bloco de atalhos deixa de ser conteúdo do seam e vira consumo de um módulo. A
+   extração fica mais limpa **depois** daquele PR, não apesar dele.
+4. **Um seam por vez, cada um sobre `feat` já integrado.** Não empilhar os 6. Torre em
    base congelada transforma cada rebase num diff que ninguém confere como recorte-e-cola
    — e é justamente essa conferência que substitui a rede de testes ausente (§0).
