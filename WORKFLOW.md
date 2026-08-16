@@ -97,7 +97,18 @@ Então a regra, na ordem:
 2. **Sempre, autor ou não:** o gate roda em **worktree limpa off `feat`**, nunca na worktree de desenvolvimento da branch.
 3. **Se só o autor puder rodar aquele gate** (toolchain que ninguém mais tem): permitido **com compensação** — o lock nomeia explicitamente *"autor-integrador"*, a saída do gate (comandos + exit codes) é **colada na #133**, e um não-autor confirma a leitura. Transparência no lugar da separação.
 
-> Antes de invocar o item 3, **verifique** se alguém mais consegue rodar o gate — a suposição "só eu tenho o toolchain" costuma ser falsa. O gate de integração do Rust é `cargo check` **sem** env OpenSSL (§5); o `--features remote`, que exige OpenSSL, é gate **da PR**, não da integração.
+> Antes de invocar o item 3, **verifique** se alguém mais consegue rodar o gate — a suposição "só eu tenho o toolchain" costuma ser falsa.
+>
+> **PR que mexe em código feature-gated precisa de gate extra.** `cargo check` default **não compila** `src-tauri/src/remote.rs` (entra o `remote_stub`; é o buraco que o #1072 fecha), então o gate padrão passaria sem olhar a mudança. Nesse caso, rodar também — receita verificada nesta máquina em 2026-08-16:
+>
+> ```bash
+> export OPENSSL_DIR="C:\Program Files\PostgreSQL"   # OpenSSL do PostgreSQL
+> export OPENSSL_NO_VENDOR=1
+> export RC="C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/rc.exe"
+> export PATH="$(dirname "$RC"):$PATH"                     # só pro cargo test
+> cargo check --features remote      # compila o remote.rs de verdade  (~36 s)
+> cargo test  --features remote      # roda os testes do módulo        (rc.exe obrigatório)
+> ```
 
 **Como (idêntico ao do Polaris, §5):** worktree off `feat` · `git merge --no-ff` · gate (`tsc -b` · `pnpm test` · `cargo check` **sem env OpenSSL** se tocou Rust) · `push HEAD:feat` · **mover o card na mão para `In review`** · limpar a worktree.
 
