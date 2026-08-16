@@ -27,20 +27,47 @@ página oficial da Microsoft. Isso exige um registro do tipo
 
 ## Permissões (API permissions)
 
-**Add a permission → Microsoft Graph → Delegated permissions**:
+**Add a permission → Microsoft Graph → Delegated permissions.**
 
-| Permissão         | Para quê                                                    |
-|-------------------|-------------------------------------------------------------|
-| `User.Read`       | nome, e-mail e **foto** do usuário logado                   |
-| `Files.ReadWrite` | criar e remover o atalho no OneDrive do próprio usuário     |
-| `Sites.Read.All`  | descobrir e ler os sites que o usuário acessa               |
-| `offline_access`  | manter a sessão (refresh token)                             |
+⚠️ **Não use uma lista fixa aqui.** A tabela de 4 permissões que ficava neste
+runbook cobria só o app antigo (atalho no OneDrive) e deixaria Bridge, Agenda,
+People e Tarefas sem escopo. A fonte é o `src-tauri/src/config.rs`:
 
-Depois clique em **Grant admin consent** (evita que cada usuário veja a tela de
-consentimento).
+| Const | O que é | Consentimento |
+|---|---|---|
+| **`SCOPES_BASE`** (`config.rs:113`) | mínimo que **toda** conta pede — mail, agenda, tarefas, arquivos, pessoas, contatos | **user-consentable** (conta pessoal/Google também consegue) |
+| **`SCOPES_ORG`** (`config.rs:120`) | caixas compartilhadas, diretório, sites, branding, OrgSettings | **exige admin consent**; só entra em conta **org contratada** |
+
+`scopes_para(tenant)` (`config.rs:143`) compõe: **BASE** no caminho comum
+(pessoal), **BASE + ORG** na org. A lista legível dos dois conjuntos está em
+[`docs/reference/graph-scopes.md`](docs/reference/graph-scopes.md#requisitados-hoje).
+
+Registre **todas** as do `SCOPES_BASE` + `SCOPES_ORG` e clique em **Grant admin
+consent** (evita que cada usuário veja a tela de consentimento).
+
+> ⚠️ **Escopo novo vai na const certa.** User-consentable → `SCOPES_BASE`;
+> exige admin → `SCOPES_ORG`. Pôr um escopo ORG no BASE **quebra o login de conta
+> pessoal**, que não consegue consentir aquilo.
 
 > `User.Read` já cobre a foto do próprio usuário (`/me/photo`). Só precisaria de
 > `User.ReadBasic.All` para ler a foto **de outras pessoas** — não é o caso.
+
+## Segundo provider — Google (Drive/Gmail)
+
+O app é multi-provider (#696/#697). Além do registro Microsoft acima, a conta
+Google tem **registro próprio**, no Google Cloud Console:
+
+1. **APIs & Services → Credentials → Create credentials → OAuth client ID.**
+2. Tipo **Desktop app** (o app usa loopback + PKCE, igual ao MS).
+3. Habilite as APIs que os escopos exigem (Drive, Gmail, Calendar, People).
+4. Os escopos pedidos estão em **`GOOGLE_SCOPES`** (`src-tauri/src/config.rs:58`)
+   — conferir lá, mesma regra de não duplicar lista em doc.
+5. **Client secret:** o fluxo Desktop do Google emite um secret, mas ele **não é
+   segredo** num app instalado — é público por construção. O app segue sendo
+   public client + PKCE; não tratar esse valor como credencial protegida.
+
+> O `client_id` de cada provider é config de build, não de tenant do cliente —
+> o onboarding de cliente novo (abaixo) não repete este passo.
 
 ## Configuração adicional
 

@@ -3592,7 +3592,8 @@ pub struct ValidacaoCaixa {
 /// compartilhadas. Assim uma sessão anterior à #113 pede relogin antes de
 /// oferecer mutações que inevitavelmente retornariam 403.
 pub fn mail_shared_disponivel(store: &TokenStore) -> Result<bool, String> {
-    // Renova se necessário (o refresh reusa a MESMA `config::SCOPES`, então um
+    // Renova se necessário (o refresh reusa o MESMO conjunto de `config::scopes_para`,
+    // então um
     // token renovado já reflete o escopo novo sem novo login interativo — desde
     // que o refresh_token original tenha o offline_access, que sempre pedimos).
     access_token(store)?;
@@ -5383,7 +5384,7 @@ pub fn cr_teams_disponivel(store: &TokenStore) -> Result<bool, String> {
 
 /// #206 (Org Admin S1): o token carrega os escopos de settings org-wide? Gate do
 /// painel Organization — só habilita pra quem tem admin consent + relogou depois
-/// de os escopos entrarem no `config::SCOPES`. Checa um escopo representativo do
+/// de os escopos entrarem na `config::SCOPES_ORG`. Checa um escopo representativo do
 /// conjunto OrgSettings (todos entram/saem juntos no mesmo consent).
 pub fn cr_org_admin_available(store: &TokenStore) -> Result<bool, String> {
     token_tem_escopo(store, "OrgSettings-AppsAndServices.Read.All")
@@ -9028,7 +9029,7 @@ mod testes_atoms_email {
 // `auth::buscar_foto` (bytes → data URI), mas aqui em LOTE via `$batch` do Graph
 // (até 20 sub-requisições por chamada) para não disparar 1 request por foto.
 //
-// Escopo: User.Read.All (admin consent já concedido; ver config::SCOPES). Só faz
+// Escopo: User.Read.All (admin consent já concedido; ver config::SCOPES_ORG). Só faz
 // sentido para remetente INTERNO — o filtro por domínio do tenant é do front
 // (fotos.ts), que já manda só e-mails internos.
 //
