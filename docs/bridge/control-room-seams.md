@@ -6,6 +6,11 @@
 > `React.memo`**, e 14 `useRef` só no componente de tela.
 >
 > Todas as faixas de linha abaixo foram conferidas no arquivo.
+>
+> ⚠️ **As linhas valem para `46ede70` e vão deslocar.** Quatro PRs abertas tocam este
+> arquivo (`#1004`, `#1081`, `#1084`, `#1086`) e uma delas remove ~64 linhas antes do S3.
+> **Execute pelos NOMES das funções** — que estão listados em cada seam; as linhas são
+> orientação, não contrato. Ver §7.
 
 ---
 
@@ -218,3 +223,27 @@ diff pequeno, antes de aplicá-la onde ela é difícil de revisar.
    registre a dívida; não deixe implícito.
 4. **`useIdioma` local** (§2) é a única mudança que toca todos os seis arquivos. Fazer
    **dentro de cada extração**, não num PR "de i18n" no fim.
+
+---
+
+## 7. Trava do arquivo e ordem com as PRs abertas
+
+Medi os hunks de `screens/control-room.tsx` em **todas** as PRs abertas no momento do
+desenho:
+
+| PR | Hunks | Seam atingido |
+|---|---|---|
+| **#1086** (#1016) | `:534`, `:3212` | **S1**, **S3** |
+| **#1084** (#1059) | `:50`, `:4035`, `:5594`, `:5889` | **S3**, **S4**, **S6** |
+| **#1081** (#1058) | `:17`, `:2441` (**-66 linhas**), `:2535`, `:3802` | fronteira **S2/S3**, **S3** |
+| **#1004** (#912) | `:1954` | **S2** |
+
+**Todo seam menos o S5 tem PR pendente em cima.** Consequências:
+
+1. **As 4 entram antes do PR1 da extração.** Não existe "começo pelo S1 enquanto o resto
+   drena" — o S1 já colide com o #1086, e o S3 é disputado por três PRs de dois autores.
+2. **A partir do PR1, o arquivo fica travado para outras raias** até a extração terminar.
+   Quem precisar tocar `control-room.tsx` nesse intervalo entra antes do PR1 ou espera.
+3. **Um seam por vez, cada um sobre `feat` já integrado.** Não empilhar os 6. Torre em
+   base congelada transforma cada rebase num diff que ninguém confere como recorte-e-cola
+   — e é justamente essa conferência que substitui a rede de testes ausente (§0).
