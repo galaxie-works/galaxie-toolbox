@@ -86,34 +86,73 @@ pub fn open_in_explorer(name: &str, email: &str, tenant: &str) -> Result<(), Str
     open::that(to_open).map_err(|e| format!("falha ao abrir o Explorer: {e}"))
 }
 
-/// Abre um arquivo com o aplicativo padrao do Windows. O "" e o argumento de
-/// titulo do `start` (sem ele, um caminho entre aspas seria lido como titulo).
+/// Abre um arquivo com o aplicativo padrao do Windows.
+///
+/// #1046 (SEC2): ANTES usava `cmd /C start "" <path>`. O `cmd.exe` reinterpreta
+/// metacaracteres de shell (`&`, `|`, `^`, `>`), entao um `path` hostil como
+/// `arquivo & calc.exe` executava um comando extra (injecao de comando). Agora
+/// usa `open::that`, que entrega o caminho como ARGUMENTO UNICO ao ShellExecute
+/// (sem montar linha de shell) — a injecao deixa de existir por construcao.
 #[cfg(windows)]
 pub fn abrir_caminho(path: &str) -> Result<(), String> {
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", path])
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("falha ao abrir o arquivo: {e}"))
+    open::that(path).map_err(|e| format!("falha ao abrir o arquivo: {e}"))
 }
 
 /// Abre o Explorer com o arquivo selecionado e a pasta em foco.
 ///
-/// #639: o `path` do "Salvar como…" (nome = assunto sanitizado) quase sempre TEM
-/// ESPAÇO. Com `.arg("/select,{path}")` o Rust quota o TOKEN INTEIRO —
-/// `explorer "/select,C:\...\Fatura de julho.pdf"` — e o Explorer não reconhece o
-/// `/select,` dentro das aspas → ignora e abre o Documentos. Correção: `raw_arg`
-/// com o `/select,` FORA das aspas e só o PATH entre aspas
-/// (`explorer /select,"C:\...\arquivo.pdf"`), a forma que o Explorer aceita. O
-/// nome é sanitizado (sem `"`) e caminho do Windows não tem `"`, então é seguro.
+/// #1046 (SEC2): ANTES montava `explorer /select,"<path>"` concatenando as aspas
+/// à mão via `raw_arg` — um `path` contendo `"` quebrava o argumento (injeção de
+/// argumento pro `explorer`). Agora usa a API COM do Shell
+/// (`SHOpenFolderAndSelectItems`): o caminho vira um PIDL, sem NENHUMA linha de
+/// comando nem aspas pra escapar. Mesmo resultado visual do #639 (item
+/// selecionado, pasta em foco), sem o vetor de aspas.
 #[cfg(windows)]
 pub fn revelar_no_explorer(path: &str) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    std::process::Command::new("explorer")
-        .raw_arg(format!("/select,\"{path}\""))
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("falha ao abrir o Explorer: {e}"))
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems};
+
+    // Caminho -> UTF-16 terminado em NUL pra PCWSTR (mantido vivo durante a chamada).
+    let wide: Vec<u16> = std::ffi::OsStr::new(path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        // Inicializa COM neste thread (STA). RPC_E_CHANGED_MODE = COM já estava
+        // inicializado em outro modo → toleramos e seguimos. Só desfazemos com
+        // CoUninitialize se ESTE código inicializou (S_OK/S_FALSE), pra não
+        // desbalancear a contagem de quem já tinha COM montado.
+        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if hr.is_err() && hr != RPC_E_CHANGED_MODE {
+            return Err(format!("falha ao inicializar COM: {hr:?}"));
+        }
+        let deve_uninit = hr.is_ok();
+
+        // ILCreateFromPathW aloca um PIDL absoluto pro caminho.
+        let pidl = ILCreateFromPathW(PCWSTR(wide.as_ptr()));
+        if pidl.is_null() {
+            if deve_uninit {
+                CoUninitialize();
+            }
+            return Err("caminho inválido ou inexistente ao revelar no Explorer".into());
+        }
+
+        // apidl=None + dwflags=0 → seleciona o próprio item apontado pelo PIDL
+        // dentro da pasta-pai (abre a pasta e foca o arquivo).
+        let r = SHOpenFolderAndSelectItems(pidl, None, 0);
+
+        ILFree(Some(pidl));
+        if deve_uninit {
+            CoUninitialize();
+        }
+
+        r.map_err(|e| format!("falha ao abrir o Explorer: {e}"))
+    }
 }
 
 // --- Stubs para plataformas nao-Windows (dev/CI) ---

@@ -221,10 +221,29 @@ fn entry_de(path: &Path, meta: &std::fs::Metadata, is_symlink: bool) -> FsEntry 
 
 // ─────────────────────────────── Núcleo ─────────────────────────────────────
 
-/// Rejeita caminho vazio antes de tocar o disco (distinto de NotFound).
+/// Rejeita caminho inválido antes de tocar o disco (distinto de NotFound).
+///
+/// #1046 (SEC2): defesa-em-profundidade LÉXICA (sem `fs::canonicalize`, que
+/// falharia num caminho de DESTINO ainda inexistente — create/copy/rename — e
+/// quebraria a criação/cópia). Barra: vazio; caractere de controle
+/// (`\0`..`\x1f`, via `is_control`); aspas dupla `"` (o vetor que furava a
+/// concatenação do antigo `revelar_no_explorer`); e caminho não-absoluto
+/// (`is_absolute` cobre `C:\...` e UNC `\\server\share` no Windows). Caminhos
+/// legítimos do Explorer são sempre absolutos, então nenhum caller regride.
 fn validar(path: &str) -> Result<(), FsError> {
     if path.trim().is_empty() {
         return Err(FsError::InvalidPath("caminho vazio".into()));
+    }
+    if path.chars().any(|c| c.is_control()) {
+        return Err(FsError::InvalidPath(
+            "caminho com caractere de controle".into(),
+        ));
+    }
+    if path.contains('"') {
+        return Err(FsError::InvalidPath("caminho com aspas duplas".into()));
+    }
+    if !Path::new(path).is_absolute() {
+        return Err(FsError::InvalidPath("caminho precisa ser absoluto".into()));
     }
     Ok(())
 }
@@ -4316,6 +4335,47 @@ mod tests {
         assert!(matches!(criar_dir("").unwrap_err(), FsError::InvalidPath(_)));
         assert!(matches!(renomear("", "x").unwrap_err(), FsError::InvalidPath(_)));
         assert!(matches!(copiar("a", "").unwrap_err(), FsError::InvalidPath(_)));
+    }
+
+    #[test]
+    fn validar_barra_vetores_de_injecao_e_aceita_absoluto() {
+        // #1046 (SEC2): defesa-em-profundidade léxica. No código ANTIGO só o
+        // caminho vazio falhava — todos os casos abaixo (menos o vazio) PASSAVAM,
+        // então este teste roda VERMELHO antes do fix.
+        //
+        // Limite honesto: o núcleo do fix é remover o `cmd.exe` de `abrir_caminho`
+        // e as aspas manuais de `revelar_no_explorer` — isso elimina a injeção POR
+        // CONSTRUÇÃO (não há mais linha de shell), e um teste não deve realmente
+        // spawnar `calc.exe`. Este teste cobre a camada de validação
+        // (defesa-em-profundidade) e o vetor de aspas do `revelar_no_explorer`.
+
+        // Vazio: já barrava antes.
+        assert!(matches!(validar(""), Err(FsError::InvalidPath(_))));
+
+        // Caractere de controle (cobre \0..\x1f) — cross-platform.
+        assert!(matches!(validar("x\u{0}y"), Err(FsError::InvalidPath(_))));
+
+        // Relativo com o comando embutido: rejeitado por NÃO ser absoluto
+        // (`x&calc.exe` não tem raiz nem no Windows nem no Unix).
+        assert!(matches!(validar("x&calc.exe"), Err(FsError::InvalidPath(_))));
+
+        // Aspas dupla: o vetor que furava o `/select,"..."` do revelar_no_explorer.
+        #[cfg(windows)]
+        assert!(matches!(
+            validar("C:\\tmp\\x\".txt"),
+            Err(FsError::InvalidPath(_))
+        ));
+
+        // Caractere de controle num caminho absoluto de Windows.
+        #[cfg(windows)]
+        assert!(matches!(
+            validar("C:\\tmp\\x\u{1}.txt"),
+            Err(FsError::InvalidPath(_))
+        ));
+
+        // Caminho absoluto normal continua ACEITO — não regride create/copy/rename.
+        #[cfg(windows)]
+        assert!(validar("C:\\Users\\x\\arquivo.txt").is_ok());
     }
 
     #[test]
