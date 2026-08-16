@@ -106,8 +106,12 @@ cargo tree  -p galaxie-remote-system-agent | grep -E "tokio|rustls|opaque"   # d
 
 ## Divergências conhecidas
 
-- **`Capabilities` tem duas formas no repo:** 5 campos aqui (`protocol.rs:55-63`)
-  e 2 no `RemoteCapabilities` do S4 (`src-tauri/src/remote.rs:104-107`). Convergir antes de #688
-  (clipboard/file) e #689 (áudio) darem semântica aos campos que faltam.
+- **`Capabilities` tem duas formas — e a menor já não descreve o produto.** 5 campos
+  aqui (`protocol.rs:55-63`) contra 2 (`screen`, `input`) no `RemoteCapabilities`, que
+  ainda é **duplicado** entre Rust (`src-tauri/src/remote.rs:104-107`) e TS
+  (`src/lib/remote.ts:39-42`). Como **#688 (clipboard/file) e #689 (áudio) já
+  entregaram** sobre o tipo de 5 campos, o `session.start` do S4 **não tem como
+  declarar** capabilities que o produto já implementa. A convergência é **colapsar o
+  de 2 no canônico de 5**, não o contrário.
 - **Nenhum consumidor no device ainda.** Hoje só o `remote-signaling` (servidor)
   depende deste crate; o lado device entra com o daemon do #691.
