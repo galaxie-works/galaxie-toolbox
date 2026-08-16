@@ -284,6 +284,9 @@ export const useChat = () => {
 
   React.useEffect(() => {
     editor.setOption(AIChatPlugin, 'chat', chat as any);
+    // `chat` é recriado a cada render (spread de baseChat); depender do objeto
+    // inteiro re-rodaria sempre. Rastreamos só os campos que importam
+    // (status/messages/error) mais o helper de abort estável.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chat.status, chat.messages, chat.error, _abortFakeStream]);
 

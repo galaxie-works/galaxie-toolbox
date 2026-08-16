@@ -21,6 +21,9 @@ const contatoCloud = (id: string): PeopleContact => ({
   emails: [{ address: `${id}@tenant-a.com` }],
   phones: [],
   organization: false,
+  frequent: false,
+  sources: ["contacts"],
+  categories: [],
 });
 
 function deferred<T>() {
@@ -88,7 +91,15 @@ test("M365 hydration replaces isolated snapshots and invalidates member cache on
     failures: [],
   };
   const groups: PeopleGroupsResult = {
-    groups: [{ id: "group-2", name: "Engineering" }],
+    groups: [
+      {
+        id: "group-2",
+        name: "Engineering",
+        description: "",
+        mail: "engineering@galaxie.works",
+        visibility: "Private",
+      },
+    ],
     missingScopes: [],
     failures: [],
   };
@@ -98,7 +109,15 @@ test("M365 hydration replaces isolated snapshots and invalidates member cache on
     crPeopleGroups: async () => groups,
   });
   state.peopleContacts = [];
-  state.peopleGroups = [{ id: "group-1", name: "Old group" }];
+  state.peopleGroups = [
+    {
+      id: "group-1",
+      name: "Old group",
+      description: "",
+      mail: "",
+      visibility: "",
+    },
+  ];
   state.peopleGroupMembersById = {
     "group-1": [],
   };
@@ -187,7 +206,15 @@ test("reset invalidates an in-flight M365 hydration and preserves display prefer
     failures: [],
   });
   groups.resolve({
-    groups: [{ id: "old-group", name: "Old group" }],
+    groups: [
+      {
+        id: "old-group",
+        name: "Old group",
+        description: "",
+        mail: "",
+        visibility: "",
+      },
+    ],
     missingScopes: [],
     failures: [],
   });
@@ -353,18 +380,20 @@ test("undoMergeContacts restores master first and recreates only deleted absorbe
   assert.deepEqual(creates, ["A1", "A2"]);
 });
 
-const peopleContact = (id: string, categories: string[] = []) =>
-  ({
-    id,
-    contactId: `graph-${id}`,
-    name: id,
-    emails: [],
-    phones: [],
-    organization: false,
-    frequent: false,
-    sources: ["contacts"],
-    categories,
-  }) as never;
+const peopleContact = (
+  id: string,
+  categories: string[] = [],
+): PeopleContact => ({
+  id,
+  contactId: `graph-${id}`,
+  name: id,
+  emails: [],
+  phones: [],
+  organization: false,
+  frequent: false,
+  sources: ["contacts"],
+  categories,
+});
 
 test("#278 S3b assign categorias é otimista e reverte no erro", async () => {
   let calls = 0;
@@ -395,7 +424,7 @@ test("#278 S3b assign recusa contato não-editável (sem contactId)", async () =
       chamou = true;
     },
   });
-  const semContactId = { ...peopleContact("d1"), contactId: null } as never;
+  const semContactId = { ...peopleContact("d1"), contactId: null };
   state.peopleContacts = [semContactId];
 
   await assert.rejects(state.setPeopleContactCategorias("d1", ["X"]));
@@ -423,7 +452,7 @@ test("#278 S3c bulk categorias: add/remove, pula não-editável e conta unchange
     peopleContact("c1", ["Antiga"]),
     peopleContact("c2", ["Crítico"]),
     { ...peopleContact("d1"), contactId: null }, // diretório: pula
-  ] as never;
+  ];
 
   const res = await state.bulkSetPeopleCategorias(
     ["c1", "c2", "d1"],
@@ -450,7 +479,7 @@ test("#278 S3c bulk categorias: reverte só o item que falha e conta failed", as
   state.peopleContacts = [
     peopleContact("c1", []),
     peopleContact("c2", []),
-  ] as never;
+  ];
 
   const res = await state.bulkSetPeopleCategorias(["c1", "c2"], ["Nova"], []);
 

@@ -209,6 +209,7 @@ test("#560: a projeção cloud das orgs strippa o logo (data-URI nunca sobe)", (
         notes: "",
         memberIds: ["c-1", "c-2"],
         excludedIds: [],
+        createdAt: 1_700_000_000_000,
         updatedAt: 1_700_000_000_000,
         logo: "data:image/png;base64,PESADO===",
       },
@@ -225,6 +226,7 @@ test("#560: a projeção cloud das orgs strippa o logo (data-URI nunca sobe)", (
       notes: "",
       memberIds: ["c-1", "c-2"],
       excludedIds: [],
+      createdAt: 1_700_000_000_000,
       updatedAt: 1_700_000_000_000,
       logo: null,
     },
@@ -391,6 +393,7 @@ test("#560: troca de tenant — load traz as orgs do tenant novo, sem vazar o an
         notes: "",
         memberIds: [],
         excludedIds: [],
+        createdAt: 1,
         updatedAt: 1,
         logo: null,
       },
@@ -560,13 +563,16 @@ test("fila offline sobrevive ao restart e é isolada por conta", async () => {
 });
 
 test("evento online drena a fila sem esperar o debounce", async () => {
-  let onlineListener: (() => void) | null = null;
+  // Guardado num objeto const (não numa `let` capturada só em closures): assim o
+  // TS mantém o tipo declarado `(() => void) | null` no ponto de uso e o
+  // `assert.ok` estreita pra `() => void` em vez de colapsar pra `never`.
+  const registro: { listener: (() => void) | null } = { listener: null };
   const onlineTarget = {
     addEventListener(_type: "online", listener: () => void) {
-      onlineListener = listener;
+      registro.listener = listener;
     },
     removeEventListener() {
-      onlineListener = null;
+      registro.listener = null;
     },
   };
   const local = new MemoryBackend({ zoom: 1 });
@@ -580,8 +586,8 @@ test("evento online drena a fila sem esperar o debounce", async () => {
   await layered.save({ zoom: 1.3 });
   assert.equal(cloud.saves.length, 0);
 
-  assert.ok(onlineListener);
-  onlineListener();
+  assert.ok(registro.listener);
+  registro.listener();
   for (let attempt = 0; attempt < 10 && cloud.saves.length === 0; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }

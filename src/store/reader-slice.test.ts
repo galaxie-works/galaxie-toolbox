@@ -95,8 +95,12 @@ test("fast message switch ignores stale body and security responses", async () =
   await primeira;
   await Promise.resolve();
 
-  assert.equal(store.leitorDetalhe, null);
-  assert.equal(store.leitorSeguranca, null);
+  // Lidos em locais pra o `asserts actual is null` do node não estreitar as
+  // propriedades do store — repovoadas pela resposta de m-2 abaixo — pra `null`.
+  const detalheAntigo = store.leitorDetalhe;
+  const segurancaAntiga = store.leitorSeguranca;
+  assert.equal(detalheAntigo, null);
+  assert.equal(segurancaAntiga, null);
 
   corpos.get("m-2")!.resolve(detalhe("atual"));
   segurancas.get("m-2")!.resolve(seguranca("spf=pass"));

@@ -430,6 +430,9 @@ export function AgendaView() {
     const ini = new Date(dia.getFullYear(), dia.getMonth(), 1);
     const fim = new Date(dia.getFullYear(), dia.getMonth() + 1, 1);
     void carregarMesAgenda(ini.toISOString(), fim.toISOString());
+    // Deps só `recargaAgenda`: o refetch é disparado exclusivamente pelo contador
+    // de retry/pós-escrita. `dia`/`carregarMesAgenda` são lidos no disparo — reagir
+    // a eles refaria a busca a cada mudança de mês (que já tem efeito próprio).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recargaAgenda]);
 

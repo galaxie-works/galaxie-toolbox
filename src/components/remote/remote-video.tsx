@@ -125,6 +125,11 @@ export const RemoteVideo = forwardRef<RemoteVideoHandle, RemoteVideoProps>(
           }
         },
       }),
+      // `garantirDecoder` é uma função recriada a cada render que só fecha sobre
+      // refs (decoderRef/config...) e o `suportado` estável — o handle imperativo
+      // não deve mudar de identidade a cada render por causa dela; só `suportado`
+      // altera o comportamento externo.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       [suportado],
     );
 

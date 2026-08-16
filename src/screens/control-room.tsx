@@ -534,7 +534,7 @@ function CorpoHtml({
       iframe.removeEventListener("load", onLoad);
       ro.disconnect();
     };
-  }, [doc]);
+  }, [doc, setFator]);
 
   // Reaplica o zoom quando o fator manual muda (teclado/roda/reset/persistido),
   // re-rodando a MESMA medição de altura do #57 pra não clipar nem sobrar espaço.
@@ -3212,7 +3212,6 @@ function MessageList({
       if (!colapsados.has(chave)) adicionarConversa(conversa);
     }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     filtrada,
     conversas,
