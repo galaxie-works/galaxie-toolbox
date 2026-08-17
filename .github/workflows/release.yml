@@ -64,6 +64,12 @@ jobs:
       - name: Testes
         run: pnpm test
 
+      # O `openssl/vendored` (ligado pela feature `remote`) compila o OpenSSL a
+      # partir do fonte, e no Windows esse build precisa do NASM para as rotinas
+      # em assembly. O Perl já vem na imagem (Strawberry).
+      - name: NASM (para o OpenSSL vendored do Remote)
+        uses: ilammy/setup-nasm@v1
+
       - name: Compilar e assinar
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -77,7 +83,11 @@ jobs:
           GALAXIE_TELEMETRY_INGEST_EMAIL: ${{ secrets.GALAXIE_TELEMETRY_INGEST_EMAIL }}
           GALAXIE_TELEMETRY_INGEST_TOKEN: ${{ secrets.GALAXIE_TELEMETRY_INGEST_TOKEN }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-        run: pnpm tauri build
+        # `--features remote` é o que faz o instalador levar o backend do GALAXIE
+        # Remote de verdade (str0m/WebRTC + captura + input). SEM ele o bundle sai
+        # com o `remote_stub` e todo comando `remote_*` responde "não compilado" —
+        # o recurso chega MORTO no usuário, que foi o caso até a v0.40.2 inclusive.
+        run: pnpm tauri build --features remote
 
       # A assinatura é o ponto do processo inteiro: sem o .sig o aplicativo
       # instalado recusa a atualização, então a ausência dele para o release

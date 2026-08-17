@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.40.2"
+version = "0.41.0"
 description = "GALAXIE"
 authors = ["Galaxie Works"]
 license = ""
@@ -22,7 +22,18 @@ tauri-build = { version = "2.6.3", features = [] }
 # por default pra o build padrão não precisar de OpenSSL. Os comandos `remote_*`
 # viram stubs (erro claro) quando OFF — o front degrada gracioso (#687-UI).
 default = []
-remote = ["dep:galaxie-remote-transport", "dep:galaxie-remote-capture"]
+# `openssl/vendored` faz o `openssl-sys` COMPILAR o OpenSSL a partir do fonte
+# (crate `openssl-src`) em vez de procurar um no sistema. Sem isso o build do
+# release quebra no runner do CI, que não tem toolchain OpenSSL instalado — e era
+# por isso que o instalador saía com o `remote_stub` em vez do Remote de verdade.
+# O atalho local continua valendo: `OPENSSL_NO_VENDOR=1` + `OPENSSL_DIR=...`
+# força o uso do OpenSSL do sistema e pula os ~10 min de compilação.
+remote = [
+  "dep:galaxie-remote-transport",
+  "dep:galaxie-remote-capture",
+  "dep:openssl",
+  "openssl/vendored",
+]
 
 [dependencies]
 serde_json = "1.0"
@@ -83,6 +94,9 @@ lru = "0.12"
 # Ligar só onde há toolchain OpenSSL: `cargo build --features remote`.
 galaxie-remote-transport = { path = "../services/remote-transport", features = ["webrtc", "input"], optional = true }
 galaxie-remote-capture = { path = "../services/remote-capture", optional = true }
+# Dependência direta só pra poder ligar `openssl/vendored` na feature `remote`
+# (o consumidor real do OpenSSL é o str0m, via remote-transport).
+openssl = { version = "0.10", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
