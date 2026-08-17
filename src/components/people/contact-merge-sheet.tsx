@@ -34,6 +34,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import { iniciais } from "@/lib/iniciais";
 import { useIdioma, preencher } from "@/lib/idioma";
 import {
   buildMergePlan,
@@ -59,18 +60,6 @@ import type {
   PeopleMergePhase,
   PeopleMergeProgress,
 } from "@/store/people-slice";
-
-function initials(name: string): string {
-  return (
-    name
-      .trim()
-      .split(/\s+/)
-      .map((part) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "?"
-  );
-}
 
 function contactName(draft: MergeDraft, contactId: string): string {
   return (
@@ -286,7 +275,9 @@ export function ContactMergeSheet({
                       >
                         <RadioGroupItem id={radioId} value={candidate.contactId} />
                         <Avatar className="size-9">
-                          <AvatarFallback>{initials(candidate.name)}</AvatarFallback>
+                          <AvatarFallback>
+                            {iniciais(candidate.name, candidate.emails[0]?.address)}
+                          </AvatarFallback>
                         </Avatar>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-medium">

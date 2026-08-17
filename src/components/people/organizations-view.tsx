@@ -85,18 +85,10 @@ import {
   type PeopleOrgInput,
 } from "@/lib/organizations";
 import type { PeopleContact } from "@/lib/people";
+import { iniciais } from "@/lib/iniciais";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
 import { toast } from "sonner";
-
-function initials(value: string): string {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toLocaleUpperCase())
-    .join("");
-}
 
 function splitDomains(value: string): string[] {
   return value
@@ -379,7 +371,9 @@ function AssignContactsDialog({
                     }
                   />
                   <Avatar size="sm">
-                    <AvatarFallback>{initials(contact.name)}</AvatarFallback>
+                    <AvatarFallback>
+                      {iniciais(contact.name, contact.emails[0]?.address)}
+                    </AvatarFallback>
                   </Avatar>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{contact.name}</span>
@@ -540,7 +534,11 @@ export function OrganizationsView({
                       />
                     )}
                     <AvatarFallback>
-                      {initials(organization.name) || <Building2 className="size-4" />}
+                      {organization.name ? (
+                        iniciais(organization.name)
+                      ) : (
+                        <Building2 className="size-4" />
+                      )}
                     </AvatarFallback>
                   </Avatar>
                   <span className="min-w-0 flex-1">
@@ -585,7 +583,11 @@ export function OrganizationsView({
                 <AvatarImage src={selected.logo} alt={selected.name} />
               )}
               <AvatarFallback className="text-lg">
-                {initials(selected.name) || <Building2 className="size-5" />}
+                {selected.name ? (
+                  iniciais(selected.name)
+                ) : (
+                  <Building2 className="size-5" />
+                )}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0">
@@ -654,7 +656,9 @@ export function OrganizationsView({
                       {/* #533: puxa a foto do cache (getFoto); 404/sem foto cai
                           nas iniciais (o AvatarImage do Radix já degrada). */}
                       <AvatarImage src={getFoto(memberEmail) ?? undefined} alt="" />
-                      <AvatarFallback>{initials(contact.name)}</AvatarFallback>
+                      <AvatarFallback>
+                        {iniciais(contact.name, memberEmail)}
+                      </AvatarFallback>
                     </Avatar>
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-medium">

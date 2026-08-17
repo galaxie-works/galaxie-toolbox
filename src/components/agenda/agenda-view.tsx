@@ -33,6 +33,7 @@ import {
 
 import { useAppStore } from "@/store";
 import { podeGerenciarEvento } from "@/lib/agenda-permissions";
+import { iniciais } from "@/lib/iniciais";
 import { useIdioma } from "@/lib/idioma";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import type { Idioma } from "@/lib/strings";
@@ -166,20 +167,6 @@ function ehRecorrente(ev: EventoAgenda): boolean {
 /** #570: payload do evento no calendar — leva o organizador pro chip. */
 type DadosChipEvento = { organizadorEmail: string };
 
-/** Iniciais a partir do e-mail (não temos o nome do organizador no list-item). */
-function iniciaisEmail(email: string): string {
-  const base = email.split("@")[0] ?? email;
-  return (
-    base
-      .split(/[._-]+/)
-      .filter(Boolean)
-      .map((p) => p[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "?"
-  );
-}
-
 function renderChipEvento(
   { occurrence, view }: EventCalendarRenderEventProps<DadosChipEvento>,
   getFoto: (email: string | null | undefined) => string | null | undefined,
@@ -198,7 +185,7 @@ function renderChipEvento(
         <Avatar className="size-3.5 shrink-0">
           <AvatarImage src={getFoto(orgEmail) ?? undefined} alt="" />
           <AvatarFallback className="text-[8px]">
-            {iniciaisEmail(orgEmail)}
+            {iniciais(undefined, orgEmail)}
           </AvatarFallback>
         </Avatar>
       )}
