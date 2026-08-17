@@ -1,8 +1,11 @@
 // #678: ordenação pura do painel de conteúdo. Em `.ts` (sem React) pra ser
-// testável e reusável. Regra invariante: PASTAS SEMPRE PRIMEIRO — a chave de
-// ordenação só desempata dentro de cada grupo (pastas entre si, arquivos entre
-// si). Nome usa Collator numérico (ex.: "arq2" < "arq10"); tamanho/data comparam
-// numérico; tipo compara pela extensão (com nome como desempate).
+// testável e reusável. #990: por PADRÃO arquivos e pastas se MISTURAM pelo
+// critério escolhido (mais recente primeiro em Data-desc, etc.) — pastas não
+// vêm mais forçadas na frente. "Pastas primeiro" virou OPT-IN: com o parâmetro
+// `pastasPrimeiro=true` reaparece o agrupamento (pastas antes, a chave só
+// desempata dentro de cada grupo). Nome usa Collator numérico (ex.: "arq2" <
+// "arq10"); tamanho/data comparam numérico; tipo compara pela extensão (com nome
+// como desempate).
 import type { FsEntry } from "@/lib/types";
 
 export type ChaveOrdem = "nome" | "modificado" | "tipo" | "tamanho";
@@ -50,13 +53,19 @@ function compararPorChave(a: FsEntry, b: FsEntry, chave: ChaveOrdem): number {
 }
 
 /**
- * Devolve uma NOVA lista ordenada. Pastas primeiro sempre; dentro de cada grupo
- * aplica a chave e a direção. A direção NÃO inverte a separação pasta/arquivo.
+ * Devolve uma NOVA lista ordenada. #990: por padrão (`pastasPrimeiro=false`)
+ * arquivos e pastas se intercalam puramente pela chave × direção. Com
+ * `pastasPrimeiro=true`, as pastas vêm antes dos arquivos e a chave/direção só
+ * desempatam dentro de cada grupo (a direção NÃO inverte a separação).
  */
-export function ordenar(entradas: FsEntry[], ordem: Ordem): FsEntry[] {
+export function ordenar(
+  entradas: FsEntry[],
+  ordem: Ordem,
+  pastasPrimeiro = false,
+): FsEntry[] {
   const sinal = ordem.direcao === "asc" ? 1 : -1;
   return [...entradas].sort((a, b) => {
-    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1; // pasta antes de arquivo
+    if (pastasPrimeiro && a.isDir !== b.isDir) return a.isDir ? -1 : 1;
     return sinal * compararPorChave(a, b, ordem.chave);
   });
 }

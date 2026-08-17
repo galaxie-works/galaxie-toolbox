@@ -68,6 +68,10 @@ export interface RibbonComandosProps {
   onModo: (m: "detalhes" | "lista" | "grade") => void;
   ordem: Ordem;
   onOrdem: (o: Ordem) => void;
+  /** #990: agrupar pastas antes dos arquivos (opt-in persistido). */
+  pastasPrimeiro: boolean;
+  /** #990: alterna o "Pastas primeiro" (o pai persiste). */
+  onPastasPrimeiro: () => void;
   acoes: AcoesMenu;
   clipboard: Clipboard | null;
   /** Caminhos selecionados (o Set do ContentPane, já espalhado em array). */
@@ -103,6 +107,8 @@ export function RibbonComandos(props: RibbonComandosProps) {
     onModo,
     ordem,
     onOrdem,
+    pastasPrimeiro,
+    onPastasPrimeiro,
     acoes,
     clipboard,
     selecionados,
@@ -346,6 +352,15 @@ export function RibbonComandos(props: RibbonComandosProps) {
               {t.arquivos.ordDesc}
             </DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          {/* #990: "Pastas primeiro" é opt-in — off por padrão os itens se
+              misturam pelo critério; ligado, as pastas vêm antes dos arquivos. */}
+          <DropdownMenuCheckboxItem
+            checked={pastasPrimeiro}
+            onCheckedChange={onPastasPrimeiro}
+          >
+            {t.arquivos.pastasPrimeiro}
+          </DropdownMenuCheckboxItem>
         </DropdownMenuContent>
       </DropdownMenu>
 

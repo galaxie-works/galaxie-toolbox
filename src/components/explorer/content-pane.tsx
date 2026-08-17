@@ -45,6 +45,7 @@ import {
   revelarCaminho,
 } from "@/lib/api";
 import type { FsEntry } from "@/lib/types";
+import { usePersistedState } from "@/lib/persist";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { ordenar, type ChaveOrdem, type Ordem } from "./ordenar";
@@ -456,6 +457,12 @@ export function ContentPane({
   const renomearAoAparecer = useRef<string | null>(null);
   const [modo, setModo] = useState<ModoView>("detalhes");
   const [ordem, setOrdem] = useState<Ordem>({ chave: "nome", direcao: "asc" });
+  // #990: "Pastas primeiro" é OPT-IN e PERSISTE (localStorage puro, conveniência
+  // de UI local). Default = false → arquivos e pastas se misturam pelo critério.
+  const [pastasPrimeiro, setPastasPrimeiro] = usePersistedState(
+    "explorer.pastasPrimeiro.v1",
+    false,
+  );
   const [selecao, setSelecao] = useState<EstadoSelecao>(SELECAO_VAZIA);
   const [largura, setLargura] = useState(0);
   // #681: filtro in-folder (as-you-type) + toggle de ocultos (off por padrão).
@@ -524,8 +531,8 @@ export function ContentPane({
     const filtrados = filtrosTipo.length
       ? porNome.filter((e) => passaFiltroTipo(e, filtrosTipo))
       : porNome;
-    return ordenar(filtrados, ordem);
-  }, [entradas, filtro, filtrosTipo, mostrarOcultos, ordem]);
+    return ordenar(filtrados, ordem, pastasPrimeiro);
+  }, [entradas, filtro, filtrosTipo, mostrarOcultos, ordem, pastasPrimeiro]);
   const paths = useMemo(() => itens.map((e) => e.path), [itens]);
   // #739 (F4): índice path→entry pra reportar a seleção em O(nº selecionados),
   // não O(n) filtrando a lista inteira a cada tecla (jank em 5000 itens).
@@ -1225,6 +1232,8 @@ export function ContentPane({
         onModo={setModo}
         ordem={ordem}
         onOrdem={setOrdem}
+        pastasPrimeiro={pastasPrimeiro}
+        onPastasPrimeiro={() => setPastasPrimeiro((v) => !v)}
         acoes={acoesMenu}
         clipboard={clipboard ?? null}
         selecionados={[...selecao.selecionados]}
