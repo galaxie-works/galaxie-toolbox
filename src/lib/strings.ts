@@ -1143,7 +1143,7 @@ const pt = {
       "Os contatos absorvidos serão apagados no Microsoft 365. Você pode desfazer logo depois (recriando-os), mas os IDs originais não voltam.",
     mergeProntoTitulo: "Plano pronto",
     mergeProntoDescricao:
-      "MergePlan v{version} com {n} contatos absorvidos. Confirme para atualizar o principal e apagar os absorvidos.",
+      "MergePlan v{version} com {n} contatos absorvidos. Confirme para atualizar o principal e excluir os absorvidos.",
     mergeContinuar: "Continuar",
     mergeCta: "Mesclar {n} contatos",
     mergeProntoCta: "Confirmar e mesclar",
@@ -1544,7 +1544,7 @@ const pt = {
     caixaAcessoParcial:
       "Acesso parcial — você não tem permissão para abrir esta pasta.",
     // #464 (S2): erros/rótulos de People que vazavam em inglês pra UI.
-    pessoaNaoEditavel: "Esta pessoa não é um contato editável do Microsoft.",
+    pessoaNaoEditavel: "Esta pessoa não é um contato editável da Microsoft.",
     mergeJaRodando: "Uma mesclagem já está em andamento.",
     mergeNadaDesfazer: "Nada a desfazer.",
     peopleSemNome: "Sem nome",
