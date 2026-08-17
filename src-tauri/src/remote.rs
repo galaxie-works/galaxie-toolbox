@@ -548,6 +548,30 @@ impl RuntimeSession {
         // mover `request.ice_servers` pro `SessionConfig` — vamos precisar deles pro
         // gathering de candidato srflx logo abaixo (o `SessionConfig` consome o Vec).
         let stun_alvos = resolver_stun_addrs(&request.ice_servers);
+        // #1108 (sondagem TURN, Ref): diagnóstico de infra pra decidir o relay — o coturn
+        // de prod já entrega credencial TURN efêmera no `ice_servers`, ou os campos vêm
+        // vazios (provisionamento pendente no VPS)? Loga SÓ contagem + presença; o
+        // `username`/`credential` (o segredo efêmero HMAC) NUNCA é logado. Um servidor
+        // conta como "TURN utilizável" só se tem url `turn:`/`turns:` E credencial não-vazia.
+        {
+            let total = request.ice_servers.len();
+            let com_turn_utilizavel = request
+                .ice_servers
+                .iter()
+                .filter(|s| s.tem_turn() && !s.credential.is_empty() && !s.username.is_empty())
+                .count();
+            let com_stun = request
+                .ice_servers
+                .iter()
+                .filter(|s| s.urls.iter().any(|u| u.starts_with("stun:")))
+                .count();
+            log::info!(
+                "[remote] ice_servers recebidos: {total} servidor(es) ({com_stun} com STUN, \
+                 {com_turn_utilizavel} com TURN+credencial preenchida) — segredo NÃO logado \
+                 (sondagem #1108: TURN {})",
+                if com_turn_utilizavel > 0 { "PRONTO p/ relay" } else { "sem credencial (relay bloqueado)" }
+            );
+        }
         let mut transport = Transport::novo(
             SessionConfig {
                 papel: request.role.papel(),
