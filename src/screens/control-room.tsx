@@ -1954,7 +1954,11 @@ function FolderSidebar({
   return (
     <aside
       className={cn(
-        "flex shrink-0 flex-col gap-3 rounded-xl border bg-card p-3 transition-[width] duration-200",
+        // #912: borderless — sai o "card" (rounded-xl border bg-card) e entra a
+        // divisória SÓ à direita (border-r) + o fundo de chrome do app (bg-muted/30,
+        // o mesmo padrão in-content das rails do Navigator), destacando o sidebar do
+        // content area. Splitter (resize) = follow-up (interage com o colapsar).
+        "flex shrink-0 flex-col gap-3 border-r border-border bg-muted/30 p-3 transition-[width] duration-200",
         // #466: o w-52 (208px) cortava "Caixa de entrada" (pt). Fit-content NÃO
         // resolve aqui — os rótulos são `min-w-0 flex-1 truncate` (o min-w-0 do
         // truncate faz o fit-content colapsar pro min-content e ficar no min). Então
