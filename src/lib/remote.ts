@@ -173,7 +173,11 @@ export async function sinalizarSessao(
   signal: RemoteSignal,
 ): Promise<void> {
   if (!TAURI) return;
-  return invoke<void>("remote_session_signal", { sessionId, signal });
+  // #1071 (RB2): o comando Rust recebe um único parâmetro `request` — o payload
+  // TEM que vir aninhado (`{ request: {...} }`), igual ao remote_session_start.
+  // Enviar achatado (`{ sessionId, signal }`) dá erro de desserialização no Tauri
+  // v2 e a sessão nunca sai de "connecting".
+  return invoke<void>("remote_session_signal", { request: { sessionId, signal } });
 }
 
 /** Envia um evento de input (só controller, capability input ativa). */
@@ -182,7 +186,8 @@ export async function enviarInput(
   event: InputEvent,
 ): Promise<void> {
   if (!TAURI) return;
-  return invoke<void>("remote_session_input", { sessionId, event });
+  // #1071 (RB2): payload aninhado em `request` (ver sinalizarSessao).
+  return invoke<void>("remote_session_input", { request: { sessionId, event } });
 }
 
 /** Encerra a sessão (idempotente): fecha transporte/canais e solta input preso. */
@@ -191,5 +196,6 @@ export async function encerrarSessao(
   reason = "requested",
 ): Promise<void> {
   if (!TAURI) return;
-  return invoke<void>("remote_session_end", { sessionId, reason });
+  // #1071 (RB2): payload aninhado em `request` (ver sinalizarSessao).
+  return invoke<void>("remote_session_end", { request: { sessionId, reason } });
 }
