@@ -72,6 +72,9 @@ struct Descriptor(NCRYPT_DESCRIPTOR_HANDLE);
 
 impl Drop for Descriptor {
     fn drop(&mut self) {
+        // SAFETY: `self.0` é um NCRYPT_DESCRIPTOR_HANDLE vivo obtido de
+        // `NCryptCreateProtectionDescriptor`/`NCryptUnprotectSecret`, fechado uma
+        // única vez aqui (dono único).
         unsafe { NCryptCloseProtectionDescriptor(self.0) };
     }
 }
@@ -80,12 +83,17 @@ pub fn protect_machine(secret: &[u8]) -> Result<Vec<u8>, SecretError> {
     let length = u32::try_from(secret.len()).map_err(|_| SecretError::TooLarge)?;
     let descriptor_wide: Vec<u16> = DESCRIPTOR.encode_utf16().chain(Some(0)).collect();
     let mut descriptor = null_mut();
+    // SAFETY: `descriptor_wide` é UTF-16 NUL-terminada válida; em sucesso a API
+    // escreve um handle em `descriptor`, que `Descriptor` passa a possuir e fecha.
     check(unsafe {
         NCryptCreateProtectionDescriptor(descriptor_wide.as_ptr(), 0, &mut descriptor)
     })?;
     let descriptor = Descriptor(descriptor);
     let mut output = null_mut();
     let mut output_len = 0;
+    // SAFETY: `descriptor.0` é um handle vivo; `secret`/`length` descrevem um slice
+    // válido; `output`/`output_len` são out-vars — em sucesso a API aloca o buffer
+    // em `output` (liberado por `copy_and_free` via `LocalFree`).
     check(unsafe {
         NCryptProtectSecret(
             descriptor.0,
@@ -106,6 +114,9 @@ pub fn unprotect_machine(blob: &[u8]) -> Result<Vec<u8>, SecretError> {
     let mut descriptor = null_mut();
     let mut output = null_mut();
     let mut output_len = 0;
+    // SAFETY: `blob`/`length` descrevem um slice válido; `descriptor` e `output`/
+    // `output_len` são out-vars — em sucesso a API aloca o descritor (fechado por
+    // `Descriptor`) e o buffer em `output` (liberado por `copy_and_free`).
     check(unsafe {
         NCryptUnprotectSecret(
             &mut descriptor,
@@ -168,7 +179,12 @@ fn write_locked_file(path: &Path, blob: &[u8], sddl: &str) -> Result<(), SecretE
     }
 
     let attributes = SECURITY_ATTRIBUTES {
-        nLength: u32::try_from(std::mem::size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
+        // #1076 (RB12): fail-CLOSED. `nLength` = 0 faz o Win32 IGNORAR o
+        // `lpSecurityDescriptor` — o arquivo do blob nasceria com a DACL default
+        // (herdada/aberta) em vez do lock SYSTEM+Administrators (SEC5). `size_of` é
+        // const e cabe em u32; `expect` nunca dispara, mas jamais deixa virar 0.
+        nLength: u32::try_from(std::mem::size_of::<SECURITY_ATTRIBUTES>())
+            .expect("size_of::<SECURITY_ATTRIBUTES>() cabe em u32"),
         lpSecurityDescriptor: security_descriptor,
         bInheritHandle: 0,
     };
@@ -327,7 +343,11 @@ fn copy_and_free(pointer: *mut u8, length: u32) -> Result<Vec<u8>, SecretError> 
     if pointer.is_null() {
         return Err(SecretError::Windows(-1));
     }
+    // SAFETY: `pointer` é não-nulo (checado acima) e aponta para `length` bytes
+    // alocados pela NCrypt*Secret; copiamos para um Vec próprio antes de liberar.
     let bytes = unsafe { std::slice::from_raw_parts(pointer, length as usize) }.to_vec();
+    // SAFETY: `pointer` foi alocado pela API (LocalAlloc-compatível) e não é mais
+    // usado após a cópia — liberado uma única vez.
     unsafe { LocalFree(pointer.cast()) };
     Ok(bytes)
 }

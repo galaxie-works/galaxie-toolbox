@@ -784,6 +784,9 @@ fn detectar_clouds() -> Vec<CloudLocation> {
 // location" (atalho nethood sem letra) é mecanismo de shell diferente → outra fatia.
 
 /// Normaliza uma letra de drive pra "Z:" (aceita "z", "Z", "Z:", "Z:\").
+/// #1076 (RB32): só usada pelo mapeamento de network drive (Win32) — `#[cfg(windows)]`
+/// pra não virar dead_code fora do Windows.
+#[cfg(windows)]
 fn normalizar_letra_drive(s: &str) -> Result<String, FsError> {
     let t = s.trim().trim_end_matches(['\\', '/']).trim_end_matches(':');
     let mut chars = t.chars();
@@ -795,6 +798,9 @@ fn normalizar_letra_drive(s: &str) -> Result<String, FsError> {
 
 /// Valida um caminho UNC de rede (`\\server\share`): 2 barras iniciais + server
 /// + separador + share.
+/// #1076 (RB32): só usada pelo mapeamento de network drive (Win32) — `#[cfg(windows)]`
+/// pra não virar dead_code fora do Windows.
+#[cfg(windows)]
 fn validar_unc(p: &str) -> Result<(), FsError> {
     let t = p.trim();
     let dupla = t.starts_with("\\\\") || t.starts_with("//");
@@ -872,7 +878,9 @@ fn desconectar_network_drive(_letra: &str, _forcar: bool) -> Result<(), FsError>
 
 /// Token que o front envia pra confirmar exclusão PERMANENTE. Sem ele,
 /// `excluir_permanente` recusa — trava contra apagar sem querer.
-pub const TOKEN_EXCLUSAO_PERMANENTE: &str = "galaxie-excluir-permanente";
+/// #1076 (RB32): privado — o front manda a string literal e nenhum outro módulo
+/// Rust consome a const (só usada neste arquivo + testes).
+const TOKEN_EXCLUSAO_PERMANENTE: &str = "galaxie-excluir-permanente";
 
 fn criar_dir(path: &str) -> Result<(), FsError> {
     validar(path)?;
@@ -1874,6 +1882,14 @@ fn tem_seek_penalty(vol: &Path) -> Option<bool> {
         );
         let _ = CloseHandle(h);
         r.ok()?;
+        // #1076 (RB31): só confia no descritor se o IOCTL preencheu ao menos a struct
+        // inteira. Sem checar `retornados`, um retorno de 0 bytes (sucesso vazio)
+        // deixaria `desc` no default — `IncursSeekPenalty=false` — e um HDD viraria
+        // "SSD", disparando paralelismo alto que causa THRASH de seek no disco
+        // mecânico. Bytes insuficientes ⇒ assume HDD (conservador: com seek penalty).
+        if (retornados as usize) < std::mem::size_of::<DEVICE_SEEK_PENALTY_DESCRIPTOR>() {
+            return Some(true);
+        }
         Some(desc.IncursSeekPenalty)
     }
 }
@@ -4056,6 +4072,8 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
+    // #1076 (RB32): helper é `#[cfg(windows)]`, então o teste também.
+    #[cfg(windows)]
     #[test]
     fn normalizar_letra_drive_aceita_formatos_e_rejeita_lixo() {
         for s in ["z", "Z", "Z:", "Z:\\", "z:/"] {
@@ -4066,6 +4084,8 @@ mod tests {
         }
     }
 
+    // #1076 (RB32): helper é `#[cfg(windows)]`, então o teste também.
+    #[cfg(windows)]
     #[test]
     fn validar_unc_exige_server_e_share() {
         assert!(validar_unc("\\\\server\\share").is_ok());

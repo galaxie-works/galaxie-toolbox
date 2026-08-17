@@ -157,3 +157,9 @@ Três travas pra a UI caseira não nascer de novo quando já existe primitivo pr
 $env:GH_TOKEN = $env:GITHUB_PERSONAL_ACCESS_TOKEN
 gh project item-list 3 --owner galaxie-works --format json
 ```
+
+## 8. MSRV / toolchain (decisão #1076 RB14)
+- **MSRV declarado = Rust 1.85** (em `src-tauri/Cargo.toml`, chave `rust-version`).
+- **Por quê:** os crates de `services/` `remote-net`, `remote-capture` e `remote-system-agent` são **edition 2024**, que estabilizou no **Rust 1.85**. O `app` (src-tauri) puxa `galaxie-remote-net` de forma **incondicional** (e os demais sob `--features remote`), então o build real exige ≥1.85 mesmo no perfil default.
+- **Decisão:** alinhar para cima (subir o `rust-version` de `1.77.2`→`1.85`) em vez de rebaixar os crates de services para edition 2021 — a menor mudança que fica **honesta**, sem arriscar features de edition 2024 já em uso. Os crates edition-2024 não declaram `rust-version` próprio (não fazem afirmação falsa); a única declaração incorreta era a do `app`.
+- **Não** rebaixar para <1.85 sem antes migrar esses crates de services para edition 2021.

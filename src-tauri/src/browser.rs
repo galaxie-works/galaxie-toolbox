@@ -369,6 +369,10 @@ pub fn instalar_accelerators(app: &AppHandle, wv: &tauri::webview::Webview) {
                     Some(a) => a,
                     None => return Ok(()),
                 };
+                // SAFETY: `args` é a interface COM viva do evento AcceleratorKeyPressed;
+                // os métodos (`KeyEventKind`/`VirtualKey`/`SetHandled`) só desreferenciam
+                // a vtable dela, e `GetKeyState` lê o estado global do teclado (sempre
+                // válido). Nenhum ponteiro escapa do bloco.
                 unsafe {
                     let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
                     args.KeyEventKind(&mut kind)?;
@@ -397,6 +401,9 @@ pub fn instalar_accelerators(app: &AppHandle, wv: &tauri::webview::Webview) {
             },
         ));
         let mut token = Default::default();
+        // SAFETY: `controller` é o ICoreWebView2Controller vivo desta aba (obtido do
+        // `pw` do Tauri); registra `handler` (COM ref-counted, mantido vivo pelo
+        // WebView2) e escreve o token de registro em `token`.
         unsafe {
             let _ = controller.add_AcceleratorKeyPressed(&handler, &mut token);
         }
@@ -416,6 +423,8 @@ pub fn instalar_captura_scroll(wv: &tauri::webview::Webview, label: &str) {
 
     let label = label.to_string();
     let _ = wv.with_webview(move |pw| {
+        // SAFETY: `pw` é a PlatformWebview viva fornecida pelo Tauri neste closure;
+        // `controller()`/`CoreWebView2()` acessam o ponteiro COM do WebView2 desta aba.
         let core = match unsafe { pw.controller().CoreWebView2() } {
             Ok(c) => c,
             Err(_) => return,
@@ -425,6 +434,10 @@ pub fn instalar_captura_scroll(wv: &tauri::webview::Webview, label: &str) {
                 Some(a) => a,
                 None => return Ok(()),
             };
+            // SAFETY: `args` é a interface COM viva do evento WebMessageReceived;
+            // `TryGetWebMessageAsString` escreve em `bruto` uma string alocada pelo
+            // WebView2 (CoTaskMemAlloc), que copiamos e liberamos com `CoTaskMemFree`
+            // exatamente uma vez antes de sair do bloco.
             unsafe {
                 let mut bruto = windows::core::PWSTR::null();
                 if args.TryGetWebMessageAsString(&mut bruto).is_ok() && !bruto.is_null() {
@@ -441,6 +454,8 @@ pub fn instalar_captura_scroll(wv: &tauri::webview::Webview, label: &str) {
             Ok(())
         }));
         let mut token = Default::default();
+        // SAFETY: `core` é o ICoreWebView2 vivo desta aba; registra `handler` (COM
+        // ref-counted, mantido vivo pelo WebView2) e escreve o token em `token`.
         unsafe {
             let _ = core.add_WebMessageReceived(&handler, &mut token);
         }
@@ -485,6 +500,10 @@ fn capturar_snapshot(wv: &tauri::webview::Webview) -> Option<String> {
 
     let saida: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let saida_cl = saida.clone();
+    // SAFETY: dentro do closure do Tauri, `pw` é a PlatformWebview viva desta aba;
+    // as chamadas COM (`controller`/`CoreWebView2`/`CapturePreview`) e as leituras do
+    // `IStream` (`Seek`/`Read`) usam ponteiros e buffers próprios (`buf`) vivos durante
+    // a operação síncrona (pump até o CapturePreview terminar). Nada escapa do bloco.
     let _ = wv.with_webview(move |pw| unsafe {
         let core = match pw.controller().CoreWebView2() {
             Ok(c) => c,

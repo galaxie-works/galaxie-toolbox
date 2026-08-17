@@ -360,7 +360,8 @@ fn key_from_weburl(web_url: &str) -> String {
 
 /// Conjunto de siteGuids que ja tem atalho no OneDrive do usuario.
 /// Consulta DELEGADA (/me/drive): diferente do app-only, aqui os remoteItem
-/// costumam aparecer. O log mostra o que veio, pra nao ficar no achismo.
+/// costumam aparecer. #1076 (RB48/LGPD): loga só a CONTAGEM agregada — nunca os
+/// NOMES dos itens do OneDrive (podem ser nome de cliente/projeto = PII).
 fn connected_site_guids(client: &reqwest::blocking::Client, token: &str) -> Vec<String> {
     let url = format!("{GRAPH}/me/drive/root/children?$select=id,name,remoteItem&$top=200");
     let mut out = Vec::new();
@@ -373,15 +374,13 @@ fn connected_site_guids(client: &reqwest::blocking::Client, token: &str) -> Vec<
                     let mut com_remote = 0;
                     if let Some(items) = v["value"].as_array() {
                         for it in items {
-                            let nome = it["name"].as_str().unwrap_or("?");
+                            // #1076 (RB48): NÃO logar o nome do item (PII); só coletar
+                            // o siteId e contar.
                             if let Some(sid) =
                                 it["remoteItem"]["sharepointIds"]["siteId"].as_str()
                             {
                                 com_remote += 1;
-                                log::info!("[atalho] '{nome}' -> siteId={sid}");
                                 out.push(sid.to_string());
-                            } else {
-                                log::info!("[atalho] '{nome}' (pasta normal)");
                             }
                         }
                     }
@@ -3573,9 +3572,30 @@ fn mailbox_prefix(mailbox: Option<&str>) -> String {
     }
 }
 
+/// #1076 (RB48/LGPD): mascara o local-part de um e-mail pra uso em LOG — mantém só
+/// a 1ª letra e o domínio (`fulano@empresa.com` → `f***@empresa.com`). Sem `@` (não
+/// parece e-mail), preserva só a 1ª letra. Endereço de contato é PII de cliente
+/// real; nunca deve ir em claro pro log.
+fn mascarar_email(email: &str) -> String {
+    let email = email.trim();
+    match email.split_once('@') {
+        Some((local, dominio)) if !local.is_empty() => {
+            let inicial = local.chars().next().unwrap_or('*');
+            format!("{inicial}***@{dominio}")
+        }
+        _ => {
+            let mut chars = email.chars();
+            match chars.next() {
+                Some(c) => format!("{c}***"),
+                None => "***".to_string(),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod testes_mailbox_prefix {
-    use super::{erro_envio, erro_escrita, mailbox_prefix};
+    use super::{erro_envio, erro_escrita, mailbox_prefix, mascarar_email};
 
     #[test]
     fn preserva_me_como_default() {
@@ -3593,7 +3613,10 @@ mod testes_mailbox_prefix {
     }
 
     #[test]
-    fn escrita_403_expoe_erro_claro_da_caixa_ativa() {
+    fn escrita_403_nao_vaza_a_caixa_no_erro() {
+        // #1076 (RB48/LGPD): o `/{prefix}` de uma caixa compartilhada é
+        // `users/<email>` — PII do cliente. A mensagem que vai ao FRONT (toast) NÃO
+        // pode conter o endereço; a caixa fica só no log interno.
         let erro = erro_escrita(
             "users/financeiro%40empresa.com",
             "mover mensagem",
@@ -3601,11 +3624,18 @@ mod testes_mailbox_prefix {
         );
         assert!(erro.contains("sem permissão de escrita"));
         assert!(erro.contains("(403)"));
-        assert!(erro.contains("users/financeiro%40empresa.com"));
+        assert!(
+            !erro.contains("financeiro"),
+            "não pode vazar a caixa (PII) no erro: {erro}"
+        );
+        assert!(
+            !erro.contains("users/"),
+            "não pode vazar o prefix da caixa: {erro}"
+        );
     }
 
     #[test]
-    fn envio_403_expoe_erro_claro_da_caixa_ativa() {
+    fn envio_403_nao_vaza_a_caixa_no_erro() {
         let erro = erro_envio(
             "users/financeiro%40empresa.com",
             "envio",
@@ -3613,6 +3643,24 @@ mod testes_mailbox_prefix {
         );
         assert!(erro.contains("sem permissão para enviar"));
         assert!(erro.contains("(403)"));
+        // #1076 (RB48): também aqui a caixa não pode vazar no toast.
+        assert!(
+            !erro.contains("financeiro"),
+            "não pode vazar a caixa (PII) no erro: {erro}"
+        );
+    }
+
+    #[test]
+    fn mascarar_email_preserva_inicial_e_dominio() {
+        // #1076 (RB48): local-part vira `x***`, domínio intacto; sem `@` não vaza tudo.
+        assert_eq!(mascarar_email("fulano@empresa.com"), "f***@empresa.com");
+        assert_eq!(mascarar_email(" Ana.Silva@Cliente.com "), "A***@Cliente.com");
+        assert_eq!(mascarar_email("x@y.z"), "x***@y.z");
+        assert_eq!(mascarar_email(""), "***");
+        // sem '@' não expõe o valor inteiro.
+        let m = mascarar_email("naoehemail");
+        assert_ne!(m, "naoehemail");
+        assert!(m.starts_with('n') && m.ends_with("***"));
     }
 }
 
@@ -4223,27 +4271,36 @@ fn deletar_msg(
     }
 }
 
+/// Mensagem de erro de escrita para o FRONT. #1076 (RB48/LGPD): NÃO inclui o
+/// `/{prefix}` — numa caixa compartilhada o prefix é `users/<email>`, e o endereço
+/// é PII do cliente; não pode vazar no toast do usuário. O prefix fica só no log
+/// interno (diagnóstico), nunca na string devolvida.
 fn erro_escrita(
     prefix: &str,
     operacao: &str,
     status: reqwest::StatusCode,
 ) -> String {
+    log::warn!("[escrita] {operacao} em /{prefix} retornou {status}");
     if status.as_u16() == 403 {
-        format!("sem permissão de escrita na caixa ativa (403): {operacao} em /{prefix}")
+        format!("sem permissão de escrita na caixa ativa (403): {operacao}")
     } else {
-        format!("{operacao} em /{prefix} retornou {status}")
+        format!("{operacao} na caixa ativa retornou {status}")
     }
 }
 
+/// Mensagem de erro de envio para o FRONT. #1076 (RB48/LGPD): mesma regra do
+/// `erro_escrita` — o `/{prefix}` (`users/<email>` na caixa compartilhada) é PII e
+/// fica só no log interno, nunca no toast.
 fn erro_envio(
     prefix: &str,
     operacao: &str,
     status: reqwest::StatusCode,
 ) -> String {
+    log::warn!("[envio] {operacao} em /{prefix} retornou {status}");
     if prefix != "me" && status == reqwest::StatusCode::FORBIDDEN {
         format!("sem permissão para enviar usando a caixa ativa (403): {operacao}")
     } else {
-        format!("{operacao} em /{prefix} retornou {status}")
+        format!("{operacao} na caixa ativa retornou {status}")
     }
 }
 
@@ -5862,6 +5919,9 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
 /// arbitrário). ⚠️ O endpoint/shape do `/admin/todo` ainda NÃO foi confirmado no
 /// tenant real (auth-gate) — a UI mantém a escrita TRAVADA atrás de um gate até o
 /// live-QA de admin do Wagner validar; este comando fica pronto pra ativar (#208).
+/// #1076 (RB16): follow-up formal desta dívida (confirmar endpoint/shape em live-QA
+/// de admin) rastreado na auditoria #994. Enquanto não confirmado, a trava da UI
+/// permanece — não ativar sem o live-QA fechar.
 pub fn cr_org_todo_set(store: &TokenStore, campo: &str, valor: bool) -> Result<(), String> {
     if !matches!(
         campo,
@@ -8214,12 +8274,13 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
                 .and_then(|v| v["value"].as_array().map(|a| !a.is_empty()))
                 .unwrap_or(false),
             Ok(resp) => {
-                log::warn!("[contatos] filtro '{email}' retornou {}", resp.status());
+                // #1076 (RB48/LGPD): e-mail do contato mascarado no log (PII).
+                log::warn!("[contatos] filtro '{}' retornou {}", mascarar_email(email), resp.status());
                 // Nao da pra ter certeza: pula para nao arriscar duplicar.
                 true
             }
             Err(e) => {
-                log::warn!("[contatos] filtro '{email}' falhou: {e}");
+                log::warn!("[contatos] filtro '{}' falhou: {e}", mascarar_email(email));
                 true
             }
         };
@@ -8242,8 +8303,9 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
             client.post(&criar_url).bearer_auth(&token).json(&body).send()
         }) {
             Ok(resp) if resp.status().is_success() => criados += 1,
-            Ok(resp) => log::warn!("[contatos] criar '{email}' retornou {}", resp.status()),
-            Err(e) => log::warn!("[contatos] criar '{email}' falhou: {e}"),
+            // #1076 (RB48/LGPD): e-mail do contato mascarado no log (PII).
+            Ok(resp) => log::warn!("[contatos] criar '{}' retornou {}", mascarar_email(email), resp.status()),
+            Err(e) => log::warn!("[contatos] criar '{}' falhou: {e}", mascarar_email(email)),
         }
     }
     Ok(criados)

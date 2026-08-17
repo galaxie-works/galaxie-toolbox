@@ -68,8 +68,11 @@ pub struct UnattendedSession {
 
 struct AssistedCode {
     creator_device_id: String,
+    // A expiração é imposta por `expires_at: Instant` (checado em `redeem_code`).
+    // #1076 (RB17): NÃO guardamos mais a versão unix-seconds — ela só era repassada
+    // ao resultado do redeem e nunca lida pelo chamador; o valor wall-clock já vai
+    // ao criador via `create_code`. Sem campo morto e sem `#[allow(dead_code)]` nu.
     expires_at: Instant,
-    expires_at_unix_seconds: u64,
 }
 
 struct SlidingWindowLimiter {
@@ -446,7 +449,6 @@ impl AppState {
                 entry.insert(AssistedCode {
                     creator_device_id: creator_device_id.to_owned(),
                     expires_at,
-                    expires_at_unix_seconds,
                 });
                 return Ok((code, expires_at_unix_seconds));
             }
@@ -468,7 +470,6 @@ impl AppState {
         }
         RedeemResult::Ready {
             creator_device_id: entry.creator_device_id,
-            expires_at_unix_seconds: entry.expires_at_unix_seconds,
         }
     }
 
@@ -497,8 +498,6 @@ pub enum RedeemResult {
     Expired,
     Ready {
         creator_device_id: String,
-        #[allow(dead_code)]
-        expires_at_unix_seconds: u64,
     },
 }
 
