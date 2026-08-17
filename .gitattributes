@@ -1,3 +1,54 @@
-infra/remote/*.sh text eol=lf
+# Política de EOL do repositório (#1014, HG2). Sem esta linha, o índice ficar
+# limpo dependia de `core.autocrlf=true` em CADA máquina — e o time já teve dor
+# de CRLF aqui. `* text=auto`: o git normaliza pra LF no índice e usa o EOL
+# nativo no checkout, então uma máquina/agente novo sem config local NÃO gera
+# mais diff de arquivo inteiro por troca de EOL.
+* text=auto
+
+# Scripts com EOL fixo por exigência de execução.
+*.sh   text eol=lf
+*.bash text eol=lf
+*.ps1  text eol=crlf
+*.psm1 text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# infra/remote (preservado do original): units/compose/entrega no Linux SEMPRE
+# LF, independentemente da plataforma de quem commita.
+infra/remote/*.sh      text eol=lf
 infra/remote/*.service text eol=lf
-infra/remote/*.yml text eol=lf
+infra/remote/*.yml     text eol=lf
+
+# Binários — declara `binary` explicitamente (à prova da heurística do
+# `text=auto`): nunca aplica conversão de EOL nem tenta diff de texto.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.icns  binary
+*.webp  binary
+*.avif  binary
+*.bmp   binary
+*.wav   binary
+*.mp3   binary
+*.ogg   binary
+*.opus  binary
+*.flac  binary
+*.m4a   binary
+*.mp4   binary
+*.webm  binary
+*.mov   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.eot   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary
+*.7z    binary
+*.exe   binary
+*.dll   binary
+*.node  binary
+*.wasm  binary
