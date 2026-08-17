@@ -1005,6 +1005,9 @@ function EventoFormSheet() {
   const coresCat = useAppStore((s) => s.agendaCoresCategoria);
   const calendarios = useAppStore((s) => s.agendaCalendarios);
   const selCalendarios = useAppStore((s) => s.agendaCalendariosSelecionados);
+  // #1069: caixa ativa (própria/compartilhada) pra ler a recorrência da série na
+  // caixa certa (a escrita do form já é mailbox-aware pelo slice).
+  const caixaAtiva = useAppStore((s) => s.caixaAtiva);
 
   const [titulo, setTitulo] = useState("");
   const [diaInteiro, setDiaInteiro] = useState(false);
@@ -1272,7 +1275,9 @@ function EventoFormSheet() {
       evento.tipo === "seriesMaster" ? evento.id : evento.seriesMasterId;
     if (!masterId) return;
     let vivo = true;
-    void crEventoRecorrencia(masterId)
+    // #1069: lê a recorrência da série na caixa ATIVA (própria ou compartilhada),
+    // não no /me fixo — casa com a edição/exclusão de evento agora mailbox-aware.
+    void crEventoRecorrencia(masterId, caixaAtiva)
       .then((rec) => {
         if (!vivo) return;
         if (!rec) {
@@ -1299,7 +1304,7 @@ function EventoFormSheet() {
     return () => {
       vivo = false;
     };
-  }, [aberto, modo, evento, escopoRec, eventoRecorrente]);
+  }, [aberto, modo, evento, escopoRec, eventoRecorrente, caixaAtiva]);
 
   const executarSalvar = async (
     idAlvo: string | null,

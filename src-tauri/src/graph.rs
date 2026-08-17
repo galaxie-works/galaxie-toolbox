@@ -1883,10 +1883,15 @@ fn recorrencia_de_json(recurrence: &serde_json::Value) -> Option<Recorrencia> {
 pub fn cr_evento_recorrencia(
     store: &TokenStore,
     id: &str,
+    mailbox: Option<&str>,
 ) -> Result<Option<Recorrencia>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}?$select=recurrence");
+    // #1069: recorrência da série na caixa RESOLVIDA — antes /me fixo, o que numa
+    // caixa compartilhada dava 404 e o form de "editar a série" não carregava os
+    // campos (só o fallback best-effort). Agora acompanha a escrita mailbox-aware.
+    let prefix = mailbox_prefix(mailbox);
+    let url = format!("{GRAPH}/{prefix}/events/{id}?$select=recurrence");
     let resp = graph_enviar("agenda:recorrencia", GRAPH_TETO_ESPERA_S, || {
         client.get(&url).bearer_auth(&token).send()
     })
@@ -1894,7 +1899,7 @@ pub fn cr_evento_recorrencia(
     if !resp.status().is_success() {
         let st = resp.status();
         log::warn!("[agenda:recorrencia] Graph retornou {st}");
-        return Err(format!("/me/events (recorrência) retornou {st}"));
+        return Err(format!("/{prefix}/events (recorrência) retornou {st}"));
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     Ok(recorrencia_de_json(&v["recurrence"]))
@@ -2045,42 +2050,72 @@ fn evento_json(input: &EventoInput) -> serde_json::Value {
     obj
 }
 
-/// Cria um evento no calendário do usuário (POST /me/events). Devolve o id do
-/// evento criado para o front trocar o id otimista pelo real. Calendars.ReadWrite.
-pub fn cr_criar_evento(store: &TokenStore, input: EventoInput) -> Result<String, String> {
+/// #1069: URL de um recurso de evento na caixa RESOLVIDA por `mailbox_prefix`.
+/// `sufixo` acrescenta a sub-ação ("" · "/cancel" · "/accept"…). O bug do #1069
+/// era a escrita de agenda presa em `/me/events`: numa caixa COMPARTILHADA isso
+/// mirava o calendário errado (e, no excluir/cancelar, o 404 da caixa errada
+/// virava sucesso → exclusão FANTASMA). Extraída pura pra provar em teste que a
+/// caixa certa endereça `/users/{addr}/events`.
+fn url_evento(prefix: &str, id: &str, sufixo: &str) -> String {
+    format!("{GRAPH}/{prefix}/events/{id}{sufixo}")
+}
+
+/// #1069: URL da COLEÇÃO de eventos na caixa resolvida (POST criar). Sem
+/// calendário-alvo mira `/{prefix}/events`; com id, `/{prefix}/calendars/{id}/events`.
+fn url_eventos_colecao(prefix: &str, calendario_id: Option<&str>) -> String {
+    match calendario_id.filter(|s| !s.is_empty()) {
+        Some(cal) => format!("{GRAPH}/{prefix}/calendars/{cal}/events"),
+        None => format!("{GRAPH}/{prefix}/events"),
+    }
+}
+
+/// Cria um evento no calendário da caixa ativa (POST /{prefix}/events). Devolve o
+/// id do evento criado para o front trocar o id otimista pelo real. #1069:
+/// `mailbox` endereça a caixa (própria ou compartilhada). Calendars.ReadWrite(.Shared).
+pub fn cr_criar_evento(
+    store: &TokenStore,
+    input: EventoInput,
+    mailbox: Option<&str>,
+) -> Result<String, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    // Calendário-alvo (#233): com id, cria em /me/calendars/{id}/events; sem id,
-    // mantém o padrão (/me/events) — sem regressão do #211.
-    let url = match input.calendario_id.as_deref().filter(|s| !s.is_empty()) {
-        Some(cal) => format!("{GRAPH}/me/calendars/{cal}/events"),
-        None => format!("{GRAPH}/me/events"),
-    };
+    let prefix = mailbox_prefix(mailbox);
+    // Calendário-alvo (#233): com id, cria em /{prefix}/calendars/{id}/events; sem
+    // id, mantém o padrão (/{prefix}/events) — sem regressão do #211. #1069: agora
+    // na caixa resolvida, não mais no /me fixo.
+    let url = url_eventos_colecao(&prefix, input.calendario_id.as_deref());
     let body = evento_json(&input);
     let resp = graph_enviar("agenda:criar", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(&token).json(&body).send()
     })
     .map_err(|e| format!("falha ao criar o evento: {e}"))?;
     if !resp.status().is_success() {
-        return Err(erro_escrita("me/events", "criar evento", resp.status()));
+        return Err(erro_escrita(&format!("{prefix}/events"), "criar evento", resp.status()));
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     memo_invalidar("agenda:"); // #440: agenda mudou → próximo read traz fresco
     Ok(v["id"].as_str().unwrap_or("").to_string())
 }
 
-/// Edita um evento existente (PATCH /me/events/{id}). Calendars.ReadWrite.
-pub fn cr_editar_evento(store: &TokenStore, id: &str, input: EventoInput) -> Result<(), String> {
+/// Edita um evento existente (PATCH /{prefix}/events/{id}). #1069: `mailbox`
+/// endereça a caixa (própria ou compartilhada). Calendars.ReadWrite(.Shared).
+pub fn cr_editar_evento(
+    store: &TokenStore,
+    id: &str,
+    input: EventoInput,
+    mailbox: Option<&str>,
+) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}");
+    let prefix = mailbox_prefix(mailbox);
+    let url = url_evento(&prefix, id, "");
     let body = evento_json(&input);
     let resp = graph_enviar("agenda:editar", GRAPH_TETO_ESPERA_S, || {
         client.patch(&url).bearer_auth(&token).json(&body).send()
     })
     .map_err(|e| format!("falha ao editar o evento: {e}"))?;
     if !resp.status().is_success() {
-        return Err(erro_escrita("me/events", "editar evento", resp.status()));
+        return Err(erro_escrita(&format!("{prefix}/events"), "editar evento", resp.status()));
     }
     memo_invalidar("agenda:"); // #440
     Ok(())
@@ -2099,10 +2134,12 @@ pub fn cr_reagendar_evento(
     fim: &str,
     dia_inteiro: bool,
     time_zone: &str,
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}");
+    let prefix = mailbox_prefix(mailbox);
+    let url = url_evento(&prefix, id, ""); // #1069: caixa resolvida, não /me fixo.
     let ini = inicio.trim_end_matches('Z');
     let f = fim.trim_end_matches('Z');
     let body = serde_json::json!({
@@ -2115,27 +2152,48 @@ pub fn cr_reagendar_evento(
     })
     .map_err(|e| format!("falha ao reagendar o evento: {e}"))?;
     if !resp.status().is_success() {
-        return Err(erro_escrita("me/events", "reagendar evento", resp.status()));
+        return Err(erro_escrita(&format!("{prefix}/events"), "reagendar evento", resp.status()));
     }
     memo_invalidar("agenda:"); // #440
     Ok(())
 }
 
-/// Exclui um evento (DELETE /me/events/{id}). 404 conta como sucesso
-/// (idempotente — já foi removido). Calendars.ReadWrite.
-pub fn cr_excluir_evento(store: &TokenStore, id: &str) -> Result<(), String> {
+/// Exclui um evento (DELETE /{prefix}/events/{id}). #1069: `mailbox` endereça a
+/// caixa (própria ou compartilhada) — antes era /me fixo, o que numa caixa
+/// compartilhada apagava do calendário errado (ou, mais grave, o Graph devolvia
+/// 404 "não é da minha caixa" e o código tratava como sucesso: a UI removia o
+/// card e o evento PERMANECIA na caixa real — exclusão FANTASMA).
+/// Calendars.ReadWrite(.Shared).
+pub fn cr_excluir_evento(
+    store: &TokenStore,
+    id: &str,
+    mailbox: Option<&str>,
+) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}");
+    let prefix = mailbox_prefix(mailbox);
+    let url = url_evento(&prefix, id, "");
     let resp = graph_enviar("agenda:excluir", GRAPH_TETO_ESPERA_S, || {
         client.delete(&url).bearer_auth(&token).send()
     })
     .map_err(|e| format!("falha ao excluir o evento: {e}"))?;
-    if resp.status().is_success() || resp.status().as_u16() == 404 {
+    if resp.status().is_success() {
+        memo_invalidar("agenda:"); // #440
+        Ok(())
+    } else if resp.status().as_u16() == 404 {
+        // #1069: 404 só é aceito como sucesso-idempotente PORQUE a chamada foi
+        // endereçada à caixa CORRETA (mailbox aplicado no `prefix`). Antes, com
+        // /me fixo, um 404 podia significar apenas "este evento não é da minha
+        // caixa" e ainda assim virava sucesso → exclusão fantasma. Agora,
+        // resolvida a caixa, 404 = o evento realmente não existe LÁ.
+        // Limite honesto: sem um GET de verificação prévio não dá pra separar
+        // "nunca existiu" de "já foi excluído antes" — ambos são idempotência
+        // legítima na caixa certa, então aceitamos como sucesso e logamos.
+        log::info!("[agenda:excluir] 404 na caixa /{prefix} — evento já não existe (idempotente)");
         memo_invalidar("agenda:"); // #440
         Ok(())
     } else {
-        Err(erro_escrita("me/events", "excluir evento", resp.status()))
+        Err(erro_escrita(&format!("{prefix}/events"), "excluir evento", resp.status()))
     }
 }
 
@@ -2144,21 +2202,35 @@ pub fn cr_excluir_evento(store: &TokenStore, id: &str) -> Result<(), String> {
 /// convidados e remove o evento. Só é válido quando o usuário é o organizador —
 /// a UI já restringe a ação; um 403/400 do Graph vira erro tratado. O
 /// `comentario` opcional entra no corpo como "Comment". Calendars.ReadWrite.
-pub fn cr_cancelar_evento(store: &TokenStore, id: &str, comentario: &str) -> Result<(), String> {
+pub fn cr_cancelar_evento(
+    store: &TokenStore,
+    id: &str,
+    comentario: &str,
+    mailbox: Option<&str>,
+) -> Result<(), String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}/cancel");
+    let prefix = mailbox_prefix(mailbox);
+    let url = url_evento(&prefix, id, "/cancel"); // #1069: caixa resolvida, não /me.
     let body = serde_json::json!({ "Comment": comentario });
     let resp = graph_enviar("agenda:cancelar", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(&token).json(&body).send()
     })
     .map_err(|e| format!("falha ao cancelar o evento: {e}"))?;
-    // 404 = já removido (idempotente, como no excluir).
-    if resp.status().is_success() || resp.status().as_u16() == 404 {
+    if resp.status().is_success() {
+        memo_invalidar("agenda:"); // #440
+        Ok(())
+    } else if resp.status().as_u16() == 404 {
+        // #1069: mesmo limite honesto do excluir — 404 só é sucesso-idempotente
+        // porque a chamada foi endereçada à caixa CORRETA (mailbox no `prefix`).
+        // Com /me fixo, cancelar evento de caixa compartilhada dava 404 "não é da
+        // minha caixa" tratado como sucesso (o front removia o card e o evento
+        // ficava). Resolvida a caixa, 404 = realmente não existe lá.
+        log::info!("[agenda:cancelar] 404 na caixa /{prefix} — evento já não existe (idempotente)");
         memo_invalidar("agenda:"); // #440
         Ok(())
     } else {
-        Err(erro_escrita("me/events", "cancelar evento", resp.status()))
+        Err(erro_escrita(&format!("{prefix}/events"), "cancelar evento", resp.status()))
     }
 }
 
@@ -2175,6 +2247,7 @@ pub fn cr_responder_evento(
     resposta: &str,
     enviar_resposta: bool,
     comentario: &str,
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     // Mapeia a ação semântica -> segmento do endpoint do Graph. Recusamos
     // valores desconhecidos em vez de montar uma URL inválida.
@@ -2186,7 +2259,9 @@ pub fn cr_responder_evento(
     };
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}/{acao}");
+    let prefix = mailbox_prefix(mailbox);
+    // #1069: RSVP na caixa resolvida (/{prefix}/events/{id}/{acao}), não /me fixo.
+    let url = url_evento(&prefix, id, &format!("/{acao}"));
     let body = serde_json::json!({
         "comment": comentario,
         "sendResponse": enviar_resposta,
@@ -2195,12 +2270,76 @@ pub fn cr_responder_evento(
         client.post(&url).bearer_auth(&token).json(&body).send()
     })
     .map_err(|e| format!("falha ao responder o convite: {e}"))?;
-    // 404 = evento já não existe (idempotente, como cancelar/excluir).
+    // 404 = evento já não existe na caixa CORRETA (idempotente, como cancelar/
+    // excluir): agora que o `prefix` endereça a caixa certa, aceitar é honesto.
     if resp.status().is_success() || resp.status().as_u16() == 404 {
         memo_invalidar("agenda:"); // #440
         Ok(())
     } else {
-        Err(erro_escrita("me/events", "responder convite", resp.status()))
+        Err(erro_escrita(&format!("{prefix}/events"), "responder convite", resp.status()))
+    }
+}
+
+#[cfg(test)]
+mod testes_agenda_1069 {
+    use super::{deve_limpar_rascunho, mailbox_prefix, url_evento, url_eventos_colecao};
+
+    // #1069 — RB35: prova que a ESCRITA de agenda numa caixa COMPARTILHADA
+    // endereça /users/{addr}/events, e não /me/events (o bug: escrita presa em
+    // /me → operação no calendário errado + 404 tratado como sucesso = exclusão
+    // fantasma). Reverter `url_evento`/`cr_excluir_evento` pro /me fixo faz este
+    // teste ficar VERMELHO (o `!contains("/me/events")`).
+    #[test]
+    fn escrita_de_evento_endereca_caixa_compartilhada() {
+        let prefix = mailbox_prefix(Some("shared@x.com"));
+        // O que `cr_excluir_evento(mailbox=Some("shared@x.com"))` monta:
+        let excluir = url_evento(&prefix, "AAA", "");
+        assert!(
+            excluir.ends_with("/users/shared%40x.com/events/AAA"),
+            "excluir deveria mirar a caixa compartilhada, veio: {excluir}"
+        );
+        assert!(
+            !excluir.contains("/me/events"),
+            "regressão: escrita voltou ao /me fixo: {excluir}"
+        );
+        // cancelar/RSVP acrescentam a sub-ação na MESMA caixa.
+        let cancelar = url_evento(&prefix, "AAA", "/cancel");
+        assert!(cancelar.ends_with("/users/shared%40x.com/events/AAA/cancel"));
+        let rsvp = url_evento(&prefix, "AAA", "/accept");
+        assert!(rsvp.ends_with("/users/shared%40x.com/events/AAA/accept"));
+    }
+
+    // #1069: a caixa PRÓPRia (None/"me") preserva o caminho pessoal — sem
+    // regressão do comportamento pré-#1069.
+    #[test]
+    fn escrita_de_evento_preserva_me_na_caixa_propria() {
+        let prefix = mailbox_prefix(None);
+        assert!(url_evento(&prefix, "AAA", "").ends_with("/me/events/AAA"));
+        assert!(url_eventos_colecao(&prefix, None).ends_with("/me/events"));
+        assert!(url_eventos_colecao(&prefix, Some("cal1")).ends_with("/me/calendars/cal1/events"));
+    }
+
+    // #1069: criar (coleção) também segue a caixa, com/sem calendário-alvo (#233).
+    #[test]
+    fn colecao_de_evento_endereca_caixa_compartilhada() {
+        let prefix = mailbox_prefix(Some("shared@x.com"));
+        assert!(url_eventos_colecao(&prefix, None).ends_with("/users/shared%40x.com/events"));
+        assert!(url_eventos_colecao(&prefix, Some(""))
+            .ends_with("/users/shared%40x.com/events")); // id vazio = sem calendário
+        assert!(url_eventos_colecao(&prefix, Some("cal1"))
+            .ends_with("/users/shared%40x.com/calendars/cal1/events"));
+    }
+
+    // #1069 — RB36: rascunho ÓRFÃO. A limpeza só dispara quando o rascunho já
+    // existe E um passo posterior falhou. Se a criação falha não há rascunho;
+    // se o envio conclui, o rascunho foi consumido. (Antes, os 4 passos rodavam
+    // fora do pool/retry e um 429 no meio deixava o rascunho parado em Drafts.)
+    #[test]
+    fn limpa_rascunho_so_apos_criar_e_em_falha() {
+        assert!(deve_limpar_rascunho(true, false)); // patch/anexo/send falhou → limpa
+        assert!(!deve_limpar_rascunho(false, false)); // createReply falhou → sem draft
+        assert!(!deve_limpar_rascunho(true, true)); // tudo ok → draft consumido
+        assert!(!deve_limpar_rascunho(false, true)); // impossível na prática
     }
 }
 
@@ -3043,7 +3182,20 @@ fn anexo_json(a: &AnexoUp) -> serde_json::Value {
     })
 }
 
+/// #1069 (RB36): decide se um passo do `compor_e_enviar` deixou rascunho ÓRFÃO a
+/// limpar. O rascunho só existe DEPOIS do passo de criação (createReply/Forward);
+/// um envio BEM-sucedido consome o rascunho (nada a limpar). Pura, pra testar a
+/// regra sem rede: só limpamos quando o rascunho foi criado E um passo posterior
+/// falhou. Antes do RB36, os 4 passos rodavam fora do `graph_enviar` e um 429 no
+/// meio abortava deixando o rascunho parado em Drafts.
+fn deve_limpar_rascunho(rascunho_criado: bool, passo_ok: bool) -> bool {
+    rascunho_criado && !passo_ok
+}
+
 /// Cria um rascunho de resposta/encaminhamento, injeta o corpo e envia.
+/// #1069 (RB36): as 4 chamadas rodam sob `graph_enviar` (pool + retry 429), como
+/// o `cr_enviar_novo`; se um passo POSTERIOR à criação falhar, o rascunho é
+/// removido (DELETE) pra não ficar órfão em Drafts.
 fn compor_e_enviar(
     store: &TokenStore,
     id: &str,
@@ -3057,15 +3209,14 @@ fn compor_e_enviar(
     let client = reqwest::blocking::Client::new();
     let prefix = mailbox_prefix(mailbox);
 
-    // 1) rascunho a partir da mensagem original
+    // 1) rascunho a partir da mensagem original — sob o pool + retry 429 (#1069).
     let url = format!("{GRAPH}/{prefix}/messages/{id}/{acao}");
-    let resp = client
-        .post(&url)
-        .bearer_auth(&token)
-        .header("Content-Length", "0")
-        .send()
-        .map_err(|e| format!("falha ao criar o rascunho: {e}"))?;
+    let resp = graph_enviar("mail:compor-rascunho", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).header("Content-Length", "0").send()
+    })
+    .map_err(|e| format!("falha ao criar o rascunho: {e}"))?;
     if !resp.status().is_success() {
+        // Criação falhou: `deve_limpar_rascunho(false, _)` = nada a limpar.
         return Err(erro_envio(&prefix, acao, resp.status()));
     }
     let rascunho: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
@@ -3073,6 +3224,20 @@ fn compor_e_enviar(
     // corpo original (com a citação) que o Graph montou — preservamos abaixo
     let citacao = rascunho["body"]["content"].as_str().unwrap_or("");
     let corpo_final = format!("{corpo_html}<br>{citacao}");
+
+    // #1069 (RB36): daqui pra frente o rascunho JÁ existe em Drafts. Qualquer
+    // falha de passo POSTERIOR (transporte ou 429 esgotado) tem de LIMPAR o
+    // rascunho, senão fica órfão. `limpar` faz o DELETE best-effort (via
+    // `deletar_msg`, que já roda sob o pool) e devolve o erro original.
+    let limpar = |erro: String| -> String {
+        // No caminho de falha, o passo NÃO teve ok (passo_ok = false).
+        if deve_limpar_rascunho(true, false) {
+            if let Err(e) = deletar_msg(&client, &token, &prefix, &draft_id) {
+                log::warn!("[mail:compor] rascunho órfão {draft_id} não pôde ser limpo: {e}");
+            }
+        }
+        erro
+    };
 
     // 2) PATCH: injeta o HTML composto (+ destinatários no encaminhamento)
     let mut patch = serde_json::json!({
@@ -3087,14 +3252,12 @@ fn compor_e_enviar(
         patch["toRecipients"] = serde_json::Value::Array(dest);
     }
     let url = format!("{GRAPH}/{prefix}/messages/{draft_id}");
-    let resp = client
-        .patch(&url)
-        .bearer_auth(&token)
-        .json(&patch)
-        .send()
-        .map_err(|e| format!("falha ao preencher o rascunho: {e}"))?;
+    let resp = graph_enviar("mail:compor-patch", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&patch).send()
+    })
+    .map_err(|e| limpar(format!("falha ao preencher o rascunho: {e}")))?;
     if !resp.status().is_success() {
-        return Err(erro_envio(&prefix, "PATCH do rascunho", resp.status()));
+        return Err(limpar(erro_envio(&prefix, "PATCH do rascunho", resp.status())));
     }
 
     // 2.5) anexa os arquivos no rascunho (POST /attachments), um por vez.
@@ -3103,31 +3266,27 @@ fn compor_e_enviar(
             continue;
         }
         let url = format!("{GRAPH}/{prefix}/messages/{draft_id}/attachments");
-        let resp = client
-            .post(&url)
-            .bearer_auth(&token)
-            .json(&anexo_json(a))
-            .send()
-            .map_err(|e| format!("falha ao anexar '{}': {e}", a.nome))?;
+        let resp = graph_enviar("mail:compor-anexo", GRAPH_TETO_ESPERA_S, || {
+            client.post(&url).bearer_auth(&token).json(&anexo_json(a)).send()
+        })
+        .map_err(|e| limpar(format!("falha ao anexar '{}': {e}", a.nome)))?;
         if !resp.status().is_success() {
-            return Err(erro_envio(
+            return Err(limpar(erro_envio(
                 &prefix,
                 &format!("anexar '{}'", a.nome),
                 resp.status(),
-            ));
+            )));
         }
     }
 
-    // 3) envia
+    // 3) envia — sucesso CONSOME o rascunho (não há o que limpar).
     let url = format!("{GRAPH}/{prefix}/messages/{draft_id}/send");
-    let resp = client
-        .post(&url)
-        .bearer_auth(&token)
-        .header("Content-Length", "0")
-        .send()
-        .map_err(|e| format!("falha ao enviar: {e}"))?;
+    let resp = graph_enviar("mail:compor-enviar", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).header("Content-Length", "0").send()
+    })
+    .map_err(|e| limpar(format!("falha ao enviar: {e}")))?;
     if !resp.status().is_success() {
-        return Err(erro_envio(&prefix, "envio", resp.status()));
+        return Err(limpar(erro_envio(&prefix, "envio", resp.status())));
     }
     Ok(())
 }

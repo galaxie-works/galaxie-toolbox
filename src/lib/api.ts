@@ -742,6 +742,7 @@ export async function crResponderEvento(
   resposta: AcaoRsvp,
   enviarResposta: boolean,
   comentario: string,
+  mailbox?: string,
 ): Promise<void> {
   if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_responder_evento", {
@@ -749,19 +750,26 @@ export async function crResponderEvento(
     resposta,
     enviarResposta,
     comentario,
+    // #1069: RSVP na caixa ativa (própria ou compartilhada), não no /me fixo.
+    mailbox: mailboxArg(mailbox),
   });
 }
 
-/** Cria um evento no calendário (#211). Devolve o id do evento criado. */
-export async function crCriarEvento(input: EventoInput): Promise<string> {
+/** Cria um evento no calendário (#211). Devolve o id do evento criado.
+ *  #1069: `mailbox` endereça a caixa ativa (própria ou compartilhada). */
+export async function crCriarEvento(input: EventoInput, mailbox?: string): Promise<string> {
   if (!inTauri()) mockEscritaBloqueada();
-  return invoke<string>("cr_criar_evento", { input });
+  return invoke<string>("cr_criar_evento", { input, mailbox: mailboxArg(mailbox) });
 }
 
-/** Edita um evento existente (#211). */
-export async function crEditarEvento(id: string, input: EventoInput): Promise<void> {
+/** Edita um evento existente (#211). #1069: `mailbox` endereça a caixa ativa. */
+export async function crEditarEvento(
+  id: string,
+  input: EventoInput,
+  mailbox?: string,
+): Promise<void> {
   if (!inTauri()) mockEscritaBloqueada();
-  await invoke("cr_editar_evento", { id, input });
+  await invoke("cr_editar_evento", { id, input, mailbox: mailboxArg(mailbox) });
 }
 
 /** #213: reagenda um evento arrastando — PATCH só de início/fim/dia-inteiro,
@@ -773,35 +781,56 @@ export async function crReagendarEvento(
   fim: string,
   diaInteiro: boolean,
   timeZone: string,
+  mailbox?: string,
 ): Promise<void> {
   if (!inTauri()) mockEscritaBloqueada();
-  await invoke("cr_reagendar_evento", { id, inicio, fim, diaInteiro, timeZone });
+  // #1069: reagenda na caixa ativa (própria ou compartilhada), não no /me fixo.
+  await invoke("cr_reagendar_evento", {
+    id,
+    inicio,
+    fim,
+    diaInteiro,
+    timeZone,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** #397: recorrência da SÉRIE (do seriesMaster) pra o form carregar os campos ao
  * editar "a série inteira". `null` = evento único ou padrão não modelado (relative*). */
 export async function crEventoRecorrencia(
   id: string,
+  mailbox?: string,
 ): Promise<RecorrenciaInput | null> {
   if (!inTauri()) {
     await sleep(200);
     return null;
   }
-  return invoke<RecorrenciaInput | null>("cr_evento_recorrencia", { id });
+  // #1069: recorrência da série na caixa ativa (própria ou compartilhada).
+  return invoke<RecorrenciaInput | null>("cr_evento_recorrencia", {
+    id,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
-/** Exclui um evento (#211). */
-export async function crExcluirEvento(id: string): Promise<void> {
+/** Exclui um evento (#211). #1069: `mailbox` endereça a caixa ativa — sem isso, a
+ *  exclusão ia pro /me fixo e um evento de caixa compartilhada retornava 404
+ *  tratado como sucesso (exclusão fantasma). */
+export async function crExcluirEvento(id: string, mailbox?: string): Promise<void> {
   if (!inTauri()) mockEscritaBloqueada();
-  await invoke("cr_excluir_evento", { id });
+  await invoke("cr_excluir_evento", { id, mailbox: mailboxArg(mailbox) });
 }
 
 /** Cancela um evento organizado pelo usuário (#260): envia o cancelamento aos
  *  convidados via POST /me/events/{id}/cancel, com comentário opcional.
  *  Distinto de excluir (silencioso). */
-export async function crCancelarEvento(id: string, comentario: string): Promise<void> {
+export async function crCancelarEvento(
+  id: string,
+  comentario: string,
+  mailbox?: string,
+): Promise<void> {
   if (!inTauri()) mockEscritaBloqueada();
-  await invoke("cr_cancelar_evento", { id, comentario });
+  // #1069: cancela na caixa ativa (própria ou compartilhada), não no /me fixo.
+  await invoke("cr_cancelar_evento", { id, comentario, mailbox: mailboxArg(mailbox) });
 }
 
 export async function crInboxDia(inicio: string, fim: string): Promise<EmailItem[]> {
