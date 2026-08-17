@@ -3896,7 +3896,16 @@ pub fn cr_buscar(
     // Continuação: se veio um nextLink, ele já traz $search+$top+skiptoken —
     // usa-se tal e qual. Só na 1ª página montamos a URL inicial.
     let url = match next_link {
-        Some(link) => link,
+        Some(link) => {
+            // Segurança (#1068): o next_link chega do renderer via IPC e é usado com
+            // bearer_auth. Um XSS/script injetado poderia mandar uma URL de outro host
+            // e exfiltrar o access token delegado. Validamos que a continuação segue
+            // DENTRO do Graph ANTES de anexar o token.
+            if !url_continuacao_graph_valida(&link) {
+                return Err("next_link inválido: continuação fora do Microsoft Graph".to_string());
+            }
+            link
+        }
         None => {
             // As aspas duplas fazem parte da sintaxe do $search; as que vierem no
             // próprio termo são trocadas por espaço para não fechar a expressão
@@ -3991,7 +4000,14 @@ pub fn cr_filtrar(
     // Continuação: o nextLink já traz filtro+select+top+skiptoken embutidos —
     // usa-se tal e qual. Só na 1ª página montamos a URL inicial por filtro.
     let url = match next_link {
-        Some(link) => link,
+        Some(link) => {
+            // Segurança (#1068): mesma proteção de cr_buscar — valida o next_link do
+            // renderer antes do bearer_auth pra não exfiltrar o token.
+            if !url_continuacao_graph_valida(&link) {
+                return Err("next_link inválido: continuação fora do Microsoft Graph".to_string());
+            }
+            link
+        }
         None => match filtro {
             "tome" => {
                 let email = mailbox
@@ -4868,6 +4884,72 @@ mod testes_people_directory {
     }
 }
 
+#[cfg(test)]
+mod testes_next_link_1068 {
+    //! #1068 — o `next_link` (paginação) chega do renderer via IPC e é usado com
+    //! `bearer_auth` em 6 pontos (cr_buscar, cr_filtrar, cr_grupos, cr_grupo_membros,
+    //! cr_contact_folders, cr_pasta_contatos). Se a URL apontar pra fora do Graph, o
+    //! access token delegado vaza. A guarda tem que rejeitar ANTES do bearer_auth.
+    use super::{url_continuacao_graph_valida, GRAPH};
+
+    /// Vetores de exfiltração que a guarda DEVE rejeitar. Inclui os dois formatos que
+    /// o relatório de auditoria chama por nome.
+    const MALICIOSOS: &[&str] = &[
+        // sufixo colado no host — passa numa checagem ingênua de "contém graph.microsoft.com"
+        "https://graph.microsoft.com.evil.example/v1.0/users",
+        // sufixo colado no PATH v1.0 — este é o que fura a guarda fraca `starts_with(GRAPH)`
+        "https://graph.microsoft.com/v1.0.evil.example/users",
+        // userinfo trick: host real é evil.example
+        "https://graph.microsoft.com@evil.example/v1.0/users",
+        // host totalmente diferente
+        "https://evil.example/v1.0/users",
+        // downgrade de esquema
+        "http://graph.microsoft.com/v1.0/users",
+    ];
+
+    #[test]
+    fn rejeita_todos_os_vetores_de_exfiltracao() {
+        for u in MALICIOSOS {
+            assert!(
+                !url_continuacao_graph_valida(u),
+                "next_link malicioso passou pela guarda (exfiltra token): {u}"
+            );
+        }
+    }
+
+    #[test]
+    fn aceita_continuacao_legitima_do_graph() {
+        // não pode regredir a paginação real devolvida pelo próprio Graph.
+        for u in [
+            "https://graph.microsoft.com/v1.0/users?$skiptoken=abc",
+            "https://graph.microsoft.com/v1.0/me/contactFolders/AAA/contacts?$skip=100",
+            "https://graph.microsoft.com/v1.0/me/memberOf?$skiptoken=xyz",
+        ] {
+            assert!(
+                url_continuacao_graph_valida(u),
+                "continuação legítima do Graph foi rejeitada (regressão): {u}"
+            );
+        }
+    }
+
+    /// PROVA da vulnerabilidade que motivou o #1068: a guarda fraca `starts_with(GRAPH)`,
+    /// usada em 4 dos 6 pontos, ACEITA o bypass `v1.0.evil.example` — enviaria o token
+    /// pro atacante. A guarda forte (aplicada agora) o rejeita. Este teste ficaria
+    /// VERMELHO se alguém revertesse pro `starts_with(GRAPH)`.
+    #[test]
+    fn guarda_fraca_starts_with_era_exploravel() {
+        let bypass = "https://graph.microsoft.com/v1.0.evil.example/users";
+        assert!(
+            bypass.starts_with(GRAPH),
+            "pré-condição: o bypass passava pela guarda fraca"
+        );
+        assert!(
+            !url_continuacao_graph_valida(bypass),
+            "a guarda forte tem que fechar o bypass que a fraca deixava passar"
+        );
+    }
+}
+
 /// Lista inicial do People (#166): contatos explicitos + pessoas relevantes.
 /// Mantem as fontes separadas para o merge deterministico no front e preserva a
 /// ordem de relevancia de `/me/people` via `people_rank`.
@@ -5188,7 +5270,10 @@ pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
     ));
 
     while let Some(url) = proxima.take() {
-        if !url.starts_with(GRAPH) {
+        // Segurança (#1068): guarda forte (host exato do Graph). `starts_with(GRAPH)`
+        // deixava passar `https://graph.microsoft.com/v1.0.evil.example/...` e exfiltrava
+        // o token; `url_continuacao_graph_valida` exige o `/` logo após o v1.0.
+        if !url_continuacao_graph_valida(&url) {
             result
                 .failures
                 .push("Groups: continuation URL outside Microsoft Graph".to_string());
@@ -5288,7 +5373,8 @@ pub fn cr_grupo_membros(
     ));
 
     while let Some(url) = proxima.take() {
-        if !url.starts_with(GRAPH) {
+        // Segurança (#1068): guarda forte contra next_link fora do Graph (ver cr_grupos).
+        if !url_continuacao_graph_valida(&url) {
             return Err("Groups: continuation URL outside Microsoft Graph".to_string());
         }
         let resp = graph_enviar("people:group-members", GRAPH_TETO_ESPERA_S, || {
@@ -7029,7 +7115,8 @@ pub fn cr_contact_folders(store: &TokenStore) -> Result<ContactFoldersResult, St
         "{GRAPH}/me/contactFolders?$top=200&$select=id,displayName,parentFolderId"
     ));
     while let Some(url) = proxima.take() {
-        if !url.starts_with(GRAPH) {
+        // Segurança (#1068): guarda forte contra next_link fora do Graph (ver cr_grupos).
+        if !url_continuacao_graph_valida(&url) {
             result
                 .failures
                 .push("ContactFolders: continuation URL outside Microsoft Graph".to_string());
@@ -7120,9 +7207,11 @@ pub fn cr_pasta_contatos(
             "{base}?$top=100&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager,categories"
         )]
     } else {
+        // Segurança (#1068): guarda forte por next_link (ver cr_grupos) — descarta
+        // qualquer continuação fora do Graph antes do bearer_auth.
         next_links
             .into_iter()
-            .filter(|u| u.starts_with(GRAPH) && u.contains("/contactFolders/"))
+            .filter(|u| url_continuacao_graph_valida(u) && u.contains("/contactFolders/"))
             .collect()
     };
     for url in urls {
