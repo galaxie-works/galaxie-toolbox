@@ -67,6 +67,19 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * #1017: no browser (fora do Tauri) o mock NÃO pode fingir que uma mutação do
+ * Graph aconteceu. Antes, ~30 comandos de escrita resolviam com sucesso
+ * fabricado (id falso, `void`, contagem) sem falar com backend nenhum — o
+ * mecanismo exato do "VERDE ≠ PRONTO": aprovava-se feature que nunca escreveu
+ * de verdade. Toda escrita de dado do Bridge (mail/calendar/people/org/share)
+ * agora REJEITA explicitamente em vez de mentir sucesso. Leitura segue mockada
+ * normalmente — é o valor real do modo dev sem Tauri (não é alvo desta regra).
+ */
+function mockEscritaBloqueada(): never {
+  throw new Error("mock: escrita não suportada fora do Tauri");
+}
+
 // --- MOCK usado apenas no browser (fora do Tauri), pra visualizar a UI ---
 const MOCK_USER: AppUser = {
   displayName: "Wagner Consani",
@@ -548,10 +561,7 @@ export async function crTarefaConcluir(
   listaId: string,
   tarefaId: string,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(250);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_tarefa_concluir", { listaId, tarefaId });
 }
 
@@ -695,18 +705,7 @@ export async function crCriarCategoria(
   nome: string,
   preset: string,
 ): Promise<CategoriaCor> {
-  if (!inTauri()) {
-    await sleep(200);
-    const HEX: Record<string, string> = {
-      preset0: "#D13438",
-      preset4: "#498205",
-      preset7: "#0078D4",
-      preset8: "#8764B8",
-      preset1: "#FF8C00",
-      preset5: "#00B7C3",
-    };
-    return { nome, cor: HEX[preset] ?? "#8A8886" };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<CategoriaCor>("cr_criar_categoria", { nome, preset });
 }
 
@@ -744,10 +743,7 @@ export async function crResponderEvento(
   enviarResposta: boolean,
   comentario: string,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_responder_evento", {
     id,
     resposta,
@@ -758,19 +754,13 @@ export async function crResponderEvento(
 
 /** Cria um evento no calendário (#211). Devolve o id do evento criado. */
 export async function crCriarEvento(input: EventoInput): Promise<string> {
-  if (!inTauri()) {
-    await sleep(300);
-    return `mock-${Date.now()}`;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<string>("cr_criar_evento", { input });
 }
 
 /** Edita um evento existente (#211). */
 export async function crEditarEvento(id: string, input: EventoInput): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_editar_evento", { id, input });
 }
 
@@ -784,10 +774,7 @@ export async function crReagendarEvento(
   diaInteiro: boolean,
   timeZone: string,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_reagendar_evento", { id, inicio, fim, diaInteiro, timeZone });
 }
 
@@ -805,10 +792,7 @@ export async function crEventoRecorrencia(
 
 /** Exclui um evento (#211). */
 export async function crExcluirEvento(id: string): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_excluir_evento", { id });
 }
 
@@ -816,10 +800,7 @@ export async function crExcluirEvento(id: string): Promise<void> {
  *  convidados via POST /me/events/{id}/cancel, com comentário opcional.
  *  Distinto de excluir (silencioso). */
 export async function crCancelarEvento(id: string, comentario: string): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_cancelar_evento", { id, comentario });
 }
 
@@ -1332,10 +1313,7 @@ export async function crFolderContacts(
 
 /** Cria uma pasta de contatos pessoal; devolve a pasta criada (com id real). */
 export async function crCreateContactFolder(nome: string): Promise<ContactFolder> {
-  if (!inTauri()) {
-    await sleep(300);
-    return { id: `folder-${Date.now()}`, name: nome, parentFolderId: "" };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<ContactFolder>("cr_criar_pasta_contato", { nome });
 }
 
@@ -1344,19 +1322,13 @@ export async function crRenameContactFolder(
   folderId: string,
   nome: string,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(250);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_renomear_pasta_contato", { folderId, nome });
 }
 
 /** Exclui uma pasta de contatos pessoal (os contatos dela vão junto). */
 export async function crDeleteContactFolder(folderId: string): Promise<void> {
-  if (!inTauri()) {
-    await sleep(250);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_excluir_pasta_contato", { folderId });
 }
 
@@ -1365,10 +1337,7 @@ export async function crMoveContact(
   contactId: string,
   folderId: string,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(250);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_mover_contato", { contactId, folderId });
 }
 
@@ -1434,10 +1403,7 @@ export async function crPeopleEnrichApply(
   contactId: string,
   fields: PeopleEnrichField[],
 ): Promise<PeopleEnrichApplyResult> {
-  if (!inTauri()) {
-    await sleep(550);
-    return { saved: true, writeAvailable: true };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<PeopleEnrichApplyResult>("cr_people_enrich_apply", {
     contactId,
     fields,
@@ -1576,10 +1542,7 @@ export async function crOrgSettings(): Promise<OrgSettingsResult> {
  * wrapper fica pronto; ativar é só destravar a UI. Fora do Tauri é no-op (mock).
  */
 export async function crOrgTodoSet(campo: string, valor: boolean): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_org_todo_set", { campo, valor });
 }
 
@@ -1723,10 +1686,7 @@ export async function crPeopleContactUpdate(
   contactId: string,
   input: PeopleContactEdit,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(550);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_people_contact_update", { contactId, input });
 }
 
@@ -1739,10 +1699,7 @@ export async function crPeopleContactCategories(
   contactId: string,
   categorias: string[],
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_people_contact_categories", { contactId, categorias });
 }
 
@@ -1754,10 +1711,7 @@ export async function crPeopleContactCategories(
 export async function crPeopleContactCreate(
   input: PeopleContactEdit,
 ): Promise<string> {
-  if (!inTauri()) {
-    await sleep(400);
-    return `mock-contact-${crypto.randomUUID()}`;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<string>("cr_people_contact_create", { input });
 }
 
@@ -1766,10 +1720,7 @@ export async function crPeopleContactCreate(
  * (idempotente). Execução do merge (#379) — o chamador trata item a item.
  */
 export async function crPeopleContactDelete(contactId: string): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_people_contact_delete", { contactId });
 }
 
@@ -1781,14 +1732,7 @@ export async function crPeopleCompanyWrite(
   contactIds: string[],
   companyName: string,
 ): Promise<PeopleCompanyWriteResult> {
-  if (!inTauri()) {
-    await sleep(550);
-    return {
-      writeAvailable: true,
-      savedContactIds: [...new Set(contactIds)],
-      failedContactIds: [],
-    };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<PeopleCompanyWriteResult>("cr_people_company_write", {
     contactIds,
     companyName,
@@ -1803,14 +1747,7 @@ export async function crPeopleDetailsWrite(
   contactIds: string[],
   changes: PeopleBulkDetailsChange[],
 ): Promise<PeopleBulkDetailsWriteResult> {
-  if (!inTauri()) {
-    await sleep(550);
-    return {
-      writeAvailable: true,
-      savedContactIds: [...new Set(contactIds)],
-      failedContactIds: [],
-    };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<PeopleBulkDetailsWriteResult>("cr_people_details_write", {
     contactIds,
     changes,
@@ -1863,10 +1800,7 @@ export async function crEnviarNovo(
   anexos: AnexoEnvio[] = [],
   mailbox?: string
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(700);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_enviar_novo", {
     para,
     cc,
@@ -1887,19 +1821,13 @@ export async function crCompartilharOneDrive(
   nome: string,
   conteudoB64: string
 ): Promise<string> {
-  if (!inTauri()) {
-    await sleep(700);
-    return `https://exemplo-my.sharepoint.com/:b:/g/mock/${encodeURIComponent(nome)}`;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<string>("cr_compartilhar_onedrive", { nome, conteudoB64 });
 }
 
 /** Salva contatos pessoais (sem duplicar). Retorna quantos foram criados. */
 export async function crSalvarContatos(pessoas: Pessoa[]): Promise<number> {
-  if (!inTauri()) {
-    await sleep(400);
-    return pessoas.length;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<number>("cr_salvar_contatos", { pessoas });
 }
 
@@ -2007,10 +1935,7 @@ export async function crResponder(
   anexos: AnexoEnvio[] = [],
   mailbox?: string
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(700);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_responder", {
     id,
     corpo,
@@ -2027,10 +1952,7 @@ export async function crEncaminhar(
   anexos: AnexoEnvio[] = [],
   mailbox?: string
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(700);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_encaminhar", {
     id,
     corpo,
@@ -2041,10 +1963,7 @@ export async function crEncaminhar(
 }
 
 export async function crExcluirEmail(id: string, mailbox?: string): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_excluir_email", { id, mailbox: mailboxArg(mailbox) });
 }
 
@@ -2055,10 +1974,7 @@ export async function crExcluirEmails(
   permanente = false,
   mailbox?: string
 ): Promise<string[]> {
-  if (!inTauri()) {
-    await sleep(300);
-    return ids;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<string[]>("cr_excluir_emails", {
     ids,
     permanente,
@@ -2076,10 +1992,7 @@ export async function crMoverEmails(
   destino: string,
   mailbox?: string
 ): Promise<string[]> {
-  if (!inTauri()) {
-    await sleep(300);
-    return ids;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<string[]>("cr_mover_emails", {
     ids,
     destino,
@@ -2092,10 +2005,7 @@ export async function crMarcarEmail(
   sinalizado: boolean,
   mailbox?: string
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_marcar_email", {
     id,
     sinalizado,
@@ -2109,10 +2019,7 @@ export async function crMarcarLido(
   lido: boolean,
   mailbox?: string
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_marcar_lido", {
     id,
     lido,
@@ -2285,10 +2192,7 @@ export async function crEsvaziarPasta(
   folderId: string,
   mailbox?: string
 ): Promise<number> {
-  if (!inTauri()) {
-    await sleep(500);
-    return 12;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<number>("cr_esvaziar_pasta", {
     folderId,
     mailbox: mailboxArg(mailbox),
@@ -2303,10 +2207,7 @@ export async function crMarcarPastaLida(
   folderId: string,
   mailbox?: string
 ): Promise<number> {
-  if (!inTauri()) {
-    await sleep(500);
-    return 7;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<number>("cr_marcar_pasta_lida", {
     folderId,
     mailbox: mailboxArg(mailbox),
@@ -2328,17 +2229,7 @@ export async function crCriarSubpasta(
   nome: string,
   mailbox?: string
 ): Promise<PastaEmail> {
-  if (!inTauri()) {
-    await sleep(400);
-    return {
-      id: `${paiId}-nova-${Date.now()}`,
-      tipo: "child",
-      nome,
-      naoLidos: 0,
-      total: 0,
-      filhos: 0,
-    };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<PastaEmail>("cr_criar_subpasta", {
     paiId,
     nome,
@@ -2352,10 +2243,7 @@ export async function crRenomearPasta(
   nome: string,
   mailbox?: string
 ): Promise<PastaEmail> {
-  if (!inTauri()) {
-    await sleep(400);
-    return { id, tipo: "child", nome, naoLidos: 0, total: 0, filhos: 0 };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<PastaEmail>("cr_renomear_pasta", {
     id,
     nome,
@@ -2374,10 +2262,7 @@ export async function crExcluirPasta(
   id: string,
   mailbox?: string
 ): Promise<boolean> {
-  if (!inTauri()) {
-    await sleep(400);
-    return true;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<boolean>("cr_excluir_pasta", {
     id,
     mailbox: mailboxArg(mailbox),
@@ -2390,10 +2275,7 @@ export async function crMoverPasta(
   novoPai: string,
   mailbox?: string
 ): Promise<PastaEmail> {
-  if (!inTauri()) {
-    await sleep(400);
-    return { id, tipo: "child", nome: "Pasta", naoLidos: 0, total: 0, filhos: 0 };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<PastaEmail>("cr_mover_pasta", {
     id,
     novoPai,
