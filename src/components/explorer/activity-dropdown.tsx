@@ -1,11 +1,15 @@
 // #898 (fatia 1): o Status Center do Explorer virou uma "activity-dropdown" (ref
 // de UX: morphin.dev/components/activity-dropdown, mas reconstruída dos NOSSOS
 // primitivos + tokens do tema, sem dep nova). SUBSTITUI o `ProgressoPanel` — é a
-// ÚNICA superfície de progresso agora. Trigger = sino + "{n} novas atividades" +
-// badge de contagem colorido pelo estado agregado (reusa a lógica do painel) +
-// chevron; expande numa lista com REVELAÇÃO ESCALONADA (`grid-rows-[0fr]→[1fr]` +
-// `transitionDelay: i*60ms`). Cada item = ícone-por-tipo (círculo) + título +
-// subtítulo + timestamp relativo (`tempo-relativo.ts`).
+// ÚNICA superfície de progresso agora.
+//
+// #987: o TRIGGER saiu de flutuante (dentro do Explorer) pra TITLE BAR do app
+// (fileira de chrome, ao lado do theme/avatar) — status sempre visível app-wide.
+// Trigger = botão-ícone de chrome (sino) + badge "N" de NÃO-VISTAS (some com 0),
+// ANCORADO num Popover (não flutua solto). O conteúdo (título/subtítulo + lista)
+// abre numa lista com REVELAÇÃO ESCALONADA (`transitionDelay: i*60ms`). Cada item
+// = ícone-por-tipo (círculo) + título + subtítulo + timestamp relativo
+// (`tempo-relativo.ts`).
 //
 // Linha ATIVA (em curso OU pausada #898) traz controles: Pausar/Retomar +
 // Cancelar. Linha PAUSADA mostra Retomar; em curso mostra Pausar; ambas Cancelar.
@@ -19,7 +23,6 @@ import {
   Ban,
   Bell,
   Check,
-  ChevronUp,
   Copy,
   Pause,
   Play,
@@ -30,6 +33,11 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { cn, formatBytes } from "@/lib/utils";
 import { preencher, useIdioma } from "@/lib/idioma";
@@ -188,21 +196,51 @@ export function ActivityDropdown({
   );
 
   return (
-    <div className="pointer-events-auto absolute bottom-4 right-4 z-40 w-80 max-w-[calc(100%-2rem)]">
-      <div
-        className={cn(
-          "overflow-hidden rounded-2xl border bg-card shadow-xl",
-          "transition-[border-radius] duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
-        )}
-      >
-        {/* Trigger: sino + "N novas atividades" + subtítulo + badge de contagem +
-            chevron. O subtítulo some ao abrir. */}
+    <Popover open={aberto} onOpenChange={setAberto}>
+      {/* #987: trigger = botão-ícone de chrome na title bar (sino + badge de
+          NÃO-VISTAS no canto). Some quando não há atividade nenhuma (o guard
+          `ops.length === 0` acima) — o sino só aparece quando há o que mostrar. */}
+      <PopoverTrigger asChild>
         <button
           type="button"
-          className="flex w-full items-center gap-3 p-3 text-left"
-          onClick={() => setAberto((v) => !v)}
-          aria-expanded={aberto}
+          className={cn(
+            "relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg",
+            "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            aberto && "bg-muted text-foreground",
+          )}
+          aria-label={
+            naoVistas > 0
+              ? preencher(t.arquivos.atividadesTitulo, { n: naoVistas })
+              : t.arquivos.atividadesTituloVazio
+          }
         >
+          <Bell className="size-5" />
+          {/* #898 fatia 3 (#966): badge de NÃO-VISTAS ("N novas") — some quando
+              zero (tudo visto). Cor pelo estado agregado (erro>ativo>concluído). */}
+          {naoVistas > 0 && (
+            <Badge
+              variant={badgeVariant}
+              className={cn(
+                "absolute -right-1 -top-1 min-w-4 justify-center rounded-full px-1 py-0 text-[10px] leading-4 tabular-nums",
+                badgeExtra,
+              )}
+              aria-hidden
+            >
+              {naoVistas}
+            </Badge>
+          )}
+        </button>
+      </PopoverTrigger>
+
+      {/* Conteúdo ANCORADO no sino (align end → alinha à direita, sob o chrome).
+          Cabeçalho (título + subtítulo) + "Limpar concluídas" + lista escalonada. */}
+      <PopoverContent
+        align="end"
+        sideOffset={8}
+        className="w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl p-0"
+      >
+        <div className="flex items-center gap-3 p-3">
           <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted">
             <Bell className="size-5 text-muted-foreground" />
           </div>
@@ -212,78 +250,45 @@ export function ActivityDropdown({
                 ? preencher(t.arquivos.atividadesTitulo, { n: naoVistas })
                 : t.arquivos.atividadesTituloVazio}
             </h3>
-            <p
-              className={cn(
-                "truncate text-xs text-muted-foreground tabular-nums",
-                "transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
-                aberto ? "mt-0 max-h-0 opacity-0" : "mt-0.5 max-h-5 opacity-100",
-              )}
-            >
+            <p className="mt-0.5 truncate text-xs text-muted-foreground tabular-nums">
               {subtitulo}
             </p>
           </div>
-          {/* #898 fatia 3 (#966): badge de NÃO-VISTAS ("N novas") — some quando
-              zero (tudo visto). Cor pelo estado agregado (erro>ativo>concluído). */}
-          {naoVistas > 0 && (
-            <Badge
-              variant={badgeVariant}
-              className={cn("shrink-0 tabular-nums", badgeExtra)}
-              aria-label={preencher(t.arquivos.atividadesTitulo, { n: naoVistas })}
-            >
-              {naoVistas}
-            </Badge>
-          )}
-          <ChevronUp
-            className={cn(
-              "size-5 shrink-0 text-muted-foreground transition-transform duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
-              aberto ? "rotate-0" : "rotate-180",
-            )}
-          />
-        </button>
-
-        {/* Container animado: grid-rows 0fr→1fr abre a lista com altura fluida. */}
-        <div
-          className={cn(
-            "grid transition-all duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]",
-            aberto ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
-          )}
-        >
-          <div className="overflow-hidden">
-            {temTerminal && (
-              <div className="flex justify-end px-3 pb-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
-                  onClick={onLimparConcluidas}
-                >
-                  {t.arquivos.limparConcluidas}
-                </Button>
-              </div>
-            )}
-            <div className="max-h-[50vh] space-y-1 overflow-y-auto px-2 pb-3">
-              {ordenadas.map((op, index) => (
-                <LinhaAtividade
-                  key={op.opId}
-                  op={op}
-                  index={index}
-                  aberto={aberto}
-                  agoraMs={agoraMs}
-                  rotulosTempo={rotulosTempo}
-                  rotulosResumo={rotulosResumo}
-                  onCancelar={onCancelar}
-                  onPausar={onPausar}
-                  onResumir={onResumir}
-                  onDispensar={onDispensar}
-                  onDesfazer={onDesfazer}
-                  desfeitos={desfeitos}
-                />
-              ))}
-            </div>
-          </div>
         </div>
-      </div>
-    </div>
+
+        {temTerminal && (
+          <div className="flex justify-end px-3 pb-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={onLimparConcluidas}
+            >
+              {t.arquivos.limparConcluidas}
+            </Button>
+          </div>
+        )}
+        <div className="max-h-[50vh] space-y-1 overflow-y-auto px-2 pb-3">
+          {ordenadas.map((op, index) => (
+            <LinhaAtividade
+              key={op.opId}
+              op={op}
+              index={index}
+              aberto={aberto}
+              agoraMs={agoraMs}
+              rotulosTempo={rotulosTempo}
+              rotulosResumo={rotulosResumo}
+              onCancelar={onCancelar}
+              onPausar={onPausar}
+              onResumir={onResumir}
+              onDispensar={onDispensar}
+              onDesfazer={onDesfazer}
+              desfeitos={desfeitos}
+            />
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

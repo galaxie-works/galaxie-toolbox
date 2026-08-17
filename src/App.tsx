@@ -48,6 +48,12 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { MenuUsuario } from "@/components/user-menu";
+// #987: o sino do activity-dropdown vive na title bar (sempre visível). A máquina
+// de `ops` está no `useOpsAtivas` (montado UMA vez aqui); as transferências
+// seguem sendo disparadas pelo Explorer.
+import { ActivityDropdown } from "@/components/explorer/activity-dropdown";
+import { UndoPreviewDialog } from "@/components/explorer/undo-preview-dialog";
+import { useOpsAtivas } from "@/components/explorer/use-ops-ativas";
 import {
   Alert,
   AlertAction,
@@ -122,6 +128,9 @@ function TelaFallback() {
  */
 function AppInner() {
   const { idioma, t } = useIdioma();
+  // #987: assina o progresso das transferências (Tauri) UMA vez e expõe a fila +
+  // handlers pro sino da title bar e pro preview de undo (ambos app-level agora).
+  const atividade = useOpsAtivas();
   const setBridgeView = useAppStore((state) => state.setBridgeView);
   const reauthMissingScopes = useAppStore(
     (state) => state.reauthMissingScopes,
@@ -1245,6 +1254,20 @@ function AppInner() {
             data-tauri-drag-region
             className="flex shrink-0 items-center gap-1.5 pr-[140px] pl-2"
           >
+            {/* #987: sino do activity-dropdown na fileira de chrome (à esquerda do
+                theme/avatar) — some quando não há atividade. Abre o dropdown
+                ANCORADO aqui (não flutua). */}
+            <ActivityDropdown
+              ops={atividade.ops}
+              agoraMs={atividade.agoraMs}
+              onCancelar={atividade.onCancelar}
+              onPausar={atividade.onPausar}
+              onResumir={atividade.onResumir}
+              onDispensar={atividade.onDispensar}
+              onDesfazer={atividade.onDesfazer}
+              desfeitos={atividade.desfeitos}
+              onLimparConcluidas={atividade.onLimparConcluidas}
+            />
             <ThemeToggle size="md" />
             <MenuUsuario
               user={user}
@@ -1254,6 +1277,15 @@ function AppInner() {
             />
           </div>
         </header>
+
+        {/* #987: preview de undo de transferência — app-level porque o "Desfazer"
+            é disparado pelo sino da title bar (visível em qualquer tela). */}
+        <UndoPreviewDialog
+          aberto={atividade.undoPreview !== null}
+          plan={atividade.undoPreview?.plan ?? null}
+          onConfirmar={atividade.confirmarUndo}
+          onCancelar={atividade.fecharUndoPreview}
+        />
 
         {reauthMissingScopes.length > 0 && !reauthDismissed && (
           <div className="relative z-20 px-4 pb-3">
