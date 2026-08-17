@@ -2377,33 +2377,194 @@ fn limpar_destinos_a_planejar(
     residuos
 }
 
-/// #1067 RB20: registra o manifesto PARCIAL dos renames mesmo-volume já efetivados
-/// (`status="partial"`, `kind="move"`), pros caminhos de erro/cancel do multi-move — sem
-/// isto, arquivos já movidos ficam no destino sem manifesto = undo indisponível. No-op
-/// se não houve rename. Recebe os itens por referência e clona (o caminho feliz ainda os usa).
+/// #1067 RB20: monta o manifesto PARCIAL dos renames mesmo-volume já efetivados
+/// (`status="partial"`, `kind="move"`). `None` sse não houve rename (no-op). Pura (sem
+/// I/O nem `AppHandle`) → é o núcleo testável do que o funil grava em TODA saída de
+/// erro/cancel da fase pós-rename; um teste prova que a rota de erro produz um manifesto
+/// que `executar_undo` reverte, sem depender do runtime pra escrever o journal.
+fn entrada_parcial_renomes(
+    op_id: u64,
+    started_at_ms: u64,
+    itens_renome: &[JournalItem],
+) -> Option<OperationJournalEntry> {
+    if itens_renome.is_empty() {
+        return None;
+    }
+    Some(OperationJournalEntry {
+        op_id,
+        kind: "move".into(),
+        started_at_ms,
+        ended_at_ms: agora_ms(),
+        status: "partial".into(),
+        resolucao: None,
+        items: itens_renome.to_vec(),
+        trash_record_ids: Vec::new(),
+        undo_granularidade: String::new(),
+    })
+}
+
+/// #1067 RB20: registra o manifesto PARCIAL dos renames mesmo-volume já efetivados, pros
+/// caminhos de erro/cancel do multi-move — sem isto, arquivos já movidos ficam no destino
+/// sem manifesto = undo indisponível. No-op se não houve rename. Recebe os itens por
+/// referência e clona (o caminho feliz ainda os usa).
 fn journalar_renomes_parciais(
     app: &AppHandle,
     op_id: u64,
     started_at_ms: u64,
     itens_renome: &[JournalItem],
 ) {
-    if itens_renome.is_empty() {
-        return;
+    if let Some(entry) = entrada_parcial_renomes(op_id, started_at_ms, itens_renome) {
+        registrar_journal(app, &entry);
     }
-    registrar_journal(
-        app,
-        &OperationJournalEntry {
-            op_id,
-            kind: "move".into(),
-            started_at_ms,
-            ended_at_ms: agora_ms(),
-            status: "partial".into(),
-            resolucao: None,
-            items: itens_renome.to_vec(),
-            trash_record_ids: Vec::new(),
-            undo_granularidade: String::new(),
-        },
+}
+
+/// #1067 RB20: desfecho da fase pós-rename (`planejar_e_copiar_muitas`) — só o que o
+/// chamador precisa pra montar o `ResumoOp` e o manifesto de SUCESSO. `canceled == false`
+/// e sem `Err` = sucesso; qualquer `Err` ou `canceled == true` obriga o chamador a
+/// journalar o manifesto PARCIAL dos renames.
+struct FaseMuitas {
+    plano: Plano,
+    canceled: bool,
+    arquivos_feitos: u64,
+}
+
+/// #1067 RB20 (funil): a fase pós-rename do multi-move/copy — planeja (`planejar_muitas`),
+/// cria os dirs, copia (`copiar_plano`) e, no move, aplica o gate anti-perda (#1066) e
+/// remove as origens. Extraída de `executar_progresso_muitas` pra que TODAS as saídas de
+/// erro/cancel DEPOIS dos renames mesmo-volume passem por um ÚNICO ponto de junção no
+/// chamador — que é quem journala. INVARIANTE: este helper **não journala nada**; só
+/// devolve o desfecho. Preserva RB24 (limpeza de resíduo via `limpar_destinos_a_planejar`
+/// embutida no `Err`/cancel do `copiar_plano`), o gate `copia_completa` e todos os logs.
+/// As cinco saídas de erro (plano ilegível `?`, enumeração incompleta `plano.erros`,
+/// `create_dir_all?`, cópia falha, `copia_completa` falso + `remover?` da origem) viram
+/// `Err`; o cancel vira `Ok(FaseMuitas{canceled:true,..})`; o sucesso, `canceled:false`.
+#[allow(clippy::too_many_arguments)]
+fn planejar_e_copiar_muitas(
+    mover: bool,
+    a_planejar: &[(String, String)],
+    op_id: u64,
+    flag: &Arc<AtomicBool>,
+    pausar: &Arc<AtomicBool>,
+    verify: Option<VerifyAlg>,
+    app: &AppHandle,
+    rotulo: &'static str,
+    started_at_ms: u64,
+    t0: Instant,
+    renomeados: usize,
+) -> Result<FaseMuitas, FsError> {
+    emitir_descobrindo(app, op_id, rotulo, started_at_ms); // #875: fase Discovering
+    let pares_path: Vec<(PathBuf, PathBuf)> = a_planejar
+        .iter()
+        .map(|(s, d)| (PathBuf::from(s), PathBuf::from(d)))
+        .collect();
+    let plano = planejar_muitas(&pares_path)?;
+    // #1066: alguma origem teve entrada não-enumerável → plano incompleto. Aborta
+    // antes de copiar (as origens de `a_planejar` ficam intactas). Os renames
+    // mesmo-volume já efetivados acima seguem no destino — não são perda de dado.
+    if !plano.erros.is_empty() {
+        log::error!(
+            "fs_{rotulo} ERRO op={op_id}: enumeração pulou {} entrada(s) — abortando (ex.: {})",
+            plano.erros.len(),
+            plano.erros.first().map(String::as_str).unwrap_or("")
+        );
+        return Err(FsError::Io(format!(
+            "enumeração incompleta: {} entrada(s) inacessível(is) — op abortada (ex.: {})",
+            plano.erros.len(),
+            plano.erros.first().map(String::as_str).unwrap_or("")
+        )));
+    }
+    for d in &plano.dirs {
+        std::fs::create_dir_all(com_long_path(d))?;
+    }
+    let perfil = perfilar(&pares_path[0].0, &pares_path[0].1);
+    log::info!(
+        "fs_{rotulo} START op={op_id}: {} origem(ns) ({renomeados} rename), {} arquivo(s), {:.1} MiB, {} dir(s), {} worker(s)",
+        a_planejar.len() + renomeados,
+        plano.total_arquivos,
+        plano.total_bytes as f64 / 1_048_576.0,
+        plano.dirs.len(),
+        perfil.workers
     );
+    let ctx = Contexto {
+        processados: Arc::new(AtomicU64::new(0)),
+        arquivos_feitos: Arc::new(AtomicU64::new(0)),
+        cancelar: flag.clone(),
+        pausar: pausar.clone(),
+        verify,
+        atual: Arc::new(Mutex::new(String::new())),
+    };
+    let ticker = iniciar_ticker(
+        app,
+        op_id,
+        plano.total_bytes,
+        plano.total_arquivos,
+        ctx.processados.clone(),
+        ctx.arquivos_feitos.clone(),
+        verify.is_some(),
+        rotulo,
+        started_at_ms,
+        ctx.atual.clone(),
+        pausar.clone(),
+    );
+    let resultado = copiar_plano(&plano, perfil.workers, &ctx);
+    ticker.parar();
+    if let Err(e) = resultado {
+        log::error!("fs_{rotulo} ERRO op={op_id}: {e}");
+        // #1067 RB24: limpa os destinos do plano capturando resíduo (não engole falha).
+        let residuos = limpar_destinos_a_planejar(a_planejar, rotulo, op_id);
+        // #1067 RB20: NÃO journala aqui — o chamador é o ÚNICO ponto que grava o manifesto
+        // parcial dos renames (pra este `Err` e pros outros quatro). A limpeza acima já
+        // desfez o que a cópia deixou pela metade.
+        if !residuos.is_empty() {
+            return Err(FsError::Io(format!("{e} — resíduo NÃO removido em: {}", residuos.join(", "))));
+        }
+        return Err(e);
+    }
+    if flag.load(Ordering::Relaxed) {
+        // #1067 RB24: mesma captura de resíduo no cancel.
+        let residuos = limpar_destinos_a_planejar(a_planejar, rotulo, op_id);
+        if !residuos.is_empty() {
+            log::error!(
+                "fs_{rotulo} op={op_id}: CANCELADO com {} resíduo(s) não removido(s): {}",
+                residuos.len(), residuos.join(", ")
+            );
+        }
+        // #1067 RB20: cancel volta como `Ok(canceled=true)` — o chamador journala o parcial
+        // e monta o `ResumoOp` terminal (sem reclassificar cancel→erro).
+        return Ok(FaseMuitas {
+            plano,
+            canceled: true,
+            arquivos_feitos: ctx.arquivos_feitos.load(Ordering::Relaxed),
+        });
+    }
+    if mover {
+        // #1066: gate anti-perda — só remove as origens se a cópia bateu com o plano.
+        let feitos = ctx.arquivos_feitos.load(Ordering::Relaxed);
+        let bytes = ctx.processados.load(Ordering::Relaxed);
+        if !copia_completa(&plano, feitos, bytes) {
+            log::error!(
+                "fs_{rotulo} ERRO op={op_id}: cópia incompleta ({feitos}/{} arq, {bytes}/{} bytes) — origens PRESERVADAS",
+                plano.total_arquivos, plano.total_bytes
+            );
+            return Err(FsError::Io(format!(
+                "cópia incompleta: {feitos}/{} arquivo(s), {bytes}/{} byte(s) copiado(s) — origens NÃO removidas",
+                plano.total_arquivos, plano.total_bytes
+            )));
+        }
+        for (src, _) in a_planejar {
+            remover(src)?;
+        }
+    }
+    let elapsed = t0.elapsed().as_secs_f64().max(0.001);
+    let mib = plano.total_bytes as f64 / 1_048_576.0;
+    log::info!(
+        "fs_{rotulo} END op={op_id}: {elapsed:.2}s, {:.1} MiB/s medio, {:.0} arquivo(s)/s, {} arquivo(s), {mib:.1} MiB",
+        mib / elapsed,
+        plano.total_arquivos as f64 / elapsed,
+        plano.total_arquivos
+    );
+    let arquivos_feitos = ctx.arquivos_feitos.load(Ordering::Relaxed);
+    Ok(FaseMuitas { plano, canceled: false, arquivos_feitos })
 }
 
 /// #850 (fatia B): copy/move de MÚLTIPLAS origens pra um destino, em UMA fase só.
@@ -2472,132 +2633,42 @@ fn executar_progresso_muitas(
         let n = renomeados as u64;
         return Ok(ResumoOp { canceled: false, files_total: n, files_done: n });
     }
-    emitir_descobrindo(app, op_id, rotulo, started_at_ms); // #875: fase Discovering
-    let pares_path: Vec<(PathBuf, PathBuf)> = a_planejar
-        .iter()
-        .map(|(s, d)| (PathBuf::from(s), PathBuf::from(d)))
-        .collect();
-    let plano = planejar_muitas(&pares_path)?;
-    // #1066: alguma origem teve entrada não-enumerável → plano incompleto. Aborta
-    // antes de copiar (as origens de `a_planejar` ficam intactas). Os renames
-    // mesmo-volume já efetivados acima seguem no destino — não são perda de dado.
-    if !plano.erros.is_empty() {
-        log::error!(
-            "fs_{rotulo} ERRO op={op_id}: enumeração pulou {} entrada(s) — abortando (ex.: {})",
-            plano.erros.len(),
-            plano.erros.first().map(String::as_str).unwrap_or("")
-        );
-        return Err(FsError::Io(format!(
-            "enumeração incompleta: {} entrada(s) inacessível(is) — op abortada (ex.: {})",
-            plano.erros.len(),
-            plano.erros.first().map(String::as_str).unwrap_or("")
-        )));
-    }
-    for d in &plano.dirs {
-        std::fs::create_dir_all(com_long_path(d))?;
-    }
-    let perfil = perfilar(&pares_path[0].0, &pares_path[0].1);
-    log::info!(
-        "fs_{rotulo} START op={op_id}: {} origem(ns) ({renomeados} rename), {} arquivo(s), {:.1} MiB, {} dir(s), {} worker(s)",
-        pares.len(),
-        plano.total_arquivos,
-        plano.total_bytes as f64 / 1_048_576.0,
-        plano.dirs.len(),
-        perfil.workers
-    );
-    let ctx = Contexto {
-        processados: Arc::new(AtomicU64::new(0)),
-        arquivos_feitos: Arc::new(AtomicU64::new(0)),
-        cancelar: flag.clone(),
-        pausar: pausar.clone(),
-        verify,
-        atual: Arc::new(Mutex::new(String::new())),
-    };
-    let ticker = iniciar_ticker(
-        app,
-        op_id,
-        plano.total_bytes,
-        plano.total_arquivos,
-        ctx.processados.clone(),
-        ctx.arquivos_feitos.clone(),
-        verify.is_some(),
-        rotulo,
-        started_at_ms,
-        ctx.atual.clone(),
-        pausar.clone(),
-    );
-    let resultado = copiar_plano(&plano, perfil.workers, &ctx);
-    ticker.parar();
-    if let Err(e) = resultado {
-        log::error!("fs_{rotulo} ERRO op={op_id}: {e}");
-        // #1067 RB24: limpa os destinos do plano capturando resíduo (não engole falha).
-        let residuos = limpar_destinos_a_planejar(&a_planejar, rotulo, op_id);
-        // #1067 RB20 (crítico): os renames mesmo-volume JÁ efetivados (itens_renome) ficam
-        // no destino. Sem journalá-los aqui, ficam sem manifesto → undo indisponível =
-        // estado irreversível pela UI (data-loss de reversibilidade). Registra um manifesto
-        // PARCIAL (mesmo op_id) cobrindo só os renames — a limpeza de `a_planejar` acima já
-        // desfez o que a cópia deixou pela metade. `clone` porque o caminho feliz ainda usa
-        // `itens_renome` no fim (sem use-after-move).
-        journalar_renomes_parciais(app, op_id, started_at_ms, &itens_renome);
-        if !residuos.is_empty() {
-            return Err(FsError::Io(format!("{e} — resíduo NÃO removido em: {}", residuos.join(", "))));
+    // #1067 RB20 (invariante ESTRUTURAL): daqui pra baixo, TODA saída de erro/cancel da
+    // fase pós-rename precisa journalar o manifesto PARCIAL dos renames mesmo-volume já
+    // efetivados — senão eles ficam no destino sem manifesto → undo indisponível = estado
+    // irreversível (o data-loss que o #1067 fecha). Em vez de tapar cada `return` da fase
+    // (frágil: a próxima rota nova reabriria o buraco), a fase inteira vive em
+    // `planejar_e_copiar_muitas` (que NÃO journala). AQUI, no ÚNICO ponto de junção, os
+    // braços `Err`/cancel journalam o parcial e o braço de sucesso grava o manifesto
+    // completo. Qualquer rota nova DENTRO da fase sai por `Err`/`Ok(canceled)` e cai num
+    // destes três braços — a lacuna vira estruturalmente impossível.
+    match planejar_e_copiar_muitas(
+        mover, &a_planejar, op_id, flag, pausar, verify, app, rotulo, started_at_ms, t0, renomeados,
+    ) {
+        Err(e) => {
+            journalar_renomes_parciais(app, op_id, started_at_ms, &itens_renome);
+            Err(e)
         }
-        return Err(e);
-    }
-    if flag.load(Ordering::Relaxed) {
-        // #1067 RB24: mesma captura de resíduo no cancel.
-        let residuos = limpar_destinos_a_planejar(&a_planejar, rotulo, op_id);
-        // #1067 RB20 (crítico): idem ao caminho de erro — renames efetivados viram
-        // manifesto parcial pra continuarem desfazíveis. O resultado terminal é `canceled`
-        // (sem campo de erro); resíduo vai pro log estruturado (não reclassifico cancel→erro).
-        journalar_renomes_parciais(app, op_id, started_at_ms, &itens_renome);
-        if !residuos.is_empty() {
-            log::error!(
-                "fs_{rotulo} op={op_id}: CANCELADO com {} resíduo(s) não removido(s): {}",
-                residuos.len(), residuos.join(", ")
-            );
+        Ok(f) if f.canceled => {
+            journalar_renomes_parciais(app, op_id, started_at_ms, &itens_renome);
+            Ok(ResumoOp {
+                canceled: true,
+                files_total: renomeados as u64 + f.plano.total_arquivos,
+                files_done: renomeados as u64 + f.arquivos_feitos,
+            })
         }
-        return Ok(ResumoOp {
-            canceled: true,
-            files_total: renomeados as u64 + plano.total_arquivos,
-            files_done: renomeados as u64 + ctx.arquivos_feitos.load(Ordering::Relaxed),
-        });
-    }
-    if mover {
-        // #1066: gate anti-perda — só remove as origens se a cópia bateu com o plano.
-        let feitos = ctx.arquivos_feitos.load(Ordering::Relaxed);
-        let bytes = ctx.processados.load(Ordering::Relaxed);
-        if !copia_completa(&plano, feitos, bytes) {
-            log::error!(
-                "fs_{rotulo} ERRO op={op_id}: cópia incompleta ({feitos}/{} arq, {bytes}/{} bytes) — origens PRESERVADAS",
-                plano.total_arquivos, plano.total_bytes
-            );
-            return Err(FsError::Io(format!(
-                "cópia incompleta: {feitos}/{} arquivo(s), {bytes}/{} byte(s) copiado(s) — origens NÃO removidas",
-                plano.total_arquivos, plano.total_bytes
-            )));
-        }
-        for (src, _) in &a_planejar {
-            remover(src)?;
+        Ok(f) => {
+            // #899 U0: manifesto do plano global + os renames por-origem (mesmo op_id).
+            let mut entrada = montar_entrada(op_id, mover, started_at_ms, agora_ms(), &f.plano);
+            entrada.items.extend(itens_renome);
+            registrar_journal(app, &entrada);
+            Ok(ResumoOp {
+                canceled: false,
+                files_total: renomeados as u64 + f.plano.total_arquivos,
+                files_done: renomeados as u64 + f.arquivos_feitos,
+            })
         }
     }
-    let elapsed = t0.elapsed().as_secs_f64().max(0.001);
-    let mib = plano.total_bytes as f64 / 1_048_576.0;
-    log::info!(
-        "fs_{rotulo} END op={op_id}: {elapsed:.2}s, {:.1} MiB/s medio, {:.0} arquivo(s)/s, {} arquivo(s), {mib:.1} MiB",
-        mib / elapsed,
-        plano.total_arquivos as f64 / elapsed,
-        plano.total_arquivos
-    );
-    // #899 U0: manifesto do plano global + os renames por-origem (mesmo op_id).
-    let mut entrada = montar_entrada(op_id, mover, started_at_ms, agora_ms(), &plano);
-    entrada.items.extend(itens_renome);
-    registrar_journal(app, &entrada);
-    Ok(ResumoOp {
-        canceled: false,
-        files_total: renomeados as u64 + plano.total_arquivos,
-        files_done: renomeados as u64 + ctx.arquivos_feitos.load(Ordering::Relaxed),
-    })
 }
 
 /// #1066: a cópia bateu EXATAMENTE com o planejado? Gate anti-perda-de-dado que
@@ -4714,6 +4785,74 @@ mod tests {
         };
         let rep_vazio = executar_undo(&sem_manifesto);
         assert_eq!(rep_vazio.executados, 0, "sem manifesto não há reversão possível");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn rb20_rota_erro_de_plano_planejar_muitas_falha_deterministicamente() {
+        // #1067 RB20 (rejeição da Lúmen): a "rota de erro-de-plano" é a que dispara a 1ª
+        // saída de erro da fase pós-rename — `let plano = planejar_muitas(&pares_path)?;`.
+        // Aqui provo que essa condição de erro é REAL e determinística (não hipotética):
+        // uma origem ilegível faz `planejar_muitas` devolver `Err`. No multi-move, uma
+        // origem inexistente NÃO é filtrada pelo rename mesmo-volume (o rename falha), logo
+        // ela cai em `a_planejar` e CHEGA ao `planejar_muitas` — exatamente o caminho em que
+        // os renames já efetivados de OUTRAS origens precisam do manifesto parcial.
+        let base = dir_temp("rota-erro-plano");
+        let inexistente = base.join("nao-existe-src");
+        let destino = base.join("dst");
+        assert!(
+            std::fs::rename(com_long_path(&inexistente), com_long_path(&destino)).is_err(),
+            "origem inexistente NÃO é absorvida pelo rename mesmo-volume → vai pro plano"
+        );
+        let r = planejar_muitas(&[(inexistente.clone(), destino.clone())]);
+        assert!(
+            r.is_err(),
+            "origem ilegível → planejar_muitas Err (saída #1 da fase pós-rename, antes de copiar)"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn rb20_entrada_parcial_renomes_monta_manifesto_reversivel_na_rota_de_erro() {
+        // #1067 RB20 (rejeição da Lúmen): o funil grava, em TODA saída de erro/cancel da
+        // fase pós-rename, exatamente o manifesto que `entrada_parcial_renomes` produz. Aqui
+        // exercito ESSA unidade de produção (não um `OperationJournalEntry` montado à mão):
+        // pra a rota de erro ela devolve `Some(status="partial", kind="move")` cobrindo os
+        // renames JÁ efetivados, e `executar_undo` desse manifesto devolve cada `to`→`from`.
+        // A ESCRITA via `registrar_journal` é runtime: as assinaturas usam `AppHandle<Wry>`,
+        // que não se constrói em unit test (o mock dá `AppHandle<MockRuntime>`, incompatível),
+        // por isso o e2e do caminho (A) é inviável e este é o fallback determinístico.
+        let base = dir_temp("entrada-parcial-erro");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        let a_de = origem.join("a.txt");
+        let b_de = origem.join("b.txt");
+        std::fs::write(&a_de, vec![1u8; 10]).unwrap();
+        std::fs::write(&b_de, vec![2u8; 20]).unwrap();
+        let a_para = base.join("a.txt");
+        let b_para = base.join("b.txt");
+        // renames mesmo-volume efetivados (como no loop do multi-move, ANTES da saída de erro).
+        mover(&a_de.to_string_lossy(), &a_para.to_string_lossy()).unwrap();
+        mover(&b_de.to_string_lossy(), &b_para.to_string_lossy()).unwrap();
+        let itens_renome =
+            vec![journal_item(&a_de, &a_para, true), journal_item(&b_de, &b_para, true)];
+
+        // Sem renames → None (no-op: nada a journalar; o funil não grava linha vazia).
+        assert!(entrada_parcial_renomes(1, 0, &[]).is_none());
+
+        // Com renames → manifesto partial/move cobrindo os dois (o que o funil grava no `Err`).
+        let entrada = entrada_parcial_renomes(99, 0, &itens_renome)
+            .expect("há renames efetivados → Some(manifesto parcial)");
+        assert_eq!(entrada.status, "partial", "rota de erro/cancel = manifesto parcial");
+        assert_eq!(entrada.kind, "move");
+        assert_eq!(entrada.items.len(), 2, "os dois renames entram no parcial");
+
+        // `executar_undo` do parcial reverte os renames (to→from) — reversibilidade preservada.
+        let rep = executar_undo(&entrada);
+        assert_eq!(rep.executados, 2, "os 2 renames revertidos pelo manifesto parcial");
+        assert!(rep.erros.is_empty());
+        assert!(a_de.exists() && b_de.exists(), "voltaram à origem");
+        assert!(!a_para.exists() && !b_para.exists(), "saíram do destino");
         std::fs::remove_dir_all(&base).ok();
     }
 
