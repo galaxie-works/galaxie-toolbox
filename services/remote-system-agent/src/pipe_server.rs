@@ -10,12 +10,40 @@
 
 use crate::session_channel::PresencaLocal;
 
+/// Logon SID recusado por não casar `^S-1-[0-9-]+$` (#1073 RB13).
+#[derive(Debug, PartialEq, Eq)]
+pub struct SidInvalido(pub String);
+
+impl std::fmt::Display for SidInvalido {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "logon SID malformado (esperado ^S-1-[0-9-]+$): {:?}", self.0)
+    }
+}
+
+impl std::error::Error for SidInvalido {}
+
+/// #1073 (RB13): valida o formato do SID ANTES de interpolar no SDDL. Casa
+/// `^S-1-[0-9-]+$` — só o prefixo `S-1-` seguido de dígitos e hífens. Barra qualquer
+/// metacaractere de SDDL (`)`, `(`, `;`, espaço, …) que fecharia o nosso ACE e
+/// injetaria outro (ex.: abrir pra `WD`/Everyone). Sem regex (crate sem essa dep).
+fn sid_valido(sid: &str) -> bool {
+    match sid.strip_prefix("S-1-") {
+        Some(resto) => !resto.is_empty() && resto.bytes().all(|b| b.is_ascii_digit() || b == b'-'),
+        None => false,
+    }
+}
+
 /// SDDL da DACL do pipe (§4.1): **SYSTEM + o Logon SID da sessão ativa APENAS**,
 /// protegida (`P` = sem herança). Sem ACE pra rede/outras sessões ⇒ negado por
 /// omissão. `GA` = GENERIC_ALL (o worker é dono; o owner precisa ler/escrever).
-#[must_use]
-pub fn dacl_sddl(logon_sid: &str) -> String {
-    format!("D:P(A;;GA;;;SY)(A;;GA;;;{logon_sid})")
+///
+/// #1073 (RB13): `Result` — `logon_sid` malformado é RECUSADO (anti-injeção de DACL),
+/// nunca interpolado cru.
+pub fn dacl_sddl(logon_sid: &str) -> Result<String, SidInvalido> {
+    if !sid_valido(logon_sid) {
+        return Err(SidInvalido(logon_sid.to_string()));
+    }
+    Ok(format!("D:P(A;;GA;;;SY)(A;;GA;;;{logon_sid})"))
 }
 
 #[cfg(windows)]
@@ -78,7 +106,10 @@ mod win {
         /// Cria o pipe `\\.\pipe\Galaxie.Remote.Worker.<sid>.<nonce>` com a DACL
         /// SYSTEM+LogonSID, message-mode, sem clientes remotos, teto 64 KiB.
         pub fn criar(nome_pipe: &str, logon_sid: &str) -> io::Result<Self> {
-            let sddl = to_wide(&dacl_sddl(logon_sid));
+            // #1073 (RB13): SID validado ANTES do SDDL — malformado vira erro, não DACL.
+            let sddl_str = dacl_sddl(logon_sid)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+            let sddl = to_wide(&sddl_str);
             let mut psd = PSECURITY_DESCRIPTOR::default();
             unsafe {
                 ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -229,7 +260,7 @@ mod tests {
     #[test]
     fn sddl_tem_system_e_o_logon_sid_e_nega_o_resto() {
         let sid = "S-1-5-5-0-1234567";
-        let s = dacl_sddl(sid);
+        let s = dacl_sddl(sid).expect("SID bem-formado");
         assert_eq!(s, format!("D:P(A;;GA;;;SY)(A;;GA;;;{sid})"));
         assert!(s.contains(";;SY)"), "tem SYSTEM");
         assert!(s.contains(&format!(";;{sid})")), "tem o Logon SID da sessão");
@@ -238,5 +269,35 @@ mod tests {
         for aberto in [";;WD)", ";;AU)", ";;BU)"] {
             assert!(!s.contains(aberto), "não pode ter ACE aberta {aberto}");
         }
+    }
+
+    /// #1073 (RB13, adversarial): SID com metacaractere de SDDL é RECUSADO — nunca
+    /// gera DACL malformada/injetada. É a prova de que a validação fecha a injeção.
+    #[test]
+    fn sid_malformado_e_rejeitado_sem_gerar_sddl() {
+        for ruim in [
+            "S-1-5-21)(A;;GA;;;WD",       // fecha nosso ACE e injeta Everyone
+            "S-1-5-21;;GA;;;WD",          // `;` quebra o campo do ACE
+            "S-1-5-21 1177238915",        // espaço
+            "S-1-5-(21)",                 // parênteses
+            "S-1-5-21\t512",              // tab
+            "WD",                          // não começa com S-1-
+            "S-1-",                        // vazio após o prefixo
+            "",                            // vazio
+            "s-1-5-21",                    // minúsculo
+            "X-1-5-21",                    // prefixo errado
+            "S-1-5-21;",                   // termina com `;`
+        ] {
+            assert!(
+                dacl_sddl(ruim).is_err(),
+                "{ruim:?} devia ser recusado (anti-injeção de DACL)"
+            );
+        }
+
+        // SID legítimo (com vários hífens) passa e gera a DACL protegida, sem ACE aberta.
+        let ok = dacl_sddl("S-1-5-21-1004336348-1177238915-682003330-512")
+            .expect("SID bem-formado deve passar");
+        assert!(ok.starts_with("D:P("), "DACL protegida");
+        assert!(!ok.contains(";;WD)"), "sem Everyone");
     }
 }

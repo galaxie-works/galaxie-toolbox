@@ -397,53 +397,13 @@ fn connected_site_guids(client: &reqwest::blocking::Client, token: &str) -> Vec<
     out
 }
 
-/// DIAGNOSTICO TEMPORARIO: sonda endpoints que talvez exponham os atalhos.
-/// O /drive/root/children comprovadamente nao devolve remoteItem.
-fn sondar_atalhos(client: &reqwest::blocking::Client, token: &str) {
-    let alvos = [
-        ("sharedWithMe", format!("{GRAPH}/me/drive/sharedWithMe")),
-        ("delta", format!("{GRAPH}/me/drive/root/delta")),
-        (
-            "children+expand",
-            format!("{GRAPH}/me/drive/root/children?$expand=remoteItem&$top=200"),
-        ),
-    ];
-    for (rotulo, url) in alvos {
-        match client.get(&url).bearer_auth(token).send() {
-            Ok(r) => {
-                let st = r.status();
-                match r.json::<serde_json::Value>() {
-                    Ok(v) => {
-                        let arr = v["value"].as_array();
-                        let total = arr.map(|a| a.len()).unwrap_or(0);
-                        let mut remotos = 0;
-                        if let Some(items) = arr {
-                            for it in items {
-                                if !it["remoteItem"].is_null() {
-                                    remotos += 1;
-                                    log::info!(
-                                        "[sonda:{rotulo}] REMOTO '{}' id={}",
-                                        it["name"].as_str().unwrap_or("?"),
-                                        it["id"].as_str().unwrap_or("?")
-                                    );
-                                }
-                            }
-                        }
-                        log::info!("[sonda:{rotulo}] {st}: {total} itens, {remotos} com remoteItem");
-                    }
-                    Err(e) => log::warn!("[sonda:{rotulo}] json: {e}"),
-                }
-            }
-            Err(e) => log::warn!("[sonda:{rotulo}] erro: {e}"),
-        }
-    }
-}
-
 /// Lista os sites do tenant que o usuario enxerga (delegado), com status.
 pub fn list_sites(store: &TokenStore) -> Result<Vec<SiteDto>, String> {
     let token = access_token(store)?;
     let client = reqwest::blocking::Client::new();
-    sondar_atalhos(&client, &token);
+    // #1073 (RB38): a sonda de diagnóstico `sondar_atalhos` foi REMOVIDA — rodava em
+    // produção a cada `list_sites` (3 GETs extras fora do pool + logava nomes de
+    // arquivo do usuário). Nada mais depende dela.
 
     let url = format!("{GRAPH}/sites?search=*&$top=200");
     let resp = client

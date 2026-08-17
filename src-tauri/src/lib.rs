@@ -3,6 +3,8 @@ mod bookmarks;
 mod browser;
 mod config;
 mod domain_claim;
+// #1073 (RB10): wrapper DPAPI único (antes duplicado em auth.rs + lock_screen.rs).
+mod dpapi;
 mod estado;
 mod favicon;
 mod fs_explorer;

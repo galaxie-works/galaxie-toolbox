@@ -351,7 +351,7 @@ fn carregar_fila() -> VecDeque<EnvelopeCarimbado> {
     let Ok(cifrado) = std::fs::read(&p) else {
         return VecDeque::new();
     };
-    crate::auth::dpapi::decifrar(&cifrado)
+    crate::dpapi::decifrar(&cifrado)
         .and_then(|claro| serde_json::from_slice::<Vec<EnvelopeCarimbado>>(&claro).ok())
         .map(VecDeque::from)
         .unwrap_or_default()
@@ -365,7 +365,7 @@ fn gravar_fila(fila: &VecDeque<EnvelopeCarimbado>) {
     }
     let itens: Vec<&EnvelopeCarimbado> = fila.iter().collect();
     match serde_json::to_vec(&itens) {
-        Ok(claro) => match crate::auth::dpapi::cifrar(&claro) {
+        Ok(claro) => match crate::dpapi::cifrar(&claro) {
             Some(cifrado) => {
                 if let Err(e) = std::fs::write(&p, &cifrado) {
                     log::error!("[telemetry] falha ao gravar fila: {e}");
