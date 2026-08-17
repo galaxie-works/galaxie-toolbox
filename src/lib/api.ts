@@ -89,6 +89,61 @@ export async function remoteSignalingEndpoint(): Promise<string> {
   }
 }
 
+/**
+ * #1129 A1: URL de PROD do plano de controle v2 (`/v2/ws`), derivada do v1 —
+ * espelha o `derivar_signaling_endpoint_v2` do Rust pro caminho browser/falha.
+ */
+export const REMOTE_SIGNALING_DEFAULT_PROD_V2 =
+  "wss://telemetry.thegalaxie.cloud/remote/v2/ws";
+
+/**
+ * #1129 A1: endpoint do signaling v2 (`/v2/ws`), resolvido pelo backend (derivado
+ * do v1). Fora do Tauri, ou se o invoke falhar, cai no default de PROD v2. O v2 é
+ * o plano de controle S8 (não-crítico hoje) — o probe que o usa sempre cai pro v1.
+ */
+export async function remoteSignalingEndpointV2(): Promise<string> {
+  if (!inTauri()) return REMOTE_SIGNALING_DEFAULT_PROD_V2;
+  try {
+    return await invoke<string>("remote_signaling_endpoint_v2");
+  } catch {
+    return REMOTE_SIGNALING_DEFAULT_PROD_V2;
+  }
+}
+
+/**
+ * #1129 A1 / L1: prova-de-posse (PoP) assinada pelo Rust pra o Register v2. O
+ * `nonce`/`timestamp` são cunhados no Rust e a assinatura Ed25519 cobre
+ * `(deviceId, nonce, timestamp)`. A CHAVE PRIVADA nunca cruza pro WebView —
+ * ver `remote_identity.rs`. Nenhum campo é segredo (só a assinatura + público).
+ */
+export interface SignedRegistrationV2 {
+  deviceId: string;
+  publicKey: string;
+  nonce: string;
+  timestamp: number;
+  signature: string;
+}
+
+/** #1129 A1: pede ao Rust a PoP de registro v2 (comando L1 `remote_sign_register`). */
+export async function remoteSignRegister(): Promise<SignedRegistrationV2> {
+  return invoke<SignedRegistrationV2>("remote_sign_register");
+}
+
+/**
+ * #1129 A1: ponte de log de INFO/diagnóstico do Remote pro arquivo do
+ * `tauri-plugin-log` (comando `remote_log`). Best-effort: silencioso fora do
+ * Tauri e NUNCA estoura (logar não pode virar um novo erro). Diferente do
+ * `log_frontend_error` (que loga em Error), este loga em Info.
+ */
+export async function remoteLog(msg: string): Promise<void> {
+  if (!inTauri()) return;
+  try {
+    await invoke("remote_log", { msg });
+  } catch {
+    // canal de log indisponível: engole (não transforma um log em erro).
+  }
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**

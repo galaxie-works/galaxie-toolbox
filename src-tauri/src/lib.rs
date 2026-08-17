@@ -1848,6 +1848,53 @@ fn remote_signaling_endpoint() -> String {
     )
 }
 
+/// #1129 A1: deriva o endpoint `/v2/ws` a partir do endpoint v1 resolvido,
+/// trocando SÓ o sufixo de path `/v1/ws` → `/v2/ws` (mantém host/scheme/env
+/// override). Puro pra ser testável. Regra robusta pra um override que não siga
+/// a convenção:
+///   1. Se houver `/v1/ws` (a forma canônica), troca a ÚLTIMA ocorrência.
+///   2. Senão, se houver um segmento `/v1` (ex.: `.../remote/v1`), troca a última
+///      ocorrência de `/v1` por `/v2`.
+///   3. Senão, devolve INALTERADO — o probe v2 é best-effort e não-crítico: um
+///      endpoint sem marcador de versão simplesmente falha o probe (logado) sem
+///      NUNCA afetar o caminho v1. Não inventamos um path que o server não expõe.
+fn derivar_signaling_endpoint_v2(v1: &str) -> String {
+    if let Some(pos) = v1.rfind("/v1/ws") {
+        let mut out = String::with_capacity(v1.len());
+        out.push_str(&v1[..pos]);
+        out.push_str("/v2/ws");
+        out.push_str(&v1[pos + "/v1/ws".len()..]);
+        return out;
+    }
+    if let Some(pos) = v1.rfind("/v1") {
+        let mut out = String::with_capacity(v1.len());
+        out.push_str(&v1[..pos]);
+        out.push_str("/v2");
+        out.push_str(&v1[pos + "/v1".len()..]);
+        return out;
+    }
+    v1.to_owned()
+}
+
+/// #1129 A1: endpoint do plano de controle v2 (`/v2/ws`), derivado do v1. Comando
+/// SEPARADO (não estende `remote_signaling_endpoint`) — a MENOR mudança que não
+/// quebra o consumidor atual, que espera uma `String` (mudar o retorno pra um
+/// objeto `{v1,v2}` obrigaria a mexer no `remoteSignalingEndpoint` do front).
+#[tauri::command]
+fn remote_signaling_endpoint_v2() -> String {
+    derivar_signaling_endpoint_v2(&remote_signaling_endpoint())
+}
+
+/// #1129 A1: canal de log de INFO/diagnóstico do Remote que chega ao arquivo do
+/// `tauri-plugin-log` (nível Info; ver o setup do plugin). Espelha o
+/// `log_frontend_error` (que loga em Error) — o front não tinha ponte de INFO, só
+/// de erro. Usado pelo probe v2 pra registrar, NÃO-silenciosamente, o motivo do
+/// fallback pro v1. `sync`, fire-and-forget: só formata e loga, sem I/O.
+#[tauri::command]
+fn remote_log(msg: String) {
+    log::info!("[remote] {msg}");
+}
+
 /// Navigator (#176): importa favoritos do Chrome/Edge lendo SOMENTE o arquivo
 /// `Bookmarks` (JSON) de cada perfil. Nunca le `Login Data`/credenciais. Devolve
 /// a arvore por navegador+perfil; ausencia degrada em lista vazia (sem panico).
@@ -2037,6 +2084,9 @@ pub fn run() {
             remote::remote_session_end,
             // #1104: endpoint do signaling (config, não constante) — sempre compilado.
             remote_signaling_endpoint,
+            // #1129 A1: endpoint v2 (derivado do v1) + ponte de log INFO do Remote.
+            remote_signaling_endpoint_v2,
+            remote_log,
             // #1129 L1: custódia da chave do device — chave pública/device_id e
             // assinatura de registro (PoP). O segredo NUNCA sai do Rust.
             remote_identity::remote_device_public_key,
@@ -2270,5 +2320,49 @@ mod tests {
     #[test]
     fn comando_signaling_endpoint_nao_e_placeholder() {
         assert!(!remote_signaling_endpoint().contains(".example"));
+    }
+
+    // #1129 A1: a derivação troca SÓ o sufixo `/v1/ws` → `/v2/ws` no default PROD.
+    #[test]
+    fn deriva_v2_do_default_prod() {
+        assert_eq!(
+            derivar_signaling_endpoint_v2(REMOTE_SIGNALING_DEFAULT_PROD),
+            "wss://telemetry.thegalaxie.cloud/remote/v2/ws"
+        );
+    }
+
+    // Preserva host/scheme/porta de um override que segue a convenção `/v1/ws`.
+    #[test]
+    fn deriva_v2_preserva_host_e_porta() {
+        assert_eq!(
+            derivar_signaling_endpoint_v2("ws://127.0.0.1:9099/remote/v1/ws"),
+            "ws://127.0.0.1:9099/remote/v2/ws"
+        );
+    }
+
+    // Fallback robusto: override com `/v1` sem `/ws` troca o segmento de versão.
+    #[test]
+    fn deriva_v2_fallback_segmento_v1() {
+        assert_eq!(
+            derivar_signaling_endpoint_v2("wss://host.example/remote/v1"),
+            "wss://host.example/remote/v2"
+        );
+    }
+
+    // Sem marcador de versão: devolve INALTERADO (não inventa path).
+    #[test]
+    fn deriva_v2_sem_marcador_fica_inalterado() {
+        assert_eq!(
+            derivar_signaling_endpoint_v2("wss://host.example/socket"),
+            "wss://host.example/socket"
+        );
+    }
+
+    // O comando v2 real não é placeholder e casa com a derivação do endpoint v1.
+    #[test]
+    fn comando_signaling_endpoint_v2_deriva_do_v1() {
+        let v2 = remote_signaling_endpoint_v2();
+        assert!(!v2.contains(".example"));
+        assert_eq!(v2, derivar_signaling_endpoint_v2(&remote_signaling_endpoint()));
     }
 }

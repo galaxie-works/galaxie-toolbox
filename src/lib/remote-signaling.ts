@@ -9,7 +9,19 @@
 // do S0 (perguntado ao Confucius na #133). A tela pendura na INTERFACE, então já
 // dá pra montar/testar a UI com um sinalizador fake.
 
-import { remoteSignalingEndpoint } from "./api";
+import {
+  inTauri,
+  remoteLog,
+  remoteSignalingEndpoint,
+  remoteSignalingEndpointV2,
+  remoteSignRegister,
+} from "./api";
+import {
+  PROBE_V2_TIMEOUT_MS,
+  tentarRegistrarV2,
+  type DepsProbeV2,
+  type WsMinimoV2,
+} from "./remote-signaling-v2";
 
 /** SDP/ICE kind (igual ao `RemoteSignal.kind` do wiring). */
 export type SignalKind = "offer" | "answer" | "ice_candidate";
@@ -171,6 +183,42 @@ async function gerarPublicKey(): Promise<string> {
 }
 
 /**
+ * #1129 A1: probe v2 (Register PoP) BEST-EFFORT + fallback NÃO-silencioso.
+ *
+ * Roda EM PARALELO ao fluxo v1 (o `conectar` dispara com `void` e NÃO aguarda),
+ * então NUNCA adiciona latência ao connect nem pode quebrar o v1 — a escolha
+ * deliberada pra manter o cliente v0.41.1 (v1) intacto em campo. O v2 é o plano
+ * de controle S8 e é não-crítico: HOJE sempre cai pro v1 (sem device matriculado
+ * / sem ice_servers). A única coisa que este caminho GARANTE é o registro
+ * NÃO-silencioso do motivo do fallback no arquivo de log.
+ *
+ * `tentarRegistrarV2` nunca rejeita; ainda assim o `.catch` é cinto-e-suspensório
+ * contra falha ao RESOLVER as deps (endpoint/PoP) — v1 segue de qualquer forma.
+ */
+function sondarV2BestEffort(): void {
+  // Sem Tauri (pnpm dev no browser) não há PoP no Rust — nada a sondar.
+  if (!inTauri()) return;
+  void (async () => {
+    try {
+      const endpointV2 = await remoteSignalingEndpointV2();
+      const deps: DepsProbeV2 = {
+        endpointV2,
+        obterPoP: remoteSignRegister,
+        abrirWs: (url) => new WebSocket(url) as unknown as WsMinimoV2,
+        gerarId: () => crypto.randomUUID(),
+        timeoutMs: PROBE_V2_TIMEOUT_MS,
+      };
+      const resultado = await tentarRegistrarV2(deps);
+      // Log NÃO-silencioso: chega ao arquivo do tauri-plugin-log (nível Info).
+      await remoteLog(resultado.mensagem);
+    } catch {
+      // Falha ao montar/rodar o probe: v1 é soberano, seguimos calados aqui
+      // (o próprio probe já loga os resultados que consegue classificar).
+    }
+  })();
+}
+
+/**
  * Client de signaling S0 concreto (WebSocket). Faz o Register (device_id +
  * pubkey Ed25519), resolve o `conectar` com os ICE servers do `registered`,
  * despacha as `ServerMessage` pros handlers e mantém o heartbeat. O matchmaking
@@ -248,6 +296,10 @@ export function criarSinalizadorWs(endpoint: string): SinalizadorS0 {
   return {
     conectar(h) {
       handlers = h;
+      // #1129 A1: probe v2 EM PARALELO, best-effort. Dispara e NÃO aguarda — o
+      // fluxo v1 abaixo começa na mesma hora, sem latência extra, e é imune a
+      // qualquer falha do v2 (o probe nunca rejeita e loga o motivo do fallback).
+      sondarV2BestEffort();
       return new Promise<{ iceServers: IceServer[] }>((resolve, reject) => {
         resolverConexao = resolve;
         rejeitarConexao = reject;
