@@ -1,13 +1,18 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { telModuloAberto, telSessaoIniciada } from "@/lib/telemetria";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { registrarHandlersGlobais } from "@/lib/log";
 import { LoginScreen } from "@/screens/login";
-import { OnboardingEmpresaScreen } from "@/screens/onboarding-empresa";
 import { TierProvider } from "@/lib/tier-context";
 import { SitesScreen } from "@/screens/sites";
 import { AppsScreen } from "@/screens/apps";
-import { AtomsScreen } from "@/screens/atoms";
 import { ControlRoomScreen } from "@/screens/control-room";
 import { NavegadorScreen } from "@/screens/navegador";
 import {
@@ -32,11 +37,8 @@ import {
   type PeriodoLimpeza,
 } from "@/lib/navigator-history";
 import * as browser from "@/lib/browser";
-import { WindowsScreen } from "@/screens/windows";
 import { ArquivosScreen } from "@/screens/arquivos";
-import { RemoteScreen } from "@/screens/remote";
 import { ConfiguracoesScreen } from "@/screens/configuracoes";
-import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Atualizacao } from "@/components/atualizacao";
 import { TelaBloqueio } from "@/components/tela-bloqueio";
@@ -79,6 +81,39 @@ import {
   revelarAppEFecharSplash,
 } from "@/lib/splash";
 import { KeyRound } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
+
+// #1025 (FE11, parte B): code-split das telas de baixa frequência — saem do
+// chunk `index` do boot e viram chunks próprios, carregados sob demanda quando o
+// usuário navega até elas. Bridge (control-room, keep-alive), Navigator e Login
+// seguem EAGER de propósito. Cada uso mora dentro de um <Suspense> (ver
+// TelaFallback) que só suspende no lazy — telas eager passam direto.
+const OnboardingEmpresaScreen = lazy(() =>
+  import("@/screens/onboarding-empresa").then((m) => ({
+    default: m.OnboardingEmpresaScreen,
+  })),
+);
+const AtomsScreen = lazy(() =>
+  import("@/screens/atoms").then((m) => ({ default: m.AtomsScreen })),
+);
+const WindowsScreen = lazy(() =>
+  import("@/screens/windows").then((m) => ({ default: m.WindowsScreen })),
+);
+const RemoteScreen = lazy(() =>
+  import("@/screens/remote").then((m) => ({ default: m.RemoteScreen })),
+);
+const EmBreveScreen = lazy(() =>
+  import("@/screens/em-breve").then((m) => ({ default: m.EmBreveScreen })),
+);
+
+/** Fallback centralizado enquanto o chunk da tela lazy chega (#1025). */
+function TelaFallback() {
+  return (
+    <div className="grid h-full place-items-center">
+      <Spinner className="size-6 text-muted-foreground" />
+    </div>
+  );
+}
 
 /**
  * Todo o app de verdade. Fica ABAIXO do ErrorBoundary (ver `App`): é esta árvore
@@ -1088,11 +1123,13 @@ function AppInner() {
   // AppUser do PS0).
   if (user.orgStatus === "uncontracted" && !entrarComoPessoal) {
     return (
-      <OnboardingEmpresaScreen
-        user={user}
-        onContinuar={() => setEntrarComoPessoal(true)}
-        onSair={() => void logout()}
-      />
+      <Suspense fallback={<TelaFallback />}>
+        <OnboardingEmpresaScreen
+          user={user}
+          onContinuar={() => setEntrarComoPessoal(true)}
+          onSair={() => void logout()}
+        />
+      </Suspense>
     );
   }
 
@@ -1146,7 +1183,13 @@ function AppInner() {
           />
         );
       case "remote":
-        return <RemoteScreen />;
+        // #1025: só o Remote é lazy aqui; o Bridge (control-room) segue eager e
+        // keep-alive, sem passar por Suspense — não suspende, não remonta.
+        return (
+          <Suspense fallback={<TelaFallback />}>
+            <RemoteScreen />
+          </Suspense>
+        );
     }
   };
 
@@ -1319,6 +1362,10 @@ function AppInner() {
             min-h-0: sem isso o flex-1 nao encolhe abaixo do conteudo e nao
             existe area rolavel nenhuma. */
         <ScrollArea className="relative z-10 min-h-0 flex-1">
+          {/* #1025: um único Suspense de nível alto cobre as telas lazy deste
+              bloco (Atoms, EmBreve, Windows). Sites é eager e passa direto —
+              Suspense só suspende no lazy. */}
+          <Suspense fallback={<TelaFallback />}>
           <main className="flex flex-col p-4 pt-0">
           {tela === "atoms" && (
             <AtomsScreen
@@ -1391,6 +1438,7 @@ function AppInner() {
               segue (label/rota são do S2/Vega). */}
           {tela === "caminhos-longos" && <WindowsScreen />}
           </main>
+          </Suspense>
         </ScrollArea>
         )}
       </SidebarInset>

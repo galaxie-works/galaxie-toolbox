@@ -34,7 +34,6 @@ import {
   ConfirmarBiblioteca,
   type ModoConfirmacao,
 } from "@/components/confirmar-biblioteca";
-import { EmBreveScreen } from "@/screens/em-breve";
 import { MeusArquivosScreen } from "@/screens/meus-arquivos";
 import { RecursoOrgEmpty } from "@/components/recurso-org-empty";
 import { useTier } from "@/lib/tier-context";
@@ -43,8 +42,15 @@ import { preencher, useIdioma } from "@/lib/idioma";
 import type { Dicionario } from "@/lib/strings";
 import type { Site } from "@/lib/types";
 import { AlertTriangle, Hammer, Info, Loader2, Lock } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/store";
+
+// #1025 (FE11, parte B): EmBreve é lazy no App.tsx; este segundo importador
+// (estático) o prendia no chunk `index` do boot. Dinâmico aqui também → a tela
+// vira chunk próprio, carregado só quando a aba "problemas" abre.
+const EmBreveScreen = lazy(() =>
+  import("@/screens/em-breve").then((m) => ({ default: m.EmBreveScreen })),
+);
 
 /* size padrao dos icones animados e 28, alto demais pra linha da aba */
 const abas = (t: Dicionario) => [
@@ -260,17 +266,25 @@ export function SitesScreen({
       />
 
       {aba === "problemas" ? (
-        <EmBreveScreen
-          titulo={t.problemas.titulo}
-          icone={Hammer}
-          descricao={t.problemas.descricao}
-          itens={[
-            t.problemas.item1,
-            t.problemas.item2,
-            t.problemas.item3,
-            t.problemas.item4,
-          ]}
-        />
+        <Suspense
+          fallback={
+            <div className="grid h-full place-items-center">
+              <Spinner className="size-6 text-muted-foreground" />
+            </div>
+          }
+        >
+          <EmBreveScreen
+            titulo={t.problemas.titulo}
+            icone={Hammer}
+            descricao={t.problemas.descricao}
+            itens={[
+              t.problemas.item1,
+              t.problemas.item2,
+              t.problemas.item3,
+              t.problemas.item4,
+            ]}
+          />
+        </Suspense>
       ) : aba === "meusArquivos" ? (
         <MeusArquivosScreen />
       ) : !recursoOrgDisponivel ? (
