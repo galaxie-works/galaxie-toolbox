@@ -79,6 +79,71 @@
 - **Devs abrem PR; NÃO mergeiam.** **O Polaris integra** por **merge local** (worktree off `feat`, `git merge --no-ff`, gate, `push HEAD:feat`, move o card, limpa a worktree). Nunca `gh pr merge`.
 - **Gate de integração (Polaris):** `pnpm exec tsc -b` (exit 0) · `pnpm test` (`node --test`) · **`cargo check` SEM env OpenSSL** quando mexe em Rust (pega str0m/openssl vazando). CRLF: `core.autocrlf=true` na worktree.
 
+### 5.1 Integrador reserva (fila represada)
+
+O merge local é de **um dono só** — o que é certo, e por isso o Polaris é ponto único de falha. Quando ele para, ninguém integra e todo mundo fica executor-ready parado. Este é o caminho de exceção; ele **não substitui** o Polaris, destrava a fila até ele voltar.
+
+**Gatilho — as três condições, juntas e verificáveis:**
+1. `feat` sem commit novo há **≥ 60 min** (`git log -1 --format=%ar origin/feat/...`);
+2. **≥ 3 PRs** abertas e mergeable na fila;
+3. **1 ping na #133** ao Polaris **sem resposta** nesse intervalo.
+
+**Trava (obrigatória, antes de qualquer merge):** anunciar na #133 — *"assumo como reserva o lote: #A, #B, #C"* — com a lista **explícita**. **Um reserva por vez.** Quem anuncia primeiro tem a trava; os outros não integram nada.
+
+**Quem — e por que "não-autor":** a regra existe, mas vale saber **o que ela protege**. O §5 não tem etapa de revisão: integrar é merge + gate + push + mover card. Logo o não-autor **não** compra uma segunda opinião sobre o código — compra **reprodutibilidade do gate**: pega o verde que só existe na máquina de quem escreveu (worktree suja, artefato velho, variável de ambiente mágica). É falha real e já aconteceu aqui.
+
+Então a regra, na ordem:
+1. **Preferência forte:** integra quem **não é autor** do lote.
+2. **Sempre, autor ou não:** o gate roda em **worktree limpa off `feat`**, nunca na worktree de desenvolvimento da branch.
+3. **Se só o autor puder rodar aquele gate** (toolchain que ninguém mais tem): permitido **com compensação** — o lock nomeia explicitamente *"autor-integrador"*, a saída do gate (comandos + exit codes) é **colada na #133**, e um não-autor confirma a leitura. Transparência no lugar da separação.
+
+> Antes de invocar o item 3, **verifique** se alguém mais consegue rodar o gate — a suposição "só eu tenho o toolchain" costuma ser falsa.
+>
+> **PR que mexe em código feature-gated precisa de gate extra.** `cargo check` default **não compila** `src-tauri/src/remote.rs` (entra o `remote_stub`; é o buraco que o #1072 fecha), então o gate padrão passaria sem olhar a mudança. Nesse caso, rodar também — receita verificada nesta máquina em 2026-08-16:
+>
+> ```bash
+> export OPENSSL_DIR="C:\Program Files\PostgreSQL\16"   # OpenSSL do PostgreSQL
+> export OPENSSL_NO_VENDOR=1
+> export RC="C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/rc.exe"
+> export PATH="$(dirname "$RC"):$PATH"                     # só pro cargo test
+> cargo check --features remote      # compila o remote.rs de verdade  (~36 s)
+> cargo test  --features remote      # roda os testes do módulo        (rc.exe obrigatório)
+> ```
+
+**Como (idêntico ao do Polaris, §5):** worktree off `feat` · `git merge --no-ff` · gate (`tsc -b` · `pnpm test` · `cargo check` **sem env OpenSSL** se tocou Rust) · `push HEAD:feat` · **mover o card na mão para `In review`** · limpar a worktree.
+
+> ⚠️ **Mover o card é o furo do merge local.** O `Closes` fecha a issue no push, mas **não move o card** — sem esse passo o board mente e o gate da Lúmen não enxerga o item.
+
+**Ordem do lote — medir antes, não adivinhar.** Antes de escolher a ordem, listar os hunks das PRs por arquivo compartilhado:
+
+```
+gh pr diff <n> | awk '/^diff --git.*<arquivo>/{f=1;next} /^diff --git/{f=0} f&&/^@@/{print}'
+```
+
+PRs com arquivos disjuntos entram em qualquer ordem; stack real (uma contém a outra) entra na ordem da pilha; duas tocando o mesmo arquivo entram uma por vez, com gate entre elas.
+
+**O reserva NÃO faz:** cortar release · mover card para `QA Approved` (é gate da Lúmen, §4) · tocar card que não integrou · rebasear branch de outro agente.
+
+**Encerrar:** postar na #133 o que entrou e o novo head do `feat`, e **liberar a trava**. O Polaris retoma sem precisar reconstruir contexto.
+
+### 5.2 Dívida nova nasce **gated** na PR que toca o mesmo arquivo
+
+Quando alguém identifica trabalho novo (dívida, refactor, gate, convergência de tipo) **que edita um arquivo já tocado por PR aberta**, esse trabalho **não começa** antes daquela PR integrar. Constrói-se sobre a forma nova, não sobre a velha.
+
+**Por quê:** construir em paralelo garante conflito de mesmo-arquivo, e o custo não é o conflito — é que **resolver conflito é onde se perde correção em silêncio** (ver o `api.ts` do #1069×#1017: `--ours` revertia um crítico, `--theirs` revertia o outro, e **os dois lados compilavam**).
+
+**Como checar, antes de começar:**
+
+```bash
+gh pr list --state open --limit 100 --json number,files   --jq '.[] | select(.files[].path == "<arquivo alvo>") | .number'
+```
+
+Se voltar alguma PR: a US nova **nasce com a dependência escrita no corpo** (*"gated no #NNN"*), não como descoberta no meio da implementação.
+
+> Casos reais que produziram esta regra (2026-08-16): #1067 gated no #1066 · #1019 gated nas 5 PRs do `control-room.tsx` · o gate do #1017 gated no #1079 · convergência do `Capabilities` gated no #1089.
+
+**Não vale como desculpa pra parar:** se a PR bloqueadora demora, o certo é **cobrar a integração**, não construir em paralelo e pagar no merge.
+
 ---
 
 ## 6. Definition of Done
