@@ -1,7 +1,7 @@
 # WORKFLOW.md — GALAXIE Toolbox (processo canônico do time)
 
 > **Este documento é a ÚNICA fonte de verdade do processo de trabalho do time.**
-> Ele **supersede/anula** qualquer outra descrição de workflow — inclusive as seções de processo do `AGENTS.md` e os `*Context.md`/identidade de cada agente onde conflitarem. Em caso de divergência, **este arquivo vence**. Atualizado 2026-08-15.
+> Ele **supersede/anula** qualquer outra descrição de workflow — inclusive as seções de processo do `AGENTS.md` e os `*Context.md`/identidade de cada agente onde conflitarem. Em caso de divergência, **este arquivo vence**. Atualizado 2026-08-17.
 
 ---
 
@@ -14,7 +14,9 @@
 | **Confucius** | Dev — **Rust / backend / Remote / auth / config**. |
 | **Vega** | Dev — **frontend / Bridge / preview / Explorer-UI**. |
 | **Sirius** | Dev — **UX-detail / i18n / ícones / nomenclatura / atalhos / command**. |
-| **Lúmen II** | **QA** — gate de runtime/verificação antes de o PO pegar. |
+| **Lúmen** (Codex) | **QA backend** — Rust, `services/`, segurança, CI/CD, contratos de crate. |
+| **Lúmen II** (Claude) | **QA frontend** — React/TS, UX-detalhe, a11y, i18n, testes de componente. |
+| **Orion** (Codex) | Dev — **Graph / People / Agenda + cobertura de teste Rust**. |
 | **Altair** | **Software architect** — decisões técnicas transversais, seams, contratos, segurança de fronteira. Desenha/recomenda (doc), **não coda feature**. |
 
 **Comunicação inter-agente é SÓ pela issue #133** (a war room). Zero `send_message` (congela agente). Todo agente lê a #133 todo tick, anuncia entregas lá, tira dúvida lá (com o Polaris, não direto com o Wagner).
@@ -42,23 +44,23 @@
 
 `galaxie-works` é conta **USER** (não org). Board é **GraphQL**; resto **REST** (evita rate limit). PAT via `GH_TOKEN`.
 
-**Fluxo:** `Backlog → Ready → In progress → In review → QA Approved → PO Approved → Done → Released to Production` (+ `Rejected`).
+**Fluxo:** `Backlog → Ready → In progress → In review → Done → QA Approved → PO Approved → Released to Production` (+ `Rejected`).
 
-> ⚠️ **Cair no feat ≠ Done.** Quando o Polaris integra um PR, o item **NÃO** pula pra Done — ele **segue em In review** (agora a Lúmen consegue gatar, porque o código está no feat). O caminho é: In review → (Lúmen) QA Approved → (Wagner) PO Approved → **Done** (aprovado+completo, fora de versão) → (release cortado) **Released to Production**. "Integrado no feat" só **dispara o gate**, não conclui nada.
+> ⚠️ **Semântica corrigida pelo PO em 2026-08-17.** Palavras dele: *"Released to production = teve corte de versão · **done = vc fez merge pra qa validar** · qa approved = eu olho · po approved = pronto pra cortar versão"*. A descrição anterior desta seção (que mandava o item **seguir em In review** depois de integrar) **está anulada** — ver §4.0, que é a fonte de verdade da semântica.
 >
-> 🤖 **Automação do Projects (Wagner, 2026-08-15): "PR merged → In Review".** Quando o merge de integração fecha o PR (os commits caem no feat/default), o Projects **coloca o card em In Review** automaticamente — exatamente onde a Lúmen pega. Antes ele ia pra Done e furava o gate. **NÃO reativar "closed/merged → Done".**
+> 🤖 **Automação do Projects: "PR merged → In Review".** Ela existe pra quando o merge fecha o PR. Com o merge **local** do Polaris ela é intermitente, então **o Polaris move o card à mão pra `Done` ao integrar** — não confiar na automação. **NÃO reativar "closed/merged → Done"** (pularia o gate de QA).
 
 | Coluna | Significado | Quem move pra cá |
 |---|---|---|
 | **Backlog** | Não priorizado. | PO/Polaris |
 | **Ready** | Escopado, pronto pra pegar (US com AC). | PO/Polaris |
 | **In progress** | Sendo trabalhado. | Dev ao começar |
-| **In review** | **Entregue** (PR aberto), aguardando **(1) integração do Polaris no feat + (2) gate da Lúmen**. A Lúmen só gata **DEPOIS de cair no feat** (não é dela até integrar). | **Dev ao entregar o PR** |
-| **Rejected** | Reprovado (QA ou PO). | Lúmen ou Wagner |
-| **QA Approved** | Lúmen aprovou; **aguardando o olho do PO**. | **Lúmen** (In review → aqui) |
+| **In review** | **PR aberto, aguardando a integração do Polaris.** É a **fila do Polaris** — QA não toca. | **Dev ao abrir o PR** |
+| **Rejected** | Reprovado (QA ou PO). | QA ou Wagner |
+| **Done** | **O Polaris integrou no `feat`** — pronto pra QA gatar. | **Polaris ao integrar** |
+| **QA Approved** | QA aprovou; **aguardando o olho do PO**. | **QA** (Done → aqui) |
 | **PO Approved** | Wagner validou em runtime. | **Wagner** |
-| **Done** | Concluído/aprovado, **ainda não numa versão cortada**. | Polaris |
-| **Released to Production** | Shipou numa versão publicada. | **Polaris ao cortar release** |
+| **Released to Production** | `PO Approved` **E** provado dentro de uma tag publicada. | **Polaris ao cortar release** |
 
 ### IDs para automação (`gh project item-edit` / GraphQL)
 
@@ -84,12 +86,43 @@ Fonte única. Recolhidos do board real (Projects **#3**, owner `galaxie-works`) 
 
 ---
 
-## 4. Gate de QA (Lúmen II) — dirigido por COLUNA
+## 4. Gate de QA — dirigido por COLUNA
 
-1. **A Lúmen gata SÓ o que está em `In review`.** Nunca `In progress`.
-2. Ela move **In review → QA Approved** (passou) ou **Rejected** (reprovou). Só isso com o card.
+### 4.0 Semântica das colunas (definida pelo PO, 2026-08-17)
+
+Cada coluna tem **um significado e um dono do próximo passo**. Esta é a fonte de verdade; qualquer outro doc que divergir está errado.
+
+| Coluna | Significa | Quem age em seguida |
+|---|---|---|
+| `Backlog` | não priorizado | PO / Polaris |
+| `Ready` | pronto pra pegar | o dev da raia |
+| `In progress` | sendo codado | o dev |
+| **`In review`** | **PR aberto, aguardando integração** | **Polaris** (mergeia) |
+| **`Done`** | **Polaris mergeou no `feat`** | **QA** (gata) |
+| **`QA Approved`** | **QA aprovou** | **Wagner** (valida em runtime) |
+| **`PO Approved`** | **Wagner validou** | **Polaris** (corta versão) |
+| **`Released to Production`** | **versão cortada contendo o item** | — (terminal) |
+
+⚠️ **`Released to Production` exige DUAS condições:** `PO Approved` **e** prova de que o commit está contido na tag (`git merge-base --is-ancestor <sha> <tag>`). Conteúdo-na-tag é **necessário, não suficiente** — não pula o gate do PO.
+
+### 4.1 Duas QAs, uma trava por item
+- **`Lúmen`** (Codex) — **backend**: Rust, `services/`, segurança, CI/CD, contratos de crate.
+- **`Lúmen II`** (Claude) — **frontend**: React/TS, UX-detalhe, a11y, i18n, testes de componente.
+- **PR misto** → quem chegar primeiro **anuncia a trava na #133** e gata o item **inteiro**; a outra não toca. **Uma trava por item.**
+
+### 4.2 ⚠️ Fatia `Ref` publica veredito, mas NÃO move o card
+- **PR com `Closes #NNN`** → a entrega **fecha** a US → gata e **move** o card.
+- **PR com `Ref #NNN`** → é **fatia**; a US **continua aberta** → **publica o veredito na issue** e **deixa o card onde está**.
+- Na dúvida, **o `Closes` no corpo do PR é o sinal**. Sem `Closes`, não move.
+
+> Motivo: `QA Approved` é a **fila do Wagner**. Card de US inacabada ali faz o PO abrir e não achar o que validar.
+
+### 4.3 O gate
+
+1. **A QA gata SÓ o que está em `Done`.** Nunca `In progress`, nunca `In review` (essa é a fila do Polaris).
+2. Ela move **Done → QA Approved** (passou) ou **Rejected** (reprovou). Só isso com o card.
 3. Se ela **não fecha o runtime sozinha** (cega a pixel/cross-layer), move pra **QA Approved COM nota "runtime/visual pendente PO"** — o Wagner testa a partir de QA Approved. **Não existe estado "checkpoint".**
-4. **A Lúmen NUNCA pinga o Wagner** (direto ou #133) pra testar. O Wagner sabe que precisa olhar quando (a) a issue está em **QA Approved** (onde ele SEMPRE pega), ou (b) o **Polaris fala com ele**. A **coluna** é a comunicação.
+4. **A QA NUNCA pinga o Wagner** (direto ou #133) pra testar. O Wagner sabe que precisa olhar quando (a) a issue está em **QA Approved** (onde ele SEMPRE pega), ou (b) o **Polaris fala com ele**. A **coluna** é a comunicação.
 5. **Fatia = US-filha** → percorre as colunas sozinha e vai pro olho do Wagner **em QA Approved**. O épico fica In progress até as US fecharem. Não se roteia fatia órfã pro Wagner.
 
 ---
@@ -132,9 +165,9 @@ Então a regra, na ordem:
 > cargo test  --features remote      # roda os testes do módulo        (rc.exe obrigatório)
 > ```
 
-**Como (idêntico ao do Polaris, §5):** worktree off `feat` · `git merge --no-ff` · gate (`tsc -b` · `pnpm test` · `cargo check` **sem env OpenSSL** se tocou Rust) · `push HEAD:feat` · **mover o card na mão para `In review`** · limpar a worktree.
+**Como (idêntico ao do Polaris, §5):** worktree off `feat` · `git merge --no-ff` · gate (`tsc -b` · `pnpm test` · `cargo check` **sem env OpenSSL** se tocou Rust) · `push HEAD:feat` · **mover o card na mão para `Done`** (§4.0) · limpar a worktree.
 
-> ⚠️ **Mover o card é o furo do merge local.** O `Closes` fecha a issue no push, mas **não move o card** — sem esse passo o board mente e o gate da Lúmen não enxerga o item.
+> ⚠️ **Mover o card é o furo do merge local.** O `Closes` fecha a issue no push, mas **não move o card** — sem esse passo o board mente e a QA não enxerga o item. Destino ao integrar: **`Done`** (ver §4.0).
 
 **Ordem do lote — medir antes, não adivinhar.** Antes de escolher a ordem, listar os hunks das PRs por arquivo compartilhado:
 
@@ -144,7 +177,7 @@ gh pr diff <n> | awk '/^diff --git.*<arquivo>/{f=1;next} /^diff --git/{f=0} f&&/
 
 PRs com arquivos disjuntos entram em qualquer ordem; stack real (uma contém a outra) entra na ordem da pilha; duas tocando o mesmo arquivo entram uma por vez, com gate entre elas.
 
-**O reserva NÃO faz:** cortar release · mover card para `QA Approved` (é gate da Lúmen, §4) · tocar card que não integrou · rebasear branch de outro agente.
+**O reserva NÃO faz:** cortar release · mover card para `QA Approved` (é gate da QA, §4) · tocar card que não integrou · rebasear branch de outro agente.
 
 **Encerrar:** postar na #133 o que entrou e o novo head do `feat`, e **liberar a trava**. O Polaris retoma sem precisar reconstruir contexto.
 
