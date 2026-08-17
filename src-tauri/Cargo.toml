@@ -31,6 +31,7 @@ default = []
 remote = [
   "dep:galaxie-remote-transport",
   "dep:galaxie-remote-capture",
+  "dep:if-addrs",
   "dep:openssl",
   "openssl/vendored",
 ]
@@ -94,6 +95,13 @@ lru = "0.12"
 # Ligar só onde há toolchain OpenSSL: `cargo build --features remote`.
 galaxie-remote-transport = { path = "../services/remote-transport", features = ["webrtc", "input"], optional = true }
 galaxie-remote-capture = { path = "../services/remote-capture", optional = true }
+# Remote (#1108): enumeração de IPs de interface reais pra candidatos ICE host.
+# O bind fica em `0.0.0.0:0` (recebe em todas as interfaces), mas `0.0.0.0` NUNCA
+# pode virar candidato — o str0m rejeita ("ICE bad candidate: invalid ip
+# 0.0.0.0"). `if-addrs` dá todos os IPs de interface (cross-platform, sem
+# OpenSSL); geramos 1 candidato host por IP real. Gated na feature `remote` (só o
+# runtime Remote usa) pra o build padrão continuar enxuto.
+if-addrs = { version = "0.10.2", optional = true }
 # Dependência direta só pra poder ligar `openssl/vendored` na feature `remote`
 # (o consumidor real do OpenSSL é o str0m, via remote-transport).
 openssl = { version = "0.10", optional = true }
