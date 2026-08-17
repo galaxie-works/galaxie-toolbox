@@ -10,10 +10,8 @@ import {
   type RefObject,
 } from "react";
 import {
-  AlertCircle,
   ChevronDown,
   ChevronUp,
-  FolderOpen,
   TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -79,6 +77,7 @@ import { solicitarThumb } from "./thumb-fila";
 import { ehImagem, iconeParaEntry } from "./icones-arquivo";
 import { formatarDataArquivo, rotuloTipo } from "./format";
 import { RibbonComandos } from "./ribbon-comandos";
+import { EstadoConteudoExplorer } from "./estado-conteudo";
 
 type ModoView = "detalhes" | "lista" | "grade";
 
@@ -1351,19 +1350,11 @@ export function ContentPane({
           }}
         >
           {carregando ? (
-            <div className="flex h-full items-center justify-center py-10">
-              <Spinner className="size-5 text-muted-foreground" />
-            </div>
+            <EstadoConteudoExplorer estado="carregando" />
           ) : erro ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
-              <AlertCircle className="size-8" />
-              <p className="text-sm">{t.arquivos.erroLer}</p>
-            </div>
+            <EstadoConteudoExplorer estado="erro" rotulo={t.arquivos.erroLer} />
           ) : itens.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
-              <FolderOpen className="size-8" />
-              <p className="text-sm">{t.arquivos.vazio}</p>
-            </div>
+            <EstadoConteudoExplorer estado="vazio" rotulo={t.arquivos.vazio} />
           ) : (
             <div
               style={{

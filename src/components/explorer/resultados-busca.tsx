@@ -1,6 +1,7 @@
-import { File, Folder, X } from "lucide-react";
+import { File, Folder, SearchX, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Spinner } from "@/components/ui/spinner";
 import { useIdioma, preencher } from "@/lib/idioma";
 import type { FsEntry } from "@/lib/types";
@@ -58,14 +59,23 @@ export function ResultadosBusca({
       </div>
 
       {buscando && resultados.length === 0 ? (
-        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 text-muted-foreground">
-          <Spinner className="size-5" />
-          <p className="text-sm">{t.arquivos.buscando}</p>
-        </div>
+        <Empty className="min-h-0 flex-1">
+          <EmptyHeader>
+            <EmptyMedia>
+              <Spinner className="size-5 text-muted-foreground" />
+            </EmptyMedia>
+            <EmptyTitle>{t.arquivos.buscando}</EmptyTitle>
+          </EmptyHeader>
+        </Empty>
       ) : !buscando && resultados.length === 0 ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center text-center">
-          <p className="text-sm text-muted-foreground">{t.arquivos.buscaVazia}</p>
-        </div>
+        <Empty className="min-h-0 flex-1">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SearchX />
+            </EmptyMedia>
+            <EmptyTitle>{t.arquivos.buscaVazia}</EmptyTitle>
+          </EmptyHeader>
+        </Empty>
       ) : (
         <div className="min-h-0 flex-1 overflow-y-auto p-1">
           {resultados.map((entry) => (
