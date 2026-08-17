@@ -1,47 +1,33 @@
-// Dark Reader (v4.9.x UMD) para o render de e-mail em iframe.
+// Modo escuro do render de e-mail em iframe — SEM script (#1034, SEC1).
 //
-// Estratégia (igual ao MailVault):
-// - O bundle UMD é carregado como string crua no load do módulo (Vite ?raw):
-//   um único fetch, cacheado pela vida do app.
-// - `getDarkReaderInlineScripts()` embute o bundle + um `enable()` direto no
-//   <head> do srcDoc. O DR roda DURANTE o load da página — sem corrida com o
-//   evento `load` do iframe e sem flash de conteúdo claro ao trocar de tema.
-// - O DR instala um MutationObserver dentro do iframe, então conteúdo tardio
-//   (imagens que reflowam, etc.) também é invertido.
+// ANTES: o Dark Reader (bundle UMD) era injetado como <script> no srcDoc e o
+// iframe precisava de `allow-scripts` no tema escuro. Isso, somado ao
+// `allow-same-origin`, anulava o sandbox: um e-mail malicioso podia rodar
+// script na origem do app.
 //
-// Notas de tuning p/ e-mail:
-// - brightness/contrast em 100/90 mantêm o texto legível sem escurecer demais.
-// - sepia 0 — queremos neutro, não quente.
-// - darkScheme{Background,Text}Color combinam com o "letterbox" do painel.
+// AGORA: o iframe é opaque origin (sandbox sem allow-same-origin) e NÃO roda
+// script do e-mail (CSP `script-src 'nonce-…'` só libera a nossa ponte de
+// medição). A inversão de cores vira CSS PURO — abordagem filter-based, no
+// espírito do que o Dark Reader gera, mas sem nenhum JavaScript:
+//   - `filter:invert(1) hue-rotate(180deg)` no <html> inverte a página inteira
+//     (o baseline é claro, então vira escuro);
+//   - o mesmo filtro re-aplicado em mídia (img/vídeo/etc.) as desinverte, pra
+//     fotos/logos não ficarem em negativo.
+// O ajuste fino do tom é responsabilidade do runtime-QA (é visual).
 
-import drSource from "darkreader/darkreader.js?raw";
-
-type DarkReaderOptions = {
-  brightness?: number;
-  contrast?: number;
-  sepia?: number;
-  darkSchemeBackgroundColor?: string;
-  darkSchemeTextColor?: string;
-};
-
-const DEFAULT_OPTIONS: DarkReaderOptions = {
-  brightness: 100,
-  contrast: 90,
-  sepia: 0,
-  darkSchemeBackgroundColor: "#0f0f11",
-  darkSchemeTextColor: "#e6e6e8",
-};
-
-// Retorna as tags <script> inline p/ embutir o Dark Reader num documento HTML.
-// O DR roda enquanto o documento carrega, então não há corrida com injeção
-// pós-load nem flash de conteúdo claro.
-export function getDarkReaderInlineScripts(options: DarkReaderOptions = {}): string {
-  const opts = JSON.stringify({ ...DEFAULT_OPTIONS, ...options });
-  // Neutraliza qualquer </script> perdido dentro do source, senão a tag
-  // externa terminaria cedo.
-  const safeSource = drSource.replace(/<\/script>/gi, "<\\/script>");
+/**
+ * CSS de inversão do tema escuro, injetado como <style> no <head> do srcDoc.
+ *
+ * O documento é SEMPRE autorado em claro; o escuro nasce só desta inversão —
+ * inclusive o botão de dobra (#92), que por isso é autorado claro em
+ * `estiloDobra()` e escurece ao ser invertido junto com o resto.
+ */
+export function estiloInversaoEscuro(): string {
   return (
-    `<script>${safeSource}</script>` +
-    `<script>try{if(window.DarkReader)window.DarkReader.enable(${opts})}catch(e){}</script>`
+    // Fundo levemente claro pra, invertido, virar um cinza-escuro de "letterbox"
+    // (o body claro do baseline vira preto; o html vira o cinza ao redor).
+    `html{filter:invert(1) hue-rotate(180deg);background:#dcdcdc}` +
+    // Re-inverte a mídia pra ela voltar às cores reais (dupla inversão = neutro).
+    `img,video,picture,svg,canvas,[style*="background-image"]{filter:invert(1) hue-rotate(180deg)}`
   );
 }

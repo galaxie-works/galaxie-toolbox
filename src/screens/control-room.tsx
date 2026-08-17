@@ -195,9 +195,7 @@ import { tocarSomEscopo } from "@/lib/sons-notificacao";
 import { scrollTopReancorado, type Ancora } from "@/lib/scroll-ancora";
 import { useDebounce } from "@/hooks/use-debounce";
 import { useUndoSend } from "@/hooks/use-undo-send";
-import { getDarkReaderInlineScripts } from "@/lib/dark-reader-inject";
-import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
-import DOMPurify from "dompurify";
+import { montarDocEmail, SANDBOX_LEITOR } from "@/lib/corpo-email-doc";
 import { cn, comLoginHint } from "@/lib/utils";
 import type {
   AcaoRsvp,
@@ -335,8 +333,11 @@ function quandoCurto(iso: string, idioma: string): string {
  * (1) o CSS do nosso app não mutila o layout do e-mail (e vice-versa);
  * (2) e-mails de largura fixa (tabelas 600px+) são ESCALADOS pra caber no painel
  *     em vez de cortar — não-responsividade é do remetente, mas mitigamos aqui.
- * O HTML é sanitizado (DOMPurify) e o `allow-scripts` (necessário pro Dark
- * Reader no tema escuro) só permite o DR — scripts do e-mail são removidos.
+ * ISOLAMENTO (#1034, SEC1): o iframe é OPAQUE ORIGIN (`SANDBOX_LEITOR`, sem
+ * allow-same-origin) + CSP + DOMPurify — o e-mail não alcança a origem do app
+ * nem roda script próprio. O `srcDoc` é montado por `montarDocEmail`. Como o pai
+ * não enxerga mais o `contentDocument`, a medição de altura/zoom roda DENTRO do
+ * iframe (ponte confiável) e conversa por `postMessage` (ver o listener abaixo).
  */
 
 // Zoom MANUAL do leitor (#76) — camada por cima do auto-fit do #57.
@@ -370,179 +371,83 @@ function CorpoHtml({
   // a chave localStorage `bridge.leitorZoom` é preservada pelo persist.
   const fator = useAppStore((s) => s.zoom);
   const setFator = useAppStore((s) => s.setZoom);
-  // Ref pro fator (lido dentro dos listeners do iframe sem re-bindar) e ref pra
-  // função de reaplicar o zoom (chamada pelo efeito que reage à mudança de fator).
+  // Ref pro fator: o 1º render EMBUTE o fator no srcDoc (a ponte de medição usa
+  // como valor inicial); depois disso o pai empurra novos fatores por postMessage
+  // (sem recarregar o iframe). Sem `fator` nas deps do `doc` de propósito.
   const fatorRef = useRef(fator);
-  const ajustarRef = useRef<() => void>(() => {});
   // Render ciente do tema do app (como leitores modernos). O baseline é SEMPRE
-  // claro — dá ao Dark Reader um conjunto limpo de cores pra inverter. No modo
-  // escuro, injetamos o Dark Reader real (como o MailVault) no <head> do srcDoc:
-  // ele roda no load (sem flash) e o MutationObserver dele pega conteúdo tardio.
+  // claro; o tema escuro nasce da inversão por CSS (`estiloInversaoEscuro`, sem
+  // script) injetada por `montarDocEmail` (#1034).
   const escuro = useTemaEscuro();
   const { t } = useIdioma();
   const rotuloAparado = t.controlRoom.conteudoAparado;
 
-  const doc = useMemo(() => {
-    // overflow:hidden garante ZERO scrollbar interna do iframe — nós ajustamos
-    // a altura por fora; a largura encaixa via `zoom` (reflui o layout).
-    const baseline =
-      // O ROOT (viewport do iframe) rola no eixo X quando algum elemento largo
-      // ainda estoura depois do zoom mínimo — ex.: a tabela "Saltos de Mensagem"
-      // que o Exchange anexa a encaminhados (~880px fixos). Assim o excedente
-      // vira SCROLL horizontal em vez de espremer/clipar o e-mail inteiro (#57).
-      // overflow-y fica hidden: a altura é medida e aplicada por fora.
-      `<style>:root{color-scheme:light}html{margin:0;padding:0;overflow-x:auto;overflow-y:hidden}` +
-      `body{margin:0;background:#fff;color:#111;` +
-      `font-family:system-ui,-apple-system,Segoe UI,sans-serif;` +
-      // overflow-wrap:anywhere quebra strings longas (URLs/tokens sem espaço)
-      // que, sozinhas, inflavam o scrollWidth.
-      `font-size:14px;line-height:1.5;padding:6px;overflow-wrap:anywhere}` +
-      `img{max-width:100%;height:auto}a{color:#7c3aed}` +
-      // Botão "⋯" da dobra do citado/assinatura (#92) — CSS puro, sem script.
-      estiloDobra(escuro) +
-      `</style>`;
-    const dr = escuro ? getDarkReaderInlineScripts() : "";
-    // Sanitiza o HTML do e-mail (tira <script>, handlers on*, javascript: etc.)
-    // ANTES de injetar. Como habilitamos allow-scripts pro Dark Reader rodar, um
-    // e-mail malicioso poderia rodar script na nossa origem — o DOMPurify fecha
-    // isso, mantendo tabelas/estilos/imagens do e-mail intactos.
-    const corpoLimpo = DOMPurify.sanitize(corpo, { ADD_ATTR: ["target"] });
-    // Dobra o histórico citado/assinatura DEPOIS do sanitize (senão o <details>
-    // que criamos seria removido) e ANTES de virar srcDoc — o toggle é o
-    // <details> nativo, então funciona também no tema claro, onde o sandbox
-    // NÃO tem allow-scripts.
-    const corpoDobrado = dobrarCitado(corpoLimpo, rotuloAparado);
-    return (
-      `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">` +
-      `<meta name="color-scheme" content="light">` +
-      baseline +
-      dr +
-      `</head><body>${corpoDobrado}</body></html>`
-    );
-  }, [corpo, escuro, rotuloAparado]);
+  // Nonce único por documento: casa com o `<script>` da ponte na CSP do srcDoc.
+  // Regenera junto com o `doc` (mesmas deps) — cada srcDoc tem o seu.
+  const doc = useMemo(
+    () =>
+      montarDocEmail({
+        corpo,
+        escuro,
+        rotulo: rotuloAparado,
+        nonce: crypto.randomUUID(),
+        fator: fatorRef.current,
+      }),
+    [corpo, escuro, rotuloAparado],
+  );
 
+  // Ponte de medição por postMessage (#1034): o iframe é opaque origin, o pai
+  // não lê mais `contentDocument`. A altura/zoom vêm de DENTRO do iframe; aqui só
+  // validamos a origem (`e.source === iframe.contentWindow`) e o `tipo`, e:
+  //  - altura → aplica no elemento;
+  //  - zoom (#76) → o PAI é o dono do clamp (ZOOM_MIN/MAX), então recalcula o
+  //    fator e devolve por postMessage; preserva o piso #57 (que roda no iframe);
+  //  - link (#91) → http vira modal de confirmação; outros esquemas vão pro SO.
   useEffect(() => {
     const iframe = ref.current;
     if (!iframe) return;
-    let ultimaLargura = 0;
-    const ajustar = () => {
-      try {
-        const d = iframe.contentDocument;
-        const body = d?.body;
-        if (!body) return;
-        // `zoom` (Chromium/WebView2) escala reflowando: a largura passa a caber.
-        body.style.zoom = "1";
-        const conteudo = body.scrollWidth;
-        const disponivel = iframe.clientWidth;
-        const ideal = conteudo > disponivel && conteudo > 0 ? disponivel / conteudo : 1;
-        // PISO DE LEGIBILIDADE (#57): nunca encolher abaixo de 0.75 (14px -> ~10.5px).
-        // Um único elemento largo de baixo valor (a tabela "Saltos de Mensagem"
-        // dos encaminhados, ~880px) não pode espremer o e-mail inteiro a um
-        // tamanho ilegível. Se o piso bater, o excedente NÃO clipa: rola no eixo
-        // X (overflow-x:auto no root) e continua acessível.
-        const PISO = 0.75;
-        const base = Math.max(PISO, ideal); // auto-fit calculado pelo app (#57)
-        // Zoom manual (#76) por cima do auto-fit: base × fator do usuário.
-        const efetivo = base * fatorRef.current;
-        body.style.zoom = String(efetivo);
-        // Se, na escala efetiva, o conteúdo ainda estoura a largura útil, haverá
-        // scrollbar horizontal; reserva a altura dela pra não clipar a última linha.
-        const rolaX = conteudo * efetivo > disponivel + 1;
-        // altura VISÍVEL (pós-zoom) via bounding rect; setAltura só se mudou de
-        // verdade (evita re-render à toa).
-        const h = Math.ceil(body.getBoundingClientRect().height) + 4 + (rolaX ? 16 : 0);
-        setAltura((a) => (Math.abs(a - h) > 1 ? h : a));
-      } catch {
-        /* srcDoc é same-origin; catch só por segurança */
-      }
-    };
-    // Exposto pra fora do onLoad: o efeito de [fator] reaplica o zoom + re-mede.
-    ajustarRef.current = ajustar;
-    const onLoad = () => {
-      ultimaLargura = iframe.clientWidth;
-      ajustar();
-      const d = iframe.contentDocument;
-      d?.querySelectorAll("img").forEach((img) => {
-        if (!img.complete) img.addEventListener("load", ajustar, { once: true });
-      });
-      // Dobra do citado/assinatura (#92): abrir/fechar o <details> muda a
-      // altura (e pode mudar a largura -> zoom). O `toggle` NÃO borbulha, por
-      // isso escutamos na fase de CAPTURA, no documento. Este listener é código
-      // NOSSO (realm do app), então roda mesmo com o sandbox sem allow-scripts
-      // — mesmo mecanismo já usado no clique dos links, logo abaixo.
-      d?.addEventListener("toggle", ajustar, true);
-      // Links do e-mail: o `target=_blank` não navega no Tauri (nada acontecia
-      // ao clicar). Interceptamos o clique. Para http(s), NÃO abrimos direto:
-      // link-safety (#91) — analisamos texto × href e abrimos um modal de
-      // confirmação com o DESTINO REAL e os avisos (mismatch/encurtador/etc).
-      // Este listener é código NOSSO (realm do app), capturado no documento do
-      // iframe, então roda mesmo no tema claro (sandbox sem allow-scripts).
-      // Outros esquemas (mailto/tel) seguem pro handler padrão do SO.
-      d?.addEventListener("click", (e) => {
-        const a = (e.target as HTMLElement | null)?.closest?.("a") as HTMLAnchorElement | null;
-        const href = a?.href;
-        if (!href) return;
-        e.preventDefault();
-        if (/^https?:/i.test(href)) {
-          // `a.href` é a URL RESOLVIDA (absoluta); `a.textContent` é o texto
-          // visível — a base do teste de mismatch texto × destino.
-          setLinkPendente(analisarLink(a.textContent ?? "", href));
-        } else {
-          api.openUrl(href).catch(() => {});
-        }
-      });
-      // Zoom manual (#76). Estes handlers são código NOSSO (realm do app),
-      // capturados NO documento do iframe — então rodam mesmo com o sandbox sem
-      // allow-scripts (tema claro), e ficam restritos ao leitor: nunca tocam a
-      // lista/sidebar/UI do app. `preventDefault` bloqueia o zoom nativo do
-      // WebView2/Chromium (CTRL+roda) e os atalhos nativos (CTRL +/−/0).
-      // O `wheel` precisa de `passive:false` pra poder dar preventDefault.
-      d?.addEventListener(
-        "wheel",
-        (e) => {
-          if (!e.ctrlKey) return;
-          e.preventDefault();
-          const passo = e.deltaY < 0 ? ZOOM_PASSO : -ZOOM_PASSO;
-          setFator((f) => clampZoom(f + passo));
-        },
-        { passive: false },
-      );
-      d?.addEventListener("keydown", (e) => {
-        if (!e.ctrlKey) return;
-        if (e.key === "+" || e.key === "=") {
-          e.preventDefault();
-          setFator((f) => clampZoom(f + ZOOM_PASSO));
-        } else if (e.key === "-" || e.key === "_") {
-          e.preventDefault();
-          setFator((f) => clampZoom(f - ZOOM_PASSO));
-        } else if (e.key === "0") {
-          e.preventDefault();
+    const onMsg = (e: MessageEvent) => {
+      if (e.source !== iframe.contentWindow) return; // só do NOSSO iframe
+      const d = e.data as
+        | { tipo?: string; altura?: number; direcao?: number; href?: string; texto?: string }
+        | null;
+      if (!d || typeof d !== "object") return;
+      switch (d.tipo) {
+        case "gt-reader-altura":
+          if (typeof d.altura === "number") {
+            const h = d.altura;
+            setAltura((a) => (Math.abs(a - h) > 1 ? h : a));
+          }
+          break;
+        case "gt-reader-zoom":
+          setFator((f) => clampZoom(f + (d.direcao && d.direcao > 0 ? ZOOM_PASSO : -ZOOM_PASSO)));
+          break;
+        case "gt-reader-zoom-reset":
           setFator(1); // volta ao auto-fit do #57
-        }
-      });
-    };
-    iframe.addEventListener("load", onLoad);
-    // IMPORTANTE: só re-mede quando a LARGURA muda (arrastar o splitter). Reagir
-    // à altura criava loop de feedback (setAltura -> resize -> ajustar -> cresce).
-    const ro = new ResizeObserver(() => {
-      const w = iframe.clientWidth;
-      if (w !== ultimaLargura) {
-        ultimaLargura = w;
-        ajustar();
+          break;
+        case "gt-reader-link":
+          if (typeof d.href === "string") {
+            if (/^https?:/i.test(d.href)) {
+              // `href` é a URL RESOLVIDA; `texto` é o texto visível — base do
+              // teste de mismatch texto × destino (#91).
+              setLinkPendente(analisarLink(d.texto ?? "", d.href));
+            } else {
+              api.openUrl(d.href).catch(() => {});
+            }
+          }
+          break;
       }
-    });
-    ro.observe(iframe);
-    return () => {
-      iframe.removeEventListener("load", onLoad);
-      ro.disconnect();
     };
+    window.addEventListener("message", onMsg);
+    return () => window.removeEventListener("message", onMsg);
   }, [doc, setFator]);
 
-  // Reaplica o zoom quando o fator manual muda (teclado/roda/reset/persistido),
-  // re-rodando a MESMA medição de altura do #57 pra não clipar nem sobrar espaço.
+  // Empurra o fator pro iframe quando ele muda (teclado/roda/reset/persistido).
+  // O 1º valor já foi embutido no srcDoc; daqui pra frente é só postMessage — sem
+  // recarregar o iframe. O script lá dentro re-mede aplicando o piso #57.
   useEffect(() => {
     fatorRef.current = fator;
-    ajustarRef.current();
+    ref.current?.contentWindow?.postMessage({ tipo: "gt-reader-set-fator", fator }, "*");
   }, [fator]);
 
   const zoomAlterado = fator !== 1;
@@ -550,17 +455,16 @@ function CorpoHtml({
   return (
     <div className="relative w-full">
       <iframe
-        // Remonta o iframe quando o tema muda: alterar `sandbox` (add/remove
-        // allow-scripts) num iframe JÁ montado não reaplica na mesma carga do
-        // novo srcDoc, então o Dark Reader era bloqueado ao trocar claro→escuro
-        // com o e-mail aberto (só pegava ao trocar de e-mail). Um `key` por tema
-        // cria um iframe novo com o sandbox correto desde o início (#73).
+        // Remonta o iframe ao trocar de tema: a inversão do escuro é um `<style>`
+        // no srcDoc, então um `key` por tema garante um documento novo e limpo
+        // (sem resíduo de filtro) desde o início (#73/#1034).
         key={escuro ? "dark" : "light"}
         ref={ref}
         srcDoc={doc}
-        // allow-scripts só no escuro: é o que o Dark Reader precisa pra rodar no
-        // load. No claro mantemos o sandbox estrito (nenhum script do e-mail roda).
-        sandbox={escuro ? "allow-same-origin allow-popups allow-scripts" : "allow-same-origin allow-popups"}
+        // OPAQUE ORIGIN (#1034, SEC1): SEM allow-same-origin nos DOIS temas — o
+        // e-mail não alcança a origem do app. `allow-scripts` fica só pela ponte
+        // de medição (a CSP do srcDoc só libera o nosso script, via nonce).
+        sandbox={SANDBOX_LEITOR}
         title={t.controlRoom.corpoEmail}
         className="w-full border-0 bg-white"
         style={{ height: altura }}
