@@ -215,6 +215,102 @@ fn converter(v: &serde_json::Value, contador: &mut usize) -> Option<BookmarkNode
     }
 }
 
+#[cfg(all(test, windows))]
+mod tests {
+    //! #1045 (TST-03): o allowlist de URL do parser de bookmarks é a ÚNICA barreira
+    //! entre um arquivo `Bookmarks` de terceiro (conteúdo controlado fora do app) e
+    //! uma URL aberta pelo WebView2 embutido. Antes deste módulo, `bookmarks.rs`
+    //! tinha 0 `#[cfg(test)]` — um refactor podia deixar passar `javascript:`/
+    //! `file://`/`chrome://` sem ninguém perceber.
+    use super::{converter, parse_bookmarks};
+    use serde_json::json;
+
+    fn url_node(url: &str) -> serde_json::Value {
+        json!({ "type": "url", "name": "x", "url": url, "guid": "g1" })
+    }
+
+    /// AC1 (SEGURANÇA): esquemas perigosos são DESCARTADOS pelo allowlist.
+    #[test]
+    fn converter_allowlist_barra_esquemas_perigosos() {
+        let mut c = 0;
+        for perigoso in [
+            "javascript:alert(1)",
+            "file:///C:/Windows/System32/calc.exe",
+            "chrome://settings",
+            "data:text/html,<script>alert(1)</script>",
+            "vbscript:msgbox(1)",
+            "about:blank",
+            "HTTPS://maiusculo.example", // starts_with é case-sensitive → barrado (defensivo)
+            " https://espaco-a-frente.example", // espaço quebra o starts_with → barrado
+        ] {
+            assert!(
+                converter(&url_node(perigoso), &mut c).is_none(),
+                "esquema perigoso passou pelo allowlist: {perigoso}"
+            );
+        }
+    }
+
+    /// AC2: `http://`/`https://` são ACEITOS, com a url preservada.
+    #[test]
+    fn converter_allowlist_aceita_http_e_https() {
+        let mut c = 0;
+        for ok in ["http://exemplo.com", "https://exemplo.com/x?y=1#z"] {
+            let no = converter(&url_node(ok), &mut c).expect("http(s) deveria ser aceito");
+            assert_eq!(no.url.as_deref(), Some(ok));
+            assert!(no.filhos.is_empty());
+        }
+    }
+
+    /// AC3: JSON malformado / sem `roots` / `roots` não-objeto → `None`, SEM panic.
+    #[test]
+    fn parse_bookmarks_json_invalido_ou_sem_roots_nao_paniqueia() {
+        assert!(parse_bookmarks("{ not json").is_none());
+        assert!(parse_bookmarks(r#"{"version":1}"#).is_none());
+        assert!(parse_bookmarks(r#"{"roots": 42}"#).is_none());
+        assert!(parse_bookmarks("").is_none());
+    }
+
+    /// AC4: nó sem `guid` nem `id` recebe id de reserva `bm-{contador}`; `guid`
+    /// tem precedência sobre `id`, e `id` sobre o fallback.
+    #[test]
+    fn converter_id_fallback_e_precedencia() {
+        let mut c = 0;
+        let sem = converter(&json!({ "type":"url","name":"x","url":"https://a.b" }), &mut c)
+            .expect("url válida");
+        assert_eq!(sem.id, "bm-1");
+        let com_guid =
+            converter(&json!({ "type":"url","name":"x","url":"https://a.b","guid":"G","id":"I" }), &mut c)
+                .unwrap();
+        assert_eq!(com_guid.id, "G");
+        let com_id =
+            converter(&json!({ "type":"url","name":"x","url":"https://a.b","id":"I" }), &mut c).unwrap();
+        assert_eq!(com_id.id, "I");
+    }
+
+    /// AC5 + prova ponta-a-ponta: pasta de topo vazia NÃO entra na lista final, e o
+    /// allowlist barra `javascript:` mesmo aninhado dentro de uma pasta com conteúdo.
+    #[test]
+    fn parse_bookmarks_descarta_pasta_vazia_e_filtra_link_perigoso_aninhado() {
+        let bruto = json!({
+            "roots": {
+                "bookmark_bar": { "type": "folder", "name": "Barra", "children": [] },
+                "other": { "type": "folder", "name": "Outros", "children": [
+                    { "type": "url", "name": "Site", "url": "https://ok.example", "guid": "u1" },
+                    { "type": "url", "name": "Ruim", "url": "javascript:void(0)", "guid": "u2" }
+                ] }
+            }
+        })
+        .to_string();
+        let saida = parse_bookmarks(&bruto).expect("json válido");
+        // bookmark_bar vazia é descartada; sobra só "Outros"…
+        assert_eq!(saida.len(), 1);
+        assert_eq!(saida[0].nome, "Outros");
+        // …e dentro dela, só o link http(s) — o javascript: foi barrado na conversão.
+        assert_eq!(saida[0].filhos.len(), 1);
+        assert_eq!(saida[0].filhos[0].url.as_deref(), Some("https://ok.example"));
+    }
+}
+
 // --- Stub para plataformas nao-Windows (dev/CI) ---
 #[cfg(not(windows))]
 pub fn importar() -> ImportarResultado {
