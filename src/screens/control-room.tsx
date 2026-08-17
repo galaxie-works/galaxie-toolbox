@@ -123,8 +123,10 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { shortcutAccessibleLabel, formatShortcut } from "@/components/ui/shortcut";
-import type { ShortcutDefinition } from "@/components/ui/shortcut";
 import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
+// #1060: catálogo declarativo dos atalhos do Bridge (fonte única) — os tooltips/
+// aria-labels das ações icon-only leem daqui, a MESMA fonte da ajuda "?".
+import { shortcutBridge } from "@/components/atalhos-bridge";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -2809,13 +2811,15 @@ function ItensMenuEmail({
 // platform-correto). Ctrl+A/Esc já são tratados no handler de teclas da lista
 // (mod+a → selecionarTudo; Escape → limparSelecao); S/Delete idem (onFlag /
 // onExcluir da mensagem ativa).
-const ATALHO_SELECIONAR_TUDO: ShortcutDefinition = { key: "A", primary: true };
-const ATALHO_LIMPAR_SELECAO: ShortcutDefinition = { key: "Esc" };
-const ATALHO_SINALIZAR: ShortcutDefinition = { key: "S" };
-const ATALHO_EXCLUIR: ShortcutDefinition = { key: "Delete" };
+// #1060: os ShortcutDefinition dos tooltips saem do catálogo (`atalhos-bridge`),
+// a mesma fonte da ajuda "?" — nada de par de verdades divergindo.
+const ATALHO_SELECIONAR_TUDO = shortcutBridge("selecionarTudo");
+const ATALHO_LIMPAR_SELECAO = shortcutBridge("limparSelecao");
+const ATALHO_SINALIZAR = shortcutBridge("sinalizar");
+const ATALHO_EXCLUIR = shortcutBridge("excluir");
 // Ler/não-ler do leitor (#102): atalho U. Alimenta aria-label + ShortcutTooltip
 // do botão que ALTERNA lido/não-lido na toolbar do leitor.
-const ATALHO_LER_NAO_LIDO: ShortcutDefinition = { key: "U" };
+const ATALHO_LER_NAO_LIDO = shortcutBridge("lidoNaoLido");
 // #497: atalhos das ações do leitor JÁ cabeados no handler central (#28, switch
 // por e.key.toLowerCase() = r/a/f). Exibidos como <Kbd> ao lado do rótulo dos
 // botões Responder/Responder a todos/Encaminhar. NÃO inventar — casam com o
@@ -2824,36 +2828,28 @@ const ATALHO_LER_NAO_LIDO: ShortcutDefinition = { key: "U" };
 // Filtro da lista). Responder=Ctrl+R · Responder a todos=Ctrl+Shift+R ·
 // Encaminhar=Ctrl+Shift+F. O `ShortcutDefinition` já suporta primary/shift, e o
 // `formatShortcut` renderiza "Ctrl+Shift+R" no <Kbd> — o exibido acompanha.
-const ATALHO_RESPONDER: ShortcutDefinition = { key: "R", primary: true };
-const ATALHO_RESPONDER_TODOS: ShortcutDefinition = {
-  key: "R",
-  primary: true,
-  shift: true,
-};
-const ATALHO_ENCAMINHAR: ShortcutDefinition = {
-  key: "F",
-  primary: true,
-  shift: true,
-};
+const ATALHO_RESPONDER = shortcutBridge("responder");
+const ATALHO_RESPONDER_TODOS = shortcutBridge("responderTodos");
+const ATALHO_ENCAMINHAR = shortcutBridge("encaminhar");
 // #538: o Filtro da lista tem atalho F (single, liberado pelo #537) via o
 // `<Filters enableShortcut shortcutKey="f">` — o tooltip precisa exibir o Kbd.
-const ATALHO_FILTRO: ShortcutDefinition = { key: "F" };
+const ATALHO_FILTRO = shortcutBridge("filtro");
 // #538: "Novo e-mail" (icon-only) dispara o mesmo compose do atalho "c" (o
 // handler chama onCompor; onNovo === onCompor === novoEmailModal).
-const ATALHO_COMPOR: ShortcutDefinition = { key: "C" };
+const ATALHO_COMPOR = shortcutBridge("compor");
 // #549: equiparação Outlook nos icon-only que NÃO tinham atalho.
 // Atualizar = F9 (Outlook Send/Receive All). Ordenar = O (app-nativo — o Outlook
 // não tem atalho único de sort; tecla livre e mnemônica, sem colisão).
-const ATALHO_ATUALIZAR: ShortcutDefinition = { key: "F9" };
-const ATALHO_ORDENAR: ShortcutDefinition = { key: "O" };
+const ATALHO_ATUALIZAR = shortcutBridge("atualizar");
+const ATALHO_ORDENAR = shortcutBridge("ordenar");
 // #549: Esc fecha o preview de anexo (email aninhado) — por PRECEDÊNCIA sobre o
 // clear-selection (padrão Outlook: Esc fecha o painel aberto primeiro).
-const ATALHO_FECHAR_PREVIEW: ShortcutDefinition = { key: "Esc" };
+const ATALHO_FECHAR_PREVIEW = shortcutBridge("fecharPreview");
 // #636 (épico #635): Salvar como… = F12 · Imprimir = Ctrl+P (esquema Outlook).
 // O abridor "..." usa a tecla nativa de context-menu do Windows (Menu/Shift+F10),
 // só documentada no tooltip — o Radix já abre o menu por Enter/Espaço/↓.
-const ATALHO_SALVAR_COMO: ShortcutDefinition = { key: "F12" };
-const ATALHO_IMPRIMIR: ShortcutDefinition = { key: "P", primary: true };
+const ATALHO_SALVAR_COMO = shortcutBridge("salvarComo");
+const ATALHO_IMPRIMIR = shortcutBridge("imprimir");
 
 /** #636: formatos de "Salvar como…". Um comando por formato (S2–S5). */
 export type FormatoSalvar = "pdf" | "eml";

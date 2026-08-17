@@ -408,6 +408,7 @@ export function ContentPane({
   onToggleInspector,
   buscaRef,
   listaRef,
+  onEditarCaminho,
 }: {
   currentPath: string;
   onNavegar: (path: string) => void;
@@ -436,6 +437,8 @@ export function ContentPane({
   buscaRef?: RefObject<HTMLInputElement | null>;
   /** #968: ref do container da lista — a navbar foca-o ao SAIR da busca (ESC). */
   listaRef?: RefObject<HTMLDivElement | null>;
+  /** #1060 (UX21): Ctrl+L entra no modo "editar caminho" do breadcrumb (navbar). */
+  onEditarCaminho?: () => void;
 }) {
   const { t, idioma } = useIdioma();
   const [entradas, setEntradas] = useState<FsEntry[] | null>(null);
@@ -963,6 +966,14 @@ export function ContentPane({
         buscaRef?.current?.select();
         return;
       }
+      // #1060 (UX21): Ctrl+L entra no modo "editar caminho" do breadcrumb, à moda
+      // do Explorer do Windows / barra de endereço dos navegadores. O `autoFocus`
+      // do Input de endereço (navbar) leva o foco pro campo ao montar.
+      if (ctrl && !ev.shiftKey && (ev.key === "l" || ev.key === "L")) {
+        ev.preventDefault();
+        onEditarCaminho?.();
+        return;
+      }
       if (paths.length === 0) return;
       const atual = selecao.cursor ? paths.indexOf(selecao.cursor) : -1;
       const base = atual < 0 ? 0 : atual;
@@ -1088,6 +1099,7 @@ export function ContentPane({
       buscaRef,
       clipboard, // #986: ESC cancela o recorte — precisa do clipboard atual
       onClipboardChange,
+      onEditarCaminho,
     ],
   );
 

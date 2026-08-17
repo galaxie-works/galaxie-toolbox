@@ -705,6 +705,7 @@ const pt = {
     filtro: "Filtrar",
     preview: "Abrir/fechar painel de detalhes",
     focoBusca: "Buscar (recursivo)",
+    editarCaminho: "Editar caminho",
   },
 
   controlRoom: {
@@ -2980,6 +2981,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     filtro: "Filter",
     preview: "Toggle details pane",
     focoBusca: "Search (recursive)",
+    editarCaminho: "Edit path",
   },
 
   controlRoom: {

@@ -197,6 +197,10 @@ export function ExplorerShell({
   const buscaInputRef = useRef<HTMLInputElement>(null);
   // #968: ref do container da lista — a navbar foca-o ao SAIR da busca (ESC).
   const listaRef = useRef<HTMLDivElement>(null);
+  // #1060 (UX21): modo "editar caminho" do breadcrumb — CONTROLADO aqui pra que
+  // o Ctrl+L (no aoTeclar do ContentPane) e o clique/teclado no breadcrumb
+  // compartilhem o MESMO estado.
+  const [editandoCaminho, setEditandoCaminho] = useState(false);
 
   // #724: ops de copy/move ativas (rastreadas por opId) + diálogo de conflito +
   // nonce do watcher (bump → ContentPane recarrega a MESMA pasta).
@@ -732,6 +736,10 @@ export function ExplorerShell({
               onSairBusca={() =>
                 listaRef.current?.focus({ preventScroll: true })
               }
+              // #1060 (UX21): edição do caminho controlada pelo shell (Ctrl+L +
+              // clique/teclado no breadcrumb compartilham o estado).
+              editando={editandoCaminho}
+              onEditandoChange={setEditandoCaminho}
             />
             {busca !== null ? (
               // #871 (fatia 2b): busca ativa → resultados no lugar da lista/DrivesView.
@@ -767,6 +775,8 @@ export function ExplorerShell({
                 // #968: Ctrl+E foca a busca da navbar (ref compartilhada).
                 buscaRef={buscaInputRef}
                 listaRef={listaRef}
+                // #1060 (UX21): Ctrl+L abre o modo "editar caminho" do breadcrumb.
+                onEditarCaminho={() => setEditandoCaminho(true)}
               />
             ) : drives && drives.length > 0 ? (
               // #855: "Este computador" selecionado (sentinel de caminho vazio)
