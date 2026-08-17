@@ -558,8 +558,13 @@ function CsvViewer({
           })}
         </p>
       )}
-      {/* Único container de scroll (H e V) — a virtualização mede este elemento. */}
-      <div ref={scrollRef} className="min-h-0 w-full flex-1 overflow-auto">
+      {/* Único container de scroll (H e V) — a virtualização mede este elemento.
+          #958: `scrollbar-fina` = scrollbar custom do app (mesmo do Explorer/Bridge),
+          no lugar do scrollbar padrão do browser (bug recorrente, cf. #767). */}
+      <div
+        ref={scrollRef}
+        className="min-h-0 w-full flex-1 overflow-auto scrollbar-fina"
+      >
         <div style={{ width: larguraTotal }} className="text-xs">
           {/* Header: sticky top; a célula-canto é sticky nos dois eixos. */}
           <div className="sticky top-0 z-20 flex bg-muted font-medium">
