@@ -15,6 +15,9 @@ pub mod frame;
 pub mod input;
 pub mod signaling;
 pub mod stats;
+// Codec STUN Binding (RFC 5389) do gathering srflx — PURO (sem str0m/OpenSSL);
+// fica no núcleo pra o `cargo test` default do CI exercitar sem toolchain. #1108.
+pub mod stun;
 pub mod transfer;
 
 // Injeção de input (S3) — puxa o enigo; a UI/host liga a feature `input`.

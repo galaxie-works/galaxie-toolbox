@@ -6,18 +6,20 @@
 //! jamais são logados aqui.
 
 use std::collections::HashSet;
-use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use galaxie_remote_transport::stun::{build_binding_request, parse_xor_mapped_address};
 use galaxie_remote_transport::{
     canal_de_comandos, decode, encode_input, CommandReceiver as TransportCommandReceiver,
     EncoderCommand as TransportEncoderCommand, EventoSessao, Frame as ControlFrame, IceServer,
     InputEvent, Papel, Passo, ScreenInfo, SessionConfig, SignalMessage, Transport,
 };
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody, Response};
 
@@ -31,6 +33,12 @@ const COMMAND_CAPACITY: usize = 64;
 const VIDEO_CAPACITY: usize = 2;
 const NETWORK_TICK: Duration = Duration::from_millis(10);
 const STATS_INTERVAL: Duration = Duration::from_secs(1);
+/// #1108 Parte 2: orçamento total de espera pela resposta STUN de CADA servidor no
+/// gathering srflx. Curto de propósito — srflx é aditivo e o startup não pode
+/// travar esperando um STUN inalcançável (dev/LAN sem coturn).
+const SRFLX_GATHER_TIMEOUT: Duration = Duration::from_millis(800);
+/// Intervalo de sleep entre `recv_from` no socket NONBLOCKING durante o gathering.
+const SRFLX_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 #[derive(Default)]
 pub struct RemoteRuntime {
@@ -536,6 +544,10 @@ impl RuntimeSession {
             } else {
                 (None, None, None)
             };
+        // #1108 Parte 2 (Confucius): resolve os STUN servers em `SocketAddr` ANTES de
+        // mover `request.ice_servers` pro `SessionConfig` — vamos precisar deles pro
+        // gathering de candidato srflx logo abaixo (o `SessionConfig` consome o Vec).
+        let stun_alvos = resolver_stun_addrs(&request.ice_servers);
         let mut transport = Transport::novo(
             SessionConfig {
                 papel: request.role.papel(),
@@ -560,6 +572,22 @@ impl RuntimeSession {
         for ip in &ips_locais {
             let addr = SocketAddr::new(*ip, porta);
             transport.candidato_local(addr).map_err(transport_error)?;
+        }
+
+        // #1108 Parte 2: gathering de candidato srflx (server-reflexive) via STUN.
+        // O str0m é sans-I/O e NÃO faz esse passo — o app manda o Binding no socket e
+        // alimenta o candidato. Rodamos AQUI (DEPOIS dos host, ANTES do offer): o
+        // socket ainda está quieto (o ICE do str0m nem começou), então o Binding não
+        // colide com o tráfego do str0m. A `base` é um IP de interface REAL com a
+        // porta do bind (o 1º IP válido do P1). srflx é ADITIVO e NÃO-fatal: STUN
+        // inalcançável (dev/LAN sem coturn) → `gather_srflx` volta vazio e a sessão
+        // segue com host-only, exatamente como antes do #1108 Parte 2.
+        let base_srflx = SocketAddr::new(ips_locais[0], porta);
+        let srflx = gather_srflx(&socket, &stun_alvos, base_srflx);
+        for (mapeado, base) in &srflx {
+            transport
+                .candidato_srflx(*mapeado, *base)
+                .map_err(transport_error)?;
         }
 
         let mut session = Self {
@@ -593,6 +621,18 @@ impl RuntimeSession {
             session.send_event(RemoteSessionEvent::Signal {
                 signal: SignalMessage::IceCandidate {
                     candidate: Transport::candidato_local_sdp(addr).map_err(transport_error)?,
+                }
+                .into(),
+            })?;
+        }
+        // #1108 Parte 2: trickle dos candidatos srflx — DEPOIS dos host (ordem
+        // host-primeiro preservada). Cada SDP carrega o IP:porta público visto pelo
+        // STUN. Se o gather voltou vazio, este loop não emite nada (host-only).
+        for (mapeado, base) in &srflx {
+            session.send_event(RemoteSessionEvent::Signal {
+                signal: SignalMessage::IceCandidate {
+                    candidate: Transport::candidato_srflx_sdp(*mapeado, *base)
+                        .map_err(transport_error)?,
                 }
                 .into(),
             })?;
@@ -1039,6 +1079,97 @@ fn descobrir_ips_locais() -> Vec<IpAddr> {
         }
     };
     ips_de_interface_validos(&brutos)
+}
+
+/// #1108 Parte 2: resolve os STUN servers dos `IceServer` em `SocketAddr`. Pega
+/// TODA url com prefixo `stun:` (sem credencial), tira o prefixo, corta um eventual
+/// `?transport=...` e resolve `host:porta` via `ToSocketAddrs` (DNS + IPv4/IPv6).
+/// Deduplica preservando a ordem. Falha de resolução é NÃO-fatal (loga e pula): o
+/// gathering srflx é aditivo. Relay/TURN fica de fora (bloqueado: credencial +
+/// coturn + #1049).
+fn resolver_stun_addrs(ice_servers: &[IceServer]) -> Vec<SocketAddr> {
+    let mut vistos = HashSet::new();
+    let mut addrs = Vec::new();
+    for server in ice_servers {
+        for url in &server.urls {
+            let Some(hostport) = url.strip_prefix("stun:") else {
+                continue;
+            };
+            let hostport = hostport.split('?').next().unwrap_or(hostport);
+            match hostport.to_socket_addrs() {
+                Ok(resolvidos) => {
+                    for addr in resolvidos {
+                        if vistos.insert(addr) {
+                            addrs.push(addr);
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::warn!("[remote] STUN '{hostport}' não resolveu: {error} — srflx pulado");
+                }
+            }
+        }
+    }
+    addrs
+}
+
+/// #1108 Parte 2: faz o gathering de candidatos srflx. Pra cada STUN server, gera um
+/// `txid` aleatório, envia um STUN Binding Request pelo `socket` (o MESMO socket da
+/// sessão) e faz poll-recv com deadline curto (o socket é NONBLOCKING): lê
+/// `recv_from` até `SRFLX_GATHER_TIMEOUT`, tratando `WouldBlock` com um `sleep`
+/// curto. Ao chegar um pacote, tenta casar o `txid` via `parse_xor_mapped_address`;
+/// se casar, o IP:porta público é o `mapeado` (par `(mapeado, base)`); senão o
+/// pacote é ignorado (pode ser outro tráfego) e o laço segue. Devolve os pares
+/// únicos. NÃO-fatal: timeout/erro/STUN inalcançável → vetor vazio (host-only).
+///
+/// Sans-I/O: o str0m não descobre srflx; este é o passo de runtime que o app faz por
+/// ele. Chamado ANTES do offer, com o socket ainda quieto, pra o Binding não colidir
+/// com o ICE do str0m.
+fn gather_srflx(
+    socket: &UdpSocket,
+    stun_alvos: &[SocketAddr],
+    base: SocketAddr,
+) -> Vec<(SocketAddr, SocketAddr)> {
+    let mut resultados: Vec<(SocketAddr, SocketAddr)> = Vec::new();
+    let mut vistos = HashSet::new();
+    let mut buf = [0u8; 512];
+    for &stun in stun_alvos {
+        let mut txid = [0u8; 12];
+        rand::thread_rng().fill(&mut txid[..]);
+        let req = build_binding_request(&txid);
+        if let Err(error) = socket.send_to(&req, stun) {
+            log::warn!("[remote] STUN Binding não enviou: {error} — srflx pulado");
+            continue;
+        }
+        let deadline = Instant::now() + SRFLX_GATHER_TIMEOUT;
+        loop {
+            if Instant::now() >= deadline {
+                log::warn!("[remote] STUN sem resposta (timeout) — srflx pulado deste servidor");
+                break;
+            }
+            match socket.recv_from(&mut buf) {
+                Ok((len, _origem)) => {
+                    // O `txid` no parse é a prova de identidade; um pacote que não
+                    // casa (outro tráfego chegando no socket) é ignorado e o laço
+                    // segue até a resposta certa ou o deadline.
+                    if let Some(mapeado) = parse_xor_mapped_address(&buf[..len], &txid) {
+                        if vistos.insert((mapeado, base)) {
+                            resultados.push((mapeado, base));
+                        }
+                        break;
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(SRFLX_POLL_INTERVAL);
+                }
+                Err(error) => {
+                    log::warn!("[remote] STUN recv falhou: {error} — srflx pulado deste servidor");
+                    break;
+                }
+            }
+        }
+    }
+    resultados
 }
 
 fn sanitize_reason(reason: String) -> String {
