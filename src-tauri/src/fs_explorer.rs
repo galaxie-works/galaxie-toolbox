@@ -334,20 +334,31 @@ fn ler_dir_streamed(path: &str, batch: usize, app: &AppHandle) -> Result<u64, Fs
 // `ProgressManager`/`fs_cancel`) + teto de resultados — "Search This PC" pode
 // varrer milhões de arquivos, então NUNCA segura tudo na memória nem trava.
 
-/// Resolve as raízes da busca: `root` vazio = "This PC" (todos os drives locais
+/// Resolve as raízes da busca: `root` vazio = "This PC" (todos os drives LOCAIS
 /// montados); senão a pasta dada.
+///
+/// #1073 (RB30): drives de REDE (`network`/DRIVE_REMOTE) ficam FORA do "This PC" —
+/// varrê-los recursivamente numa share lenta/offline faz a busca parecer travada,
+/// e o escopo documentado sempre foi "drives locais". `cloud` (OneDrive/Drive
+/// montado) permanece: é um mount local com cache em disco.
 fn raizes_de_busca(root: &str) -> Vec<PathBuf> {
     let t = root.trim();
     if t.is_empty() {
         listar_drives()
             .unwrap_or_default()
             .into_iter()
-            .filter(|d| matches!(d.kind.as_str(), "fixed" | "removable" | "cloud" | "network"))
+            .filter(|d| kind_no_escopo_this_pc(&d.kind))
             .map(|d| PathBuf::from(d.path))
             .collect()
     } else {
         vec![PathBuf::from(t)]
     }
+}
+
+/// #1073 (RB30): predicado puro do escopo "This PC" — inclui só drives LOCAIS.
+/// `network` (DRIVE_REMOTE) fica de fora; `cdrom`/`ramdisk`/`unknown` também.
+fn kind_no_escopo_this_pc(kind: &str) -> bool {
+    matches!(kind, "fixed" | "removable" | "cloud")
 }
 
 /// Varre as raízes chamando `on_match` a cada arquivo/pasta cujo nome contém
@@ -977,9 +988,30 @@ fn caminho_existe(p: &str) -> bool {
     std::fs::symlink_metadata(com_long_path(Path::new(p))).is_ok()
 }
 
+/// Comprimento clássico do MAX_PATH do Windows (260, inclui o NUL). A Lixeira do
+/// shell (IFileOperation) não alcança caminhos a partir daqui.
+const MAX_PATH: usize = 260;
+
+/// #1073 (RB29): o caminho estoura o MAX_PATH clássico? A Lixeira do shell
+/// (`IFileOperation`/`SHCreateItemFromParsingName`, usada pelo crate `trash`) NÃO
+/// alcança caminhos a partir de 260 nem aceita o prefixo verbatim `\\?\`. Caminhos
+/// longos (comuns em SharePoint/OneDrive) NÃO podem ir pra Lixeira — ver `para_lixeira`.
+fn excede_max_path(p: &str) -> bool {
+    p.chars().count() >= MAX_PATH
+}
+
 /// Manda os itens pra Lixeira do SO (batch, reversível pelo usuário). #849: loga
 /// (START/END/ERRO, "como o Delphero" no GALAXIE.log) e é IDEMPOTENTE — filtra os
 /// caminhos que já sumiram (delete concorrente do 3x-clique); todos já idos = no-op.
+///
+/// #1073 (RB29 — decisão do PO): caminhos curtos vão pra Lixeira (reversível). Caminho
+/// >= MAX_PATH a Lixeira do shell NÃO alcança → **FALHA EXPLÍCITA preservando o
+/// arquivo**, JAMAIS delete permanente silencioso. O usuário pediu "Lixeira"
+/// (reversível), não "apagar": entregar irreversível seria fazer coisa diferente da que
+/// ele mandou, e caminho profundo é o DIA A DIA de quem migra OneDrive/SharePoint (dado
+/// de cliente real), não borda. Os longos ficam INTACTOS e o erro nomeia o porquê (a UI
+/// mostra). Delete permanente de caminho longo, se desejado, é ação ESCOLHIDA com
+/// confirmação na UI — US-filha de front, nunca consequência de clicar "Lixeira".
 fn para_lixeira(paths: &[String]) -> Result<(), FsError> {
     if paths.is_empty() {
         return Ok(());
@@ -987,30 +1019,43 @@ fn para_lixeira(paths: &[String]) -> Result<(), FsError> {
     for p in paths {
         validar(p)?;
     }
-    let alvos: Vec<&str> = paths
+    let (longos, curtos): (Vec<&str>, Vec<&str>) = paths
         .iter()
         .filter(|p| caminho_existe(p))
         .map(String::as_str)
-        .collect();
-    let ja_idos = paths.len() - alvos.len();
+        .partition(|p| excede_max_path(p));
+    let ja_idos = paths.len() - longos.len() - curtos.len();
     log::info!(
-        "fs_trash START: {} para a Lixeira, {ja_idos} já removido(s)/ignorado(s)",
-        alvos.len()
+        "fs_trash START: {} para a Lixeira, {} longo(s) intocado(s) (>= MAX_PATH), {ja_idos} já removido(s)/ignorado(s)",
+        curtos.len(),
+        longos.len()
     );
-    if alvos.is_empty() {
-        return Ok(());
-    }
-    let total = alvos.len();
-    match trash::delete_all(alvos) {
-        Ok(()) => {
-            log::info!("fs_trash END: {total} item(ns) na Lixeira OK");
-            Ok(())
-        }
-        Err(e) => {
+
+    // Curtos vão pra Lixeira (reversível) — independentemente dos longos.
+    if !curtos.is_empty() {
+        let total = curtos.len();
+        if let Err(e) = trash::delete_all(&curtos) {
             log::error!("fs_trash ERRO: {e} ({total} alvo(s))");
-            Err(FsError::Io(format!("lixeira: {e}")))
+            return Err(FsError::Io(format!("lixeira: {e}")));
         }
+        log::info!("fs_trash END: {total} item(ns) na Lixeira OK");
     }
+
+    // #1073 RB29 (decisão do PO): caminho >= MAX_PATH → falha EXPLÍCITA, arquivo
+    // INTACTO. Falha (recuperável) > delete permanente (irrecuperável). Nunca apaga
+    // pra sempre um item que o usuário mandou pra Lixeira.
+    if !longos.is_empty() {
+        let nomes = longos.join(", ");
+        log::warn!(
+            "fs_trash: {} caminho(s) excedem o MAX_PATH ({MAX_PATH}) — a Lixeira não os alcança; NÃO excluídos (intactos): {nomes}",
+            longos.len()
+        );
+        return Err(FsError::Io(format!(
+            "{} caminho(s) excedem o limite de {MAX_PATH} caracteres do Windows e a Lixeira não os alcança — não foram excluídos e permanecem intactos.",
+            longos.len()
+        )));
+    }
+    Ok(())
 }
 
 /// Apaga PERMANENTEMENTE (sem Lixeira) — exige o token de confirmação. #849: loga
@@ -1060,35 +1105,35 @@ impl ProgressManager {
         let id = self.proximo_id.fetch_add(1, Ordering::Relaxed);
         let cancelar = Arc::new(AtomicBool::new(false));
         let pausar = Arc::new(AtomicBool::new(false));
-        self.cancelados.lock().unwrap().insert(id, cancelar.clone());
-        self.pausados.lock().unwrap().insert(id, pausar.clone());
+        self.cancelados.lock().unwrap_or_else(|e| e.into_inner()).insert(id, cancelar.clone());
+        self.pausados.lock().unwrap_or_else(|e| e.into_inner()).insert(id, pausar.clone());
         (id, cancelar, pausar)
     }
     fn cancelar(&self, id: u64) {
-        if let Some(f) = self.cancelados.lock().unwrap().get(&id) {
+        if let Some(f) = self.cancelados.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
             f.store(true, Ordering::Relaxed);
         }
         // Um op pausado precisa ser destravado pra ver o cancel e encerrar.
-        if let Some(p) = self.pausados.lock().unwrap().get(&id) {
+        if let Some(p) = self.pausados.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
             p.store(false, Ordering::Relaxed);
         }
     }
     /// #898: sinaliza pause — os workers bloqueiam no próximo check (entre arquivos ou
     /// entre chunks). No-op se a op não existe (já terminou).
     fn pausar(&self, id: u64) {
-        if let Some(p) = self.pausados.lock().unwrap().get(&id) {
+        if let Some(p) = self.pausados.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
             p.store(true, Ordering::Relaxed);
         }
     }
     /// #898: destrava a op pausada — os workers retomam do ponto exato.
     fn resumir(&self, id: u64) {
-        if let Some(p) = self.pausados.lock().unwrap().get(&id) {
+        if let Some(p) = self.pausados.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
             p.store(false, Ordering::Relaxed);
         }
     }
     fn finalizar(&self, id: u64) {
-        self.cancelados.lock().unwrap().remove(&id);
-        self.pausados.lock().unwrap().remove(&id);
+        self.cancelados.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        self.pausados.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
     }
 }
 
@@ -2702,7 +2747,7 @@ fn copiar_plano(plano: &Plano, workers: usize, ctx: &Contexto) -> Result<(), FsE
                     return;
                 }
                 if let Err(e) = copiar_arquivo(job, ctx) {
-                    let mut g = erro.lock().unwrap();
+                    let mut g = erro.lock().unwrap_or_else(|e| e.into_inner());
                     if g.is_none() {
                         *g = Some(e);
                         ctx.cancelar.store(true, Ordering::Relaxed); // aborta os demais
@@ -2710,7 +2755,9 @@ fn copiar_plano(plano: &Plano, workers: usize, ctx: &Contexto) -> Result<(), FsE
                 }
             });
     });
-    match erro.into_inner().unwrap() {
+    // #1073 (RB26): um `copiar_arquivo` que PANICAR envenena este Mutex; recupera o
+    // interior em vez de propagar o panic (into_inner de Mutex poisonado = Err).
+    match erro.into_inner().unwrap_or_else(|e| e.into_inner()) {
         Some(e) => Err(e),
         None => Ok(()),
     }
@@ -2763,17 +2810,27 @@ pub struct ThumbRef {
 /// Pool rayon dedicado a thumbnails, criado uma vez. Dimensionado a ~3/4 dos
 /// núcleos lógicos (headroom pra UI/OS; hyperthreading não ajuda decode SIMD),
 /// mínimo 1. Bounda a paralelização mesmo com N chamadas simultâneas do front.
-fn thumb_pool() -> &'static rayon::ThreadPool {
-    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+fn thumb_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
     POOL.get_or_init(|| {
         let logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         let n = (logical * 3 / 4).max(1);
-        rayon::ThreadPoolBuilder::new()
+        // #1073 (RB26): a falha ao montar o pool (raro: limite de threads do SO)
+        // NÃO pode derrubar o app via `expect`. Sem pool dedicado, o chamador
+        // gera o thumbnail direto (pool global do rayon), só sem o cap de threads.
+        match rayon::ThreadPoolBuilder::new()
             .num_threads(n)
             .thread_name(|i| format!("thumb-{i}"))
             .build()
-            .expect("pool de thumbnail")
+        {
+            Ok(pool) => Some(pool),
+            Err(e) => {
+                log::error!("[thumb] pool dedicado indisponível ({e}); gerando sem cap de threads");
+                None
+            }
+        }
     })
+    .as_ref()
 }
 
 /// Gera o thumbnail de `path` com o maior lado <= `max_size` (16..=1024).
@@ -2848,7 +2905,12 @@ fn fs_thumbnail_sync(path: String, max_size: u32) -> Result<ThumbRef, FsError> {
     // 3) miss — gera no pool (bounda CPU) e persiste nos dois níveis. #740: mede o
     // tempo de geração (pro avg/throughput do relatório de perf).
     let t0 = Instant::now();
-    let (webp, w, h, source) = thumb_pool().install(|| gerar_webp(&path, max))?;
+    // #1073 (RB26): com pool → roda dentro dele (cap de threads); sem pool (build
+    // falhou) → gera direto no pool global do rayon, sem panicar.
+    let (webp, w, h, source) = match thumb_pool() {
+        Some(pool) => pool.install(|| gerar_webp(&path, max)),
+        None => gerar_webp(&path, max),
+    }?;
     MET_GEN_NS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
     MET_GERADAS.fetch_add(1, Ordering::Relaxed);
     disco_put(&key, &webp);
@@ -2881,10 +2943,15 @@ static DISK_CAP_MB: AtomicU64 = AtomicU64::new(1024);
 static MEM_CAP_MB: AtomicU64 = AtomicU64::new(96);
 
 /// Ajusta os tetos do cache (MB). Disco mín. 16, memória mín. 8.
+/// #1073 (RB28): `async` + `spawn_blocking` — não bloqueia a main thread (padrão da
+/// casa). Contrato de retorno inalterado (`()`).
 #[tauri::command]
-pub fn fs_thumb_cache_limits(disk_mb: u64, mem_mb: u64) {
-    DISK_CAP_MB.store(disk_mb.max(16), Ordering::Relaxed);
-    MEM_CAP_MB.store(mem_mb.max(8), Ordering::Relaxed);
+pub async fn fs_thumb_cache_limits(disk_mb: u64, mem_mb: u64) {
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        DISK_CAP_MB.store(disk_mb.max(16), Ordering::Relaxed);
+        MEM_CAP_MB.store(mem_mb.max(8), Ordering::Relaxed);
+    })
+    .await;
 }
 
 // ── Métricas de perf do gerador de thumbnail (#740 F5) ───────────────────────
@@ -2896,7 +2963,7 @@ static MET_HIT_DISCO: AtomicU64 = AtomicU64::new(0);
 static MET_GERADAS: AtomicU64 = AtomicU64::new(0);
 static MET_GEN_NS: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThumbMetrics {
     pub hit_mem: u64,
@@ -2951,28 +3018,38 @@ fn montar_metrics(
 }
 
 /// Snapshot das métricas do gerador de thumbnail (pro painel/relatório de perf).
+/// #1073 (RB28): `async` + `spawn_blocking` — não bloqueia a main thread. Retorno
+/// `ThumbMetrics` inalterado (JoinError impossível aqui → `unwrap_or_default`).
 #[tauri::command]
-pub fn fs_thumb_metrics() -> ThumbMetrics {
-    let mem_bytes = cache_mem().lock().map(|c| c.bytes as u64).unwrap_or(0);
-    montar_metrics(
-        MET_HIT_MEM.load(Ordering::Relaxed),
-        MET_HIT_DISCO.load(Ordering::Relaxed),
-        MET_GERADAS.load(Ordering::Relaxed),
-        MET_GEN_NS.load(Ordering::Relaxed),
-        thumb_pool().current_num_threads(),
-        DISK_CAP_MB.load(Ordering::Relaxed),
-        MEM_CAP_MB.load(Ordering::Relaxed),
-        mem_bytes,
-    )
+pub async fn fs_thumb_metrics() -> ThumbMetrics {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mem_bytes = cache_mem().lock().map(|c| c.bytes as u64).unwrap_or(0);
+        montar_metrics(
+            MET_HIT_MEM.load(Ordering::Relaxed),
+            MET_HIT_DISCO.load(Ordering::Relaxed),
+            MET_GERADAS.load(Ordering::Relaxed),
+            MET_GEN_NS.load(Ordering::Relaxed),
+            thumb_pool().map(|p| p.current_num_threads()).unwrap_or(0),
+            DISK_CAP_MB.load(Ordering::Relaxed),
+            MEM_CAP_MB.load(Ordering::Relaxed),
+            mem_bytes,
+        )
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Zera os contadores (pra rodar um baseline limpo antes de medir).
+/// #1073 (RB28): `async` + `spawn_blocking` — não bloqueia a main thread.
 #[tauri::command]
-pub fn fs_thumb_metrics_reset() {
-    MET_HIT_MEM.store(0, Ordering::Relaxed);
-    MET_HIT_DISCO.store(0, Ordering::Relaxed);
-    MET_GERADAS.store(0, Ordering::Relaxed);
-    MET_GEN_NS.store(0, Ordering::Relaxed);
+pub async fn fs_thumb_metrics_reset() {
+    let _ = tauri::async_runtime::spawn_blocking(|| {
+        MET_HIT_MEM.store(0, Ordering::Relaxed);
+        MET_HIT_DISCO.store(0, Ordering::Relaxed);
+        MET_GERADAS.store(0, Ordering::Relaxed);
+        MET_GEN_NS.store(0, Ordering::Relaxed);
+    })
+    .await;
 }
 
 /// Chave do cache: blake3(path | mtime_nanos | size | maxSize). `maxSize` entra
@@ -3372,15 +3449,26 @@ pub async fn fs_known_dirs() -> Result<Vec<FsEntry>, FsError> {
 }
 
 /// Revela o item no Explorer (reusa `system::revelar_no_explorer`).
+/// #1073 (RB28): a chamada ao shell é bloqueante → `spawn_blocking` (não trava a
+/// main thread). Contrato de retorno inalterado.
 #[tauri::command]
 pub async fn fs_reveal(path: String) -> Result<(), FsError> {
-    crate::system::revelar_no_explorer(&path).map_err(FsError::Io)
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::system::revelar_no_explorer(&path).map_err(FsError::Io)
+    })
+    .await
+    .map_err(spawn_err)?
 }
 
 /// Abre o item com o app padrão do Windows (reusa `system::abrir_caminho`).
+/// #1073 (RB28): idem `fs_reveal` — shell bloqueante em `spawn_blocking`.
 #[tauri::command]
 pub async fn fs_open(path: String) -> Result<(), FsError> {
-    crate::system::abrir_caminho(&path).map_err(FsError::Io)
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::system::abrir_caminho(&path).map_err(FsError::Io)
+    })
+    .await
+    .map_err(spawn_err)?
 }
 
 // --- Mutações (#679 S3) ---
@@ -3703,14 +3791,14 @@ pub async fn fs_watch(
 ) -> Result<u64, FsError> {
     let id = wr.proximo_id.fetch_add(1, Ordering::Relaxed);
     let w = iniciar_watch(&path, recursive, id, &app)?;
-    wr.watchers.lock().unwrap().insert(id, w);
+    wr.watchers.lock().unwrap_or_else(|e| e.into_inner()).insert(id, w);
     Ok(id)
 }
 
 #[tauri::command]
 pub async fn fs_unwatch(watcher_id: u64, wr: State<'_, WatcherRegistry>) -> Result<(), FsError> {
     // Dropar o Debouncer solta o watch do SO (sem vazar).
-    wr.watchers.lock().unwrap().remove(&watcher_id);
+    wr.watchers.lock().unwrap_or_else(|e| e.into_inner()).remove(&watcher_id);
     Ok(())
 }
 
@@ -3995,6 +4083,55 @@ mod tests {
         let uma = raizes_de_busca("C:\\Users");
         assert_eq!(uma.len(), 1);
         assert_eq!(uma[0], PathBuf::from("C:\\Users"));
+    }
+
+    #[test]
+    fn this_pc_exclui_drives_de_rede() {
+        // #1073 (RB30): "This PC" varre só drives LOCAIS; rede (DRIVE_REMOTE) fica
+        // FORA (share lenta/offline fazia a busca parecer travada).
+        assert!(kind_no_escopo_this_pc("fixed"));
+        assert!(kind_no_escopo_this_pc("removable"));
+        assert!(kind_no_escopo_this_pc("cloud"));
+        assert!(!kind_no_escopo_this_pc("network"), "drive de rede fora do This PC");
+        for outro in ["cdrom", "ramdisk", "unknown"] {
+            assert!(!kind_no_escopo_this_pc(outro), "{outro} não é local");
+        }
+    }
+
+    #[test]
+    fn excede_max_path_detecta_fronteira() {
+        // #1073 (RB29): detector do limite clássico do Windows.
+        assert!(!excede_max_path("C:\\Users\\wagner\\arquivo.txt"));
+        assert!(excede_max_path(&format!("C:\\{}", "a".repeat(300))));
+        // fronteira: 259 cabe, 260 não (MAX_PATH inclui o NUL).
+        assert!(!excede_max_path(&"x".repeat(259)));
+        assert!(excede_max_path(&"x".repeat(260)));
+    }
+
+    /// #1073 (RB29 — decisão do PO): caminho >= MAX_PATH mandado pra Lixeira FALHA
+    /// EXPLICITAMENTE e o arquivo permanece INTACTO — jamais delete permanente
+    /// silencioso (o usuário pediu "Lixeira", reversível; caminho profundo é o dia a
+    /// dia de OneDrive/SharePoint). Prova que trocamos um bug recuperável (falha) por
+    /// nenhum bug irrecuperável (perda de dado).
+    #[cfg(windows)]
+    #[test]
+    fn trash_recusa_caminho_longo_sem_apagar() {
+        let base = dir_temp("trash-longo");
+        // nome longo o bastante pra o caminho completo passar de MAX_PATH.
+        let alvo = base.join("a".repeat(250));
+        std::fs::write(com_long_path(&alvo), b"conteudo").unwrap();
+        let alvo_str = alvo.to_string_lossy().into_owned();
+        assert!(excede_max_path(&alvo_str), "o caminho de teste tem que exceder MAX_PATH");
+        assert!(caminho_existe(&alvo_str), "pré-condição: o arquivo existe");
+
+        let r = para_lixeira(&[alvo_str.clone()]);
+        assert!(r.is_err(), "caminho longo deve FALHAR (não vai pra Lixeira)");
+        // O CRUCIAL: o arquivo continua LÁ (não foi apagado permanentemente).
+        assert!(
+            caminho_existe(&alvo_str),
+            "arquivo longo NÃO pode ter sido apagado — falha preserva o dado"
+        );
+        let _ = std::fs::remove_dir_all(com_long_path(&base));
     }
 
     #[test]

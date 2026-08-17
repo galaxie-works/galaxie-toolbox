@@ -761,49 +761,9 @@ fn caminho_sessao() -> Option<std::path::PathBuf> {
     Some(dir.join("sessao.bin"))
 }
 
-#[cfg(windows)]
-pub(crate) mod dpapi {
-    use std::ptr;
-    use winapi::um::dpapi::{CryptProtectData, CryptUnprotectData};
-    use winapi::um::winbase::LocalFree;
-    use winapi::um::wincrypt::DATA_BLOB;
-
-    fn saida_para_vec(out: &DATA_BLOB) -> Vec<u8> {
-        let v = unsafe { std::slice::from_raw_parts(out.pbData, out.cbData as usize).to_vec() };
-        unsafe { LocalFree(out.pbData as *mut _) };
-        v
-    }
-
-    pub fn cifrar(dados: &[u8]) -> Option<Vec<u8>> {
-        let mut entrada = dados.to_vec();
-        let mut inb = DATA_BLOB { cbData: entrada.len() as u32, pbData: entrada.as_mut_ptr() };
-        let mut outb = DATA_BLOB { cbData: 0, pbData: ptr::null_mut() };
-        let ok = unsafe {
-            CryptProtectData(&mut inb, ptr::null(), ptr::null_mut(), ptr::null_mut(),
-                             ptr::null_mut(), 0, &mut outb)
-        };
-        if ok == 0 { return None; }
-        Some(saida_para_vec(&outb))
-    }
-
-    pub fn decifrar(dados: &[u8]) -> Option<Vec<u8>> {
-        let mut entrada = dados.to_vec();
-        let mut inb = DATA_BLOB { cbData: entrada.len() as u32, pbData: entrada.as_mut_ptr() };
-        let mut outb = DATA_BLOB { cbData: 0, pbData: ptr::null_mut() };
-        let ok = unsafe {
-            CryptUnprotectData(&mut inb, ptr::null_mut(), ptr::null_mut(), ptr::null_mut(),
-                               ptr::null_mut(), 0, &mut outb)
-        };
-        if ok == 0 { return None; }
-        Some(saida_para_vec(&outb))
-    }
-}
-
-#[cfg(not(windows))]
-mod dpapi {
-    pub fn cifrar(d: &[u8]) -> Option<Vec<u8>> { Some(d.to_vec()) }
-    pub fn decifrar(d: &[u8]) -> Option<Vec<u8>> { Some(d.to_vec()) }
-}
+// #1073 (RB10): o wrapper DPAPI agora é único em `crate::dpapi` (era duplicado aqui
+// e em `lock_screen.rs`). `telemetry.rs` também passou a consumir `crate::dpapi`.
+use crate::dpapi;
 
 /// Guarda {provider, tenant, refresh} — a chave do vault é (provider, conta).
 /// Sem o tenant nao da pra renovar; o provider decide o endpoint no restore.
