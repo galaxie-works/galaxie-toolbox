@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    // #1016: projeto dedicado aos testes — type-check dos *.test.ts(x) que o
+    // build do app deixa de fora. `node` habilita `node:test`/`node:assert`;
+    // `vite/client` mantém os globals que os .test.tsx (vitest) já usavam.
+    "strict": true,
+    "types": ["vite/client", "node"],
+    "noEmit": true,
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo"
+  },
+  "include": ["src/**/*.test.ts", "src/**/*.test.tsx"],
+  "exclude": []
+}

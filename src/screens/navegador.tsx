@@ -1921,6 +1921,9 @@ export function NavegadorScreen({
           if (activeTab.reativando) onReativada(activeTab.id);
         });
     }
+    // Deps são a lista curada dos sinais que DEVEM reposicionar/reabrir a webview.
+    // Depender do `activeTab` inteiro ou dos helpers estáveis (browser/medir/
+    // onReativada) faria a webview nativa piscar a cada render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ativa, activeTab?.url, activeTab?.tipo, visivel, paletaAberta, overlaysWebview, menuAbertoId, chromeOverlays, snapshotOverlay]);
 
@@ -2565,6 +2568,9 @@ function DialogEditarGrupo({
   // Sincroniza o input ao abrir/trocar de grupo.
   useEffect(() => {
     if (grupo) setNome(grupo.nome);
+    // Re-sincroniza só quando o id do grupo muda (abrir/trocar). Reagir a
+    // `grupo.nome` sobrescreveria a edição em andamento do usuário. `setNome` é
+    // estável (setter de useState).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [grupo?.id]);
 

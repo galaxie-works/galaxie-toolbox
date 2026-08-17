@@ -32,6 +32,7 @@ function contact(
     organization: false,
     frequent: false,
     sources: contactId ? ["contacts"] : ["people"],
+    categories: [],
     ...overrides,
   };
 }

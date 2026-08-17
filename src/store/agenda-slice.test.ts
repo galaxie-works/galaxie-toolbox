@@ -37,6 +37,8 @@ const evento = (id: string): EventoAgenda => ({
   resposta: "organizer",
   souOrganizador: true,
   respostaSolicitada: false,
+  organizadorEmail: "contato@galaxie.works",
+  tipo: "singleInstance",
 });
 
 const detalhe = (assunto: string): EventoDetalhe => ({
@@ -56,7 +58,26 @@ const detalhe = (assunto: string): EventoDetalhe => ({
   webLink: "https://outlook.office.com",
 });
 
-function criarStore(api: Parameters<typeof criarAgendaSlice>[0]) {
+// Base completa da AgendaApi: no-ops realistas pra cada método. Cada teste passa
+// só o subconjunto que exercita; o resto vem daqui (mock completo, sem `as any`).
+const apiBase: Parameters<typeof criarAgendaSlice>[0] = {
+  carregarEventos: async () => [],
+  carregarEventosCalendario: async () => [],
+  listarCalendarios: async () => [],
+  carregarCategorias: async () => [],
+  criarCategoria: async (nome) => ({ nome, cor: "#4f46e5" }),
+  carregarEvento: async () => detalhe("evento"),
+  criarEvento: async () => "evento-1",
+  editarEvento: async () => {},
+  reagendarEvento: async () => {},
+  excluirEvento: async () => {},
+  cancelarEvento: async () => {},
+  responderEvento: async () => {},
+};
+
+function criarStore(
+  api: Partial<Parameters<typeof criarAgendaSlice>[0]> = {},
+) {
   const state = {} as AgendaSlice;
   const set = (
     update:
@@ -65,7 +86,9 @@ function criarStore(api: Parameters<typeof criarAgendaSlice>[0]) {
   ) => Object.assign(state, typeof update === "function" ? update(state) : update);
   return Object.assign(
     state,
-    criarAgendaSlice(api)(set as never, (() => state) as never, {} as never),
+    criarAgendaSlice(
+      { ...apiBase, ...api } as Parameters<typeof criarAgendaSlice>[0],
+    )(set as never, (() => state) as never, {} as never),
   );
 }
 
@@ -85,7 +108,10 @@ test("month generation ignores an older calendarView response", async () => {
   const atual = store.carregarMesAgenda("agosto", "setembro");
   pedidos.get("julho")!.resolve([evento("antigo")]);
   await antigo;
-  assert.equal(store.agendaEventosMes, null);
+  // Lido num local pra o `asserts actual is null` do node não estreitar a
+  // propriedade do store — que o refetch abaixo repovoa — pra `null` permanente.
+  const aposAntigo = store.agendaEventosMes;
+  assert.equal(aposAntigo, null);
 
   pedidos.get("agosto")!.resolve([evento("atual")]);
   await atual;

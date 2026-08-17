@@ -165,8 +165,12 @@ export function CampoPessoas({
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       pedidoRef.current++; // invalida qualquer resposta pendente
     };
+    // Cleanup de unmount: precisa dos valores VIVOS dos refs (o timer em voo e o
+    // contador de pedido atual). Copiar pra um local no efeito leria o valor da
+    // montagem, não o do unmount — o oposto do que este cleanup precisa.
   }, []);
 
   // Fotos (#39) dos escolhidos + das sugestões visíveis: o cache filtra o que

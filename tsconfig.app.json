@@ -1,5 +1,7 @@
 {
   "compilerOptions": {
+    // #1016: já é default do TS6; declarado explícito pra prender a garantia (não depender do default)
+    "strict": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "target": "es2023",
     "lib": ["ES2023", "DOM"],
@@ -30,6 +32,6 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
-  "//": "Testes headless (*.test.ts) rodam via `node --test` (type-stripping do Node) e os de componente/navegador (*.test.tsx) via vitest (`pnpm test:component`); ambos ficam fora do build do app — não exigem @types/node nem os globals do vitest no bundle.",
+  "//": "Testes (*.test.ts/*.test.tsx) são type-checkados pelo tsconfig.test.json (#1016); ficam fora do build do app pra não exigir @types/node no bundle e pra cada arquivo viver em UM só projeto.",
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

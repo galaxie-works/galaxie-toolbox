@@ -1,5 +1,7 @@
 {
   "compilerOptions": {
+    // #1016: já é default do TS6; declarado explícito pra prender a garantia (não depender do default)
+    "strict": true,
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.node.tsbuildinfo",
     "target": "es2023",
     "lib": ["ES2023"],
