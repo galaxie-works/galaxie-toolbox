@@ -62,6 +62,11 @@
       "debugApplicationIdSuffix": ".debug"
     },
     "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installMode": "both"
+      }
+    },
     "publisher": "Galaxie Works",
     "copyright": "Galaxie Works",
     "category": "Business",
