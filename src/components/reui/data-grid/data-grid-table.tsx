@@ -1429,7 +1429,7 @@ function DataGridTableEmpty() {
         colSpan={Math.max(visibleColumnCount, 1)}
         className="text-muted-foreground py-6 text-center text-sm"
       >
-        {props.emptyMessage || "No data available"}
+        {props.emptyMessage || props.i18n?.emptyMessage || "No data available"}
       </td>
     </tr>
   )
@@ -1442,19 +1442,24 @@ function DataGridTableLoader() {
     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
       <div className="text-muted-foreground bg-card rounded-lg flex items-center gap-2 border px-4 py-2 text-sm leading-none font-medium">
         <Spinner className="size-5 opacity-60" />
-        {props.loadingMessage || "Loading..."}
+        {props.loadingMessage || props.i18n?.loadingMessage || "Loading..."}
       </div>
     </div>
   )
 }
 
 function DataGridTableRowPin<TData>({ row }: { row: Row<TData> }) {
+  const { props } = useDataGrid()
   const isPinned = row.getIsPinned()
 
   return (
     <button
       type="button"
-      aria-label={isPinned ? "Unpin row" : "Pin row"}
+      aria-label={
+        isPinned
+          ? props.i18n?.unpinRow ?? "Unpin row"
+          : props.i18n?.pinRow ?? "Pin row"
+      }
       onClick={(event) => {
         // Pinning must not bubble into the row's onRowClick handler.
         event.stopPropagation()
@@ -1502,6 +1507,7 @@ function DataGridTableRowPin<TData>({ row }: { row: Row<TData> }) {
 }
 
 function DataGridTableRowSelect<TData>({ row }: { row: Row<TData> }) {
+  const { props } = useDataGrid()
   return (
     <>
       <div
@@ -1517,7 +1523,7 @@ function DataGridTableRowSelect<TData>({ row }: { row: Row<TData> }) {
           // Selection must not bubble into the row's onRowClick handler.
           event.stopPropagation()
         }}
-        aria-label="Select row"
+        aria-label={props.i18n?.selectRow ?? "Select row"}
         className="align-[inherit]"
       />
     </>
@@ -1525,7 +1531,7 @@ function DataGridTableRowSelect<TData>({ row }: { row: Row<TData> }) {
 }
 
 function DataGridTableRowSelectAll() {
-  const { table, recordCount, isLoading } = useDataGrid()
+  const { table, recordCount, isLoading, props } = useDataGrid()
 
   const isAllSelected = table.getIsAllPageRowsSelected()
   const isSomeSelected = table.getIsSomePageRowsSelected()
@@ -1537,7 +1543,7 @@ function DataGridTableRowSelectAll() {
       }
       disabled={isLoading || recordCount === 0}
       onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-      aria-label="Select all"
+      aria-label={props.i18n?.selectAllRows ?? "Select all"}
       className="align-[inherit]"
     />
   )

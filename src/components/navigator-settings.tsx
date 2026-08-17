@@ -94,8 +94,20 @@ export function NavigatorSearchPanel() {
             placeholder={t.settings.navigatorSearchCustomPlaceholder}
           />
           <p className="text-xs text-muted-foreground">
-            {t.settings.navigatorSearchCustomDicaAntes} <code>%s</code>{" "}
-            {t.settings.navigatorSearchCustomDicaDepois}
+            {/* #1058: chave única com token {placeholder} (não mais 2 fragmentos).
+                Preservo o <code> monospace do %s — é token de URL de busca, não
+                ênfase; comDestaque renderiza <strong>, então faço o split local. */}
+            {(() => {
+              const partes =
+                t.settings.navigatorSearchCustomDica.split("{placeholder}");
+              return (
+                <>
+                  {partes[0]}
+                  <code>%s</code>
+                  {partes.slice(1).join("{placeholder}")}
+                </>
+              );
+            })()}
           </p>
         </div>
       )}

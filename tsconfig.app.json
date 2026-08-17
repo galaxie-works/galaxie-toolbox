@@ -30,6 +30,6 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src"],
-  "//": "Testes headless (*.test.ts) rodam via `node --test` (type-stripping do Node); ficam fora do build do app pra não exigir @types/node no bundle.",
-  "exclude": ["src/**/*.test.ts"]
+  "//": "Testes headless (*.test.ts) rodam via `node --test` (type-stripping do Node) e os de componente/navegador (*.test.tsx) via vitest (`pnpm test:component`); ambos ficam fora do build do app — não exigem @types/node nem os globals do vitest no bundle.",
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

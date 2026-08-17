@@ -55,6 +55,7 @@ import {
   useDataGrid,
 } from "@/components/reui/data-grid/data-grid";
 import { DataGridColumnHeader } from "@/components/reui/data-grid/data-grid-column-header";
+import { montarGridI18n } from "@/lib/reui-i18n";
 import { DataGridColumnVisibility } from "@/components/reui/data-grid/data-grid-column-visibility";
 import {
   DataGridTableRowSelect,
@@ -2400,6 +2401,9 @@ export function PeopleView({
   onReauthenticate: () => void;
 }) {
   const { t } = useIdioma();
+  // #1058: i18n do DataGrid (menu de coluna + aria-labels). Memoizado por idioma
+  // (t é estável) para não republicar o context do grid a cada render.
+  const gridI18n = useMemo(() => montarGridI18n(t.grid), [t]);
   const contacts = useAppStore((state) => state.peopleContacts);
   const organizations = useAppStore((state) => state.organizations);
   const loadOrganizationLogo = useAppStore(
@@ -3302,6 +3306,7 @@ export function PeopleView({
                     activeRowId={keyboardActiveId}
                     isLoading={listLoading && !listLoaded}
                     loadingMode="skeleton"
+                    i18n={gridI18n}
                     emptyMessage={
                       semAcessoCaixa ? (
                         <PeoplePermissionEmpty

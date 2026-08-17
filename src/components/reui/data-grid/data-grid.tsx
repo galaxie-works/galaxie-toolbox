@@ -133,6 +133,63 @@ export type DataGridRequestParams = {
   columnFilters?: ColumnFiltersState
 }
 
+/**
+ * Localizable strings for the DataGrid chrome (column-header menu + table
+ * aria-labels + empty state). Optional per-key overrides via the `i18n` prop;
+ * anything omitted falls back to the English defaults below, so untouched
+ * call-sites keep working. Mirrors the filters.tsx i18n contract.
+ */
+export interface DataGridI18n {
+  /** Column-header menu: sort ascending item. */
+  sortAsc: string
+  /** Column-header menu: sort descending item. */
+  sortDesc: string
+  pinToLeft: string
+  pinToRight: string
+  moveToLeft: string
+  moveToRight: string
+  /** Column-header menu: visibility submenu trigger. */
+  columns: string
+  /** Aria-label/title of the header unpin button. */
+  unpinColumn: (column: string) => string
+  /** Row checkbox aria-label. */
+  selectRow: string
+  /** Header "select all" checkbox aria-label. */
+  selectAllRows: string
+  /** Row pin button aria-label (pinned → offers unpin, so this is the pin verb). */
+  pinRow: string
+  unpinRow: string
+  /** Fallback empty-state text when no `emptyMessage` node is provided. */
+  emptyMessage: string
+  /** Fallback loader text when no `loadingMessage` node is provided. */
+  loadingMessage: string
+}
+
+/** English defaults — merged under any `i18n` override the consumer passes. */
+export const DEFAULT_DATA_GRID_I18N: DataGridI18n = {
+  sortAsc: "Asc",
+  sortDesc: "Desc",
+  pinToLeft: "Pin to left",
+  pinToRight: "Pin to right",
+  moveToLeft: "Move to Left",
+  moveToRight: "Move to Right",
+  columns: "Columns",
+  unpinColumn: (column) => `Unpin ${column} column`,
+  selectRow: "Select row",
+  selectAllRows: "Select all",
+  pinRow: "Pin row",
+  unpinRow: "Unpin row",
+  emptyMessage: "No data available",
+  loadingMessage: "Loading...",
+}
+
+/** Merge a consumer's partial `i18n` over the English defaults. */
+export function resolveDataGridI18n(
+  override?: Partial<DataGridI18n>
+): DataGridI18n {
+  return override ? { ...DEFAULT_DATA_GRID_I18N, ...override } : DEFAULT_DATA_GRID_I18N
+}
+
 export interface DataGridProps<TData extends object> {
   className?: string
   table?: Table<TData>
@@ -146,6 +203,8 @@ export interface DataGridProps<TData extends object> {
   fetchingMoreMessage?: ReactNode | string
   allRowsLoadedMessage?: ReactNode | string
   emptyMessage?: ReactNode | string
+  /** Localized chrome strings (menu items, aria-labels). Falls back to English. */
+  i18n?: Partial<DataGridI18n>
   tableLayout?: {
     dense?: boolean
     cellBorder?: boolean
@@ -248,6 +307,10 @@ function DataGridProvider<TData extends object>({
       props.isLoading,
       props.loadingMode,
       props.className,
+      // Republish on language switch so consumers pick up new i18n. Consumers
+      // pass a memoized object (stable per language), so this stays off the
+      // resize-drag hot path.
+      props.i18n,
       // eslint-disable-next-line react-hooks/exhaustive-deps
       JSON.stringify(props.tableLayout),
       // eslint-disable-next-line react-hooks/exhaustive-deps

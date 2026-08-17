@@ -17,10 +17,9 @@ import {
 import {
   DateSelector,
   formatDateValue,
-  DEFAULT_DATE_SELECTOR_I18N,
   type DateSelectorValue,
-  type DateSelectorI18nConfig,
 } from "@/components/reui/date-selector";
+import { montarFiltrosI18n, montarDateSelectorI18n } from "@/lib/reui-i18n";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Toolbar, ToolbarButton } from "@/components/ui/toolbar";
@@ -2445,66 +2444,10 @@ function FolderSidebar({
 // Serialização, resolução do intervalo e predicado client-side agora vivem no
 // filters slice (#129); a UI abaixo mantém somente o registry DateSelector.
 
-// i18n em português do DateSelector (o registry vem só em inglês). Trimestres
-// (Q1–Q4) e semestres (H1–H2) ficam como no padrão — são notação de negócio
-// usada também em BR e batem com o parser de linguagem natural do input.
-const DATE_SELECTOR_I18N_PT: Partial<DateSelectorI18nConfig> = {
-  selectDate: "Selecionar data",
-  apply: "Aplicar",
-  cancel: "Cancelar",
-  clear: "Limpar",
-  today: "Hoje",
-  filterTypes: { is: "é", before: "antes", after: "depois", between: "entre" },
-  periodTypes: {
-    day: "Dia",
-    month: "Mês",
-    quarter: "Trimestre",
-    halfYear: "Semestre",
-    year: "Ano",
-  },
-  months: [
-    "Janeiro",
-    "Fevereiro",
-    "Março",
-    "Abril",
-    "Maio",
-    "Junho",
-    "Julho",
-    "Agosto",
-    "Setembro",
-    "Outubro",
-    "Novembro",
-    "Dezembro",
-  ],
-  monthsShort: [
-    "Jan",
-    "Fev",
-    "Mar",
-    "Abr",
-    "Mai",
-    "Jun",
-    "Jul",
-    "Ago",
-    "Set",
-    "Out",
-    "Nov",
-    "Dez",
-  ],
-  quarters: ["Q1", "Q2", "Q3", "Q4"],
-  halfYears: ["H1", "H2"],
-  weekdays: [
-    "Domingo",
-    "Segunda",
-    "Terça",
-    "Quarta",
-    "Quinta",
-    "Sexta",
-    "Sábado",
-  ],
-  weekdaysShort: ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"],
-  placeholder: "Selecionar data...",
-  rangePlaceholder: "Selecionar intervalo...",
-};
+// #1058: a tradução do DateSelector agora vive no namespace `dateSelector` do
+// strings.ts (pt E en), montada por `montarDateSelectorI18n`. Trimestres (Q1–Q4)
+// e semestres (H1–H2) seguem iguais nos dois idiomas — notação de negócio que
+// bate com o parser de linguagem natural do input.
 
 /**
  * Campo "Data" do filter-builder reui (#110) como o `type: "custom"` do exemplo
@@ -2539,15 +2482,13 @@ function SeletorDataFiltro({
   const [rascunho, setRascunho] = useState<DateSelectorValue | undefined>(atual);
 
   const ehPt = idioma === "pt-BR";
-  const dsI18n = ehPt ? DATE_SELECTOR_I18N_PT : undefined;
+  // #1058: config completa (pt/en) montada do dicionário central.
+  const dsI18n = useMemo(
+    () => montarDateSelectorI18n(t.dateSelector),
+    [t],
+  );
   const fmt = ehPt ? "dd/MM/yyyy" : "MM/dd/yyyy";
-  const rotulo = atual
-    ? formatDateValue(
-        atual,
-        ehPt ? { ...DEFAULT_DATE_SELECTOR_I18N, ...DATE_SELECTOR_I18N_PT } : undefined,
-        fmt,
-      )
-    : "";
+  const rotulo = atual ? formatDateValue(atual, dsI18n, fmt) : "";
   const texto = rotulo || t.controlRoom.filtroDataSelecione;
 
   // Ao abrir, semeia a partida e o rascunho com o valor persistido.
@@ -3806,11 +3747,7 @@ function MessageList({
                       <ListFilter />
                     </ToolbarButton>
                   }
-                  i18n={{
-                    addFilter: t.controlRoom.filtroLabel,
-                    searchFields: t.controlRoom.filtroBuscarCampo,
-                    select: t.controlRoom.filtroSelecione,
-                  }}
+                  i18n={montarFiltrosI18n(t.filtros)}
                 />
               </span>
             </TooltipTrigger>
