@@ -25,13 +25,15 @@ Public client + PKCE, delegado `/me`. Distinção que importa pro roadmap:
 - **GRANTED** = concedido no app registration (admin consent do tenant Galaxie Works Ltd). Disponível **sem novo consent**.
   - 📄 **Fonte única de verdade dos escopos concedidos: [`docs/reference/graph-scopes.md`](./docs/reference/graph-scopes.md)** (atualizado 2026-08-03, **101 escopos** admin-consented). NÃO duplicar a lista aqui — ela driftou (esta seção já esteve com "53"). Sempre conferir o graph-scopes.md.
   - Na tabela do graph-scopes.md, a coluna **"Admin?"** = *exige admin consent?* — **"Não" NÃO significa "não concedido"**; significa que é user-consentable. Todos os 101 já estão concedidos.
-- **REQUESTED** = subconjunto **mínimo** que a app pede no token, em `src-tauri/src/config.rs` const `SCOPES`. Adicionar um escopo já-GRANTED aqui **não** dispara re-consent (admin já consentiu); só exige o usuário **relogar** pra token novo.
+- **REQUESTED** = subconjunto **mínimo** que a app pede no token, em `src-tauri/src/config.rs`, hoje **duas** consts: `SCOPES_BASE` (user-consentable, vale pra conta pessoal/Google) e `SCOPES_ORG` (exige admin consent, só entra em conta org contratada). `scopes_para(tenant)` compõe: BASE no caminho comum, BASE+ORG na org. Adicionar um escopo já-GRANTED aqui **não** dispara re-consent (admin já consentiu); só exige o usuário **relogar** pra token novo.
 
-**REQUESTED hoje** (`config.rs` SCOPES): `openid profile offline_access User.Read User.Read.All Files.ReadWrite Sites.Read.All Calendars.Read Mail.ReadWrite Mail.Send Tasks.ReadWrite People.Read Contacts.ReadWrite` — conferir sempre no `config.rs` (é a fonte).
+**REQUESTED hoje:** conferir direto em `config.rs` — `SCOPES_BASE` (`:113`) e `SCOPES_ORG` (`:120`). **Não duplicar a lista aqui:** a cópia anterior driftou (trazia `Calendars.Read`, quando o real é `Calendars.ReadWrite`, e punha `User.Read.All`/`Sites.Read.All` como base, quando são ORG).
+
+> ⚠️ **Escopo novo vai na const certa.** Se é user-consentable → `SCOPES_BASE`. Se exige admin consent → `SCOPES_ORG`. Pôr um escopo ORG no BASE **quebra o login de conta pessoal**, que não consegue consentir aquilo.
 
 **Implicações:**
-- **Chat.Read (Atoms A6 / #445) JÁ está GRANTED** (graph-scopes.md, seção Teams/Chat). O blocker do widget de Teams é só **adicionar Chat.Read à const `SCOPES` + relogar** — não é consent novo de admin. (Confusão anterior: o "Admin? = Não" foi lido como "não concedido".)
-- **Caixas compartilhadas** — `Mail.*.Shared` já GRANTED; adicionar à `SCOPES` + relogar.
+- **Chat.Read (Atoms A6 / #445) JÁ está GRANTED** (graph-scopes.md, seção Teams/Chat). O blocker do widget de Teams é só **adicionar Chat.Read à `SCOPES_BASE` (é user-consentable) + relogar** — não é consent novo de admin. (Confusão anterior: o "Admin? = Não" foi lido como "não concedido".)
+- **Caixas compartilhadas** — `Mail.*.Shared` já GRANTED **e já presentes na `SCOPES_ORG`**; nada a adicionar (a instrução anterior estava vencida).
 - ⚠️ `Contacts.ReadWrite` já GRANTED (graph-scopes.md; destravou o edit de contato no People).
 - **NÃO usar IMAP/EWS/EAS** apesar de granted — arquitetura é **Graph-only, delegado /me**.
 

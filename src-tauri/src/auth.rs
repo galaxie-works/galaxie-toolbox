@@ -99,7 +99,7 @@ pub struct Tokens {
     pub tenant: String,
     /// Escopos delegados que o Entra ID DE FATO concedeu neste token (campo
     /// `scope` da resposta OAuth). Guardado para sinalizar quando um escopo novo
-    /// da `config::SCOPES` (ex.: Mail.Read.Shared, #111) ainda nao esta no token
+    /// da `config::SCOPES_ORG` (ex.: Mail.Read.Shared, #111) ainda nao esta no token
     /// porque a sessao foi aberta antes de ele entrar no pedido — nesse caso o
     /// app pede "faca login novamente" em vez de tratar o 403 como falta de
     /// acesso a caixa.

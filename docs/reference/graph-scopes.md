@@ -10,15 +10,31 @@ Referência dos **escopos delegados** do Microsoft Graph concedidos ao app **GAL
 
 - **Todos os 101 já estão concedidos** (admin consent do tenant). As tabelas listam o que está disponível hoje.
 - Coluna **Admin**: `✔` = exigiu consentimento de admin (**já dado**); `—` = user-consentable. **`✔` não significa "não concedido"** — significa apenas que precisou de admin, e o admin já consentiu.
-- ⚠️ **Concedido ≠ requisitado.** O app só recebe no token os escopos listados em `src-tauri/src/config.rs` (const `SCOPES`). Um escopo concedido que não esteja nessa lista **não vem no token** até ser adicionado **e** o usuário **relogar** (refresh com escopo novo). Adicionar um escopo já concedido **não** dispara novo consent.
+- ⚠️ **Concedido ≠ requisitado.** O app só recebe no token os escopos listados em `src-tauri/src/config.rs` — hoje `SCOPES_BASE` (user-consentable) e `SCOPES_ORG` (admin consent), compostos por `scopes_para(tenant)`. Um escopo concedido que não esteja nessa lista **não vem no token** até ser adicionado **e** o usuário **relogar** (refresh com escopo novo). Adicionar um escopo já concedido **não** dispara novo consent.
 
-**Requisitados hoje** (`config.rs` → `SCOPES`, o subconjunto mínimo que o app pede):
+**Requisitados hoje** (`config.rs` → `SCOPES_BASE` `:113` + `SCOPES_ORG` `:120`; conta pessoal/Google recebe só o BASE):
+
+`SCOPES_BASE` — user-consentable, é o que **toda** conta recebe (inclusive pessoal/Google):
 
 ```
-openid  profile  offline_access  User.Read  User.Read.All  Files.ReadWrite
-Sites.Read.All  Calendars.Read  Mail.ReadWrite  Mail.Send  Tasks.ReadWrite
-People.Read  Contacts.ReadWrite
+openid  profile  offline_access  User.Read  Mail.ReadWrite  Mail.Send
+Calendars.ReadWrite  Tasks.ReadWrite  Files.ReadWrite  People.Read
+Contacts.ReadWrite
 ```
+
+`SCOPES_ORG` — exigem **admin consent**; só entram no pedido de conta **org contratada**:
+
+```
+User.Read.All  Directory.Read.All  Sites.Read.All  OrganizationalBranding.Read.All
+Calendars.ReadWrite.Shared  MailboxSettings.ReadWrite
+Mail.Read.Shared  Mail.ReadWrite.Shared  Mail.Send.Shared  Contacts.ReadWrite.Shared
+MultiTenantOrganization.Read.All  Application.Read.All  ServicePrincipalEndpoint.Read.All
+OrgSettings-AppsAndServices.Read.All  OrgSettings-Forms.Read.All
+OrgSettings-Microsoft365Install.Read.All  OrgSettings-Todo.Read.All
+OrgSettings-Todo.ReadWrite.All
+```
+
+> Esta é uma cópia de conveniência. **A fonte é o `config.rs`** — se divergir, o código manda.
 
 ---
 
@@ -188,7 +204,7 @@ People.Read  Contacts.ReadWrite
 
 Referência rápida de como os escopos concedidos habilitam funcionalidades. Detalhe de produto vive nas issues/épicos.
 
-- **Atoms** (#181, replanejado — ver [`atoms-ux-replan.md`](../atoms/atoms-ux-replan.md)): `Chat.Read` está concedido → o blocker do widget de Teams (A6/#445) é só adicioná-lo à `SCOPES` + relogar, **não** é consent de admin. `Tasks.Read`/`Tasks.ReadWrite` → widget de To-Dos com dado real. `Notes.*` → widget OneNote (follow-up).
+- **Atoms** (#181, replanejado — ver [`atoms-ux-replan.md`](../atoms/atoms-ux-replan.md)): `Chat.Read` está concedido → o blocker do widget de Teams (A6/#445) é só adicioná-lo à `SCOPES_BASE` + relogar, **não** é consent de admin. `Tasks.Read`/`Tasks.ReadWrite` → widget de To-Dos com dado real. `Notes.*` → widget OneNote (follow-up).
 - **Previews / seletor de arquivo** (#178): a família `Files.*` completa (incl. `Files.Read.Selected`, `Files.ReadWrite.Selected`, `Files.SelectedOperations.Selected`) permite **acesso granular por arquivo selecionado**, sem escopo amplo.
 - **Galaxie AI** (#180): `Directory.Read.All` + `RoleManagement.Read.Directory` → derivar o "usuário master" do papel de admin no M365. `OnlineMeetingRecording/Transcript/AiInsight.Read.All` → puxar a gravação oficial via Graph e rodar ASR própria. `Chat.*`/`ChatMessage.*`/`TeamsActivity.Read` → IA lê/age em chats.
 - **People** (#167): `User.Read.All` + `People.Read.All` + `ProfilePhoto.Read.All` → enrich por diretório e foto.

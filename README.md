@@ -63,13 +63,12 @@ escopos estejam disponíveis no registro). Há duas listas que não se confundem
   fonte única de verdade. Inclui caixa compartilhada, Teams/Chat, Online Meetings,
   OneNote, Org settings, entre outros.
 - **Requisitadas (*requested*)** — o subconjunto **mínimo** que o app pede no token,
-  na const `SCOPES` de `src-tauri/src/config.rs`. Hoje:
+  em `src-tauri/src/config.rs`, em **duas** consts: `SCOPES_BASE` (user-consentable)
+  e `SCOPES_ORG` (admin consent, só na org contratada). Conferir no arquivo — a
+  lista não é duplicada aqui de propósito, porque a cópia antiga driftou:
 
-  ```
-  openid profile offline_access User.Read User.Read.All Files.ReadWrite
-  Sites.Read.All Calendars.Read Mail.ReadWrite Mail.Send Tasks.ReadWrite
-  People.Read Contacts.ReadWrite
-  ```
+  Lista completa e atualizada em
+  [`docs/reference/graph-scopes.md`](docs/reference/graph-scopes.md#requisitados-hoje).
 
 Adicionar um escopo **já concedido** à lista requisitada **não** dispara re-consent
 — o admin já consentiu; basta o usuário relogar para obter um token novo. A lista
@@ -117,7 +116,7 @@ src-tauri/src/
   onedrive.rs           sonda local de sync do OneDrive (Atoms)
   system.rs             registro do Windows e Explorer
   estado.rs             registro local dos atalhos criados
-  config.rs             CLIENT_ID, endpoints e SCOPES requisitados
+  config.rs             CLIENT_ID, endpoints e SCOPES_BASE/SCOPES_ORG
 ```
 
 Docs em [`docs/`](docs/), **escopados por área** (ver o índice [`docs/README.md`](docs/README.md)):
