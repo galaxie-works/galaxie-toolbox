@@ -4300,6 +4300,95 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
+    #[test]
+    fn executar_undo_copy_manda_pra_lixeira_e_limpa_dirs() {
+        // #1042 (TST-02): espelha `executar_undo_move_volta_para_origem` pro ramo
+        // COPY. Cópia cria arquivos no destino; o undo manda os criados pra Lixeira
+        // (revogável — §8; NÃO `remove_dir`/delete permanente) e remove os diretórios
+        // criados que ficaram VAZIOS. `executados` = nº real de arquivos desfeitos.
+        let base = dir_temp("undo-copy");
+        let destino = base.join("dst");
+        let sub = destino.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let a = destino.join("a.txt");
+        let b = sub.join("b.bin");
+        std::fs::write(&a, vec![5u8; 12]).unwrap();
+        std::fs::write(&b, vec![7u8; 20]).unwrap();
+
+        // Journal de COPY: 2 dirs criados + 2 arquivos criados (from vazio ⇒ mover=false).
+        let entry = OperationJournalEntry {
+            op_id: 3,
+            kind: "copy".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "success".into(),
+            resolucao: None,
+            items: vec![
+                journal_item(&destino, &destino, false), // dir raiz (is_dir via stat)
+                journal_item(&sub, &sub, false),          // sub-dir criado
+                journal_item(&a, &a, false),              // arquivo criado
+                journal_item(&b, &b, false),              // arquivo criado
+            ],
+            trash_record_ids: Vec::new(),
+        };
+        let rep = executar_undo(&entry);
+        assert_eq!(rep.executados, 2, "os 2 arquivos criados foram desfeitos (Lixeira)");
+        assert!(rep.erros.is_empty(), "ramo copy feliz não acumula erro");
+        // Foram pra Lixeira ⇒ sumiram do destino (não sobraram, nem sumiram na frente).
+        assert!(!a.exists(), "a.txt saiu do destino (Lixeira)");
+        assert!(!b.exists(), "b.bin saiu do destino (Lixeira)");
+        // Dirs criados que ficaram vazios são removidos (mais fundos primeiro).
+        assert!(!sub.exists(), "sub-dir vazio removido");
+        assert!(!destino.exists(), "dir raiz criado e esvaziado removido");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn executar_undo_copy_alvo_removido_antes_nao_infla_contagem() {
+        // #1042 (TST-02, caso de borda): se um dos criados foi removido POR FORA antes
+        // do undo, o re-classificar na hora (anti-TOCTOU §8) o marca "pulado" (sumiu) e
+        // ele NÃO entra no batch da Lixeira — logo `executados` conta só os realmente
+        // desfeitos, sem inflar, e não vira erro. Trava o comportamento observado hoje.
+        //
+        // Nota de contagem (documentação do DoD): a soma é `executados += n` do batch,
+        // mas `n` só inclui alvos que classificaram "seguro" AQUI. A única janela
+        // residual é entre esta classificação e o filtro `caminho_existe` do
+        // `para_lixeira` (um alvo sumindo nesse intervalo curtíssimo contaria +1
+        // fantasma); é benigna (Lixeira é idempotente) e não é reproduzível de forma
+        // determinística num teste — por isso cobrimos o caso "removido ANTES do undo".
+        let base = dir_temp("undo-copy-parcial");
+        let destino = base.join("dst");
+        std::fs::create_dir_all(&destino).unwrap();
+        let vivo = destino.join("vivo.txt");
+        let morto = destino.join("morto.txt");
+        std::fs::write(&vivo, vec![1u8; 8]).unwrap();
+        std::fs::write(&morto, vec![2u8; 8]).unwrap();
+
+        let entry = OperationJournalEntry {
+            op_id: 4,
+            kind: "copy".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "success".into(),
+            resolucao: None,
+            items: vec![
+                journal_item(&destino, &destino, false),
+                journal_item(&vivo, &vivo, false),
+                journal_item(&morto, &morto, false),
+            ],
+            trash_record_ids: Vec::new(),
+        };
+        // Remoção POR FORA (fora do controle do app) ANTES do undo rodar.
+        std::fs::remove_file(&morto).unwrap();
+
+        let rep = executar_undo(&entry);
+        assert_eq!(rep.executados, 1, "só o alvo vivo foi desfeito — contagem não infla");
+        assert_eq!(rep.pulados, 1, "alvo removido por fora vira 'pulado' (sumiu), não erro");
+        assert!(rep.erros.is_empty(), "alvo já sumido é no-op idempotente, não erro");
+        assert!(!vivo.exists(), "vivo.txt foi pra Lixeira");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
     // --- Cache de thumbnail (#737 F2) ---
 
     #[test]
