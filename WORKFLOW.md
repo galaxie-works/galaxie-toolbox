@@ -48,7 +48,7 @@
 
 > ⚠️ **Semântica corrigida pelo PO em 2026-08-17.** Palavras dele: *"Released to production = teve corte de versão · **done = vc fez merge pra qa validar** · qa approved = eu olho · po approved = pronto pra cortar versão"*. A descrição anterior desta seção (que mandava o item **seguir em In review** depois de integrar) **está anulada** — ver §4.0, que é a fonte de verdade da semântica.
 >
-> 🤖 **Automação do Projects: "PR merged → In Review".** Ela existe pra quando o merge fecha o PR. Com o merge **local** do Polaris ela é intermitente, então **o Polaris move o card à mão pra `Done` ao integrar** — não confiar na automação. **NÃO reativar "closed/merged → Done"** (pularia o gate de QA).
+> 🤖 **Automação do Projects: "PR merged → In Review".** Ela existe pra quando o merge fecha o PR. Com o merge **local** do Polaris ela é intermitente, então **o Polaris move o card à mão ao integrar** (destino conforme §4.2: `Closes` → `Done`; `Ref` → não move) — não confiar na automação. **NÃO reativar "closed/merged → Done"** (pularia o gate de QA).
 
 | Coluna | Significado | Quem move pra cá |
 |---|---|---|
@@ -110,12 +110,20 @@ Cada coluna tem **um significado e um dono do próximo passo**. Esta é a fonte 
 - **`Lúmen II`** (Claude) — **frontend**: React/TS, UX-detalhe, a11y, i18n, testes de componente.
 - **PR misto** → quem chegar primeiro **anuncia a trava na #133** e gata o item **inteiro**; a outra não toca. **Uma trava por item.**
 
-### 4.2 ⚠️ Fatia `Ref` publica veredito, mas NÃO move o card
-- **PR com `Closes #NNN`** → a entrega **fecha** a US → gata e **move** o card.
-- **PR com `Ref #NNN`** → é **fatia**; a US **continua aberta** → **publica o veredito na issue** e **deixa o card onde está**.
-- Na dúvida, **o `Closes` no corpo do PR é o sinal**. Sem `Closes`, não move.
+### 4.2 ⚠️ O card só anda quando a US FECHA. Fatia `Ref` não move nada.
 
-> Motivo: `QA Approved` é a **fila do Wagner**. Card de US inacabada ali faz o PO abrir e não achar o que validar.
+**A regra vale pros três papéis** — dev, integrador e QA:
+
+| Papel | PR com `Closes` (fecha a US) | PR com `Ref` (fatia; US segue aberta) |
+|---|---|---|
+| **Dev** ao entregar | move o card → **`In review`** | **não move** (fica em `In progress`) + anuncia na #133 |
+| **Polaris** ao integrar | move o card → **`Done`** | **não move** + anuncia a fatia integrada na #133 |
+| **QA** ao gatar | move → **`QA Approved`** / **`Rejected`** | **publica o veredito na issue** e **não move** |
+
+- **O sinal é o `Closes` no corpo do PR.** Sem `Closes`, ninguém move o card.
+- **Como a QA sabe que há fatia pra gatar?** Pelo **anúncio do Polaris na #133** ao integrar — não pela coluna. É a única exceção ao "a coluna é a comunicação", e existe porque a US inacabada precisa continuar visível como `In progress`.
+
+> **Motivo:** `QA Approved` é a **fila do Wagner**. Card de US inacabada ali faz o PO abrir e não achar o que validar. E card de US viva parado em `Done` some do radar de quem está codando.
 
 ### 4.3 O gate
 
@@ -136,7 +144,7 @@ Cada coluna tem **um significado e um dono do próximo passo**. Esta é a fonte 
   2. **Gate de runtime/QA depois de integrar** (ex.: preview no empacotado, risco tipo #873) — senão a issue fecha antes da prova;
   3. **Design/spec** de issue aprovada (o doc integra; o *done* é quando a implementação landa).
 - **Consequência no board (§4.2):** `Closes` move o card; `Ref` **não move**.
-- **Devs abrem PR; NÃO mergeiam.** **O Polaris integra** por **merge local** (worktree off `feat`, `git merge --no-ff`, gate, `push HEAD:feat`, move o card, limpa a worktree). Nunca `gh pr merge`.
+- **Devs abrem PR; NÃO mergeiam.** **O Polaris integra** por **merge local** (worktree off `feat`, `git merge --no-ff`, gate, `push HEAD:feat`, **move o card conforme §4.2** — `Closes` → `Done`; `Ref` → não move, anuncia na #133 —, limpa a worktree). Nunca `gh pr merge`.
 - **Gate de integração (Polaris):** `pnpm exec tsc -b` (exit 0) · `pnpm test` (`node --test`) · **`cargo check` SEM env OpenSSL** quando mexe em Rust (pega str0m/openssl vazando). CRLF: `core.autocrlf=true` na worktree.
 
 ### 5.1 Integrador reserva (fila represada)
@@ -170,9 +178,9 @@ Então a regra, na ordem:
 > cargo test  --features remote      # roda os testes do módulo        (rc.exe obrigatório)
 > ```
 
-**Como (idêntico ao do Polaris, §5):** worktree off `feat` · `git merge --no-ff` · gate (`tsc -b` · `pnpm test` · `cargo check` **sem env OpenSSL** se tocou Rust) · `push HEAD:feat` · **mover o card na mão para `Done`** (§4.0) · limpar a worktree.
+**Como (idêntico ao do Polaris, §5):** worktree off `feat` · `git merge --no-ff` · gate (`tsc -b` · `pnpm test` · `cargo check` **sem env OpenSSL** se tocou Rust) · `push HEAD:feat` · **mover o card conforme §4.2** (`Closes` → `Done`; `Ref` → não move, anuncia na #133) · limpar a worktree.
 
-> ⚠️ **Mover o card é o furo do merge local.** O `Closes` fecha a issue no push, mas **não move o card** — sem esse passo o board mente e a QA não enxerga o item. Destino ao integrar: **`Done`** (ver §4.0).
+> ⚠️ **Mover o card é o furo do merge local.** O `Closes` fecha a issue no push, mas **não move o card** — sem esse passo o board mente e a QA não enxerga o item. Destino ao integrar: **`Done`** para PR com `Closes`; para fatia `Ref`, **não mover** e anunciar na #133 (§4.2).
 
 **Ordem do lote — medir antes, não adivinhar.** Antes de escolher a ordem, listar os hunks das PRs por arquivo compartilhado:
 
