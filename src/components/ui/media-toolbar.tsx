@@ -23,6 +23,8 @@ import {
 } from 'platejs/react';
 
 import { Button, buttonVariants } from '@/components/ui/button';
+// #950 US3: rótulos i18n da família mídia (acessor não-hook, #529).
+import { plateLabel } from '@/lib/plate-labels';
 import {
   Popover,
   PopoverAnchor,
@@ -87,7 +89,7 @@ export function MediaToolbar({
 
               <FloatingMediaPrimitive.UrlInput
                 className={inputVariants()}
-                placeholder="Paste the embed link..."
+                placeholder={plateLabel('embedLinkPlaceholder')}
                 options={{ plugin }}
               />
             </div>

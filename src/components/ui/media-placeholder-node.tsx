@@ -16,34 +16,37 @@ import { PlateElement, useEditorPlugin, withHOC } from 'platejs/react';
 import { useFilePicker } from 'use-file-picker';
 
 import { cn } from '@/lib/utils';
+// #950 US3: rótulos i18n da família mídia (acessor não-hook, #529).
+import { plateLabel } from '@/lib/plate-labels';
 import { useUploadFile } from '@/hooks/use-upload-file';
 
 const CONTENT: Record<
   string,
   {
     accept: string[];
-    content: React.ReactNode;
+    // #950 US3: chave i18n (não string crua) — resolvida no render por idioma.
+    contentKey: Parameters<typeof plateLabel>[0];
     icon: React.ReactNode;
   }
 > = {
   [KEYS.audio]: {
     accept: ['audio/*'],
-    content: 'Add an audio file',
+    contentKey: 'addAudio',
     icon: <AudioLines />,
   },
   [KEYS.file]: {
     accept: ['*'],
-    content: 'Add a file',
+    contentKey: 'addFile',
     icon: <FileUp />,
   },
   [KEYS.img]: {
     accept: ['image/*'],
-    content: 'Add an image',
+    contentKey: 'addImage',
     icon: <ImageIcon />,
   },
   [KEYS.video]: {
     accept: ['video/*'],
-    content: 'Add a video',
+    contentKey: 'addVideo',
     icon: <Film />,
   },
 };
@@ -151,7 +154,9 @@ export const PlaceholderElement = withHOC(
             </div>
             <div className="whitespace-nowrap text-muted-foreground text-sm">
               <div>
-                {loading ? uploadingFile?.name : currentContent.content}
+                {loading
+                  ? uploadingFile?.name
+                  : plateLabel(currentContent.contentKey)}
               </div>
 
               {loading && !isImage && (
