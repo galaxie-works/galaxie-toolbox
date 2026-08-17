@@ -218,6 +218,8 @@ type ItemArquivoProps = {
   modo: ModoView;
   sel: boolean;
   cursor: boolean;
+  /** #986: item recortado (Ctrl+X) — esmaece + borda tracejada até colar/cancelar. */
+  recortado: boolean;
   editando: boolean;
   idioma: string;
   labelTipoPasta: string;
@@ -250,6 +252,7 @@ const ItemArquivo = memo(function ItemArquivo({
   modo,
   sel,
   cursor,
+  recortado,
   editando,
   idioma,
   labelTipoPasta,
@@ -340,6 +343,7 @@ const ItemArquivo = memo(function ItemArquivo({
     "grid h-[34px] w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
     sel ? "bg-accent" : "hover:bg-accent/50",
     cursor && "ring-2 ring-ring/60",
+    recortado && "border-dashed border-muted-foreground/60 opacity-50",
   );
   const conteudo = (
     <>
@@ -1047,6 +1051,14 @@ export function ContentPane({
           // #714 (Wagner): ESC na lista LIMPA a seleção. Se algo ficou "renomeando"
           // sem o input focado (foco escapou), cancela o rename também.
           ev.preventDefault();
+          // #986: cascade de ESC no Files (a busca focada já saiu antes, no input
+          // da navbar — #995). Se há recorte ativo (Ctrl+X), ESC só CANCELA o
+          // recorte (mantém a seleção, como o Windows Explorer); o próximo ESC
+          // segue pro comportamento de sempre (limpa a seleção).
+          if (clipboard?.op === "cut") {
+            onClipboardChange?.(null);
+            break;
+          }
           if (renomeando) setRenomeando(null);
           setSelecao(SELECAO_VAZIA);
           break;
@@ -1074,6 +1086,8 @@ export function ContentPane({
       criarPastaNova,
       onToggleInspector,
       buscaRef,
+      clipboard, // #986: ESC cancela o recorte — precisa do clipboard atual
+      onClipboardChange,
     ],
   );
 
@@ -1126,12 +1140,19 @@ export function ContentPane({
   // #739 (F4): cada item é um `<ItemArquivo>` MEMOIZADO; esta função só monta os
   // elementos (props estáveis + sel/cursor/editando por item). No scroll/seleção,
   // os itens que não mudaram não re-renderizam.
+  // #986: paths recortados (Ctrl+X ativo) — Set memoizado pra o lookup O(1) por
+  // linha. Só o cut esmaece/tracejа; o copy (op="copy") não marca visualmente.
+  const cutPaths = useMemo(
+    () => new Set(clipboard?.op === "cut" ? clipboard.paths : []),
+    [clipboard],
+  );
   const itemProps = (entry: FsEntry, index: number, m: ModoView) => ({
     entry,
     index,
     modo: m,
     sel: selecao.selecionados.has(entry.path),
     cursor: selecao.cursor === entry.path && !todosSelec,
+    recortado: cutPaths.has(entry.path),
     editando: renomeando === entry.path,
     idioma,
     labelTipoPasta: t.arquivos.tipoPasta,
