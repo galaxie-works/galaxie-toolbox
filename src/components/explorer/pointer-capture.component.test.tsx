@@ -1,3 +1,4 @@
+// Originalmente lumen-680-pointer-capture.component.test.tsx (#680). Renomeado por assunto (#1015 / HG3).
 // #680 (P0) — invariante de pointer-capture do marquee. Regrediu 4x:
 //   #778 → #748 (marquee capturava em todo pointerdown) → #846 (adiou p/ >3px)
 //   → #865 (o guard por tag-name não pegava `role=menuitem` PORTADO no body).

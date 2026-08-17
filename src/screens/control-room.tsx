@@ -195,7 +195,7 @@ import { tocarSomEscopo } from "@/lib/sons-notificacao";
 import { scrollTopReancorado, type Ancora } from "@/lib/scroll-ancora";
 import { useDebounce } from "@/hooks/use-debounce";
 import { useUndoSend } from "@/hooks/use-undo-send";
-import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
+import { getDarkReaderInlineScripts } from "@/lib/dark-reader-inject";
 import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
 import DOMPurify from "dompurify";
 import { cn, comLoginHint } from "@/lib/utils";

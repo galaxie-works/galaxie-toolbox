@@ -44,5 +44,8 @@ Regras **obrigatórias** para qualquer agente (Orion, Confucius, subagents) que 
 - **A integração + code-QA é do Polaris** (merge da feat, builds, evidência ao mover pra QA Approved). **NÃO** rode um subagente de QA/review separado nem re-revise o código inteiro linha-a-linha — duplica o Polaris e queima o limite semanal.
 - **Subagente só pra tarefa GRANDE** (~150-400k tokens cada). Solo pro pequeno/mecânico. **Sem auditoria/review espontâneo** — achou algo fora do escopo, abre issue curta (finding) e segue.
 
+## 12. Nomenclatura de arquivos
+- kebab-case sempre para nomes de arquivo; domínio em pt-BR, infra/técnico em en.
+
 ---
 *Toda issue de story herda estas regras na Definition of Done. PO reprova entrega que as viole.*
