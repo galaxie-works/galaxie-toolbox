@@ -18,6 +18,10 @@ mod remote;
 #[cfg(not(feature = "remote"))]
 #[path = "remote_stub.rs"]
 mod remote;
+// #1129 L1: identidade Ed25519 do device (custódia da chave no Rust + DPAPI-NG).
+// Sempre compilado — independe da feature `remote` (é só assinatura/DPAPI, não o
+// runtime de mídia).
+mod remote_identity;
 mod salvar_pdf;
 mod system;
 mod telemetry;
@@ -2033,6 +2037,10 @@ pub fn run() {
             remote::remote_session_end,
             // #1104: endpoint do signaling (config, não constante) — sempre compilado.
             remote_signaling_endpoint,
+            // #1129 L1: custódia da chave do device — chave pública/device_id e
+            // assinatura de registro (PoP). O segredo NUNCA sai do Rust.
+            remote_identity::remote_device_public_key,
+            remote_identity::remote_sign_register,
             login,
             logout,
             current_account,
