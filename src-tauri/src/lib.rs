@@ -1815,6 +1815,35 @@ fn telemetry_debug_dump(
     state.debug_dump()
 }
 
+/// #1104 / fecha TODO(#687): URL de PROD do signaling Remote (S0). O front (WS em
+/// TS) conecta AQUI, então isto vive no `lib.rs` (sempre compilado) e NÃO no
+/// módulo `remote` gated por feature/OpenSSL.
+const REMOTE_SIGNALING_DEFAULT_PROD: &str = "wss://telemetry.thegalaxie.cloud/remote/v1/ws";
+
+/// Resolve o endpoint a partir de (runtime env, baked em compile-time). Puro pra
+/// ser testável sem tocar no env global do processo. Espelha o `config_var` da
+/// telemetria (`telemetry.rs`) — runtime > compile-time > default — MAS o default
+/// aqui NÃO é fail-closed: é a URL de PROD real, pra o Remote conectar
+/// out-of-the-box sem recompilar.
+fn resolver_signaling_endpoint(runtime: Option<String>, baked: Option<&'static str>) -> String {
+    runtime
+        .filter(|valor| !valor.is_empty())
+        .or_else(|| baked.map(str::to_owned))
+        .filter(|valor| !valor.is_empty())
+        .unwrap_or_else(|| REMOTE_SIGNALING_DEFAULT_PROD.to_owned())
+}
+
+/// #1104 / fecha TODO(#687): endpoint do signaling Remote vem de config, não de
+/// constante no front. Runtime env (dev/CI) > baked em compile-time (o
+/// `release.yml` pode injetar) > default de PROD.
+#[tauri::command]
+fn remote_signaling_endpoint() -> String {
+    resolver_signaling_endpoint(
+        std::env::var("GALAXIE_REMOTE_SIGNALING_URL").ok(),
+        option_env!("GALAXIE_REMOTE_SIGNALING_URL"),
+    )
+}
+
 /// Navigator (#176): importa favoritos do Chrome/Edge lendo SOMENTE o arquivo
 /// `Bookmarks` (JSON) de cada perfil. Nunca le `Login Data`/credenciais. Devolve
 /// a arvore por navegador+perfil; ausencia degrada em lista vazia (sem panico).
@@ -2002,6 +2031,8 @@ pub fn run() {
             remote::remote_session_signal,
             remote::remote_session_input,
             remote::remote_session_end,
+            // #1104: endpoint do signaling (config, não constante) — sempre compilado.
+            remote_signaling_endpoint,
             login,
             logout,
             current_account,
@@ -2189,4 +2220,47 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // #1104: guarda anti-regressão — o default NUNCA pode voltar a ser o
+    // placeholder `.example` (TLD reservado RFC 2606) que quebrava o WS em prod.
+    #[test]
+    fn signaling_default_e_prod_nao_placeholder() {
+        let ep = resolver_signaling_endpoint(None, None);
+        assert!(
+            !ep.contains(".example"),
+            "endpoint de signaling voltou ao placeholder .example: {ep}"
+        );
+        assert!(
+            ep.starts_with("wss://telemetry.thegalaxie.cloud"),
+            "default de signaling não é a URL de PROD: {ep}"
+        );
+    }
+
+    // Runtime env vazio conta como ausente → cai no default de PROD.
+    #[test]
+    fn signaling_runtime_vazio_cai_no_default() {
+        let ep = resolver_signaling_endpoint(Some(String::new()), None);
+        assert_eq!(ep, REMOTE_SIGNALING_DEFAULT_PROD);
+    }
+
+    // Override de runtime (dev/CI) tem precedência sobre baked e default.
+    #[test]
+    fn signaling_runtime_override_vence() {
+        let ep = resolver_signaling_endpoint(
+            Some("ws://127.0.0.1:9099/remote/v1/ws".to_owned()),
+            Some("wss://baked.example/v1/ws"),
+        );
+        assert_eq!(ep, "ws://127.0.0.1:9099/remote/v1/ws");
+    }
+
+    // O comando real (sem env setado no ambiente de teste) devolve PROD, não `.example`.
+    #[test]
+    fn comando_signaling_endpoint_nao_e_placeholder() {
+        assert!(!remote_signaling_endpoint().contains(".example"));
+    }
 }

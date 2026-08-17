@@ -9,6 +9,8 @@
 // do S0 (perguntado ao Confucius na #133). A tela pendura na INTERFACE, então já
 // dá pra montar/testar a UI com um sinalizador fake.
 
+import { remoteSignalingEndpoint } from "./api";
+
 /** SDP/ICE kind (igual ao `RemoteSignal.kind` do wiring). */
 export type SignalKind = "offer" | "answer" | "ice_candidate";
 
@@ -114,15 +116,14 @@ export interface SinalizadorS0 {
 const HEARTBEAT_MS = 20_000;
 
 /**
- * Endpoint do S0. Hoje é um placeholder — a URL real do
- * `galaxie-remote-signaling` vem quando o Wagner subir o serviço no VPS.
- *
- * TODO(#687): trocar por uma leitura de config do Rust (comando Tauri, no padrão
- * da telemetria — `telemetry.thegalaxie.cloud`) em vez de string fixa, pra o
- * ambiente (dev/prod) mandar a URL.
+ * Endpoint do S0. #1104 (fecha TODO(#687)): vem do backend via comando Tauri
+ * (`remote_signaling_endpoint`, no padrão da telemetria — runtime env > baked >
+ * default de PROD `telemetry.thegalaxie.cloud`) em vez de string fixa, pra o
+ * ambiente (dev/prod) mandar a URL sem recompilar. Fora do Tauri cai no default
+ * de PROD; nunca mais o placeholder `.example` (que falhava DNS → `ws.onerror`).
  */
-export function endpointSignaling(): string {
-  return "wss://remote.example/v1/ws";
+export async function endpointSignaling(): Promise<string> {
+  return remoteSignalingEndpoint();
 }
 
 /** ICE server como chega no fio (o campo de expiração vem em snake_case). */
@@ -293,7 +294,11 @@ export function criarSinalizadorWs(endpoint: string): SinalizadorS0 {
           };
           ws.onerror = () => {
             if (rejeitarConexao) {
-              rejeitarConexao(new Error("Erro no WebSocket de signaling"));
+              // #1104 (AC3): o erro diz QUAL endpoint falhou, pra diagnosticar
+              // placeholder/DNS/serviço fora do ar sem adivinhar.
+              rejeitarConexao(
+                new Error(`Erro no WebSocket de signaling (${endpoint})`),
+              );
               resolverConexao = null;
               rejeitarConexao = null;
             }
