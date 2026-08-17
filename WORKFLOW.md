@@ -127,11 +127,20 @@ Cada coluna tem **um significado e um dono do próximo passo**. Esta é a fonte 
 
 ### 4.3 O gate
 
-1. **A QA gata SÓ o que está em `Done`.** Nunca `In progress`, nunca `In review` (essa é a fila do Polaris).
-2. Ela move **Done → QA Approved** (passou) ou **Rejected** (reprovou). Só isso com o card.
-3. Se ela **não fecha o runtime sozinha** (cega a pixel/cross-layer), move pra **QA Approved COM nota "runtime/visual pendente PO"** — o Wagner testa a partir de QA Approved. **Não existe estado "checkpoint".**
-4. **A QA NUNCA pinga o Wagner** (direto ou #133) pra testar. O Wagner sabe que precisa olhar quando (a) a issue está em **QA Approved** (onde ele SEMPRE pega), ou (b) o **Polaris fala com ele**. A **coluna** é a comunicação.
-5. **Fatia = US-filha** → percorre as colunas sozinha e vai pro olho do Wagner **em QA Approved**. O épico fica In progress até as US fecharem. Não se roteia fatia órfã pro Wagner.
+**A QA gata DUAS coisas, e só estas duas** (§4.2):
+
+**(a) US completa** — card em **`Done`** (PR com `Closes`, já integrado pelo Polaris):
+1. Nunca gatar `In progress` nem `In review` — `In review` é a fila de integração do Polaris.
+2. Move **`Done` → `QA Approved`** (passou) ou **`Rejected`** (reprovou). Só isso com o card.
+3. Se **não fecha o runtime sozinha** (cega a pixel/cross-layer), move pra **`QA Approved` COM nota "runtime/visual pendente PO"** — o Wagner testa a partir dali. **Não existe estado "checkpoint".**
+
+**(b) Fatia `Ref`** — card **fica em `In progress`**; a QA soube pelo **anúncio do Polaris na #133** (§4.2):
+4. Gata a **fatia** contra o snapshot integrado do `feat` e **publica o veredito na issue** (+ 1 linha na #133).
+5. **NÃO move o card** — nem pra `QA Approved` (a US não fechou), nem pra `Rejected`. Se a fatia reprova, **diz na issue** e o dono corrige na próxima entrega; a US segue `In progress`.
+
+**Vale pros dois casos:**
+6. **A QA NUNCA pinga o Wagner** (direto ou #133) pra testar. Ele sabe que precisa olhar quando (a) a issue está em **`QA Approved`**, ou (b) o **Polaris fala com ele**. A **coluna** é a comunicação — a única exceção é o anúncio de fatia do §4.2, que é entre Polaris e QA, não com o PO.
+7. **US-filha de épico é US normal** — percorre as colunas sozinha e vai pro olho do Wagner em `QA Approved`. O **épico** fica `In progress` até as US fecharem. Não se roteia item órfão pro Wagner.
 
 ---
 
@@ -158,7 +167,7 @@ O merge local é de **um dono só** — o que é certo, e por isso o Polaris é 
 
 **Trava (obrigatória, antes de qualquer merge):** anunciar na #133 — *"assumo como reserva o lote: #A, #B, #C"* — com a lista **explícita**. **Um reserva por vez.** Quem anuncia primeiro tem a trava; os outros não integram nada.
 
-**Quem — e por que "não-autor":** a regra existe, mas vale saber **o que ela protege**. O §5 não tem etapa de revisão: integrar é merge + gate + push + mover card. Logo o não-autor **não** compra uma segunda opinião sobre o código — compra **reprodutibilidade do gate**: pega o verde que só existe na máquina de quem escreveu (worktree suja, artefato velho, variável de ambiente mágica). É falha real e já aconteceu aqui.
+**Quem — e por que "não-autor":** a regra existe, mas vale saber **o que ela protege**. O §5 não tem etapa de revisão: integrar é merge + gate + push + tratar o card (§4.2). Logo o não-autor **não** compra uma segunda opinião sobre o código — compra **reprodutibilidade do gate**: pega o verde que só existe na máquina de quem escreveu (worktree suja, artefato velho, variável de ambiente mágica). É falha real e já aconteceu aqui.
 
 Então a regra, na ordem:
 1. **Preferência forte:** integra quem **não é autor** do lote.
