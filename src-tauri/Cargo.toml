@@ -102,6 +102,9 @@ windows = { version = "0.61", features = [
     "Win32_System_Com",
     # #275 rework: SHCreateMemStream pro CapturePreview (snapshot-to-image).
     "Win32_UI_Shell",
+    # #1046 (SEC2): revelar_no_explorer sem shell — ILCreateFromPathW/ILFree/
+    # SHOpenFolderAndSelectItems (e o tipo ITEMIDLIST) vivem no submódulo Common.
+    "Win32_UI_Shell_Common",
     # #676 Explorer: GetLogicalDrives/GetDriveTypeW/GetDiskFreeSpaceExW/
     # GetVolumeInformationW pra listar drives com tipo, label e espaço.
     "Win32_Storage_FileSystem",
