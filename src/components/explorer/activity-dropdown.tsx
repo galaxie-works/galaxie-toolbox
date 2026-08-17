@@ -24,6 +24,7 @@ import {
   Pause,
   Play,
   Scissors,
+  Undo2,
   X,
 } from "lucide-react";
 
@@ -90,6 +91,8 @@ export function ActivityDropdown({
   onPausar,
   onResumir,
   onDispensar,
+  onDesfazer,
+  desfeitos,
   onLimparConcluidas,
 }: {
   ops: OpAtiva[];
@@ -99,6 +102,10 @@ export function ActivityDropdown({
   onPausar: (opId: number) => void;
   onResumir: (opId: number) => void;
   onDispensar: (opId: number) => void;
+  /** #967: abre o preview de undo de uma op terminal (copy/move concluída). */
+  onDesfazer: (opId: number) => void;
+  /** #967: opIds já desfeitos (marca a linha como "Desfeito"). */
+  desfeitos: ReadonlySet<number>;
   onLimparConcluidas: () => void;
 }) {
   const { t } = useIdioma();
@@ -268,6 +275,8 @@ export function ActivityDropdown({
                   onPausar={onPausar}
                   onResumir={onResumir}
                   onDispensar={onDispensar}
+                  onDesfazer={onDesfazer}
+                  desfeitos={desfeitos}
                 />
               ))}
             </div>
@@ -289,6 +298,8 @@ function LinhaAtividade({
   onPausar,
   onResumir,
   onDispensar,
+  onDesfazer,
+  desfeitos,
 }: {
   op: OpAtiva;
   index: number;
@@ -300,6 +311,8 @@ function LinhaAtividade({
   onPausar: (opId: number) => void;
   onResumir: (opId: number) => void;
   onDispensar: (opId: number) => void;
+  onDesfazer: (opId: number) => void;
+  desfeitos: ReadonlySet<number>;
 }) {
   const { t } = useIdioma();
   const p = op.progresso;
@@ -402,6 +415,29 @@ function LinhaAtividade({
             </TooltipAcao>
           </>
         )}
+        {/* Linha TERMINAL: Desfazer (undo) + Dispensar. Desfazer só numa op
+            reversível (copy/move concluída OU parcial). Já desfeita → some o
+            botão e mostra o rótulo "Desfeito" (#967). */}
+        {terminal &&
+          (desfeitos.has(op.opId) ? (
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {t.arquivos.undoDesfeito}
+            </span>
+          ) : (
+            (s === "success" || s === "partial") && (
+              <TooltipAcao label={t.arquivos.desfazer}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6 opacity-0 transition-opacity group-hover:opacity-100"
+                  onClick={() => onDesfazer(op.opId)}
+                  aria-label={t.arquivos.desfazer}
+                >
+                  <Undo2 className="size-3.5" />
+                </Button>
+              </TooltipAcao>
+            )
+          ))}
         {/* Linha TERMINAL: Dispensar (revela no hover). */}
         {terminal && (
           <TooltipAcao label={t.arquivos.dispensar}>
