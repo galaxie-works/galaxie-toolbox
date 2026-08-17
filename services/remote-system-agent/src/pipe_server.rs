@@ -89,6 +89,9 @@ mod win {
     impl Drop for SecDesc {
         fn drop(&mut self) {
             if !self.0 .0.is_null() {
+                // SAFETY: `self.0` é o PSECURITY_DESCRIPTOR não-nulo alocado por
+                // `ConvertStringSecurityDescriptorToSecurityDescriptorW`; `LocalFree`
+                // o libera exatamente uma vez (dono único, só aqui no Drop).
                 unsafe {
                     let _ = LocalFree(Some(HLOCAL(self.0 .0)));
                 }
@@ -111,6 +114,9 @@ mod win {
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
             let sddl = to_wide(&sddl_str);
             let mut psd = PSECURITY_DESCRIPTOR::default();
+            // SAFETY: `sddl` é UTF-16 NUL-terminada válida (de `to_wide`); em sucesso
+            // a API aloca o descritor em `psd`, que `SecDesc` passa a possuir e
+            // libera com `LocalFree` no Drop.
             unsafe {
                 ConvertStringSecurityDescriptorToSecurityDescriptorW(
                     PCWSTR(sddl.as_ptr()),
@@ -123,11 +129,18 @@ mod win {
             let sd = SecDesc(psd);
 
             let sa = SECURITY_ATTRIBUTES {
-                nLength: u32::try_from(std::mem::size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(0),
+                // #1076 (RB12): fail-CLOSED. `nLength` = 0 faz o Win32 IGNORAR o
+                // `lpSecurityDescriptor` — o pipe nasceria com a DACL default (aberta),
+                // furando a restrição SYSTEM+LogonSID da §4.1. `size_of` é const e cabe
+                // trivialmente em u32; `expect` nunca dispara, mas jamais deixa virar 0.
+                nLength: u32::try_from(std::mem::size_of::<SECURITY_ATTRIBUTES>())
+                    .expect("size_of::<SECURITY_ATTRIBUTES>() cabe em u32"),
                 lpSecurityDescriptor: psd.0,
                 bInheritHandle: false.into(),
             };
             let nome = to_wide(nome_pipe);
+            // SAFETY: `nome` é UTF-16 NUL-terminada válida; `sa` referencia um
+            // descritor de segurança vivo (`sd`) que sobrevive a esta chamada.
             let handle = unsafe {
                 CreateNamedPipeW(
                     PCWSTR(nome.as_ptr()),
@@ -148,6 +161,8 @@ mod win {
 
         /// Bloqueia até o owner conectar.
         pub fn aceitar(&self) -> io::Result<()> {
+            // SAFETY: `self.handle` é o pipe válido criado em `criar` (não-fechado
+            // até o Drop); `None` = conexão síncrona sem OVERLAPPED.
             unsafe { ConnectNamedPipe(self.handle, None) }
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("ConnectNamedPipe: {e}")))
         }
@@ -156,6 +171,8 @@ mod win {
         pub fn ler_hello(&self) -> io::Result<Hello> {
             let mut buf = vec![0u8; MAX_MESSAGE_BYTES];
             let mut lidos = 0u32;
+            // SAFETY: `self.handle` é válido; `buf`/`lidos` são buffers próprios e
+            // vivos durante a chamada síncrona (sem OVERLAPPED).
             unsafe { ReadFile(self.handle, Some(&mut buf), Some(&mut lidos), None) }
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("ReadFile: {e}")))?;
             buf.truncate(lidos as usize);
@@ -166,6 +183,7 @@ mod win {
         /// PID do cliente conectado.
         pub fn client_pid(&self) -> io::Result<u32> {
             let mut pid = 0u32;
+            // SAFETY: `self.handle` é o pipe válido; `pid` é uma out-var própria.
             unsafe { GetNamedPipeClientProcessId(self.handle, &mut pid) }
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("GetNamedPipeClientProcessId: {e}")))?;
             Ok(pid)
@@ -176,6 +194,7 @@ mod win {
         pub fn presenca_local(&self) -> io::Result<PresencaLocal> {
             let pid = self.client_pid()?;
             let mut session = 0u32;
+            // SAFETY: `pid` veio de `client_pid` (Win32); `session` é out-var própria.
             unsafe { ProcessIdToSessionId(pid, &mut session) }
                 .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("ProcessIdToSessionId: {e}")))?;
             Ok(PresencaLocal {
@@ -187,6 +206,8 @@ mod win {
 
     impl Drop for PipeServer {
         fn drop(&mut self) {
+            // SAFETY: `self.handle` é o HANDLE do pipe criado em `criar`, fechado
+            // exatamente uma vez aqui (dono único).
             unsafe {
                 let _ = CloseHandle(self.handle);
             }
@@ -195,13 +216,18 @@ mod win {
 
     /// Caminho da imagem do processo (`QueryFullProcessImageNameW`).
     fn caminho_imagem(pid: u32) -> io::Result<Vec<u16>> {
+        // SAFETY: `pid` é um PID do Win32; em sucesso devolve um HANDLE que fechamos
+        // com `CloseHandle` abaixo.
         let proc = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("OpenProcess: {e}")))?;
         let mut buf = vec![0u16; 32_768];
         let mut tam = buf.len() as u32;
+        // SAFETY: `proc` é um HANDLE de processo válido; `buf` tem `tam` u16s e vive
+        // durante a chamada; a API escreve o caminho e ajusta `tam`.
         let r = unsafe {
             QueryFullProcessImageNameW(proc, PROCESS_NAME_FORMAT(0), PWSTR(buf.as_mut_ptr()), &mut tam)
         };
+        // SAFETY: `proc` é o HANDLE aberto acima, fechado uma única vez aqui.
         unsafe {
             let _ = CloseHandle(proc);
         }
@@ -233,6 +259,9 @@ mod win {
         };
         data.Anonymous.pFile = &mut file_info;
         let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+        // SAFETY: `action` e `data` são structs próprias e vivas; `data.pFile` aponta
+        // para `file_info` (também vivo), cujo `pcwszFilePath` é `caminho` NUL-terminado.
+        // O ponteiro `c_void` é só a passagem do `&mut data` que a API espera.
         let status = unsafe {
             WinVerifyTrust(
                 Default::default(),
@@ -242,6 +271,8 @@ mod win {
         };
         // fecha o estado (obrigatório após VERIFY).
         data.dwStateAction = WTD_STATEACTION_CLOSE;
+        // SAFETY: mesmos `action`/`data` da chamada VERIFY acima, ainda vivos; agora
+        // com dwStateAction=CLOSE, a API libera o estado que ela alocou no VERIFY.
         unsafe {
             let _ = WinVerifyTrust(
                 Default::default(),
