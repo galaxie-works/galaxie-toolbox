@@ -54,6 +54,13 @@ import { MenuUsuario } from "@/components/user-menu";
 import { ActivityDropdown } from "@/components/explorer/activity-dropdown";
 import { UndoPreviewDialog } from "@/components/explorer/undo-preview-dialog";
 import { useOpsAtivas } from "@/components/explorer/use-ops-ativas";
+// #1109: logo GALAXIE na title bar (clique = nova aba do Navigator).
+import { GalaxieLogo } from "@/components/ui/icons/marca/galaxie-logo";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Alert,
   AlertAction,
@@ -1215,11 +1222,7 @@ function AppInner() {
     <SidebarProvider className="h-svh" open={false} onOpenChange={() => {}}>
       <Atualizacao />
       <BarraJanela />
-      <AppSidebar
-        tela={tela}
-        onNavegar={navegarPara}
-        onAbrirApp={abrirUrlLivre}
-      />
+      <AppSidebar onAbrirApp={abrirUrlLivre} />
       <SidebarInset className="relative overflow-hidden">
         {/* #1017: fora do Tauri (browser/pnpm dev) o app roda em MODO MOCK — as
             leituras devolvem dado fake e as escrituras REJEITAM. Faixa fixa e não
@@ -1245,6 +1248,36 @@ function AppInner() {
           data-tauri-drag-region
           className="relative z-10 flex h-11 shrink-0 items-stretch border-b border-border"
         >
+          {/* #1109 (AC do Wagner na #876): a marca GALAXIE mora aqui, no canto
+              esquerdo junto das tabs, em tamanho compatível com a altura de uma
+              tab (não mais ocupando a largura do rail). Clique = ABRE UMA ABA NOVA
+              com a home do Navigator ("Time to set sail" + command) — reusa o
+              `novaAba` do "+"/Ctrl+T; `setTela("navegador")` garante pousar no
+              Navigator mesmo vindo de outra tela. O botão é clicável apesar do
+              `data-tauri-drag-region` do pai (mesmo padrão do avatar/tabs). */}
+          <div
+            data-tauri-drag-region
+            className="flex shrink-0 items-center pr-1 pl-2.5"
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={t.sidebar.abrirNavegador}
+                  onClick={() => {
+                    setTela("navegador");
+                    novaAba();
+                  }}
+                  className="grid size-7 place-items-center rounded-lg transition-colors hover:bg-accent"
+                >
+                  <GalaxieLogo className="size-6" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="start">
+                {t.sidebar.abrirNavegador}
+              </TooltipContent>
+            </Tooltip>
+          </div>
           <div
             ref={setTabSlot}
             data-tauri-drag-region
