@@ -6,7 +6,7 @@
 //! jamais são logados aqui.
 
 use std::collections::HashSet;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{IpAddr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -543,9 +543,24 @@ impl RuntimeSession {
             },
             encoder_commands,
         );
-        transport
-            .candidato_local(local_addr)
-            .map_err(transport_error)?;
+        // #1108: o BIND fica em `0.0.0.0` (recebe em todas as interfaces), mas o
+        // endereço do bind NÃO é um candidato — só a PORTA importa. Um candidato ICE
+        // host tem que carregar um IP de interface REAL; `0.0.0.0` é rejeitado pelo
+        // str0m ("invalid ip 0.0.0.0") e mata a sessão no transporte (P0 em prod).
+        let porta = local_addr.port();
+        let ips_locais = descobrir_ips_locais();
+        if ips_locais.is_empty() {
+            return Err(RemoteError::Network(
+                "nenhum IP de interface válido pra candidato ICE host (só unspecified/loopback)"
+                    .to_owned(),
+            ));
+        }
+        // Registra 1 candidato host por IP real (não só o primeiro). O erro nomeia o
+        // IP/tipo tentado (AC #1108) via `TransportError::Candidato` do session.rs.
+        for ip in &ips_locais {
+            let addr = SocketAddr::new(*ip, porta);
+            transport.candidato_local(addr).map_err(transport_error)?;
+        }
 
         let mut session = Self {
             role: request.role,
@@ -570,12 +585,18 @@ impl RuntimeSession {
             terminal_sent: false,
         };
         session.emit_state(RemoteSessionState::Connecting, None, None)?;
-        session.send_event(RemoteSessionEvent::Signal {
-            signal: SignalMessage::IceCandidate {
-                candidate: Transport::candidato_local_sdp(local_addr).map_err(transport_error)?,
-            }
-            .into(),
-        })?;
+        // #1108: trickle-ICE — envia 1 `IceCandidate` por IP de interface válido (N
+        // candidatos, não mais só o endereço do bind). Cada SDP carrega um IP REAL;
+        // nenhum é `0.0.0.0`/`::` (a fonte do bug em prod).
+        for ip in &ips_locais {
+            let addr = SocketAddr::new(*ip, porta);
+            session.send_event(RemoteSessionEvent::Signal {
+                signal: SignalMessage::IceCandidate {
+                    candidate: Transport::candidato_local_sdp(addr).map_err(transport_error)?,
+                }
+                .into(),
+            })?;
+        }
         if session.role == RemoteRole::Controller {
             let offer = session.transport.criar_offer().map_err(transport_error)?;
             session.send_event(RemoteSessionEvent::Signal {
@@ -976,6 +997,50 @@ fn transport_error(error: impl std::fmt::Display) -> RemoteError {
     RemoteError::Transport(error.to_string())
 }
 
+/// `true` se `ip` é link-local — IPv4 `169.254.0.0/16` ou IPv6 `fe80::/10`. Esses
+/// raramente roteiam entre peers e só poluem o gathering ICE, então saem junto
+/// com unspecified/loopback. (O teste do `fe80::/10` é por prefixo pra não depender
+/// de API instável de `Ipv6Addr`.)
+fn is_link_local(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_link_local(),
+        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+    }
+}
+
+/// Filtra os IPs de interface BRUTOS, descartando o que NUNCA pode virar candidato
+/// ICE host: unspecified (`0.0.0.0`/`::` — o endereço do BIND, que o str0m rejeita
+/// com "invalid ip 0.0.0.0"), loopback (`127.0.0.1`/`::1`, inalcançável pelo peer)
+/// e link-local. Sobram só IPs de interface REAIS; deduplica preservando a ordem
+/// pra emitir 1 candidato por IP sem repetição.
+///
+/// Fn PURA (não toca a rede): é o ponto testável do #1108 — a regra de que um IP
+/// unspecified jamais escapa pro gathering é provada aqui, sem interface/socket.
+fn ips_de_interface_validos(brutos: &[IpAddr]) -> Vec<IpAddr> {
+    let mut vistos = HashSet::new();
+    brutos
+        .iter()
+        .copied()
+        .filter(|ip| !ip.is_unspecified() && !ip.is_loopback() && !is_link_local(ip))
+        .filter(|ip| vistos.insert(*ip))
+        .collect()
+}
+
+/// Descobre os IPs de interface REAIS desta máquina (todas as interfaces up) e
+/// devolve só os válidos pra candidato ICE host. Isola o toque na rede
+/// (`if_addrs::get_if_addrs`) da regra pura `ips_de_interface_validos`. Falha de
+/// enumeração vira lista vazia (o chamador trata como "sem candidato host").
+fn descobrir_ips_locais() -> Vec<IpAddr> {
+    let brutos: Vec<IpAddr> = match if_addrs::get_if_addrs() {
+        Ok(ifaces) => ifaces.into_iter().map(|iface| iface.ip()).collect(),
+        Err(error) => {
+            log::warn!("[remote] enumeração de interfaces falhou: {error}");
+            Vec::new()
+        }
+    };
+    ips_de_interface_validos(&brutos)
+}
+
 fn sanitize_reason(reason: String) -> String {
     reason
         .chars()
@@ -1018,6 +1083,70 @@ fn host_screen_info() -> ScreenInfo {
 mod tests {
     use super::*;
     use galaxie_remote_transport::{BotaoMouse, CodedFrame, Tecla};
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn filtro_de_ip_descarta_unspecified_loopback_e_link_local() {
+        // #1108: entrada com o endereço do BIND (`0.0.0.0`), loopback, link-local e
+        // IPs de interface reais → só os reais sobram.
+        let brutos = vec![
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),               // 0.0.0.0 (bind)
+            IpAddr::V4(Ipv4Addr::LOCALHOST),                 // 127.0.0.1
+            IpAddr::V4(Ipv4Addr::new(169, 254, 3, 4)),       // link-local v4
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),       // LAN real
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),               // ::
+            IpAddr::V6(Ipv6Addr::LOCALHOST),                 // ::1
+            IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)), // link-local v6
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)), // global v6
+        ];
+        let validos = ips_de_interface_validos(&brutos);
+        assert_eq!(
+            validos,
+            vec![
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
+                IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
+            ],
+            "só IPs de interface reais podem virar candidato host"
+        );
+        // DoD: NENHUM unspecified/loopback pode escapar pro gathering.
+        assert!(validos
+            .iter()
+            .all(|ip| !ip.is_unspecified() && !ip.is_loopback()));
+    }
+
+    #[test]
+    fn filtro_deduplica_ips_repetidos() {
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7));
+        let validos = ips_de_interface_validos(&[ip, ip]);
+        assert_eq!(validos, vec![ip], "1 candidato por IP, sem repetição");
+    }
+
+    #[test]
+    fn unspecified_nunca_vira_candidato_local() {
+        // Prova o caminho de emissão do #1108: todo IP que passa pelo filtro produz
+        // um SDP de candidato host, e nenhum é `0.0.0.0`/`::` (a fonte do P0). Se o
+        // filtro deixasse o endereço do bind passar, este SDP conteria "0.0.0.0" e o
+        // str0m rejeitaria no `add_local_candidate` — aqui garantimos que o
+        // unspecified sequer chega a ser montado como candidato.
+        let brutos = vec![
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7)),
+        ];
+        let validos = ips_de_interface_validos(&brutos);
+        assert!(!validos.is_empty(), "deve sobrar ≥1 candidato host real");
+        assert!(
+            !validos.contains(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+            "candidato com IP unspecified é o bug do #1108"
+        );
+        for ip in &validos {
+            let addr = SocketAddr::new(*ip, 55000);
+            let sdp = Transport::candidato_local_sdp(addr).expect("SDP do candidato host");
+            assert!(
+                !sdp.contains("0.0.0.0") && !sdp.contains("typ host :: "),
+                "SDP de candidato não pode carregar IP unspecified: {sdp}"
+            );
+        }
+    }
 
     #[test]
     fn video_raw_tem_header_congelado_de_17_bytes() {

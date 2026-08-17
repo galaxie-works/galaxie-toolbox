@@ -188,19 +188,25 @@ impl Transport {
         })
     }
 
-    /// Adiciona um candidato ICE LOCAL (host/srflx/relay) montado pelo gathering.
+    /// Adiciona um candidato ICE LOCAL host montado pelo gathering. O erro NOMEIA o
+    /// IP/tipo tentado (`host <addr>`) em vez de só "falha no transporte" — #1108: o
+    /// operador precisa saber QUAL IP o str0m rejeitou (ex.: `0.0.0.0` unspecified).
+    // #1108 Parte 2 (Confucius): srflx/relay via STUN/TURN entram aqui —
+    // `Candidate::server_reflexive(addr, base, proto)` e `Candidate::relayed(addr,
+    // proto)` (ambos existem no str0m 0.6). NÃO implementar nesta task (só host).
     pub fn candidato_local(&mut self, addr: SocketAddr) -> Result<(), TransportError> {
         let c = Candidate::host(addr, Protocol::Udp)
-            .map_err(|e| TransportError::Candidato(e.to_string()))?;
+            .map_err(|e| TransportError::Candidato(format!("host {addr}: {e}")))?;
         self.rtc.add_local_candidate(c);
         Ok(())
     }
 
-    /// Forma SDP do candidato local para o signaling trickle-ICE do app.
+    /// Forma SDP do candidato local host para o signaling trickle-ICE do app. Erro
+    /// nomeia `host <addr>` (AC #1108).
     pub fn candidato_local_sdp(addr: SocketAddr) -> Result<String, TransportError> {
         Candidate::host(addr, Protocol::Udp)
             .map(|candidate| candidate.to_sdp_string())
-            .map_err(|e| TransportError::Candidato(e.to_string()))
+            .map_err(|e| TransportError::Candidato(format!("host {addr}: {e}")))
     }
 
     /// Adiciona um candidato ICE REMOTO recebido via signaling.
