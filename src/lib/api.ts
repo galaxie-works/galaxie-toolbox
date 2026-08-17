@@ -65,6 +65,29 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return core.invoke<T>(cmd, args);
 }
 
+/**
+ * #1104 / fecha TODO(#687): URL de PROD do signaling Remote (S0). Fallback pro
+ * caminho browser (`pnpm dev`, sem Tauri) e pra falha do invoke. Casa com o
+ * `REMOTE_SIGNALING_DEFAULT_PROD` do Rust (`src-tauri/src/lib.rs`).
+ */
+export const REMOTE_SIGNALING_DEFAULT_PROD =
+  "wss://telemetry.thegalaxie.cloud/remote/v1/ws";
+
+/**
+ * Endpoint do WS de signaling Remote, resolvido pelo backend (comando Tauri,
+ * padrão da telemetria: runtime env > baked em compile-time > default de PROD).
+ * Fora do Tauri, ou se o invoke falhar, cai no default de PROD — nunca no
+ * placeholder `.example` que quebrava o WS em produção.
+ */
+export async function remoteSignalingEndpoint(): Promise<string> {
+  if (!inTauri()) return REMOTE_SIGNALING_DEFAULT_PROD;
+  try {
+    return await invoke<string>("remote_signaling_endpoint");
+  } catch {
+    return REMOTE_SIGNALING_DEFAULT_PROD;
+  }
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // --- MOCK usado apenas no browser (fora do Tauri), pra visualizar a UI ---

@@ -199,7 +199,7 @@ export function RemoteScreen() {
     setConectandoS0(true);
     const sessionId = crypto.randomUUID();
     sessionIdRef.current = sessionId;
-    const endpoint = endpointSignaling();
+    const endpoint = await endpointSignaling();
     const sinal = criarSinalizadorWs(endpoint);
     sinalizadorRef.current = sinal;
     try {
@@ -248,7 +248,7 @@ export function RemoteScreen() {
     setConectandoS0(true);
     const sessionId = crypto.randomUUID();
     sessionIdRef.current = sessionId;
-    const endpoint = endpointSignaling();
+    const endpoint = await endpointSignaling();
     const sinal = criarSinalizadorWs(endpoint);
     sinalizadorRef.current = sinal;
     try {
