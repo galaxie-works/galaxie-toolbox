@@ -1177,6 +1177,13 @@ struct JournalItem {
     mtime_at_end: u64,
     hash_at_end: Option<String>,
     hash_alg: Option<String>,
+    /// #1067 RB25: o `stat` do `to` FALHOU no fim da op → `size_at_end`/`mtime_at_end`
+    /// caíram no fallback 0 e NÃO são confiáveis. Sem esta marca, o undo compararia
+    /// `len()=0` com o disco e classificaria o item como "modificado" (motivo errado);
+    /// com ela, o undo pula por "stat_indisponivel" (fail-closed, não confunde os dois).
+    /// `serde(default)=false` → retrocompatível com journals já gravados em disco.
+    #[serde(default)]
+    stat_indisponivel: bool,
 }
 
 /// Um registro por operação mutante — serializado como 1 linha JSON no journal.
@@ -1194,10 +1201,22 @@ struct OperationJournalEntry {
     items: Vec<JournalItem>,
     /// Handles do SO pra restaurar da Lixeira (kind=trash; vazio aqui).
     trash_record_ids: Vec<String>,
+    /// #1067 RB27: granularidade do undo. `""`/`"item"` (default) = manifesto completo,
+    /// um item por caminho criado. `"raiz"` = manifesto REDUZIDO por teto (op gigante,
+    /// `items.len()` estourou `JOURNAL_ITENS_MAX`) → o undo é mais grosso e NÃO cobre
+    /// todos os caminhos; o front deve avisar que o desfazer é parcial. Nunca reduzido
+    /// em silêncio (há `log::warn!` no ponto do corte). `serde(default)` = retrocompat.
+    #[serde(default)]
+    undo_granularidade: String,
 }
 
 /// Máximo de ops retidas (§7 do spike: journal efêmero, poda o excesso).
 const JOURNAL_MAX: usize = 50;
+/// #1067 RB27: teto de itens por manifesto. Uma op de árvore com centenas de milhares
+/// de arquivos geraria UMA linha JSON de centenas de MB — a escrita trava e o journal
+/// inteiro fica refém dela. Acima deste teto o manifesto é REDUZIDO (ver
+/// `reduzir_para_teto`) e marcado `undo_granularidade="raiz"`, nunca gravado gigante.
+const JOURNAL_ITENS_MAX: usize = 5000;
 /// Serializa as escritas concorrentes no arquivo do journal.
 static JOURNAL_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1231,6 +1250,9 @@ fn journal_item(from: &Path, to: &Path, mover: bool) -> JournalItem {
         mtime_at_end: meta.as_ref().map(mtime_ms).unwrap_or(0),
         hash_at_end: None,
         hash_alg: None,
+        // #1067 RB25: stat falhou → size/mtime acima são 0 não-confiáveis. Marca pro
+        // undo pular por motivo próprio em vez de acusar "modificado" (len 0 ≠ disco).
+        stat_indisponivel: meta.is_none(),
     }
 }
 
@@ -1244,6 +1266,9 @@ fn montar_entrada(
     plano: &Plano,
 ) -> OperationJournalEntry {
     let mut items = Vec::with_capacity(plano.dirs.len() + plano.total_arquivos as usize);
+    // #1067: o stat em massa (um `journal_item`/arquivo) roda AQUI, FORA do ticker de
+    // progresso — não bloqueia a UI. Numa op gigante isto é serial e pode custar; mover
+    // o stat pro worker do ticker (statando durante a cópia) é follow-up, não deste US.
     for d in &plano.dirs {
         // dir: o undo remove o vazio (copy) ou é recriado pelos moves (move).
         items.push(journal_item(d, d, false));
@@ -1260,6 +1285,7 @@ fn montar_entrada(
         resolucao: None,
         items,
         trash_record_ids: Vec::new(),
+        undo_granularidade: String::new(),
     }
 }
 
@@ -1271,6 +1297,33 @@ fn podar_journal(mut linhas: Vec<String>, max: usize) -> Vec<String> {
     linhas
 }
 
+/// #1067 RB27: precisa reescrever o journal inteiro (pra podar), ou dá pra fazer append
+/// barato da nova linha? Reescrever é o que trava com manifestos gigantes; só cai nele
+/// quando o push passaria de `max` linhas (raro: 1×/op só depois de 50 ops acumuladas).
+/// Pura → testável sem I/O.
+fn precisa_reescrever(n_linhas_atual: usize, max: usize) -> bool {
+    n_linhas_atual + 1 > max
+}
+
+/// #1067 RB27: se o manifesto estoura o teto de itens, devolve uma versão REDUZIDA
+/// (senão `None` = grava como está). A redução aqui é TRUNCAR pros primeiros `max`
+/// itens + marcar `undo_granularidade="raiz"`. Escolha deliberada sobre "raízes por
+/// ancestralidade": no código atual os itens de DIRETÓRIO carregam `from=""` (o undo
+/// os ignora — `executar_undo` filtra `!is_dir`), então reduzir uma árvore profunda às
+/// suas raízes-dir deixaria o move SEM nenhum item reversível (undo faria nada). Truncar
+/// preserva `max` itens de ARQUIVO realmente reversíveis; o resto não some do disco —
+/// segue no destino (recuperável à mão), só não é desfeito pelo botão. O corte é sempre
+/// BARULHENTO (marca + `log::warn!` no chamador), nunca silencioso. Pura → testável.
+fn reduzir_para_teto(entry: &OperationJournalEntry, max: usize) -> Option<OperationJournalEntry> {
+    if entry.items.len() <= max {
+        return None;
+    }
+    let mut reduzido = entry.clone();
+    reduzido.items.truncate(max);
+    reduzido.undo_granularidade = "raiz".into();
+    Some(reduzido)
+}
+
 /// Grava (append + poda) o manifesto no journal. **Best-effort**: falha de I/O
 /// do journal NUNCA quebra a op de arquivo — só loga.
 fn registrar_journal(app: &AppHandle, entry: &OperationJournalEntry) {
@@ -1278,6 +1331,16 @@ fn registrar_journal(app: &AppHandle, entry: &OperationJournalEntry) {
         log::warn!("journal: appDataDir indisponível, op {} não registrada", entry.op_id);
         return;
     };
+    // #1067 RB27 (teto): op gigante vira manifesto reduzido ANTES de serializar — nunca
+    // gravamos uma linha de centenas de MB. O corte é logado (warn), não silencioso.
+    let reduzido = reduzir_para_teto(entry, JOURNAL_ITENS_MAX);
+    let entry = reduzido.as_ref().unwrap_or(entry);
+    if reduzido.is_some() {
+        log::warn!(
+            "journal: op {} com muitos itens — manifesto TRUNCADO pra {} de origem (undo=raiz, parcial)",
+            entry.op_id, JOURNAL_ITENS_MAX
+        );
+    }
     let json = match serde_json::to_string(entry) {
         Ok(j) => j,
         Err(e) => {
@@ -1289,16 +1352,49 @@ fn registrar_journal(app: &AppHandle, entry: &OperationJournalEntry) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let mut linhas: Vec<String> = std::fs::read_to_string(&path)
-        .map(|s| s.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect())
-        .unwrap_or_default();
-    linhas.push(json);
-    let linhas = podar_journal(linhas, JOURNAL_MAX);
-    let conteudo = linhas.join("\n") + "\n";
-    if let Err(e) = std::fs::write(&path, conteudo) {
-        log::error!("journal: gravação falhou ({}): {e}", path.display());
+    // #1067 RB27 (append): a reescrita do arquivo inteiro é o que trava com manifestos
+    // grandes. Enquanto não precisa PODAR (< JOURNAL_MAX linhas após o push), fazemos
+    // append real da nova linha — sem tocar no que já está lá. Só caímos no read-all +
+    // rewrite quando o journal atingiu o teto de ops e precisa dropar as mais velhas.
+    // Invariante mantida pelos dois caminhos: cada linha termina em "\n" (o append
+    // depende disso pra não colar duas ops na mesma linha).
+    let n_atual = contar_linhas_journal(&path);
+    if precisa_reescrever(n_atual, JOURNAL_MAX) {
+        let mut linhas: Vec<String> = std::fs::read_to_string(&path)
+            .map(|s| s.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect())
+            .unwrap_or_default();
+        linhas.push(json);
+        let linhas = podar_journal(linhas, JOURNAL_MAX);
+        let conteudo = linhas.join("\n") + "\n";
+        if let Err(e) = std::fs::write(&path, conteudo) {
+            log::error!("journal: gravação (poda) falhou ({}): {e}", path.display());
+        }
+    } else {
+        match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(mut f) => {
+                use std::io::Write;
+                if let Err(e) = writeln!(f, "{json}") {
+                    log::error!("journal: append falhou ({}): {e}", path.display());
+                }
+            }
+            Err(e) => log::error!("journal: abertura p/ append falhou ({}): {e}", path.display()),
+        }
     }
     log::info!("journal: op {} registrada ({} item(s))", entry.op_id, entry.items.len());
+}
+
+/// #1067 RB27: conta as linhas não-vazias do journal SEM materializar todas de uma vez
+/// (BufReader linha-a-linha). Decide append-vs-rewrite; barato mesmo com o arquivo
+/// grande (só o custo de leitura — a economia real é não RE-ESCREVER o gigante).
+fn contar_linhas_journal(path: &Path) -> usize {
+    use std::io::BufRead;
+    let Ok(f) = std::fs::File::open(path) else {
+        return 0;
+    };
+    std::io::BufReader::new(f)
+        .lines()
+        .filter(|l| l.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false))
+        .count()
 }
 
 // ─── #899 U1: undo verificado (lê o journal, classifica, executa) ────────────
@@ -1318,7 +1414,7 @@ pub struct UndoItemPlan {
     /// `seguro` | `pulado` | `naoReversivel`.
     estado: String,
     /// Código do motivo (só pulado/naoReversível): `sumiu` | `modificado` |
-    /// `origemReocupada` | `sobrescrita`. O front mapeia pra copy i18n.
+    /// `origemReocupada` | `sobrescrita` | `stat_indisponivel`. O front mapeia pra copy i18n.
     motivo: Option<String>,
 }
 
@@ -1392,7 +1488,12 @@ fn remover_entrada_journal(app: &AppHandle, op_id: u64) {
     } else {
         restantes.join("\n") + "\n"
     };
-    let _ = std::fs::write(&path, conteudo);
+    // #1067 RB25: NÃO engolir a falha. Se a reescrita falha, a entrada da op desfeita
+    // PERMANECE no journal e pode ser desfeita de novo (undo em dobro = data-loss).
+    // A fn é `()` (pós-undo, best-effort), então logar em erro satisfaz o AC.
+    if let Err(e) = std::fs::write(&path, conteudo) {
+        log::error!("journal: remoção da entrada da op {op_id} falhou ({}): {e} — RISCO de undo duplicado", path.display());
+    }
 }
 
 /// Um arquivo do manifesto mudou desde a op? v1: size+mtime (hash é fallback
@@ -1414,6 +1515,12 @@ fn classificar_item(item: &JournalItem, mover: bool) -> (String, Option<String>)
     if item.overwritten {
         // sobrescrita: o original não volta (§3) → fora do plano.
         return ("naoReversivel".into(), Some("sobrescrita".into()));
+    }
+    // #1067 RB25: stat indisponível no fim da op → size/mtime gravados são 0 não-confiáveis.
+    // Precede `item_modificado` de propósito: sem isto, `len()=0 != disco` marcaria o item
+    // como "modificado" (motivo enganoso). Motivo próprio, item pulado (fail-closed).
+    if item.stat_indisponivel {
+        return ("pulado".into(), Some("stat_indisponivel".into()));
     }
     if item_modificado(item) {
         return ("pulado".into(), Some("modificado".into()));
@@ -2121,6 +2228,7 @@ fn executar_progresso(
                 resolucao: None,
                 items: vec![item],
                 trash_record_ids: Vec::new(),
+                undo_granularidade: String::new(),
             },
         );
         // rename mesmo-volume: 1 item movido (não varre pra contar os arquivos internos).
@@ -2185,12 +2293,28 @@ fn executar_progresso(
 
     if let Err(e) = resultado {
         log::error!("fs_{rotulo} ERRO op={op_id}: {e}");
-        let _ = remover(to); // limpa o parcial
+        // #1067 RB24: a limpeza do parcial não pode ser engolida. Se `remover` falha E o
+        // caminho ainda existe, é resíduo (árvore parcial no destino) — loga e reflete no
+        // erro terminal (o front vê o path). `remover` falhar por NotFound (nada criado)
+        // não é resíduo: `caminho_existe` filtra isso.
+        if let Err(re) = remover(to) {
+            if caminho_existe(to) {
+                log::error!("fs_{rotulo} op={op_id}: resíduo em {to} (limpeza falhou): {re}");
+                return Err(FsError::Io(format!("{e} — resíduo NÃO removido em: {to}")));
+            }
+        }
         return Err(e);
     }
     if flag.load(Ordering::Relaxed) {
         log::info!("fs_{rotulo} END op={op_id}: CANCELADO ({:.2}s)", t0.elapsed().as_secs_f64());
-        let _ = remover(to);
+        // #1067 RB24: mesmo no cancel a limpeza é verificada; resíduo vai pro log (o
+        // resultado terminal é `canceled`, sem campo de erro — não reclassifico cancel
+        // como erro; o log estruturado é o canal, conforme o AC).
+        if let Err(re) = remover(to) {
+            if caminho_existe(to) {
+                log::error!("fs_{rotulo} op={op_id}: CANCELADO com resíduo em {to} (limpeza falhou): {re}");
+            }
+        }
         return Ok(ResumoOp {
             canceled: true,
             files_total: plano.total_arquivos,
@@ -2230,6 +2354,56 @@ fn executar_progresso(
         files_total: plano.total_arquivos,
         files_done: ctx.arquivos_feitos.load(Ordering::Relaxed),
     })
+}
+
+/// #1067 RB24: remove os destinos do plano (parciais da cópia abortada/cancelada) SEM
+/// engolir falha. Devolve a lista de resíduos — caminhos que a limpeza não conseguiu
+/// remover E que ainda existem no disco (uma remoção que falha por NotFound, ou seja,
+/// nada foi criado, não é resíduo). Cada resíduo é logado; o chamador reflete no terminal.
+fn limpar_destinos_a_planejar(
+    a_planejar: &[(String, String)],
+    rotulo: &str,
+    op_id: u64,
+) -> Vec<String> {
+    let mut residuos = Vec::new();
+    for (_, dst) in a_planejar {
+        if let Err(re) = remover(dst) {
+            if caminho_existe(dst) {
+                log::error!("fs_{rotulo} op={op_id}: resíduo em {dst} (limpeza falhou): {re}");
+                residuos.push(dst.clone());
+            }
+        }
+    }
+    residuos
+}
+
+/// #1067 RB20: registra o manifesto PARCIAL dos renames mesmo-volume já efetivados
+/// (`status="partial"`, `kind="move"`), pros caminhos de erro/cancel do multi-move — sem
+/// isto, arquivos já movidos ficam no destino sem manifesto = undo indisponível. No-op
+/// se não houve rename. Recebe os itens por referência e clona (o caminho feliz ainda os usa).
+fn journalar_renomes_parciais(
+    app: &AppHandle,
+    op_id: u64,
+    started_at_ms: u64,
+    itens_renome: &[JournalItem],
+) {
+    if itens_renome.is_empty() {
+        return;
+    }
+    registrar_journal(
+        app,
+        &OperationJournalEntry {
+            op_id,
+            kind: "move".into(),
+            started_at_ms,
+            ended_at_ms: agora_ms(),
+            status: "partial".into(),
+            resolucao: None,
+            items: itens_renome.to_vec(),
+            trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
+        },
+    );
 }
 
 /// #850 (fatia B): copy/move de MÚLTIPLAS origens pra um destino, em UMA fase só.
@@ -2290,6 +2464,7 @@ fn executar_progresso_muitas(
                     resolucao: None,
                     items: itens_renome,
                     trash_record_ids: Vec::new(),
+                    undo_granularidade: String::new(),
                 },
             );
         }
@@ -2355,14 +2530,32 @@ fn executar_progresso_muitas(
     ticker.parar();
     if let Err(e) = resultado {
         log::error!("fs_{rotulo} ERRO op={op_id}: {e}");
-        for (_, dst) in &a_planejar {
-            let _ = remover(dst);
+        // #1067 RB24: limpa os destinos do plano capturando resíduo (não engole falha).
+        let residuos = limpar_destinos_a_planejar(&a_planejar, rotulo, op_id);
+        // #1067 RB20 (crítico): os renames mesmo-volume JÁ efetivados (itens_renome) ficam
+        // no destino. Sem journalá-los aqui, ficam sem manifesto → undo indisponível =
+        // estado irreversível pela UI (data-loss de reversibilidade). Registra um manifesto
+        // PARCIAL (mesmo op_id) cobrindo só os renames — a limpeza de `a_planejar` acima já
+        // desfez o que a cópia deixou pela metade. `clone` porque o caminho feliz ainda usa
+        // `itens_renome` no fim (sem use-after-move).
+        journalar_renomes_parciais(app, op_id, started_at_ms, &itens_renome);
+        if !residuos.is_empty() {
+            return Err(FsError::Io(format!("{e} — resíduo NÃO removido em: {}", residuos.join(", "))));
         }
         return Err(e);
     }
     if flag.load(Ordering::Relaxed) {
-        for (_, dst) in &a_planejar {
-            let _ = remover(dst);
+        // #1067 RB24: mesma captura de resíduo no cancel.
+        let residuos = limpar_destinos_a_planejar(&a_planejar, rotulo, op_id);
+        // #1067 RB20 (crítico): idem ao caminho de erro — renames efetivados viram
+        // manifesto parcial pra continuarem desfazíveis. O resultado terminal é `canceled`
+        // (sem campo de erro); resíduo vai pro log estruturado (não reclassifico cancel→erro).
+        journalar_renomes_parciais(app, op_id, started_at_ms, &itens_renome);
+        if !residuos.is_empty() {
+            log::error!(
+                "fs_{rotulo} op={op_id}: CANCELADO com {} resíduo(s) não removido(s): {}",
+                residuos.len(), residuos.join(", ")
+            );
         }
         return Ok(ResumoOp {
             canceled: true,
@@ -4179,8 +4372,10 @@ mod tests {
                 mtime_at_end: 1734200004000,
                 hash_at_end: None,
                 hash_alg: None,
+                stat_indisponivel: false,
             }],
             trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
         };
         let json = serde_json::to_string(&e).unwrap();
         // camelCase no wire (casa com types.ts).
@@ -4256,6 +4451,7 @@ mod tests {
             resolucao: None,
             items: vec![it_seg, it_mod, it_ovr],
             trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
         };
         let plano = montar_plano_undo(&entry);
         assert_eq!(plano.seguros, 1);
@@ -4289,6 +4485,7 @@ mod tests {
                 journal_item(&origem.join("a.txt"), &destino.join("a.txt"), true),
             ],
             trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
         };
         let rep = executar_undo(&entry);
         assert_eq!(rep.executados, 1, "o arquivo voltou pra origem");
@@ -4330,6 +4527,7 @@ mod tests {
                 journal_item(&b, &b, false),              // arquivo criado
             ],
             trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
         };
         let rep = executar_undo(&entry);
         assert_eq!(rep.executados, 2, "os 2 arquivos criados foram desfeitos (Lixeira)");
@@ -4377,6 +4575,7 @@ mod tests {
                 journal_item(&morto, &morto, false),
             ],
             trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
         };
         // Remoção POR FORA (fora do controle do app) ANTES do undo rodar.
         std::fs::remove_file(&morto).unwrap();
@@ -4386,6 +4585,135 @@ mod tests {
         assert_eq!(rep.pulados, 1, "alvo removido por fora vira 'pulado' (sumiu), não erro");
         assert!(rep.erros.is_empty(), "alvo já sumido é no-op idempotente, não erro");
         assert!(!vivo.exists(), "vivo.txt foi pra Lixeira");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // --- #1067: hardening do undo/journal (data-loss) ---
+
+    #[test]
+    fn rb25_journal_item_marca_stat_indisponivel_quando_to_some() {
+        // #1067 RB25(b): stat do `to` inexistente → flag ligada + size/mtime no fallback 0
+        // (não são confiáveis; o undo deve pular por motivo próprio, não por "modificado").
+        let base = dir_temp("journal-stat-none");
+        let inexistente = base.join("nao-existe.txt");
+        let it = journal_item(&inexistente, &inexistente, false);
+        assert!(it.stat_indisponivel, "to inexistente → stat indisponível");
+        assert_eq!(it.size_at_end, 0);
+        assert_eq!(it.mtime_at_end, 0);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn rb25_classificar_stat_indisponivel_pula_com_motivo_proprio() {
+        // #1067 RB25(b): item com stat falho no END NÃO pode virar "modificado". Precisa
+        // classificar "pulado"/"stat_indisponivel" — motivo próprio, jamais confundido.
+        let base = dir_temp("undo-stat-indisp");
+        let f = base.join("z.txt");
+        std::fs::write(&f, vec![4u8; 16]).unwrap();
+        let mut it = journal_item(&f, &f, false); // to existe → seria "seguro"
+        it.stat_indisponivel = true; // mas o stat falhou no fim da op
+        let (estado, motivo) = classificar_item(&it, false);
+        assert_eq!(estado, "pulado");
+        assert_eq!(motivo.as_deref(), Some("stat_indisponivel"));
+        assert_ne!(motivo.as_deref(), Some("modificado"), "nunca confundir stat falho com modificação");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn rb27_precisa_reescrever_apenas_ao_atingir_o_teto() {
+        // #1067 RB27: append barato enquanto cabe (< JOURNAL_MAX após o push); só reescreve
+        // (podar) quando o push passaria do teto de ops. Predicado puro do append-vs-rewrite.
+        assert!(!precisa_reescrever(0, JOURNAL_MAX));
+        assert!(!precisa_reescrever(JOURNAL_MAX - 1, JOURNAL_MAX), "push → exatamente MAX ainda cabe");
+        assert!(precisa_reescrever(JOURNAL_MAX, JOURNAL_MAX), "push → MAX+1 precisa podar");
+        assert!(precisa_reescrever(JOURNAL_MAX + 5, JOURNAL_MAX));
+    }
+
+    #[test]
+    fn rb27_reduzir_para_teto_marca_raiz_e_corta() {
+        // #1067 RB27: manifesto acima do teto vira reduzido (undo_granularidade="raiz") com
+        // no máximo `max` itens; no/abaixo do teto não mexe (None = grava como está).
+        let base = dir_temp("teto");
+        let f = base.join("f.txt");
+        std::fs::write(&f, vec![1u8; 4]).unwrap();
+        let item = journal_item(&f, &f, false);
+        let mk = |n: usize| OperationJournalEntry {
+            op_id: 1,
+            kind: "copy".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "success".into(),
+            resolucao: None,
+            items: vec![item.clone(); n],
+            trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
+        };
+        assert!(reduzir_para_teto(&mk(3), 5).is_none(), "abaixo do teto não reduz");
+        assert!(reduzir_para_teto(&mk(5), 5).is_none(), "no teto exato não reduz");
+        let reduzido = reduzir_para_teto(&mk(9), 5).expect("acima do teto reduz");
+        assert_eq!(reduzido.items.len(), 5, "truncado pro teto");
+        assert_eq!(reduzido.undo_granularidade, "raiz", "corte marcado, nunca silencioso");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn rb20_undo_manifesto_parcial_de_move_reverte_os_renames() {
+        // #1067 RB20 (DoD): num multi-move cancelado, os renames mesmo-volume JÁ efetivados
+        // precisam virar manifesto `status="partial"` pra continuarem desfazíveis. Aqui
+        // reproduzimos o estado pós-cancel — 2 renames feitos + o manifesto parcial que o
+        // fix grava — e provamos que `executar_undo` volta cada `to`→`from`. Contraste: SEM
+        // esse manifesto (items vazio) não há o que desfazer = o buraco irreversível de antes.
+        let base = dir_temp("undo-parcial-cancel");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        let a_de = origem.join("a.txt");
+        let b_de = origem.join("b.txt");
+        std::fs::write(&a_de, vec![1u8; 10]).unwrap();
+        std::fs::write(&b_de, vec![2u8; 20]).unwrap();
+        let a_para = base.join("a.txt");
+        let b_para = base.join("b.txt");
+        // renames mesmo-volume efetivados ANTES do "cancel" (como no loop do multi-move).
+        mover(&a_de.to_string_lossy(), &a_para.to_string_lossy()).unwrap();
+        mover(&b_de.to_string_lossy(), &b_para.to_string_lossy()).unwrap();
+        assert!(a_para.exists() && b_para.exists());
+        assert!(!a_de.exists() && !b_de.exists());
+
+        // O manifesto PARCIAL que o fix grava nos caminhos de erro/cancel (RB20).
+        let itens_renome: Vec<JournalItem> =
+            vec![journal_item(&a_de, &a_para, true), journal_item(&b_de, &b_para, true)];
+        let entry = OperationJournalEntry {
+            op_id: 77,
+            kind: "move".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "partial".into(),
+            resolucao: None,
+            items: itens_renome,
+            trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
+        };
+        assert_eq!(entry.status, "partial", "renames de op abortada/cancelada = manifesto parcial");
+
+        let rep = executar_undo(&entry);
+        assert_eq!(rep.executados, 2, "os 2 renames foram revertidos");
+        assert!(rep.erros.is_empty());
+        assert!(a_de.exists() && b_de.exists(), "voltaram pra origem");
+        assert!(!a_para.exists() && !b_para.exists(), "saíram do destino");
+
+        // Sem manifesto, nada a desfazer — exatamente o estado irreversível que o RB20 fecha.
+        let sem_manifesto = OperationJournalEntry {
+            op_id: 78,
+            kind: "move".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "partial".into(),
+            resolucao: None,
+            items: Vec::new(),
+            trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
+        };
+        let rep_vazio = executar_undo(&sem_manifesto);
+        assert_eq!(rep_vazio.executados, 0, "sem manifesto não há reversão possível");
         std::fs::remove_dir_all(&base).ok();
     }
 
