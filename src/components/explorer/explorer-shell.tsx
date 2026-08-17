@@ -572,19 +572,29 @@ export function ExplorerShell({
     [executarMulti],
   );
 
-  const cancelarTransferencia = useCallback((opId: number) => {
-    void cancelarOp(opId).catch(() => {});
-  }, []);
+  const cancelarTransferencia = useCallback(
+    (opId: number) => {
+      // #1028 (FE7): ação destrutiva explícita não pode falhar em silêncio.
+      void cancelarOp(opId).catch(() => toast.error(t.arquivos.erroCancelarOp));
+    },
+    [t.arquivos.erroCancelarOp],
+  );
 
   // #898 (fatia 1): pausa/retoma uma op de copy/move em curso. O backend trava/
   // continua os workers e o stream de progresso passa a reportar `status: "paused"`
   // (op fica ATIVA, progresso congelado — não é terminal, ver `onProgressoOp`).
-  const pausarTransferencia = useCallback((opId: number) => {
-    void pausarOp(opId).catch(() => {});
-  }, []);
-  const resumirTransferencia = useCallback((opId: number) => {
-    void resumirOp(opId).catch(() => {});
-  }, []);
+  const pausarTransferencia = useCallback(
+    (opId: number) => {
+      void pausarOp(opId).catch(() => toast.error(t.arquivos.erroPausarOp));
+    },
+    [t.arquivos.erroPausarOp],
+  );
+  const resumirTransferencia = useCallback(
+    (opId: number) => {
+      void resumirOp(opId).catch(() => toast.error(t.arquivos.erroResumirOp));
+    },
+    [t.arquivos.erroResumirOp],
+  );
 
   // #875/#898: dispensa UMA op terminal do Status Center (guard: nunca uma op
   // ATIVA — "inProgress" OU "paused" — essa é cancelável/retomável, não

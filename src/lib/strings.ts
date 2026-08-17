@@ -1721,6 +1721,11 @@ const pt = {
     tipoPasta: "Pasta",
     tipoArquivo: "Arquivo",
     erroLer: "Não foi possível ler esta pasta",
+    // #1028 (FE7): ações explícitas do usuário não falham em silêncio.
+    erroCancelarOp: "Não foi possível cancelar a transferência.",
+    erroPausarOp: "Não foi possível pausar a transferência.",
+    erroResumirOp: "Não foi possível retomar a transferência.",
+    erroAbrirArquivo: "Não foi possível abrir o arquivo.",
     // #681 — filtro in-folder, ocultos, long paths, inspector
     filtrar: "Filtrar nesta pasta",
     limparFiltro: "Limpar filtro",
@@ -3981,6 +3986,11 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     tipoPasta: "Folder",
     tipoArquivo: "File",
     erroLer: "Couldn't read this folder",
+    // #1028 (FE7): explicit user actions never fail silently.
+    erroCancelarOp: "Couldn't cancel the transfer.",
+    erroPausarOp: "Couldn't pause the transfer.",
+    erroResumirOp: "Couldn't resume the transfer.",
+    erroAbrirArquivo: "Couldn't open the file.",
     // #681 — in-folder filter, hidden toggle, long paths, inspector
     filtrar: "Filter in this folder",
     limparFiltro: "Clear filter",

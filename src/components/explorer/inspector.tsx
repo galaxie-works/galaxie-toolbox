@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Eye, Info, SquareArrowOutUpRight } from "lucide-react";
 
+import { toast } from "sonner";
+
 import { cn } from "@/lib/utils";
 import { formatBytes } from "@/lib/utils";
 import { abrirCaminhoFs } from "@/lib/api";
@@ -57,7 +59,10 @@ export function InspectorPane({ itens }: { itens: FsEntry[] }) {
             }}
             acaoPrimaria={{
               onClick: () => {
-                void abrirCaminhoFs(arquivoUnico.path).catch(() => {});
+                // #1028 (FE7): abrir falhou → avisa, não fica um botão morto.
+                void abrirCaminhoFs(arquivoUnico.path).catch(() =>
+                  toast.error(t.arquivos.erroAbrirArquivo),
+                );
               },
               rotulo: t.arquivos.abrir,
               Icone: SquareArrowOutUpRight,
