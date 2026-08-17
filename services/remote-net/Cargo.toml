@@ -56,7 +56,9 @@ required-features = ["authority"]
 windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Security_Authorization",     # ConvertStringSecurityDescriptor…W + SDDL_REVISION (#1054)
   "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",         # CreateFileW + CREATE_NEW/FILE_* (blob DACL, #1054)
   "Win32_System_Memory",
 ] }
 
