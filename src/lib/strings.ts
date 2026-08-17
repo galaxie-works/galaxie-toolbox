@@ -645,6 +645,8 @@ const pt = {
     remote: "Remoto",
     // #721 (SH3): grupo dos apps fixados no rail.
     pinados: "Fixados",
+    // #1109: tooltip da marca GALAXIE na title bar (clique = nova aba do Navigator).
+    abrirNavegador: "Nova aba do Navigator",
   },
 
   // #720 (SH2): command com catálogo de apps categorizado (~1795).
@@ -2938,6 +2940,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     remote: "Remote",
     // #721 (SH3): pinned-apps group on the rail.
     pinados: "Pinned",
+    // #1109: GALAXIE brand tooltip in the title bar (click = new Navigator tab).
+    abrirNavegador: "New Navigator tab",
   },
 
   // #720 (SH2): command with a categorized app catalog (~1795).
