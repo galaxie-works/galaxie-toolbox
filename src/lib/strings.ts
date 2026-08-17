@@ -1670,6 +1670,8 @@ const pt = {
     // #869 — itens do menu de contexto (fixar/desafixar pasta no Acesso rápido)
     fixarAcessoRapido: "Fixar no Acesso rápido",
     desafixarAcessoRapido: "Desafixar do Acesso rápido",
+    // #991 — rótulo do chevron de expandir/colapsar da árvore (Windows Explorer)
+    expandirColapsar: "Expandir ou colapsar",
     carregando: "Carregando…",
     documentos: "Documentos",
     downloads: "Downloads",
@@ -3929,6 +3931,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #869 — context menu items (pin/unpin a folder to Quick access)
     fixarAcessoRapido: "Pin to Quick access",
     desafixarAcessoRapido: "Unpin from Quick access",
+    // #991 — tree expand/collapse chevron label (Windows Explorer)
+    expandirColapsar: "Expand or collapse",
     carregando: "Loading…",
     documentos: "Documents",
     downloads: "Downloads",
