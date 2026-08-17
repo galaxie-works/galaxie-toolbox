@@ -126,6 +126,41 @@ test("#1060: todo shortcutBridge(id) usado nos tooltips do control-room existe n
   );
 });
 
+test("#1065: a busca universal (alvo do atalho '/') está MONTADA no control-room — não órfã (regressão do #876)", () => {
+  // O #876 orfanou o UniversalSearch ao tirar o mount da title bar: o handler do
+  // "/" continuava focando "[data-universal-search-input]", mas nada renderizava
+  // esse input → atalho morto. Este guard trava o re-orfanamento cruzando três
+  // fatos: (1) o handler '/' mira o seletor; (2) o UniversalSearch está montado
+  // como JSX no control-room; (3) o UniversalSearch renderiza aquele seletor.
+  const controlRoom = readFileSync(CONTROL_ROOM, "utf8");
+  const handler = fonteAoTeclar();
+
+  // (1) o atalho '/' foca o input da busca universal.
+  assert.match(
+    handler,
+    /"\[data-universal-search-input\]"/,
+    'o handler do "/" precisa focar "[data-universal-search-input]"',
+  );
+
+  // (2) o control-room MONTA o componente (o mount que o #876 removeu).
+  assert.match(
+    controlRoom,
+    /<UniversalSearch[\s/>]/,
+    "o control-room precisa MONTAR <UniversalSearch …/> (senão o atalho '/' fica morto — regressão do #876)",
+  );
+
+  // (3) o componente da busca de fato expõe o seletor que o atalho mira.
+  const universalSearch = readFileSync(
+    new URL("./universal-search.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    universalSearch,
+    /data-universal-search-input/,
+    "o UniversalSearch precisa renderizar [data-universal-search-input] (alvo do atalho '/')",
+  );
+});
+
 test("#1060: ids do catálogo do Bridge são únicos", () => {
   const vistos = new Set<string>();
   const dupes: string[] = [];

@@ -142,6 +142,7 @@ import { NovaMensagemModal } from "@/components/compose/nova-mensagem-modal";
 import { AgendaView } from "@/components/agenda/agenda-view";
 import { AgendaCalendarSelector } from "@/components/agenda/agenda-calendar-selector";
 import { PeopleView } from "@/components/people/people-view";
+import { UniversalSearch } from "@/components/universal-search";
 import { PersonHoverCard } from "@/components/people/person-hover-card";
 import * as AnimatedButton from "@/components/morphin/animated-border-button";
 import SuccessIcon from "@/components/ui/icons/success";
@@ -7517,7 +7518,21 @@ export function ControlRoomScreen({
           t={t}
         />
 
-        {bridgeView === "people" ? (
+        {/* #1065: busca do Bridge REMONTADA no toolbar do conteúdo (OPÇÃO A).
+            O #876 orfanou o UniversalSearch ao tirar o mount da title bar; aqui
+            ele volta como topo da coluna de conteúdo, ao lado do FolderSidebar.
+            O atalho "/" (que já mira [data-universal-search-input]) e o Esc
+            round-trip passam a funcionar. A coluna é flex-col/flex-1 e o
+            view-switch abaixo mantém min-h-0/flex-1 pra preencher a altura. */}
+        <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-hidden">
+          <div className="shrink-0">
+            <UniversalSearch
+              tela="control-room"
+              screenLabel={t.nav.controlRoom}
+              bridgeView={bridgeView}
+            />
+          </div>
+          {bridgeView === "people" ? (
           <PeopleView
             userEmail={user.email}
             onGrantAccess={onGrantPeopleAccess}
@@ -7602,6 +7617,7 @@ export function ControlRoomScreen({
           </ResizablePanel>
           </ResizablePanelGroup>
         )}
+        </div>
       </div>
 
       <EventoDialog userEmail={user.email} />
