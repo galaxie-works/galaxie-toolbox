@@ -29,13 +29,13 @@
 |---|---|---|
 | **ÉPICO** | Issue com **`ÉPICO`** na descrição. Grande demais pra 1 PR. | **PO** (Wagner; ou Polaris via skill `agile-product-owner`) |
 | **US** (User Story) | O épico **fatiado em issues-filhas** (sub-issues), **cada uma com história + DoD + critérios de aceite (Given/When/Then)**. | **PO** |
-| **TASK** | As **PRs**. Cada PR **`Closes` uma US**. | **Devs** |
+| **TASK** | As **PRs**. Cada PR aponta pra **uma US**: `Closes` quando a entrega **fecha** a US; `Ref` quando é **fatia** de uma US que continua aberta (ver §4.2 e §5). | **Devs** |
 
 **A US TEM que existir ANTES da task/PR.** A história diz *o que desenvolver pra resolver o quê*, com AC/DoD. Sem ela, a PR resolve o que o dev bem entender (sem DoD/AC), a gente fica refém das entregas e o **release notes** vira caos (PR sem issue; épico com 0 US e mil PRs).
 
 **Regras:**
 - Antes de trabalhar uma fatia, **existe a US-filha** (sub-issue do épico) com história+AC+DoD. O Polaris escreve (via `agile-product-owner`) **OU** o dev escreve quando tem autonomia — mas **tem que existir**.
-- **Proibido PR de fatia sem US.** O Polaris **barra na integração** um PR que não fecha uma US e cobra a criação da US antes.
+- **Proibido PR sem US.** O Polaris **barra na integração** um PR que não referencia US alguma (nem `Closes`, nem `Ref`) e cobra a criação da US antes. **Fatia com `Ref` é legítima** — o que é proibido é PR órfã.
 - US pequena o suficiente = 1 PR resolve. US grande = vira épico e fatia de novo.
 
 ---
@@ -129,8 +129,13 @@ Cada coluna tem **um significado e um dono do próximo passo**. Esta é a fonte 
 
 ## 5. PR e integração
 
-- **Todo PR traz `Closes #<US>`** no corpo (1ª linha). O **default branch é `feat/bridge-email-client`**, então `Closes` **preenche a caixa Development** da issue **e auto-fecha** a US no merge.
-- **Exceção `Ref` (merge ≠ done):** se o item precisa de **gate de runtime/QA DEPOIS de integrar** (ex.: preview no empacotado, risco tipo #873), o PR usa **`Ref #NNN`, NÃO `Closes`** — senão a issue fecha antes da prova. Design/spec de issue aprovada também vai com `Ref`.
+- **Todo PR referencia uma US na 1ª linha do corpo** — com `Closes` **ou** `Ref`. PR órfã (sem nenhum dos dois) é barrada na integração (§2).
+- **`Closes #<US>` — a entrega FECHA a US.** O **default branch é `feat/bridge-email-client`**, então `Closes` **preenche a caixa Development** da issue **e auto-fecha** a US no merge.
+- **`Ref #<US>` — a US continua ABERTA depois do merge.** Três casos:
+  1. **Fatia** de uma US multi-parte (o mais comum: #1129 L1, #1108 srflx, #1019 S1);
+  2. **Gate de runtime/QA depois de integrar** (ex.: preview no empacotado, risco tipo #873) — senão a issue fecha antes da prova;
+  3. **Design/spec** de issue aprovada (o doc integra; o *done* é quando a implementação landa).
+- **Consequência no board (§4.2):** `Closes` move o card; `Ref` **não move**.
 - **Devs abrem PR; NÃO mergeiam.** **O Polaris integra** por **merge local** (worktree off `feat`, `git merge --no-ff`, gate, `push HEAD:feat`, move o card, limpa a worktree). Nunca `gh pr merge`.
 - **Gate de integração (Polaris):** `pnpm exec tsc -b` (exit 0) · `pnpm test` (`node --test`) · **`cargo check` SEM env OpenSSL** quando mexe em Rust (pega str0m/openssl vazando). CRLF: `core.autocrlf=true` na worktree.
 
@@ -215,4 +220,8 @@ Ao cortar release: bump de versão nos **4** lugares (`package.json`, `src-tauri
 
 ## 8. Protocolo de entrega (todos)
 
-Ao entregar: **comenta a issue** + **posta na #133** + **move o card**. Nunca idle silencioso; raia zerada = pinga o Polaris ("livre, próximo?"). Conferir-o-existente **antes** de construir/recomendar (ler o código real, citar arquivo:linha).
+Ao entregar: **comenta a issue** + **posta na #133** + **move o card conforme §4.2**:
+- PR com **`Closes`** (fecha a US) → move o card pra **`In review`** (fila de integração do Polaris).
+- PR com **`Ref`** (fatia; a US segue aberta) → **comenta e NÃO move o card** — ele já está em `In progress` e continua lá até a última fatia.
+
+Nunca idle silencioso; raia zerada = pinga o Polaris ("livre, próximo?"). Conferir-o-existente **antes** de construir/recomendar (ler o código real, citar arquivo:linha).
