@@ -191,9 +191,9 @@ impl Transport {
     /// Adiciona um candidato ICE LOCAL host montado pelo gathering. O erro NOMEIA o
     /// IP/tipo tentado (`host <addr>`) em vez de só "falha no transporte" — #1108: o
     /// operador precisa saber QUAL IP o str0m rejeitou (ex.: `0.0.0.0` unspecified).
-    // #1108 Parte 2 (Confucius): srflx/relay via STUN/TURN entram aqui —
-    // `Candidate::server_reflexive(addr, base, proto)` e `Candidate::relayed(addr,
-    // proto)` (ambos existem no str0m 0.6). NÃO implementar nesta task (só host).
+    // #1108 Parte 2 (Confucius): srflx FEITO abaixo (`candidato_srflx`). O relay/TURN
+    // via `Candidate::relayed(addr, proto)` segue como follow-up BLOQUEADO
+    // (credencial + coturn + #1049) — não implementar aqui.
     pub fn candidato_local(&mut self, addr: SocketAddr) -> Result<(), TransportError> {
         let c = Candidate::host(addr, Protocol::Udp)
             .map_err(|e| TransportError::Candidato(format!("host {addr}: {e}")))?;
@@ -207,6 +207,35 @@ impl Transport {
         Candidate::host(addr, Protocol::Udp)
             .map(|candidate| candidate.to_sdp_string())
             .map_err(|e| TransportError::Candidato(format!("host {addr}: {e}")))
+    }
+
+    /// #1108 Parte 2 (Confucius): adiciona um candidato ICE LOCAL srflx
+    /// (server-reflexive) descoberto pelo app via STUN Binding. `mapeado` é o
+    /// IP:porta público que o STUN server enxergou; `base` é o endereço local real
+    /// (IP de interface + porta do bind) de onde o Binding saiu — o str0m usa a base
+    /// pra priorizar e casar o par. O str0m é sans-I/O e NÃO faz esse gathering; o
+    /// app resolve o `mapeado` (via `stun::parse_xor_mapped_address`) e chama aqui.
+    /// O erro NOMEIA `srflx <mapeado> (base <base>)` no mesmo estilo do host (#1108).
+    pub fn candidato_srflx(
+        &mut self,
+        mapeado: SocketAddr,
+        base: SocketAddr,
+    ) -> Result<(), TransportError> {
+        let c = Candidate::server_reflexive(mapeado, base, Protocol::Udp)
+            .map_err(|e| TransportError::Candidato(format!("srflx {mapeado} (base {base}): {e}")))?;
+        self.rtc.add_local_candidate(c);
+        Ok(())
+    }
+
+    /// Forma SDP do candidato srflx pro trickle-ICE do app (espelha
+    /// `candidato_local_sdp`). Erro nomeia `srflx <mapeado> (base <base>)`. #1108.
+    pub fn candidato_srflx_sdp(
+        mapeado: SocketAddr,
+        base: SocketAddr,
+    ) -> Result<String, TransportError> {
+        Candidate::server_reflexive(mapeado, base, Protocol::Udp)
+            .map(|candidate| candidate.to_sdp_string())
+            .map_err(|e| TransportError::Candidato(format!("srflx {mapeado} (base {base}): {e}")))
     }
 
     /// Adiciona um candidato ICE REMOTO recebido via signaling.
