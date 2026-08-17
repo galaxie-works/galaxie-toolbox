@@ -476,6 +476,9 @@ export function SignaturesPanel() {
                 ? t.settings.bridgeAssinaturaEditarTitulo
                 : t.settings.bridgeAssinaturaNovaTitulo}
             </SheetTitle>
+            <SheetDescription className="sr-only">
+              {t.settings.bridgeAssinaturaDescricao}
+            </SheetDescription>
           </SheetHeader>
 
           {edicao && (

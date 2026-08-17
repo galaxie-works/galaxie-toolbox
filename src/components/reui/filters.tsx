@@ -15,6 +15,7 @@ import {
 import { cva } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
+import { textoUi } from "@/lib/idioma-core"
 import { Button } from "@/components/ui/button"
 import {
   ButtonGroup,
@@ -428,6 +429,7 @@ function FilterRemoveButton({
   return (
     <Button
       variant="outline"
+      aria-label={textoUi("removerFiltro")}
       size={
         context.size === "sm"
           ? "icon-sm"

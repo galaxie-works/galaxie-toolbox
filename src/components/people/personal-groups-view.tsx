@@ -28,6 +28,7 @@ import { Spinner } from "@/components/ui/spinner";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -487,6 +488,9 @@ export function PersonalGroupsView({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t.controlRoom.createFolder}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {t.controlRoom.createFolderDescricao}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             <Label htmlFor="pg-nome-novo">{t.controlRoom.folderName}</Label>
@@ -518,6 +522,9 @@ export function PersonalGroupsView({
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t.controlRoom.renameFolder}</DialogTitle>
+            <DialogDescription className="sr-only">
+              {t.controlRoom.renameFolderDescricao}
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
             <Label htmlFor="pg-nome-editar">{t.controlRoom.folderName}</Label>

@@ -49,6 +49,7 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetFooter,
   SheetHeader,
   SheetTitle,
@@ -3976,7 +3977,7 @@ function MessageList({
         <div
           ref={listaRef}
           tabIndex={0}
-          className="min-h-0 flex-1 overflow-y-auto scrollbar-fina outline-none"
+          className="min-h-0 flex-1 overflow-y-auto scrollbar-fina outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
           onScroll={(e) => {
             // Pré-carga antecipada: ao passar de 90% da lista já busca a próxima
             // página, pra sempre haver buffer à frente (não espera bater no fim).
@@ -5535,6 +5536,9 @@ const MessageDetail = forwardRef<
                   ? t.controlRoom.responderTodos
                   : t.controlRoom.responder}
             </SheetTitle>
+            <SheetDescription className="sr-only">
+              {t.controlRoom.composeRespostaDescricao}
+            </SheetDescription>
           </SheetHeader>
           {/* Composer (editável) em cima + a mensagem original como referência
               read-only embaixo, como todo mailclient. O original NÃO faz parte
@@ -5830,6 +5834,9 @@ function EventoDialog({ userEmail }: { userEmail?: string | null }) {
           <>
             <SheetHeader className="border-b px-4 py-3">
               <SheetTitle className="pr-6 text-left">{det.assunto}</SheetTitle>
+              <SheetDescription className="sr-only">
+                {t.controlRoom.agendaEventoDetalheDescricao}
+              </SheetDescription>
               {recorrente && (
                 <Badge
                   variant="secondary"
