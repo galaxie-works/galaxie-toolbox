@@ -8,16 +8,14 @@ import {
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
-import { preencher, useIdioma } from "@/lib/idioma";
+import { useIdioma } from "@/lib/idioma";
 import { usePersistedState } from "@/lib/persist";
 import {
   abrirCaminhoFs,
   buscarArquivos,
-  cancelarOp,
   checarConflitos,
   copiarComProgresso,
   copiarVariasComProgresso,
-  desfazerOp,
   dirsConhecidos,
   listarCloudLocations,
   listarDir,
@@ -25,10 +23,6 @@ import {
   moverComProgresso,
   moverVariasComProgresso,
   observarPasta,
-  onProgressoOp,
-  pausarOp,
-  previewUndo,
-  resumirOp,
   type BuscaHandle,
 } from "@/lib/api";
 import type {
@@ -36,7 +30,6 @@ import type {
   DriveInfo,
   FsConflict,
   FsEntry,
-  UndoPlan,
 } from "@/lib/types";
 import { DrivesView } from "./drives-view";
 import { ArvoreArquivos } from "./arvore";
@@ -44,13 +37,12 @@ import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
 import { ResultadosBusca } from "./resultados-busca";
 import { InspectorPane } from "./inspector";
-import { type OpAtiva } from "./progresso-panel";
-// #898 (fatia 1): o Status Center É a activity-dropdown — substitui o
-// `ProgressoPanel`, alimentada pelo MESMO modelo `ops`.
-import { ActivityDropdown } from "./activity-dropdown";
+// #987: a máquina de `ops` (assinatura de progresso + handlers) subiu pro
+// `useOpsAtivas`, montado no App (sino na title bar). Aqui só disparamos as
+// transferências e registramos tipo/destino por opId ao iniciá-las.
+import { registrarOp } from "./use-ops-ativas";
 import { ConflitoDialog } from "./conflito-dialog";
-import { UndoPreviewDialog } from "./undo-preview-dialog";
-import { calcVelocidade, planejarTransferencia, type ResolucaoConflito } from "./operacao";
+import { planejarTransferencia, type ResolucaoConflito } from "./operacao";
 import { CAMINHO_ESTE_PC, nomeBase, pathPai } from "./caminho";
 import type { Clipboard, OperacaoClipboard } from "./menu-arquivo";
 import {
@@ -61,11 +53,6 @@ import {
   removerPin,
   type PinAcessoRapido,
 } from "./quick-access";
-
-/** #967: estado inicial "nada desfeito". Constante de módulo — um só set vazio
- *  readonly compartilhado (evita re-alocar por render e o gotcha de genérico
- *  inline do gate #861). */
-const DESFEITOS_VAZIO: ReadonlySet<number> = new Set();
 
 // --- Estado de navegação (histórico back/forward + caminho atual) ----------
 // Local ao shell (useReducer): é estado de UI efêmero, não tenant-scoped — não
@@ -202,29 +189,12 @@ export function ExplorerShell({
   // compartilhem o MESMO estado.
   const [editandoCaminho, setEditandoCaminho] = useState(false);
 
-  // #724: ops de copy/move ativas (rastreadas por opId) + diálogo de conflito +
-  // nonce do watcher (bump → ContentPane recarrega a MESMA pasta).
-  const [ops, setOps] = useState<OpAtiva[]>([]);
+  // #724: diálogo de conflito + nonce do watcher (bump → ContentPane recarrega a
+  // MESMA pasta). #987: a fila de `ops` + a assinatura de progresso mudaram-se
+  // pro `useOpsAtivas` (montado no App); aqui só disparamos as transferências.
   const [conflito, setConflito] = useState<ConflitoPendente | null>(null);
   const [watcherNonce, setWatcherNonce] = useState(0);
-  // #967: preview de undo em aberto (opId + plano; plan=null = fora da janela do
-  // journal) + opIds já desfeitos (marca a linha como "Desfeito" na dropdown).
-  const [undoPreview, setUndoPreview] = useState<{
-    opId: number;
-    plan: UndoPlan | null;
-  } | null>(null);
-  const [desfeitos, setDesfeitos] = useState<ReadonlySet<number>>(DESFEITOS_VAZIO);
-
-  // Refs de bookkeeping das ops: último byte/tempo (velocidade), tipo por opId
-  // (o payload de progresso não carrega copy/move), e dedupe do evento terminal.
-  const ultimoRef = useRef<Map<number, { bytes: number; ms: number }>>(new Map());
-  const tiposRef = useRef<Map<number, "copy" | "move">>(new Map());
-  // #898 fatia 2: basename do destino por opId (o payload de progresso não o
-  // carrega) → alimenta o resumo terminal ("→ Downloads") na activity-dropdown.
-  const destinosRef = useRef<Map<number, string>>(new Map());
-  const terminadosRef = useRef<Set<number>>(new Set());
-  // t via ref → a assinatura de progresso é registrada UMA vez (sem re-subscribe
-  // a cada troca de idioma), mas os toasts saem no idioma atual.
+  // t via ref → os toasts dos produtores saem no idioma atual sem re-render.
   const tRef = useRef(t);
   tRef.current = t;
 
@@ -266,87 +236,6 @@ export function ExplorerShell({
     const caminho = p === CAMINHO_ESTE_PC ? t.arquivos.drives : p;
     onLocalChangeRef.current?.({ rotulo, caminho });
   }, [nav.currentPath, t.arquivos.drives]);
-
-  // #724: assina o progresso das ops UMA vez (no mount). Deriva a velocidade
-  // entre eventos, remove a op no evento terminal (done/cancelado/erro) e mostra
-  // um toast único por op. A unsub é SEMPRE chamada (inclui a corrida de resolver
-  // depois do unmount: se `vivo` já é falso quando a promise resolve, desliga na
-  // hora). No mock (fora do Tauri) o subscribe é no-op e nenhum evento dispara.
-  useEffect(() => {
-    let vivo = true;
-    let unsub: () => void = () => {};
-    void onProgressoOp((p) => {
-      const arquivos = tRef.current.arquivos;
-      const agora = Date.now();
-      const ult = ultimoRef.current.get(p.opId);
-      const velocidade = ult
-        ? calcVelocidade(p.processedBytes, ult.bytes, agora - ult.ms)
-        : 0;
-      ultimoRef.current.set(p.opId, { bytes: p.processedBytes, ms: agora });
-
-      const terminal = p.done || p.canceled || p.error != null;
-      if (terminal) {
-        if (!terminadosRef.current.has(p.opId)) {
-          terminadosRef.current.add(p.opId);
-          if (p.error) {
-            toast.error(arquivos.opFalhou, { description: p.error.message });
-          } else if (p.canceled) {
-            toast.info(arquivos.opCancelada);
-          } else {
-            toast.success(arquivos.opConcluida);
-          }
-        }
-        // #875: RETÉM a op na fila marcada como terminal (não remove mais) — vira
-        // card revisável no Status Center. Erro fica vermelho até dispensar; a
-        // limpeza dos refs (tiposRef/terminadosRef) mora em dismissOp/clearCompleted.
-        // Sem mais progresso → velocidade 0; só o ultimoRef (delta de bytes) sai.
-        ultimoRef.current.delete(p.opId);
-        setOps((prev) => {
-          const tipo =
-            tiposRef.current.get(p.opId) ??
-            prev.find((o) => o.opId === p.opId)?.tipo ??
-            "copy";
-          const novo: OpAtiva = {
-            opId: p.opId,
-            tipo,
-            progresso: p,
-            velocidade: 0,
-            destino: destinosRef.current.get(p.opId),
-          };
-          return prev.some((o) => o.opId === p.opId)
-            ? prev.map((o) => (o.opId === p.opId ? novo : o))
-            : [...prev, novo];
-        });
-        return;
-      }
-
-      setOps((prev) => {
-        const tipo = tiposRef.current.get(p.opId) ?? "copy";
-        const novo: OpAtiva = {
-          opId: p.opId,
-          tipo,
-          progresso: p,
-          velocidade,
-          destino: destinosRef.current.get(p.opId),
-        };
-        return prev.some((o) => o.opId === p.opId)
-          ? prev.map((o) => (o.opId === p.opId ? novo : o))
-          : [...prev, novo];
-      });
-    })
-      .then((fn) => {
-        if (!vivo) {
-          fn();
-          return;
-        }
-        unsub = fn;
-      })
-      .catch(() => {});
-    return () => {
-      vivo = false;
-      unsub();
-    };
-  }, []);
 
   // #724: watcher de disco na pasta atual (live refresh). CRÍTICO — a `parar` que
   // a promise resolve DEVE ser chamada ao trocar de pasta / desmontar, e a
@@ -511,8 +400,7 @@ export function ExplorerShell({
             op === "copy"
               ? await copiarComProgresso(item.from, item.to)
               : await moverComProgresso(item.from, item.to);
-          tiposRef.current.set(opId, op === "copy" ? "copy" : "move");
-          destinosRef.current.set(opId, nomeBase(destDir));
+          registrarOp(opId, op === "copy" ? "copy" : "move", nomeBase(destDir));
         } catch (e) {
           toast.error(tRef.current.arquivos.erroOperacao, {
             description: String(e),
@@ -536,8 +424,7 @@ export function ExplorerShell({
           op === "copy"
             ? await copiarVariasComProgresso(sources, destDir)
             : await moverVariasComProgresso(sources, destDir);
-        tiposRef.current.set(opId, op === "copy" ? "copy" : "move");
-        destinosRef.current.set(opId, nomeBase(destDir));
+        registrarOp(opId, op === "copy" ? "copy" : "move", nomeBase(destDir));
       } catch (e) {
         toast.error(tRef.current.arquivos.erroOperacao, {
           description: String(e),
@@ -571,111 +458,6 @@ export function ExplorerShell({
     },
     [executarMulti],
   );
-
-  const cancelarTransferencia = useCallback(
-    (opId: number) => {
-      // #1028 (FE7): ação destrutiva explícita não pode falhar em silêncio.
-      void cancelarOp(opId).catch(() => toast.error(t.arquivos.erroCancelarOp));
-    },
-    [t.arquivos.erroCancelarOp],
-  );
-
-  // #898 (fatia 1): pausa/retoma uma op de copy/move em curso. O backend trava/
-  // continua os workers e o stream de progresso passa a reportar `status: "paused"`
-  // (op fica ATIVA, progresso congelado — não é terminal, ver `onProgressoOp`).
-  const pausarTransferencia = useCallback(
-    (opId: number) => {
-      void pausarOp(opId).catch(() => toast.error(t.arquivos.erroPausarOp));
-    },
-    [t.arquivos.erroPausarOp],
-  );
-  const resumirTransferencia = useCallback(
-    (opId: number) => {
-      void resumirOp(opId).catch(() => toast.error(t.arquivos.erroResumirOp));
-    },
-    [t.arquivos.erroResumirOp],
-  );
-
-  // #875/#898: dispensa UMA op terminal do Status Center (guard: nunca uma op
-  // ATIVA — "inProgress" OU "paused" — essa é cancelável/retomável, não
-  // dispensável). Limpa os refs de bookkeeping pra não vazar entre ops futuras.
-  const dispensarOp = useCallback((opId: number) => {
-    setOps((prev) => {
-      const alvo = prev.find((o) => o.opId === opId);
-      if (
-        !alvo ||
-        alvo.progresso.status === "inProgress" ||
-        alvo.progresso.status === "paused"
-      )
-        return prev;
-      return prev.filter((o) => o.opId !== opId);
-    });
-    ultimoRef.current.delete(opId);
-    tiposRef.current.delete(opId);
-    destinosRef.current.delete(opId);
-    terminadosRef.current.delete(opId);
-  }, []);
-
-  // #967 (#898 fatia 4): abre o preview de undo de uma op terminal — busca o
-  // plano (classificação seguros/pulados/não-reversíveis, sem efeito). Abre o
-  // diálogo MESMO com `plan=null` (op fora da janela do journal → empty state).
-  const onDesfazer = useCallback(async (opId: number) => {
-    const plan = await previewUndo(opId).catch(() => null);
-    setUndoPreview({ opId, plan });
-  }, []);
-
-  // #967: confirma o undo — executa (best-effort, só os itens seguros) e marca a
-  // op como desfeita. Toast pelo relatório: sucesso / parcial (algo pulado) /
-  // erro (falhas). i18n via tRef (idioma atual, sem re-subscribe).
-  const confirmarUndo = useCallback(async () => {
-    const alvo = undoPreview;
-    if (!alvo) return;
-    setUndoPreview(null);
-    const rep = await desfazerOp(alvo.opId).catch(() => null);
-    if (!rep) return;
-    setDesfeitos((prev) => new Set(prev).add(alvo.opId));
-    const arquivos = tRef.current.arquivos;
-    if (rep.erros.length > 0) {
-      toast.error(preencher(arquivos.undoErro, { n: rep.erros.length }), {
-        description: rep.erros[0],
-      });
-    } else if (rep.pulados > 0 || rep.naoReversiveis > 0) {
-      toast.info(
-        preencher(arquivos.undoParcial, {
-          ok: rep.executados,
-          pulados: rep.pulados + rep.naoReversiveis,
-        }),
-      );
-    } else {
-      toast.success(preencher(arquivos.undoOk, { n: rep.executados }));
-    }
-  }, [undoPreview]);
-
-  // #875/#898: limpa TODAS as ops terminais (concluídas/erro/canceladas/parciais),
-  // mantendo as ATIVAS (em curso OU pausadas). Limpa os refs das removidas.
-  const ehAtiva = (status: string) =>
-    status === "inProgress" || status === "paused";
-  const limparConcluidas = useCallback(() => {
-    setOps((prev) => {
-      for (const o of prev) {
-        if (!ehAtiva(o.progresso.status)) {
-          ultimoRef.current.delete(o.opId);
-          tiposRef.current.delete(o.opId);
-          destinosRef.current.delete(o.opId);
-          terminadosRef.current.delete(o.opId);
-        }
-      }
-      return prev.filter((o) => ehAtiva(o.progresso.status));
-    });
-  }, []);
-
-  // #898 (fatia 1): relógio (Date.now, tick de 30s) pros timestamps relativos da
-  // activity-dropdown re-renderizarem.
-  const [agoraMs, setAgoraMs] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setAgoraMs(Date.now()), 30_000);
-    return () => clearInterval(id);
-  }, []);
 
   return (
     <div className="relative h-full">
@@ -822,26 +604,9 @@ export function ExplorerShell({
         )}
       </ResizablePanelGroup>
 
-      {/* #898 (fatia 1): Status Center = activity-dropdown flutuante (canto inferior
-          direito), alimentada pelo `ops`. Substitui o `ProgressoPanel`. Linhas
-          ativas trazem Pausar/Retomar + Cancelar; terminais, Dispensar. */}
-      <ActivityDropdown
-        ops={ops}
-        agoraMs={agoraMs}
-        onCancelar={cancelarTransferencia}
-        onPausar={pausarTransferencia}
-        onResumir={resumirTransferencia}
-        onDispensar={dispensarOp}
-        onDesfazer={onDesfazer}
-        desfeitos={desfeitos}
-        onLimparConcluidas={limparConcluidas}
-      />
-      <UndoPreviewDialog
-        aberto={undoPreview !== null}
-        plan={undoPreview?.plan ?? null}
-        onConfirmar={confirmarUndo}
-        onCancelar={() => setUndoPreview(null)}
-      />
+      {/* #987: o Status Center (activity-dropdown) + o preview de undo agora vivem
+          no App (sino na title bar, sempre visível) — ver `useOpsAtivas`. O shell
+          só dispara as transferências e resolve conflitos. */}
       <ConflitoDialog
         aberto={conflito !== null}
         conflitos={conflito?.conflitos ?? []}
