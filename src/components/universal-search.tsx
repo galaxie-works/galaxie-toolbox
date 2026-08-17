@@ -13,6 +13,7 @@ import {
 } from "@/components/reui/autocomplete";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useFotos } from "@/lib/fotos";
+import { iniciais } from "@/lib/iniciais";
 import { useIdioma, preencher } from "@/lib/idioma";
 import type { Tela } from "@/lib/navegacao";
 import type { PeopleContact } from "@/lib/people";
@@ -29,15 +30,6 @@ type SearchResult =
       kind: "organization";
       value: PeopleOrg;
     };
-
-function initials(value: string): string {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toLocaleUpperCase())
-    .join("");
-}
 
 export function UniversalSearch({
   tela,
@@ -228,7 +220,7 @@ export function UniversalSearch({
                             />
                           )}
                           <AvatarFallback>
-                            {initials(organization.name)}
+                            {iniciais(organization.name)}
                           </AvatarFallback>
                         </Avatar>
                         <span className="min-w-0 flex-1">
@@ -257,7 +249,7 @@ export function UniversalSearch({
                           <AvatarImage src={photo} alt={contact.name} />
                         )}
                         <AvatarFallback>
-                          {initials(contact.name)}
+                          {iniciais(contact.name, contact.emails[0]?.address)}
                         </AvatarFallback>
                       </Avatar>
                       <span className="min-w-0 flex-1">

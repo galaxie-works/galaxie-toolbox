@@ -160,6 +160,7 @@ import { PersonalGroupsView } from "@/components/people/personal-groups-view";
 import { ContactMergeSheet } from "@/components/people/contact-merge-sheet";
 import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
+import { iniciais } from "@/lib/iniciais";
 import { useIdioma, preencher } from "@/lib/idioma";
 import { useTier } from "@/lib/tier-context";
 import { RecursoOrgEmpty } from "@/components/recurso-org-empty";
@@ -184,18 +185,6 @@ import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
 
 const EMPTY_CONTACTS: PeopleContact[] = [];
-
-function initials(name: string): string {
-  return (
-    name
-      .trim()
-      .split(/\s+/)
-      .map((part) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "?"
-  );
-}
 
 function PeopleColumnsHeader({ label }: { label: string }) {
   const { table } = useDataGrid();
@@ -792,7 +781,7 @@ function PeopleDetail({
                   />
                 )}
                 <AvatarFallback className="text-lg">
-                  {initials(contact.name)}
+                  {iniciais(contact.name, contact.emails[0]?.address)}
                 </AvatarFallback>
               </Avatar>
               {contact.photo && <SourceBadge source={contact.photoSource} />}
@@ -1376,7 +1365,9 @@ export function PeopleCard({
       <FrameHeader className="flex-row items-start gap-3">
         <Avatar className="size-11">
           {photo && <AvatarImage src={photo} alt={contact.name} />}
-          <AvatarFallback>{initials(contact.name)}</AvatarFallback>
+          <AvatarFallback>
+            {iniciais(contact.name, contact.emails[0]?.address)}
+          </AvatarFallback>
         </Avatar>
         <div className="min-w-0 flex-1">
           <FrameTitle className="truncate">{contact.name}</FrameTitle>
@@ -2785,7 +2776,9 @@ export function PeopleView({
             <div className="flex min-w-0 items-center gap-2.5">
               <Avatar className="size-9">
                 {photo && <AvatarImage src={photo} alt={contact.name} />}
-                <AvatarFallback>{initials(contact.name)}</AvatarFallback>
+                <AvatarFallback>
+                  {iniciais(contact.name, contact.emails[0]?.address)}
+                </AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
                 <div className="flex min-w-0 items-center gap-2">

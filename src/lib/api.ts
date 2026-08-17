@@ -54,6 +54,7 @@ import type {
   TipoArquivo,
   UsoOneDrive,
 } from "./types";
+import { iniciais } from "./iniciais.ts";
 
 /** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
 export function inTauri(): boolean {
@@ -1936,7 +1937,7 @@ export async function crFolderMensagens(
       ][i],
       de: n,
       deEmail: `${n.toLowerCase().replace(/\s+/g, ".")}@example.com`,
-      iniciais: n.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+      iniciais: iniciais(n),
       // Espalha 1 item por dia (24h) — dá datas variadas p/ exercitar o filtro
       // de intervalo de datas (#110) e os buckets de período (#30) no mock.
       recebido: t(i * 24),

@@ -179,6 +179,7 @@ import {
   configurarEscopoFotos,
 } from "@/lib/fotos";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { iniciais } from "@/lib/iniciais";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTier } from "@/lib/tier-context";
 import { recursoOrgDisponivel } from "@/lib/tier";
@@ -1178,16 +1179,6 @@ const CAIXA_ADICIONAR = "__adicionar__";
  * ativa e a sinaliza (o próprio trigger mostra qual está ativa) — a listagem do
  * conteúdo dela é a #112. Colapsado, vira um ícone que abre o dialog direto.
  */
-/** Iniciais de uma caixa a partir do e-mail (não há nome): "wagner.consani" →
- *  "WC", "financeiro" → "FI". Fallback "?" (#493). */
-function iniciaisDeEmail(email: string): string {
-  const local = (email.split("@")[0] || email).trim();
-  const partes = local.split(/[._-]+/).filter(Boolean);
-  const base =
-    partes.length >= 2 ? partes[0][0] + partes[1][0] : local.slice(0, 2);
-  return base.toUpperCase() || "?";
-}
-
 /** Avatar da caixa: foto do Graph (via cache de fotos #39) com fallback de
  *  iniciais. Sem foto / 404 / sem permissão → iniciais, sem erro visível (#493). */
 function AvatarCaixa({
@@ -1203,7 +1194,7 @@ function AvatarCaixa({
     <Avatar className={cn("size-5 shrink-0", className)}>
       {foto && <AvatarImage src={foto} alt="" />}
       <AvatarFallback className="text-[9px]">
-        {iniciaisDeEmail(email)}
+        {iniciais(undefined, email)}
       </AvatarFallback>
     </Avatar>
   );

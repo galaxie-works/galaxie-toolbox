@@ -15,6 +15,7 @@ import {
   crResponderEvento,
 } from "../lib/api.ts";
 import { podeGerenciarEvento } from "../lib/agenda-permissions.ts";
+import { iniciais } from "../lib/iniciais.ts";
 import type {
   AcaoRsvp,
   Calendario,
@@ -216,21 +217,12 @@ function localParaUtc(wall: string): string {
   return Number.isNaN(d.getTime()) ? wall : d.toISOString();
 }
 
-/** Iniciais a partir de nome/e-mail (fallback do avatar otimista). */
-function iniciaisDe(nome: string, email: string): string {
-  const base = nome && !nome.includes("@") ? nome : email.split("@")[0];
-  const partes = base.split(/[\s._-]+/).filter(Boolean);
-  if (partes.length === 0) return "?";
-  if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
-  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
-}
-
 /** Monta um EventoAgenda de exibição a partir dos dados do formulário. */
 function eventoDeInput(id: string, input: EventoInput): EventoAgenda {
   const participantes = input.convidados.map((c) => ({
     nome: c.nome || c.email,
     email: c.email,
-    iniciais: iniciaisDe(c.nome, c.email),
+    iniciais: iniciais(c.nome, c.email),
     foto: null,
   }));
   return {

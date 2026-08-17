@@ -16,23 +16,10 @@ import {
   normalizeDomain,
   resolveOrganization,
 } from "@/lib/organizations";
+import { iniciais } from "@/lib/iniciais";
 import { resolvePerson } from "@/lib/people";
 import type { Pessoa } from "@/lib/types";
 import { useAppStore } from "@/store";
-
-function initials(name: string, email: string): string {
-  const base = name && name !== email ? name : email.split("@")[0];
-  return (
-    base
-      .trim()
-      .split(/[\s._-]+/)
-      .filter(Boolean)
-      .map((part) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "?"
-  );
-}
 
 export function PersonHoverCard({
   email,
@@ -115,7 +102,7 @@ export function PersonHoverCard({
         <div className="flex space-x-2">
           <Avatar className="size-10 shrink-0">
             {photo && <AvatarImage src={photo} alt="" />}
-            <AvatarFallback>{initials(name, primaryEmail)}</AvatarFallback>
+            <AvatarFallback>{iniciais(name, primaryEmail)}</AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1 space-y-1">
             <div>
