@@ -20,8 +20,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from "@/components/animate-ui/components/radix/dropdown-menu";
-import { Switch } from "@/components/animate-ui/components/radix/switch";
+} from "@/components/ui/dropdown-menu";
+import { Switch } from "@/components/ui/switch";
 import { ConnectIcon, type ConnectIconHandle } from "@/components/ui/connect";
 import { FileStackIcon } from "@/components/ui/file-stack";
 import { FolderOpenIcon } from "@/components/ui/folder-open";
