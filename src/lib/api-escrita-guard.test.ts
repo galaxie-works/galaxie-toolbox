@@ -53,6 +53,13 @@ const ALLOWLIST_NAO_ESCRITA = new Set<string>([
   "crLerAnexo", "crAnexoParaPdf", "crLerAnexoEmail", "crAnexoLink", "crSalvarEmailPdf",
   "crImprimirEmail", "longPathsStatus", "importBrowserBookmarks", "fetchFavicon",
   "autostartEnabled", "telemetryStatus", "telemetryDebugDump",
+  // — Remote signaling (#1104/#1129): lookup de endpoint de config + PoP de
+  //   registro (assinatura no Rust) + ponte de log de diagnóstico. NÃO são
+  //   escrita de dado do Bridge/Graph; a exemção fica EXPLÍCITA aqui (antes,
+  //   `remoteSignalingEndpoint` passava por acidente de posição vizinha ao
+  //   `mockEscritaBloqueada`, que o scaffold v2 desfez ao inserir vizinhos). —
+  "remoteSignalingEndpoint", "remoteSignalingEndpointV2", "remoteSignRegister",
+  "remoteLog",
   // — Afordâncias de dev-state (mock persiste de propósito p/ visualizar a UI) —
   "onedriveSettingsWrite", "gdriveSettingsWrite", "lockSetPin", "lockDisablePin",
   "setAutostartEnabled", "telemetryTrack", "telemetrySetConsent", "telemetryRevoke",
