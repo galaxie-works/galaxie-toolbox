@@ -178,7 +178,7 @@ export function NumberedListToolbarButton() {
             <ListOrdered className="size-4" />
           </ToolbarSplitButtonPrimary>
         </TooltipTrigger>
-        <TooltipContent>Numbered list</TooltipContent>
+        <TooltipContent>{plateLabel('numberedList')}</TooltipContent>
       </Tooltip>
 
       <DropdownMenu open={open} onOpenChange={setOpen} modal={false}>
@@ -188,7 +188,7 @@ export function NumberedListToolbarButton() {
               <ToolbarSplitButtonSecondary aria-label={plateLabel('numberedListOptions')} />
             </DropdownMenuTrigger>
           </TooltipTrigger>
-          <TooltipContent>Numbered list options</TooltipContent>
+          <TooltipContent>{plateLabel('numberedListOptions')}</TooltipContent>
         </Tooltip>
 
         <DropdownMenuContent align="start" alignOffset={-32}>
