@@ -18,6 +18,8 @@ import {
   DOWNLOAD_FILENAME,
 } from '@platejs/code-drawing';
 import type { PlateElementProps } from 'platejs/react';
+// #950 US4: rótulos i18n da família código (acessor não-hook, #529).
+import { plateLabel } from '@/lib/plate-labels';
 import {
   PlateElement,
   useEditorRef,
@@ -252,7 +254,7 @@ export function CodeDrawingElement(
               variant="ghost"
               className="size-8"
               onClick={handleDownload}
-              title="Export"
+              title={plateLabel('exportar')}
             >
               <DownloadIcon className="size-4" />
             </Button>
@@ -262,7 +264,7 @@ export function CodeDrawingElement(
             variant="ghost"
             className="size-8"
             onClick={removeNode}
-            title="Delete"
+            title={plateLabel('excluir')}
           >
             <Trash2 className="size-4" />
           </Button>
@@ -516,7 +518,7 @@ function CodeDrawingTextarea({
               readOnly={readOnly}
               className="m-0 h-full w-full resize-none overflow-auto border-0 bg-transparent p-0 font-mono text-sm outline-none"
               style={{ minHeight: `${DEFAULT_MIN_HEIGHT}px` }}
-              placeholder="Enter your code here..."
+              placeholder={plateLabel('enterCode')}
               spellCheck={false}
             />
           </code>
@@ -575,7 +577,7 @@ function CodeDrawingPreviewArea({
           {!loading && image && (
             <img
               src={image}
-              alt="Code drawing"
+              alt={plateLabel('codeDrawing')}
               className="max-h-full max-w-full object-contain"
             />
           )}

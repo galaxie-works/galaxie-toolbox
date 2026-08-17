@@ -3,6 +3,8 @@
 import * as React from 'react';
 
 import { formatCodeBlock, isLangSupported } from '@platejs/code-block';
+// #950 US4: rótulos i18n da família código (acessor não-hook, #529).
+import { plateLabel } from '@/lib/plate-labels';
 import { BracesIcon, Check, CheckIcon, CopyIcon } from 'lucide-react';
 import { type TCodeBlockElement, type TCodeSyntaxLeaf, NodeApi } from 'platejs';
 import {
@@ -162,7 +164,7 @@ export function CodeBlockElement({
               variant="ghost"
               className="size-6 text-xs"
               onClick={() => formatCodeBlock(editor, { element })}
-              title="Format code"
+              title={plateLabel('formatCode')}
             >
               <BracesIcon className="!size-3.5 text-muted-foreground" />
             </Button>
@@ -232,9 +234,9 @@ function CodeBlockCombobox({
             className="h-9"
             value={searchValue}
             onValueChange={(value) => setSearchValue(value)}
-            placeholder="Search language..."
+            placeholder={plateLabel('searchLanguage')}
           />
-          <CommandEmpty>No language found.</CommandEmpty>
+          <CommandEmpty>{plateLabel('noLanguageFound')}</CommandEmpty>
 
           <CommandList className="h-[344px] overflow-y-auto">
             <CommandGroup>
