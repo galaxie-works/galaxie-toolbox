@@ -6,15 +6,15 @@
  * os padrões do Outlook/Exchange que o Bridge recebe via Graph.
  *
  * DIFERENÇA IMPORTANTE em relação ao MailVault: lá a dobra é um `<script>`
- * injetado no `srcDoc`. Aqui NÃO dá: o iframe do `CorpoHtml` só ganha
- * `allow-scripts` no tema escuro (pro Dark Reader) — no tema claro o sandbox é
- * estrito de propósito. Então a detecção roda AQUI (no React, sobre o HTML já
- * sanitizado pelo DOMPurify) e o que vai pro iframe é um `<details>/<summary>`
- * nativo: o toggle é do navegador, funciona sem script nenhum, é acessível
- * (o summary já anuncia expandido/recolhido) e responde a teclado.
+ * injetado no `srcDoc`. Aqui NÃO dá: o iframe do `CorpoHtml` é opaque origin
+ * (sandbox sem allow-same-origin, #1034) e não roda script do e-mail. Então a
+ * detecção roda AQUI (no React, sobre o HTML BRUTO — ANTES do DOMPurify, ver
+ * `montarDocEmail`) e o que vai pro iframe é um `<details>/<summary>` nativo: o
+ * toggle é do navegador, funciona sem script nenhum, é acessível (o summary já
+ * anuncia expandido/recolhido) e responde a teclado.
  *
- * O `CorpoHtml` escuta o evento `toggle` (em captura — `toggle` não borbulha)
- * pra remedir a altura do iframe quando o bloco abre/fecha.
+ * A ponte de medição dentro do iframe escuta o evento `toggle` (em captura —
+ * `toggle` não borbulha) pra remedir a altura quando o bloco abre/fecha.
  */
 
 /** Elementos que, quando aparecem, marcam o início do histórico citado. */
@@ -173,8 +173,11 @@ function conteudoRelevante(el: Element | DocumentFragment): boolean {
  * "⋯" (o `<summary>`). Devolve o HTML transformado; se nada for detectado — ou
  * se dobrar esconderia a mensagem inteira — devolve o HTML original.
  *
- * @param html  HTML JÁ SANITIZADO (a transformação roda depois do DOMPurify,
- *              pra que o `<details>` que criamos não seja removido).
+ * @param html  HTML BRUTO do e-mail. A dobra roda ANTES do DOMPurify (#1034):
+ *              o `DOMParser` aqui NÃO executa script, e o `DOMPurify.sanitize`
+ *              é a ÚLTIMA transformação antes do srcDoc (fecha o mXSS que a
+ *              reserialização abaixo poderia reintroduzir). O `<details>` que
+ *              criamos sobrevive ao sanitize via `ADD_TAGS` em `montarDocEmail`.
  * @param rotulo Rótulo acessível do botão (i18n).
  */
 export function dobrarCitado(html: string, rotulo: string): string {
@@ -230,17 +233,16 @@ export function dobrarCitado(html: string, rotulo: string): string {
 /**
  * CSS do botão de dobra, injetado no baseline do `srcDoc`.
  *
- * As CORES vêm por tema (em vez de deixar o Dark Reader inverter junto com o
- * e-mail, como o resto do baseline faz): o cinza claro do chip do Gmail bate
- * quase exatamente no fundo que o DR gera pro body, e o botão sumia no escuro.
- * O `!important` resolve as duas coisas de uma vez — o DR não sobrescreve
- * declarações `!important` do autor, e o `<style>` do próprio e-mail (que vem
- * DEPOIS do nosso no documento) também não.
+ * SEMPRE autorado em CLARO (as cores do chip do Gmail): no tema escuro o botão
+ * escurece junto com o resto via a inversão por CSS (`estiloInversaoEscuro`,
+ * #1034) — não há mais Dark Reader nem cores por tema aqui. O `!important`
+ * segura o `<style>` do próprio e-mail (que vem DEPOIS do nosso no documento)
+ * pra ele não repintar o botão.
  */
-export function estiloDobra(escuro: boolean): string {
-  const fundo = escuro ? "#3c4043" : "#dadce0";
-  const fundoHover = escuro ? "#4d5155" : "#c6cad0";
-  const cor = escuro ? "#dadce0" : "#3c4043";
+export function estiloDobra(): string {
+  const fundo = "#dadce0";
+  const fundoHover = "#c6cad0";
+  const cor = "#3c4043";
   return (
     `details.gt-aparado{margin:2px 0;display:block!important}` +
     `details.gt-aparado>summary.gt-aparado-botao{` +
