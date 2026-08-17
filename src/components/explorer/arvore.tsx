@@ -176,13 +176,11 @@ export function ArvoreArquivos({
           void carregar(p);
         }
       }
-      // Expandir uma PASTA também navega até ela (cobre teclado; o clique do mouse
-      // já navega pelo container). Ignora sentinelas — não são caminhos. This PC
-      // navega pelo próprio clique do cabeçalho (abaixo).
-      const alvo = adicionados.filter(ehLazy).at(-1);
-      if (alvo) onNavegar(alvo);
+      // #991 (correção do Wagner): expandir pelo chevron NÃO navega. Antes um
+      // clique na pasta expandia E navegava, despejando as subpastas inline; agora
+      // o chevron só abre/fecha na árvore, e a navegação é só pelo clique no label.
     },
-    [open, filhosPorPath, carregando, carregar, onNavegar],
+    [open, filhosPorPath, carregando, carregar],
   );
 
   return (
@@ -328,6 +326,7 @@ function SecaoRaiz({
   onNavegar: (path: string) => void;
   children: ReactNode;
 }) {
+  const { t } = useIdioma();
   const ativo = navPath !== undefined && currentPath === navPath;
   return (
     <FolderItem value={value}>
@@ -336,10 +335,14 @@ function SecaoRaiz({
           onClick={() => onNavegar(navPath)}
           className={cn("rounded-md", ativo && "bg-secondary")}
         >
-          <FolderTrigger>{label}</FolderTrigger>
+          <FolderTrigger expandLabel={t.arquivos.expandirColapsar}>
+            {label}
+          </FolderTrigger>
         </div>
       ) : (
-        <FolderTrigger>{label}</FolderTrigger>
+        <FolderTrigger expandLabel={t.arquivos.expandirColapsar}>
+          {label}
+        </FolderTrigger>
       )}
       <FolderContent>{children}</FolderContent>
     </FolderItem>
@@ -375,6 +378,7 @@ function NoArvore({
   carregandoLabel: string;
   vazioLabel: string;
 }) {
+  const { t } = useIdioma();
   const filhos = filhosPorPath.get(entry.path);
   const estaCarregando = carregando.has(entry.path);
   const ativo = currentPath === entry.path;
@@ -400,7 +404,9 @@ function NoArvore({
             onClick={() => onNavegar(entry.path)}
             className={cn("rounded-md", ativo && "bg-secondary")}
           >
-            <FolderTrigger icon={icone}>{entry.name}</FolderTrigger>
+            <FolderTrigger icon={icone} expandLabel={t.arquivos.expandirColapsar}>
+              {entry.name}
+            </FolderTrigger>
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
