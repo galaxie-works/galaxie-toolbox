@@ -36,6 +36,7 @@ struct Inner {
     codes: Mutex<HashMap<[u8; 32], AssistedCode>>,
     pairings: RwLock<HashMap<String, String>>,
     limiter: SlidingWindowLimiter,
+    redeem_failures: Mutex<HashMap<IpAddr, RedeemFailState>>,
     unattended: Mutex<galaxie_remote_net::authority::UnattendedAuthority>,
     unattended_state_file: Option<PathBuf>,
     unattended_persistence: Mutex<()>,
@@ -79,6 +80,35 @@ struct SlidingWindowLimiter {
     max_events: usize,
     window: Duration,
     events: Mutex<HashMap<IpAddr, VecDeque<Instant>>>,
+}
+
+// SEC13 (#1050): rate-limit dedicado às falhas de `redeem_code` por IP. O limite
+// geral de mensagens (120/min) não encarece a varredura de códigos de 8 dígitos
+// o bastante; este backoff exponencial por-IP torna a força-bruta inviável.
+const REDEEM_MAX_FALHAS: usize = 5;
+const REDEEM_JANELA: Duration = Duration::from_secs(60);
+const REDEEM_BACKOFF_BASE: Duration = Duration::from_secs(2);
+const REDEEM_BACKOFF_MAX: Duration = Duration::from_secs(300);
+
+// Estado por-IP das falhas de redeem: janela deslizante de falhas + bloqueio ativo.
+#[derive(Default)]
+struct RedeemFailState {
+    falhas: VecDeque<Instant>,
+    bloqueado_ate: Option<Instant>,
+    ciclos: u32,
+}
+
+// Backoff exponencial puro (testável sem sleep): BASE * 2^(ciclos-1), com teto MAX.
+fn duracao_backoff(ciclos: u32) -> Duration {
+    if ciclos == 0 {
+        return Duration::ZERO;
+    }
+    let base = REDEEM_BACKOFF_BASE.as_secs();
+    let teto = REDEEM_BACKOFF_MAX.as_secs();
+    // 2^(ciclos-1) saturando: shift >= 64 vira u64::MAX, evitando overflow em ciclos altos.
+    let fator = 1_u64.checked_shl(ciclos - 1).unwrap_or(u64::MAX);
+    let segundos = base.saturating_mul(fator).min(teto);
+    Duration::from_secs(segundos)
 }
 
 impl AppState {
@@ -169,6 +199,7 @@ impl AppState {
                     window: rate_limit_window,
                     events: Mutex::new(HashMap::new()),
                 },
+                redeem_failures: Mutex::new(HashMap::new()),
                 unattended: Mutex::new(unattended),
                 unattended_state_file,
                 unattended_persistence: Mutex::new(()),
@@ -321,6 +352,54 @@ impl AppState {
 
     pub async fn allow_message(&self, ip: IpAddr) -> bool {
         self.inner.limiter.allow(ip).await
+    }
+
+    // SEC13: true se o IP pode tentar um redeem agora. Falso enquanto em backoff.
+    pub async fn allow_redeem(&self, ip: IpAddr) -> bool {
+        let now = Instant::now();
+        let mut all = self.inner.redeem_failures.lock().await;
+        let Some(estado) = all.get_mut(&ip) else {
+            return true;
+        };
+        if let Some(ate) = estado.bloqueado_ate {
+            if ate > now {
+                return false;
+            }
+            // backoff expirou: libera novas tentativas (mas preserva `ciclos` p/ escalar).
+            estado.bloqueado_ate = None;
+        }
+        // poda falhas fora da janela para não reter estado velho.
+        let threshold = now.checked_sub(REDEEM_JANELA).unwrap_or(now);
+        while estado.falhas.front().is_some_and(|evento| *evento <= threshold) {
+            estado.falhas.pop_front();
+        }
+        // sem bloqueio e sem falhas recentes: descarta a entrada (economia de memória).
+        if estado.falhas.is_empty() && estado.bloqueado_ate.is_none() {
+            all.remove(&ip);
+        }
+        true
+    }
+
+    // SEC13: registra uma falha de redeem; ao atingir o teto na janela, arma o backoff.
+    pub async fn register_redeem_failure(&self, ip: IpAddr) {
+        let now = Instant::now();
+        let threshold = now.checked_sub(REDEEM_JANELA).unwrap_or(now);
+        let mut all = self.inner.redeem_failures.lock().await;
+        let estado = all.entry(ip).or_default();
+        while estado.falhas.front().is_some_and(|evento| *evento <= threshold) {
+            estado.falhas.pop_front();
+        }
+        estado.falhas.push_back(now);
+        if estado.falhas.len() >= REDEEM_MAX_FALHAS {
+            estado.ciclos = estado.ciclos.saturating_add(1);
+            estado.bloqueado_ate = Some(now + duracao_backoff(estado.ciclos));
+            estado.falhas.clear();
+        }
+    }
+
+    // SEC13: um redeem bem-sucedido zera todo o histórico de falhas do IP.
+    pub async fn clear_redeem_failures(&self, ip: IpAddr) {
+        self.inner.redeem_failures.lock().await.remove(&ip);
     }
 
     pub async fn register(
@@ -548,4 +627,64 @@ fn unix_seconds() -> Result<u64, std::time::SystemTimeError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn estado_de_teste() -> AppState {
+        AppState::new(
+            SigningKey::from_bytes(&[7_u8; 32]),
+            b"turn-secret-de-teste".to_vec(),
+            vec!["turn:localhost:3478".to_owned()],
+            Duration::from_secs(60),
+            Duration::from_secs(600),
+            Duration::from_secs(600),
+            120,
+            Duration::from_secs(60),
+        )
+    }
+
+    #[tokio::test]
+    async fn redeem_bloqueia_apos_teto_de_falhas_e_isola_por_ip() {
+        let estado = estado_de_teste();
+        let alvo = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        // Até o teto o IP segue permitido; a falha nº REDEEM_MAX_FALHAS arma o backoff.
+        for _ in 0..REDEEM_MAX_FALHAS {
+            assert!(estado.allow_redeem(alvo).await);
+            estado.register_redeem_failure(alvo).await;
+        }
+        assert!(!estado.allow_redeem(alvo).await, "IP deveria estar em backoff");
+        // Outro IP não é afetado (isolamento por-IP).
+        let outro = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+        assert!(estado.allow_redeem(outro).await);
+    }
+
+    #[tokio::test]
+    async fn sucesso_reabre_o_ip_bloqueado() {
+        let estado = estado_de_teste();
+        let alvo = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
+        for _ in 0..REDEEM_MAX_FALHAS {
+            estado.register_redeem_failure(alvo).await;
+        }
+        assert!(!estado.allow_redeem(alvo).await);
+        // clear_redeem_failures simula o redeem bem-sucedido: zera o histórico.
+        estado.clear_redeem_failures(alvo).await;
+        assert!(estado.allow_redeem(alvo).await);
+    }
+
+    #[test]
+    fn backoff_cresce_exponencialmente_com_teto() {
+        assert_eq!(duracao_backoff(0), Duration::ZERO);
+        assert_eq!(duracao_backoff(1), Duration::from_secs(2));
+        assert_eq!(duracao_backoff(2), Duration::from_secs(4));
+        assert_eq!(duracao_backoff(3), Duration::from_secs(8));
+        assert_eq!(duracao_backoff(4), Duration::from_secs(16));
+        assert_eq!(duracao_backoff(5), Duration::from_secs(32));
+        // Teto de 300s atingido e mantido, sem overflow em ciclos altos.
+        assert_eq!(duracao_backoff(20), Duration::from_secs(300));
+        assert_eq!(duracao_backoff(1000), Duration::from_secs(300));
+    }
 }
