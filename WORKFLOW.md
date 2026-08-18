@@ -170,6 +170,27 @@ A **`Lúmen II`** é a única QA desde 18/08 (a `Lúmen` do Codex foi aposentada
 - **Devs abrem PR; NÃO mergeiam.** **O Polaris integra** por **merge local** (worktree off `feat`, `git merge --no-ff`, gate, `push HEAD:feat`, **move o card conforme §4.2** — `Closes` → `Done`; `Ref` → não move, anuncia na #133 —, limpa a worktree). Nunca `gh pr merge`.
 - **Gate de integração (Polaris):** `pnpm exec tsc -b` (exit 0) · `pnpm test` (`node --test`) · **`cargo check` SEM env OpenSSL** quando mexe em Rust (pega str0m/openssl vazando). CRLF: `core.autocrlf=true` na worktree.
 
+### 5.0-bis Os TRÊS canais de teste do front (achado TST-10 do #1056)
+
+`pnpm test` **não é o teste do front** — é **um** dos três canais. A convenção
+existia só num comentário do `vitest.config.ts`; não estava aqui, nem no
+`AGENTS.md`, nem no `Rules.md`. Consequência: quem seguia este processo rodava
+**um** canal e descobria os outros dois no CI.
+
+| comando | arquivos | roda em | cobre |
+|---|---|---|---|
+| `pnpm test` | `*.test.ts` | `node --test` | lógica pura, contratos e **gates estáticos** (ratchets que varrem o código) |
+| `pnpm test:component` | `*.component.test.tsx` | vitest + happy-dom | componente montado, sem navegador |
+| `pnpm test:browser` | `*.browser.test.tsx` | vitest browser-mode (Playwright) | foco/ponteiro **reais** — o único que pega regressão de foco (#786) |
+
+**Antes de abrir PR:** rode os três se tocou no front. `pnpm test` sozinho passa
+verde com o componente quebrado.
+
+⚠️ O `ci.yml` roda os três **e** a matriz de `cargo test`. O `release.yml` roda
+**só `pnpm test`** — gate menor que o de PR, medido no #1056 (TST-05) e ainda
+aberto: a correção proposta é extrair o gate para um `workflow_call` chamado
+pelos dois, em vez de duplicar a lista.
+
 ### 5.1 Integrador reserva (fila represada)
 
 O merge local é de **um dono só** — o que é certo, e por isso o Polaris é ponto único de falha. Quando ele para, ninguém integra e todo mundo fica executor-ready parado. Este é o caminho de exceção; ele **não substitui** o Polaris, destrava a fila até ele voltar.

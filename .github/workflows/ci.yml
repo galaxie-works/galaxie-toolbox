@@ -36,11 +36,25 @@ jobs:
         with:
           run_install: false
 
+      # #1056 (TST-08): o path era `~/.pnpm-store`, que o pnpm 11 NÃO usa (o
+      # store fica em `~/.local/share/pnpm/store/<v>` no Linux e em
+      # `%LOCALAPPDATA%\pnpm\store\<v>` no Windows). O step salvava um
+      # diretório vazio e restaurava nada — cache que AFIRMA e não confere.
+      # Agora o caminho vem do próprio pnpm, em vez de literal.
+      - name: Descobrir o store do pnpm
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
       - name: Cache do pnpm
         uses: actions/cache@v4
         with:
-          path: ~/.pnpm-store
+          path: ${{ steps.pnpm-store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          # Sem `restore-keys` um lockfile novo perdia o cache INTEIRO; com ele
+          # o run parte do store da última key do mesmo SO.
+          restore-keys: |
+            pnpm-${{ runner.os }}-
 
       - name: Instalar dependências
         run: pnpm install --frozen-lockfile
@@ -63,6 +77,16 @@ jobs:
       # #786: testes em NAVEGADOR REAL (vitest browser-mode / Playwright chromium)
       # — foco/ponteiro de verdade, o único jeito de guardar a recorrência do
       # erase do compose. Precisa do browser instalado no runner.
+      # #1056 (TST-09): sem cache, o chromium era baixado da rede em TODO run.
+      # A key sai do lockfile — versão nova do Playwright invalida sozinha.
+      - name: Cache do browser (Playwright)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
       - name: Instalar chromium (Playwright)
         run: pnpm exec playwright install --with-deps chromium
 

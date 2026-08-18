@@ -39,11 +39,25 @@ jobs:
         with:
           run_install: false
 
+      # #1056 (TST-08): o path era `~/.pnpm-store`, que o pnpm 11 NÃO usa (o
+      # store fica em `~/.local/share/pnpm/store/<v>` no Linux e em
+      # `%LOCALAPPDATA%\pnpm\store\<v>` no Windows). O step salvava um
+      # diretório vazio e restaurava nada — cache que AFIRMA e não confere.
+      # Agora o caminho vem do próprio pnpm, em vez de literal.
+      - name: Descobrir o store do pnpm
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
       - name: Cache do pnpm
         uses: actions/cache@v4
         with:
-          path: ~/.pnpm-store
+          path: ${{ steps.pnpm-store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          # Sem `restore-keys` um lockfile novo perdia o cache INTEIRO; com ele
+          # o run parte do store da última key do mesmo SO.
+          restore-keys: |
+            pnpm-${{ runner.os }}-
 
       - name: Rust
         uses: dtolnay/rust-toolchain@stable
