@@ -1,0 +1,92 @@
+# Gate do front-end — DEFINIÇÃO ÚNICA (#1056, TST-05).
+#
+# ── Por que este arquivo existe ─────────────────────────────────────────────
+# Até aqui o gate vivia inteiro dentro do job `frontend` do `ci.yml`, e o
+# `release.yml` rodava só `pnpm test` antes do `tauri build`. Resultado medido
+# em `ba73c22` (18/08): **um PR que reprovasse em `lint`/`test:component`/
+# `test:browser` não integrava, mas uma tag que reprovaria nos mesmos testes era
+# PUBLICADA.** Foi por esse caminho que a v0.44.0 saiu.
+#
+# A correção óbvia — copiar os steps para o `release.yml` — recria a causa: duas
+# listas divergem na próxima vez que alguém acrescentar um check só num lado,
+# que é exatamente como chegamos aqui. Por isso o gate virou `workflow_call`:
+# **uma definição, dois chamadores.** Não há como um caminho ficar mais fraco
+# que o outro, porque não há dois lugares para escrever.
+#
+# ── Escopo ─────────────────────────────────────────────────────────────────
+# Só o front (Node/Vite/vitest). O gate de Rust segue nos jobs próprios do
+# `ci.yml` (matriz de crates) — o `release.yml` compila o Rust no `tauri build`,
+# que reprova sozinho se não compilar. Ver a nota em §5.0-bis do WORKFLOW.md.
+name: gate-front
+
+on:
+  workflow_call:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      # #1056 (TST-08): o path era `~/.pnpm-store`, que o pnpm 11 NÃO usa — o
+      # step salvava um diretório vazio e restaurava nada. Agora vem do próprio
+      # pnpm, e o `restore-keys` evita perder o cache inteiro num lockfile novo.
+      - name: Descobrir o store do pnpm
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache do pnpm
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      # `pnpm build` = `tsc -b && vite build` — cobre typecheck E o build do Vite.
+      - name: Build (tsc + vite)
+        run: pnpm build
+
+      - name: Lint (oxlint)
+        run: pnpm lint
+
+      - name: Testes (node:test)
+        run: pnpm test
+
+      # #786: testes de COMPONENTE (vitest + happy-dom) — exercitam a interação
+      # real com o Base UI (Combobox do compose) que o node:test não cobre.
+      - name: Testes de componente (vitest)
+        run: pnpm test:component
+
+      # #786: testes em NAVEGADOR REAL (vitest browser-mode / Playwright
+      # chromium) — foco/ponteiro de verdade, o único jeito de guardar a
+      # recorrência do erase do compose.
+      # #1056 (TST-09): sem cache, o chromium era baixado da rede em TODO run.
+      - name: Cache do browser (Playwright)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Instalar chromium (Playwright)
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Testes em navegador (vitest browser-mode)
+        run: pnpm test:browser
