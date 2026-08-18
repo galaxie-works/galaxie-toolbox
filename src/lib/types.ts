@@ -123,6 +123,21 @@ export interface TarefasResultado {
   listasComFalha: string[];
 }
 
+/**
+ * Resultado de gravar contatos pessoais (#1075 RB46-d).
+ *
+ * Era só `number` (quantos criados). O chamador pedia N contatos, recebia um
+ * número, e não havia canal para "pulei M porque não consegui checar".
+ *
+ * `jaExistiam` é separado de `falhas` de propósito: já existir é o caminho
+ * feliz do dedup, não um problema.
+ */
+export interface SalvarContatosResultado {
+  criados: number;
+  jaExistiam: number;
+  falhas: { email: string; motivo: string }[];
+}
+
 export interface Tarefa {
   titulo: string;
   lista: string;

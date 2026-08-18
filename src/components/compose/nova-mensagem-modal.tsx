@@ -33,6 +33,7 @@ import {
 import { preencher, useIdioma } from "@/lib/idioma";
 import { toastIcone } from "@/lib/toasts";
 import { cn } from "@/lib/utils";
+import { logErro } from "@/lib/log";
 import { useAppStore } from "@/store";
 
 /** Seletor canônico de remetente do compose (#114). */
@@ -178,6 +179,9 @@ export function NovaMensagemModal({
           anexos,
           remetenteAgendado,
         );
+        // #1075 RB46-d: best-effort para o USUARIO (ele pediu para enviar, nao
+        // para gravar contatos), mas nao silencioso para NOS. O `.catch(() => {})`
+        // engolia ate erro duro — a versao TS do `if let Ok` sem `else`.
         api
           .crSalvarContatos(
             [...para, ...cc, ...cco].map((email) => ({
@@ -185,7 +189,8 @@ export function NovaMensagemModal({
               email,
             })),
           )
-          .catch(() => {});
+          .then(api.registrarFalhasDeContato)
+          .catch((e) => logErro("contatos:salvar", e));
       },
       onConcluido: () => {
         toastIcone(

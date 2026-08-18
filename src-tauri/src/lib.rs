@@ -791,7 +791,7 @@ async fn gdrive_settings_write(
 async fn cr_salvar_contatos(
     state: State<'_, Store>,
     pessoas: Vec<graph::Pessoa>,
-) -> Result<u64, String> {
+) -> Result<graph::SalvarContatosResultado, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || graph::cr_salvar_contatos(&store, pessoas))
         .await

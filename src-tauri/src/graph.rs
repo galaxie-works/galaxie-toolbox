@@ -8907,11 +8907,110 @@ pub fn cr_enviar_novo(
 
 /// Salva os contatos informados na pasta pessoal do usuario, sem duplicar.
 /// Retorna quantos foram efetivamente criados. Contacts.ReadWrite.
-pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u64, String> {
+/// Resultado de gravar contatos pessoais (#1075 RB46-d).
+///
+/// Segue a forma do `SalvarEmailResultado`: o que deu certo e o que falhou, com
+/// motivo. Antes era `Result<u64, String>` — só `criados`. O chamador pedia N
+/// contatos, recebia um número, e **não havia canal** para dizer "pulei M
+/// porque não consegui checar".
+///
+/// `ja_existiam` é separado de `falhas` de propósito: já existir é o caminho
+/// feliz do dedup, não um problema.
+#[derive(serde::Serialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SalvarContatosResultado {
+    pub criados: u64,
+    /// Dedup funcionou: o contato já estava lá. Não é falha.
+    pub ja_existiam: u64,
+    pub falhas: Vec<SalvarContatoFalha>,
+}
+
+#[derive(serde::Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SalvarContatoFalha {
+    /// E-mail do contato, **sem máscara**: o front precisa casar a falha com a
+    /// lista que ELE acabou de mandar, e mascarado não serve para isso. É o
+    /// mesmo dado que veio na requisição, no mesmo processo — não é exposição
+    /// nova. No LOG segue mascarado (#1076 RB48/LGPD), que é onde o endereço
+    /// sairia do contexto de quem o digitou.
+    pub email: String,
+    pub motivo: String,
+}
+
+/// A resposta do filtro de duplicata diz que o contato já existe?
+///
+/// `Some(true)` já existe · `Some(false)` não existe · `None` o corpo veio 2xx
+/// mas ilegível (sem `value` array) — que é "não sei", não "não existe".
+fn duplicata_do_corpo(v: &serde_json::Value) -> Option<bool> {
+    v["value"].as_array().map(|a| !a.is_empty())
+}
+
+#[cfg(test)]
+mod testes_salvar_contatos {
+    use super::*;
+
+    #[test]
+    fn corpo_com_resultado_diz_que_existe() {
+        let v = serde_json::json!({ "value": [{ "id": "abc" }] });
+        assert_eq!(duplicata_do_corpo(&v), Some(true));
+    }
+
+    #[test]
+    fn corpo_com_lista_vazia_diz_que_nao_existe() {
+        let v = serde_json::json!({ "value": [] });
+        assert_eq!(duplicata_do_corpo(&v), Some(false));
+    }
+
+    /// O caso que antes virava `unwrap_or(false)` = "nao existe" = CRIA, com
+    /// risco de duplicar. 2xx com corpo ilegivel e "nao sei".
+    #[test]
+    fn corpo_ilegivel_e_nao_sei_e_nao_nao_existe() {
+        for v in [
+            serde_json::json!({}),
+            serde_json::json!({ "value": "nao e array" }),
+            serde_json::json!({ "error": { "code": "x" } }),
+        ] {
+            assert_eq!(
+                duplicata_do_corpo(&v),
+                None,
+                "corpo sem `value` array tem que ser 'nao sei': {v}"
+            );
+        }
+    }
+
+    /// Ja existir NAO e falha — o dedup fez o trabalho dele.
+    #[test]
+    fn ja_existir_nao_conta_como_falha() {
+        let mut r = SalvarContatosResultado::default();
+        r.ja_existiam += 1;
+        assert!(r.falhas.is_empty());
+        assert_eq!(r.criados, 0);
+    }
+
+    /// A soma tem que fechar com o que foi pedido: nenhum contato entra e some.
+    #[test]
+    fn todo_contato_pedido_sai_em_alguma_coluna() {
+        let r = SalvarContatosResultado {
+            criados: 2,
+            ja_existiam: 1,
+            falhas: vec![SalvarContatoFalha {
+                email: "a@b.c".to_string(),
+                motivo: "nao foi possivel checar duplicata".to_string(),
+            }],
+        };
+        assert_eq!(
+            r.criados + r.ja_existiam + r.falhas.len() as u64,
+            4,
+            "criados + ja_existiam + falhas tem que fechar com o pedido"
+        );
+    }
+}
+
+pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<SalvarContatosResultado, String> {
     let token = access_token(store)?;
     let client = cliente();
 
-    let mut criados: u64 = 0;
+    let mut resultado = SalvarContatosResultado::default();
     for p in pessoas {
         let email = p.email.trim();
         if email.is_empty() {
@@ -8927,27 +9026,45 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
             urlencoding::encode(&filtro)
         );
         // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
-        let existe = match graph_enviar("contatos:existe", GRAPH_TETO_ESPERA_S, || {
+        // #1075 RB46-d: TRES vias explícitas. Antes o "não sei" tinha DUAS
+        // resoluções opostas dependendo de qual camada falhou: não-2xx virava
+        // `true` (pula, para não duplicar) e 2xx-com-corpo-ilegível virava
+        // `unwrap_or(false)` (CRIA, arriscando duplicar). A mesma incerteza,
+        // duas ações contrárias — e nenhuma delas contada.
+        let duplicata = match graph_enviar("contatos:existe", GRAPH_TETO_ESPERA_S, || {
             client.get(&url).bearer_auth(&token).send()
         }) {
             Ok(resp) if resp.status().is_success() => resp
                 .json::<serde_json::Value>()
                 .ok()
-                .and_then(|v| v["value"].as_array().map(|a| !a.is_empty()))
-                .unwrap_or(false),
+                .as_ref()
+                .and_then(duplicata_do_corpo),
             Ok(resp) => {
                 // #1076 (RB48/LGPD): e-mail do contato mascarado no log (PII).
                 log::warn!("[contatos] filtro '{}' retornou {}", mascarar_email(email), resp.status());
-                // Nao da pra ter certeza: pula para nao arriscar duplicar.
-                true
+                None
             }
             Err(e) => {
                 log::warn!("[contatos] filtro '{}' falhou: {e}", mascarar_email(email));
-                true
+                None
             }
         };
-        if existe {
-            continue;
+        match duplicata {
+            Some(true) => {
+                resultado.ja_existiam += 1;
+                continue;
+            }
+            Some(false) => {}
+            None => {
+                // Segue pulando — criar às cegas arriscaria duplicar o contato
+                // do usuário. O que muda é que o pulo deixa de ser SILENCIOSO:
+                // vira falha contada, com motivo.
+                resultado.falhas.push(SalvarContatoFalha {
+                    email: email.to_string(),
+                    motivo: "nao foi possivel verificar se o contato ja existe".to_string(),
+                });
+                continue;
+            }
         }
 
         let nome = if p.nome.trim().is_empty() { email } else { p.nome.trim() };
@@ -8964,13 +9081,26 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
         match graph_enviar("contatos:criar", GRAPH_TETO_ESPERA_S, || {
             client.post(&criar_url).bearer_auth(&token).json(&body).send()
         }) {
-            Ok(resp) if resp.status().is_success() => criados += 1,
+            Ok(resp) if resp.status().is_success() => resultado.criados += 1,
             // #1076 (RB48/LGPD): e-mail do contato mascarado no log (PII).
-            Ok(resp) => log::warn!("[contatos] criar '{}' retornou {}", mascarar_email(email), resp.status()),
-            Err(e) => log::warn!("[contatos] criar '{}' falhou: {e}", mascarar_email(email)),
+            Ok(resp) => {
+                let status = resp.status();
+                log::warn!("[contatos] criar '{}' retornou {}", mascarar_email(email), status);
+                resultado.falhas.push(SalvarContatoFalha {
+                    email: email.to_string(),
+                    motivo: format!("criar contato retornou {status}"),
+                });
+            }
+            Err(e) => {
+                log::warn!("[contatos] criar '{}' falhou: {e}", mascarar_email(email));
+                resultado.falhas.push(SalvarContatoFalha {
+                    email: email.to_string(),
+                    motivo: format!("falha de transporte ao criar contato: {e}"),
+                });
+            }
         }
     }
-    Ok(criados)
+    Ok(resultado)
 }
 
 /// Subpastas de uma pasta de e-mail. O id do filho serve direto no endpoint de
