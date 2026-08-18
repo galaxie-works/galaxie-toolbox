@@ -60,9 +60,17 @@ impl AppConfig {
                 "GALAXIE_REMOTE_MAX_CODE_TTL_SECONDS",
                 900,
             )?),
+            // #1050 (SEC10): TTL da credencial TURN reduzido de 3600s → 1800s pra
+            // encurtar a janela em que uma credencial capturada é válida (a AC pede
+            // "próximo do tempo real de uma sessão", não 1h fixa). Tunável pelo env
+            // `GALAXIE_REMOTE_TURN_TTL_SECONDS`. ⚠️ Tradeoff: uma sessão RELAYED que
+            // ultrapasse o TTL cai se o cliente não re-buscar credencial (o cliente
+            // re-pede `ice_servers` no ICE restart). Se sessões de suporte passarem
+            // de 30min com frequência, subir o env — não baixar mais sem confirmar o
+            // refresh do cliente.
             turn_credential_ttl: Duration::from_secs(read_u64(
                 "GALAXIE_REMOTE_TURN_TTL_SECONDS",
-                3600,
+                1800,
             )?),
             rate_limit_messages: read_usize("GALAXIE_REMOTE_RATE_LIMIT_MESSAGES", 120)?,
             rate_limit_window: Duration::from_secs(read_u64(

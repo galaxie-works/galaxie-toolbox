@@ -160,6 +160,7 @@ async fn handle_socket(
                                     message,
                                     &state,
                                     connection_id,
+                                    client_ip,
                                     &outbound_tx,
                                     &mut registered_device_id,
                                 ).await;
@@ -200,6 +201,7 @@ async fn process_message(
     message: ClientMessage,
     state: &AppState,
     connection_id: Uuid,
+    client_ip: std::net::IpAddr,
     outbound: &mpsc::Sender<ServerMessage>,
     registered_device_id: &mut Option<String>,
 ) {
@@ -336,8 +338,23 @@ async fn process_message(
             let Some(device_id) = require_registration(registered_device_id, outbound).await else {
                 return;
             };
+            // SEC13: se o IP está em backoff por falhas repetidas, recusa antes de
+            // sequer consultar o código. Devolve o MESMO erro genérico do caso Invalid
+            // para não revelar ao atacante que ele foi bloqueado.
+            if !state.allow_redeem(client_ip).await {
+                warn!(%client_ip, "redeem bloqueado por backoff");
+                send_error(
+                    outbound,
+                    ErrorCode::InvalidCode,
+                    "codigo invalido ou ja utilizado",
+                )
+                .await;
+                return;
+            }
             match state.redeem_code(&code).await {
                 RedeemResult::Invalid => {
+                    state.register_redeem_failure(client_ip).await;
+                    warn!(%client_ip, "redeem invalido");
                     send_error(
                         outbound,
                         ErrorCode::InvalidCode,
@@ -346,11 +363,15 @@ async fn process_message(
                     .await;
                 }
                 RedeemResult::Expired => {
+                    state.register_redeem_failure(client_ip).await;
+                    warn!(%client_ip, "redeem expirado");
                     send_error(outbound, ErrorCode::CodeExpired, "codigo expirado").await;
                 }
                 RedeemResult::Ready {
                     creator_device_id, ..
                 } => {
+                    // Código válido: zera o histórico de falhas do IP (não era scanning).
+                    state.clear_redeem_failures(client_ip).await;
                     if creator_device_id == device_id {
                         send_error(
                             outbound,
