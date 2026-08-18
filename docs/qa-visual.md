@@ -59,3 +59,10 @@ provam integrações do Graph, permissões, dados reais, WebView2 nativa, hover,
 teclado, animação ou estados não reproduzidos pelo cenário. Esses pontos devem
 continuar listados para o live-QA do PO quando fizerem parte dos critérios de
 aceite.
+
+## Validação sem login Graph (mock do Vite)
+
+> Movido do `AGENTS.md` pelo #1043: é **ferramental do gate**, não instrução de orquestração.
+> O papel era descrito como "subagente QA"; hoje quem executa é a **`Lúmen II`** (QA frontend).
+
+🖥️ **A `Lúmen II` PODE validar visualmente** (ACs de layout/estrutura), sem login Graph real. O Vite dev server serve o frontend em `http://localhost:1420`; aberto **fora do Tauri** (browser), o `api.ts` usa **dados MOCK** (`inTauri()` = false). Fluxo: `preview_start {url:"http://localhost:1420"}` → `read_page` (login screen) → `form_input` email + `left_click` "Sign in with Microsoft" (o mock loga qualquer email como usuário fake) → cai no Bridge com dados mock → **`read_page`** inspeciona a árvore de acessibilidade **renderizada** (posição/presença de componentes, estados colapsado/expandido, tema, labels). **`read_page` funciona headless** (não precisa da pane visível); **screenshot** só funciona com a pane exibida. **Limite:** mock ≠ Graph real — comportamento dependente de dados reais (carregar/ordenar e-mail, contadores, `$search`, fotos, autocomplete, 429/retry) continua sendo validação de **runtime do PO**. Use validação visual para todo AC de UI que o mock consiga exercer; deixe explícito quais ACs sobraram pro PO.
