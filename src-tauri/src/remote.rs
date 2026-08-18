@@ -115,6 +115,11 @@ impl RemoteRole {
 pub struct RemoteSessionStartRequest {
     pub role: RemoteRole,
     pub session_id: String,
+    /// #1070 RB8: INFORMATIVO — é validado (formato/tamanho) mas o `RuntimeSession`
+    /// NÃO o consome. O signaling real (offer/answer/ICE) roda na ponte TS/S0 (o
+    /// front fala com o servidor de signaling); o runtime Rust só dirige o str0m e
+    /// recebe os `SignalMessage` já roteados via `RuntimeCommand::Signal`. Mantido no
+    /// contrato pra validação de entrada e diagnóstico, não como fonte de verdade.
     pub signaling: RemoteSignalingBinding,
     #[serde(default)]
     pub ice_servers: Vec<IceServer>,
@@ -932,16 +937,27 @@ impl RuntimeSession {
                 let mut txid = [0u8; 12];
                 rand::thread_rng().fill(&mut txid[..]);
                 let ind = build_send_indication(&txid, destino, dados);
-                self.socket
-                    .send_to(&ind, relay.turn_server)
-                    .map_err(|e| RemoteError::Network(e.to_string()))?;
-                return Ok(());
+                return Self::enviar_best_effort(&self.socket, &ind, relay.turn_server);
             }
         }
-        self.socket
-            .send_to(dados, destino)
-            .map_err(|e| RemoteError::Network(e.to_string()))?;
-        Ok(())
+        Self::enviar_best_effort(&self.socket, dados, destino)
+    }
+
+    /// #1070 RB1: envia um datagrama do data-path tratando `WouldBlock` (buffer de
+    /// saída cheio) como NÃO-fatal — o MESMO comportamento do `IoDriver`
+    /// (`services/remote-transport/src/driver.rs`) usado pelo harness E2E. Sob carga de
+    /// vídeo o buffer enche normalmente; derrubar a sessão por isso (o `?` que existia
+    /// aqui) era a divergência silenciosa do RB1. ICE/RTP/o próprio TURN retransmitem.
+    fn enviar_best_effort(
+        socket: &UdpSocket,
+        dados: &[u8],
+        destino: SocketAddr,
+    ) -> Result<(), RemoteError> {
+        match socket.send_to(dados, destino) {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(()),
+            Err(e) => Err(RemoteError::Network(e.to_string())),
+        }
     }
 
     /// #1130 fatia 3c: reação a uma resposta de controle TURN (não-Data) do coturn.
