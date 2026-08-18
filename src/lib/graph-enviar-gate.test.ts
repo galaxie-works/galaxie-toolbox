@@ -158,3 +158,52 @@ test("#1074 RB37: o gate reconhece cobertura por graph_enviar e ignora coleção
     0,
   );
 });
+
+// ─────────────── #1074 F3 (RB44): um client HTTP, com timeout ───────────────
+// Eram 87 `Client::new()` no `graph.rs`, NENHUM com timeout. Cada `new()` monta o
+// próprio pool de conexão (nem reuso de TLS havia) e, sem timeout, a conexão que
+// pendura segura uma das 4 vagas do pool para sempre — 4 penduradas param todo o
+// tráfego Graph SEM ERRO.
+//
+// A F3 trocou os 87 por `cliente()` (OnceLock + connect_timeout + timeout). Este
+// gate impede o 88º: `Client::new()` só pode existir DENTRO do `cliente()`, como
+// fallback de build.
+
+const CLIENT_NEW = /Client::new\s*\(\s*\)/g;
+
+/** Faixa do corpo de `fn cliente()`, achada por profundidade de chaves. */
+function faixaDoCliente(src: string): [number, number] | null {
+  const m = /fn cliente\s*\([^)]*\)[^{]*\{/.exec(src);
+  if (!m) return null;
+  const abre = m.index + m[0].length - 1;
+  let prof = 0;
+  for (let i = abre; i < src.length; i++) {
+    if (src[i] === "{") prof++;
+    else if (src[i] === "}") {
+      prof--;
+      if (prof === 0) return [m.index, i + 1];
+    }
+  }
+  return [m.index, src.length];
+}
+
+test("#1074 RB44: `Client::new()` só dentro de `cliente()` — o resto usa o compartilhado", () => {
+  const src = semComentarios(readFileSync("src-tauri/src/graph.rs", "utf8"));
+  const faixa = faixaDoCliente(src);
+  assert.ok(faixa, "não achei `fn cliente()` no graph.rs — a F3 foi revertida?");
+
+  const fora: number[] = [];
+  for (const m of src.matchAll(CLIENT_NEW)) {
+    if (m.index < faixa[0] || m.index >= faixa[1]) fora.push(m.index);
+  }
+  // Linha, não offset de caractere: `char 9277` não diz a ninguém onde arrumar.
+  const linhaDe = (pos: number) => src.slice(0, pos).split("\n").length;
+
+  assert.deepEqual(
+    fora.map((i) => `graph.rs:${linhaDe(i)}`),
+    [],
+    "`Client::new()` fora do `cliente()` — sem timeout e com pool próprio. " +
+      "Use `cliente()`; se precisar de tempo maior, sobrescreva por requisição " +
+      "com `RequestBuilder::timeout`, não afrouxando o default (#1074 RB44).",
+  );
+});
