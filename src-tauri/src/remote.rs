@@ -572,11 +572,10 @@ impl RuntimeSession {
                 if com_turn_utilizavel > 0 { "PRONTO p/ relay" } else { "sem credencial (relay bloqueado)" }
             );
         }
+        // #1182: limites do bitrate adaptativo nos defaults (300 kbps..12 Mbps,
+        // início 3 Mbps). O BWE do str0m sobe daí conforme a banda dá folga.
         let mut transport = Transport::novo(
-            SessionConfig {
-                papel: request.role.papel(),
-                ice_servers: request.ice_servers,
-            },
+            SessionConfig::new(request.role.papel(), request.ice_servers),
             encoder_commands,
         );
         // #1108: o BIND fica em `0.0.0.0` (recebe em todas as interfaces), mas o

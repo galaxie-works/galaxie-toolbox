@@ -8,6 +8,9 @@
 //! - **transporte ↔ rede:** sans-I/O — o app faz o UDP; o [`Transport`] só diz o
 //!   que transmitir/quando ([`Passo`]).
 
+// Controle de bitrate adaptativo (#1182) — PURO (BWE→encoder, sem str0m); fica no
+// núcleo pra o `cargo test` default exercitar sem OpenSSL.
+pub mod bitrate;
 pub mod bridge;
 pub mod command;
 pub mod control;
@@ -41,6 +44,7 @@ pub mod session;
 #[cfg(feature = "webrtc")]
 pub mod driver;
 
+pub use bitrate::AplicadorBitrate;
 pub use bridge::{FrameBridge, FrameFim};
 pub use command::{canal_de_comandos, CommandChannel, CommandReceiver, EncoderCommand};
 pub use control::{
