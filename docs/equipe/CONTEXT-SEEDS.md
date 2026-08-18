@@ -23,7 +23,7 @@ v1.0 · 2026-08-18 · No cutover, o Hiparco fatia em `<Nome>Context.md` na memó
 
 ## Castor / Pollux / Mizar / AlcorContext (Devs)
 - **Raia vazia — big-bang.** Aguardo primeiro despacho do `Polaris` (não pego card sozinho; livre = pingo na #133).
-- Convenções: worktree `C:\dev\gt-<meunome>-<issue>` off pre-prod · core.autocrlf=true + conferir `git diff --cached` (EOL LF) · pnpm · gate local verde antes de In review · commit com `-c user.name` · PR `Closes #US` (ou `Ref` em fatia).
+- Convenções: worktree `G:\galaxie_development\wt\<meunome>-<issue>` off pre-prod (canon §8.2; o path antigo `C:\dev\gt-…` está congelado) · core.autocrlf=true + conferir `git diff --cached` (EOL LF) · pnpm · gate local verde antes de In review · commit com `-c user.name` · PR `Closes #US` (ou `Ref` em fatia).
 - (BE) OPENSSL_DIR do PostgreSQL 16 + OPENSSL_NO_VENDOR=1 só quando compilar str0m de fato; default é openssl-free.
 
 ## LumenContext (QA-A)
