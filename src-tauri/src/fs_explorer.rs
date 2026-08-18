@@ -535,8 +535,13 @@ fn mime_de_ext(path: &str) -> &'static str {
 /// "failed to fetch" porque o `assetProtocol` não está habilitado no tauri.conf).
 /// Guards: caminho válido, é ARQUIVO (não dir), ≤ `max_bytes` limitado a 25MB.
 /// `metadata` (segue symlink) pra o teto valer sobre o conteúdo real.
-fn ler_bytes_arquivo(path: &str, max_bytes: Option<u64>) -> Result<crate::graph::AnexoConteudo, FsError> {
-    use base64::Engine;
+/// #1044 SEC6: guards compartilhados de leitura de arquivo local — caminho válido
+/// (absoluto), é ARQUIVO (não dir), tamanho ≤ teto (limitado ao hard cap de 25MB).
+/// Devolve os bytes CRUS. É o funil único de leitura de disco a mando do front:
+/// tanto o preview do Explorer quanto o anexo/compartilhamento do compositor
+/// passam por aqui, então o front nunca precisa da capability `fs:allow-read-file`
+/// aberta em `**` (leitura de disco arbitrária).
+pub(crate) fn ler_bytes_cru(path: &str, max_bytes: Option<u64>) -> Result<Vec<u8>, FsError> {
     validar(path)?;
     let p = com_long_path(Path::new(path));
     let meta = std::fs::metadata(&p)?; // NotFound se não existe/broken symlink
@@ -549,7 +554,12 @@ fn ler_bytes_arquivo(path: &str, max_bytes: Option<u64>) -> Result<crate::graph:
     if size > teto {
         return Err(FsError::ArquivoGrande(format!("{path} ({size} bytes > {teto})")));
     }
-    let bytes = std::fs::read(&p)?;
+    Ok(std::fs::read(&p)?)
+}
+
+fn ler_bytes_arquivo(path: &str, max_bytes: Option<u64>) -> Result<crate::graph::AnexoConteudo, FsError> {
+    use base64::Engine;
+    let bytes = ler_bytes_cru(path, max_bytes)?;
     let nome = Path::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -4357,6 +4367,37 @@ mod tests {
         std::fs::File::create(&grande).unwrap().set_len(MAX_PREVIEW_BYTES + 1).unwrap();
         assert!(matches!(
             ler_bytes_arquivo(&grande.to_string_lossy(), None),
+            Err(FsError::ArquivoGrande(_))
+        ));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // #1044 SEC6: o funil de bytes crus que o compartilhamento via OneDrive usa —
+    // devolve os bytes EXATOS (sem base64) e aplica os mesmos guards (path válido,
+    // é arquivo, teto). Prova que o front nunca precisa da capability `fs` aberta.
+    #[test]
+    fn ler_bytes_cru_exato_e_guards() {
+        let base = dir_temp("read-cru");
+        std::fs::create_dir_all(&base).unwrap();
+        let f = base.join("anexo.bin");
+        let conteudo = vec![0u8, 1, 2, 253, 254, 255, 42];
+        std::fs::write(&f, &conteudo).unwrap();
+
+        // Arquivo → bytes crus idênticos (o share sobe ISSO, sem round-trip base64).
+        assert_eq!(ler_bytes_cru(&f.to_string_lossy(), None).unwrap(), conteudo);
+
+        // Diretório / inexistente / vazio / teto → mesmos erros do funil.
+        assert!(matches!(
+            ler_bytes_cru(&base.to_string_lossy(), None),
+            Err(FsError::NotADirectory(_))
+        ));
+        assert!(matches!(
+            ler_bytes_cru(&base.join("naoexiste").to_string_lossy(), None),
+            Err(FsError::NotFound(_))
+        ));
+        assert!(matches!(ler_bytes_cru("", None), Err(FsError::InvalidPath(_))));
+        assert!(matches!(
+            ler_bytes_cru(&f.to_string_lossy(), Some(3)),
             Err(FsError::ArquivoGrande(_))
         ));
         std::fs::remove_dir_all(&base).ok();

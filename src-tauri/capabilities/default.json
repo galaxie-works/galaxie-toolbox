@@ -17,10 +17,6 @@
     "core:window:allow-show",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
-    "dialog:allow-open",
-    {
-      "identifier": "fs:allow-read-file",
-      "allow": [{ "path": "**" }]
-    }
+    "dialog:allow-open"
   ]
 }
