@@ -132,3 +132,35 @@ O #1148 (renovação de credencial) é **imaturidade nossa**, não dívida perma
 ## 7. O que eu recomendo abrir como card, independente da decisão
 
 **Bitrate adaptativo + política de perda melhor que "pede keyframe".** Vale em qualquer transporte, é a causa provável da percepção de qualidade ruim, e é pré-requisito pra qualquer comparação honesta. **É o item que eu colocaria na frente do espinho.**
+
+---
+
+## 8. Emenda — a premissa do §3 caiu em 12 horas, e ela **inverte o sinal** (2026-08-18)
+
+O `Confucius` entregou o **#1182** (PR #1186) — exatamente o item que eu tinha posto **na frente do espinho**. Isso obsoleta a medição do §3, que era de `81d789d`. Re-medi no branch:
+
+| §3 dizia (em `81d789d`) | Agora (PR #1186) |
+|---|---|
+| BWE **não habilitado** (zero ocorrência) | ✅ **`Rtc::builder().enable_bwe(Some(inicial))`** — `session.rs:158` |
+| bitrate **FIXO** em 12 Mbps | ✅ **12 Mbps virou TETO** (`bitrate_max_bps`); início em **teto/4 = 3 Mbps** e segue o BWE |
+| perda: **só PLI** | ✅ o BWE **reduz a taxa na perda**, não só pede keyframe |
+
+### Por que isso inverte o sinal, e não só atualiza o número
+
+O §3 era o argumento que **enfraquecia** o "ficar": eu mostrei que a maturidade do str0m que justificaria ficar era **valor não realizado** — a gente pagava o custo da stack sem cobrar o benefício.
+
+**Isso deixou de ser verdade.** Agora o str0m entrega congestion control **em uso**. Trocar por Iroh passaria a significar **abrir mão de controle de congestionamento que funciona** e reconstruí-lo sobre datagrama QUIC — que é exatamente o §5.1, o ponto onde eu já dizia que a decisão se perde.
+
+⇒ **A recomendação "não trocar agora" fica mais forte, não igual.**
+
+### E a pré-condição que eu impus foi cumprida
+
+Eu escrevi: *"o bitrate adaptativo entra ANTES da comparação. Sem isso, o espinho mede o nosso bug."* **Entrou.** Então a comparação do §6 deixou de ser prematura — **agora um espinho mediria transporte, não a nossa configuração quebrada.**
+
+Isso não muda a recomendação; **muda o que um espinho valeria.** Antes seria medida contaminada; agora seria evidência.
+
+### Nota de método (a segunda vez em dois dias)
+
+Esta é a **segunda** premissa medida minha que cai em menos de 24h — a primeira foi a §5 do #1049 (`endpointSignaling`). As duas caíram porque **o time consertou o que eu tinha medido como quebrado**, que é o melhor motivo possível.
+
+Reforça a regra que eu já tinha registrado: **fato medido é contexto perecível, com ref e data — nunca desempate.** Aqui o fundamento (§5.1: quem faz pacing/perda sobre QUIC) não se moveu, e é por isso que a decisão sobreviveu às duas quedas.
