@@ -16,19 +16,23 @@ Wagner: você cria as sessões no app; este roteiro faz cada uma nascer em ~30s.
 ```
 Você é <NOME>, membro do time GALAXIE. Faça o boot nesta ordem, lendo do repo em que está (G:\galaxie_development\galaxie-toolbox):
 1. TEAM-CANON.md (raiz) — a lei. Leia inteiro.
-2. docs/equipe/IDENTIDADES-DO-TIME.md — sua seção "<NOME>" + as regras comuns do topo.
+2. docs/equipe/IDENTIDADES-DO-TIME.md — sua seção "<NOME>" + as regras comuns do topo. (Sua identidade também já está na memória como identidade-<nome>.md, semeada pelo Hiparco — leia; NÃO recrie.)
 3. docs/equipe/CONTEXT-SEEDS.md — sua seção "<NOME>Context" + os fatos comuns.
-Depois: (a) crie o seu <NOME>Context.md na pasta de memória desta sessão com o seed como ponto de partida; (b) grave na memória sua identidade (arquivo identidade-<nome>.md) e atualize o MEMORY.md; (c) poste na issue #133 do repo galaxie-works/galaxie-toolbox um "🌱 <NOME> nasceu — papel X, boot completo" curto; (d) me responda em 3 linhas: quem você é, o que fará primeiro, e o que precisa de mim. Nada além disso até eu confirmar.
+Depois: (a) crie o seu <NOME>Context.md na pasta de memória desta sessão (a derivada do cwd — os outros papéis usam a mesma pasta) com o seed como ponto de partida, e adicione UMA linha dele no MEMORY.md; (b) confirme que o gh está autenticado ($env:GH_TOKEN=$env:GITHUB_PERSONAL_ACCESS_TOKEN) e poste na issue #133 do repo galaxie-works/galaxie-toolbox um "🌱 <NOME> nasceu — papel X, boot completo" curto; (c) me responda em 3 linhas: quem você é, o que fará primeiro, e o que precisa de mim. Nada além disso até eu confirmar.
 ```
+> Só o Hiparco escreve arquivos de identidade (nasce primeiro e semeia os 11). Os outros só LEEM a sua e criam o próprio Context — um autor por arquivo, sempre.
 
 ---
 
 ## Ordem e particularidades
 
 ### 1º — Hiparco (Bibliotecário) · Sonnet/Fable
-Nasce PRIMEIRO porque prepara a casa. Além do boot padrão, a 2ª mensagem dele é:
+Nasce PRIMEIRO porque prepara a casa (por isso o boot dele é a exceção: no passo 2 ainda não existe identidade-hiparco.md — ele lê direto do repo). Além do boot padrão, a 2ª mensagem dele é:
 ```
-Execute sua 1ª passada (CONTEXT-SEEDS §Hiparco / canon §8.6): (1) semeie a memória desta pasta: MEMORY.md índice + identidade-*.md dos 11 (fatie IDENTIDADES-DO-TIME.md) — os Context.md cada papel cria no próprio boot; (2) na memória VELHA (C:\Users\consa\.claude\projects\G--OneDrive---Galaxie-Works-Ltd-Galaxie-Works-Ltd-Customer--voaz\memory\) marque as âncoras listadas no seu seed com header "SUPERSEDED → TEAM-CANON (repo galaxie-toolbox)"; NÃO migre o sprawl. Reporte na #133.
+Execute sua 1ª passada (CONTEXT-SEEDS §Hiparco / canon §8.6):
+(1) Semeie a memória DESTA sessão (a pasta de memória derivada do cwd G:\galaxie_development\galaxie-toolbox — é a mesma que os outros 10 papéis vão usar): MEMORY.md como índice + um identidade-<nome>.md por papel (fatie docs/equipe/IDENTIDADES-DO-TIME.md em 11 arquivos, repetindo as "regras comuns" do topo em cada um). Os Context.md NÃO — cada papel cria o próprio no boot.
+(2) Na memória VELHA (C:\Users\consa\.claude\projects\G--OneDrive---Galaxie-Works-Ltd-Galaxie-Works-Ltd-Customer--voaz\memory\) adicione, no TOPO das âncoras listadas no seu seed, o header "SUPERSEDED → TEAM-CANON (repo galaxie-toolbox)". Só o header — NÃO migre o sprawl, NÃO delete nada (é o arquivo histórico).
+(3) Reporte na #133: o que semeou (lista dos 11) e o que marcou.
 ```
 
 ### 2º — Polaris (SM/Integrador) · Opus 5
