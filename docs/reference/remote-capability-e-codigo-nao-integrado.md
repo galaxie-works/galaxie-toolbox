@@ -189,8 +189,15 @@ servidor de signaling, o outro faz mídia P2P. Nenhum está naturalmente abaixo 
 outro — e é por isso que a resposta é um terceiro lugar.
 
 **Decisão: crate folha `galaxie-remote-capabilities`.** Dep única: `serde`.
-Consumidores: `remote-net`, `remote-transport` e `src-tauri`. Precedente de
-crate pequeno já existe na casa (`remote-system-helper`).
+Consumidores: `remote-net`, `remote-transport` e `src-tauri`.
+
+> ⚠️ **Correção (18/08, `3e2c361`).** Esta linha dizia que já havia "precedente de
+> crate pequeno na casa (`remote-system-helper`)". **Está errado:** o
+> `remote-system-helper` **não é crate Rust** — não tem `Cargo.toml` (é helper
+> Delphi/PowerShell). Não havia precedente; eu apoiei a recomendação num fato que
+> não conferi. A **decisão não muda** — ela nunca dependeu disso, e sim do
+> argumento de que o vocabulário é o contrato ENTRE os dois crates. Mas o
+> argumento de apoio era falso e fica corrigido aqui.
 
 Custo honesto: +1 `Cargo.toml`, +1 entrada no `ci.yml` (build e cache).
 

@@ -266,3 +266,19 @@ jobs:
       - name: clippy remote-transport (-D warnings — núcleo do Remote)
         working-directory: services/remote-transport
         run: cargo clippy --all-targets -- -D warnings
+
+      # Medidos em `3e2c361` (18/08): os três já estavam com ZERO achado sob
+      # `-D warnings` e mesmo assim fora do gate — entram de graça. O
+      # `remote-capabilities` nasceu HOJE (#1240): entrou no CI de teste e ficou
+      # fora do de clippy, que é o modo de falha que o ratchet abaixo fecha.
+      - name: clippy remote-capabilities (-D warnings — nasceu limpo)
+        working-directory: services/remote-capabilities
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: clippy remote-broker-client (-D warnings — limpo, sem consumidor)
+        working-directory: services/remote-broker-client
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: clippy remote-capture (-D warnings — limpo)
+        working-directory: services/remote-capture
+        run: cargo clippy --all-targets -- -D warnings
