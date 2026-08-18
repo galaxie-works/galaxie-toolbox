@@ -28,6 +28,9 @@ input = ["dep:enigo"]
 audio = ["dep:audiopus", "dep:wasapi"]
 
 [dependencies]
+# #1070 RB7 passo 3: o vocabulário ÚNICO de capability (crate folha, dep só serde).
+# O gate do DataChannel (CapabilityPolicy) aplica o MESMO tipo que o ticket S8 concede.
+galaxie-remote-capabilities = { path = "../remote-capabilities" }
 str0m = { version = "0.6", optional = true }
 enigo = { version = "0.6", optional = true }
 audiopus = { version = "0.2", optional = true }

@@ -1509,6 +1509,7 @@ name = "galaxie-remote-transport"
 version = "0.1.0"
 dependencies = [
  "enigo",
+ "galaxie-remote-capabilities",
  "hmac",
  "md-5",
  "rand 0.8.7",
