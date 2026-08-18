@@ -274,7 +274,6 @@ Conferidas contra o catalogo INTEIRO. URLs sao **proposta, nao medicao** - o pas
 | Banking and Finance | `asaas` | Asaas | https://www.asaas.com | cobranca por boleto/Pix automatizada para PME |
 | Banking and Finance | `serasa-experian` | Serasa Experian | https://www.serasaexperian.com.br | consulta de credito antes de vender a prazo |
 | Shopping | `mercado-livre` | Mercado Livre | https://www.mercadolivre.com.br | maior e-commerce da America Latina; ausente do catalogo |
-| Shopping | `shopify` | Shopify | https://admin.shopify.com | lider mundial em loja virtual; so o bigcommerce estava |
 
-📌 **`shopify` merece destaque:** e o **lider absoluto** de plataforma de e-commerce e **nao esta no catalogo inteiro** - so o BigCommerce, que e o segundo. E o mesmo padrao que registrei nas fatias #1160 e #1161: **entrou o tier-2 e faltou o lider.** Terceira confirmacao independente.
+⚠️ **Correcao (achada por mim ao curar a fatia #1157):** uma versao anterior deste doc afirmava que o `shopify` **nao estava no catalogo inteiro**. **Estava errado** - ele existe em `Work and Business`, e eu o mantive la. O erro foi afirmar ausencia a partir da minha fatia em vez de buscar no catalogo todo. O padrao "entrou o tier-2 e faltou o lider" continua valido onde eu o medi de fato (Sonar, AnyDesk, Render, Wasabi, Acronis, e o bloco brasileiro inteiro) - mas **nao se aplica ao shopify**.
 

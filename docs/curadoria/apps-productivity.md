@@ -401,13 +401,11 @@ Conferidas contra o catalogo INTEIRO. URLs sao **proposta, nao medicao**.
 
 | id sugerido | Nome | URL | Por que entra |
 |---|---|---|---|
-| `google-drive-x` | *(ja existe em Cloud Storage)* | — | so registrando que conferi e nao esta faltando |
-| `airtable` | Airtable | https://airtable.com | lider em base de dados sem codigo; **ausente do catalogo inteiro** |
-| `slack` | *(ja existe em Work and Business)* | — | conferido, nao falta |
-| `clickup` | *(ja existe em Work and Business)* | — | conferido, nao falta |
-| `rd-station` | RD Station | https://app.rdstation.com.br | lider de automacao de marketing no Brasil |
-| `pipefy` | Pipefy | https://app.pipefy.com | gestao de processo brasileira com adocao real em PME |
-| `docusign-x` | *(ja mantido)* | — | — |
+| `rd-station` | RD Station | https://app.rdstation.com.br | lider de automacao de marketing no Brasil; ausente do catalogo |
 
-📌 **`airtable` e o achado**: e o lider de base-de-dados-sem-codigo e **nao esta em lugar nenhum do catalogo**, enquanto 30+ alternativas tier-2 de gestao de projeto estao. **Quarta confirmacao** do padrao "entrou o tier-2 e faltou o lider".
+📌 **Conferi e NAO estao faltando** (existem em outra categoria, entao nao proponho): `airtable`, `slack`, `clickup`, `asana`, `canva`, `figma`, `confluence`, `calendly`, `hubspot`, `box`, `bitwarden` - todos em `Work and Business`; `google-drive` em `Cloud Storage`.
+
+⚠️ **Correcao de uma afirmacao minha:** numa versao anterior deste doc eu escrevi que o `airtable` estava *"ausente do catalogo inteiro"*. **Estava errado** - ele existe em `Work and Business`. Achei ao levantar a fatia #1156, antes de publicar. **O erro foi ter afirmado ausencia a partir da minha fatia em vez de buscar no catalogo todo** - que e exatamente a disciplina que eu mesmo apliquei nas fatias anteriores. Fica registrado porque o padrao "entrou o tier-2 e faltou o lider" continua valendo nas outras fatias, mas **nao se aplica ao airtable**.
+
+⚠️ **Correcao:** uma versao anterior deste doc propunha o `pipefy` como adicao. **Ele ja existe** em `Work and Business` (achei ao levantar a fatia #1157) - removi a proposta.
 
