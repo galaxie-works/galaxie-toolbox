@@ -12,7 +12,35 @@ O script usa `agent-browser@0.33.2` via `pnpm dlx` (versão pinada, sem adiciona
 o binário de 91 MB às dependências), um e-mail fictício e a API mock do browser.
 Nenhuma credencial, token ou sessão real é necessária.
 
-## Fluxo obrigatório para PR de UI
+## Status: ferramental sob demanda — **não** é obrigação de PR (#1029, DOC-11)
+
+⚠️ Este documento dizia **"Fluxo obrigatório para PR de UI"**. Não é, e nunca
+chegou a ser: o `AGENTS.md` já classificava este mesmo arquivo como
+*"ferramental do gate da `Lúmen II`, não instrução de orquestração"*, e o
+`WORKFLOW.md` — que é a fonte canônica e supersede o `AGENTS.md` — nunca o
+adotou. Medido em `56ddc51` (18/08): **nenhuma PR de UI do dia anexou PNG, e
+nenhuma foi reprovada por isso.**
+
+Obrigação que ninguém cumpre e ninguém cobra é pior que obrigação nenhuma:
+ela corrói a confiança no resto do processo, porque quem lê não sabe mais
+quais regras valem.
+
+**O que substituiu a parte automatizável:** o #786 criou `pnpm test:component`
+(vitest + happy-dom) e `pnpm test:browser` (navegador real, Playwright) — os
+dois **rodam no CI** e travam a classe de regressão que motivou este doc
+(foco/ponteiro, o erase do compose). Ver `WORKFLOW.md` §5.0-bis.
+
+**O que este ferramental ainda faz, e nenhum teste faz:** olhar. Espaçamento,
+contraste, dark mode, alinhamento — coisas que um assert não afirma.
+
+### Quando usar (sob demanda, não por regra)
+
+- A `Lúmen II` pede, no gate de um card de UI.
+- O autor mexeu em layout/tema e quer evidência na PR.
+- O PO pede print de uma tela específica.
+
+## Como capturar
+
 
 1. Em um terminal, inicie o mock:
 
