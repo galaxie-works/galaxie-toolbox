@@ -405,6 +405,29 @@ async fn process_message(
                 }
             }
         }
+        ClientMessage::RenewIceServers => {
+            // #1148: reemite credencial TURN fresca pro device JÁ registrado nesta
+            // conexão — sem refazer pareamento. O cliente chama antes do TTL vencer
+            // pra a sessão relayed não cair.
+            let Some(device_id) = require_registration(registered_device_id, outbound).await else {
+                return;
+            };
+            match state.ice_servers(device_id) {
+                Ok(ice_servers) => {
+                    let _ = outbound
+                        .send(ServerMessage::IceServersRenewed { ice_servers })
+                        .await;
+                }
+                Err(_) => {
+                    send_error(
+                        outbound,
+                        ErrorCode::Internal,
+                        "falha ao renovar credencial TURN",
+                    )
+                    .await;
+                }
+            }
+        }
         ClientMessage::Signal {
             peer_id,
             kind,

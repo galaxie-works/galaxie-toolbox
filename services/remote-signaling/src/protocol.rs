@@ -20,6 +20,10 @@ pub enum ClientMessage {
     RedeemAssistedSession {
         code: String,
     },
+    /// #1148: o device JÁ registrado nesta conexão pede uma credencial TURN
+    /// FRESCA (o TTL da anterior está perto de expirar) — SEM refazer pareamento
+    /// nem novo código. O servidor responde com `IceServersRenewed`.
+    RenewIceServers,
     Signal {
         peer_id: String,
         kind: SignalKind,
@@ -57,6 +61,12 @@ pub enum ServerMessage {
     },
     SessionPaired {
         peer_id: String,
+    },
+    /// #1148: credencial TURN renovada em resposta a `RenewIceServers`. Mesmo
+    /// formato do `ice_servers` do `Registered`, com `expires_at` novo — o cliente
+    /// aplica antes do TTL da anterior vencer pra a sessão *relayed* não cair.
+    IceServersRenewed {
+        ice_servers: Vec<IceServer>,
     },
     Signal {
         peer_id: String,
