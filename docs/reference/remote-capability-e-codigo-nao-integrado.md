@@ -128,3 +128,83 @@ Não abri card — é chamada do `Polaris II`. Se ele quiser, eu faço.
 | **RB5** | Parquear com marca de não-integrado. Não apagar — está no CI. | `Confucius` |
 | **RB4** | Parquear com marca de não-integrado. #937 CLOSED ⇒ é espera. | `Confucius` |
 | RB1+RB8 | Sem decisão pendente — fatia dele, pode ir agora | `Confucius` |
+
+---
+
+## 4. Adendo (18/08, `9143525`) — ONDE mora o tipo único
+
+O `Confucius` implementou a parte de segurança do RB7 (o `Default` do
+`CapabilityPolicy` virou DENY, PR #1232) e travou no resto com uma pergunta
+que **este doc não tinha respondido**:
+
+> `remote-net` (dono do `Capabilities`) e `remote-transport` (dono do
+> `CapabilityPolicy`) são crates irmãos **sem dep entre si**. Unificar exige
+> escolher a colocação.
+
+Ele está certo — a §1 disse *"reexportado de `remote-net`"* e passou por cima do
+problema. Lacuna minha; fecho aqui.
+
+### 4.1 O que já dá para fazer HOJE, sem depender desta decisão
+
+`src-tauri` **já depende de `galaxie-remote-net` com default features, de forma
+incondicional** (`src-tauri/Cargo.toml:51` — *"LEVE do remote-net, SEM
+client/authority"*).
+
+⇒ Trocar o `RemoteCapabilities` (2 campos, `src-tauri/src/remote.rs:133`) por
+`galaxie_remote_net::protocol::Capabilities` **não custa nenhuma dependência
+nova**. Isso já colapsa **dois dos três** vocabulários e faz o que o ticket S8
+assina finalmente cruzar a fronteira IPC — que era o buraco de segurança da §1.
+
+**Faça esta parte primeiro**, independentemente do que se decidir abaixo.
+
+### 4.2 O custo real da dep direta, medido
+
+A premissa *"`remote-net` traz opaque-ke/argon2/tokio/rustls"* **não se sustenta**:
+essas são todas `optional` e `default = []` (`services/remote-net/Cargo.toml`).
+
+Deps incondicionais, medidas em `9143525` (18/08):
+
+| crate | deps incondicionais |
+|---|---|
+| `remote-net` | base64, ed25519-dalek, rand, serde, serde_json, thiserror, zeroize |
+| `remote-transport` | serde, serde_json, thiserror, tracing, rand, hmac, sha1, md-5 |
+
+**Custo marginal de `transport → net` (com `default-features = false`):**
+`base64`, `ed25519-dalek`, `zeroize`. Bem menor que o alegado — mas
+`ed25519-dalek` (assinatura) num crate que não assina nada não é nada.
+
+### 4.3 A decisão, e por que o desempate NÃO é o custo
+
+O número acima é **fato perecível** (muda com um `cargo add`). O desempate tem
+de ser um argumento que não expira:
+
+> **O vocabulário de capability é o contrato ENTRE os dois crates** — o ticket
+> S8 (`remote-net`) **concede**, o DataChannel (`remote-transport`) **aplica**.
+> Um contrato que mora dentro de uma das partes é **exatamente como os três
+> vocabulários divergiram**. Qualquer colocação dentro de um dos dois recria a
+> assimetria que causou o defeito.
+
+`remote-net` e `remote-transport` são **pares**, não camadas: um fala com o
+servidor de signaling, o outro faz mídia P2P. Nenhum está naturalmente abaixo do
+outro — e é por isso que a resposta é um terceiro lugar.
+
+**Decisão: crate folha `galaxie-remote-capabilities`.** Dep única: `serde`.
+Consumidores: `remote-net`, `remote-transport` e `src-tauri`. Precedente de
+crate pequeno já existe na casa (`remote-system-helper`).
+
+Custo honesto: +1 `Cargo.toml`, +1 entrada no `ci.yml` (build e cache).
+
+**Alternativa, se `Polaris II` preferir não abrir o 7º crate:** `remote-transport`
+depende de `remote-net` com `default-features = false`. Funciona, custa os três
+crates da §4.2, e **aceita conscientemente** que o contrato passe a morar na casa
+de uma das partes. Não recomendo, mas é sustentável — o que não é sustentável é
+manter dois tipos e sincronizá-los na mão.
+
+### 4.4 Ordem final do RB7/RB6
+
+1. `RemoteCapabilities` → `Capabilities` no `src-tauri` (§4.1, **sem custo**)
+2. crate `galaxie-remote-capabilities`; `remote-net` e `remote-transport` passam
+   a reexportá-lo
+3. `CapabilityPolicy` vira wrapper/alias sobre os 5 campos (o `Default` já é
+   DENY desde a #1232)
+4. **só então** RB6: `remote.rs:1126` deixa de descartar — loga e aplica
