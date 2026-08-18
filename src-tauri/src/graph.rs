@@ -726,7 +726,14 @@ pub fn onedrive_folders(store: &TokenStore) -> Result<Vec<PastaOneDrive>, String
     let mut proxima = Some(format!(
         "{GRAPH}/me/drive/root/children?$select=id,name,size,webUrl,folder&$top=200"
     ));
+    let mut guarda = GuardaPaginacao::nova();
     while let Some(url) = proxima {
+        // #1074 RB41: este laço não tinha guarda NENHUMA — nem de host (#1068, que
+        // exfiltraria o token) nem de ciclo. Diferente das listagens de People, aqui
+        // a falha vira `Err` porque a função não acumula `failures`.
+        if let Err(motivo) = guarda.aceitar(&url) {
+            return Err(format!("listagem do OneDrive interrompida ({motivo:?})"));
+        }
         let resp = client
             .get(&url)
             .bearer_auth(&token)
@@ -884,16 +891,7 @@ pub fn onedrive_tipos(store: &TokenStore, web_url: &str) -> Result<Vec<TipoArqui
 // escopos sem admin consent (Calendars.Read, Mail.Read, Tasks.ReadWrite).
 // ============================================================================
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Reuniao {
-    pub assunto: String,
-    /// Inicio em ISO UTC (o front converte para o horario local).
-    pub inicio: String,
-    pub fim: String,
-    pub local: String,
-    pub online: bool,
-}
+
 
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -903,12 +901,7 @@ pub struct EmailRecente {
     pub recebido: String,
 }
 
-#[derive(serde::Serialize, Default, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct CaixaEntrada {
-    pub nao_lidos: u64,
-    pub recentes: Vec<EmailRecente>,
-}
+
 
 /// E-mail do dashboard Atoms (#440 A1): não-lidos + sinalizados + recentes num
 /// ÚNICO `$batch` sob o pool — 1 request, 1 caminho de erro. Substitui o
@@ -4950,6 +4943,140 @@ fn url_continuacao_graph_valida(url: &str) -> bool {
         .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
+/// Teto de páginas de uma listagem do Graph (#1074 RB41).
+///
+/// Rede de segurança final: mesmo com detecção de ciclo, um servidor que devolva
+/// uma sequência INFINITA de URLs distintas manteria o laço vivo — e o `HashSet`
+/// de visitadas cresceria junto. 999 itens por página × 500 páginas cobre
+/// qualquer tenant real com folga.
+const GRAPH_MAX_PAGINAS: usize = 500;
+
+/// Por que a paginação parou.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ParadaPaginacao {
+    /// `next_link` fora do Graph — seguir vazaria o bearer token (#1068).
+    ForaDoGraph,
+    /// URL já visitada: ciclo. Sem isto, o laço é infinito.
+    Ciclo,
+    /// Passou do teto de páginas.
+    TetoDePaginas,
+}
+
+/// Guarda de paginação por `@odata.nextLink` (#1074 RB41).
+///
+/// Cada listagem do Graph parseia a resposta do seu jeito, mas TODAS precisam da
+/// mesma invariante antes de ir para a próxima página: **host do Graph, não
+/// repetida, dentro do teto.**
+///
+/// Antes disto, das 5 listagens paginadas só a `cr_people_directory` checava
+/// ciclo. `cr_grupos`, `cr_grupo_membros`, `cr_contact_folders` e
+/// `onedrive_folders` entravam em **laço infinito** com um `nextLink` cíclico —
+/// segurando uma vaga do pool de 4 para sempre.
+///
+/// Unifica a INVARIANTE, não a forma do laço: os laços diferem no que parseiam e
+/// nos erros que reportam; transformá-los num `paginar<T>` genérico mudaria 5
+/// caminhos de erro de uma vez, risco desproporcional ao ganho.
+pub(crate) struct GuardaPaginacao {
+    vistas: std::collections::HashSet<String>,
+}
+
+impl GuardaPaginacao {
+    pub(crate) fn nova() -> Self {
+        Self {
+            vistas: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Decide se `url` pode ser buscada. `Ok(())` segue; `Err(motivo)` para.
+    pub(crate) fn aceitar(&mut self, url: &str) -> Result<(), ParadaPaginacao> {
+        if !url_continuacao_graph_valida(url) {
+            return Err(ParadaPaginacao::ForaDoGraph);
+        }
+        if self.vistas.len() >= GRAPH_MAX_PAGINAS {
+            return Err(ParadaPaginacao::TetoDePaginas);
+        }
+        if !self.vistas.insert(url.to_string()) {
+            return Err(ParadaPaginacao::Ciclo);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod testes_guarda_paginacao {
+    use super::*;
+
+    /// REPRODUZ o bug do RB41: o Graph devolve um `nextLink` apontando para a
+    /// página que acabou de ser lida. Sem guarda, o `while let Some(url)` nunca
+    /// termina. O teste tem um teto próprio de voltas — se a guarda não pegar, ele
+    /// falha por estouro em vez de travar a suíte.
+    #[test]
+    fn next_link_ciclico_para_em_vez_de_repetir_para_sempre() {
+        let mut g = GuardaPaginacao::nova();
+        let url = format!("{GRAPH}/groups?$top=999");
+
+        let mut voltas = 0usize;
+        let mut proxima = Some(url.clone());
+        while let Some(u) = proxima.take() {
+            if g.aceitar(&u).is_err() {
+                break;
+            }
+            voltas += 1;
+            assert!(voltas < 10, "o laço não parou — a guarda não pegou o ciclo");
+            proxima = Some(url.clone()); // o servidor devolve a MESMA URL
+        }
+        assert_eq!(voltas, 1, "deve buscar a 1ª página e parar na repetição");
+    }
+
+    #[test]
+    fn ciclo_alternando_duas_paginas_tambem_para() {
+        // A→B→A: o HashSet pega; guardar só "a última URL vista" não pegaria.
+        let mut g = GuardaPaginacao::nova();
+        let a = format!("{GRAPH}/groups?p=a");
+        let b = format!("{GRAPH}/groups?p=b");
+        assert_eq!(g.aceitar(&a), Ok(()));
+        assert_eq!(g.aceitar(&b), Ok(()));
+        assert_eq!(g.aceitar(&a), Err(ParadaPaginacao::Ciclo));
+    }
+
+    #[test]
+    fn next_link_fora_do_graph_para_antes_de_mandar_o_token() {
+        let mut g = GuardaPaginacao::nova();
+        for u in [
+            "https://evil.example/users",
+            "https://graph.microsoft.com.evil.example/users",
+            "",
+        ] {
+            assert_eq!(
+                g.aceitar(u),
+                Err(ParadaPaginacao::ForaDoGraph),
+                "aceitou URL de fora: {u}"
+            );
+        }
+    }
+
+    #[test]
+    fn paginacao_normal_com_paginas_distintas_segue() {
+        let mut g = GuardaPaginacao::nova();
+        for i in 0..50 {
+            assert_eq!(g.aceitar(&format!("{GRAPH}/users?skip={i}")), Ok(()));
+        }
+    }
+
+    #[test]
+    fn teto_barra_sequencia_infinita_de_urls_distintas() {
+        // Ciclo não pega este caso (URLs sempre novas). O teto pega.
+        let mut g = GuardaPaginacao::nova();
+        for i in 0..GRAPH_MAX_PAGINAS {
+            assert_eq!(g.aceitar(&format!("{GRAPH}/users?skip={i}")), Ok(()));
+        }
+        assert_eq!(
+            g.aceitar(&format!("{GRAPH}/users?skip={GRAPH_MAX_PAGINAS}")),
+            Err(ParadaPaginacao::TetoDePaginas)
+        );
+    }
+}
+
 /// `/me/people` mistura pessoas e objetos mail-enabled. `personType.class` é o
 /// sinal canônico do Graph para excluir Teams, listas de distribuição e sites
 /// SharePoint respaldados por Microsoft 365 Groups da lista de pessoas (#281).
@@ -5360,19 +5487,16 @@ pub fn cr_people_directory(store: &TokenStore) -> Result<PeopleDirectoryResult, 
     let mut proxima = Some(format!(
         "{GRAPH}/users?$top=999&$select=id,displayName,mail,userPrincipalName,businessPhones,mobilePhone,jobTitle,companyName,department,officeLocation"
     ));
-    let mut paginas_visitadas = std::collections::HashSet::new();
+    let mut guarda = GuardaPaginacao::nova();
 
     while let Some(url) = proxima.take() {
-        if !url_continuacao_graph_valida(&url) {
+        // #1074 RB41: era a ÚNICA listagem com anti-ciclo, escrita à mão aqui.
+        // Agora usa a mesma guarda das outras quatro — uma implementação da
+        // invariante, não cinco cópias que podem divergir.
+        if let Err(motivo) = guarda.aceitar(&url) {
             result
                 .failures
-                .push("Directory: continuation URL outside Microsoft Graph".to_string());
-            break;
-        }
-        if !paginas_visitadas.insert(url.clone()) {
-            result
-                .failures
-                .push("Directory: continuation URL repeated".to_string());
+                .push(format!("Directory: paginação interrompida ({motivo:?})"));
             break;
         }
         match graph_enviar("people:directory", GRAPH_TETO_ESPERA_S, || {
@@ -5438,15 +5562,16 @@ pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
     let mut proxima = Some(format!(
         "{GRAPH}/me/memberOf?$top=999&$select=id,displayName,description,mail,visibility,groupTypes,mailEnabled,securityEnabled"
     ));
+    let mut guarda = GuardaPaginacao::nova();
 
     while let Some(url) = proxima.take() {
-        // Segurança (#1068): guarda forte (host exato do Graph). `starts_with(GRAPH)`
-        // deixava passar `https://graph.microsoft.com/v1.0.evil.example/...` e exfiltrava
-        // o token; `url_continuacao_graph_valida` exige o `/` logo após o v1.0.
-        if !url_continuacao_graph_valida(&url) {
+        // #1068 (host) + #1074 RB41 (ciclo/teto) na MESMA guarda: antes só o host
+        // era checado aqui, e um `nextLink` cíclico deixava este laço rodando para
+        // sempre, segurando uma das 4 vagas do pool.
+        if let Err(motivo) = guarda.aceitar(&url) {
             result
                 .failures
-                .push("Groups: continuation URL outside Microsoft Graph".to_string());
+                .push(format!("Groups: paginação interrompida ({motivo:?})"));
             break;
         }
         match graph_enviar("people:groups", GRAPH_TETO_ESPERA_S, || {
@@ -5541,11 +5666,14 @@ pub fn cr_grupo_membros(
         "{GRAPH}/groups/{}/members/microsoft.graph.user?$top=999&$select=id,displayName,mail,userPrincipalName,businessPhones,mobilePhone,jobTitle,companyName,department,officeLocation",
         urlencoding::encode(group_id)
     ));
+    let mut guarda = GuardaPaginacao::nova();
 
     while let Some(url) = proxima.take() {
         // Segurança (#1068): guarda forte contra next_link fora do Graph (ver cr_grupos).
-        if !url_continuacao_graph_valida(&url) {
-            return Err("Groups: continuation URL outside Microsoft Graph".to_string());
+        // #1068 (host) + #1074 RB41 (ciclo/teto). Aqui a falha vira `Err` porque a
+        // função não acumula `failures`.
+        if let Err(motivo) = guarda.aceitar(&url) {
+            return Err(format!("Group members: paginação interrompida ({motivo:?})"));
         }
         let resp = graph_enviar("people:group-members", GRAPH_TETO_ESPERA_S, || {
             client.get(&url).bearer_auth(&token).send()
@@ -7287,12 +7415,14 @@ pub fn cr_contact_folders(store: &TokenStore) -> Result<ContactFoldersResult, St
     let mut proxima = Some(format!(
         "{GRAPH}/me/contactFolders?$top=200&$select=id,displayName,parentFolderId"
     ));
+    let mut guarda = GuardaPaginacao::nova();
     while let Some(url) = proxima.take() {
         // Segurança (#1068): guarda forte contra next_link fora do Graph (ver cr_grupos).
-        if !url_continuacao_graph_valida(&url) {
+        // #1068 (host) + #1074 RB41 (ciclo/teto).
+        if let Err(motivo) = guarda.aceitar(&url) {
             result
                 .failures
-                .push("ContactFolders: continuation URL outside Microsoft Graph".to_string());
+                .push(format!("Contact folders: paginação interrompida ({motivo:?})"));
             break;
         }
         match graph_enviar("people:contact-folders", GRAPH_TETO_ESPERA_S, || {
