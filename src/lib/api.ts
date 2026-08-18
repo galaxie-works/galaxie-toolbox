@@ -1724,6 +1724,20 @@ export async function resetSessionMemo(): Promise<void> {
   }
 }
 
+/**
+ * #1257 (P0): limpa a SESSÃO DE CONTA no backend (Rust) — token em memória, sessão
+ * persistida (`sessao.bin`), identidade em cache e memo do Graph — SEM zerar o PIN.
+ * Diferente do `resetSessionMemo` (só o memo curto), fecha o vazamento entre contas:
+ * o `resetSessaoCompleta` chama isto **awaited** na fronteira de conta, pra o token
+ * da conta anterior não sobreviver à janela do novo login. No-op fora do Tauri.
+ * NÃO engole o erro: se o clear falhar, a fronteira de conta precisa saber (senão
+ * seguiria vazando) — o `resetSessaoCompleta` propaga.
+ */
+export async function clearAccountSession(): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("clear_account_session");
+}
+
 /** #426: tenant membro de uma organização multi-tenant. */
 export interface MultiTenantMember {
   tenantId: string;
