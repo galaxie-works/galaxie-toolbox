@@ -151,3 +151,70 @@ aberta pelo lado que atualiza sozinho.
   em campo, exigir PoP o desconecta. É decisão de PO (janela de atualização
   forçada vs. período de tolerância), não minha.
 - **A implementação.** Raia do `Confucius` — aqui só o desenho, como o card pede.
+
+---
+
+## 6. Adendo (18/08, `8f08136`) — **T2 não precisa esperar a janela do PoP**
+
+O `Polaris II` recomendou **v0.45 assina / v0.47 exige** e escalou o corte para o
+`Wagner`, nomeando o trade: *"tolerância mais longa = T2 aberto mais tempo"*.
+
+O trade é real, mas **é mais barato do que parece** — porque T1 e T2 têm
+constrangimentos de rollout diferentes, e **só T1 depende do cliente**.
+
+| | o que fecha | precisa de cliente novo? |
+|---|---|---|
+| **T1** sequestro | PoP no re-registro de `device_id` ativo | **sim** — é o que abre a janela |
+| **T2** relé aberto | limitar a **cunhagem** de credencial | **não** — é servidor puro |
+
+### 6.1 O que NÃO serve: baixar o TTL
+
+O caminho óbvio seria encurtar `turn_credential_ttl` (hoje **1800s**,
+`config.rs:76`). **Não serve**, e o próprio código explica por quê
+(`config.rs:70-75`): não existe renovação nem `restartIce` — *"zero
+`restartIce`/`iceRestart` em TS ou Rust"* —, então **uma sessão RELAYED morre ao
+atingir o TTL, sem recuperação**. Baixar o número antecipa a morte de sessão
+legítima; a correção é a renovação (#1148), que está aberta.
+
+Registro isto porque era a minha primeira ideia, e ela quebraria o relay que
+acabou de passar a funcionar.
+
+### 6.2 O que serve: orçamento próprio para o `Register`
+
+Hoje o `Register` divide um balde **genérico por IP** com todo o resto:
+`allow_message(client_ip)` — **120 mensagens / 60s** (`config.rs:80-84`,
+`lib.rs:98` e `:140`). Ping, offer e `Register` custam o mesmo, e cada
+`Register` devolve uma credencial TURN de 30 minutos.
+
+Mas **a casa já tem o padrão certo para ação sensível**: o `allow_redeem`
+(SEC13, `state.rs:358`) é um limitador **dedicado, por IP, com backoff que
+escala**. O `Register` — que é o que cunha credencial — não tem nenhum.
+
+**Proposta:** um `allow_register` espelhando o `allow_redeem`. Um cliente
+legítimo registra **uma vez por sessão**, não 120×/min; um orçamento apertado
+não incomoda ninguém real e derruba a cunhagem em massa a partir de um host.
+
+- **Servidor puro** — nenhum cliente em campo quebra, então **não espera a
+  janela do PoP**: vale a partir do próximo deploy.
+- **Ortogonal** ao PoP: quando o server-enforce entrar (v0.47 ou onde o `Wagner`
+  cortar), os dois compõem.
+- **Compõe com o coturn**: as quotas aplicadas no #1185 limitam o que se faz com
+  a credencial; este limita **quantas são emitidas**.
+
+### 6.3 O limite honesto disto
+
+Rate limit por IP **não para atacante distribuído** — quem tiver muitos IPs
+continua cunhando. O que ele faz é tirar o custo-zero: de *"um host emite 120
+credenciais por minuto"* para *"um punhado"*.
+
+**T2 só fecha de verdade com autorização de identidade** — o OPAQUE do v2
+(#1132), como já está na §4.1. Isto é **redução de exposição durante a janela**,
+e deve ser lido assim; não é o fecho.
+
+### 6.4 Recomendação ao PO
+
+A escolha da janela não muda. O que muda é **o preço dela**: com o §6.2,
+escolher tolerância mais longa deixa de significar *"T2 totalmente aberto até
+v0.47"*. Se o `Wagner` preferir a janela mais confortável, este é o item que
+torna a escolha barata — e é uma fatia de servidor, pequena, sem coordenação com
+release de cliente.
