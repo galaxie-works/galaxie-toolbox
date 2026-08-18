@@ -19,6 +19,7 @@ use galaxie_remote_transport::turn::{
     build_refresh_request, build_send_indication, derive_key, parse_allocate_success,
     parse_data_indication, parse_error_unauthorized, parse_refresh_success, parse_stale_nonce,
 };
+use galaxie_remote_net::protocol::Capabilities;
 use galaxie_remote_transport::{
     canal_de_comandos, decode, encode_input, CommandReceiver as TransportCommandReceiver,
     EncoderCommand as TransportEncoderCommand, EventoSessao, Frame as ControlFrame, IceServer,
@@ -69,7 +70,7 @@ pub struct RemoteRuntime {
 struct ActiveSession {
     session_id: String,
     role: RemoteRole,
-    capabilities: RemoteCapabilities,
+    capabilities: Capabilities,
     commands: SyncSender<RuntimeCommand>,
     worker: Option<JoinHandle<()>>,
     finished: Arc<AtomicBool>,
@@ -123,7 +124,7 @@ pub struct RemoteSessionStartRequest {
     pub signaling: RemoteSignalingBinding,
     #[serde(default)]
     pub ice_servers: Vec<IceServer>,
-    pub capabilities: RemoteCapabilities,
+    pub capabilities: Capabilities,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,13 +132,6 @@ pub struct RemoteSessionStartRequest {
 pub struct RemoteSignalingBinding {
     pub endpoint: String,
     pub peer_id: String,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteCapabilities {
-    pub screen: bool,
-    pub input: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -307,7 +301,7 @@ struct RelayState {
 
 struct RuntimeSession {
     role: RemoteRole,
-    capabilities: RemoteCapabilities,
+    capabilities: Capabilities,
     on_event: Channel<RemoteSessionEvent>,
     video_frames: Option<SyncSender<galaxie_remote_transport::CodedFrame>>,
     video_failed: Arc<AtomicBool>,
@@ -1850,9 +1844,10 @@ mod tests {
                 peer_id: "peer-1".to_owned(),
             },
             ice_servers: Vec::new(),
-            capabilities: RemoteCapabilities {
+            capabilities: Capabilities {
                 screen: true,
                 input: true,
+                ..Default::default()
             },
         };
         assert!(validate_start(&request).is_ok());
