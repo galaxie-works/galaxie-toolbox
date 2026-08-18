@@ -1503,7 +1503,14 @@ export async function crOrgAdminAvailable(): Promise<boolean> {
 }
 
 /** #425: status de um cartão OrgSettings — read-only, degrada por card. */
-export type OrgCardStatus = "ok" | "forbidden" | "error";
+/**
+ * Estado de um card de settings org-wide.
+ *
+ * #1075 RB45: ganhou `"indisponivel"`. Antes, "este endpoint beta não existe no
+ * seu tenant" e "a rede caiu" eram o MESMO `"error"` — o mesmo card vermelho
+ * para uma condição permanente e sem ação e para outra que pede tentar de novo.
+ */
+export type OrgCardStatus = "ok" | "forbidden" | "indisponivel" | "error";
 
 export interface AppsAndServicesCard {
   status: OrgCardStatus;
