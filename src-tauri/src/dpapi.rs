@@ -82,24 +82,50 @@ mod imp {
     }
 }
 
-// #1073 (RB10): stub SÓ pra dev/CI fora do Windows — o app é Windows-only em
-// produção; nenhum build de release passa por aqui. DPAPI não existe fora do Windows,
-// então é um passthrough (identidade) SEM cifra. Consequência: qualquer segredo
-// passado é gravado EM CLARO. Isso é aceitável APENAS porque:
-//   * produção é sempre Windows (imp real acima);
-//   * os chamadores off-Windows são testes/CI, onde `lock_screen` grava só o hash
-//     Argon2id (não-segredo) e `auth`/`telemetry` rodam com token descartável de dev.
-// NÃO use este caminho pra persistir segredo real fora de teste.
+// #1073 (RB10): stub SÓ pra dev/CI fora do Windows — o app é Windows-only em produção;
+// nenhum build de release passa por aqui. DPAPI não existe fora do Windows.
+//
+// #1057 (SEC12): FAIL-CLOSED. Antes era passthrough (identidade), então qualquer
+// segredo passado era gravado EM CLARO — enquanto comentários afirmam que a sessão
+// está "protegida por DPAPI". Um build de portabilidade/dev/CI vazaria o refresh_token
+// OAuth legível. Agora, sem backend de cifra real, `cifrar` devolve `None` (não cifra)
+// e `decifrar` devolve `None` (não há blob válido). Os chamadores JÁ tratam `None` como
+// "não persiste / indisponível" — é o MESMO caminho de quando a `CryptProtectData` do
+// Windows falha (telemetry `match`, auth `match`/`?`, lock_screen `ok_or_else`/`?`),
+// então nada persiste segredo sem cifra de verdade.
 #[cfg(not(windows))]
 mod imp {
-    /// Passthrough dev-only (sem DPAPI fora do Windows). Ver o aviso acima.
-    pub fn cifrar(dados: &[u8]) -> Option<Vec<u8>> {
-        Some(dados.to_vec())
+    /// Fail-closed dev-only: sem DPAPI fora do Windows, NÃO cifra → `None` (nunca
+    /// devolve o segredo em claro). #1057 SEC12.
+    pub fn cifrar(_dados: &[u8]) -> Option<Vec<u8>> {
+        None
     }
-    /// Passthrough dev-only (sem DPAPI fora do Windows). Ver o aviso acima.
-    pub fn decifrar(dados: &[u8]) -> Option<Vec<u8>> {
-        Some(dados.to_vec())
+    /// Fail-closed dev-only: sem backend de cifra, não há blob válido a decifrar →
+    /// `None`. #1057 SEC12.
+    pub fn decifrar(_dados: &[u8]) -> Option<Vec<u8>> {
+        None
     }
 }
 
 pub(crate) use imp::{cifrar, decifrar};
+
+// SEC12 (#1057): fora do Windows o stub é FAIL-CLOSED — nunca devolve segredo em claro.
+// Roda em qualquer build/CI não-Windows; se alguém reintroduzir o passthrough
+// (`Some(dados.to_vec())`), estes testes falham. (No Windows o `imp` real é coberto
+// pelo teste de round-trip em `lock_screen.rs`.)
+#[cfg(all(test, not(windows)))]
+mod testes_fail_closed {
+    #[test]
+    fn cifrar_fora_do_windows_nunca_devolve_claro() {
+        let segredo = b"refresh_token_super_secreto";
+        assert_eq!(super::cifrar(segredo), None);
+        // Explícito: NUNCA o segredo (embrulhado ou não) — o bug antigo era exatamente
+        // `Some(segredo.to_vec())`.
+        assert_ne!(super::cifrar(segredo), Some(segredo.to_vec()));
+    }
+
+    #[test]
+    fn decifrar_fora_do_windows_e_none() {
+        assert_eq!(super::decifrar(b"qualquer-bytes"), None);
+    }
+}
