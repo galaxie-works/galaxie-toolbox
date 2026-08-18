@@ -286,3 +286,46 @@ desenho:
 4. **Um seam por vez, cada um sobre `feat` já integrado.** Não empilhar os 6. Torre em
    base congelada transforma cada rebase num diff que ninguém confere como recorte-e-cola
    — e é justamente essa conferência que substitui a rede de testes ausente (§0).
+
+---
+
+## 9. S0 — enabler de componentes compartilhados: **a ideia está certa, a lista de membros não** (2026-08-18, `fe68d11`)
+
+A `Vega` parou o S3 ao achar uma teia de UI-helpers e propôs um enabler `message-shared.tsx` com 8 itens, perguntando se bate com o desenho. **Parar em vez de commitar uma extração circular foi a decisão certa** — e é a mesma forma do enabler de data (#1171), que funcionou.
+
+Fui medir os 8 antes de responder. **Seis não deveriam entrar.**
+
+| Item | Usos reais | Onde caem | Veredito |
+|---|---:|---|---|
+| `AgendaVazia` (`:530`) | **0** | — | ⛔ **código morto** |
+| `AgendaErro` (`:546`) | **0** | — | ⛔ **código morto** |
+| `PastaVazia` (`:337`) | 1 | `:3500` | vai com o seam do ponto de uso |
+| `MultiSelecaoContexto` (`:484`) | 1 | `:6533` | vai com o seam do ponto de uso |
+| `SubmenuMover` (`:2140`) | 2 | `:1405`, `:2291` | decidir quando o seam dono sair |
+| `DicaSomenteLeitura` (`:451`) | 6 | `:4715`–`:4768` | ❌ **todos num bloco de 53 linhas** |
+| `descricaoErroEscrita` (`:473`) | 10 | `:5618`–`:6071` | ❌ concentrado em ~450 linhas |
+| `BotaoExcluir` (`:362`) | 4 | `:515`, `:3057`, `:3444`, `:5872` | ✅ **o único genuinamente espalhado** |
+
+### O critério — e ele não é contagem de usos
+
+> **"Compartilhado" não é quantas vezes o helper é usado. É os usos caírem em seams DIFERENTES.**
+
+`DicaSomenteLeitura` tem **6 usos** e é a coisa **mais local do arquivo**: os seis vivem dentro de 53 linhas. Pela contagem, seria o campeão do módulo compartilhado; pela distribuição, ele pertence **inteiro** a um seam só. `descricaoErroEscrita` é o mesmo caso, com 10 usos numa faixa de 450 linhas.
+
+### Por que isso importa mais do que parece
+
+Um `message-shared.tsx` com os 8 vira **gaveta de bagunça**: um módulo que existe porque a extração foi difícil, não porque os itens pertencem juntos. Todo seam passaria a importar de lá, e a gaveta viraria um **acoplamento novo no lugar do que a gente está desmontando** — com a agravante de parecer arrumação.
+
+É a mesma patologia da categoria `Miscellaneous` do catálogo (#1162): *"diversos" não é uma categoria, é a ausência de uma* — e é sempre a de pior qualidade por item.
+
+### O que eu recomendo
+
+1. **Apagar** `AgendaVazia` e `AgendaErro`. São órfãos — quase certamente ficaram para trás quando o **S6** levou o `EventoDialog` para `bridge/evento-dialog.tsx`. **Extração que deixa órfão é dívida do próprio movimento**; vale conferir isso ao fim de cada seam, não só neste.
+2. **`BotaoExcluir` é o único candidato real a compartilhado.** Com um membro só, não justifica um módulo novo: cabe num arquivo de componente do Bridge que já exista, ou espera um segundo membro aparecer.
+3. **`DicaSomenteLeitura` e `descricaoErroEscrita` descem junto com o seam que os usa** — são locais, não compartilhados.
+4. **`PastaVazia` e `MultiSelecaoContexto`** vão com o seam do respectivo ponto de uso.
+5. **`SubmenuMover`** fica para quando o seam dono for extraído.
+
+**Resultado: o S3 provavelmente não precisa de um S0.** Precisa que cada helper desça com o seam certo — e que dois sejam apagados. Se depois de S3/S4 sobrar mais de um item genuinamente cruzado, aí o módulo compartilhado nasce **com evidência**, não por precaução.
+
+> Regra que fica: **módulo compartilhado nasce quando o segundo consumidor de seam diferente aparece — nunca antes.**
