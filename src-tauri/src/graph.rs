@@ -6464,8 +6464,99 @@ pub struct OrgSettingsResult {
 /// Resultado bruto de um GET de OrgSettings, antes de virar card tipado.
 enum OrgGetOutcome {
     Ok(serde_json::Value),
+    /// 403 — o token não tem a permissão de admin para este grupo de settings.
     Forbidden,
+    /// 404/501 — o endpoint **não existe neste tenant**. É estado de mundo, não
+    /// falha nossa: não adianta tentar de novo nem pedir permissão (#1075 RB45).
+    Indisponivel,
+    /// Qualquer outra coisa: 5xx, 429 esgotado, transporte, corpo ilegível.
     Error,
+}
+
+/// Desfecho de uma resposta **não-2xx** de settings org-wide (#1075 RB45).
+///
+/// Antes, tudo que não fosse 200 ou 403 caía em `Error`:
+///
+/// ```ignore
+/// Ok(_)  => OrgGetOutcome::Error,   // 404 caía aqui
+/// Err(_) => OrgGetOutcome::Error,   // e a rede caindo, também
+/// ```
+///
+/// "Este endpoint beta não existe no seu tenant" e "a rede caiu" viravam o
+/// **mesmo card vermelho**. São coisas diferentes para quem lê: a primeira é
+/// permanente e não tem ação; a segunda pede tentar de novo.
+fn desfecho_org_nao_2xx(status: reqwest::StatusCode) -> OrgGetOutcome {
+    match status.as_u16() {
+        403 => OrgGetOutcome::Forbidden,
+        // 501 = o Graph responde "não implementado" para beta ausente em alguns
+        // tenants; é a mesma classe do 404 para quem lê o card.
+        404 | 501 => OrgGetOutcome::Indisponivel,
+        _ => OrgGetOutcome::Error,
+    }
+}
+
+#[cfg(test)]
+mod testes_org_settings {
+    use super::*;
+
+    fn cod(n: u16) -> reqwest::StatusCode {
+        reqwest::StatusCode::from_u16(n).expect("status valido")
+    }
+
+    /// O defeito do RB45: "endpoint nao existe no tenant" e "a rede caiu"
+    /// viravam o mesmo card vermelho.
+    #[test]
+    fn endpoint_ausente_nao_se_confunde_com_erro() {
+        assert!(matches!(
+            desfecho_org_nao_2xx(cod(404)),
+            OrgGetOutcome::Indisponivel
+        ));
+        assert!(matches!(
+            desfecho_org_nao_2xx(cod(501)),
+            OrgGetOutcome::Indisponivel
+        ));
+        for status in [429u16, 500, 502, 503] {
+            assert!(
+                matches!(desfecho_org_nao_2xx(cod(status)), OrgGetOutcome::Error),
+                "{status} e falha transitoria, nao ausencia de endpoint"
+            );
+        }
+    }
+
+    #[test]
+    fn so_o_403_e_falta_de_permissao() {
+        assert!(matches!(
+            desfecho_org_nao_2xx(cod(403)),
+            OrgGetOutcome::Forbidden
+        ));
+        for status in [401u16, 404, 500] {
+            assert!(
+                !matches!(desfecho_org_nao_2xx(cod(status)), OrgGetOutcome::Forbidden),
+                "{status} nao e falta de permissao"
+            );
+        }
+    }
+
+    /// Os tres desfechos de falha viram discriminantes DISTINTOS no JSON — e o
+    /// front tem um ramo para cada. Se alguem colapsar dois, este teste cai.
+    #[test]
+    fn os_tres_desfechos_de_falha_sao_distintos() {
+        let rotulo = |o: &OrgGetOutcome| match o {
+            OrgGetOutcome::Ok(_) => "ok",
+            OrgGetOutcome::Forbidden => "forbidden",
+            OrgGetOutcome::Indisponivel => "indisponivel",
+            OrgGetOutcome::Error => "error",
+        };
+        let vistos = [
+            rotulo(&desfecho_org_nao_2xx(cod(403))),
+            rotulo(&desfecho_org_nao_2xx(cod(404))),
+            rotulo(&desfecho_org_nao_2xx(cod(500))),
+        ];
+        let mut unicos = vistos.to_vec();
+        unicos.sort_unstable();
+        unicos.dedup();
+        assert_eq!(unicos.len(), 3, "403/404/500 tem que dar tres cards diferentes");
+    }
 }
 
 fn org_settings_get(
@@ -6481,8 +6572,9 @@ fn org_settings_get(
             Ok(body) => OrgGetOutcome::Ok(body),
             Err(_) => OrgGetOutcome::Error,
         },
-        Ok(resp) if resp.status().as_u16() == 403 => OrgGetOutcome::Forbidden,
-        Ok(_) => OrgGetOutcome::Error,
+        // #1075 RB45: 403, 404 e 5xx deixam de cair no mesmo balde.
+        Ok(resp) => desfecho_org_nao_2xx(resp.status()),
+        // Transporte nao tem status: e falha nossa, transitoria.
         Err(_) => OrgGetOutcome::Error,
     }
 }
@@ -6501,6 +6593,7 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
     ) {
         OrgGetOutcome::Ok(body) => AppsAndServicesCard::dos_settings(&body["value"]["settings"]),
         OrgGetOutcome::Forbidden => AppsAndServicesCard::vazio("forbidden"),
+        OrgGetOutcome::Indisponivel => AppsAndServicesCard::vazio("indisponivel"),
         OrgGetOutcome::Error => AppsAndServicesCard::vazio("error"),
     };
 
@@ -6512,6 +6605,7 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
     ) {
         OrgGetOutcome::Ok(body) => FormsCard::dos_settings(&body["value"]["settings"]),
         OrgGetOutcome::Forbidden => FormsCard::vazio("forbidden"),
+        OrgGetOutcome::Indisponivel => FormsCard::vazio("indisponivel"),
         OrgGetOutcome::Error => FormsCard::vazio("error"),
     };
 
@@ -6523,6 +6617,7 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
     ) {
         OrgGetOutcome::Ok(body) => M365InstallCard::da_raiz(&body),
         OrgGetOutcome::Forbidden => M365InstallCard::vazio("forbidden"),
+        OrgGetOutcome::Indisponivel => M365InstallCard::vazio("indisponivel"),
         OrgGetOutcome::Error => M365InstallCard::vazio("error"),
     };
 
@@ -6537,6 +6632,7 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
     ) {
         OrgGetOutcome::Ok(body) => OrgTodoCard::dos_settings(&body["value"]["settings"]),
         OrgGetOutcome::Forbidden => OrgTodoCard::vazio("forbidden"),
+        OrgGetOutcome::Indisponivel => OrgTodoCard::vazio("indisponivel"),
         OrgGetOutcome::Error => OrgTodoCard::vazio("error"),
     };
 
@@ -6695,8 +6791,13 @@ pub fn cr_tenant_apps(store: &TokenStore) -> Result<TenantAppsResult, String> {
             }
             Err(_) => Ok(TenantAppsResult::vazio("error")),
         },
-        Ok(resp) if resp.status().as_u16() == 403 => Ok(TenantAppsResult::vazio("forbidden")),
-        Ok(_) => Ok(TenantAppsResult::vazio("error")),
+        // #1075 RB45: mesmo defeito do `org_settings_get`, escrito inline aqui.
+        // Buscar no escopo inteiro achou este segundo sitio.
+        Ok(resp) => Ok(TenantAppsResult::vazio(match desfecho_org_nao_2xx(resp.status()) {
+            OrgGetOutcome::Forbidden => "forbidden",
+            OrgGetOutcome::Indisponivel => "indisponivel",
+            _ => "error",
+        })),
         Err(_) => Ok(TenantAppsResult::vazio("error")),
     }
 }

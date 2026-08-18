@@ -2071,6 +2071,9 @@ const pt = {
     cfgOrgOff: "Desativado",
     cfgOrgUnknown: "—",
     cfgOrgCardForbidden: "Sem permissão para este item.",
+    // #1075 RB45: o endpoint nao existe NESTE tenant — permanente, sem acao do
+    // usuario. Distinto do erro transitorio logo abaixo.
+    cfgOrgCardIndisponivel: "Este recurso não está disponível na sua organização.",
     cfgOrgCardError: "Não foi possível carregar este item.",
     cfgOrgOfficeStore: "Office Store",
     cfgOrgAppsTrial: "Testes de apps e serviços",
@@ -4341,6 +4344,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgOrgOff: "Off",
     cfgOrgUnknown: "—",
     cfgOrgCardForbidden: "You don't have permission for this item.",
+    // #1075 RB45: the endpoint doesn't exist in THIS tenant — permanent, no user
+    // action. Distinct from the transient error below.
+    cfgOrgCardIndisponivel: "This feature isn't available in your organization.",
     cfgOrgCardError: "Couldn't load this item.",
     cfgOrgOfficeStore: "Office Store",
     cfgOrgAppsTrial: "Apps & services trials",

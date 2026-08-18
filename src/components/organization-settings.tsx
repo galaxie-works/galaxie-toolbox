@@ -197,7 +197,15 @@ function Cartao({
         <div className="divide-y divide-border/60">{children}</div>
       ) : (
         <p className="text-sm text-muted-foreground">
-          {status === "forbidden" ? s.cfgOrgCardForbidden : s.cfgOrgCardError}
+          {/* #1075 RB45: era ternário binário — TUDO que não fosse "forbidden"
+              virava "não foi possível carregar", inclusive o endpoint que
+              simplesmente não existe neste tenant. São coisas diferentes para
+              quem lê: uma é permanente e sem ação, a outra pede tentar de novo. */}
+          {status === "forbidden"
+            ? s.cfgOrgCardForbidden
+            : status === "indisponivel"
+              ? s.cfgOrgCardIndisponivel
+              : s.cfgOrgCardError}
         </p>
       )}
     </div>
