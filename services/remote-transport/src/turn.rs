@@ -24,14 +24,18 @@ const MSG_ALLOCATE_REQUEST: u16 = 0x0003;
 const MSG_ALLOCATE_SUCCESS: u16 = 0x0103;
 const MSG_ALLOCATE_ERROR: u16 = 0x0113;
 const MSG_CREATE_PERMISSION_REQUEST: u16 = 0x0008;
-#[allow(dead_code)] // simetria de documentação; a fatia 2 valida a resposta
 const MSG_CREATE_PERMISSION_SUCCESS: u16 = 0x0108;
 const MSG_REFRESH_REQUEST: u16 = 0x0004;
-#[allow(dead_code)] // idem
 const MSG_REFRESH_SUCCESS: u16 = 0x0104;
+// Indications do data-path (RFC 5766 §10.1/§10.3). São `class = indication`, então
+// NÃO levam MESSAGE-INTEGRITY (a permissão já autoriza o par; o relay dropa dados de
+// peer sem permissão instalada).
+const MSG_SEND_INDICATION: u16 = 0x0016; // método Send (0x006) + classe indication
+const MSG_DATA_INDICATION: u16 = 0x0017; // método Data (0x007) + classe indication
 
 /// Atributos TURN/STUN usados aqui (type u16).
 const ATTR_MAPPED_XOR_PEER: u16 = 0x0012; // XOR-PEER-ADDRESS
+const ATTR_DATA: u16 = 0x0013; // DATA (RFC 5766 §14.4) — carga do peer
 const ATTR_XOR_RELAYED_ADDRESS: u16 = 0x0016;
 const ATTR_LIFETIME: u16 = 0x000D;
 const ATTR_REQUESTED_TRANSPORT: u16 = 0x0019;
@@ -225,6 +229,21 @@ pub fn build_refresh_request(
     buf
 }
 
+/// Send Indication (RFC 5766 §10.1): embrulha `dados` (o pacote que o str0m quer
+/// mandar ao peer) num XOR-PEER-ADDRESS + DATA, endereçado ao relay. É o caminho de
+/// ENVIO do data-path: quando o str0m emite `Transmit{source=relayed}`, o app manda
+/// ISTO ao servidor TURN (não o pacote cru ao peer). Sem autenticação/MI — a
+/// permissão instalada (CreatePermission) é o que autoriza; o `txid` é aleatório e
+/// não precisa casar com nada (indication não tem resposta). A ORDEM importa:
+/// XOR-PEER-ADDRESS antes de DATA, como o coturn espera.
+pub fn build_send_indication(txid: &[u8; 12], peer: SocketAddr, dados: &[u8]) -> Vec<u8> {
+    let mut buf = new_header(MSG_SEND_INDICATION, txid);
+    push_xor_peer_address(&mut buf, peer, txid);
+    push_attr(&mut buf, ATTR_DATA, dados);
+    set_length(&mut buf);
+    buf
+}
+
 // ---------------------------------------------------------------------------
 // Parse de respostas (PURA)
 // ---------------------------------------------------------------------------
@@ -304,6 +323,55 @@ pub fn parse_allocate_success(resp: &[u8], txid: &[u8; 12]) -> Option<(SocketAdd
     }
     let secs = u32::from_be_bytes([lifetime[0], lifetime[1], lifetime[2], lifetime[3]]);
     Some((addr, secs))
+}
+
+/// Confirma um CreatePermission Success (RFC 5766 §9.3) pro `txid` enviado. Só há o
+/// cabeçalho a validar (a resposta de sucesso não tem atributos obrigatórios).
+pub fn parse_create_permission_success(resp: &[u8], txid: &[u8; 12]) -> bool {
+    message_attrs(resp, MSG_CREATE_PERMISSION_SUCCESS, txid).is_some()
+}
+
+/// Lê o LIFETIME concedido de um Refresh Success (RFC 5766 §7.3). O servidor pode
+/// conceder MENOS do que pedimos — quem renova reagenda pelo valor devolvido, não
+/// pelo pedido. `None` se o tipo/txid/cookie não casam ou falta o LIFETIME.
+pub fn parse_refresh_success(resp: &[u8], txid: &[u8; 12]) -> Option<u32> {
+    let attrs = message_attrs(resp, MSG_REFRESH_SUCCESS, txid)?;
+    let lifetime = find_attr(attrs, ATTR_LIFETIME)?;
+    if lifetime.len() < 4 {
+        return None;
+    }
+    Some(u32::from_be_bytes([
+        lifetime[0],
+        lifetime[1],
+        lifetime[2],
+        lifetime[3],
+    ]))
+}
+
+/// Desembrulha uma Data Indication (RFC 5766 §10.3): é o caminho de RECEBIMENTO do
+/// data-path — o relay entrega o pacote de um peer embrulhado em XOR-PEER-ADDRESS +
+/// DATA. O `txid` é ESCOLHIDO PELO SERVIDOR (não casa com nenhum request nosso), então
+/// lemos do próprio cabeçalho e usamos ele pra de-XOR do endereço. Devolve
+/// `(peer, dados)` — os `dados` são o pacote cru (STUN/DTLS/RTP) que alimenta o str0m
+/// como se viesse do peer. `None` se não é Data Indication, cookie errado, ou falta
+/// algum atributo (não entrega lixo pro str0m).
+pub fn parse_data_indication(msg: &[u8]) -> Option<(SocketAddr, Vec<u8>)> {
+    if msg.len() < HEADER_LEN {
+        return None;
+    }
+    if u16::from_be_bytes([msg[0], msg[1]]) != MSG_DATA_INDICATION {
+        return None;
+    }
+    if msg[4..8] != MAGIC_COOKIE.to_be_bytes() {
+        return None;
+    }
+    let mut txid = [0u8; 12];
+    txid.copy_from_slice(&msg[8..20]);
+    let msg_len = u16::from_be_bytes([msg[2], msg[3]]) as usize;
+    let attrs = msg.get(HEADER_LEN..HEADER_LEN + msg_len)?;
+    let peer = decode_xor_address(find_attr(attrs, ATTR_MAPPED_XOR_PEER)?, &txid)?;
+    let dados = find_attr(attrs, ATTR_DATA)?.to_vec();
+    Some((peer, dados))
 }
 
 #[cfg(test)]
@@ -496,5 +564,80 @@ mod tests {
         // Anuncia o length cheio mas corta o buffer no meio dos atributos.
         let curta = &msg[..HEADER_LEN + 4];
         assert_eq!(parse_allocate_success(curta, &TXID), None);
+    }
+
+    // ── data-path (fatia 3a): Send/Data indication + acks ──────────────────
+
+    #[test]
+    fn send_indication_embrulha_peer_e_data_sem_mi() {
+        let peer: SocketAddr = "192.0.2.15:32853".parse().unwrap();
+        // 15 bytes: NÃO múltiplo de 4 — exercita o padding do DATA.
+        let carga = b"pacote-str0m-cr";
+        let ind = build_send_indication(&TXID, peer, carga);
+
+        assert_eq!(u16::from_be_bytes([ind[0], ind[1]]), MSG_SEND_INDICATION);
+        let attrs = &ind[HEADER_LEN..];
+        // XOR-PEER-ADDRESS de-XORa de volta pro peer exato.
+        let pe = find_attr(attrs, ATTR_MAPPED_XOR_PEER).expect("XOR-PEER-ADDRESS");
+        assert_eq!(decode_xor_address(pe, &TXID), Some(peer));
+        // DATA volta intacta (15 bytes, sem o padding vazar).
+        assert_eq!(find_attr(attrs, ATTR_DATA), Some(&carga[..]));
+        // Indication NÃO leva MESSAGE-INTEGRITY (é a diferença do request).
+        assert_eq!(find_attr(attrs, ATTR_MESSAGE_INTEGRITY), None);
+        // Length do header bate com os atributos reais (com padding).
+        let msg_len = u16::from_be_bytes([ind[2], ind[3]]) as usize;
+        assert_eq!(msg_len, ind.len() - HEADER_LEN);
+    }
+
+    /// Monta uma Data Indication com `txid` ESCOLHIDO PELO SERVIDOR (não o nosso).
+    fn data_indication(peer: SocketAddr, dados: &[u8], txid: &[u8; 12]) -> Vec<u8> {
+        let mut buf = new_header(MSG_DATA_INDICATION, txid);
+        push_xor_peer_address(&mut buf, peer, txid);
+        push_attr(&mut buf, ATTR_DATA, dados);
+        set_length(&mut buf);
+        buf
+    }
+
+    #[test]
+    fn parse_data_indication_desembrulha_peer_e_data() {
+        let peer: SocketAddr = "203.0.113.7:5004".parse().unwrap();
+        let carga = b"rtp-ou-dtls-vindo-do-peer";
+        // txid do servidor, diferente do TXID dos nossos requests.
+        let srv_txid = [9u8, 9, 9, 9, 8, 8, 8, 8, 7, 7, 7, 7];
+        let ind = data_indication(peer, carga, &srv_txid);
+
+        let (p, d) = parse_data_indication(&ind).expect("Data Indication válida");
+        assert_eq!(p, peer); // de-XOR com o txid DO SERVIDOR, lido do header
+        assert_eq!(d, carga);
+    }
+
+    #[test]
+    fn parse_data_indication_rejeita_tipo_e_cookie_errados() {
+        let peer: SocketAddr = "203.0.113.7:5004".parse().unwrap();
+        let ind = data_indication(peer, b"x", &[1u8; 12]);
+        // Tipo errado (Send em vez de Data) → None.
+        let mut tipo_errado = ind.clone();
+        tipo_errado[0..2].copy_from_slice(&MSG_SEND_INDICATION.to_be_bytes());
+        assert_eq!(parse_data_indication(&tipo_errado), None);
+        // Cookie corrompido → None (não entrega lixo pro str0m).
+        let mut cookie_errado = ind;
+        cookie_errado[4] ^= 0xFF;
+        assert_eq!(parse_data_indication(&cookie_errado), None);
+    }
+
+    #[test]
+    fn parse_permission_e_refresh_success() {
+        // CreatePermission Success: só o cabeçalho, casa pelo txid.
+        let mut perm = new_header(MSG_CREATE_PERMISSION_SUCCESS, &TXID);
+        set_length(&mut perm);
+        assert!(parse_create_permission_success(&perm, &TXID));
+        assert!(!parse_create_permission_success(&perm, &[0u8; 12])); // txid errado
+
+        // Refresh Success: o LIFETIME concedido pode ser MENOR que o pedido.
+        let mut rf = new_header(MSG_REFRESH_SUCCESS, &TXID);
+        push_attr(&mut rf, ATTR_LIFETIME, &300u32.to_be_bytes());
+        set_length(&mut rf);
+        assert_eq!(parse_refresh_success(&rf, &TXID), Some(300));
+        assert_eq!(parse_refresh_success(&rf, &[0u8; 12]), None); // txid errado
     }
 }
