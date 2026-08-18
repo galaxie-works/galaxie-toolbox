@@ -1681,6 +1681,36 @@ async fn open_url(url: String) -> Result<(), String> {
 /// entao a pessoa entra uma vez aqui dentro e a sessao fica guardada para as
 /// proximas. Em maquina ingressada no Entra, o SSO do Windows costuma resolver
 /// sozinho.
+/// #1044 SEC11: sufixo-allowlist dos domínios registráveis da Microsoft/M365. Só um
+/// host que casa (igual OU subdomínio) pode abrir uma janela de app interno, que
+/// compartilha o perfil WebView2 autenticado. Todos os apps do catálogo M365 vivem
+/// nestes domínios; um host fora é recusado (fecha o vetor de phishing de sessão).
+fn host_m365_permitido(host: &str) -> bool {
+    const DOMINIOS_M365: &[&str] = &[
+        "microsoft.com",
+        "microsoft365.com",
+        "office.com",
+        "office365.com",
+        "office.net",
+        "sharepoint.com",
+        "microsoftonline.com",
+        "live.com",
+        "outlook.com",
+        "onedrive.com",
+        "dynamics.com",
+        "powerbi.com",
+        "powerapps.com",
+        "power.microsoft.com",
+        "azure.com",
+        "cloud.microsoft",
+        "skype.com",
+    ];
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    DOMINIOS_M365
+        .iter()
+        .any(|d| host == *d || host.ends_with(&format!(".{d}")))
+}
+
 #[tauri::command]
 async fn abrir_app_interno(
     app: tauri::AppHandle,
@@ -1706,7 +1736,16 @@ async fn abrir_app_interno(
         return Ok(());
     }
 
-    let destino = url.parse().map_err(|_| "endereco invalido".to_string())?;
+    let destino: tauri::Url = url.parse().map_err(|_| "endereco invalido".to_string())?;
+    // #1044 SEC11: a janela de APP INTERNO compartilha o perfil WebView2 AUTENTICADO
+    // (a sessão M365). Um host arbitrário aqui abriria uma página no contexto logado —
+    // phishing/roubo de sessão. Só hosts Microsoft/M365 (os apps do catálogo vivem
+    // todos neles) podem abrir. (O browser GERAL — `browser_abrir` — não dá pra
+    // allowlistar sem quebrar a navegação; a mitigação dele é isolamento de perfil,
+    // registrada à parte.)
+    if !destino.host_str().is_some_and(host_m365_permitido) {
+        return Err("host nao autorizado para app interno (apenas Microsoft/M365)".into());
+    }
     tauri::WebviewWindowBuilder::new(&app, &rotulo, tauri::WebviewUrl::External(destino))
         .title(titulo)
         .inner_size(1280.0, 860.0)
@@ -2237,6 +2276,35 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // #1044 SEC11: só host Microsoft/M365 abre janela de app interno (perfil
+    // autenticado). Se alguém afrouxar o allowlist, o phishing de sessão volta.
+    #[test]
+    fn host_m365_allowlist_aceita_microsoft_e_recusa_o_resto() {
+        // Aceita: domínios M365 e seus subdomínios.
+        for ok in [
+            "outlook.office.com",
+            "teams.microsoft.com",
+            "contoso.sharepoint.com",
+            "login.microsoftonline.com",
+            "office.com",
+            "www.office365.com",
+            "OUTLOOK.OFFICE.COM", // case-insensitive
+        ] {
+            assert!(host_m365_permitido(ok), "deveria aceitar {ok}");
+        }
+        // Recusa: host arbitrário, e ataques de sufixo/prefixo.
+        for mau in [
+            "evil.com",
+            "microsoft.com.evil.com",   // sufixo-fake
+            "notmicrosoft.com",         // não é subdomínio de microsoft.com
+            "sharepoint.com.attacker.io",
+            "microsoftonline.com.br",   // TLD diferente
+            "",
+        ] {
+            assert!(!host_m365_permitido(mau), "deveria recusar {mau}");
+        }
+    }
 
     // #1104: guarda anti-regressão — o default NUNCA pode voltar a ser o
     // placeholder `.example` (TLD reservado RFC 2606) que quebrava o WS em prod.
