@@ -4,9 +4,11 @@
 //!
 //! Via A (aprovada pelo Polaris): o backend busca o corpo (`cr_email_corpo`),
 //! compõe um HTML próprio (cabeçalho de/para/assunto/data + corpo) e imprime numa
-//! **webview Tauri oculta** — travada com `IsScriptEnabled(false)` + scrub de
-//! conteúdo ativo (script/iframe/handlers/`javascript:`). Lote resiliente igual ao
-//! `.eml` (#637): a falha de um item não aborta os demais.
+//! **webview Tauri oculta** — travada com `IsScriptEnabled(false)`, **CSP
+//! `default-src 'none'`** no HTML impresso e **sanitização de árvore** do corpo via
+//! `ammonia` (#1044 SEC8: remove script/iframe/handlers/`javascript:` no DOM real, não
+//! por texto). Lote resiliente igual ao `.eml` (#637): a falha de um item não aborta
+//! os demais.
 
 use crate::auth::TokenStore;
 use crate::graph::{self, SalvarEmailFalha, SalvarEmailResultado};
@@ -20,85 +22,44 @@ fn escapar_html(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-/// Remove um par `<tag …>…</tag>` (case-insensitive) do HTML, repetidamente.
-/// Scrub conservador de conteúdo ativo — o `IsScriptEnabled(false)` na webview é
-/// a garantia principal; isto é cinto-e-suspensório (a view é oculta, efêmera e
-/// não-interativa, então o risco residual é baixo).
-fn remover_bloco(html: &str, tag: &str) -> String {
-    let baixo = html.to_ascii_lowercase();
-    let abre = format!("<{tag}");
-    let fecha = format!("</{tag}>");
-    let mut saida = String::with_capacity(html.len());
-    let mut i = 0usize;
-    while i < html.len() {
-        if baixo[i..].starts_with(&abre) {
-            // Acha o fim do bloco (ou o fim da string se não fechar).
-            if let Some(rel) = baixo[i..].find(&fecha) {
-                i += rel + fecha.len();
-                continue;
-            } else {
-                break; // tag aberta sem fechamento — descarta o resto.
-            }
-        }
-        // Copia o char corrente (respeitando limites UTF-8).
-        let ch = html[i..].chars().next().unwrap();
-        saida.push(ch);
-        i += ch.len_utf8();
-    }
-    saida
-}
-
-/// Remove atributos de handler inline (`on...="..."`/`on...='...'`) e ocorrências
-/// de `javascript:` do HTML. Best-effort textual (a garantia real é a webview
-/// travada); mira os vetores óbvios de conteúdo ativo.
-fn remover_handlers(html: &str) -> String {
-    let mut s = html.replace("javascript:", "blocked:");
-    // Remove ` on<algo>="..."` e ` on<algo>='...'` — varredura simples.
-    for aspa in ['"', '\''] {
-        loop {
-            let baixo = s.to_ascii_lowercase();
-            let Some(pos) = acha_handler(&baixo) else { break };
-            // A partir de `pos` (índice do " on"), acha a aspa de abertura e a de
-            // fechamento e remove o intervalo.
-            let resto = &s[pos..];
-            let Some(eq) = resto.find('=') else { break };
-            let apos_eq = &resto[eq + 1..];
-            let Some(a1) = apos_eq.find(aspa) else { break };
-            let depois = &apos_eq[a1 + 1..];
-            let Some(a2) = depois.find(aspa) else { break };
-            let fim = pos + eq + 1 + a1 + 1 + a2 + 1;
-            s.replace_range(pos..fim, "");
-        }
-    }
-    s
-}
-
-/// Acha ` on<letras>=` (um handler inline) numa string já em minúsculas.
-fn acha_handler(baixo: &str) -> Option<usize> {
-    let bytes = baixo.as_bytes();
-    let mut i = 0usize;
-    while i + 3 < bytes.len() {
-        if bytes[i] == b' ' && bytes[i + 1] == b'o' && bytes[i + 2] == b'n' {
-            let mut j = i + 3;
-            while j < bytes.len() && bytes[j].is_ascii_alphabetic() {
-                j += 1;
-            }
-            if j > i + 3 && j < bytes.len() && bytes[j] == b'=' {
-                return Some(i);
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Scrub de conteúdo ativo do corpo HTML do e-mail.
-fn scrub_corpo(html: &str) -> String {
-    let mut s = remover_bloco(html, "script");
-    s = remover_bloco(&s, "iframe");
-    s = remover_bloco(&s, "object");
-    s = remover_bloco(&s, "embed");
-    remover_handlers(&s)
+/// #1044 SEC8: sanitiza o corpo HTML do e-mail com um sanitizador de ÁRVORE
+/// (`ammonia`/html5ever), no lugar do scrub textual frágil anterior. Faz o parse do
+/// DOM real e REMOVE conteúdo ativo de forma confiável — `<script>`/`<iframe>`/
+/// `<object>`/`<embed>`/`<form>`, atributos `on*` (handlers) e URLs `javascript:` —
+/// sem depender de casar texto (que dá pra burlar com `<scr<script>ipt>` etc.).
+/// Preserva o que um e-mail precisa pra não sair quebrado no PDF: tabelas, imagens
+/// (inclusive `cid:`/`data:` embutidas), links e o `style` inline (o Outlook gera
+/// layout majoritariamente inline). Combinado com a CSP `default-src 'none'` do HTML
+/// composto, um script no corpo não executa nem que passasse.
+fn sanitizar_corpo(html: &str) -> String {
+    use std::collections::HashSet;
+    // Esquemas de URL permitidos: os seguros de link/imagem + `cid:`/`data:` das
+    // imagens embutidas de e-mail (o default do ammonia dropa esses dois).
+    let esquemas: HashSet<&str> = ["http", "https", "mailto", "tel", "cid", "data"]
+        .into_iter()
+        .collect();
+    ammonia::Builder::default()
+        .url_schemes(esquemas)
+        // Atributos de apresentação que o layout de e-mail usa (o default do ammonia
+        // tira o `style`). Não reintroduz risco ativo: com script off + CSP, CSS não
+        // executa.
+        .add_generic_attributes([
+            "style",
+            "class",
+            "align",
+            "valign",
+            "bgcolor",
+            "color",
+            "width",
+            "height",
+            "cellpadding",
+            "cellspacing",
+            "border",
+            "colspan",
+            "rowspan",
+        ])
+        .clean(html)
+        .to_string()
 }
 
 /// Monta o HTML final (cabeçalho + corpo) para imprimir em PDF. CSS com `@page`,
@@ -130,7 +91,7 @@ pub fn compor_html(d: &graph::EmailDetalhe) -> String {
     let data = escapar_html(&d.recebido);
 
     let corpo = if d.corpo_tipo == "html" {
-        scrub_corpo(&d.corpo)
+        sanitizar_corpo(&d.corpo)
     } else {
         format!(
             "<pre style=\"white-space:pre-wrap;word-break:break-word;font:inherit\">{}</pre>",
@@ -140,6 +101,8 @@ pub fn compor_html(d: &graph::EmailDetalhe) -> String {
 
     format!(
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">\
+<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; \
+img-src data: cid: https: http:; style-src 'unsafe-inline'; font-src data:\">\
 <style>\
 @page{{size:A4;margin:14mm}}\
 html,body{{margin:0}}\
@@ -254,16 +217,21 @@ fn render_html_para_pdf(
     use tauri::{WebviewUrl, WebviewWindowBuilder};
 
     // 1. Grava o HTML num arquivo temp (evita o limite ~2 MB do NavigateToString
-    //    e resolve `file://` sem servidor). Nome único por conteúdo/destino.
-    let temp = std::env::temp_dir().join(format!(
-        "gx-salvar-pdf-{}.html",
-        destino
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .map(sanitizar_temp)
-            .unwrap_or_else(|| "email".to_string())
-    ));
+    //    e resolve `file://` sem servidor). #1044 SEC8: nome ALEATÓRIO (não derivado
+    //    do assunto) — não vaza o assunto do e-mail no temp dir e é anti-colisão.
+    use rand::Rng;
+    let seed: u64 = rand::thread_rng().gen();
+    let temp = std::env::temp_dir().join(format!("gx-salvar-pdf-{seed:016x}.html"));
     std::fs::write(&temp, html).map_err(|e| format!("falha ao preparar o HTML: {e}"))?;
+    // #1044 SEC8: apaga o temp em QUALQUER saída (os `?` abaixo OU pânico). Antes, um
+    // erro entre aqui e o fim vazava o HTML do e-mail no temp dir.
+    struct LimpaTemp<'a>(&'a std::path::Path);
+    impl Drop for LimpaTemp<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(self.0);
+        }
+    }
+    let _limpa_temp = LimpaTemp(&temp);
     let temp_url = url_de_arquivo(&temp)?;
 
     // Rótulo de janela válido ([a-zA-Z0-9-_/:#]) e único.
@@ -305,9 +273,9 @@ fn render_html_para_pdf(
         imprimir_pdf(&janela, destino)
     };
 
-    // 3. Limpeza: fecha a janela e apaga o temp (best-effort).
+    // 3. Limpeza: fecha a janela (o temp cai no `Drop` do `LimpaTemp`, cobrindo
+    //    também os caminhos de erro acima).
     let _ = janela.close();
-    let _ = std::fs::remove_file(&temp);
     resultado
 }
 
@@ -416,21 +384,6 @@ fn travar_webview(janela: &tauri::WebviewWindow) {
     });
 }
 
-/// Nome de arquivo temp seguro (só alfanumérico/hífen), evitando colisão/escape.
-#[cfg(windows)]
-fn sanitizar_temp(s: &str) -> String {
-    let base: String = s
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
-        .take(48)
-        .collect();
-    if base.is_empty() {
-        "email".to_string()
-    } else {
-        base
-    }
-}
-
 /// Converte um caminho local num `file:///C:/...` URL (barras normais, sem
 /// depender de crate externo).
 #[cfg(windows)]
@@ -475,14 +428,40 @@ mod testes {
     }
 
     #[test]
-    fn scrub_remove_script_iframe_e_handlers() {
-        let sujo = r#"<p onclick="steal()">oi</p><script>evil()</script><iframe src="http://x"></iframe><a href="javascript:bad()">x</a>"#;
-        let limpo = scrub_corpo(sujo);
-        assert!(!limpo.to_ascii_lowercase().contains("<script"));
-        assert!(!limpo.to_ascii_lowercase().contains("<iframe"));
-        assert!(!limpo.contains("onclick"));
-        assert!(!limpo.contains("javascript:"));
-        assert!(limpo.contains("oi")); // conteúdo legítimo preservado
+    fn sanitizar_remove_ativo_e_preserva_layout() {
+        let sujo = concat!(
+            r#"<p onclick="steal()" style="color:red">oi</p>"#,
+            r#"<script>evil()</script><iframe src="http://x"></iframe>"#,
+            r#"<a href="javascript:bad()">x</a>"#,
+            r#"<table border="1"><tr><td>c</td></tr></table>"#,
+            r#"<img src="cid:foto1"><img src="data:image/png;base64,AAAA">"#,
+        );
+        let limpo = sanitizar_corpo(sujo);
+        let baixo = limpo.to_ascii_lowercase();
+        // Conteúdo ativo removido pela ÁRVORE (não por casar texto).
+        assert!(!baixo.contains("<script"));
+        assert!(!baixo.contains("<iframe"));
+        assert!(!baixo.contains("onclick"));
+        assert!(!baixo.contains("javascript:"));
+        // Layout de e-mail preservado (senão o PDF sai quebrado).
+        assert!(limpo.contains("oi"));
+        assert!(baixo.contains("<table"));
+        assert!(baixo.contains("<td"));
+        assert!(limpo.contains("style=")); // `style` inline sobrevive
+        assert!(limpo.contains("cid:foto1")); // imagem embutida cid:
+        assert!(limpo.contains("data:image/png")); // imagem data:
+    }
+
+    #[test]
+    fn compor_inclui_csp_e_sanitiza_corpo() {
+        let d = detalhe("s", r#"<script>x()</script><p>corpo</p>"#, "html");
+        let html = compor_html(&d);
+        // CSP `default-src 'none'` no HTML impresso — script não executa nem que passasse.
+        assert!(html.contains("Content-Security-Policy"));
+        assert!(html.contains("default-src 'none'"));
+        // O corpo entra sanitizado (sem <script>), o conteúdo legítimo fica.
+        assert!(!html.to_ascii_lowercase().contains("<script"));
+        assert!(html.contains("<p>corpo</p>"));
     }
 
     #[test]
