@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 // #1056 (TST-11) — ratchet dos warnings do oxlint no NOSSO código.
@@ -57,43 +57,53 @@ const BASELINE: Record<string, number> = {
   "eslint(no-unused-vars)": 1,
 };
 
-/** Roda o oxlint pelo shim JS — portátil (o `.CMD` do Windows não spawna). */
-function warningsDoNossoCodigo(): Map<string, number> {
-  let saida = "";
+/**
+ * Warnings do NOSSO código, por regra, via `oxlint --format=json` — saída
+ * estável e determinística. **#1262:** o scrape do texto humano (regex sobre
+ * `execFileSync`) devolvia zero no runner do CI e derrubava a esteira — oxlint
+ * sai **0** com warnings-only, então o `catch` (que combinava stdout+stderr)
+ * nunca corria e o path de sucesso perdia a saída sob o ambiente do runner. O
+ * `spawnSync` captura o `stdout` SEMPRE, sem depender do exit-code; o JSON é o
+ * mesmo em qualquer runtime (o shim JS roda igual no Windows).
+ */
+function warningsDoNossoCodigo(): { porRegra: Map<string, number>; bruto: string } {
+  const r = spawnSync(
+    process.execPath,
+    ["node_modules/oxlint/bin/oxlint", "--format=json", "src"],
+    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  );
+  const stdout = r.stdout ?? "";
+  const bruto = stdout || (r.stderr ?? "");
+
+  let diagnosticos: Array<{ code?: string; severity?: string; filename?: string }> = [];
   try {
-    saida = execFileSync(
-      process.execPath,
-      ["node_modules/oxlint/bin/oxlint", "src"],
-      { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
-    );
-  } catch (e) {
-    // oxlint sai != 0 quando há achados; a saída é o que interessa.
-    const err = e as { stdout?: string; stderr?: string };
-    saida = (err.stdout ?? "") + (err.stderr ?? "");
+    diagnosticos = (JSON.parse(stdout) as { diagnostics?: typeof diagnosticos }).diagnostics ?? [];
+  } catch {
+    diagnosticos = [];
   }
 
   const porRegra = new Map<string, number>();
-  for (const linha of saida.split("\n")) {
-    const m = /^(\S+?):\d+:\d+: warning ([a-z-]+\([a-z/-]+\))/.exec(linha.trim());
-    if (!m) continue;
-    const arquivo = m[1].replace(/\\/g, "/");
+  for (const d of diagnosticos) {
+    if (d.severity !== "warning" || !d.code) continue;
+    const arquivo = (d.filename ?? "").replace(/\\/g, "/");
     if (VENDOR.some((v) => arquivo.includes(v))) continue;
-    porRegra.set(m[2], (porRegra.get(m[2]) ?? 0) + 1);
+    porRegra.set(d.code, (porRegra.get(d.code) ?? 0) + 1);
   }
-  return porRegra;
+  return { porRegra, bruto };
 }
 
 test("#1056 (TST-11): warning de lint no nosso código não cresce — e a baseline não fica frouxa", () => {
-  const atual = warningsDoNossoCodigo();
+  const { porRegra: atual, bruto } = warningsDoNossoCodigo();
 
   // Sanidade: se o spawn falhar, `atual` vem vazio e o ratchet passaria para
   // sempre. Gate que não vê nada é pior que gate nenhum — foi assim que o
-  // `icon: true` (#1153) ficou verde por meses.
+  // `icon: true` (#1153) ficou verde por meses. Imprime a saída crua (#1262)
+  // pra a causa ficar visível no log do runner em vez de só "spawn quebrou".
   const totalAtual = [...atual.values()].reduce((a, b) => a + b, 0);
   const totalBaseline = Object.values(BASELINE).reduce((a, b) => a + b, 0);
   assert.ok(
     totalAtual > 0 || totalBaseline === 0,
-    "o oxlint não devolveu nenhum warning — o spawn/parse quebrou, não o código",
+    `o oxlint não devolveu nenhum warning — o spawn/parse quebrou, não o código. Saída crua (head): ${JSON.stringify(bruto.slice(0, 400))}`,
   );
 
   const regras = new Set([...atual.keys(), ...Object.keys(BASELINE)]);
