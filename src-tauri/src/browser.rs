@@ -563,3 +563,31 @@ fn capturar_snapshot(wv: &tauri::webview::Webview) -> Option<String> {
 fn capturar_snapshot(_wv: &tauri::webview::Webview) -> Option<String> {
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotulo_prefixa_e_filtra_caracteres_invalidos() {
+        // caso normal: id limpo ganha o prefixo.
+        assert_eq!(rotulo("outlook"), "browser-outlook");
+        // borda: barras, espacos e simbolos sao removidos (rotulo so aceita
+        // [a-zA-Z0-9-]); sobra "abcd".
+        assert_eq!(rotulo("a/b c!d"), "browser-abcd");
+    }
+
+    #[test]
+    fn script_restaura_scroll_escapa_url_e_trunca_y() {
+        // caso normal: url e y aparecem no script gerado.
+        let s = script_restaura_scroll("https://x.com/a", 100.0);
+        assert!(s.contains(r#"location.href==="https://x.com/a""#));
+        assert!(s.contains("window.scrollTo(0,100)"));
+
+        // borda: url com aspas e escapada via serde_json (nao quebra o JS).
+        let s2 = script_restaura_scroll("https://x.com/\"a", 12.9);
+        assert!(s2.contains(r#"\"a"#));
+        // y vira i64 (trunca a fracao).
+        assert!(s2.contains("window.scrollTo(0,12)"));
+    }
+}
