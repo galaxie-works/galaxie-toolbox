@@ -977,7 +977,7 @@ fn atoms_email_de_batch(v: &serde_json::Value) -> Result<AtomsEmail, String> {
             let status = it["status"].as_u64().unwrap_or(0);
             match id {
                 "naoLidos" => {
-                    if status != 200 {
+                    if !leitura_status_ok(status) {
                         return Err(format!("sub-resposta naoLidos: status {status}"));
                     }
                     out.nao_lidos = it["body"]["unreadItemCount"].as_u64().unwrap_or(0);
@@ -1907,6 +1907,37 @@ mod testes_cliente_graph {
 #[cfg(test)]
 mod testes_mail {
     use super::*;
+
+    /// O ponto do RB43 não é cada classificador isolado — é que a MESMA resposta
+    /// HTTP tinha veredito diferente dependendo de qual parser a lia. Estes casos
+    /// fixam onde as três divergem DE PROPÓSITO; se alguém uniformizar por engano,
+    /// um destes cai.
+    #[test]
+    fn as_tres_classes_divergem_de_proposito_nos_casos_que_importam() {
+        // 204: PATCH bem-sucedido não devolve corpo. Para leitura, resposta vazia
+        // não é o dado que o chamador pediu.
+        assert!(escrita_status_ok(204), "PATCH devolve 204 no caminho feliz");
+        assert!(delete_status_ok(204));
+        assert!(!leitura_status_ok(204), "leitura sem corpo não é leitura OK");
+
+        // 404: some no delete (idempotente), mas escrever/ler algo que não existe
+        // é falha real — e silenciar isso viraria sucesso fabricado.
+        assert!(delete_status_ok(404));
+        assert!(!escrita_status_ok(404), "PATCH em contato inexistente é falha");
+        assert!(!leitura_status_ok(404));
+
+        // 200 é sucesso nas três.
+        for f in [leitura_status_ok, escrita_status_ok, delete_status_ok] {
+            assert!(f(200));
+        }
+
+        // Erro real não passa em nenhuma — inclusive o 0 de "não veio status".
+        for status in [0, 400, 403, 429, 500] {
+            assert!(!leitura_status_ok(status), "leitura aceitou {status}");
+            assert!(!escrita_status_ok(status), "escrita aceitou {status}");
+            assert!(!delete_status_ok(status), "delete aceitou {status}");
+        }
+    }
 
     #[test]
     fn delete_status_ok_trata_404_410_como_sucesso() {
@@ -4457,6 +4488,27 @@ const CR_PASTA_LIMITE: u64 = 1000;
 /// #788: no esvaziar em lote, um DELETE conta como sucesso se apagou (2xx) OU se
 /// o item já não existia (404/410) — idempotente, pra um item já removido não
 /// abortar o resto do "empty".
+/// Sucesso de uma sub-resposta de **LEITURA** dentro de um `$batch` (#1074 RB43).
+///
+/// GET no Graph responde `200` quando deu certo. `204` seria "sem conteúdo" — para
+/// uma leitura isso é resposta vazia, não sucesso: quem chamou espera dado.
+fn leitura_status_ok(status: u64) -> bool {
+    status == 200
+}
+
+/// Sucesso de uma sub-resposta de **ESCRITA** (PATCH/POST) dentro de um `$batch`.
+///
+/// Aqui `204 No Content` é o caso NORMAL do PATCH — por isso a faixa, e não `== 200`.
+/// E `404` **não** é sucesso: escrever num contato que não existe é falha real, ao
+/// contrário do delete, onde 404 é idempotência.
+fn escrita_status_ok(status: u64) -> bool {
+    (200..300).contains(&status)
+}
+
+/// Sucesso de uma sub-resposta de **DELETE**.
+///
+/// `404`/`410` contam como sucesso: o alvo já não existe, que é o estado desejado.
+/// É a única das três em que "não achei" é um bom resultado.
 fn delete_status_ok(status: u64) -> bool {
     (200..300).contains(&status) || status == 404 || status == 410
 }
@@ -7863,7 +7915,7 @@ pub fn cr_people_company_write(
                 continue;
             };
             let status = item["status"].as_u64().unwrap_or_default();
-            if index < chunk.len() && (200..300).contains(&status) {
+            if index < chunk.len() && escrita_status_ok(status) {
                 successful_indexes.insert(index);
             }
         }
@@ -7976,7 +8028,7 @@ pub fn cr_people_details_write(
                 continue;
             };
             let status = item["status"].as_u64().unwrap_or_default();
-            if index < chunk.len() && (200..300).contains(&status) {
+            if index < chunk.len() && escrita_status_ok(status) {
                 successful_indexes.insert(index);
             }
         }
@@ -8747,7 +8799,7 @@ fn contadores_de_batch(v: &serde_json::Value) -> Contadores {
     let mut out = Contadores::default();
     if let Some(items) = v["responses"].as_array() {
         for it in items {
-            if it["status"].as_u64().unwrap_or(0) != 200 {
+            if !leitura_status_ok(it["status"].as_u64().unwrap_or(0)) {
                 continue; // sub-falha → mantém 0 (degradação graciosa)
             }
             let n = it["body"]
@@ -9493,7 +9545,7 @@ fn batch_fotos(
                 None => continue,
             };
             let status = it["status"].as_u64().unwrap_or(0);
-            let res = if status == 200 {
+            let res = if leitura_status_ok(status) {
                 // O corpo binário vem base64 no próprio JSON do $batch. O
                 // content-type pode vir com capitalização variada.
                 let mime = it["headers"]["Content-Type"]
