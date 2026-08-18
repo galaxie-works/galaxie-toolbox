@@ -1027,7 +1027,7 @@ async fn cr_people_company_write(
     state: State<'_, Store>,
     contact_ids: Vec<String>,
     company_name: String,
-) -> Result<graph::PeopleCompanyWriteResult, String> {
+) -> Result<graph::PeopleWriteResult, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         graph::cr_people_company_write(&store, contact_ids, &company_name)
@@ -1041,7 +1041,7 @@ async fn cr_people_details_write(
     state: State<'_, Store>,
     contact_ids: Vec<String>,
     changes: Vec<graph::PeopleBulkDetailsChange>,
-) -> Result<graph::PeopleBulkDetailsWriteResult, String> {
+) -> Result<graph::PeopleWriteResult, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         graph::cr_people_details_write(&store, contact_ids, changes)

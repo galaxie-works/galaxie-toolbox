@@ -534,8 +534,18 @@ export interface PeopleEnrichApplyResult {
   writeAvailable: boolean;
 }
 
-/** Resultado por contato do write-back Company ↔ Organization (#288). */
-export interface PeopleCompanyWriteResult {
+/**
+ * Resultado por contato de uma escrita em lote de People (#288, #1074 RB37).
+ *
+ * Servia `cr_people_company_write` e `cr_people_details_write` em duas
+ * interfaces com os mesmos tres campos. Do lado Rust as duas viraram
+ * `PeopleWriteResult` sobre o motor unico `patch_contatos_em_lote`; aqui
+ * seguem o mesmo caminho.
+ *
+ * `savedContactIds` + `failedContactIds` cobre todo ID nao duplicado que
+ * entrou: ID invalido cai em `failed`, nao some.
+ */
+export interface PeopleWriteResult {
   writeAvailable: boolean;
   savedContactIds: string[];
   failedContactIds: string[];
@@ -549,12 +559,6 @@ export type PeopleBulkDetailsField =
 export interface PeopleBulkDetailsChange {
   field: PeopleBulkDetailsField;
   value: string | null;
-}
-
-export interface PeopleBulkDetailsWriteResult {
-  writeAvailable: boolean;
-  savedContactIds: string[];
-  failedContactIds: string[];
 }
 
 export interface PeopleContactEdit {

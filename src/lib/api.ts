@@ -31,8 +31,7 @@ import type {
   Pessoa,
   RecorrenciaInput,
   PeopleBulkDetailsChange,
-  PeopleBulkDetailsWriteResult,
-  PeopleCompanyWriteResult,
+  PeopleWriteResult,
   PeopleEnrichApplyResult,
   PeopleContactEdit,
   PeopleEnrichField,
@@ -1792,9 +1791,9 @@ export async function crPeopleContactDelete(contactId: string): Promise<void> {
 export async function crPeopleCompanyWrite(
   contactIds: string[],
   companyName: string,
-): Promise<PeopleCompanyWriteResult> {
+): Promise<PeopleWriteResult> {
   if (!inTauri()) mockEscritaBloqueada();
-  return invoke<PeopleCompanyWriteResult>("cr_people_company_write", {
+  return invoke<PeopleWriteResult>("cr_people_company_write", {
     contactIds,
     companyName,
   });
@@ -1807,9 +1806,9 @@ export async function crPeopleCompanyWrite(
 export async function crPeopleDetailsWrite(
   contactIds: string[],
   changes: PeopleBulkDetailsChange[],
-): Promise<PeopleBulkDetailsWriteResult> {
+): Promise<PeopleWriteResult> {
   if (!inTauri()) mockEscritaBloqueada();
-  return invoke<PeopleBulkDetailsWriteResult>("cr_people_details_write", {
+  return invoke<PeopleWriteResult>("cr_people_details_write", {
     contactIds,
     changes,
   });
