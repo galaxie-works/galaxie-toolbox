@@ -5,13 +5,13 @@
 
 ---
 
-## 1. Os números da US estão desatualizados — e **para menos**
+## 1. Os números da US estão desatualizados — e em três achados, **para mais**
 
 A US foi escrita na auditoria #994 com linhas de um commit antigo. Medido hoje:
 
 | Achado | US diz | Medido em `3479b36` | |
 |---|---|---|---|
-| **RB37** call sites fora do `graph_enviar` | 22 | **81** chamadas `client.(get\|post\|patch\|delete)` diretas | 🔺 3,7× |
+| **RB37** call sites fora do `graph_enviar` | 22 | **7** — ver §1-bis, a correção | 🔻 |
 | **RB39** comandos mortos | 4 | **4** — `cr_reunioes`, `cr_email`, `cr_inbox_dia`, `cr_contar` | = |
 | **RB40** write duplicado | 2 fn | **2** — `:7658` e `:7766` | = |
 | **RB41** laços de paginação | 4 | **13** ocorrências de `@odata.nextLink`; `fn paginar` **não existe** | 🔺 3,2× |
@@ -23,15 +23,36 @@ O `graph.rs` está com **9.711 linhas**.
 
 > **Achado de auditoria é hipótese com data.** Aqui as hipóteses continuam verdadeiras, mas **a dívida cresceu** entre a auditoria e hoje. Quem executar precisa medir de novo antes de cada fatia — não confiar nesta tabela daqui a uma semana, inclusive.
 
+## 1-bis. ⚠️ Correção da minha própria medição — RB37 é **7**, não 81
+
+A primeira versão deste doc disse *"RB37: 22 → **81**, 3,7× pior"*. **Está errado, e o erro é meu.**
+
+Os 81 vieram de `grep -c "client\.(get|post|patch|delete)"`. Ao construir o gate da F1 — que precisa saber se a chamada está **dentro de um closure de `graph_enviar`** — medi com varredura de parênteses:
+
+```
+graph.rs    81 chamadas   77 JÁ COBERTAS   →  4 violações
+auth.rs      1 chamada     0 cobertas      →  1 violação
+favicon.rs   2 chamadas    0 cobertas      →  2 violações
+                                    TOTAL →  7
+```
+
+**77 das 81 já estavam convertidas.** Contei o que já tinha sido feito como se fosse dívida.
+
+> **É o mesmo erro que este gate existe para impedir: contar o símbolo sem olhar o contexto.** E é a terceira vez no épico da auditoria que eu afirmo um número sem o escopo certo — as outras duas foram `airtable`/`shopify`/`pipefy` na curadoria. O padrão é o mesmo: **`grep -c` responde "quantas vezes aparece", não "quantas estão erradas".**
+
+**Consequência prática — o esforço da F1 despenca.** Não são 81 conversões; são **7**, e nenhuma no caminho quente. A F1 deixa de ser "congelar uma dívida enorme" e passa a ser **"fechar a porta com a casa quase arrumada"**. O resto do plano (F2–F7) não muda: aqueles achados foram medidos por símbolo desde o começo.
+
+⚠️ **O que continua verdadeiro e é o ponto real da F1:** o gate não existe para os 7. Existe para o **oitavo** — `graph.rs` é tocado por várias raias, e sem ratchet a contagem sobe de novo.
+
 ## 2. O erro que essa US convida a cometer
 
-O DoD lista *"22 call sites convertidos"*. Com **81**, a leitura ingênua é *"converter os 81 e pronto"*. **Isso é tapar buraco visível**, e é o modo de falha que já registramos: alguém converte os que achou, o gate não existe, e o 82º entra na semana seguinte.
+O DoD lista *"22 call sites convertidos"*. Com um grep cru dando **81**, a leitura ingênua é *"converter os 81 e pronto"* — e ela erra duas vezes: no número (são 7) e no método. **Isso é tapar buraco visível**, e é o modo de falha que já registramos: alguém converte os que achou, o gate não existe, e o 82º entra na semana seguinte.
 
 O próprio DoD já traz a cura, mas **listada por último**:
 
 > *"lint/teste que falha se `client.get|post|patch|delete` aparecer fora de um closure de `graph_enviar`"*
 
-**Essa linha tem que vir primeiro, não por último.** É a mesma forma do gate de ícone do `Confucius` (#1153): **baseline-ratchet** — registra os 81 numa baseline que **só encolhe**, e qualquer chamada direta **nova** reprova na hora. Aí a conversão vira trabalho incremental seguro em vez de um PR de 81 pontos que ninguém revisa.
+**Essa linha tem que vir primeiro, não por último.** É a mesma forma do gate de ícone do `Confucius` (#1153): **baseline-ratchet** — registra a dívida medida (**7**) numa baseline que **só encolhe**, e qualquer chamada direta **nova** reprova na hora.
 
 ## 3. Fatiamento — 7 fatias, por risco crescente
 
@@ -53,8 +74,12 @@ Ordem escolhida para que **cada fatia seja reconferível sozinha** e nenhuma dep
 
 - **Não aproveitar o `22b5f1e`.** Ele tem o desenho certo — client único, paginação sem ciclo, `patch_contatos_em_lote`, parser de `$batch` centralizado — mas o **diff** está velho: `git diff --stat origin/feat 22b5f1e` acusa **4.781 deleções**, incluindo o `overlay-webview-slice.ts` inteiro (#1163) e a devolução de 647 linhas ao `control-room` (#1019). **Aproveitar o diff desfaz trabalho de duas pessoas.** O desenho reaproveita; o patch, não.
 - **Não fazer as 7 num PR.** São 9.711 linhas e três mudanças de comportamento. Um PR desses não é revisável, e colide com todo mundo que toca `graph.rs`.
-- **Não converter os 81 antes do gate.** Sem ratchet, a contagem volta a subir enquanto a PR está aberta.
+- **Não converter antes do gate.** Sem ratchet, a contagem volta a subir enquanto a PR está aberta — e `graph.rs` é tocado por várias raias ao mesmo tempo.
+- **Não confiar em `grep -c` para dimensionar dívida.** Foi assim que eu inflei o RB37 de 7 para 81 (§1-bis). O grep diz **quantas vezes aparece**, não **quantas estão erradas**.
 
 ## 5. Estado
 
-**F1 é a próxima**, e é a única que não depende de decisão nenhuma.
+- **F1 ✅ entregue** — `src/lib/graph-enviar-gate.test.ts`, baseline `graph.rs` 4 · `favicon.rs` 2 · `auth.rs` 1. Gate verde, `tsc -b` 0, `node --test` 420/420.
+- **F3 é a próxima que eu faria**: é a de maior retorno pelo esforço — hoje **nenhuma** chamada Graph tem timeout, e 4 conexões penduradas param todo o tráfego do app **sem erro nenhum**.
+
+📌 Ao converter um call site, **baixe o número da BASELINE no mesmo PR**. O gate reprova se a dívida cair e o número não acompanhar — de propósito, para o ratchet não afrouxar em silêncio.
