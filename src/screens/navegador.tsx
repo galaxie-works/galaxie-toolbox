@@ -930,7 +930,7 @@ function PaletaOverlay({
  * `font-medium` + resumo opcional (M365) → altura/espaçamento consistentes (o
  * bug de render que o Wagner viu). O botão de fixar (#721) mora aqui, um lugar só.
  */
-function ItemUnificado({
+export function ItemUnificado({
   app,
   termo,
   fixado,
@@ -973,9 +973,16 @@ function ItemUnificado({
       ) : (
         <AppIcon id={app.id} name={nome} />
       )}
+      {/* #1154: layout com posição PREVISÍVEL do resumo — o nome (flex-1, basis-0
+          → peso de shrink 0) NUNCA encolhe/corta; o resumo é sempre right-aligned
+          (padrão de command palette: nome à esquerda, hint à direita), então a
+          posição não depende do comprimento do nome. Regra de truncamento
+          EXPLÍCITA: em janela estreita quem cede é o RESUMO (min-w-0 + shrink +
+          max-w-[45%] → trunca com "…"), o nome fica protegido. Sem resumo o nome
+          segue flex-1 e nem ele nem o ícone "pulam" de posição. */}
       <span className="min-w-0 flex-1 truncate font-medium">{nome}</span>
       {app.resumo && (
-        <span className="hidden shrink-0 truncate text-xs text-muted-foreground sm:inline">
+        <span className="ml-auto hidden min-w-0 max-w-[45%] shrink truncate text-right text-xs text-muted-foreground sm:inline">
           {app.resumo[idioma]}
         </span>
       )}
