@@ -893,7 +893,7 @@ pub fn onedrive_tipos(store: &TokenStore, web_url: &str) -> Result<Vec<TipoArqui
 
 
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailRecente {
     pub assunto: String,
@@ -910,12 +910,98 @@ pub struct EmailRecente {
 /// falhava (#187). Memoizado (single-flight + TTL curto) pra não competir com o
 /// Bridge no boot. Só o não-lido é sinal-chave (propaga erro); sinalizados e
 /// recentes degradam graciosamente. Mail.Read.
-#[derive(serde::Serialize, Default, Clone)]
+#[derive(serde::Serialize, Default, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AtomsEmail {
     pub nao_lidos: u64,
     pub sinalizados: u64,
     pub recentes: Vec<EmailRecente>,
+    /// Sub-respostas do `$batch` que NÃO puderam ser lidas (#1075 RB46-a).
+    /// Vazio = o card está completo. Mesma forma do `TarefasResultado` da F2.
+    pub parciais: Vec<String>,
+}
+
+#[cfg(test)]
+mod testes_atoms_email_parcial {
+    use super::*;
+
+    fn resposta(itens: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "responses": itens })
+    }
+
+    fn ok_completo() -> serde_json::Value {
+        resposta(serde_json::json!([
+            { "id": "naoLidos", "status": 200, "body": { "unreadItemCount": 7 } },
+            { "id": "sinalizados", "status": 200, "body": 3 },
+            { "id": "recentes", "status": 200, "body": { "value": [] } },
+        ]))
+    }
+
+    #[test]
+    fn caminho_feliz_nao_marca_nada_como_parcial() {
+        let r = atoms_email_de_batch(&ok_completo()).expect("batch valido");
+        assert_eq!(r.nao_lidos, 7);
+        assert_eq!(r.sinalizados, 3);
+        assert!(r.parciais.is_empty(), "card completo nao tem parcial");
+    }
+
+    /// O RB46-a: 200 **sem o campo** virava `unwrap_or(0)` e a tela dizia
+    /// "0 nao lidos" como fato. Agora cai na mesma guarda da sub-resposta
+    /// ausente — nao temos o numero, entao nao inventamos um.
+    #[test]
+    fn duzentos_sem_o_campo_nao_vira_zero_nao_lidos() {
+        let v = resposta(serde_json::json!([
+            { "id": "naoLidos", "status": 200, "body": {} },
+        ]));
+        let e = atoms_email_de_batch(&v).expect_err("nao pode devolver 0 como fato");
+        assert!(e.contains("unreadItemCount"), "motivo tem que dizer o que faltou: {e}");
+    }
+
+    /// O guard `if status == 200` fazia o braco NAO CASAR e cair no `_ => {}`:
+    /// o valor ficava no default e a UI lia 0 como fato.
+    #[test]
+    fn sinalizados_com_erro_e_marcado_e_nao_vira_zero_silencioso() {
+        for status in [403, 429, 500] {
+            let v = resposta(serde_json::json!([
+                { "id": "naoLidos", "status": 200, "body": { "unreadItemCount": 4 } },
+                { "id": "sinalizados", "status": status, "body": 0 },
+            ]));
+            let r = atoms_email_de_batch(&v).expect("o card nao pode cair por causa do secundario");
+            assert_eq!(r.nao_lidos, 4, "o principal segue valendo");
+            assert_eq!(
+                r.parciais,
+                vec!["sinalizados"],
+                "status {status} tem que aparecer como parcial"
+            );
+        }
+    }
+
+    #[test]
+    fn recentes_com_erro_nao_vira_lista_vazia_silenciosa() {
+        let v = resposta(serde_json::json!([
+            { "id": "naoLidos", "status": 200, "body": { "unreadItemCount": 4 } },
+            { "id": "recentes", "status": 500, "body": { "value": [] } },
+        ]));
+        let r = atoms_email_de_batch(&v).expect("secundario nao derruba o card");
+        assert!(r.recentes.is_empty());
+        assert_eq!(r.parciais, vec!["recentes"], "lista vazia por erro tem que ser marcada");
+    }
+
+    /// Lista REALMENTE vazia (200) nao e parcial — a distincao que importa.
+    #[test]
+    fn lista_realmente_vazia_nao_e_parcial() {
+        let r = atoms_email_de_batch(&ok_completo()).expect("batch valido");
+        assert!(r.recentes.is_empty());
+        assert!(!r.parciais.contains(&"recentes".to_string()));
+    }
+
+    #[test]
+    fn sub_resposta_ausente_segue_derrubando() {
+        let v = resposta(serde_json::json!([
+            { "id": "sinalizados", "status": 200, "body": 1 },
+        ]));
+        assert!(atoms_email_de_batch(&v).is_err(), "sem naoLidos nao ha card");
+    }
 }
 
 pub fn atoms_email(store: &TokenStore) -> Result<AtomsEmail, String> {
@@ -976,21 +1062,40 @@ fn atoms_email_de_batch(v: &serde_json::Value) -> Result<AtomsEmail, String> {
             let id = it["id"].as_str().unwrap_or("");
             let status = it["status"].as_u64().unwrap_or(0);
             match id {
+                // #1075 RB46-a: o NÚMERO PRINCIPAL do card. Status não-200 já
+                // derrubava; o que faltava era o 200 **sem o campo** — que virava
+                // `unwrap_or(0)` e mostrava "0 não lidos" como se fosse fato.
+                // Agora cai na MESMA guarda que a sub-resposta ausente: se não
+                // temos o número, não inventamos um.
                 "naoLidos" => {
                     if !leitura_status_ok(status) {
                         return Err(format!("sub-resposta naoLidos: status {status}"));
                     }
-                    out.nao_lidos = it["body"]["unreadItemCount"].as_u64().unwrap_or(0);
+                    let Some(n) = it["body"]["unreadItemCount"].as_u64() else {
+                        return Err(
+                            "sub-resposta naoLidos sem `unreadItemCount`".to_string()
+                        );
+                    };
+                    out.nao_lidos = n;
                     viu_nao_lidos = true;
                 }
-                "sinalizados" if status == 200 => {
-                    out.sinalizados = it["body"]
+                // Secundários: aqui derrubar o card inteiro seria pior que o
+                // defeito (lição da F2). Mas o guard `if status == 200` fazia o
+                // braço NÃO CASAR e cair no `_ => {}` — o valor ficava no default
+                // (0 / lista vazia) e a UI lia isso como fato. Mesma forma do
+                // `if let Ok` sem `else`.
+                "sinalizados" => {
+                    match it["body"]
                         .as_u64()
                         .or_else(|| it["body"].as_str().and_then(|s| s.trim().parse().ok()))
-                        .unwrap_or(0);
+                        .filter(|_| leitura_status_ok(status))
+                    {
+                        Some(n) => out.sinalizados = n,
+                        None => out.parciais.push("sinalizados".to_string()),
+                    }
                 }
-                "recentes" if status == 200 => {
-                    if let Some(msgs) = it["body"]["value"].as_array() {
+                "recentes" => match it["body"]["value"].as_array() {
+                    Some(msgs) if leitura_status_ok(status) => {
                         for m in msgs {
                             out.recentes.push(EmailRecente {
                                 assunto: m["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
@@ -1003,7 +1108,8 @@ fn atoms_email_de_batch(v: &serde_json::Value) -> Result<AtomsEmail, String> {
                             });
                         }
                     }
-                }
+                    _ => out.parciais.push("recentes".to_string()),
+                },
                 _ => {}
             }
         }

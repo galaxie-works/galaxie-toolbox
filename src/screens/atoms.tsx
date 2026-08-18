@@ -130,6 +130,7 @@ export function AtomsScreen({
       naoLidos: number;
       sinalizados: number;
       recentes: EmailRecente[];
+      parciais: string[];
     }>
   >({ fase: "carregando" });
   const [todos, setTodos] = useState<Estado<TarefasResultado>>({ fase: "carregando" });
@@ -165,6 +166,7 @@ export function AtomsScreen({
           naoLidos: email.naoLidos,
           sinalizados: email.sinalizados,
           recentes: email.recentes,
+          parciais: email.parciais,
         },
       });
     } catch (e) {
@@ -228,8 +230,12 @@ export function AtomsScreen({
   // "Tudo em dia" do dashboard inteiro: as três fontes carregadas E sem nada
   // pendente. Só quando todas resolveram ok.
   const agendaVazia = agenda.fase === "ok" && agenda.dados.length === 0;
+  // #1075 RB46-a: "tudo em dia" so vale se a leitura foi COMPLETA. Com
+  // `parciais` nao vazio, zero significa "nao consegui ler", nao "nao ha nada"
+  // — e declarar caixa-zero em cima disso e a pior forma do defeito.
   const emailVazio =
     email.fase === "ok" &&
+    email.dados.parciais.length === 0 &&
     email.dados.naoLidos === 0 &&
     email.dados.sinalizados === 0;
   const todosVazio = todos.fase === "ok" && todos.dados.tarefas.length === 0;
@@ -465,7 +471,12 @@ function FeedAtencao({
   onNavegar,
 }: {
   agenda: Estado<EventoAgenda[]>;
-  email: Estado<{ naoLidos: number; sinalizados: number; recentes: EmailRecente[] }>;
+  email: Estado<{
+    naoLidos: number;
+    sinalizados: number;
+    recentes: EmailRecente[];
+    parciais: string[];
+  }>;
   todos: Estado<TarefasResultado>;
   idioma: string;
   t: Dic;
@@ -798,7 +809,7 @@ function EmailWidget({
   onNavegar,
   denso,
 }: {
-  estado: Estado<{ naoLidos: number; sinalizados: number }>;
+  estado: Estado<{ naoLidos: number; sinalizados: number; parciais: string[] }>;
   t: Dic;
   onRetry: () => void;
   onNavegar: (tela: Tela) => void;
@@ -808,8 +819,9 @@ function EmailWidget({
     if (estado.fase === "carregando") return <SkeletonLinhas />;
     if (estado.fase === "erro") return <ErroCard t={t} onRetry={onRetry} />;
 
-    const { naoLidos, sinalizados } = estado.dados;
-    if (naoLidos === 0 && sinalizados === 0) {
+    const { naoLidos, sinalizados, parciais } = estado.dados;
+    // So declara "caixa zero" quando a leitura foi completa (#1075 RB46-a).
+    if (naoLidos === 0 && sinalizados === 0 && parciais.length === 0) {
       return (
         <div className="flex flex-col items-center gap-2 py-6 text-center">
           <IconStack>
@@ -836,6 +848,11 @@ function EmailWidget({
             </Badge>
           )}
         </div>
+        {parciais.length > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {t.atoms.emailParcial}
+          </p>
+        )}
         <p className="mt-2 text-xs text-muted-foreground">{t.atoms.emailAbrir}</p>
       </button>
     );
