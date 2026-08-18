@@ -1249,18 +1249,12 @@ export function NavegadorScreen({
   // #275 rework: snapshot (data URL JPEG) da aba mostrado por baixo do overlay
   // pra o conteúdo não sumir quando a webview é escondida. Null = sem overlay.
   const [snapshotOverlay, setSnapshotOverlay] = useState<string | null>(null);
-  // #358: overlays do APP SHELL (fora do Navigator) que abrem sobre a área da
-  // webview — ex.: o menu do usuário no AppSidebar — avisam por window-event
-  // pra a webview ceder. Contador auto-curável (clamp >= 0).
-  const [chromeOverlays, setChromeOverlays] = useState(0);
-  useEffect(() => {
-    const aoCeder = (e: Event) => {
-      const aberto = (e as CustomEvent<boolean>).detail;
-      setChromeOverlays((n) => Math.max(0, n + (aberto ? 1 : -1)));
-    };
-    window.addEventListener("galaxie:webview-ceder", aoCeder);
-    return () => window.removeEventListener("galaxie:webview-ceder", aoCeder);
-  }, []);
+  // #358 → #1163/#1179: o window-event `galaxie:webview-ceder` MORREU. Ele existia
+  // porque overlays do app shell (fora da árvore do Provider antigo) não tinham
+  // como registrar; o #1163 (D1/D2) pôs a conta no store — qualquer overlay, em
+  // qualquer lugar, registra pelo primitivo — e o #1179 trocou a última exceção
+  // (tooltip do sidebar colapsado) pela REGRA de geometria. Sem produtores, o
+  // listener era mecanismo morto: removido em vez de mantido "por precaução".
 
   // Z-order (#275): conta os overlays DOM abertos SOBRE a webview (menus de
   // contexto, dropdowns da barra, diálogos). Enquanto houver algum, a webview
@@ -1269,6 +1263,8 @@ export function NavegadorScreen({
   // (default no-op → Furo 1; Provider abaixo do header → Furo 3). Agora vive no
   // store e os PRIMITIVOS se registram sozinhos (D2) — aqui só LEMOS a conta.
   const overlaysWebview = useAppStore((s) => s.overlaysWebview);
+  // #1179: publicação da região da webview (ver o efeito lá embaixo).
+  const definirWebviewRect = useAppStore((s) => s.definirWebviewRect);
 
   // #275 (regressão): os menus de contexto de aba/grupo escondem a webview.
   // Rastreamos UM menu aberto por vez (o Radix já só deixa um) por uma chave
@@ -1922,12 +1918,10 @@ export function NavegadorScreen({
       browser.esconderTodas();
       return;
     }
-    const overlayAtivo =
-      paletaAberta ||
-      overlaysWebview > 0 || // #1163: conta do store — primitivos (incl. os menus
-      // de contexto de aba/grupo, controlados) se registram sozinhos via D2.
-      chromeOverlays > 0; // #358: tooltip do sidebar colapsado — fica no window-event
-      // (Tooltip é D3-excluído do D2; ver `sidebar.tsx`).
+    // #1163/#1179: UMA conta, no store. Os primitivos de overlay se registram
+    // sozinhos (D2) e os tooltips entram pela regra de geometria (#1179) — não há
+    // mais canal paralelo por window-event.
+    const overlayAtivo = paletaAberta || overlaysWebview > 0;
     if (overlayAtivo || !ativa) {
       // #275 rework: ANTES de esconder, tira um snapshot da aba ativa e o mostra
       // como imagem sob o overlay (conteúdo congela, não some). Só uma vez por
@@ -1963,7 +1957,7 @@ export function NavegadorScreen({
     // Depender do `activeTab` inteiro ou dos helpers estáveis (browser/medir/
     // onReativada) faria a webview nativa piscar a cada render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ativa, activeTab?.url, activeTab?.tipo, visivel, paletaAberta, overlaysWebview, chromeOverlays, snapshotOverlay]);
+  }, [ativa, activeTab?.url, activeTab?.tipo, visivel, paletaAberta, overlaysWebview, snapshotOverlay]);
 
   // Auto-cura do menu de contexto (#275): se o dono do menu aberto (aba/grupo)
   // sumiu — chip desmontou com o menu aberto, sem disparar o fechamento — limpa a
@@ -1991,6 +1985,35 @@ export function NavegadorScreen({
       window.removeEventListener("resize", reposicionar);
     };
   }, [ativa]);
+
+  // #1179: publica no store a REGIÃO que a webview ocupa. É o dado que torna a
+  // regra do tooltip (*a caixa cruza o retângulo da webview?*) decidível de
+  // qualquer lugar da árvore — o `TooltipContent` é global e não conhece o
+  // Navigator. Publica a região quando há webview EM JOGO (tela visível + aba web
+  // ativa), mesmo que ela esteja escondida por um overlay: é a área que ela ocupa,
+  // não "está pintando agora" — assim um tooltip já aberto não muda de veredito no
+  // meio da vida dele. Fora disso publica `null` ⇒ nenhum tooltip aciona nada.
+  useEffect(() => {
+    const el = area.current;
+    const abaInterna = activeTab != null && ehAbaInterna(activeTab);
+    if (!visivel || abaInterna || ativa === null || !el) {
+      definirWebviewRect(null);
+      return;
+    }
+    const publicar = () => definirWebviewRect(medir());
+    publicar();
+    const ro = new ResizeObserver(publicar);
+    ro.observe(el);
+    window.addEventListener("resize", publicar);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", publicar);
+      definirWebviewRect(null);
+    };
+    // Mesma lista curada do efeito de z-order acima (`medir` é local e estável na
+    // prática; depender dele re-observaria a cada render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visivel, ativa, activeTab?.tipo, definirWebviewRect]);
 
   useEffect(() => {
     return () => {
