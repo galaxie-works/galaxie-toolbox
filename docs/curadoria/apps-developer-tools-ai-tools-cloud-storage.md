@@ -160,7 +160,7 @@ Medicao feita lendo os magic bytes do blob **no ref** (`git cat-file`), nao o wo
 | `abacus-ai` | **remover** | plataforma ML enterprise, fora do perfil PME | - | - | - |
 | `agency-advanta` | **remover** | nicho de agencia, sem relevancia de mercado | - | - | - |
 | `atria` | **remover** | produto obscuro sem base instalada | - | - | - |
-| `base44` | **remover** | tier-2 de vibe-coding; PO citou (ver ressalva) | - | - | - |
+| `base44` | **remover** | tier-2 de vibe-coding; REMOCAO CONFIRMADA pelo PO | - | - | - |
 | `boosted` | **remover** | video consumer da Lightricks, nao B2B | - | - | - |
 | `carousel-conversion-studio` | **remover** | obscuro, nicho de midia social | - | - | - |
 | `characters` | **remover** | entretenimento/roleplay, nao uso profissional | - | - | - |
@@ -240,3 +240,41 @@ Medicao feita lendo os magic bytes do blob **no ref** (`git cat-file`), nao o wo
 ## Nota de metodo
 
 O `icone_ok` **nao** pode ser respondido pelo campo `icon` do JSON - ele e afirmacao do gerador, nao verificacao (achado do #1153). Cada linha aqui saiu de leitura de magic bytes do arquivo real.
+
+## Adicoes recomendadas - lideres de nicho AUSENTES do catalogo
+
+Pedido direto do PO. **Conferi cada um contra o catalogo INTEIRO antes de propor** - varios que eu ia sugerir ja existem em outra categoria e por isso NAO estao aqui: `grammarly`, `deepl`, `figma`, `notion`, `jira`, `cloudflare`, `digitalocean`, `grafana`, `veeam`, `datto`, `1password`, `bitwarden`, `otter`, `replit`, `canva`.
+
+| Categoria | id sugerido | Nome | URL | Por que entra |
+|---|---|---|---|---|
+| AI Tools | `lovable` | Lovable | https://lovable.dev | lider do nicho de vibe-coding que o base44 ocupava |
+| AI Tools | `v0` | v0 | https://v0.app | top-3 de vibe-coding; e da Vercel, que ja mantemos |
+| AI Tools | `bolt-new` | Bolt | https://bolt.new | top-3 de vibe-coding (StackBlitz) |
+| AI Tools | `windsurf` | Windsurf | https://windsurf.com | top-2 de editor com IA junto do cursor, que mantivemos |
+| AI Tools | `mistral` | Mistral Le Chat | https://chat.mistral.ai | top-5 de LLM; opcao europeia, argumento de LGPD/soberania |
+| Developer Tools | `hostinger` | Hostinger | https://hpanel.hostinger.com | hospedagem com forte presenca em PME brasileira |
+| Developer Tools | `render` | Render | https://dashboard.render.com | sucessor real do heroku, que mantivemos por inercia |
+| Developer Tools | `railway` | Railway | https://railway.app | top-3 de PaaS moderno |
+| Developer Tools | `sonarcloud` | SonarQube Cloud | https://sonarcloud.io | LIDER de qualidade de codigo - cortei o codacy tier-2 e o lider nao estava |
+| Developer Tools | `anydesk` | AnyDesk | https://my.anydesk.com | acesso remoto top-2 e MUITO usado no Brasil |
+| Developer Tools | `rustdesk` | RustDesk | https://rustdesk.com | acesso remoto aberto; concorrente direto do nosso GALAXIE Remote |
+| Developer Tools | `zabbix` | Zabbix | https://www.zabbix.com | monitoramento dominante em infra brasileira |
+| Developer Tools | `glpi` | GLPI | https://glpi-project.org | ITSM/inventario dominante em PME e setor publico BR |
+| Developer Tools | `portainer` | Portainer | https://www.portainer.io | padrao de gestao de container para quem nao vive no terminal |
+| Developer Tools | `proxmox` | Proxmox | https://www.proxmox.com | virtualizacao dominante em PME/MSP brasileiro |
+| Cloud Storage | `box` | Box | https://app.box.com | top-5 de compartilhamento corporativo; ausencia e um buraco grande |
+| Cloud Storage | `nextcloud` | Nextcloud | https://nextcloud.com | lider de nuvem auto-hospedada; relevante para quem nao quer SaaS |
+| Cloud Storage | `acronis` | Acronis | https://cloud.acronis.com | backup forte no canal de MSP brasileiro |
+| Cloud Storage | `wasabi` | Wasabi | https://console.wasabisys.com | armazenamento S3 compativel de baixo custo |
+
+**As URLs acima sao proposta, nao medicao.** Nao resolvi nenhuma - o passo do patch deve fazer HEAD em cada uma antes de gravar, que e exatamente o gate que falta hoje (o `apps-catalog-integrity.test.ts` nunca resolve URL).
+
+### O corte revelou um viés que o catalogo ja tinha
+
+Tres remocoes minhas expoem a mesma falha de curadoria original: **entrou o tier-2 e faltou o lider.** Cortei `codacy` (qualidade de codigo) e o **SonarQube nao estava**; cortei `realvnc` e o **AnyDesk nao estava**; cortei `linode`/`carbonite` e **Render, Wasabi e Acronis nao estavam**. O catalogo nao foi montado por lideranca de categoria - foi montado por disponibilidade de integracao.
+
+### 🔴 Buraco fora da minha fatia, e e o maior de todos
+
+A regua do epico nomeia **contabil** como nicho que atendemos. Medi o catalogo inteiro: **nenhum ERP ou sistema contabil brasileiro existe nele.** Ausentes - `totvs`, `sankhya`, `senior`, `omie`, `conta-azul`, `bling`, `tiny`, `nibo`, `dominio-sistemas`.
+
+Sao 1779 apps e **zero** software de gestao brasileiro, num produto cujo publico e PME brasileira. Isso nao e a minha fatia (cai em Work and Business / Banking and Finance), mas nenhuma fatia individual enxergaria - so aparece varrendo o catalogo inteiro. Fica registrado para quem for montar o patch.
