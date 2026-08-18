@@ -70,6 +70,10 @@ import {
   createActivitySlice,
   type ActivitySlice,
 } from "./activity-slice";
+import {
+  createOverlayWebviewSlice,
+  type OverlayWebviewSlice,
+} from "./overlay-webview-slice";
 
 /**
  * ============================================================================
@@ -117,7 +121,8 @@ export type AppStore =
   & AuthSlice
   & CloudPrefsSlice
   & PinnedSlice
-  & ActivitySlice;
+  & ActivitySlice
+  & OverlayWebviewSlice;
 
 // #697: a camada cloud é roteada por provider. MS→OneDrive, Google→Drive
 // appDataFolder. A troca de conta seleciona o alvo antes de reativar.
@@ -189,6 +194,9 @@ export const useAppStore = create<AppStore>()(
       // #987: fila de atividades de transferência (copy/move) — estado de sessão,
       // fora do partialize e do reset tenant-scoped (não é por-conta).
       ...createActivitySlice(...a),
+      // #1163 (D1): contador de overlays sobre a webview do Navigator — session
+      // puro (fora do partialize e do reset). Substitui o OcultarWebviewContext.
+      ...createOverlayWebviewSlice(...a),
     }),
     {
       name: "galaxie-toolbox.store",

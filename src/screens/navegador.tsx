@@ -171,10 +171,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { BridgeIcon } from "@/components/ui/icons/marca-anim";
-import {
-  OcultarWebviewContext,
-  useOcultarWebviewEnquantoAberto,
-} from "@/lib/navigator-overlay";
 import { ShipIcon, type ShipIconHandle } from "@/components/ui/ship";
 import { PirataIcon } from "@/components/ui/icons/marca/pirata";
 import { PirateSkullIcon } from "@/components/ui/icons/marca/pirate-skull";
@@ -1261,19 +1257,18 @@ export function NavegadorScreen({
 
   // Z-order (#275): conta os overlays DOM abertos SOBRE a webview (menus de
   // contexto, dropdowns da barra, diálogos). Enquanto houver algum, a webview
-  // fica escondida para não cortar o overlay — mesmo padrão do #174 (paleta),
-  // agora generalizado via OcultarWebviewContext.
-  const [overlaysWebview, setOverlaysWebview] = useState(0);
-  const registrarOverlayWebview = useCallback((aberto: boolean) => {
-    setOverlaysWebview((n) => Math.max(0, n + (aberto ? 1 : -1)));
-  }, []);
+  // fica escondida para não cortar o overlay — mesmo padrão do #174 (paleta).
+  // #1163 (D1): a conta ERA um useState local exposto por `OcultarWebviewContext`
+  // (default no-op → Furo 1; Provider abaixo do header → Furo 3). Agora vive no
+  // store e os PRIMITIVOS se registram sozinhos (D2) — aqui só LEMOS a conta.
+  const overlaysWebview = useAppStore((s) => s.overlaysWebview);
 
-  // #275 (regressão): os menus de contexto de aba/grupo escondem a webview. Antes
-  // isso ia por `onOpenChange` cru no contador — mas se o chip DESMONTASSE com o
-  // menu aberto (re-render por timer de sleeping/favicon), o decremento nunca
-  // vinha e a webview ficava presa escondida (tela PRETA). Aqui rastreamos UM
-  // menu aberto por vez (o Radix já só deixa um) por uma chave estável e, num
-  // efeito, LIMPAMOS a chave se o dono (aba/grupo) sumir — auto-cura, nunca trava.
+  // #275 (regressão): os menus de contexto de aba/grupo escondem a webview.
+  // Rastreamos UM menu aberto por vez (o Radix já só deixa um) por uma chave
+  // estável, para poder controlá-los (`open=`) e, num efeito, LIMPAR a chave se o
+  // dono (aba/grupo) sumir. A conta em si é do store: o `ContextMenu` controlado se
+  // registra sozinho (D2, caminho controlado) e o cleanup do primitivo libera a
+  // conta se o chip desmontar com o menu aberto — a auto-cura anti-tela-preta.
   const [menuAbertoId, setMenuAbertoId] = useState<string | null>(null);
   const aoAbrirMenu = (chave: string) => (aberto: boolean) =>
     setMenuAbertoId((atual) => (aberto ? chave : atual === chave ? null : atual));
@@ -1922,9 +1917,10 @@ export function NavegadorScreen({
     }
     const overlayAtivo =
       paletaAberta ||
-      overlaysWebview > 0 ||
-      menuAbertoId !== null ||
-      chromeOverlays > 0; // #358: overlays do app shell sobre a webview — menu do usuário + tooltips do sidebar colapsado
+      overlaysWebview > 0 || // #1163: conta do store — primitivos (incl. os menus
+      // de contexto de aba/grupo, controlados) se registram sozinhos via D2.
+      chromeOverlays > 0; // #358: tooltip do sidebar colapsado — fica no window-event
+      // (Tooltip é D3-excluído do D2; ver `sidebar.tsx`).
     if (overlayAtivo || !ativa) {
       // #275 rework: ANTES de esconder, tira um snapshot da aba ativa e o mostra
       // como imagem sob o overlay (conteúdo congela, não some). Só uma vez por
@@ -1960,7 +1956,7 @@ export function NavegadorScreen({
     // Depender do `activeTab` inteiro ou dos helpers estáveis (browser/medir/
     // onReativada) faria a webview nativa piscar a cada render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ativa, activeTab?.url, activeTab?.tipo, visivel, paletaAberta, overlaysWebview, menuAbertoId, chromeOverlays, snapshotOverlay]);
+  }, [ativa, activeTab?.url, activeTab?.tipo, visivel, paletaAberta, overlaysWebview, chromeOverlays, snapshotOverlay]);
 
   // Auto-cura do menu de contexto (#275): se o dono do menu aberto (aba/grupo)
   // sumiu — chip desmontou com o menu aberto, sem disparar o fechamento — limpa a
@@ -2136,7 +2132,6 @@ export function NavegadorScreen({
   };
 
   return (
-    <OcultarWebviewContext.Provider value={registrarOverlayWebview}>
     <div className="flex h-full w-full flex-col">
       {/* #876: a barra de abas vive na TITLE BAR — teleportada pro `tabStripSlot`
           (App.tsx). Sem slot (mock/teste/web) cai inline aqui, comportamento
@@ -2283,7 +2278,8 @@ export function NavegadorScreen({
             <TooltipContent>{t.navegador.novaAbaPrivada}</TooltipContent>
           </Tooltip>
         ) : (
-        <DropdownMenu onOpenChange={registrarOverlayWebview}>
+        // #1163 D2: o DropdownMenu já cede a webview sozinho — sem onOpenChange manual.
+        <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
@@ -2574,7 +2570,6 @@ export function NavegadorScreen({
         onExcluir={excluirGrupo}
       />
     </div>
-    </OcultarWebviewContext.Provider>
   );
 }
 
@@ -2597,8 +2592,8 @@ function DialogEditarGrupo({
 }) {
   const { t } = useIdioma();
   const [nome, setNome] = useState("");
-  // z-order (#275): esconde a webview enquanto o diálogo estiver aberto.
-  useOcultarWebviewEnquantoAberto(grupo != null);
+  // z-order (#275): esconder a webview enquanto o diálogo estiver aberto agora é
+  // por construção — o `<Dialog>` (D2) se registra sozinho pelo `open`. Nada aqui.
 
   // Sincroniza o input ao abrir/trocar de grupo.
   useEffect(() => {

@@ -3,6 +3,7 @@ import { XIcon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { textoUi } from "@/lib/idioma-core"
+import { useRegistroOverlayWebview } from "@/lib/navigator-overlay"
 /**
  * #479 (épico #476): sheets laterais migradas pro Animate UI. Este é o **ponto
  * único de troca** — troca o primitivo Radix cru por `@animate-ui/.../radix/sheet`
@@ -33,8 +34,17 @@ import {
   type SheetDescriptionProps,
 } from "@/components/animate-ui/primitives/radix/sheet"
 
-function Sheet(props: SheetProps) {
-  return <SheetPrimitive data-slot="sheet" {...props} />
+function Sheet({ open, onOpenChange, ...props }: SheetProps) {
+  // #1163 D2: a sheet cede a webview do Navigator sozinha (controlada OU por trigger).
+  const aoMudarAbertura = useRegistroOverlayWebview(open, onOpenChange)
+  return (
+    <SheetPrimitive
+      data-slot="sheet"
+      open={open}
+      onOpenChange={aoMudarAbertura}
+      {...props}
+    />
+  )
 }
 
 function SheetTrigger(props: SheetTriggerProps) {

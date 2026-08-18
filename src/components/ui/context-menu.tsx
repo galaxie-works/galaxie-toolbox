@@ -3,11 +3,24 @@ import { CheckIcon, ChevronRightIcon, CircleIcon } from "lucide-react"
 import { ContextMenu as ContextMenuPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { useRegistroOverlayWebview } from "@/lib/navigator-overlay"
 
 function ContextMenu({
+  open,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Root>) {
-  return <ContextMenuPrimitive.Root data-slot="context-menu" {...props} />
+  // #1163 D2: cede a webview do Navigator sozinho. Cobre o caso do chip de aba que
+  // desmonta com o menu aberto — o cleanup do hook libera a conta (auto-cura).
+  const aoMudarAbertura = useRegistroOverlayWebview(open, onOpenChange)
+  return (
+    <ContextMenuPrimitive.Root
+      data-slot="context-menu"
+      open={open}
+      onOpenChange={aoMudarAbertura}
+      {...props}
+    />
+  )
 }
 
 function ContextMenuTrigger({

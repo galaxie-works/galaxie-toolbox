@@ -2,6 +2,7 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { useRegistroOverlayWebview } from "@/lib/navigator-overlay"
 /**
  * #480 (épico #476): dialogs migrados pro Animate UI. **Ponto único de troca** —
  * envolve o primitivo `radix` do Animate UI (overlay/content via `motion`,
@@ -39,8 +40,17 @@ import {
   type AlertDialogCancelProps,
 } from "@/components/animate-ui/primitives/radix/alert-dialog"
 
-function AlertDialog(props: AlertDialogProps) {
-  return <AlertDialogPrimitive data-slot="alert-dialog" {...props} />
+function AlertDialog({ open, onOpenChange, ...props }: AlertDialogProps) {
+  // #1163 D2: cede a webview do Navigator sozinho (controlado OU por trigger).
+  const aoMudarAbertura = useRegistroOverlayWebview(open, onOpenChange)
+  return (
+    <AlertDialogPrimitive
+      data-slot="alert-dialog"
+      open={open}
+      onOpenChange={aoMudarAbertura}
+      {...props}
+    />
+  )
 }
 
 function AlertDialogTrigger(props: AlertDialogTriggerProps) {
