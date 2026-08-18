@@ -5,9 +5,9 @@ name: CI
 
 on:
   push:
-    branches: [feat/bridge-email-client, main]
+    branches: [pre-prod, main]
   pull_request:
-    branches: [feat/bridge-email-client, main]
+    branches: [pre-prod, main]
 
 # Um push novo na mesma ref cancela a run anterior (economiza runner).
 concurrency:
