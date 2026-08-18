@@ -488,19 +488,19 @@ impl AppState {
         })
     }
 
+    /// Gera as credenciais TURN de curta duração a partir do relógio atual
+    /// (`now + turn_credential_ttl`). #1148: usado no `Registered` E na renovação
+    /// (`RenewIceServers`) — chamar de novo com o relógio adiantado devolve uma
+    /// credencial com `expires_at` novo, sem refazer pareamento.
     pub fn ice_servers(&self, device_id: &str) -> Result<Vec<IceServer>, TurnCredentialError> {
         let expires_at = unix_seconds()?.saturating_add(self.inner.turn_credential_ttl.as_secs());
-        let username = format!("{expires_at}:{device_id}");
-        let mut mac = HmacSha1::new_from_slice(&self.inner.turn_secret)
-            .map_err(|_| TurnCredentialError::InvalidSecret)?;
-        mac.update(username.as_bytes());
-        let credential = BASE64.encode(mac.finalize().into_bytes());
-        Ok(vec![IceServer {
-            urls: self.inner.turn_urls.clone(),
-            username,
-            credential,
-            expires_at_unix_seconds: expires_at,
-        }])
+        let ice = montar_ice_server(
+            &self.inner.turn_urls,
+            &self.inner.turn_secret,
+            device_id,
+            expires_at,
+        )?;
+        Ok(vec![ice])
     }
 
     pub async fn create_code(
@@ -629,10 +629,66 @@ fn unix_seconds() -> Result<u64, std::time::SystemTimeError> {
         .map(|duration| duration.as_secs())
 }
 
+/// #1148: monta UMA credencial TURN de curta duração (esquema REST do coturn:
+/// `username = "{expires_at}:{device_id}"`, `credential = base64(HMAC-SHA1(secret,
+/// username))`). PURA em `expires_at` — o `ice_servers` passa `now + ttl`; o teste
+/// passa dois instantes (relógio adiantado) e prova que a renovação gera uma
+/// credencial FRESCA (username/credential diferentes, `expires_at` maior).
+fn montar_ice_server(
+    turn_urls: &[String],
+    turn_secret: &[u8],
+    device_id: &str,
+    expires_at: u64,
+) -> Result<IceServer, TurnCredentialError> {
+    let username = format!("{expires_at}:{device_id}");
+    let mut mac =
+        HmacSha1::new_from_slice(turn_secret).map_err(|_| TurnCredentialError::InvalidSecret)?;
+    mac.update(username.as_bytes());
+    let credential = BASE64.encode(mac.finalize().into_bytes());
+    Ok(IceServer {
+        urls: turn_urls.to_vec(),
+        username,
+        credential,
+        expires_at_unix_seconds: expires_at,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::net::Ipv4Addr;
+
+    #[test]
+    fn renovar_gera_credencial_fresca_com_relogio_adiantado() {
+        // #1148: a renovação (RenewIceServers → ice_servers) chamada mais tarde
+        // devolve uma credencial com `expires_at` NOVO e credencial distinta — o
+        // que permite a sessão relayed sobreviver ao TTL. Prova com o relógio
+        // adiantado (t2 > t1) sem depender do relógio real.
+        let urls = vec!["turn:localhost:3478".to_owned()];
+        let secret = b"turn-secret-de-teste";
+        let dev = "device-abc";
+
+        let t1 = 1_000_000u64;
+        let t2 = t1 + 1800; // relógio adiantado 30min (um TTL)
+        let a = montar_ice_server(&urls, secret, dev, t1).expect("t1");
+        let b = montar_ice_server(&urls, secret, dev, t2).expect("t2");
+
+        // expiração renovada pra frente.
+        assert_eq!(a.expires_at_unix_seconds, t1);
+        assert_eq!(b.expires_at_unix_seconds, t2);
+        assert!(b.expires_at_unix_seconds > a.expires_at_unix_seconds);
+        // credencial FRESCA: username embute o novo expires_at e o HMAC muda com ele.
+        assert_ne!(a.username, b.username);
+        assert_ne!(a.credential, b.credential);
+        assert!(b.username.starts_with(&format!("{t2}:")));
+        // o device e as urls não mudam na renovação (não refaz pareamento).
+        assert!(b.username.ends_with(dev));
+        assert_eq!(a.urls, b.urls);
+        // credencial não-vazia e determinística (mesmo instante → mesma credencial).
+        let b2 = montar_ice_server(&urls, secret, dev, t2).expect("t2 de novo");
+        assert_eq!(b.credential, b2.credential, "mesmo expires_at → mesma credencial");
+        assert!(!b.credential.is_empty());
+    }
 
     fn estado_de_teste() -> AppState {
         AppState::new(
