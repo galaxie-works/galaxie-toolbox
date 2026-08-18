@@ -270,11 +270,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "galaxie-remote-capabilities"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "galaxie-remote-transport"
 version = "0.1.0"
 dependencies = [
  "audiopus",
  "enigo",
+ "galaxie-remote-capabilities",
  "hmac",
  "md-5",
  "rand",

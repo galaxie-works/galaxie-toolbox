@@ -9,6 +9,7 @@
 //! Núcleo testável — não depende de str0m/OpenSSL. A sessão (S2) só transporta os
 //! bytes; a UI (S5-front, depois) lê/escreve o clipboard do SO e escolhe a pasta.
 
+use galaxie_remote_capabilities::Capabilities;
 use serde::{Deserialize, Serialize};
 
 use crate::input::InputEvent;
@@ -144,36 +145,34 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ControlError> {
     }
 }
 
-/// Política de capability da sessão (o host decide). O gating é aplicado dos DOIS
-/// lados: não envia nem aceita o que está desligado.
-///
-/// #1070 RB7 (decisão do `Altair`, doc `remote-capability-e-codigo-nao-integrado.md`):
-/// o `Default` era escrito À MÃO como `true`/`true` = **ALLOW** — polaridade invertida.
-/// Como o gate ainda não é aplicado (o RB6 é que o liga), ligar os frames com este
-/// default trocaria "descarta tudo em silêncio" por "permite clipboard e arquivo por
-/// default" — pior. Agora `#[derive(Default)]` → `false`/`false` = **DENY** (default
-/// seguro), pré-requisito do RB6.
-///
-/// A unificação COMPLETA num tipo único de 5 campos (`Capabilities` de `remote-net`) é
-/// o restante do RB7 e depende de uma decisão de colocação cross-crate (os dois crates
-/// são irmãos sem dep; puxar um pro outro infla o build — candidato a um crate
-/// compartilhado). Registrado pra o `Altair`/`Polaris`.
+/// Política de capability da sessão — wrapper sobre o tipo ÚNICO de 5 campos
+/// (`Capabilities` do crate folha `galaxie-remote-capabilities`). #1070 RB7 passo 3
+/// (decisão do `Altair`, #1234): o vocabulário que o ticket S8 **concede** é agora o
+/// MESMO que o DataChannel **aplica** — acabaram os 2 campos próprios que divergiam do
+/// tipo assinado. O gating vale dos DOIS lados: não envia nem aceita o que está
+/// desligado. `Default` = tudo DENY (via `Capabilities::default`), o pré-requisito de
+/// segurança que o RB6 exige (fechado no RB7-core, preservado aqui).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CapabilityPolicy {
-    pub clipboard: bool,
-    pub file_transfer: bool,
+    pub caps: Capabilities,
 }
 
 impl CapabilityPolicy {
+    /// Constrói a política a partir das capabilities concedidas (ticket S8 / IPC).
+    pub fn nova(caps: Capabilities) -> Self {
+        Self { caps }
+    }
+
     /// Rejeita uma mensagem que a política proíbe (clipboard/transfer desligado).
-    /// `Capabilities`/cancel/complete passam sempre.
+    /// `Capabilities`/cancel/complete passam sempre. `screen`/`input`/`audio` são
+    /// gateados no setup da sessão (track/injeção), não por frame de controle.
     pub fn permite(&self, msg: &ControlMessage) -> Result<(), ControlError> {
         let ok = match msg {
             ControlMessage::ClipboardText { .. } | ControlMessage::ClipboardImage { .. } => {
-                self.clipboard
+                self.caps.clipboard
             }
             ControlMessage::FileOffer { .. } | ControlMessage::FileAccept { .. } => {
-                self.file_transfer
+                self.caps.file_transfer
             }
             _ => true,
         };
@@ -247,8 +246,8 @@ mod tests {
         // #1070 RB7: o default TEM que negar (fail-closed). Antes o `impl Default`
         // à mão era true/true (ALLOW) — se alguém reverter pra allow, isto falha.
         let pol = CapabilityPolicy::default();
-        assert!(!pol.clipboard);
-        assert!(!pol.file_transfer);
+        assert!(!pol.caps.clipboard);
+        assert!(!pol.caps.file_transfer);
         assert_eq!(
             pol.permite(&ControlMessage::ClipboardText { text: "x".into() }),
             Err(ControlError::Bloqueado)
@@ -265,10 +264,11 @@ mod tests {
 
     #[test]
     fn gating_bloqueia_o_desligado() {
-        let pol = CapabilityPolicy {
+        let pol = CapabilityPolicy::nova(Capabilities {
             clipboard: false,
             file_transfer: true,
-        };
+            ..Default::default()
+        });
         assert_eq!(
             pol.permite(&ControlMessage::ClipboardText { text: "x".into() }),
             Err(ControlError::Bloqueado)
