@@ -275,6 +275,17 @@
     }
   },
   {
+    "id": "alterdata",
+    "name": "Alterdata",
+    "category": "Banking and Finance",
+    "url": "https://www.alterdata.com.br",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Software contabil, fiscal e de gestao",
+      "en": "Accounting, tax and management software"
+    }
+  },
+  {
     "id": "chargebee",
     "name": "Chargebee",
     "category": "Banking and Finance",
@@ -297,6 +308,28 @@
     }
   },
   {
+    "id": "contaazul",
+    "name": "ContaAzul",
+    "category": "Banking and Finance",
+    "url": "https://contaazul.com",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Gestao financeira para pequenas empresas",
+      "en": "Financial management for small businesses"
+    }
+  },
+  {
+    "id": "dominio",
+    "name": "Dominio Sistemas",
+    "category": "Banking and Finance",
+    "url": "https://www.dominiosistemas.com.br",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Sistema contabil e fiscal para escritorios",
+      "en": "Accounting and tax software for firms"
+    }
+  },
+  {
     "id": "expensify",
     "name": "Expensify",
     "category": "Banking and Finance",
@@ -308,6 +341,17 @@
     }
   },
   {
+    "id": "nibo",
+    "name": "Nibo",
+    "category": "Banking and Finance",
+    "url": "https://www.nibo.com.br",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Gestao financeira e contabil para PME",
+      "en": "Financial and accounting management for SMBs"
+    }
+  },
+  {
     "id": "paypal",
     "name": "PayPal",
     "category": "Banking and Finance",
@@ -316,6 +360,17 @@
     "desc": {
       "pt-BR": "Pagamento online e cobranca internacional",
       "en": "Online payments and international billing"
+    }
+  },
+  {
+    "id": "questor",
+    "name": "Questor",
+    "category": "Banking and Finance",
+    "url": "https://www.questor.com.br",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Sistema contabil para escritorios contabeis",
+      "en": "Accounting software for accounting firms"
     }
   },
   {
@@ -371,6 +426,17 @@
     "desc": {
       "pt-BR": "Contabilidade na nuvem para pequena empresa",
       "en": "Cloud accounting for small business"
+    }
+  },
+  {
+    "id": "acronis",
+    "name": "Acronis",
+    "category": "Cloud Storage",
+    "url": "https://cloud.acronis.com",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Backup e recuperacao de dados",
+      "en": "Data backup and recovery"
     }
   },
   {
@@ -536,6 +602,17 @@
     "desc": {
       "pt-BR": "Portal de gestao dos NAS Synology",
       "en": "Management portal for Synology NAS"
+    }
+  },
+  {
+    "id": "wasabi",
+    "name": "Wasabi",
+    "category": "Cloud Storage",
+    "url": "https://console.wasabisys.com",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Armazenamento de objetos na nuvem",
+      "en": "Cloud object storage"
     }
   },
   {
@@ -869,6 +946,17 @@
     }
   },
   {
+    "id": "render",
+    "name": "Render",
+    "category": "Developer Tools",
+    "url": "https://dashboard.render.com",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Hospedagem de apps e sites na nuvem",
+      "en": "Cloud hosting for apps and websites"
+    }
+  },
+  {
     "id": "retool",
     "name": "Retool",
     "category": "Developer Tools",
@@ -888,6 +976,17 @@
     "desc": {
       "pt-BR": "Monitoramento de erros e performance",
       "en": "Error and performance monitoring"
+    }
+  },
+  {
+    "id": "sonarqube",
+    "name": "SonarQube",
+    "category": "Developer Tools",
+    "url": "https://sonarcloud.io",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Analise estatica e qualidade de codigo",
+      "en": "Static analysis and code quality"
     }
   },
   {
@@ -1284,6 +1383,17 @@
     "desc": {
       "pt-BR": "Gerenciador de senhas para time e empresa",
       "en": "Password manager for teams and business"
+    }
+  },
+  {
+    "id": "anydesk",
+    "name": "AnyDesk",
+    "category": "Productivity",
+    "url": "https://my.anydesk.com",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Acesso remoto a computadores",
+      "en": "Remote desktop access"
     }
   },
   {
@@ -2299,6 +2409,17 @@
     }
   },
   {
+    "id": "bling",
+    "name": "Bling",
+    "category": "Work and Business",
+    "url": "https://www.bling.com.br",
+    "icon": false,
+    "desc": {
+      "pt-BR": "ERP online para e-commerce e varejo",
+      "en": "Online ERP for e-commerce and retail"
+    }
+  },
+  {
     "id": "box",
     "name": "Box",
     "category": "Work and Business",
@@ -2574,6 +2695,17 @@
     }
   },
   {
+    "id": "linx",
+    "name": "Linx",
+    "category": "Work and Business",
+    "url": "https://www.linx.com.br",
+    "icon": false,
+    "desc": {
+      "pt-BR": "Sistemas de gestao para o varejo brasileiro",
+      "en": "Management systems for Brazilian retail"
+    }
+  },
+  {
     "id": "mailchimp",
     "name": "MailChimp",
     "category": "Work and Business",
@@ -2615,6 +2747,17 @@
     "desc": {
       "pt-BR": "Monitoramento e gestao remota de endpoint",
       "en": "Remote endpoint monitoring and management"
+    }
+  },
+  {
+    "id": "omie",
+    "name": "Omie",
+    "category": "Work and Business",
+    "url": "https://app.omie.com.br",
+    "icon": false,
+    "desc": {
+      "pt-BR": "ERP online para pequenas e medias empresas",
+      "en": "Online ERP for small and medium businesses"
     }
   },
   {
@@ -2673,6 +2816,17 @@
     }
   },
   {
+    "id": "sankhya",
+    "name": "Sankhya",
+    "category": "Work and Business",
+    "url": "https://www.sankhya.com.br",
+    "icon": false,
+    "desc": {
+      "pt-BR": "ERP brasileiro para media e grande empresa",
+      "en": "Brazilian ERP for mid and large companies"
+    }
+  },
+  {
     "id": "semrush",
     "name": "SEMrush",
     "category": "Work and Business",
@@ -2681,6 +2835,17 @@
     "desc": {
       "pt-BR": "Pesquisa de palavra-chave e analise de SEO",
       "en": "Keyword research and SEO analysis"
+    }
+  },
+  {
+    "id": "senior",
+    "name": "Senior Sistemas",
+    "category": "Work and Business",
+    "url": "https://www.senior.com.br",
+    "icon": false,
+    "desc": {
+      "pt-BR": "ERP, folha e ponto eletronico brasileiros",
+      "en": "Brazilian ERP, payroll and time tracking"
     }
   },
   {
@@ -2714,6 +2879,28 @@
     "desc": {
       "pt-BR": "Analise visual e painel de dados",
       "en": "Visual data analysis and dashboards"
+    }
+  },
+  {
+    "id": "tiny",
+    "name": "Tiny",
+    "category": "Work and Business",
+    "url": "https://tiny.com.br",
+    "icon": false,
+    "desc": {
+      "pt-BR": "ERP online para e-commerce e logistica",
+      "en": "Online ERP for e-commerce and logistics"
+    }
+  },
+  {
+    "id": "totvs",
+    "name": "TOTVS",
+    "category": "Work and Business",
+    "url": "https://www.totvs.com",
+    "icon": false,
+    "desc": {
+      "pt-BR": "ERP brasileiro para gestao empresarial",
+      "en": "Brazilian ERP for business management"
     }
   },
   {
