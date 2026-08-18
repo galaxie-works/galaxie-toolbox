@@ -21,6 +21,9 @@ pub mod stats;
 // Codec STUN Binding (RFC 5389) do gathering srflx — PURO (sem str0m/OpenSSL);
 // fica no núcleo pra o `cargo test` default do CI exercitar sem toolchain. #1108.
 pub mod stun;
+// Codec TURN (RFC 5766) do candidato relay — PURO (sem str0m/OpenSSL), espelha o
+// stun.rs e reusa o XOR-address dele. Só o codec; o I/O é a fatia 2. #1130.
+pub mod turn;
 pub mod transfer;
 
 // Injeção de input (S3) — puxa o enigo; a UI/host liga a feature `input`.

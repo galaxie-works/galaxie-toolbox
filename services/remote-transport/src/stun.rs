@@ -12,8 +12,9 @@
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
 /// Magic cookie do STUN (RFC 5389 §6). Fixa em toda mensagem; também é a máscara
-/// de XOR do endereço IPv4 e o prefixo da máscara IPv6.
-const MAGIC_COOKIE: u32 = 0x2112_A442;
+/// de XOR do endereço IPv4 e o prefixo da máscara IPv6. `pub(crate)` pra o codec
+/// TURN (turn.rs) reusar — TURN é STUN por baixo (RFC 5766).
+pub(crate) const MAGIC_COOKIE: u32 = 0x2112_A442;
 
 /// Tipos de mensagem STUN usados aqui.
 const MSG_BINDING_REQUEST: u16 = 0x0001;
@@ -23,9 +24,10 @@ const MSG_BINDING_SUCCESS: u16 = 0x0101;
 const ATTR_MAPPED_ADDRESS: u16 = 0x0001;
 const ATTR_XOR_MAPPED_ADDRESS: u16 = 0x0020;
 
-/// Famílias de endereço (RFC 5389 §15.1).
-const FAMILY_IPV4: u8 = 0x01;
-const FAMILY_IPV6: u8 = 0x02;
+/// Famílias de endereço (RFC 5389 §15.1). `pub(crate)` pra o turn.rs reusar ao
+/// montar XOR-PEER-ADDRESS.
+pub(crate) const FAMILY_IPV4: u8 = 0x01;
+pub(crate) const FAMILY_IPV6: u8 = 0x02;
 
 /// Cabeçalho fixo de toda mensagem STUN: 2 (tipo) + 2 (length) + 4 (cookie) + 12
 /// (transaction id) = 20 bytes.
@@ -102,8 +104,9 @@ pub fn parse_xor_mapped_address(resp: &[u8], txid: &[u8; 12]) -> Option<SocketAd
 
 /// XOR-decodifica o valor de um XOR-MAPPED-ADDRESS: `[reserved, family, x-port(2),
 /// x-address(4|16)]`. Porta ^ 16 bits altos do cookie; IPv4 ^ cookie; IPv6 ^
-/// (cookie ++ txid).
-fn decode_xor_address(value: &[u8], txid: &[u8; 12]) -> Option<SocketAddr> {
+/// (cookie ++ txid). `pub(crate)` porque o XOR-RELAYED-ADDRESS do TURN (RFC 5766
+/// §14.5) usa exatamente o mesmo esquema XOR — turn.rs reusa este decoder.
+pub(crate) fn decode_xor_address(value: &[u8], txid: &[u8; 12]) -> Option<SocketAddr> {
     if value.len() < 4 {
         return None;
     }

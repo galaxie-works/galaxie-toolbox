@@ -37,6 +37,11 @@ serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
 rand = "0.8"
+# Credencial long-term do TURN (RFC 5766/5389): derive_key = MD5, MESSAGE-INTEGRITY
+# = HMAC-SHA1. Puras (sem OpenSSL); versões casadas com o remote-signaling. #1130.
+hmac = "0.12"
+sha1 = "0.10"
+md-5 = "0.10"
 
 [dev-dependencies]
 # testes deterministicos rodam sem rede real (mock de signaling + dummy source).
