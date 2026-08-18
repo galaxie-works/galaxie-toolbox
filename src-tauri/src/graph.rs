@@ -75,6 +75,45 @@ const GRAPH_MAX_TENTATIVAS: u8 = 4;
 /// servidor pedir um valor absurdo.
 const GRAPH_TETO_ESPERA_S: u64 = 10;
 
+/// Teto para ESTABELECER a conexão (TCP+TLS). Nenhum connect legítimo ao Graph
+/// leva tanto; o que passa disso é conexão pendurada — e pendurada é o caso
+/// grave, porque ela segura uma das 4 vagas de `GRAPH_MAX_CONCORRENTES` sem
+/// nunca falhar. Com 4 penduradas, TODO o tráfego Graph do app para, sem erro.
+const GRAPH_CONNECT_TIMEOUT_S: u64 = 10;
+
+/// Teto TOTAL de uma requisição Graph.
+///
+/// ⚠️ É um LIMITE, não uma medição: ninguém mediu a cauda real de download de
+/// anexo grande. Escolhido folgado de propósito, porque o erro caro aqui é
+/// apertar demais e quebrar em silêncio um anexo que funcionava. Operação que
+/// legitimamente demore mais deve sobrescrever POR REQUISIÇÃO
+/// (`RequestBuilder::timeout`), não afrouxar este default.
+const GRAPH_TIMEOUT_TOTAL_S: u64 = 120;
+
+/// Client HTTP único do Graph (#1074 RB44).
+///
+/// Eram **87** `reqwest::blocking::Client::new()` espalhados, **nenhum** com
+/// timeout. Cada `new()` monta o próprio pool de conexão, então o app nem
+/// reaproveitava conexão TLS entre chamadas — e, sem timeout, uma conexão que
+/// pendura fica pendurada para sempre.
+///
+/// `Client` é barato de clonar (é `Arc` por dentro) e é `Send + Sync`, então um
+/// único `OnceLock` serve todas as chamadas — mesmo padrão do `POOL` do
+/// `fs_explorer.rs`.
+fn cliente() -> &'static reqwest::blocking::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> =
+        std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(GRAPH_CONNECT_TIMEOUT_S))
+            .timeout(std::time::Duration::from_secs(GRAPH_TIMEOUT_TOTAL_S))
+            .build()
+            // Só falha se o backend TLS não subir; aí não há Graph nenhum e um
+            // client sem timeout é melhor que derrubar o app no boot.
+            .unwrap_or_else(|_| reqwest::blocking::Client::new())
+    })
+}
+
 struct Limitador {
     vagas: std::sync::Mutex<usize>,
     liberou: std::sync::Condvar,
@@ -399,7 +438,7 @@ fn connected_site_guids(client: &reqwest::blocking::Client, token: &str) -> Vec<
 /// Lista os sites do tenant que o usuario enxerga (delegado), com status.
 pub fn list_sites(store: &TokenStore) -> Result<Vec<SiteDto>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     // #1073 (RB38): a sonda de diagnóstico `sondar_atalhos` foi REMOVIDA — rodava em
     // produção a cada `list_sites` (3 GETs extras fora do pool + logava nomes de
     // arquivo do usuário). Nada mais depende dela.
@@ -499,7 +538,7 @@ pub fn site_details(
     web_url: &str,
 ) -> Result<SiteDetalhes, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let mut det = SiteDetalhes::default();
 
@@ -529,7 +568,7 @@ pub fn connect_site(
     web_url: &str,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     // sharepointIds da biblioteca padrao (drive root) do site.
     let sp_url = format!("{GRAPH}/sites/{site_id}/drive/root?$select=sharepointIds");
@@ -599,7 +638,7 @@ pub fn disconnect_site(store: &TokenStore, site_id: &str) -> Result<(), String> 
     let reg = crate::estado::buscar(guid)
         .ok_or("este atalho nao foi criado por aqui - remova pelo OneDrive web")?;
 
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let resp = client
         .delete(format!("{GRAPH}/me/drive/items/{}", reg.item_id))
         .bearer_auth(&token)
@@ -669,7 +708,7 @@ pub struct PastaOneDrive {
 /// Pastas de primeiro nivel do OneDrive do usuario, maiores primeiro.
 pub fn onedrive_folders(store: &TokenStore) -> Result<Vec<PastaOneDrive>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let mut pastas = Vec::new();
     let mut proxima = Some(format!(
@@ -720,7 +759,7 @@ pub fn onedrive_folder_details(
     web_url: &str,
 ) -> Result<PastaDetalhes, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     Ok(PastaDetalhes {
         files: contar_busca(&client, &token, &format!("path:\"{web_url}\" AND IsDocument:true")),
         folders: contar_busca(&client, &token, &format!("path:\"{web_url}\" AND IsContainer:true")),
@@ -739,7 +778,7 @@ pub struct UsoOneDrive {
 
 pub fn onedrive_quota(store: &TokenStore) -> Result<UsoOneDrive, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!("{GRAPH}/me/drive/root?$select=webUrl");
     let web_url = client
         .get(&url)
@@ -781,7 +820,7 @@ pub struct TipoArquivo {
 /// "quantos", nao "quanto pesam".
 pub fn onedrive_tipos(store: &TokenStore, web_url: &str) -> Result<Vec<TipoArquivo>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let kql = if web_url.is_empty() {
         "IsDocument:true".to_string()
@@ -848,7 +887,7 @@ pub struct Reuniao {
 pub fn cr_reunioes(store: &TokenStore) -> Result<Vec<Reuniao>, String> {
     use chrono::{Duration, Utc};
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let agora = Utc::now();
     let ini = agora.format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -907,7 +946,7 @@ pub struct CaixaEntrada {
 /// contagem é o sinal principal e a lista é só enriquecimento.
 pub fn cr_email(store: &TokenStore) -> Result<CaixaEntrada, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let mut cx = CaixaEntrada::default();
 
@@ -978,7 +1017,7 @@ pub fn atoms_email(store: &TokenStore) -> Result<AtomsEmail, String> {
 
 fn atoms_email_inner(store: &TokenStore) -> Result<AtomsEmail, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let requests = serde_json::json!({
         "requests": [
@@ -1092,7 +1131,7 @@ pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
 
 fn cr_tarefas_inner(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     // 1) listas
     let url = format!("{GRAPH}/me/todo/lists?$select=id,displayName&$top=50");
@@ -1167,7 +1206,7 @@ pub fn cr_tarefa_concluir(
         return Err("Invalid task.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/me/todo/lists/{}/tasks/{}",
         urlencoding::encode(lista_id),
@@ -1336,7 +1375,7 @@ fn parse_eventos(v: &serde_json::Value) -> Vec<EventoAgenda> {
 /// agenda até um F5 no app inteiro (#41).
 fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgenda>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let resp = graph_enviar("agenda", GRAPH_TETO_ESPERA_S, || {
         client
             .get(url)
@@ -1445,7 +1484,7 @@ pub fn cr_calendarios(
     mailbox: Option<&str>,
 ) -> Result<Vec<Calendario>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     // #495: caixa própria = /me, caixa compartilhada = /users/{addr}.
     let prefix = mailbox_prefix(mailbox);
@@ -1526,7 +1565,7 @@ fn preset_para_hex(preset: &str) -> &'static str {
 /// Categorias mestras do usuario com a cor (hex) de cada uma. Calendars.Read / Mail.Read.
 pub fn cr_categorias(store: &TokenStore) -> Result<Vec<CategoriaCor>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let url = format!("{GRAPH}/me/outlook/masterCategories?$select=displayName,color");
     // Sob o pool + retry central (#64): faz parte da rajada de abertura, então
@@ -1562,7 +1601,7 @@ pub fn cr_criar_categoria(
     preset: &str,
 ) -> Result<CategoriaCor, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let url = format!("{GRAPH}/me/outlook/masterCategories");
     let body = serde_json::json!({ "displayName": nome, "color": preset });
@@ -1616,7 +1655,7 @@ pub struct EventoDetalhe {
 /// Detalhe completo de um evento (corpo + todos os convidados). Calendars.Read.
 pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let url = format!(
         "{GRAPH}/me/events/{id}?$select=subject,start,end,location,onlineMeeting,\
@@ -1845,7 +1884,7 @@ pub fn cr_evento_recorrencia(
     mailbox: Option<&str>,
 ) -> Result<Option<Recorrencia>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     // #1069: recorrência da série na caixa RESOLVIDA — antes /me fixo, o que numa
     // caixa compartilhada dava 404 e o form de "editar a série" não carregava os
     // campos (só o fallback best-effort). Agora acompanha a escrita mailbox-aware.
@@ -1870,6 +1909,49 @@ pub fn cr_evento_recorrencia(
 //
 // Rodar: cargo test --lib graph::testes_recorrencia
 // ---------------------------------------------------------------------------
+#[cfg(test)]
+mod testes_cliente_graph {
+    use super::*;
+
+    #[test]
+    fn cliente_e_a_mesma_instancia_em_toda_chamada() {
+        // O ponto do OnceLock não é economizar alocação: é o POOL DE CONEXÃO ser
+        // um só. Com 87 `Client::new()`, cada chamada abria o próprio pool e o app
+        // não reaproveitava conexão TLS entre requisições ao mesmo host.
+        let a = cliente();
+        let b = cliente();
+        assert!(
+            std::ptr::eq(a, b),
+            "cliente() devolveu instâncias diferentes — o pool de conexão deixou de ser único"
+        );
+    }
+
+    #[test]
+    fn connect_timeout_e_menor_que_o_teto_total() {
+        // Se o connect pudesse durar tanto quanto a requisição inteira, o teto de
+        // connect não bloquearia nada — a conexão pendurada seguraria a vaga do
+        // pool até o fim do timeout total.
+        assert!(
+            GRAPH_CONNECT_TIMEOUT_S < GRAPH_TIMEOUT_TOTAL_S,
+            "connect ({GRAPH_CONNECT_TIMEOUT_S}s) tem que ser menor que o total ({GRAPH_TIMEOUT_TOTAL_S}s)"
+        );
+    }
+
+    #[test]
+    fn teto_total_cobre_o_backoff_do_retry_com_folga() {
+        // `graph_enviar` re-tenta até GRAPH_MAX_TENTATIVAS dormindo até
+        // GRAPH_TETO_ESPERA_S entre elas. O timeout TOTAL é por requisição (o
+        // reqwest reconta a cada tentativa), mas se ele fosse menor que uma espera
+        // inteira, a 1ª tentativa lenta já estouraria antes de qualquer retry ter
+        // chance — o retry viraria decoração.
+        let espera_total = GRAPH_TETO_ESPERA_S * u64::from(GRAPH_MAX_TENTATIVAS);
+        assert!(
+            GRAPH_TIMEOUT_TOTAL_S > espera_total,
+            "teto total ({GRAPH_TIMEOUT_TOTAL_S}s) não pode ser menor que o backoff acumulado ({espera_total}s)"
+        );
+    }
+}
+
 #[cfg(test)]
 mod testes_mail {
     use super::*;
@@ -2037,7 +2119,7 @@ pub fn cr_criar_evento(
     mailbox: Option<&str>,
 ) -> Result<String, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     // Calendário-alvo (#233): com id, cria em /{prefix}/calendars/{id}/events; sem
     // id, mantém o padrão (/{prefix}/events) — sem regressão do #211. #1069: agora
@@ -2065,7 +2147,7 @@ pub fn cr_editar_evento(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let url = url_evento(&prefix, id, "");
     let body = evento_json(&input);
@@ -2096,7 +2178,7 @@ pub fn cr_reagendar_evento(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let url = url_evento(&prefix, id, ""); // #1069: caixa resolvida, não /me fixo.
     let ini = inicio.trim_end_matches('Z');
@@ -2129,7 +2211,7 @@ pub fn cr_excluir_evento(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let url = url_evento(&prefix, id, "");
     let resp = graph_enviar("agenda:excluir", GRAPH_TETO_ESPERA_S, || {
@@ -2168,7 +2250,7 @@ pub fn cr_cancelar_evento(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let url = url_evento(&prefix, id, "/cancel"); // #1069: caixa resolvida, não /me.
     let body = serde_json::json!({ "Comment": comentario });
@@ -2217,7 +2299,7 @@ pub fn cr_responder_evento(
         outro => return Err(format!("resposta de convite inválida: {outro}")),
     };
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     // #1069: RSVP na caixa resolvida (/{prefix}/events/{id}/{acao}), não /me fixo.
     let url = url_evento(&prefix, id, &format!("/{acao}"));
@@ -2322,7 +2404,7 @@ pub struct EmailItem {
 /// E-mails recebidos no dia escolhido (limites em ISO UTC). Mail.Read.
 pub fn cr_inbox_dia(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EmailItem>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let url = format!(
         "{GRAPH}/me/mailFolders/inbox/messages\
@@ -2457,7 +2539,7 @@ pub fn cr_email_corpo(
     mailbox: Option<&str>,
 ) -> Result<EmailDetalhe, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -2578,7 +2660,7 @@ pub fn cr_email_seguranca(
     mailbox: Option<&str>,
 ) -> Result<SegurancaEmail, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -2639,7 +2721,7 @@ pub fn cr_baixar_anexo(
     use base64::{engine::general_purpose, Engine as _};
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -2710,7 +2792,7 @@ pub fn cr_ler_anexo(
     mailbox: Option<&str>,
 ) -> Result<AnexoConteudo, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -2751,7 +2833,7 @@ pub fn cr_ler_anexo_email(
     mailbox: Option<&str>,
 ) -> Result<EmailDetalhe, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -2822,7 +2904,7 @@ pub fn cr_anexo_link(
     mailbox: Option<&str>,
 ) -> Result<String, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let url =
         format!("{GRAPH}/{prefix}/messages/{message_id}/attachments/{attachment_id}");
@@ -2860,7 +2942,7 @@ pub fn cr_anexo_para_pdf(
     use base64::{engine::general_purpose, Engine as _};
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     // 1) Lê o anexo (bytes + nome).
@@ -3075,7 +3157,7 @@ pub fn cr_salvar_email_eml(
     }
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let mut salvos: Vec<String> = Vec::new();
@@ -3165,7 +3247,7 @@ fn compor_e_enviar(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     // 1) rascunho a partir da mensagem original — sob o pool + retry 429 (#1069).
@@ -3300,7 +3382,7 @@ pub fn cr_compartilhar_onedrive(
     use base64::{engine::general_purpose, Engine as _};
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let bytes = general_purpose::STANDARD
         .decode(conteudo_b64.trim())
@@ -3386,7 +3468,7 @@ fn drive_item_tags(value: &serde_json::Value) -> (Option<String>, Option<String>
 /// Lê o JSON privado de configuração. 404 é o primeiro uso, não um erro.
 pub fn onedrive_settings_read(store: &TokenStore) -> Result<OneDriveSettingsReadResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let item = graph_enviar("onedrive:settings:item", GRAPH_TETO_ESPERA_S, || {
         client
             .get(ONEDRIVE_SETTINGS_ITEM_URL)
@@ -3453,7 +3535,7 @@ pub fn onedrive_settings_write(
     e_tag: Option<&str>,
 ) -> Result<OneDriveSettingsWriteResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let bytes = content.as_bytes().to_vec();
     let upload = || {
         graph_enviar("onedrive:settings:write", GRAPH_TETO_ESPERA_S, || {
@@ -3671,7 +3753,7 @@ pub fn cr_mail_folders(
     mailbox: Option<&str>,
 ) -> Result<Vec<PastaEmail>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     // Pastas well-known (o id textual funciona direto no Graph).
@@ -3808,7 +3890,7 @@ pub fn cr_validar_caixa(store: &TokenStore, endereco: &str) -> Result<ValidacaoC
         return Err("endereco invalido".into());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/users/{}/mailFolders/inbox?$select=id",
         urlencoding::encode(&addr)
@@ -3976,7 +4058,7 @@ pub fn cr_folder_mensagens(
     mailbox: Option<&str>,
 ) -> Result<Vec<EmailItem>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
@@ -4057,7 +4139,7 @@ pub fn cr_buscar(
     mailbox: Option<&str>,
 ) -> Result<BuscaPagina, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
@@ -4157,7 +4239,7 @@ pub fn cr_filtrar(
     mailbox: Option<&str>,
 ) -> Result<BuscaPagina, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
@@ -4339,7 +4421,7 @@ pub fn cr_excluir_email(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     mover_msg(&client, &token, &prefix, id, "deleteditems")
 }
@@ -4356,7 +4438,7 @@ pub fn cr_excluir_emails(
     mailbox: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let mut ok = Vec::with_capacity(ids.len());
     for id in &ids {
@@ -4389,7 +4471,7 @@ pub fn cr_mover_emails(
     mailbox: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let mut ok = Vec::with_capacity(ids.len());
     for id in &ids {
@@ -4410,7 +4492,7 @@ pub fn cr_marcar_email(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let status = if sinalizado { "flagged" } else { "notFlagged" };
@@ -4439,7 +4521,7 @@ pub fn cr_marcar_lido(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let patch = serde_json::json!({ "isRead": lido });
@@ -4481,7 +4563,7 @@ pub fn cr_esvaziar_pasta(
     mailbox: Option<&str>,
 ) -> Result<u64, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let mut apagados: u64 = 0;
@@ -4593,7 +4675,7 @@ pub fn cr_marcar_pasta_lida(
     mailbox: Option<&str>,
 ) -> Result<u64, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let filtro = urlencoding::encode("isRead eq false");
@@ -5136,7 +5218,7 @@ pub fn cr_people_list(
     mailbox: Option<&str>,
 ) -> Result<PeopleListResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut result = PeopleListResult {
         records: Vec::new(),
         missing_scopes: Vec::new(),
@@ -5305,7 +5387,7 @@ pub fn cr_people_list(
 /// Organização do tenant atual, usando o nome canônico do Microsoft Graph.
 pub fn cr_organizacao(store: &TokenStore) -> Result<PeopleOrganizationResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut result = PeopleOrganizationResult {
         organization: None,
         missing_scopes: Vec::new(),
@@ -5358,7 +5440,7 @@ pub fn cr_organizacao(store: &TokenStore) -> Result<PeopleOrganizationResult, St
 /// local e nunca exponha uma lista silenciosamente truncada.
 pub fn cr_people_directory(store: &TokenStore) -> Result<PeopleDirectoryResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut result = PeopleDirectoryResult {
         records: Vec::new(),
         missing_scopes: Vec::new(),
@@ -5436,7 +5518,7 @@ pub fn cr_people_directory(store: &TokenStore) -> Result<PeopleDirectoryResult, 
 /// A lista não dispara N+1: a contagem fica ausente até `cr_grupo_membros`.
 pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut result = PeopleGroupsResult {
         groups: Vec::new(),
         missing_scopes: Vec::new(),
@@ -5542,7 +5624,7 @@ pub fn cr_grupo_membros(
     }
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut records = Vec::new();
     let mut proxima = Some(format!(
         "{GRAPH}/groups/{}/members/microsoft.graph.user?$top=999&$select=id,displayName,mail,userPrincipalName,businessPhones,mobilePhone,jobTitle,companyName,department,officeLocation",
@@ -5856,7 +5938,7 @@ fn org_settings_get(
 /// carrega seu próprio status pra a UI mostrar loading/erro/sem-permissão por card.
 pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let apps_and_services = match org_settings_get(
         &token,
@@ -5930,7 +6012,7 @@ pub fn cr_org_todo_set(store: &TokenStore, campo: &str, valor: bool) -> Result<(
         return Err(format!("campo de To Do desconhecido: {campo}"));
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let body = serde_json::json!({ "settings": { campo: valor } });
     let resp = graph_enviar("org:todo:set", GRAPH_TETO_ESPERA_S, || {
         client
@@ -6034,7 +6116,7 @@ fn tenant_app_do_sp(sp: &serde_json::Value) -> Option<TenantApp> {
 /// complemento curado ao catálogo, não um explorador completo de diretório.
 pub fn cr_tenant_apps(store: &TokenStore) -> Result<TenantAppsResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/servicePrincipals?$select=appId,displayName,accountEnabled,homepage,loginUrl,tags,servicePrincipalType\
          &$orderby=displayName&$count=true&$top=100"
@@ -6121,7 +6203,7 @@ fn baixar_branding_logo(
 /// #541: logo do tenant (claro + escuro) do branding default do Entra.
 pub fn cr_org_branding(store: &TokenStore) -> Result<OrgBranding, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     // orgId do usuário logado; sem ele não dá pra montar a URL de branding.
     let org_id = match graph_enviar("org:branding:orgId", GRAPH_TETO_ESPERA_S, || {
@@ -6216,7 +6298,7 @@ impl MultiTenantCard {
 /// estiver ativa. Degrada gracioso (403 → forbidden, não-membro → inactive).
 pub fn cr_multi_tenant(store: &TokenStore) -> Result<MultiTenantCard, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let org = match graph_enviar("org:multiTenant", GRAPH_TETO_ESPERA_S, || {
         client
@@ -6571,7 +6653,7 @@ pub fn cr_people_enrich_preview(
     }
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut failures = Vec::new();
     let mut contato = serde_json::json!({});
 
@@ -6899,7 +6981,7 @@ pub fn cr_people_enrich_apply(
         });
     }
 
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let contact_url = format!(
         "{GRAPH}/me/contacts/{}",
         urlencoding::encode(contact_id.trim())
@@ -7157,7 +7239,7 @@ pub fn cr_people_contact_update(
     }
     let body = contato_body(input)?;
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/me/contacts/{}",
         urlencoding::encode(contact_id)
@@ -7194,7 +7276,7 @@ pub fn cr_people_contact_categories(
     }
     let body = serde_json::json!({ "categories": categorias });
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!("{GRAPH}/me/contacts/{}", urlencoding::encode(contact_id));
     let resp = graph_enviar("people:contact-categories", GRAPH_TETO_ESPERA_S, || {
         client.patch(&url).bearer_auth(&token).json(&body).send()
@@ -7219,7 +7301,7 @@ pub fn cr_people_contact_create(
     }
     let body = contato_body(input)?;
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!("{GRAPH}/me/contacts");
     let resp = graph_enviar("people:contact-create", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(&token).json(&body).send()
@@ -7244,7 +7326,7 @@ pub fn cr_people_contact_delete(store: &TokenStore, contact_id: &str) -> Result<
         return Err("Invalid contact.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/me/contacts/{}",
         urlencoding::encode(contact_id)
@@ -7285,7 +7367,7 @@ pub struct ContactFoldersResult {
 /// Contacts.Read (subset do ReadWrite já concedido). Ordena por nome.
 pub fn cr_contact_folders(store: &TokenStore) -> Result<ContactFoldersResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut result = ContactFoldersResult {
         folders: Vec::new(),
         missing_scopes: Vec::new(),
@@ -7367,7 +7449,7 @@ pub fn cr_pasta_contatos(
     next_links: Vec<String>,
 ) -> Result<PeopleListResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let folder_id = folder_id.trim();
     let mut result = PeopleListResult {
         records: Vec::new(),
@@ -7463,7 +7545,7 @@ pub fn cr_criar_pasta_contato(store: &TokenStore, nome: &str) -> Result<ContactF
         return Err("Invalid folder name.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!("{GRAPH}/me/contactFolders");
     let body = serde_json::json!({ "displayName": nome });
     let resp = graph_enviar("people:folder-create", GRAPH_TETO_ESPERA_S, || {
@@ -7496,7 +7578,7 @@ pub fn cr_renomear_pasta_contato(
         return Err("Invalid folder.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/me/contactFolders/{}",
         urlencoding::encode(folder_id)
@@ -7523,7 +7605,7 @@ pub fn cr_excluir_pasta_contato(store: &TokenStore, folder_id: &str) -> Result<(
         return Err("Invalid folder.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/me/contactFolders/{}",
         urlencoding::encode(folder_id)
@@ -7556,7 +7638,7 @@ pub fn cr_mover_contato(
         return Err("Invalid contact or folder.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!("{GRAPH}/me/contacts/{}", urlencoding::encode(contact_id));
     let body = serde_json::json!({ "parentFolderId": folder_id });
     let resp = graph_enviar("people:contact-move", GRAPH_TETO_ESPERA_S, || {
@@ -7687,7 +7769,7 @@ pub fn cr_people_company_write(
     }
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut saved_contact_ids = Vec::new();
     let mut failed_contact_ids = Vec::new();
 
@@ -7799,7 +7881,7 @@ pub fn cr_people_details_write(
     }
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let batch_url = format!("{GRAPH}/$batch");
     let mut saved_contact_ids = Vec::new();
     let mut failed_contact_ids = Vec::new();
@@ -7971,7 +8053,7 @@ pub fn cr_people_interactions(
         return Err("Invalid email address.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let search_expression = format!("from:{email} OR to:{email}");
     let search = urlencoding::encode(&search_expression);
     let url = format!(
@@ -8076,7 +8158,7 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
         return Ok(Vec::new());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let enc = urlencoding::encode(q);
 
     let mut resultados: Vec<Pessoa> = Vec::new();
@@ -8189,7 +8271,7 @@ pub fn cr_enviar_novo(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     // Mapeia cada e-mail para o formato do Graph, descartando os vazios.
@@ -8247,7 +8329,7 @@ pub fn cr_enviar_novo(
 /// Retorna quantos foram efetivamente criados. Contacts.ReadWrite.
 pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u64, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let mut criados: u64 = 0;
     for p in pessoas {
@@ -8319,7 +8401,7 @@ pub fn cr_subpastas(
     mailbox: Option<&str>,
 ) -> Result<Vec<PastaEmail>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -8407,7 +8489,7 @@ pub fn cr_criar_subpasta(
         return Err("o nome da pasta não pode ficar vazio".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!("{GRAPH}/{prefix}/mailFolders/{pai_id}/childFolders");
@@ -8438,7 +8520,7 @@ pub fn cr_renomear_pasta(
         return Err("o nome da pasta não pode ficar vazio".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!("{GRAPH}/{prefix}/mailFolders/{id}");
@@ -8493,7 +8575,7 @@ pub fn cr_mover_pasta(
     mailbox: Option<&str>,
 ) -> Result<PastaEmail, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let v = mover_pasta_graph(&client, &token, &prefix, id, novo_pai)?;
     Ok(pasta_de_json(&v))
@@ -8519,7 +8601,7 @@ pub fn cr_excluir_pasta(
     mailbox: Option<&str>,
 ) -> Result<bool, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     match mover_pasta_graph(&client, &token, &prefix, id, "deleteditems") {
@@ -8564,7 +8646,7 @@ pub fn cr_contar(
     mailbox: Option<&str>,
 ) -> Result<u64, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     // Mapeia o filtro lógico para a expressão OData. Desconhecido → erro.
@@ -8635,7 +8717,7 @@ pub fn cr_contadores(
     mailbox: Option<&str>,
 ) -> Result<Contadores, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     // O `id` de cada sub-requisição casa a resposta de volta (o Graph não garante
@@ -9336,7 +9418,7 @@ pub fn cr_fotos_contatos(
     use std::collections::{HashMap, HashSet};
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     // Normaliza (minúsculas), remove vazios/duplicatas e limita a 20 (teto do
     // $batch). O front já debouncia e manda no máximo 20, mas o teto aqui protege
@@ -9506,7 +9588,7 @@ pub fn cr_insights_remetente(
     endereco: &str,
 ) -> Result<InsightsRemetente, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let addr = endereco.trim().to_lowercase();
     if addr.is_empty() {
