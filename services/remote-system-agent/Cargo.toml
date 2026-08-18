@@ -26,12 +26,18 @@ windows = { version = "0.62.2", features = [
   "Win32_Security",
   "Win32_Security_Authorization",
   "Win32_Security_Cryptography",
+  # WTHelperProvDataFromStateData / WTHelperGetProvSignerFromChain / CRYPT_PROVIDER_*
+  # (extração do signer do estado do WinVerifyTrust — F1) exigem estes dois:
+  "Win32_Security_Cryptography_Catalog",
+  "Win32_Security_Cryptography_Sip",
   "Win32_Security_WinTrust",
   "Win32_Storage_FileSystem",
   "Win32_System_IO",
   "Win32_System_Pipes",
   "Win32_System_RemoteDesktop",
   "Win32_System_StationsAndDesktops",
+  # GetSystemTimeAsFileTime (cinto de timing do F2).
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
 ] }
 
