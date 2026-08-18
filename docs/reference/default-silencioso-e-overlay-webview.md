@@ -113,3 +113,27 @@ Depois de D1+D2 o gate certo é estático, no estilo dos que já rodam (`lumen-b
 
 - **Não decide o fix imediato do #1163.** Se a raia de frontend precisar destravar o PO hoje, subir o Provider pro `App.tsx` resolve o sintoma e é compatível com D1 — vira passo intermediário, não trabalho jogado fora.
 - **Não toca o #1152.** Lá a decisão é de produto (o que fazer com pin de app fora do `APPS_CATALOGO`), não de arquitetura. Só a regra 3 se aplica: qualquer que seja a escolha, o descarte precisa deixar rastro.
+
+---
+
+## 8. Emenda pós-implementação (2026-08-18) — dois pontos que o `Sirius` acertou melhor que o desenho
+
+Revisei o **PR #1176** contra este doc. D1, D2, D3 e D4 estão cumpridos, o `OcultarWebviewContext` **deixou de existir** (o Furo 1 não foi contornado, foi removido) e a auto-cura por chave estável migrou junto (`navegador.tsx:1272` + efeito de limpeza `:1965-1970`). Duas correções ao desenho:
+
+### 8.1 O D2 tinha um buraco: abertura PROGRAMÁTICA
+
+Eu escrevi que os primitivos deveriam registrar-se *"a partir do estado controlado que já possuem"*. **Isso não basta:** o Radix só dispara `onOpenChange` em **interação do usuário** — um overlay aberto por código (`setAberto(true)`) nunca notificaria, e o registro não aconteceria.
+
+A implementação cobre os três modos: controlado (efeito sincronizando o store ao `open`), não-controlado (pelo `onOpenChange`) e desmonte com o overlay aberto (cleanup). **O desenho previa um; eram três.**
+
+### 8.2 O `Tooltip` do D3 já tinha um caminho próprio — e ele deve continuar existindo
+
+O D3 diz que `Tooltip` fica fora do D2 porque hover é alta frequência. Correto — **mas não quer dizer que nenhum tooltip precise esconder a webview**. Já existe um caso tratado por outro mecanismo: o tooltip do sidebar colapsado (#358) entra pelo `chromeOverlays`, por window-event, e não pelo registrador.
+
+⚠️ **Isso precisa estar escrito, senão alguém "conserta" a incoerência aparente** ligando o `Tooltip` ao D2 e devolvendo o flicker. A regra completa é: **`Tooltip` fora do D2; o tooltip que comprovadamente cruza a webview entra pelo caminho pontual (`chromeOverlays`), nunca pelo primitivo.**
+
+### 8.3 Acoplamento novo, benigno hoje — registrado para não virar surpresa
+
+A conta agora é **app-global** (slice do store), enquanto o consumidor é **só a tela do navegador**. Um diálogo aberto no Bridge incrementa a mesma conta.
+
+Hoje é inofensivo: o efeito tem saída antecipada em `!visivel` (`navegador.tsx:1913-1918`) — se a tela não está à frente, a webview já é escondida por outro caminho. **Fica registrado para o dia em que houver um segundo consumidor de webview:** aí a conta única passa a ser acoplamento de verdade, e o slice precisa virar conta por-consumidor.
