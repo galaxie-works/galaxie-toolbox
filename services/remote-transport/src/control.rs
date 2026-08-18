@@ -146,19 +146,22 @@ pub fn decode(bytes: &[u8]) -> Result<Frame, ControlError> {
 
 /// Política de capability da sessão (o host decide). O gating é aplicado dos DOIS
 /// lados: não envia nem aceita o que está desligado.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// #1070 RB7 (decisão do `Altair`, doc `remote-capability-e-codigo-nao-integrado.md`):
+/// o `Default` era escrito À MÃO como `true`/`true` = **ALLOW** — polaridade invertida.
+/// Como o gate ainda não é aplicado (o RB6 é que o liga), ligar os frames com este
+/// default trocaria "descarta tudo em silêncio" por "permite clipboard e arquivo por
+/// default" — pior. Agora `#[derive(Default)]` → `false`/`false` = **DENY** (default
+/// seguro), pré-requisito do RB6.
+///
+/// A unificação COMPLETA num tipo único de 5 campos (`Capabilities` de `remote-net`) é
+/// o restante do RB7 e depende de uma decisão de colocação cross-crate (os dois crates
+/// são irmãos sem dep; puxar um pro outro infla o build — candidato a um crate
+/// compartilhado). Registrado pra o `Altair`/`Polaris`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CapabilityPolicy {
     pub clipboard: bool,
     pub file_transfer: bool,
-}
-
-impl Default for CapabilityPolicy {
-    fn default() -> Self {
-        Self {
-            clipboard: true,
-            file_transfer: true,
-        }
-    }
 }
 
 impl CapabilityPolicy {
@@ -236,6 +239,27 @@ mod tests {
         assert_eq!(
             decode(&[OP_CHUNK, 1, 2]).unwrap_err(),
             ControlError::ChunkTruncado
+        );
+    }
+
+    #[test]
+    fn default_e_deny_nao_allow() {
+        // #1070 RB7: o default TEM que negar (fail-closed). Antes o `impl Default`
+        // à mão era true/true (ALLOW) — se alguém reverter pra allow, isto falha.
+        let pol = CapabilityPolicy::default();
+        assert!(!pol.clipboard);
+        assert!(!pol.file_transfer);
+        assert_eq!(
+            pol.permite(&ControlMessage::ClipboardText { text: "x".into() }),
+            Err(ControlError::Bloqueado)
+        );
+        assert_eq!(
+            pol.permite(&ControlMessage::FileOffer {
+                transfer_id: 1,
+                name: "a".into(),
+                size: 1
+            }),
+            Err(ControlError::Bloqueado)
         );
     }
 
