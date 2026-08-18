@@ -3232,10 +3232,6 @@ export async function buscarArquivos(
 // Fora do Tauri (mock) são no-op (a UI é validada no app real). Erros tipados
 // (FsError) chegam do backend.
 
-/** Token interno que autoriza a exclusão PERMANENTE — o gate real é o
- *  Shift+confirmação na UI, que só então chama `excluirPermanente`. */
-const TOKEN_EXCLUSAO_PERMANENTE = "galaxie-excluir-permanente";
-
 /** Cria uma pasta nova (erra se já existe). */
 export async function criarPasta(path: string): Promise<void> {
   if (!inTauri()) return;
@@ -3268,12 +3264,15 @@ export async function paraLixeira(paths: string[]): Promise<void> {
   return invoke<void>("fs_trash", { paths });
 }
 
-/** Apaga PERMANENTEMENTE (sem Lixeira). Só depois do Shift+confirmação na UI. */
+/** Apaga PERMANENTEMENTE (sem Lixeira). Só depois do Shift+confirmação na UI.
+ *  #1047 (SEC7): pede um nonce de sessão single-use ao backend imediatamente
+ *  antes de excluir (substitui o token hardcoded, que qualquer um podia forjar). */
 export async function excluirPermanente(paths: string[]): Promise<void> {
   if (!inTauri()) return;
+  const token = await invoke<string>("fs_delete_permanent_token");
   return invoke<void>("fs_delete_permanent", {
     paths,
-    confirmToken: TOKEN_EXCLUSAO_PERMANENTE,
+    confirmToken: token,
   });
 }
 
