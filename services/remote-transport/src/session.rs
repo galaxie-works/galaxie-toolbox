@@ -10,6 +10,7 @@
 use std::net::SocketAddr;
 use std::time::Instant;
 
+use str0m::bwe::{Bitrate, BweKind};
 use str0m::change::{SdpAnswer, SdpOffer, SdpPendingOffer};
 use str0m::channel::ChannelId;
 use str0m::format::{Codec, CodecExtra};
@@ -17,6 +18,7 @@ use str0m::media::{Direction, Frequency, KeyframeRequestKind, MediaKind, MediaTi
 use str0m::net::{Protocol, Receive};
 use str0m::{Candidate, Event, Input, Output, Rtc};
 
+use crate::bitrate::AplicadorBitrate;
 use crate::command::CommandChannel;
 use crate::frame::CodedFrame;
 use crate::signaling::{IceServer, SignalMessage};
@@ -50,10 +52,40 @@ pub enum TransportError {
     Candidato(String),
 }
 
-/// Config de uma sessão: papel + os servidores ICE do coturn (do `Registered`).
+/// Piso conservador default do bitrate adaptativo (#1182): 300 kbps.
+pub const BITRATE_MIN_BPS_PADRAO: u32 = 300_000;
+/// Teto default do bitrate adaptativo: 12 Mbps (o valor FIXO histórico vira teto).
+pub const BITRATE_MAX_BPS_PADRAO: u32 = 12_000_000;
+/// Início conservador default: o encoder começa aqui e o BWE sobe conforme a
+/// banda dá folga (evita estourar a fila no primeiro segundo de um link estreito).
+pub const BITRATE_INICIAL_BPS_PADRAO: u32 = 3_000_000;
+
+/// Config de uma sessão: papel + os servidores ICE do coturn (do `Registered`) +
+/// os limites do bitrate adaptativo (#1182). Use [`SessionConfig::new`] pra
+/// preencher os limites com os defaults.
 pub struct SessionConfig {
     pub papel: Papel,
     pub ice_servers: Vec<IceServer>,
+    /// Piso do bitrate adaptativo (bps).
+    pub bitrate_min_bps: u32,
+    /// Teto do bitrate adaptativo (bps) — o BWE nunca pede acima disto.
+    pub bitrate_max_bps: u32,
+    /// Bitrate inicial (bps) com que o encoder/BWE começam (conservador).
+    pub bitrate_inicial_bps: u32,
+}
+
+impl SessionConfig {
+    /// Config com os limites de bitrate nos defaults (300 kbps..12 Mbps, início 3 Mbps).
+    #[must_use]
+    pub fn new(papel: Papel, ice_servers: Vec<IceServer>) -> Self {
+        Self {
+            papel,
+            ice_servers,
+            bitrate_min_bps: BITRATE_MIN_BPS_PADRAO,
+            bitrate_max_bps: BITRATE_MAX_BPS_PADRAO,
+            bitrate_inicial_bps: BITRATE_INICIAL_BPS_PADRAO,
+        }
+    }
 }
 
 /// O que o driver da sessão precisa que o app faça a cada passo (sans-I/O).
@@ -101,8 +133,12 @@ pub struct Transport {
     mid_audio: Option<Mid>,
     canal_controle: Option<ChannelId>,
     pending: Option<SdpPendingOffer>,
-    /// Via S2→S1: quando o peer manda PLI, pedimos keyframe ao encoder (coalescido).
+    /// Via S2→S1: quando o peer manda PLI, pedimos keyframe ao encoder (coalescido);
+    /// e quando o BWE reestima a banda, mandamos o novo bitrate por aqui também.
     comando_encoder: CommandChannel,
+    /// #1182: traduz a estimativa de banda do BWE (str0m) num bitrate-alvo pro
+    /// encoder, com histerese (não oscila a cada amostra).
+    aplicador: AplicadorBitrate,
 }
 
 impl Transport {
@@ -112,7 +148,19 @@ impl Transport {
     pub fn novo(cfg: SessionConfig, comando_encoder: CommandChannel) -> Self {
         // ICE lite off (queremos ICE completo com relay via coturn). Os candidatos
         // (host/srflx/relay) são adicionados pelo app conforme o gathering.
-        let rtc = Rtc::new();
+        //
+        // #1182: habilitamos o BWE (GCC) NATIVO do str0m com o bitrate inicial
+        // conservador. O str0m usa TWCC (auto-negociado no SDP: `a=rtcp-fb
+        // transport-cc` + extensão TransportSequenceNumber, ligados por padrão) pra
+        // estimar a banda de ENVIO e emitir `Event::EgressBitrateEstimate`. NÃO
+        // reimplementamos congestion control — consumimos o estimate do str0m.
+        let inicial = Bitrate::bps(u64::from(cfg.bitrate_inicial_bps));
+        let mut rtc = Rtc::builder().enable_bwe(Some(inicial)).build();
+        // Alvo de probing = teto: o BWE tenta chegar no `max` com padding quando a
+        // banda permite, e reporta o estimate real (que pode ficar abaixo).
+        rtc.bwe()
+            .set_desired_bitrate(Bitrate::bps(u64::from(cfg.bitrate_max_bps)));
+        rtc.bwe().set_current_bitrate(inicial);
         let _ = &cfg.ice_servers; // usados pelo app no gathering (fora do str0m puro)
         Self {
             rtc,
@@ -123,6 +171,11 @@ impl Transport {
             canal_controle: None,
             pending: None,
             comando_encoder,
+            aplicador: AplicadorBitrate::novo(
+                cfg.bitrate_min_bps,
+                cfg.bitrate_max_bps,
+                cfg.bitrate_inicial_bps,
+            ),
         }
     }
 
@@ -388,8 +441,34 @@ impl Transport {
                 }
             }
             // PLI/keyframe request do peer → pede IDR ao encoder (coalescido).
+            //
+            // POLÍTICA DE PERDA (#1182): a política PRIMÁRIA contra perda é o BWE
+            // reduzir o bitrate (abaixo, em `EgressBitrateEstimate`) — reduzir a
+            // TAXA quando o link congestiona degrada com graça, em vez de só pedir
+            // IDR, que é um frame GRANDE e AGRAVARIA a congestão. O PLI continua
+            // aqui só pro seu papel legítimo: recuperar de um keyframe perdido /
+            // late-join. NACK/RTX (retransmissão seletiva) seria a próxima camada,
+            // mas a 0.6 não expõe uma flag trivial de RTX no builder sans-I/O — fica
+            // como follow-up honesto (não habilitado aqui pra não fingir cobertura).
             Event::KeyframeRequest(_) => {
                 self.comando_encoder.pedir_keyframe();
+                Passo::Aguardar(Instant::now())
+            }
+            // #1182: estimativa de banda de ENVIO do BWE (GCC do str0m). Passa pelo
+            // AplicadorBitrate (histerese) → se mudou o alvo, comanda o encoder e
+            // realimenta o str0m com o bitrate REAL aplicado (calibra pacing/probing).
+            Event::EgressBitrateEstimate(kind) => {
+                let estimativa = match kind {
+                    BweKind::Twcc(b) => b,
+                    BweKind::Remb(_, b) => b,
+                };
+                let bps = estimativa.as_u64().min(u64::from(u32::MAX)) as u32;
+                if let Some(novo) = self.aplicador.aplicar(bps) {
+                    self.comando_encoder.definir_bitrate(novo);
+                    self.rtc
+                        .bwe()
+                        .set_current_bitrate(Bitrate::bps(u64::from(novo)));
+                }
                 Passo::Aguardar(Instant::now())
             }
             _ => Passo::Aguardar(Instant::now()),

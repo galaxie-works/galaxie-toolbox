@@ -20,7 +20,13 @@ pub struct PipelineConfig {
     pub width: u32,
     pub height: u32,
     pub fps: u32,
-    pub bitrate_bps: u32,
+    /// Teto do bitrate adaptativo (#1182): o valor FIXO histórico (12 Mbps) virou
+    /// o TETO. O encoder começa conservador (ver [`Self::bitrate_inicial_bps`]) e o
+    /// BWE do transporte sobe até aqui conforme a banda dá folga.
+    pub bitrate_max_bps: u32,
+    /// Piso do bitrate adaptativo: o encoder nunca cai abaixo disto (degrada, mas
+    /// não congela) num link estreito.
+    pub bitrate_min_bps: u32,
     pub include_cursor: bool,
     pub dirty_regions: bool,
     pub frame_channel_capacity: usize,
@@ -37,7 +43,8 @@ impl Default for PipelineConfig {
             width: 1920,
             height: 1080,
             fps: 60,
-            bitrate_bps: 12_000_000,
+            bitrate_max_bps: 12_000_000,
+            bitrate_min_bps: 300_000,
             include_cursor: true,
             dirty_regions: true,
             frame_channel_capacity: 8,
@@ -58,9 +65,20 @@ pub enum ConfigError {
     InvalidFps,
     #[error("bitrate deve ser >= 64 kbps")]
     InvalidBitrate,
+    #[error("bitrate_min_bps deve ser <= bitrate_max_bps")]
+    InvalidBitrateRange,
 }
 
 impl PipelineConfig {
+    /// Bitrate (bps) com que o encoder INICIA — conservador, pra não estourar a
+    /// fila no primeiro segundo de um link estreito. O BWE do transporte sobe daí
+    /// até `bitrate_max_bps`. Um quarto do teto, nunca abaixo do piso nem acima do
+    /// teto (default: 12 Mbps/4 = 3 Mbps).
+    #[must_use]
+    pub fn bitrate_inicial_bps(&self) -> u32 {
+        (self.bitrate_max_bps / 4).clamp(self.bitrate_min_bps, self.bitrate_max_bps)
+    }
+
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.monitor_index == 0 {
             return Err(ConfigError::InvalidMonitorIndex);
@@ -75,8 +93,11 @@ impl PipelineConfig {
         if !(1..=240).contains(&self.fps) {
             return Err(ConfigError::InvalidFps);
         }
-        if self.bitrate_bps < 64_000 {
+        if self.bitrate_max_bps < 64_000 || self.bitrate_min_bps < 64_000 {
             return Err(ConfigError::InvalidBitrate);
+        }
+        if self.bitrate_min_bps > self.bitrate_max_bps {
+            return Err(ConfigError::InvalidBitrateRange);
         }
         Ok(())
     }
@@ -92,6 +113,24 @@ mod tests {
         assert_eq!((config.width, config.height, config.fps), (1920, 1080, 60));
         assert_eq!(config.frame_channel_capacity, 8);
         config.validate().expect("default config must be valid");
+    }
+
+    #[test]
+    fn initial_bitrate_is_conservative_and_within_bounds() {
+        let config = PipelineConfig::default();
+        let inicial = config.bitrate_inicial_bps();
+        assert!(inicial >= config.bitrate_min_bps && inicial <= config.bitrate_max_bps);
+        assert!(inicial < config.bitrate_max_bps, "deve começar abaixo do teto");
+    }
+
+    #[test]
+    fn rejects_inverted_bitrate_range() {
+        let config = PipelineConfig {
+            bitrate_min_bps: 8_000_000,
+            bitrate_max_bps: 1_000_000,
+            ..PipelineConfig::default()
+        };
+        assert_eq!(config.validate(), Err(ConfigError::InvalidBitrateRange));
     }
 
     #[test]

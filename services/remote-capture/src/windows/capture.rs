@@ -131,6 +131,23 @@ impl ActiveEncoder {
         }
         Ok(())
     }
+
+    /// #1182: aplica o novo bitrate-alvo (hardware muda em runtime; software recria).
+    fn set_bitrate(&mut self, bitrate_bps: u32) -> Result<(), HandlerError> {
+        match self {
+            Self::Hardware(encoder) => encoder.set_bitrate(bitrate_bps)?,
+            Self::Software(encoder) => encoder.set_bitrate(bitrate_bps)?,
+        }
+        Ok(())
+    }
+
+    /// Aplica um comando do transporte (S2→S1): keyframe OU novo bitrate.
+    fn apply_command(&mut self, command: EncoderCommand) -> Result<(), HandlerError> {
+        match command {
+            EncoderCommand::RequestKeyframe => self.request_keyframe(),
+            EncoderCommand::SetBitrate(bps) => self.set_bitrate(bps),
+        }
+    }
 }
 
 impl GraphicsCaptureApiHandler for WgcCapture {
@@ -214,7 +231,7 @@ impl GraphicsCaptureApiHandler for WgcCapture {
             next_output_us = next_output_us.saturating_add(interval_us);
         }
         self.next_output_us = Some(next_output_us);
-        drain_keyframe_requests(&self.commands, self.encoder.as_mut())?;
+        drain_encoder_commands(&self.commands, self.encoder.as_mut())?;
 
         let encode_started = Instant::now();
         let width = frame.width();
@@ -276,7 +293,7 @@ impl WgcCapture {
                     frame.width(),
                     frame.height(),
                     self.config.fps,
-                    self.config.bitrate_bps,
+                    self.config.bitrate_inicial_bps(),
                 )?;
                 let fallback_width = frame.width();
                 let fallback_height = frame.height();
@@ -305,7 +322,7 @@ fn monotonic_wgc_timestamp(
     Ok(ticks.saturating_sub(*start) as u64 / 10)
 }
 
-fn drain_keyframe_requests(
+fn drain_encoder_commands(
     commands: &Arc<Mutex<CommandReceiver>>,
     encoder: Option<&mut ActiveEncoder>,
 ) -> Result<(), HandlerError> {
@@ -315,8 +332,10 @@ fn drain_keyframe_requests(
     let Ok(commands) = commands.lock() else {
         return Ok(());
     };
-    while let Some(EncoderCommand::RequestKeyframe) = commands.try_receive() {
-        encoder.request_keyframe()?;
+    // Drena TODOS os comandos (keyframe e/ou SetBitrate) — #1182: um `while let`
+    // casando só `RequestKeyframe` DESCARTARIA o `SetBitrate` silenciosamente.
+    while let Some(command) = commands.try_receive() {
+        encoder.apply_command(command)?;
     }
     Ok(())
 }
@@ -336,7 +355,7 @@ fn create_encoder(
             (width, height),
             (config.width, config.height),
             config.fps,
-            config.bitrate_bps,
+            config.bitrate_inicial_bps(),
         ) {
             Ok(encoder) => {
                 if let Ok(mut state) = state.lock() {
@@ -352,7 +371,7 @@ fn create_encoder(
             Err(error) => tracing::warn!(%error, "Media Foundation indisponivel; usando OpenH264"),
         }
     }
-    let encoder = SoftwareEncoder::new(width, height, config.fps, config.bitrate_bps)?;
+    let encoder = SoftwareEncoder::new(width, height, config.fps, config.bitrate_inicial_bps())?;
     if let Ok(mut state) = state.lock() {
         state.encoder_name = "OpenH264 software".to_owned();
         state.width = width;
@@ -542,9 +561,10 @@ fn run_dxgi(
             continue;
         }
         if let Ok(commands) = commands.lock() {
-            while let Some(EncoderCommand::RequestKeyframe) = commands.try_receive() {
+            // Drena keyframe E SetBitrate (#1182) — não descarta o SetBitrate.
+            while let Some(command) = commands.try_receive() {
                 encoder
-                    .request_keyframe()
+                    .apply_command(command)
                     .map_err(|error| PipelineError::Encoder(error.to_string()))?;
             }
         }
@@ -587,7 +607,7 @@ fn run_dxgi(
                         frame.width(),
                         frame.height(),
                         config.fps,
-                        config.bitrate_bps,
+                        config.bitrate_inicial_bps(),
                     )
                     .map_err(|error| PipelineError::Encoder(error.to_string()))?;
                     let fallback_width = frame.width();

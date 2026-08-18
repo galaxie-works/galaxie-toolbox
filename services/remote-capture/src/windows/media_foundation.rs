@@ -301,6 +301,20 @@ impl MediaFoundationH264Encoder {
         Ok(())
     }
 
+    /// Muda o bitrate-alvo em RUNTIME (#1182). O MFT expoe o bitrate via `ICodecAPI`
+    /// (`AVEncCommonMeanBitRate`), entao muda SEM recriar o encoder nem perder estado
+    /// — custo baixo (ao contrario do caminho software OpenH264, que recria). Nao
+    /// forca IDR: o rate control absorve a nova taxa nos proximos frames.
+    pub fn set_bitrate(&self, bitrate_bps: u32) -> Result<(), HardwareEncoderError> {
+        let value = VARIANT::from(bitrate_bps);
+        // SAFETY: GUID e VARIANT validos durante a chamada.
+        unsafe {
+            self.codec
+                .SetValue(&CODECAPI_AVEncCommonMeanBitRate, &value)?
+        };
+        Ok(())
+    }
+
     pub fn encode_texture(
         &mut self,
         texture: &ID3D11Texture2D,
