@@ -9648,3 +9648,64 @@ fn buscar_data(
         .as_str()
         .map(|s| s.to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::{Account, AccountKind, OrgStatus, Provider, TokenStore, Tokens};
+
+    /// Sessao com token vencido e SEM refresh: `access_token` falha na hora, sem
+    /// rede. E isso que torna os testes abaixo testes de COMPORTAMENTO e nao de
+    /// texto — se o gate do #803 sumir, a chamada escorrega ate o `access_token`
+    /// e o resultado vira `Err`.
+    fn store_sem_token(provider: Provider, tenant: &str) -> TokenStore {
+        let conta = Account {
+            display_name: "Teste".to_string(),
+            email: "teste@exemplo.com".to_string(),
+            initials: "T".to_string(),
+            photo: None,
+            organizacao: None,
+            provider,
+            account_kind: AccountKind::Personal,
+            org_status: OrgStatus::None,
+            domain: None,
+            tenant_id: None,
+            capabilities: Vec::new(),
+        };
+        TokenStore {
+            inner: std::sync::Mutex::new(Some(Tokens {
+                access_token: String::new(),
+                refresh_token: None,
+                expires_at: 0,
+                account: conta,
+                tenant: tenant.to_string(),
+                scopes: String::new(),
+            })),
+        }
+    }
+
+    /// #803 (gate perdido no PR #818): conta Google nao tem MS Graph People. O
+    /// gate tem que devolver lista vazia ANTES de pedir token — nunca tocar o
+    /// Graph nem gerar erro na cara do usuario.
+    #[test]
+    fn cr_pessoas_com_google_devolve_vazio_sem_pedir_token() {
+        let store = store_sem_token(Provider::Google, "common");
+        match cr_pessoas(&store, "ana") {
+            Ok(pessoas) => assert!(pessoas.is_empty(), "Google nao pode devolver pessoa"),
+            Err(e) => panic!("Google deveria sair pelo gate, veio erro: {e}"),
+        }
+    }
+
+    /// Controle adversarial do teste acima: se alguem "consertar" o gate
+    /// devolvendo vazio pra todo mundo, este teste quebra. Microsoft PRECISA
+    /// passar do gate e chegar no `access_token` (que aqui falha por falta de
+    /// sessao valida).
+    #[test]
+    fn cr_pessoas_com_microsoft_passa_do_gate_e_exige_token() {
+        let store = store_sem_token(Provider::Microsoft, crate::config::MS_PERSONAL_TENANT);
+        assert!(
+            cr_pessoas(&store, "ana").is_err(),
+            "Microsoft nao pode sair pelo gate do Google — tem que chegar no token"
+        );
+    }
+}
