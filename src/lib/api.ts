@@ -48,7 +48,6 @@ import type {
   SegurancaEmail,
   Site,
   SalvarContatosResultado,
-  Tarefa,
   TarefasResultado,
   TipoArquivo,
   UsoOneDrive,
