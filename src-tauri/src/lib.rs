@@ -131,12 +131,41 @@ async fn dominio_verificar(dominio: String, registro: String) -> Result<bool, St
 #[tauri::command]
 async fn logout(state: State<'_, Store>) -> Result<(), String> {
     let store = state.inner().clone();
-    *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = None;
-    // #693: revoga/limpa a sessão pela abstração de provider.
-    auth::provider_de(auth::Provider::Microsoft).revoke();
-    estado::limpar_identidade();
+    limpar_sessao_conta(&store)?;
+    // Logout TOTAL (sai do app): além da sessão de conta, zera o PIN de bloqueio.
     lock_screen::resetar()?;
     Ok(())
+}
+
+/// #1257 (P0): limpa TODA a sessão de CONTA no Rust — token em memória
+/// (`store.inner`), sessão persistida no disco (`sessao.bin`, via `revoke`),
+/// identidade em cache e o memo curto do Graph. É o funil único da fronteira de
+/// conta: o `resetSessaoCompleta` do front chama isto (awaited) pra a conta anterior
+/// NÃO sobreviver à janela do novo login. **NÃO** toca no PIN de bloqueio (é
+/// device-level, não pertence à conta — trocar de conta não pode zerar o PIN).
+///
+/// Fica DEPOIS do `logout` de propósito: o contrato do `login` (provider-login-
+/// contract) fatia `login`→`logout`, e este helper cita `provider_de(Microsoft)`
+/// (o `revoke`) — se caísse no meio, o teste veria "login fixa Microsoft".
+fn limpar_sessao_conta(store: &TokenStore) -> Result<(), String> {
+    *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = None;
+    // #693: revoga/limpa a sessão persistida pela abstração de provider.
+    auth::provider_de(auth::Provider::Microsoft).revoke();
+    estado::limpar_identidade();
+    graph::limpar_memo_sessao(); // memo curto do Graph (senão serve a caixa anterior por ~2,5s)
+    Ok(())
+}
+
+/// #1257 (P0): fecha o vazamento de sessão entre contas. A fronteira de conta
+/// (troca/login novo) chama isto — awaited — pra limpar o token/sessão da conta
+/// anterior no Rust ANTES de adquirir o novo, sem zerar o PIN (o `logout` completo
+/// é que zera o PIN). Sem isto, um login cancelado/interrompido deixava o token
+/// da conta anterior vivo em memória e no disco (`sessao.bin`), e o Bridge servia
+/// a caixa dela.
+#[tauri::command]
+async fn clear_account_session(state: State<'_, Store>) -> Result<(), String> {
+    let store = state.inner().clone();
+    limpar_sessao_conta(&store)
 }
 
 #[tauri::command]
@@ -2151,6 +2180,7 @@ pub fn run() {
             cr_org_branding,
             cr_multi_tenant,
             reset_session_memo,
+            clear_account_session,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,

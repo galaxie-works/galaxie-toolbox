@@ -500,7 +500,7 @@ function AppInner() {
     // #555 (P0): fronteira de conta — zera TODO o estado tenant-scoped (mailbox,
     // agenda, organizations, branding, memos Rust, fotos…) antes de trocar de
     // conta, pra a conta nova não herdar dado do tenant anterior.
-    resetSessaoCompleta();
+    await resetSessaoCompleta();
     resetNavegadorSessao(); // #821: zera as abas in-memory da conta anterior
     try {
       // #695: `hint` = login_hint OPCIONAL; `provider` escolhe a porta (o backend
@@ -1054,7 +1054,7 @@ function AppInner() {
     await api.logout();
     // #555 (P0): fronteira de conta — reset completo de sessão (inclui fotos,
     // reauth, mailbox, agenda, organizations, branding, memos Rust…).
-    resetSessaoCompleta();
+    await resetSessaoCompleta();
     resetNavegadorSessao(); // #821: zera as abas in-memory da conta que saiu
     setUser(null);
     setEntrarComoPessoal(false); // #698: não herda o "entrar assim mesmo" pra próxima conta
@@ -1068,7 +1068,7 @@ function AppInner() {
     suspenderConfiguracaoNuvem();
     await api.logout();
     // #555 (P0): recuperação de bloqueio também sai da conta → reset completo.
-    resetSessaoCompleta();
+    await resetSessaoCompleta();
     resetNavegadorSessao(); // #821: zera as abas in-memory da conta que saiu
     setUser(null);
     setEntrarComoPessoal(false); // #698: idem — reset da fronteira de conta

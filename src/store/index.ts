@@ -24,7 +24,7 @@ import {
 
 // #555 (P0): vetores de sessão fora do store, zerados pelo seam de reset.
 import { limparFotos } from "@/lib/fotos";
-import { invalidarBrandingCache, resetSessionMemo } from "@/lib/api";
+import { invalidarBrandingCache, clearAccountSession } from "@/lib/api";
 
 import { createUiSlice, type UiSlice } from "./ui-slice";
 import { createListSlice, type ListSlice } from "./list-slice";
@@ -300,8 +300,15 @@ export function suspenderConfiguracaoNuvem(): void {
  *
  * Se um slice novo tiver estado por-conta, adicione seu reset aqui — e o teste
  * `store/reset-sessao.test.ts` (herança-zero) falha se algo escapar.
+ *
+ * #1257 (P0): é `async` de propósito e DEVE ser awaited na fronteira — limpa a
+ * SESSÃO DE CONTA no Rust (`clearAccountSession`: token em memória + `sessao.bin`
+ * no disco + identidade + memo) ANTES do novo login adquirir o token. Zerar só o
+ * store FE + o memo curto (o bug de origem) deixava o token da conta anterior vivo
+ * no Rust → o Bridge servia a caixa dela (vazamento entre contas). Não engole o
+ * erro do clear: se falhar, o chamador aborta a troca em vez de vazar.
  */
-export function resetSessaoCompleta(): void {
+export async function resetSessaoCompleta(): Promise<void> {
   suspenderConfiguracaoNuvem();
   const s = useAppStore.getState();
   // Slices tenant-scoped (reusa limpar*/fechar* existentes + os resets do #555).
@@ -320,7 +327,9 @@ export function resetSessaoCompleta(): void {
   resetSessaoNavegador(); // #821: abas web/pins/grupos do Navigator (localStorage)
   limparFotos(); // cache de fotos (módulo + localStorage)
   invalidarBrandingCache(); // memo do logo do tenant (#541)
-  void resetSessionMemo(); // memo curto do Graph no Rust (best-effort)
   // Persistência: purga as chaves tenant-scoped do disco (senão reidratam).
   purgarChavesTenant();
+  // #1257 (P0): sessão de conta no Rust — token/sessao.bin/identidade/memo. AWAITED
+  // e por último, pra que uma falha aqui propague e o chamador aborte a troca.
+  await clearAccountSession();
 }

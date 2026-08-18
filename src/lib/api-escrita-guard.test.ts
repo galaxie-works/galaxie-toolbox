@@ -46,7 +46,7 @@ const ALLOWLIST_NAO_ESCRITA = new Set<string>([
   "crSubpastas", "crFotosContatos", "crPessoas", "crPeopleList", "crPeopleOrganization",
   "crPeopleDirectory", "crPeopleGroups", "crPeopleGroupMembers", "crContactFolders",
   "crFolderContacts", "crPeopleEnrichPreview", "crPeopleWriteAvailable",
-  "crOrgAdminAvailable", "crOrgSettings", "crTenantApps", "resetSessionMemo",
+  "crOrgAdminAvailable", "crOrgSettings", "crTenantApps", "resetSessionMemo", "clearAccountSession",
   "crMultiTenant", "crPeopleInteractions", "crFolderMensagens", "crBuscar", "crFiltrar",
   "crContadores", "crInsightsRemetente", "crBaixarAnexo", "crSalvarEmailEml",
   "crLerAnexo", "crAnexoParaPdf", "crLerAnexoEmail", "crAnexoLink", "crSalvarEmailPdf",

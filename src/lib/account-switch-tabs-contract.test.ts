@@ -26,7 +26,8 @@ test("#821: TODA fronteira resetSessaoCompleta() é seguida de resetNavegadorSes
   const linhas = app.split("\n");
   const chamadas: number[] = [];
   linhas.forEach((l, i) => {
-    if (/^\s*resetSessaoCompleta\(\);/.test(l)) chamadas.push(i);
+    // #1257: o seam virou `async` e agora é AWAITED na fronteira — aceita o prefixo.
+    if (/^\s*(await )?resetSessaoCompleta\(\);/.test(l)) chamadas.push(i);
   });
   assert.ok(chamadas.length >= 3, `esperava >=3 fronteiras de conta, achei ${chamadas.length}`);
   for (const i of chamadas) {
