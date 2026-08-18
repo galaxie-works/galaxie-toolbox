@@ -71,3 +71,51 @@ resposta a incidente: gerar novo secret no Google Cloud Console (mesmo OAuth cli
 - [ ] **Adotar a cadência** de rotação por-release (revogar o antigo).
 - [ ] **(Opcional, elimina o embutido)** provisionar o *installation-token endpoint*; o
       seam `AuthProvider` no código já está pronto pra consumir.
+
+---
+
+## Inventário COMPLETO do que é embutido em compile-time
+
+> Medido no `feat` `68e6dfb`, **18/08/2026**, varrendo `option_env!` no repo
+> inteiro (`--include=*.rs`, fora de `target/`). Este inventário é **gateado**:
+> ver `src/lib/segredos-embutidos-gate.test.ts`.
+
+O runbook nascia cobrindo os **dois** valores que o #1055 nomeia. A varredura do
+escopo inteiro achou **oito**, em **quatro** arquivos — os outros seis não eram
+segredo, mas também não estavam listados em lugar nenhum, e "não está listado" é
+como um segredo novo entra sem ninguém notar.
+
+| valor | arquivo | classe | rotação |
+|---|---|---|---|
+| `GALAXIE_TELEMETRY_INGEST_TOKEN` | `src-tauri/src/telemetry.rs` | 🔑 **credencial** | por-release (runbook acima) |
+| `GALAXIE_TELEMETRY_INGEST_EMAIL` | `src-tauri/src/telemetry.rs` | 👤 identidade de ingestão — par do token; sozinho não autentica | junto do token |
+| `GALAXIE_TELEMETRY_OTLP_ENDPOINT` | `src-tauri/src/telemetry.rs` | ⚙️ config (URL) | só se o host mudar |
+| `GALAXIE_TELEMETRY_STREAM_NAME` | `src-tauri/src/telemetry.rs` | ⚙️ config (nome do stream) | só se o stream mudar |
+| `GOOGLE_CLIENT_SECRET` | `src-tauri/src/config.rs` | 🔓 **público-na-prática** (PKCE é a fronteira) | só por exigência do Google/incidente |
+| `GALAXIE_REMOTE_SIGNALING_URL` | `src-tauri/src/lib.rs` | ⚙️ config (URL do signaling) | só se o host mudar |
+| `GALAXIE_SIGN_PIN_ISSUER` | `services/remote-system-agent/src/pipe_server.rs` | 📌 **pin de publisher** (não é segredo: atributo público do cert) | quando o cert EV existir (S7/F5) |
+| `GALAXIE_SIGN_PIN_SUBJECT_O` | `services/remote-system-agent/src/pipe_server.rs` | 📌 **pin de publisher** | idem |
+
+### Os dois pins estão VAZIOS hoje — e isso é fail-closed, não buraco
+
+`PIN` (`pipe_server.rs:77-87`) cai em `""` quando a esteira não injeta, e
+`avaliar_signer` **recusa tudo** nesse estado. Não há bypass de dev. Ou seja: o
+S7 não fecha handshake até o certificado EV existir e a esteira assinar (F5).
+
+Está listado aqui porque **valor embutido vazio hoje é valor embutido amanhã** —
+quando o cert existir, estes dois passam a viajar em todo binário, e a hora de
+já estarem no inventário é antes disso.
+
+### Por que isto vira gate
+
+O runbook é útil **enquanto estiver completo**. Um `option_env!` novo entra num
+PR qualquer e nada obriga a atualizar este arquivo — a próxima pessoa a auditar
+segredos embutidos leria uma lista que não corresponde ao binário.
+
+O gate (`src/lib/segredos-embutidos-gate.test.ts`) varre o repo e exige que todo
+nome usado em `option_env!` apareça nesta tabela. **Valor embutido novo reprova o
+CI até ser documentado e classificado.**
+
+É a mesma forma dos outros ratchets da casa (#1153 ícones, #1074 F1
+`graph_enviar`, #1070 comando async): a lista só encolhe quando o valor sai do
+código, nunca por esquecimento.
