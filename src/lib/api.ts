@@ -578,6 +578,13 @@ export interface AtomsEmail {
   naoLidos: number;
   sinalizados: number;
   recentes: EmailRecente[];
+  /**
+   * Sub-respostas do `$batch` que NÃO puderam ser lidas (#1075 RB46-a).
+   *
+   * Vazio = o card está completo. Não vazio = os números são PARCIAIS — e a UI
+   * não pode declarar "tudo em dia" a partir deles.
+   */
+  parciais: string[];
 }
 
 export async function crAtomsEmail(): Promise<AtomsEmail> {
@@ -590,6 +597,7 @@ export async function crAtomsEmail(): Promise<AtomsEmail> {
         { assunto: "Fatura de julho", de: "Financeiro", recebido: new Date().toISOString() },
         { assunto: "Aprovação pendente", de: "João", recebido: new Date().toISOString() },
       ],
+      parciais: [],
     };
   }
   return invoke<AtomsEmail>("atoms_email");

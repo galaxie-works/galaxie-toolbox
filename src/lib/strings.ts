@@ -603,6 +603,8 @@ const pt = {
     emailNaoLidos: "não lidos",
     emailSinalizados: "sinalizados",
     emailZero: "Caixa de entrada limpa.",
+    // #1075 RB46-a: parte do card nao pode ser lida — os numeros sao parciais.
+    emailParcial: "Alguns contadores não puderam ser lidos.",
     emailAbrir: "Abrir o Bridge",
     todosTitulo: "Tarefas",
     todosVazio: "Nenhuma tarefa aberta.",
@@ -2905,6 +2907,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     emailNaoLidos: "unread",
     emailSinalizados: "flagged",
     emailZero: "Inbox zero.",
+    // #1075 RB46-a: part of the card couldn't be read — the numbers are partial.
+    emailParcial: "Some counters couldn't be read.",
     emailAbrir: "Open Bridge",
     todosTitulo: "Tasks",
     todosVazio: "No open tasks.",
