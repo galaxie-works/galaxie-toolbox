@@ -85,7 +85,7 @@ Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pr
 > - **Não deixar branch não-mergeado órfão.** Se um rework/WIP não vai ser integrado, decidir: reintegrar ou descartar explicitamente (não deixar boiando anos). O Polaris varre branches não-mergeados no sweep e cobra dono/decisão.
 
 > 💸 **Custo / eficiência — modelo atual de integração (NÃO queimar créditos):**
-> - Quem **ENTREGA** (Orion/Confucius/subagent) faz só: build local verde (`tsc` + `cargo` se tocar Rust + `vite`) + **evidência CONCISA** (o que mudou, arquivos, commit, ACs cobertos) → **PR pra `feat`** e **PARA**.
+> - Quem **ENTREGA** (qualquer agente de dev ou subagente) faz só: build local verde (`tsc` + `cargo` se tocar Rust + `vite`) + **evidência CONCISA** (o que mudou, arquivos, commit, ACs cobertos) → **PR pra `feat`** e **PARA**.
 > - A **integração + code-QA + o move pra QA Approved são do Polaris** (orquestrador). Neste projeto isso **substitui** o "agente dispara subagente QA" da tabela acima — o QA é **centralizado no Polaris**. O agente que entrega **NÃO** roda subagente de QA/review próprio nem re-revisa o código inteiro linha-a-linha (duplica o Polaris e queima o limite semanal).
 > - Subagente **só pra tarefa grande** (~150-400k tokens). Solo pro pequeno/mecânico. **Sem auditoria/review espontâneo**: achou algo fora do escopo → issue curta (finding) e segue. Detalhes em [`Rules.md`](./Rules.md) §11.
 >
@@ -93,7 +93,7 @@ Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pr
 >
 > ⚠️ **NÃO parafrasear os ACs no prompt do QA.** O prompt do orquestrador deve só dizer **qual issue ler** — o QA **puxa o corpo real** (`gh issue view N`), **cita verbatim** os ACs que encontrou lá (prova de que leu a fonte) e valida cada um. Se o QA não conseguiu ler o corpo (ex.: `gh` falhou), ele **REPROVA/avisa** — nunca valida de memória nem da paráfrase. (Erro pego pelo PO no #50, 2026-07-26: QA validou contra a paráfrase do orquestrador.)
 >
-> 🖥️ **O QA PODE validar visualmente** (ACs de layout/estrutura), sem login Graph real. O Vite dev server serve o frontend em `http://localhost:1420`; aberto **fora do Tauri** (browser), o `api.ts` usa **dados MOCK** (`inTauri()` = false). Fluxo do QA: `preview_start {url:"http://localhost:1420"}` → `read_page` (login screen) → `form_input` email + `left_click` "Sign in with Microsoft" (o mock loga qualquer email como usuário fake) → cai no Bridge com dados mock → **`read_page`** inspeciona a árvore de acessibilidade **renderizada** (posição/presença de componentes, estados colapsado/expandido, tema, labels). **`read_page` funciona headless** (não precisa da pane visível); **screenshot** só funciona com a pane exibida. **Limite:** mock ≠ Graph real — comportamento dependente de dados reais (carregar/ordenar e-mail, contadores, `$search`, fotos, autocomplete, 429/retry) continua sendo validação de **runtime do PO**. Use validação visual para todo AC de UI que o mock consiga exercer; deixe explícito quais ACs sobraram pro PO.
+> 🖥️ **Ferramental de QA visual** (validar ACs de layout/estrutura sem login Graph real): vive em [`docs/qa-visual.md`](./docs/qa-visual.md) — é ferramental do gate da **`Lúmen II`**, não instrução de orquestração.
 
 ### IDs (para automação via `gh`/GraphQL)
 - **projId**: `PVT_kwHOD_4JN84BedaN`

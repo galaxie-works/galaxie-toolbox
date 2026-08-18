@@ -84,10 +84,12 @@ Da tela **Overview**, copie o **Application (client) ID** e coloque em
 pub const CLIENT_ID: &str = "<application-client-id>";
 ```
 
-Para testar sem recompilar, dá para sobrescrever por variável de ambiente:
+Para testar sem recompilar, dá para sobrescrever por variável de ambiente.
+O nome primário é `GALAXIE_CLIENT_ID`; `VOAZ_CLIENT_ID` continua aceito como
+**alias legado** (`src-tauri/src/config.rs:160-161`):
 
 ```powershell
-$env:VOAZ_CLIENT_ID = "<application-client-id>"
+$env:GALAXIE_CLIENT_ID = "<application-client-id>"
 pnpm tauri dev
 ```
 
