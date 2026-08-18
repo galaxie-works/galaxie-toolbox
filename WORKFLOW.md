@@ -193,6 +193,26 @@ arquivo — que é a fonte — nunca o adotou. É ferramental **sob demanda**: a
 `Lúmen II` pede no gate, ou o autor anexa quando mexeu em layout/tema. A parte
 automatizável virou `test:component`/`test:browser` no #786, que rodam no CI.
 
+### 5.0-ter Gate do INTEGRADOR por integração (decisão DOC-07 do #1029, Polaris II)
+
+O gate manual que o **Polaris** roda a cada `git merge --no-ff` — o que decide o
+push pro `feat` — é, por decisão:
+
+| canal | quando | por quê |
+|---|---|---|
+| `pnpm exec tsc -b` | **sempre** | contrato de tipos; barato |
+| `pnpm test` (`node --test`) | **sempre** | lógica + gates estáticos (ratchets) |
+| `pnpm test:component` | **se o diff toca componente** (`*.tsx` de UI) | monta o componente; segundos |
+| `cargo check` (sem env OpenSSL) | **se toca `.rs`** | + `--features remote` se toca Remote; + `clippy -D warnings` no crate que tem o deny |
+| ~~`pnpm test:browser`~~ (Playwright) | **NÃO** no gate manual | **CI-only.** Pesado (browser runner); o `ci.yml` já roda os 3 canais em TODA PR. Rodar Playwright a cada integração seria custo redundante com o CI. |
+
+**A razão da assimetria:** o `test:component` é barato e pega regressão de
+montagem que o `tsc` não vê — vale o custo por integração. O `test:browser`
+existe pra foco/ponteiro **reais** e só roda com browser; o CI já o gata na PR,
+então o integrador confia no CI pra ESSE canal em vez de re-rodá-lo local. Se o
+CI da PR falhar no `test:browser`, o Polaris trata como qualquer CI vermelho —
+não integra até resolver.
+
 ⚠️ O `ci.yml` roda os três **e** a matriz de `cargo test`. O `release.yml` roda
 **só `pnpm test`** — gate menor que o de PR, medido no #1056 (TST-05) e ainda
 aberto: a correção proposta é extrair o gate para um `workflow_call` chamado
