@@ -219,7 +219,9 @@ function catalogoParaUnificado(a: AppCatalogo): AppUnificado {
     category: a.category,
     url: a.url,
     fluentIcon: null,
-    resumo: null,
+    // #1196: era `null` fixo — o catálogo não tinha descrição. Agora vem da
+    // curadoria (#1155), então o app do catálogo mostra resumo como o do M365.
+    resumo: a.desc,
     nativo: null,
     m365: false,
   };

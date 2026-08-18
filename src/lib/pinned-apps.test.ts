@@ -10,9 +10,9 @@ import {
 import type { AppCatalogo } from "./apps-catalog-core.ts";
 
 const cat: AppCatalogo[] = [
-  { id: "figma", name: "Figma", category: "Developer Tools", url: "u", icon: true },
-  { id: "notion", name: "Notion", category: "Productivity", url: "u", icon: true },
-  { id: "slack", name: "Slack", category: "Work and Business", url: "u", icon: true },
+  { id: "figma", name: "Figma", category: "Developer Tools", url: "u", icon: true, desc: { "pt-BR": "d", en: "d" } },
+  { id: "notion", name: "Notion", category: "Productivity", url: "u", icon: true, desc: { "pt-BR": "d", en: "d" } },
+  { id: "slack", name: "Slack", category: "Work and Business", url: "u", icon: true, desc: { "pt-BR": "d", en: "d" } },
 ];
 
 test("#721 estaPinado", () => {

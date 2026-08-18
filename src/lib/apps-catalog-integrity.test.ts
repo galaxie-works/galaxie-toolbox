@@ -20,6 +20,7 @@ const catalogo = JSON.parse(raw) as {
   name: string;
   url: string;
   icon: boolean;
+  desc?: { "pt-BR"?: string; en?: string };
 }[];
 
 /** #827 SU4: diretório dos ícones estáticos (servidos de `public/app-icons`). */
@@ -86,3 +87,87 @@ test("#827 SU4: todo app com icon:true tem arquivo de ícone não-vazio", () => 
     .map((a) => a.id);
   assert.deepEqual(quebrados, []);
 });
+
+// ─────────────────────── #1196: o catálogo curado ───────────────────────
+// A curadoria do épico #1155 aplicou 7 vereditos num write só e adicionou a
+// `desc` de cada sobrevivente. Estes gates existem para que a próxima entrada no
+// catálogo NASÇA completa — sem descrição o render volta a mostrar só o nome, e
+// sem ícone decodificável mostra a inicial. Os dois defeitos são silenciosos.
+
+test("#1196: todo app tem desc em pt-BR E en, não vazia", () => {
+  const semDesc = catalogo
+    .filter((a) => {
+      const pt = a.desc?.["pt-BR"]?.trim();
+      const en = a.desc?.en?.trim();
+      return !pt || !en;
+    })
+    .map((a) => a.id);
+  assert.deepEqual(
+    semDesc,
+    [],
+    "app sem descrição nos dois idiomas — o render mostra só o nome (#1196)",
+  );
+});
+
+test("#1196: descrição diz o que o app FAZ, não repete o nome", () => {
+  const iguais = catalogo
+    .filter((a) => {
+      const pt = a.desc?.["pt-BR"]?.trim().toLowerCase() ?? "";
+      return pt === a.name.trim().toLowerCase();
+    })
+    .map((a) => a.id);
+  assert.deepEqual(iguais, [], "desc pt-BR é só o nome repetido — não informa nada");
+});
+
+test("#1196: o ícone de todo app existe em disco e NÃO é raster renomeado .svg", () => {
+  // O `icon: true` do JSON é afirmação do gerador. Aqui o arquivo é ABERTO — foi
+  // assim que a curadoria achou 220 JPEG/PNG com extensão .svg (#1153).
+  const semArquivo: string[] = [];
+  const raster: string[] = [];
+  for (const a of catalogo) {
+    if (!a.icon) continue;
+    const arq = new URL(`${a.id}.svg`, iconesDir);
+    if (!existsSync(arq)) {
+      semArquivo.push(a.id);
+      continue;
+    }
+    const buf = readFileSync(arq);
+    const jpeg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+    const png =
+      buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+    const webp =
+      buf.subarray(0, 4).toString("latin1") === "RIFF" &&
+      buf.subarray(8, 12).toString("latin1") === "WEBP";
+    if (jpeg || png || webp) raster.push(a.id);
+  }
+
+  assert.deepEqual(semArquivo, [], "`icon: true` sem arquivo em public/app-icons");
+
+  // Ratchet: os 30 sobreviventes com ícone raster são dívida CONHECIDA, herdada do
+  // scrape e escopo da fatia 2 do #1153. A lista só pode ENCOLHER — app novo com
+  // raster reprova na hora, e app que sair daqui sem sair da lista também.
+  const conhecidos = new Set(RASTER_HERDADO);
+  const novos = raster.filter((id) => !conhecidos.has(id));
+  const resolvidos = RASTER_HERDADO.filter((id) => !raster.includes(id));
+  assert.deepEqual(
+    [
+      ...novos.map((id) => `NOVO raster: ${id}`),
+      ...resolvidos.map((id) => `RESOLVIDO, tire da lista: ${id}`),
+    ],
+    [],
+    "ícone raster renomeado .svg — renderiza a inicial, não o ícone (#1153 fatia 2)",
+  );
+});
+
+/**
+ * Os 30 sobreviventes da curadoria cujo ícone ainda é raster renomeado `.svg`.
+ * Medido em `7a5c3e5`. É o escopo REAL da fatia 2 do #1153: a baseline global
+ * tinha 237, mas 207 eram de apps que a curadoria removeu.
+ */
+const RASTER_HERDADO = [
+  "brevo", "claude", "copyai", "cursor", "deepseek", "elevenlabs", "framer",
+  "gamma", "gemini", "github-copilot", "google-ai-studio", "google-notebooklm",
+  "google-tasks", "grok", "heygen", "jasper", "jenkins", "microsoft-copilot",
+  "namecheap", "perplexity", "power-bi", "runway", "substack", "supabase",
+  "unifi", "veeam",
+];

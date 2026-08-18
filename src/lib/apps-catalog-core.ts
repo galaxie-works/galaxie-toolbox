@@ -14,6 +14,12 @@ export interface AppCatalogo {
   url: string;
   /** Tem ícone local em `public/app-icons/<id>.svg`? */
   icon: boolean;
+  /**
+   * Descrição curta do que o app FAZ, nos dois idiomas (#1196). Vem da curadoria
+   * do épico #1155 — todo app do catálogo tem, e o gate de integridade reprova
+   * se faltar. É o que o render unificado mostra; antes era `resumo: null` fixo.
+   */
+  desc: { "pt-BR": string; en: string };
 }
 
 /** Categorias canônicas do catálogo (as strings vêm do JSON de origem). */

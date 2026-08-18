@@ -9,11 +9,11 @@ import {
 } from "./apps-catalog-core.ts";
 
 const fix: AppCatalogo[] = [
-  { id: "figma", name: "Figma", category: "Developer Tools", url: "u", icon: true },
-  { id: "notion", name: "Notion", category: "Productivity", url: "u", icon: true },
-  { id: "slack", name: "Slack", category: "Work and Business", url: "u", icon: true },
-  { id: "chatgpt", name: "ChatGPT", category: "AI Tools", url: "u", icon: true },
-  { id: "trello", name: "Trello", category: "Productivity", url: "u", icon: false },
+  { id: "figma", name: "Figma", category: "Developer Tools", url: "u", icon: true, desc: { "pt-BR": "d", en: "d" } },
+  { id: "notion", name: "Notion", category: "Productivity", url: "u", icon: true, desc: { "pt-BR": "d", en: "d" } },
+  { id: "slack", name: "Slack", category: "Work and Business", url: "u", icon: true, desc: { "pt-BR": "d", en: "d" } },
+  { id: "chatgpt", name: "ChatGPT", category: "AI Tools", url: "u", icon: true, desc: { "pt-BR": "d", en: "d" } },
+  { id: "trello", name: "Trello", category: "Productivity", url: "u", icon: false, desc: { "pt-BR": "d", en: "d" } },
 ];
 
 test("#720 buscar: por nome (case-insensitive)", () => {
