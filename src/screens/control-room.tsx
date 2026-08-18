@@ -215,7 +215,6 @@ import {
   AtSign,
   Building2,
   CalendarCheck,
-  CalendarClock,
   CalendarDays,
   ChevronDown,
   ListFilter,
@@ -303,34 +302,6 @@ function IlustracaoCards() {
       </div>
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-linear-to-b from-background/0 via-background/60 to-background" />
     </div>
-  );
-}
-
-/** Ilustração de calendário (c-empty-20) — dia sem eventos. */
-function IlustracaoCalendario() {
-  return (
-    <svg
-      width="140"
-      height="122"
-      viewBox="0 0 160 140"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <rect x="24" y="28" width="112" height="96" rx="10" className="fill-background stroke-border" strokeWidth="1.5" />
-      <rect x="24" y="28" width="112" height="24" rx="10" className="fill-muted dark:fill-muted/60" />
-      <rect x="24" y="42" width="112" height="10" className="fill-muted dark:fill-muted/60" />
-      <line x1="56" y1="20" x2="56" y2="36" className="stroke-muted-foreground/30" strokeWidth="3" strokeLinecap="round" />
-      <line x1="104" y1="20" x2="104" y2="36" className="stroke-muted-foreground/30" strokeWidth="3" strokeLinecap="round" />
-      {[68, 86, 104].map((cy) =>
-        [48, 68, 88, 108].map((cx) => (
-          <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="4" className="fill-muted-foreground/10" />
-        ))
-      )}
-      <circle cx="88" cy="86" r="4" className="fill-primary/25" />
-      <circle cx="88" cy="86" r="2" className="fill-primary" />
-      <circle cx="148" cy="56" r="2.5" className="fill-primary/10" />
-    </svg>
   );
 }
 
@@ -527,59 +498,6 @@ function MultiSelecaoContexto({
   );
 }
 
-function AgendaVazia({ t }: { t: ReturnType<typeof useIdioma>["t"] }) {
-  return (
-    <Empty className="py-8">
-      <EmptyHeader>
-        <EmptyMedia>
-          <IlustracaoCalendario />
-        </EmptyMedia>
-        <EmptyTitle>{t.controlRoom.semEventosTitulo}</EmptyTitle>
-        <EmptyDescription>{t.controlRoom.semEventos}</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}
-
-/** Falha ao carregar a agenda — distinta do "sem eventos", com o erro real e
- *  um retry. Antes uma falha do Graph era mascarada como mês vazio (#21). */
-function AgendaErro({
-  mensagem,
-  onRetry,
-  t,
-}: {
-  mensagem: string;
-  onRetry: () => void;
-  t: ReturnType<typeof useIdioma>["t"];
-}) {
-  // Mensagem amigável na UI (o usuário não deve ver "/me/calendarView 429");
-  // o detalhe técnico vai pro console pra diagnóstico. #41
-  useEffect(() => {
-    console.warn("[agenda] falha ao carregar:", mensagem);
-  }, [mensagem]);
-  return (
-    <Empty className="py-8">
-      <EmptyHeader>
-        <EmptyMedia>
-          <CalendarClock className="size-8 text-muted-foreground" />
-        </EmptyMedia>
-        <EmptyTitle>
-          <SoftBlurIn delay={80} stagger={18}>
-            {t.controlRoom.agendaErroTitulo}
-          </SoftBlurIn>
-        </EmptyTitle>
-        <EmptyDescription className="text-xs">
-          {t.controlRoom.agendaErroDica}
-        </EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          <RefreshCw /> {t.controlRoom.atualizar}
-        </Button>
-      </EmptyContent>
-    </Empty>
-  );
-}
 
 // ===========================================================================
 // Painel 1 — pastas
