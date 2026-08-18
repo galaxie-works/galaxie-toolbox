@@ -88,11 +88,10 @@ pub fn parse_xor_mapped_address(resp: &[u8], txid: &[u8; 12]) -> Option<SocketAd
                     return Some(addr);
                 }
             }
-            ATTR_MAPPED_ADDRESS => {
-                // Guarda como fallback se nenhum XOR aparecer.
-                if fallback.is_none() {
-                    fallback = decode_plain_address(value);
-                }
+            // Guarda como fallback se nenhum XOR aparecer. Se já temos um
+            // fallback, o guard falha e cai no `_` (nada a fazer) — mesmo efeito.
+            ATTR_MAPPED_ADDRESS if fallback.is_none() => {
+                fallback = decode_plain_address(value);
             }
             _ => {}
         }

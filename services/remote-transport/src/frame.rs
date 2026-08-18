@@ -91,7 +91,7 @@ impl CodedFrameSource for DummyFrameSource {
                 return None;
             }
         }
-        let keyframe = self.contador % self.gop == 0;
+        let keyframe = self.contador.is_multiple_of(self.gop);
         let timestamp_us = self.contador * 1_000_000 / self.fps;
         let n = if keyframe {
             self.tamanho * 4
@@ -104,7 +104,7 @@ impl CodedFrameSource for DummyFrameSource {
         // delta. Sem isso o 0xAB (forbidden-bit=1) é NAL inválido e o depacketizer
         // do str0m rejeita/segura esperando keyframe (o E2E dummy não recebia nada).
         data.push(if keyframe { 0x65 } else { 0x61 });
-        data.extend(std::iter::repeat(0xAB).take(n.saturating_sub(1)));
+        data.extend(std::iter::repeat_n(0xAB, n.saturating_sub(1)));
         self.contador += 1;
         Some(CodedFrame {
             data,

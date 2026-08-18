@@ -192,3 +192,47 @@ jobs:
       - name: services/remote-broker-client
         working-directory: services/remote-broker-client
         run: cargo test
+
+  # #1193: o gate de clippy que NÃO existia. Até aqui o `#![deny(clippy::unwrap_used,
+  # expect_used)]` do remote-signaling era decoração — nada o executava, e no #1148
+  # entraram 3 `expect()` nesse crate com o CI verde (pegou a QA rodando na mão).
+  #
+  # Toolchain FIXADO (não `@stable`): clippy varia com a versão do compilador, então
+  # um upgrade de toolchain adicionaria lints novos e reprovaria o CI sem ninguém ter
+  # mexido em código. Ao fixar, a versão só sobe quando ALGUÉM edita esta linha.
+  # Subir a versão = tarefa consciente (corrige o que o novo clippy achar, num PR).
+  #
+  # ESCOPO (crescente, não big-bang — mesmo raciocínio do ratchet de ícones do #1153):
+  #   • remote-signaling  -D warnings → é onde o `deny(unwrap_used, expect_used)` já
+  #     está declarado no código; o gate só torna REAL o que o crate já promete.
+  #   • remote-transport  -D warnings → núcleo do Remote (stun/turn/frame/bridge); os
+  #     4 achados pré-existentes foram corrigidos neste mesmo PR, então entra limpo.
+  #   NÃO gateado ainda (de propósito): src-tauri (9,6k linhas num arquivo — um
+  #   hard-fail global seria revertido em uma hora) e os crates com feature OpenSSL.
+  #   Esses entram quando a dívida deles for zerada, um crate por vez.
+  # roda default (sem a feature webrtc→OpenSSL): barato, não precisa de NASM/OpenSSL.
+  clippy:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust + clippy (toolchain FIXADO — ver comentário acima)
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: clippy
+
+      - name: Cache do cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            services/remote-transport
+            services/remote-signaling
+
+      - name: clippy remote-signaling (-D warnings — onde o deny já mora)
+        working-directory: services/remote-signaling
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: clippy remote-transport (-D warnings — núcleo do Remote)
+        working-directory: services/remote-transport
+        run: cargo clippy --all-targets -- -D warnings
