@@ -5,7 +5,7 @@
 
 ---
 
-## 1. Os números da US estão desatualizados — e **para menos**
+## 1. Os números da US estão desatualizados — e em três achados, **para mais**
 
 A US foi escrita na auditoria #994 com linhas de um commit antigo. Medido hoje:
 
@@ -52,7 +52,7 @@ O próprio DoD já traz a cura, mas **listada por último**:
 
 > *"lint/teste que falha se `client.get|post|patch|delete` aparecer fora de um closure de `graph_enviar`"*
 
-**Essa linha tem que vir primeiro, não por último.** É a mesma forma do gate de ícone do `Confucius` (#1153): **baseline-ratchet** — registra os 81 numa baseline que **só encolhe**, e qualquer chamada direta **nova** reprova na hora. Aí a conversão vira trabalho incremental seguro em vez de um PR de 81 pontos que ninguém revisa.
+**Essa linha tem que vir primeiro, não por último.** É a mesma forma do gate de ícone do `Confucius` (#1153): **baseline-ratchet** — registra a dívida medida (**7**) numa baseline que **só encolhe**, e qualquer chamada direta **nova** reprova na hora.
 
 ## 3. Fatiamento — 7 fatias, por risco crescente
 
@@ -74,8 +74,12 @@ Ordem escolhida para que **cada fatia seja reconferível sozinha** e nenhuma dep
 
 - **Não aproveitar o `22b5f1e`.** Ele tem o desenho certo — client único, paginação sem ciclo, `patch_contatos_em_lote`, parser de `$batch` centralizado — mas o **diff** está velho: `git diff --stat origin/feat 22b5f1e` acusa **4.781 deleções**, incluindo o `overlay-webview-slice.ts` inteiro (#1163) e a devolução de 647 linhas ao `control-room` (#1019). **Aproveitar o diff desfaz trabalho de duas pessoas.** O desenho reaproveita; o patch, não.
 - **Não fazer as 7 num PR.** São 9.711 linhas e três mudanças de comportamento. Um PR desses não é revisável, e colide com todo mundo que toca `graph.rs`.
-- **Não converter os 81 antes do gate.** Sem ratchet, a contagem volta a subir enquanto a PR está aberta.
+- **Não converter antes do gate.** Sem ratchet, a contagem volta a subir enquanto a PR está aberta — e `graph.rs` é tocado por várias raias ao mesmo tempo.
+- **Não confiar em `grep -c` para dimensionar dívida.** Foi assim que eu inflei o RB37 de 7 para 81 (§1-bis). O grep diz **quantas vezes aparece**, não **quantas estão erradas**.
 
 ## 5. Estado
 
-**F1 é a próxima**, e é a única que não depende de decisão nenhuma.
+- **F1 ✅ entregue** — `src/lib/graph-enviar-gate.test.ts`, baseline `graph.rs` 4 · `favicon.rs` 2 · `auth.rs` 1. Gate verde, `tsc -b` 0, `node --test` 420/420.
+- **F3 é a próxima que eu faria**: é a de maior retorno pelo esforço — hoje **nenhuma** chamada Graph tem timeout, e 4 conexões penduradas param todo o tráfego do app **sem erro nenhum**.
+
+📌 Ao converter um call site, **baixe o número da BASELINE no mesmo PR**. O gate reprova se a dívida cair e o número não acompanhar — de propósito, para o ratchet não afrouxar em silêncio.
