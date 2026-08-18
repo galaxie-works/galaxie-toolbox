@@ -62,7 +62,19 @@ export type ErrorCodeS0 =
 
 /** Mensagens que o CLIENT envia (tag `type`, snake_case). */
 export type ClientMessage =
-  | { type: "register"; device_id: string; public_key: string }
+  // #1049 §4.3-passo-1: o Register carrega a PoP (nonce/timestamp/signature) quando
+  // o cliente roda no Tauri (assinada pelo Rust). Campos OPCIONAIS: o servidor v1
+  // ainda IGNORA (aditivo — não tem `deny_unknown_fields`), e o fallback de browser
+  // (sem Rust) segue mandando só device_id/public_key. O servidor passará a EXIGIR a
+  // PoP num passo separado (janela de atualização = decisão de PO, §5 do design).
+  | {
+      type: "register";
+      device_id: string;
+      public_key: string;
+      nonce?: string;
+      timestamp?: number;
+      signature?: string;
+    }
   | { type: "heartbeat" }
   | { type: "presence"; device_id: string }
   | { type: "create_assisted_session"; ttl_seconds?: number }
@@ -304,22 +316,38 @@ export function criarSinalizadorWs(endpoint: string): SinalizadorS0 {
         resolverConexao = resolve;
         rejeitarConexao = reject;
         void (async () => {
-          let publicKey: string;
+          // #1049 §4.3-passo-1: no Tauri, o registro usa a PoP assinada pelo Rust —
+          // device_id/pubkey da identidade ESTÁVEL (custódia DPAPI), nonce/timestamp/
+          // assinatura Ed25519 cobrindo `(deviceId, nonce, ts)`. A chave privada NUNCA
+          // existe no WebView. Fora do Tauri (pnpm dev no browser) não há Rust: cai no
+          // WebCrypto de antes (device_id efêmero, sem PoP). O servidor v1 ainda IGNORA
+          // a PoP (aditivo); passará a exigir num passo separado (janela = decisão de PO).
+          let registro: ClientMessage;
           try {
-            publicKey = await gerarPublicKey();
+            if (inTauri()) {
+              const pop = await remoteSignRegister();
+              registro = {
+                type: "register",
+                device_id: pop.deviceId,
+                public_key: pop.publicKey,
+                nonce: pop.nonce,
+                timestamp: pop.timestamp,
+                signature: pop.signature,
+              };
+            } else {
+              const publicKey = await gerarPublicKey();
+              // device_id = 32 hex (casa com o [A-Za-z0-9_-]{8,64} do protocolo).
+              const deviceId = crypto.randomUUID().replace(/-/g, "");
+              registro = { type: "register", device_id: deviceId, public_key: publicKey };
+            }
           } catch (e) {
             resolverConexao = null;
             rejeitarConexao = null;
             reject(
-              new Error(
-                "Ed25519 indisponível neste ambiente (WebCrypto). " +
-                  String(e),
-              ),
+              new Error("Falha ao preparar o registro do device (PoP/Ed25519): " + String(e)),
             );
             return;
           }
-          // device_id = 32 hex (casa com o [A-Za-z0-9_-]{8,64} do protocolo).
-          const deviceId = crypto.randomUUID().replace(/-/g, "");
           try {
             ws = new WebSocket(endpoint);
           } catch (e) {
@@ -329,11 +357,7 @@ export function criarSinalizadorWs(endpoint: string): SinalizadorS0 {
             return;
           }
           ws.onopen = () => {
-            enviar({
-              type: "register",
-              device_id: deviceId,
-              public_key: publicKey,
-            });
+            enviar(registro);
           };
           ws.onmessage = (ev) => {
             let msg: ServerMessage;
