@@ -289,39 +289,7 @@ import { AtalhosAjuda } from "@/components/atalhos-ajuda";
 /** #109 removeu o esconder-escopo em 400; a coleção canônica permanece vazia. */
 const FILTROS_OCULTOS = new Set<string>();
 
-// --- helpers de data/horário ------------------------------------------------
-
-function comZ(iso: string): string {
-  return iso.endsWith("Z") ? iso : iso + "Z";
-}
-
-function hora(iso: string, idioma: string): string {
-  const d = new Date(comZ(iso));
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString(idioma, { hour: "2-digit", minute: "2-digit" });
-}
-
-function faixaHora(ini: string, fim: string, idioma: string): string {
-  const a = hora(ini, idioma);
-  const b = hora(fim, idioma);
-  return b ? `${a} – ${b}` : a;
-}
-
-/** Data + hora curtas para a lista (hoje = só hora; senão data curta + hora). */
-function quandoCurto(iso: string, idioma: string): string {
-  const d = new Date(comZ(iso));
-  if (Number.isNaN(d.getTime())) return "";
-  const hoje = new Date();
-  const hora = d.toLocaleTimeString(idioma, { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === hoje.toDateString()) return hora;
-  const mesmoAno = d.getFullYear() === hoje.getFullYear();
-  const data = d.toLocaleDateString(idioma, {
-    day: "2-digit",
-    month: "short",
-    year: mesmoAno ? undefined : "2-digit",
-  });
-  return `${data} · ${hora}`;
-}
+import { comZ, faixaHora, quandoCurto } from "@/lib/data-email";
 
 
 // #640 (re-spec): a impressão saiu do front. O `window.print()` de um iframe cai
