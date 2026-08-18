@@ -213,12 +213,27 @@ então o integrador confia no CI pra ESSE canal em vez de re-rodá-lo local. Se 
 CI da PR falhar no `test:browser`, o Polaris trata como qualquer CI vermelho —
 não integra até resolver.
 
-✅ **CI e release rodam a MESMA definição** (`#1056` TST-05, fechado). Os três
-canais + `lint` vivem em `.github/workflows/gate-front.yml` (`workflow_call`), e
-tanto o `ci.yml` quanto o `release.yml` o chamam — no release como `needs:` do
-job que builda. Antes, o `release.yml` rodava **só `pnpm test`** antes do
-`tauri build`: um PR que reprovasse em `lint`/`test:component`/`test:browser`
-não integrava, mas uma tag que reprovaria nos mesmos testes **era publicada**.
+✅ **CI e release rodam a MESMA definição** (`#1056` TST-05). `pnpm build` +
+`lint` + `pnpm test` + `test:component` vivem em
+`.github/workflows/gate-front.yml` (`workflow_call`), e tanto o `ci.yml` quanto
+o `release.yml` o chamam — no release como `needs:` do job que builda. Antes, o
+`release.yml` rodava **só `pnpm test`** antes do `tauri build`: um PR que
+reprovasse em `lint`/`test:component` não integrava, mas uma tag que reprovaria
+nos mesmos testes **era publicada**.
+
+⚠️ **O `test:browser` NÃO está no gate bloqueante** (`#1262`, 18/08). Ele é job
+próprio no `ci.yml`, com `timeout-minutes`, e **não bloqueia o release**. Motivo
+medido: num run ele ficou **45+ min pendurado** — nem passou, nem reprovou — e
+travou o corte da v0.45.0; local, o `campo-pessoas.browser.test.tsx` sozinho
+estoura 10 min, então é a **subida do canal**, não o volume de testes.
+
+> **Passo que PENDURA num gate bloqueante é pior que passo que reprova.**
+> Reprovar avisa; pendurar só consome a janela de release, disfarçado de
+> "rodando". O teto transforma travamento em falha visível.
+
+Isso alinha com o **§5.0-ter**: o `test:browser` já era CI-only para o gate
+manual do integrador, pelo mesmo motivo (custo). Ele continua rodando em toda
+PR — só deixou de poder segurar uma tag.
 
 📌 **Por que `workflow_call` e não copiar os steps:** duas listas divergem na
 próxima vez que alguém acrescentar um check num lado só — que é exatamente como
