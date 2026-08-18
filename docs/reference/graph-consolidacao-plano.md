@@ -11,7 +11,7 @@ A US foi escrita na auditoria #994 com linhas de um commit antigo. Medido hoje:
 
 | Achado | US diz | Medido em `3479b36` | |
 |---|---|---|---|
-| **RB37** call sites fora do `graph_enviar` | 22 | **81** chamadas `client.(get\|post\|patch\|delete)` diretas | 🔺 3,7× |
+| **RB37** call sites fora do `graph_enviar` | 22 | **7** — ver §1-bis, a correção | 🔻 |
 | **RB39** comandos mortos | 4 | **4** — `cr_reunioes`, `cr_email`, `cr_inbox_dia`, `cr_contar` | = |
 | **RB40** write duplicado | 2 fn | **2** — `:7658` e `:7766` | = |
 | **RB41** laços de paginação | 4 | **13** ocorrências de `@odata.nextLink`; `fn paginar` **não existe** | 🔺 3,2× |
@@ -23,9 +23,30 @@ O `graph.rs` está com **9.711 linhas**.
 
 > **Achado de auditoria é hipótese com data.** Aqui as hipóteses continuam verdadeiras, mas **a dívida cresceu** entre a auditoria e hoje. Quem executar precisa medir de novo antes de cada fatia — não confiar nesta tabela daqui a uma semana, inclusive.
 
+## 1-bis. ⚠️ Correção da minha própria medição — RB37 é **7**, não 81
+
+A primeira versão deste doc disse *"RB37: 22 → **81**, 3,7× pior"*. **Está errado, e o erro é meu.**
+
+Os 81 vieram de `grep -c "client\.(get|post|patch|delete)"`. Ao construir o gate da F1 — que precisa saber se a chamada está **dentro de um closure de `graph_enviar`** — medi com varredura de parênteses:
+
+```
+graph.rs    81 chamadas   77 JÁ COBERTAS   →  4 violações
+auth.rs      1 chamada     0 cobertas      →  1 violação
+favicon.rs   2 chamadas    0 cobertas      →  2 violações
+                                    TOTAL →  7
+```
+
+**77 das 81 já estavam convertidas.** Contei o que já tinha sido feito como se fosse dívida.
+
+> **É o mesmo erro que este gate existe para impedir: contar o símbolo sem olhar o contexto.** E é a terceira vez no épico da auditoria que eu afirmo um número sem o escopo certo — as outras duas foram `airtable`/`shopify`/`pipefy` na curadoria. O padrão é o mesmo: **`grep -c` responde "quantas vezes aparece", não "quantas estão erradas".**
+
+**Consequência prática — o esforço da F1 despenca.** Não são 81 conversões; são **7**, e nenhuma no caminho quente. A F1 deixa de ser "congelar uma dívida enorme" e passa a ser **"fechar a porta com a casa quase arrumada"**. O resto do plano (F2–F7) não muda: aqueles achados foram medidos por símbolo desde o começo.
+
+⚠️ **O que continua verdadeiro e é o ponto real da F1:** o gate não existe para os 7. Existe para o **oitavo** — `graph.rs` é tocado por várias raias, e sem ratchet a contagem sobe de novo.
+
 ## 2. O erro que essa US convida a cometer
 
-O DoD lista *"22 call sites convertidos"*. Com **81**, a leitura ingênua é *"converter os 81 e pronto"*. **Isso é tapar buraco visível**, e é o modo de falha que já registramos: alguém converte os que achou, o gate não existe, e o 82º entra na semana seguinte.
+O DoD lista *"22 call sites convertidos"*. Com um grep cru dando **81**, a leitura ingênua é *"converter os 81 e pronto"* — e ela erra duas vezes: no número (são 7) e no método. **Isso é tapar buraco visível**, e é o modo de falha que já registramos: alguém converte os que achou, o gate não existe, e o 82º entra na semana seguinte.
 
 O próprio DoD já traz a cura, mas **listada por último**:
 
