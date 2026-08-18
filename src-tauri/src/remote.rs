@@ -21,9 +21,10 @@ use galaxie_remote_transport::turn::{
 };
 use galaxie_remote_net::protocol::Capabilities;
 use galaxie_remote_transport::{
-    canal_de_comandos, decode, encode_input, CommandReceiver as TransportCommandReceiver,
-    EncoderCommand as TransportEncoderCommand, EventoSessao, Frame as ControlFrame, IceServer,
-    InputEvent, Papel, Passo, ScreenInfo, SessionConfig, SignalMessage, Transport,
+    canal_de_comandos, decode, encode_input, CapabilityPolicy,
+    CommandReceiver as TransportCommandReceiver, EncoderCommand as TransportEncoderCommand,
+    EventoSessao, Frame as ControlFrame, IceServer, InputEvent, Papel, Passo, ScreenInfo,
+    SessionConfig, SignalMessage, Transport,
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -1133,7 +1134,29 @@ impl RuntimeSession {
                 self.send_event(RemoteSessionEvent::Screen { info })?;
             }
             ControlFrame::Input(event) => self.apply_host_input(event)?,
-            ControlFrame::Control(_) | ControlFrame::Chunk { .. } => {}
+            // #1070 RB6: aplica o gate de capability ANTES de qualquer processamento —
+            // não descarta em silêncio (o furo do §1). A política sai das capabilities
+            // da sessão (tipo único de 5 campos, RB7). Um frame negado é LOGADO e
+            // rejeitado. NUNCA logamos o conteúdo (ClipboardText carrega texto do
+            // usuário) — só o veredito. Os handlers de clipboard/file (S5-front) ainda
+            // não existem no app; até lá o frame permitido não é processado, mas o gate
+            // já vale e o negado já aparece no log.
+            ControlFrame::Control(msg) => {
+                if CapabilityPolicy::nova(self.capabilities).permite(&msg).is_err() {
+                    log::warn!(
+                        "[remote] frame de controle BLOQUEADO por capability \
+                         (clipboard/file desligado na sessão)"
+                    );
+                }
+            }
+            ControlFrame::Chunk { .. } => {
+                if !self.capabilities.file_transfer {
+                    log::warn!(
+                        "[remote] chunk de arquivo BLOQUEADO: capability file_transfer \
+                         desligada na sessão"
+                    );
+                }
+            }
         }
         Ok(())
     }
