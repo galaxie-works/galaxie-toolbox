@@ -7744,11 +7744,20 @@ pub fn cr_mover_contato(
     Ok(())
 }
 
+/// Resultado de uma escrita em lote sobre contatos pessoais (#1074 RB37).
+///
+/// Antes da F7 este shape existia DUAS vezes — `PeopleCompanyWriteResult` e
+/// `PeopleBulkDetailsWriteResult` — com os mesmos tres campos e a mesma
+/// serializacao. Dois nomes para uma forma so: o TS ja declarava as duas
+/// interfaces identicas, e nada no protocolo as distinguia.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PeopleCompanyWriteResult {
+pub struct PeopleWriteResult {
     pub write_available: bool,
+    /// IDs que o Graph confirmou (sub-resposta 2xx).
     pub saved_contact_ids: Vec<String>,
+    /// IDs que nao foram escritos — por transporte, por sub-resposta nao-2xx,
+    /// por falta de escopo ou por serem invalidos.
     pub failed_contact_ids: Vec<String>,
 }
 
@@ -7785,14 +7794,6 @@ where
     <Option<String> as serde::Deserialize>::deserialize(deserializer)
 }
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PeopleBulkDetailsWriteResult {
-    pub write_available: bool,
-    pub saved_contact_ids: Vec<String>,
-    pub failed_contact_ids: Vec<String>,
-}
-
 fn people_bulk_details_body(
     changes: Vec<PeopleBulkDetailsChange>,
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
@@ -7827,149 +7828,78 @@ fn people_bulk_details_body(
     Ok(body)
 }
 
-/// Persiste a Organization escolhida explicitamente como `companyName`.
-/// O Graph limita JSON batches a 20 sub-requisições; cada envelope é casado
-/// pelo `id`, pois a ordem das respostas não é garantida.
-pub fn cr_people_company_write(
-    store: &TokenStore,
-    contact_ids: Vec<String>,
-    company_name: &str,
-) -> Result<PeopleCompanyWriteResult, String> {
-    let company_name = company_name.trim();
-    if company_name.is_empty() || company_name.len() > 256 {
-        return Err("Invalid company name.".to_string());
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    let contact_ids: Vec<String> = contact_ids
-        .into_iter()
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty() && id.len() <= 512 && seen.insert(id.clone()))
-        .collect();
-    if contact_ids.is_empty() {
-        return Ok(PeopleCompanyWriteResult {
-            write_available: token_tem_escopo(store, "Contacts.ReadWrite")?,
-            saved_contact_ids: Vec::new(),
-            failed_contact_ids: Vec::new(),
-        });
-    }
-    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
-        return Ok(PeopleCompanyWriteResult {
-            write_available: false,
-            saved_contact_ids: Vec::new(),
-            failed_contact_ids: contact_ids,
-        });
-    }
-
-    let token = access_token(store)?;
-    let client = cliente();
-    let mut saved_contact_ids = Vec::new();
-    let mut failed_contact_ids = Vec::new();
-
-    for chunk in contact_ids.chunks(20) {
-        let requests: Vec<serde_json::Value> = chunk
-            .iter()
-            .enumerate()
-            .map(|(index, contact_id)| {
-                serde_json::json!({
-                    "id": index.to_string(),
-                    "method": "PATCH",
-                    "url": format!(
-                        "/me/contacts/{}",
-                        urlencoding::encode(contact_id)
-                    ),
-                    "headers": { "Content-Type": "application/json" },
-                    "body": { "companyName": company_name },
-                })
-            })
-            .collect();
-        let body = serde_json::json!({ "requests": requests });
-        let url = format!("{GRAPH}/$batch");
-        let response = match graph_enviar("people:company-write", GRAPH_TETO_ESPERA_S, || {
-            client.post(&url).bearer_auth(&token).json(&body).send()
-        }) {
-            Ok(response) => response,
-            Err(_) => {
-                failed_contact_ids.extend(chunk.iter().cloned());
-                continue;
-            }
-        };
-        if !response.status().is_success() {
-            failed_contact_ids.extend(chunk.iter().cloned());
+/// Separa os IDs de contato em (aceitos, rejeitados), preservando a ordem.
+///
+/// **Decisao da F7.** As duas escritas em lote divergiam AQUI, e so aqui:
+/// `cr_people_company_write` descartava ID invalido em silencio
+/// (`.filter(|id| !id.is_empty() && id.len() <= 512 ...)`), enquanto
+/// `cr_people_details_write` devolvia `Err("Invalid contact ID.")` e derrubava
+/// o lote inteiro. A mesma entrada dava dois comportamentos.
+///
+/// Nenhum dos dois vira o padrao:
+///
+/// - descartar calado e a familia do #1017 — quem pediu N contatos recebe
+///   "sucesso" com N-k escritos e nenhum sinal de que k sumiram;
+/// - abortar tudo faz um unico ID torto matar um lote de 200 contatos bons.
+///
+/// O terceiro caminho usa o canal que o resultado JA tem: ID invalido cai em
+/// `failed_contact_ids`, como qualquer outra falha por item. Isso sustenta a
+/// invariante que os dois comportamentos antigos quebravam — **todo ID nao
+/// duplicado sai exatamente uma vez em `saved` uniao `failed`** — e e ela que o
+/// teste abaixo prende.
+///
+/// Duplicata nao e perda: o ID segue processado, so que uma vez so.
+fn normalizar_ids_contatos(contact_ids: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let mut vistos = std::collections::HashSet::new();
+    let mut aceitos = Vec::new();
+    let mut rejeitados = Vec::new();
+    for contact_id in contact_ids {
+        let contact_id = contact_id.trim().to_string();
+        if contact_id.is_empty() || contact_id.len() > 512 {
+            rejeitados.push(contact_id);
             continue;
         }
-
-        let value: serde_json::Value = match response.json() {
-            Ok(value) => value,
-            Err(_) => {
-                failed_contact_ids.extend(chunk.iter().cloned());
-                continue;
-            }
-        };
-        let mut successful_indexes = std::collections::HashSet::new();
-        for item in value["responses"].as_array().into_iter().flatten() {
-            let Some(index) = item["id"]
-                .as_str()
-                .and_then(|id| id.parse::<usize>().ok())
-            else {
-                continue;
-            };
-            let status = item["status"].as_u64().unwrap_or_default();
-            if index < chunk.len() && escrita_status_ok(status) {
-                successful_indexes.insert(index);
-            }
-        }
-        for (index, contact_id) in chunk.iter().enumerate() {
-            if successful_indexes.contains(&index) {
-                saved_contact_ids.push(contact_id.clone());
-            } else {
-                failed_contact_ids.push(contact_id.clone());
-            }
+        if vistos.insert(contact_id.clone()) {
+            aceitos.push(contact_id);
         }
     }
-
-    Ok(PeopleCompanyWriteResult {
-        write_available: true,
-        saved_contact_ids,
-        failed_contact_ids,
-    })
+    (aceitos, rejeitados)
 }
 
-/// Aplica a mesma alteração de detalhes seguros a vários contatos pessoais.
-/// O Graph limita JSON batches a 20 sub-requisições; falhas de transporte ou
-/// sub-respostas não-2xx são isoladas nos IDs correspondentes.
-pub fn cr_people_details_write(
+/// PATCH do MESMO corpo em varios contatos pessoais, via `$batch` do Graph.
+///
+/// Motor unico das escritas de People (#1074 RB37). `cr_people_company_write` e
+/// `cr_people_details_write` eram ~100 e ~200 linhas que, da obtencao do token
+/// em diante, so diferiam no rotulo de telemetria e no corpo do PATCH — o
+/// chunking de 20, o isolamento de falha de transporte, a correlacao por
+/// `item["id"]` e a classificacao por `escrita_status_ok` eram identicos,
+/// duplicados linha a linha.
+///
+/// O Graph limita um JSON batch a 20 sub-requisicoes. Falha de transporte,
+/// resposta nao-2xx e corpo ilegivel reprovam so o chunk corrente; a sub-resposta
+/// decide contato a contato dentro do chunk.
+fn patch_contatos_em_lote(
     store: &TokenStore,
     contact_ids: Vec<String>,
-    changes: Vec<PeopleBulkDetailsChange>,
-) -> Result<PeopleBulkDetailsWriteResult, String> {
-    let body = people_bulk_details_body(changes)?;
-
-    let mut seen = std::collections::HashSet::new();
-    let mut normalized_contact_ids = Vec::new();
-    for contact_id in contact_ids {
-        let contact_id = contact_id.trim();
-        if contact_id.is_empty() || contact_id.len() > 512 {
-            return Err("Invalid contact ID.".to_string());
-        }
-        if seen.insert(contact_id.to_string()) {
-            normalized_contact_ids.push(contact_id.to_string());
-        }
-    }
+    body: serde_json::Map<String, serde_json::Value>,
+    rotulo: &'static str,
+) -> Result<PeopleWriteResult, String> {
+    let (aceitos, mut failed_contact_ids) = normalizar_ids_contatos(contact_ids);
 
     let write_available = token_tem_escopo(store, "Contacts.ReadWrite")?;
-    if normalized_contact_ids.is_empty() {
-        return Ok(PeopleBulkDetailsWriteResult {
+    if aceitos.is_empty() {
+        return Ok(PeopleWriteResult {
             write_available,
             saved_contact_ids: Vec::new(),
-            failed_contact_ids: Vec::new(),
+            failed_contact_ids,
         });
     }
     if !write_available {
-        return Ok(PeopleBulkDetailsWriteResult {
+        failed_contact_ids.extend(aceitos);
+        return Ok(PeopleWriteResult {
             write_available: false,
             saved_contact_ids: Vec::new(),
-            failed_contact_ids: normalized_contact_ids,
+            failed_contact_ids,
         });
     }
 
@@ -7977,9 +7907,8 @@ pub fn cr_people_details_write(
     let client = cliente();
     let batch_url = format!("{GRAPH}/$batch");
     let mut saved_contact_ids = Vec::new();
-    let mut failed_contact_ids = Vec::new();
 
-    for chunk in normalized_contact_ids.chunks(20) {
+    for chunk in aceitos.chunks(20) {
         let requests: Vec<serde_json::Value> = chunk
             .iter()
             .enumerate()
@@ -7987,17 +7916,14 @@ pub fn cr_people_details_write(
                 serde_json::json!({
                     "id": index.to_string(),
                     "method": "PATCH",
-                    "url": format!(
-                        "/me/contacts/{}",
-                        urlencoding::encode(contact_id)
-                    ),
+                    "url": format!("/me/contacts/{}", urlencoding::encode(contact_id)),
                     "headers": { "Content-Type": "application/json" },
                     "body": body.clone(),
                 })
             })
             .collect();
         let batch_body = serde_json::json!({ "requests": requests });
-        let response = match graph_enviar("people:details-write", GRAPH_TETO_ESPERA_S, || {
+        let response = match graph_enviar(rotulo, GRAPH_TETO_ESPERA_S, || {
             client
                 .post(&batch_url)
                 .bearer_auth(&token)
@@ -8014,7 +7940,6 @@ pub fn cr_people_details_write(
             failed_contact_ids.extend(chunk.iter().cloned());
             continue;
         }
-
         let value: serde_json::Value = match response.json() {
             Ok(value) => value,
             Err(_) => {
@@ -8022,18 +7947,19 @@ pub fn cr_people_details_write(
                 continue;
             }
         };
-        let mut successful_indexes = std::collections::HashSet::new();
+
+        let mut indices_ok = std::collections::HashSet::new();
         for item in value["responses"].as_array().into_iter().flatten() {
             let Some(index) = item["id"].as_str().and_then(|id| id.parse::<usize>().ok()) else {
                 continue;
             };
             let status = item["status"].as_u64().unwrap_or_default();
             if index < chunk.len() && escrita_status_ok(status) {
-                successful_indexes.insert(index);
+                indices_ok.insert(index);
             }
         }
         for (index, contact_id) in chunk.iter().enumerate() {
-            if successful_indexes.contains(&index) {
+            if indices_ok.contains(&index) {
                 saved_contact_ids.push(contact_id.clone());
             } else {
                 failed_contact_ids.push(contact_id.clone());
@@ -8041,11 +7967,110 @@ pub fn cr_people_details_write(
         }
     }
 
-    Ok(PeopleBulkDetailsWriteResult {
+    Ok(PeopleWriteResult {
         write_available: true,
         saved_contact_ids,
         failed_contact_ids,
     })
+}
+
+#[cfg(test)]
+mod testes_escrita_contatos_em_lote {
+    use super::*;
+
+    /// A invariante que as DUAS formas antigas quebravam, cada uma do seu jeito.
+    #[test]
+    fn id_invalido_vira_falha_em_vez_de_sumir_ou_abortar() {
+        let (aceitos, rejeitados) = normalizar_ids_contatos(vec![
+            "  bom-1  ".to_string(),
+            String::new(),
+            "   ".to_string(),
+            "x".repeat(513),
+            "bom-2".to_string(),
+        ]);
+
+        assert_eq!(aceitos, vec!["bom-1", "bom-2"], "o trim tem que valer");
+        assert_eq!(
+            rejeitados.len(),
+            3,
+            "vazio, so-espaco e >512 sao falhas reportadas — nao descartes calados"
+        );
+        assert!(
+            !rejeitados.iter().any(|id| id == "bom-1" || id == "bom-2"),
+            "ID bom nao pode ser reprovado junto"
+        );
+    }
+
+    /// Prende a soma: nenhum ID entra e some. Com os comportamentos antigos este
+    /// teste nao passava — `company` perdia 3 no caminho e `details` nem chegava
+    /// aqui, devolvia `Err`.
+    #[test]
+    fn todo_id_nao_duplicado_sai_exatamente_uma_vez() {
+        let entrada: Vec<String> = vec!["a", "", "b", "  ", "c"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let (aceitos, rejeitados) = normalizar_ids_contatos(entrada.clone());
+        assert_eq!(
+            aceitos.len() + rejeitados.len(),
+            entrada.len(),
+            "aceitos + rejeitados tem que fechar com a entrada"
+        );
+    }
+
+    /// Duplicata e colapsada, nao reprovada: o contato segue escrito uma vez.
+    #[test]
+    fn duplicata_e_colapsada_e_nao_conta_como_falha() {
+        let (aceitos, rejeitados) = normalizar_ids_contatos(vec![
+            "a".to_string(),
+            " a ".to_string(),
+            "a".to_string(),
+            "b".to_string(),
+        ]);
+        assert_eq!(aceitos, vec!["a", "b"]);
+        assert!(rejeitados.is_empty(), "duplicata nao e falha");
+    }
+
+    /// Lote sem nenhum ID aceito nao pode perder os invalidos pelo caminho.
+    #[test]
+    fn lote_vazio_nao_perde_os_invalidos() {
+        let (aceitos, rejeitados) = normalizar_ids_contatos(vec![String::new(), "  ".to_string()]);
+        assert!(aceitos.is_empty(), "nao ha o que mandar ao Graph");
+        assert_eq!(rejeitados.len(), 2, "mas os 2 invalidos seguem reportados");
+    }
+}
+
+/// Grava o mesmo nome de empresa em varios contatos pessoais (#288).
+///
+/// Caso particular de `patch_contatos_em_lote`: so monta o corpo de um campo.
+pub fn cr_people_company_write(
+    store: &TokenStore,
+    contact_ids: Vec<String>,
+    company_name: &str,
+) -> Result<PeopleWriteResult, String> {
+    let company_name = company_name.trim();
+    if company_name.is_empty() || company_name.len() > 256 {
+        return Err("Invalid company name.".to_string());
+    }
+    let mut body = serde_json::Map::new();
+    body.insert(
+        "companyName".to_string(),
+        serde_json::Value::String(company_name.to_string()),
+    );
+    patch_contatos_em_lote(store, contact_ids, body, "people:company-write")
+}
+
+/// Aplica a mesma alteracao de detalhes seguros a varios contatos pessoais.
+///
+/// Caso geral de `patch_contatos_em_lote`: o corpo vem do whitelist de campos
+/// em `people_bulk_details_body`, que continua validando ANTES de tocar em ID.
+pub fn cr_people_details_write(
+    store: &TokenStore,
+    contact_ids: Vec<String>,
+    changes: Vec<PeopleBulkDetailsChange>,
+) -> Result<PeopleWriteResult, String> {
+    let body = people_bulk_details_body(changes)?;
+    patch_contatos_em_lote(store, contact_ids, body, "people:details-write")
 }
 
 #[cfg(test)]
