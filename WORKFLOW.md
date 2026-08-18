@@ -153,6 +153,16 @@ Cada coluna tem **um significado e um dono do próximo passo**. Esta é a fonte 
   2. **Gate de runtime/QA depois de integrar** (ex.: preview no empacotado, risco tipo #873) — senão a issue fecha antes da prova;
   3. **Design/spec** de issue aprovada (o doc integra; o *done* é quando a implementação landa).
 - **Consequência no board (§4.2):** `Closes` move o card; `Ref` **não move**.
+### 5.0 Branch: NÃO se deleta ao integrar (decisão canônica)
+
+**O branch mergeado PERMANECE.** Deletá-lo apaga o vínculo da seção **Development** da issue, e o PO já **reprovou** por isso. Branch atrelada a issue (via `gh issue develop`) é rastreável — não é lixo.
+
+- **Proibido** remover o branch remoto no passo de integração, e proibido o `--delete-branch` do `gh`.
+- **Permitido e desejável:** varrer branches **genuinamente órfãs** — sem issue atrelada, da era anterior ao linked-branch. Tem card próprio (**#1040**); hoje são **313 branches remotas**.
+- **Worktree de agente** é outra coisa: essa **remove** ao concluir.
+
+> Esta é a decisão que desempata o antigo conflito do `AGENTS.md` (achado **DOC-01** da auditoria #994). Qualquer outro doc que mande deletar branch ao integrar está **superseded por esta seção**.
+
 - **Devs abrem PR; NÃO mergeiam.** **O Polaris integra** por **merge local** (worktree off `feat`, `git merge --no-ff`, gate, `push HEAD:feat`, **move o card conforme §4.2** — `Closes` → `Done`; `Ref` → não move, anuncia na #133 —, limpa a worktree). Nunca `gh pr merge`.
 - **Gate de integração (Polaris):** `pnpm exec tsc -b` (exit 0) · `pnpm test` (`node --test`) · **`cargo check` SEM env OpenSSL** quando mexe em Rust (pega str0m/openssl vazando). CRLF: `core.autocrlf=true` na worktree.
 

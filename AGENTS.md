@@ -80,7 +80,7 @@ Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pr
 > 🌿 **HIGIENE DE BRANCH E DE `main` (regra do PO, 2026-08-03 — o repo chegou a 138 branches e a `main` 32 commits atrás).** O modelo é **`feat/bridge-email-client` = tronco/develop**, **`main` = release** (o workflow de Release só dispara em **push de tag `v*`** ou dispatch — push na `main` NÃO builda/publica).
 > - **NÃO deletar o branch ao integrar** (regra do PO — ver §4). Deletar apaga o vínculo da seção **Development** da issue, e isso **já foi motivo de Rejected**. Branch atrelada a issue é rastreável, não é lixo. **A única varredura permitida é a de branches genuinamente órfãs** (sem issue atrelada, da era pré-`gh issue develop`) — hoje são **313 branches remotas** e o saneamento tem card próprio (#1040). Worktree de agente: **essa sim**, remover ao concluir.
 >
-> ⚠️ *A redação anterior aqui mandava `git push origin --delete <branch>` ao integrar — **contradizia o §4 no mesmo arquivo** e induzia ao erro que o PO reprova. Corrigido em 2026-08-18 (achado DOC-01 da auditoria #994, US #1018).*
+> ⚠️ *Até 2026-08-18 esta seção mandava **remover o branch remoto** no passo de integração — contradizendo o §4 deste mesmo arquivo e induzindo ao erro que o PO reprova. Regra canônica: [`WORKFLOW.md` §5.0](./WORKFLOW.md). (Achado DOC-01 da auditoria #994, US #1018.)*
 > - **`main` nunca deve encalhar.** Alinhar `feat→main` (PR de merge, padrão do repo) a cada release real, e **release incremental a cada ~3 issues** — a `main` não pode passar de ~10 commits atrás da `feat`. Se a fila em QA Approved cresce sem release, o Polaris **cobra o PO** pra validar e cortar.
 > - **Não deixar branch não-mergeado órfão.** Se um rework/WIP não vai ser integrado, decidir: reintegrar ou descartar explicitamente (não deixar boiando anos). O Polaris varre branches não-mergeados no sweep e cobra dono/decisão.
 
@@ -135,7 +135,7 @@ Para **dúvidas de design** (padrão de componente, comportamento de interação
 - **PR atrelado** com `Closes #N` (fecha automático no merge). É adicional ao linked branch — juntos dão rastreabilidade issue ↔ branch ↔ PR.
 - PRs vão pra **`feat/bridge-email-client`**, que **É o default branch do repositório** (confirmado: `gh api repos/... --jq .default_branch`). Portanto **`Closes #<US>` preenche a caixa Development E auto-fecha a US no merge à `feat`** — não é preciso chegar à `main`. Ver [`WORKFLOW.md` §5](./WORKFLOW.md) para quando usar `Ref` em vez de `Closes`.
 
-  ⚠️ *A redação anterior dizia "issues auto-fecham só no merge à `main` (default branch)" — **factualmente errado**. Quem lesse isso usaria `Closes` achando que não fecha nada, e fechava a US antes do gate. Corrigido em 2026-08-18 (achado DOC-02 da auditoria #994, US #1018).*
+  ⚠️ *Até 2026-08-18 esta linha apontava a `main` como default branch e dizia que a issue só fecharia no merge a ela — **factualmente errado** (o default é a `feat`). Quem lesse isso usaria `Closes` achando que não fechava nada, e fechava a US antes do gate de QA. (Achado DOC-02 da auditoria #994, US #1018.)*
 - **NÃO deletar a branch após o merge** (⚠️ NÃO usar `--delete-branch`). O PO exige que a seção **Development** da issue continue mostrando a branch atrelada; deletar apaga esse vínculo (foi motivo de Rejected). Como toda branch é **atrelada a uma issue** (via `gh issue develop`), elas são rastreáveis — não são "órfãs". Só varrer branches genuinamente órfãs (sem issue, pré-era do linked-branch).
 - Cada feature que mereça commit, comita. `tsc` + `cargo check` verdes antes de PR.
 
