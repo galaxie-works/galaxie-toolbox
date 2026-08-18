@@ -186,6 +186,13 @@ existia só num comentário do `vitest.config.ts`; não estava aqui, nem no
 **Antes de abrir PR:** rode os três se tocou no front. `pnpm test` sozinho passa
 verde com o componente quebrado.
 
+📸 **QA visual (`pnpm qa:visual`) NÃO é obrigatório** — decidido no #1029
+(DOC-11). O `docs/qa-visual.md` dizia "Fluxo obrigatório para PR de UI", mas o
+`AGENTS.md` já o classificava como ferramental do gate da `Lúmen II`, e este
+arquivo — que é a fonte — nunca o adotou. É ferramental **sob demanda**: a
+`Lúmen II` pede no gate, ou o autor anexa quando mexeu em layout/tema. A parte
+automatizável virou `test:component`/`test:browser` no #786, que rodam no CI.
+
 ⚠️ O `ci.yml` roda os três **e** a matriz de `cargo test`. O `release.yml` roda
 **só `pnpm test`** — gate menor que o de PR, medido no #1056 (TST-05) e ainda
 aberto: a correção proposta é extrair o gate para um `workflow_call` chamado
