@@ -137,3 +137,35 @@ O D3 diz que `Tooltip` fica fora do D2 porque hover é alta frequência. Correto
 A conta agora é **app-global** (slice do store), enquanto o consumidor é **só a tela do navegador**. Um diálogo aberto no Bridge incrementa a mesma conta.
 
 Hoje é inofensivo: o efeito tem saída antecipada em `!visivel` (`navegador.tsx:1913-1918`) — se a tela não está à frente, a webview já é escondida por outro caminho. **Fica registrado para o dia em que houver um segundo consumidor de webview:** aí a conta única passa a ser acoplamento de verdade, e o slice precisa virar conta por-consumidor.
+
+---
+
+## 9. O D3 tinha uma terceira saída que eu não vi — e ela mata o §8.2 (2026-08-18)
+
+O `Sirius` fechou o **#1179** (PR #1201) e o resultado **obsoleta o meu §8.2**. Registro porque doc que fica errado é pior que doc que não existe.
+
+### O que eu escrevi, e onde estava o limite
+
+O **D3** cravou o critério certo: *"não é qual primitivo, é **a caixa do overlay cruza o retângulo da webview?**"*. Mas na hora de operacionalizar, o §8.2 disse: *"o tooltip que comprovadamente cruza entra pelo **caminho pontual** (`chromeOverlays`), nunca pelo primitivo"* — e avisei que remover esse caminho devolveria o flicker.
+
+**Eu enunciei o critério como geometria e o implementei como lista.** `chromeOverlays` era uma exceção mantida à mão (o tooltip do rail colapsado, #358/#360). Lista de exceção precisa de manutenção e envelhece — foi o que aconteceu com a enumeração de agentes no `Rules.md` (#1043), no mesmo dia.
+
+### A saída que ele achou
+
+Ele transformou o critério em **medição**: `cruzaWebview(caixa, webview)` puro em `lib/navigator-overlay-core.ts`, o Navigator publica a **região** da webview no store (**inclusive escondida** — senão um tooltip aberto mudaria de veredito no meio da vida dele), e o `TooltipContent` mede a própria caixa **depois** do Radix posicionar, registrando **só se cruzar**.
+
+Conferi a função: interseção AABB com `<` estrito nos quatro lados — **bordas que só se encostam não cruzam** — e retorno `false` para retângulo degenerado ou webview ausente. Custo: **1 `getBoundingClientRect` por abertura**, não por movimento de mouse.
+
+⇒ **Com o critério medido, `chromeOverlays` ficou sem produtor** — e mecanismo morto mantido "por precaução" é exatamente a patologia que este doc combate. Ele removeu. Conferi: as duas menções que sobraram no código são **comentários históricos** explicando por que o mecanismo morreu, não produtores.
+
+### O que fica no lugar do §8.2
+
+> **Quando o critério é geométrico, a regra é medir — não listar quem se encaixa.** Lista de exceção é o critério *congelado no dia em que foi escrito*; a medição continua verdadeira quando o layout muda.
+
+E a contagem de caminhos fecha a história da família #275 → #358/#360 → #1163 → #1179:
+
+| Antes | Agora |
+|---|---|
+| contexto com default no-op + window-event `galaxie:webview-ceder` + lista de chamadas manuais | **uma conta, no store, com gate** |
+
+**Três mecanismos paralelos viraram um.** O D2 tinha matado o primeiro; o D3-como-medição matou os outros dois.
