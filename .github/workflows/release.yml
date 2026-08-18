@@ -21,7 +21,16 @@ env:
   REPO_DISTRIBUICAO: galaxie-works/galaxie-toolbox-releases
 
 jobs:
+  # #1056 (TST-05): o release publicava com gate MENOR que o de PR — rodava só
+  # `pnpm test` antes do `tauri build`, sem lint, sem test:component e sem
+  # test:browser. Um PR que reprovasse neles não integrava; uma tag que
+  # reprovaria era publicada. Agora chama a MESMA definição que o `ci.yml`.
+  gate-front:
+    uses: ./.github/workflows/gate-front.yml
+
   windows:
+    # O build só começa depois do gate passar.
+    needs: gate-front
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -75,8 +84,9 @@ jobs:
       # Os testes (node:test) rodam ANTES do build do Rust — que domina o tempo.
       # Uma regressão barra o release aqui em segundos, sem gastar a compilação
       # inteira só pra descobrir que a versão não deveria sair.
-      - name: Testes
-        run: pnpm test
+      # O `pnpm test` saiu daqui: o job `gate-front` (mesma definição do CI) já
+      # roda os 3 canais + lint antes deste job começar (`needs`). Mantê-lo aqui
+      # seria rodar o mais fraco dos três de novo, no runner caro do Windows.
 
       # O `openssl/vendored` (ligado pela feature `remote`) compila o OpenSSL a
       # partir do fonte, e no Windows esse build precisa do NASM para as rotinas

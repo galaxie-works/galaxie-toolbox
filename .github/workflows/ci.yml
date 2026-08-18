@@ -18,80 +18,14 @@ permissions:
   contents: read
 
 jobs:
-  # Front-end: typecheck + build + lint + testes. Roda no ubuntu (rápido/barato);
-  # o build do Vite é puro JS, não precisa das libs nativas do Tauri.
+  # Front-end: typecheck + build + lint + os 3 canais de teste.
+  #
+  # #1056 (TST-05): os steps saíram daqui para `gate-front.yml` (`workflow_call`).
+  # O `release.yml` chama o MESMO arquivo — antes ele rodava só `pnpm test` antes
+  # do `tauri build`, então a tag publicava com gate menor que o de PR. Uma
+  # definição, dois chamadores: não há como um caminho ficar mais fraco.
   frontend:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          run_install: false
-
-      # #1056 (TST-08): o path era `~/.pnpm-store`, que o pnpm 11 NÃO usa (o
-      # store fica em `~/.local/share/pnpm/store/<v>` no Linux e em
-      # `%LOCALAPPDATA%\pnpm\store\<v>` no Windows). O step salvava um
-      # diretório vazio e restaurava nada — cache que AFIRMA e não confere.
-      # Agora o caminho vem do próprio pnpm, em vez de literal.
-      - name: Descobrir o store do pnpm
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache do pnpm
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          # Sem `restore-keys` um lockfile novo perdia o cache INTEIRO; com ele
-          # o run parte do store da última key do mesmo SO.
-          restore-keys: |
-            pnpm-${{ runner.os }}-
-
-      - name: Instalar dependências
-        run: pnpm install --frozen-lockfile
-
-      # `pnpm build` = `tsc -b && vite build` — cobre typecheck E o build do Vite.
-      - name: Build (tsc + vite)
-        run: pnpm build
-
-      - name: Lint (oxlint)
-        run: pnpm lint
-
-      - name: Testes (node:test)
-        run: pnpm test
-
-      # #786: testes de COMPONENTE (vitest + happy-dom) — exercitam a interação
-      # real com o Base UI (Combobox do compose) que o node:test não cobre.
-      - name: Testes de componente (vitest)
-        run: pnpm test:component
-
-      # #786: testes em NAVEGADOR REAL (vitest browser-mode / Playwright chromium)
-      # — foco/ponteiro de verdade, o único jeito de guardar a recorrência do
-      # erase do compose. Precisa do browser instalado no runner.
-      # #1056 (TST-09): sem cache, o chromium era baixado da rede em TODO run.
-      # A key sai do lockfile — versão nova do Playwright invalida sozinha.
-      - name: Cache do browser (Playwright)
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-
-      - name: Instalar chromium (Playwright)
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Testes em navegador (vitest browser-mode)
-        run: pnpm test:browser
+    uses: ./.github/workflows/gate-front.yml
 
   # Rust/Tauri: compila e testa o Remote REAL (não o `remote_stub`) + os 6 crates
   # de services/. Roda no windows-latest (mesma plataforma do release, evita as

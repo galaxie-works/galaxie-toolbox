@@ -213,10 +213,19 @@ então o integrador confia no CI pra ESSE canal em vez de re-rodá-lo local. Se 
 CI da PR falhar no `test:browser`, o Polaris trata como qualquer CI vermelho —
 não integra até resolver.
 
-⚠️ O `ci.yml` roda os três **e** a matriz de `cargo test`. O `release.yml` roda
-**só `pnpm test`** — gate menor que o de PR, medido no #1056 (TST-05) e ainda
-aberto: a correção proposta é extrair o gate para um `workflow_call` chamado
-pelos dois, em vez de duplicar a lista.
+✅ **CI e release rodam a MESMA definição** (`#1056` TST-05, fechado). Os três
+canais + `lint` vivem em `.github/workflows/gate-front.yml` (`workflow_call`), e
+tanto o `ci.yml` quanto o `release.yml` o chamam — no release como `needs:` do
+job que builda. Antes, o `release.yml` rodava **só `pnpm test`** antes do
+`tauri build`: um PR que reprovasse em `lint`/`test:component`/`test:browser`
+não integrava, mas uma tag que reprovaria nos mesmos testes **era publicada**.
+
+📌 **Por que `workflow_call` e não copiar os steps:** duas listas divergem na
+próxima vez que alguém acrescentar um check num lado só — que é exatamente como
+o buraco surgiu. Uma definição, dois chamadores: não há onde divergir.
+
+O gate de **Rust** segue nos jobs próprios do `ci.yml` (matriz de crates); no
+release, o `tauri build` reprova sozinho se o Rust não compilar.
 
 ### 5.1 Integrador reserva (fila represada)
 
