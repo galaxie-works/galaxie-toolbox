@@ -89,3 +89,39 @@ O `Polaris` mediu certo: **o `/v2/ws` não carrega `ice_servers`** (zero ocorrê
 3. **#1133:** `ice_servers` migra pro v2, atrelado ao device matriculado. Aí o §3 vira defesa em profundidade, não o controle principal.
 
 **O que eu explicitamente NÃO recomendo:** segurar o relay até o #1133. Suporte assistido funcionando vale mais que a raiz fechada, **desde que o teto exista** — e o §3 é o teto.
+
+---
+
+## 6. ⚠️ ATUALIZAÇÃO — não é "quando subir". **Já subiu, e eu aloquei.** (2026-08-18, `249d9a3`)
+
+Este doc foi escrito como aviso preventivo. Ao assumir a infra (#1184) eu **testei contra produção**, e o tempo verbal estava errado.
+
+### 6.1 O relay JÁ FUNCIONA — o "único bloqueio" do caminho crítico não existe
+
+Fiz um `Allocate` TURN real contra `telemetry.thegalaxie.cloud:3478` (UDP, `REQUESTED-TRANSPORT=UDP`):
+
+```
+401 recebido: realm='telemetry.thegalaxie.cloud'  nonce=16B
+Allocate  →  SUCESSO
+XOR-RELAYED-ADDRESS = 145.223.94.149:49185
+```
+
+A porta relayed **49185** cai dentro do `min-port=49160`/`max-port=49200` do `turnserver.conf`. Ou seja: **coturn no ar, `turn_secret` alinhado entre signaling e coturn, e a faixa UDP de relay alcançável de fora.** Não há o que provisionar.
+
+### 6.2 E o §1 deixou de ser leitura de código — virou demonstração
+
+O `Allocate` acima usou credencial obtida assim, na mesma execução:
+
+```
+Register no /v1/ws com device_id INVENTADO + 32 bytes ALEATÓRIOS como public_key
+  → resposta: "registered"
+  → ice_servers: 1  (stun + turn:udp + turn:tcp, com username e credential)
+```
+
+**De uma máquina que não tem nada a ver com o produto.** Não é hipótese: é um relay aberto, **agora**.
+
+### 6.3 O que isso muda no §3
+
+Nada no conteúdo — **tudo na urgência.** As linhas de `denied-peer-ip` e quota não são mais "junto do provisionamento". São **correção de produção**, e o item que eu mais quero é o `denied-peer-ip`: sem ele, essa alocação que eu acabei de obter pode ter como peer o `127.0.0.1` do VPS, onde moram o signaling e a telemetria.
+
+📌 **Não exercitei esse caminho.** A ausência de `denied-peer-ip` está provada pelo arquivo de config; explorar o pivô não acrescentaria informação e acrescentaria risco. **Medir o suficiente para decidir, e parar aí.**
