@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import { useAppStore } from "@/store";
+// A REGRA do #1179 é pura e mora no `-core.ts` (o `node --test` não carrega .tsx).
+import { cruzaWebview } from "./navigator-overlay-core";
+
+export { cruzaWebview };
+export type { RetanguloWebview } from "./navigator-overlay-core";
 
 /**
  * Z-order do WebView2 (#275, padrão do #174): a webview nativa pinta ACIMA do
@@ -99,5 +104,63 @@ export function useRegistroOverlayWebview(
       onOpenChange?.(aberto);
     },
     [controlado, aplicar, onOpenChange],
+  );
+}
+
+/**
+ * #1179: registro do TOOLTIP — devolve um ref callback pro elemento de conteúdo.
+ *
+ * Por que aqui e não no D2: o D2 registra pelo ESTADO (`open`), e pro tooltip isso
+ * seria cedo demais — não se sabe onde a caixa vai parar antes de ela existir. Aqui
+ * o registro é decidido pela GEOMETRIA REAL, depois que o Radix posicionou.
+ *
+ * **Por que não gera jank** (o AC do card):
+ *  - só roda quando um tooltip REALMENTE abre — o `onOpenChange` do Radix já vem
+ *    depois do `delayDuration` de hover; passar o mouse não executa nada;
+ *  - é UM `getBoundingClientRect` por abertura, não por movimento de mouse;
+ *  - hover que NÃO cruza não toca a webview: `cruzaWebview` devolve false e nenhum
+ *    registro acontece — nada de esconder/revelar, nada de cintilação;
+ *  - fora do Navigator (`webviewRect === null`) o custo é uma comparação com null.
+ *
+ * A medição é adiada um frame (`requestAnimationFrame`): o Radix posiciona o
+ * conteúdo DEPOIS de montar, e medir antes disso leria a caixa na origem. A
+ * animação de entrada do tooltip (fade/zoom) cobre esse frame.
+ */
+export function useRegistroTooltipWebview(): (el: HTMLElement | null) => void {
+  const registrar = useRegistrarOverlayWebview();
+  const registradoRef = useRef(false);
+
+  // Solta o registro se o tooltip sumir ainda "cruzando" (mesma auto-cura do D2:
+  // conta presa esconderia a webview pra sempre).
+  useEffect(
+    () => () => {
+      if (registradoRef.current) {
+        registradoRef.current = false;
+        registrar(false);
+      }
+    },
+    [registrar],
+  );
+
+  return useCallback(
+    (el: HTMLElement | null) => {
+      if (!el) {
+        if (registradoRef.current) {
+          registradoRef.current = false;
+          registrar(false);
+        }
+        return;
+      }
+      requestAnimationFrame(() => {
+        // O tooltip pode ter fechado dentro do frame.
+        if (!el.isConnected || registradoRef.current) return;
+        const b = el.getBoundingClientRect();
+        const caixa = { x: b.x, y: b.y, w: b.width, h: b.height };
+        if (!cruzaWebview(caixa, useAppStore.getState().webviewRect)) return;
+        registradoRef.current = true;
+        registrar(true);
+      });
+    },
+    [registrar],
   );
 }
