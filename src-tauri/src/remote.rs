@@ -14,6 +14,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use galaxie_remote_transport::stun::{build_binding_request, parse_xor_mapped_address};
+use galaxie_remote_transport::turn::{
+    build_allocate_request, build_allocate_request_auth, derive_key, parse_allocate_success,
+    parse_error_unauthorized,
+};
 use galaxie_remote_transport::{
     canal_de_comandos, decode, encode_input, CommandReceiver as TransportCommandReceiver,
     EncoderCommand as TransportEncoderCommand, EventoSessao, Frame as ControlFrame, IceServer,
@@ -39,6 +43,11 @@ const STATS_INTERVAL: Duration = Duration::from_secs(1);
 const SRFLX_GATHER_TIMEOUT: Duration = Duration::from_millis(800);
 /// Intervalo de sleep entre `recv_from` no socket NONBLOCKING durante o gathering.
 const SRFLX_POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// #1130 fatia 2: orçamento de espera por CADA resposta do coturn no handshake
+/// Allocate (o fluxo tem 2 round-trips: 401 Unauthorized + Success). Curto de
+/// propósito — relay é aditivo e o startup não pode travar esperando um coturn
+/// inalcançável. Reusa o `SRFLX_POLL_INTERVAL` no recv NONBLOCKING.
+const RELAY_ALLOCATE_TIMEOUT: Duration = Duration::from_millis(1200);
 
 #[derive(Default)]
 pub struct RemoteRuntime {
@@ -548,6 +557,12 @@ impl RuntimeSession {
         // mover `request.ice_servers` pro `SessionConfig` — vamos precisar deles pro
         // gathering de candidato srflx logo abaixo (o `SessionConfig` consome o Vec).
         let stun_alvos = resolver_stun_addrs(&request.ice_servers);
+        // #1130 fatia 2 (Confucius): resolve os TURN servers UDP em
+        // `(SocketAddr, username, credential)` ANTES de mover `ice_servers` pro
+        // `SessionConfig` (que consome o Vec) — mesmo motivo do `stun_alvos`. O
+        // segredo (`credential`) vai no tuple SÓ pra alimentar o `derive_key` do
+        // handshake; NUNCA é logado (aqui nem no `gather_relay`).
+        let turn_alvos = resolver_turn_alvos(&request.ice_servers);
         // #1108 (sondagem TURN, Ref): diagnóstico de infra pra decidir o relay — o coturn
         // de prod já entrega credencial TURN efêmera no `ice_servers`, ou os campos vêm
         // vazios (provisionamento pendente no VPS)? Loga SÓ contagem + presença; o
@@ -613,6 +628,23 @@ impl RuntimeSession {
                 .map_err(transport_error)?;
         }
 
+        // #1130 fatia 2: PROBE do relay — roda o handshake Allocate no coturn (via o
+        // MESMO socket quieto, como o srflx) pra PROVAR que o relay aloca. Espelha o
+        // srflx e é NÃO-fatal (sem TURN/credencial/timeout → custa zero, host/srflx
+        // seguem). O `gather_relay` loga o `relayed` alocado (diagnóstico de runtime).
+        //
+        // NÃO anuncia o candidato relay ainda, DE PROPÓSITO: a str0m 0.6 é sans-I/O e
+        // NÃO faz o data-path do relay (embrulhar `Transmit{source=relayed}` em TURN
+        // ChannelData/Send + CreatePermission por peer). Sem isso — a FATIA 3 — o
+        // candidato seria INERTE: anunciá-lo só geraria checagens ICE mortas e faria a
+        // str0m emitir `Transmit{source=relayed}` que sairia CRU pelo socket errado.
+        // O candidato (`candidato_relay`) + trickle entram JUNTO com o data-path na
+        // fatia 3. Aqui a entrega é o handshake provado + a fundação.
+        let base_relay = SocketAddr::new(ips_locais[0], porta);
+        for (turn_server, username, credential) in &turn_alvos {
+            let _ = gather_relay(&socket, *turn_server, username, credential, base_relay);
+        }
+
         let mut session = Self {
             role: request.role,
             capabilities: request.capabilities,
@@ -660,6 +692,8 @@ impl RuntimeSession {
                 .into(),
             })?;
         }
+        // #1130 fatia 2: NÃO faz trickle do candidato relay — ele não é anunciado até a
+        // fatia 3 (data-path). Ver o comentário do PROBE acima e `Transport::candidato_relay`.
         if session.role == RemoteRole::Controller {
             let offer = session.transport.criar_offer().map_err(transport_error)?;
             session.send_event(RemoteSessionEvent::Signal {
@@ -1195,6 +1229,130 @@ fn gather_srflx(
     resultados
 }
 
+/// #1130 fatia 2: resolve os TURN servers UDP dos `IceServer` em
+/// `(SocketAddr, username, credential)`. Só entra servidor com `username` E
+/// `credential` NÃO-vazios (o coturn de prod entrega credencial efêmera; sem ela o
+/// relay é impossível — nem tentamos o handshake) E que exponha ao menos um endpoint
+/// `turn:` UDP (`IceServer::turn_udp_endpoints` — `turns:`/`transport=tcp` ficam de
+/// fora, o Allocate aqui é UDP). Deduplica por `SocketAddr` preservando a ordem.
+/// Falha de resolução DNS é NÃO-fatal (loga o HOST e pula). O `credential` (o
+/// segredo) É CARREGADO no retorno pra o `derive_key`, mas NUNCA aparece em log.
+fn resolver_turn_alvos(ice_servers: &[IceServer]) -> Vec<(SocketAddr, String, String)> {
+    let mut vistos = HashSet::new();
+    let mut alvos = Vec::new();
+    for server in ice_servers {
+        if server.username.is_empty() || server.credential.is_empty() {
+            continue; // sem credencial → relay impossível (não tenta)
+        }
+        for endpoint in server.turn_udp_endpoints() {
+            match endpoint.to_socket_addrs() {
+                Ok(resolvidos) => {
+                    for addr in resolvidos {
+                        if vistos.insert(addr) {
+                            alvos.push((
+                                addr,
+                                server.username.clone(),
+                                server.credential.clone(),
+                            ));
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::warn!("[remote] TURN '{endpoint}' não resolveu: {error} — relay pulado");
+                }
+            }
+        }
+    }
+    alvos
+}
+
+/// #1130 fatia 2: envia `req` pro `turn_server` e faz poll-recv NONBLOCKING até o
+/// `parse` casar ou o `RELAY_ALLOCATE_TIMEOUT` vencer (mesmo padrão de recv do
+/// `gather_srflx`). Um pacote que não casa (ex.: resposta STUN de srflx atrasada, ou
+/// outro tráfego chegando no socket compartilhado) é ignorado e o laço segue. Erro
+/// de envio/recv ou timeout → `None`. O `parse` é quem prova a identidade (txid).
+fn relay_troca<T>(
+    socket: &UdpSocket,
+    turn_server: SocketAddr,
+    req: &[u8],
+    parse: impl Fn(&[u8]) -> Option<T>,
+) -> Option<T> {
+    if let Err(error) = socket.send_to(req, turn_server) {
+        log::warn!("[remote] TURN request não enviou: {error} — relay pulado");
+        return None;
+    }
+    let mut buf = [0u8; 1024];
+    let deadline = Instant::now() + RELAY_ALLOCATE_TIMEOUT;
+    loop {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        match socket.recv_from(&mut buf) {
+            Ok((len, _origem)) => {
+                if let Some(valor) = parse(&buf[..len]) {
+                    return Some(valor);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(SRFLX_POLL_INTERVAL);
+            }
+            Err(error) => {
+                log::warn!("[remote] TURN recv falhou: {error} — relay pulado");
+                return None;
+            }
+        }
+    }
+}
+
+/// #1130 fatia 2: gathering de UM candidato relay (RELAY/TURN) via handshake
+/// Allocate no coturn (RFC 5766 §6). Espelha o `gather_srflx`: usa o MESMO socket da
+/// sessão, com poll-recv NONBLOCKING e deadline curto. Fluxo:
+///   1. Allocate SEM auth → coturn responde `401 Unauthorized` com REALM/NONCE.
+///   2. deriva a chave long-term (`derive_key(user, realm, credential)`) e reenvia o
+///      Allocate autenticado (novo txid).
+///   3. lê o Allocate Success → `(relayed, lifetime)`.
+/// NÃO-fatal: qualquer timeout/erro/resposta inesperada → `None` (a sessão segue sem
+/// relay, exatamente como sem TURN). Devolve `(relayed, base, lifetime)`, onde `base`
+/// é o endereço local real do bind (repassado pelo chamador) — o triplo é o que a
+/// FATIA 3 precisa pro data-path/refresh. O `credential` alimenta o `derive_key` e
+/// NUNCA é logado (nem o `Debug` de `IceServer` é usado aqui).
+fn gather_relay(
+    socket: &UdpSocket,
+    turn_server: SocketAddr,
+    username: &str,
+    credential: &str,
+    base: SocketAddr,
+) -> Option<(SocketAddr, SocketAddr, u32)> {
+    // Passo 1: Allocate sem auth → espera 401 Unauthorized com REALM/NONCE.
+    let mut txid = [0u8; 12];
+    rand::thread_rng().fill(&mut txid[..]);
+    let req = build_allocate_request(&txid);
+    let Some((realm, nonce)) =
+        relay_troca(socket, turn_server, &req, |resp| parse_error_unauthorized(resp, &txid))
+    else {
+        log::warn!("[remote] TURN Allocate sem 401 (timeout/erro) — relay pulado");
+        return None;
+    };
+
+    // Passo 2: Allocate autenticado (long-term credential). Novo txid pro retry.
+    let key = derive_key(username, &realm, credential);
+    let mut txid_auth = [0u8; 12];
+    rand::thread_rng().fill(&mut txid_auth[..]);
+    let req_auth = build_allocate_request_auth(&txid_auth, username, &realm, &nonce, &key);
+    let Some((relayed, lifetime)) = relay_troca(socket, turn_server, &req_auth, |resp| {
+        parse_allocate_success(resp, &txid_auth)
+    }) else {
+        log::warn!("[remote] TURN Allocate autenticado sem sucesso (timeout/erro) — relay pulado");
+        return None;
+    };
+
+    log::info!(
+        "[remote] relay TURN alocado via {turn_server}: relayed={relayed} lifetime={lifetime}s \
+         (data-path/refresh = fatia 3; segredo NÃO logado)"
+    );
+    Some((relayed, base, lifetime))
+}
+
 fn sanitize_reason(reason: String) -> String {
     reason
         .chars()
@@ -1266,6 +1424,36 @@ mod tests {
         assert!(validos
             .iter()
             .all(|ip| !ip.is_unspecified() && !ip.is_loopback()));
+    }
+
+    #[test]
+    fn resolver_turn_alvos_exige_credencial_e_carrega_segredo() {
+        // #1130 fatia 2: só servidor com username E credential preenchidos entra; o
+        // sem credencial e o `stun:` puro são pulados. Usa IP numérico (127.0.0.1) pra
+        // o `to_socket_addrs` resolver sem DNS. O segredo é carregado no tuple (pro
+        // `derive_key`), nunca logado.
+        let servers = vec![
+            IceServer {
+                urls: vec!["turn:127.0.0.1:3478".into()],
+                username: String::new(),
+                credential: String::new(),
+            },
+            IceServer {
+                urls: vec!["turn:127.0.0.1:3479?transport=udp".into()],
+                username: "u".into(),
+                credential: "segredo".into(),
+            },
+            IceServer {
+                urls: vec!["stun:127.0.0.1:3478".into()],
+                username: String::new(),
+                credential: String::new(),
+            },
+        ];
+        let alvos = resolver_turn_alvos(&servers);
+        assert_eq!(alvos.len(), 1, "só o servidor com credencial vira alvo");
+        assert_eq!(alvos[0].0, "127.0.0.1:3479".parse().unwrap());
+        assert_eq!(alvos[0].1, "u");
+        assert_eq!(alvos[0].2, "segredo");
     }
 
     #[test]

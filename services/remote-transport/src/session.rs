@@ -244,9 +244,8 @@ impl Transport {
     /// Adiciona um candidato ICE LOCAL host montado pelo gathering. O erro NOMEIA o
     /// IP/tipo tentado (`host <addr>`) em vez de só "falha no transporte" — #1108: o
     /// operador precisa saber QUAL IP o str0m rejeitou (ex.: `0.0.0.0` unspecified).
-    // #1108 Parte 2 (Confucius): srflx FEITO abaixo (`candidato_srflx`). O relay/TURN
-    // via `Candidate::relayed(addr, proto)` segue como follow-up BLOQUEADO
-    // (credencial + coturn + #1049) — não implementar aqui.
+    // #1108 Parte 2 (Confucius): srflx em `candidato_srflx`; #1130 fatia 2: relay em
+    // `candidato_relay` (o gathering Allocate no coturn é o `gather_relay` do app).
     pub fn candidato_local(&mut self, addr: SocketAddr) -> Result<(), TransportError> {
         let c = Candidate::host(addr, Protocol::Udp)
             .map_err(|e| TransportError::Candidato(format!("host {addr}: {e}")))?;
@@ -289,6 +288,39 @@ impl Transport {
         Candidate::server_reflexive(mapeado, base, Protocol::Udp)
             .map(|candidate| candidate.to_sdp_string())
             .map_err(|e| TransportError::Candidato(format!("srflx {mapeado} (base {base}): {e}")))
+    }
+
+    /// #1130 fatia 2 (Confucius): adiciona um candidato ICE LOCAL relay (RELAY/TURN)
+    /// descoberto pelo app via handshake Allocate no coturn (`gather_relay`).
+    /// `relayed` é o XOR-RELAYED-ADDRESS que o coturn alocou — o IP:porta público que
+    /// o peer usa pra nos alcançar PELO relay. Diferente do srflx, o
+    /// `Candidate::relayed` da str0m 0.6 recebe só `(addr, proto)` (CONFIRMADO em
+    /// str0m-0.6.3 `ice/candidate.rs`): a `base` do candidato é o PRÓPRIO `relayed` (a
+    /// str0m seta `Some(addr)` internamente), então não há parâmetro `base` aqui. O
+    /// erro NOMEIA `relay <relayed>` no mesmo estilo do host/srflx (#1108).
+    ///
+    /// ATENÇÃO — NÃO CHAMADO na fatia 2, de propósito; entra na FATIA 3 junto do
+    /// data-path. A str0m 0.6 é sans-I/O e NÃO trata o data-path do relay: emite
+    /// `Transmit { source: relayed, .. }` esperando que o APP embrulhe o datagrama em
+    /// TURN ChannelData / Send indication e instale CreatePermission por peer
+    /// (documentado no doc de `str0m::net::Transmit`). Anunciar o candidato ANTES
+    /// desse data-path o deixaria INERTE — só geraria checagens ICE mortas e
+    /// `Transmit{source=relayed}` saindo cru pelo socket errado. Por isso a fatia 2 só
+    /// PROBA o Allocate (`gather_relay`); esta API fica pronta pra a fatia 3 anunciar
+    /// + servir o relay junto. Erro nomeia `relay <relayed>` (#1108).
+    pub fn candidato_relay(&mut self, relayed: SocketAddr) -> Result<(), TransportError> {
+        let c = Candidate::relayed(relayed, Protocol::Udp)
+            .map_err(|e| TransportError::Candidato(format!("relay {relayed}: {e}")))?;
+        self.rtc.add_local_candidate(c);
+        Ok(())
+    }
+
+    /// Forma SDP do candidato relay pro trickle-ICE do app (espelha
+    /// `candidato_srflx_sdp`). Erro nomeia `relay <relayed>`. #1130 fatia 2.
+    pub fn candidato_relay_sdp(relayed: SocketAddr) -> Result<String, TransportError> {
+        Candidate::relayed(relayed, Protocol::Udp)
+            .map(|candidate| candidate.to_sdp_string())
+            .map_err(|e| TransportError::Candidato(format!("relay {relayed}: {e}")))
     }
 
     /// Adiciona um candidato ICE REMOTO recebido via signaling.
