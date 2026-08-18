@@ -245,6 +245,16 @@ fn validar(path: &str) -> Result<(), FsError> {
     if !Path::new(path).is_absolute() {
         return Err(FsError::InvalidPath("caminho precisa ser absoluto".into()));
     }
+    // #1047 (SEC7): rejeita traversal léxico. Nenhum caminho legítimo do front usa
+    // `..` (o front sempre manda absoluto já resolvido). Barra em TODOS os callers
+    // (leitura+escrita) — é seguro. `Component::ParentDir` pega `..` em qualquer
+    // posição, independente do separador (`/` ou `\`).
+    if Path::new(path)
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(FsError::InvalidPath("caminho com '..'".into()));
+    }
     Ok(())
 }
 
@@ -876,14 +886,254 @@ fn desconectar_network_drive(_letra: &str, _forcar: bool) -> Result<(), FsError>
 // Delete → Lixeira é o PADRÃO (reversível); permanente só com token de
 // confirmação (o front manda depois do Shift+confirmar). Tudo tipado em FsError.
 
-/// Token que o front envia pra confirmar exclusão PERMANENTE. Sem ele,
-/// `excluir_permanente` recusa — trava contra apagar sem querer.
-/// #1076 (RB32): privado — o front manda a string literal e nenhum outro módulo
-/// Rust consome a const (só usada neste arquivo + testes).
-const TOKEN_EXCLUSAO_PERMANENTE: &str = "galaxie-excluir-permanente";
+// ───────────────── #1047 (SEC7): funil de segurança das mutações ─────────────
+
+/// Normaliza a caixa pra comparação de caminho no Windows (case-insensitive).
+/// Baixa a string inteira; a comparação depois é POR COMPONENTE (`starts_with`
+/// do `Path`), então o limite de pasta é respeitado (`C:\Foo` não casa `C:\Foobar`).
+#[cfg(windows)]
+fn normalizar_caixa(p: &Path) -> PathBuf {
+    PathBuf::from(p.to_string_lossy().to_lowercase())
+}
+#[cfg(not(windows))]
+fn normalizar_caixa(p: &Path) -> PathBuf {
+    p.to_path_buf()
+}
+
+/// Absolutiza SEM tocar o disco (fallback quando a canonicalização falha). O
+/// caller (`validar`) já exige caminho absoluto, então o ramo do `cwd` é defensivo.
+fn absolutizar_lexical(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Resolve um caminho pra checagem de diretório sensível: canonicaliza o ANCESTRAL
+/// EXISTENTE mais profundo (sobe com `.parent()` até um existir) e re-anexa a cauda
+/// inexistente. Assim um caminho A-SER-criado (create/copy/rename) ainda resolve.
+/// `dunce::canonicalize` evita o prefixo verbatim `\\?\` (que quebraria o
+/// `starts_with` contra as raízes). NUNCA panica: qualquer falha cai no lexical.
+fn resolver_para_checagem(path: &Path) -> PathBuf {
+    let mut cauda: Vec<std::ffi::OsString> = Vec::new();
+    let mut atual = path;
+    loop {
+        if let Ok(canon) = dunce::canonicalize(atual) {
+            let mut resolvido = canon;
+            // `cauda` acumulou folha→raiz; re-anexa raiz→folha (rev).
+            for parte in cauda.iter().rev() {
+                resolvido.push(parte);
+            }
+            return resolvido;
+        }
+        match atual.parent() {
+            Some(pai) => {
+                if let Some(nome) = atual.file_name() {
+                    cauda.push(nome.to_os_string());
+                }
+                atual = pai;
+            }
+            None => break,
+        }
+    }
+    absolutizar_lexical(path)
+}
+
+/// PURO (raízes por parâmetro → testável): `resolvido` está dentro de alguma raiz?
+/// Compara por componente após normalizar a caixa (Windows case-insensitive).
+fn dentro_de_dir_sensivel(resolvido: &Path, raizes: &[PathBuf]) -> bool {
+    let alvo = normalizar_caixa(resolvido);
+    raizes
+        .iter()
+        .any(|r| alvo.starts_with(normalizar_caixa(r)))
+}
+
+/// Canonicaliza `p` e empurra pra lista SÓ se existir (raiz que não resolve é
+/// ignorada — não trava mutação por causa de pasta ausente).
+fn push_se_existe(raizes: &mut Vec<PathBuf>, p: PathBuf) {
+    if let Ok(canon) = dunce::canonicalize(&p) {
+        raizes.push(canon);
+    }
+}
+
+/// Diretórios cuja MUTAÇÃO é sempre recusada: System32, a pasta do próprio app
+/// (não sobrescrever binário/DLLs) e a Startup do usuário (vetor de persistência).
+/// Cada uma canonicalizada se existir; as que não resolvem são ignoradas.
+fn raizes_sensiveis() -> Vec<PathBuf> {
+    let mut raizes: Vec<PathBuf> = Vec::new();
+    // %SystemRoot%\System32 (Windows).
+    if let Some(sysroot) = std::env::var_os("SystemRoot") {
+        push_se_existe(&mut raizes, Path::new(&sysroot).join("System32"));
+    }
+    // Diretório do próprio executável.
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+    {
+        push_se_existe(&mut raizes, dir);
+    }
+    // Startup do usuário (%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup).
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        push_se_existe(
+            &mut raizes,
+            Path::new(&appdata).join(r"Microsoft\Windows\Start Menu\Programs\Startup"),
+        );
+    }
+    raizes
+}
+
+/// Guarda das ESCRITAS: `validar` (léxico) + hard-block de diretório sensível.
+/// Sempre-recusado (não há UI de bypass) — mais rígido que a AC, que só pede
+/// "sem confirmação → recusado". Não usado nas LEITURAS (listar System32 é ok).
+fn validar_mutacao(path: &str) -> Result<(), FsError> {
+    validar(path)?;
+    let resolvido = resolver_para_checagem(Path::new(path));
+    if dentro_de_dir_sensivel(&resolvido, &raizes_sensiveis()) {
+        return Err(FsError::InvalidPath(
+            "mutação em diretório protegido do sistema recusada".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// O caminho é um reparse point (symlink/junction)? Testa a PRÓPRIA entrada
+/// (`symlink_metadata` não segue). Windows: atributo `FILE_ATTRIBUTE_REPARSE_POINT`;
+/// não-Windows: `file_type().is_symlink()`. Erro → `false`.
+#[cfg(windows)]
+fn eh_reparse_point(p: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    std::fs::symlink_metadata(com_long_path(p))
+        .map(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .unwrap_or(false)
+}
+#[cfg(not(windows))]
+fn eh_reparse_point(p: &Path) -> bool {
+    std::fs::symlink_metadata(p)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+/// Directory-ness BRUTA (nível do link). No Windows um dir-symlink/junction tem
+/// o bit `FILE_ATTRIBUTE_DIRECTORY` no `symlink_metadata`, embora `Metadata::is_dir`
+/// o mascare por ser reparse point — por isso lemos o atributo cru. Não-Windows: `is_dir`.
+#[cfg(windows)]
+fn eh_dir_bruto(meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    meta.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0
+}
+#[cfg(not(windows))]
+fn eh_dir_bruto(meta: &std::fs::Metadata) -> bool {
+    meta.is_dir()
+}
+
+/// Decisão PURA (testável sem privilégio): um dir que é reparse point é removido
+/// como LINK (`remove_dir` no ponto), NUNCA `remove_dir_all` (que atravessaria pro
+/// alvo real = data-loss). Só `is_dir && is_reparse`.
+fn deve_remover_como_link(is_dir: bool, is_reparse: bool) -> bool {
+    is_dir && is_reparse
+}
+
+/// Ancestral EXISTENTE mais próximo de `p` (o dir onde a escrita realmente cairia).
+fn parent_existente(p: &Path) -> Option<PathBuf> {
+    let mut atual = p.parent();
+    while let Some(dir) = atual {
+        if std::fs::symlink_metadata(com_long_path(dir)).is_ok() {
+            return Some(dir.to_path_buf());
+        }
+        atual = dir.parent();
+    }
+    None
+}
+
+/// #1047 (SEC7): recusa escrever num destino que é reparse point OU cujo pai
+/// existente é reparse point — não segue o symlink/junction pra fora da pasta
+/// esperada sem confirmação (não há UI de bypass → hard-block).
+fn destino_seguro(dst: &Path) -> Result<(), FsError> {
+    let alvo = eh_reparse_point(dst);
+    let pai = parent_existente(dst)
+        .map(|pai| eh_reparse_point(&pai))
+        .unwrap_or(false);
+    if alvo || pai {
+        return Err(FsError::InvalidPath(
+            "destino é symlink/junction — não seguido sem confirmação".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// #1047 (SEC7): guarda de ENTRADA do pipeline turbo de cópia. A UI copia/move
+/// pelos comandos `fs_*_with_progress` (não pelas `copiar`/`mover` internas), que
+/// disparam a op em background — então a validação tem que acontecer AQUI, antes
+/// do spawn, senão o hard-block de dir sensível/reparse não cobre o caminho real
+/// (o buraco do SEC7). Origem = LEITURA (`validar`); destino = ESCRITA
+/// (`validar_mutacao` + `destino_seguro`).
+fn checar_entrada_copia(from: &str, to: &str) -> Result<(), FsError> {
+    validar(from)?;
+    validar_mutacao(to)?;
+    destino_seguro(Path::new(to))
+}
+
+/// Idem, mas MOVE: a origem também é mutada (o move apaga `from` no fim) → a
+/// origem passa por `validar_mutacao` (não pode mover pra fora de dir protegido).
+fn checar_entrada_move(from: &str, to: &str) -> Result<(), FsError> {
+    validar_mutacao(from)?;
+    validar_mutacao(to)?;
+    destino_seguro(Path::new(to))
+}
+
+/// Entrada dos comandos "muitas": valida o `dest_dir` (escrita) e cada origem.
+/// `eh_move` decide se a origem é leitura (copy) ou mutação (move).
+fn checar_entrada_muitas(sources: &[String], dest_dir: &str, eh_move: bool) -> Result<(), FsError> {
+    validar_mutacao(dest_dir)?;
+    destino_seguro(Path::new(dest_dir))?;
+    for s in sources {
+        if eh_move {
+            validar_mutacao(s)?;
+        } else {
+            validar(s)?;
+        }
+    }
+    Ok(())
+}
+
+/// #1047 (SEC7): nonce de sessão que autoriza a exclusão PERMANENTE — substitui o
+/// token hardcoded (`galaxie-excluir-permanente`), que qualquer um podia forjar.
+/// Single-use (zera ao consumir) + deadline (TTL). Estado gerenciado pelo Tauri;
+/// `Arc<Mutex<…>>` interno pra ser `Clone`/`Send` e cruzar o `spawn_blocking`.
+#[derive(Clone, Default)]
+pub struct TokenExclusao(Arc<Mutex<Option<(String, Instant)>>>);
+
+impl TokenExclusao {
+    /// Emite um nonce com TTL padrão (30s) — janela suficiente pro round-trip da UI.
+    fn emitir(&self) -> String {
+        self.emitir_com_ttl(Duration::from_secs(30))
+    }
+    /// Emite um nonce 128-bit (hex) válido por `ttl`; sobrescreve o anterior.
+    fn emitir_com_ttl(&self, ttl: Duration) -> String {
+        let nonce = format!("{:032x}", rand::random::<u128>());
+        let deadline = Instant::now() + ttl;
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some((nonce.clone(), deadline));
+        nonce
+    }
+    /// Confere o nonce apresentado (igual + dentro do prazo). Em sucesso ZERA o
+    /// estado (single-use): o mesmo nonce não vale duas vezes.
+    fn consumir(&self, apresentado: &str) -> bool {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let ok = matches!(&*guard, Some((n, dl)) if n == apresentado && Instant::now() < *dl);
+        if ok {
+            *guard = None;
+        }
+        ok
+    }
+}
 
 fn criar_dir(path: &str) -> Result<(), FsError> {
-    validar(path)?;
+    validar_mutacao(path)?;
     // `create_dir` (não `_all`) → AlreadyExists se a pasta já existe.
     std::fs::create_dir(com_long_path(Path::new(path)))?;
     Ok(())
@@ -891,7 +1141,7 @@ fn criar_dir(path: &str) -> Result<(), FsError> {
 
 fn criar_arquivo(path: &str, contents: Option<String>) -> Result<(), FsError> {
     use std::io::Write;
-    validar(path)?;
+    validar_mutacao(path)?;
     // `create_new` é atômico: erra AlreadyExists sem sobrescrever.
     let mut f = std::fs::OpenOptions::new()
         .write(true)
@@ -904,8 +1154,8 @@ fn criar_arquivo(path: &str, contents: Option<String>) -> Result<(), FsError> {
 }
 
 fn renomear(from: &str, to: &str) -> Result<(), FsError> {
-    validar(from)?;
-    validar(to)?;
+    validar_mutacao(from)?;
+    validar_mutacao(to)?;
     let dest = com_long_path(Path::new(to));
     if dest.exists() {
         return Err(FsError::AlreadyExists(to.to_string()));
@@ -917,10 +1167,16 @@ fn renomear(from: &str, to: &str) -> Result<(), FsError> {
 /// Copia arquivo (std) ou pasta (recursiva + paralela via rayon). Conflito de
 /// arquivo no destino → AlreadyExists.
 fn copiar(from: &str, to: &str) -> Result<(), FsError> {
+    // #1047 (SEC7): a ORIGEM da cópia é LEITURA (não muta `from`) → só `validar`
+    // (absoluto/sem `..`/sem control-char). O bloqueio de dir sensível vale pro
+    // DESTINO (escrita). O `mover` cross-volume que chama `copiar` já validou o
+    // `from` como mutação no topo dele, então o delete pós-cópia segue protegido.
     validar(from)?;
-    validar(to)?;
+    validar_mutacao(to)?;
     let src = Path::new(from);
     let dst = Path::new(to);
+    // #1047 (SEC7): não seguir symlink/junction no destino (nem no pai existente).
+    destino_seguro(dst)?;
     if std::fs::symlink_metadata(com_long_path(src))?.is_dir() {
         copiar_dir(src, dst)
     } else {
@@ -963,8 +1219,10 @@ fn copiar_dir(src: &Path, dst: &Path) -> Result<(), FsError> {
 /// Tauri paralelo (`fs_copy`/`fs_move` foram removidos); a UI só usa o pipeline
 /// turbo. Mantido pro undo e testes.
 fn mover(from: &str, to: &str) -> Result<(), FsError> {
-    validar(from)?;
-    validar(to)?;
+    validar_mutacao(from)?;
+    validar_mutacao(to)?;
+    // #1047 (SEC7): destino não pode ser symlink/junction (nem o pai existente).
+    destino_seguro(Path::new(to))?;
     let dest = com_long_path(Path::new(to));
     // #680: paridade com o copy — "Substituir" honra a decisão da UI e sobrescreve.
     // std::fs::rename troca um arquivo existente (REPLACE_EXISTING no Windows;
@@ -981,9 +1239,17 @@ fn mover(from: &str, to: &str) -> Result<(), FsError> {
 
 fn remover(path: &str) -> Result<(), FsError> {
     let p = Path::new(path);
-    if std::fs::symlink_metadata(com_long_path(p))?.is_dir() {
+    let meta = std::fs::symlink_metadata(com_long_path(p))?;
+    let is_dir = eh_dir_bruto(&meta);
+    if deve_remover_como_link(is_dir, eh_reparse_point(p)) {
+        // #1047 (SEC7) DATA-LOSS-crítico: dir que é reparse point (symlink/junction)
+        // é removido como LINK (`remove_dir` apaga só o ponto). JAMAIS `remove_dir_all`,
+        // que atravessaria pro alvo real e apagaria o conteúdo apontado (perda de dado).
+        std::fs::remove_dir(com_long_path(p))?;
+    } else if is_dir {
         std::fs::remove_dir_all(com_long_path(p))?;
     } else {
+        // Arquivo ou symlink-de-arquivo: remove a própria entrada (não segue).
         std::fs::remove_file(com_long_path(p))?;
     }
     Ok(())
@@ -1066,19 +1332,24 @@ fn para_lixeira(paths: &[String]) -> Result<(), FsError> {
     Ok(())
 }
 
-/// Apaga PERMANENTEMENTE (sem Lixeira) — exige o token de confirmação. #849: loga
+/// Apaga PERMANENTEMENTE (sem Lixeira) — exige o nonce de sessão (#1047). #849: loga
 /// (Delphero) e é IDEMPOTENTE (caminho já sumido não vira erro; conta e segue).
-fn excluir_permanente(paths: &[String], confirm_token: &str) -> Result<(), FsError> {
-    if confirm_token != TOKEN_EXCLUSAO_PERMANENTE {
+fn excluir_permanente(
+    paths: &[String],
+    confirm_token: &str,
+    token: &TokenExclusao,
+) -> Result<(), FsError> {
+    // #1047 (SEC7): nonce de sessão single-use no lugar do token hardcoded.
+    if !token.consumir(confirm_token) {
         return Err(FsError::InvalidPath(
-            "exclusão permanente requer confirmação".into(),
+            "exclusão permanente requer confirmação válida (nonce)".into(),
         ));
     }
     log::info!("fs_delete_permanent START: {} alvo(s)", paths.len());
     let mut removidos = 0usize;
     let mut ja_idos = 0usize;
     for p in paths {
-        validar(p)?;
+        validar_mutacao(p)?;
         if !caminho_existe(p) {
             ja_idos += 1;
             continue;
@@ -3523,12 +3794,23 @@ pub async fn fs_trash(paths: Vec<String>) -> Result<(), FsError> {
         .map_err(spawn_err)?
 }
 
+/// #1047 (SEC7): emite o nonce de sessão que autoriza UMA exclusão permanente.
+/// O front chama isto imediatamente antes de `fs_delete_permanent`. Read-only
+/// (não escreve dado do Bridge) — só gera e guarda o nonce no estado.
+#[tauri::command]
+pub fn fs_delete_permanent_token(state: State<'_, TokenExclusao>) -> String {
+    state.emitir()
+}
+
 #[tauri::command]
 pub async fn fs_delete_permanent(
     paths: Vec<String>,
     confirm_token: String,
+    token: State<'_, TokenExclusao>,
 ) -> Result<(), FsError> {
-    tauri::async_runtime::spawn_blocking(move || excluir_permanente(&paths, &confirm_token))
+    // `TokenExclusao` é `Clone` (Arc interno) → cruza o `spawn_blocking` (Send + 'static).
+    let token = token.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || excluir_permanente(&paths, &confirm_token, &token))
         .await
         .map_err(spawn_err)?
 }
@@ -3682,6 +3964,8 @@ pub async fn fs_copy_with_progress(
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
+    // #1047 (SEC7): valida antes de spawnar — rejeita dir sensível/reparse no destino.
+    checar_entrada_copia(&from, &to)?;
     let (op_id, flag, pausar) = pm.nova_op();
     spawn_progresso(false, from, to, op_id, flag, pausar, verify, app);
     Ok(op_id)
@@ -3695,6 +3979,8 @@ pub async fn fs_move_with_progress(
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
+    // #1047 (SEC7): move valida a origem como mutação (o move apaga `from`).
+    checar_entrada_move(&from, &to)?;
     let (op_id, flag, pausar) = pm.nova_op();
     spawn_progresso(true, from, to, op_id, flag, pausar, verify, app);
     Ok(op_id)
@@ -3711,6 +3997,8 @@ pub async fn fs_copy_many_with_progress(
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
+    // #1047 (SEC7): valida dest_dir (escrita) + cada origem (leitura) antes do spawn.
+    checar_entrada_muitas(&sources, &dest_dir, false)?;
     let pares = pares_para_destino(sources, &dest_dir);
     let (op_id, flag, pausar) = pm.nova_op();
     spawn_progresso_muitas(false, pares, op_id, flag, pausar, verify, app);
@@ -3727,6 +4015,8 @@ pub async fn fs_move_many_with_progress(
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
+    // #1047 (SEC7): move valida dest_dir + cada origem como mutação (apaga a origem).
+    checar_entrada_muitas(&sources, &dest_dir, true)?;
     let pares = pares_para_destino(sources, &dest_dir);
     let (op_id, flag, pausar) = pm.nova_op();
     spawn_progresso_muitas(true, pares, op_id, flag, pausar, verify, app);
@@ -5152,13 +5442,16 @@ mod tests {
         mover(&s(&d2), &s(&d3)).unwrap();
         assert!(!d2.exists() && d3.join("dentro.txt").exists());
 
-        // delete permanente: recusa sem token, apaga com token
+        // delete permanente: recusa sem nonce válido, apaga com o nonce emitido.
+        // #1047 (SEC7): a assinatura mudou — nonce de sessão no lugar do token fixo.
+        let token = TokenExclusao::default();
         assert!(matches!(
-            excluir_permanente(&[s(&f2)], "errado").unwrap_err(),
+            excluir_permanente(&[s(&f2)], "errado", &token).unwrap_err(),
             FsError::InvalidPath(_)
         ));
         assert!(f2.exists());
-        excluir_permanente(&[s(&f2), s(&d3)], TOKEN_EXCLUSAO_PERMANENTE).unwrap();
+        let nonce = token.emitir();
+        excluir_permanente(&[s(&f2), s(&d3)], &nonce, &token).unwrap();
         assert!(!f2.exists() && !d3.exists());
 
         let _ = std::fs::remove_dir_all(&base);
@@ -5210,6 +5503,154 @@ mod tests {
         // Caminho absoluto normal continua ACEITO — não regride create/copy/rename.
         #[cfg(windows)]
         assert!(validar("C:\\Users\\x\\arquivo.txt").is_ok());
+    }
+
+    // ── #1047 (SEC7): traversal, dir sensível, reparse/data-loss e nonce ────────
+
+    #[test]
+    fn validar_rejeita_traversal_ponto_ponto() {
+        // Componente `..` barrado em qualquer posição (path traversal).
+        #[cfg(windows)]
+        {
+            assert!(matches!(
+                validar(r"C:\Users\x\..\y"),
+                Err(FsError::InvalidPath(_))
+            ));
+            assert!(matches!(validar(r"C:\..\Windows"), Err(FsError::InvalidPath(_))));
+            // Absoluto sem `..` continua ok — não regride.
+            assert!(validar(r"C:\Users\x\y.txt").is_ok());
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(matches!(validar("/home/x/../y"), Err(FsError::InvalidPath(_))));
+            assert!(validar("/home/x/y.txt").is_ok());
+        }
+    }
+
+    #[test]
+    fn dentro_de_dir_sensivel_puro() {
+        #[cfg(windows)]
+        {
+            let raizes = vec![PathBuf::from(r"C:\Windows\System32")];
+            // Dentro da raiz.
+            assert!(dentro_de_dir_sensivel(
+                Path::new(r"C:\Windows\System32\drivers\etc\hosts"),
+                &raizes
+            ));
+            // Caixa diferente → ainda casa (Windows é case-insensitive).
+            assert!(dentro_de_dir_sensivel(
+                Path::new(r"c:\windows\system32\cmd.exe"),
+                &raizes
+            ));
+            // Fora da raiz.
+            assert!(!dentro_de_dir_sensivel(
+                Path::new(r"C:\Users\wagner\doc.txt"),
+                &raizes
+            ));
+            // Prefixo parcial de componente NÃO casa (System32 ≠ System32Extra).
+            assert!(!dentro_de_dir_sensivel(
+                Path::new(r"C:\Windows\System32Extra\x"),
+                &raizes
+            ));
+        }
+        #[cfg(not(windows))]
+        {
+            let raizes = vec![PathBuf::from("/usr/bin")];
+            assert!(dentro_de_dir_sensivel(Path::new("/usr/bin/sh"), &raizes));
+            assert!(!dentro_de_dir_sensivel(Path::new("/home/user/x"), &raizes));
+            // Prefixo parcial de componente.
+            assert!(!dentro_de_dir_sensivel(Path::new("/usr/binary/x"), &raizes));
+        }
+    }
+
+    #[test]
+    fn deve_remover_como_link_decisao_pura() {
+        // Só dir + reparse = remover como link (o caso data-loss). Resto = não.
+        assert!(deve_remover_como_link(true, true), "dir-symlink → só o link");
+        assert!(!deve_remover_como_link(true, false), "dir normal → remove_dir_all");
+        assert!(!deve_remover_como_link(false, true), "symlink de arquivo → remove_file");
+        assert!(!deve_remover_como_link(false, false), "arquivo normal → remove_file");
+    }
+
+    #[test]
+    #[ignore = "requer privilégio de symlink (SeCreateSymbolicLink/Developer Mode); \
+                a decisão pura está coberta por deve_remover_como_link_decisao_pura"]
+    fn remover_symlink_de_dir_apaga_so_o_link_alvo_intacto() {
+        // ⚠️ Ponto data-loss-crítico: `remover` num dir-symlink apaga SÓ o link,
+        // NUNCA o alvo apontado. Criar symlink no Windows exige privilégio → #[ignore].
+        let base = temp_unico();
+        std::fs::create_dir_all(&base).unwrap();
+        let alvo = base.join("alvo-real");
+        std::fs::create_dir_all(&alvo).unwrap();
+        std::fs::write(alvo.join("conteudo.txt"), "intacto").unwrap();
+        let link = base.join("link-para-alvo");
+
+        #[cfg(windows)]
+        let criado = std::os::windows::fs::symlink_dir(&alvo, &link).is_ok();
+        #[cfg(not(windows))]
+        let criado = std::os::unix::fs::symlink(&alvo, &link).is_ok();
+        assert!(criado, "não conseguiu criar o symlink de dir (privilégio?)");
+
+        remover(&s(&link)).unwrap();
+        assert!(!link.exists(), "o link deveria ter sido removido");
+        assert!(alvo.exists(), "o alvo real NÃO pode ser apagado (data-loss)");
+        assert!(
+            alvo.join("conteudo.txt").exists(),
+            "o conteúdo do alvo deve ficar intacto"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn nonce_exclusao_single_use_hardcoded_e_expira() {
+        let token = TokenExclusao::default();
+        let n = token.emitir();
+        // Single-use: vale na 1ª, recusa na 2ª.
+        assert!(token.consumir(&n), "nonce válido na 1ª vez");
+        assert!(!token.consumir(&n), "mesmo nonce recusado na 2ª vez");
+        // O token hardcoded velho não vale mais.
+        let n2 = token.emitir();
+        assert!(
+            !token.consumir("galaxie-excluir-permanente"),
+            "token hardcoded velho recusado"
+        );
+        // Tentativa inválida não zera o nonce corrente.
+        assert!(token.consumir(&n2), "nonce corrente sobrevive à tentativa inválida");
+        // Expiração: TTL mínimo + sleep passa do prazo.
+        let expira = token.emitir_com_ttl(Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(!token.consumir(&expira), "nonce expirado recusado");
+    }
+
+    #[test]
+    fn checar_entrada_pipeline_barra_traversal_e_aceita_normal() {
+        // O pipeline turbo (fs_*_with_progress) é o caminho REAL de cópia/move; a
+        // guarda de entrada tem que rejeitar traversal e aceitar caminho normal.
+        let base = temp_unico();
+        std::fs::create_dir_all(&base).unwrap();
+        let src = base.join("origem.txt");
+        let dst = base.join("destino.txt");
+
+        #[cfg(windows)]
+        let travessia = r"C:\Users\x\..\y";
+        #[cfg(not(windows))]
+        let travessia = "/home/x/../y";
+
+        // Traversal na origem OU no destino → recusado (copy e move).
+        assert!(checar_entrada_copia(travessia, &s(&dst)).is_err());
+        assert!(checar_entrada_copia(&s(&src), travessia).is_err());
+        assert!(checar_entrada_move(travessia, &s(&dst)).is_err());
+        assert!(checar_entrada_muitas(&[travessia.to_string()], &s(&base), false).is_err());
+        // Destino relativo (não-absoluto) também barra.
+        assert!(checar_entrada_muitas(&[s(&src)], "destino-relativo", false).is_err());
+
+        // Caminho normal dentro de tempdir (não sensível) → ok (origem inexistente
+        // é ok pra copy: `validar` é léxico, não exige existir).
+        assert!(checar_entrada_copia(&s(&src), &s(&dst)).is_ok());
+        assert!(checar_entrada_muitas(&[s(&src)], &s(&base), false).is_ok());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

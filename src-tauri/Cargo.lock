@@ -79,6 +79,7 @@ dependencies = [
  "blake3",
  "chrono",
  "dirs 5.0.1",
+ "dunce",
  "fast_image_resize",
  "galaxie-remote-capture",
  "galaxie-remote-net",

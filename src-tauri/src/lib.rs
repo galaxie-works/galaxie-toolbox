@@ -1976,6 +1976,8 @@ pub fn run() {
         // #680 Explorer S4: progresso de copy/move (cancel) + watchers ativos.
         .manage(fs_explorer::ProgressManager::default())
         .manage(fs_explorer::WatcherRegistry::default())
+        // #1047 (SEC7): nonce de sessão da exclusão permanente (single-use + TTL).
+        .manage(fs_explorer::TokenExclusao::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -2261,6 +2263,8 @@ pub fn run() {
             // divergente + sem caller de UI). A UI usa só o pipeline turbo abaixo.
             fs_explorer::fs_trash,
             fs_explorer::fs_delete_permanent,
+            // #1047 (SEC7): emite o nonce que autoriza UMA exclusão permanente.
+            fs_explorer::fs_delete_permanent_token,
             // #680 S4: progresso + conflito + watcher.
             fs_explorer::fs_copy_with_progress,
             fs_explorer::fs_move_with_progress,

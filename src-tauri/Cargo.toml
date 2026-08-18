@@ -73,6 +73,10 @@ argon2 = "0.5"
 hickory-resolver = "0.24"
 # Explorer de Arquivos (#676): erro tipado, varredura paralela e pastas do SO.
 thiserror = "2"
+# #1047 (SEC7): canonicalização SEM o prefixo verbatim `\\?\` (que o
+# `std::fs::canonicalize` sempre adiciona no Windows) — assim a comparação
+# `starts_with` de diretório sensível não quebra por prefixo divergente.
+dunce = "1"
 rayon = "1"
 jwalk = "0.8"
 dirs = "5"
