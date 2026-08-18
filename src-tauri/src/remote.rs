@@ -419,10 +419,17 @@ pub fn remote_session_input(
 }
 
 #[tauri::command]
-pub fn remote_session_end(
+pub async fn remote_session_end(
     request: RemoteSessionEndRequest,
     runtime: tauri::State<'_, RemoteRuntime>,
 ) -> Result<(), RemoteError> {
+    // #1070 RB9: `session.stop()` faz `worker.join()` — BLOQUEIA até a thread do worker
+    // (que ainda junta captura/vídeo) encerrar. Num comando SÍNCRONO isso rodava na
+    // thread do IPC e TRAVAVA a UI no "Encerrar" (mesma classe do P0 #834). Agora o
+    // comando é async e o join sai pra `spawn_blocking`, fora da thread do IPC.
+    //
+    // O lock é solto ANTES do await (o guard vive só neste bloco): não seguramos o
+    // Mutex do runtime através do ponto de espera.
     let session = {
         let mut active = runtime
             .active
@@ -436,7 +443,10 @@ pub fn remote_session_end(
             Some(_) => active.take().expect("active checked"),
         }
     };
-    session.stop(sanitize_reason(request.reason));
+    let reason = sanitize_reason(request.reason);
+    tauri::async_runtime::spawn_blocking(move || session.stop(reason))
+        .await
+        .map_err(|_| RemoteError::ChannelClosed)?;
     Ok(())
 }
 
