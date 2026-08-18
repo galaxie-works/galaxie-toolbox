@@ -11,6 +11,13 @@
 //! RESPOSTAS do broker são lidas **tolerantes a campos novos** (é fronteira de
 //! outro time — o Delphi do Wagner), inclusive o campo aditivo `{workerPipe,
 //! nonce, workerPid}` do `agent.ensure` que ainda não landou no lado Delphi (§10).
+//!
+//! ⚠️ **NÃO INTEGRADO (#1070 RB5 — decisão do `Altair` no #1234).** Este crate é
+//! **compilado e testado no CI**, mas tem **ZERO consumidor no repo inteiro** (busca em
+//! `.rs`/`.toml` fora do próprio crate): o lado owner (Tauri) ainda não chama o
+//! `BrokerClient` pra bootstrapar o worker. É código **verificado esperando um fio** (o
+//! wiring do S7 #690, cujo design #937 já está CLOSED — tem destino, é espera, não
+//! abandono), NÃO código morto — por isso é MARCADO, não apagado.
 
 use serde::{Deserialize, Serialize};
 
