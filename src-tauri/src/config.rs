@@ -30,6 +30,12 @@ pub const CLIENT_ID_PESSOAL: &str = "53ddcae4-7368-4072-8ed2-8ee18daa8600";
 /// secret nao e uma fronteira de confianca (PKCE protege), mas o token endpoint do
 /// Google pede ele no exchange do fluxo desktop.
 pub const GOOGLE_CLIENT_ID: &str = "672866388200-objaoko15r9on8jvrc64m991r3e2act2.apps.googleusercontent.com";
+// #1055 (SEC9): o GOOGLE_CLIENT_SECRET de um OAuth *public client* (Desktop app) é
+// **público-na-prática** — o próprio Google trata o fluxo Desktop como público e é o
+// **PKCE** (code_verifier/challenge) que protege o exchange, NÃO o secret. Ele só
+// existe aqui porque o token endpoint do Google ainda o pede no fluxo desktop; não é
+// fronteira de confiança. Rotacionar só por exigência do Google/incidente (ver
+// docs/reference/rotacao-segredos.md).
 // #release: injetado em compile-time via `option_env!` (mesmo padrão dos secrets
 // de telemetria — ver build.rs). Ausente no build de dev (`tauri dev`) => "" =>
 // login Google desligado localmente (usa-se Microsoft no dev). No CI/release o
