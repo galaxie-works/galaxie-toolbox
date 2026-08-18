@@ -4274,17 +4274,17 @@ fn deletar_msg(
     token: &str,
     prefix: &str,
     id: &str,
-) -> Result<(), String> {
+) -> Result<(), ErroGraph> {
     let url = format!("{GRAPH}/{prefix}/messages/{id}");
     // Sob o pool + retry central (#64): Retry-After + jitter. 404 = idempotente.
     let resp = graph_enviar("mail:excluir", GRAPH_TETO_ESPERA_S, || {
         client.delete(&url).bearer_auth(token).send()
     })
-    .map_err(|e| format!("falha ao excluir o e-mail: {e}"))?;
+    .map_err(|e| ErroGraph::Transporte(format!("falha ao excluir o e-mail: {e}")))?;
     if resp.status().is_success() || resp.status().as_u16() == 404 {
         Ok(())
     } else {
-        Err(erro_escrita(prefix, "excluir mensagem", resp.status()))
+        Err(ErroGraph::da_resposta(prefix, "excluir mensagem", resp.status()))
     }
 }
 
@@ -4305,6 +4305,242 @@ fn erro_escrita(
     }
 }
 
+/// Erro de uma escrita do Graph **com o status preservado** (#1075 RB47).
+///
+/// O problema que este tipo resolve: `deletar_msg`/`mover_msg`/`mover_pasta_graph`
+/// devolviam `String`, e quem precisava decidir *"aborto o lote inteiro?"* tinha
+/// de **adivinhar o status de volta** a partir do texto:
+///
+/// ```ignore
+/// fn eh_erro_permissao(erro: &str) -> bool {
+///     erro.contains("(403)") || erro.contains(" 403") || erro.contains("403 ")
+/// }
+/// ```
+///
+/// O `StatusCode` existia na resposta e era jogado fora ao formatar. Reconstruí-lo
+/// por substring erra nos dois sentidos: um erro de transporte cuja mensagem
+/// contenha "403" por acaso (um id, um timestamp, uma porta) **aborta o lote**; e
+/// uma mensagem futura que escreva o 403 de outro jeito **deixa de abortar**.
+///
+/// A mensagem viaja pronta dentro da variante — construída por `erro_escrita`,
+/// que já aplica a regra LGPD do #1076 (o `/{prefix}` é PII e não sai no toast).
+/// Assim o texto para o usuário não muda em nada; o que muda é que a **decisão**
+/// passa a ler um tipo em vez de um texto.
+///
+/// Escopo deliberado: `erro_escrita` continua devolvendo `String` para os ~30
+/// outros sítios de escrita. Só os três produtores cujo erro alimenta uma decisão
+/// de abortar lote passam a ser tipados — trocar os 30 seria raio de explosão sem
+/// achado que o justifique.
+#[derive(Debug)]
+pub(crate) enum ErroGraph {
+    /// 403 — sem permissão. É o ÚNICO caso que aborta o lote: insistir nos
+    /// próximos itens daria 403 de novo.
+    Permissao(String),
+    /// 404/410 — o alvo não existe. Em `deletar_msg`/`mover_msg` isto nem chega
+    /// a virar erro (é idempotente); sobra para quem não trata 404 como sucesso.
+    NaoEncontrado(String),
+    /// Qualquer outro status HTTP. Falha do item, não do lote.
+    Outro(reqwest::StatusCode, String),
+    /// Falhou ANTES de existir status: rede, DNS, timeout, corpo ilegível.
+    /// Guardar isto separado é o ponto — "não tenho status" deixa de ser
+    /// confundido com "tenho um status que por acaso tem 403 no texto".
+    Transporte(String),
+}
+
+impl ErroGraph {
+    /// Constrói a partir de uma resposta que chegou (tem status).
+    fn da_resposta(prefix: &str, operacao: &str, status: reqwest::StatusCode) -> Self {
+        // `erro_escrita` loga com o prefix e devolve o texto SEM ele (#1076).
+        let msg = erro_escrita(prefix, operacao, status);
+        match status.as_u16() {
+            403 => ErroGraph::Permissao(msg),
+            404 | 410 => ErroGraph::NaoEncontrado(msg),
+            _ => ErroGraph::Outro(status, msg),
+        }
+    }
+
+    /// Aborta o lote? Só o 403. Lê o TIPO, não o texto.
+    pub(crate) fn eh_permissao(&self) -> bool {
+        matches!(self, ErroGraph::Permissao(_))
+    }
+
+    /// O DELETE definitivo de pasta cabe como fallback? (#1075 RB47)
+    ///
+    /// O doc do `cr_excluir_pasta` sempre prometeu que o `DELETE` só entra
+    /// *"quando o move falhou por não ser suportado naquele item (4xx que não
+    /// seja 429)"* — mas o código caía no fallback em QUALQUER erro, porque com
+    /// `String` não dava para saber qual era. Resultado: **um blip de rede
+    /// escalava um "mover para a lixeira" (reversível) num DELETE (definitivo).**
+    ///
+    /// Com o status preservado, a promessa do doc vira código: só 4xx que não
+    /// seja 429. Transporte e 5xx são transitórios — a resposta certa é falhar e
+    /// deixar o usuário tentar de novo, não apagar de vez.
+    pub(crate) fn cabe_fallback_delete(&self) -> bool {
+        match self {
+            ErroGraph::NaoEncontrado(_) => true,
+            ErroGraph::Outro(st, _) => st.is_client_error() && st.as_u16() != 429,
+            // 403 nem chega aqui (barrado antes); transporte nunca cabe.
+            ErroGraph::Permissao(_) | ErroGraph::Transporte(_) => false,
+        }
+    }
+
+    /// Texto para a borda do IPC — é aqui, e só aqui, que o erro vira `String`.
+    pub(crate) fn mensagem(self) -> String {
+        match self {
+            ErroGraph::Permissao(m)
+            | ErroGraph::NaoEncontrado(m)
+            | ErroGraph::Outro(_, m)
+            | ErroGraph::Transporte(m) => m,
+        }
+    }
+}
+
+impl std::fmt::Display for ErroGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let m = match self {
+            ErroGraph::Permissao(m)
+            | ErroGraph::NaoEncontrado(m)
+            | ErroGraph::Outro(_, m)
+            | ErroGraph::Transporte(m) => m,
+        };
+        f.write_str(m)
+    }
+}
+
+#[cfg(test)]
+mod testes_erro_graph {
+    use super::*;
+
+    /// REPRODUZ o RB47. Antes, a decisão era `erro.contains(" 403")` — e esta
+    /// mensagem de transporte a satisfazia, abortando o lote inteiro por causa de
+    /// um número dentro de um id. Agora não há status, então não é permissão.
+    #[test]
+    fn transporte_com_403_no_texto_nao_e_permissao() {
+        for texto in [
+            "falha ao excluir o e-mail: error sending request for url (id AAMkAD 403 xyz)",
+            "falha ao mover o e-mail: connection closed before message completed (port 4030)",
+            "timeout apos 403 ms",
+        ] {
+            let e = ErroGraph::Transporte(texto.to_string());
+            assert!(
+                !e.eh_permissao(),
+                "erro de transporte foi classificado como permissao: {texto}"
+            );
+        }
+    }
+
+    /// Prova que o defeito era REAL, nao hipotetico: a heuristica antiga
+    /// classificaria TODAS as tres mensagens acima como "sem permissao" e
+    /// abortaria o lote. Se alguem reintroduzir a decisao por texto, este teste
+    /// e o de cima passam a discordar.
+    #[test]
+    fn a_heuristica_antiga_erraria_nos_tres_casos() {
+        // copia literal do `eh_erro_permissao` que a F1 removeu
+        fn antiga(erro: &str) -> bool {
+            erro.contains("(403)") || erro.contains(" 403") || erro.contains("403 ")
+        }
+        for texto in [
+            "falha ao excluir o e-mail: error sending request for url (id AAMkAD 403 xyz)",
+            "falha ao mover o e-mail: connection closed before message completed (port 4030)",
+            "timeout apos 403 ms",
+        ] {
+            assert!(
+                antiga(texto),
+                "o caso perdeu a graca — a heuristica antiga NAO erraria aqui: {texto}"
+            );
+            assert!(
+                !ErroGraph::Transporte(texto.to_string()).eh_permissao(),
+                "a nova classificacao repetiu o erro da antiga: {texto}"
+            );
+        }
+    }
+
+    #[test]
+    fn so_o_403_aborta_o_lote() {
+        let permissao = ErroGraph::da_resposta("me", "excluir mensagem", cod(403));
+        assert!(permissao.eh_permissao());
+
+        for status in [400u16, 404, 409, 410, 429, 500, 503] {
+            let e = ErroGraph::da_resposta("me", "excluir mensagem", cod(status));
+            assert!(!e.eh_permissao(), "{status} nao pode abortar o lote");
+        }
+    }
+
+    #[test]
+    fn classifica_por_status_e_nao_por_texto() {
+        assert!(matches!(
+            ErroGraph::da_resposta("me", "op", cod(403)),
+            ErroGraph::Permissao(_)
+        ));
+        assert!(matches!(
+            ErroGraph::da_resposta("me", "op", cod(404)),
+            ErroGraph::NaoEncontrado(_)
+        ));
+        assert!(matches!(
+            ErroGraph::da_resposta("me", "op", cod(410)),
+            ErroGraph::NaoEncontrado(_)
+        ));
+        assert!(matches!(
+            ErroGraph::da_resposta("me", "op", cod(500)),
+            ErroGraph::Outro(_, _)
+        ));
+    }
+
+    /// O texto entregue ao usuario nao pode mudar com a tipagem — e continua sem
+    /// o `/{prefix}`, que e PII (#1076 RB48/LGPD).
+    #[test]
+    fn a_mensagem_do_usuario_nao_muda_e_nao_vaza_prefix() {
+        let prefix = "users/cliente@empresa.com.br";
+
+        let e = ErroGraph::da_resposta(prefix, "excluir mensagem", cod(403));
+        let msg = e.mensagem();
+        assert_eq!(msg, erro_escrita(prefix, "excluir mensagem", cod(403)));
+        assert!(!msg.contains("cliente@empresa.com.br"), "vazou PII: {msg}");
+        assert!(!msg.contains("users/"), "vazou o prefix: {msg}");
+
+        let outro = ErroGraph::da_resposta(prefix, "mover mensagem", cod(500));
+        let msg = outro.mensagem();
+        assert_eq!(msg, erro_escrita(prefix, "mover mensagem", cod(500)));
+        assert!(!msg.contains("cliente@empresa.com.br"), "vazou PII: {msg}");
+    }
+
+    /// O DELETE de pasta e DEFINITIVO. Um erro TRANSITORIO nao pode escalar um
+    /// "mover para a lixeira" (reversivel) num apagamento irreversivel — era o
+    /// que acontecia quando a decisao so tinha `String` para olhar.
+    #[test]
+    fn erro_transitorio_nao_escala_para_o_delete_definitivo() {
+        assert!(
+            !ErroGraph::Transporte("connection reset".to_string()).cabe_fallback_delete(),
+            "queda de rede nao pode virar DELETE definitivo"
+        );
+        for status in [429u16, 500, 502, 503, 504] {
+            assert!(
+                !ErroGraph::da_resposta("me", "mover pasta", cod(status)).cabe_fallback_delete(),
+                "{status} e transitorio — nao pode virar DELETE definitivo"
+            );
+        }
+    }
+
+    /// O caso que o fallback existe para cobrir: o item nao suporta o move.
+    #[test]
+    fn quatro_xx_que_nao_seja_429_cabe_no_fallback() {
+        for status in [400u16, 405, 409, 422] {
+            assert!(
+                ErroGraph::da_resposta("me", "mover pasta", cod(status)).cabe_fallback_delete(),
+                "{status} deveria cair no fallback"
+            );
+        }
+        // 404: a pasta ja nao esta la; o DELETE tambem e idempotente.
+        assert!(ErroGraph::da_resposta("me", "mover pasta", cod(404)).cabe_fallback_delete());
+        // 403 nunca — e barrado antes, mas o tipo tambem nega.
+        assert!(!ErroGraph::da_resposta("me", "mover pasta", cod(403)).cabe_fallback_delete());
+    }
+
+    fn cod(n: u16) -> reqwest::StatusCode {
+        reqwest::StatusCode::from_u16(n).expect("status valido")
+    }
+}
+
 /// Mensagem de erro de envio para o FRONT. #1076 (RB48/LGPD): mesma regra do
 /// `erro_escrita` — o `/{prefix}` (`users/<email>` na caixa compartilhada) é PII e
 /// fica só no log interno, nunca no toast.
@@ -4321,10 +4557,6 @@ fn erro_envio(
     }
 }
 
-fn eh_erro_permissao(erro: &str) -> bool {
-    erro.contains("(403)") || erro.contains(" 403") || erro.contains("403 ")
-}
-
 /// Move uma mensagem para uma pasta (well-known como "deleteditems" ou id).
 /// 404 conta como sucesso (idempotente). Retry no 429. Mail.ReadWrite ou
 /// Mail.ReadWrite.Shared, conforme `prefix`.
@@ -4334,18 +4566,18 @@ fn mover_msg(
     prefix: &str,
     id: &str,
     destino: &str,
-) -> Result<(), String> {
+) -> Result<(), ErroGraph> {
     let url = format!("{GRAPH}/{prefix}/messages/{id}/move");
     let body = serde_json::json!({ "destinationId": destino });
     // Sob o pool + retry central (#64): Retry-After + jitter. 404 = idempotente.
     let resp = graph_enviar("mail:mover", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(token).json(&body).send()
     })
-    .map_err(|e| format!("falha ao mover o e-mail: {e}"))?;
+    .map_err(|e| ErroGraph::Transporte(format!("falha ao mover o e-mail: {e}")))?;
     if resp.status().is_success() || resp.status().as_u16() == 404 {
         Ok(())
     } else {
-        Err(erro_escrita(prefix, "mover mensagem", resp.status()))
+        Err(ErroGraph::da_resposta(prefix, "mover mensagem", resp.status()))
     }
 }
 
@@ -4358,7 +4590,7 @@ pub fn cr_excluir_email(
     let token = access_token(store)?;
     let client = cliente();
     let prefix = mailbox_prefix(mailbox);
-    mover_msg(&client, &token, &prefix, id, "deleteditems")
+    mover_msg(&client, &token, &prefix, id, "deleteditems").map_err(ErroGraph::mensagem)
 }
 
 /// Exclui vários e-mails em série (evita a rajada concorrente que leva o Graph a
@@ -4384,7 +4616,9 @@ pub fn cr_excluir_emails(
         };
         match r {
             Ok(()) => ok.push(id.clone()),
-            Err(e) if eh_erro_permissao(&e) => return Err(e),
+            // 403 aborta o lote: insistir daria 403 de novo. Agora e o TIPO que
+            // decide (#1075 RB47) — antes era `contains(" 403")` no texto.
+            Err(e) if e.eh_permissao() => return Err(e.mensagem()),
             Err(e) => log::warn!("[mail] excluir '{id}' falhou: {e}"),
         }
     }
@@ -4412,7 +4646,7 @@ pub fn cr_mover_emails(
     for id in &ids {
         match mover_msg(&client, &token, &prefix, id, &destino) {
             Ok(()) => ok.push(id.clone()),
-            Err(e) if eh_erro_permissao(&e) => return Err(e),
+            Err(e) if e.eh_permissao() => return Err(e.mensagem()),
             Err(e) => log::warn!("[mail] mover '{id}' para '{destino}' falhou: {e}"),
         }
     }
@@ -8668,19 +8902,20 @@ fn mover_pasta_graph(
     prefix: &str,
     id: &str,
     destino: &str,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ErroGraph> {
     let url = format!("{GRAPH}/{prefix}/mailFolders/{id}/move");
     let body = serde_json::json!({ "destinationId": destino });
     // Sob o pool + retry central (#64): Retry-After + jitter.
     let resp = graph_enviar("mail:mover-pasta", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(token).json(&body).send()
     })
-    .map_err(|e| format!("falha ao mover a pasta: {e}"))?;
+    .map_err(|e| ErroGraph::Transporte(format!("falha ao mover a pasta: {e}")))?;
     let st = resp.status();
     if !st.is_success() {
-        return Err(erro_escrita(prefix, "mover pasta", st));
+        return Err(ErroGraph::da_resposta(prefix, "mover pasta", st));
     }
-    resp.json::<serde_json::Value>().map_err(|e| e.to_string())
+    resp.json::<serde_json::Value>()
+        .map_err(|e| ErroGraph::Transporte(e.to_string()))
 }
 
 /// Move uma pasta para dentro de `novo_pai` (#90). O front impede escolher a
@@ -8695,7 +8930,8 @@ pub fn cr_mover_pasta(
     let token = access_token(store)?;
     let client = cliente();
     let prefix = mailbox_prefix(mailbox);
-    let v = mover_pasta_graph(&client, &token, &prefix, id, novo_pai)?;
+    let v = mover_pasta_graph(&client, &token, &prefix, id, novo_pai)
+        .map_err(ErroGraph::mensagem)?;
     Ok(pasta_de_json(&v))
 }
 
@@ -8724,7 +8960,17 @@ pub fn cr_excluir_pasta(
 
     match mover_pasta_graph(&client, &token, &prefix, id, "deleteditems") {
         Ok(_) => Ok(true),
-        Err(e) if eh_erro_permissao(&e) => Err(e),
+        // Sem permissao nao adianta tentar o DELETE — daria 403 igual. Nos
+        // demais casos o fallback vale a viagem. A decisao le o TIPO (#1075 RB47);
+        // antes um erro de TRANSPORTE com "403" no texto pulava o fallback.
+        Err(e) if e.eh_permissao() => Err(e.mensagem()),
+        // #1075 RB47: erro transitório (transporte/5xx/429) NÃO escala para o
+        // DELETE definitivo — o doc acima sempre prometeu isso, mas com `String`
+        // não dava para distinguir e o fallback pegava tudo.
+        Err(e) if !e.cabe_fallback_delete() => {
+            log::warn!("[mail] excluir pasta '{id}': falha transitória, sem fallback ({e})");
+            Err(e.mensagem())
+        }
         Err(e) => {
             log::warn!(
                 "[mail] excluir pasta '{id}': move p/ lixeira falhou ({e}); tentando DELETE"
