@@ -171,3 +171,43 @@ const RASTER_HERDADO = [
   "namecheap", "perplexity", "power-bi", "runway", "substack", "supabase",
   "unifi", "veeam",
 ];
+
+// ───────────────── #1172: o catálogo não pode perder o Brasil ─────────────────
+// O scrape que originou o catálogo montou a lista por DISPONIBILIDADE DE
+// INTEGRAÇÃO, não por liderança de categoria — e o resultado foi 1779 apps com
+// ZERO software de gestão brasileiro (medido em `c84708c`, 18/08). A curadoria
+// do #1155 não criou esse buraco, mas também não o fecharia: curar uma lista
+// enviesada devolve uma lista enviesada menor.
+//
+// Este gate existe porque o defeito é SILENCIOSO: ninguém percebe uma categoria
+// que nunca esteve lá. Se um próximo import regenerar o catálogo a partir da
+// mesma fonte, ele reprova aqui em vez de passar verde com o Brasil de fora.
+
+/** Gestão brasileira que uma PME abre todo dia (#1172). */
+const GESTAO_BRASILEIRA = [
+  // ERP e gestão
+  "totvs", "sankhya", "senior", "linx", "omie", "bling", "tiny",
+  // contábil, fiscal e financeiro
+  "dominio", "alterdata", "questor", "contaazul", "nibo",
+];
+
+test("#1172: o catálogo tem software de gestão brasileiro", () => {
+  const ids = new Set(catalogo.map((a) => a.id));
+  const ausentes = GESTAO_BRASILEIRA.filter((id) => !ids.has(id));
+  assert.deepEqual(
+    ausentes,
+    [],
+    "categoria inteira faltando num produto para PME brasileira — ver #1172",
+  );
+});
+
+test("#1172: líder de categoria que o scrape deixou de fora segue presente", () => {
+  // Amostra do padrão, não a lista toda: a curadoria cortou `codacy` sem que
+  // Sonar estivesse, e `realvnc` sem que AnyDesk estivesse. O catálogo NÃO é
+  // fonte de verdade de liderança de categoria.
+  const ids = new Set(catalogo.map((a) => a.id));
+  const ausentes = ["sonarqube", "anydesk", "render", "wasabi", "acronis"].filter(
+    (id) => !ids.has(id),
+  );
+  assert.deepEqual(ausentes, []);
+});
