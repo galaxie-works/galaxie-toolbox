@@ -883,46 +883,6 @@ pub struct Reuniao {
     pub online: bool,
 }
 
-/// Proximas reunioes (janela de 7 dias, ate 6). Calendars.Read.
-pub fn cr_reunioes(store: &TokenStore) -> Result<Vec<Reuniao>, String> {
-    use chrono::{Duration, Utc};
-    let token = access_token(store)?;
-    let client = cliente();
-
-    let agora = Utc::now();
-    let ini = agora.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let fim = (agora + Duration::days(7)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let url = format!(
-        "{GRAPH}/me/calendarView?startDateTime={ini}&endDateTime={fim}\
-         &$select=subject,start,end,location,isAllDay,onlineMeeting\
-         &$orderby=start/dateTime&$top=6"
-    );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        // times em UTC, deterministico para o front converter.
-        .header("Prefer", "outlook.timezone=\"UTC\"")
-        .send()
-        .map_err(|e| format!("falha no calendario: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("/me/calendarView retornou {}", resp.status()));
-    }
-    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
-    let mut reunioes = Vec::new();
-    if let Some(items) = v["value"].as_array() {
-        for it in items {
-            reunioes.push(Reuniao {
-                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
-                inicio: it["start"]["dateTime"].as_str().unwrap_or("").to_string(),
-                fim: it["end"]["dateTime"].as_str().unwrap_or("").to_string(),
-                local: it["location"]["displayName"].as_str().unwrap_or("").to_string(),
-                online: it["onlineMeeting"].is_object(),
-            });
-        }
-    }
-    Ok(reunioes)
-}
-
 #[derive(serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailRecente {
@@ -936,64 +896,6 @@ pub struct EmailRecente {
 pub struct CaixaEntrada {
     pub nao_lidos: u64,
     pub recentes: Vec<EmailRecente>,
-}
-
-/// Nao-lidos da Caixa de Entrada + ultimas mensagens nao lidas. Mail.Read.
-///
-/// #440 (A1): AGORA sob o pool (`graph_enviar` — retry/429), e a contagem de
-/// não-lidos PROPAGA erro em vez de devolver "0 silencioso" (o front tem de
-/// distinguir "caixa vazia" de "falhou"; AC4). Os recentes seguem best-effort: a
-/// contagem é o sinal principal e a lista é só enriquecimento.
-pub fn cr_email(store: &TokenStore) -> Result<CaixaEntrada, String> {
-    let token = access_token(store)?;
-    let client = cliente();
-
-    let mut cx = CaixaEntrada::default();
-
-    // Não-lidos: sinal-chave → um erro real vira Err (nunca "0" falso).
-    let url = format!("{GRAPH}/me/mailFolders/inbox?$select=unreadItemCount");
-    let resp = graph_enviar("mail:naolidos", GRAPH_TETO_ESPERA_S, || {
-        client.get(&url).bearer_auth(&token).send()
-    })
-    .map_err(|e| format!("falha ao ler não-lidos: {e}"))?;
-    if !resp.status().is_success() {
-        let st = resp.status();
-        log::warn!("[mail:naolidos] Graph retornou {st}");
-        return Err(format!("/me/mailFolders/inbox retornou {st}"));
-    }
-    if let Ok(v) = resp.json::<serde_json::Value>() {
-        cx.nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
-    }
-
-    // Recentes: enriquecimento. Se falhar, mantém a contagem e degrada.
-    let url = format!(
-        "{GRAPH}/me/mailFolders/inbox/messages?$filter=isRead eq false\
-         &$select=subject,from,receivedDateTime&$top=5&$orderby=receivedDateTime desc"
-    );
-    if let Ok(resp) = graph_enviar("mail:recentes", GRAPH_TETO_ESPERA_S, || {
-        client.get(&url).bearer_auth(&token).send()
-    }) {
-        if resp.status().is_success() {
-            if let Ok(v) = resp.json::<serde_json::Value>() {
-                if let Some(items) = v["value"].as_array() {
-                    for it in items {
-                        cx.recentes.push(EmailRecente {
-                            assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
-                            de: it["from"]["emailAddress"]["name"]
-                                .as_str()
-                                .or_else(|| it["from"]["emailAddress"]["address"].as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
-                        });
-                    }
-                }
-            }
-        } else {
-            log::warn!("[mail:recentes] Graph retornou {} (degradando)", resp.status());
-        }
-    }
-    Ok(cx)
 }
 
 /// E-mail do dashboard Atoms (#440 A1): não-lidos + sinalizados + recentes num
@@ -2399,54 +2301,6 @@ pub struct EmailItem {
     pub lido: bool,
     pub tem_anexos: bool,
     pub sinalizado: bool,
-}
-
-/// E-mails recebidos no dia escolhido (limites em ISO UTC). Mail.Read.
-pub fn cr_inbox_dia(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EmailItem>, String> {
-    let token = access_token(store)?;
-    let client = cliente();
-
-    let url = format!(
-        "{GRAPH}/me/mailFolders/inbox/messages\
-         ?$filter=receivedDateTime ge {inicio} and receivedDateTime lt {fim}\
-         &$select=subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex\
-         &$orderby=receivedDateTime desc&$top=50"
-    );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .map_err(|e| format!("falha ao ler a inbox: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("/me/mailFolders/inbox/messages retornou {}", resp.status()));
-    }
-    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
-    let mut itens = Vec::new();
-    if let Some(items) = v["value"].as_array() {
-        for it in items {
-            let de = it["from"]["emailAddress"]["name"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .or_else(|| it["from"]["emailAddress"]["address"].as_str())
-                .unwrap_or("")
-                .to_string();
-            itens.push(EmailItem {
-                id: it["id"].as_str().unwrap_or("").to_string(),
-                conversation_id: it["conversationId"].as_str().map(str::to_string),
-                conversation_index: it["conversationIndex"].as_str().map(str::to_string),
-                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
-                iniciais: iniciais(&de),
-                de,
-                de_email: it["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
-                recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
-                preview: it["bodyPreview"].as_str().unwrap_or("").trim().to_string(),
-                lido: it["isRead"].as_bool().unwrap_or(true),
-                tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
-                sinalizado: it["flag"]["flagStatus"].as_str() == Some("flagged"),
-            });
-        }
-    }
-    Ok(itens)
 }
 
 #[derive(serde::Serialize)]
@@ -8626,64 +8480,6 @@ pub fn cr_excluir_pasta(
             }
         }
     }
-}
-
-/// Conta, na PASTA inteira (não só no que está carregado), quantas mensagens
-/// batem com um filtro. Usa o endpoint /$count, que devolve um número puro
-/// (texto) no corpo — daí o parse para u64. O $filter exige o header
-/// ConsistencyLevel: eventual. Retry no 429. Mail.Read.
-///
-/// `filtro` aceita:
-///   - "flagged" → mensagens sinalizadas (flag/flagStatus eq 'flagged')
-///   - "anexos"  → mensagens com anexos (hasAttachments eq true)
-/// Qualquer outro valor é rejeitado com erro (em vez de contar tudo em
-/// silêncio, o que enganaria a UI): assim um filtro digitado errado aparece
-/// como falha em vez de virar um total sem sentido.
-pub fn cr_contar(
-    store: &TokenStore,
-    folder_id: &str,
-    filtro: &str,
-    mailbox: Option<&str>,
-) -> Result<u64, String> {
-    let token = access_token(store)?;
-    let client = cliente();
-    let prefix = mailbox_prefix(mailbox);
-
-    // Mapeia o filtro lógico para a expressão OData. Desconhecido → erro.
-    let odata = match filtro {
-        "flagged" => "flag/flagStatus eq 'flagged'",
-        "anexos" => "hasAttachments eq true",
-        outro => return Err(format!("filtro desconhecido: '{outro}'")),
-    };
-
-    // O $filter vai percent-encodado; o /$count devolve o total como texto puro.
-    let url = format!(
-        "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages/$count?$filter={}",
-        urlencoding::encode(odata)
-    );
-
-    // Sob o pool + retry central (#64): Retry-After + jitter. Contadores são a
-    // parte da rajada de abertura que mais tomava 429. O /$count com $filter
-    // exige ConsistencyLevel: eventual.
-    let resp = graph_enviar("mail:contar", GRAPH_TETO_ESPERA_S, || {
-        client
-            .get(&url)
-            .bearer_auth(&token)
-            .header("ConsistencyLevel", "eventual")
-            .send()
-    })
-    .map_err(|e| format!("falha ao contar: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!(
-            "/{prefix}/mailFolders/{folder_id}/messages/$count retornou {}",
-            resp.status()
-        ));
-    }
-    let corpo = resp.text().map_err(|e| e.to_string())?;
-    corpo
-        .trim()
-        .parse::<u64>()
-        .map_err(|e| format!("resposta do /$count não é um número ('{corpo}'): {e}"))
 }
 
 /// Os dois contadores por-pasta que a UI mostra nas abas (Sinalizados / Com

@@ -306,24 +306,6 @@ async fn onedrive_tipos(
         .map_err(|e| e.to_string())?
 }
 
-/// Control room: proximas reunioes do usuario.
-#[tauri::command]
-async fn cr_reunioes(state: State<'_, Store>) -> Result<Vec<graph::Reuniao>, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_reunioes(&store))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-/// Control room: caixa de entrada (nao-lidos + recentes).
-#[tauri::command]
-async fn cr_email(state: State<'_, Store>) -> Result<graph::CaixaEntrada, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_email(&store))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
 /// Control room: tarefas pendentes do To Do.
 #[tauri::command]
 async fn cr_tarefas(state: State<'_, Store>) -> Result<Vec<graph::Tarefa>, String> {
@@ -414,19 +396,6 @@ async fn cr_evento_corpo(
 ) -> Result<graph::EventoDetalhe, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || graph::cr_evento_corpo(&store, &id))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-/// Control room: e-mails recebidos no dia escolhido (limites ISO UTC).
-#[tauri::command]
-async fn cr_inbox_dia(
-    state: State<'_, Store>,
-    inicio: String,
-    fim: String,
-) -> Result<Vec<graph::EmailItem>, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_inbox_dia(&store, &inicio, &fim))
         .await
         .map_err(|e| e.to_string())?
 }
@@ -1337,23 +1306,6 @@ async fn cr_filtrar(
     .map_err(|e| e.to_string())?
 }
 
-/// Control room: conta na pasta inteira as mensagens que batem com um filtro
-/// ("flagged" | "anexos"), via endpoint /$count do Graph.
-#[tauri::command]
-async fn cr_contar(
-    state: State<'_, Store>,
-    folder_id: String,
-    filtro: String,
-    mailbox: Option<String>,
-) -> Result<u64, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_contar(&store, &folder_id, &filtro, mailbox.as_deref())
-    })
-        .await
-        .map_err(|e| e.to_string())?
-}
-
 /// Control room: os dois contadores por-pasta das abas (Sinalizados / Com anexos)
 /// numa ÚNICA chamada $batch — substitui as duas `cr_contar` em paralelo (#87).
 #[tauri::command]
@@ -2112,8 +2064,6 @@ pub fn run() {
             onedrive_folder_details,
             onedrive_quota,
             onedrive_tipos,
-            cr_reunioes,
-            cr_email,
             cr_tarefas,
             atoms_email,
             cr_tarefa_concluir,
@@ -2121,7 +2071,6 @@ pub fn run() {
             cr_calendarios,
             cr_agenda_calendario,
             cr_evento_corpo,
-            cr_inbox_dia,
             cr_email_corpo,
             cr_email_seguranca,
             cr_categorias,
@@ -2189,7 +2138,6 @@ pub fn run() {
             cr_marcar_lido,
             cr_buscar,
             cr_filtrar,
-            cr_contar,
             cr_contadores,
             cr_insights_remetente,
             cr_esvaziar_pasta,

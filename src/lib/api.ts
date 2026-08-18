@@ -570,34 +570,6 @@ export async function onedriveTipos(webUrl: string): Promise<TipoArquivo[]> {
   return invoke<TipoArquivo[]>("onedrive_tipos", { webUrl });
 }
 
-// --- Control room ---------------------------------------------------------
-export async function crReunioes(): Promise<Reuniao[]> {
-  if (!inTauri()) {
-    await sleep(400);
-    const agora = new Date();
-    const em = (h: number) => new Date(agora.getTime() + h * 3600_000).toISOString().replace("Z", "");
-    return [
-      { assunto: "Daily do time", inicio: em(1), fim: em(1.5), local: "Teams", online: true },
-      { assunto: "Reunião com cliente VOAZ", inicio: em(4), fim: em(5), local: "Sala 2", online: false },
-    ];
-  }
-  return invoke<Reuniao[]>("cr_reunioes");
-}
-
-export async function crEmail(): Promise<CaixaEntrada> {
-  if (!inTauri()) {
-    await sleep(500);
-    return {
-      naoLidos: 7,
-      recentes: [
-        { assunto: "Fatura de julho", de: "Financeiro", recebido: new Date().toISOString() },
-        { assunto: "Aprovação pendente", de: "João", recebido: new Date().toISOString() },
-      ],
-    };
-  }
-  return invoke<CaixaEntrada>("cr_email");
-}
-
 /** #440 (Atoms A1): e-mail do dashboard num único $batch (não-lidos + sinalizados
  * + recentes). 1 comando, 1 caminho de erro — substitui o
  * Promise.all([crEmail, crContadores]) que derrubava o widget quando só o
@@ -910,23 +882,6 @@ export async function crCancelarEvento(
   if (!inTauri()) mockEscritaBloqueada();
   // #1069: cancela na caixa ativa (própria ou compartilhada), não no /me fixo.
   await invoke("cr_cancelar_evento", { id, comentario, mailbox: mailboxArg(mailbox) });
-}
-
-export async function crInboxDia(inicio: string, fim: string): Promise<EmailItem[]> {
-  if (!inTauri()) {
-    await sleep(500);
-    const t = (h: number) => {
-      const d = new Date(inicio);
-      d.setHours(h, 12, 0, 0);
-      return d.toISOString();
-    };
-    return [
-      { id: "m1", assunto: "Fatura de julho", de: "Financeiro VOAZ", deEmail: "fin@voaz.com.br", iniciais: "FV", recebido: t(8), preview: "Segue em anexo a fatura referente aos serviços de julho.", lido: false, temAnexos: true, sinalizado: false },
-      { id: "m2", assunto: "Aprovação pendente — compra PROH", de: "João Pereira", deEmail: "joao@proh.com.br", iniciais: "JP", recebido: t(10), preview: "Oi Wagner, preciso da sua aprovação para seguir com o pedido.", lido: false, temAnexos: false, sinalizado: true },
-      { id: "m3", assunto: "Seu OneDrive está sem espaço", de: "Microsoft", deEmail: "no-reply@microsoft.com", iniciais: "MS", recebido: t(13), preview: "Seu armazenamento do OneDrive está cheio. Libere espaço para continuar.", lido: true, temAnexos: false, sinalizado: false },
-    ];
-  }
-  return invoke<EmailItem[]>("cr_inbox_dia", { inicio, fim });
 }
 
 function mailboxArg(mailbox?: string): string | null {
@@ -2191,26 +2146,6 @@ export async function crFiltrar(
     folderId,
     filtro,
     nextLink,
-    mailbox: mailboxArg(mailbox),
-  });
-}
-
-/**
- * Conta na pasta inteira as mensagens que batem com um filtro ("flagged" |
- * "anexos"), via endpoint /$count do Graph. Fora do Tauri (mock) devolve 0.
- */
-export async function crContar(
-  folderId: string,
-  filtro: string,
-  mailbox?: string
-): Promise<number> {
-  if (!inTauri()) {
-    await sleep(200);
-    return 0;
-  }
-  return invoke<number>("cr_contar", {
-    folderId,
-    filtro,
     mailbox: mailboxArg(mailbox),
   });
 }
