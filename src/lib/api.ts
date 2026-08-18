@@ -47,12 +47,14 @@ import type {
   PeopleRecord,
   SegurancaEmail,
   Site,
+  SalvarContatosResultado,
   Tarefa,
   TarefasResultado,
   TipoArquivo,
   UsoOneDrive,
 } from "./types";
 import { iniciais } from "./iniciais.ts";
+import { logErro } from "./log.ts";
 
 /** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
 export function inTauri(): boolean {
@@ -1889,10 +1891,37 @@ export async function crCompartilharOneDrive(
   return invoke<string>("cr_compartilhar_onedrive", { nome, conteudoB64 });
 }
 
-/** Salva contatos pessoais (sem duplicar). Retorna quantos foram criados. */
-export async function crSalvarContatos(pessoas: Pessoa[]): Promise<number> {
+/**
+ * Salva contatos pessoais (sem duplicar), best-effort.
+ *
+ * #1075 RB46-d: devolve `{ criados, jaExistiam, falhas }` em vez de só um
+ * número. Os chamadores são fire-and-forget de propósito (salvar contato é
+ * efeito colateral de enviar e-mail, não o pedido do usuário) — então a falha
+ * vai para `logErro`, não para toast. Ver `registrarFalhasDeContato`.
+ */
+export async function crSalvarContatos(
+  pessoas: Pessoa[],
+): Promise<SalvarContatosResultado> {
   if (!inTauri()) mockEscritaBloqueada();
-  return invoke<number>("cr_salvar_contatos", { pessoas });
+  return invoke<SalvarContatosResultado>("cr_salvar_contatos", { pessoas });
+}
+
+/**
+ * Canal único para o resultado do `crSalvarContatos` (#1075 RB46-d).
+ *
+ * O usuário NÃO é notificado: ele pediu para enviar um e-mail, não para gravar
+ * contatos; um toast aqui seria ruído sobre algo que ele não pediu. Mas o
+ * silêncio para o usuário não pode virar silêncio para NÓS — antes, o contato
+ * que não dava para checar era pulado e não sobrava rastro nenhum fora de um
+ * `log::warn` no Rust.
+ */
+export function registrarFalhasDeContato(r: SalvarContatosResultado): void {
+  if (r.falhas.length === 0) return;
+  logErro(
+    "contatos:salvar",
+    new Error(`${r.falhas.length} contato(s) nao gravado(s)`),
+    r.falhas.map((f) => `${f.email}: ${f.motivo}`).join(" | "),
+  );
 }
 
 /** Chave de ordenação da lista (mapeada no backend para $orderby do Graph).

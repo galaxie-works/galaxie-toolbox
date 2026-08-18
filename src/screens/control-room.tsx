@@ -271,6 +271,7 @@ import { AtalhosAjuda } from "@/components/atalhos-ajuda";
 const FILTROS_OCULTOS = new Set<string>();
 
 import { comZ, quandoCurto } from "@/lib/data-email";
+import { logErro } from "@/lib/log";
 
 
 // #640 (re-spec): a impressão saiu do front. O `window.print()` de um iframe cai
@@ -4253,10 +4254,13 @@ const MessageDetail = forwardRef<
       enviar: async () => {
         if (modoAgendado === "encaminhar") {
           await api.crEncaminhar(id, html, destinos, anexos, mailbox);
-          // salva os destinatários nos Contatos (best-effort, silencioso)
+          // Salva os destinatários nos Contatos: best-effort para o USUÁRIO
+          // (#1075 RB46-d) — sem toast, porque ele pediu para encaminhar, não
+          // para gravar contatos. Mas o resultado passa a ser registrado.
           api
             .crSalvarContatos(destinos.map((e) => ({ nome: e, email: e })))
-            .catch(() => {});
+            .then(api.registrarFalhasDeContato)
+            .catch((e) => logErro("contatos:salvar", e));
         } else {
           await api.crResponder(
             id,
