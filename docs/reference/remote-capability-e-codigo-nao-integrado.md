@@ -208,3 +208,102 @@ manter dois tipos e sincronizá-los na mão.
 3. `CapabilityPolicy` vira wrapper/alias sobre os 5 campos (o `Default` já é
    DENY desde a #1232)
 4. **só então** RB6: `remote.rs:1126` deixa de descartar — loga e aplica
+
+---
+
+## 5. Adendo (18/08, `ba73c22`) — o gate que eu propus NÃO funciona
+
+Na §3 propus um gate ratchet que varreria `#[tauri::command]` não-`async`
+procurando chamada bloqueante **no corpo** (`.join()`, `.recv()`, `block_on`…).
+
+**Fui medir antes de alguém construir. A proposta está errada.**
+
+### 5.1 A medição
+
+Em `ba73c22` (18/08), varrendo `src-tauri/src/**/*.rs`:
+
+```
+#[tauri::command] async : 167
+#[tauri::command] SYNC  :  15
+SYNC com chamada bloqueante NO CORPO : 0
+```
+
+Zero. O gate teria baseline vazia — o que parece ótimo, e é justamente o
+problema: **ele não teria pego nenhuma das quatro ocorrências da família**.
+
+Em todas, o bloqueio está **uma chamada de profundidade**:
+
+| # | comando | como bloqueava |
+|---|---|---|
+| #834 | `fs_thumbnail` | helper de decodificação |
+| #1073 | — | idem |
+| #1227 | `remote_session_end` | `session.stop()` → `worker.join()` (`remote.rs:79-84`) |
+| **novo** | `remote_session_start` | **o mesmo `session.stop()`** (§5.3) |
+
+Um scan textual do corpo não vê `join()` escondido dentro de `stop()`. Construir
+esse gate daria **falsa confiança** — CI verde afirmando uma propriedade que ele
+não verifica. É exatamente o defeito que o #1153 achou nos ícones (`icon: true`
+era afirmação do gerador, nada abria o arquivo) e que a F1 do #1075 achou no
+`eh_erro_permissao` (decidir farejando texto).
+
+### 5.2 O gate que funcionaria: estrutural, não textual
+
+**Regra:** todo `#[tauri::command]` é `async`, salvo os que estiverem numa
+ALLOW-list explícita, cada um com uma linha de justificativa.
+
+Por que funciona onde o outro falha: ele **não precisa saber o que o comando
+chama**. Se `sync` é barrado por padrão, não há como esconder bloqueio atrás de
+um helper — a profundidade da chamada deixa de importar. É a mesma lição da F1:
+**decidir pela forma, não farejando o texto.**
+
+A medição diz que o custo é baixo: **12 dos 15** síncronos de hoje são
+delegadores de 2 linhas (`telemetry_*`, `remote_log`, `reset_session_memo`…),
+triviais de justificar. Os **3** substantivos — `remote_session_start` (43
+linhas), `remote_session_input` (22), `remote_session_signal` (8) — são
+exatamente onde o risco mora, que é o resultado que se quer de um gate.
+
+Baseline = os 15 de hoje; a lista só encolhe.
+
+### 5.3 Achado: o RB9 cobriu metade do item de DoD
+
+O DoD do #1070 diz:
+
+> `remote_session_end` **(e o ramo de limpeza de `remote_session_start`)**
+> convertidos para `async fn` + `spawn_blocking`
+
+A #1227 converteu o `remote_session_end`. O **ramo de limpeza do
+`remote_session_start` continua síncrono** (`remote.rs:345-351`):
+
+```rust
+if active.as_ref().is_some_and(|s| s.finished.load(Ordering::Acquire)) {
+    if let Some(session) = active.take() {
+        session.stop("worker_finished".to_owned());   // → worker.join()
+    }
+}
+```
+
+…e faz isso **segurando `runtime.active.lock()`**, ao contrário do
+`remote_session_end`, que solta o guard antes do `await` de propósito.
+
+**Severidade hoje: BAIXA — e quero ser exato.** O ramo só roda quando
+`finished == true`, e o worker grava isso **depois** de `run_session` retornar
+(`remote.rs:368-370`). Ou seja, o join encontra a thread praticamente terminada
+e volta quase imediato. **Não é o congelamento do #834.**
+
+O que incomoda é outra coisa: **é uma armadilha a uma edição de distância.**
+Basta alguém afrouxar a guarda, ou passar a gravar `finished` mais cedo, e o
+`join()` volta a ser longo — na thread do IPC e com o mutex na mão. E o item de
+DoD segue aberto.
+
+**Raia:** `Confucius` (#1070). Reporto, não codo.
+
+### 5.4 O que recomendo
+
+1. Fechar a outra metade do item de DoD: `remote_session_start` vira `async` e o
+   `stop()` do ramo de limpeza sai para `spawn_blocking`, com o lock solto antes
+   do await — copiando a forma que o `remote_session_end` já tem.
+2. **Só depois** o gate estrutural da §5.2, com a ALLOW-list nascendo já sem os
+   comandos corrigidos.
+
+Se `Polaris II` quiser o gate, eu faço — mas na forma da §5.2, não na que eu
+mesmo propus na §3.
