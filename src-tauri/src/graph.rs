@@ -75,6 +75,18 @@ const GRAPH_MAX_TENTATIVAS: u8 = 4;
 /// servidor pedir um valor absurdo.
 const GRAPH_TETO_ESPERA_S: u64 = 10;
 
+/// Campos da LISTAGEM de mensagens (#1074 RB42).
+///
+/// Os três caminhos que listam e-mail — pasta, busca e filtro — precisam pedir
+/// exatamente os mesmos campos, porque os três montam o item pelo
+/// `montar_email_item`. Se um deles pedir um campo a menos, aquele caminho passa
+/// a devolver item incompleto SÓ NELE — e o sintoma aparece longe da causa.
+///
+/// Já era assim na prática, garantido por um COMENTÁRIO ("campos idênticos aos de
+/// cr_buscar/cr_folder_mensagens") e uma `const` local a uma função. Comentário não
+/// impede divergência; const de módulo impede.
+const SELECT_MENSAGEM: &str = "subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex";
+
 /// Teto para ESTABELECER a conexão (TCP+TLS). Nenhum connect legítimo ao Graph
 /// leva tanto; o que passa disso é conexão pendurada — e pendurada é o caso
 /// grave, porque ela segura uma das 4 vagas de `GRAPH_MAX_CONCORRENTES` sem
@@ -1811,6 +1823,51 @@ pub fn cr_evento_recorrencia(
 //
 // Rodar: cargo test --lib graph::testes_recorrencia
 // ---------------------------------------------------------------------------
+#[cfg(test)]
+mod testes_select_mensagem {
+    use super::*;
+
+    #[test]
+    fn select_de_mensagem_cobre_o_que_o_montar_email_item_consome() {
+        // A const existe pra que os 3 caminhos peçam o MESMO conjunto. O risco real
+        // não é a string mudar — é ela perder um campo que o `montar_email_item`
+        // lê, e aí SÓ aquele caminho devolve item incompleto, com o sintoma
+        // aparecendo longe da causa. Este teste ancora os campos obrigatórios.
+        for campo in [
+            "subject",
+            "from",
+            "receivedDateTime",
+            "bodyPreview",
+            "isRead",
+            "hasAttachments",
+            "flag",
+            "conversationId",
+        ] {
+            assert!(
+                SELECT_MENSAGEM.split(',').any(|c| c == campo),
+                "SELECT_MENSAGEM perdeu o campo `{campo}` — a listagem passa a                  devolver item incompleto nos 3 caminhos de uma vez"
+            );
+        }
+    }
+
+    #[test]
+    fn select_de_mensagem_nao_tem_campo_repetido_nem_vazio() {
+        let campos: Vec<&str> = SELECT_MENSAGEM.split(',').collect();
+        assert!(
+            !campos.iter().any(|c| c.trim().is_empty()),
+            "campo vazio no SELECT_MENSAGEM (vírgula sobrando) — o Graph rejeita a query"
+        );
+        let mut unicos = campos.clone();
+        unicos.sort_unstable();
+        unicos.dedup();
+        assert_eq!(
+            unicos.len(),
+            campos.len(),
+            "campo repetido no SELECT_MENSAGEM"
+        );
+    }
+}
+
 #[cfg(test)]
 mod testes_cliente_graph {
     use super::*;
@@ -3921,7 +3978,7 @@ pub fn cr_folder_mensagens(
     // Página de 50, com $skip para o lazy load (rolar até o fim carrega mais).
     let base = format!(
         "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages\
-         ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex\
+         ?$select={SELECT_MENSAGEM}\
          &$top=50&$skip={skip}"
     );
     // Ordenação escolhida; se o Graph REJEITAR o $orderby (400 — ex.: alguns
@@ -4020,7 +4077,7 @@ pub fn cr_buscar(
             format!(
                 "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages\
                  ?$search=\"{enc}\"\
-                 &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex\
+                 &$select={SELECT_MENSAGEM}\
                  &$top=50"
             )
         }
@@ -4099,7 +4156,7 @@ pub fn cr_filtrar(
     let saida = matches!(folder_id, "sentitems" | "drafts");
     // Campos idênticos aos de cr_buscar/cr_folder_mensagens: a lista fica igual
     // nos três caminhos (montados por montar_email_item).
-    const SELECT: &str = "subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex";
+    const SELECT: &str = SELECT_MENSAGEM;
 
     // Continuação: o nextLink já traz filtro+select+top+skiptoken embutidos —
     // usa-se tal e qual. Só na 1ª página montamos a URL inicial por filtro.
