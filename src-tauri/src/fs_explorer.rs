@@ -4344,8 +4344,17 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
+    // Smoke de HARDWARE REAL: prova que o IOCTL de seek-penalty responde num disco
+    // FÍSICO (rode com `cargo test -- --ignored` na máquina do QA). Fica #[ignore]
+    // porque o runner do CI usa disco VIRTUALIZADO, onde esse IOCTL não é suportado
+    // e `tem_seek_penalty` devolve None — o fallback conservador DOCUMENTADO (o
+    // `perfilar` trata None como HDD). Assumir `is_some()` amarra o teste a hardware
+    // físico e derruba o job `rust` no CI. O caminho que importa (o consumidor
+    // produzir um nº de workers são a partir de None) já é coberto de forma
+    // determinística por `perfilar_da_pelo_menos_dois_workers`, que roda no CI.
     #[cfg(windows)]
     #[test]
+    #[ignore = "requer disco físico; no disco virtual do CI o IOCTL não responde (None = fallback conservador, já coberto por perfilar_da_pelo_menos_dois_workers)"]
     fn perfil_de_disco_real_responde_no_volume_do_qa() {
         let resultado = tem_seek_penalty(Path::new(r"C:\"));
         assert!(resultado.is_some(), "IOCTL não classificou o volume C: {resultado:?}");
