@@ -1063,27 +1063,39 @@ function FolderSidebar({
     // é o TOTAL de itens (não-lido não faz sentido em enviados/rascunhos).
     const contagemEhNaoLidos = p.tipo !== "drafts" && p.tipo !== "sentitems";
     const contagem = contagemEhNaoLidos ? p.naoLidos : p.total;
+    // #1075 RB46-b: `acessoNegado: boolean` virou `leitura` de 3 estados. Um 500
+    // ou queda de rede davam `false` + 0/0, e a pasta era desenhada VAZIA.
+    const semAcesso = p.leitura === "negado";
+    // Só `ok` autoriza exibir contador como fato. Em `indisponivel` a contagem
+    // existe na struct (é 0), mas 0 aqui significa "não sei", não "vazio".
+    const contagemEhFato = p.leitura === "ok";
     const rotulo = rotuloPasta(p.tipo, p.nome, t);
     const linhaBtn = (
       <button
         type="button"
         onClick={() => {
-          if (p.acessoNegado) {
+          if (semAcesso) {
             toast.warning(t.controlRoom.caixaAcessoParcial);
             return;
           }
           onSel(p.id);
         }}
-        aria-disabled={p.acessoNegado || undefined}
+        aria-disabled={semAcesso || undefined}
         aria-label={colapsada ? rotulo : undefined}
         // Colapsada: o nome vem pelo tooltip canônico (#100), não mais por
         // `title` nativo. `title` fica só para o aviso de acesso parcial.
-        title={p.acessoNegado ? t.controlRoom.caixaAcessoParcial : undefined}
+        title={
+          semAcesso
+            ? t.controlRoom.caixaAcessoParcial
+            : p.leitura === "indisponivel"
+              ? t.controlRoom.pastaContagemIndisponivel
+              : undefined
+        }
         className={cn(
           "flex items-center rounded-md text-sm transition-colors",
           colapsada ? "relative size-9 justify-center" : "flex-1 gap-2.5 px-2.5 py-2",
           ativo ? "bg-secondary font-medium text-secondary-foreground" : "hover:bg-accent/50",
-          p.acessoNegado && "cursor-not-allowed opacity-50"
+          semAcesso && "cursor-not-allowed opacity-50"
         )}
       >
         {colapsada ? (
@@ -1105,10 +1117,10 @@ function FolderSidebar({
           <>
             <Ico size={16} className="shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate text-left">{rotulo}</span>
-            {p.acessoNegado && (
+            {(semAcesso || p.leitura === "indisponivel") && (
               <TriangleAlert className="size-3.5 shrink-0 text-warning" />
             )}
-            {contagem > 0 && (
+            {contagemEhFato && contagem > 0 && (
               <span className="shrink-0 text-xs text-muted-foreground">{contagem}</span>
             )}
           </>
@@ -1126,7 +1138,7 @@ function FolderSidebar({
     const criarSub = podeCriarSubpasta(p.tipo);
     const custom = ehPastaCustom(p.tipo);
     const semAcoes =
-      Boolean(p.acessoNegado) || (!marcarLidas && !esvaziar && !criarSub && !custom);
+      semAcesso || (!marcarLidas && !esvaziar && !criarSub && !custom);
 
     // Irmãs da pasta (para barrar nome duplicado antes de ir ao Graph): as
     // filhas do pai. Nas raízes, as próprias raízes.
@@ -5163,7 +5175,7 @@ export function ControlRoomScreen({
     [arvorePastas, pastaSel]
   );
   const pastaCargaAcessoNegado =
-    pastas?.some((p) => p.id === pastaCarga && p.acessoNegado) ?? false;
+    pastas?.some((p) => p.id === pastaCarga && p.leitura === "negado") ?? false;
 
   // Detecção central de e-mails novos na Inbox: compara o topo da lista com o
   // último visto e dispara o toast rico (c-sonner-9). Chamada tanto pelo poll
@@ -6197,7 +6209,9 @@ export function ControlRoomScreen({
               titulo={tituloLista}
               mensagens={fonteListaAtiva}
               erroLeitura={
-                pastaAtual?.acessoNegado ? t.controlRoom.caixaAcessoParcial : undefined
+                pastaAtual?.leitura === "negado"
+                  ? t.controlRoom.caixaAcessoParcial
+                  : undefined
               }
               onRefresh={() => setRecarga((n) => n + 1)}
               pastaId={pastaSel}

@@ -1545,6 +1545,8 @@ const pt = {
       "Você não tem permissão para enviar usando esta caixa compartilhada.",
     caixaEnvioRelogin:
       "Faça login novamente para enviar usando caixas compartilhadas.",
+    // #1075 RB46-b: os contadores nao puderam ser lidos — nao e "pasta vazia".
+    pastaContagemIndisponivel: "Não foi possível ler os itens desta pasta.",
     caixaAcessoParcial:
       "Acesso parcial — você não tem permissão para abrir esta pasta.",
     // #464 (S2): erros/rótulos de People que vazavam em inglês pra UI.
@@ -3830,6 +3832,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
       "You don't have permission to send using this shared mailbox.",
     caixaEnvioRelogin:
       "Sign in again to send using shared mailboxes.",
+    // #1075 RB46-b: counters couldn't be read — this is NOT "empty folder".
+    pastaContagemIndisponivel: "Couldn't read this folder's items.",
     caixaAcessoParcial:
       "Partial access — you don't have permission to open this folder.",
     pessoaNaoEditavel: "This person is not an editable Microsoft contact.",

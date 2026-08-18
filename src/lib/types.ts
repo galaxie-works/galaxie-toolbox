@@ -378,9 +378,21 @@ export interface PastaEmail {
   naoLidos: number;
   total: number;
   filhos: number; // nº de subpastas — chevron de expandir só aparece quando > 0
-  /** 403 apenas nesta pasta de uma caixa compartilhada; a árvore segue utilizável. */
-  acessoNegado?: boolean;
+  /**
+   * Como foi a leitura dos contadores desta pasta (#1075 RB46-b).
+   *
+   * Era `acessoNegado?: boolean` — dois estados para uma realidade de três. Um
+   * 500 ou uma queda de rede davam `false` com `naoLidos: 0, total: 0`, e a
+   * pasta aparecia **vazia**. Faltava o "não sei".
+   *
+   * - `ok` — contadores são fato.
+   * - `negado` — 403 nesta pasta da caixa compartilhada; árvore segue utilizável (#112).
+   * - `indisponivel` — não deu para ler; os contadores NÃO podem ser exibidos.
+   */
+  leitura: LeituraPasta;
 }
+
+export type LeituraPasta = "ok" | "negado" | "indisponivel";
 
 /**
  * Insights do remetente (#94): resumo do relacionamento com um endereço,

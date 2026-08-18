@@ -3707,9 +3707,99 @@ pub struct PastaEmail {
     pub total: u64,
     /// nº de subpastas — o front só mostra o chevron de expandir quando > 0.
     pub filhos: u64,
-    /// A pasta existe, mas o token não tem acesso a ela nesta caixa. O front
-    /// mantém a árvore utilizável e mostra o aviso de acesso parcial (#112).
-    pub acesso_negado: bool,
+    /// Como foi a leitura desta pasta (#1075 RB46-b). Ver `LeituraPasta`.
+    pub leitura: LeituraPasta,
+}
+
+/// Como terminou a leitura dos contadores de UMA pasta (#1075 RB46-b).
+///
+/// O campo anterior era `acesso_negado: bool` — **dois estados para uma
+/// realidade de três**. As duas rotas de falha caíam no mesmo lugar:
+///
+/// ```ignore
+/// Ok(resp) => { acesso_negado = resp.status().as_u16() == 403; }  // 500/429 → false
+/// Err(e)   => { log::warn!(...); }                                 // transporte → false
+/// ```
+///
+/// …e a pasta era empurrada com `nao_lidos: 0, total: 0`. Ou seja: **um 500 ou
+/// uma queda de rede produziam uma pasta que a UI desenhava como VAZIA**, com
+/// contadores zerados apresentados como fato.
+///
+/// Faltava o terceiro estado — *não sei*. Sem ele, "não consegui ler" só tinha
+/// para onde ir: virava "li, e não tem nada".
+#[derive(serde::Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum LeituraPasta {
+    /// Contadores lidos. `nao_lidos`/`total` são fato.
+    #[default]
+    Ok,
+    /// 403 — a pasta existe mas o token não tem acesso a ela nesta caixa. A
+    /// árvore segue utilizável e o front mostra acesso parcial (#112).
+    Negado,
+    /// Não deu para ler: transporte, 5xx, 429 esgotado. Os contadores **não são
+    /// fato** e o front não pode apresentá-los como se fossem.
+    Indisponivel,
+}
+
+// A regra de EXIBIÇÃO ("só `ok` autoriza mostrar o contador") vive no front, em
+// `control-room.tsx` (`contagemEhFato`), que é quem desenha. Aqui não há
+// consumidor — e inventar um só para o método não ficar sem uso seria o oposto
+// do que a F1 ensinou: dead code é sintoma, não sujeira a esconder.
+
+impl LeituraPasta {
+    /// Classifica o desfecho de uma resposta que CHEGOU (tem status).
+    fn da_resposta(status: reqwest::StatusCode) -> Self {
+        if status.is_success() {
+            LeituraPasta::Ok
+        } else if status.as_u16() == 403 {
+            LeituraPasta::Negado
+        } else {
+            LeituraPasta::Indisponivel
+        }
+    }
+}
+
+#[cfg(test)]
+mod testes_leitura_pasta {
+    use super::*;
+
+    fn cod(n: u16) -> reqwest::StatusCode {
+        reqwest::StatusCode::from_u16(n).expect("status valido")
+    }
+
+    /// O defeito do RB46-b em uma linha: 500 e queda de rede NAO podem virar
+    /// "pasta vazia". Antes os dois davam `acesso_negado = false` + 0/0.
+    #[test]
+    fn erro_que_nao_e_403_nao_pode_virar_pasta_vazia() {
+        for status in [429u16, 500, 502, 503] {
+            let l = LeituraPasta::da_resposta(cod(status));
+            assert_eq!(
+                l,
+                LeituraPasta::Indisponivel,
+                "{status} tem que ser Indisponivel"
+            );
+        }
+    }
+
+    #[test]
+    fn so_o_403_e_acesso_negado() {
+        assert_eq!(LeituraPasta::da_resposta(cod(403)), LeituraPasta::Negado);
+        for status in [400u16, 404, 500] {
+            assert_ne!(
+                LeituraPasta::da_resposta(cod(status)),
+                LeituraPasta::Negado,
+                "{status} nao e falta de permissao"
+            );
+        }
+    }
+
+    /// `Negado` continua distinto de `Indisponivel`: o #112 depende disso para
+    /// mostrar "acesso parcial" so quando e realmente permissao.
+    #[test]
+    fn negado_e_indisponivel_nao_se_confundem() {
+        assert_ne!(LeituraPasta::Negado, LeituraPasta::Indisponivel);
+        assert_eq!(LeituraPasta::default(), LeituraPasta::Ok);
+    }
 }
 
 /// Prefixo do recurso de e-mail no Graph. `None`/`"me"` preserva o caminho
@@ -3841,7 +3931,7 @@ pub fn cr_mail_folders(
         let mut total = 0;
         let mut filhos = 0;
         let mut nome = id.to_string();
-        let mut acesso_negado = false;
+        let mut leitura = LeituraPasta::Ok;
         // $expand=childFolders (não $select=childFolderCount): o childFolderCount
         // conta subpastas OCULTAS de sistema (ex.: em Deleted), fazendo aparecer
         // um chevron que expande pra nada. O $expand — como o /childFolders da
@@ -3865,10 +3955,15 @@ pub fn cr_mail_folders(
                 }
             }
             Ok(resp) => {
-                acesso_negado = resp.status().as_u16() == 403;
+                // #1075 RB46-b: 403 e "sem acesso"; qualquer outro nao-2xx e
+                // "nao sei". Antes os dois viravam `acesso_negado = false` com
+                // contadores 0/0 — a pasta saia da API parecendo VAZIA.
+                leitura = LeituraPasta::da_resposta(resp.status());
                 log::warn!("[mail] pasta '{id}' retornou {}", resp.status());
             }
             Err(e) => {
+                // Sem status: nao da para afirmar nada sobre os contadores.
+                leitura = LeituraPasta::Indisponivel;
                 log::warn!("[mail] pasta '{id}' falhou: {e}");
             }
         }
@@ -3879,7 +3974,7 @@ pub fn cr_mail_folders(
             nao_lidos,
             total,
             filhos,
-            acesso_negado,
+            leitura,
         });
     }
     Ok(pastas)
@@ -8918,7 +9013,8 @@ pub fn cr_subpastas(
                 nao_lidos: it["unreadItemCount"].as_u64().unwrap_or(0),
                 total: it["totalItemCount"].as_u64().unwrap_or(0),
                 filhos: it["childFolderCount"].as_u64().unwrap_or(0),
-                acesso_negado: false,
+                // Veio dentro de uma resposta 2xx: os contadores sao fato.
+                leitura: LeituraPasta::Ok,
             });
         }
     }
@@ -8950,7 +9046,8 @@ fn pasta_de_json(v: &serde_json::Value) -> PastaEmail {
         nao_lidos: v["unreadItemCount"].as_u64().unwrap_or(0),
         total: v["totalItemCount"].as_u64().unwrap_or(0),
         filhos: v["childFolderCount"].as_u64().unwrap_or(0),
-        acesso_negado: false,
+        // Veio dentro de uma resposta 2xx: os contadores sao fato.
+        leitura: LeituraPasta::Ok,
     }
 }
 
