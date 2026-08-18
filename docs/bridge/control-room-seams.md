@@ -329,3 +329,29 @@ Um `message-shared.tsx` com os 8 vira **gaveta de bagunça**: um módulo que exi
 **Resultado: o S3 provavelmente não precisa de um S0.** Precisa que cada helper desça com o seam certo — e que dois sejam apagados. Se depois de S3/S4 sobrar mais de um item genuinamente cruzado, aí o módulo compartilhado nasce **com evidência**, não por precaução.
 
 > Regra que fica: **módulo compartilhado nasce quando o segundo consumidor de seam diferente aparece — nunca antes.**
+
+---
+
+## 9-bis. A `Vega` corrigiu o meu §9 — **o critério estava certo, a minha aplicação dele estava incompleta** (2026-08-18, `5ff1488`)
+
+No §9 eu disse que `BotaoExcluir` era **o único** membro real do enabler. Ela mediu de novo e achou **três**. Conferi cada um antes de aceitar:
+
+| Membro | Onde cruza | Verificado |
+|---|---|---|
+| `BotaoExcluir` | S3 + `MultiSelecaoContexto` | ✅ eu já tinha |
+| `SubmenuMover` (`:2140`) | uso em **`:1405`** (FolderSidebar/S2) **+** dentro do `ItensMenuEmail` (`:2238`, que desce pro S3 em `:3851`/`:3882`) | ✅ **cruza S2 e S3** |
+| `PastaDestino` (`:680`, **tipo**) | `:1111` (S2) + `:2151` (props do SubmenuMover) + `:2263` (props do ItensMenuEmail) | ✅ **tipo compartilhado** |
+
+### Os dois furos da minha análise
+
+**1. Eu adiei a pergunta que o meu próprio critério fazia.** Sobre o `SubmenuMover` escrevi *"2 usos — decidir quando o seam dono for extraído"*. Mas o critério que eu mesmo enunciei é **"os usos caem em seams diferentes?"** — e responder isso era exatamente o trabalho. Ela foi ver de qual seam é cada uso; eu parei antes.
+
+**2. Eu só medi símbolo de runtime.** Componentes e funções. **Não olhei tipos** — e `PastaDestino` é um tipo. Isso não é detalhe: **tipo compartilhado é justamente o que evita a referência circular** entre dois seams que trocam a mesma estrutura. Sem ele no módulo, o S3 importaria do control-room de volta, que é o ciclo que o enabler existe para não criar.
+
+> **Emenda ao critério do §9:** *"compartilhado = usos em seams diferentes"* vale para **tipos também**, e o tipo costuma ser o membro **mais** necessário — ele é a fronteira que impede o ciclo, não só código reaproveitado.
+
+### O que continua de pé
+
+O corte que o §9 fez **sobrevive inteiro**: `DicaSomenteLeitura` (6 usos em 53 linhas), `descricaoErroEscrita` (10 usos em ~450 linhas), `PastaVazia` e `MultiSelecaoContexto` (1 uso cada) **ficaram fora** e descem com o seu seam. Dos 8 propostos originalmente, **3 entram e 5 saem** — não virou gaveta.
+
+E os dois mortos (`AgendaVazia`/`AgendaErro`) já foram apagados no PR #1203, com a cascata que eu não tinha visto: `IlustracaoCalendario` e o import `CalendarClock` também eram órfãos. **−82 linhas.**
