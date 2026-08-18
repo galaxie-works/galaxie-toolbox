@@ -14,6 +14,8 @@ import { ResizableProvider, useResizableValue } from '@platejs/resizable';
 import { PlateElement, useEditorMounted, withHOC } from 'platejs/react';
 
 import { cn } from '@/lib/utils';
+// #950 US3: rótulos i18n da família mídia (acessor não-hook, #529).
+import { plateLabel } from '@/lib/plate-labels';
 
 import { Caption, CaptionTextarea } from './caption';
 import {
@@ -79,7 +81,7 @@ export const VideoElement = withHOC(
                 <div ref={handleRef}>
                   <LiteYouTubeEmbed
                     id={embed!.id!}
-                    title="youtube"
+                    title={plateLabel('embedYoutubeTitle')}
                     wrapperClass={cn(
                       'aspect-video rounded-sm',
                       'relative block cursor-pointer bg-black bg-center bg-cover [contain:content]',
@@ -126,7 +128,7 @@ export const VideoElement = withHOC(
           <Caption style={{ width }} align={align}>
             <CaptionTextarea
               readOnly={readOnly}
-              placeholder="Write a caption..."
+              placeholder={plateLabel('captionPlaceholder')}
             />
           </Caption>
         </figure>

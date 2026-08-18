@@ -33,6 +33,7 @@ import {
 
 import { useAppStore } from "@/store";
 import { podeGerenciarEvento } from "@/lib/agenda-permissions";
+import { iniciais } from "@/lib/iniciais";
 import { useIdioma } from "@/lib/idioma";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import type { Idioma } from "@/lib/strings";
@@ -62,7 +63,7 @@ import {
   EventCalendarNav,
   EventCalendarToolbar,
 } from "@/components/reui/event-calendar/event-calendar-nav";
-import type { EventCalendarI18nOverrides } from "@/components/reui/event-calendar/event-calendar-i18n";
+import { montarAgendaI18n } from "@/lib/reui-i18n";
 import type {
   CalendarEvent,
   EventCalendarOccurrence,
@@ -77,6 +78,7 @@ import { Button } from "@/components/ui/button";
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetFooter,
   SheetHeader,
   SheetTitle,
@@ -123,8 +125,6 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty";
 
-type Dic = ReturnType<typeof useIdioma>["t"];
-
 // Recorrência (#396): ordem dos dias (domingo=0, como o getDay do JS) e rótulo
 // curto localizado via Intl (sem precisar de string por dia no dicionário).
 const ORDEM_DIAS: DiaSemana[] = [
@@ -167,20 +167,6 @@ function ehRecorrente(ev: EventoAgenda): boolean {
 /** #570: payload do evento no calendar — leva o organizador pro chip. */
 type DadosChipEvento = { organizadorEmail: string };
 
-/** Iniciais a partir do e-mail (não temos o nome do organizador no list-item). */
-function iniciaisEmail(email: string): string {
-  const base = email.split("@")[0] ?? email;
-  return (
-    base
-      .split(/[._-]+/)
-      .filter(Boolean)
-      .map((p) => p[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase() || "?"
-  );
-}
-
 function renderChipEvento(
   { occurrence, view }: EventCalendarRenderEventProps<DadosChipEvento>,
   getFoto: (email: string | null | undefined) => string | null | undefined,
@@ -199,7 +185,7 @@ function renderChipEvento(
         <Avatar className="size-3.5 shrink-0">
           <AvatarImage src={getFoto(orgEmail) ?? undefined} alt="" />
           <AvatarFallback className="text-[8px]">
-            {iniciaisEmail(orgEmail)}
+            {iniciais(undefined, orgEmail)}
           </AvatarFallback>
         </Avatar>
       )}
@@ -275,27 +261,6 @@ function somarDias(dataIso: string, dias: number): string {
 
 function localeDe(idioma: Idioma): Locale {
   return idioma === "pt-BR" ? ptBR : enUS;
-}
-
-/** Overrides de i18n do event-calendar a partir do dicionário do app. */
-function montarI18n(t: Dic): EventCalendarI18nOverrides {
-  return {
-    labels: {
-      today: t.controlRoom.agendaHoje,
-      addEvent: t.controlRoom.agendaNovoEvento,
-      allDay: t.controlRoom.diaInteiro,
-      more: (n: number) => `+${n} ${t.controlRoom.agendaCalMais}`,
-      noEvents: t.controlRoom.agendaCalSemEventos,
-      loading: t.controlRoom.agendaCalCarregando,
-    },
-    viewNames: {
-      month: t.controlRoom.agendaViewMes,
-      week: t.controlRoom.agendaViewSemana,
-      day: t.controlRoom.agendaViewDia,
-      agenda: t.controlRoom.agendaViewAgenda,
-      resource: t.controlRoom.agendaViewResource,
-    },
-  };
 }
 
 // --- view principal ---------------------------------------------------------
@@ -430,6 +395,9 @@ export function AgendaView() {
     const ini = new Date(dia.getFullYear(), dia.getMonth(), 1);
     const fim = new Date(dia.getFullYear(), dia.getMonth() + 1, 1);
     void carregarMesAgenda(ini.toISOString(), fim.toISOString());
+    // Deps só `recargaAgenda`: o refetch é disparado exclusivamente pelo contador
+    // de retry/pós-escrita. `dia`/`carregarMesAgenda` são lidos no disparo — reagir
+    // a eles refaria a busca a cada mudança de mês (que já tem efeito próprio).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recargaAgenda]);
 
@@ -515,7 +483,7 @@ export function AgendaView() {
     return lista;
   }, [mesEventos, idioma, t]);
 
-  const i18nCal = useMemo(() => montarI18n(t), [t]);
+  const i18nCal = useMemo(() => montarAgendaI18n(t), [t]);
   const locale = localeDe(idioma);
 
   const aoClicarEvento = (occ: EventCalendarOccurrence) => {
@@ -1024,6 +992,9 @@ function EventoFormSheet() {
   const coresCat = useAppStore((s) => s.agendaCoresCategoria);
   const calendarios = useAppStore((s) => s.agendaCalendarios);
   const selCalendarios = useAppStore((s) => s.agendaCalendariosSelecionados);
+  // #1069: caixa ativa (própria/compartilhada) pra ler a recorrência da série na
+  // caixa certa (a escrita do form já é mailbox-aware pelo slice).
+  const caixaAtiva = useAppStore((s) => s.caixaAtiva);
 
   const [titulo, setTitulo] = useState("");
   const [diaInteiro, setDiaInteiro] = useState(false);
@@ -1291,7 +1262,9 @@ function EventoFormSheet() {
       evento.tipo === "seriesMaster" ? evento.id : evento.seriesMasterId;
     if (!masterId) return;
     let vivo = true;
-    void crEventoRecorrencia(masterId)
+    // #1069: lê a recorrência da série na caixa ATIVA (própria ou compartilhada),
+    // não no /me fixo — casa com a edição/exclusão de evento agora mailbox-aware.
+    void crEventoRecorrencia(masterId, caixaAtiva)
       .then((rec) => {
         if (!vivo) return;
         if (!rec) {
@@ -1318,7 +1291,7 @@ function EventoFormSheet() {
     return () => {
       vivo = false;
     };
-  }, [aberto, modo, evento, escopoRec, eventoRecorrente]);
+  }, [aberto, modo, evento, escopoRec, eventoRecorrente, caixaAtiva]);
 
   const executarSalvar = async (
     idAlvo: string | null,
@@ -1411,6 +1384,9 @@ function EventoFormSheet() {
                   ? t.controlRoom.agendaFormEditarOcorrenciaTitulo
                   : t.controlRoom.agendaFormEditarTitulo}
           </SheetTitle>
+          <SheetDescription className="sr-only">
+            {t.controlRoom.agendaFormDescricao}
+          </SheetDescription>
         </SheetHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto scrollbar-fina px-4 py-4">

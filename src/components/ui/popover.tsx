@@ -4,11 +4,23 @@ import * as React from "react"
 import { Popover as PopoverPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { useRegistroOverlayWebview } from "@/lib/navigator-overlay"
 
 function Popover({
+  open,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Root>) {
-  return <PopoverPrimitive.Root data-slot="popover" {...props} />
+  // #1163 D2: cede a webview do Navigator sozinho (controlado OU por trigger).
+  const aoMudarAbertura = useRegistroOverlayWebview(open, onOpenChange)
+  return (
+    <PopoverPrimitive.Root
+      data-slot="popover"
+      open={open}
+      onOpenChange={aoMudarAbertura}
+      {...props}
+    />
+  )
 }
 
 function PopoverTrigger({

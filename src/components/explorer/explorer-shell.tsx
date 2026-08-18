@@ -13,7 +13,6 @@ import { usePersistedState } from "@/lib/persist";
 import {
   abrirCaminhoFs,
   buscarArquivos,
-  cancelarOp,
   checarConflitos,
   copiarComProgresso,
   copiarVariasComProgresso,
@@ -24,19 +23,26 @@ import {
   moverComProgresso,
   moverVariasComProgresso,
   observarPasta,
-  onProgressoOp,
   type BuscaHandle,
 } from "@/lib/api";
-import type { CloudLocation, DriveInfo, FsConflict, FsEntry } from "@/lib/types";
+import type {
+  CloudLocation,
+  DriveInfo,
+  FsConflict,
+  FsEntry,
+} from "@/lib/types";
 import { DrivesView } from "./drives-view";
 import { ArvoreArquivos } from "./arvore";
 import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
 import { ResultadosBusca } from "./resultados-busca";
 import { InspectorPane } from "./inspector";
-import { ProgressoPanel, type OpAtiva } from "./progresso-panel";
+// #987: a máquina de `ops` (assinatura de progresso + handlers) subiu pro
+// `useOpsAtivas`, montado no App (sino na title bar). Aqui só disparamos as
+// transferências e registramos tipo/destino por opId ao iniciá-las.
+import { registrarOp } from "./use-ops-ativas";
 import { ConflitoDialog } from "./conflito-dialog";
-import { calcVelocidade, planejarTransferencia, type ResolucaoConflito } from "./operacao";
+import { planejarTransferencia, type ResolucaoConflito } from "./operacao";
 import { CAMINHO_ESTE_PC, nomeBase, pathPai } from "./caminho";
 import type { Clipboard, OperacaoClipboard } from "./menu-arquivo";
 import {
@@ -162,30 +168,33 @@ export function ExplorerShell({
   // pra sobreviver à navegação entre pastas.
   const [clipboard, setClipboard] = useState<Clipboard | null>(null);
 
-  // #871 (fatia 2b): busca recursiva na PASTA atual. `null` = sem busca (mostra a
-  // lista/DrivesView normal). O handle vivo fica na ref pra cancelar ao re-buscar,
-  // limpar ou navegar. A busca é por-pasta: trocar de caminho a zera (efeito abaixo).
+  // #871 (fatia 2b/2c): busca recursiva. `null` = sem busca (mostra a
+  // lista/DrivesView normal). Na PASTA (fatia 2b) = uma raiz; no This PC (fatia 2c)
+  // = fan-out sobre TODOS os drives. Os handles vivos ficam na ref (LISTA — um por
+  // raiz) pra cancelar TODOS ao re-buscar, limpar ou navegar. A busca é por-local:
+  // trocar de caminho a zera (efeito abaixo).
   const [busca, setBusca] = useState<{
     query: string;
     resultados: FsEntry[];
     buscando: boolean;
     truncado: boolean;
   } | null>(null);
-  const buscaHandleRef = useRef<BuscaHandle | null>(null);
+  const buscaHandlesRef = useRef<BuscaHandle[]>([]);
+  // #968: ref do input de busca da navbar — Ctrl+E (aoTeclar do ContentPane) foca.
+  const buscaInputRef = useRef<HTMLInputElement>(null);
+  // #968: ref do container da lista — a navbar foca-o ao SAIR da busca (ESC).
+  const listaRef = useRef<HTMLDivElement>(null);
+  // #1060 (UX21): modo "editar caminho" do breadcrumb — CONTROLADO aqui pra que
+  // o Ctrl+L (no aoTeclar do ContentPane) e o clique/teclado no breadcrumb
+  // compartilhem o MESMO estado.
+  const [editandoCaminho, setEditandoCaminho] = useState(false);
 
-  // #724: ops de copy/move ativas (rastreadas por opId) + diálogo de conflito +
-  // nonce do watcher (bump → ContentPane recarrega a MESMA pasta).
-  const [ops, setOps] = useState<OpAtiva[]>([]);
+  // #724: diálogo de conflito + nonce do watcher (bump → ContentPane recarrega a
+  // MESMA pasta). #987: a fila de `ops` + a assinatura de progresso mudaram-se
+  // pro `useOpsAtivas` (montado no App); aqui só disparamos as transferências.
   const [conflito, setConflito] = useState<ConflitoPendente | null>(null);
   const [watcherNonce, setWatcherNonce] = useState(0);
-
-  // Refs de bookkeeping das ops: último byte/tempo (velocidade), tipo por opId
-  // (o payload de progresso não carrega copy/move), e dedupe do evento terminal.
-  const ultimoRef = useRef<Map<number, { bytes: number; ms: number }>>(new Map());
-  const tiposRef = useRef<Map<number, "copy" | "move">>(new Map());
-  const terminadosRef = useRef<Set<number>>(new Set());
-  // t via ref → a assinatura de progresso é registrada UMA vez (sem re-subscribe
-  // a cada troca de idioma), mas os toasts saem no idioma atual.
+  // t via ref → os toasts dos produtores saem no idioma atual sem re-render.
   const tRef = useRef(t);
   tRef.current = t;
 
@@ -227,75 +236,6 @@ export function ExplorerShell({
     const caminho = p === CAMINHO_ESTE_PC ? t.arquivos.drives : p;
     onLocalChangeRef.current?.({ rotulo, caminho });
   }, [nav.currentPath, t.arquivos.drives]);
-
-  // #724: assina o progresso das ops UMA vez (no mount). Deriva a velocidade
-  // entre eventos, remove a op no evento terminal (done/cancelado/erro) e mostra
-  // um toast único por op. A unsub é SEMPRE chamada (inclui a corrida de resolver
-  // depois do unmount: se `vivo` já é falso quando a promise resolve, desliga na
-  // hora). No mock (fora do Tauri) o subscribe é no-op e nenhum evento dispara.
-  useEffect(() => {
-    let vivo = true;
-    let unsub: () => void = () => {};
-    void onProgressoOp((p) => {
-      const arquivos = tRef.current.arquivos;
-      const agora = Date.now();
-      const ult = ultimoRef.current.get(p.opId);
-      const velocidade = ult
-        ? calcVelocidade(p.processedBytes, ult.bytes, agora - ult.ms)
-        : 0;
-      ultimoRef.current.set(p.opId, { bytes: p.processedBytes, ms: agora });
-
-      const terminal = p.done || p.canceled || p.error != null;
-      if (terminal) {
-        if (!terminadosRef.current.has(p.opId)) {
-          terminadosRef.current.add(p.opId);
-          if (p.error) {
-            toast.error(arquivos.opFalhou, { description: p.error.message });
-          } else if (p.canceled) {
-            toast.info(arquivos.opCancelada);
-          } else {
-            toast.success(arquivos.opConcluida);
-          }
-        }
-        // #875: RETÉM a op na fila marcada como terminal (não remove mais) — vira
-        // card revisável no Status Center. Erro fica vermelho até dispensar; a
-        // limpeza dos refs (tiposRef/terminadosRef) mora em dismissOp/clearCompleted.
-        // Sem mais progresso → velocidade 0; só o ultimoRef (delta de bytes) sai.
-        ultimoRef.current.delete(p.opId);
-        setOps((prev) => {
-          const tipo =
-            tiposRef.current.get(p.opId) ??
-            prev.find((o) => o.opId === p.opId)?.tipo ??
-            "copy";
-          const novo: OpAtiva = { opId: p.opId, tipo, progresso: p, velocidade: 0 };
-          return prev.some((o) => o.opId === p.opId)
-            ? prev.map((o) => (o.opId === p.opId ? novo : o))
-            : [...prev, novo];
-        });
-        return;
-      }
-
-      setOps((prev) => {
-        const tipo = tiposRef.current.get(p.opId) ?? "copy";
-        const novo: OpAtiva = { opId: p.opId, tipo, progresso: p, velocidade };
-        return prev.some((o) => o.opId === p.opId)
-          ? prev.map((o) => (o.opId === p.opId ? novo : o))
-          : [...prev, novo];
-      });
-    })
-      .then((fn) => {
-        if (!vivo) {
-          fn();
-          return;
-        }
-        unsub = fn;
-      })
-      .catch(() => {});
-    return () => {
-      vivo = false;
-      unsub();
-    };
-  }, []);
 
   // #724: watcher de disco na pasta atual (live refresh). CRÍTICO — a `parar` que
   // a promise resolve DEVE ser chamada ao trocar de pasta / desmontar, e a
@@ -353,55 +293,74 @@ export function ExplorerShell({
   // aparecem. Array vazio → a árvore omite a seção (como hoje).
   const acessoRapidoMesclado = mesclarAcessoRapido(pins, acessoRapido ?? []);
 
-  // #871 (fatia 2b): dispara a busca recursiva na pasta atual. Cancela o handle
-  // anterior, zera os resultados e consome o stream (`buscarArquivos`), acumulando
-  // os lotes até `done`. Guard: só com caminho real (This PC = multi-drive, fatia
-  // futura). Cada lote pode marcar `truncated` ao bater o teto.
+  // #871 (fatia 2b/2c): dispara a busca recursiva. Numa PASTA (2b) = uma raiz; no
+  // This PC (2c) = fan-out sobre TODOS os drives. Cancela os handles anteriores,
+  // zera os resultados e consome os streams (`buscarArquivos`), MESCLANDO os lotes
+  // de todas as raízes (ordem de chegada — sem sort no v1). Cada lote pode marcar
+  // `truncated` ao bater o teto (`maxResults` é POR drive). Um contador `pendentes`
+  // (closure compartilhado entre os N streams) mantém o spinner vivo até TODAS as
+  // raízes terminarem: decrementa no lote `done` de cada raiz E no `.catch` de
+  // início; só ao zerar vira `buscando:false`. Uma raiz que falha ao iniciar só
+  // decrementa — não derruba a busca das outras.
   const onBuscar = useCallback(
     (query: string) => {
-      const root = nav.currentPath;
-      if (!root) return;
-      void buscaHandleRef.current?.cancelar();
+      const roots = nav.currentPath
+        ? [nav.currentPath]
+        : (drives ?? []).map((d) => d.path); // This PC: raiz de cada drive
+      if (roots.length === 0) return;
+      buscaHandlesRef.current.forEach((h) => void h.cancelar());
+      buscaHandlesRef.current = [];
       setBusca({ query, resultados: [], buscando: true, truncado: false });
-      void buscarArquivos(
-        root,
-        query,
-        (lote) => {
-          setBusca((b) =>
-            b
-              ? {
-                  ...b,
-                  resultados: [...b.resultados, ...lote.entries],
-                  buscando: !lote.done,
-                  truncado: b.truncado || lote.truncated,
-                }
-              : b,
-          );
-        },
-        { maxResults: 1000 },
-      )
-        .then((h) => {
-          buscaHandleRef.current = h;
-        })
-        .catch(() => {
-          // Falha ao iniciar → sai do estado de busca (volta pra lista normal).
-          setBusca(null);
-        });
+      let pendentes = roots.length;
+      for (const root of roots) {
+        void buscarArquivos(
+          root,
+          query,
+          (lote) => {
+            setBusca((b) =>
+              b
+                ? {
+                    ...b,
+                    resultados: [...b.resultados, ...lote.entries],
+                    truncado: b.truncado || lote.truncated,
+                  }
+                : b,
+            );
+            if (lote.done) {
+              pendentes -= 1;
+              if (pendentes <= 0)
+                setBusca((b) => (b ? { ...b, buscando: false } : b));
+            }
+          },
+          { maxResults: 1000 },
+        )
+          .then((h) => {
+            buscaHandlesRef.current.push(h);
+          })
+          .catch(() => {
+            // Falha ao iniciar UMA raiz → só decrementa (não derruba as outras).
+            pendentes -= 1;
+            if (pendentes <= 0)
+              setBusca((b) => (b ? { ...b, buscando: false } : b));
+          });
+      }
     },
-    [nav.currentPath],
+    [nav.currentPath, drives],
   );
 
-  // #871 (fatia 2b): sai da busca — cancela o stream vivo e volta pra lista normal.
+  // #871 (fatia 2b/2c): sai da busca — cancela TODOS os streams vivos e volta pra
+  // lista/DrivesView normal.
   const onLimparBusca = useCallback(() => {
-    void buscaHandleRef.current?.cancelar();
-    buscaHandleRef.current = null;
+    buscaHandlesRef.current.forEach((h) => void h.cancelar());
+    buscaHandlesRef.current = [];
     setBusca(null);
   }, []);
 
-  // #871 (fatia 2b): busca é POR-PASTA — navegar limpa a busca (e cancela o stream).
+  // #871 (fatia 2b/2c): busca é POR-LOCAL — navegar limpa a busca (e cancela os
+  // streams de todas as raízes).
   useEffect(() => {
-    void buscaHandleRef.current?.cancelar();
-    buscaHandleRef.current = null;
+    buscaHandlesRef.current.forEach((h) => void h.cancelar());
+    buscaHandlesRef.current = [];
     setBusca(null);
   }, [nav.currentPath]);
 
@@ -441,7 +400,7 @@ export function ExplorerShell({
             op === "copy"
               ? await copiarComProgresso(item.from, item.to)
               : await moverComProgresso(item.from, item.to);
-          tiposRef.current.set(opId, op === "copy" ? "copy" : "move");
+          registrarOp(opId, op === "copy" ? "copy" : "move", nomeBase(destDir));
         } catch (e) {
           toast.error(tRef.current.arquivos.erroOperacao, {
             description: String(e),
@@ -465,7 +424,7 @@ export function ExplorerShell({
           op === "copy"
             ? await copiarVariasComProgresso(sources, destDir)
             : await moverVariasComProgresso(sources, destDir);
-        tiposRef.current.set(opId, op === "copy" ? "copy" : "move");
+        registrarOp(opId, op === "copy" ? "copy" : "move", nomeBase(destDir));
       } catch (e) {
         toast.error(tRef.current.arquivos.erroOperacao, {
           description: String(e),
@@ -499,39 +458,6 @@ export function ExplorerShell({
     },
     [executarMulti],
   );
-
-  const cancelarTransferencia = useCallback((opId: number) => {
-    void cancelarOp(opId).catch(() => {});
-  }, []);
-
-  // #875: dispensa UMA op terminal do Status Center (guard: nunca uma op ainda
-  // "inProgress" — essa é cancelável, não dispensável). Limpa os refs de
-  // bookkeeping pra não vazar entre ops de mesmo opId futuro.
-  const dispensarOp = useCallback((opId: number) => {
-    setOps((prev) => {
-      const alvo = prev.find((o) => o.opId === opId);
-      if (!alvo || alvo.progresso.status === "inProgress") return prev;
-      return prev.filter((o) => o.opId !== opId);
-    });
-    ultimoRef.current.delete(opId);
-    tiposRef.current.delete(opId);
-    terminadosRef.current.delete(opId);
-  }, []);
-
-  // #875: limpa TODAS as ops não-inProgress (concluídas/erro/canceladas/parciais),
-  // mantendo as ativas. Limpa os refs das removidas.
-  const limparConcluidas = useCallback(() => {
-    setOps((prev) => {
-      for (const o of prev) {
-        if (o.progresso.status !== "inProgress") {
-          ultimoRef.current.delete(o.opId);
-          tiposRef.current.delete(o.opId);
-          terminadosRef.current.delete(o.opId);
-        }
-      }
-      return prev.filter((o) => o.progresso.status === "inProgress");
-    });
-  }, []);
 
   return (
     <div className="relative h-full">
@@ -594,7 +520,18 @@ export function ExplorerShell({
               buscaAtiva={busca !== null}
               onBuscar={onBuscar}
               onLimparBusca={onLimparBusca}
-              podeBuscar={nav.currentPath !== ""}
+              // #871 (fatia 2c): busca habilitada numa pasta OU no This PC assim
+              // que houver ao menos um drive carregado (fan-out multi-drive).
+              podeBuscar={nav.currentPath !== "" || (drives?.length ?? 0) > 0}
+              // #968: Ctrl+E (no aoTeclar do ContentPane) foca este input.
+              buscaRef={buscaInputRef}
+              onSairBusca={() =>
+                listaRef.current?.focus({ preventScroll: true })
+              }
+              // #1060 (UX21): edição do caminho controlada pelo shell (Ctrl+L +
+              // clique/teclado no breadcrumb compartilham o estado).
+              editando={editandoCaminho}
+              onEditandoChange={setEditandoCaminho}
             />
             {busca !== null ? (
               // #871 (fatia 2b): busca ativa → resultados no lugar da lista/DrivesView.
@@ -627,6 +564,11 @@ export function ExplorerShell({
                 refreshSignal={watcherNonce}
                 mostrarInspector={mostrarInspector}
                 onToggleInspector={() => setMostrarInspector((v) => !v)}
+                // #968: Ctrl+E foca a busca da navbar (ref compartilhada).
+                buscaRef={buscaInputRef}
+                listaRef={listaRef}
+                // #1060 (UX21): Ctrl+L abre o modo "editar caminho" do breadcrumb.
+                onEditarCaminho={() => setEditandoCaminho(true)}
               />
             ) : drives && drives.length > 0 ? (
               // #855: "Este computador" selecionado (sentinel de caminho vazio)
@@ -662,14 +604,9 @@ export function ExplorerShell({
         )}
       </ResizablePanelGroup>
 
-      {/* #724: painel flutuante de progresso (canto inferior direito) + diálogo
-          de conflito controlado pelo shell. */}
-      <ProgressoPanel
-        ops={ops}
-        onCancelar={cancelarTransferencia}
-        onDispensar={dispensarOp}
-        onLimparConcluidas={limparConcluidas}
-      />
+      {/* #987: o Status Center (activity-dropdown) + o preview de undo agora vivem
+          no App (sino na title bar, sempre visível) — ver `useOpsAtivas`. O shell
+          só dispara as transferências e resolve conflitos. */}
       <ConflitoDialog
         aberto={conflito !== null}
         conflitos={conflito?.conflitos ?? []}

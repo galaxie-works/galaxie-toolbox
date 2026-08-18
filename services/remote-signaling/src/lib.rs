@@ -160,6 +160,7 @@ async fn handle_socket(
                                     message,
                                     &state,
                                     connection_id,
+                                    client_ip,
                                     &outbound_tx,
                                     &mut registered_device_id,
                                 ).await;
@@ -200,6 +201,7 @@ async fn process_message(
     message: ClientMessage,
     state: &AppState,
     connection_id: Uuid,
+    client_ip: std::net::IpAddr,
     outbound: &mpsc::Sender<ServerMessage>,
     registered_device_id: &mut Option<String>,
 ) {
@@ -208,6 +210,21 @@ async fn process_message(
             device_id,
             public_key,
         } => {
+            // #1049 T2 (adendo §6 do Altair): limitador DEDICADO do Register — cada
+            // Register cunha credencial TURN de 30min, então a FREQUÊNCIA é o abuso.
+            // Antes o Register dividia o balde genérico (`allow_message`, 120/60s); um
+            // host emitia 120 credenciais/min. Agora um IP acima do teto é recusado
+            // ANTES de atestar/cunhar/inserir. Reduz a exposição do T2 (o fecho é o
+            // OPAQUE do v2, #1132); servidor puro, não espera a janela do cliente.
+            if !state.allow_register(client_ip).await {
+                send_error(
+                    outbound,
+                    ErrorCode::RateLimited,
+                    "muitos registros deste IP; tente novamente em instantes",
+                )
+                .await;
+                return;
+            }
             if !valid_device_id(&device_id) {
                 send_error(outbound, ErrorCode::InvalidDeviceId, "device_id invalido").await;
                 return;
@@ -336,8 +353,23 @@ async fn process_message(
             let Some(device_id) = require_registration(registered_device_id, outbound).await else {
                 return;
             };
+            // SEC13: se o IP está em backoff por falhas repetidas, recusa antes de
+            // sequer consultar o código. Devolve o MESMO erro genérico do caso Invalid
+            // para não revelar ao atacante que ele foi bloqueado.
+            if !state.allow_redeem(client_ip).await {
+                warn!(%client_ip, "redeem bloqueado por backoff");
+                send_error(
+                    outbound,
+                    ErrorCode::InvalidCode,
+                    "codigo invalido ou ja utilizado",
+                )
+                .await;
+                return;
+            }
             match state.redeem_code(&code).await {
                 RedeemResult::Invalid => {
+                    state.register_redeem_failure(client_ip).await;
+                    warn!(%client_ip, "redeem invalido");
                     send_error(
                         outbound,
                         ErrorCode::InvalidCode,
@@ -346,11 +378,15 @@ async fn process_message(
                     .await;
                 }
                 RedeemResult::Expired => {
+                    state.register_redeem_failure(client_ip).await;
+                    warn!(%client_ip, "redeem expirado");
                     send_error(outbound, ErrorCode::CodeExpired, "codigo expirado").await;
                 }
                 RedeemResult::Ready {
                     creator_device_id, ..
                 } => {
+                    // Código válido: zera o histórico de falhas do IP (não era scanning).
+                    state.clear_redeem_failures(client_ip).await;
                     if creator_device_id == device_id {
                         send_error(
                             outbound,
@@ -381,6 +417,29 @@ async fn process_message(
                             peer_id: creator_device_id,
                         })
                         .await;
+                }
+            }
+        }
+        ClientMessage::RenewIceServers => {
+            // #1148: reemite credencial TURN fresca pro device JÁ registrado nesta
+            // conexão — sem refazer pareamento. O cliente chama antes do TTL vencer
+            // pra a sessão relayed não cair.
+            let Some(device_id) = require_registration(registered_device_id, outbound).await else {
+                return;
+            };
+            match state.ice_servers(device_id) {
+                Ok(ice_servers) => {
+                    let _ = outbound
+                        .send(ServerMessage::IceServersRenewed { ice_servers })
+                        .await;
+                }
+                Err(_) => {
+                    send_error(
+                        outbound,
+                        ErrorCode::Internal,
+                        "falha ao renovar credencial TURN",
+                    )
+                    .await;
                 }
             }
         }

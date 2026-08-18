@@ -2,7 +2,6 @@ import {
   Sidebar,
   SidebarContent,
   SidebarGroup,
-  SidebarHeader,
 } from "@/components/animate-ui/components/radix/sidebar";
 import {
   Tooltip,
@@ -15,16 +14,8 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { GalaxieLogo } from "@/components/ui/icons/marca/galaxie-logo";
-import { IconeAnim, type AnimIcon } from "@/components/ui/icons/marca-anim";
-import { ShipIcon } from "@/components/ui/ship";
-import { ShipWheelIcon } from "@/components/ui/ship-wheel";
-import { FoldersIcon } from "@/components/ui/folders";
-import { AirplayIcon } from "@/components/ui/airplay";
 import { AppIcon } from "@/components/app-icon";
-import { type Tela } from "@/lib/navegacao";
 import { useIdioma } from "@/lib/idioma";
-import { cn } from "@/lib/utils";
 import { useAppStore } from "@/store";
 import { resolverPinados } from "@/lib/pinned-apps";
 import { APPS_CATALOGO } from "@/lib/apps-catalog";
@@ -32,22 +23,23 @@ import { useMemo } from "react";
 import { PinOff } from "lucide-react";
 
 /**
- * #718 (SH0 · épico #717 GALAXIE Shell): o sidebar virou um RAIL fixo da marca
- * GALAXIE — logo no topo, itens fixos (Navigator · Bridge · Files · Remote) e
- * slot de pinados (SH3). Sem seções M365 e sem toggle de abrir: o
- * `SidebarProvider` fica controlado colapsado (`open={false}`) no App. (#876: o
- * avatar do usuário migrou pra a title bar — `MenuUsuario`.)
+ * #718 (SH0 · épico #717 GALAXIE Shell) + #1109: o sidebar é um RAIL só de apps
+ * FIXADOS. Os itens fixos (Navigator · Bridge · Files · Remote) SAÍRAM do rail —
+ * já vivem no command em "From GALAXIE" (#877) e como abas — e a marca GALAXIE
+ * migrou pra title bar (#1109, canto esquerdo, clique = nova aba do Navigator).
+ * O `SidebarProvider` fica controlado colapsado (`open={false}`) no App.
  *
- * ⚠️ P0 (webview): NÃO amarrar esconder a webview do Navigator ao estado
- * PERSISTENTE `collapsed` (ver #650). O esconder segue só TRANSIENTE (flyout/menu
- * → `galaxie:webview-ceder`); os itens do rail são navegação direta com tooltip
- * simples (mesmo padrão dos itens-folha atuais).
+ * ⚠️ P0 (webview #650/#358): NÃO amarrar esconder a webview do Navigator ao
+ * estado PERSISTENTE do rail. Montar/desmontar o rail por PIN (abaixo) é gate de
+ * pin, não de webview — o esconder da webview segue só TRANSIENTE (menu de
+ * contexto de app fixado). Esse esconder-transiente é do #1163 D2: o próprio
+ * `ContextMenu` se registra na conta de overlays do store.
  */
 /**
  * #721 (SH3): seção de apps FIXADOS do rail. Lê os ids do store, resolve contra
  * o catálogo (#720) — ids órfãos (app sumiu do catálogo) somem — e renderiza cada
  * um como um botão ícone-only que abre a aba no Navigator. Desafixar via menu de
- * contexto. Vazio = não renderiza (o rail fica só com fixos + avatar).
+ * contexto.
  */
 function PinnedApps({
   onAbrirApp,
@@ -63,18 +55,12 @@ function PinnedApps({
   );
   if (fixados.length === 0) return null;
   return (
-    <SidebarGroup className="mt-1 items-center gap-1 border-t border-sidebar-border/50 px-1.5 pt-2">
+    <SidebarGroup className="items-center gap-1 px-1.5 py-1">
+      {/* #358 → #1163 D2: o menu abre à direita, sobre a webview do Navigator. O
+          ContextMenu (primitivo de `@/components/ui`) já cede a webview sozinho
+          (se registra no store) — o window-event manual virou redundante. */}
       {fixados.map((app) => (
-        <ContextMenu
-          key={app.id}
-          // #358: o menu abre à direita, sobre a webview do Navigator — avisa pra
-          // ela ceder enquanto aberto (TRANSIENTE; fora do Navigator é no-op).
-          onOpenChange={(aberto) =>
-            window.dispatchEvent(
-              new CustomEvent("galaxie:webview-ceder", { detail: aberto }),
-            )
-          }
-        >
+        <ContextMenu key={app.id}>
           <Tooltip>
             <ContextMenuTrigger asChild>
               <TooltipTrigger asChild>
@@ -108,84 +94,34 @@ function PinnedApps({
 }
 
 export function AppSidebar({
-  tela,
-  onNavegar,
   onAbrirApp,
 }: {
-  tela: Tela;
-  onNavegar: (t: Tela) => void;
   /** #721: abre um app FIXADO como aba do Navigator (mesma ponte da omnibox). */
   onAbrirApp: (url: string, nome: string) => void;
 }) {
-  const { t } = useIdioma();
+  const appsFixados = useAppStore((s) => s.appsFixados);
+  const fixados = useMemo(
+    () => resolverPinados(appsFixados, APPS_CATALOGO),
+    [appsFixados],
+  );
 
-  // Itens fixos do rail. Ícones lucide-animated (24px), animam no hover da linha
-  // (IconeAnim acha o <button> ancestral). O roteamento como aba do Navigator é
-  // o SH1; aqui cada item dispara a navegação pra sua Tela.
-  const itens: { id: Tela; label: string; Comp: AnimIcon }[] = [
-    { id: "navegador", label: t.sidebar.navigator, Comp: ShipIcon as unknown as AnimIcon },
-    { id: "control-room", label: t.sidebar.bridge, Comp: ShipWheelIcon as unknown as AnimIcon },
-    { id: "arquivos", label: t.sidebar.files, Comp: FoldersIcon as unknown as AnimIcon },
-    { id: "remote", label: t.sidebar.remote, Comp: AirplayIcon as unknown as AnimIcon },
-  ];
+  // #1109 (AC do Wagner na #876): visibilidade do rail dirigida por PIN. Sem app
+  // fixado o rail NÃO renderiza — o conteúdo (SidebarInset, `w-full flex-1`)
+  // ocupa a largura cheia, sem faixa vazia nem gutter. O componente "some mas não
+  // morre": AppSidebar segue montado e reativo ao store, então fixar um app pelo
+  // command re-monta o rail na hora (sem recarregar) e desafixar o último some com
+  // ele. O estado (`appsFixados`) persiste no store, não no DOM do rail.
+  if (fixados.length === 0) return null;
 
   return (
     <Sidebar collapsible="icon">
-      {/* #718 (fix visual): a marca GALAXIE OCUPA a largura do rail (só o padding
-          do header a limita) — não mais um logo minúsculo. Clicar leva ao Navigator. */}
-      <SidebarHeader className="items-center px-1 pt-1.5 pb-1">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label="GALAXIE"
-              onClick={() => onNavegar("navegador")}
-              className="grid w-full place-items-center rounded-xl transition-colors hover:bg-sidebar-accent"
-            >
-              <GalaxieLogo className="w-full" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="right" align="center">
-            GALAXIE
-          </TooltipContent>
-        </Tooltip>
-      </SidebarHeader>
-
       <SidebarContent>
-        {/* #718 (fix visual): itens icon-only 24×24 CENTRALIZADOS (sem o texto que
-            cortava). Botão quadrado que preenche a largura do rail; ícone animado. */}
-        <SidebarGroup className="items-center gap-1 px-1.5 py-1">
-          {itens.map((item) => (
-            <Tooltip key={item.id}>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  aria-label={item.label}
-                  aria-current={tela === item.id ? "page" : undefined}
-                  onClick={() => onNavegar(item.id)}
-                  className={cn(
-                    "grid aspect-square w-full place-items-center rounded-xl transition-colors",
-                    tela === item.id
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent/60"
-                  )}
-                >
-                  <IconeAnim Comp={item.Comp} size={24} />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right" align="center">
-                {item.label}
-              </TooltipContent>
-            </Tooltip>
-          ))}
-        </SidebarGroup>
-
         {/* #721 (SH3): apps FIXADOS pelo command — ícone-only, abrem como aba do
-            Navigator; menu de contexto pra desafixar. Vazio → não renderiza nada. */}
+            Navigator; menu de contexto pra desafixar. */}
         <PinnedApps onAbrirApp={onAbrirApp} />
       </SidebarContent>
-      {/* #876: o avatar/menu do usuário SAIU do rodapé do rail pra a title bar
-          (à direita do switcher) — ver `MenuUsuario` em `user-menu.tsx`. */}
+      {/* #876: o avatar/menu do usuário vive na title bar (ver `MenuUsuario`).
+          #1109: a marca GALAXIE também migrou pra title bar (ver `App.tsx`). */}
     </Sidebar>
   );
 }

@@ -60,9 +60,22 @@ impl AppConfig {
                 "GALAXIE_REMOTE_MAX_CODE_TTL_SECONDS",
                 900,
             )?),
+            // #1050 (SEC10): TTL da credencial TURN reduzido de 3600s → 1800s pra
+            // encurtar a janela em que uma credencial capturada é válida (a AC pede
+            // "próximo do tempo real de uma sessão", não 1h fixa). Tunável pelo env
+            // `GALAXIE_REMOTE_TURN_TTL_SECONDS`.
+            //
+            // ⚠️ ATENÇÃO (#1148): o cliente NÃO renova a credencial. `ice_servers`
+            // chega uma única vez no `Registered` e não há ICE restart em lugar
+            // nenhum — verificado no `feat`: zero `restartIce`/`iceRestart` em TS ou
+            // Rust, e `conectar()` resolve uma Promise que ninguém repete. Logo uma
+            // sessão RELAYED morre ao atingir este TTL, sem recuperação. Baixar este
+            // valor ANTECIPA essa morte; não a causa. A correção é a renovação
+            // (#1148) — enquanto ela não existir, este número é o teto real de uma
+            // sessão via relay.
             turn_credential_ttl: Duration::from_secs(read_u64(
                 "GALAXIE_REMOTE_TURN_TTL_SECONDS",
-                3600,
+                1800,
             )?),
             rate_limit_messages: read_usize("GALAXIE_REMOTE_RATE_LIMIT_MESSAGES", 120)?,
             rate_limit_window: Duration::from_secs(read_u64(

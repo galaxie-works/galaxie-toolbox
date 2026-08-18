@@ -4,6 +4,7 @@ import { memo, useMemo } from "react"
 import type { HTMLAttributes, ReactNode } from "react"
 import {
   getColumnHeaderLabel,
+  resolveDataGridI18n,
   useDataGrid,
 } from "@/components/reui/data-grid/data-grid"
 import type { Column } from "@tanstack/react-table"
@@ -49,6 +50,8 @@ function DataGridColumnHeaderInner<TData, TValue>({
 }: DataGridColumnHeaderProps<TData, TValue>) {
   const { isLoading, table, props } = useDataGrid()
   const resolvedTitle = title ?? getColumnHeaderLabel(column)
+  // Stable per language (consumers memoize props.i18n) — safe in the menu memo.
+  const gridI18n = useMemo(() => resolveDataGridI18n(props.i18n), [props.i18n])
 
   // TanStack's columnOrder defaults to [] until a consumer seeds it; fall
   // back to the definition order so Move Left/Right work out of the box.
@@ -139,7 +142,7 @@ function DataGridColumnHeaderInner<TData, TValue>({
           disabled={!canSort}
         >
           <ArrowUpIcon className="size-3.5!" />
-          <span className="grow">Asc</span>
+          <span className="grow">{gridI18n.sortAsc}</span>
           {isSorted === "asc" && (
             <CheckIcon className="text-primary size-4 opacity-100!" />
           )}
@@ -156,7 +159,7 @@ function DataGridColumnHeaderInner<TData, TValue>({
           disabled={!canSort}
         >
           <ArrowDownIcon className="size-3.5!" />
-          <span className="grow">Desc</span>
+          <span className="grow">{gridI18n.sortDesc}</span>
           {isSorted === "desc" && (
             <CheckIcon className="text-primary size-4 opacity-100!" />
           )}
@@ -176,7 +179,7 @@ function DataGridColumnHeaderInner<TData, TValue>({
           onClick={() => column.pin(isPinned === "left" ? false : "left")}
         >
           <ArrowLeftToLineIcon className="size-3.5!" aria-hidden="true" />
-          <span className="grow">Pin to left</span>
+          <span className="grow">{gridI18n.pinToLeft}</span>
           {isPinned === "left" && (
             <CheckIcon className="text-primary size-4 opacity-100!" />
           )}
@@ -186,7 +189,7 @@ function DataGridColumnHeaderInner<TData, TValue>({
           onClick={() => column.pin(isPinned === "right" ? false : "right")}
         >
           <ArrowRightToLineIcon className="size-3.5!" aria-hidden="true" />
-          <span className="grow">Pin to right</span>
+          <span className="grow">{gridI18n.pinToRight}</span>
           {isPinned === "right" && (
             <CheckIcon className="text-primary size-4 opacity-100!" />
           )}
@@ -214,7 +217,7 @@ function DataGridColumnHeaderInner<TData, TValue>({
           disabled={!canMoveLeft || isPinned !== false}
         >
           <ArrowLeftIcon className="size-3.5!" aria-hidden="true" />
-          <span>Move to Left</span>
+          <span>{gridI18n.moveToLeft}</span>
         </DropdownMenuItem>,
         <DropdownMenuItem
           key="move-right"
@@ -229,7 +232,7 @@ function DataGridColumnHeaderInner<TData, TValue>({
           disabled={!canMoveRight || isPinned !== false}
         >
           <ArrowRightIcon className="size-3.5!" aria-hidden="true" />
-          <span>Move to Right</span>
+          <span>{gridI18n.moveToRight}</span>
         </DropdownMenuItem>
       )
       hasPreviousSection = true
@@ -244,7 +247,7 @@ function DataGridColumnHeaderInner<TData, TValue>({
         <DropdownMenuSub key="visibility">
           <DropdownMenuSubTrigger>
             <Settings2Icon className="size-3.5!" />
-            <span>Columns</span>
+            <span>{gridI18n.columns}</span>
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent>
             {table
@@ -285,6 +288,7 @@ function DataGridColumnHeaderInner<TData, TValue>({
     columnIndex,
     columnOrder,
     columnVisibilityKey, // Needed to update checkbox states when visibility changes
+    gridI18n,
   ])
 
   if (hasControls) {
@@ -312,8 +316,8 @@ function DataGridColumnHeaderInner<TData, TValue>({
             variant="ghost"
             className="rounded-lg -me-1 size-7"
             onClick={() => column.pin(false)}
-            aria-label={`Unpin ${resolvedTitle} column`}
-            title={`Unpin ${resolvedTitle} column`}
+            aria-label={gridI18n.unpinColumn(resolvedTitle)}
+            title={gridI18n.unpinColumn(resolvedTitle)}
           >
             <PinOffIcon className="size-3.5! opacity-50!" aria-hidden="true" />
           </Button>

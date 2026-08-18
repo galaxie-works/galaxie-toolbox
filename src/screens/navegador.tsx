@@ -171,10 +171,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { BridgeIcon } from "@/components/ui/icons/marca-anim";
-import {
-  OcultarWebviewContext,
-  useOcultarWebviewEnquantoAberto,
-} from "@/lib/navigator-overlay";
 import { ShipIcon, type ShipIconHandle } from "@/components/ui/ship";
 import { PirataIcon } from "@/components/ui/icons/marca/pirata";
 import { PirateSkullIcon } from "@/components/ui/icons/marca/pirate-skull";
@@ -200,20 +196,49 @@ const TELAS_IR_PARA_VISIVEIS: Tela[] = TELAS_IR_PARA.filter(
  * #719 (SH1): ícone da aba interna (Bridge/Files/Remote) na strip e no rail —
  * mesmos glifos do rail do shell (SH0) pra fidelidade visual. Fallback = globo.
  */
-function iconeTelaInterna(tela: TelaInterna | undefined): ReactNode {
+function iconeTelaInterna(
+  tela: TelaInterna | undefined,
+  // #1150: o command lista as telas do GALAXIE ao lado dos apps M365, cujos
+  // ícones Fluent são 20px — por isso o tamanho é parâmetro. `size` existe
+  // separado da classe porque o `IconeAnim` dimensiona por style inline (a
+  // classe sozinha não o alcança); os lucide estáticos vão só pela classe.
+  tamanho: { classe: string; px: number } = { classe: "size-4", px: 16 },
+): ReactNode {
   switch (tela) {
     case "control-room":
-      return <BridgeIcon className="size-4 shrink-0" />;
+      return (
+        <BridgeIcon className={cn(tamanho.classe, "shrink-0")} size={tamanho.px} />
+      );
     case "arquivos":
-      return <FolderTree className="size-4 shrink-0 text-muted-foreground" />;
+      return (
+        <FolderTree className={cn(tamanho.classe, "shrink-0 text-muted-foreground")} />
+      );
     case "remote":
       return (
-        <MonitorSmartphone className="size-4 shrink-0 text-muted-foreground" />
+        <MonitorSmartphone
+          className={cn(tamanho.classe, "shrink-0 text-muted-foreground")}
+        />
       );
     default:
-      return <Globe className="size-4 shrink-0 text-muted-foreground" />;
+      return <Globe className={cn(tamanho.classe, "shrink-0 text-muted-foreground")} />;
   }
 }
+
+/**
+ * #1150: as três telas do GALAXIE no command. O ícone delas tem que ser o MESMO
+ * glifo do rail e da strip de abas (`iconeTelaInterna`) — antes caíam no
+ * `AppIcon`, que serve o SVG estático de `public/app-icons/galaxie-*.svg`. O do
+ * Bridge é um envelope genérico; o ícone real do Bridge é o LEME (ship-wheel)
+ * animado. Dois símbolos diferentes pro mesmo app, na mesma tela.
+ */
+const TELA_GALAXIE: Record<string, TelaInterna> = {
+  "galaxie-bridge": "control-room",
+  "galaxie-files": "arquivos",
+  "galaxie-remote": "remote",
+};
+
+/** Tamanho do glifo no command: casa com os ícones Fluent do M365 (20px). */
+const TAMANHO_COMMAND = { classe: "size-5", px: 20 } as const;
 
 /**
  * Hero da aba vazia do Navigator (#74): a nave (lucide-animated) balançando em
@@ -905,7 +930,7 @@ function PaletaOverlay({
  * `font-medium` + resumo opcional (M365) → altura/espaçamento consistentes (o
  * bug de render que o Wagner viu). O botão de fixar (#721) mora aqui, um lugar só.
  */
-function ItemUnificado({
+export function ItemUnificado({
   app,
   termo,
   fixado,
@@ -932,7 +957,13 @@ function ItemUnificado({
       onSelect={onSelecionar}
       className="group gap-2.5"
     >
-      {app.fluentIcon ? (
+      {TELA_GALAXIE[app.id] ? (
+        // #1150: reusa o glifo do rail/strip. Vem ANTES do `fluentIcon` só por
+        // clareza — as telas do GALAXIE não têm Fluent —, e os M365 que abrem
+        // tela nativa (Outlook → control-room) seguem com o ícone da marca
+        // deles, porque o mapa é por id do app, não pela tela de destino.
+        iconeTelaInterna(TELA_GALAXIE[app.id], TAMANHO_COMMAND)
+      ) : app.fluentIcon ? (
         <img
           src={app.fluentIcon}
           alt=""
@@ -942,9 +973,16 @@ function ItemUnificado({
       ) : (
         <AppIcon id={app.id} name={nome} />
       )}
+      {/* #1154: layout com posição PREVISÍVEL do resumo — o nome (flex-1, basis-0
+          → peso de shrink 0) NUNCA encolhe/corta; o resumo é sempre right-aligned
+          (padrão de command palette: nome à esquerda, hint à direita), então a
+          posição não depende do comprimento do nome. Regra de truncamento
+          EXPLÍCITA: em janela estreita quem cede é o RESUMO (min-w-0 + shrink +
+          max-w-[45%] → trunca com "…"), o nome fica protegido. Sem resumo o nome
+          segue flex-1 e nem ele nem o ícone "pulam" de posição. */}
       <span className="min-w-0 flex-1 truncate font-medium">{nome}</span>
       {app.resumo && (
-        <span className="hidden shrink-0 truncate text-xs text-muted-foreground sm:inline">
+        <span className="ml-auto hidden min-w-0 max-w-[45%] shrink truncate text-right text-xs text-muted-foreground sm:inline">
           {app.resumo[idioma]}
         </span>
       )}
@@ -1211,34 +1249,29 @@ export function NavegadorScreen({
   // #275 rework: snapshot (data URL JPEG) da aba mostrado por baixo do overlay
   // pra o conteúdo não sumir quando a webview é escondida. Null = sem overlay.
   const [snapshotOverlay, setSnapshotOverlay] = useState<string | null>(null);
-  // #358: overlays do APP SHELL (fora do Navigator) que abrem sobre a área da
-  // webview — ex.: o menu do usuário no AppSidebar — avisam por window-event
-  // pra a webview ceder. Contador auto-curável (clamp >= 0).
-  const [chromeOverlays, setChromeOverlays] = useState(0);
-  useEffect(() => {
-    const aoCeder = (e: Event) => {
-      const aberto = (e as CustomEvent<boolean>).detail;
-      setChromeOverlays((n) => Math.max(0, n + (aberto ? 1 : -1)));
-    };
-    window.addEventListener("galaxie:webview-ceder", aoCeder);
-    return () => window.removeEventListener("galaxie:webview-ceder", aoCeder);
-  }, []);
+  // #358 → #1163/#1179: o window-event `galaxie:webview-ceder` MORREU. Ele existia
+  // porque overlays do app shell (fora da árvore do Provider antigo) não tinham
+  // como registrar; o #1163 (D1/D2) pôs a conta no store — qualquer overlay, em
+  // qualquer lugar, registra pelo primitivo — e o #1179 trocou a última exceção
+  // (tooltip do sidebar colapsado) pela REGRA de geometria. Sem produtores, o
+  // listener era mecanismo morto: removido em vez de mantido "por precaução".
 
   // Z-order (#275): conta os overlays DOM abertos SOBRE a webview (menus de
   // contexto, dropdowns da barra, diálogos). Enquanto houver algum, a webview
-  // fica escondida para não cortar o overlay — mesmo padrão do #174 (paleta),
-  // agora generalizado via OcultarWebviewContext.
-  const [overlaysWebview, setOverlaysWebview] = useState(0);
-  const registrarOverlayWebview = useCallback((aberto: boolean) => {
-    setOverlaysWebview((n) => Math.max(0, n + (aberto ? 1 : -1)));
-  }, []);
+  // fica escondida para não cortar o overlay — mesmo padrão do #174 (paleta).
+  // #1163 (D1): a conta ERA um useState local exposto por `OcultarWebviewContext`
+  // (default no-op → Furo 1; Provider abaixo do header → Furo 3). Agora vive no
+  // store e os PRIMITIVOS se registram sozinhos (D2) — aqui só LEMOS a conta.
+  const overlaysWebview = useAppStore((s) => s.overlaysWebview);
+  // #1179: publicação da região da webview (ver o efeito lá embaixo).
+  const definirWebviewRect = useAppStore((s) => s.definirWebviewRect);
 
-  // #275 (regressão): os menus de contexto de aba/grupo escondem a webview. Antes
-  // isso ia por `onOpenChange` cru no contador — mas se o chip DESMONTASSE com o
-  // menu aberto (re-render por timer de sleeping/favicon), o decremento nunca
-  // vinha e a webview ficava presa escondida (tela PRETA). Aqui rastreamos UM
-  // menu aberto por vez (o Radix já só deixa um) por uma chave estável e, num
-  // efeito, LIMPAMOS a chave se o dono (aba/grupo) sumir — auto-cura, nunca trava.
+  // #275 (regressão): os menus de contexto de aba/grupo escondem a webview.
+  // Rastreamos UM menu aberto por vez (o Radix já só deixa um) por uma chave
+  // estável, para poder controlá-los (`open=`) e, num efeito, LIMPAR a chave se o
+  // dono (aba/grupo) sumir. A conta em si é do store: o `ContextMenu` controlado se
+  // registra sozinho (D2, caminho controlado) e o cleanup do primitivo libera a
+  // conta se o chip desmontar com o menu aberto — a auto-cura anti-tela-preta.
   const [menuAbertoId, setMenuAbertoId] = useState<string | null>(null);
   const aoAbrirMenu = (chave: string) => (aberto: boolean) =>
     setMenuAbertoId((atual) => (aberto ? chave : atual === chave ? null : atual));
@@ -1885,11 +1918,10 @@ export function NavegadorScreen({
       browser.esconderTodas();
       return;
     }
-    const overlayAtivo =
-      paletaAberta ||
-      overlaysWebview > 0 ||
-      menuAbertoId !== null ||
-      chromeOverlays > 0; // #358: overlays do app shell sobre a webview — menu do usuário + tooltips do sidebar colapsado
+    // #1163/#1179: UMA conta, no store. Os primitivos de overlay se registram
+    // sozinhos (D2) e os tooltips entram pela regra de geometria (#1179) — não há
+    // mais canal paralelo por window-event.
+    const overlayAtivo = paletaAberta || overlaysWebview > 0;
     if (overlayAtivo || !ativa) {
       // #275 rework: ANTES de esconder, tira um snapshot da aba ativa e o mostra
       // como imagem sob o overlay (conteúdo congela, não some). Só uma vez por
@@ -1921,8 +1953,11 @@ export function NavegadorScreen({
           if (activeTab.reativando) onReativada(activeTab.id);
         });
     }
+    // Deps são a lista curada dos sinais que DEVEM reposicionar/reabrir a webview.
+    // Depender do `activeTab` inteiro ou dos helpers estáveis (browser/medir/
+    // onReativada) faria a webview nativa piscar a cada render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ativa, activeTab?.url, activeTab?.tipo, visivel, paletaAberta, overlaysWebview, menuAbertoId, chromeOverlays, snapshotOverlay]);
+  }, [ativa, activeTab?.url, activeTab?.tipo, visivel, paletaAberta, overlaysWebview, snapshotOverlay]);
 
   // Auto-cura do menu de contexto (#275): se o dono do menu aberto (aba/grupo)
   // sumiu — chip desmontou com o menu aberto, sem disparar o fechamento — limpa a
@@ -1950,6 +1985,35 @@ export function NavegadorScreen({
       window.removeEventListener("resize", reposicionar);
     };
   }, [ativa]);
+
+  // #1179: publica no store a REGIÃO que a webview ocupa. É o dado que torna a
+  // regra do tooltip (*a caixa cruza o retângulo da webview?*) decidível de
+  // qualquer lugar da árvore — o `TooltipContent` é global e não conhece o
+  // Navigator. Publica a região quando há webview EM JOGO (tela visível + aba web
+  // ativa), mesmo que ela esteja escondida por um overlay: é a área que ela ocupa,
+  // não "está pintando agora" — assim um tooltip já aberto não muda de veredito no
+  // meio da vida dele. Fora disso publica `null` ⇒ nenhum tooltip aciona nada.
+  useEffect(() => {
+    const el = area.current;
+    const abaInterna = activeTab != null && ehAbaInterna(activeTab);
+    if (!visivel || abaInterna || ativa === null || !el) {
+      definirWebviewRect(null);
+      return;
+    }
+    const publicar = () => definirWebviewRect(medir());
+    publicar();
+    const ro = new ResizeObserver(publicar);
+    ro.observe(el);
+    window.addEventListener("resize", publicar);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", publicar);
+      definirWebviewRect(null);
+    };
+    // Mesma lista curada do efeito de z-order acima (`medir` é local e estável na
+    // prática; depender dele re-observaria a cada render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visivel, ativa, activeTab?.tipo, definirWebviewRect]);
 
   useEffect(() => {
     return () => {
@@ -2098,7 +2162,6 @@ export function NavegadorScreen({
   };
 
   return (
-    <OcultarWebviewContext.Provider value={registrarOverlayWebview}>
     <div className="flex h-full w-full flex-col">
       {/* #876: a barra de abas vive na TITLE BAR — teleportada pro `tabStripSlot`
           (App.tsx). Sem slot (mock/teste/web) cai inline aqui, comportamento
@@ -2245,7 +2308,8 @@ export function NavegadorScreen({
             <TooltipContent>{t.navegador.novaAbaPrivada}</TooltipContent>
           </Tooltip>
         ) : (
-        <DropdownMenu onOpenChange={registrarOverlayWebview}>
+        // #1163 D2: o DropdownMenu já cede a webview sozinho — sem onOpenChange manual.
+        <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
@@ -2454,7 +2518,10 @@ export function NavegadorScreen({
               <div
                 key={aba.id}
                 className={cn(
-                  "absolute inset-0 min-h-0 p-4 pt-0",
+                  // #913: respiro no topo do content area da aba interna (era
+                  // `pt-0` → a tela embutida colava na title bar/tabs). Padding
+                  // uniforme (p-4) resolvido NO HOST → vale pra Bridge/Files/Remote.
+                  "absolute inset-0 min-h-0 p-4",
                   ativaAba ? "flex flex-col" : "hidden",
                 )}
               >
@@ -2533,7 +2600,6 @@ export function NavegadorScreen({
         onExcluir={excluirGrupo}
       />
     </div>
-    </OcultarWebviewContext.Provider>
   );
 }
 
@@ -2556,12 +2622,15 @@ function DialogEditarGrupo({
 }) {
   const { t } = useIdioma();
   const [nome, setNome] = useState("");
-  // z-order (#275): esconde a webview enquanto o diálogo estiver aberto.
-  useOcultarWebviewEnquantoAberto(grupo != null);
+  // z-order (#275): esconder a webview enquanto o diálogo estiver aberto agora é
+  // por construção — o `<Dialog>` (D2) se registra sozinho pelo `open`. Nada aqui.
 
   // Sincroniza o input ao abrir/trocar de grupo.
   useEffect(() => {
     if (grupo) setNome(grupo.nome);
+    // Re-sincroniza só quando o id do grupo muda (abrir/trocar). Reagir a
+    // `grupo.nome` sobrescreveria a edição em andamento do usuário. `setNome` é
+    // estável (setter de useState).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [grupo?.id]);
 

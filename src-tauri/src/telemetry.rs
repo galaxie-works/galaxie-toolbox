@@ -351,7 +351,7 @@ fn carregar_fila() -> VecDeque<EnvelopeCarimbado> {
     let Ok(cifrado) = std::fs::read(&p) else {
         return VecDeque::new();
     };
-    crate::auth::dpapi::decifrar(&cifrado)
+    crate::dpapi::decifrar(&cifrado)
         .and_then(|claro| serde_json::from_slice::<Vec<EnvelopeCarimbado>>(&claro).ok())
         .map(VecDeque::from)
         .unwrap_or_default()
@@ -365,7 +365,7 @@ fn gravar_fila(fila: &VecDeque<EnvelopeCarimbado>) {
     }
     let itens: Vec<&EnvelopeCarimbado> = fila.iter().collect();
     match serde_json::to_vec(&itens) {
-        Ok(claro) => match crate::auth::dpapi::cifrar(&claro) {
+        Ok(claro) => match crate::dpapi::cifrar(&claro) {
             Some(cifrado) => {
                 if let Err(e) = std::fs::write(&p, &cifrado) {
                     log::error!("[telemetry] falha ao gravar fila: {e}");
@@ -927,6 +927,16 @@ impl TelemetryState {
     /// recebe endpoint/credencial (o `release.yml` injeta os secrets no build).
     /// Ausente nos dois → None → transporte desativado (fail-closed). Qualquer
     /// configuracao parcial falha fechado antes de iniciar a rede.
+    ///
+    /// #1055 (SEC9): o `GALAXIE_TELEMETRY_INGEST_TOKEN` embutido é
+    /// **público-na-prática** — `option_env!` não ofusca; o valor sai extraível de
+    /// todo binário distribuído. Por isso ele DEVE ser um token **write-only /
+    /// ingest-only** do OpenObserve (escopo do stream de telemetria), NUNCA
+    /// admin/read: extrair o token só permite *escrever* no stream (poluir), jamais
+    /// ler dado de terceiro. Rotação por-release + revogação do antigo é ação do PO
+    /// (tem as chaves) — runbook em `docs/reference/rotacao-segredos.md`. O trait
+    /// `AuthProvider` acima é o seam pra plugar o installation-token (curta duração,
+    /// emitido por endpoint) e ELIMINAR o embutido, sem mexer no dreno da fila.
     pub fn iniciar_transporte_configurado(&self) -> Result<bool, TransporteErro> {
         // Runtime > compile-time; string vazia conta como ausente.
         fn config_var(runtime: &str, baked: Option<&'static str>) -> Option<String> {

@@ -28,7 +28,9 @@ services:
         turn:${GALAXIE_REMOTE_REALM:-telemetry.thegalaxie.cloud}:3478?transport=tcp
       GALAXIE_REMOTE_CODE_TTL_SECONDS: 600
       GALAXIE_REMOTE_MAX_CODE_TTL_SECONDS: 900
-      GALAXIE_REMOTE_TURN_TTL_SECONDS: 3600
+      # #1050: o default do `config.rs` virou 1800, mas a env SOBRESCREVE o
+      # default — o valor 3600 aqui tornava a redução letra morta (#1184).
+      GALAXIE_REMOTE_TURN_TTL_SECONDS: 1800
       GALAXIE_REMOTE_RATE_LIMIT_MESSAGES: 120
       GALAXIE_REMOTE_RATE_LIMIT_WINDOW_SECONDS: 60
       RUST_LOG: galaxie_remote_signaling=info

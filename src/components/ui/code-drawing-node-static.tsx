@@ -4,6 +4,8 @@ import type { TCodeDrawingElement } from '@platejs/code-drawing';
 import type { SlateElementProps } from 'platejs/static';
 
 import { cn } from '@/lib/utils';
+// #950 US4: rótulos i18n da família código (acessor não-hook, #529).
+import { plateLabel } from '@/lib/plate-labels';
 import { SlateElement } from 'platejs/static';
 
 export function CodeDrawingElementStatic({
@@ -17,7 +19,7 @@ export function CodeDrawingElementStatic({
           <pre className="m-0 overflow-x-auto font-mono text-sm leading-[normal] [tab-size:2] print:break-inside-avoid">
             <code className="block w-full">
               {(props.element.data?.code as string) ||
-                'Enter your code here...'}
+                plateLabel('enterCode')}
             </code>
           </pre>
         </div>

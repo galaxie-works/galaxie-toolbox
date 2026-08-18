@@ -8,6 +8,7 @@ import { useEditorRef } from 'platejs/react';
 import { commentPlugin } from '@/components/editor/plugins/comment-kit';
 
 import { ToolbarButton } from './toolbar';
+import { plateLabel } from '@/lib/plate-labels';
 
 export function CommentToolbarButton() {
   const editor = useEditorRef();
@@ -18,7 +19,7 @@ export function CommentToolbarButton() {
         editor.getTransforms(commentPlugin).comment.setDraft();
       }}
       data-plate-prevent-overlay
-      tooltip="Comment"
+      tooltip={plateLabel('comment')}
     >
       <MessageSquareTextIcon />
     </ToolbarButton>

@@ -41,6 +41,10 @@ export const ATALHOS: readonly Atalho[] = [
   { id: "voltar", categoria: "navegacao", combos: [["Alt", "←"], ["Backspace"]], rotulo: "voltar" },
   { id: "avancar", categoria: "navegacao", combos: [["Alt", "→"]], rotulo: "avancar" },
   { id: "pastaAcima", categoria: "navegacao", combos: [["Alt", "↑"]], rotulo: "pastaAcima" },
+  // #1060 (UX21): entra no modo "editar caminho" do breadcrumb via teclado
+  // (Ctrl+L, à moda do Explorer/navegadores). O breadcrumb ganhou role/tabIndex;
+  // o `aoTeclar` do content-pane dispara `onEditarCaminho`.
+  { id: "editarCaminho", categoria: "navegacao", combos: [["Ctrl", "L"]], rotulo: "editarCaminho" },
   { id: "mover", categoria: "navegacao", combos: [["↑"], ["↓"], ["←"], ["→"]], rotulo: "mover" },
   { id: "extremos", categoria: "navegacao", combos: [["Home"], ["End"]], rotulo: "extremos" },
   // Seleção
@@ -63,6 +67,13 @@ export const ATALHOS: readonly Atalho[] = [
   { id: "verGrade", categoria: "visualizacao", combos: [["Ctrl", "3"]], rotulo: "verGrade" },
   { id: "ocultos", categoria: "visualizacao", combos: [["Ctrl", "H"]], rotulo: "ocultos" },
   { id: "filtro", categoria: "visualizacao", combos: [["Ctrl", "F"]], rotulo: "filtro" },
+  // #950 (audit de consistência): abrir/fechar o painel de detalhes (Alt+P, à
+  // moda do Explorer do Windows). A ação já existe (`onToggleInspector`); faltava
+  // só o atalho + tooltip.
+  { id: "preview", categoria: "visualizacao", combos: [["Alt", "P"]], rotulo: "preview" },
+  // #968: foco na busca recursiva (Ctrl+E, à moda do Explorer do Windows). O
+  // Ctrl+F fica com o FILTRO in-folder; o Ctrl+E com a BUSCA recursiva da navbar.
+  { id: "focoBusca", categoria: "visualizacao", combos: [["Ctrl", "E"]], rotulo: "focoBusca" },
 ];
 
 /** Um combo formatado pra exibição: `["Ctrl","C"]` → "Ctrl+C". */

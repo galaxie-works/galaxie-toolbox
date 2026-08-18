@@ -25,6 +25,7 @@ import { preencher, useIdioma } from "@/lib/idioma";
 import type { FsOpProgress } from "@/lib/types";
 
 import { formatarEta } from "./operacao";
+import { TooltipAcao } from "./tooltip-acao";
 
 /** Uma op de copy/move rastreada por opId no shell (ativa OU terminal retida). */
 export interface OpAtiva {
@@ -33,6 +34,8 @@ export interface OpAtiva {
   progresso: FsOpProgress;
   /** Velocidade instantânea (bytes/s) derivada entre eventos de progresso. */
   velocidade: number;
+  /** #898 fatia 2: basename do destino pra o resumo terminal (histórico de sessão). */
+  destino?: string;
 }
 
 /** Uma op é terminal (não-cancelável, dispensável) quando não está mais em curso. */
@@ -224,41 +227,48 @@ function LinhaOp({
               {percent}%
             </span>
           )}
-          <CollapsibleTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6 shrink-0"
-              aria-label={t.arquivos.detalhesOp}
-              title={t.arquivos.detalhesOp}
-            >
-              <ChevronDown
-                className={cn("size-3.5 transition-transform", aberto && "rotate-180")}
-              />
-            </Button>
-          </CollapsibleTrigger>
+          {/* #894: `title` nativo → TooltipAcao (padrão-ouro #862). O chevron é
+              `CollapsibleTrigger asChild`; o TooltipAcao (que também é asChild) vai
+              POR FORA — os dois `asChild` compõem no mesmo <Button> (Tooltip +
+              toggle do Collapsible), padrão Radix de triggers aninhados. */}
+          <TooltipAcao label={t.arquivos.detalhesOp}>
+            <CollapsibleTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0"
+                aria-label={t.arquivos.detalhesOp}
+              >
+                <ChevronDown
+                  className={cn("size-3.5 transition-transform", aberto && "rotate-180")}
+                />
+              </Button>
+            </CollapsibleTrigger>
+          </TooltipAcao>
           {terminal ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6 shrink-0"
-              onClick={() => onDispensar(op.opId)}
-              aria-label={t.arquivos.dispensar}
-              title={t.arquivos.dispensar}
-            >
-              <X className="size-3.5" />
-            </Button>
+            <TooltipAcao label={t.arquivos.dispensar}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0"
+                onClick={() => onDispensar(op.opId)}
+                aria-label={t.arquivos.dispensar}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </TooltipAcao>
           ) : (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="size-6 shrink-0"
-              onClick={() => onCancelar(op.opId)}
-              aria-label={t.arquivos.cancelar}
-              title={t.arquivos.cancelar}
-            >
-              <X className="size-3.5" />
-            </Button>
+            <TooltipAcao label={t.arquivos.cancelar}>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-6 shrink-0"
+                onClick={() => onCancelar(op.opId)}
+                aria-label={t.arquivos.cancelar}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </TooltipAcao>
           )}
         </div>
 

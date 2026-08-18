@@ -35,6 +35,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
+// #950 US3: rótulos i18n da família mídia (acessor não-hook, #529).
+import { plateLabel } from '@/lib/plate-labels';
 
 import {
   ToolbarSplitButton,
@@ -47,33 +49,30 @@ const MEDIA_CONFIG: Record<
   {
     accept: string[];
     icon: React.ReactNode;
-    title: string;
-    tooltip: string;
+    // #950 US3: chave i18n do título (resolvida no render por idioma). O antigo
+    // `tooltip` era campo morto (nunca consumido) — removido.
+    titleKey: Parameters<typeof plateLabel>[0];
   }
 > = {
   [KEYS.audio]: {
     accept: ['audio/*'],
     icon: <AudioLinesIcon className="size-4" />,
-    title: 'Insert Audio',
-    tooltip: 'Audio',
+    titleKey: 'insertAudio',
   },
   [KEYS.file]: {
     accept: ['*'],
     icon: <FileUpIcon className="size-4" />,
-    title: 'Insert File',
-    tooltip: 'File',
+    titleKey: 'insertFile',
   },
   [KEYS.img]: {
     accept: ['image/*'],
     icon: <ImageIcon className="size-4" />,
-    title: 'Insert Image',
-    tooltip: 'Image',
+    titleKey: 'insertImage',
   },
   [KEYS.video]: {
     accept: ['video/*'],
     icon: <FilmIcon className="size-4" />,
-    title: 'Insert Video',
-    tooltip: 'Video',
+    titleKey: 'insertVideo',
   },
 };
 
@@ -101,7 +100,7 @@ export function MediaToolbarButton({
         pressed={open}
       >
         <ToolbarSplitButtonPrimary
-          aria-label={currentConfig.title}
+          aria-label={plateLabel(currentConfig.titleKey)}
           onClick={() => {
             openFilePicker();
           }}
@@ -123,7 +122,7 @@ export function MediaToolbarButton({
         >
           <DropdownMenuTrigger asChild>
             <ToolbarSplitButtonSecondary
-              aria-label={`${currentConfig.title} options`}
+              aria-label={plateLabel('maisOpcoes')}
             />
           </DropdownMenuTrigger>
 
@@ -135,11 +134,11 @@ export function MediaToolbarButton({
             <DropdownMenuGroup>
               <DropdownMenuItem onSelect={() => openFilePicker()}>
                 {currentConfig.icon}
-                Upload from computer
+                {plateLabel('uploadDoComputador')}
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setDialogOpen(true)}>
                 <LinkIcon />
-                Insert via URL
+                {plateLabel('inserirViaUrl')}
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
@@ -177,7 +176,7 @@ function MediaUrlDialogContent({
   const [url, setUrl] = React.useState('');
 
   const embedMedia = React.useCallback(() => {
-    if (!isUrl(url)) return toast.error('Invalid URL');
+    if (!isUrl(url)) return toast.error(plateLabel('urlInvalida'));
 
     setOpen(false);
     editor.tf.insertNodes({
@@ -191,7 +190,7 @@ function MediaUrlDialogContent({
   return (
     <>
       <AlertDialogHeader>
-        <AlertDialogTitle>{currentConfig.title}</AlertDialogTitle>
+        <AlertDialogTitle>{plateLabel(currentConfig.titleKey)}</AlertDialogTitle>
       </AlertDialogHeader>
 
       <AlertDialogDescription className="group relative w-full">
@@ -216,14 +215,14 @@ function MediaUrlDialogContent({
       </AlertDialogDescription>
 
       <AlertDialogFooter>
-        <AlertDialogCancel>Cancel</AlertDialogCancel>
+        <AlertDialogCancel>{plateLabel('cancelar')}</AlertDialogCancel>
         <AlertDialogAction
           onClick={(e) => {
             e.preventDefault();
             embedMedia();
           }}
         >
-          Accept
+          {plateLabel('aceitar')}
         </AlertDialogAction>
       </AlertDialogFooter>
     </>

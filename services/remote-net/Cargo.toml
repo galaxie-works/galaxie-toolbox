@@ -4,29 +4,63 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+# Feature-gate (D1-bis, #971/#690 — decisão do @Altair no #955). `default` = núcleo
+# LEVE (protocol/ticket/identity/windows_secret): só assinatura/serde, sem runtime
+# async — pro binário SYSTEM (worker `remote-system-agent`) verificar o ticket do S8
+# sem arrastar tokio/rustls/opaque pra dentro de um binário privilegiado. `client`
+# liga worker/transport (daemon `galaxie-remote-device`, #691); `authority` liga
+# authority/opaque (S0 `remote-signaling`). Padrão da casa (igual ao remote-transport).
+[features]
+default = []
+client = [
+  "dep:tokio",
+  "dep:tokio-tungstenite",
+  "dep:rustls",
+  "dep:webpki-roots",
+  "dep:url",
+  "dep:futures-util",
+  "dep:sha2",
+]
+authority = ["dep:opaque-ke", "dep:argon2"]
+
 [dependencies]
-argon2 = { version = "0.5.3", default-features = false, features = ["alloc"] }
+# ── núcleo leve (sempre) ──
+# #1070 RB7: vocabulário ÚNICO de capability mora no crate folha; aqui só reexporta.
+galaxie-remote-capabilities = { path = "../remote-capabilities" }
 base64 = "0.22.1"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
-futures-util = "0.3.31"
-opaque-ke = { version = "3.0.0", features = ["argon2", "ristretto255", "std"] }
 rand = "0.8.5"
-rustls = { version = "0.23.35", default-features = false, features = ["ring", "std"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-sha2 = "0.10.9"
 thiserror = "2.0.18"
-tokio = { version = "1.47.1", features = ["macros", "net", "rt", "time"] }
-tokio-tungstenite = { version = "0.27.0", features = ["rustls-tls-webpki-roots"] }
-url = "2.5.7"
-webpki-roots = "1.0.3"
 zeroize = { version = "1.8.2", features = ["derive"] }
+
+# ── client (worker/transport WSS — daemon #691) — opt-in ──
+tokio = { version = "1.47.1", features = ["macros", "net", "rt", "time"], optional = true }
+tokio-tungstenite = { version = "0.27.0", features = ["rustls-tls-webpki-roots"], optional = true }
+rustls = { version = "0.23.35", default-features = false, features = ["ring", "std"], optional = true }
+webpki-roots = { version = "1.0.3", optional = true }
+url = { version = "2.5.7", optional = true }
+futures-util = { version = "0.3.31", optional = true }
+sha2 = { version = "0.10.9", optional = true }
+
+# ── authority (opaque/argon2 — S0 remote-signaling) — opt-in ──
+opaque-ke = { version = "3.0.0", features = ["argon2", "ristretto255", "std"], optional = true }
+argon2 = { version = "0.5.3", default-features = false, features = ["alloc"], optional = true }
+
+# O example usa o `opaque` (S0) — gateado em `authority` pra o `cargo test` default
+# (núcleo leve) não tentar compilá-lo.
+[[example]]
+name = "generate_opaque_setup"
+required-features = ["authority"]
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Security_Authorization",     # ConvertStringSecurityDescriptor…W + SDDL_REVISION (#1054)
   "Win32_Security_Cryptography",
+  "Win32_Storage_FileSystem",         # CreateFileW + CREATE_NEW/FILE_* (blob DACL, #1054)
   "Win32_System_Memory",
 ] }
 

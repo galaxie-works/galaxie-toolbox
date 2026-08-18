@@ -54,8 +54,8 @@ import {
 } from "@/components/ui/tooltip";
 import { useIdioma } from "@/lib/idioma";
 import { cn } from "@/lib/utils";
-import { useOcultarWebviewEnquantoAberto } from "@/lib/navigator-overlay";
-import { useRegistrarOverlayWebview } from "@/lib/navigator-overlay";
+// #1163 D2: os dropdowns/menus/diálogos daqui cedem a webview do Navigator sozinhos
+// (o registro vive nos primitivos de `@/components/ui/*`) — sem hook manual.
 
 /**
  * Favoritos do Navigator (#176, opção C — mínimo honesto).
@@ -180,7 +180,6 @@ export function BarraFavoritos({
   abaAtiva?: { url: string; nome: string };
 }) {
   const { t } = useIdioma();
-  const registrarOverlayWebview = useRegistrarOverlayWebview();
   const [urlAberto, setUrlAberto] = useState(false);
   const [renomeando, setRenomeando] = useState<Favorito | null>(null);
   const [arrastando, setArrastando] = useState(false);
@@ -249,8 +248,8 @@ export function BarraFavoritos({
       onDragLeave={() => setArrastando(false)}
       onDrop={aoSoltar}
     >
-      {/* Menu de gerenciamento (estrela). */}
-      <DropdownMenu onOpenChange={registrarOverlayWebview}>
+      {/* Menu de gerenciamento (estrela). #1163 D2: cede a webview sozinho. */}
+      <DropdownMenu>
         <Tooltip>
           <TooltipTrigger asChild>
             <DropdownMenuTrigger asChild>
@@ -296,11 +295,11 @@ export function BarraFavoritos({
       ) : (
         <div className="scrollbar-fina flex min-w-0 items-center gap-0.5 overflow-x-auto">
           {favoritos.map((fav) => (
-            <ContextMenu key={fav.id} onOpenChange={registrarOverlayWebview}>
+            <ContextMenu key={fav.id}>
               <ContextMenuTrigger asChild>
                 {fav.tipo === "pasta" ? (
                   <span className="shrink-0">
-                    <DropdownMenu onOpenChange={registrarOverlayWebview}>
+                    <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
                           type="button"
@@ -422,8 +421,8 @@ function DialogAdicionarUrl({
   onAdicionar: (url: string, nome: string) => void;
 }) {
   const { t } = useIdioma();
-  // z-order (#275): esconde a webview enquanto o diálogo estiver aberto.
-  useOcultarWebviewEnquantoAberto(aberto);
+  // z-order (#275): esconder a webview enquanto aberto é por construção — o
+  // `<Dialog>` (D2) se registra sozinho pelo `open`. Nada a fazer aqui.
   const [url, setUrl] = useState("");
   const [nome, setNome] = useState("");
 
@@ -524,8 +523,7 @@ function DialogRenomearFavorito({
   onRenomear: (id: string, nome: string) => void;
 }) {
   const { t } = useIdioma();
-  // z-order (#275): esconde a webview enquanto o diálogo de renomear estiver aberto.
-  useOcultarWebviewEnquantoAberto(favorito != null);
+  // z-order (#275): o `<Dialog>` (D2) cede a webview sozinho pelo `open`.
   const [nome, setNome] = useState("");
 
   useEffect(() => {

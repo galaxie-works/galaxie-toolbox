@@ -5,19 +5,28 @@
 //! bytes crus. O signaling continua na ponte TS/S0; credenciais TURN, SDP e ICE
 //! jamais são logados aqui.
 
-use std::collections::HashSet;
-use std::net::{SocketAddr, UdpSocket};
+use std::collections::{HashMap, HashSet};
+use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use galaxie_remote_transport::{
-    canal_de_comandos, decode, encode_input, CommandReceiver as TransportCommandReceiver,
-    EncoderCommand as TransportEncoderCommand, EventoSessao, Frame as ControlFrame, IceServer,
-    InputEvent, Papel, Passo, ScreenInfo, SessionConfig, SignalMessage, Transport,
+use galaxie_remote_transport::stun::{build_binding_request, parse_xor_mapped_address};
+use galaxie_remote_transport::turn::{
+    build_allocate_request, build_allocate_request_auth, build_create_permission_request,
+    build_refresh_request, build_send_indication, derive_key, parse_allocate_success,
+    parse_data_indication, parse_error_unauthorized, parse_refresh_success, parse_stale_nonce,
 };
+use galaxie_remote_net::protocol::Capabilities;
+use galaxie_remote_transport::{
+    canal_de_comandos, decode, encode_input, CapabilityPolicy,
+    CommandReceiver as TransportCommandReceiver, EncoderCommand as TransportEncoderCommand,
+    EventoSessao, Frame as ControlFrame, IceServer, InputEvent, Papel, Passo, ScreenInfo,
+    SessionConfig, SignalMessage, Transport,
+};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{Channel, InvokeResponseBody, Response};
 
@@ -31,6 +40,28 @@ const COMMAND_CAPACITY: usize = 64;
 const VIDEO_CAPACITY: usize = 2;
 const NETWORK_TICK: Duration = Duration::from_millis(10);
 const STATS_INTERVAL: Duration = Duration::from_secs(1);
+/// #1108 Parte 2: orçamento total de espera pela resposta STUN de CADA servidor no
+/// gathering srflx. Curto de propósito — srflx é aditivo e o startup não pode
+/// travar esperando um STUN inalcançável (dev/LAN sem coturn).
+const SRFLX_GATHER_TIMEOUT: Duration = Duration::from_millis(800);
+/// Intervalo de sleep entre `recv_from` no socket NONBLOCKING durante o gathering.
+const SRFLX_POLL_INTERVAL: Duration = Duration::from_millis(10);
+/// #1130 fatia 2: orçamento de espera por CADA resposta do coturn no handshake
+/// Allocate (o fluxo tem 2 round-trips: 401 Unauthorized + Success). Curto de
+/// propósito — relay é aditivo e o startup não pode travar esperando um coturn
+/// inalcançável. Reusa o `SRFLX_POLL_INTERVAL` no recv NONBLOCKING.
+const RELAY_ALLOCATE_TIMEOUT: Duration = Duration::from_millis(1200);
+/// #1130 fatia 3c: a permissão de peer do coturn expira em ~300s (RFC 5766 §8).
+/// Reemitimos a 3/4 disso (225s) pra nunca deixar lapsar durante a sessão.
+const PERM_REFRESH: Duration = Duration::from_secs(225);
+
+/// Quando reenviar o Refresh da alocação: a 3/4 do lifetime concedido, com piso de
+/// 60s (se o coturn conceder um lifetime absurdamente curto, não martelamos o
+/// servidor). #1130 fatia 3c.
+fn intervalo_refresh(lifetime_s: u32) -> Duration {
+    let tres_quartos = u64::from(lifetime_s).saturating_mul(3) / 4;
+    Duration::from_secs(tres_quartos).max(Duration::from_secs(60))
+}
 
 #[derive(Default)]
 pub struct RemoteRuntime {
@@ -40,7 +71,7 @@ pub struct RemoteRuntime {
 struct ActiveSession {
     session_id: String,
     role: RemoteRole,
-    capabilities: RemoteCapabilities,
+    capabilities: Capabilities,
     commands: SyncSender<RuntimeCommand>,
     worker: Option<JoinHandle<()>>,
     finished: Arc<AtomicBool>,
@@ -86,10 +117,15 @@ impl RemoteRole {
 pub struct RemoteSessionStartRequest {
     pub role: RemoteRole,
     pub session_id: String,
+    /// #1070 RB8: INFORMATIVO — é validado (formato/tamanho) mas o `RuntimeSession`
+    /// NÃO o consome. O signaling real (offer/answer/ICE) roda na ponte TS/S0 (o
+    /// front fala com o servidor de signaling); o runtime Rust só dirige o str0m e
+    /// recebe os `SignalMessage` já roteados via `RuntimeCommand::Signal`. Mantido no
+    /// contrato pra validação de entrada e diagnóstico, não como fonte de verdade.
     pub signaling: RemoteSignalingBinding,
     #[serde(default)]
     pub ice_servers: Vec<IceServer>,
-    pub capabilities: RemoteCapabilities,
+    pub capabilities: Capabilities,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,13 +133,6 @@ pub struct RemoteSessionStartRequest {
 pub struct RemoteSignalingBinding {
     pub endpoint: String,
     pub peer_id: String,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteCapabilities {
-    pub screen: bool,
-    pub input: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -243,9 +272,37 @@ enum RuntimeCommand {
     End { reason: String },
 }
 
+/// #1130 fatia 3: estado do relay TURN alocado, pra servir o data-path. Só existe se
+/// o `gather_relay` alocou (senão a sessão é host/srflx puro). `key`/`nonce` derivam
+/// da credencial efêmera do coturn e NUNCA são logados.
+struct RelayState {
+    /// Onde mandar as Send indications: o próprio servidor coturn.
+    turn_server: SocketAddr,
+    /// XOR-RELAYED-ADDRESS = o candidato local `relay`. `Passo::Transmitir` com
+    /// `origem == relayed` sai embrulhado pelo relay.
+    relayed: SocketAddr,
+    username: String,
+    realm: String,
+    nonce: String,
+    key: [u8; 16],
+    /// #1130 fatia 3c: lifetime (s) da alocação — usado pra reagendar o Refresh.
+    lifetime_s: u32,
+    /// Quando reenviar o Refresh da alocação (antes do lifetime expirar) — senão o
+    /// coturn libera o relay e a sessão CAI.
+    refresh_em: Instant,
+    /// Peers com CreatePermission instalada → quando REEMITIR (a permissão do coturn
+    /// expira em ~300s; sem reemitir, o relay dropa o peer no meio da sessão). Chave =
+    /// IP do peer (a permissão é por IP, RFC 5766 §9).
+    permitidos: HashMap<IpAddr, Instant>,
+    /// txid do ÚLTIMO request TURN (Refresh/CreatePermission) enviado. A manutenção
+    /// manda no máximo 1 por tick, então um `438 Stale Nonce` sempre casa com ESTE
+    /// txid — daí renovamos o nonce sem corrida.
+    ultimo_txid: [u8; 12],
+}
+
 struct RuntimeSession {
     role: RemoteRole,
-    capabilities: RemoteCapabilities,
+    capabilities: Capabilities,
     on_event: Channel<RemoteSessionEvent>,
     video_frames: Option<SyncSender<galaxie_remote_transport::CodedFrame>>,
     video_failed: Arc<AtomicBool>,
@@ -259,6 +316,8 @@ struct RuntimeSession {
     pressed_keys: HashSet<galaxie_remote_transport::Tecla>,
     pressed_buttons: HashSet<galaxie_remote_transport::BotaoMouse>,
     injector: Option<galaxie_remote_transport::Injector>,
+    /// #1130 fatia 3: relay TURN alocado (data-path), ou `None` (host/srflx puro).
+    relay: Option<RelayState>,
     capture_frames: Option<Receiver<galaxie_remote_capture::CodedFrame>>,
     transport_encoder_commands: TransportCommandReceiver,
     capture_encoder_commands: Option<galaxie_remote_capture::contract::CommandChannel>,
@@ -360,10 +419,17 @@ pub fn remote_session_input(
 }
 
 #[tauri::command]
-pub fn remote_session_end(
+pub async fn remote_session_end(
     request: RemoteSessionEndRequest,
     runtime: tauri::State<'_, RemoteRuntime>,
 ) -> Result<(), RemoteError> {
+    // #1070 RB9: `session.stop()` faz `worker.join()` — BLOQUEIA até a thread do worker
+    // (que ainda junta captura/vídeo) encerrar. Num comando SÍNCRONO isso rodava na
+    // thread do IPC e TRAVAVA a UI no "Encerrar" (mesma classe do P0 #834). Agora o
+    // comando é async e o join sai pra `spawn_blocking`, fora da thread do IPC.
+    //
+    // O lock é solto ANTES do await (o guard vive só neste bloco): não seguramos o
+    // Mutex do runtime através do ponto de espera.
     let session = {
         let mut active = runtime
             .active
@@ -377,7 +443,10 @@ pub fn remote_session_end(
             Some(_) => active.take().expect("active checked"),
         }
     };
-    session.stop(sanitize_reason(request.reason));
+    let reason = sanitize_reason(request.reason);
+    tauri::async_runtime::spawn_blocking(move || session.stop(reason))
+        .await
+        .map_err(|_| RemoteError::ChannelClosed)?;
     Ok(())
 }
 
@@ -536,16 +605,98 @@ impl RuntimeSession {
             } else {
                 (None, None, None)
             };
+        // #1108 Parte 2 (Confucius): resolve os STUN servers em `SocketAddr` ANTES de
+        // mover `request.ice_servers` pro `SessionConfig` — vamos precisar deles pro
+        // gathering de candidato srflx logo abaixo (o `SessionConfig` consome o Vec).
+        let stun_alvos = resolver_stun_addrs(&request.ice_servers);
+        // #1130 fatia 2 (Confucius): resolve os TURN servers UDP em
+        // `(SocketAddr, username, credential)` ANTES de mover `ice_servers` pro
+        // `SessionConfig` (que consome o Vec) — mesmo motivo do `stun_alvos`. O
+        // segredo (`credential`) vai no tuple SÓ pra alimentar o `derive_key` do
+        // handshake; NUNCA é logado (aqui nem no `gather_relay`).
+        let turn_alvos = resolver_turn_alvos(&request.ice_servers);
+        // #1108 (sondagem TURN, Ref): diagnóstico de infra pra decidir o relay — o coturn
+        // de prod já entrega credencial TURN efêmera no `ice_servers`, ou os campos vêm
+        // vazios (provisionamento pendente no VPS)? Loga SÓ contagem + presença; o
+        // `username`/`credential` (o segredo efêmero HMAC) NUNCA é logado. Um servidor
+        // conta como "TURN utilizável" só se tem url `turn:`/`turns:` E credencial não-vazia.
+        {
+            let total = request.ice_servers.len();
+            let com_turn_utilizavel = request
+                .ice_servers
+                .iter()
+                .filter(|s| s.tem_turn() && !s.credential.is_empty() && !s.username.is_empty())
+                .count();
+            let com_stun = request
+                .ice_servers
+                .iter()
+                .filter(|s| s.urls.iter().any(|u| u.starts_with("stun:")))
+                .count();
+            log::info!(
+                "[remote] ice_servers recebidos: {total} servidor(es) ({com_stun} com STUN, \
+                 {com_turn_utilizavel} com TURN+credencial preenchida) — segredo NÃO logado \
+                 (sondagem #1108: TURN {})",
+                if com_turn_utilizavel > 0 { "PRONTO p/ relay" } else { "sem credencial (relay bloqueado)" }
+            );
+        }
+        // #1182: limites do bitrate adaptativo nos defaults (300 kbps..12 Mbps,
+        // início 3 Mbps). O BWE do str0m sobe daí conforme a banda dá folga.
         let mut transport = Transport::novo(
-            SessionConfig {
-                papel: request.role.papel(),
-                ice_servers: request.ice_servers,
-            },
+            SessionConfig::new(request.role.papel(), request.ice_servers),
             encoder_commands,
         );
-        transport
-            .candidato_local(local_addr)
-            .map_err(transport_error)?;
+        // #1108: o BIND fica em `0.0.0.0` (recebe em todas as interfaces), mas o
+        // endereço do bind NÃO é um candidato — só a PORTA importa. Um candidato ICE
+        // host tem que carregar um IP de interface REAL; `0.0.0.0` é rejeitado pelo
+        // str0m ("invalid ip 0.0.0.0") e mata a sessão no transporte (P0 em prod).
+        let porta = local_addr.port();
+        let ips_locais = descobrir_ips_locais();
+        if ips_locais.is_empty() {
+            return Err(RemoteError::Network(
+                "nenhum IP de interface válido pra candidato ICE host (só unspecified/loopback)"
+                    .to_owned(),
+            ));
+        }
+        // Registra 1 candidato host por IP real (não só o primeiro). O erro nomeia o
+        // IP/tipo tentado (AC #1108) via `TransportError::Candidato` do session.rs.
+        for ip in &ips_locais {
+            let addr = SocketAddr::new(*ip, porta);
+            transport.candidato_local(addr).map_err(transport_error)?;
+        }
+
+        // #1108 Parte 2: gathering de candidato srflx (server-reflexive) via STUN.
+        // O str0m é sans-I/O e NÃO faz esse passo — o app manda o Binding no socket e
+        // alimenta o candidato. Rodamos AQUI (DEPOIS dos host, ANTES do offer): o
+        // socket ainda está quieto (o ICE do str0m nem começou), então o Binding não
+        // colide com o tráfego do str0m. A `base` é um IP de interface REAL com a
+        // porta do bind (o 1º IP válido do P1). srflx é ADITIVO e NÃO-fatal: STUN
+        // inalcançável (dev/LAN sem coturn) → `gather_srflx` volta vazio e a sessão
+        // segue com host-only, exatamente como antes do #1108 Parte 2.
+        let base_srflx = SocketAddr::new(ips_locais[0], porta);
+        let srflx = gather_srflx(&socket, &stun_alvos, base_srflx);
+        for (mapeado, base) in &srflx {
+            transport
+                .candidato_srflx(*mapeado, *base)
+                .map_err(transport_error)?;
+        }
+
+        // #1130 fatia 3: aloca o relay E anuncia o candidato. Diferente da fatia 2
+        // (que só PROBAVA o Allocate), agora o data-path existe — o `drain_transport`
+        // embrulha `origem==relayed` numa Send indication e o `receive_udp`
+        // desembrulha a Data indication do coturn — então anunciar o candidato relay é
+        // ÚTIL, não inerte. Fica com o PRIMEIRO relay que alocar (um basta; vários
+        // coturn seriam fallback, improvável no MVP). NÃO-fatal: sem relay a sessão
+        // segue host/srflx, exatamente como antes.
+        let mut relay: Option<RelayState> = None;
+        for (turn_server, username, credential) in &turn_alvos {
+            if let Some(estado) = gather_relay(&socket, *turn_server, username, credential) {
+                transport
+                    .candidato_relay(estado.relayed)
+                    .map_err(transport_error)?;
+                relay = Some(estado);
+                break;
+            }
+        }
 
         let mut session = Self {
             role: request.role,
@@ -563,6 +714,7 @@ impl RuntimeSession {
             pressed_keys: HashSet::new(),
             pressed_buttons: HashSet::new(),
             injector,
+            relay,
             capture_frames,
             transport_encoder_commands,
             capture_encoder_commands,
@@ -570,12 +722,40 @@ impl RuntimeSession {
             terminal_sent: false,
         };
         session.emit_state(RemoteSessionState::Connecting, None, None)?;
-        session.send_event(RemoteSessionEvent::Signal {
-            signal: SignalMessage::IceCandidate {
-                candidate: Transport::candidato_local_sdp(local_addr).map_err(transport_error)?,
-            }
-            .into(),
-        })?;
+        // #1108: trickle-ICE — envia 1 `IceCandidate` por IP de interface válido (N
+        // candidatos, não mais só o endereço do bind). Cada SDP carrega um IP REAL;
+        // nenhum é `0.0.0.0`/`::` (a fonte do bug em prod).
+        for ip in &ips_locais {
+            let addr = SocketAddr::new(*ip, porta);
+            session.send_event(RemoteSessionEvent::Signal {
+                signal: SignalMessage::IceCandidate {
+                    candidate: Transport::candidato_local_sdp(addr).map_err(transport_error)?,
+                }
+                .into(),
+            })?;
+        }
+        // #1108 Parte 2: trickle dos candidatos srflx — DEPOIS dos host (ordem
+        // host-primeiro preservada). Cada SDP carrega o IP:porta público visto pelo
+        // STUN. Se o gather voltou vazio, este loop não emite nada (host-only).
+        for (mapeado, base) in &srflx {
+            session.send_event(RemoteSessionEvent::Signal {
+                signal: SignalMessage::IceCandidate {
+                    candidate: Transport::candidato_srflx_sdp(*mapeado, *base)
+                        .map_err(transport_error)?,
+                }
+                .into(),
+            })?;
+        }
+        // #1130 fatia 3: trickle do candidato relay (se alocou) — DEPOIS de host+srflx
+        // (ordem host-primeiro preservada). Só emite se o `gather_relay` alocou.
+        if let Some(relayed) = session.relay.as_ref().map(|r| r.relayed) {
+            session.send_event(RemoteSessionEvent::Signal {
+                signal: SignalMessage::IceCandidate {
+                    candidate: Transport::candidato_relay_sdp(relayed).map_err(transport_error)?,
+                }
+                .into(),
+            })?;
+        }
         if session.role == RemoteRole::Controller {
             let offer = session.transport.criar_offer().map_err(transport_error)?;
             session.send_event(RemoteSessionEvent::Signal {
@@ -613,6 +793,7 @@ impl RuntimeSession {
             }
 
             self.receive_udp()?;
+            self.manutencao_relay()?;
             self.drain_capture()?;
             self.forward_encoder_commands();
             if self
@@ -680,16 +861,178 @@ impl RuntimeSession {
 
     fn receive_udp(&mut self) -> Result<(), RemoteError> {
         let mut buffer = [0u8; 65_536];
+        // #1130 fatia 3: snapshot Copy do (turn_server, relayed) pra demultiplexar sem
+        // segurar `&self.relay` enquanto chamamos `&mut self.transport`. O recv NÃO
+        // muta o relay (a permissão é instalada no caminho de ENVIO).
+        let relay_io = self.relay.as_ref().map(|r| (r.turn_server, r.relayed));
         loop {
             match self.socket.recv_from(&mut buffer) {
-                Ok((len, source)) => self
-                    .transport
-                    .receber_udp(source, self.local_addr, &buffer[..len])
-                    .map_err(transport_error)?,
+                Ok((len, source)) => {
+                    let pacote = &buffer[..len];
+                    // Tráfego vindo do coturn: só a Data indication interessa ao str0m
+                    // (é o pacote do peer embrulhado). O resto (CreatePermission
+                    // Success, Refresh…) é controle TURN e não vai pro str0m. Um pacote
+                    // do peer chega ao str0m como vindo do `peer` no candidato `relayed`.
+                    if let Some((turn_server, relayed)) = relay_io {
+                        if source == turn_server {
+                            if let Some((peer, dados)) = parse_data_indication(pacote) {
+                                self.transport
+                                    .receber_udp(peer, relayed, &dados)
+                                    .map_err(transport_error)?;
+                            } else {
+                                // Não é dado de peer: é controle TURN (resposta a um
+                                // Refresh/CreatePermission nosso). #1130 fatia 3c.
+                                self.tratar_controle_relay(pacote);
+                            }
+                            continue;
+                        }
+                    }
+                    self.transport
+                        .receber_udp(source, self.local_addr, pacote)
+                        .map_err(transport_error)?;
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
                 Err(error) => return Err(RemoteError::Network(error.to_string())),
             }
         }
+    }
+
+    /// #1130 fatia 3: caminho de SAÍDA de um datagrama do str0m. Host/srflx (`origem`
+    /// = base local) → UDP direto ao `destino`, como sempre. Relay (`origem` ==
+    /// `relayed`) → embrulha numa Send indication endereçada ao servidor TURN, com
+    /// CreatePermission instalada pro peer ANTES na 1ª vez (o coturn dropa tráfego de
+    /// peer sem permissão). `txid` aleatório: indication não tem resposta a casar.
+    fn enviar_datagrama(
+        &mut self,
+        origem: SocketAddr,
+        destino: SocketAddr,
+        dados: &[u8],
+    ) -> Result<(), RemoteError> {
+        if let Some(relay) = self.relay.as_mut() {
+            if origem == relay.relayed {
+                if !relay.permitidos.contains_key(&destino.ip()) {
+                    let mut txid = [0u8; 12];
+                    rand::thread_rng().fill(&mut txid[..]);
+                    let perm = build_create_permission_request(
+                        &txid,
+                        destino,
+                        &relay.username,
+                        &relay.realm,
+                        &relay.nonce,
+                        &relay.key,
+                    );
+                    self.socket
+                        .send_to(&perm, relay.turn_server)
+                        .map_err(|e| RemoteError::Network(e.to_string()))?;
+                    relay.ultimo_txid = txid;
+                    relay
+                        .permitidos
+                        .insert(destino.ip(), Instant::now() + PERM_REFRESH);
+                }
+                let mut txid = [0u8; 12];
+                rand::thread_rng().fill(&mut txid[..]);
+                let ind = build_send_indication(&txid, destino, dados);
+                return Self::enviar_best_effort(&self.socket, &ind, relay.turn_server);
+            }
+        }
+        Self::enviar_best_effort(&self.socket, dados, destino)
+    }
+
+    /// #1070 RB1: envia um datagrama do data-path tratando `WouldBlock` (buffer de
+    /// saída cheio) como NÃO-fatal — o MESMO comportamento do `IoDriver`
+    /// (`services/remote-transport/src/driver.rs`) usado pelo harness E2E. Sob carga de
+    /// vídeo o buffer enche normalmente; derrubar a sessão por isso (o `?` que existia
+    /// aqui) era a divergência silenciosa do RB1. ICE/RTP/o próprio TURN retransmitem.
+    fn enviar_best_effort(
+        socket: &UdpSocket,
+        dados: &[u8],
+        destino: SocketAddr,
+    ) -> Result<(), RemoteError> {
+        match socket.send_to(dados, destino) {
+            Ok(_) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => Ok(()),
+            Err(e) => Err(RemoteError::Network(e.to_string())),
+        }
+    }
+
+    /// #1130 fatia 3c: reação a uma resposta de controle TURN (não-Data) do coturn.
+    /// Casa pelo `ultimo_txid` (a manutenção manda 1 req/tick, então sem corrida):
+    /// - `438 Stale Nonce` → adota o nonce novo e força reemissão IMEDIATA (refresh +
+    ///   todas as permissões) com o nonce fresco, senão a alocação/permissões CAEM.
+    /// - Refresh Success → reagenda pelo lifetime REALMENTE concedido (o coturn pode
+    ///   conceder menos do que pedimos).
+    fn tratar_controle_relay(&mut self, pacote: &[u8]) {
+        let Some(relay) = self.relay.as_mut() else {
+            return;
+        };
+        if let Some(nonce_novo) = parse_stale_nonce(pacote, &relay.ultimo_txid) {
+            relay.nonce = nonce_novo;
+            let agora = Instant::now();
+            relay.refresh_em = agora; // refaz o refresh já, com o nonce fresco
+            for prazo in relay.permitidos.values_mut() {
+                *prazo = agora; // e reemite todas as permissões
+            }
+        } else if let Some(lifetime) = parse_refresh_success(pacote, &relay.ultimo_txid) {
+            relay.lifetime_s = lifetime;
+            relay.refresh_em = Instant::now() + intervalo_refresh(lifetime);
+        }
+    }
+
+    /// #1130 fatia 3c: mantém a alocação e as permissões do relay VIVAS ("não cai").
+    /// Manda no MÁXIMO 1 request por tick (refresh tem prioridade; senão a 1ª permissão
+    /// vencida), pra que um `438 Stale Nonce` sempre case com o `ultimo_txid`. No-op se
+    /// a sessão é host/srflx puro.
+    fn manutencao_relay(&mut self) -> Result<(), RemoteError> {
+        let Some(relay) = self.relay.as_mut() else {
+            return Ok(());
+        };
+        let agora = Instant::now();
+        // 1. Refresh da alocação antes do lifetime expirar.
+        if agora >= relay.refresh_em {
+            let mut txid = [0u8; 12];
+            rand::thread_rng().fill(&mut txid[..]);
+            let req = build_refresh_request(
+                &txid,
+                relay.lifetime_s,
+                &relay.username,
+                &relay.realm,
+                &relay.nonce,
+                &relay.key,
+            );
+            self.socket
+                .send_to(&req, relay.turn_server)
+                .map_err(|e| RemoteError::Network(e.to_string()))?;
+            relay.ultimo_txid = txid;
+            // Reagenda otimista; a Success (recv) ajusta pelo lifetime concedido.
+            relay.refresh_em = agora + intervalo_refresh(relay.lifetime_s);
+            return Ok(());
+        }
+        // 2. Reemite UMA permissão vencida (a próxima entra no tick seguinte).
+        let vencida = relay
+            .permitidos
+            .iter()
+            .find(|(_, prazo)| agora >= **prazo)
+            .map(|(ip, _)| *ip);
+        if let Some(ip) = vencida {
+            let mut txid = [0u8; 12];
+            rand::thread_rng().fill(&mut txid[..]);
+            // A permissão é por IP (RFC 5766 §9); a porta do XOR-PEER-ADDRESS é ignorada.
+            let peer = SocketAddr::new(ip, 0);
+            let perm = build_create_permission_request(
+                &txid,
+                peer,
+                &relay.username,
+                &relay.realm,
+                &relay.nonce,
+                &relay.key,
+            );
+            self.socket
+                .send_to(&perm, relay.turn_server)
+                .map_err(|e| RemoteError::Network(e.to_string()))?;
+            relay.ultimo_txid = txid;
+            relay.permitidos.insert(ip, agora + PERM_REFRESH);
+        }
+        Ok(())
     }
 
     fn drain_capture(&mut self) -> Result<(), RemoteError> {
@@ -739,10 +1082,12 @@ impl RuntimeSession {
     fn drain_transport(&mut self) -> Result<bool, RemoteError> {
         for _ in 0..256 {
             match self.transport.passo().map_err(transport_error)? {
-                Passo::Transmitir { destino, dados } => {
-                    self.socket
-                        .send_to(&dados, destino)
-                        .map_err(|e| RemoteError::Network(e.to_string()))?;
+                Passo::Transmitir {
+                    origem,
+                    destino,
+                    dados,
+                } => {
+                    self.enviar_datagrama(origem, destino, &dados)?;
                 }
                 Passo::Aguardar(at) => {
                     self.next_timeout = Some(at);
@@ -789,7 +1134,29 @@ impl RuntimeSession {
                 self.send_event(RemoteSessionEvent::Screen { info })?;
             }
             ControlFrame::Input(event) => self.apply_host_input(event)?,
-            ControlFrame::Control(_) | ControlFrame::Chunk { .. } => {}
+            // #1070 RB6: aplica o gate de capability ANTES de qualquer processamento —
+            // não descarta em silêncio (o furo do §1). A política sai das capabilities
+            // da sessão (tipo único de 5 campos, RB7). Um frame negado é LOGADO e
+            // rejeitado. NUNCA logamos o conteúdo (ClipboardText carrega texto do
+            // usuário) — só o veredito. Os handlers de clipboard/file (S5-front) ainda
+            // não existem no app; até lá o frame permitido não é processado, mas o gate
+            // já vale e o negado já aparece no log.
+            ControlFrame::Control(msg) => {
+                if CapabilityPolicy::nova(self.capabilities).permite(&msg).is_err() {
+                    log::warn!(
+                        "[remote] frame de controle BLOQUEADO por capability \
+                         (clipboard/file desligado na sessão)"
+                    );
+                }
+            }
+            ControlFrame::Chunk { .. } => {
+                if !self.capabilities.file_transfer {
+                    log::warn!(
+                        "[remote] chunk de arquivo BLOQUEADO: capability file_transfer \
+                         desligada na sessão"
+                    );
+                }
+            }
         }
         Ok(())
     }
@@ -976,6 +1343,277 @@ fn transport_error(error: impl std::fmt::Display) -> RemoteError {
     RemoteError::Transport(error.to_string())
 }
 
+/// `true` se `ip` é link-local — IPv4 `169.254.0.0/16` ou IPv6 `fe80::/10`. Esses
+/// raramente roteiam entre peers e só poluem o gathering ICE, então saem junto
+/// com unspecified/loopback. (O teste do `fe80::/10` é por prefixo pra não depender
+/// de API instável de `Ipv6Addr`.)
+fn is_link_local(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_link_local(),
+        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) == 0xfe80,
+    }
+}
+
+/// Filtra os IPs de interface BRUTOS, descartando o que NUNCA pode virar candidato
+/// ICE host: unspecified (`0.0.0.0`/`::` — o endereço do BIND, que o str0m rejeita
+/// com "invalid ip 0.0.0.0"), loopback (`127.0.0.1`/`::1`, inalcançável pelo peer)
+/// e link-local. Sobram só IPs de interface REAIS; deduplica preservando a ordem
+/// pra emitir 1 candidato por IP sem repetição.
+///
+/// Fn PURA (não toca a rede): é o ponto testável do #1108 — a regra de que um IP
+/// unspecified jamais escapa pro gathering é provada aqui, sem interface/socket.
+fn ips_de_interface_validos(brutos: &[IpAddr]) -> Vec<IpAddr> {
+    let mut vistos = HashSet::new();
+    brutos
+        .iter()
+        .copied()
+        .filter(|ip| !ip.is_unspecified() && !ip.is_loopback() && !is_link_local(ip))
+        .filter(|ip| vistos.insert(*ip))
+        .collect()
+}
+
+/// Descobre os IPs de interface REAIS desta máquina (todas as interfaces up) e
+/// devolve só os válidos pra candidato ICE host. Isola o toque na rede
+/// (`if_addrs::get_if_addrs`) da regra pura `ips_de_interface_validos`. Falha de
+/// enumeração vira lista vazia (o chamador trata como "sem candidato host").
+fn descobrir_ips_locais() -> Vec<IpAddr> {
+    let brutos: Vec<IpAddr> = match if_addrs::get_if_addrs() {
+        Ok(ifaces) => ifaces.into_iter().map(|iface| iface.ip()).collect(),
+        Err(error) => {
+            log::warn!("[remote] enumeração de interfaces falhou: {error}");
+            Vec::new()
+        }
+    };
+    ips_de_interface_validos(&brutos)
+}
+
+/// #1108 Parte 2: resolve os STUN servers dos `IceServer` em `SocketAddr`. Pega
+/// TODA url com prefixo `stun:` (sem credencial), tira o prefixo, corta um eventual
+/// `?transport=...` e resolve `host:porta` via `ToSocketAddrs` (DNS + IPv4/IPv6).
+/// Deduplica preservando a ordem. Falha de resolução é NÃO-fatal (loga e pula): o
+/// gathering srflx é aditivo. Relay/TURN fica de fora (bloqueado: credencial +
+/// coturn + #1049).
+fn resolver_stun_addrs(ice_servers: &[IceServer]) -> Vec<SocketAddr> {
+    let mut vistos = HashSet::new();
+    let mut addrs = Vec::new();
+    for server in ice_servers {
+        for url in &server.urls {
+            let Some(hostport) = url.strip_prefix("stun:") else {
+                continue;
+            };
+            let hostport = hostport.split('?').next().unwrap_or(hostport);
+            match hostport.to_socket_addrs() {
+                Ok(resolvidos) => {
+                    for addr in resolvidos {
+                        if vistos.insert(addr) {
+                            addrs.push(addr);
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::warn!("[remote] STUN '{hostport}' não resolveu: {error} — srflx pulado");
+                }
+            }
+        }
+    }
+    addrs
+}
+
+/// #1108 Parte 2: faz o gathering de candidatos srflx. Pra cada STUN server, gera um
+/// `txid` aleatório, envia um STUN Binding Request pelo `socket` (o MESMO socket da
+/// sessão) e faz poll-recv com deadline curto (o socket é NONBLOCKING): lê
+/// `recv_from` até `SRFLX_GATHER_TIMEOUT`, tratando `WouldBlock` com um `sleep`
+/// curto. Ao chegar um pacote, tenta casar o `txid` via `parse_xor_mapped_address`;
+/// se casar, o IP:porta público é o `mapeado` (par `(mapeado, base)`); senão o
+/// pacote é ignorado (pode ser outro tráfego) e o laço segue. Devolve os pares
+/// únicos. NÃO-fatal: timeout/erro/STUN inalcançável → vetor vazio (host-only).
+///
+/// Sans-I/O: o str0m não descobre srflx; este é o passo de runtime que o app faz por
+/// ele. Chamado ANTES do offer, com o socket ainda quieto, pra o Binding não colidir
+/// com o ICE do str0m.
+fn gather_srflx(
+    socket: &UdpSocket,
+    stun_alvos: &[SocketAddr],
+    base: SocketAddr,
+) -> Vec<(SocketAddr, SocketAddr)> {
+    let mut resultados: Vec<(SocketAddr, SocketAddr)> = Vec::new();
+    let mut vistos = HashSet::new();
+    let mut buf = [0u8; 512];
+    for &stun in stun_alvos {
+        let mut txid = [0u8; 12];
+        rand::thread_rng().fill(&mut txid[..]);
+        let req = build_binding_request(&txid);
+        if let Err(error) = socket.send_to(&req, stun) {
+            log::warn!("[remote] STUN Binding não enviou: {error} — srflx pulado");
+            continue;
+        }
+        let deadline = Instant::now() + SRFLX_GATHER_TIMEOUT;
+        loop {
+            if Instant::now() >= deadline {
+                log::warn!("[remote] STUN sem resposta (timeout) — srflx pulado deste servidor");
+                break;
+            }
+            match socket.recv_from(&mut buf) {
+                Ok((len, _origem)) => {
+                    // O `txid` no parse é a prova de identidade; um pacote que não
+                    // casa (outro tráfego chegando no socket) é ignorado e o laço
+                    // segue até a resposta certa ou o deadline.
+                    if let Some(mapeado) = parse_xor_mapped_address(&buf[..len], &txid) {
+                        if vistos.insert((mapeado, base)) {
+                            resultados.push((mapeado, base));
+                        }
+                        break;
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(SRFLX_POLL_INTERVAL);
+                }
+                Err(error) => {
+                    log::warn!("[remote] STUN recv falhou: {error} — srflx pulado deste servidor");
+                    break;
+                }
+            }
+        }
+    }
+    resultados
+}
+
+/// #1130 fatia 2: resolve os TURN servers UDP dos `IceServer` em
+/// `(SocketAddr, username, credential)`. Só entra servidor com `username` E
+/// `credential` NÃO-vazios (o coturn de prod entrega credencial efêmera; sem ela o
+/// relay é impossível — nem tentamos o handshake) E que exponha ao menos um endpoint
+/// `turn:` UDP (`IceServer::turn_udp_endpoints` — `turns:`/`transport=tcp` ficam de
+/// fora, o Allocate aqui é UDP). Deduplica por `SocketAddr` preservando a ordem.
+/// Falha de resolução DNS é NÃO-fatal (loga o HOST e pula). O `credential` (o
+/// segredo) É CARREGADO no retorno pra o `derive_key`, mas NUNCA aparece em log.
+fn resolver_turn_alvos(ice_servers: &[IceServer]) -> Vec<(SocketAddr, String, String)> {
+    let mut vistos = HashSet::new();
+    let mut alvos = Vec::new();
+    for server in ice_servers {
+        if server.username.is_empty() || server.credential.is_empty() {
+            continue; // sem credencial → relay impossível (não tenta)
+        }
+        for endpoint in server.turn_udp_endpoints() {
+            match endpoint.to_socket_addrs() {
+                Ok(resolvidos) => {
+                    for addr in resolvidos {
+                        if vistos.insert(addr) {
+                            alvos.push((
+                                addr,
+                                server.username.clone(),
+                                server.credential.clone(),
+                            ));
+                        }
+                    }
+                }
+                Err(error) => {
+                    log::warn!("[remote] TURN '{endpoint}' não resolveu: {error} — relay pulado");
+                }
+            }
+        }
+    }
+    alvos
+}
+
+/// #1130 fatia 2: envia `req` pro `turn_server` e faz poll-recv NONBLOCKING até o
+/// `parse` casar ou o `RELAY_ALLOCATE_TIMEOUT` vencer (mesmo padrão de recv do
+/// `gather_srflx`). Um pacote que não casa (ex.: resposta STUN de srflx atrasada, ou
+/// outro tráfego chegando no socket compartilhado) é ignorado e o laço segue. Erro
+/// de envio/recv ou timeout → `None`. O `parse` é quem prova a identidade (txid).
+fn relay_troca<T>(
+    socket: &UdpSocket,
+    turn_server: SocketAddr,
+    req: &[u8],
+    parse: impl Fn(&[u8]) -> Option<T>,
+) -> Option<T> {
+    if let Err(error) = socket.send_to(req, turn_server) {
+        log::warn!("[remote] TURN request não enviou: {error} — relay pulado");
+        return None;
+    }
+    let mut buf = [0u8; 1024];
+    let deadline = Instant::now() + RELAY_ALLOCATE_TIMEOUT;
+    loop {
+        if Instant::now() >= deadline {
+            return None;
+        }
+        match socket.recv_from(&mut buf) {
+            Ok((len, _origem)) => {
+                if let Some(valor) = parse(&buf[..len]) {
+                    return Some(valor);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(SRFLX_POLL_INTERVAL);
+            }
+            Err(error) => {
+                log::warn!("[remote] TURN recv falhou: {error} — relay pulado");
+                return None;
+            }
+        }
+    }
+}
+
+/// #1130 fatia 2: gathering de UM candidato relay (RELAY/TURN) via handshake
+/// Allocate no coturn (RFC 5766 §6). Espelha o `gather_srflx`: usa o MESMO socket da
+/// sessão, com poll-recv NONBLOCKING e deadline curto. Fluxo:
+///   1. Allocate SEM auth → coturn responde `401 Unauthorized` com REALM/NONCE.
+///   2. deriva a chave long-term (`derive_key(user, realm, credential)`) e reenvia o
+///      Allocate autenticado (novo txid).
+///   3. lê o Allocate Success → `(relayed, lifetime)`.
+/// NÃO-fatal: qualquer timeout/erro/resposta inesperada → `None` (a sessão segue sem
+/// relay, exatamente como sem TURN). Devolve `(relayed, base, lifetime)`, onde `base`
+/// é o endereço local real do bind (repassado pelo chamador) — o triplo é o que a
+/// FATIA 3 precisa pro data-path/refresh. O `credential` alimenta o `derive_key` e
+/// NUNCA é logado (nem o `Debug` de `IceServer` é usado aqui).
+fn gather_relay(
+    socket: &UdpSocket,
+    turn_server: SocketAddr,
+    username: &str,
+    credential: &str,
+) -> Option<RelayState> {
+    // Passo 1: Allocate sem auth → espera 401 Unauthorized com REALM/NONCE.
+    let mut txid = [0u8; 12];
+    rand::thread_rng().fill(&mut txid[..]);
+    let req = build_allocate_request(&txid);
+    let Some((realm, nonce)) =
+        relay_troca(socket, turn_server, &req, |resp| parse_error_unauthorized(resp, &txid))
+    else {
+        log::warn!("[remote] TURN Allocate sem 401 (timeout/erro) — relay pulado");
+        return None;
+    };
+
+    // Passo 2: Allocate autenticado (long-term credential). Novo txid pro retry.
+    let key = derive_key(username, &realm, credential);
+    let mut txid_auth = [0u8; 12];
+    rand::thread_rng().fill(&mut txid_auth[..]);
+    let req_auth = build_allocate_request_auth(&txid_auth, username, &realm, &nonce, &key);
+    let Some((relayed, lifetime)) = relay_troca(socket, turn_server, &req_auth, |resp| {
+        parse_allocate_success(resp, &txid_auth)
+    }) else {
+        log::warn!("[remote] TURN Allocate autenticado sem sucesso (timeout/erro) — relay pulado");
+        return None;
+    };
+
+    log::info!(
+        "[remote] relay TURN alocado via {turn_server}: relayed={relayed} lifetime={lifetime}s \
+         (renovação do lifetime = fatia 3c; segredo NÃO logado)"
+    );
+    // Guarda a credencial pro data-path (Send indication + CreatePermission) e agenda
+    // o 1º Refresh a 3/4 do lifetime (#1130 fatia 3c — "não cai").
+    Some(RelayState {
+        turn_server,
+        relayed,
+        username: username.to_owned(),
+        realm,
+        nonce,
+        key,
+        lifetime_s: lifetime,
+        refresh_em: Instant::now() + intervalo_refresh(lifetime),
+        permitidos: HashMap::new(),
+        ultimo_txid: [0u8; 12],
+    })
+}
+
 fn sanitize_reason(reason: String) -> String {
     reason
         .chars()
@@ -1018,6 +1656,100 @@ fn host_screen_info() -> ScreenInfo {
 mod tests {
     use super::*;
     use galaxie_remote_transport::{BotaoMouse, CodedFrame, Tecla};
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn filtro_de_ip_descarta_unspecified_loopback_e_link_local() {
+        // #1108: entrada com o endereço do BIND (`0.0.0.0`), loopback, link-local e
+        // IPs de interface reais → só os reais sobram.
+        let brutos = vec![
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),               // 0.0.0.0 (bind)
+            IpAddr::V4(Ipv4Addr::LOCALHOST),                 // 127.0.0.1
+            IpAddr::V4(Ipv4Addr::new(169, 254, 3, 4)),       // link-local v4
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),       // LAN real
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),               // ::
+            IpAddr::V6(Ipv6Addr::LOCALHOST),                 // ::1
+            IpAddr::V6(Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, 1)), // link-local v6
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)), // global v6
+        ];
+        let validos = ips_de_interface_validos(&brutos);
+        assert_eq!(
+            validos,
+            vec![
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, 5)),
+                IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
+            ],
+            "só IPs de interface reais podem virar candidato host"
+        );
+        // DoD: NENHUM unspecified/loopback pode escapar pro gathering.
+        assert!(validos
+            .iter()
+            .all(|ip| !ip.is_unspecified() && !ip.is_loopback()));
+    }
+
+    #[test]
+    fn resolver_turn_alvos_exige_credencial_e_carrega_segredo() {
+        // #1130 fatia 2: só servidor com username E credential preenchidos entra; o
+        // sem credencial e o `stun:` puro são pulados. Usa IP numérico (127.0.0.1) pra
+        // o `to_socket_addrs` resolver sem DNS. O segredo é carregado no tuple (pro
+        // `derive_key`), nunca logado.
+        let servers = vec![
+            IceServer {
+                urls: vec!["turn:127.0.0.1:3478".into()],
+                username: String::new(),
+                credential: String::new(),
+            },
+            IceServer {
+                urls: vec!["turn:127.0.0.1:3479?transport=udp".into()],
+                username: "u".into(),
+                credential: "segredo".into(),
+            },
+            IceServer {
+                urls: vec!["stun:127.0.0.1:3478".into()],
+                username: String::new(),
+                credential: String::new(),
+            },
+        ];
+        let alvos = resolver_turn_alvos(&servers);
+        assert_eq!(alvos.len(), 1, "só o servidor com credencial vira alvo");
+        assert_eq!(alvos[0].0, "127.0.0.1:3479".parse().unwrap());
+        assert_eq!(alvos[0].1, "u");
+        assert_eq!(alvos[0].2, "segredo");
+    }
+
+    #[test]
+    fn filtro_deduplica_ips_repetidos() {
+        let ip = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7));
+        let validos = ips_de_interface_validos(&[ip, ip]);
+        assert_eq!(validos, vec![ip], "1 candidato por IP, sem repetição");
+    }
+
+    #[test]
+    fn unspecified_nunca_vira_candidato_local() {
+        // Prova o caminho de emissão do #1108: todo IP que passa pelo filtro produz
+        // um SDP de candidato host, e nenhum é `0.0.0.0`/`::` (a fonte do P0). Se o
+        // filtro deixasse o endereço do bind passar, este SDP conteria "0.0.0.0" e o
+        // str0m rejeitaria no `add_local_candidate` — aqui garantimos que o
+        // unspecified sequer chega a ser montado como candidato.
+        let brutos = vec![
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7)),
+        ];
+        let validos = ips_de_interface_validos(&brutos);
+        assert!(!validos.is_empty(), "deve sobrar ≥1 candidato host real");
+        assert!(
+            !validos.contains(&IpAddr::V4(Ipv4Addr::UNSPECIFIED)),
+            "candidato com IP unspecified é o bug do #1108"
+        );
+        for ip in &validos {
+            let addr = SocketAddr::new(*ip, 55000);
+            let sdp = Transport::candidato_local_sdp(addr).expect("SDP do candidato host");
+            assert!(
+                !sdp.contains("0.0.0.0") && !sdp.contains("typ host :: "),
+                "SDP de candidato não pode carregar IP unspecified: {sdp}"
+            );
+        }
+    }
 
     #[test]
     fn video_raw_tem_header_congelado_de_17_bytes() {
@@ -1063,6 +1795,68 @@ mod tests {
         assert!(!keys.contains(&Tecla::Control));
     }
 
+    /// #1071 (RB2): contrato de shape dos comandos remote_* contra as structs REAIS
+    /// deste módulo (compila só sob `--features remote`, NÃO o remote_stub). O Tauri v2
+    /// desserializa cada parâmetro nomeado a partir da chave homônima no objeto de args
+    /// do invoke; como as 3 assinaturas recebem um único `request: T`, o front TEM que
+    /// enviar `{ "request": {...} }`. O payload ACHATADO que o remote.ts enviava antes
+    /// (`{ "sessionId":.., "signal":.. }`) não tem a chave `request` → o parâmetro não
+    /// desserializa e a sessão trava em "connecting". Reproduz ANTES (achatado = Err) /
+    /// passa DEPOIS (aninhado = Ok).
+    #[test]
+    fn contrato_remote_cmds_exige_payload_aninhado_em_request() {
+        use serde_json::json;
+
+        // Replica o que o Tauri v2 faz: pega args["request"] e desserializa em T.
+        fn param_request<T: serde::de::DeserializeOwned>(
+            args: serde_json::Value,
+        ) -> Result<T, String> {
+            let inner = args
+                .get("request")
+                .ok_or("faltou a chave `request` no objeto de args")?
+                .clone();
+            serde_json::from_value(inner).map_err(|e| e.to_string())
+        }
+
+        // signal
+        assert!(
+            param_request::<RemoteSessionSignalRequest>(
+                json!({ "sessionId": "s1", "signal": { "kind": "answer", "payload": "sdp" } })
+            )
+            .is_err(),
+            "payload achatado (front antigo) tem que FALHAR — reproduz a sessão travada"
+        );
+        let sig: RemoteSessionSignalRequest = param_request(json!({
+            "request": { "sessionId": "s1", "signal": { "kind": "answer", "payload": "sdp" } }
+        }))
+        .expect("shape novo do signal (o que o remote.ts envia agora)");
+        assert_eq!(sig.session_id, "s1");
+        assert!(matches!(sig.signal, RemoteSignal::Answer(_)));
+
+        // input
+        assert!(param_request::<RemoteSessionInputRequest>(
+            json!({ "sessionId": "s1", "event": { "e": "mouseMove", "x": 0.0, "y": 0.0 } })
+        )
+        .is_err());
+        let inp: RemoteSessionInputRequest = param_request(json!({
+            "request": { "sessionId": "s1", "event": { "e": "mouseMove", "x": 0.25, "y": 0.75 } }
+        }))
+        .expect("shape novo do input");
+        assert_eq!(inp.session_id, "s1");
+        assert!(matches!(inp.event, InputEvent::MouseMove { .. }));
+
+        // end
+        assert!(param_request::<RemoteSessionEndRequest>(
+            json!({ "sessionId": "s1", "reason": "requested" })
+        )
+        .is_err());
+        let end: RemoteSessionEndRequest =
+            param_request(json!({ "request": { "sessionId": "s1", "reason": "requested" } }))
+                .expect("shape novo do end");
+        assert_eq!(end.session_id, "s1");
+        assert_eq!(end.reason, "requested");
+    }
+
     #[test]
     fn valida_ids_e_signal_bounded() {
         let request = RemoteSessionStartRequest {
@@ -1073,9 +1867,10 @@ mod tests {
                 peer_id: "peer-1".to_owned(),
             },
             ice_servers: Vec::new(),
-            capabilities: RemoteCapabilities {
+            capabilities: Capabilities {
                 screen: true,
                 input: true,
+                ..Default::default()
             },
         };
         assert!(validate_start(&request).is_ok());

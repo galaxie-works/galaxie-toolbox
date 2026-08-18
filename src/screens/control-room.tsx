@@ -1,6 +1,6 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BridgeHeaderIcon } from "@/components/ui/icons/marca-anim";
-import { Badge, type BadgeProps } from "@/components/reui/badge";
+import { Badge } from "@/components/reui/badge";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 import { PreviewAnexo } from "@/components/bridge/preview-anexo";
 import {
@@ -17,10 +17,9 @@ import {
 import {
   DateSelector,
   formatDateValue,
-  DEFAULT_DATE_SELECTOR_I18N,
   type DateSelectorValue,
-  type DateSelectorI18nConfig,
 } from "@/components/reui/date-selector";
+import { montarFiltrosI18n, montarDateSelectorI18n } from "@/lib/reui-i18n";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { Toolbar, ToolbarButton } from "@/components/ui/toolbar";
@@ -38,8 +37,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Calendar } from "@/components/ui/calendar";
-import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Collapsible, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Frame, FrameHeader, FrameTitle } from "@/components/reui/frame";
 import {
@@ -50,6 +47,7 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetFooter,
   SheetHeader,
   SheetTitle,
@@ -123,13 +121,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { shortcutAccessibleLabel, formatShortcut } from "@/components/ui/shortcut";
-import type { ShortcutDefinition } from "@/components/ui/shortcut";
 import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
+// #1060: catálogo declarativo dos atalhos do Bridge (fonte única) — os tooltips/
+// aria-labels das ações icon-only leem daqui, a MESMA fonte da ajuda "?".
+import { shortcutBridge } from "@/components/atalhos-bridge";
 import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -140,10 +138,8 @@ import { NovaMensagemModal } from "@/components/compose/nova-mensagem-modal";
 import { AgendaView } from "@/components/agenda/agenda-view";
 import { AgendaCalendarSelector } from "@/components/agenda/agenda-calendar-selector";
 import { PeopleView } from "@/components/people/people-view";
+import { UniversalSearch } from "@/components/universal-search";
 import { PersonHoverCard } from "@/components/people/person-hover-card";
-import * as AnimatedButton from "@/components/morphin/animated-border-button";
-import SuccessIcon from "@/components/ui/icons/success";
-import TrashIcon from "@/components/ui/icons/trash";
 // Ícones animados das pastas de e-mail (#494) — lucide-animated via registry.
 import { MailboxIcon } from "@/components/ui/mailbox";
 import { CalendarDaysIcon } from "@/components/ui/calendar-days";
@@ -155,12 +151,9 @@ import { ArchiveIcon } from "@/components/ui/archive";
 import { DeleteIcon } from "@/components/ui/delete";
 import { BadgeAlertIcon } from "@/components/ui/badge-alert";
 import { FolderOpenIcon } from "@/components/ui/folder-open";
-import { AnimatePresence, motion } from "motion/react";
-import { TextMorph } from "torph/react";
 import { toast } from "sonner";
 import { toastIcone, toastDownload, toastMensagem } from "@/lib/toasts";
 import * as api from "@/lib/api";
-import { podeGerenciarEvento } from "@/lib/agenda-permissions";
 import { surfaceSuportada } from "@/lib/capabilities-surface";
 import {
   CAIXA_PROPRIA,
@@ -176,10 +169,10 @@ import {
   configurarEscopoFotos,
 } from "@/lib/fotos";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { iniciais } from "@/lib/iniciais";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { useTier } from "@/lib/tier-context";
 import { recursoOrgDisponivel } from "@/lib/tier";
-import { useTemaEscuro } from "@/lib/tema";
 import { useAppStore } from "@/store";
 import type { BridgeView } from "@/store/ui-slice";
 import {
@@ -193,27 +186,21 @@ import { tocarSomEscopo } from "@/lib/sons-notificacao";
 import { scrollTopReancorado, type Ancora } from "@/lib/scroll-ancora";
 import { useDebounce } from "@/hooks/use-debounce";
 import { useUndoSend } from "@/hooks/use-undo-send";
-import { getDarkReaderInlineScripts } from "@/lib/darkReaderInject";
-import { dobrarCitado, estiloDobra } from "@/lib/dobrar-citado";
-import DOMPurify from "dompurify";
+import { CorpoMensagem } from "@/components/bridge/corpo-html";
+import { EventoDialog } from "@/components/bridge/evento-dialog";
+import { BotaoExcluir, SubmenuMover, type PastaDestino } from "@/components/bridge/message-shared";
 import { cn, comLoginHint } from "@/lib/utils";
 import type {
-  AcaoRsvp,
   AnexoEmail,
   AppUser,
   EmailDetalhe,
   EmailItem,
   PastaEmail,
-  Participante,
-  RespostaConvite,
 } from "@/lib/types";
 import {
-  analisarLink,
   nivelAutenticacao,
   parseAuthResults,
   replyToDivergente,
-  type AnaliseLink,
-  type AvisoLink,
   type NivelAutenticacao,
   type ResultadoAutenticacao,
 } from "@/lib/seguranca-leitor";
@@ -222,11 +209,7 @@ import {
   AtSign,
   Building2,
   CalendarCheck,
-  CalendarClock,
   CalendarDays,
-  CalendarX2,
-  Check,
-  CircleHelp,
   ChevronDown,
   ListFilter,
   ChevronRight,
@@ -237,24 +220,19 @@ import {
   Flag,
   FlagOff,
   FunnelX,
-  Folder,
-  FolderInput,
   FolderPlus,
   Forward,
   Inbox,
   Mail,
   MailOpen,
-  MapPin,
   MoreHorizontal,
   Plus,
   Paperclip,
   Pencil,
   Printer,
   RefreshCw,
-  Repeat,
   Reply,
   ReplyAll,
-  RotateCcw,
   Save,
   Send,
   Shield,
@@ -268,7 +246,6 @@ import {
   Tag,
   UsersRound,
   Contact,
-  Video,
   X,
 } from "lucide-react";
 // #489: ícones de collapse do registry animate-ui (animados), por estado.
@@ -279,7 +256,6 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
-  useId,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -292,441 +268,9 @@ import { AtalhosAjuda } from "@/components/atalhos-ajuda";
 /** #109 removeu o esconder-escopo em 400; a coleção canônica permanece vazia. */
 const FILTROS_OCULTOS = new Set<string>();
 
-// --- helpers de data/horário ------------------------------------------------
+import { comZ, quandoCurto } from "@/lib/data-email";
+import { logErro } from "@/lib/log";
 
-function comZ(iso: string): string {
-  return iso.endsWith("Z") ? iso : iso + "Z";
-}
-
-function hora(iso: string, idioma: string): string {
-  const d = new Date(comZ(iso));
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString(idioma, { hour: "2-digit", minute: "2-digit" });
-}
-
-function faixaHora(ini: string, fim: string, idioma: string): string {
-  const a = hora(ini, idioma);
-  const b = hora(fim, idioma);
-  return b ? `${a} – ${b}` : a;
-}
-
-/** Data + hora curtas para a lista (hoje = só hora; senão data curta + hora). */
-function quandoCurto(iso: string, idioma: string): string {
-  const d = new Date(comZ(iso));
-  if (Number.isNaN(d.getTime())) return "";
-  const hoje = new Date();
-  const hora = d.toLocaleTimeString(idioma, { hour: "2-digit", minute: "2-digit" });
-  if (d.toDateString() === hoje.toDateString()) return hora;
-  const mesmoAno = d.getFullYear() === hoje.getFullYear();
-  const data = d.toLocaleDateString(idioma, {
-    day: "2-digit",
-    month: "short",
-    year: mesmoAno ? undefined : "2-digit",
-  });
-  return `${data} · ${hora}`;
-}
-
-// --- corpo (html/texto) do Graph -------------------------------------------
-
-/**
- * Corpo HTML renderizado num IFRAME isolado (como Outlook/Gmail fazem). Motivos:
- * (1) o CSS do nosso app não mutila o layout do e-mail (e vice-versa);
- * (2) e-mails de largura fixa (tabelas 600px+) são ESCALADOS pra caber no painel
- *     em vez de cortar — não-responsividade é do remetente, mas mitigamos aqui.
- * O HTML é sanitizado (DOMPurify) e o `allow-scripts` (necessário pro Dark
- * Reader no tema escuro) só permite o DR — scripts do e-mail são removidos.
- */
-
-// Zoom MANUAL do leitor (#76) — camada por cima do auto-fit do #57.
-// O fator do usuário (1 = auto-fit puro) multiplica o zoom que o app calculou:
-// `efetivo = base(auto-fit) × fator`. Piso/teto e passo consistentes entre
-// teclado (CTRL +/−) e roda (CTRL+scroll). CTRL+0 volta ao auto-fit (fator 1).
-const ZOOM_MIN = 0.5;
-const ZOOM_MAX = 3.0;
-const ZOOM_PASSO = 0.1;
-/** Clampa e arredonda pra 2 casas (evita drift de float ao somar 0.1). */
-const clampZoom = (v: number) =>
-  Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, Math.round(v * 100) / 100));
-
-function CorpoHtml({
-  corpo,
-  onAbrirLink,
-}: {
-  corpo: string;
-  onAbrirLink?: (url: string) => void;
-}) {
-  const ref = useRef<HTMLIFrameElement>(null);
-  const [altura, setAltura] = useState(120);
-  // Link-safety (#91): clique num link do corpo abre um modal de confirmação
-  // com o DESTINO REAL + avisos, em vez de abrir direto. `null` = modal fechado.
-  const [linkPendente, setLinkPendente] = useState<AnaliseLink | null>(null);
-  // Zoom manual (#76): fator do USUÁRIO aplicado POR CIMA do auto-fit do #57.
-  // GLOBAL e persistido (não por-mensagem): a preferência sobrevive a fechar/
-  // reabrir o app e a trocar de mensagem e voltar (decisão da issue #76 — o
-  // leitor tem UM nível de zoom, como o zoom de página de um navegador).
-  // Zoom migrado pro ui slice do store (#126). Seletor evita re-render amplo;
-  // a chave localStorage `bridge.leitorZoom` é preservada pelo persist.
-  const fator = useAppStore((s) => s.zoom);
-  const setFator = useAppStore((s) => s.setZoom);
-  // Ref pro fator (lido dentro dos listeners do iframe sem re-bindar) e ref pra
-  // função de reaplicar o zoom (chamada pelo efeito que reage à mudança de fator).
-  const fatorRef = useRef(fator);
-  const ajustarRef = useRef<() => void>(() => {});
-  // Render ciente do tema do app (como leitores modernos). O baseline é SEMPRE
-  // claro — dá ao Dark Reader um conjunto limpo de cores pra inverter. No modo
-  // escuro, injetamos o Dark Reader real (como o MailVault) no <head> do srcDoc:
-  // ele roda no load (sem flash) e o MutationObserver dele pega conteúdo tardio.
-  const escuro = useTemaEscuro();
-  const { t } = useIdioma();
-  const rotuloAparado = t.controlRoom.conteudoAparado;
-
-  const doc = useMemo(() => {
-    // overflow:hidden garante ZERO scrollbar interna do iframe — nós ajustamos
-    // a altura por fora; a largura encaixa via `zoom` (reflui o layout).
-    const baseline =
-      // O ROOT (viewport do iframe) rola no eixo X quando algum elemento largo
-      // ainda estoura depois do zoom mínimo — ex.: a tabela "Saltos de Mensagem"
-      // que o Exchange anexa a encaminhados (~880px fixos). Assim o excedente
-      // vira SCROLL horizontal em vez de espremer/clipar o e-mail inteiro (#57).
-      // overflow-y fica hidden: a altura é medida e aplicada por fora.
-      `<style>:root{color-scheme:light}html{margin:0;padding:0;overflow-x:auto;overflow-y:hidden}` +
-      `body{margin:0;background:#fff;color:#111;` +
-      `font-family:system-ui,-apple-system,Segoe UI,sans-serif;` +
-      // overflow-wrap:anywhere quebra strings longas (URLs/tokens sem espaço)
-      // que, sozinhas, inflavam o scrollWidth.
-      `font-size:14px;line-height:1.5;padding:6px;overflow-wrap:anywhere}` +
-      `img{max-width:100%;height:auto}a{color:#7c3aed}` +
-      // Botão "⋯" da dobra do citado/assinatura (#92) — CSS puro, sem script.
-      estiloDobra(escuro) +
-      `</style>`;
-    const dr = escuro ? getDarkReaderInlineScripts() : "";
-    // Sanitiza o HTML do e-mail (tira <script>, handlers on*, javascript: etc.)
-    // ANTES de injetar. Como habilitamos allow-scripts pro Dark Reader rodar, um
-    // e-mail malicioso poderia rodar script na nossa origem — o DOMPurify fecha
-    // isso, mantendo tabelas/estilos/imagens do e-mail intactos.
-    const corpoLimpo = DOMPurify.sanitize(corpo, { ADD_ATTR: ["target"] });
-    // Dobra o histórico citado/assinatura DEPOIS do sanitize (senão o <details>
-    // que criamos seria removido) e ANTES de virar srcDoc — o toggle é o
-    // <details> nativo, então funciona também no tema claro, onde o sandbox
-    // NÃO tem allow-scripts.
-    const corpoDobrado = dobrarCitado(corpoLimpo, rotuloAparado);
-    return (
-      `<!doctype html><html><head><meta charset="utf-8"><base target="_blank">` +
-      `<meta name="color-scheme" content="light">` +
-      baseline +
-      dr +
-      `</head><body>${corpoDobrado}</body></html>`
-    );
-  }, [corpo, escuro, rotuloAparado]);
-
-  useEffect(() => {
-    const iframe = ref.current;
-    if (!iframe) return;
-    let ultimaLargura = 0;
-    const ajustar = () => {
-      try {
-        const d = iframe.contentDocument;
-        const body = d?.body;
-        if (!body) return;
-        // `zoom` (Chromium/WebView2) escala reflowando: a largura passa a caber.
-        body.style.zoom = "1";
-        const conteudo = body.scrollWidth;
-        const disponivel = iframe.clientWidth;
-        const ideal = conteudo > disponivel && conteudo > 0 ? disponivel / conteudo : 1;
-        // PISO DE LEGIBILIDADE (#57): nunca encolher abaixo de 0.75 (14px -> ~10.5px).
-        // Um único elemento largo de baixo valor (a tabela "Saltos de Mensagem"
-        // dos encaminhados, ~880px) não pode espremer o e-mail inteiro a um
-        // tamanho ilegível. Se o piso bater, o excedente NÃO clipa: rola no eixo
-        // X (overflow-x:auto no root) e continua acessível.
-        const PISO = 0.75;
-        const base = Math.max(PISO, ideal); // auto-fit calculado pelo app (#57)
-        // Zoom manual (#76) por cima do auto-fit: base × fator do usuário.
-        const efetivo = base * fatorRef.current;
-        body.style.zoom = String(efetivo);
-        // Se, na escala efetiva, o conteúdo ainda estoura a largura útil, haverá
-        // scrollbar horizontal; reserva a altura dela pra não clipar a última linha.
-        const rolaX = conteudo * efetivo > disponivel + 1;
-        // altura VISÍVEL (pós-zoom) via bounding rect; setAltura só se mudou de
-        // verdade (evita re-render à toa).
-        const h = Math.ceil(body.getBoundingClientRect().height) + 4 + (rolaX ? 16 : 0);
-        setAltura((a) => (Math.abs(a - h) > 1 ? h : a));
-      } catch {
-        /* srcDoc é same-origin; catch só por segurança */
-      }
-    };
-    // Exposto pra fora do onLoad: o efeito de [fator] reaplica o zoom + re-mede.
-    ajustarRef.current = ajustar;
-    const onLoad = () => {
-      ultimaLargura = iframe.clientWidth;
-      ajustar();
-      const d = iframe.contentDocument;
-      d?.querySelectorAll("img").forEach((img) => {
-        if (!img.complete) img.addEventListener("load", ajustar, { once: true });
-      });
-      // Dobra do citado/assinatura (#92): abrir/fechar o <details> muda a
-      // altura (e pode mudar a largura -> zoom). O `toggle` NÃO borbulha, por
-      // isso escutamos na fase de CAPTURA, no documento. Este listener é código
-      // NOSSO (realm do app), então roda mesmo com o sandbox sem allow-scripts
-      // — mesmo mecanismo já usado no clique dos links, logo abaixo.
-      d?.addEventListener("toggle", ajustar, true);
-      // Links do e-mail: o `target=_blank` não navega no Tauri (nada acontecia
-      // ao clicar). Interceptamos o clique. Para http(s), NÃO abrimos direto:
-      // link-safety (#91) — analisamos texto × href e abrimos um modal de
-      // confirmação com o DESTINO REAL e os avisos (mismatch/encurtador/etc).
-      // Este listener é código NOSSO (realm do app), capturado no documento do
-      // iframe, então roda mesmo no tema claro (sandbox sem allow-scripts).
-      // Outros esquemas (mailto/tel) seguem pro handler padrão do SO.
-      d?.addEventListener("click", (e) => {
-        const a = (e.target as HTMLElement | null)?.closest?.("a") as HTMLAnchorElement | null;
-        const href = a?.href;
-        if (!href) return;
-        e.preventDefault();
-        if (/^https?:/i.test(href)) {
-          // `a.href` é a URL RESOLVIDA (absoluta); `a.textContent` é o texto
-          // visível — a base do teste de mismatch texto × destino.
-          setLinkPendente(analisarLink(a.textContent ?? "", href));
-        } else {
-          api.openUrl(href).catch(() => {});
-        }
-      });
-      // Zoom manual (#76). Estes handlers são código NOSSO (realm do app),
-      // capturados NO documento do iframe — então rodam mesmo com o sandbox sem
-      // allow-scripts (tema claro), e ficam restritos ao leitor: nunca tocam a
-      // lista/sidebar/UI do app. `preventDefault` bloqueia o zoom nativo do
-      // WebView2/Chromium (CTRL+roda) e os atalhos nativos (CTRL +/−/0).
-      // O `wheel` precisa de `passive:false` pra poder dar preventDefault.
-      d?.addEventListener(
-        "wheel",
-        (e) => {
-          if (!e.ctrlKey) return;
-          e.preventDefault();
-          const passo = e.deltaY < 0 ? ZOOM_PASSO : -ZOOM_PASSO;
-          setFator((f) => clampZoom(f + passo));
-        },
-        { passive: false },
-      );
-      d?.addEventListener("keydown", (e) => {
-        if (!e.ctrlKey) return;
-        if (e.key === "+" || e.key === "=") {
-          e.preventDefault();
-          setFator((f) => clampZoom(f + ZOOM_PASSO));
-        } else if (e.key === "-" || e.key === "_") {
-          e.preventDefault();
-          setFator((f) => clampZoom(f - ZOOM_PASSO));
-        } else if (e.key === "0") {
-          e.preventDefault();
-          setFator(1); // volta ao auto-fit do #57
-        }
-      });
-    };
-    iframe.addEventListener("load", onLoad);
-    // IMPORTANTE: só re-mede quando a LARGURA muda (arrastar o splitter). Reagir
-    // à altura criava loop de feedback (setAltura -> resize -> ajustar -> cresce).
-    const ro = new ResizeObserver(() => {
-      const w = iframe.clientWidth;
-      if (w !== ultimaLargura) {
-        ultimaLargura = w;
-        ajustar();
-      }
-    });
-    ro.observe(iframe);
-    return () => {
-      iframe.removeEventListener("load", onLoad);
-      ro.disconnect();
-    };
-  }, [doc]);
-
-  // Reaplica o zoom quando o fator manual muda (teclado/roda/reset/persistido),
-  // re-rodando a MESMA medição de altura do #57 pra não clipar nem sobrar espaço.
-  useEffect(() => {
-    fatorRef.current = fator;
-    ajustarRef.current();
-  }, [fator]);
-
-  const zoomAlterado = fator !== 1;
-
-  return (
-    <div className="relative w-full">
-      <iframe
-        // Remonta o iframe quando o tema muda: alterar `sandbox` (add/remove
-        // allow-scripts) num iframe JÁ montado não reaplica na mesma carga do
-        // novo srcDoc, então o Dark Reader era bloqueado ao trocar claro→escuro
-        // com o e-mail aberto (só pegava ao trocar de e-mail). Um `key` por tema
-        // cria um iframe novo com o sandbox correto desde o início (#73).
-        key={escuro ? "dark" : "light"}
-        ref={ref}
-        srcDoc={doc}
-        // allow-scripts só no escuro: é o que o Dark Reader precisa pra rodar no
-        // load. No claro mantemos o sandbox estrito (nenhum script do e-mail roda).
-        sandbox={escuro ? "allow-same-origin allow-popups allow-scripts" : "allow-same-origin allow-popups"}
-        title={t.controlRoom.corpoEmail}
-        className="w-full border-0 bg-white"
-        style={{ height: altura }}
-      />
-      {/* Indicador do nível de zoom manual (#76) + reset via UI. Só aparece
-          quando o usuário mudou o zoom (fator ≠ auto-fit); some ao resetar.
-          O % é relativo ao auto-fit (100% = o que o app calculou), como o zoom
-          de página de um navegador. Fica sobreposto ao canto do leitor, sem
-          empurrar o layout do e-mail. */}
-      {zoomAlterado && (
-        <div className="absolute top-2 right-2 z-10 flex items-center gap-1 rounded-full border bg-background/90 py-0.5 pr-0.5 pl-2 shadow-sm backdrop-blur">
-          <span className="text-xs font-medium tabular-nums text-muted-foreground">
-            {Math.round(fator * 100)}%
-          </span>
-          {/* Restaurar zoom (#102): sem atalho dedicado no cluster, Tooltip
-              simples; o texto já traz o Ctrl+0. Substitui o `title` nativo. */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="rounded-full text-muted-foreground"
-                onClick={() => setFator(1)}
-                aria-label={t.controlRoom.zoomResetar}
-              >
-                <RotateCcw />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>{t.controlRoom.zoomResetar}</TooltipContent>
-          </Tooltip>
-        </div>
-      )}
-      <ModalLinkSeguro
-        analise={linkPendente}
-        onFechar={() => setLinkPendente(null)}
-        onAbrir={(url) => {
-          setLinkPendente(null);
-          onAbrirLink?.(url);
-        }}
-        t={t}
-      />
-    </div>
-  );
-}
-
-/** Texto localizado de cada aviso de link (#91). */
-function textoAviso(t: ReturnType<typeof useIdioma>["t"], a: AvisoLink): string {
-  switch (a) {
-    case "mismatch":
-      return t.controlRoom.segAvisoMismatch;
-    case "encurtador":
-      return t.controlRoom.segAvisoEncurtador;
-    case "ip":
-      return t.controlRoom.segAvisoIp;
-    case "punycode":
-      return t.controlRoom.segAvisoPunycode;
-    case "inseguro":
-      return t.controlRoom.segAvisoInseguro;
-    case "redirecionamento":
-      return t.controlRoom.segAvisoRedirecionamento;
-  }
-}
-
-/**
- * Modal de confirmação de link (#91, parte a). Mostra o DESTINO REAL antes de
- * abrir e, quando há sinais de risco (mismatch/encurtador/IP/punycode/redirect/
- * http), lista os avisos num Alert. O botão de abrir fica destrutivo quando o
- * link é suspeito, pra o usuário pensar duas vezes.
- */
-function ModalLinkSeguro({
-  analise,
-  onFechar,
-  onAbrir,
-  t,
-}: {
-  analise: AnaliseLink | null;
-  onFechar: () => void;
-  onAbrir: (url: string) => void;
-  t: ReturnType<typeof useIdioma>["t"];
-}) {
-  const suspeito = analise?.suspeito ?? false;
-  return (
-    <Dialog open={analise !== null} onOpenChange={(o) => !o && onFechar()}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            {suspeito ? (
-              <TriangleAlert className="size-4 text-[color:var(--destructive)]" />
-            ) : (
-              <ShieldCheck className="size-4 text-[color:var(--success)]" />
-            )}
-            {t.controlRoom.segLinkTitulo}
-          </DialogTitle>
-          <DialogDescription>{t.controlRoom.segLinkDescricao}</DialogDescription>
-        </DialogHeader>
-        {analise && (
-          <div className="space-y-3">
-            <div>
-              <p className="mb-1 text-xs font-medium text-muted-foreground">
-                {t.controlRoom.segLinkDestino}
-              </p>
-              <p className="rounded-md border bg-muted/40 px-2 py-1.5 font-mono text-xs break-all">
-                {analise.href}
-              </p>
-            </div>
-            {analise.textoLink && analise.textoLink !== analise.href && (
-              <div>
-                <p className="mb-1 text-xs font-medium text-muted-foreground">
-                  {t.controlRoom.segLinkTexto}
-                </p>
-                <p className="text-sm break-all">{analise.textoLink}</p>
-              </div>
-            )}
-            {analise.avisos.length > 0 ? (
-              <Alert variant={suspeito ? "destructive" : "warning"}>
-                <TriangleAlert />
-                <AlertTitle>{t.controlRoom.segLinkSuspeito}</AlertTitle>
-                <AlertDescription>
-                  <ul className="list-disc pl-4">
-                    {analise.avisos.map((a) => (
-                      <li key={a}>{textoAviso(t, a)}</li>
-                    ))}
-                  </ul>
-                </AlertDescription>
-              </Alert>
-            ) : (
-              <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                <ShieldCheck className="size-3.5 text-[color:var(--success)]" />
-                {t.controlRoom.segLinkVerificado}
-              </p>
-            )}
-          </div>
-        )}
-        <DialogFooter>
-          <Button variant="ghost" onClick={onFechar}>
-            {t.controlRoom.segLinkCancelar}
-          </Button>
-          <Button
-            variant={suspeito ? "destructive" : "default"}
-            onClick={() => analise && onAbrir(analise.href)}
-          >
-            <ExternalLink /> {t.controlRoom.segLinkAbrir}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function CorpoMensagem({
-  corpo,
-  tipo,
-  onAbrirLink,
-}: {
-  corpo: string;
-  tipo: "html" | "text";
-  onAbrirLink?: (url: string) => void;
-}) {
-  const { t } = useIdioma();
-  if (!corpo.trim()) {
-    return <p className="text-sm text-muted-foreground">{t.controlRoom.semCorpo}</p>;
-  }
-  if (tipo === "html") return <CorpoHtml corpo={corpo} onAbrirLink={onAbrirLink} />;
-  return (
-    <p className="text-sm leading-relaxed break-words whitespace-pre-wrap">{corpo}</p>
-  );
-}
 
 // #640 (re-spec): a impressão saiu do front. O `window.print()` de um iframe cai
 // no diálogo LEGADO do Windows (Win32); o PO quer o PREVIEW do Chromium. Isso só
@@ -754,34 +298,6 @@ function IlustracaoCards() {
   );
 }
 
-/** Ilustração de calendário (c-empty-20) — dia sem eventos. */
-function IlustracaoCalendario() {
-  return (
-    <svg
-      width="140"
-      height="122"
-      viewBox="0 0 160 140"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden="true"
-    >
-      <rect x="24" y="28" width="112" height="96" rx="10" className="fill-background stroke-border" strokeWidth="1.5" />
-      <rect x="24" y="28" width="112" height="24" rx="10" className="fill-muted dark:fill-muted/60" />
-      <rect x="24" y="42" width="112" height="10" className="fill-muted dark:fill-muted/60" />
-      <line x1="56" y1="20" x2="56" y2="36" className="stroke-muted-foreground/30" strokeWidth="3" strokeLinecap="round" />
-      <line x1="104" y1="20" x2="104" y2="36" className="stroke-muted-foreground/30" strokeWidth="3" strokeLinecap="round" />
-      {[68, 86, 104].map((cy) =>
-        [48, 68, 88, 108].map((cx) => (
-          <circle key={`${cx}-${cy}`} cx={cx} cy={cy} r="4" className="fill-muted-foreground/10" />
-        ))
-      )}
-      <circle cx="88" cy="86" r="4" className="fill-primary/25" />
-      <circle cx="88" cy="86" r="2" className="fill-primary" />
-      <circle cx="148" cy="56" r="2.5" className="fill-primary/10" />
-    </svg>
-  );
-}
-
 function PastaVazia({ t }: { t: ReturnType<typeof useIdioma>["t"] }) {
   return (
     <Empty className="py-10">
@@ -797,99 +313,6 @@ function PastaVazia({ t }: { t: ReturnType<typeof useIdioma>["t"] }) {
         <EmptyDescription>{t.controlRoom.semMensagens}</EmptyDescription>
       </EmptyHeader>
     </Empty>
-  );
-}
-
-/**
- * Botão de exclusão no padrão destrutivo do app — o mesmo animated-border-button
- * do registry @morphin usado no "Remover biblioteca": parado → processando
- * (borda tracejada animada) → sucesso (verde, brevemente). `onExcluir` pode ser
- * async; `onConcluir` (opcional) roda após o flash de sucesso — usado pra limpar
- * a seleção sem cortar a animação. Cores dark vão no uso (o registry só tem claro).
- */
-function BotaoExcluir({
-  onExcluir,
-  onConcluir,
-  rotulo,
-  rotuloProcessando,
-  rotuloConcluido,
-  size = "small",
-  className,
-  disabled = false,
-}: {
-  onExcluir: () => void | Promise<void>;
-  onConcluir?: () => void;
-  rotulo: string;
-  rotuloProcessando: string;
-  rotuloConcluido: string;
-  size?: "medium" | "small" | "xsmall";
-  className?: string;
-  disabled?: boolean;
-}) {
-  const [estado, setEstado] = useState<"parado" | "processando" | "sucesso">("parado");
-
-  useEffect(() => {
-    if (estado !== "sucesso" || !onConcluir) return;
-    const id = setTimeout(onConcluir, 900);
-    return () => clearTimeout(id);
-  }, [estado, onConcluir]);
-
-  async function run() {
-    if (disabled || estado !== "parado") return;
-    setEstado("processando");
-    try {
-      // Duração mínima pra a animação (borda tracejada) ser visível mesmo quando
-      // a exclusão é otimista/instantânea — antes o botão sumia sem animar (#23).
-      await Promise.all([
-        Promise.resolve(onExcluir()),
-        new Promise((r) => setTimeout(r, 650)),
-      ]);
-      setEstado("sucesso");
-    } catch {
-      setEstado("parado");
-    }
-  }
-
-  return (
-    <AnimatedButton.Root
-      variant={estado === "sucesso" ? "success" : "error"}
-      mode="animatedBorder"
-      size={size}
-      onClick={run}
-      animateBorder={estado === "processando"}
-      showAnimatedBorder={estado === "processando"}
-      animatedBorderStyle={estado === "processando" ? "dashed" : "solid"}
-      disabled={disabled || estado !== "parado"}
-      className={cn(
-        estado === "sucesso"
-          ? "dark:border-green-500/40 dark:bg-green-950/40 dark:text-green-300 dark:hover:bg-green-950/60 dark:hover:text-green-200"
-          : "dark:border-red-500/40 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60",
-        className
-      )}
-    >
-      <AnimatePresence mode="popLayout">
-        <motion.div
-          key={estado === "sucesso" ? "sucesso" : "excluir"}
-          initial={false}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.4, y: 10 }}
-          transition={{ duration: 0.2, ease: "easeOut" }}
-        >
-          <AnimatedButton.Icon
-            as={estado === "sucesso" ? SuccessIcon : TrashIcon}
-            className="size-4"
-            aria-hidden
-          />
-        </motion.div>
-      </AnimatePresence>
-      <TextMorph>
-        {estado === "sucesso"
-          ? rotuloConcluido
-          : estado === "processando"
-            ? rotuloProcessando
-            : rotulo}
-      </TextMorph>
-    </AnimatedButton.Root>
   );
 }
 
@@ -975,59 +398,6 @@ function MultiSelecaoContexto({
   );
 }
 
-function AgendaVazia({ t }: { t: ReturnType<typeof useIdioma>["t"] }) {
-  return (
-    <Empty className="py-8">
-      <EmptyHeader>
-        <EmptyMedia>
-          <IlustracaoCalendario />
-        </EmptyMedia>
-        <EmptyTitle>{t.controlRoom.semEventosTitulo}</EmptyTitle>
-        <EmptyDescription>{t.controlRoom.semEventos}</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}
-
-/** Falha ao carregar a agenda — distinta do "sem eventos", com o erro real e
- *  um retry. Antes uma falha do Graph era mascarada como mês vazio (#21). */
-function AgendaErro({
-  mensagem,
-  onRetry,
-  t,
-}: {
-  mensagem: string;
-  onRetry: () => void;
-  t: ReturnType<typeof useIdioma>["t"];
-}) {
-  // Mensagem amigável na UI (o usuário não deve ver "/me/calendarView 429");
-  // o detalhe técnico vai pro console pra diagnóstico. #41
-  useEffect(() => {
-    console.warn("[agenda] falha ao carregar:", mensagem);
-  }, [mensagem]);
-  return (
-    <Empty className="py-8">
-      <EmptyHeader>
-        <EmptyMedia>
-          <CalendarClock className="size-8 text-muted-foreground" />
-        </EmptyMedia>
-        <EmptyTitle>
-          <SoftBlurIn delay={80} stagger={18}>
-            {t.controlRoom.agendaErroTitulo}
-          </SoftBlurIn>
-        </EmptyTitle>
-        <EmptyDescription className="text-xs">
-          {t.controlRoom.agendaErroDica}
-        </EmptyDescription>
-      </EmptyHeader>
-      <EmptyContent>
-        <Button variant="outline" size="sm" onClick={onRetry}>
-          <RefreshCw /> {t.controlRoom.atualizar}
-        </Button>
-      </EmptyContent>
-    </Empty>
-  );
-}
 
 // ===========================================================================
 // Painel 1 — pastas
@@ -1117,20 +487,6 @@ function subarvoreIds(
   }
   return out;
 }
-
-/**
- * Pasta ACHATADA para o seletor de destino do "Mover para pasta…" (#88): a
- * árvore (raízes de `crMailFolders` + subpastas de `crSubpastas`) vira uma lista
- * plana, com a profundidade para indentar — o padrão do `MoveToFolderDropdown`
- * do MailVault. `caminho` é o nome completo ("Caixa de entrada / Clientes"):
- * alimenta a busca (achar "Clientes" pela pasta-mãe) e o title da linha.
- */
-type PastaDestino = {
-  id: string;
-  rotulo: string;
-  caminho: string;
-  profundidade: number;
-};
 
 /** Achata a árvore de pastas em profundidade (pai antes dos filhos). */
 function achatarPastas(
@@ -1271,16 +627,6 @@ const CAIXA_ADICIONAR = "__adicionar__";
  * ativa e a sinaliza (o próprio trigger mostra qual está ativa) — a listagem do
  * conteúdo dela é a #112. Colapsado, vira um ícone que abre o dialog direto.
  */
-/** Iniciais de uma caixa a partir do e-mail (não há nome): "wagner.consani" →
- *  "WC", "financeiro" → "FI". Fallback "?" (#493). */
-function iniciaisDeEmail(email: string): string {
-  const local = (email.split("@")[0] || email).trim();
-  const partes = local.split(/[._-]+/).filter(Boolean);
-  const base =
-    partes.length >= 2 ? partes[0][0] + partes[1][0] : local.slice(0, 2);
-  return base.toUpperCase() || "?";
-}
-
 /** Avatar da caixa: foto do Graph (via cache de fotos #39) com fallback de
  *  iniciais. Sem foto / 404 / sem permissão → iniciais, sem erro visível (#493). */
 function AvatarCaixa({
@@ -1296,7 +642,7 @@ function AvatarCaixa({
     <Avatar className={cn("size-5 shrink-0", className)}>
       {foto && <AvatarImage src={foto} alt="" />}
       <AvatarFallback className="text-[9px]">
-        {iniciaisDeEmail(email)}
+        {iniciais(undefined, email)}
       </AvatarFallback>
     </Avatar>
   );
@@ -1716,27 +1062,39 @@ function FolderSidebar({
     // é o TOTAL de itens (não-lido não faz sentido em enviados/rascunhos).
     const contagemEhNaoLidos = p.tipo !== "drafts" && p.tipo !== "sentitems";
     const contagem = contagemEhNaoLidos ? p.naoLidos : p.total;
+    // #1075 RB46-b: `acessoNegado: boolean` virou `leitura` de 3 estados. Um 500
+    // ou queda de rede davam `false` + 0/0, e a pasta era desenhada VAZIA.
+    const semAcesso = p.leitura === "negado";
+    // Só `ok` autoriza exibir contador como fato. Em `indisponivel` a contagem
+    // existe na struct (é 0), mas 0 aqui significa "não sei", não "vazio".
+    const contagemEhFato = p.leitura === "ok";
     const rotulo = rotuloPasta(p.tipo, p.nome, t);
     const linhaBtn = (
       <button
         type="button"
         onClick={() => {
-          if (p.acessoNegado) {
+          if (semAcesso) {
             toast.warning(t.controlRoom.caixaAcessoParcial);
             return;
           }
           onSel(p.id);
         }}
-        aria-disabled={p.acessoNegado || undefined}
+        aria-disabled={semAcesso || undefined}
         aria-label={colapsada ? rotulo : undefined}
         // Colapsada: o nome vem pelo tooltip canônico (#100), não mais por
         // `title` nativo. `title` fica só para o aviso de acesso parcial.
-        title={p.acessoNegado ? t.controlRoom.caixaAcessoParcial : undefined}
+        title={
+          semAcesso
+            ? t.controlRoom.caixaAcessoParcial
+            : p.leitura === "indisponivel"
+              ? t.controlRoom.pastaContagemIndisponivel
+              : undefined
+        }
         className={cn(
           "flex items-center rounded-md text-sm transition-colors",
           colapsada ? "relative size-9 justify-center" : "flex-1 gap-2.5 px-2.5 py-2",
           ativo ? "bg-secondary font-medium text-secondary-foreground" : "hover:bg-accent/50",
-          p.acessoNegado && "cursor-not-allowed opacity-50"
+          semAcesso && "cursor-not-allowed opacity-50"
         )}
       >
         {colapsada ? (
@@ -1758,10 +1116,10 @@ function FolderSidebar({
           <>
             <Ico size={16} className="shrink-0 text-muted-foreground" />
             <span className="min-w-0 flex-1 truncate text-left">{rotulo}</span>
-            {p.acessoNegado && (
+            {(semAcesso || p.leitura === "indisponivel") && (
               <TriangleAlert className="size-3.5 shrink-0 text-warning" />
             )}
-            {contagem > 0 && (
+            {contagemEhFato && contagem > 0 && (
               <span className="shrink-0 text-xs text-muted-foreground">{contagem}</span>
             )}
           </>
@@ -1779,7 +1137,7 @@ function FolderSidebar({
     const criarSub = podeCriarSubpasta(p.tipo);
     const custom = ehPastaCustom(p.tipo);
     const semAcoes =
-      Boolean(p.acessoNegado) || (!marcarLidas && !esvaziar && !criarSub && !custom);
+      semAcesso || (!marcarLidas && !esvaziar && !criarSub && !custom);
 
     // Irmãs da pasta (para barrar nome duplicado antes de ir ao Graph): as
     // filhas do pai. Nas raízes, as próprias raízes.
@@ -1954,7 +1312,11 @@ function FolderSidebar({
   return (
     <aside
       className={cn(
-        "flex shrink-0 flex-col gap-3 rounded-xl border bg-card p-3 transition-[width] duration-200",
+        // #912: borderless — sai o "card" (rounded-xl border bg-card) e entra a
+        // divisória SÓ à direita (border-r) + o fundo de chrome do app (bg-muted/30,
+        // o mesmo padrão in-content das rails do Navigator), destacando o sidebar do
+        // content area. Splitter (resize) = follow-up (interage com o colapsar).
+        "flex shrink-0 flex-col gap-3 border-r border-border bg-muted/30 p-3 transition-[width] duration-200",
         // #466: o w-52 (208px) cortava "Caixa de entrada" (pt). Fit-content NÃO
         // resolve aqui — os rótulos são `min-w-0 flex-1 truncate` (o min-w-0 do
         // truncate faz o fit-content colapsar pro min-content e ficar no min). Então
@@ -2441,66 +1803,10 @@ function FolderSidebar({
 // Serialização, resolução do intervalo e predicado client-side agora vivem no
 // filters slice (#129); a UI abaixo mantém somente o registry DateSelector.
 
-// i18n em português do DateSelector (o registry vem só em inglês). Trimestres
-// (Q1–Q4) e semestres (H1–H2) ficam como no padrão — são notação de negócio
-// usada também em BR e batem com o parser de linguagem natural do input.
-const DATE_SELECTOR_I18N_PT: Partial<DateSelectorI18nConfig> = {
-  selectDate: "Selecionar data",
-  apply: "Aplicar",
-  cancel: "Cancelar",
-  clear: "Limpar",
-  today: "Hoje",
-  filterTypes: { is: "é", before: "antes", after: "depois", between: "entre" },
-  periodTypes: {
-    day: "Dia",
-    month: "Mês",
-    quarter: "Trimestre",
-    halfYear: "Semestre",
-    year: "Ano",
-  },
-  months: [
-    "Janeiro",
-    "Fevereiro",
-    "Março",
-    "Abril",
-    "Maio",
-    "Junho",
-    "Julho",
-    "Agosto",
-    "Setembro",
-    "Outubro",
-    "Novembro",
-    "Dezembro",
-  ],
-  monthsShort: [
-    "Jan",
-    "Fev",
-    "Mar",
-    "Abr",
-    "Mai",
-    "Jun",
-    "Jul",
-    "Ago",
-    "Set",
-    "Out",
-    "Nov",
-    "Dez",
-  ],
-  quarters: ["Q1", "Q2", "Q3", "Q4"],
-  halfYears: ["H1", "H2"],
-  weekdays: [
-    "Domingo",
-    "Segunda",
-    "Terça",
-    "Quarta",
-    "Quinta",
-    "Sexta",
-    "Sábado",
-  ],
-  weekdaysShort: ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"],
-  placeholder: "Selecionar data...",
-  rangePlaceholder: "Selecionar intervalo...",
-};
+// #1058: a tradução do DateSelector agora vive no namespace `dateSelector` do
+// strings.ts (pt E en), montada por `montarDateSelectorI18n`. Trimestres (Q1–Q4)
+// e semestres (H1–H2) seguem iguais nos dois idiomas — notação de negócio que
+// bate com o parser de linguagem natural do input.
 
 /**
  * Campo "Data" do filter-builder reui (#110) como o `type: "custom"` do exemplo
@@ -2535,15 +1841,13 @@ function SeletorDataFiltro({
   const [rascunho, setRascunho] = useState<DateSelectorValue | undefined>(atual);
 
   const ehPt = idioma === "pt-BR";
-  const dsI18n = ehPt ? DATE_SELECTOR_I18N_PT : undefined;
+  // #1058: config completa (pt/en) montada do dicionário central.
+  const dsI18n = useMemo(
+    () => montarDateSelectorI18n(t.dateSelector),
+    [t],
+  );
   const fmt = ehPt ? "dd/MM/yyyy" : "MM/dd/yyyy";
-  const rotulo = atual
-    ? formatDateValue(
-        atual,
-        ehPt ? { ...DEFAULT_DATE_SELECTOR_I18N, ...DATE_SELECTOR_I18N_PT } : undefined,
-        fmt,
-      )
-    : "";
+  const rotulo = atual ? formatDateValue(atual, dsI18n, fmt) : "";
   const texto = rotulo || t.controlRoom.filtroDataSelecione;
 
   // Ao abrir, semeia a partida e o rascunho com o valor persistido.
@@ -2630,112 +1934,6 @@ function periodoChave(recebido: string, agora: Date): string {
   if (d.getFullYear() === agora.getFullYear()) return `mes-${d.getMonth()}`;
   if (d.getFullYear() === agora.getFullYear() - 1) return `ano-${d.getFullYear()}`;
   return "older";
-}
-
-/**
- * Submenu "Mover para pasta…" (#88) — a árvore de pastas ACHATADA (indentada
- * por profundidade) com BUSCA por nome, portando o padrão do
- * `MoveToFolderDropdown` do MailVault para o menu de contexto do Bridge.
- *
- * Montado com `ContextMenuSub`/`SubTrigger`/`SubContent` do @reui/context-menu
- * (Radix) e o `Input` do registry — o mesmo arranjo "campo de busca + separador
- * + lista rolável" que o @reui/filters usa na sua lista pesquisável.
- *
- * A pasta ATUAL não entra na lista (já vem filtrada do pai): mover para onde a
- * mensagem já está não é uma opção.
- *
- * Serve aos DOIS "mover" do Bridge: o de mensagens (#88, `alvos` = ids das
- * mensagens) e o de PASTA (#90, `alvos` = [id da pasta], com `rotulo` próprio e
- * a lista já sem a própria pasta/descendentes). Só muda o rótulo do gatilho — a
- * árvore achatada, a busca e o comportamento do menu são os mesmos.
- */
-function SubmenuMover({
-  alvos,
-  pastas,
-  carregando,
-  rotulo,
-  onAbrir,
-  onMover,
-  disabled = false,
-  t,
-}: {
-  alvos: string[];
-  pastas: PastaDestino[];
-  carregando: boolean;
-  /** Texto do gatilho; padrão é o "Mover para pasta…" das mensagens (#88). */
-  rotulo?: string;
-  onAbrir: () => void;
-  onMover: (ids: string[], destino: string, rotulo: string) => void;
-  disabled?: boolean;
-  t: ReturnType<typeof useIdioma>["t"];
-}) {
-  const [busca, setBusca] = useState("");
-  const filtradas = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    if (!q) return pastas;
-    // Busca no CAMINHO: digitar o nome da pasta-mãe também acha as filhas.
-    return pastas.filter((p) => p.caminho.toLowerCase().includes(q));
-  }, [pastas, busca]);
-
-  return (
-    <ContextMenuSub
-      onOpenChange={(aberto) => {
-        // Abrir o submenu é o gatilho pra completar a árvore (as subpastas são
-        // lazy); fechar limpa a busca pra próxima abertura começar do zero.
-        if (aberto) onAbrir();
-        else setBusca("");
-      }}
-    >
-      <ContextMenuSubTrigger
-        className="gap-2"
-        disabled={disabled}
-        title={disabled ? t.controlRoom.caixaSomenteLeitura : undefined}
-      >
-        <FolderInput />
-        {rotulo ?? t.controlRoom.moverPara}
-      </ContextMenuSubTrigger>
-      <ContextMenuSubContent className="w-64 p-0">
-        <Input
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          placeholder={t.controlRoom.moverBuscarPasta}
-          aria-label={t.controlRoom.moverBuscarPasta}
-          className="h-8 rounded-none border-0 bg-transparent! px-2 text-sm shadow-none focus-visible:border-border focus-visible:ring-0"
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => {
-            // Escape/Tab seguem pro Radix (fecham o menu); o resto fica no
-            // input — senão a navegação-por-digitação do menu roubaria as
-            // letras e a busca nunca receberia texto.
-            if (e.key !== "Escape" && e.key !== "Tab") e.stopPropagation();
-          }}
-        />
-        <ContextMenuSeparator className="mx-0 my-0" />
-        {filtradas.length === 0 ? (
-          <p className="px-3 py-3 text-center text-sm text-muted-foreground">
-            {carregando ? t.controlRoom.moverCarregandoPastas : t.controlRoom.moverSemPastas}
-          </p>
-        ) : (
-          <ScrollArea className="max-h-64">
-            <div className="p-1">
-              {filtradas.map((p) => (
-                <ContextMenuItem
-                  key={p.id}
-                  className="gap-2"
-                  title={p.caminho}
-                  onClick={() => onMover(alvos, p.id, p.rotulo)}
-                >
-                  {/* Indentação por profundidade = a hierarquia continua
-                      legível mesmo com a árvore achatada (MailVault). */}
-                  <Folder style={{ marginLeft: p.profundidade * 12 }} />
-                  <span className="truncate">{p.rotulo}</span>
-                </ContextMenuItem>
-              ))}
-            </div>
-          </ScrollArea>
-        )}
-      </ContextMenuSubContent>
-    </ContextMenuSub>
-  );
 }
 
 /**
@@ -2863,13 +2061,15 @@ function ItensMenuEmail({
 // platform-correto). Ctrl+A/Esc já são tratados no handler de teclas da lista
 // (mod+a → selecionarTudo; Escape → limparSelecao); S/Delete idem (onFlag /
 // onExcluir da mensagem ativa).
-const ATALHO_SELECIONAR_TUDO: ShortcutDefinition = { key: "A", primary: true };
-const ATALHO_LIMPAR_SELECAO: ShortcutDefinition = { key: "Esc" };
-const ATALHO_SINALIZAR: ShortcutDefinition = { key: "S" };
-const ATALHO_EXCLUIR: ShortcutDefinition = { key: "Delete" };
+// #1060: os ShortcutDefinition dos tooltips saem do catálogo (`atalhos-bridge`),
+// a mesma fonte da ajuda "?" — nada de par de verdades divergindo.
+const ATALHO_SELECIONAR_TUDO = shortcutBridge("selecionarTudo");
+const ATALHO_LIMPAR_SELECAO = shortcutBridge("limparSelecao");
+const ATALHO_SINALIZAR = shortcutBridge("sinalizar");
+const ATALHO_EXCLUIR = shortcutBridge("excluir");
 // Ler/não-ler do leitor (#102): atalho U. Alimenta aria-label + ShortcutTooltip
 // do botão que ALTERNA lido/não-lido na toolbar do leitor.
-const ATALHO_LER_NAO_LIDO: ShortcutDefinition = { key: "U" };
+const ATALHO_LER_NAO_LIDO = shortcutBridge("lidoNaoLido");
 // #497: atalhos das ações do leitor JÁ cabeados no handler central (#28, switch
 // por e.key.toLowerCase() = r/a/f). Exibidos como <Kbd> ao lado do rótulo dos
 // botões Responder/Responder a todos/Encaminhar. NÃO inventar — casam com o
@@ -2878,36 +2078,28 @@ const ATALHO_LER_NAO_LIDO: ShortcutDefinition = { key: "U" };
 // Filtro da lista). Responder=Ctrl+R · Responder a todos=Ctrl+Shift+R ·
 // Encaminhar=Ctrl+Shift+F. O `ShortcutDefinition` já suporta primary/shift, e o
 // `formatShortcut` renderiza "Ctrl+Shift+R" no <Kbd> — o exibido acompanha.
-const ATALHO_RESPONDER: ShortcutDefinition = { key: "R", primary: true };
-const ATALHO_RESPONDER_TODOS: ShortcutDefinition = {
-  key: "R",
-  primary: true,
-  shift: true,
-};
-const ATALHO_ENCAMINHAR: ShortcutDefinition = {
-  key: "F",
-  primary: true,
-  shift: true,
-};
+const ATALHO_RESPONDER = shortcutBridge("responder");
+const ATALHO_RESPONDER_TODOS = shortcutBridge("responderTodos");
+const ATALHO_ENCAMINHAR = shortcutBridge("encaminhar");
 // #538: o Filtro da lista tem atalho F (single, liberado pelo #537) via o
 // `<Filters enableShortcut shortcutKey="f">` — o tooltip precisa exibir o Kbd.
-const ATALHO_FILTRO: ShortcutDefinition = { key: "F" };
+const ATALHO_FILTRO = shortcutBridge("filtro");
 // #538: "Novo e-mail" (icon-only) dispara o mesmo compose do atalho "c" (o
 // handler chama onCompor; onNovo === onCompor === novoEmailModal).
-const ATALHO_COMPOR: ShortcutDefinition = { key: "C" };
+const ATALHO_COMPOR = shortcutBridge("compor");
 // #549: equiparação Outlook nos icon-only que NÃO tinham atalho.
 // Atualizar = F9 (Outlook Send/Receive All). Ordenar = O (app-nativo — o Outlook
 // não tem atalho único de sort; tecla livre e mnemônica, sem colisão).
-const ATALHO_ATUALIZAR: ShortcutDefinition = { key: "F9" };
-const ATALHO_ORDENAR: ShortcutDefinition = { key: "O" };
+const ATALHO_ATUALIZAR = shortcutBridge("atualizar");
+const ATALHO_ORDENAR = shortcutBridge("ordenar");
 // #549: Esc fecha o preview de anexo (email aninhado) — por PRECEDÊNCIA sobre o
 // clear-selection (padrão Outlook: Esc fecha o painel aberto primeiro).
-const ATALHO_FECHAR_PREVIEW: ShortcutDefinition = { key: "Esc" };
+const ATALHO_FECHAR_PREVIEW = shortcutBridge("fecharPreview");
 // #636 (épico #635): Salvar como… = F12 · Imprimir = Ctrl+P (esquema Outlook).
 // O abridor "..." usa a tecla nativa de context-menu do Windows (Menu/Shift+F10),
 // só documentada no tooltip — o Radix já abre o menu por Enter/Espaço/↓.
-const ATALHO_SALVAR_COMO: ShortcutDefinition = { key: "F12" };
-const ATALHO_IMPRIMIR: ShortcutDefinition = { key: "P", primary: true };
+const ATALHO_SALVAR_COMO = shortcutBridge("salvarComo");
+const ATALHO_IMPRIMIR = shortcutBridge("imprimir");
 
 /** #636: formatos de "Salvar como…". Um comando por formato (S2–S5). */
 export type FormatoSalvar = "pdf" | "eml";
@@ -3212,7 +2404,6 @@ function MessageList({
       if (!colapsados.has(chave)) adicionarConversa(conversa);
     }
     return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     filtrada,
     conversas,
@@ -3802,11 +2993,7 @@ function MessageList({
                       <ListFilter />
                     </ToolbarButton>
                   }
-                  i18n={{
-                    addFilter: t.controlRoom.filtroLabel,
-                    searchFields: t.controlRoom.filtroBuscarCampo,
-                    select: t.controlRoom.filtroSelecione,
-                  }}
+                  i18n={montarFiltrosI18n(t.filtros)}
                 />
               </span>
             </TooltipTrigger>
@@ -4035,7 +3222,7 @@ function MessageList({
         <div
           ref={listaRef}
           tabIndex={0}
-          className="min-h-0 flex-1 overflow-y-auto scrollbar-fina outline-none"
+          className="min-h-0 flex-1 overflow-y-auto scrollbar-fina outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50"
           onScroll={(e) => {
             // Pré-carga antecipada: ao passar de 90% da lista já busca a próxima
             // página, pra sempre haver buffer à frente (não espera bater no fim).
@@ -5065,10 +4252,13 @@ const MessageDetail = forwardRef<
       enviar: async () => {
         if (modoAgendado === "encaminhar") {
           await api.crEncaminhar(id, html, destinos, anexos, mailbox);
-          // salva os destinatários nos Contatos (best-effort, silencioso)
+          // Salva os destinatários nos Contatos: best-effort para o USUÁRIO
+          // (#1075 RB46-d) — sem toast, porque ele pediu para encaminhar, não
+          // para gravar contatos. Mas o resultado passa a ser registrado.
           api
             .crSalvarContatos(destinos.map((e) => ({ nome: e, email: e })))
-            .catch(() => {});
+            .then(api.registrarFalhasDeContato)
+            .catch((e) => logErro("contatos:salvar", e));
         } else {
           await api.crResponder(
             id,
@@ -5594,6 +4784,9 @@ const MessageDetail = forwardRef<
                   ? t.controlRoom.responderTodos
                   : t.controlRoom.responder}
             </SheetTitle>
+            <SheetDescription className="sr-only">
+              {t.controlRoom.composeRespostaDescricao}
+            </SheetDescription>
           </SheetHeader>
           {/* Composer (editável) em cima + a mensagem original como referência
               read-only embaixo, como todo mailclient. O original NÃO faz parte
@@ -5657,600 +4850,6 @@ const MessageDetail = forwardRef<
 });
 
 
-/** Badge semântica do estado de resposta a um convite (#287). Devolve o
- *  variant do Badge (reui) e o rótulo i18n; `null` para eventos sem semântica de
- *  convite (ex.: sem resposta requisitada e ainda `none`). */
-function badgeResposta(
-  resposta: RespostaConvite,
-  souOrganizador: boolean,
-  t: ReturnType<typeof useIdioma>["t"],
-): { variant: BadgeProps["variant"]; label: string } | null {
-  if (souOrganizador || resposta === "organizer") {
-    return { variant: "primary-light", label: t.controlRoom.rsvpStatusOrganizador };
-  }
-  switch (resposta) {
-    case "accepted":
-      return { variant: "success-light", label: t.controlRoom.rsvpStatusAceito };
-    case "tentativelyAccepted":
-      return { variant: "warning-light", label: t.controlRoom.rsvpStatusTalvez };
-    case "declined":
-      return { variant: "destructive-light", label: t.controlRoom.rsvpStatusRecusado };
-    case "notResponded":
-      return { variant: "secondary", label: t.controlRoom.rsvpStatusPendente };
-    default:
-      return null;
-  }
-}
-
-function EventoParticipantePill({
-  participante,
-  foto,
-  mostrarTooltip = true,
-}: {
-  participante: Participante;
-  foto?: string | null;
-  mostrarTooltip?: boolean;
-}) {
-  const nome = participante.nome.trim() || participante.email;
-  const email = participante.email.trim();
-  const rotuloCompleto =
-    email && email.toLocaleLowerCase() !== nome.toLocaleLowerCase()
-      ? `${nome} · ${email}`
-      : nome;
-
-  const pill = (
-    <span
-      tabIndex={mostrarTooltip ? 0 : undefined}
-      // #478 rework: com email o PersonHoverCard cobre o hover — o title nativo
-      // duplicaria; mantido só no fallback sem email.
-      title={email ? undefined : rotuloCompleto}
-      aria-label={mostrarTooltip ? rotuloCompleto : undefined}
-      className="inline-flex w-fit min-w-0 max-w-full items-center gap-2 rounded-full bg-muted/60 py-1 pr-3 pl-1 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-    >
-      <Avatar size="sm" className="shrink-0">
-        {foto && <AvatarImage src={foto} alt="" />}
-        <AvatarFallback>{participante.iniciais}</AvatarFallback>
-      </Avatar>
-      <span className="min-w-0 max-w-40 truncate text-xs">{nome}</span>
-    </span>
-  );
-
-  // #478 rework: participante com email → PersonHoverCard (avatar/nome/ações),
-  // substitui o Tooltip simples em TODOS os locais com pessoa (detalhe do evento,
-  // lista compacta e popover "ver todos"). Sem email cai no Tooltip/plain de antes.
-  if (email) {
-    return (
-      <PersonHoverCard email={email} fallback={{ nome, email, foto }}>
-        {pill}
-      </PersonHoverCard>
-    );
-  }
-
-  return mostrarTooltip ? (
-    <Tooltip>
-      <TooltipTrigger asChild>{pill}</TooltipTrigger>
-      <TooltipContent className="max-w-xs break-words">{rotuloCompleto}</TooltipContent>
-    </Tooltip>
-  ) : (
-    pill
-  );
-}
-
-function EventoDialog({ userEmail }: { userEmail?: string | null }) {
-  const { idioma, t } = useIdioma();
-  const id = useAppStore((s) => s.agendaEventoId);
-  const det = useAppStore((s) => s.agendaEventoDetalhe);
-  const fecharEventoAgenda = useAppStore((s) => s.fecharEventoAgenda);
-  const abrirFormEditar = useAppStore((s) => s.abrirFormEditar);
-  const excluirEvento = useAppStore((s) => s.excluirEvento);
-  const recarregarAgenda = useAppStore((s) => s.recarregarAgenda);
-  const cancelarEvento = useAppStore((s) => s.cancelarEvento);
-  const responderEvento = useAppStore((s) => s.responderEvento);
-  const eventosMes = useAppStore((s) => s.agendaEventosMes);
-  const participantesPopoverTituloId = useId();
-  // #399: badge "recorrente". O detalhe (EventoDetalhe) não traz o `type`, mas o
-  // evento da lista (EventoAgenda, #397) sim — casa pelo id selecionado.
-  const eventoLista = eventosMes?.find((e) => e.id === id);
-  const recorrente =
-    !!eventoLista &&
-    (eventoLista.tipo === "occurrence" ||
-      eventoLista.tipo === "exception" ||
-      eventoLista.tipo === "seriesMaster");
-  // Avatares dos participantes internos (#39).
-  const { getFoto, pedirFotos } = useFotos();
-
-  // RSVP a convites (#287): só quando o usuário é CONVIDADO (não organiza) — o
-  // organizador vê os status dos convidados, não RSVP. `respostaSolicitada`
-  // false = convite informativo: mostramos o badge, sem as ações.
-  const podeGerenciar = podeGerenciarEvento(det);
-  const ehConvite = !!det && !podeGerenciar;
-  const podeResponder = ehConvite && (det?.respostaSolicitada ?? true);
-  const badge = det ? badgeResposta(det.resposta, det.souOrganizador, t) : null;
-  const [comentarioRsvp, setComentarioRsvp] = useState("");
-  const [enviarResposta, setEnviarResposta] = useState(true);
-  const [rsvpEmVoo, setRsvpEmVoo] = useState<AcaoRsvp | null>(null);
-
-  // Envia o RSVP (#287): otimista no store (badge/lista atualizam na hora);
-  // toasta o resultado. Mantém o Sheet aberto — o usuário pode trocar a resposta.
-  const responder = async (acao: AcaoRsvp) => {
-    if (!id) return;
-    setRsvpEmVoo(acao);
-    try {
-      await responderEvento(id, acao, enviarResposta, comentarioRsvp.trim());
-      toast.success(t.controlRoom.rsvpEnviado);
-    } catch {
-      toast.error(t.controlRoom.rsvpErro);
-    } finally {
-      setRsvpEmVoo(null);
-    }
-  };
-
-  // Cancelar evento (#260): só faz sentido pra quem ORGANIZA um evento COM
-  // convidados — aí o cancelamento os notifica. Sem isso, resta só o Excluir
-  // (silencioso). Confirmação em AlertDialog com comentário opcional.
-  const podeCancelar = podeGerenciar && (det?.participantes.length ?? 0) > 0;
-  const [confirmarCancelar, setConfirmarCancelar] = useState(false);
-  const [comentarioCancel, setComentarioCancel] = useState("");
-  const [cancelando, setCancelando] = useState(false);
-
-  // Abre o formulário de edição com o evento clicado (vindo da lista do mês).
-  // #397: recorrente passa o escopo (ocorrência × série) já escolhido aqui.
-  const editar = (escopo?: "ocorrencia" | "serie") => {
-    if (!id || !podeGerenciar) return;
-    const ev = eventosMes?.find((e) => e.id === id);
-    if (ev) {
-      abrirFormEditar(ev, escopo);
-      fecharEventoAgenda();
-    }
-  };
-
-  // #398: excluir um recorrente pergunta ocorrência × série (guarda o alvo do
-  // prompt); único é direto. Otimista no store; fecha o Sheet e toasta.
-  const [excluirRecAberto, setExcluirRecAberto] = useState(false);
-  const [excluindoRec, setExcluindoRec] = useState(false);
-
-  const excluir = async () => {
-    if (!id || !podeGerenciar) return;
-    // #398: recorrente escolhe o escopo antes de apagar (não apaga direto).
-    if (recorrente) {
-      setExcluirRecAberto(true);
-      return;
-    }
-    fecharEventoAgenda();
-    try {
-      await excluirEvento(id);
-      toast.success(t.controlRoom.agendaExcluido);
-    } catch {
-      toast.error(t.controlRoom.agendaErroExcluir);
-    }
-  };
-
-  // #398: aplica a escolha do prompt de exclusão do detalhe. "Série" apaga o
-  // seriesMaster (some tudo) + recarrega; "ocorrência" apaga só o id dela.
-  const confirmarExcluirRec = async (alvo: "ocorrencia" | "serie") => {
-    if (!id) return;
-    const alvoId =
-      alvo === "serie" && eventoLista?.seriesMasterId
-        ? eventoLista.seriesMasterId
-        : id;
-    setExcluindoRec(true);
-    try {
-      await excluirEvento(alvoId);
-      if (alvo === "serie") recarregarAgenda();
-      setExcluirRecAberto(false);
-      fecharEventoAgenda();
-      toast.success(t.controlRoom.agendaExcluido);
-    } catch {
-      toast.error(t.controlRoom.agendaErroExcluir);
-    } finally {
-      setExcluindoRec(false);
-    }
-  };
-
-  // Cancela (#260): POST /events/{id}/cancel com comentário opcional — notifica
-  // os convidados. Otimista no store; fecha confirmação + Sheet e toasta.
-  const cancelar = async () => {
-    if (!id || !podeCancelar) return;
-    const comentario = comentarioCancel.trim();
-    setCancelando(true);
-    try {
-      await cancelarEvento(id, comentario);
-      setConfirmarCancelar(false);
-      setComentarioCancel("");
-      fecharEventoAgenda();
-      toast.success(t.controlRoom.agendaCancelado);
-    } catch {
-      toast.error(t.controlRoom.agendaErroCancelar);
-    } finally {
-      setCancelando(false);
-    }
-  };
-
-  // Pede as fotos dos participantes quando o detalhe carrega.
-  useEffect(() => {
-    if (det?.participantes.length) pedirFotos(det.participantes.map((p) => p.email));
-  }, [det, pedirFotos]);
-
-  // Zera o rascunho de RSVP ao trocar de evento (#287).
-  useEffect(() => {
-    setComentarioRsvp("");
-    setEnviarResposta(true);
-    setRsvpEmVoo(null);
-  }, [id]);
-
-  return (
-    <Sheet open={!!id} onOpenChange={(o) => !o && fecharEventoAgenda()}>
-      <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-lg">
-        {!det ? (
-          <div className="flex flex-1 items-center justify-center py-10">
-            <Spinner className="size-6 text-muted-foreground" />
-          </div>
-        ) : (
-          <>
-            <SheetHeader className="border-b px-4 py-3">
-              <SheetTitle className="pr-6 text-left">{det.assunto}</SheetTitle>
-              {recorrente && (
-                <Badge
-                  variant="secondary"
-                  size="sm"
-                  className="mt-1 w-fit gap-1"
-                >
-                  <Repeat className="size-3" />
-                  {t.controlRoom.agendaRecorrenteBadge}
-                </Badge>
-              )}
-            </SheetHeader>
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto scrollbar-fina px-4 py-4 text-sm">
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <CalendarClock className="size-4 shrink-0" />
-                <span>{faixaHora(det.inicio, det.fim, idioma)}</span>
-              </div>
-              {/* Semântica do convite (#287): badge do estado da resposta. */}
-              {badge && (
-                <Badge variant={badge.variant} size="lg">
-                  {badge.label}
-                </Badge>
-              )}
-              {(det.online || det.local) && (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  {det.online ? (
-                    <Video className="size-4 shrink-0" />
-                  ) : (
-                    <MapPin className="size-4 shrink-0" />
-                  )}
-                  <span>{det.online ? t.controlRoom.online : det.local}</span>
-                </div>
-              )}
-              {det.organizador && (
-                <p className="text-xs text-muted-foreground">
-                  <span className="font-medium">{t.controlRoom.organizador}:</span>{" "}
-                  {/* #515: com email real → PersonHoverCard no organizador;
-                      sem email cai no texto simples de antes. */}
-                  {det.organizadorEmail ? (
-                    <PersonHoverCard
-                      email={det.organizadorEmail}
-                      fallback={{ nome: det.organizador, email: det.organizadorEmail }}
-                    >
-                      <span
-                        tabIndex={0}
-                        className="cursor-default rounded-sm underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        {det.organizador}
-                      </span>
-                    </PersonHoverCard>
-                  ) : (
-                    det.organizador
-                  )}
-                </p>
-              )}
-              {det.participantes.length > 0 && (
-                <div>
-                  <p className="mb-2 text-xs font-medium">{t.controlRoom.convidadosTitulo}</p>
-                  <div className="max-h-[8.5rem] overflow-hidden">
-                    <div className="flex flex-wrap gap-2">
-                      {det.participantes.slice(0, 3).map((p) => (
-                        <EventoParticipantePill
-                          key={p.email || p.nome}
-                          participante={p}
-                          foto={p.foto ?? getFoto(p.email)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                  {det.participantes.length > 3 && (
-                    <Popover>
-                      <PopoverTrigger
-                        type="button"
-                        className="mt-1 cursor-pointer truncate rounded-sm px-1.5 py-1 text-start text-xs text-muted-foreground hover:text-foreground"
-                      >
-                        {preencher(t.controlRoom.agendaMostrarTodosConvidados, {
-                          count: det.participantes.length,
-                        })}
-                      </PopoverTrigger>
-                      <PopoverContent
-                        align="start"
-                        aria-labelledby={participantesPopoverTituloId}
-                        className="w-80 gap-2 p-2"
-                      >
-                        <p
-                          id={participantesPopoverTituloId}
-                          className="px-1 text-xs font-medium"
-                        >
-                          {t.controlRoom.agendaTodosConvidados}
-                        </p>
-                        <div className="flex max-h-64 flex-wrap gap-2 overflow-y-auto p-1 scrollbar-fina">
-                          {det.participantes.map((p) => (
-                            <EventoParticipantePill
-                              key={p.email || p.nome}
-                              participante={p}
-                              foto={p.foto ?? getFoto(p.email)}
-                              mostrarTooltip={false}
-                            />
-                          ))}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                  )}
-                </div>
-              )}
-              {/* RSVP a convites (#287): Aceitar/Talvez/Recusar. Só para
-                  convidados; o botão do estado atual fica destacado (permite
-                  trocar). Convite informativo (responseRequested=false) mostra
-                  só o aviso, sem ações. */}
-              {ehConvite && (
-                <div className="space-y-3 rounded-md border bg-muted/30 p-3">
-                  <p className="text-xs font-medium">{t.controlRoom.rsvpTitulo}</p>
-                  {podeResponder ? (
-                    <>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          variant={det.resposta === "accepted" ? "default" : "outline"}
-                          size="sm"
-                          disabled={!!rsvpEmVoo}
-                          onClick={() => void responder("accept")}
-                        >
-                          {rsvpEmVoo === "accept" ? (
-                            <Spinner className="size-4" />
-                          ) : (
-                            <Check />
-                          )}
-                          {t.controlRoom.rsvpAceitar}
-                        </Button>
-                        <Button
-                          variant={
-                            det.resposta === "tentativelyAccepted" ? "default" : "outline"
-                          }
-                          size="sm"
-                          disabled={!!rsvpEmVoo}
-                          onClick={() => void responder("tentativelyAccept")}
-                        >
-                          {rsvpEmVoo === "tentativelyAccept" ? (
-                            <Spinner className="size-4" />
-                          ) : (
-                            <CircleHelp />
-                          )}
-                          {t.controlRoom.rsvpTalvez}
-                        </Button>
-                        <Button
-                          variant={det.resposta === "declined" ? "default" : "outline"}
-                          size="sm"
-                          disabled={!!rsvpEmVoo}
-                          onClick={() => void responder("decline")}
-                        >
-                          {rsvpEmVoo === "decline" ? (
-                            <Spinner className="size-4" />
-                          ) : (
-                            <X />
-                          )}
-                          {t.controlRoom.rsvpRecusar}
-                        </Button>
-                      </div>
-                      <Textarea
-                        value={comentarioRsvp}
-                        onChange={(e) => setComentarioRsvp(e.target.value)}
-                        placeholder={t.controlRoom.rsvpComentarioPlaceholder}
-                        rows={2}
-                        disabled={!!rsvpEmVoo}
-                      />
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          id="agenda-rsvp-enviar"
-                          checked={enviarResposta}
-                          onCheckedChange={setEnviarResposta}
-                          disabled={!!rsvpEmVoo}
-                        />
-                        <Label htmlFor="agenda-rsvp-enviar" className="text-xs font-normal">
-                          {t.controlRoom.rsvpEnviarResposta}
-                        </Label>
-                      </div>
-                    </>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      {t.controlRoom.rsvpInfoSemResposta}
-                    </p>
-                  )}
-                </div>
-              )}
-              {det.corpo.trim() && (
-                <>
-                  <Separator />
-                  <CorpoMensagem corpo={det.corpo} tipo={det.corpoTipo} />
-                </>
-              )}
-            </div>
-            <SheetFooter className="flex-row items-center gap-2 border-t px-4 py-3">
-              {podeGerenciar && (
-                <>
-                  {recorrente ? (
-                    // #397: recorrente escolhe o escopo no próprio Edit.
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={!eventosMes?.some((e) => e.id === id)}
-                        >
-                          <Pencil /> {t.controlRoom.agendaEditar}
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="start">
-                        <DropdownMenuItem onClick={() => editar("ocorrencia")}>
-                          {t.controlRoom.agendaEditarEstaOcorrencia}
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => editar("serie")}>
-                          {t.controlRoom.agendaEditarSerie}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  ) : (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => editar()}
-                      disabled={!eventosMes?.some((e) => e.id === id)}
-                    >
-                      <Pencil /> {t.controlRoom.agendaEditar}
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => void excluir()}
-                  >
-                    <Trash2 /> {t.controlRoom.agendaExcluir}
-                  </Button>
-                </>
-              )}
-              {podeCancelar && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => setConfirmarCancelar(true)}
-                >
-                  <CalendarX2 /> {t.controlRoom.agendaCancelar}
-                </Button>
-              )}
-              <div className="grow" />
-              {det.webLink && (
-                <Button
-                  variant="outline"
-                  onClick={() => api.openUrl(comLoginHint(det.webLink, userEmail))}
-                >
-                  <ExternalLink /> {t.controlRoom.abrirOutlook}
-                </Button>
-              )}
-              {det.online && det.joinUrl && (
-                <Button onClick={() => api.openUrl(det.joinUrl!)}>
-                  <Video /> {t.controlRoom.entrarReuniao}
-                </Button>
-              )}
-            </SheetFooter>
-          </>
-        )}
-      </SheetContent>
-
-      {/* Confirmação do "Cancelar evento" (#260). Destrutiva → AlertDialog (mesmo
-          padrão do "Excluir pasta" #90), mas com campo de comentário opcional
-          que segue aos convidados junto do cancelamento. */}
-      <AlertDialog
-        open={confirmarCancelar}
-        onOpenChange={(aberto) => {
-          if (!aberto && !cancelando) {
-            setConfirmarCancelar(false);
-            setComentarioCancel("");
-          }
-        }}
-      >
-        <AlertDialogContent className="max-w-md!">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t.controlRoom.agendaCancelarTitulo}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t.controlRoom.agendaCancelarDesc}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="agenda-cancelar-comentario">
-              {t.controlRoom.agendaCancelarComentario}
-            </Label>
-            <Textarea
-              id="agenda-cancelar-comentario"
-              value={comentarioCancel}
-              onChange={(e) => setComentarioCancel(e.target.value)}
-              placeholder={t.controlRoom.agendaCancelarComentarioPlaceholder}
-              rows={3}
-              disabled={cancelando}
-            />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={cancelando}>
-              {t.controlRoom.agendaCancelarVoltar}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={cancelando}
-              onClick={(e) => {
-                // Impede o fechamento automático do AlertDialog até a chamada
-                // resolver (mostramos o spinner enquanto o Graph notifica).
-                e.preventDefault();
-                void cancelar();
-              }}
-            >
-              {cancelando && <Spinner className="size-4" />}
-              {t.controlRoom.agendaCancelarConfirmar}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* #398: excluir recorrente pelo detalhe — ocorrência × série. Antes o
-          Delete do detalhe apagava a ocorrência direto, sem perguntar. */}
-      <AlertDialog
-        open={excluirRecAberto}
-        onOpenChange={(o) => {
-          if (!o && !excluindoRec) setExcluirRecAberto(false);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {t.controlRoom.agendaExcluirRecorrenteTitulo}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {t.controlRoom.agendaExcluirRecorrenteDesc}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={excluindoRec}>
-              {t.controlRoom.agendaEditarCancelar}
-            </AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={excluindoRec}
-              onClick={(e) => {
-                e.preventDefault();
-                void confirmarExcluirRec("ocorrencia");
-              }}
-            >
-              {t.controlRoom.agendaEditarEstaOcorrencia}
-            </AlertDialogAction>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={excluindoRec}
-              onClick={(e) => {
-                e.preventDefault();
-                void confirmarExcluirRec("serie");
-              }}
-            >
-              {t.controlRoom.agendaEditarSerie}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </Sheet>
-  );
-}
 
 // ===========================================================================
 // Tela
@@ -6578,7 +5177,7 @@ export function ControlRoomScreen({
     [arvorePastas, pastaSel]
   );
   const pastaCargaAcessoNegado =
-    pastas?.some((p) => p.id === pastaCarga && p.acessoNegado) ?? false;
+    pastas?.some((p) => p.id === pastaCarga && p.leitura === "negado") ?? false;
 
   // Detecção central de e-mails novos na Inbox: compara o topo da lista com o
   // último visto e dispara o toast rico (c-sonner-9). Chamada tanto pelo poll
@@ -7574,7 +6173,21 @@ export function ControlRoomScreen({
           t={t}
         />
 
-        {bridgeView === "people" ? (
+        {/* #1065: busca do Bridge REMONTADA no toolbar do conteúdo (OPÇÃO A).
+            O #876 orfanou o UniversalSearch ao tirar o mount da title bar; aqui
+            ele volta como topo da coluna de conteúdo, ao lado do FolderSidebar.
+            O atalho "/" (que já mira [data-universal-search-input]) e o Esc
+            round-trip passam a funcionar. A coluna é flex-col/flex-1 e o
+            view-switch abaixo mantém min-h-0/flex-1 pra preencher a altura. */}
+        <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-hidden">
+          <div className="shrink-0">
+            <UniversalSearch
+              tela="control-room"
+              screenLabel={t.nav.controlRoom}
+              bridgeView={bridgeView}
+            />
+          </div>
+          {bridgeView === "people" ? (
           <PeopleView
             userEmail={user.email}
             onGrantAccess={onGrantPeopleAccess}
@@ -7598,7 +6211,9 @@ export function ControlRoomScreen({
               titulo={tituloLista}
               mensagens={fonteListaAtiva}
               erroLeitura={
-                pastaAtual?.acessoNegado ? t.controlRoom.caixaAcessoParcial : undefined
+                pastaAtual?.leitura === "negado"
+                  ? t.controlRoom.caixaAcessoParcial
+                  : undefined
               }
               onRefresh={() => setRecarga((n) => n + 1)}
               pastaId={pastaSel}
@@ -7659,6 +6274,7 @@ export function ControlRoomScreen({
           </ResizablePanel>
           </ResizablePanelGroup>
         )}
+        </div>
       </div>
 
       <EventoDialog userEmail={user.email} />

@@ -1,5 +1,13 @@
-import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, ArrowUp, RefreshCw, Search, X } from "lucide-react";
+import { useEffect, useState, type Ref } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  Monitor,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useIdioma, preencher } from "@/lib/idioma";
 import { statCaminho } from "@/lib/api";
-import { nomeBase, segmentosCaminho } from "./caminho";
+import { CAMINHO_ESTE_PC, nomeBase, segmentosCaminho } from "./caminho";
 import { TooltipAcao } from "./tooltip-acao";
 
 /**
@@ -35,7 +43,11 @@ export function NavBarArquivos({
   buscaAtiva,
   onBuscar,
   onLimparBusca,
+  onSairBusca,
   podeBuscar,
+  buscaRef,
+  editando,
+  onEditandoChange,
 }: {
   currentPath: string;
   canBack: boolean;
@@ -49,10 +61,20 @@ export function NavBarArquivos({
   buscaAtiva: boolean;
   onBuscar: (query: string) => void;
   onLimparBusca: () => void;
+  /** #968: ESC no campo de busca devolve o foco pra lista (round-trip do Ctrl+E). */
+  onSairBusca?: () => void;
   podeBuscar: boolean;
+  /** #968: ref do input de busca — Ctrl+E (no `aoTeclar` do ContentPane) foca-o. */
+  buscaRef?: Ref<HTMLInputElement>;
+  /**
+   * #1060 (UX21): modo "editar caminho" CONTROLADO pelo shell — assim o atalho
+   * Ctrl+L (no `aoTeclar` do ContentPane) e o clique/teclado no breadcrumb
+   * compartilham o mesmo estado. O Input de endereço `autoFocus` ao montar.
+   */
+  editando: boolean;
+  onEditandoChange: (v: boolean) => void;
 }) {
   const { t } = useIdioma();
-  const [editando, setEditando] = useState(false);
   const [valor, setValor] = useState(currentPath);
   const [erro, setErro] = useState(false);
   const [validando, setValidando] = useState(false);
@@ -81,7 +103,7 @@ export function NavBarArquivos({
         setErro(true);
         return;
       }
-      setEditando(false);
+      onEditandoChange(false);
       onNavegar(info.path);
     } catch {
       setErro(true);
@@ -159,12 +181,12 @@ export function NavBarArquivos({
             onKeyDown={(e) => {
               if (e.key === "Enter") void confirmar();
               else if (e.key === "Escape") {
-                setEditando(false);
+                onEditandoChange(false);
                 setValor(currentPath);
                 setErro(false);
               }
             }}
-            onBlur={() => setEditando(false)}
+            onBlur={() => onEditandoChange(false)}
             className={cn("h-8", erro && "border-destructive")}
           />
           {validando && <Spinner className="size-4 text-muted-foreground" />}
@@ -181,17 +203,43 @@ export function NavBarArquivos({
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
-              className="flex min-w-0 flex-1 cursor-text items-center overflow-x-auto rounded-md border bg-background/40 px-1 py-0.5"
+              // #1060 (UX21): o breadcrumb agora entra em edição por TECLADO —
+              // `role="button"` + `tabIndex` + Enter/Espaço (além do clique no
+              // espaço vazio e do Ctrl+L global). Só age quando o próprio
+              // container tem foco/alvo (não os botões de segmento aninhados).
+              role="button"
+              tabIndex={0}
+              aria-label={t.arquivos.editarCaminho}
+              className="flex min-w-0 flex-1 cursor-text items-center overflow-x-auto rounded-md border bg-background/40 px-1 py-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={(e) => {
-                if (e.target === e.currentTarget) setEditando(true);
+                if (e.target === e.currentTarget) onEditandoChange(true);
+              }}
+              onKeyDown={(e) => {
+                if (e.target !== e.currentTarget) return;
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onEditandoChange(true);
+                }
               }}
               title={t.arquivos.editarCaminho}
             >
-              {segmentos.map((seg, i) => (
+              {/* #911: "This PC" é SEMPRE a raiz do breadcrumb (ícone + rótulo).
+                  No This PC (caminho vazio) é o único segmento → o campo nunca
+                  fica vazio/colapsado; num drive vira "This PC \ C: \ …". */}
+              <span className="flex shrink-0 items-center">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 gap-1 px-1.5 text-xs font-normal"
+                  onClick={() => onNavegar(CAMINHO_ESTE_PC)}
+                >
+                  <Monitor className="size-3.5 shrink-0" />
+                  {t.arquivos.drives}
+                </Button>
+              </span>
+              {segmentos.map((seg) => (
                 <span key={seg.path} className="flex shrink-0 items-center">
-                  {i > 0 && (
-                    <span className="px-0.5 text-muted-foreground">\</span>
-                  )}
+                  <span className="px-0.5 text-muted-foreground">\</span>
                   <Button
                     variant="ghost"
                     size="sm"
@@ -205,19 +253,22 @@ export function NavBarArquivos({
             </div>
           </ContextMenuTrigger>
           <ContextMenuContent>
-            <ContextMenuItem onSelect={() => setEditando(true)}>
+            <ContextMenuItem onSelect={() => onEditandoChange(true)}>
               {t.arquivos.editarCaminho}
             </ContextMenuItem>
           </ContextMenuContent>
         </ContextMenu>
       )}
 
-      {/* #871 (fatia 2b): busca recursiva na pasta atual. No This PC
-          (`!podeBuscar`) o campo fica desabilitado — a busca multi-drive é uma
-          fatia futura. Enter dispara; Esc limpa e sai da busca. */}
+      {/* #871 (fatia 2b/2c): busca recursiva. Numa pasta = a pasta atual; no This PC
+          (`currentPath` vazio) = fan-out sobre TODOS os drives. O campo só fica
+          desabilitado quando `!podeBuscar` (This PC antes dos drives carregarem). O
+          placeholder é pelo caminho: vazio → "Buscar Este PC"; senão → a pasta.
+          Enter dispara; Esc limpa e sai da busca. */}
       <div className="relative w-56 shrink-0">
         <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
+          ref={buscaRef}
           value={busca}
           disabled={!podeBuscar}
           onChange={(e) => setBusca(e.target.value)}
@@ -228,15 +279,20 @@ export function NavBarArquivos({
             } else if (e.key === "Escape") {
               setBusca("");
               onLimparBusca();
+              // #968 (Wagner): ESC SAI da busca — devolve o foco pra lista
+              // (round-trip completo do Ctrl+E). Blur de fallback se a lista
+              // não estiver ligada (defensivo).
+              if (onSairBusca) onSairBusca();
+              else e.currentTarget.blur();
             }
           }}
           placeholder={
-            podeBuscar
+            currentPath
               ? preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) })
               : t.arquivos.buscarThisPc
           }
           aria-label={
-            podeBuscar
+            currentPath
               ? preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) })
               : t.arquivos.buscarThisPc
           }

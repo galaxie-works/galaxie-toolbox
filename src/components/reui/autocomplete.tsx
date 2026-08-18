@@ -2,6 +2,7 @@ import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomple
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
+import { textoUi } from "@/lib/idioma-core"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { XIcon, ChevronsUpDownIcon } from "lucide-react"
 
@@ -268,6 +269,7 @@ function AutocompleteClear({
   return (
     <AutocompletePrimitive.Clear
       data-slot="autocomplete-clear"
+      aria-label={textoUi("limparBusca")}
       className={cn(
         "ring-offset-background focus:ring-ring absolute top-1/2 -translate-y-1/2 cursor-pointer opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:pointer-events-none data-disabled:pointer-events-none",
         className
@@ -286,6 +288,7 @@ function AutocompleteTrigger({
   return (
     <AutocompletePrimitive.Trigger
       data-slot="autocomplete-trigger"
+      aria-label={textoUi("abrirSeletor")}
       className={cn(
         "focus:ring-ring ring-offset-background absolute top-1/2 -translate-y-1/2 cursor-pointer focus:ring-2 focus:ring-offset-2 focus:outline-none disabled:pointer-events-none has-[+[data-slot=autocomplete-clear]]:hidden data-disabled:pointer-events-none",
         className

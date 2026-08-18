@@ -77,6 +77,13 @@ const pt = {
     preparando: "Alinhando os astros...",
   },
 
+  // #1017: faixa fixa e não-dispensável no shell quando roda fora do Tauri
+  // (pnpm dev no browser). Deixa explícito que nenhum dado é real e que as
+  // ESCRITAS falham de propósito — o modo mock não finge sucesso (VERDE≠PRONTO).
+  mockBanner: {
+    aviso: "MODO MOCK — nenhum dado é real",
+  },
+
   reauth: {
     // #584 copy v2 (cósmica) — padrão-ouro do PO
     titulo: "A GALAXIE está em expansão",
@@ -239,7 +246,115 @@ const pt = {
       "Toca quando o Bridge encontra um erro ao sincronizar com o Microsoft 365.",
     semSom: "Não tocar nada",
     sonsDisponiveis: "Sons disponíveis",
-    preview: "Preview",
+    preview: "Prévia",
+  },
+
+  // #1058: i18n do filter-builder reui (espelha FilterI18nConfig via
+  // montarFiltrosI18n). Placeholders com {campo} são montados em runtime.
+  filtros: {
+    addFilter: "Filtro",
+    searchFields: "Filtrar...",
+    noFieldsFound: "Nenhum filtro encontrado.",
+    noResultsFound: "Nenhum resultado encontrado.",
+    select: "Selecionar...",
+    valorVerdadeiro: "Verdadeiro",
+    valorFalso: "Falso",
+    min: "Mín",
+    max: "Máx",
+    to: "até",
+    typeAndPressEnter: "Digite e pressione Enter para adicionar",
+    selected: "selecionado",
+    selectedCount: "selecionado(s)",
+    percent: "%",
+    defaultCurrency: "R$",
+    defaultColor: "#000000",
+    addFilterTitle: "Adicionar filtro",
+    loadingOptions: "Carregando...",
+    errorLoadingOptions: "Falha ao carregar opções.",
+    opIs: "é",
+    opIsNot: "não é",
+    opIsAnyOf: "é qualquer um de",
+    opIsNotAnyOf: "não é nenhum de",
+    opIncludesAll: "inclui todos",
+    opExcludesAll: "exclui todos",
+    opBefore: "antes de",
+    opAfter: "depois de",
+    opBetween: "entre",
+    opNotBetween: "fora de",
+    opContains: "contém",
+    opNotContains: "não contém",
+    opStartsWith: "começa com",
+    opEndsWith: "termina com",
+    opIsExactly: "é exatamente",
+    opEquals: "igual a",
+    opNotEquals: "diferente de",
+    opGreaterThan: "maior que",
+    opLessThan: "menor que",
+    opOverlaps: "sobrepõe",
+    opIncludes: "inclui",
+    opExcludes: "exclui",
+    opIncludesAllOf: "inclui todos de",
+    opIncludesAnyOf: "inclui algum de",
+    opEmpty: "está vazio",
+    opNotEmpty: "não está vazio",
+    phEnterField: "Digite {campo}...",
+    phSelectField: "Selecionar...",
+    phSearchField: "Buscar {campo}...",
+    phEnterKey: "Digite a chave...",
+    phEnterValue: "Digite o valor...",
+    validInvalidEmail: "Formato de e-mail inválido",
+    validInvalidUrl: "Formato de URL inválido",
+    validInvalidTel: "Formato de telefone inválido",
+    validInvalid: "Formato inválido",
+  },
+
+  // #1058: i18n do DataGrid reui (menu de coluna + aria-labels), via
+  // montarGridI18n. {coluna} montado em runtime no unpinColumn.
+  grid: {
+    sortAsc: "Crescente",
+    sortDesc: "Decrescente",
+    pinToLeft: "Fixar à esquerda",
+    pinToRight: "Fixar à direita",
+    moveToLeft: "Mover para a esquerda",
+    moveToRight: "Mover para a direita",
+    columns: "Colunas",
+    unpinColumn: "Desafixar coluna {coluna}",
+    selectRow: "Selecionar linha",
+    selectAllRows: "Selecionar tudo",
+    pinRow: "Fixar linha",
+    unpinRow: "Desafixar linha",
+    emptyMessage: "Nenhum dado disponível",
+    loadingMessage: "Carregando...",
+  },
+
+  // #1058: i18n do DateSelector reui (antes inline em control-room). Listas
+  // (meses/dias/etc.) vão em CSV e são separadas em montarDateSelectorI18n —
+  // ordem fixa nos dois idiomas, sem quebra de frase. Q1–Q4/H1–H2 são notação
+  // de negócio, iguais nos dois lados.
+  dateSelector: {
+    selectDate: "Selecionar data",
+    apply: "Aplicar",
+    cancel: "Cancelar",
+    clear: "Limpar",
+    today: "Hoje",
+    filterTypeIs: "é",
+    filterTypeBefore: "antes",
+    filterTypeAfter: "depois",
+    filterTypeBetween: "entre",
+    periodDay: "Dia",
+    periodMonth: "Mês",
+    periodQuarter: "Trimestre",
+    periodHalfYear: "Semestre",
+    periodYear: "Ano",
+    months:
+      "Janeiro,Fevereiro,Março,Abril,Maio,Junho,Julho,Agosto,Setembro,Outubro,Novembro,Dezembro",
+    monthsShort: "Jan,Fev,Mar,Abr,Mai,Jun,Jul,Ago,Set,Out,Nov,Dez",
+    quarters: "Q1,Q2,Q3,Q4",
+    halfYears: "H1,H2",
+    weekdays: "Domingo,Segunda,Terça,Quarta,Quinta,Sexta,Sábado",
+    weekdaysShort: "Dom,Seg,Ter,Qua,Qui,Sex,Sáb",
+    placeholder: "Selecionar data...",
+    rangePlaceholder: "Selecionar intervalo...",
   },
 
   templates: {
@@ -488,6 +603,8 @@ const pt = {
     emailNaoLidos: "não lidos",
     emailSinalizados: "sinalizados",
     emailZero: "Caixa de entrada limpa.",
+    // #1075 RB46-a: parte do card nao pode ser lida — os numeros sao parciais.
+    emailParcial: "Alguns contadores não puderam ser lidos.",
     emailAbrir: "Abrir o Bridge",
     todosTitulo: "Tarefas",
     todosVazio: "Nenhuma tarefa aberta.",
@@ -508,6 +625,8 @@ const pt = {
     densidadeCompacta: "Layout compacto",
     reordenar: "Reordenar",
     erroCarregar: "Não foi possível carregar.",
+    // #1075 RB46: o card tem dados, mas incompletos — antes isso era invisível.
+    todosListasComFalha: "Algumas listas não puderam ser lidas:",
     tentarNovamente: "Tentar de novo",
     semPermissao: "Permissão necessária.",
     conectar: "Conectar",
@@ -530,6 +649,8 @@ const pt = {
     remote: "Remoto",
     // #721 (SH3): grupo dos apps fixados no rail.
     pinados: "Fixados",
+    // #1109: tooltip da marca GALAXIE na title bar (clique = nova aba do Navigator).
+    abrirNavegador: "Nova aba do Navigator",
   },
 
   // #720 (SH2): command com catálogo de apps categorizado (~1795).
@@ -588,6 +709,9 @@ const pt = {
     verGrade: "Ver em grade",
     ocultos: "Mostrar ocultos",
     filtro: "Filtrar",
+    preview: "Abrir/fechar painel de detalhes",
+    focoBusca: "Buscar (recursivo)",
+    editarCaminho: "Editar caminho",
   },
 
   controlRoom: {
@@ -775,6 +899,20 @@ const pt = {
     agendaCalSemEventos: "Sem eventos",
     agendaCalCarregando: "Carregando eventos",
     agendaCalMais: "mais",
+    // #1058: cobertura i18n completa do event-calendar (montarAgendaI18n).
+    agendaAnterior: "Anterior",
+    agendaProximo: "Próximo",
+    agendaSelecionarVisao: "Selecionar visão",
+    agendaIrParaData: "Ir para data",
+    agendaNaoPodeAqui: "Não pode soltar aqui",
+    agendaContinua: "continua",
+    agendaHoraDe: "De {valor}",
+    agendaHoraAte: "Até {valor}",
+    agendaSemanaPrefixo: "S",
+    agendaPalavraEvento: "evento",
+    agendaPalavraEventos: "eventos",
+    agendaPalavraDia: "dia",
+    agendaPalavraDias: "dias",
     agendaEditar: "Editar",
     agendaExcluir: "Excluir",
     // Menu de contexto do evento (#330).
@@ -1011,7 +1149,7 @@ const pt = {
       "Os contatos absorvidos serão apagados no Microsoft 365. Você pode desfazer logo depois (recriando-os), mas os IDs originais não voltam.",
     mergeProntoTitulo: "Plano pronto",
     mergeProntoDescricao:
-      "MergePlan v{version} com {n} contatos absorvidos. Confirme para atualizar o principal e apagar os absorvidos.",
+      "MergePlan v{version} com {n} contatos absorvidos. Confirme para atualizar o principal e excluir os absorvidos.",
     mergeContinuar: "Continuar",
     mergeCta: "Mesclar {n} contatos",
     mergeProntoCta: "Confirmar e mesclar",
@@ -1142,8 +1280,8 @@ const pt = {
     peopleEnrichSaved: "Contato enriquecido",
     peopleEnrichSessionSaved: "Dados aplicados somente nesta sessão",
     peopleEnrichError: "Não foi possível enriquecer este contato.",
-    peopleSourceContacts: "Contacts",
-    peopleSourcePeople: "People",
+    peopleSourceContacts: "Contatos",
+    peopleSourcePeople: "Pessoas",
     peopleSourceDirectory: "Diretório",
     peopleFilterSourceContacts: "Contatos salvos",
     peopleFilterSourcePeople: "Pessoas relevantes",
@@ -1237,6 +1375,15 @@ const pt = {
     filtroDataDescricao:
       "Escolha um período para filtrar as mensagens por data.",
     filtroDataDica: "Ex.: 2025, Q4, 05/10/2025",
+    // #1059 (a11y Bridge): descrições sr-only de sheets/diálogos (elimina o
+    // warning do Radix e dá contexto ao leitor de tela).
+    composeRespostaDescricao:
+      "Editor de resposta ao e-mail selecionado.",
+    agendaEventoDetalheDescricao: "Detalhes do evento selecionado.",
+    novaMensagemDescricao: "Compositor de nova mensagem de e-mail.",
+    agendaFormDescricao: "Formulário para criar ou editar um evento da agenda.",
+    createFolderDescricao: "Informe o nome da nova pasta.",
+    renameFolderDescricao: "Informe o novo nome da pasta.",
     filtroAplicar: "Aplicar",
     // Detalhe do evento
     organizador: "Organizador",
@@ -1269,6 +1416,7 @@ const pt = {
     previewAltaFidelidade: "Alta fidelidade",
     previewConvertendo: "Convertendo via Microsoft 365…",
     previewConvertido: "Convertido em alta fidelidade no seu OneDrive (Microsoft 365).",
+    previewCarregandoPlanilha: "Carregando planilha…",
     responder: "Responder",
     encaminhar: "Encaminhar",
     // Atalhos de teclado (#28) — catálogo do modal de ajuda ("?"). Chaves
@@ -1399,10 +1547,12 @@ const pt = {
       "Você não tem permissão para enviar usando esta caixa compartilhada.",
     caixaEnvioRelogin:
       "Faça login novamente para enviar usando caixas compartilhadas.",
+    // #1075 RB46-b: os contadores nao puderam ser lidos — nao e "pasta vazia".
+    pastaContagemIndisponivel: "Não foi possível ler os itens desta pasta.",
     caixaAcessoParcial:
       "Acesso parcial — você não tem permissão para abrir esta pasta.",
     // #464 (S2): erros/rótulos de People que vazavam em inglês pra UI.
-    pessoaNaoEditavel: "Esta pessoa não é um contato editável do Microsoft.",
+    pessoaNaoEditavel: "Esta pessoa não é um contato editável da Microsoft.",
     mergeJaRodando: "Uma mesclagem já está em andamento.",
     mergeNadaDesfazer: "Nada a desfazer.",
     peopleSemNome: "Sem nome",
@@ -1456,6 +1606,42 @@ const pt = {
     descricao: "Acesso e suporte remoto, direto do seu espaço GALAXIE.",
   },
 
+  // #687: tela GALAXIE Remote (sessão assistida) — host + controlador.
+  remote: {
+    titulo: "Acesso remoto",
+    permitirSuporte: "Permitir suporte",
+    seuCodigo: "Seu código de sessão",
+    digiteCodigo: "Digite o código da sessão",
+    conectar: "Conectar",
+    conectando: "Conectando…",
+    sessaoAtiva: "Sessão ativa",
+    encerrar: "Encerrar sessão",
+    telaCheia: "Tela cheia",
+    codigoInvalido: "Código inválido ou expirado",
+    // Entrada: escolha de modo (host = pede ajuda / controlador = dá ajuda).
+    escolhaTitulo: "Como podemos ajudar?",
+    modoHost: "Preciso de suporte",
+    modoHostDesc: "Compartilhe sua tela para alguém te ajudar.",
+    modoController: "Vou dar suporte",
+    modoControllerDesc: "Conecte à tela de outra pessoa para ajudar.",
+    voltar: "Voltar",
+    // Host: aviso de consentimento + espera pelo peer.
+    consentNota:
+      "Quem tiver este código pode ver e controlar este computador até você encerrar a sessão. Compartilhe só com alguém de confiança.",
+    aguardandoPeer: "Aguardando a outra pessoa conectar…",
+    copiarCodigo: "Copiar código",
+    codigoCopiado: "Copiado",
+    // Estados da sessão.
+    reconectando: "Reconectando…",
+    sessaoEncerrada: "Sessão encerrada",
+    erroConexao: "Erro de conexão",
+    novaSessao: "Nova sessão",
+    // Vídeo (WebCodecs) sem suporte no dispositivo.
+    codecNaoSuportado: "Vídeo não suportado neste dispositivo.",
+    // #839: build sem a feature `remote` (comandos stubados) — degrade gracioso.
+    remoteIndisponivel: "O Remote não está disponível nesta versão do app.",
+  },
+
   caminhosLongos: {
     titulo: "Caminhos longos",
     descricao:
@@ -1492,6 +1678,8 @@ const pt = {
     // #869 — itens do menu de contexto (fixar/desafixar pasta no Acesso rápido)
     fixarAcessoRapido: "Fixar no Acesso rápido",
     desafixarAcessoRapido: "Desafixar do Acesso rápido",
+    // #991 — rótulo do chevron de expandir/colapsar da árvore (Windows Explorer)
+    expandirColapsar: "Expandir ou colapsar",
     carregando: "Carregando…",
     documentos: "Documentos",
     downloads: "Downloads",
@@ -1532,6 +1720,7 @@ const pt = {
     ordTamanho: "Tamanho",
     ordAsc: "Crescente",
     ordDesc: "Decrescente",
+    pastasPrimeiro: "Pastas primeiro",
     viewMenu: "Exibir",
     mais: "Mais",
     compartilhar: "Compartilhar",
@@ -1541,9 +1730,24 @@ const pt = {
     tipoPasta: "Pasta",
     tipoArquivo: "Arquivo",
     erroLer: "Não foi possível ler esta pasta",
+    // #1028 (FE7): ações explícitas do usuário não falham em silêncio.
+    erroCancelarOp: "Não foi possível cancelar a transferência.",
+    erroPausarOp: "Não foi possível pausar a transferência.",
+    erroResumirOp: "Não foi possível retomar a transferência.",
+    erroAbrirArquivo: "Não foi possível abrir o arquivo.",
     // #681 — filtro in-folder, ocultos, long paths, inspector
     filtrar: "Filtrar nesta pasta",
     limparFiltro: "Limpar filtro",
+    // #985 (US1) — filtro por categoria/tipo (widget reui/filters) + glob
+    filtroTipo: "Tipo",
+    filtroTipoOperador: "é um de",
+    filtroSelecionados: "selecionados",
+    filtroSelecione: "Selecionar…",
+    catDocumentos: "Documentos",
+    catImagens: "Imagens",
+    catVideos: "Vídeos",
+    catAudio: "Áudio",
+    catCompactados: "Compactados",
     mostrarOcultos: "Mostrar ocultos",
     detalhes: "Detalhes",
     tamanhoTotal: "Tamanho total",
@@ -1632,6 +1836,53 @@ const pt = {
     buscaVazia: "Nenhum resultado.",
     buscaTruncada: "Mostrando os primeiros 1000 resultados.",
     limparBusca: "Limpar busca",
+    // #898 (spike) — Status Center como activity-dropdown + histórico de sessão
+    atividadesTitulo: "{n} novas atividades",
+    atividadesTituloVazio: "Atividades",
+    atividadesSubtitulo: "O que aconteceu nos seus arquivos",
+    desfazer: "Desfazer",
+    // #898 (fatia 1) — controles de linha ATIVA no Status Center (pausar/retomar)
+    pausar: "Pausar",
+    retomar: "Retomar",
+    statusPausado: "Pausado",
+    tempoAgora: "agora",
+    tempoMinAtras: "{n} min atrás",
+    tempoHorasAtras: "{n} h atrás",
+    tempoOntem: "ontem",
+    tempoDiasAtras: "{n} dias atrás",
+    // #898 (fatia 2) — resumo terminal (histórico de sessão) na activity-dropdown.
+    // Participios em pt flexionam em numero → forma singular e plural por tipo.
+    resumoCopiados: "Copiados {n} {arq}",
+    resumoCopiadoUm: "Copiado {n} {arq}",
+    resumoMovidos: "Movidos {n} {arq}",
+    resumoMovidoUm: "Movido {n} {arq}",
+    resumoCanceladoCopia: "Cancelado: cópia de {n} {arq}",
+    resumoCanceladoMove: "Cancelado: movimentação de {n} {arq}",
+    resumoFalhaCopia: "Falha ao copiar {n} {arq}",
+    resumoFalhaMove: "Falha ao mover {n} {arq}",
+    resumoParcial: "Parcial: {done} de {total} {arq}",
+    resumoParaDestino: "→ {destino}",
+    arquivoUm: "arquivo",
+    arquivosMuitos: "arquivos",
+    // #967 (#898 fatia 4) — diálogo de "Desfazer" (undo) por op no histórico da
+    // activity-dropdown. Baldes (seguros/pulados/não-reversíveis) + motivos (o
+    // código do backend mapeia pra estas copies) + toasts do relatório.
+    undoTitulo: "Desfazer operação",
+    undoDescricao:
+      "{seguros} serão revertidos · {pulados} pulados · {naoReversiveis} não-reversíveis",
+    undoSeguro: "Serão revertidos",
+    undoPulado: "Pulados",
+    undoNaoReversivel: "Não reversíveis",
+    undoMotivoSumiu: "O arquivo não existe mais",
+    undoMotivoModificado: "Modificado desde a operação",
+    undoMotivoOrigemReocupada: "A origem foi reocupada",
+    undoMotivoSobrescrita: "O original foi sobrescrito",
+    undoForaJanela: "Fora da janela de histórico — nada a desfazer",
+    undoNadaSeguro: "Nada pode ser revertido com segurança",
+    undoDesfeito: "Desfeito",
+    undoOk: "{n} revertidos",
+    undoParcial: "{ok} revertidos · {pulados} pulados",
+    undoErro: "Falha ao reverter {n}",
   },
 
   tema: {
@@ -1683,8 +1934,7 @@ const pt = {
     navigatorSearchCustomOpcao: "Personalizado…",
     navigatorSearchCustomLabel: "URL de busca personalizada",
     navigatorSearchCustomPlaceholder: "https://exemplo.com/busca?q=%s",
-    navigatorSearchCustomDicaAntes: "Use",
-    navigatorSearchCustomDicaDepois: "onde o termo de busca deve entrar.",
+    navigatorSearchCustomDica: "Use {placeholder} onde o termo de busca deve entrar.",
     navigatorTabsSleepTitulo: "Abas em suspensão",
     navigatorTabsSleepDesc:
       "Libere memória colocando abas de fundo ociosas em suspensão. Abas ativas e fixadas nunca suspendem.",
@@ -1823,6 +2073,9 @@ const pt = {
     cfgOrgOff: "Desativado",
     cfgOrgUnknown: "—",
     cfgOrgCardForbidden: "Sem permissão para este item.",
+    // #1075 RB45: o endpoint nao existe NESTE tenant — permanente, sem acao do
+    // usuario. Distinto do erro transitorio logo abaixo.
+    cfgOrgCardIndisponivel: "Este recurso não está disponível na sua organização.",
     cfgOrgCardError: "Não foi possível carregar este item.",
     cfgOrgOfficeStore: "Office Store",
     cfgOrgAppsTrial: "Testes de apps e serviços",
@@ -1873,6 +2126,8 @@ const pt = {
     bridgeAssinaturaExcluir: "Excluir assinatura",
     bridgeAssinaturaEditarTitulo: "Editar assinatura",
     bridgeAssinaturaNovaTitulo: "Nova assinatura",
+    // #1059 (a11y Bridge): descrição sr-only do sheet de assinatura.
+    bridgeAssinaturaDescricao: "Editor de assinatura de e-mail.",
     bridgeCampoNome: "Nome",
     bridgeAssinaturaNomePlaceholder: "ex.: Assinatura do trabalho",
     bridgeAssinaturaCampo: "Assinatura",
@@ -1984,6 +2239,11 @@ const pt = {
     semResultados: "Sem resultados",
     // #525: SidebarTrigger/SidebarRail (animate-ui) — sr-only/aria-label/title.
     alternarBarra: "Alternar barra lateral",
+    // #1059 (a11y Bridge): aria-label de botões icon-only do reui (autocomplete
+    // clear/trigger, filters remove) — primitivos sem i18n próprio leem o `ui`.
+    limparBusca: "Limpar busca",
+    abrirSeletor: "Abrir seletor",
+    removerFiltro: "Remover filtro",
   },
   // #529 (i18n S4 / fecha o épico #459): rótulos do editor Plate, config-driven
   // (fonte única aqui; acesso via `plateLabel` em plate-labels.ts, padrão não-hook
@@ -2001,6 +2261,67 @@ const pt = {
     linkText: "Texto a exibir",
     editLink: "Editar link",
     abrirNovaAba: "Abrir link em nova aba",
+    // #973 (US1 do #950): tooltips do toolbar do editor Plate.
+    undo: "Desfazer",
+    redo: "Refazer",
+    indent: "Aumentar recuo",
+    outdent: "Diminuir recuo",
+    numberedList: "Lista numerada",
+    numberedListOptions: "Opções da lista numerada",
+    todo: "Lista de tarefas",
+    comment: "Comentar",
+    markAsEquation: "Marcar como equação",
+    emoji: "Emoji",
+    emojiSearch: "Buscar",
+    emojiClear: "Limpar",
+    aiCommands: "Comandos de IA",
+    textColor: "Cor do texto",
+    backgroundColor: "Cor de fundo",
+    highlight: "Realce",
+    // #950 US2: família tabela do editor Plate (menu de célula + bordas).
+    mergeCells: "Mesclar células",
+    splitCell: "Dividir célula",
+    cellBorders: "Bordas da célula",
+    deleteTable: "Excluir tabela",
+    insertRowBefore: "Inserir linha acima",
+    insertRowAfter: "Inserir linha abaixo",
+    deleteRow: "Excluir linha",
+    insertColumnBefore: "Inserir coluna à esquerda",
+    insertColumnAfter: "Inserir coluna à direita",
+    deleteColumn: "Excluir coluna",
+    borderTop: "Borda superior",
+    borderRight: "Borda direita",
+    borderBottom: "Borda inferior",
+    borderLeft: "Borda esquerda",
+    borderNone: "Sem borda",
+    borderOutside: "Bordas externas",
+    // #950 US3: família mídia do editor Plate (imagem/vídeo/áudio/arquivo/embed).
+    captionPlaceholder: "Escreva uma legenda...",
+    embedLinkPlaceholder: "Cole o link de incorporação...",
+    addAudio: "Adicionar áudio",
+    addFile: "Adicionar arquivo",
+    addImage: "Adicionar imagem",
+    addVideo: "Adicionar vídeo",
+    insertAudio: "Inserir áudio",
+    insertFile: "Inserir arquivo",
+    insertImage: "Inserir imagem",
+    insertVideo: "Inserir vídeo",
+    maisOpcoes: "Mais opções",
+    uploadDoComputador: "Enviar do computador",
+    inserirViaUrl: "Inserir via URL",
+    urlInvalida: "URL inválida",
+    aceitar: "Inserir",
+    cancelar: "Cancelar",
+    embedYoutubeTitle: "Vídeo do YouTube",
+    embedTitle: "Conteúdo incorporado",
+    // #950 US4: família código do editor Plate (bloco de código + code drawing).
+    formatCode: "Formatar código",
+    searchLanguage: "Buscar linguagem...",
+    noLanguageFound: "Nenhuma linguagem encontrada.",
+    exportar: "Exportar",
+    excluir: "Excluir",
+    enterCode: "Digite seu código aqui...",
+    codeDrawing: "Desenho de código",
   },
   // #579: nomes dos sons de notificação (id do arquivo → rótulo). Antes fixos em
   // pt-BR no `sons-notificacao.ts` (vazavam na UI en); agora por idioma, resolvidos
@@ -2077,6 +2398,13 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
 
   carregando: {
     preparando: "Aligning the stars...",
+  },
+
+  // #1017: fixed, non-dismissible shell banner when running outside Tauri
+  // (pnpm dev in the browser). Makes it explicit that no data is real and that
+  // WRITES fail on purpose — mock mode never fakes success (GREEN≠DONE).
+  mockBanner: {
+    aviso: "MOCK MODE — no data is real",
   },
 
   reauth: {
@@ -2238,6 +2566,106 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     semSom: "Do not play a thing",
     sonsDisponiveis: "Available sounds",
     preview: "Preview",
+  },
+
+  filtros: {
+    addFilter: "Filter",
+    searchFields: "Filter...",
+    noFieldsFound: "No filters found.",
+    noResultsFound: "No results found.",
+    select: "Select...",
+    valorVerdadeiro: "True",
+    valorFalso: "False",
+    min: "Min",
+    max: "Max",
+    to: "to",
+    typeAndPressEnter: "Type and press Enter to add tag",
+    selected: "selected",
+    selectedCount: "selected",
+    percent: "%",
+    defaultCurrency: "$",
+    defaultColor: "#000000",
+    addFilterTitle: "Add filter",
+    loadingOptions: "Loading...",
+    errorLoadingOptions: "Failed to load options.",
+    opIs: "is",
+    opIsNot: "is not",
+    opIsAnyOf: "is any of",
+    opIsNotAnyOf: "is not any of",
+    opIncludesAll: "includes all",
+    opExcludesAll: "excludes all",
+    opBefore: "before",
+    opAfter: "after",
+    opBetween: "between",
+    opNotBetween: "not between",
+    opContains: "contains",
+    opNotContains: "does not contain",
+    opStartsWith: "starts with",
+    opEndsWith: "ends with",
+    opIsExactly: "is exactly",
+    opEquals: "equals",
+    opNotEquals: "not equals",
+    opGreaterThan: "greater than",
+    opLessThan: "less than",
+    opOverlaps: "overlaps",
+    opIncludes: "includes",
+    opExcludes: "excludes",
+    opIncludesAllOf: "includes all of",
+    opIncludesAnyOf: "includes any of",
+    opEmpty: "is empty",
+    opNotEmpty: "is not empty",
+    phEnterField: "Enter {campo}...",
+    phSelectField: "Select...",
+    phSearchField: "Search {campo}...",
+    phEnterKey: "Enter key...",
+    phEnterValue: "Enter value...",
+    validInvalidEmail: "Invalid email format",
+    validInvalidUrl: "Invalid URL format",
+    validInvalidTel: "Invalid phone format",
+    validInvalid: "Invalid input format",
+  },
+
+  grid: {
+    sortAsc: "Asc",
+    sortDesc: "Desc",
+    pinToLeft: "Pin to left",
+    pinToRight: "Pin to right",
+    moveToLeft: "Move to Left",
+    moveToRight: "Move to Right",
+    columns: "Columns",
+    unpinColumn: "Unpin {coluna} column",
+    selectRow: "Select row",
+    selectAllRows: "Select all",
+    pinRow: "Pin row",
+    unpinRow: "Unpin row",
+    emptyMessage: "No data available",
+    loadingMessage: "Loading...",
+  },
+
+  dateSelector: {
+    selectDate: "Select date",
+    apply: "Apply",
+    cancel: "Cancel",
+    clear: "Clear",
+    today: "Today",
+    filterTypeIs: "is",
+    filterTypeBefore: "before",
+    filterTypeAfter: "after",
+    filterTypeBetween: "between",
+    periodDay: "Day",
+    periodMonth: "Month",
+    periodQuarter: "Quarter",
+    periodHalfYear: "Half-year",
+    periodYear: "Year",
+    months:
+      "January,February,March,April,May,June,July,August,September,October,November,December",
+    monthsShort: "Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,Dec",
+    quarters: "Q1,Q2,Q3,Q4",
+    halfYears: "H1,H2",
+    weekdays: "Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday",
+    weekdaysShort: "Su,Mo,Tu,We,Th,Fr,Sa",
+    placeholder: "Select date...",
+    rangePlaceholder: "Select date range...",
   },
 
   templates: {
@@ -2479,6 +2907,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     emailNaoLidos: "unread",
     emailSinalizados: "flagged",
     emailZero: "Inbox zero.",
+    // #1075 RB46-a: part of the card couldn't be read — the numbers are partial.
+    emailParcial: "Some counters couldn't be read.",
     emailAbrir: "Open Bridge",
     todosTitulo: "Tasks",
     todosVazio: "No open tasks.",
@@ -2499,6 +2929,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     densidadeCompacta: "Compact layout",
     reordenar: "Reorder",
     erroCarregar: "Couldn't load.",
+    // #1075 RB46: the card has data, but incomplete — this used to be invisible.
+    todosListasComFalha: "Some lists couldn't be read:",
     tentarNovamente: "Retry",
     semPermissao: "Permission needed.",
     conectar: "Connect",
@@ -2521,6 +2953,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     remote: "Remote",
     // #721 (SH3): pinned-apps group on the rail.
     pinados: "Pinned",
+    // #1109: GALAXIE brand tooltip in the title bar (click = new Navigator tab).
+    abrirNavegador: "New Navigator tab",
   },
 
   // #720 (SH2): command with a categorized app catalog (~1795).
@@ -2578,6 +3012,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     verGrade: "Grid view",
     ocultos: "Show hidden",
     filtro: "Filter",
+    preview: "Toggle details pane",
+    focoBusca: "Search (recursive)",
+    editarCaminho: "Edit path",
   },
 
   controlRoom: {
@@ -2765,6 +3202,20 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     agendaCalSemEventos: "No events",
     agendaCalCarregando: "Loading events",
     agendaCalMais: "more",
+    // #1058: full event-calendar i18n coverage (montarAgendaI18n).
+    agendaAnterior: "Previous",
+    agendaProximo: "Next",
+    agendaSelecionarVisao: "Select view",
+    agendaIrParaData: "Go to date",
+    agendaNaoPodeAqui: "Can't place here",
+    agendaContinua: "continues",
+    agendaHoraDe: "From {valor}",
+    agendaHoraAte: "Until {valor}",
+    agendaSemanaPrefixo: "W",
+    agendaPalavraEvento: "event",
+    agendaPalavraEventos: "events",
+    agendaPalavraDia: "day",
+    agendaPalavraDias: "days",
     agendaEditar: "Edit",
     agendaExcluir: "Delete",
     // Event context menu (#330).
@@ -3220,6 +3671,12 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     filtroDataTitulo: "Filter by date",
     filtroDataDescricao: "Choose a period to filter messages by date.",
     filtroDataDica: "Try: 2025, Q4, 05/10/2025",
+    composeRespostaDescricao: "Reply editor for the selected email.",
+    agendaEventoDetalheDescricao: "Details of the selected event.",
+    novaMensagemDescricao: "New email message composer.",
+    agendaFormDescricao: "Form to create or edit an agenda event.",
+    createFolderDescricao: "Enter the name of the new folder.",
+    renameFolderDescricao: "Enter the new folder name.",
     filtroAplicar: "Apply",
     // Detalhe do evento
     organizador: "Organizer",
@@ -3252,6 +3709,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     previewAltaFidelidade: "High fidelity",
     previewConvertendo: "Converting via Microsoft 365…",
     previewConvertido: "Converted in high fidelity in your OneDrive (Microsoft 365).",
+    previewCarregandoPlanilha: "Loading spreadsheet…",
     responder: "Reply",
     encaminhar: "Forward",
     // Keyboard shortcuts (#28) — catalog for the help modal ("?"). Flat keys.
@@ -3381,6 +3839,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
       "You don't have permission to send using this shared mailbox.",
     caixaEnvioRelogin:
       "Sign in again to send using shared mailboxes.",
+    // #1075 RB46-b: counters couldn't be read — this is NOT "empty folder".
+    pastaContagemIndisponivel: "Couldn't read this folder's items.",
     caixaAcessoParcial:
       "Partial access — you don't have permission to open this folder.",
     pessoaNaoEditavel: "This person is not an editable Microsoft contact.",
@@ -3434,6 +3894,42 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     descricao: "Remote access and support, right from your GALAXIE space.",
   },
 
+  // #687: GALAXIE Remote screen (assisted session) — host + controller.
+  remote: {
+    titulo: "Remote access",
+    permitirSuporte: "Allow support",
+    seuCodigo: "Your session code",
+    digiteCodigo: "Enter session code",
+    conectar: "Connect",
+    conectando: "Connecting…",
+    sessaoAtiva: "Session active",
+    encerrar: "End session",
+    telaCheia: "Fullscreen",
+    codigoInvalido: "Invalid or expired code",
+    // Entry: pick a mode (host = ask for help / controller = give help).
+    escolhaTitulo: "How can we help?",
+    modoHost: "I need support",
+    modoHostDesc: "Share your screen so someone can help you.",
+    modoController: "I'll give support",
+    modoControllerDesc: "Connect to another person's screen to help them.",
+    voltar: "Back",
+    // Host: consent note + waiting for the peer.
+    consentNota:
+      "Anyone with this code can see and control this computer until you end the session. Only share it with someone you trust.",
+    aguardandoPeer: "Waiting for the other person to connect…",
+    copiarCodigo: "Copy code",
+    codigoCopiado: "Copied",
+    // Session states.
+    reconectando: "Reconnecting…",
+    sessaoEncerrada: "Session ended",
+    erroConexao: "Connection error",
+    novaSessao: "New session",
+    // Video (WebCodecs) not supported on this device.
+    codecNaoSuportado: "Video not supported on this device.",
+    // #839: build without the `remote` feature (stubbed commands) — graceful degrade.
+    remoteIndisponivel: "Remote isn't available in this build of the app.",
+  },
+
   caminhosLongos: {
     titulo: "Long paths",
     descricao:
@@ -3468,6 +3964,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #869 — context menu items (pin/unpin a folder to Quick access)
     fixarAcessoRapido: "Pin to Quick access",
     desafixarAcessoRapido: "Unpin from Quick access",
+    // #991 — tree expand/collapse chevron label (Windows Explorer)
+    expandirColapsar: "Expand or collapse",
     carregando: "Loading…",
     documentos: "Documents",
     downloads: "Downloads",
@@ -3507,6 +4005,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     ordTamanho: "Size",
     ordAsc: "Ascending",
     ordDesc: "Descending",
+    pastasPrimeiro: "Folders first",
     viewMenu: "View",
     mais: "More",
     compartilhar: "Share",
@@ -3516,9 +4015,24 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     tipoPasta: "Folder",
     tipoArquivo: "File",
     erroLer: "Couldn't read this folder",
+    // #1028 (FE7): explicit user actions never fail silently.
+    erroCancelarOp: "Couldn't cancel the transfer.",
+    erroPausarOp: "Couldn't pause the transfer.",
+    erroResumirOp: "Couldn't resume the transfer.",
+    erroAbrirArquivo: "Couldn't open the file.",
     // #681 — in-folder filter, hidden toggle, long paths, inspector
     filtrar: "Filter in this folder",
     limparFiltro: "Clear filter",
+    // #985 (US1) — category/type filter (reui/filters widget) + glob
+    filtroTipo: "Type",
+    filtroTipoOperador: "is any of",
+    filtroSelecionados: "selected",
+    filtroSelecione: "Select…",
+    catDocumentos: "Documents",
+    catImagens: "Images",
+    catVideos: "Videos",
+    catAudio: "Audio",
+    catCompactados: "Archives",
     mostrarOcultos: "Show hidden",
     detalhes: "Details",
     tamanhoTotal: "Total size",
@@ -3607,6 +4121,53 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     buscaVazia: "No results.",
     buscaTruncada: "Showing the first 1000 results.",
     limparBusca: "Clear search",
+    // #898 (spike) — Status Center as activity-dropdown + session history
+    atividadesTitulo: "{n} new activities",
+    atividadesTituloVazio: "Activity",
+    atividadesSubtitulo: "What happened with your files",
+    desfazer: "Undo",
+    // #898 (slice 1) — ACTIVE-row controls in the Status Center (pause/resume)
+    pausar: "Pause",
+    retomar: "Resume",
+    statusPausado: "Paused",
+    tempoAgora: "just now",
+    tempoMinAtras: "{n} min ago",
+    tempoHorasAtras: "{n} h ago",
+    tempoOntem: "yesterday",
+    tempoDiasAtras: "{n} days ago",
+    // #898 (slice 2) — terminal summary (session history) in the activity-dropdown.
+    // English participles don't inflect for number → singular == plural form.
+    resumoCopiados: "Copied {n} {arq}",
+    resumoCopiadoUm: "Copied {n} {arq}",
+    resumoMovidos: "Moved {n} {arq}",
+    resumoMovidoUm: "Moved {n} {arq}",
+    resumoCanceladoCopia: "Canceled: copy of {n} {arq}",
+    resumoCanceladoMove: "Canceled: move of {n} {arq}",
+    resumoFalhaCopia: "Failed to copy {n} {arq}",
+    resumoFalhaMove: "Failed to move {n} {arq}",
+    resumoParcial: "Partial: {done} of {total} {arq}",
+    resumoParaDestino: "→ {destino}",
+    arquivoUm: "file",
+    arquivosMuitos: "files",
+    // #967 (#898 slice 4) — per-op "Undo" dialog in the activity-dropdown session
+    // history. Buckets (safe/skipped/not-reversible) + reasons (backend code maps
+    // to these copies) + report toasts.
+    undoTitulo: "Undo operation",
+    undoDescricao:
+      "{seguros} will be reverted · {pulados} skipped · {naoReversiveis} not reversible",
+    undoSeguro: "Will be reverted",
+    undoPulado: "Skipped",
+    undoNaoReversivel: "Not reversible",
+    undoMotivoSumiu: "File no longer exists",
+    undoMotivoModificado: "Modified since the operation",
+    undoMotivoOrigemReocupada: "The source was re-occupied",
+    undoMotivoSobrescrita: "The original was overwritten",
+    undoForaJanela: "Outside the history window — nothing to undo",
+    undoNadaSeguro: "Nothing can be safely reverted",
+    undoDesfeito: "Undone",
+    undoOk: "{n} reverted",
+    undoParcial: "{ok} reverted · {pulados} skipped",
+    undoErro: "Failed to revert {n}",
   },
 
   tema: {
@@ -3653,8 +4214,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     navigatorSearchCustomOpcao: "Custom…",
     navigatorSearchCustomLabel: "Custom search URL",
     navigatorSearchCustomPlaceholder: "https://example.com/search?q=%s",
-    navigatorSearchCustomDicaAntes: "Use",
-    navigatorSearchCustomDicaDepois: "where the search term should go.",
+    navigatorSearchCustomDica: "Use {placeholder} where the search term should go.",
     navigatorTabsSleepTitulo: "Sleeping tabs",
     navigatorTabsSleepDesc:
       "Free memory by putting idle background tabs to sleep. Active and pinned tabs never sleep.",
@@ -3788,6 +4348,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     cfgOrgOff: "Off",
     cfgOrgUnknown: "—",
     cfgOrgCardForbidden: "You don't have permission for this item.",
+    // #1075 RB45: the endpoint doesn't exist in THIS tenant — permanent, no user
+    // action. Distinct from the transient error below.
+    cfgOrgCardIndisponivel: "This feature isn't available in your organization.",
     cfgOrgCardError: "Couldn't load this item.",
     cfgOrgOfficeStore: "Office Store",
     cfgOrgAppsTrial: "Apps & services trials",
@@ -3837,6 +4400,7 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     bridgeAssinaturaExcluir: "Delete signature",
     bridgeAssinaturaEditarTitulo: "Edit signature",
     bridgeAssinaturaNovaTitulo: "New signature",
+    bridgeAssinaturaDescricao: "Email signature editor.",
     bridgeCampoNome: "Name",
     bridgeAssinaturaNomePlaceholder: "e.g. Work signature",
     bridgeAssinaturaCampo: "Signature",
@@ -3939,6 +4503,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     carregando: "Loading",
     semResultados: "No results",
     alternarBarra: "Toggle sidebar",
+    limparBusca: "Clear search",
+    abrirSeletor: "Open selector",
+    removerFiltro: "Remove filter",
   },
   plate: {
     link: "Link",
@@ -3951,6 +4518,67 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     linkText: "Text to display",
     editLink: "Edit link",
     abrirNovaAba: "Open link in a new tab",
+    // #973 (US1 do #950): toolbar do editor Plate.
+    undo: "Undo",
+    redo: "Redo",
+    indent: "Indent",
+    outdent: "Outdent",
+    numberedList: "Numbered list",
+    numberedListOptions: "Numbered list options",
+    todo: "To-do list",
+    comment: "Comment",
+    markAsEquation: "Mark as equation",
+    emoji: "Emoji",
+    emojiSearch: "Search",
+    emojiClear: "Clear",
+    aiCommands: "AI commands",
+    textColor: "Text color",
+    backgroundColor: "Background color",
+    highlight: "Highlight",
+    // #950 US2: Plate editor table family (cell menu + borders).
+    mergeCells: "Merge cells",
+    splitCell: "Split cell",
+    cellBorders: "Cell borders",
+    deleteTable: "Delete table",
+    insertRowBefore: "Insert row before",
+    insertRowAfter: "Insert row after",
+    deleteRow: "Delete row",
+    insertColumnBefore: "Insert column before",
+    insertColumnAfter: "Insert column after",
+    deleteColumn: "Delete column",
+    borderTop: "Top Border",
+    borderRight: "Right Border",
+    borderBottom: "Bottom Border",
+    borderLeft: "Left Border",
+    borderNone: "No Border",
+    borderOutside: "Outside Borders",
+    // #950 US3: Plate editor media family (image/video/audio/file/embed).
+    captionPlaceholder: "Write a caption...",
+    embedLinkPlaceholder: "Paste the embed link...",
+    addAudio: "Add an audio file",
+    addFile: "Add a file",
+    addImage: "Add an image",
+    addVideo: "Add a video",
+    insertAudio: "Insert Audio",
+    insertFile: "Insert File",
+    insertImage: "Insert Image",
+    insertVideo: "Insert Video",
+    maisOpcoes: "More options",
+    uploadDoComputador: "Upload from computer",
+    inserirViaUrl: "Insert via URL",
+    urlInvalida: "Invalid URL",
+    aceitar: "Insert",
+    cancelar: "Cancel",
+    embedYoutubeTitle: "YouTube video",
+    embedTitle: "Embedded content",
+    // #950 US4: Plate editor code family (code block + code drawing).
+    formatCode: "Format code",
+    searchLanguage: "Search language...",
+    noLanguageFound: "No language found.",
+    exportar: "Export",
+    excluir: "Delete",
+    enterCode: "Enter your code here...",
+    codeDrawing: "Code drawing",
   },
   sons: {
     "mixkit-guitar-stroke-down-slow-2339": "Slow guitar stroke",

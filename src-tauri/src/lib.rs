@@ -3,6 +3,8 @@ mod bookmarks;
 mod browser;
 mod config;
 mod domain_claim;
+// #1073 (RB10): wrapper DPAPI único (antes duplicado em auth.rs + lock_screen.rs).
+mod dpapi;
 mod estado;
 mod favicon;
 mod fs_explorer;
@@ -18,6 +20,10 @@ mod remote;
 #[cfg(not(feature = "remote"))]
 #[path = "remote_stub.rs"]
 mod remote;
+// #1129 L1: identidade Ed25519 do device (custódia da chave no Rust + DPAPI-NG).
+// Sempre compilado — independe da feature `remote` (é só assinatura/DPAPI, não o
+// runtime de mídia).
+mod remote_identity;
 mod salvar_pdf;
 mod system;
 mod telemetry;
@@ -125,12 +131,41 @@ async fn dominio_verificar(dominio: String, registro: String) -> Result<bool, St
 #[tauri::command]
 async fn logout(state: State<'_, Store>) -> Result<(), String> {
     let store = state.inner().clone();
-    *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = None;
-    // #693: revoga/limpa a sessão pela abstração de provider.
-    auth::provider_de(auth::Provider::Microsoft).revoke();
-    estado::limpar_identidade();
+    limpar_sessao_conta(&store)?;
+    // Logout TOTAL (sai do app): além da sessão de conta, zera o PIN de bloqueio.
     lock_screen::resetar()?;
     Ok(())
+}
+
+/// #1257 (P0): limpa TODA a sessão de CONTA no Rust — token em memória
+/// (`store.inner`), sessão persistida no disco (`sessao.bin`, via `revoke`),
+/// identidade em cache e o memo curto do Graph. É o funil único da fronteira de
+/// conta: o `resetSessaoCompleta` do front chama isto (awaited) pra a conta anterior
+/// NÃO sobreviver à janela do novo login. **NÃO** toca no PIN de bloqueio (é
+/// device-level, não pertence à conta — trocar de conta não pode zerar o PIN).
+///
+/// Fica DEPOIS do `logout` de propósito: o contrato do `login` (provider-login-
+/// contract) fatia `login`→`logout`, e este helper cita `provider_de(Microsoft)`
+/// (o `revoke`) — se caísse no meio, o teste veria "login fixa Microsoft".
+fn limpar_sessao_conta(store: &TokenStore) -> Result<(), String> {
+    *store.inner.lock().map_err(|_| "estado de token corrompido".to_string())? = None;
+    // #693: revoga/limpa a sessão persistida pela abstração de provider.
+    auth::provider_de(auth::Provider::Microsoft).revoke();
+    estado::limpar_identidade();
+    graph::limpar_memo_sessao(); // memo curto do Graph (senão serve a caixa anterior por ~2,5s)
+    Ok(())
+}
+
+/// #1257 (P0): fecha o vazamento de sessão entre contas. A fronteira de conta
+/// (troca/login novo) chama isto — awaited — pra limpar o token/sessão da conta
+/// anterior no Rust ANTES de adquirir o novo, sem zerar o PIN (o `logout` completo
+/// é que zera o PIN). Sem isto, um login cancelado/interrompido deixava o token
+/// da conta anterior vivo em memória e no disco (`sessao.bin`), e o Bridge servia
+/// a caixa dela.
+#[tauri::command]
+async fn clear_account_session(state: State<'_, Store>) -> Result<(), String> {
+    let store = state.inner().clone();
+    limpar_sessao_conta(&store)
 }
 
 #[tauri::command]
@@ -300,27 +335,9 @@ async fn onedrive_tipos(
         .map_err(|e| e.to_string())?
 }
 
-/// Control room: proximas reunioes do usuario.
-#[tauri::command]
-async fn cr_reunioes(state: State<'_, Store>) -> Result<Vec<graph::Reuniao>, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_reunioes(&store))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-/// Control room: caixa de entrada (nao-lidos + recentes).
-#[tauri::command]
-async fn cr_email(state: State<'_, Store>) -> Result<graph::CaixaEntrada, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_email(&store))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
 /// Control room: tarefas pendentes do To Do.
 #[tauri::command]
-async fn cr_tarefas(state: State<'_, Store>) -> Result<Vec<graph::Tarefa>, String> {
+async fn cr_tarefas(state: State<'_, Store>) -> Result<graph::TarefasResultado, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || graph::cr_tarefas(&store))
         .await
@@ -412,19 +429,6 @@ async fn cr_evento_corpo(
         .map_err(|e| e.to_string())?
 }
 
-/// Control room: e-mails recebidos no dia escolhido (limites ISO UTC).
-#[tauri::command]
-async fn cr_inbox_dia(
-    state: State<'_, Store>,
-    inicio: String,
-    fim: String,
-) -> Result<Vec<graph::EmailItem>, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_inbox_dia(&store, &inicio, &fim))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
 /// Control room: corpo completo de um e-mail.
 #[tauri::command]
 async fn cr_email_corpo(
@@ -486,11 +490,14 @@ async fn cr_criar_categoria(
 async fn cr_criar_evento(
     state: State<'_, Store>,
     input: graph::EventoInput,
+    mailbox: Option<String>,
 ) -> Result<String, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_criar_evento(&store, input))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_criar_evento(&store, input, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Agenda: edita um evento existente (#211). Calendars.ReadWrite.
@@ -499,11 +506,14 @@ async fn cr_editar_evento(
     state: State<'_, Store>,
     id: String,
     input: graph::EventoInput,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_editar_evento(&store, &id, input))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_editar_evento(&store, &id, input, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Agenda (#213): reagenda um evento arrastando — PATCH só de start/end/isAllDay,
@@ -516,10 +526,11 @@ async fn cr_reagendar_evento(
     fim: String,
     dia_inteiro: bool,
     time_zone: String,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_reagendar_evento(&store, &id, &inicio, &fim, dia_inteiro, &time_zone)
+        graph::cr_reagendar_evento(&store, &id, &inicio, &fim, dia_inteiro, &time_zone, mailbox.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -531,11 +542,14 @@ async fn cr_reagendar_evento(
 async fn cr_evento_recorrencia(
     state: State<'_, Store>,
     id: String,
+    mailbox: Option<String>,
 ) -> Result<Option<graph::Recorrencia>, String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_evento_recorrencia(&store, &id))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_evento_recorrencia(&store, &id, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Agenda: exclui um evento (#211). Calendars.ReadWrite.
@@ -543,11 +557,14 @@ async fn cr_evento_recorrencia(
 async fn cr_excluir_evento(
     state: State<'_, Store>,
     id: String,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_excluir_evento(&store, &id))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_excluir_evento(&store, &id, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Agenda: cancela um evento organizado pelo usuário (#260), enviando o
@@ -558,11 +575,14 @@ async fn cr_cancelar_evento(
     state: State<'_, Store>,
     id: String,
     comentario: String,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_cancelar_evento(&store, &id, &comentario))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        graph::cr_cancelar_evento(&store, &id, &comentario, mailbox.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Agenda: responde a um convite de reunião (#287) — RSVP Aceitar/Talvez/Recusar
@@ -574,10 +594,11 @@ async fn cr_responder_evento(
     resposta: String,
     enviar_resposta: bool,
     comentario: String,
+    mailbox: Option<String>,
 ) -> Result<(), String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_responder_evento(&store, &id, &resposta, enviar_resposta, &comentario)
+        graph::cr_responder_evento(&store, &id, &resposta, enviar_resposta, &comentario, mailbox.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -734,15 +755,25 @@ async fn cr_enviar_novo(
 
 /// Compositor: sobe um arquivo pro OneDrive e devolve um link de
 /// compartilhamento (view/organization). Files.ReadWrite.
+///
+/// SEC6 #1044: o front passa só o CAMINHO escolhido no diálogo; o backend lê os
+/// bytes do disco pelo funil único de leitura (`ler_bytes_cru` — path válido, é
+/// arquivo, ≤25MB) e sobe os bytes CRUS, sem base64 do arquivo inteiro no WebView
+/// e sem a capability `fs:allow-read-file` aberta.
 #[tauri::command]
-async fn cr_compartilhar_onedrive(
+async fn cr_compartilhar_onedrive_arquivo(
     state: State<'_, Store>,
-    nome: String,
-    conteudo_b64: String,
+    caminho: String,
 ) -> Result<String, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_compartilhar_onedrive(&store, &nome, &conteudo_b64)
+        let bytes = fs_explorer::ler_bytes_cru(&caminho, None).map_err(|e| e.to_string())?;
+        let nome = std::path::Path::new(&caminho)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("arquivo");
+        graph::compartilhar_onedrive_bytes(&store, nome, bytes)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -799,7 +830,7 @@ async fn gdrive_settings_write(
 async fn cr_salvar_contatos(
     state: State<'_, Store>,
     pessoas: Vec<graph::Pessoa>,
-) -> Result<u64, String> {
+) -> Result<graph::SalvarContatosResultado, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || graph::cr_salvar_contatos(&store, pessoas))
         .await
@@ -1035,7 +1066,7 @@ async fn cr_people_company_write(
     state: State<'_, Store>,
     contact_ids: Vec<String>,
     company_name: String,
-) -> Result<graph::PeopleCompanyWriteResult, String> {
+) -> Result<graph::PeopleWriteResult, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         graph::cr_people_company_write(&store, contact_ids, &company_name)
@@ -1049,7 +1080,7 @@ async fn cr_people_details_write(
     state: State<'_, Store>,
     contact_ids: Vec<String>,
     changes: Vec<graph::PeopleBulkDetailsChange>,
-) -> Result<graph::PeopleBulkDetailsWriteResult, String> {
+) -> Result<graph::PeopleWriteResult, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         graph::cr_people_details_write(&store, contact_ids, changes)
@@ -1312,23 +1343,6 @@ async fn cr_filtrar(
     })
     .await
     .map_err(|e| e.to_string())?
-}
-
-/// Control room: conta na pasta inteira as mensagens que batem com um filtro
-/// ("flagged" | "anexos"), via endpoint /$count do Graph.
-#[tauri::command]
-async fn cr_contar(
-    state: State<'_, Store>,
-    folder_id: String,
-    filtro: String,
-    mailbox: Option<String>,
-) -> Result<u64, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_contar(&store, &folder_id, &filtro, mailbox.as_deref())
-    })
-        .await
-        .map_err(|e| e.to_string())?
 }
 
 /// Control room: os dois contadores por-pasta das abas (Sinalizados / Com anexos)
@@ -1706,6 +1720,36 @@ async fn open_url(url: String) -> Result<(), String> {
 /// entao a pessoa entra uma vez aqui dentro e a sessao fica guardada para as
 /// proximas. Em maquina ingressada no Entra, o SSO do Windows costuma resolver
 /// sozinho.
+/// #1044 SEC11: sufixo-allowlist dos domínios registráveis da Microsoft/M365. Só um
+/// host que casa (igual OU subdomínio) pode abrir uma janela de app interno, que
+/// compartilha o perfil WebView2 autenticado. Todos os apps do catálogo M365 vivem
+/// nestes domínios; um host fora é recusado (fecha o vetor de phishing de sessão).
+fn host_m365_permitido(host: &str) -> bool {
+    const DOMINIOS_M365: &[&str] = &[
+        "microsoft.com",
+        "microsoft365.com",
+        "office.com",
+        "office365.com",
+        "office.net",
+        "sharepoint.com",
+        "microsoftonline.com",
+        "live.com",
+        "outlook.com",
+        "onedrive.com",
+        "dynamics.com",
+        "powerbi.com",
+        "powerapps.com",
+        "power.microsoft.com",
+        "azure.com",
+        "cloud.microsoft",
+        "skype.com",
+    ];
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    DOMINIOS_M365
+        .iter()
+        .any(|d| host == *d || host.ends_with(&format!(".{d}")))
+}
+
 #[tauri::command]
 async fn abrir_app_interno(
     app: tauri::AppHandle,
@@ -1731,7 +1775,16 @@ async fn abrir_app_interno(
         return Ok(());
     }
 
-    let destino = url.parse().map_err(|_| "endereco invalido".to_string())?;
+    let destino: tauri::Url = url.parse().map_err(|_| "endereco invalido".to_string())?;
+    // #1044 SEC11: a janela de APP INTERNO compartilha o perfil WebView2 AUTENTICADO
+    // (a sessão M365). Um host arbitrário aqui abriria uma página no contexto logado —
+    // phishing/roubo de sessão. Só hosts Microsoft/M365 (os apps do catálogo vivem
+    // todos neles) podem abrir. (O browser GERAL — `browser_abrir` — não dá pra
+    // allowlistar sem quebrar a navegação; a mitigação dele é isolamento de perfil,
+    // registrada à parte.)
+    if !destino.host_str().is_some_and(host_m365_permitido) {
+        return Err("host nao autorizado para app interno (apenas Microsoft/M365)".into());
+    }
     tauri::WebviewWindowBuilder::new(&app, &rotulo, tauri::WebviewUrl::External(destino))
         .title(titulo)
         .inner_size(1280.0, 860.0)
@@ -1798,6 +1851,82 @@ fn telemetry_debug_dump(
     state.debug_dump()
 }
 
+/// #1104 / fecha TODO(#687): URL de PROD do signaling Remote (S0). O front (WS em
+/// TS) conecta AQUI, então isto vive no `lib.rs` (sempre compilado) e NÃO no
+/// módulo `remote` gated por feature/OpenSSL.
+const REMOTE_SIGNALING_DEFAULT_PROD: &str = "wss://telemetry.thegalaxie.cloud/remote/v1/ws";
+
+/// Resolve o endpoint a partir de (runtime env, baked em compile-time). Puro pra
+/// ser testável sem tocar no env global do processo. Espelha o `config_var` da
+/// telemetria (`telemetry.rs`) — runtime > compile-time > default — MAS o default
+/// aqui NÃO é fail-closed: é a URL de PROD real, pra o Remote conectar
+/// out-of-the-box sem recompilar.
+fn resolver_signaling_endpoint(runtime: Option<String>, baked: Option<&'static str>) -> String {
+    runtime
+        .filter(|valor| !valor.is_empty())
+        .or_else(|| baked.map(str::to_owned))
+        .filter(|valor| !valor.is_empty())
+        .unwrap_or_else(|| REMOTE_SIGNALING_DEFAULT_PROD.to_owned())
+}
+
+/// #1104 / fecha TODO(#687): endpoint do signaling Remote vem de config, não de
+/// constante no front. Runtime env (dev/CI) > baked em compile-time (o
+/// `release.yml` pode injetar) > default de PROD.
+#[tauri::command]
+fn remote_signaling_endpoint() -> String {
+    resolver_signaling_endpoint(
+        std::env::var("GALAXIE_REMOTE_SIGNALING_URL").ok(),
+        option_env!("GALAXIE_REMOTE_SIGNALING_URL"),
+    )
+}
+
+/// #1129 A1: deriva o endpoint `/v2/ws` a partir do endpoint v1 resolvido,
+/// trocando SÓ o sufixo de path `/v1/ws` → `/v2/ws` (mantém host/scheme/env
+/// override). Puro pra ser testável. Regra robusta pra um override que não siga
+/// a convenção:
+///   1. Se houver `/v1/ws` (a forma canônica), troca a ÚLTIMA ocorrência.
+///   2. Senão, se houver um segmento `/v1` (ex.: `.../remote/v1`), troca a última
+///      ocorrência de `/v1` por `/v2`.
+///   3. Senão, devolve INALTERADO — o probe v2 é best-effort e não-crítico: um
+///      endpoint sem marcador de versão simplesmente falha o probe (logado) sem
+///      NUNCA afetar o caminho v1. Não inventamos um path que o server não expõe.
+fn derivar_signaling_endpoint_v2(v1: &str) -> String {
+    if let Some(pos) = v1.rfind("/v1/ws") {
+        let mut out = String::with_capacity(v1.len());
+        out.push_str(&v1[..pos]);
+        out.push_str("/v2/ws");
+        out.push_str(&v1[pos + "/v1/ws".len()..]);
+        return out;
+    }
+    if let Some(pos) = v1.rfind("/v1") {
+        let mut out = String::with_capacity(v1.len());
+        out.push_str(&v1[..pos]);
+        out.push_str("/v2");
+        out.push_str(&v1[pos + "/v1".len()..]);
+        return out;
+    }
+    v1.to_owned()
+}
+
+/// #1129 A1: endpoint do plano de controle v2 (`/v2/ws`), derivado do v1. Comando
+/// SEPARADO (não estende `remote_signaling_endpoint`) — a MENOR mudança que não
+/// quebra o consumidor atual, que espera uma `String` (mudar o retorno pra um
+/// objeto `{v1,v2}` obrigaria a mexer no `remoteSignalingEndpoint` do front).
+#[tauri::command]
+fn remote_signaling_endpoint_v2() -> String {
+    derivar_signaling_endpoint_v2(&remote_signaling_endpoint())
+}
+
+/// #1129 A1: canal de log de INFO/diagnóstico do Remote que chega ao arquivo do
+/// `tauri-plugin-log` (nível Info; ver o setup do plugin). Espelha o
+/// `log_frontend_error` (que loga em Error) — o front não tinha ponte de INFO, só
+/// de erro. Usado pelo probe v2 pra registrar, NÃO-silenciosamente, o motivo do
+/// fallback pro v1. `sync`, fire-and-forget: só formata e loga, sem I/O.
+#[tauri::command]
+fn remote_log(msg: String) {
+    log::info!("[remote] {msg}");
+}
+
 /// Navigator (#176): importa favoritos do Chrome/Edge lendo SOMENTE o arquivo
 /// `Bookmarks` (JSON) de cada perfil. Nunca le `Login Data`/credenciais. Devolve
 /// a arvore por navegador+perfil; ausencia degrada em lista vazia (sem panico).
@@ -1850,10 +1979,11 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
-        // Anexos e "compartilhar via OneDrive": seletor de arquivo (dialog) e
-        // leitura dos bytes (fs), ambos chamados pelo front (compor-mensagem).
+        // Anexos e "compartilhar via OneDrive": só o seletor de arquivo (dialog).
+        // A LEITURA dos bytes é do backend (`fs_read_file_bytes` /
+        // `cr_compartilhar_onedrive_arquivo`), não mais do plugin `fs` no front —
+        // SEC6 #1044 fechou a capability `fs:allow-read-file` aberta em `**`.
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         // Lembra tamanho e posicao da janela entre execucoes (salva ao fechar,
         // restaura ao abrir).
         //
@@ -1877,6 +2007,8 @@ pub fn run() {
         // #680 Explorer S4: progresso de copy/move (cancel) + watchers ativos.
         .manage(fs_explorer::ProgressManager::default())
         .manage(fs_explorer::WatcherRegistry::default())
+        // #1047 (SEC7): nonce de sessão da exclusão permanente (single-use + TTL).
+        .manage(fs_explorer::TokenExclusao::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -1985,6 +2117,15 @@ pub fn run() {
             remote::remote_session_signal,
             remote::remote_session_input,
             remote::remote_session_end,
+            // #1104: endpoint do signaling (config, não constante) — sempre compilado.
+            remote_signaling_endpoint,
+            // #1129 A1: endpoint v2 (derivado do v1) + ponte de log INFO do Remote.
+            remote_signaling_endpoint_v2,
+            remote_log,
+            // #1129 L1: custódia da chave do device — chave pública/device_id e
+            // assinatura de registro (PoP). O segredo NUNCA sai do Rust.
+            remote_identity::remote_device_public_key,
+            remote_identity::remote_sign_register,
             login,
             logout,
             current_account,
@@ -2002,8 +2143,6 @@ pub fn run() {
             onedrive_folder_details,
             onedrive_quota,
             onedrive_tipos,
-            cr_reunioes,
-            cr_email,
             cr_tarefas,
             atoms_email,
             cr_tarefa_concluir,
@@ -2011,7 +2150,6 @@ pub fn run() {
             cr_calendarios,
             cr_agenda_calendario,
             cr_evento_corpo,
-            cr_inbox_dia,
             cr_email_corpo,
             cr_email_seguranca,
             cr_categorias,
@@ -2042,6 +2180,7 @@ pub fn run() {
             cr_org_branding,
             cr_multi_tenant,
             reset_session_memo,
+            clear_account_session,
             cr_people_contact_update,
             cr_people_contact_categories,
             cr_people_contact_create,
@@ -2056,7 +2195,7 @@ pub fn run() {
             cr_people_details_write,
             cr_people_interactions,
             cr_enviar_novo,
-            cr_compartilhar_onedrive,
+            cr_compartilhar_onedrive_arquivo,
             onedrive_settings_read,
             onedrive_settings_write,
             gdrive_settings_read,
@@ -2079,7 +2218,6 @@ pub fn run() {
             cr_marcar_lido,
             cr_buscar,
             cr_filtrar,
-            cr_contar,
             cr_contadores,
             cr_insights_remetente,
             cr_esvaziar_pasta,
@@ -2149,10 +2287,12 @@ pub fn run() {
             fs_explorer::fs_create_dir,
             fs_explorer::fs_create_file,
             fs_explorer::fs_rename,
-            fs_explorer::fs_copy,
-            fs_explorer::fs_move,
+            // #1066 (RB21): fs_copy/fs_move legados removidos (política de conflito
+            // divergente + sem caller de UI). A UI usa só o pipeline turbo abaixo.
             fs_explorer::fs_trash,
             fs_explorer::fs_delete_permanent,
+            // #1047 (SEC7): emite o nonce que autoriza UMA exclusão permanente.
+            fs_explorer::fs_delete_permanent_token,
             // #680 S4: progresso + conflito + watcher.
             fs_explorer::fs_copy_with_progress,
             fs_explorer::fs_move_with_progress,
@@ -2172,4 +2312,120 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // #1044 SEC11: só host Microsoft/M365 abre janela de app interno (perfil
+    // autenticado). Se alguém afrouxar o allowlist, o phishing de sessão volta.
+    #[test]
+    fn host_m365_allowlist_aceita_microsoft_e_recusa_o_resto() {
+        // Aceita: domínios M365 e seus subdomínios.
+        for ok in [
+            "outlook.office.com",
+            "teams.microsoft.com",
+            "contoso.sharepoint.com",
+            "login.microsoftonline.com",
+            "office.com",
+            "www.office365.com",
+            "OUTLOOK.OFFICE.COM", // case-insensitive
+        ] {
+            assert!(host_m365_permitido(ok), "deveria aceitar {ok}");
+        }
+        // Recusa: host arbitrário, e ataques de sufixo/prefixo.
+        for mau in [
+            "evil.com",
+            "microsoft.com.evil.com",   // sufixo-fake
+            "notmicrosoft.com",         // não é subdomínio de microsoft.com
+            "sharepoint.com.attacker.io",
+            "microsoftonline.com.br",   // TLD diferente
+            "",
+        ] {
+            assert!(!host_m365_permitido(mau), "deveria recusar {mau}");
+        }
+    }
+
+    // #1104: guarda anti-regressão — o default NUNCA pode voltar a ser o
+    // placeholder `.example` (TLD reservado RFC 2606) que quebrava o WS em prod.
+    #[test]
+    fn signaling_default_e_prod_nao_placeholder() {
+        let ep = resolver_signaling_endpoint(None, None);
+        assert!(
+            !ep.contains(".example"),
+            "endpoint de signaling voltou ao placeholder .example: {ep}"
+        );
+        assert!(
+            ep.starts_with("wss://telemetry.thegalaxie.cloud"),
+            "default de signaling não é a URL de PROD: {ep}"
+        );
+    }
+
+    // Runtime env vazio conta como ausente → cai no default de PROD.
+    #[test]
+    fn signaling_runtime_vazio_cai_no_default() {
+        let ep = resolver_signaling_endpoint(Some(String::new()), None);
+        assert_eq!(ep, REMOTE_SIGNALING_DEFAULT_PROD);
+    }
+
+    // Override de runtime (dev/CI) tem precedência sobre baked e default.
+    #[test]
+    fn signaling_runtime_override_vence() {
+        let ep = resolver_signaling_endpoint(
+            Some("ws://127.0.0.1:9099/remote/v1/ws".to_owned()),
+            Some("wss://baked.example/v1/ws"),
+        );
+        assert_eq!(ep, "ws://127.0.0.1:9099/remote/v1/ws");
+    }
+
+    // O comando real (sem env setado no ambiente de teste) devolve PROD, não `.example`.
+    #[test]
+    fn comando_signaling_endpoint_nao_e_placeholder() {
+        assert!(!remote_signaling_endpoint().contains(".example"));
+    }
+
+    // #1129 A1: a derivação troca SÓ o sufixo `/v1/ws` → `/v2/ws` no default PROD.
+    #[test]
+    fn deriva_v2_do_default_prod() {
+        assert_eq!(
+            derivar_signaling_endpoint_v2(REMOTE_SIGNALING_DEFAULT_PROD),
+            "wss://telemetry.thegalaxie.cloud/remote/v2/ws"
+        );
+    }
+
+    // Preserva host/scheme/porta de um override que segue a convenção `/v1/ws`.
+    #[test]
+    fn deriva_v2_preserva_host_e_porta() {
+        assert_eq!(
+            derivar_signaling_endpoint_v2("ws://127.0.0.1:9099/remote/v1/ws"),
+            "ws://127.0.0.1:9099/remote/v2/ws"
+        );
+    }
+
+    // Fallback robusto: override com `/v1` sem `/ws` troca o segmento de versão.
+    #[test]
+    fn deriva_v2_fallback_segmento_v1() {
+        assert_eq!(
+            derivar_signaling_endpoint_v2("wss://host.example/remote/v1"),
+            "wss://host.example/remote/v2"
+        );
+    }
+
+    // Sem marcador de versão: devolve INALTERADO (não inventa path).
+    #[test]
+    fn deriva_v2_sem_marcador_fica_inalterado() {
+        assert_eq!(
+            derivar_signaling_endpoint_v2("wss://host.example/socket"),
+            "wss://host.example/socket"
+        );
+    }
+
+    // O comando v2 real não é placeholder e casa com a derivação do endpoint v1.
+    #[test]
+    fn comando_signaling_endpoint_v2_deriva_do_v1() {
+        let v2 = remote_signaling_endpoint_v2();
+        assert!(!v2.contains(".example"));
+        assert_eq!(v2, derivar_signaling_endpoint_v2(&remote_signaling_endpoint()));
+    }
 }

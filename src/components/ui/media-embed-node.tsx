@@ -13,6 +13,8 @@ import { ResizableProvider, useResizableValue } from '@platejs/resizable';
 import { PlateElement, withHOC } from 'platejs/react';
 
 import { cn } from '@/lib/utils';
+// #950 US3: rótulos i18n da família mídia (acessor não-hook, #529).
+import { plateLabel } from '@/lib/plate-labels';
 
 import { Caption, CaptionTextarea } from './caption';
 import { MediaToolbar } from './media-toolbar';
@@ -65,7 +67,7 @@ export const MediaEmbedElement = withHOC(
                   <div>
                     <LiteYouTubeEmbed
                       id={embed!.id!}
-                      title="youtube"
+                      title={plateLabel('embedYoutubeTitle')}
                       wrapperClass={cn(
                         'rounded-sm',
                         focused && selected && 'ring-2 ring-ring ring-offset-2',
@@ -100,7 +102,7 @@ export const MediaEmbedElement = withHOC(
                         isVideo && 'border-0',
                         focused && selected && 'ring-2 ring-ring ring-offset-2'
                       )}
-                      title="embed"
+                      title={plateLabel('embedTitle')}
                       src={embed!.url}
                       allowFullScreen
                     />
@@ -128,7 +130,7 @@ export const MediaEmbedElement = withHOC(
             </Resizable>
 
             <Caption style={{ width }} align={align}>
-              <CaptionTextarea placeholder="Write a caption..." />
+              <CaptionTextarea placeholder={plateLabel('captionPlaceholder')} />
             </Caption>
           </figure>
 

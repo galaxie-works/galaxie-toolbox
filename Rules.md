@@ -1,6 +1,6 @@
 # Rules.md — Regras de UI/UX e componentes (GALAXIE)
 
-Regras **obrigatórias** para qualquer agente (Orion, Confucius, subagents) que produz UI ou entrega código neste repo. Ligado ao [`AGENTS.md`](./AGENTS.md). Nasceu das rejeições recorrentes do PO (scrollbar fora do padrão #311, webview órfã #310, ícone info minúsculo #269, árvore custom em vez do registry #176, primário no lugar errado #282, org some no restart #295). **Se a entrega quebra uma regra daqui, o PO reprova.**
+Regras **obrigatórias** para **qualquer agente que produz UI ou entrega código** neste repo — a lista viva do time está no [`WORKFLOW.md`](./WORKFLOW.md) §1, e é lá que ela se mantém atualizada. Ligado ao [`AGENTS.md`](./AGENTS.md). Nasceu das rejeições recorrentes do PO (scrollbar fora do padrão #311, webview órfã #310, ícone info minúsculo #269, árvore custom em vez do registry #176, primário no lugar errado #282, org some no restart #295). **Se a entrega quebra uma regra daqui, o PO reprova.**
 
 ## 1. Componentes — NÃO INVENTAR UI
 - Use os componentes **reui/shadcn LITERAIS do registry**. Instale com `pnpm dlx shadcn@latest add @reui/<componente>` (ou o registry do projeto) e use **como veio** — não recrie árvore, botão, input, sortable, etc. do zero.
@@ -40,9 +40,16 @@ Regras **obrigatórias** para qualquer agente (Orion, Confucius, subagents) que 
 - `aria-label`/`aria-current`/semântica correta; foco visível e ordem de tab sã; alvos clicáveis com tamanho decente.
 
 ## 11. Custo e eficiência do agente (não queimar créditos)
-- Quem **ENTREGA** (Orion/Confucius/subagent) faz só: **build local verde** (`tsc` + `cargo` se tocar Rust + `vite`) + **comentário de evidência conciso** (o que mudou, arquivos, commit, ACs) → PR e **PARA**.
+- Quem **ENTREGA** (qualquer agente de dev ou subagente) faz só: **build local verde** (`tsc` + `cargo` se tocar Rust + `vite`) + **comentário de evidência conciso** (o que mudou, arquivos, commit, ACs) → PR e **PARA**.
 - **A integração + code-QA é do Polaris** (merge da feat, builds, evidência ao mover pra QA Approved). **NÃO** rode um subagente de QA/review separado nem re-revise o código inteiro linha-a-linha — duplica o Polaris e queima o limite semanal.
 - **Subagente só pra tarefa GRANDE** (~150-400k tokens cada). Solo pro pequeno/mecânico. **Sem auditoria/review espontâneo** — achou algo fora do escopo, abre issue curta (finding) e segue.
+- ⚠️ **O ~150-400k é o CUSTO a evitar, não um orçamento a gastar.** O teste é a TAREFA, não o hábito. **Dois sinais de que era pra ser SOLO:**
+  1. **Vais re-revisar o diff linha a linha?** Então já fizeste o entendimento — o subagente só somou custo, não alavancou. Quem revisa linha a linha entende linha a linha; então escreve.
+  2. **É uma mudança FOCADA** (um arquivo, uma função, um spec já escrito por ti ou pelo Altair)? Solo. Subagente é pra trabalho que **não cabe num contexto** ou que **abre em paralelo de verdade** — não pra fatia cirúrgica que tu ias verificar de qualquer jeito.
+  Espec cirúrgica + review linha-a-linha do resultado = **fazer solo com passo extra**. Uma fatia de ~500 linhas com vetor de teste (ex.: codec TURN) é solo.
+
+## 12. Nomenclatura de arquivos
+- kebab-case sempre para nomes de arquivo; domínio em pt-BR, infra/técnico em en.
 
 ---
 *Toda issue de story herda estas regras na Definition of Done. PO reprova entrega que as viole.*

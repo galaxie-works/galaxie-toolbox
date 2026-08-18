@@ -3,6 +3,8 @@
 Instruções operacionais para agentes (Claude e afins) que trabalham neste repositório.
 Escopo atual em foco: **Bridge** (cliente de e-mail dentro do app) + track paralelo de migração.
 
+> 🧭 **[`WORKFLOW.md`](./WORKFLOW.md) é a FONTE DE VERDADE do processo** (time/raias, hierarquia Épico→US→Task, board/colunas, gate de QA por coluna, regras de PR `Closes`/`Ref` + integração, DoD, release). Ele **supersede as seções de processo deste AGENTS.md (§2–§5)** e qualquer outro doc de workflow. Divergiu → o `WORKFLOW.md` vence. Leia primeiro.
+
 > 📐 **[`Rules.md`](./Rules.md) é OBRIGATÓRIO** — regras de UI/UX, uso de componentes (não inventar UI), scrollbar/tema/persistência e **custo/eficiência do agente**. Leia antes de produzir UI ou entregar. Violou uma regra de lá → o PO reprova.
 
 > 🔴 **MÉTODO — atualizado 03/ago/2026 (aprendido na marra: o épico Atoms saiu MEDÍOCRE por "verde = pronto").** Leitura obrigatória de todos os agentes:
@@ -23,13 +25,15 @@ Public client + PKCE, delegado `/me`. Distinção que importa pro roadmap:
 - **GRANTED** = concedido no app registration (admin consent do tenant Galaxie Works Ltd). Disponível **sem novo consent**.
   - 📄 **Fonte única de verdade dos escopos concedidos: [`docs/reference/graph-scopes.md`](./docs/reference/graph-scopes.md)** (atualizado 2026-08-03, **101 escopos** admin-consented). NÃO duplicar a lista aqui — ela driftou (esta seção já esteve com "53"). Sempre conferir o graph-scopes.md.
   - Na tabela do graph-scopes.md, a coluna **"Admin?"** = *exige admin consent?* — **"Não" NÃO significa "não concedido"**; significa que é user-consentable. Todos os 101 já estão concedidos.
-- **REQUESTED** = subconjunto **mínimo** que a app pede no token, em `src-tauri/src/config.rs` const `SCOPES`. Adicionar um escopo já-GRANTED aqui **não** dispara re-consent (admin já consentiu); só exige o usuário **relogar** pra token novo.
+- **REQUESTED** = subconjunto **mínimo** que a app pede no token, em `src-tauri/src/config.rs`, hoje **duas** consts: `SCOPES_BASE` (user-consentable, vale pra conta pessoal/Google) e `SCOPES_ORG` (exige admin consent, só entra em conta org contratada). `scopes_para(tenant)` compõe: BASE no caminho comum, BASE+ORG na org. Adicionar um escopo já-GRANTED aqui **não** dispara re-consent (admin já consentiu); só exige o usuário **relogar** pra token novo.
 
-**REQUESTED hoje** (`config.rs` SCOPES): `openid profile offline_access User.Read User.Read.All Files.ReadWrite Sites.Read.All Calendars.Read Mail.ReadWrite Mail.Send Tasks.ReadWrite People.Read Contacts.ReadWrite` — conferir sempre no `config.rs` (é a fonte).
+**REQUESTED hoje:** conferir direto em `config.rs` — `SCOPES_BASE` (`:113`) e `SCOPES_ORG` (`:120`). **Não duplicar a lista aqui:** a cópia anterior driftou (trazia `Calendars.Read`, quando o real é `Calendars.ReadWrite`, e punha `User.Read.All`/`Sites.Read.All` como base, quando são ORG).
+
+> ⚠️ **Escopo novo vai na const certa.** Se é user-consentable → `SCOPES_BASE`. Se exige admin consent → `SCOPES_ORG`. Pôr um escopo ORG no BASE **quebra o login de conta pessoal**, que não consegue consentir aquilo.
 
 **Implicações:**
-- **Chat.Read (Atoms A6 / #445) JÁ está GRANTED** (graph-scopes.md, seção Teams/Chat). O blocker do widget de Teams é só **adicionar Chat.Read à const `SCOPES` + relogar** — não é consent novo de admin. (Confusão anterior: o "Admin? = Não" foi lido como "não concedido".)
-- **Caixas compartilhadas** — `Mail.*.Shared` já GRANTED; adicionar à `SCOPES` + relogar.
+- **Chat.Read (Atoms A6 / #445) JÁ está GRANTED** (graph-scopes.md, seção Teams/Chat). O blocker do widget de Teams é só **adicionar Chat.Read à `SCOPES_BASE` (é user-consentable) + relogar** — não é consent novo de admin. (Confusão anterior: o "Admin? = Não" foi lido como "não concedido".)
+- **Caixas compartilhadas** — `Mail.*.Shared` já GRANTED **e já presentes na `SCOPES_ORG`**; nada a adicionar (a instrução anterior estava vencida).
 - ⚠️ `Contacts.ReadWrite` já GRANTED (graph-scopes.md; destravou o edit de contato no People).
 - **NÃO usar IMAP/EWS/EAS** apesar de granted — arquitetura é **Graph-only, delegado /me**.
 
@@ -41,14 +45,15 @@ Board **"Galaxie Toolbox"** = `https://github.com/users/galaxie-works/projects/3
 ### Fluxo de colunas (campo Status) e quem move
 | Coluna | Descrição | Quem move |
 |---|---|---|
-| **Backlog** | não iniciado | — |
+| **Backlog** | não iniciado / não priorizado | PO/Polaris |
 | **Ready** | pronto pra pegar | **agente** puxa de Backlog quando combinado |
 | **In progress** | sendo trabalhado | **agente** ao começar a codar |
 | **In review** | em revisão | **agente** ao terminar → dispara o **subagente QA** |
 | **Rejected** | contém problemas | QA ou PO, se reprovar |
 | **QA Approved** | QA aprovou, aguardando PO | **subagente QA** (In review → aqui se passar) |
 | **PO Approved** | aprovado pra release | **usuário/PO** valida QA Approved |
-| **Done - Released** | concluído/lançado | no release |
+| **Done** | Aprovado e completo, **ainda não numa versão cortada** | Polaris |
+| **Released to Production** | Shipou numa versão publicada | Polaris, ao cortar release |
 
 Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pra PO Approved — isso é do usuário (PO), que também **ajusta a Sprint** se necessário.
 
@@ -66,27 +71,34 @@ Regra: o **agente vai só até In review + QA Approved/Rejected**. Nunca move pr
 
 > 📌 **OBRIGATÓRIO ao mover pra QA Approved: postar a EVIDÊNCIA como comentário NA issue** (`gh issue comment N`). Mover o card sem comentar faz o PO abrir a issue, não ver prova, e reprovar com *"Faltam evidências e comentários relativos ao desenvolvimento"* (aconteceu com #31/#76/#94/#96 em 2026-07-27, com código certo). O comentário deve ter: **(1) Desenvolvimento** — o que foi feito, arquivos, decisões, commit hash; **(2) QA** — `tsc`/`cargo` verdes + passos da QA visual e resultado observado + cada AC (Given/When/Then) traçado; **(3) Pro PO validar em runtime** — comportamento dependente de Graph real que o mock não exercita. ⚠️ **Mock ≠ real:** para features de interação (scroll/teclado/hover/tooltip/dados reais), exercitar esses caminhos no mock e listar o que só o PO valida no app — a QA de mock do #40 passou mas o PO achou 5 bugs de interação no app real.
 
-> 🚀 **RELEASE de PO Approved é decisão do agente** (delegado pelo PO em 2026-07-26). Uma vez em **PO Approved**, o agente decide quando **mergear na `main`, cortar release** (bump de versão + tag + notas) e mover pra **Done - Released**, sem cobrar o PO. A autonomia começa em PO Approved (QA Approved→PO Approved continua sendo do PO). Não cortar release com código não-aprovado/rejeitado ainda na `feat` (ex.: rework com `Closes #N` já mergeado) — limpar/reworkar antes.
+> 🚀 **RELEASE não precisa ser cobrado ao PO** (delegado em 2026-07-26): a partir de **PO Approved**, cortar é decisão do time, não do PO. **Quem corta é o Polaris** e o **procedimento canônico é o [`WORKFLOW.md` §7](./WORKFLOW.md)** — bump nos 4 lugares, notas, e **tag `vX.Y.Z` na `feat`** (o `release.yml` dispara no push da tag). Os itens shipados vão pra **Released to Production**.
+>
+> ⚠️ A redação anterior aqui dizia "mergear na `main`" e mover pra "Done - Released". **As duas coisas estão erradas:** a tag nasce na `feat` (a `v0.40.2` está na linha da `feat`, não na `main`) e **não existe coluna "Done - Released"** — o board tem `Done` e `Released to Production` separadas.
+>
+> Não cortar release com código não-aprovado/rejeitado ainda na `feat` (ex.: rework com `Closes #N` já mergeado) — limpar/reworkar antes.
 
 > 🌿 **HIGIENE DE BRANCH E DE `main` (regra do PO, 2026-08-03 — o repo chegou a 138 branches e a `main` 32 commits atrás).** O modelo é **`feat/bridge-email-client` = tronco/develop**, **`main` = release** (o workflow de Release só dispara em **push de tag `v*`** ou dispatch — push na `main` NÃO builda/publica).
-> - **Deletar o branch ao integrar.** Quando o Polaris mergeia teu branch na `feat`, ele **deleta o branch remoto** no mesmo passo (`git push origin --delete <branch>`). Branch mergeado = lixo; não acumular. Worktree de agente: remover ao concluir.
+> - **NÃO deletar o branch ao integrar** (regra do PO — ver §4). Deletar apaga o vínculo da seção **Development** da issue, e isso **já foi motivo de Rejected**. Branch atrelada a issue é rastreável, não é lixo. **A única varredura permitida é a de branches genuinamente órfãs** (sem issue atrelada, da era pré-`gh issue develop`) — hoje são **313 branches remotas** e o saneamento tem card próprio (#1040). Worktree de agente: **essa sim**, remover ao concluir.
+>
+> ⚠️ *Até 2026-08-18 esta seção mandava **remover o branch remoto** no passo de integração — contradizendo o §4 deste mesmo arquivo e induzindo ao erro que o PO reprova. Regra canônica: [`WORKFLOW.md` §5.0](./WORKFLOW.md). (Achado DOC-01 da auditoria #994, US #1018.)*
 > - **`main` nunca deve encalhar.** Alinhar `feat→main` (PR de merge, padrão do repo) a cada release real, e **release incremental a cada ~3 issues** — a `main` não pode passar de ~10 commits atrás da `feat`. Se a fila em QA Approved cresce sem release, o Polaris **cobra o PO** pra validar e cortar.
 > - **Não deixar branch não-mergeado órfão.** Se um rework/WIP não vai ser integrado, decidir: reintegrar ou descartar explicitamente (não deixar boiando anos). O Polaris varre branches não-mergeados no sweep e cobra dono/decisão.
 
 > 💸 **Custo / eficiência — modelo atual de integração (NÃO queimar créditos):**
-> - Quem **ENTREGA** (Orion/Confucius/subagent) faz só: build local verde (`tsc` + `cargo` se tocar Rust + `vite`) + **evidência CONCISA** (o que mudou, arquivos, commit, ACs cobertos) → **PR pra `feat`** e **PARA**.
+> - Quem **ENTREGA** (qualquer agente de dev ou subagente) faz só: build local verde (`tsc` + `cargo` se tocar Rust + `vite`) + **evidência CONCISA** (o que mudou, arquivos, commit, ACs cobertos) → **PR pra `feat`** e **PARA**.
 > - A **integração + code-QA + o move pra QA Approved são do Polaris** (orquestrador). Neste projeto isso **substitui** o "agente dispara subagente QA" da tabela acima — o QA é **centralizado no Polaris**. O agente que entrega **NÃO** roda subagente de QA/review próprio nem re-revisa o código inteiro linha-a-linha (duplica o Polaris e queima o limite semanal).
 > - Subagente **só pra tarefa grande** (~150-400k tokens). Solo pro pequeno/mecânico. **Sem auditoria/review espontâneo**: achou algo fora do escopo → issue curta (finding) e segue. Detalhes em [`Rules.md`](./Rules.md) §11.
+> - ⚠️ **O ~150-400k é o custo a EVITAR, não um orçamento.** Se vais **re-revisar o diff linha a linha**, ou é mudança **focada** (1 arquivo / 1 função / spec já escrito), é **SOLO** — espec cirúrgica + review linha-a-linha = fazer solo com passo caro no meio.
 >
 > ⚠️ **O QA valida a HISTÓRIA e os CRITÉRIOS DE ACEITE (Given/When/Then), não só code review.** Todo prompt de QA deve: ler a issue (`gh issue view N`), extrair história + cada AC, e para CADA AC traçar o caminho do código confirmando que o **Then** é satisfeito. Onde exigir runtime (login Graph), listar explicitamente os ACs que o PO precisa validar no app. `tsc`/`cargo` + code review são necessários mas **não suficientes**. Reprovar se algum AC não for atendido.
 >
 > ⚠️ **NÃO parafrasear os ACs no prompt do QA.** O prompt do orquestrador deve só dizer **qual issue ler** — o QA **puxa o corpo real** (`gh issue view N`), **cita verbatim** os ACs que encontrou lá (prova de que leu a fonte) e valida cada um. Se o QA não conseguiu ler o corpo (ex.: `gh` falhou), ele **REPROVA/avisa** — nunca valida de memória nem da paráfrase. (Erro pego pelo PO no #50, 2026-07-26: QA validou contra a paráfrase do orquestrador.)
 >
-> 🖥️ **O QA PODE validar visualmente** (ACs de layout/estrutura), sem login Graph real. O Vite dev server serve o frontend em `http://localhost:1420`; aberto **fora do Tauri** (browser), o `api.ts` usa **dados MOCK** (`inTauri()` = false). Fluxo do QA: `preview_start {url:"http://localhost:1420"}` → `read_page` (login screen) → `form_input` email + `left_click` "Sign in with Microsoft" (o mock loga qualquer email como usuário fake) → cai no Bridge com dados mock → **`read_page`** inspeciona a árvore de acessibilidade **renderizada** (posição/presença de componentes, estados colapsado/expandido, tema, labels). **`read_page` funciona headless** (não precisa da pane visível); **screenshot** só funciona com a pane exibida. **Limite:** mock ≠ Graph real — comportamento dependente de dados reais (carregar/ordenar e-mail, contadores, `$search`, fotos, autocomplete, 429/retry) continua sendo validação de **runtime do PO**. Use validação visual para todo AC de UI que o mock consiga exercer; deixe explícito quais ACs sobraram pro PO.
+> 🖥️ **Ferramental de QA visual** (validar ACs de layout/estrutura sem login Graph real): vive em [`docs/qa-visual.md`](./docs/qa-visual.md) — é ferramental do gate da **`Lúmen II`**, não instrução de orquestração.
 
 ### IDs (para automação via `gh`/GraphQL)
 - **projId**: `PVT_kwHOD_4JN84BedaN`
-- **Status** (`PVTSSF_lAHOD_4JN84BedaNzhY3dus`): Backlog `f75ad846` · Ready `61e4505c` · In progress `47fc9ee4` · In review `df73e18b` · Rejected `7389544e` · QA Approved `33a59ba9` · PO Approved `9ef1bdac` · Done - Released `98236657`
+- **Status**: a tabela de option-ids das 9 colunas vive **só no [`WORKFLOW.md` §3](./WORKFLOW.md)** — fonte única. Duplicar aqui foi o que produziu a versão de 8 entradas com a coluna inexistente "Done - Released".
 - **Sprint #** (Number): `PVTF_lAHOD_4JN84BedaNzhY3pCE`
 - **Priority** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0o`): Low `79628723` · Normal `0a877460` · High `da944a9c` · Highest `c94b4958`
 - **Size** (`PVTSSF_lAHOD_4JN84BedaNzhY3d0s`): XS `6c6483d2` · S `f784b110` · M `7515a9f1` · L `817d0097` · XL `db339eb2`
@@ -122,7 +134,9 @@ Para **dúvidas de design** (padrão de componente, comportamento de interação
 - **Assignee `galaxie-works`** em TODA issue criada.
 - **Branch ATRELADA à issue**, criada ANTES de editar, com **`gh issue develop <N> --base feat/bridge-email-client --name fix/N-slug`** (ou GraphQL `createLinkedBranch`). Isso liga a branch à issue na seção **Development**. ⚠️ **`git checkout -b` NÃO atrela** — só nomeia; toda issue precisa da branch aparecendo atrelada nela.
 - **PR atrelado** com `Closes #N` (fecha automático no merge). É adicional ao linked branch — juntos dão rastreabilidade issue ↔ branch ↔ PR.
-- PRs vão pra **`feat/bridge-email-client`**; issues **auto-fecham só no merge à `main`** (default branch).
+- PRs vão pra **`feat/bridge-email-client`**, que **É o default branch do repositório** (confirmado: `gh api repos/... --jq .default_branch`). Portanto **`Closes #<US>` preenche a caixa Development E auto-fecha a US no merge à `feat`** — não é preciso chegar à `main`. Ver [`WORKFLOW.md` §5](./WORKFLOW.md) para quando usar `Ref` em vez de `Closes`.
+
+  ⚠️ *Até 2026-08-18 esta linha apontava a `main` como default branch e dizia que a issue só fecharia no merge a ela — **factualmente errado** (o default é a `feat`). Quem lesse isso usaria `Closes` achando que não fechava nada, e fechava a US antes do gate de QA. (Achado DOC-02 da auditoria #994, US #1018.)*
 - **NÃO deletar a branch após o merge** (⚠️ NÃO usar `--delete-branch`). O PO exige que a seção **Development** da issue continue mostrando a branch atrelada; deletar apaga esse vínculo (foi motivo de Rejected). Como toda branch é **atrelada a uma issue** (via `gh issue develop`), elas são rastreáveis — não são "órfãs". Só varrer branches genuinamente órfãs (sem issue, pré-era do linked-branch).
 - Cada feature que mereça commit, comita. `tsc` + `cargo check` verdes antes de PR.
 
@@ -148,3 +162,9 @@ Três travas pra a UI caseira não nascer de novo quando já existe primitivo pr
 $env:GH_TOKEN = $env:GITHUB_PERSONAL_ACCESS_TOKEN
 gh project item-list 3 --owner galaxie-works --format json
 ```
+
+## 8. MSRV / toolchain (decisão #1076 RB14)
+- **MSRV declarado = Rust 1.85** (em `src-tauri/Cargo.toml`, chave `rust-version`).
+- **Por quê:** os crates de `services/` `remote-net`, `remote-capture` e `remote-system-agent` são **edition 2024**, que estabilizou no **Rust 1.85**. O `app` (src-tauri) puxa `galaxie-remote-net` de forma **incondicional** (e os demais sob `--features remote`), então o build real exige ≥1.85 mesmo no perfil default.
+- **Decisão:** alinhar para cima (subir o `rust-version` de `1.77.2`→`1.85`) em vez de rebaixar os crates de services para edition 2021 — a menor mudança que fica **honesta**, sem arriscar features de edition 2024 já em uso. Os crates edition-2024 não declaram `rust-version` próprio (não fazem afirmação falsa); a única declaração incorreta era a do `app`.
+- **Não** rebaixar para <1.85 sem antes migrar esses crates de services para edition 2021.

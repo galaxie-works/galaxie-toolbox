@@ -36,6 +36,9 @@ struct Inner {
     codes: Mutex<HashMap<[u8; 32], AssistedCode>>,
     pairings: RwLock<HashMap<String, String>>,
     limiter: SlidingWindowLimiter,
+    redeem_failures: Mutex<HashMap<IpAddr, RedeemFailState>>,
+    // #1049 T2: tentativas de Register por IP (reusa a mesma forma de janela+backoff).
+    register_attempts: Mutex<HashMap<IpAddr, RedeemFailState>>,
     unattended: Mutex<galaxie_remote_net::authority::UnattendedAuthority>,
     unattended_state_file: Option<PathBuf>,
     unattended_persistence: Mutex<()>,
@@ -68,14 +71,53 @@ pub struct UnattendedSession {
 
 struct AssistedCode {
     creator_device_id: String,
+    // A expiração é imposta por `expires_at: Instant` (checado em `redeem_code`).
+    // #1076 (RB17): NÃO guardamos mais a versão unix-seconds — ela só era repassada
+    // ao resultado do redeem e nunca lida pelo chamador; o valor wall-clock já vai
+    // ao criador via `create_code`. Sem campo morto e sem `#[allow(dead_code)]` nu.
     expires_at: Instant,
-    expires_at_unix_seconds: u64,
 }
 
 struct SlidingWindowLimiter {
     max_events: usize,
     window: Duration,
     events: Mutex<HashMap<IpAddr, VecDeque<Instant>>>,
+}
+
+// SEC13 (#1050): rate-limit dedicado às falhas de `redeem_code` por IP. O limite
+// geral de mensagens (120/min) não encarece a varredura de códigos de 8 dígitos
+// o bastante; este backoff exponencial por-IP torna a força-bruta inviável.
+const REDEEM_MAX_FALHAS: usize = 5;
+const REDEEM_JANELA: Duration = Duration::from_secs(60);
+const REDEEM_BACKOFF_BASE: Duration = Duration::from_secs(2);
+const REDEEM_BACKOFF_MAX: Duration = Duration::from_secs(300);
+// #1049 T2 (adendo §6 do Altair): limitador DEDICADO do Register. Cada Register cunha
+// credencial TURN de 30min; um cliente legítimo registra ~1×/sessão. 5/60s tolera
+// reconexão mas mata o 120/min do balde genérico. Reusa a forma do redeem (janela +
+// ciclos + `duracao_backoff`). NÃO fecha o T2 (isso é o OPAQUE do v2, #1132) — reduz a
+// exposição durante a janela.
+const REGISTER_MAX: usize = 5;
+const REGISTER_JANELA: Duration = Duration::from_secs(60);
+
+// Estado por-IP das falhas de redeem: janela deslizante de falhas + bloqueio ativo.
+#[derive(Default)]
+struct RedeemFailState {
+    falhas: VecDeque<Instant>,
+    bloqueado_ate: Option<Instant>,
+    ciclos: u32,
+}
+
+// Backoff exponencial puro (testável sem sleep): BASE * 2^(ciclos-1), com teto MAX.
+fn duracao_backoff(ciclos: u32) -> Duration {
+    if ciclos == 0 {
+        return Duration::ZERO;
+    }
+    let base = REDEEM_BACKOFF_BASE.as_secs();
+    let teto = REDEEM_BACKOFF_MAX.as_secs();
+    // 2^(ciclos-1) saturando: shift >= 64 vira u64::MAX, evitando overflow em ciclos altos.
+    let fator = 1_u64.checked_shl(ciclos - 1).unwrap_or(u64::MAX);
+    let segundos = base.saturating_mul(fator).min(teto);
+    Duration::from_secs(segundos)
 }
 
 impl AppState {
@@ -166,6 +208,8 @@ impl AppState {
                     window: rate_limit_window,
                     events: Mutex::new(HashMap::new()),
                 },
+                redeem_failures: Mutex::new(HashMap::new()),
+                register_attempts: Mutex::new(HashMap::new()),
                 unattended: Mutex::new(unattended),
                 unattended_state_file,
                 unattended_persistence: Mutex::new(()),
@@ -320,6 +364,84 @@ impl AppState {
         self.inner.limiter.allow(ip).await
     }
 
+    // SEC13: true se o IP pode tentar um redeem agora. Falso enquanto em backoff.
+    pub async fn allow_redeem(&self, ip: IpAddr) -> bool {
+        let now = Instant::now();
+        let mut all = self.inner.redeem_failures.lock().await;
+        let Some(estado) = all.get_mut(&ip) else {
+            return true;
+        };
+        if let Some(ate) = estado.bloqueado_ate {
+            if ate > now {
+                return false;
+            }
+            // backoff expirou: libera novas tentativas (mas preserva `ciclos` p/ escalar).
+            estado.bloqueado_ate = None;
+        }
+        // poda falhas fora da janela para não reter estado velho.
+        let threshold = now.checked_sub(REDEEM_JANELA).unwrap_or(now);
+        while estado.falhas.front().is_some_and(|evento| *evento <= threshold) {
+            estado.falhas.pop_front();
+        }
+        // sem bloqueio e sem falhas recentes: descarta a entrada (economia de memória).
+        if estado.falhas.is_empty() && estado.bloqueado_ate.is_none() {
+            all.remove(&ip);
+        }
+        true
+    }
+
+    // SEC13: registra uma falha de redeem; ao atingir o teto na janela, arma o backoff.
+    pub async fn register_redeem_failure(&self, ip: IpAddr) {
+        let now = Instant::now();
+        let threshold = now.checked_sub(REDEEM_JANELA).unwrap_or(now);
+        let mut all = self.inner.redeem_failures.lock().await;
+        let estado = all.entry(ip).or_default();
+        while estado.falhas.front().is_some_and(|evento| *evento <= threshold) {
+            estado.falhas.pop_front();
+        }
+        estado.falhas.push_back(now);
+        if estado.falhas.len() >= REDEEM_MAX_FALHAS {
+            estado.ciclos = estado.ciclos.saturating_add(1);
+            estado.bloqueado_ate = Some(now + duracao_backoff(estado.ciclos));
+            estado.falhas.clear();
+        }
+    }
+
+    // SEC13: um redeem bem-sucedido zera todo o histórico de falhas do IP.
+    pub async fn clear_redeem_failures(&self, ip: IpAddr) {
+        self.inner.redeem_failures.lock().await.remove(&ip);
+    }
+
+    // #1049 T2 (adendo §6 do Altair): true se o IP pode registrar agora. Diferente do
+    // redeem (que conta FALHAS), aqui conta TODA tentativa — todo Register cunha
+    // credencial TURN, então a própria frequência é o abuso. Ao atingir o teto na
+    // janela, arma o backoff escalante (reusa `duracao_backoff`). Servidor puro,
+    // independente da janela de atualização do cliente.
+    pub async fn allow_register(&self, ip: IpAddr) -> bool {
+        let now = Instant::now();
+        let mut all = self.inner.register_attempts.lock().await;
+        let estado = all.entry(ip).or_default();
+        if let Some(ate) = estado.bloqueado_ate {
+            if ate > now {
+                return false;
+            }
+            // backoff expirou: libera (preserva `ciclos` p/ escalar se reincidir).
+            estado.bloqueado_ate = None;
+        }
+        let threshold = now.checked_sub(REGISTER_JANELA).unwrap_or(now);
+        while estado.falhas.front().is_some_and(|evento| *evento <= threshold) {
+            estado.falhas.pop_front();
+        }
+        if estado.falhas.len() >= REGISTER_MAX {
+            estado.ciclos = estado.ciclos.saturating_add(1);
+            estado.bloqueado_ate = Some(now + duracao_backoff(estado.ciclos));
+            estado.falhas.clear();
+            return false;
+        }
+        estado.falhas.push_back(now);
+        true
+    }
+
     pub async fn register(
         &self,
         device_id: String,
@@ -406,19 +528,19 @@ impl AppState {
         })
     }
 
+    /// Gera as credenciais TURN de curta duração a partir do relógio atual
+    /// (`now + turn_credential_ttl`). #1148: usado no `Registered` E na renovação
+    /// (`RenewIceServers`) — chamar de novo com o relógio adiantado devolve uma
+    /// credencial com `expires_at` novo, sem refazer pareamento.
     pub fn ice_servers(&self, device_id: &str) -> Result<Vec<IceServer>, TurnCredentialError> {
         let expires_at = unix_seconds()?.saturating_add(self.inner.turn_credential_ttl.as_secs());
-        let username = format!("{expires_at}:{device_id}");
-        let mut mac = HmacSha1::new_from_slice(&self.inner.turn_secret)
-            .map_err(|_| TurnCredentialError::InvalidSecret)?;
-        mac.update(username.as_bytes());
-        let credential = BASE64.encode(mac.finalize().into_bytes());
-        Ok(vec![IceServer {
-            urls: self.inner.turn_urls.clone(),
-            username,
-            credential,
-            expires_at_unix_seconds: expires_at,
-        }])
+        let ice = montar_ice_server(
+            &self.inner.turn_urls,
+            &self.inner.turn_secret,
+            device_id,
+            expires_at,
+        )?;
+        Ok(vec![ice])
     }
 
     pub async fn create_code(
@@ -446,7 +568,6 @@ impl AppState {
                 entry.insert(AssistedCode {
                     creator_device_id: creator_device_id.to_owned(),
                     expires_at,
-                    expires_at_unix_seconds,
                 });
                 return Ok((code, expires_at_unix_seconds));
             }
@@ -468,7 +589,6 @@ impl AppState {
         }
         RedeemResult::Ready {
             creator_device_id: entry.creator_device_id,
-            expires_at_unix_seconds: entry.expires_at_unix_seconds,
         }
     }
 
@@ -497,8 +617,6 @@ pub enum RedeemResult {
     Expired,
     Ready {
         creator_device_id: String,
-        #[allow(dead_code)]
-        expires_at_unix_seconds: u64,
     },
 }
 
@@ -549,4 +667,146 @@ fn unix_seconds() -> Result<u64, std::time::SystemTimeError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
+}
+
+/// #1148: monta UMA credencial TURN de curta duração (esquema REST do coturn:
+/// `username = "{expires_at}:{device_id}"`, `credential = base64(HMAC-SHA1(secret,
+/// username))`). PURA em `expires_at` — o `ice_servers` passa `now + ttl`; o teste
+/// passa dois instantes (relógio adiantado) e prova que a renovação gera uma
+/// credencial FRESCA (username/credential diferentes, `expires_at` maior).
+fn montar_ice_server(
+    turn_urls: &[String],
+    turn_secret: &[u8],
+    device_id: &str,
+    expires_at: u64,
+) -> Result<IceServer, TurnCredentialError> {
+    let username = format!("{expires_at}:{device_id}");
+    let mut mac =
+        HmacSha1::new_from_slice(turn_secret).map_err(|_| TurnCredentialError::InvalidSecret)?;
+    mac.update(username.as_bytes());
+    let credential = BASE64.encode(mac.finalize().into_bytes());
+    Ok(IceServer {
+        urls: turn_urls.to_vec(),
+        username,
+        credential,
+        expires_at_unix_seconds: expires_at,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    #[test]
+    fn renovar_gera_credencial_fresca_com_relogio_adiantado() {
+        // #1148: a renovação (RenewIceServers → ice_servers) chamada mais tarde
+        // devolve uma credencial com `expires_at` NOVO e credencial distinta — o
+        // que permite a sessão relayed sobreviver ao TTL. Prova com o relógio
+        // adiantado (t2 > t1) sem depender do relógio real.
+        let urls = vec!["turn:localhost:3478".to_owned()];
+        let secret = b"turn-secret-de-teste";
+        let dev = "device-abc";
+
+        // `expect`/`unwrap` são deny no crate (clippy::expect_used); desembrulha via
+        // match com panic explícito (montar_ice_server só erra com secret inválido).
+        let montar = |exp: u64| match montar_ice_server(&urls, secret, dev, exp) {
+            Ok(v) => v,
+            Err(e) => panic!("montar_ice_server({exp}): {e:?}"),
+        };
+
+        let t1 = 1_000_000u64;
+        let t2 = t1 + 1800; // relógio adiantado 30min (um TTL)
+        let a = montar(t1);
+        let b = montar(t2);
+
+        // expiração renovada pra frente.
+        assert_eq!(a.expires_at_unix_seconds, t1);
+        assert_eq!(b.expires_at_unix_seconds, t2);
+        assert!(b.expires_at_unix_seconds > a.expires_at_unix_seconds);
+        // credencial FRESCA: username embute o novo expires_at e o HMAC muda com ele.
+        assert_ne!(a.username, b.username);
+        assert_ne!(a.credential, b.credential);
+        assert!(b.username.starts_with(&format!("{t2}:")));
+        // o device e as urls não mudam na renovação (não refaz pareamento).
+        assert!(b.username.ends_with(dev));
+        assert_eq!(a.urls, b.urls);
+        // credencial não-vazia e determinística (mesmo instante → mesma credencial).
+        let b2 = montar(t2);
+        assert_eq!(b.credential, b2.credential, "mesmo expires_at → mesma credencial");
+        assert!(!b.credential.is_empty());
+    }
+
+    fn estado_de_teste() -> AppState {
+        AppState::new(
+            SigningKey::from_bytes(&[7_u8; 32]),
+            b"turn-secret-de-teste".to_vec(),
+            vec!["turn:localhost:3478".to_owned()],
+            Duration::from_secs(60),
+            Duration::from_secs(600),
+            Duration::from_secs(600),
+            120,
+            Duration::from_secs(60),
+        )
+    }
+
+    #[tokio::test]
+    async fn register_bloqueia_apos_teto_e_isola_por_ip() {
+        // #1049 T2: diferente do redeem, cada `allow_register` JÁ conta como tentativa
+        // (todo Register cunha credencial). As primeiras REGISTER_MAX passam; a próxima
+        // arma o backoff. Um IP acima do teto não emite mais credencial na janela.
+        let estado = estado_de_teste();
+        let alvo = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
+        for _ in 0..REGISTER_MAX {
+            assert!(estado.allow_register(alvo).await);
+        }
+        assert!(
+            !estado.allow_register(alvo).await,
+            "IP acima do teto de Register deveria estar em backoff"
+        );
+        // Outro IP não é afetado (isolamento por-IP) — legítimo não sofre pelo abuso alheio.
+        let outro = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 11));
+        assert!(estado.allow_register(outro).await);
+    }
+
+    #[tokio::test]
+    async fn redeem_bloqueia_apos_teto_de_falhas_e_isola_por_ip() {
+        let estado = estado_de_teste();
+        let alvo = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+        // Até o teto o IP segue permitido; a falha nº REDEEM_MAX_FALHAS arma o backoff.
+        for _ in 0..REDEEM_MAX_FALHAS {
+            assert!(estado.allow_redeem(alvo).await);
+            estado.register_redeem_failure(alvo).await;
+        }
+        assert!(!estado.allow_redeem(alvo).await, "IP deveria estar em backoff");
+        // Outro IP não é afetado (isolamento por-IP).
+        let outro = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2));
+        assert!(estado.allow_redeem(outro).await);
+    }
+
+    #[tokio::test]
+    async fn sucesso_reabre_o_ip_bloqueado() {
+        let estado = estado_de_teste();
+        let alvo = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 3));
+        for _ in 0..REDEEM_MAX_FALHAS {
+            estado.register_redeem_failure(alvo).await;
+        }
+        assert!(!estado.allow_redeem(alvo).await);
+        // clear_redeem_failures simula o redeem bem-sucedido: zera o histórico.
+        estado.clear_redeem_failures(alvo).await;
+        assert!(estado.allow_redeem(alvo).await);
+    }
+
+    #[test]
+    fn backoff_cresce_exponencialmente_com_teto() {
+        assert_eq!(duracao_backoff(0), Duration::ZERO);
+        assert_eq!(duracao_backoff(1), Duration::from_secs(2));
+        assert_eq!(duracao_backoff(2), Duration::from_secs(4));
+        assert_eq!(duracao_backoff(3), Duration::from_secs(8));
+        assert_eq!(duracao_backoff(4), Duration::from_secs(16));
+        assert_eq!(duracao_backoff(5), Duration::from_secs(32));
+        // Teto de 300s atingido e mantido, sem overflow em ciclos altos.
+        assert_eq!(duracao_backoff(20), Duration::from_secs(300));
+        assert_eq!(duracao_backoff(1000), Duration::from_secs(300));
+    }
 }

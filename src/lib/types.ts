@@ -100,14 +100,7 @@ export interface TipoArquivo {
   quantidade: number;
 }
 
-// --- Control room (dashboard) --------------------------------------------
-export interface Reuniao {
-  assunto: string;
-  inicio: string; // ISO UTC (sem Z; o front adiciona)
-  fim: string;
-  local: string;
-  online: boolean;
-}
+
 
 export interface EmailRecente {
   assunto: string;
@@ -115,9 +108,34 @@ export interface EmailRecente {
   recebido: string;
 }
 
-export interface CaixaEntrada {
-  naoLidos: number;
-  recentes: EmailRecente[];
+
+
+/**
+ * Tarefas do To Do + as listas que NÃO puderam ser lidas (#1075 RB46).
+ *
+ * `listasComFalha` vazio = a agregação está completa. Não vazio = o card tem
+ * dados, mas parciais — estado que a UI antes não conseguia representar: uma
+ * lista que dava 403 contribuía zero tarefas e ficava idêntica a uma lista
+ * vazia.
+ */
+export interface TarefasResultado {
+  tarefas: Tarefa[];
+  listasComFalha: string[];
+}
+
+/**
+ * Resultado de gravar contatos pessoais (#1075 RB46-d).
+ *
+ * Era só `number` (quantos criados). O chamador pedia N contatos, recebia um
+ * número, e não havia canal para "pulei M porque não consegui checar".
+ *
+ * `jaExistiam` é separado de `falhas` de propósito: já existir é o caminho
+ * feliz do dedup, não um problema.
+ */
+export interface SalvarContatosResultado {
+  criados: number;
+  jaExistiam: number;
+  falhas: { email: string; motivo: string }[];
 }
 
 export interface Tarefa {
@@ -375,9 +393,21 @@ export interface PastaEmail {
   naoLidos: number;
   total: number;
   filhos: number; // nº de subpastas — chevron de expandir só aparece quando > 0
-  /** 403 apenas nesta pasta de uma caixa compartilhada; a árvore segue utilizável. */
-  acessoNegado?: boolean;
+  /**
+   * Como foi a leitura dos contadores desta pasta (#1075 RB46-b).
+   *
+   * Era `acessoNegado?: boolean` — dois estados para uma realidade de três. Um
+   * 500 ou uma queda de rede davam `false` com `naoLidos: 0, total: 0`, e a
+   * pasta aparecia **vazia**. Faltava o "não sei".
+   *
+   * - `ok` — contadores são fato.
+   * - `negado` — 403 nesta pasta da caixa compartilhada; árvore segue utilizável (#112).
+   * - `indisponivel` — não deu para ler; os contadores NÃO podem ser exibidos.
+   */
+  leitura: LeituraPasta;
 }
+
+export type LeituraPasta = "ok" | "negado" | "indisponivel";
 
 /**
  * Insights do remetente (#94): resumo do relacionamento com um endereço,
@@ -544,8 +574,18 @@ export interface PeopleEnrichApplyResult {
   writeAvailable: boolean;
 }
 
-/** Resultado por contato do write-back Company ↔ Organization (#288). */
-export interface PeopleCompanyWriteResult {
+/**
+ * Resultado por contato de uma escrita em lote de People (#288, #1074 RB37).
+ *
+ * Servia `cr_people_company_write` e `cr_people_details_write` em duas
+ * interfaces com os mesmos tres campos. Do lado Rust as duas viraram
+ * `PeopleWriteResult` sobre o motor unico `patch_contatos_em_lote`; aqui
+ * seguem o mesmo caminho.
+ *
+ * `savedContactIds` + `failedContactIds` cobre todo ID nao duplicado que
+ * entrou: ID invalido cai em `failed`, nao some.
+ */
+export interface PeopleWriteResult {
   writeAvailable: boolean;
   savedContactIds: string[];
   failedContactIds: string[];
@@ -559,12 +599,6 @@ export type PeopleBulkDetailsField =
 export interface PeopleBulkDetailsChange {
   field: PeopleBulkDetailsField;
   value: string | null;
-}
-
-export interface PeopleBulkDetailsWriteResult {
-  writeAvailable: boolean;
-  savedContactIds: string[];
-  failedContactIds: string[];
 }
 
 export interface PeopleContactEdit {

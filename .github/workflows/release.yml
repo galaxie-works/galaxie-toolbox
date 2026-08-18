@@ -21,7 +21,16 @@ env:
   REPO_DISTRIBUICAO: galaxie-works/galaxie-toolbox-releases
 
 jobs:
+  # #1056 (TST-05): o release publicava com gate MENOR que o de PR — rodava só
+  # `pnpm test` antes do `tauri build`, sem lint, sem test:component e sem
+  # test:browser. Um PR que reprovasse neles não integrava; uma tag que
+  # reprovaria era publicada. Agora chama a MESMA definição que o `ci.yml`.
+  gate-front:
+    uses: ./.github/workflows/gate-front.yml
+
   windows:
+    # O build só começa depois do gate passar.
+    needs: gate-front
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -39,11 +48,25 @@ jobs:
         with:
           run_install: false
 
+      # #1056 (TST-08): o path era `~/.pnpm-store`, que o pnpm 11 NÃO usa (o
+      # store fica em `~/.local/share/pnpm/store/<v>` no Linux e em
+      # `%LOCALAPPDATA%\pnpm\store\<v>` no Windows). O step salvava um
+      # diretório vazio e restaurava nada — cache que AFIRMA e não confere.
+      # Agora o caminho vem do próprio pnpm, em vez de literal.
+      - name: Descobrir o store do pnpm
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
       - name: Cache do pnpm
         uses: actions/cache@v4
         with:
-          path: ~/.pnpm-store
+          path: ${{ steps.pnpm-store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          # Sem `restore-keys` um lockfile novo perdia o cache INTEIRO; com ele
+          # o run parte do store da última key do mesmo SO.
+          restore-keys: |
+            pnpm-${{ runner.os }}-
 
       - name: Rust
         uses: dtolnay/rust-toolchain@stable
@@ -61,8 +84,15 @@ jobs:
       # Os testes (node:test) rodam ANTES do build do Rust — que domina o tempo.
       # Uma regressão barra o release aqui em segundos, sem gastar a compilação
       # inteira só pra descobrir que a versão não deveria sair.
-      - name: Testes
-        run: pnpm test
+      # O `pnpm test` saiu daqui: o job `gate-front` (mesma definição do CI) já
+      # roda os 3 canais + lint antes deste job começar (`needs`). Mantê-lo aqui
+      # seria rodar o mais fraco dos três de novo, no runner caro do Windows.
+
+      # O `openssl/vendored` (ligado pela feature `remote`) compila o OpenSSL a
+      # partir do fonte, e no Windows esse build precisa do NASM para as rotinas
+      # em assembly. O Perl já vem na imagem (Strawberry).
+      - name: NASM (para o OpenSSL vendored do Remote)
+        uses: ilammy/setup-nasm@v1
 
       - name: Compilar e assinar
         env:
@@ -77,7 +107,11 @@ jobs:
           GALAXIE_TELEMETRY_INGEST_EMAIL: ${{ secrets.GALAXIE_TELEMETRY_INGEST_EMAIL }}
           GALAXIE_TELEMETRY_INGEST_TOKEN: ${{ secrets.GALAXIE_TELEMETRY_INGEST_TOKEN }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-        run: pnpm tauri build
+        # `--features remote` é o que faz o instalador levar o backend do GALAXIE
+        # Remote de verdade (str0m/WebRTC + captura + input). SEM ele o bundle sai
+        # com o `remote_stub` e todo comando `remote_*` responde "não compilado" —
+        # o recurso chega MORTO no usuário, que foi o caso até a v0.40.2 inclusive.
+        run: pnpm tauri build --features remote
 
       # A assinatura é o ponto do processo inteiro: sem o .sig o aplicativo
       # instalado recusa a atualização, então a ausência dele para o release

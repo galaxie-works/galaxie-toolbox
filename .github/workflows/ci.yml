@@ -18,10 +18,24 @@ permissions:
   contents: read
 
 jobs:
-  # Front-end: typecheck + build + lint + testes. Roda no ubuntu (rápido/barato);
-  # o build do Vite é puro JS, não precisa das libs nativas do Tauri.
+  # Front-end: typecheck + build + lint + os 3 canais de teste.
+  #
+  # #1056 (TST-05): os steps saíram daqui para `gate-front.yml` (`workflow_call`).
+  # O `release.yml` chama o MESMO arquivo — antes ele rodava só `pnpm test` antes
+  # do `tauri build`, então a tag publicava com gate menor que o de PR. Uma
+  # definição, dois chamadores: não há como um caminho ficar mais fraco.
   frontend:
+    uses: ./.github/workflows/gate-front.yml
+
+  # #786 + #1262: navegador REAL (Playwright/chromium) — o único canal que pega
+  # foco/ponteiro de verdade. Job SEPARADO e com TETO:
+  #   • separado, porque ele não pode bloquear o release (o `gate-front` bloqueia);
+  #   • com teto, porque em 18/08 ele ficou 45+ min pendurado sem reprovar nem
+  #     terminar, e "pendurado" se disfarça de "rodando" até alguém olhar o relógio.
+  # O teto transforma o travamento em FALHA VISÍVEL. Causa raiz: card à parte.
+  browser:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,42 +50,84 @@ jobs:
         with:
           run_install: false
 
+      - name: Descobrir o store do pnpm
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
       - name: Cache do pnpm
         uses: actions/cache@v4
         with:
-          path: ~/.pnpm-store
+          path: ${{ steps.pnpm-store.outputs.path }}
           key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
 
       - name: Instalar dependências
         run: pnpm install --frozen-lockfile
 
-      # `pnpm build` = `tsc -b && vite build` — cobre typecheck E o build do Vite.
-      - name: Build (tsc + vite)
-        run: pnpm build
+      - name: Cache do browser (Playwright)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
 
-      - name: Lint (oxlint)
-        run: pnpm lint
-
-      - name: Testes (node:test)
-        run: pnpm test
-
-      # #786: testes de COMPONENTE (vitest + happy-dom) — exercitam a interação
-      # real com o Base UI (Combobox do compose) que o node:test não cobre.
-      - name: Testes de componente (vitest)
-        run: pnpm test:component
-
-      # #786: testes em NAVEGADOR REAL (vitest browser-mode / Playwright chromium)
-      # — foco/ponteiro de verdade, o único jeito de guardar a recorrência do
-      # erase do compose. Precisa do browser instalado no runner.
       - name: Instalar chromium (Playwright)
         run: pnpm exec playwright install --with-deps chromium
 
       - name: Testes em navegador (vitest browser-mode)
         run: pnpm test:browser
 
-  # Rust/Tauri: cargo check + testes. Roda no windows-latest (mesma plataforma do
-  # release, evita as libs de sistema que o Tauri exige no Linux). O rust-cache
-  # deixa rápido quando o Rust não mudou.
+  # Rust/Tauri: compila e testa o Remote REAL (não o `remote_stub`) + os 6 crates
+  # de services/. Roda no windows-latest (mesma plataforma do release, evita as
+  # libs de sistema que o Tauri exige no Linux). O rust-cache deixa rápido quando
+  # o Rust não mudou. US #1072 (fundação) + #1038 (cobertura).
+  #
+  # POR QUE existe: até aqui o job rodava só `cargo check`/`cargo test` default no
+  # src-tauri — ou seja, compilava o STUB, nunca o Remote. Isso deixou passar pra
+  # produção instalador com stub (até v0.40.2), shape errado dos `remote_*` (#1071)
+  # e candidato ICE `0.0.0.0` (#1108): todo bug do Remote era achado em prod.
+  #
+  # O QUE É COBERTO aqui:
+  #   • src-tauri  --features remote  → app + remote-transport(webrtc,input) +
+  #     remote-capture + if-addrs + openssl/vendored (str0m/WebRTC + captura +
+  #     input). Roda os testes unit do Remote (stun, candidato ICE host, derivação
+  #     do signaling v2, remote_identity, contrato remote_*…): 206 testes.
+  #   • remote-transport  input,audio → 32 testes de núcleo (stun/signaling/control/
+  #     frame/transfer/bridge/stats) + compila os módulos `input`(enigo) e
+  #     `audio`(audiopus + WASAPI, só Windows). O `audio` NÃO é exercido pelo passo
+  #     do app (ele liga só webrtc,input), então é aqui que ele entra no CI.
+  #   • remote-net  client,authority → opaque-ke/argon2 (authority) + worker WSS
+  #     (tokio/rustls-ring): 29 testes.
+  #   • remote-capture  cargo test    → 15 testes (Annex-B H.264, config, monitor,
+  #     stats). O teste que enumera monitor REAL é #[ignore] (precisa de desktop).
+  #   • remote-system-agent / remote-signaling / remote-broker-client → cargo test
+  #     (pipe SDDL do worker SYSTEM; server axum+opaque; cliente do broker pipe v1).
+  #
+  # O QUE FICA FORA DO CI (de propósito — não dá pra rodar no runner, não maquiado):
+  #   • webrtc do remote-transport EM STANDALONE: `--features webrtc` puxa
+  #     str0m→openssl-sys, e str0m não expõe passthrough de `openssl/vendored`
+  #     acionável pela CLI deste crate; o runner não tem OpenSSL de sistema. Esse
+  #     código (session/driver) NÃO fica sem cobertura: é compilado no CI pelo passo
+  #     `src-tauri --features remote` (liga vendored+NASM, o caminho provado do
+  #     release.yml). Testá-lo standalone quebraria o job.
+  #   • WebRTC ponta-a-ponta (2 máquinas + coturn/TURN, DTLS-SRTP real): precisa de
+  #     rede/coturn; o example `e2e_dummy` (webrtc) não roda no runner.
+  #   • Captura de tela / encode ao vivo: precisa de GPU/desktop interativo
+  #     (windows-capture + Media Foundation) — só o probe #[ignore] cobre.
+  #   • remote-system-helper (binário SYSTEM) e o broker Delphi: exigem privilégio
+  #     SYSTEM / o app Delphi. O crate `remote-system-helper` ainda NEM existe
+  #     (planejado no S7); as suítes Delphi ficam fora deste repo/toolchain.
+  #
+  # CUSTO (aviso do PO): o `openssl/vendored` compila o OpenSSL DO FONTE no runner
+  # (lento, vários min a frio; é o que exige o NASM abaixo). O rust-cache guarda o
+  # target de cada workspace, então pushes seguintes só recompilam o que mudou. Se
+  # o tempo apertar, o 1º candidato a cortar é o `cargo check --features remote`: o
+  # `cargo test --features remote` logo abaixo já compila o MESMO código — o check
+  # fica só como fast-fail de compilação (sinal mais limpo que um teste que nem
+  # linka). O compile do OpenSSL em si não dobra (openssl-src builda o .lib uma vez).
   rust:
     runs-on: windows-latest
     steps:
@@ -81,15 +137,135 @@ jobs:
       - name: Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # O `openssl/vendored` (ligado pela feature `remote`) compila o OpenSSL a
+      # partir do fonte, e no Windows esse build precisa do NASM para as rotinas
+      # em assembly. O Perl já vem na imagem (Strawberry). Espelha o release.yml.
+      # Fica ANTES de qualquer passo que compile o Remote (str0m→OpenSSL).
+      - name: NASM (para o OpenSSL vendored do Remote)
+        uses: ilammy/setup-nasm@v1
+
       - name: Cache do cargo
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          # Cada crate de services/ é um workspace próprio (target próprio); listar
+          # todos aqui faz o cache guardar cada target e economizar recompilação.
+          workspaces: |
+            src-tauri
+            services/remote-capabilities
+            services/remote-transport
+            services/remote-net
+            services/remote-capture
+            services/remote-system-agent
+            services/remote-signaling
+            services/remote-broker-client
 
-      - name: cargo check
+      # ── src-tauri: caminho STUB (Remote OFF) — build default que sai pra quem não
+      # usa o Remote. Barato (sem OpenSSL). Mantido pra guardar que o stub degrada. ──
+      - name: cargo check (stub, Remote OFF)
         working-directory: src-tauri
         run: cargo check
 
-      - name: cargo test
+      - name: cargo test (stub, Remote OFF)
         working-directory: src-tauri
         run: cargo test
+
+      # ── src-tauri: caminho REMOTE REAL (str0m/WebRTC + captura + input). É o que
+      # o release.yml compila; sem isto o instalador saía com o stub. ──
+      - name: cargo check --features remote (Remote REAL)
+        working-directory: src-tauri
+        run: cargo check --features remote
+
+      - name: cargo test --features remote (testes unit do Remote)
+        working-directory: src-tauri
+        run: cargo test --features remote
+
+      # ── services/: os crates do Remote (cada um build próprio, fora do workspace
+      # do src-tauri). Cobrem o CÓDIGO REAL (features gated), não só o default. ──
+      # #1070 RB7: crate folha do vocabulário de capability (dep só serde).
+      - name: services/remote-capabilities
+        working-directory: services/remote-capabilities
+        run: cargo test
+
+      - name: services/remote-transport (núcleo + input + audio)
+        working-directory: services/remote-transport
+        run: cargo test --features input,audio
+
+      - name: services/remote-net (client + authority)
+        working-directory: services/remote-net
+        run: cargo test --features client,authority
+
+      - name: services/remote-capture (captura/Annex-B/monitor)
+        working-directory: services/remote-capture
+        run: cargo test
+
+      - name: services/remote-system-agent
+        working-directory: services/remote-system-agent
+        run: cargo test
+
+      - name: services/remote-signaling (server axum + opaque)
+        working-directory: services/remote-signaling
+        run: cargo test
+
+      - name: services/remote-broker-client
+        working-directory: services/remote-broker-client
+        run: cargo test
+
+  # #1193: o gate de clippy que NÃO existia. Até aqui o `#![deny(clippy::unwrap_used,
+  # expect_used)]` do remote-signaling era decoração — nada o executava, e no #1148
+  # entraram 3 `expect()` nesse crate com o CI verde (pegou a QA rodando na mão).
+  #
+  # Toolchain FIXADO (não `@stable`): clippy varia com a versão do compilador, então
+  # um upgrade de toolchain adicionaria lints novos e reprovaria o CI sem ninguém ter
+  # mexido em código. Ao fixar, a versão só sobe quando ALGUÉM edita esta linha.
+  # Subir a versão = tarefa consciente (corrige o que o novo clippy achar, num PR).
+  #
+  # ESCOPO (crescente, não big-bang — mesmo raciocínio do ratchet de ícones do #1153):
+  #   • remote-signaling  -D warnings → é onde o `deny(unwrap_used, expect_used)` já
+  #     está declarado no código; o gate só torna REAL o que o crate já promete.
+  #   • remote-transport  -D warnings → núcleo do Remote (stun/turn/frame/bridge); os
+  #     4 achados pré-existentes foram corrigidos neste mesmo PR, então entra limpo.
+  #   NÃO gateado ainda (de propósito): src-tauri (9,6k linhas num arquivo — um
+  #   hard-fail global seria revertido em uma hora) e os crates com feature OpenSSL.
+  #   Esses entram quando a dívida deles for zerada, um crate por vez.
+  # roda default (sem a feature webrtc→OpenSSL): barato, não precisa de NASM/OpenSSL.
+  clippy:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust + clippy (toolchain FIXADO — ver comentário acima)
+        uses: dtolnay/rust-toolchain@1.96.0
+        with:
+          components: clippy
+
+      - name: Cache do cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            services/remote-transport
+            services/remote-signaling
+
+      - name: clippy remote-signaling (-D warnings — onde o deny já mora)
+        working-directory: services/remote-signaling
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: clippy remote-transport (-D warnings — núcleo do Remote)
+        working-directory: services/remote-transport
+        run: cargo clippy --all-targets -- -D warnings
+
+      # Medidos em `3e2c361` (18/08): os três já estavam com ZERO achado sob
+      # `-D warnings` e mesmo assim fora do gate — entram de graça. O
+      # `remote-capabilities` nasceu HOJE (#1240): entrou no CI de teste e ficou
+      # fora do de clippy, que é o modo de falha que o ratchet abaixo fecha.
+      - name: clippy remote-capabilities (-D warnings — nasceu limpo)
+        working-directory: services/remote-capabilities
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: clippy remote-broker-client (-D warnings — limpo, sem consumidor)
+        working-directory: services/remote-broker-client
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: clippy remote-capture (-D warnings — limpo)
+        working-directory: services/remote-capture
+        run: cargo clippy --all-targets -- -D warnings

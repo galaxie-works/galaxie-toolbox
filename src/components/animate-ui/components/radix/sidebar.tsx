@@ -622,21 +622,14 @@ function SidebarMenuButton({
   const mostrarTooltip = state === 'collapsed' && !isMobile;
 
   return (
-    <Tooltip
-      onOpenChange={(aberto) => {
-        // #358: colapsada, o tooltip abre à direita SOBRE a área da webview do
-        // Navigator (que pinta acima do DOM) e ficava coberto. Avisa a webview a
-        // ceder (esconder+snapshot) enquanto o tooltip está aberto — mesmo
-        // window-event do menu do usuário; no-op fora do Navigator (o listener
-        // do NavegadorScreen só existe quando `tela === "navegador"`).
-        // Abre só quando há tooltip visível (colapsada); FECHA sempre, pra o
-        // contador (auto-curável, clamp>=0) nunca ficar preso escondendo a webview.
-        if (aberto && !mostrarTooltip) return;
-        window.dispatchEvent(
-          new CustomEvent('galaxie:webview-ceder', { detail: aberto }),
-        );
-      }}
-    >
+    // #358/#360 → #1179: colapsada, este tooltip abre à direita SOBRE a área da
+    // webview do Navigator (que pinta acima do DOM) e ficava coberto. Havia aqui um
+    // `onOpenChange` disparando `galaxie:webview-ceder` — exceção mantida à mão,
+    // numa LISTA de componentes. Agora é REGRA: o `TooltipContent` mede a própria
+    // caixa e cede a webview só se ela cruzar o retângulo dela. Este tooltip cruza
+    // ⇒ segue coberto, sem código especial aqui; e tooltip que não cruza não
+    // aciona nada (sem cintilação no hover — o D3 continua valendo).
+    <Tooltip>
       <TooltipTrigger asChild>{button}</TooltipTrigger>
       {mostrarTooltip && (
         <TooltipContent side="right" align="center" {...tooltip} />

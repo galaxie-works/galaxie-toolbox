@@ -67,11 +67,8 @@ mod tests {
         let bridge = FrameBridge::iniciar(fonte);
 
         let mut recebidos = Vec::new();
-        loop {
-            match bridge.receber() {
-                Ok(f) => recebidos.push(f),
-                Err(FrameFim) => break,
-            }
+        while let Ok(f) = bridge.receber() {
+            recebidos.push(f);
         }
         assert_eq!(recebidos.len(), 5);
         // ordem preservada (timestamp monotônico crescente)

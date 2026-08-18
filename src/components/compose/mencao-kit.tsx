@@ -20,6 +20,7 @@ import {
 import { MentionElement } from "@/components/ui/mention-node";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useFotos } from "@/lib/fotos";
+import { iniciais } from "@/lib/iniciais";
 import { useIdioma } from "@/lib/idioma";
 import type { Pessoa } from "@/lib/types";
 
@@ -54,15 +55,6 @@ export function MencionaveisProvider({
       {children}
     </MencionaveisContext.Provider>
   );
-}
-
-/** Iniciais do avatar: do nome quando há nome real, senão do e-mail. */
-function iniciaisDe(nome: string, email: string): string {
-  const base = nome && !nome.includes("@") ? nome : email.split("@")[0];
-  const partes = base.split(/[\s._-]+/).filter(Boolean);
-  if (partes.length === 0) return "?";
-  if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
-  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
 }
 
 /**
@@ -132,7 +124,7 @@ function MencaoInputElement(props: PlateElementProps<TComboboxInputElement>) {
                   <Avatar className="size-6">
                     {foto && <AvatarImage src={foto} alt="" />}
                     <AvatarFallback className="text-[10px]">
-                      {iniciaisDe(p.nome, p.email)}
+                      {iniciais(p.nome, p.email)}
                     </AvatarFallback>
                   </Avatar>
                   <span className="truncate">{nome}</span>

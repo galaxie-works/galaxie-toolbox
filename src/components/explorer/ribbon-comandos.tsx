@@ -1,14 +1,20 @@
-import { useState, type Ref } from "react";
+import { useEffect, useMemo, useState, type Ref } from "react";
 import {
   ArrowDownUp,
   ChevronDown,
   ClipboardPaste,
   Copy,
+  FileArchive,
+  FileAudio,
+  FileImage,
   FilePlus,
+  FileText,
+  FileVideo,
   FolderPlus,
   LayoutGrid,
   Link,
   List,
+  ListFilter,
   MoreHorizontal,
   Network,
   PanelRight,
@@ -25,6 +31,11 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Filters,
+  type Filter,
+  type FilterFieldConfig,
+} from "@/components/reui/filters";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -57,6 +68,10 @@ export interface RibbonComandosProps {
   onModo: (m: "detalhes" | "lista" | "grade") => void;
   ordem: Ordem;
   onOrdem: (o: Ordem) => void;
+  /** #990: agrupar pastas antes dos arquivos (opt-in persistido). */
+  pastasPrimeiro: boolean;
+  /** #990: alterna o "Pastas primeiro" (o pai persiste). */
+  onPastasPrimeiro: () => void;
   acoes: AcoesMenu;
   clipboard: Clipboard | null;
   /** Caminhos selecionados (o Set do ContentPane, já espalhado em array). */
@@ -65,6 +80,10 @@ export interface RibbonComandosProps {
   entradaUnica: FsEntry | null;
   filtro: string;
   onFiltro: (s: string) => void;
+  /** #985 (US1): ids das categorias/tipo selecionadas (ver `filtro-tipo.ts`). */
+  filtrosTipo: string[];
+  /** #985 (US1): recebe os ids das categorias derivados do widget de filtros. */
+  onFiltrosTipo: (ids: string[]) => void;
   /** #863: ref do Input do filtro (Ctrl+F foca-o pelo handler de teclas do ContentPane). */
   filtroRef?: Ref<HTMLInputElement>;
   mostrarOcultos: boolean;
@@ -88,12 +107,16 @@ export function RibbonComandos(props: RibbonComandosProps) {
     onModo,
     ordem,
     onOrdem,
+    pastasPrimeiro,
+    onPastasPrimeiro,
     acoes,
     clipboard,
     selecionados,
     entradaUnica,
     filtro,
     onFiltro,
+    filtrosTipo,
+    onFiltrosTipo,
     filtroRef,
     mostrarOcultos,
     onOcultos,
@@ -105,6 +128,65 @@ export function RibbonComandos(props: RibbonComandosProps) {
   const { t } = useIdioma();
 
   const [redeAberta, setRedeAberta] = useState(false);
+
+  // #985 (US1): estado local do widget reui/filters (Filter<string>[]). O
+  // ContentPane guarda só os ids das categorias; aqui derivamos os ids no
+  // onChange e ressincronizamos quando `filtrosTipo` zera de fora (a troca de
+  // pasta limpa o filtro de tipo), pra o chip não sobreviver à navegação.
+  const [filtrosWidget, setFiltrosWidget] = useState<Filter<string>[]>([]);
+  useEffect(() => {
+    if (filtrosTipo.length === 0) setFiltrosWidget([]);
+  }, [filtrosTipo]);
+
+  const aoMudarFiltros = (fs: Filter<string>[]) => {
+    setFiltrosWidget(fs);
+    onFiltrosTipo(fs.find((f) => f.field === "tipo")?.values ?? []);
+  };
+
+  // Um único campo "tipo" (multiselect), com as 5 categorias de `filtro-tipo.ts`.
+  // Operador único (OU entre categorias) pra casar com `passaFiltroTipo`.
+  const camposTipo = useMemo<FilterFieldConfig<string>[]>(
+    () => [
+      {
+        key: "tipo",
+        label: t.arquivos.filtroTipo,
+        icon: <ListFilter className="size-3.5" />,
+        type: "multiselect",
+        searchable: false,
+        operators: [
+          { value: "is_any_of", label: t.arquivos.filtroTipoOperador },
+        ],
+        options: [
+          {
+            value: "documentos",
+            label: t.arquivos.catDocumentos,
+            icon: <FileText className="size-3.5" />,
+          },
+          {
+            value: "imagens",
+            label: t.arquivos.catImagens,
+            icon: <FileImage className="size-3.5" />,
+          },
+          {
+            value: "videos",
+            label: t.arquivos.catVideos,
+            icon: <FileVideo className="size-3.5" />,
+          },
+          {
+            value: "audio",
+            label: t.arquivos.catAudio,
+            icon: <FileAudio className="size-3.5" />,
+          },
+          {
+            value: "compactados",
+            label: t.arquivos.catCompactados,
+            icon: <FileArchive className="size-3.5" />,
+          },
+        ],
+      },
+    ],
+    [t],
+  );
 
   const semSelecao = selecionados.length === 0;
   const semClipboard = !clipboard || clipboard.paths.length === 0;
@@ -270,6 +352,15 @@ export function RibbonComandos(props: RibbonComandosProps) {
               {t.arquivos.ordDesc}
             </DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
+          {/* #990: "Pastas primeiro" é opt-in — off por padrão os itens se
+              misturam pelo critério; ligado, as pastas vêm antes dos arquivos. */}
+          <DropdownMenuCheckboxItem
+            checked={pastasPrimeiro}
+            onCheckedChange={onPastasPrimeiro}
+          >
+            {t.arquivos.pastasPrimeiro}
+          </DropdownMenuCheckboxItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -335,6 +426,34 @@ export function RibbonComandos(props: RibbonComandosProps) {
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {/* #985 (US1): filtro por categoria/tipo (widget reui/filters). Chips +
+          remoção por chip vêm prontos do widget; limpar-tudo = remover o chip. */}
+      <Filters<string>
+        filters={filtrosWidget}
+        fields={camposTipo}
+        onChange={aoMudarFiltros}
+        size="sm"
+        allowMultiple={false}
+        showSearchInput={false}
+        i18n={{
+          addFilter: t.arquivos.filtroTipo,
+          selectedCount: t.arquivos.filtroSelecionados,
+          selected: t.arquivos.filtroSelecionados,
+          select: t.arquivos.filtroSelecione,
+        }}
+        trigger={
+          <Button
+            type="button"
+            variant={filtrosTipo.length > 0 ? "secondary" : "ghost"}
+            size="icon"
+            className="size-8"
+            aria-label={t.arquivos.filtroTipo}
+          >
+            <ListFilter className="size-4" />
+          </Button>
+        }
+      />
+
       {/* Filtro in-folder (as-you-type) */}
       <div className="relative min-w-0 flex-1">
         <Search className="pointer-events-none absolute left-2 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -376,7 +495,7 @@ export function RibbonComandos(props: RibbonComandosProps) {
 
       {/* Toggle do painel de detalhes (inspector) */}
       {onToggleInspector && (
-        <TooltipAcao label={t.arquivos.detalhes}>
+        <TooltipAcao label={t.arquivos.detalhes} atalhoId="preview">
           <Button
             variant={mostrarInspector ? "secondary" : "ghost"}
             size="icon"

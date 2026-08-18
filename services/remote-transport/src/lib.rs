@@ -8,6 +8,9 @@
 //! - **transporte ↔ rede:** sans-I/O — o app faz o UDP; o [`Transport`] só diz o
 //!   que transmitir/quando ([`Passo`]).
 
+// Controle de bitrate adaptativo (#1182) — PURO (BWE→encoder, sem str0m); fica no
+// núcleo pra o `cargo test` default exercitar sem OpenSSL.
+pub mod bitrate;
 pub mod bridge;
 pub mod command;
 pub mod control;
@@ -15,6 +18,12 @@ pub mod frame;
 pub mod input;
 pub mod signaling;
 pub mod stats;
+// Codec STUN Binding (RFC 5389) do gathering srflx — PURO (sem str0m/OpenSSL);
+// fica no núcleo pra o `cargo test` default do CI exercitar sem toolchain. #1108.
+pub mod stun;
+// Codec TURN (RFC 5766) do candidato relay — PURO (sem str0m/OpenSSL), espelha o
+// stun.rs e reusa o XOR-address dele. Só o codec; o I/O é a fatia 2. #1130.
+pub mod turn;
 pub mod transfer;
 
 // Injeção de input (S3) — puxa o enigo; a UI/host liga a feature `input`.
@@ -38,6 +47,7 @@ pub mod session;
 #[cfg(feature = "webrtc")]
 pub mod driver;
 
+pub use bitrate::AplicadorBitrate;
 pub use bridge::{FrameBridge, FrameFim};
 pub use command::{canal_de_comandos, CommandChannel, CommandReceiver, EncoderCommand};
 pub use control::{

@@ -10,10 +10,11 @@ export default defineConfig({
     alias: { "@": path.resolve(__dirname, "./src") },
   },
   clearScreen: false,
-  // #873 fix: `xlsx-preview` é UMD-only (sem ESM) — força o esbuild a pré-bundlar
-  // ele + o exceljs no dev, alinhando com o import ESTÁTICO que o build de
-  // produção usa (Rollup). Sem isto o dev pode divergir do empacotado.
-  optimizeDeps: { include: ["xlsx-preview", "exceljs"] },
+  // #942: `exceljs` é CommonJS e agora só é importado DENTRO do chunk lazy do
+  // Univer (`univer-xlsx.ts`). Pré-bundlá-lo aqui evita uma re-otimização/reload
+  // do Vite na primeira vez que um xlsx é aberto no dev, alinhando dev e prod.
+  // (`xlsx-preview` saiu junto com o render legado — não é mais importado.)
+  optimizeDeps: { include: ["exceljs"] },
   server: {
     port: 1420,
     strictPort: true,

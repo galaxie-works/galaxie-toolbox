@@ -29,13 +29,7 @@ use galaxie_remote_transport::{canal_de_comandos, CodedFrameSource, DummyFrameSo
 fn cria_driver(papel: Papel) -> IoDriver {
     let socket = UdpSocket::bind("127.0.0.1:0").expect("bind loopback");
     let (cmd, _rx) = canal_de_comandos();
-    let transport = Transport::novo(
-        SessionConfig {
-            papel,
-            ice_servers: vec![],
-        },
-        cmd,
-    );
+    let transport = Transport::novo(SessionConfig::new(papel, vec![]), cmd);
     IoDriver::novo(socket, transport).expect("driver")
 }
 

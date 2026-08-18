@@ -69,8 +69,18 @@ export function classificarPorNome(
   const ct = (contentType ?? "").toLowerCase();
   const n = nome.toLowerCase();
   if (ct === "application/pdf" || n.endsWith(".pdf")) return "pdf";
-  // CSV antes de txt: um `.csv` pode chegar como `text/plain` no contentType.
-  if (ct === "text/csv" || n.endsWith(".csv")) return "csv";
+  // CSV antes de txt: um `.csv`/`.tsv` pode chegar como `text/plain` no ct. O
+  // parser auto-detecta o delimitador (`,`/`;`/tab), então TSV/TAB/PSV entram no
+  // MESMO grid virtualizado do CSV (#941) — não caem em txt cru.
+  if (
+    ct === "text/csv" ||
+    ct === "text/tab-separated-values" ||
+    n.endsWith(".csv") ||
+    n.endsWith(".tsv") ||
+    n.endsWith(".tab") ||
+    n.endsWith(".psv")
+  )
+    return "csv";
   // #873 fix: HTML renderiza SANITIZADO (DOMPurify) no iframe sandbox+CSP, igual
   // ao docx/xlsx. Antes de txt: um `.html` pode vir como `text/plain` no ct.
   if (ct === "text/html" || n.endsWith(".html") || n.endsWith(".htm"))

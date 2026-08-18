@@ -28,6 +28,9 @@ input = ["dep:enigo"]
 audio = ["dep:audiopus", "dep:wasapi"]
 
 [dependencies]
+# #1070 RB7 passo 3: o vocabulário ÚNICO de capability (crate folha, dep só serde).
+# O gate do DataChannel (CapabilityPolicy) aplica o MESMO tipo que o ticket S8 concede.
+galaxie-remote-capabilities = { path = "../remote-capabilities" }
 str0m = { version = "0.6", optional = true }
 enigo = { version = "0.6", optional = true }
 audiopus = { version = "0.2", optional = true }
@@ -37,6 +40,11 @@ serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
 rand = "0.8"
+# Credencial long-term do TURN (RFC 5766/5389): derive_key = MD5, MESSAGE-INTEGRITY
+# = HMAC-SHA1. Puras (sem OpenSSL); versões casadas com o remote-signaling. #1130.
+hmac = "0.12"
+sha1 = "0.10"
+md-5 = "0.10"
 
 [dev-dependencies]
 # testes deterministicos rodam sem rede real (mock de signaling + dummy source).

@@ -30,6 +30,13 @@ export default defineConfig({
         test: {
           name: "browser",
           include: ["src/**/*.browser.test.tsx"],
+          // #1262: tetos explícitos. Um teste que PENDURA é pior que um que
+          // falha — o CI ficou 45+ min sem passar nem reprovar. Estes limites
+          // fazem o canal falhar rápido; o `timeout-minutes` do job no ci.yml é
+          // a rede seguinte, para o caso de o travamento ser na SUBIDA do
+          // navegador (antes de qualquer teste rodar), que é o suspeito aqui.
+          testTimeout: 20_000,
+          hookTimeout: 30_000,
           browser: {
             enabled: true,
             provider: playwright(),

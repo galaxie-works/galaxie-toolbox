@@ -42,10 +42,10 @@ const m365: AppM365[] = [
 
 const catalogo: AppCatalogo[] = [
   // duplicata canônica do Outlook curado → deve sumir
-  { id: "outlook-mail", name: "Outlook", category: "Productivity", url: "https://outlook.office.com/mail", icon: true },
+  { id: "outlook-mail", name: "Outlook", category: "Productivity", url: "https://outlook.office.com/mail", icon: true, desc: { "pt-BR": "d", en: "d" } },
   // não-duplicata → fica
-  { id: "figma", name: "Figma", category: "Developer Tools", url: "https://figma.com", icon: true },
-  { id: "canva", name: "Canva", category: "Productivity", url: "https://canva.com", icon: true },
+  { id: "figma", name: "Figma", category: "Developer Tools", url: "https://figma.com", icon: true, desc: { "pt-BR": "d", en: "d" } },
+  { id: "canva", name: "Canva", category: "Productivity", url: "https://canva.com", icon: true, desc: { "pt-BR": "d", en: "d" } },
 ];
 
 const resolver = (a: AppM365) => `/assets/apps/${a.icone}.svg`;

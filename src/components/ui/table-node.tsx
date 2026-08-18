@@ -86,6 +86,8 @@ import {
   PopoverContent,
 } from '@/components/ui/popover';
 import { cn } from '@/lib/utils';
+// #950 US2: rótulos i18n da família tabela (acessor não-hook, padrão #529).
+import { plateLabel } from '@/lib/plate-labels';
 
 import { blockSelectionVariants } from './block-selection';
 import {
@@ -911,14 +913,14 @@ function TableFloatingToolbarContent({
         contentEditable={false}
       >
         <ToolbarGroup>
-          <ColorDropdownMenu tooltip="Background color">
+          <ColorDropdownMenu tooltip={plateLabel('backgroundColor')}>
             <PaintBucketIcon />
           </ColorDropdownMenu>
           {canMerge && onMerge && (
             <ToolbarButton
               onClick={onMerge}
               onMouseDown={(e) => e.preventDefault()}
-              tooltip="Merge cells"
+              tooltip={plateLabel('mergeCells')}
             >
               <CombineIcon />
             </ToolbarButton>
@@ -927,7 +929,7 @@ function TableFloatingToolbarContent({
             <ToolbarButton
               onClick={onSplit}
               onMouseDown={(e) => e.preventDefault()}
-              tooltip="Split cell"
+              tooltip={plateLabel('splitCell')}
             >
               <SquareSplitHorizontalIcon />
             </ToolbarButton>
@@ -935,7 +937,7 @@ function TableFloatingToolbarContent({
 
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-              <ToolbarButton tooltip="Cell borders">
+              <ToolbarButton tooltip={plateLabel('cellBorders')}>
                 <Grid2X2Icon />
               </ToolbarButton>
             </DropdownMenuTrigger>
@@ -947,7 +949,7 @@ function TableFloatingToolbarContent({
 
           {singleCellMode && (
             <ToolbarGroup>
-              <ToolbarButton tooltip="Delete table" {...buttonProps}>
+              <ToolbarButton tooltip={plateLabel('deleteTable')} {...buttonProps}>
                 <Trash2Icon />
               </ToolbarButton>
             </ToolbarGroup>
@@ -959,21 +961,21 @@ function TableFloatingToolbarContent({
             <ToolbarButton
               onClick={onInsertRowBefore}
               onMouseDown={(e) => e.preventDefault()}
-              tooltip="Insert row before"
+              tooltip={plateLabel('insertRowBefore')}
             >
               <ArrowUp />
             </ToolbarButton>
             <ToolbarButton
               onClick={onInsertRowAfter}
               onMouseDown={(e) => e.preventDefault()}
-              tooltip="Insert row after"
+              tooltip={plateLabel('insertRowAfter')}
             >
               <ArrowDown />
             </ToolbarButton>
             <ToolbarButton
               onClick={onDeleteRow}
               onMouseDown={(e) => e.preventDefault()}
-              tooltip="Delete row"
+              tooltip={plateLabel('deleteRow')}
             >
               <XIcon />
             </ToolbarButton>
@@ -985,21 +987,21 @@ function TableFloatingToolbarContent({
             <ToolbarButton
               onClick={onInsertColumnBefore}
               onMouseDown={(e) => e.preventDefault()}
-              tooltip="Insert column before"
+              tooltip={plateLabel('insertColumnBefore')}
             >
               <ArrowLeft />
             </ToolbarButton>
             <ToolbarButton
               onClick={onInsertColumnAfter}
               onMouseDown={(e) => e.preventDefault()}
-              tooltip="Insert column after"
+              tooltip={plateLabel('insertColumnAfter')}
             >
               <ArrowRight />
             </ToolbarButton>
             <ToolbarButton
               onClick={onDeleteColumn}
               onMouseDown={(e) => e.preventDefault()}
-              tooltip="Delete column"
+              tooltip={plateLabel('deleteColumn')}
             >
               <XIcon />
             </ToolbarButton>
@@ -1042,28 +1044,28 @@ function TableBordersDropdownMenuContent(
           onCheckedChange={getOnSelectTableBorder('top')}
         >
           <BorderTopIcon />
-          <div>Top Border</div>
+          <div>{plateLabel('borderTop')}</div>
         </DropdownMenuCheckboxItem>
         <DropdownMenuCheckboxItem
           checked={hasRightBorder}
           onCheckedChange={getOnSelectTableBorder('right')}
         >
           <BorderRightIcon />
-          <div>Right Border</div>
+          <div>{plateLabel('borderRight')}</div>
         </DropdownMenuCheckboxItem>
         <DropdownMenuCheckboxItem
           checked={hasBottomBorder}
           onCheckedChange={getOnSelectTableBorder('bottom')}
         >
           <BorderBottomIcon />
-          <div>Bottom Border</div>
+          <div>{plateLabel('borderBottom')}</div>
         </DropdownMenuCheckboxItem>
         <DropdownMenuCheckboxItem
           checked={hasLeftBorder}
           onCheckedChange={getOnSelectTableBorder('left')}
         >
           <BorderLeftIcon />
-          <div>Left Border</div>
+          <div>{plateLabel('borderLeft')}</div>
         </DropdownMenuCheckboxItem>
       </DropdownMenuGroup>
 
@@ -1073,14 +1075,14 @@ function TableBordersDropdownMenuContent(
           onCheckedChange={getOnSelectTableBorder('none')}
         >
           <BorderNoneIcon />
-          <div>No Border</div>
+          <div>{plateLabel('borderNone')}</div>
         </DropdownMenuCheckboxItem>
         <DropdownMenuCheckboxItem
           checked={hasOuterBorders}
           onCheckedChange={getOnSelectTableBorder('outer')}
         >
           <BorderAllIcon />
-          <div>Outside Borders</div>
+          <div>{plateLabel('borderOutside')}</div>
         </DropdownMenuCheckboxItem>
       </DropdownMenuGroup>
     </DropdownMenuContent>

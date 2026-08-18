@@ -15,6 +15,7 @@ import {
 import { cva } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
+import { textoUi } from "@/lib/idioma-core"
 import { Button } from "@/components/ui/button"
 import {
   ButtonGroup,
@@ -42,6 +43,7 @@ import {
 } from "@/components/ui/input-group"
 import { Kbd } from "@/components/ui/kbd"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { isTypingTarget } from "@/hooks/use-atalhos"
 import {
   Tooltip,
   TooltipContent,
@@ -428,6 +430,7 @@ function FilterRemoveButton({
   return (
     <Button
       variant="outline"
+      aria-label={textoUi("removerFiltro")}
       size={
         context.size === "sm"
           ? "icon-sm"
@@ -1634,17 +1637,18 @@ export function Filters<T = unknown>({
     if (!enableShortcut) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.key.toLowerCase() === shortcutKey.toLowerCase() &&
-        !addFilterOpen &&
-        !(
-          document.activeElement instanceof HTMLInputElement ||
-          document.activeElement instanceof HTMLTextAreaElement
-        )
-      ) {
-        e.preventDefault()
-        setAddFilterOpen(true)
-      }
+      // UX2 (#1060): guarda padrão do projeto pro atalho de TECLA ÚNICA.
+      // (1) Qualquer modificador → não é o atalho do filtro (bare `f`); deixa
+      //     passar (ex.: Ctrl+Shift+F = Encaminhar no Bridge, `control-room`).
+      // (2) `isTypingTarget(e.target)` cobre input/textarea/select E o
+      //     contenteditable do corpo do e-mail (`compor-mensagem`) — digitar 'f'
+      //     ali insere a letra, não abre o filtro.
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+      if (isTypingTarget(e.target)) return
+      if (e.key.toLowerCase() !== shortcutKey.toLowerCase()) return
+      if (addFilterOpen) return
+      e.preventDefault()
+      setAddFilterOpen(true)
     }
 
     window.addEventListener("keydown", handleKeyDown)

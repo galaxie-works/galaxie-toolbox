@@ -1,0 +1,17 @@
+[package]
+name = "galaxie-remote-capabilities"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Crate FOLHA do vocabulário de capability (#1070 RB7). Dep única: serde. Sem runtime,
+# sem async, sem OpenSSL — barato pra `remote-net` (concede) e `remote-transport`
+# (aplica) reexportarem o MESMO tipo, sem dep entre irmãos.
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1.0.149"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

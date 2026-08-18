@@ -11,6 +11,21 @@ use crate::auth::{self, Provider};
 const DRIVE_FILES: &str = "https://www.googleapis.com/drive/v3/files";
 const DRIVE_UPLOAD: &str = "https://www.googleapis.com/upload/drive/v3/files";
 const SETTINGS_NAME: &str = "toolbox.json";
+/// Boundary do corpo multipart do create (1º uso). Const pra casar body e header.
+const BOUNDARY: &str = "galaxie-boundary-7e3f2a";
+
+/// Monta o corpo multipart/related do create: parte de metadata (name +
+/// parents=appDataFolder) seguida da parte de conteudo. Pura — sem rede. O
+/// header `multipart/related; boundary={BOUNDARY}` tem que usar o mesmo BOUNDARY.
+fn corpo_multipart(content: &str) -> String {
+    let meta = serde_json::json!({ "name": SETTINGS_NAME, "parents": ["appDataFolder"] })
+        .to_string();
+    let b = BOUNDARY;
+    format!(
+        "--{b}\r\nContent-Type: application/json; charset=utf-8\r\n\r\n{meta}\r\n\
+         --{b}\r\nContent-Type: application/json; charset=utf-8\r\n\r\n{content}\r\n--{b}--\r\n"
+    )
+}
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,19 +131,12 @@ pub fn gdrive_settings_write(
             .send(),
         // 1º uso: cria com metadata (parents=[appDataFolder]) + media, multipart.
         None => {
-            let meta =
-                serde_json::json!({ "name": SETTINGS_NAME, "parents": ["appDataFolder"] })
-                    .to_string();
-            let b = "galaxie-boundary-7e3f2a";
-            let corpo = format!(
-                "--{b}\r\nContent-Type: application/json; charset=utf-8\r\n\r\n{meta}\r\n\
-                 --{b}\r\nContent-Type: application/json; charset=utf-8\r\n\r\n{content}\r\n--{b}--\r\n"
-            );
+            let corpo = corpo_multipart(content);
             client
                 .post(DRIVE_UPLOAD)
                 .bearer_auth(&token)
                 .query(&[("uploadType", "multipart"), ("fields", "headRevisionId")])
-                .header("Content-Type", format!("multipart/related; boundary={b}"))
+                .header("Content-Type", format!("multipart/related; boundary={BOUNDARY}"))
                 .body(corpo.into_bytes())
                 .send()
         }
@@ -146,4 +154,29 @@ pub fn gdrive_settings_write(
     Ok(GDriveSettingsWriteResult {
         revision: v["headRevisionId"].as_str().map(str::to_owned),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corpo_multipart_tem_metadata_conteudo_e_boundary() {
+        let corpo = corpo_multipart("{\"tema\":\"escuro\"}");
+        // metadata: nome do arquivo + pasta appDataFolder.
+        assert!(corpo.contains("\"name\":\"toolbox.json\""));
+        assert!(corpo.contains("\"parents\":[\"appDataFolder\"]"));
+        // conteudo entra na 2a parte.
+        assert!(corpo.contains("{\"tema\":\"escuro\"}"));
+        // abre e fecha com o boundary (o de fechamento leva `--` no fim).
+        assert!(corpo.contains(&format!("--{BOUNDARY}\r\n")));
+        assert!(corpo.ends_with(&format!("--{BOUNDARY}--\r\n")));
+    }
+
+    #[test]
+    fn corpo_multipart_conteudo_vazio_ainda_fecha() {
+        // borda: conteudo vazio -> corpo ainda bem-formado (fecha no boundary).
+        let corpo = corpo_multipart("");
+        assert!(corpo.ends_with(&format!("--{BOUNDARY}--\r\n")));
+    }
 }

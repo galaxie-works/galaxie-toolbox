@@ -16,7 +16,6 @@ import type {
   UndoReport,
   ThumbMetrics,
   ThumbRef,
-  CaixaEntrada,
   Calendario,
   CategoriaCor,
   EmailDetalhe,
@@ -32,8 +31,7 @@ import type {
   Pessoa,
   RecorrenciaInput,
   PeopleBulkDetailsChange,
-  PeopleBulkDetailsWriteResult,
-  PeopleCompanyWriteResult,
+  PeopleWriteResult,
   PeopleEnrichApplyResult,
   PeopleContactEdit,
   PeopleEnrichField,
@@ -47,13 +45,15 @@ import type {
   PeopleListResult,
   PeopleOrganizationResult,
   PeopleRecord,
-  Reuniao,
   SegurancaEmail,
   Site,
-  Tarefa,
+  SalvarContatosResultado,
+  TarefasResultado,
   TipoArquivo,
   UsoOneDrive,
 } from "./types";
+import { iniciais } from "./iniciais.ts";
+import { logErro } from "./log.ts";
 
 /** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
 export function inTauri(): boolean {
@@ -65,7 +65,98 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
   return core.invoke<T>(cmd, args);
 }
 
+/**
+ * #1104 / fecha TODO(#687): URL de PROD do signaling Remote (S0). Fallback pro
+ * caminho browser (`pnpm dev`, sem Tauri) e pra falha do invoke. Casa com o
+ * `REMOTE_SIGNALING_DEFAULT_PROD` do Rust (`src-tauri/src/lib.rs`).
+ */
+export const REMOTE_SIGNALING_DEFAULT_PROD =
+  "wss://telemetry.thegalaxie.cloud/remote/v1/ws";
+
+/**
+ * Endpoint do WS de signaling Remote, resolvido pelo backend (comando Tauri,
+ * padrão da telemetria: runtime env > baked em compile-time > default de PROD).
+ * Fora do Tauri, ou se o invoke falhar, cai no default de PROD — nunca no
+ * placeholder `.example` que quebrava o WS em produção.
+ */
+export async function remoteSignalingEndpoint(): Promise<string> {
+  if (!inTauri()) return REMOTE_SIGNALING_DEFAULT_PROD;
+  try {
+    return await invoke<string>("remote_signaling_endpoint");
+  } catch {
+    return REMOTE_SIGNALING_DEFAULT_PROD;
+  }
+}
+
+/**
+ * #1129 A1: URL de PROD do plano de controle v2 (`/v2/ws`), derivada do v1 —
+ * espelha o `derivar_signaling_endpoint_v2` do Rust pro caminho browser/falha.
+ */
+export const REMOTE_SIGNALING_DEFAULT_PROD_V2 =
+  "wss://telemetry.thegalaxie.cloud/remote/v2/ws";
+
+/**
+ * #1129 A1: endpoint do signaling v2 (`/v2/ws`), resolvido pelo backend (derivado
+ * do v1). Fora do Tauri, ou se o invoke falhar, cai no default de PROD v2. O v2 é
+ * o plano de controle S8 (não-crítico hoje) — o probe que o usa sempre cai pro v1.
+ */
+export async function remoteSignalingEndpointV2(): Promise<string> {
+  if (!inTauri()) return REMOTE_SIGNALING_DEFAULT_PROD_V2;
+  try {
+    return await invoke<string>("remote_signaling_endpoint_v2");
+  } catch {
+    return REMOTE_SIGNALING_DEFAULT_PROD_V2;
+  }
+}
+
+/**
+ * #1129 A1 / L1: prova-de-posse (PoP) assinada pelo Rust pra o Register v2. O
+ * `nonce`/`timestamp` são cunhados no Rust e a assinatura Ed25519 cobre
+ * `(deviceId, nonce, timestamp)`. A CHAVE PRIVADA nunca cruza pro WebView —
+ * ver `remote_identity.rs`. Nenhum campo é segredo (só a assinatura + público).
+ */
+export interface SignedRegistrationV2 {
+  deviceId: string;
+  publicKey: string;
+  nonce: string;
+  timestamp: number;
+  signature: string;
+}
+
+/** #1129 A1: pede ao Rust a PoP de registro v2 (comando L1 `remote_sign_register`). */
+export async function remoteSignRegister(): Promise<SignedRegistrationV2> {
+  return invoke<SignedRegistrationV2>("remote_sign_register");
+}
+
+/**
+ * #1129 A1: ponte de log de INFO/diagnóstico do Remote pro arquivo do
+ * `tauri-plugin-log` (comando `remote_log`). Best-effort: silencioso fora do
+ * Tauri e NUNCA estoura (logar não pode virar um novo erro). Diferente do
+ * `log_frontend_error` (que loga em Error), este loga em Info.
+ */
+export async function remoteLog(msg: string): Promise<void> {
+  if (!inTauri()) return;
+  try {
+    await invoke("remote_log", { msg });
+  } catch {
+    // canal de log indisponível: engole (não transforma um log em erro).
+  }
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * #1017: no browser (fora do Tauri) o mock NÃO pode fingir que uma mutação do
+ * Graph aconteceu. Antes, ~30 comandos de escrita resolviam com sucesso
+ * fabricado (id falso, `void`, contagem) sem falar com backend nenhum — o
+ * mecanismo exato do "VERDE ≠ PRONTO": aprovava-se feature que nunca escreveu
+ * de verdade. Toda escrita de dado do Bridge (mail/calendar/people/org/share)
+ * agora REJEITA explicitamente em vez de mentir sucesso. Leitura segue mockada
+ * normalmente — é o valor real do modo dev sem Tauri (não é alvo desta regra).
+ */
+function mockEscritaBloqueada(): never {
+  throw new Error("mock: escrita não suportada fora do Tauri");
+}
 
 // --- MOCK usado apenas no browser (fora do Tauri), pra visualizar a UI ---
 const MOCK_USER: AppUser = {
@@ -478,34 +569,6 @@ export async function onedriveTipos(webUrl: string): Promise<TipoArquivo[]> {
   return invoke<TipoArquivo[]>("onedrive_tipos", { webUrl });
 }
 
-// --- Control room ---------------------------------------------------------
-export async function crReunioes(): Promise<Reuniao[]> {
-  if (!inTauri()) {
-    await sleep(400);
-    const agora = new Date();
-    const em = (h: number) => new Date(agora.getTime() + h * 3600_000).toISOString().replace("Z", "");
-    return [
-      { assunto: "Daily do time", inicio: em(1), fim: em(1.5), local: "Teams", online: true },
-      { assunto: "Reunião com cliente VOAZ", inicio: em(4), fim: em(5), local: "Sala 2", online: false },
-    ];
-  }
-  return invoke<Reuniao[]>("cr_reunioes");
-}
-
-export async function crEmail(): Promise<CaixaEntrada> {
-  if (!inTauri()) {
-    await sleep(500);
-    return {
-      naoLidos: 7,
-      recentes: [
-        { assunto: "Fatura de julho", de: "Financeiro", recebido: new Date().toISOString() },
-        { assunto: "Aprovação pendente", de: "João", recebido: new Date().toISOString() },
-      ],
-    };
-  }
-  return invoke<CaixaEntrada>("cr_email");
-}
-
 /** #440 (Atoms A1): e-mail do dashboard num único $batch (não-lidos + sinalizados
  * + recentes). 1 comando, 1 caminho de erro — substitui o
  * Promise.all([crEmail, crContadores]) que derrubava o widget quando só o
@@ -514,6 +577,13 @@ export interface AtomsEmail {
   naoLidos: number;
   sinalizados: number;
   recentes: EmailRecente[];
+  /**
+   * Sub-respostas do `$batch` que NÃO puderam ser lidas (#1075 RB46-a).
+   *
+   * Vazio = o card está completo. Não vazio = os números são PARCIAIS — e a UI
+   * não pode declarar "tudo em dia" a partir deles.
+   */
+  parciais: string[];
 }
 
 export async function crAtomsEmail(): Promise<AtomsEmail> {
@@ -526,21 +596,25 @@ export async function crAtomsEmail(): Promise<AtomsEmail> {
         { assunto: "Fatura de julho", de: "Financeiro", recebido: new Date().toISOString() },
         { assunto: "Aprovação pendente", de: "João", recebido: new Date().toISOString() },
       ],
+      parciais: [],
     };
   }
   return invoke<AtomsEmail>("atoms_email");
 }
 
-export async function crTarefas(): Promise<Tarefa[]> {
+export async function crTarefas(): Promise<TarefasResultado> {
   if (!inTauri()) {
     await sleep(450);
     const ontem = new Date(Date.now() - 86_400_000).toISOString();
-    return [
-      { titulo: "Revisar migração PROJ-H", lista: "Trabalho", id: "t1", listaId: "l1", prazo: ontem },
-      { titulo: "Ligar para o suporte MS", lista: "Trabalho", id: "t2", listaId: "l1", prazo: null },
-    ];
+    return {
+      tarefas: [
+        { titulo: "Revisar migração PROJ-H", lista: "Trabalho", id: "t1", listaId: "l1", prazo: ontem },
+        { titulo: "Ligar para o suporte MS", lista: "Trabalho", id: "t2", listaId: "l1", prazo: null },
+      ],
+      listasComFalha: [],
+    };
   }
-  return invoke<Tarefa[]>("cr_tarefas");
+  return invoke<TarefasResultado>("cr_tarefas");
 }
 
 /** Atoms (#184): conclui uma tarefa do To Do (complete-in-place). */
@@ -548,10 +622,7 @@ export async function crTarefaConcluir(
   listaId: string,
   tarefaId: string,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(250);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_tarefa_concluir", { listaId, tarefaId });
 }
 
@@ -695,18 +766,7 @@ export async function crCriarCategoria(
   nome: string,
   preset: string,
 ): Promise<CategoriaCor> {
-  if (!inTauri()) {
-    await sleep(200);
-    const HEX: Record<string, string> = {
-      preset0: "#D13438",
-      preset4: "#498205",
-      preset7: "#0078D4",
-      preset8: "#8764B8",
-      preset1: "#FF8C00",
-      preset5: "#00B7C3",
-    };
-    return { nome, cor: HEX[preset] ?? "#8A8886" };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<CategoriaCor>("cr_criar_categoria", { nome, preset });
 }
 
@@ -743,35 +803,34 @@ export async function crResponderEvento(
   resposta: AcaoRsvp,
   enviarResposta: boolean,
   comentario: string,
+  mailbox?: string,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_responder_evento", {
     id,
     resposta,
     enviarResposta,
     comentario,
+    // #1069: RSVP na caixa ativa (própria ou compartilhada), não no /me fixo.
+    mailbox: mailboxArg(mailbox),
   });
 }
 
-/** Cria um evento no calendário (#211). Devolve o id do evento criado. */
-export async function crCriarEvento(input: EventoInput): Promise<string> {
-  if (!inTauri()) {
-    await sleep(300);
-    return `mock-${Date.now()}`;
-  }
-  return invoke<string>("cr_criar_evento", { input });
+/** Cria um evento no calendário (#211). Devolve o id do evento criado.
+ *  #1069: `mailbox` endereça a caixa ativa (própria ou compartilhada). */
+export async function crCriarEvento(input: EventoInput, mailbox?: string): Promise<string> {
+  if (!inTauri()) mockEscritaBloqueada();
+  return invoke<string>("cr_criar_evento", { input, mailbox: mailboxArg(mailbox) });
 }
 
-/** Edita um evento existente (#211). */
-export async function crEditarEvento(id: string, input: EventoInput): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
-  await invoke("cr_editar_evento", { id, input });
+/** Edita um evento existente (#211). #1069: `mailbox` endereça a caixa ativa. */
+export async function crEditarEvento(
+  id: string,
+  input: EventoInput,
+  mailbox?: string,
+): Promise<void> {
+  if (!inTauri()) mockEscritaBloqueada();
+  await invoke("cr_editar_evento", { id, input, mailbox: mailboxArg(mailbox) });
 }
 
 /** #213: reagenda um evento arrastando — PATCH só de início/fim/dia-inteiro,
@@ -783,61 +842,56 @@ export async function crReagendarEvento(
   fim: string,
   diaInteiro: boolean,
   timeZone: string,
+  mailbox?: string,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
-  await invoke("cr_reagendar_evento", { id, inicio, fim, diaInteiro, timeZone });
+  if (!inTauri()) mockEscritaBloqueada();
+  // #1069: reagenda na caixa ativa (própria ou compartilhada), não no /me fixo.
+  await invoke("cr_reagendar_evento", {
+    id,
+    inicio,
+    fim,
+    diaInteiro,
+    timeZone,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
 /** #397: recorrência da SÉRIE (do seriesMaster) pra o form carregar os campos ao
  * editar "a série inteira". `null` = evento único ou padrão não modelado (relative*). */
 export async function crEventoRecorrencia(
   id: string,
+  mailbox?: string,
 ): Promise<RecorrenciaInput | null> {
   if (!inTauri()) {
     await sleep(200);
     return null;
   }
-  return invoke<RecorrenciaInput | null>("cr_evento_recorrencia", { id });
+  // #1069: recorrência da série na caixa ativa (própria ou compartilhada).
+  return invoke<RecorrenciaInput | null>("cr_evento_recorrencia", {
+    id,
+    mailbox: mailboxArg(mailbox),
+  });
 }
 
-/** Exclui um evento (#211). */
-export async function crExcluirEvento(id: string): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
-  await invoke("cr_excluir_evento", { id });
+/** Exclui um evento (#211). #1069: `mailbox` endereça a caixa ativa — sem isso, a
+ *  exclusão ia pro /me fixo e um evento de caixa compartilhada retornava 404
+ *  tratado como sucesso (exclusão fantasma). */
+export async function crExcluirEvento(id: string, mailbox?: string): Promise<void> {
+  if (!inTauri()) mockEscritaBloqueada();
+  await invoke("cr_excluir_evento", { id, mailbox: mailboxArg(mailbox) });
 }
 
 /** Cancela um evento organizado pelo usuário (#260): envia o cancelamento aos
  *  convidados via POST /me/events/{id}/cancel, com comentário opcional.
  *  Distinto de excluir (silencioso). */
-export async function crCancelarEvento(id: string, comentario: string): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
-  await invoke("cr_cancelar_evento", { id, comentario });
-}
-
-export async function crInboxDia(inicio: string, fim: string): Promise<EmailItem[]> {
-  if (!inTauri()) {
-    await sleep(500);
-    const t = (h: number) => {
-      const d = new Date(inicio);
-      d.setHours(h, 12, 0, 0);
-      return d.toISOString();
-    };
-    return [
-      { id: "m1", assunto: "Fatura de julho", de: "Financeiro VOAZ", deEmail: "fin@voaz.com.br", iniciais: "FV", recebido: t(8), preview: "Segue em anexo a fatura referente aos serviços de julho.", lido: false, temAnexos: true, sinalizado: false },
-      { id: "m2", assunto: "Aprovação pendente — compra PROH", de: "João Pereira", deEmail: "joao@proh.com.br", iniciais: "JP", recebido: t(10), preview: "Oi Wagner, preciso da sua aprovação para seguir com o pedido.", lido: false, temAnexos: false, sinalizado: true },
-      { id: "m3", assunto: "Seu OneDrive está sem espaço", de: "Microsoft", deEmail: "no-reply@microsoft.com", iniciais: "MS", recebido: t(13), preview: "Seu armazenamento do OneDrive está cheio. Libere espaço para continuar.", lido: true, temAnexos: false, sinalizado: false },
-    ];
-  }
-  return invoke<EmailItem[]>("cr_inbox_dia", { inicio, fim });
+export async function crCancelarEvento(
+  id: string,
+  comentario: string,
+  mailbox?: string,
+): Promise<void> {
+  if (!inTauri()) mockEscritaBloqueada();
+  // #1069: cancela na caixa ativa (própria ou compartilhada), não no /me fixo.
+  await invoke("cr_cancelar_evento", { id, comentario, mailbox: mailboxArg(mailbox) });
 }
 
 function mailboxArg(mailbox?: string): string | null {
@@ -957,12 +1011,12 @@ export async function crEmailSeguranca(
 }
 
 const MOCK_PASTAS: PastaEmail[] = [
-  { id: "inbox", tipo: "inbox", nome: "Caixa de entrada", naoLidos: 3, total: 128, filhos: 1 },
-  { id: "drafts", tipo: "drafts", nome: "Rascunhos", naoLidos: 0, total: 45, filhos: 0 },
-  { id: "sentitems", tipo: "sentitems", nome: "Enviados", naoLidos: 0, total: 312, filhos: 0 },
-  { id: "archive", tipo: "archive", nome: "Arquivo", naoLidos: 0, total: 12, filhos: 0 },
-  { id: "junkemail", tipo: "junkemail", nome: "Lixo eletrônico", naoLidos: 3, total: 8, filhos: 0 },
-  { id: "deleteditems", tipo: "deleteditems", nome: "Itens excluídos", naoLidos: 0, total: 34, filhos: 0 },
+  { id: "inbox", tipo: "inbox", nome: "Caixa de entrada", naoLidos: 3, total: 128, filhos: 1, leitura: "ok" },
+  { id: "drafts", tipo: "drafts", nome: "Rascunhos", naoLidos: 0, total: 45, filhos: 0, leitura: "ok" },
+  { id: "sentitems", tipo: "sentitems", nome: "Enviados", naoLidos: 0, total: 312, filhos: 0, leitura: "ok" },
+  { id: "archive", tipo: "archive", nome: "Arquivo", naoLidos: 0, total: 12, filhos: 0, leitura: "ok" },
+  { id: "junkemail", tipo: "junkemail", nome: "Lixo eletrônico", naoLidos: 3, total: 8, filhos: 0, leitura: "ok" },
+  { id: "deleteditems", tipo: "deleteditems", nome: "Itens excluídos", naoLidos: 0, total: 34, filhos: 0, leitura: "ok" },
 ];
 
 export async function crMailFolders(mailbox?: string): Promise<PastaEmail[]> {
@@ -1039,7 +1093,7 @@ export async function crSubpastas(
   if (!inTauri()) {
     await sleep(300);
     return [
-      { id: `${folderId}-sub1`, tipo: "child", nome: "Clientes", naoLidos: 2, total: 40, filhos: 0 },
+      { id: `${folderId}-sub1`, tipo: "child", nome: "Clientes", naoLidos: 2, total: 40, filhos: 0, leitura: "ok" },
     ];
   }
   return invoke<PastaEmail[]>("cr_subpastas", {
@@ -1332,10 +1386,7 @@ export async function crFolderContacts(
 
 /** Cria uma pasta de contatos pessoal; devolve a pasta criada (com id real). */
 export async function crCreateContactFolder(nome: string): Promise<ContactFolder> {
-  if (!inTauri()) {
-    await sleep(300);
-    return { id: `folder-${Date.now()}`, name: nome, parentFolderId: "" };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<ContactFolder>("cr_criar_pasta_contato", { nome });
 }
 
@@ -1344,19 +1395,13 @@ export async function crRenameContactFolder(
   folderId: string,
   nome: string,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(250);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_renomear_pasta_contato", { folderId, nome });
 }
 
 /** Exclui uma pasta de contatos pessoal (os contatos dela vão junto). */
 export async function crDeleteContactFolder(folderId: string): Promise<void> {
-  if (!inTauri()) {
-    await sleep(250);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_excluir_pasta_contato", { folderId });
 }
 
@@ -1365,10 +1410,7 @@ export async function crMoveContact(
   contactId: string,
   folderId: string,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(250);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   await invoke("cr_mover_contato", { contactId, folderId });
 }
 
@@ -1434,10 +1476,7 @@ export async function crPeopleEnrichApply(
   contactId: string,
   fields: PeopleEnrichField[],
 ): Promise<PeopleEnrichApplyResult> {
-  if (!inTauri()) {
-    await sleep(550);
-    return { saved: true, writeAvailable: true };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<PeopleEnrichApplyResult>("cr_people_enrich_apply", {
     contactId,
     fields,
@@ -1471,7 +1510,14 @@ export async function crOrgAdminAvailable(): Promise<boolean> {
 }
 
 /** #425: status de um cartão OrgSettings — read-only, degrada por card. */
-export type OrgCardStatus = "ok" | "forbidden" | "error";
+/**
+ * Estado de um card de settings org-wide.
+ *
+ * #1075 RB45: ganhou `"indisponivel"`. Antes, "este endpoint beta não existe no
+ * seu tenant" e "a rede caiu" eram o MESMO `"error"` — o mesmo card vermelho
+ * para uma condição permanente e sem ação e para outra que pede tentar de novo.
+ */
+export type OrgCardStatus = "ok" | "forbidden" | "indisponivel" | "error";
 
 export interface AppsAndServicesCard {
   status: OrgCardStatus;
@@ -1576,10 +1622,7 @@ export async function crOrgSettings(): Promise<OrgSettingsResult> {
  * wrapper fica pronto; ativar é só destravar a UI. Fora do Tauri é no-op (mock).
  */
 export async function crOrgTodoSet(campo: string, valor: boolean): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_org_todo_set", { campo, valor });
 }
 
@@ -1681,6 +1724,20 @@ export async function resetSessionMemo(): Promise<void> {
   }
 }
 
+/**
+ * #1257 (P0): limpa a SESSÃO DE CONTA no backend (Rust) — token em memória, sessão
+ * persistida (`sessao.bin`), identidade em cache e memo do Graph — SEM zerar o PIN.
+ * Diferente do `resetSessionMemo` (só o memo curto), fecha o vazamento entre contas:
+ * o `resetSessaoCompleta` chama isto **awaited** na fronteira de conta, pra o token
+ * da conta anterior não sobreviver à janela do novo login. No-op fora do Tauri.
+ * NÃO engole o erro: se o clear falhar, a fronteira de conta precisa saber (senão
+ * seguiria vazando) — o `resetSessaoCompleta` propaga.
+ */
+export async function clearAccountSession(): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("clear_account_session");
+}
+
 /** #426: tenant membro de uma organização multi-tenant. */
 export interface MultiTenantMember {
   tenantId: string;
@@ -1723,10 +1780,7 @@ export async function crPeopleContactUpdate(
   contactId: string,
   input: PeopleContactEdit,
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(550);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_people_contact_update", { contactId, input });
 }
 
@@ -1739,10 +1793,7 @@ export async function crPeopleContactCategories(
   contactId: string,
   categorias: string[],
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_people_contact_categories", { contactId, categorias });
 }
 
@@ -1754,10 +1805,7 @@ export async function crPeopleContactCategories(
 export async function crPeopleContactCreate(
   input: PeopleContactEdit,
 ): Promise<string> {
-  if (!inTauri()) {
-    await sleep(400);
-    return `mock-contact-${crypto.randomUUID()}`;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<string>("cr_people_contact_create", { input });
 }
 
@@ -1766,10 +1814,7 @@ export async function crPeopleContactCreate(
  * (idempotente). Execução do merge (#379) — o chamador trata item a item.
  */
 export async function crPeopleContactDelete(contactId: string): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_people_contact_delete", { contactId });
 }
 
@@ -1780,16 +1825,9 @@ export async function crPeopleContactDelete(contactId: string): Promise<void> {
 export async function crPeopleCompanyWrite(
   contactIds: string[],
   companyName: string,
-): Promise<PeopleCompanyWriteResult> {
-  if (!inTauri()) {
-    await sleep(550);
-    return {
-      writeAvailable: true,
-      savedContactIds: [...new Set(contactIds)],
-      failedContactIds: [],
-    };
-  }
-  return invoke<PeopleCompanyWriteResult>("cr_people_company_write", {
+): Promise<PeopleWriteResult> {
+  if (!inTauri()) mockEscritaBloqueada();
+  return invoke<PeopleWriteResult>("cr_people_company_write", {
     contactIds,
     companyName,
   });
@@ -1802,16 +1840,9 @@ export async function crPeopleCompanyWrite(
 export async function crPeopleDetailsWrite(
   contactIds: string[],
   changes: PeopleBulkDetailsChange[],
-): Promise<PeopleBulkDetailsWriteResult> {
-  if (!inTauri()) {
-    await sleep(550);
-    return {
-      writeAvailable: true,
-      savedContactIds: [...new Set(contactIds)],
-      failedContactIds: [],
-    };
-  }
-  return invoke<PeopleBulkDetailsWriteResult>("cr_people_details_write", {
+): Promise<PeopleWriteResult> {
+  if (!inTauri()) mockEscritaBloqueada();
+  return invoke<PeopleWriteResult>("cr_people_details_write", {
     contactIds,
     changes,
   });
@@ -1863,10 +1894,7 @@ export async function crEnviarNovo(
   anexos: AnexoEnvio[] = [],
   mailbox?: string
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(700);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_enviar_novo", {
     para,
     cc,
@@ -1882,25 +1910,50 @@ export async function crEnviarNovo(
  * Sobe um arquivo para "Bridge Anexos" no OneDrive do usuário e devolve um link
  * de compartilhamento (visualização, escopo da organização). O front insere
  * esse link no corpo do e-mail. Files.ReadWrite.
+ *
+ * SEC6 #1044: passamos só o CAMINHO escolhido no diálogo; o backend lê os bytes
+ * do disco (funil `ler_bytes_cru`: path válido, é arquivo, ≤25MB) e sobe os bytes
+ * crus — o front nunca carrega o binário nem faz base64 do arquivo inteiro, e não
+ * precisa mais da capability `fs:allow-read-file` aberta.
  */
-export async function crCompartilharOneDrive(
-  nome: string,
-  conteudoB64: string
+export async function crCompartilharOneDriveArquivo(
+  caminho: string
 ): Promise<string> {
-  if (!inTauri()) {
-    await sleep(700);
-    return `https://exemplo-my.sharepoint.com/:b:/g/mock/${encodeURIComponent(nome)}`;
-  }
-  return invoke<string>("cr_compartilhar_onedrive", { nome, conteudoB64 });
+  if (!inTauri()) mockEscritaBloqueada();
+  return invoke<string>("cr_compartilhar_onedrive_arquivo", { caminho });
 }
 
-/** Salva contatos pessoais (sem duplicar). Retorna quantos foram criados. */
-export async function crSalvarContatos(pessoas: Pessoa[]): Promise<number> {
-  if (!inTauri()) {
-    await sleep(400);
-    return pessoas.length;
-  }
-  return invoke<number>("cr_salvar_contatos", { pessoas });
+/**
+ * Salva contatos pessoais (sem duplicar), best-effort.
+ *
+ * #1075 RB46-d: devolve `{ criados, jaExistiam, falhas }` em vez de só um
+ * número. Os chamadores são fire-and-forget de propósito (salvar contato é
+ * efeito colateral de enviar e-mail, não o pedido do usuário) — então a falha
+ * vai para `logErro`, não para toast. Ver `registrarFalhasDeContato`.
+ */
+export async function crSalvarContatos(
+  pessoas: Pessoa[],
+): Promise<SalvarContatosResultado> {
+  if (!inTauri()) mockEscritaBloqueada();
+  return invoke<SalvarContatosResultado>("cr_salvar_contatos", { pessoas });
+}
+
+/**
+ * Canal único para o resultado do `crSalvarContatos` (#1075 RB46-d).
+ *
+ * O usuário NÃO é notificado: ele pediu para enviar um e-mail, não para gravar
+ * contatos; um toast aqui seria ruído sobre algo que ele não pediu. Mas o
+ * silêncio para o usuário não pode virar silêncio para NÓS — antes, o contato
+ * que não dava para checar era pulado e não sobrava rastro nenhum fora de um
+ * `log::warn` no Rust.
+ */
+export function registrarFalhasDeContato(r: SalvarContatosResultado): void {
+  if (r.falhas.length === 0) return;
+  logErro(
+    "contatos:salvar",
+    new Error(`${r.falhas.length} contato(s) nao gravado(s)`),
+    r.falhas.map((f) => `${f.email}: ${f.motivo}`).join(" | "),
+  );
 }
 
 /** Chave de ordenação da lista (mapeada no backend para $orderby do Graph).
@@ -1956,7 +2009,7 @@ export async function crFolderMensagens(
       ][i],
       de: n,
       deEmail: `${n.toLowerCase().replace(/\s+/g, ".")}@example.com`,
-      iniciais: n.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+      iniciais: iniciais(n),
       // Espalha 1 item por dia (24h) — dá datas variadas p/ exercitar o filtro
       // de intervalo de datas (#110) e os buckets de período (#30) no mock.
       recebido: t(i * 24),
@@ -2007,10 +2060,7 @@ export async function crResponder(
   anexos: AnexoEnvio[] = [],
   mailbox?: string
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(700);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_responder", {
     id,
     corpo,
@@ -2027,10 +2077,7 @@ export async function crEncaminhar(
   anexos: AnexoEnvio[] = [],
   mailbox?: string
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(700);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_encaminhar", {
     id,
     corpo,
@@ -2041,10 +2088,7 @@ export async function crEncaminhar(
 }
 
 export async function crExcluirEmail(id: string, mailbox?: string): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_excluir_email", { id, mailbox: mailboxArg(mailbox) });
 }
 
@@ -2055,10 +2099,7 @@ export async function crExcluirEmails(
   permanente = false,
   mailbox?: string
 ): Promise<string[]> {
-  if (!inTauri()) {
-    await sleep(300);
-    return ids;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<string[]>("cr_excluir_emails", {
     ids,
     permanente,
@@ -2076,10 +2117,7 @@ export async function crMoverEmails(
   destino: string,
   mailbox?: string
 ): Promise<string[]> {
-  if (!inTauri()) {
-    await sleep(300);
-    return ids;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<string[]>("cr_mover_emails", {
     ids,
     destino,
@@ -2092,10 +2130,7 @@ export async function crMarcarEmail(
   sinalizado: boolean,
   mailbox?: string
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_marcar_email", {
     id,
     sinalizado,
@@ -2109,10 +2144,7 @@ export async function crMarcarLido(
   lido: boolean,
   mailbox?: string
 ): Promise<void> {
-  if (!inTauri()) {
-    await sleep(300);
-    return;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<void>("cr_marcar_lido", {
     id,
     lido,
@@ -2176,26 +2208,6 @@ export async function crFiltrar(
     folderId,
     filtro,
     nextLink,
-    mailbox: mailboxArg(mailbox),
-  });
-}
-
-/**
- * Conta na pasta inteira as mensagens que batem com um filtro ("flagged" |
- * "anexos"), via endpoint /$count do Graph. Fora do Tauri (mock) devolve 0.
- */
-export async function crContar(
-  folderId: string,
-  filtro: string,
-  mailbox?: string
-): Promise<number> {
-  if (!inTauri()) {
-    await sleep(200);
-    return 0;
-  }
-  return invoke<number>("cr_contar", {
-    folderId,
-    filtro,
     mailbox: mailboxArg(mailbox),
   });
 }
@@ -2285,10 +2297,7 @@ export async function crEsvaziarPasta(
   folderId: string,
   mailbox?: string
 ): Promise<number> {
-  if (!inTauri()) {
-    await sleep(500);
-    return 12;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<number>("cr_esvaziar_pasta", {
     folderId,
     mailbox: mailboxArg(mailbox),
@@ -2303,10 +2312,7 @@ export async function crMarcarPastaLida(
   folderId: string,
   mailbox?: string
 ): Promise<number> {
-  if (!inTauri()) {
-    await sleep(500);
-    return 7;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<number>("cr_marcar_pasta_lida", {
     folderId,
     mailbox: mailboxArg(mailbox),
@@ -2328,17 +2334,7 @@ export async function crCriarSubpasta(
   nome: string,
   mailbox?: string
 ): Promise<PastaEmail> {
-  if (!inTauri()) {
-    await sleep(400);
-    return {
-      id: `${paiId}-nova-${Date.now()}`,
-      tipo: "child",
-      nome,
-      naoLidos: 0,
-      total: 0,
-      filhos: 0,
-    };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<PastaEmail>("cr_criar_subpasta", {
     paiId,
     nome,
@@ -2352,10 +2348,7 @@ export async function crRenomearPasta(
   nome: string,
   mailbox?: string
 ): Promise<PastaEmail> {
-  if (!inTauri()) {
-    await sleep(400);
-    return { id, tipo: "child", nome, naoLidos: 0, total: 0, filhos: 0 };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<PastaEmail>("cr_renomear_pasta", {
     id,
     nome,
@@ -2374,10 +2367,7 @@ export async function crExcluirPasta(
   id: string,
   mailbox?: string
 ): Promise<boolean> {
-  if (!inTauri()) {
-    await sleep(400);
-    return true;
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<boolean>("cr_excluir_pasta", {
     id,
     mailbox: mailboxArg(mailbox),
@@ -2390,10 +2380,7 @@ export async function crMoverPasta(
   novoPai: string,
   mailbox?: string
 ): Promise<PastaEmail> {
-  if (!inTauri()) {
-    await sleep(400);
-    return { id, tipo: "child", nome: "Pasta", naoLidos: 0, total: 0, filhos: 0 };
-  }
+  if (!inTauri()) mockEscritaBloqueada();
   return invoke<PastaEmail>("cr_mover_pasta", {
     id,
     novoPai,
@@ -3242,10 +3229,6 @@ export async function buscarArquivos(
 // Fora do Tauri (mock) são no-op (a UI é validada no app real). Erros tipados
 // (FsError) chegam do backend.
 
-/** Token interno que autoriza a exclusão PERMANENTE — o gate real é o
- *  Shift+confirmação na UI, que só então chama `excluirPermanente`. */
-const TOKEN_EXCLUSAO_PERMANENTE = "galaxie-excluir-permanente";
-
 /** Cria uma pasta nova (erra se já existe). */
 export async function criarPasta(path: string): Promise<void> {
   if (!inTauri()) return;
@@ -3267,17 +3250,10 @@ export async function renomear(from: string, to: string): Promise<void> {
   return invoke<void>("fs_rename", { from, to });
 }
 
-/** Copia arquivo/pasta (recursivo). */
-export async function copiar(from: string, to: string): Promise<void> {
-  if (!inTauri()) return;
-  return invoke<void>("fs_copy", { from, to });
-}
-
-/** Move (rename rápido; fallback copy+delete cross-volume). */
-export async function mover(from: string, to: string): Promise<void> {
-  if (!inTauri()) return;
-  return invoke<void>("fs_move", { from, to });
-}
+// #1066 (RB21): `copiar`/`mover` (comandos fs_copy/fs_move) removidos — não tinham
+// chamador de UI e sobrescreviam conflito em silêncio (política oposta ao pipeline
+// turbo). O paste do Explorer usa só `copiarComProgresso`/`moverComProgresso` e as
+// variantes `...VariasComProgresso`, que compartilham UMA política de conflito.
 
 /** Manda os itens pra Lixeira do SO (reversível). Padrão do delete. */
 export async function paraLixeira(paths: string[]): Promise<void> {
@@ -3285,12 +3261,15 @@ export async function paraLixeira(paths: string[]): Promise<void> {
   return invoke<void>("fs_trash", { paths });
 }
 
-/** Apaga PERMANENTEMENTE (sem Lixeira). Só depois do Shift+confirmação na UI. */
+/** Apaga PERMANENTEMENTE (sem Lixeira). Só depois do Shift+confirmação na UI.
+ *  #1047 (SEC7): pede um nonce de sessão single-use ao backend imediatamente
+ *  antes de excluir (substitui o token hardcoded, que qualquer um podia forjar). */
 export async function excluirPermanente(paths: string[]): Promise<void> {
   if (!inTauri()) return;
+  const token = await invoke<string>("fs_delete_permanent_token");
   return invoke<void>("fs_delete_permanent", {
     paths,
-    confirmToken: TOKEN_EXCLUSAO_PERMANENTE,
+    confirmToken: token,
   });
 }
 

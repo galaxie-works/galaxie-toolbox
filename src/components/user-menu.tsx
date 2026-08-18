@@ -6,7 +6,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/animate-ui/components/radix/dropdown-menu";
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
@@ -41,13 +41,9 @@ export function MenuUsuario({
   const { t } = useIdioma();
 
   return (
-    <DropdownMenu
-      onOpenChange={(aberto) =>
-        window.dispatchEvent(
-          new CustomEvent("galaxie:webview-ceder", { detail: aberto }),
-        )
-      }
-    >
+    // #1163 D2: o DropdownMenu já cede a webview do Navigator sozinho (o primitivo
+    // se registra no store) — o window-event manual do #358 virou redundante.
+    <DropdownMenu>
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>

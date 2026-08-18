@@ -11,11 +11,6 @@ import {
 } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import {
   Combobox,
   ComboboxChip,
   ComboboxChips,
@@ -32,6 +27,7 @@ import {
 } from "@/components/ui/combobox";
 import * as api from "@/lib/api";
 import { useFotos } from "@/lib/fotos";
+import { iniciais } from "@/lib/iniciais";
 import { preencher, useIdioma } from "@/lib/idioma";
 import type { Pessoa } from "@/lib/types";
 import {
@@ -89,15 +85,6 @@ export interface CampoPessoasProps {
 interface GrupoPessoas {
   rotulo: string;
   items: Pessoa[];
-}
-
-/** Iniciais do avatar: do nome quando há nome de verdade, senão do e-mail. */
-function iniciaisDe(nome: string, email: string): string {
-  const base = nome && !nome.includes("@") ? nome : email.split("@")[0];
-  const partes = base.split(/[\s._-]+/).filter(Boolean);
-  if (partes.length === 0) return "?";
-  if (partes.length === 1) return partes[0].slice(0, 2).toUpperCase();
-  return (partes[0][0] + partes[partes.length - 1][0]).toUpperCase();
 }
 
 export function CampoPessoas({
@@ -165,8 +152,12 @@ export function CampoPessoas({
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
       pedidoRef.current++; // invalida qualquer resposta pendente
     };
+    // Cleanup de unmount: precisa dos valores VIVOS dos refs (o timer em voo e o
+    // contador de pedido atual). Copiar pra um local no efeito leria o valor da
+    // montagem, não o do unmount — o oposto do que este cleanup precisa.
   }, []);
 
   // Fotos (#39) dos escolhidos + das sugestões visíveis: o cache filtra o que
@@ -344,7 +335,7 @@ export function CampoPessoas({
                             <Avatar className="size-4 shrink-0">
                               {foto && <AvatarImage src={foto} alt="" />}
                               <AvatarFallback className="text-[8px]">
-                                {iniciaisDe(p.nome, p.email)}
+                                {iniciais(p.nome, p.email)}
                               </AvatarFallback>
                             </Avatar>
                             <span className="min-w-0 truncate">{nome}</span>
@@ -374,7 +365,7 @@ export function CampoPessoas({
                           <Avatar className="size-4">
                             {foto && <AvatarImage src={foto} alt="" />}
                             <AvatarFallback className="text-[8px]">
-                              {iniciaisDe(p.nome, p.email)}
+                              {iniciais(p.nome, p.email)}
                             </AvatarFallback>
                           </Avatar>
                           {p.nome || p.email}
@@ -432,7 +423,7 @@ export function CampoPessoas({
                                     <Avatar className="size-6 shrink-0">
                                       {foto && <AvatarImage src={foto} alt="" />}
                                       <AvatarFallback className="text-[9px]">
-                                        {iniciaisDe(p.nome, p.email)}
+                                        {iniciais(p.nome, p.email)}
                                       </AvatarFallback>
                                     </Avatar>
                                     <div className="min-w-0 flex-1">
@@ -529,7 +520,7 @@ export function CampoPessoas({
                         <Avatar className="size-9">
                           {foto && <AvatarImage src={foto} alt="" />}
                           <AvatarFallback>
-                            {iniciaisDe(p.nome, p.email)}
+                            {iniciais(p.nome, p.email)}
                           </AvatarFallback>
                         </Avatar>
                         <div className="min-w-0 flex-1">

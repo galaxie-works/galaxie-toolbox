@@ -195,6 +195,59 @@ async fn codigo_expira() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+// #1148: a rota de renovação reemite ice_servers pro device JÁ registrado, sem
+// refazer pareamento (RenewIceServers → IceServersRenewed).
+#[tokio::test]
+async fn renovar_ice_servers_reemite_para_device_registrado(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (address, _) = spawn_server(120, Duration::from_secs(60)).await?;
+    let (mut socket, _) = connect_async(format!("ws://{address}/v1/ws")).await?;
+    register(
+        &mut socket,
+        "device-renova",
+        &SigningKey::from_bytes(&[77_u8; 32]),
+    )
+    .await?;
+    // o Registered já traz a credencial TURN inicial.
+    let ice_inicial = match recv_server(&mut socket).await? {
+        ServerMessage::Registered { ice_servers, .. } => ice_servers,
+        other => return Err(format!("esperava registered, recebeu {other:?}").into()),
+    };
+    assert!(!ice_inicial.is_empty(), "Registered traz ice_servers");
+
+    // pede renovação — e recebe uma credencial fresca sem refazer pareamento.
+    send_client(&mut socket, &ClientMessage::RenewIceServers).await?;
+    let ice_novo = match recv_server(&mut socket).await? {
+        ServerMessage::IceServersRenewed { ice_servers } => ice_servers,
+        other => return Err(format!("esperava ice_servers_renewed, recebeu {other:?}").into()),
+    };
+    assert!(!ice_novo.is_empty(), "renovação traz credencial");
+    let servidor = &ice_novo[0];
+    assert!(!servidor.urls.is_empty());
+    assert!(!servidor.username.is_empty());
+    assert!(!servidor.credential.is_empty());
+    // username = "{expires_at}:{device_id}" → o device é preservado (sem repareamento).
+    assert!(servidor.username.ends_with("device-renova"));
+    Ok(())
+}
+
+// #1148: a rota exige registro antes — RenewIceServers sem Register é recusado.
+#[tokio::test]
+async fn renovar_ice_servers_sem_registro_e_rejeitado(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (address, _) = spawn_server(120, Duration::from_secs(60)).await?;
+    let (mut socket, _) = connect_async(format!("ws://{address}/v1/ws")).await?;
+    send_client(&mut socket, &ClientMessage::RenewIceServers).await?;
+    assert!(matches!(
+        recv_server(&mut socket).await?,
+        ServerMessage::Error {
+            code: ErrorCode::NotRegistered,
+            ..
+        }
+    ));
+    Ok(())
+}
+
 async fn spawn_server(
     rate_limit: usize,
     code_ttl: Duration,

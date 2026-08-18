@@ -7,12 +7,11 @@ import {
   useRef,
   useState,
   type ReactNode,
+  type RefObject,
 } from "react";
 import {
-  AlertCircle,
   ChevronDown,
   ChevronUp,
-  FolderOpen,
   TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -46,10 +45,12 @@ import {
   revelarCaminho,
 } from "@/lib/api";
 import type { FsEntry } from "@/lib/types";
+import { usePersistedState } from "@/lib/persist";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { ordenar, type ChaveOrdem, type Ordem } from "./ordenar";
 import { filtrarEntradas } from "./filtro";
+import { passaFiltroTipo } from "./filtro-tipo";
 import { juntarCaminho, pathPai } from "./caminho";
 import { ComMenu, RenameInput } from "./menu-contexto";
 import {
@@ -77,6 +78,7 @@ import { solicitarThumb } from "./thumb-fila";
 import { ehImagem, iconeParaEntry } from "./icones-arquivo";
 import { formatarDataArquivo, rotuloTipo } from "./format";
 import { RibbonComandos } from "./ribbon-comandos";
+import { EstadoConteudoExplorer } from "./estado-conteudo";
 
 type ModoView = "detalhes" | "lista" | "grade";
 
@@ -216,6 +218,8 @@ type ItemArquivoProps = {
   modo: ModoView;
   sel: boolean;
   cursor: boolean;
+  /** #986: item recortado (Ctrl+X) — esmaece + borda tracejada até colar/cancelar. */
+  recortado: boolean;
   editando: boolean;
   idioma: string;
   labelTipoPasta: string;
@@ -248,6 +252,7 @@ const ItemArquivo = memo(function ItemArquivo({
   modo,
   sel,
   cursor,
+  recortado,
   editando,
   idioma,
   labelTipoPasta,
@@ -338,6 +343,7 @@ const ItemArquivo = memo(function ItemArquivo({
     "grid h-[34px] w-full items-center gap-2 rounded-md border border-transparent px-2 text-left outline-none",
     sel ? "bg-accent" : "hover:bg-accent/50",
     cursor && "ring-2 ring-ring/60",
+    recortado && "border-dashed border-muted-foreground/60 opacity-50",
   );
   const conteudo = (
     <>
@@ -400,6 +406,9 @@ export function ContentPane({
   refreshSignal,
   mostrarInspector,
   onToggleInspector,
+  buscaRef,
+  listaRef,
+  onEditarCaminho,
 }: {
   currentPath: string;
   onNavegar: (path: string) => void;
@@ -424,6 +433,12 @@ export function ContentPane({
   /** Estado do painel de detalhes (controlado pelo shell) — pro botão de toggle. */
   mostrarInspector?: boolean;
   onToggleInspector?: () => void;
+  /** #968: ref do input de busca (navbar) — Ctrl+E foca-o daqui. */
+  buscaRef?: RefObject<HTMLInputElement | null>;
+  /** #968: ref do container da lista — a navbar foca-o ao SAIR da busca (ESC). */
+  listaRef?: RefObject<HTMLDivElement | null>;
+  /** #1060 (UX21): Ctrl+L entra no modo "editar caminho" do breadcrumb (navbar). */
+  onEditarCaminho?: () => void;
 }) {
   const { t, idioma } = useIdioma();
   const [entradas, setEntradas] = useState<FsEntry[] | null>(null);
@@ -442,10 +457,19 @@ export function ContentPane({
   const renomearAoAparecer = useRef<string | null>(null);
   const [modo, setModo] = useState<ModoView>("detalhes");
   const [ordem, setOrdem] = useState<Ordem>({ chave: "nome", direcao: "asc" });
+  // #990: "Pastas primeiro" é OPT-IN e PERSISTE (localStorage puro, conveniência
+  // de UI local). Default = false → arquivos e pastas se misturam pelo critério.
+  const [pastasPrimeiro, setPastasPrimeiro] = usePersistedState(
+    "explorer.pastasPrimeiro.v1",
+    false,
+  );
   const [selecao, setSelecao] = useState<EstadoSelecao>(SELECAO_VAZIA);
   const [largura, setLargura] = useState(0);
   // #681: filtro in-folder (as-you-type) + toggle de ocultos (off por padrão).
   const [filtro, setFiltro] = useState("");
+  // #985 (US1): categorias/tipo selecionadas no widget de filtros (ids das
+  // categorias — ver `filtro-tipo.ts`). Vazio = filtro de tipo inativo.
+  const [filtrosTipo, setFiltrosTipo] = useState<string[]>([]);
   const [mostrarOcultos, setMostrarOcultos] = useState(false);
   // #681: suporte a caminhos longos — checado 1x no mount, re-checado após habilitar.
   const [longPathsOn, setLongPathsOn] = useState<boolean | null>(null);
@@ -466,6 +490,7 @@ export function ContentPane({
     setErro(false);
     setSelecao(SELECAO_VAZIA);
     setFiltro(""); // filtro é por-pasta: zera ao trocar de caminho
+    setFiltrosTipo([]); // #985: filtro de tipo também é por-pasta
     void listarDir(currentPath)
       .then((lista) => {
         if (!vivo) return;
@@ -501,8 +526,13 @@ export function ContentPane({
   // operam sobre a lista VISÍVEL (filtrada+ordenada).
   const itens = useMemo(() => {
     if (!entradas) return [];
-    return ordenar(filtrarEntradas(entradas, filtro, mostrarOcultos), ordem);
-  }, [entradas, filtro, mostrarOcultos, ordem]);
+    // #985 (US1): nome (substring/glob) + ocultos → filtro por tipo → ordena.
+    const porNome = filtrarEntradas(entradas, filtro, mostrarOcultos);
+    const filtrados = filtrosTipo.length
+      ? porNome.filter((e) => passaFiltroTipo(e, filtrosTipo))
+      : porNome;
+    return ordenar(filtrados, ordem, pastasPrimeiro);
+  }, [entradas, filtro, filtrosTipo, mostrarOcultos, ordem, pastasPrimeiro]);
   const paths = useMemo(() => itens.map((e) => e.path), [itens]);
   // #739 (F4): índice path→entry pra reportar a seleção em O(nº selecionados),
   // não O(n) filtrando a lista inteira a cada tecla (jank em 5000 itens).
@@ -929,6 +959,27 @@ export function ContentPane({
         filtroRef.current?.focus();
         return;
       }
+      // #950: Alt+P abre/fecha o painel de detalhes (Explorer do Windows).
+      if (ev.altKey && (ev.key === "p" || ev.key === "P")) {
+        ev.preventDefault();
+        onToggleInspector?.();
+        return;
+      }
+      // #968: Ctrl+E foca a busca recursiva (navbar), à moda do Windows Explorer.
+      if (ctrl && (ev.key === "e" || ev.key === "E")) {
+        ev.preventDefault();
+        buscaRef?.current?.focus();
+        buscaRef?.current?.select();
+        return;
+      }
+      // #1060 (UX21): Ctrl+L entra no modo "editar caminho" do breadcrumb, à moda
+      // do Explorer do Windows / barra de endereço dos navegadores. O `autoFocus`
+      // do Input de endereço (navbar) leva o foco pro campo ao montar.
+      if (ctrl && !ev.shiftKey && (ev.key === "l" || ev.key === "L")) {
+        ev.preventDefault();
+        onEditarCaminho?.();
+        return;
+      }
       if (paths.length === 0) return;
       const atual = selecao.cursor ? paths.indexOf(selecao.cursor) : -1;
       const base = atual < 0 ? 0 : atual;
@@ -1017,6 +1068,14 @@ export function ContentPane({
           // #714 (Wagner): ESC na lista LIMPA a seleção. Se algo ficou "renomeando"
           // sem o input focado (foco escapou), cancela o rename também.
           ev.preventDefault();
+          // #986: cascade de ESC no Files (a busca focada já saiu antes, no input
+          // da navbar — #995). Se há recorte ativo (Ctrl+X), ESC só CANCELA o
+          // recorte (mantém a seleção, como o Windows Explorer); o próximo ESC
+          // segue pro comportamento de sempre (limpa a seleção).
+          if (clipboard?.op === "cut") {
+            onClipboardChange?.(null);
+            break;
+          }
           if (renomeando) setRenomeando(null);
           setSelecao(SELECAO_VAZIA);
           break;
@@ -1042,6 +1101,11 @@ export function ContentPane({
       onAcima,
       recarregar,
       criarPastaNova,
+      onToggleInspector,
+      buscaRef,
+      clipboard, // #986: ESC cancela o recorte — precisa do clipboard atual
+      onClipboardChange,
+      onEditarCaminho,
     ],
   );
 
@@ -1094,12 +1158,19 @@ export function ContentPane({
   // #739 (F4): cada item é um `<ItemArquivo>` MEMOIZADO; esta função só monta os
   // elementos (props estáveis + sel/cursor/editando por item). No scroll/seleção,
   // os itens que não mudaram não re-renderizam.
+  // #986: paths recortados (Ctrl+X ativo) — Set memoizado pra o lookup O(1) por
+  // linha. Só o cut esmaece/tracejа; o copy (op="copy") não marca visualmente.
+  const cutPaths = useMemo(
+    () => new Set(clipboard?.op === "cut" ? clipboard.paths : []),
+    [clipboard],
+  );
   const itemProps = (entry: FsEntry, index: number, m: ModoView) => ({
     entry,
     index,
     modo: m,
     sel: selecao.selecionados.has(entry.path),
     cursor: selecao.cursor === entry.path && !todosSelec,
+    recortado: cutPaths.has(entry.path),
     editando: renomeando === entry.path,
     idioma,
     labelTipoPasta: t.arquivos.tipoPasta,
@@ -1161,12 +1232,16 @@ export function ContentPane({
         onModo={setModo}
         ordem={ordem}
         onOrdem={setOrdem}
+        pastasPrimeiro={pastasPrimeiro}
+        onPastasPrimeiro={() => setPastasPrimeiro((v) => !v)}
         acoes={acoesMenu}
         clipboard={clipboard ?? null}
         selecionados={[...selecao.selecionados]}
         entradaUnica={entradaUnica}
         filtro={filtro}
         onFiltro={setFiltro}
+        filtrosTipo={filtrosTipo}
+        onFiltrosTipo={setFiltrosTipo}
         filtroRef={filtroRef}
         mostrarOcultos={mostrarOcultos}
         onOcultos={() => setMostrarOcultos((v) => !v)}
@@ -1242,7 +1317,12 @@ export function ContentPane({
           pasta / Novo arquivo) envolve o conteúdo; menus de item (linhas/tiles)
           ficam aninhados e têm precedência. */}
       <div
-        ref={scrollRef}
+        ref={(el) => {
+          // #968: ref mesclado — mantém o scrollRef interno (virtualizador,
+          // scroll, foco) e espelha no listaRef externo pra navbar focar no ESC.
+          scrollRef.current = el;
+          if (listaRef) listaRef.current = el;
+        }}
         tabIndex={0}
         onKeyDown={aoTeclar}
         onPointerDown={marquee.onPointerDown}
@@ -1279,19 +1359,11 @@ export function ContentPane({
           }}
         >
           {carregando ? (
-            <div className="flex h-full items-center justify-center py-10">
-              <Spinner className="size-5 text-muted-foreground" />
-            </div>
+            <EstadoConteudoExplorer estado="carregando" />
           ) : erro ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
-              <AlertCircle className="size-8" />
-              <p className="text-sm">{t.arquivos.erroLer}</p>
-            </div>
+            <EstadoConteudoExplorer estado="erro" rotulo={t.arquivos.erroLer} />
           ) : itens.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center gap-2 py-10 text-center text-muted-foreground">
-              <FolderOpen className="size-8" />
-              <p className="text-sm">{t.arquivos.vazio}</p>
-            </div>
+            <EstadoConteudoExplorer estado="vazio" rotulo={t.arquivos.vazio} />
           ) : (
             <div
               style={{
@@ -1397,7 +1469,7 @@ function CabecalhoOrd({
       type="button"
       onClick={() => onClick(chave)}
       className={cn(
-        "flex items-center gap-1 text-xs font-medium text-muted-foreground outline-none hover:text-foreground",
+        "flex items-center gap-1 rounded-sm text-xs font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
         alinharDireita && "justify-end",
       )}
     >

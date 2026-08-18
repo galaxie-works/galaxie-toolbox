@@ -221,10 +221,39 @@ fn entry_de(path: &Path, meta: &std::fs::Metadata, is_symlink: bool) -> FsEntry 
 
 // ─────────────────────────────── Núcleo ─────────────────────────────────────
 
-/// Rejeita caminho vazio antes de tocar o disco (distinto de NotFound).
+/// Rejeita caminho inválido antes de tocar o disco (distinto de NotFound).
+///
+/// #1046 (SEC2): defesa-em-profundidade LÉXICA (sem `fs::canonicalize`, que
+/// falharia num caminho de DESTINO ainda inexistente — create/copy/rename — e
+/// quebraria a criação/cópia). Barra: vazio; caractere de controle
+/// (`\0`..`\x1f`, via `is_control`); aspas dupla `"` (o vetor que furava a
+/// concatenação do antigo `revelar_no_explorer`); e caminho não-absoluto
+/// (`is_absolute` cobre `C:\...` e UNC `\\server\share` no Windows). Caminhos
+/// legítimos do Explorer são sempre absolutos, então nenhum caller regride.
 fn validar(path: &str) -> Result<(), FsError> {
     if path.trim().is_empty() {
         return Err(FsError::InvalidPath("caminho vazio".into()));
+    }
+    if path.chars().any(|c| c.is_control()) {
+        return Err(FsError::InvalidPath(
+            "caminho com caractere de controle".into(),
+        ));
+    }
+    if path.contains('"') {
+        return Err(FsError::InvalidPath("caminho com aspas duplas".into()));
+    }
+    if !Path::new(path).is_absolute() {
+        return Err(FsError::InvalidPath("caminho precisa ser absoluto".into()));
+    }
+    // #1047 (SEC7): rejeita traversal léxico. Nenhum caminho legítimo do front usa
+    // `..` (o front sempre manda absoluto já resolvido). Barra em TODOS os callers
+    // (leitura+escrita) — é seguro. `Component::ParentDir` pega `..` em qualquer
+    // posição, independente do separador (`/` ou `\`).
+    if Path::new(path)
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(FsError::InvalidPath("caminho com '..'".into()));
     }
     Ok(())
 }
@@ -315,20 +344,31 @@ fn ler_dir_streamed(path: &str, batch: usize, app: &AppHandle) -> Result<u64, Fs
 // `ProgressManager`/`fs_cancel`) + teto de resultados — "Search This PC" pode
 // varrer milhões de arquivos, então NUNCA segura tudo na memória nem trava.
 
-/// Resolve as raízes da busca: `root` vazio = "This PC" (todos os drives locais
+/// Resolve as raízes da busca: `root` vazio = "This PC" (todos os drives LOCAIS
 /// montados); senão a pasta dada.
+///
+/// #1073 (RB30): drives de REDE (`network`/DRIVE_REMOTE) ficam FORA do "This PC" —
+/// varrê-los recursivamente numa share lenta/offline faz a busca parecer travada,
+/// e o escopo documentado sempre foi "drives locais". `cloud` (OneDrive/Drive
+/// montado) permanece: é um mount local com cache em disco.
 fn raizes_de_busca(root: &str) -> Vec<PathBuf> {
     let t = root.trim();
     if t.is_empty() {
         listar_drives()
             .unwrap_or_default()
             .into_iter()
-            .filter(|d| matches!(d.kind.as_str(), "fixed" | "removable" | "cloud" | "network"))
+            .filter(|d| kind_no_escopo_this_pc(&d.kind))
             .map(|d| PathBuf::from(d.path))
             .collect()
     } else {
         vec![PathBuf::from(t)]
     }
+}
+
+/// #1073 (RB30): predicado puro do escopo "This PC" — inclui só drives LOCAIS.
+/// `network` (DRIVE_REMOTE) fica de fora; `cdrom`/`ramdisk`/`unknown` também.
+fn kind_no_escopo_this_pc(kind: &str) -> bool {
+    matches!(kind, "fixed" | "removable" | "cloud")
 }
 
 /// Varre as raízes chamando `on_match` a cada arquivo/pasta cujo nome contém
@@ -495,8 +535,13 @@ fn mime_de_ext(path: &str) -> &'static str {
 /// "failed to fetch" porque o `assetProtocol` não está habilitado no tauri.conf).
 /// Guards: caminho válido, é ARQUIVO (não dir), ≤ `max_bytes` limitado a 25MB.
 /// `metadata` (segue symlink) pra o teto valer sobre o conteúdo real.
-fn ler_bytes_arquivo(path: &str, max_bytes: Option<u64>) -> Result<crate::graph::AnexoConteudo, FsError> {
-    use base64::Engine;
+/// #1044 SEC6: guards compartilhados de leitura de arquivo local — caminho válido
+/// (absoluto), é ARQUIVO (não dir), tamanho ≤ teto (limitado ao hard cap de 25MB).
+/// Devolve os bytes CRUS. É o funil único de leitura de disco a mando do front:
+/// tanto o preview do Explorer quanto o anexo/compartilhamento do compositor
+/// passam por aqui, então o front nunca precisa da capability `fs:allow-read-file`
+/// aberta em `**` (leitura de disco arbitrária).
+pub(crate) fn ler_bytes_cru(path: &str, max_bytes: Option<u64>) -> Result<Vec<u8>, FsError> {
     validar(path)?;
     let p = com_long_path(Path::new(path));
     let meta = std::fs::metadata(&p)?; // NotFound se não existe/broken symlink
@@ -509,7 +554,12 @@ fn ler_bytes_arquivo(path: &str, max_bytes: Option<u64>) -> Result<crate::graph:
     if size > teto {
         return Err(FsError::ArquivoGrande(format!("{path} ({size} bytes > {teto})")));
     }
-    let bytes = std::fs::read(&p)?;
+    Ok(std::fs::read(&p)?)
+}
+
+fn ler_bytes_arquivo(path: &str, max_bytes: Option<u64>) -> Result<crate::graph::AnexoConteudo, FsError> {
+    use base64::Engine;
+    let bytes = ler_bytes_cru(path, max_bytes)?;
     let nome = Path::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -754,6 +804,9 @@ fn detectar_clouds() -> Vec<CloudLocation> {
 // location" (atalho nethood sem letra) é mecanismo de shell diferente → outra fatia.
 
 /// Normaliza uma letra de drive pra "Z:" (aceita "z", "Z", "Z:", "Z:\").
+/// #1076 (RB32): só usada pelo mapeamento de network drive (Win32) — `#[cfg(windows)]`
+/// pra não virar dead_code fora do Windows.
+#[cfg(windows)]
 fn normalizar_letra_drive(s: &str) -> Result<String, FsError> {
     let t = s.trim().trim_end_matches(['\\', '/']).trim_end_matches(':');
     let mut chars = t.chars();
@@ -765,6 +818,9 @@ fn normalizar_letra_drive(s: &str) -> Result<String, FsError> {
 
 /// Valida um caminho UNC de rede (`\\server\share`): 2 barras iniciais + server
 /// + separador + share.
+/// #1076 (RB32): só usada pelo mapeamento de network drive (Win32) — `#[cfg(windows)]`
+/// pra não virar dead_code fora do Windows.
+#[cfg(windows)]
 fn validar_unc(p: &str) -> Result<(), FsError> {
     let t = p.trim();
     let dupla = t.starts_with("\\\\") || t.starts_with("//");
@@ -840,12 +896,254 @@ fn desconectar_network_drive(_letra: &str, _forcar: bool) -> Result<(), FsError>
 // Delete → Lixeira é o PADRÃO (reversível); permanente só com token de
 // confirmação (o front manda depois do Shift+confirmar). Tudo tipado em FsError.
 
-/// Token que o front envia pra confirmar exclusão PERMANENTE. Sem ele,
-/// `excluir_permanente` recusa — trava contra apagar sem querer.
-pub const TOKEN_EXCLUSAO_PERMANENTE: &str = "galaxie-excluir-permanente";
+// ───────────────── #1047 (SEC7): funil de segurança das mutações ─────────────
+
+/// Normaliza a caixa pra comparação de caminho no Windows (case-insensitive).
+/// Baixa a string inteira; a comparação depois é POR COMPONENTE (`starts_with`
+/// do `Path`), então o limite de pasta é respeitado (`C:\Foo` não casa `C:\Foobar`).
+#[cfg(windows)]
+fn normalizar_caixa(p: &Path) -> PathBuf {
+    PathBuf::from(p.to_string_lossy().to_lowercase())
+}
+#[cfg(not(windows))]
+fn normalizar_caixa(p: &Path) -> PathBuf {
+    p.to_path_buf()
+}
+
+/// Absolutiza SEM tocar o disco (fallback quando a canonicalização falha). O
+/// caller (`validar`) já exige caminho absoluto, então o ramo do `cwd` é defensivo.
+fn absolutizar_lexical(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(path)
+    } else {
+        path.to_path_buf()
+    }
+}
+
+/// Resolve um caminho pra checagem de diretório sensível: canonicaliza o ANCESTRAL
+/// EXISTENTE mais profundo (sobe com `.parent()` até um existir) e re-anexa a cauda
+/// inexistente. Assim um caminho A-SER-criado (create/copy/rename) ainda resolve.
+/// `dunce::canonicalize` evita o prefixo verbatim `\\?\` (que quebraria o
+/// `starts_with` contra as raízes). NUNCA panica: qualquer falha cai no lexical.
+fn resolver_para_checagem(path: &Path) -> PathBuf {
+    let mut cauda: Vec<std::ffi::OsString> = Vec::new();
+    let mut atual = path;
+    loop {
+        if let Ok(canon) = dunce::canonicalize(atual) {
+            let mut resolvido = canon;
+            // `cauda` acumulou folha→raiz; re-anexa raiz→folha (rev).
+            for parte in cauda.iter().rev() {
+                resolvido.push(parte);
+            }
+            return resolvido;
+        }
+        match atual.parent() {
+            Some(pai) => {
+                if let Some(nome) = atual.file_name() {
+                    cauda.push(nome.to_os_string());
+                }
+                atual = pai;
+            }
+            None => break,
+        }
+    }
+    absolutizar_lexical(path)
+}
+
+/// PURO (raízes por parâmetro → testável): `resolvido` está dentro de alguma raiz?
+/// Compara por componente após normalizar a caixa (Windows case-insensitive).
+fn dentro_de_dir_sensivel(resolvido: &Path, raizes: &[PathBuf]) -> bool {
+    let alvo = normalizar_caixa(resolvido);
+    raizes
+        .iter()
+        .any(|r| alvo.starts_with(normalizar_caixa(r)))
+}
+
+/// Canonicaliza `p` e empurra pra lista SÓ se existir (raiz que não resolve é
+/// ignorada — não trava mutação por causa de pasta ausente).
+fn push_se_existe(raizes: &mut Vec<PathBuf>, p: PathBuf) {
+    if let Ok(canon) = dunce::canonicalize(&p) {
+        raizes.push(canon);
+    }
+}
+
+/// Diretórios cuja MUTAÇÃO é sempre recusada: System32, a pasta do próprio app
+/// (não sobrescrever binário/DLLs) e a Startup do usuário (vetor de persistência).
+/// Cada uma canonicalizada se existir; as que não resolvem são ignoradas.
+fn raizes_sensiveis() -> Vec<PathBuf> {
+    let mut raizes: Vec<PathBuf> = Vec::new();
+    // %SystemRoot%\System32 (Windows).
+    if let Some(sysroot) = std::env::var_os("SystemRoot") {
+        push_se_existe(&mut raizes, Path::new(&sysroot).join("System32"));
+    }
+    // Diretório do próprio executável.
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+    {
+        push_se_existe(&mut raizes, dir);
+    }
+    // Startup do usuário (%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup).
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        push_se_existe(
+            &mut raizes,
+            Path::new(&appdata).join(r"Microsoft\Windows\Start Menu\Programs\Startup"),
+        );
+    }
+    raizes
+}
+
+/// Guarda das ESCRITAS: `validar` (léxico) + hard-block de diretório sensível.
+/// Sempre-recusado (não há UI de bypass) — mais rígido que a AC, que só pede
+/// "sem confirmação → recusado". Não usado nas LEITURAS (listar System32 é ok).
+fn validar_mutacao(path: &str) -> Result<(), FsError> {
+    validar(path)?;
+    let resolvido = resolver_para_checagem(Path::new(path));
+    if dentro_de_dir_sensivel(&resolvido, &raizes_sensiveis()) {
+        return Err(FsError::InvalidPath(
+            "mutação em diretório protegido do sistema recusada".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// O caminho é um reparse point (symlink/junction)? Testa a PRÓPRIA entrada
+/// (`symlink_metadata` não segue). Windows: atributo `FILE_ATTRIBUTE_REPARSE_POINT`;
+/// não-Windows: `file_type().is_symlink()`. Erro → `false`.
+#[cfg(windows)]
+fn eh_reparse_point(p: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    std::fs::symlink_metadata(com_long_path(p))
+        .map(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+        .unwrap_or(false)
+}
+#[cfg(not(windows))]
+fn eh_reparse_point(p: &Path) -> bool {
+    std::fs::symlink_metadata(p)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+/// Directory-ness BRUTA (nível do link). No Windows um dir-symlink/junction tem
+/// o bit `FILE_ATTRIBUTE_DIRECTORY` no `symlink_metadata`, embora `Metadata::is_dir`
+/// o mascare por ser reparse point — por isso lemos o atributo cru. Não-Windows: `is_dir`.
+#[cfg(windows)]
+fn eh_dir_bruto(meta: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x10;
+    meta.file_attributes() & FILE_ATTRIBUTE_DIRECTORY != 0
+}
+#[cfg(not(windows))]
+fn eh_dir_bruto(meta: &std::fs::Metadata) -> bool {
+    meta.is_dir()
+}
+
+/// Decisão PURA (testável sem privilégio): um dir que é reparse point é removido
+/// como LINK (`remove_dir` no ponto), NUNCA `remove_dir_all` (que atravessaria pro
+/// alvo real = data-loss). Só `is_dir && is_reparse`.
+fn deve_remover_como_link(is_dir: bool, is_reparse: bool) -> bool {
+    is_dir && is_reparse
+}
+
+/// Ancestral EXISTENTE mais próximo de `p` (o dir onde a escrita realmente cairia).
+fn parent_existente(p: &Path) -> Option<PathBuf> {
+    let mut atual = p.parent();
+    while let Some(dir) = atual {
+        if std::fs::symlink_metadata(com_long_path(dir)).is_ok() {
+            return Some(dir.to_path_buf());
+        }
+        atual = dir.parent();
+    }
+    None
+}
+
+/// #1047 (SEC7): recusa escrever num destino que é reparse point OU cujo pai
+/// existente é reparse point — não segue o symlink/junction pra fora da pasta
+/// esperada sem confirmação (não há UI de bypass → hard-block).
+fn destino_seguro(dst: &Path) -> Result<(), FsError> {
+    let alvo = eh_reparse_point(dst);
+    let pai = parent_existente(dst)
+        .map(|pai| eh_reparse_point(&pai))
+        .unwrap_or(false);
+    if alvo || pai {
+        return Err(FsError::InvalidPath(
+            "destino é symlink/junction — não seguido sem confirmação".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// #1047 (SEC7): guarda de ENTRADA do pipeline turbo de cópia. A UI copia/move
+/// pelos comandos `fs_*_with_progress` (não pelas `copiar`/`mover` internas), que
+/// disparam a op em background — então a validação tem que acontecer AQUI, antes
+/// do spawn, senão o hard-block de dir sensível/reparse não cobre o caminho real
+/// (o buraco do SEC7). Origem = LEITURA (`validar`); destino = ESCRITA
+/// (`validar_mutacao` + `destino_seguro`).
+fn checar_entrada_copia(from: &str, to: &str) -> Result<(), FsError> {
+    validar(from)?;
+    validar_mutacao(to)?;
+    destino_seguro(Path::new(to))
+}
+
+/// Idem, mas MOVE: a origem também é mutada (o move apaga `from` no fim) → a
+/// origem passa por `validar_mutacao` (não pode mover pra fora de dir protegido).
+fn checar_entrada_move(from: &str, to: &str) -> Result<(), FsError> {
+    validar_mutacao(from)?;
+    validar_mutacao(to)?;
+    destino_seguro(Path::new(to))
+}
+
+/// Entrada dos comandos "muitas": valida o `dest_dir` (escrita) e cada origem.
+/// `eh_move` decide se a origem é leitura (copy) ou mutação (move).
+fn checar_entrada_muitas(sources: &[String], dest_dir: &str, eh_move: bool) -> Result<(), FsError> {
+    validar_mutacao(dest_dir)?;
+    destino_seguro(Path::new(dest_dir))?;
+    for s in sources {
+        if eh_move {
+            validar_mutacao(s)?;
+        } else {
+            validar(s)?;
+        }
+    }
+    Ok(())
+}
+
+/// #1047 (SEC7): nonce de sessão que autoriza a exclusão PERMANENTE — substitui o
+/// token hardcoded (`galaxie-excluir-permanente`), que qualquer um podia forjar.
+/// Single-use (zera ao consumir) + deadline (TTL). Estado gerenciado pelo Tauri;
+/// `Arc<Mutex<…>>` interno pra ser `Clone`/`Send` e cruzar o `spawn_blocking`.
+#[derive(Clone, Default)]
+pub struct TokenExclusao(Arc<Mutex<Option<(String, Instant)>>>);
+
+impl TokenExclusao {
+    /// Emite um nonce com TTL padrão (30s) — janela suficiente pro round-trip da UI.
+    fn emitir(&self) -> String {
+        self.emitir_com_ttl(Duration::from_secs(30))
+    }
+    /// Emite um nonce 128-bit (hex) válido por `ttl`; sobrescreve o anterior.
+    fn emitir_com_ttl(&self, ttl: Duration) -> String {
+        let nonce = format!("{:032x}", rand::random::<u128>());
+        let deadline = Instant::now() + ttl;
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = Some((nonce.clone(), deadline));
+        nonce
+    }
+    /// Confere o nonce apresentado (igual + dentro do prazo). Em sucesso ZERA o
+    /// estado (single-use): o mesmo nonce não vale duas vezes.
+    fn consumir(&self, apresentado: &str) -> bool {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let ok = matches!(&*guard, Some((n, dl)) if n == apresentado && Instant::now() < *dl);
+        if ok {
+            *guard = None;
+        }
+        ok
+    }
+}
 
 fn criar_dir(path: &str) -> Result<(), FsError> {
-    validar(path)?;
+    validar_mutacao(path)?;
     // `create_dir` (não `_all`) → AlreadyExists se a pasta já existe.
     std::fs::create_dir(com_long_path(Path::new(path)))?;
     Ok(())
@@ -853,7 +1151,7 @@ fn criar_dir(path: &str) -> Result<(), FsError> {
 
 fn criar_arquivo(path: &str, contents: Option<String>) -> Result<(), FsError> {
     use std::io::Write;
-    validar(path)?;
+    validar_mutacao(path)?;
     // `create_new` é atômico: erra AlreadyExists sem sobrescrever.
     let mut f = std::fs::OpenOptions::new()
         .write(true)
@@ -866,8 +1164,8 @@ fn criar_arquivo(path: &str, contents: Option<String>) -> Result<(), FsError> {
 }
 
 fn renomear(from: &str, to: &str) -> Result<(), FsError> {
-    validar(from)?;
-    validar(to)?;
+    validar_mutacao(from)?;
+    validar_mutacao(to)?;
     let dest = com_long_path(Path::new(to));
     if dest.exists() {
         return Err(FsError::AlreadyExists(to.to_string()));
@@ -879,10 +1177,16 @@ fn renomear(from: &str, to: &str) -> Result<(), FsError> {
 /// Copia arquivo (std) ou pasta (recursiva + paralela via rayon). Conflito de
 /// arquivo no destino → AlreadyExists.
 fn copiar(from: &str, to: &str) -> Result<(), FsError> {
+    // #1047 (SEC7): a ORIGEM da cópia é LEITURA (não muta `from`) → só `validar`
+    // (absoluto/sem `..`/sem control-char). O bloqueio de dir sensível vale pro
+    // DESTINO (escrita). O `mover` cross-volume que chama `copiar` já validou o
+    // `from` como mutação no topo dele, então o delete pós-cópia segue protegido.
     validar(from)?;
-    validar(to)?;
+    validar_mutacao(to)?;
     let src = Path::new(from);
     let dst = Path::new(to);
+    // #1047 (SEC7): não seguir symlink/junction no destino (nem no pai existente).
+    destino_seguro(dst)?;
     if std::fs::symlink_metadata(com_long_path(src))?.is_dir() {
         copiar_dir(src, dst)
     } else {
@@ -898,9 +1202,13 @@ fn copiar(from: &str, to: &str) -> Result<(), FsError> {
 fn copiar_dir(src: &Path, dst: &Path) -> Result<(), FsError> {
     use rayon::prelude::*;
     std::fs::create_dir_all(com_long_path(dst))?;
-    let entradas: Vec<std::fs::DirEntry> = std::fs::read_dir(com_long_path(src))?
-        .filter_map(Result::ok)
-        .collect();
+    // #1066: NÃO engolir `DirEntry` com erro. O `filter_map(Result::ok)` antigo
+    // descartava entradas em silêncio → a cópia terminava Ok sem elas e o `mover`
+    // apagava a origem = perda de dado. Agora um erro de enumeração ABORTA a cópia.
+    let mut entradas: Vec<std::fs::DirEntry> = Vec::new();
+    for e in std::fs::read_dir(com_long_path(src))? {
+        entradas.push(e?);
+    }
     entradas.par_iter().try_for_each(|e| -> Result<(), FsError> {
         let origem = e.path();
         let nome = origem
@@ -917,9 +1225,14 @@ fn copiar_dir(src: &Path, dst: &Path) -> Result<(), FsError> {
 }
 
 /// Move: rename rápido (mesmo volume); se falhar (cross-volume), copia+apaga.
+/// #1066: hoje é caminho INTERNO (undo em `executar_undo`) — não há mais comando
+/// Tauri paralelo (`fs_copy`/`fs_move` foram removidos); a UI só usa o pipeline
+/// turbo. Mantido pro undo e testes.
 fn mover(from: &str, to: &str) -> Result<(), FsError> {
-    validar(from)?;
-    validar(to)?;
+    validar_mutacao(from)?;
+    validar_mutacao(to)?;
+    // #1047 (SEC7): destino não pode ser symlink/junction (nem o pai existente).
+    destino_seguro(Path::new(to))?;
     let dest = com_long_path(Path::new(to));
     // #680: paridade com o copy — "Substituir" honra a decisão da UI e sobrescreve.
     // std::fs::rename troca um arquivo existente (REPLACE_EXISTING no Windows;
@@ -927,16 +1240,26 @@ fn mover(from: &str, to: &str) -> Result<(), FsError> {
     if std::fs::rename(com_long_path(Path::new(from)), &dest).is_ok() {
         return Ok(());
     }
-    // Fallback cross-volume: copia recursivo e apaga a origem.
+    // Fallback cross-volume: copia recursivo e SÓ apaga a origem se a cópia foi
+    // completa. #1066: `copiar` agora propaga erro de enumeração/I/O (nunca Ok
+    // parcial), então `remover` só roda quando tudo copiou — sem perda de dado.
     copiar(from, to)?;
     remover(from)
 }
 
 fn remover(path: &str) -> Result<(), FsError> {
     let p = Path::new(path);
-    if std::fs::symlink_metadata(com_long_path(p))?.is_dir() {
+    let meta = std::fs::symlink_metadata(com_long_path(p))?;
+    let is_dir = eh_dir_bruto(&meta);
+    if deve_remover_como_link(is_dir, eh_reparse_point(p)) {
+        // #1047 (SEC7) DATA-LOSS-crítico: dir que é reparse point (symlink/junction)
+        // é removido como LINK (`remove_dir` apaga só o ponto). JAMAIS `remove_dir_all`,
+        // que atravessaria pro alvo real e apagaria o conteúdo apontado (perda de dado).
+        std::fs::remove_dir(com_long_path(p))?;
+    } else if is_dir {
         std::fs::remove_dir_all(com_long_path(p))?;
     } else {
+        // Arquivo ou symlink-de-arquivo: remove a própria entrada (não segue).
         std::fs::remove_file(com_long_path(p))?;
     }
     Ok(())
@@ -949,9 +1272,30 @@ fn caminho_existe(p: &str) -> bool {
     std::fs::symlink_metadata(com_long_path(Path::new(p))).is_ok()
 }
 
+/// Comprimento clássico do MAX_PATH do Windows (260, inclui o NUL). A Lixeira do
+/// shell (IFileOperation) não alcança caminhos a partir daqui.
+const MAX_PATH: usize = 260;
+
+/// #1073 (RB29): o caminho estoura o MAX_PATH clássico? A Lixeira do shell
+/// (`IFileOperation`/`SHCreateItemFromParsingName`, usada pelo crate `trash`) NÃO
+/// alcança caminhos a partir de 260 nem aceita o prefixo verbatim `\\?\`. Caminhos
+/// longos (comuns em SharePoint/OneDrive) NÃO podem ir pra Lixeira — ver `para_lixeira`.
+fn excede_max_path(p: &str) -> bool {
+    p.chars().count() >= MAX_PATH
+}
+
 /// Manda os itens pra Lixeira do SO (batch, reversível pelo usuário). #849: loga
 /// (START/END/ERRO, "como o Delphero" no GALAXIE.log) e é IDEMPOTENTE — filtra os
 /// caminhos que já sumiram (delete concorrente do 3x-clique); todos já idos = no-op.
+///
+/// #1073 (RB29 — decisão do PO): caminhos curtos vão pra Lixeira (reversível). Caminho
+/// >= MAX_PATH a Lixeira do shell NÃO alcança → **FALHA EXPLÍCITA preservando o
+/// arquivo**, JAMAIS delete permanente silencioso. O usuário pediu "Lixeira"
+/// (reversível), não "apagar": entregar irreversível seria fazer coisa diferente da que
+/// ele mandou, e caminho profundo é o DIA A DIA de quem migra OneDrive/SharePoint (dado
+/// de cliente real), não borda. Os longos ficam INTACTOS e o erro nomeia o porquê (a UI
+/// mostra). Delete permanente de caminho longo, se desejado, é ação ESCOLHIDA com
+/// confirmação na UI — US-filha de front, nunca consequência de clicar "Lixeira".
 fn para_lixeira(paths: &[String]) -> Result<(), FsError> {
     if paths.is_empty() {
         return Ok(());
@@ -959,45 +1303,63 @@ fn para_lixeira(paths: &[String]) -> Result<(), FsError> {
     for p in paths {
         validar(p)?;
     }
-    let alvos: Vec<&str> = paths
+    let (longos, curtos): (Vec<&str>, Vec<&str>) = paths
         .iter()
         .filter(|p| caminho_existe(p))
         .map(String::as_str)
-        .collect();
-    let ja_idos = paths.len() - alvos.len();
+        .partition(|p| excede_max_path(p));
+    let ja_idos = paths.len() - longos.len() - curtos.len();
     log::info!(
-        "fs_trash START: {} para a Lixeira, {ja_idos} já removido(s)/ignorado(s)",
-        alvos.len()
+        "fs_trash START: {} para a Lixeira, {} longo(s) intocado(s) (>= MAX_PATH), {ja_idos} já removido(s)/ignorado(s)",
+        curtos.len(),
+        longos.len()
     );
-    if alvos.is_empty() {
-        return Ok(());
-    }
-    let total = alvos.len();
-    match trash::delete_all(alvos) {
-        Ok(()) => {
-            log::info!("fs_trash END: {total} item(ns) na Lixeira OK");
-            Ok(())
-        }
-        Err(e) => {
+
+    // Curtos vão pra Lixeira (reversível) — independentemente dos longos.
+    if !curtos.is_empty() {
+        let total = curtos.len();
+        if let Err(e) = trash::delete_all(&curtos) {
             log::error!("fs_trash ERRO: {e} ({total} alvo(s))");
-            Err(FsError::Io(format!("lixeira: {e}")))
+            return Err(FsError::Io(format!("lixeira: {e}")));
         }
+        log::info!("fs_trash END: {total} item(ns) na Lixeira OK");
     }
+
+    // #1073 RB29 (decisão do PO): caminho >= MAX_PATH → falha EXPLÍCITA, arquivo
+    // INTACTO. Falha (recuperável) > delete permanente (irrecuperável). Nunca apaga
+    // pra sempre um item que o usuário mandou pra Lixeira.
+    if !longos.is_empty() {
+        let nomes = longos.join(", ");
+        log::warn!(
+            "fs_trash: {} caminho(s) excedem o MAX_PATH ({MAX_PATH}) — a Lixeira não os alcança; NÃO excluídos (intactos): {nomes}",
+            longos.len()
+        );
+        return Err(FsError::Io(format!(
+            "{} caminho(s) excedem o limite de {MAX_PATH} caracteres do Windows e a Lixeira não os alcança — não foram excluídos e permanecem intactos.",
+            longos.len()
+        )));
+    }
+    Ok(())
 }
 
-/// Apaga PERMANENTEMENTE (sem Lixeira) — exige o token de confirmação. #849: loga
+/// Apaga PERMANENTEMENTE (sem Lixeira) — exige o nonce de sessão (#1047). #849: loga
 /// (Delphero) e é IDEMPOTENTE (caminho já sumido não vira erro; conta e segue).
-fn excluir_permanente(paths: &[String], confirm_token: &str) -> Result<(), FsError> {
-    if confirm_token != TOKEN_EXCLUSAO_PERMANENTE {
+fn excluir_permanente(
+    paths: &[String],
+    confirm_token: &str,
+    token: &TokenExclusao,
+) -> Result<(), FsError> {
+    // #1047 (SEC7): nonce de sessão single-use no lugar do token hardcoded.
+    if !token.consumir(confirm_token) {
         return Err(FsError::InvalidPath(
-            "exclusão permanente requer confirmação".into(),
+            "exclusão permanente requer confirmação válida (nonce)".into(),
         ));
     }
     log::info!("fs_delete_permanent START: {} alvo(s)", paths.len());
     let mut removidos = 0usize;
     let mut ja_idos = 0usize;
     for p in paths {
-        validar(p)?;
+        validar_mutacao(p)?;
         if !caminho_existe(p) {
             ja_idos += 1;
             continue;
@@ -1032,35 +1394,35 @@ impl ProgressManager {
         let id = self.proximo_id.fetch_add(1, Ordering::Relaxed);
         let cancelar = Arc::new(AtomicBool::new(false));
         let pausar = Arc::new(AtomicBool::new(false));
-        self.cancelados.lock().unwrap().insert(id, cancelar.clone());
-        self.pausados.lock().unwrap().insert(id, pausar.clone());
+        self.cancelados.lock().unwrap_or_else(|e| e.into_inner()).insert(id, cancelar.clone());
+        self.pausados.lock().unwrap_or_else(|e| e.into_inner()).insert(id, pausar.clone());
         (id, cancelar, pausar)
     }
     fn cancelar(&self, id: u64) {
-        if let Some(f) = self.cancelados.lock().unwrap().get(&id) {
+        if let Some(f) = self.cancelados.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
             f.store(true, Ordering::Relaxed);
         }
         // Um op pausado precisa ser destravado pra ver o cancel e encerrar.
-        if let Some(p) = self.pausados.lock().unwrap().get(&id) {
+        if let Some(p) = self.pausados.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
             p.store(false, Ordering::Relaxed);
         }
     }
     /// #898: sinaliza pause — os workers bloqueiam no próximo check (entre arquivos ou
     /// entre chunks). No-op se a op não existe (já terminou).
     fn pausar(&self, id: u64) {
-        if let Some(p) = self.pausados.lock().unwrap().get(&id) {
+        if let Some(p) = self.pausados.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
             p.store(true, Ordering::Relaxed);
         }
     }
     /// #898: destrava a op pausada — os workers retomam do ponto exato.
     fn resumir(&self, id: u64) {
-        if let Some(p) = self.pausados.lock().unwrap().get(&id) {
+        if let Some(p) = self.pausados.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
             p.store(false, Ordering::Relaxed);
         }
     }
     fn finalizar(&self, id: u64) {
-        self.cancelados.lock().unwrap().remove(&id);
-        self.pausados.lock().unwrap().remove(&id);
+        self.cancelados.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
+        self.pausados.lock().unwrap_or_else(|e| e.into_inner()).remove(&id);
     }
 }
 
@@ -1149,6 +1511,13 @@ struct JournalItem {
     mtime_at_end: u64,
     hash_at_end: Option<String>,
     hash_alg: Option<String>,
+    /// #1067 RB25: o `stat` do `to` FALHOU no fim da op → `size_at_end`/`mtime_at_end`
+    /// caíram no fallback 0 e NÃO são confiáveis. Sem esta marca, o undo compararia
+    /// `len()=0` com o disco e classificaria o item como "modificado" (motivo errado);
+    /// com ela, o undo pula por "stat_indisponivel" (fail-closed, não confunde os dois).
+    /// `serde(default)=false` → retrocompatível com journals já gravados em disco.
+    #[serde(default)]
+    stat_indisponivel: bool,
 }
 
 /// Um registro por operação mutante — serializado como 1 linha JSON no journal.
@@ -1166,10 +1535,22 @@ struct OperationJournalEntry {
     items: Vec<JournalItem>,
     /// Handles do SO pra restaurar da Lixeira (kind=trash; vazio aqui).
     trash_record_ids: Vec<String>,
+    /// #1067 RB27: granularidade do undo. `""`/`"item"` (default) = manifesto completo,
+    /// um item por caminho criado. `"raiz"` = manifesto REDUZIDO por teto (op gigante,
+    /// `items.len()` estourou `JOURNAL_ITENS_MAX`) → o undo é mais grosso e NÃO cobre
+    /// todos os caminhos; o front deve avisar que o desfazer é parcial. Nunca reduzido
+    /// em silêncio (há `log::warn!` no ponto do corte). `serde(default)` = retrocompat.
+    #[serde(default)]
+    undo_granularidade: String,
 }
 
 /// Máximo de ops retidas (§7 do spike: journal efêmero, poda o excesso).
 const JOURNAL_MAX: usize = 50;
+/// #1067 RB27: teto de itens por manifesto. Uma op de árvore com centenas de milhares
+/// de arquivos geraria UMA linha JSON de centenas de MB — a escrita trava e o journal
+/// inteiro fica refém dela. Acima deste teto o manifesto é REDUZIDO (ver
+/// `reduzir_para_teto`) e marcado `undo_granularidade="raiz"`, nunca gravado gigante.
+const JOURNAL_ITENS_MAX: usize = 5000;
 /// Serializa as escritas concorrentes no arquivo do journal.
 static JOURNAL_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1203,6 +1584,9 @@ fn journal_item(from: &Path, to: &Path, mover: bool) -> JournalItem {
         mtime_at_end: meta.as_ref().map(mtime_ms).unwrap_or(0),
         hash_at_end: None,
         hash_alg: None,
+        // #1067 RB25: stat falhou → size/mtime acima são 0 não-confiáveis. Marca pro
+        // undo pular por motivo próprio em vez de acusar "modificado" (len 0 ≠ disco).
+        stat_indisponivel: meta.is_none(),
     }
 }
 
@@ -1216,6 +1600,9 @@ fn montar_entrada(
     plano: &Plano,
 ) -> OperationJournalEntry {
     let mut items = Vec::with_capacity(plano.dirs.len() + plano.total_arquivos as usize);
+    // #1067: o stat em massa (um `journal_item`/arquivo) roda AQUI, FORA do ticker de
+    // progresso — não bloqueia a UI. Numa op gigante isto é serial e pode custar; mover
+    // o stat pro worker do ticker (statando durante a cópia) é follow-up, não deste US.
     for d in &plano.dirs {
         // dir: o undo remove o vazio (copy) ou é recriado pelos moves (move).
         items.push(journal_item(d, d, false));
@@ -1232,6 +1619,7 @@ fn montar_entrada(
         resolucao: None,
         items,
         trash_record_ids: Vec::new(),
+        undo_granularidade: String::new(),
     }
 }
 
@@ -1243,6 +1631,33 @@ fn podar_journal(mut linhas: Vec<String>, max: usize) -> Vec<String> {
     linhas
 }
 
+/// #1067 RB27: precisa reescrever o journal inteiro (pra podar), ou dá pra fazer append
+/// barato da nova linha? Reescrever é o que trava com manifestos gigantes; só cai nele
+/// quando o push passaria de `max` linhas (raro: 1×/op só depois de 50 ops acumuladas).
+/// Pura → testável sem I/O.
+fn precisa_reescrever(n_linhas_atual: usize, max: usize) -> bool {
+    n_linhas_atual + 1 > max
+}
+
+/// #1067 RB27: se o manifesto estoura o teto de itens, devolve uma versão REDUZIDA
+/// (senão `None` = grava como está). A redução aqui é TRUNCAR pros primeiros `max`
+/// itens + marcar `undo_granularidade="raiz"`. Escolha deliberada sobre "raízes por
+/// ancestralidade": no código atual os itens de DIRETÓRIO carregam `from=""` (o undo
+/// os ignora — `executar_undo` filtra `!is_dir`), então reduzir uma árvore profunda às
+/// suas raízes-dir deixaria o move SEM nenhum item reversível (undo faria nada). Truncar
+/// preserva `max` itens de ARQUIVO realmente reversíveis; o resto não some do disco —
+/// segue no destino (recuperável à mão), só não é desfeito pelo botão. O corte é sempre
+/// BARULHENTO (marca + `log::warn!` no chamador), nunca silencioso. Pura → testável.
+fn reduzir_para_teto(entry: &OperationJournalEntry, max: usize) -> Option<OperationJournalEntry> {
+    if entry.items.len() <= max {
+        return None;
+    }
+    let mut reduzido = entry.clone();
+    reduzido.items.truncate(max);
+    reduzido.undo_granularidade = "raiz".into();
+    Some(reduzido)
+}
+
 /// Grava (append + poda) o manifesto no journal. **Best-effort**: falha de I/O
 /// do journal NUNCA quebra a op de arquivo — só loga.
 fn registrar_journal(app: &AppHandle, entry: &OperationJournalEntry) {
@@ -1250,6 +1665,16 @@ fn registrar_journal(app: &AppHandle, entry: &OperationJournalEntry) {
         log::warn!("journal: appDataDir indisponível, op {} não registrada", entry.op_id);
         return;
     };
+    // #1067 RB27 (teto): op gigante vira manifesto reduzido ANTES de serializar — nunca
+    // gravamos uma linha de centenas de MB. O corte é logado (warn), não silencioso.
+    let reduzido = reduzir_para_teto(entry, JOURNAL_ITENS_MAX);
+    let entry = reduzido.as_ref().unwrap_or(entry);
+    if reduzido.is_some() {
+        log::warn!(
+            "journal: op {} com muitos itens — manifesto TRUNCADO pra {} de origem (undo=raiz, parcial)",
+            entry.op_id, JOURNAL_ITENS_MAX
+        );
+    }
     let json = match serde_json::to_string(entry) {
         Ok(j) => j,
         Err(e) => {
@@ -1261,16 +1686,49 @@ fn registrar_journal(app: &AppHandle, entry: &OperationJournalEntry) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    let mut linhas: Vec<String> = std::fs::read_to_string(&path)
-        .map(|s| s.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect())
-        .unwrap_or_default();
-    linhas.push(json);
-    let linhas = podar_journal(linhas, JOURNAL_MAX);
-    let conteudo = linhas.join("\n") + "\n";
-    if let Err(e) = std::fs::write(&path, conteudo) {
-        log::error!("journal: gravação falhou ({}): {e}", path.display());
+    // #1067 RB27 (append): a reescrita do arquivo inteiro é o que trava com manifestos
+    // grandes. Enquanto não precisa PODAR (< JOURNAL_MAX linhas após o push), fazemos
+    // append real da nova linha — sem tocar no que já está lá. Só caímos no read-all +
+    // rewrite quando o journal atingiu o teto de ops e precisa dropar as mais velhas.
+    // Invariante mantida pelos dois caminhos: cada linha termina em "\n" (o append
+    // depende disso pra não colar duas ops na mesma linha).
+    let n_atual = contar_linhas_journal(&path);
+    if precisa_reescrever(n_atual, JOURNAL_MAX) {
+        let mut linhas: Vec<String> = std::fs::read_to_string(&path)
+            .map(|s| s.lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect())
+            .unwrap_or_default();
+        linhas.push(json);
+        let linhas = podar_journal(linhas, JOURNAL_MAX);
+        let conteudo = linhas.join("\n") + "\n";
+        if let Err(e) = std::fs::write(&path, conteudo) {
+            log::error!("journal: gravação (poda) falhou ({}): {e}", path.display());
+        }
+    } else {
+        match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            Ok(mut f) => {
+                use std::io::Write;
+                if let Err(e) = writeln!(f, "{json}") {
+                    log::error!("journal: append falhou ({}): {e}", path.display());
+                }
+            }
+            Err(e) => log::error!("journal: abertura p/ append falhou ({}): {e}", path.display()),
+        }
     }
     log::info!("journal: op {} registrada ({} item(s))", entry.op_id, entry.items.len());
+}
+
+/// #1067 RB27: conta as linhas não-vazias do journal SEM materializar todas de uma vez
+/// (BufReader linha-a-linha). Decide append-vs-rewrite; barato mesmo com o arquivo
+/// grande (só o custo de leitura — a economia real é não RE-ESCREVER o gigante).
+fn contar_linhas_journal(path: &Path) -> usize {
+    use std::io::BufRead;
+    let Ok(f) = std::fs::File::open(path) else {
+        return 0;
+    };
+    std::io::BufReader::new(f)
+        .lines()
+        .filter(|l| l.as_ref().map(|s| !s.trim().is_empty()).unwrap_or(false))
+        .count()
 }
 
 // ─── #899 U1: undo verificado (lê o journal, classifica, executa) ────────────
@@ -1290,7 +1748,7 @@ pub struct UndoItemPlan {
     /// `seguro` | `pulado` | `naoReversivel`.
     estado: String,
     /// Código do motivo (só pulado/naoReversível): `sumiu` | `modificado` |
-    /// `origemReocupada` | `sobrescrita`. O front mapeia pra copy i18n.
+    /// `origemReocupada` | `sobrescrita` | `stat_indisponivel`. O front mapeia pra copy i18n.
     motivo: Option<String>,
 }
 
@@ -1364,7 +1822,12 @@ fn remover_entrada_journal(app: &AppHandle, op_id: u64) {
     } else {
         restantes.join("\n") + "\n"
     };
-    let _ = std::fs::write(&path, conteudo);
+    // #1067 RB25: NÃO engolir a falha. Se a reescrita falha, a entrada da op desfeita
+    // PERMANECE no journal e pode ser desfeita de novo (undo em dobro = data-loss).
+    // A fn é `()` (pós-undo, best-effort), então logar em erro satisfaz o AC.
+    if let Err(e) = std::fs::write(&path, conteudo) {
+        log::error!("journal: remoção da entrada da op {op_id} falhou ({}): {e} — RISCO de undo duplicado", path.display());
+    }
 }
 
 /// Um arquivo do manifesto mudou desde a op? v1: size+mtime (hash é fallback
@@ -1386,6 +1849,12 @@ fn classificar_item(item: &JournalItem, mover: bool) -> (String, Option<String>)
     if item.overwritten {
         // sobrescrita: o original não volta (§3) → fora do plano.
         return ("naoReversivel".into(), Some("sobrescrita".into()));
+    }
+    // #1067 RB25: stat indisponível no fim da op → size/mtime gravados são 0 não-confiáveis.
+    // Precede `item_modificado` de propósito: sem isto, `len()=0 != disco` marcaria o item
+    // como "modificado" (motivo enganoso). Motivo próprio, item pulado (fail-closed).
+    if item.stat_indisponivel {
+        return ("pulado".into(), Some("stat_indisponivel".into()));
     }
     if item_modificado(item) {
         return ("pulado".into(), Some("modificado".into()));
@@ -1527,6 +1996,11 @@ struct Plano {
     grandes: Vec<CopyJob>,
     total_bytes: u64,
     total_arquivos: u64,
+    /// #1066: entradas que a enumeração NÃO conseguiu planejar (erro de I/O do
+    /// jwalk, metadata ilegível, symlink não replicável). Nunca descartadas em
+    /// silêncio: os executores abortam a op se isto vier não-vazio (a origem de um
+    /// move NÃO é removida com o plano incompleto).
+    erros: Vec<String>,
 }
 
 /// Enumera a origem (jwalk paralelo), cria a lista de dirs a criar (rasos
@@ -1549,7 +2023,25 @@ fn planejar(from: &Path, to: &Path) -> Result<Plano, FsError> {
     plano.dirs.push(to.to_path_buf());
     let raiz = com_long_path(from);
     for entry in jwalk::WalkDir::new(&raiz).skip_hidden(false).sort(true) {
-        let Ok(entry) = entry else { continue };
+        // #1066: entrada com erro de enumeração NÃO é mais pulada em silêncio —
+        // vira um erro acumulado (o move não apagaria a origem sem tê-la copiado).
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                plano.erros.push(format!("enumeração falhou: {e}"));
+                continue;
+            }
+        };
+        // #1066: o jwalk NÃO propaga erro de LEITURA de subpasta como item `Err` —
+        // ele anexa em `read_children_error` na entrada do próprio diretório e segue.
+        // Sem checar isto, uma subpasta ilegível (permissão negada etc.) sumia calada:
+        // a cópia terminava "Ok" sem o conteúdo dela e o move apagava a origem = perda
+        // de dado. Agora vira erro acumulado (op abortada / origem preservada).
+        if let Some(err) = &entry.read_children_error {
+            plano
+                .erros
+                .push(format!("{}: leitura da subpasta falhou: {err}", caminho_limpo(&entry.path())));
+        }
         let p = entry.path();
         let Ok(rel) = p.strip_prefix(&raiz) else { continue };
         if rel.as_os_str().is_empty() {
@@ -1560,7 +2052,16 @@ fn planejar(from: &Path, to: &Path) -> Result<Plano, FsError> {
         if ft.is_dir() {
             plano.dirs.push(dst);
         } else if ft.is_file() {
-            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            // #1066: metadata ilegível = não sabemos o tamanho → NÃO planeja como
+            // job (copiaria conteúdo errado/parcial). Registra como erro pra op ficar
+            // incompleta, em vez do `.unwrap_or(0)` antigo que mascarava a falha.
+            let size = match entry.metadata() {
+                Ok(m) => m.len(),
+                Err(e) => {
+                    plano.erros.push(format!("{}: metadata ilegível: {e}", caminho_limpo(&p)));
+                    continue;
+                }
+            };
             plano.total_bytes += size;
             plano.total_arquivos += 1;
             let job = CopyJob { src: from.join(rel), dst, size };
@@ -1569,8 +2070,11 @@ fn planejar(from: &Path, to: &Path) -> Result<Plano, FsError> {
             } else {
                 plano.grandes.push(job);
             }
+        } else if ft.is_symlink() {
+            // #1066: symlink/junction não é replicado (a cópia é de conteúdo real).
+            // Antes sumia calado; agora conta como erro pra não fingir cópia completa.
+            plano.erros.push(format!("{}: symlink/reparse não replicado", caminho_limpo(&p)));
         }
-        // symlink/outros: pulados (a cópia é de conteúdo real).
     }
     Ok(plano)
 }
@@ -1588,6 +2092,7 @@ fn planejar_muitas(pares: &[(PathBuf, PathBuf)]) -> Result<Plano, FsError> {
         global.grandes.extend(p.grandes);
         global.total_bytes += p.total_bytes;
         global.total_arquivos += p.total_arquivos;
+        global.erros.extend(p.erros); // #1066: acumula os pulos de cada origem
     }
     Ok(global)
 }
@@ -1658,6 +2163,14 @@ fn tem_seek_penalty(vol: &Path) -> Option<bool> {
         );
         let _ = CloseHandle(h);
         r.ok()?;
+        // #1076 (RB31): só confia no descritor se o IOCTL preencheu ao menos a struct
+        // inteira. Sem checar `retornados`, um retorno de 0 bytes (sucesso vazio)
+        // deixaria `desc` no default — `IncursSeekPenalty=false` — e um HDD viraria
+        // "SSD", disparando paralelismo alto que causa THRASH de seek no disco
+        // mecânico. Bytes insuficientes ⇒ assume HDD (conservador: com seek penalty).
+        if (retornados as usize) < std::mem::size_of::<DEVICE_SEEK_PENALTY_DESCRIPTOR>() {
+            return Some(true);
+        }
         Some(desc.IncursSeekPenalty)
     }
 }
@@ -1852,8 +2365,16 @@ fn copiar_arquivo(job: &CopyJob, ctx: &Contexto) -> Result<(), FsError> {
     }
     sai.flush()?;
     // #850: arquivo encolheu entre planejar e copiar → corta o excesso pré-alocado.
+    // #1066 (RB23): NÃO engolir o erro do corte — `set_len` que falha deixaria o
+    // destino com padding de zeros (arquivo corrompido). Propaga com `?`.
     if prealoc && escritos != job.size {
-        let _ = sai.set_len(escritos);
+        sai.set_len(escritos)?;
+    }
+    // #1066 (RB22): com verify, o hash tem que sair do DISCO, não da page cache.
+    // `sync_all` força os dados+metadata a persistirem ANTES de reabrir pra hashear —
+    // senão a verificação compara cache com cache e não pega corrupção de gravação.
+    if ctx.verify.is_some() {
+        sai.sync_all()?;
     }
     drop(sai);
     // Preserva atributos de permissão (readonly etc.).
@@ -2020,7 +2541,7 @@ fn executar_progresso(
     verify: Option<VerifyAlg>,
     app: &AppHandle,
     started_at_ms: u64,
-) -> Result<bool, FsError> {
+) -> Result<ResumoOp, FsError> {
     validar(from)?;
     validar(to)?;
     let src = Path::new(from);
@@ -2049,15 +2570,32 @@ fn executar_progresso(
                 resolucao: None,
                 items: vec![item],
                 trash_record_ids: Vec::new(),
+                undo_granularidade: String::new(),
             },
         );
-        return Ok(false);
+        // rename mesmo-volume: 1 item movido (não varre pra contar os arquivos internos).
+        return Ok(ResumoOp { canceled: false, files_total: 1, files_done: 1 });
     }
 
     // #875: fase Discovering — a varredura (jwalk) pode demorar; o front mostra
     // "Descobrindo itens…" (indeterminado) antes do ticker de bytes ligar.
     emitir_descobrindo(app, op_id, rotulo, started_at_ms);
     let plano = planejar(src, dst)?;
+    // #1066: enumeração pulou entrada(s) → o plano é incompleto. Aborta ANTES de
+    // copiar 1 byte (nada criado no destino, origem intocada). Melhor erro barulhento
+    // que um move que apaga a origem depois de uma cópia furada.
+    if !plano.erros.is_empty() {
+        log::error!(
+            "fs_{rotulo} ERRO op={op_id}: enumeração pulou {} entrada(s) — abortando (ex.: {})",
+            plano.erros.len(),
+            plano.erros.first().map(String::as_str).unwrap_or("")
+        );
+        return Err(FsError::Io(format!(
+            "enumeração incompleta: {} entrada(s) inacessível(is) — op abortada (ex.: {})",
+            plano.erros.len(),
+            plano.erros.first().map(String::as_str).unwrap_or("")
+        )));
+    }
     for d in &plano.dirs {
         std::fs::create_dir_all(com_long_path(d))?;
     }
@@ -2097,16 +2635,50 @@ fn executar_progresso(
 
     if let Err(e) = resultado {
         log::error!("fs_{rotulo} ERRO op={op_id}: {e}");
-        let _ = remover(to); // limpa o parcial
+        // #1067 RB24: a limpeza do parcial não pode ser engolida. Se `remover` falha E o
+        // caminho ainda existe, é resíduo (árvore parcial no destino) — loga e reflete no
+        // erro terminal (o front vê o path). `remover` falhar por NotFound (nada criado)
+        // não é resíduo: `caminho_existe` filtra isso.
+        if let Err(re) = remover(to) {
+            if caminho_existe(to) {
+                log::error!("fs_{rotulo} op={op_id}: resíduo em {to} (limpeza falhou): {re}");
+                return Err(FsError::Io(format!("{e} — resíduo NÃO removido em: {to}")));
+            }
+        }
         return Err(e);
     }
     if flag.load(Ordering::Relaxed) {
         log::info!("fs_{rotulo} END op={op_id}: CANCELADO ({:.2}s)", t0.elapsed().as_secs_f64());
-        let _ = remover(to);
-        return Ok(true);
+        // #1067 RB24: mesmo no cancel a limpeza é verificada; resíduo vai pro log (o
+        // resultado terminal é `canceled`, sem campo de erro — não reclassifico cancel
+        // como erro; o log estruturado é o canal, conforme o AC).
+        if let Err(re) = remover(to) {
+            if caminho_existe(to) {
+                log::error!("fs_{rotulo} op={op_id}: CANCELADO com resíduo em {to} (limpeza falhou): {re}");
+            }
+        }
+        return Ok(ResumoOp {
+            canceled: true,
+            files_total: plano.total_arquivos,
+            files_done: ctx.arquivos_feitos.load(Ordering::Relaxed),
+        });
     }
     if mover {
-        remover(from)?; // move = copiou tudo → apaga a origem
+        // #1066: só apaga a origem se a cópia BATER com o planejado (contagem E bytes).
+        // Cópia incompleta = origem preservada + erro barulhento (nunca Ok mentiroso).
+        let feitos = ctx.arquivos_feitos.load(Ordering::Relaxed);
+        let bytes = ctx.processados.load(Ordering::Relaxed);
+        if !copia_completa(&plano, feitos, bytes) {
+            log::error!(
+                "fs_{rotulo} ERRO op={op_id}: cópia incompleta ({feitos}/{} arq, {bytes}/{} bytes) — origem PRESERVADA",
+                plano.total_arquivos, plano.total_bytes
+            );
+            return Err(FsError::Io(format!(
+                "cópia incompleta: {feitos}/{} arquivo(s), {bytes}/{} byte(s) copiado(s) — origem NÃO removida",
+                plano.total_arquivos, plano.total_bytes
+            )));
+        }
+        remover(from)?; // move = copiou tudo (confirmado) → apaga a origem
     }
     // #850: END com MB/s médio + arquivos/s — a linha de benchmark comparável.
     let elapsed = t0.elapsed().as_secs_f64().max(0.001);
@@ -2119,7 +2691,222 @@ fn executar_progresso(
     );
     // #899 U0: manifesto da op (dirs+arquivos criados) pro undo.
     registrar_journal(app, &montar_entrada(op_id, mover, started_at_ms, agora_ms(), &plano));
-    Ok(false)
+    Ok(ResumoOp {
+        canceled: false,
+        files_total: plano.total_arquivos,
+        files_done: ctx.arquivos_feitos.load(Ordering::Relaxed),
+    })
+}
+
+/// #1067 RB24: remove os destinos do plano (parciais da cópia abortada/cancelada) SEM
+/// engolir falha. Devolve a lista de resíduos — caminhos que a limpeza não conseguiu
+/// remover E que ainda existem no disco (uma remoção que falha por NotFound, ou seja,
+/// nada foi criado, não é resíduo). Cada resíduo é logado; o chamador reflete no terminal.
+fn limpar_destinos_a_planejar(
+    a_planejar: &[(String, String)],
+    rotulo: &str,
+    op_id: u64,
+) -> Vec<String> {
+    let mut residuos = Vec::new();
+    for (_, dst) in a_planejar {
+        if let Err(re) = remover(dst) {
+            if caminho_existe(dst) {
+                log::error!("fs_{rotulo} op={op_id}: resíduo em {dst} (limpeza falhou): {re}");
+                residuos.push(dst.clone());
+            }
+        }
+    }
+    residuos
+}
+
+/// #1067 RB20: monta o manifesto PARCIAL dos renames mesmo-volume já efetivados
+/// (`status="partial"`, `kind="move"`). `None` sse não houve rename (no-op). Pura (sem
+/// I/O nem `AppHandle`) → é o núcleo testável do que o funil grava em TODA saída de
+/// erro/cancel da fase pós-rename; um teste prova que a rota de erro produz um manifesto
+/// que `executar_undo` reverte, sem depender do runtime pra escrever o journal.
+fn entrada_parcial_renomes(
+    op_id: u64,
+    started_at_ms: u64,
+    itens_renome: &[JournalItem],
+) -> Option<OperationJournalEntry> {
+    if itens_renome.is_empty() {
+        return None;
+    }
+    Some(OperationJournalEntry {
+        op_id,
+        kind: "move".into(),
+        started_at_ms,
+        ended_at_ms: agora_ms(),
+        status: "partial".into(),
+        resolucao: None,
+        items: itens_renome.to_vec(),
+        trash_record_ids: Vec::new(),
+        undo_granularidade: String::new(),
+    })
+}
+
+/// #1067 RB20: registra o manifesto PARCIAL dos renames mesmo-volume já efetivados, pros
+/// caminhos de erro/cancel do multi-move — sem isto, arquivos já movidos ficam no destino
+/// sem manifesto = undo indisponível. No-op se não houve rename. Recebe os itens por
+/// referência e clona (o caminho feliz ainda os usa).
+fn journalar_renomes_parciais(
+    app: &AppHandle,
+    op_id: u64,
+    started_at_ms: u64,
+    itens_renome: &[JournalItem],
+) {
+    if let Some(entry) = entrada_parcial_renomes(op_id, started_at_ms, itens_renome) {
+        registrar_journal(app, &entry);
+    }
+}
+
+/// #1067 RB20: desfecho da fase pós-rename (`planejar_e_copiar_muitas`) — só o que o
+/// chamador precisa pra montar o `ResumoOp` e o manifesto de SUCESSO. `canceled == false`
+/// e sem `Err` = sucesso; qualquer `Err` ou `canceled == true` obriga o chamador a
+/// journalar o manifesto PARCIAL dos renames.
+struct FaseMuitas {
+    plano: Plano,
+    canceled: bool,
+    arquivos_feitos: u64,
+}
+
+/// #1067 RB20 (funil): a fase pós-rename do multi-move/copy — planeja (`planejar_muitas`),
+/// cria os dirs, copia (`copiar_plano`) e, no move, aplica o gate anti-perda (#1066) e
+/// remove as origens. Extraída de `executar_progresso_muitas` pra que TODAS as saídas de
+/// erro/cancel DEPOIS dos renames mesmo-volume passem por um ÚNICO ponto de junção no
+/// chamador — que é quem journala. INVARIANTE: este helper **não journala nada**; só
+/// devolve o desfecho. Preserva RB24 (limpeza de resíduo via `limpar_destinos_a_planejar`
+/// embutida no `Err`/cancel do `copiar_plano`), o gate `copia_completa` e todos os logs.
+/// As cinco saídas de erro (plano ilegível `?`, enumeração incompleta `plano.erros`,
+/// `create_dir_all?`, cópia falha, `copia_completa` falso + `remover?` da origem) viram
+/// `Err`; o cancel vira `Ok(FaseMuitas{canceled:true,..})`; o sucesso, `canceled:false`.
+#[allow(clippy::too_many_arguments)]
+fn planejar_e_copiar_muitas(
+    mover: bool,
+    a_planejar: &[(String, String)],
+    op_id: u64,
+    flag: &Arc<AtomicBool>,
+    pausar: &Arc<AtomicBool>,
+    verify: Option<VerifyAlg>,
+    app: &AppHandle,
+    rotulo: &'static str,
+    started_at_ms: u64,
+    t0: Instant,
+    renomeados: usize,
+) -> Result<FaseMuitas, FsError> {
+    emitir_descobrindo(app, op_id, rotulo, started_at_ms); // #875: fase Discovering
+    let pares_path: Vec<(PathBuf, PathBuf)> = a_planejar
+        .iter()
+        .map(|(s, d)| (PathBuf::from(s), PathBuf::from(d)))
+        .collect();
+    let plano = planejar_muitas(&pares_path)?;
+    // #1066: alguma origem teve entrada não-enumerável → plano incompleto. Aborta
+    // antes de copiar (as origens de `a_planejar` ficam intactas). Os renames
+    // mesmo-volume já efetivados acima seguem no destino — não são perda de dado.
+    if !plano.erros.is_empty() {
+        log::error!(
+            "fs_{rotulo} ERRO op={op_id}: enumeração pulou {} entrada(s) — abortando (ex.: {})",
+            plano.erros.len(),
+            plano.erros.first().map(String::as_str).unwrap_or("")
+        );
+        return Err(FsError::Io(format!(
+            "enumeração incompleta: {} entrada(s) inacessível(is) — op abortada (ex.: {})",
+            plano.erros.len(),
+            plano.erros.first().map(String::as_str).unwrap_or("")
+        )));
+    }
+    for d in &plano.dirs {
+        std::fs::create_dir_all(com_long_path(d))?;
+    }
+    let perfil = perfilar(&pares_path[0].0, &pares_path[0].1);
+    log::info!(
+        "fs_{rotulo} START op={op_id}: {} origem(ns) ({renomeados} rename), {} arquivo(s), {:.1} MiB, {} dir(s), {} worker(s)",
+        a_planejar.len() + renomeados,
+        plano.total_arquivos,
+        plano.total_bytes as f64 / 1_048_576.0,
+        plano.dirs.len(),
+        perfil.workers
+    );
+    let ctx = Contexto {
+        processados: Arc::new(AtomicU64::new(0)),
+        arquivos_feitos: Arc::new(AtomicU64::new(0)),
+        cancelar: flag.clone(),
+        pausar: pausar.clone(),
+        verify,
+        atual: Arc::new(Mutex::new(String::new())),
+    };
+    let ticker = iniciar_ticker(
+        app,
+        op_id,
+        plano.total_bytes,
+        plano.total_arquivos,
+        ctx.processados.clone(),
+        ctx.arquivos_feitos.clone(),
+        verify.is_some(),
+        rotulo,
+        started_at_ms,
+        ctx.atual.clone(),
+        pausar.clone(),
+    );
+    let resultado = copiar_plano(&plano, perfil.workers, &ctx);
+    ticker.parar();
+    if let Err(e) = resultado {
+        log::error!("fs_{rotulo} ERRO op={op_id}: {e}");
+        // #1067 RB24: limpa os destinos do plano capturando resíduo (não engole falha).
+        let residuos = limpar_destinos_a_planejar(a_planejar, rotulo, op_id);
+        // #1067 RB20: NÃO journala aqui — o chamador é o ÚNICO ponto que grava o manifesto
+        // parcial dos renames (pra este `Err` e pros outros quatro). A limpeza acima já
+        // desfez o que a cópia deixou pela metade.
+        if !residuos.is_empty() {
+            return Err(FsError::Io(format!("{e} — resíduo NÃO removido em: {}", residuos.join(", "))));
+        }
+        return Err(e);
+    }
+    if flag.load(Ordering::Relaxed) {
+        // #1067 RB24: mesma captura de resíduo no cancel.
+        let residuos = limpar_destinos_a_planejar(a_planejar, rotulo, op_id);
+        if !residuos.is_empty() {
+            log::error!(
+                "fs_{rotulo} op={op_id}: CANCELADO com {} resíduo(s) não removido(s): {}",
+                residuos.len(), residuos.join(", ")
+            );
+        }
+        // #1067 RB20: cancel volta como `Ok(canceled=true)` — o chamador journala o parcial
+        // e monta o `ResumoOp` terminal (sem reclassificar cancel→erro).
+        return Ok(FaseMuitas {
+            plano,
+            canceled: true,
+            arquivos_feitos: ctx.arquivos_feitos.load(Ordering::Relaxed),
+        });
+    }
+    if mover {
+        // #1066: gate anti-perda — só remove as origens se a cópia bateu com o plano.
+        let feitos = ctx.arquivos_feitos.load(Ordering::Relaxed);
+        let bytes = ctx.processados.load(Ordering::Relaxed);
+        if !copia_completa(&plano, feitos, bytes) {
+            log::error!(
+                "fs_{rotulo} ERRO op={op_id}: cópia incompleta ({feitos}/{} arq, {bytes}/{} bytes) — origens PRESERVADAS",
+                plano.total_arquivos, plano.total_bytes
+            );
+            return Err(FsError::Io(format!(
+                "cópia incompleta: {feitos}/{} arquivo(s), {bytes}/{} byte(s) copiado(s) — origens NÃO removidas",
+                plano.total_arquivos, plano.total_bytes
+            )));
+        }
+        for (src, _) in a_planejar {
+            remover(src)?;
+        }
+    }
+    let elapsed = t0.elapsed().as_secs_f64().max(0.001);
+    let mib = plano.total_bytes as f64 / 1_048_576.0;
+    log::info!(
+        "fs_{rotulo} END op={op_id}: {elapsed:.2}s, {:.1} MiB/s medio, {:.0} arquivo(s)/s, {} arquivo(s), {mib:.1} MiB",
+        mib / elapsed,
+        plano.total_arquivos as f64 / elapsed,
+        plano.total_arquivos
+    );
+    let arquivos_feitos = ctx.arquivos_feitos.load(Ordering::Relaxed);
+    Ok(FaseMuitas { plano, canceled: false, arquivos_feitos })
 }
 
 /// #850 (fatia B): copy/move de MÚLTIPLAS origens pra um destino, em UMA fase só.
@@ -2136,7 +2923,7 @@ fn executar_progresso_muitas(
     verify: Option<VerifyAlg>,
     app: &AppHandle,
     started_at_ms: u64,
-) -> Result<bool, FsError> {
+) -> Result<ResumoOp, FsError> {
     for (from, to) in &pares {
         validar(from)?;
         validar(to)?;
@@ -2180,83 +2967,60 @@ fn executar_progresso_muitas(
                     resolucao: None,
                     items: itens_renome,
                     trash_record_ids: Vec::new(),
+                    undo_granularidade: String::new(),
                 },
             );
         }
-        return Ok(false);
+        // só renames mesmo-volume: conta os itens renomeados.
+        let n = renomeados as u64;
+        return Ok(ResumoOp { canceled: false, files_total: n, files_done: n });
     }
-    emitir_descobrindo(app, op_id, rotulo, started_at_ms); // #875: fase Discovering
-    let pares_path: Vec<(PathBuf, PathBuf)> = a_planejar
-        .iter()
-        .map(|(s, d)| (PathBuf::from(s), PathBuf::from(d)))
-        .collect();
-    let plano = planejar_muitas(&pares_path)?;
-    for d in &plano.dirs {
-        std::fs::create_dir_all(com_long_path(d))?;
-    }
-    let perfil = perfilar(&pares_path[0].0, &pares_path[0].1);
-    log::info!(
-        "fs_{rotulo} START op={op_id}: {} origem(ns) ({renomeados} rename), {} arquivo(s), {:.1} MiB, {} dir(s), {} worker(s)",
-        pares.len(),
-        plano.total_arquivos,
-        plano.total_bytes as f64 / 1_048_576.0,
-        plano.dirs.len(),
-        perfil.workers
-    );
-    let ctx = Contexto {
-        processados: Arc::new(AtomicU64::new(0)),
-        arquivos_feitos: Arc::new(AtomicU64::new(0)),
-        cancelar: flag.clone(),
-        pausar: pausar.clone(),
-        verify,
-        atual: Arc::new(Mutex::new(String::new())),
-    };
-    let ticker = iniciar_ticker(
-        app,
-        op_id,
-        plano.total_bytes,
-        plano.total_arquivos,
-        ctx.processados.clone(),
-        ctx.arquivos_feitos.clone(),
-        verify.is_some(),
-        rotulo,
-        started_at_ms,
-        ctx.atual.clone(),
-        pausar.clone(),
-    );
-    let resultado = copiar_plano(&plano, perfil.workers, &ctx);
-    ticker.parar();
-    if let Err(e) = resultado {
-        log::error!("fs_{rotulo} ERRO op={op_id}: {e}");
-        for (_, dst) in &a_planejar {
-            let _ = remover(dst);
+    // #1067 RB20 (invariante ESTRUTURAL): daqui pra baixo, TODA saída de erro/cancel da
+    // fase pós-rename precisa journalar o manifesto PARCIAL dos renames mesmo-volume já
+    // efetivados — senão eles ficam no destino sem manifesto → undo indisponível = estado
+    // irreversível (o data-loss que o #1067 fecha). Em vez de tapar cada `return` da fase
+    // (frágil: a próxima rota nova reabriria o buraco), a fase inteira vive em
+    // `planejar_e_copiar_muitas` (que NÃO journala). AQUI, no ÚNICO ponto de junção, os
+    // braços `Err`/cancel journalam o parcial e o braço de sucesso grava o manifesto
+    // completo. Qualquer rota nova DENTRO da fase sai por `Err`/`Ok(canceled)` e cai num
+    // destes três braços — a lacuna vira estruturalmente impossível.
+    match planejar_e_copiar_muitas(
+        mover, &a_planejar, op_id, flag, pausar, verify, app, rotulo, started_at_ms, t0, renomeados,
+    ) {
+        Err(e) => {
+            journalar_renomes_parciais(app, op_id, started_at_ms, &itens_renome);
+            Err(e)
         }
-        return Err(e);
-    }
-    if flag.load(Ordering::Relaxed) {
-        for (_, dst) in &a_planejar {
-            let _ = remover(dst);
+        Ok(f) if f.canceled => {
+            journalar_renomes_parciais(app, op_id, started_at_ms, &itens_renome);
+            Ok(ResumoOp {
+                canceled: true,
+                files_total: renomeados as u64 + f.plano.total_arquivos,
+                files_done: renomeados as u64 + f.arquivos_feitos,
+            })
         }
-        return Ok(true);
-    }
-    if mover {
-        for (src, _) in &a_planejar {
-            remover(src)?;
+        Ok(f) => {
+            // #899 U0: manifesto do plano global + os renames por-origem (mesmo op_id).
+            let mut entrada = montar_entrada(op_id, mover, started_at_ms, agora_ms(), &f.plano);
+            entrada.items.extend(itens_renome);
+            registrar_journal(app, &entrada);
+            Ok(ResumoOp {
+                canceled: false,
+                files_total: renomeados as u64 + f.plano.total_arquivos,
+                files_done: renomeados as u64 + f.arquivos_feitos,
+            })
         }
     }
-    let elapsed = t0.elapsed().as_secs_f64().max(0.001);
-    let mib = plano.total_bytes as f64 / 1_048_576.0;
-    log::info!(
-        "fs_{rotulo} END op={op_id}: {elapsed:.2}s, {:.1} MiB/s medio, {:.0} arquivo(s)/s, {} arquivo(s), {mib:.1} MiB",
-        mib / elapsed,
-        plano.total_arquivos as f64 / elapsed,
-        plano.total_arquivos
-    );
-    // #899 U0: manifesto do plano global + os renames por-origem (mesmo op_id).
-    let mut entrada = montar_entrada(op_id, mover, started_at_ms, agora_ms(), &plano);
-    entrada.items.extend(itens_renome);
-    registrar_journal(app, &entrada);
-    Ok(false)
+}
+
+/// #1066: a cópia bateu EXATAMENTE com o planejado? Gate anti-perda-de-dado que
+/// decide se um MOVE pode remover a origem: exige contagem de arquivos E bytes
+/// iguais ao plano E nenhum pulo de enumeração. Pura (só compara números) →
+/// testável sem `AppHandle`. `false` = cópia incompleta → NUNCA apagar a origem.
+fn copia_completa(plano: &Plano, arquivos_feitos: u64, bytes_feitos: u64) -> bool {
+    plano.erros.is_empty()
+        && arquivos_feitos == plano.total_arquivos
+        && bytes_feitos == plano.total_bytes
 }
 
 /// Copia todos os jobs do plano num pool rayon dimensionado por `workers`.
@@ -2280,7 +3044,7 @@ fn copiar_plano(plano: &Plano, workers: usize, ctx: &Contexto) -> Result<(), FsE
                     return;
                 }
                 if let Err(e) = copiar_arquivo(job, ctx) {
-                    let mut g = erro.lock().unwrap();
+                    let mut g = erro.lock().unwrap_or_else(|e| e.into_inner());
                     if g.is_none() {
                         *g = Some(e);
                         ctx.cancelar.store(true, Ordering::Relaxed); // aborta os demais
@@ -2288,7 +3052,9 @@ fn copiar_plano(plano: &Plano, workers: usize, ctx: &Contexto) -> Result<(), FsE
                 }
             });
     });
-    match erro.into_inner().unwrap() {
+    // #1073 (RB26): um `copiar_arquivo` que PANICAR envenena este Mutex; recupera o
+    // interior em vez de propagar o panic (into_inner de Mutex poisonado = Err).
+    match erro.into_inner().unwrap_or_else(|e| e.into_inner()) {
         Some(e) => Err(e),
         None => Ok(()),
     }
@@ -2341,17 +3107,27 @@ pub struct ThumbRef {
 /// Pool rayon dedicado a thumbnails, criado uma vez. Dimensionado a ~3/4 dos
 /// núcleos lógicos (headroom pra UI/OS; hyperthreading não ajuda decode SIMD),
 /// mínimo 1. Bounda a paralelização mesmo com N chamadas simultâneas do front.
-fn thumb_pool() -> &'static rayon::ThreadPool {
-    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+fn thumb_pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: std::sync::OnceLock<Option<rayon::ThreadPool>> = std::sync::OnceLock::new();
     POOL.get_or_init(|| {
         let logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         let n = (logical * 3 / 4).max(1);
-        rayon::ThreadPoolBuilder::new()
+        // #1073 (RB26): a falha ao montar o pool (raro: limite de threads do SO)
+        // NÃO pode derrubar o app via `expect`. Sem pool dedicado, o chamador
+        // gera o thumbnail direto (pool global do rayon), só sem o cap de threads.
+        match rayon::ThreadPoolBuilder::new()
             .num_threads(n)
             .thread_name(|i| format!("thumb-{i}"))
             .build()
-            .expect("pool de thumbnail")
+        {
+            Ok(pool) => Some(pool),
+            Err(e) => {
+                log::error!("[thumb] pool dedicado indisponível ({e}); gerando sem cap de threads");
+                None
+            }
+        }
     })
+    .as_ref()
 }
 
 /// Gera o thumbnail de `path` com o maior lado <= `max_size` (16..=1024).
@@ -2426,7 +3202,12 @@ fn fs_thumbnail_sync(path: String, max_size: u32) -> Result<ThumbRef, FsError> {
     // 3) miss — gera no pool (bounda CPU) e persiste nos dois níveis. #740: mede o
     // tempo de geração (pro avg/throughput do relatório de perf).
     let t0 = Instant::now();
-    let (webp, w, h, source) = thumb_pool().install(|| gerar_webp(&path, max))?;
+    // #1073 (RB26): com pool → roda dentro dele (cap de threads); sem pool (build
+    // falhou) → gera direto no pool global do rayon, sem panicar.
+    let (webp, w, h, source) = match thumb_pool() {
+        Some(pool) => pool.install(|| gerar_webp(&path, max)),
+        None => gerar_webp(&path, max),
+    }?;
     MET_GEN_NS.fetch_add(t0.elapsed().as_nanos() as u64, Ordering::Relaxed);
     MET_GERADAS.fetch_add(1, Ordering::Relaxed);
     disco_put(&key, &webp);
@@ -2459,10 +3240,15 @@ static DISK_CAP_MB: AtomicU64 = AtomicU64::new(1024);
 static MEM_CAP_MB: AtomicU64 = AtomicU64::new(96);
 
 /// Ajusta os tetos do cache (MB). Disco mín. 16, memória mín. 8.
+/// #1073 (RB28): `async` + `spawn_blocking` — não bloqueia a main thread (padrão da
+/// casa). Contrato de retorno inalterado (`()`).
 #[tauri::command]
-pub fn fs_thumb_cache_limits(disk_mb: u64, mem_mb: u64) {
-    DISK_CAP_MB.store(disk_mb.max(16), Ordering::Relaxed);
-    MEM_CAP_MB.store(mem_mb.max(8), Ordering::Relaxed);
+pub async fn fs_thumb_cache_limits(disk_mb: u64, mem_mb: u64) {
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        DISK_CAP_MB.store(disk_mb.max(16), Ordering::Relaxed);
+        MEM_CAP_MB.store(mem_mb.max(8), Ordering::Relaxed);
+    })
+    .await;
 }
 
 // ── Métricas de perf do gerador de thumbnail (#740 F5) ───────────────────────
@@ -2474,7 +3260,7 @@ static MET_HIT_DISCO: AtomicU64 = AtomicU64::new(0);
 static MET_GERADAS: AtomicU64 = AtomicU64::new(0);
 static MET_GEN_NS: AtomicU64 = AtomicU64::new(0);
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ThumbMetrics {
     pub hit_mem: u64,
@@ -2529,28 +3315,38 @@ fn montar_metrics(
 }
 
 /// Snapshot das métricas do gerador de thumbnail (pro painel/relatório de perf).
+/// #1073 (RB28): `async` + `spawn_blocking` — não bloqueia a main thread. Retorno
+/// `ThumbMetrics` inalterado (JoinError impossível aqui → `unwrap_or_default`).
 #[tauri::command]
-pub fn fs_thumb_metrics() -> ThumbMetrics {
-    let mem_bytes = cache_mem().lock().map(|c| c.bytes as u64).unwrap_or(0);
-    montar_metrics(
-        MET_HIT_MEM.load(Ordering::Relaxed),
-        MET_HIT_DISCO.load(Ordering::Relaxed),
-        MET_GERADAS.load(Ordering::Relaxed),
-        MET_GEN_NS.load(Ordering::Relaxed),
-        thumb_pool().current_num_threads(),
-        DISK_CAP_MB.load(Ordering::Relaxed),
-        MEM_CAP_MB.load(Ordering::Relaxed),
-        mem_bytes,
-    )
+pub async fn fs_thumb_metrics() -> ThumbMetrics {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mem_bytes = cache_mem().lock().map(|c| c.bytes as u64).unwrap_or(0);
+        montar_metrics(
+            MET_HIT_MEM.load(Ordering::Relaxed),
+            MET_HIT_DISCO.load(Ordering::Relaxed),
+            MET_GERADAS.load(Ordering::Relaxed),
+            MET_GEN_NS.load(Ordering::Relaxed),
+            thumb_pool().map(|p| p.current_num_threads()).unwrap_or(0),
+            DISK_CAP_MB.load(Ordering::Relaxed),
+            MEM_CAP_MB.load(Ordering::Relaxed),
+            mem_bytes,
+        )
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Zera os contadores (pra rodar um baseline limpo antes de medir).
+/// #1073 (RB28): `async` + `spawn_blocking` — não bloqueia a main thread.
 #[tauri::command]
-pub fn fs_thumb_metrics_reset() {
-    MET_HIT_MEM.store(0, Ordering::Relaxed);
-    MET_HIT_DISCO.store(0, Ordering::Relaxed);
-    MET_GERADAS.store(0, Ordering::Relaxed);
-    MET_GEN_NS.store(0, Ordering::Relaxed);
+pub async fn fs_thumb_metrics_reset() {
+    let _ = tauri::async_runtime::spawn_blocking(|| {
+        MET_HIT_MEM.store(0, Ordering::Relaxed);
+        MET_HIT_DISCO.store(0, Ordering::Relaxed);
+        MET_GERADAS.store(0, Ordering::Relaxed);
+        MET_GEN_NS.store(0, Ordering::Relaxed);
+    })
+    .await;
 }
 
 /// Chave do cache: blake3(path | mtime_nanos | size | maxSize). `maxSize` entra
@@ -2950,15 +3746,26 @@ pub async fn fs_known_dirs() -> Result<Vec<FsEntry>, FsError> {
 }
 
 /// Revela o item no Explorer (reusa `system::revelar_no_explorer`).
+/// #1073 (RB28): a chamada ao shell é bloqueante → `spawn_blocking` (não trava a
+/// main thread). Contrato de retorno inalterado.
 #[tauri::command]
 pub async fn fs_reveal(path: String) -> Result<(), FsError> {
-    crate::system::revelar_no_explorer(&path).map_err(FsError::Io)
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::system::revelar_no_explorer(&path).map_err(FsError::Io)
+    })
+    .await
+    .map_err(spawn_err)?
 }
 
 /// Abre o item com o app padrão do Windows (reusa `system::abrir_caminho`).
+/// #1073 (RB28): idem `fs_reveal` — shell bloqueante em `spawn_blocking`.
 #[tauri::command]
 pub async fn fs_open(path: String) -> Result<(), FsError> {
-    crate::system::abrir_caminho(&path).map_err(FsError::Io)
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::system::abrir_caminho(&path).map_err(FsError::Io)
+    })
+    .await
+    .map_err(spawn_err)?
 }
 
 // --- Mutações (#679 S3) ---
@@ -2984,19 +3791,11 @@ pub async fn fs_rename(from: String, to: String) -> Result<(), FsError> {
         .map_err(spawn_err)?
 }
 
-#[tauri::command]
-pub async fn fs_copy(from: String, to: String) -> Result<(), FsError> {
-    tauri::async_runtime::spawn_blocking(move || copiar(&from, &to))
-        .await
-        .map_err(spawn_err)?
-}
-
-#[tauri::command]
-pub async fn fs_move(from: String, to: String) -> Result<(), FsError> {
-    tauri::async_runtime::spawn_blocking(move || mover(&from, &to))
-        .await
-        .map_err(spawn_err)?
-}
+// #1066 (RB21): os comandos `fs_copy`/`fs_move` legados foram REMOVIDOS. Tinham
+// política de conflito OPOSTA ao pipeline turbo (sobrescreviam em silêncio vs. o
+// turbo que recusa com `AlreadyExists`) e nenhum chamador de UI — o Explorer usa
+// só `copiarComProgresso`/`moverComProgresso` (turbo). Sobra UMA política de
+// conflito. As funções internas `copiar`/`mover` continuam (undo + testes).
 
 #[tauri::command]
 pub async fn fs_trash(paths: Vec<String>) -> Result<(), FsError> {
@@ -3005,12 +3804,23 @@ pub async fn fs_trash(paths: Vec<String>) -> Result<(), FsError> {
         .map_err(spawn_err)?
 }
 
+/// #1047 (SEC7): emite o nonce de sessão que autoriza UMA exclusão permanente.
+/// O front chama isto imediatamente antes de `fs_delete_permanent`. Read-only
+/// (não escreve dado do Bridge) — só gera e guarda o nonce no estado.
+#[tauri::command]
+pub fn fs_delete_permanent_token(state: State<'_, TokenExclusao>) -> String {
+    state.emitir()
+}
+
 #[tauri::command]
 pub async fn fs_delete_permanent(
     paths: Vec<String>,
     confirm_token: String,
+    token: State<'_, TokenExclusao>,
 ) -> Result<(), FsError> {
-    tauri::async_runtime::spawn_blocking(move || excluir_permanente(&paths, &confirm_token))
+    // `TokenExclusao` é `Clone` (Arc interno) → cruza o `spawn_blocking` (Send + 'static).
+    let token = token.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || excluir_permanente(&paths, &confirm_token, &token))
         .await
         .map_err(spawn_err)?
 }
@@ -3036,22 +3846,43 @@ fn spawn_progresso(
         let resultado =
             executar_progresso(mover, &from, &to, op_id, &flag, &pausar, verify, &app, started_at_ms);
         app.state::<ProgressManager>().finalizar(op_id);
-        let (canceled, error) = match resultado {
-            Ok(c) => (c, None),
-            Err(e) => (false, Some(e)),
+        let (canceled, files_total, files_done, error) = match resultado {
+            Ok(r) => (r.canceled, r.files_total, r.files_done, None),
+            Err(e) => (false, 0, 0, Some(e)),
         };
-        emitir_final(&app, op_id, op_kind, started_at_ms, canceled, error);
+        emitir_final(
+            &app,
+            op_id,
+            op_kind,
+            started_at_ms,
+            canceled,
+            files_total,
+            files_done,
+            error,
+        );
     });
+}
+
+/// Resumo do fim de uma op de cópia/move: cancelamento + contagem REAL de arquivos
+/// (#989: o terminal hardcodava 0 → o front mostrava "Moved 0 files"). No sucesso,
+/// `files_done == files_total`. Renames instantâneos contam os ITENS renomeados.
+struct ResumoOp {
+    canceled: bool,
+    files_total: u64,
+    files_done: u64,
 }
 
 /// #875: evento terminal (`phase=done`) — status agregado (success/canceled/error),
 /// `completed_at_ms`. O front RETÉM a op na fila por isto (não descarta no terminal).
+/// #989: emite a contagem REAL de arquivos (não mais 0 hardcoded).
 fn emitir_final(
     app: &AppHandle,
     op_id: u64,
     op_kind: &'static str,
     started_at_ms: u64,
     canceled: bool,
+    files_total: u64,
+    files_done: u64,
     error: Option<FsError>,
 ) {
     let status = if error.is_some() {
@@ -3069,8 +3900,8 @@ fn emitir_final(
             total_bytes: 0,
             percent: if error.is_some() { 0.0 } else { 100.0 },
             eta_ms: None,
-            files_total: 0,
-            files_done: 0,
+            files_total,
+            files_done,
             bytes_per_sec: 0,
             verifying: false,
             done: true,
@@ -3104,11 +3935,20 @@ fn spawn_progresso_muitas(
         let resultado =
             executar_progresso_muitas(mover, pares, op_id, &flag, &pausar, verify, &app, started_at_ms);
         app.state::<ProgressManager>().finalizar(op_id);
-        let (canceled, error) = match resultado {
-            Ok(c) => (c, None),
-            Err(e) => (false, Some(e)),
+        let (canceled, files_total, files_done, error) = match resultado {
+            Ok(r) => (r.canceled, r.files_total, r.files_done, None),
+            Err(e) => (false, 0, 0, Some(e)),
         };
-        emitir_final(&app, op_id, op_kind, started_at_ms, canceled, error);
+        emitir_final(
+            &app,
+            op_id,
+            op_kind,
+            started_at_ms,
+            canceled,
+            files_total,
+            files_done,
+            error,
+        );
     });
 }
 
@@ -3134,6 +3974,8 @@ pub async fn fs_copy_with_progress(
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
+    // #1047 (SEC7): valida antes de spawnar — rejeita dir sensível/reparse no destino.
+    checar_entrada_copia(&from, &to)?;
     let (op_id, flag, pausar) = pm.nova_op();
     spawn_progresso(false, from, to, op_id, flag, pausar, verify, app);
     Ok(op_id)
@@ -3147,6 +3989,8 @@ pub async fn fs_move_with_progress(
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
+    // #1047 (SEC7): move valida a origem como mutação (o move apaga `from`).
+    checar_entrada_move(&from, &to)?;
     let (op_id, flag, pausar) = pm.nova_op();
     spawn_progresso(true, from, to, op_id, flag, pausar, verify, app);
     Ok(op_id)
@@ -3163,6 +4007,8 @@ pub async fn fs_copy_many_with_progress(
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
+    // #1047 (SEC7): valida dest_dir (escrita) + cada origem (leitura) antes do spawn.
+    checar_entrada_muitas(&sources, &dest_dir, false)?;
     let pares = pares_para_destino(sources, &dest_dir);
     let (op_id, flag, pausar) = pm.nova_op();
     spawn_progresso_muitas(false, pares, op_id, flag, pausar, verify, app);
@@ -3179,6 +4025,8 @@ pub async fn fs_move_many_with_progress(
     app: AppHandle,
     pm: State<'_, ProgressManager>,
 ) -> Result<u64, FsError> {
+    // #1047 (SEC7): move valida dest_dir + cada origem como mutação (apaga a origem).
+    checar_entrada_muitas(&sources, &dest_dir, true)?;
     let pares = pares_para_destino(sources, &dest_dir);
     let (op_id, flag, pausar) = pm.nova_op();
     spawn_progresso_muitas(true, pares, op_id, flag, pausar, verify, app);
@@ -3259,14 +4107,14 @@ pub async fn fs_watch(
 ) -> Result<u64, FsError> {
     let id = wr.proximo_id.fetch_add(1, Ordering::Relaxed);
     let w = iniciar_watch(&path, recursive, id, &app)?;
-    wr.watchers.lock().unwrap().insert(id, w);
+    wr.watchers.lock().unwrap_or_else(|e| e.into_inner()).insert(id, w);
     Ok(id)
 }
 
 #[tauri::command]
 pub async fn fs_unwatch(watcher_id: u64, wr: State<'_, WatcherRegistry>) -> Result<(), FsError> {
     // Dropar o Debouncer solta o watch do SO (sem vazar).
-    wr.watchers.lock().unwrap().remove(&watcher_id);
+    wr.watchers.lock().unwrap_or_else(|e| e.into_inner()).remove(&watcher_id);
     Ok(())
 }
 
@@ -3524,6 +4372,39 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
+    // #1044 SEC6: o funil de bytes crus que o compartilhamento via OneDrive usa —
+    // devolve os bytes EXATOS (sem base64) e aplica os mesmos guards (path válido,
+    // é arquivo, teto). Prova que o front nunca precisa da capability `fs` aberta.
+    #[test]
+    fn ler_bytes_cru_exato_e_guards() {
+        let base = dir_temp("read-cru");
+        std::fs::create_dir_all(&base).unwrap();
+        let f = base.join("anexo.bin");
+        let conteudo = vec![0u8, 1, 2, 253, 254, 255, 42];
+        std::fs::write(&f, &conteudo).unwrap();
+
+        // Arquivo → bytes crus idênticos (o share sobe ISSO, sem round-trip base64).
+        assert_eq!(ler_bytes_cru(&f.to_string_lossy(), None).unwrap(), conteudo);
+
+        // Diretório / inexistente / vazio / teto → mesmos erros do funil.
+        assert!(matches!(
+            ler_bytes_cru(&base.to_string_lossy(), None),
+            Err(FsError::NotADirectory(_))
+        ));
+        assert!(matches!(
+            ler_bytes_cru(&base.join("naoexiste").to_string_lossy(), None),
+            Err(FsError::NotFound(_))
+        ));
+        assert!(matches!(ler_bytes_cru("", None), Err(FsError::InvalidPath(_))));
+        assert!(matches!(
+            ler_bytes_cru(&f.to_string_lossy(), Some(3)),
+            Err(FsError::ArquivoGrande(_))
+        ));
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // #1076 (RB32): helper é `#[cfg(windows)]`, então o teste também.
+    #[cfg(windows)]
     #[test]
     fn normalizar_letra_drive_aceita_formatos_e_rejeita_lixo() {
         for s in ["z", "Z", "Z:", "Z:\\", "z:/"] {
@@ -3534,6 +4415,8 @@ mod tests {
         }
     }
 
+    // #1076 (RB32): helper é `#[cfg(windows)]`, então o teste também.
+    #[cfg(windows)]
     #[test]
     fn validar_unc_exige_server_e_share() {
         assert!(validar_unc("\\\\server\\share").is_ok());
@@ -3551,6 +4434,55 @@ mod tests {
         let uma = raizes_de_busca("C:\\Users");
         assert_eq!(uma.len(), 1);
         assert_eq!(uma[0], PathBuf::from("C:\\Users"));
+    }
+
+    #[test]
+    fn this_pc_exclui_drives_de_rede() {
+        // #1073 (RB30): "This PC" varre só drives LOCAIS; rede (DRIVE_REMOTE) fica
+        // FORA (share lenta/offline fazia a busca parecer travada).
+        assert!(kind_no_escopo_this_pc("fixed"));
+        assert!(kind_no_escopo_this_pc("removable"));
+        assert!(kind_no_escopo_this_pc("cloud"));
+        assert!(!kind_no_escopo_this_pc("network"), "drive de rede fora do This PC");
+        for outro in ["cdrom", "ramdisk", "unknown"] {
+            assert!(!kind_no_escopo_this_pc(outro), "{outro} não é local");
+        }
+    }
+
+    #[test]
+    fn excede_max_path_detecta_fronteira() {
+        // #1073 (RB29): detector do limite clássico do Windows.
+        assert!(!excede_max_path("C:\\Users\\wagner\\arquivo.txt"));
+        assert!(excede_max_path(&format!("C:\\{}", "a".repeat(300))));
+        // fronteira: 259 cabe, 260 não (MAX_PATH inclui o NUL).
+        assert!(!excede_max_path(&"x".repeat(259)));
+        assert!(excede_max_path(&"x".repeat(260)));
+    }
+
+    /// #1073 (RB29 — decisão do PO): caminho >= MAX_PATH mandado pra Lixeira FALHA
+    /// EXPLICITAMENTE e o arquivo permanece INTACTO — jamais delete permanente
+    /// silencioso (o usuário pediu "Lixeira", reversível; caminho profundo é o dia a
+    /// dia de OneDrive/SharePoint). Prova que trocamos um bug recuperável (falha) por
+    /// nenhum bug irrecuperável (perda de dado).
+    #[cfg(windows)]
+    #[test]
+    fn trash_recusa_caminho_longo_sem_apagar() {
+        let base = dir_temp("trash-longo");
+        // nome longo o bastante pra o caminho completo passar de MAX_PATH.
+        let alvo = base.join("a".repeat(250));
+        std::fs::write(com_long_path(&alvo), b"conteudo").unwrap();
+        let alvo_str = alvo.to_string_lossy().into_owned();
+        assert!(excede_max_path(&alvo_str), "o caminho de teste tem que exceder MAX_PATH");
+        assert!(caminho_existe(&alvo_str), "pré-condição: o arquivo existe");
+
+        let r = para_lixeira(&[alvo_str.clone()]);
+        assert!(r.is_err(), "caminho longo deve FALHAR (não vai pra Lixeira)");
+        // O CRUCIAL: o arquivo continua LÁ (não foi apagado permanentemente).
+        assert!(
+            caminho_existe(&alvo_str),
+            "arquivo longo NÃO pode ter sido apagado — falha preserva o dado"
+        );
+        let _ = std::fs::remove_dir_all(com_long_path(&base));
     }
 
     #[test]
@@ -3743,8 +4675,17 @@ mod tests {
         std::fs::remove_dir_all(&base).ok();
     }
 
+    // Smoke de HARDWARE REAL: prova que o IOCTL de seek-penalty responde num disco
+    // FÍSICO (rode com `cargo test -- --ignored` na máquina do QA). Fica #[ignore]
+    // porque o runner do CI usa disco VIRTUALIZADO, onde esse IOCTL não é suportado
+    // e `tem_seek_penalty` devolve None — o fallback conservador DOCUMENTADO (o
+    // `perfilar` trata None como HDD). Assumir `is_some()` amarra o teste a hardware
+    // físico e derruba o job `rust` no CI. O caminho que importa (o consumidor
+    // produzir um nº de workers são a partir de None) já é coberto de forma
+    // determinística por `perfilar_da_pelo_menos_dois_workers`, que roda no CI.
     #[cfg(windows)]
     #[test]
+    #[ignore = "requer disco físico; no disco virtual do CI o IOCTL não responde (None = fallback conservador, já coberto por perfilar_da_pelo_menos_dois_workers)"]
     fn perfil_de_disco_real_responde_no_volume_do_qa() {
         let resultado = tem_seek_penalty(Path::new(r"C:\"));
         assert!(resultado.is_some(), "IOCTL não classificou o volume C: {resultado:?}");
@@ -3999,8 +4940,10 @@ mod tests {
                 mtime_at_end: 1734200004000,
                 hash_at_end: None,
                 hash_alg: None,
+                stat_indisponivel: false,
             }],
             trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
         };
         let json = serde_json::to_string(&e).unwrap();
         // camelCase no wire (casa com types.ts).
@@ -4076,6 +5019,7 @@ mod tests {
             resolucao: None,
             items: vec![it_seg, it_mod, it_ovr],
             trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
         };
         let plano = montar_plano_undo(&entry);
         assert_eq!(plano.seguros, 1);
@@ -4109,6 +5053,7 @@ mod tests {
                 journal_item(&origem.join("a.txt"), &destino.join("a.txt"), true),
             ],
             trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
         };
         let rep = executar_undo(&entry);
         assert_eq!(rep.executados, 1, "o arquivo voltou pra origem");
@@ -4117,6 +5062,294 @@ mod tests {
         assert!(!destino.join("a.txt").exists(), "saiu do destino");
         // o dir dst vazio foi limpo.
         assert!(!destino.exists(), "dir criado e esvaziado foi removido");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn executar_undo_copy_manda_pra_lixeira_e_limpa_dirs() {
+        // #1042 (TST-02): espelha `executar_undo_move_volta_para_origem` pro ramo
+        // COPY. Cópia cria arquivos no destino; o undo manda os criados pra Lixeira
+        // (revogável — §8; NÃO `remove_dir`/delete permanente) e remove os diretórios
+        // criados que ficaram VAZIOS. `executados` = nº real de arquivos desfeitos.
+        let base = dir_temp("undo-copy");
+        let destino = base.join("dst");
+        let sub = destino.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        let a = destino.join("a.txt");
+        let b = sub.join("b.bin");
+        std::fs::write(&a, vec![5u8; 12]).unwrap();
+        std::fs::write(&b, vec![7u8; 20]).unwrap();
+
+        // Journal de COPY: 2 dirs criados + 2 arquivos criados (from vazio ⇒ mover=false).
+        let entry = OperationJournalEntry {
+            op_id: 3,
+            kind: "copy".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "success".into(),
+            resolucao: None,
+            items: vec![
+                journal_item(&destino, &destino, false), // dir raiz (is_dir via stat)
+                journal_item(&sub, &sub, false),          // sub-dir criado
+                journal_item(&a, &a, false),              // arquivo criado
+                journal_item(&b, &b, false),              // arquivo criado
+            ],
+            trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
+        };
+        let rep = executar_undo(&entry);
+        assert_eq!(rep.executados, 2, "os 2 arquivos criados foram desfeitos (Lixeira)");
+        assert!(rep.erros.is_empty(), "ramo copy feliz não acumula erro");
+        // Foram pra Lixeira ⇒ sumiram do destino (não sobraram, nem sumiram na frente).
+        assert!(!a.exists(), "a.txt saiu do destino (Lixeira)");
+        assert!(!b.exists(), "b.bin saiu do destino (Lixeira)");
+        // Dirs criados que ficaram vazios são removidos (mais fundos primeiro).
+        assert!(!sub.exists(), "sub-dir vazio removido");
+        assert!(!destino.exists(), "dir raiz criado e esvaziado removido");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn executar_undo_copy_alvo_removido_antes_nao_infla_contagem() {
+        // #1042 (TST-02, caso de borda): se um dos criados foi removido POR FORA antes
+        // do undo, o re-classificar na hora (anti-TOCTOU §8) o marca "pulado" (sumiu) e
+        // ele NÃO entra no batch da Lixeira — logo `executados` conta só os realmente
+        // desfeitos, sem inflar, e não vira erro. Trava o comportamento observado hoje.
+        //
+        // Nota de contagem (documentação do DoD): a soma é `executados += n` do batch,
+        // mas `n` só inclui alvos que classificaram "seguro" AQUI. A única janela
+        // residual é entre esta classificação e o filtro `caminho_existe` do
+        // `para_lixeira` (um alvo sumindo nesse intervalo curtíssimo contaria +1
+        // fantasma); é benigna (Lixeira é idempotente) e não é reproduzível de forma
+        // determinística num teste — por isso cobrimos o caso "removido ANTES do undo".
+        let base = dir_temp("undo-copy-parcial");
+        let destino = base.join("dst");
+        std::fs::create_dir_all(&destino).unwrap();
+        let vivo = destino.join("vivo.txt");
+        let morto = destino.join("morto.txt");
+        std::fs::write(&vivo, vec![1u8; 8]).unwrap();
+        std::fs::write(&morto, vec![2u8; 8]).unwrap();
+
+        let entry = OperationJournalEntry {
+            op_id: 4,
+            kind: "copy".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "success".into(),
+            resolucao: None,
+            items: vec![
+                journal_item(&destino, &destino, false),
+                journal_item(&vivo, &vivo, false),
+                journal_item(&morto, &morto, false),
+            ],
+            trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
+        };
+        // Remoção POR FORA (fora do controle do app) ANTES do undo rodar.
+        std::fs::remove_file(&morto).unwrap();
+
+        let rep = executar_undo(&entry);
+        assert_eq!(rep.executados, 1, "só o alvo vivo foi desfeito — contagem não infla");
+        assert_eq!(rep.pulados, 1, "alvo removido por fora vira 'pulado' (sumiu), não erro");
+        assert!(rep.erros.is_empty(), "alvo já sumido é no-op idempotente, não erro");
+        assert!(!vivo.exists(), "vivo.txt foi pra Lixeira");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // --- #1067: hardening do undo/journal (data-loss) ---
+
+    #[test]
+    fn rb25_journal_item_marca_stat_indisponivel_quando_to_some() {
+        // #1067 RB25(b): stat do `to` inexistente → flag ligada + size/mtime no fallback 0
+        // (não são confiáveis; o undo deve pular por motivo próprio, não por "modificado").
+        let base = dir_temp("journal-stat-none");
+        let inexistente = base.join("nao-existe.txt");
+        let it = journal_item(&inexistente, &inexistente, false);
+        assert!(it.stat_indisponivel, "to inexistente → stat indisponível");
+        assert_eq!(it.size_at_end, 0);
+        assert_eq!(it.mtime_at_end, 0);
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn rb25_classificar_stat_indisponivel_pula_com_motivo_proprio() {
+        // #1067 RB25(b): item com stat falho no END NÃO pode virar "modificado". Precisa
+        // classificar "pulado"/"stat_indisponivel" — motivo próprio, jamais confundido.
+        let base = dir_temp("undo-stat-indisp");
+        let f = base.join("z.txt");
+        std::fs::write(&f, vec![4u8; 16]).unwrap();
+        let mut it = journal_item(&f, &f, false); // to existe → seria "seguro"
+        it.stat_indisponivel = true; // mas o stat falhou no fim da op
+        let (estado, motivo) = classificar_item(&it, false);
+        assert_eq!(estado, "pulado");
+        assert_eq!(motivo.as_deref(), Some("stat_indisponivel"));
+        assert_ne!(motivo.as_deref(), Some("modificado"), "nunca confundir stat falho com modificação");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn rb27_precisa_reescrever_apenas_ao_atingir_o_teto() {
+        // #1067 RB27: append barato enquanto cabe (< JOURNAL_MAX após o push); só reescreve
+        // (podar) quando o push passaria do teto de ops. Predicado puro do append-vs-rewrite.
+        assert!(!precisa_reescrever(0, JOURNAL_MAX));
+        assert!(!precisa_reescrever(JOURNAL_MAX - 1, JOURNAL_MAX), "push → exatamente MAX ainda cabe");
+        assert!(precisa_reescrever(JOURNAL_MAX, JOURNAL_MAX), "push → MAX+1 precisa podar");
+        assert!(precisa_reescrever(JOURNAL_MAX + 5, JOURNAL_MAX));
+    }
+
+    #[test]
+    fn rb27_reduzir_para_teto_marca_raiz_e_corta() {
+        // #1067 RB27: manifesto acima do teto vira reduzido (undo_granularidade="raiz") com
+        // no máximo `max` itens; no/abaixo do teto não mexe (None = grava como está).
+        let base = dir_temp("teto");
+        let f = base.join("f.txt");
+        std::fs::write(&f, vec![1u8; 4]).unwrap();
+        let item = journal_item(&f, &f, false);
+        let mk = |n: usize| OperationJournalEntry {
+            op_id: 1,
+            kind: "copy".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "success".into(),
+            resolucao: None,
+            items: vec![item.clone(); n],
+            trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
+        };
+        assert!(reduzir_para_teto(&mk(3), 5).is_none(), "abaixo do teto não reduz");
+        assert!(reduzir_para_teto(&mk(5), 5).is_none(), "no teto exato não reduz");
+        let reduzido = reduzir_para_teto(&mk(9), 5).expect("acima do teto reduz");
+        assert_eq!(reduzido.items.len(), 5, "truncado pro teto");
+        assert_eq!(reduzido.undo_granularidade, "raiz", "corte marcado, nunca silencioso");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn rb20_undo_manifesto_parcial_de_move_reverte_os_renames() {
+        // #1067 RB20 (DoD): num multi-move cancelado, os renames mesmo-volume JÁ efetivados
+        // precisam virar manifesto `status="partial"` pra continuarem desfazíveis. Aqui
+        // reproduzimos o estado pós-cancel — 2 renames feitos + o manifesto parcial que o
+        // fix grava — e provamos que `executar_undo` volta cada `to`→`from`. Contraste: SEM
+        // esse manifesto (items vazio) não há o que desfazer = o buraco irreversível de antes.
+        let base = dir_temp("undo-parcial-cancel");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        let a_de = origem.join("a.txt");
+        let b_de = origem.join("b.txt");
+        std::fs::write(&a_de, vec![1u8; 10]).unwrap();
+        std::fs::write(&b_de, vec![2u8; 20]).unwrap();
+        let a_para = base.join("a.txt");
+        let b_para = base.join("b.txt");
+        // renames mesmo-volume efetivados ANTES do "cancel" (como no loop do multi-move).
+        mover(&a_de.to_string_lossy(), &a_para.to_string_lossy()).unwrap();
+        mover(&b_de.to_string_lossy(), &b_para.to_string_lossy()).unwrap();
+        assert!(a_para.exists() && b_para.exists());
+        assert!(!a_de.exists() && !b_de.exists());
+
+        // O manifesto PARCIAL que o fix grava nos caminhos de erro/cancel (RB20).
+        let itens_renome: Vec<JournalItem> =
+            vec![journal_item(&a_de, &a_para, true), journal_item(&b_de, &b_para, true)];
+        let entry = OperationJournalEntry {
+            op_id: 77,
+            kind: "move".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "partial".into(),
+            resolucao: None,
+            items: itens_renome,
+            trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
+        };
+        assert_eq!(entry.status, "partial", "renames de op abortada/cancelada = manifesto parcial");
+
+        let rep = executar_undo(&entry);
+        assert_eq!(rep.executados, 2, "os 2 renames foram revertidos");
+        assert!(rep.erros.is_empty());
+        assert!(a_de.exists() && b_de.exists(), "voltaram pra origem");
+        assert!(!a_para.exists() && !b_para.exists(), "saíram do destino");
+
+        // Sem manifesto, nada a desfazer — exatamente o estado irreversível que o RB20 fecha.
+        let sem_manifesto = OperationJournalEntry {
+            op_id: 78,
+            kind: "move".into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "partial".into(),
+            resolucao: None,
+            items: Vec::new(),
+            trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
+        };
+        let rep_vazio = executar_undo(&sem_manifesto);
+        assert_eq!(rep_vazio.executados, 0, "sem manifesto não há reversão possível");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn rb20_rota_erro_de_plano_planejar_muitas_falha_deterministicamente() {
+        // #1067 RB20 (rejeição da Lúmen): a "rota de erro-de-plano" é a que dispara a 1ª
+        // saída de erro da fase pós-rename — `let plano = planejar_muitas(&pares_path)?;`.
+        // Aqui provo que essa condição de erro é REAL e determinística (não hipotética):
+        // uma origem ilegível faz `planejar_muitas` devolver `Err`. No multi-move, uma
+        // origem inexistente NÃO é filtrada pelo rename mesmo-volume (o rename falha), logo
+        // ela cai em `a_planejar` e CHEGA ao `planejar_muitas` — exatamente o caminho em que
+        // os renames já efetivados de OUTRAS origens precisam do manifesto parcial.
+        let base = dir_temp("rota-erro-plano");
+        let inexistente = base.join("nao-existe-src");
+        let destino = base.join("dst");
+        assert!(
+            std::fs::rename(com_long_path(&inexistente), com_long_path(&destino)).is_err(),
+            "origem inexistente NÃO é absorvida pelo rename mesmo-volume → vai pro plano"
+        );
+        let r = planejar_muitas(&[(inexistente.clone(), destino.clone())]);
+        assert!(
+            r.is_err(),
+            "origem ilegível → planejar_muitas Err (saída #1 da fase pós-rename, antes de copiar)"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn rb20_entrada_parcial_renomes_monta_manifesto_reversivel_na_rota_de_erro() {
+        // #1067 RB20 (rejeição da Lúmen): o funil grava, em TODA saída de erro/cancel da
+        // fase pós-rename, exatamente o manifesto que `entrada_parcial_renomes` produz. Aqui
+        // exercito ESSA unidade de produção (não um `OperationJournalEntry` montado à mão):
+        // pra a rota de erro ela devolve `Some(status="partial", kind="move")` cobrindo os
+        // renames JÁ efetivados, e `executar_undo` desse manifesto devolve cada `to`→`from`.
+        // A ESCRITA via `registrar_journal` é runtime: as assinaturas usam `AppHandle<Wry>`,
+        // que não se constrói em unit test (o mock dá `AppHandle<MockRuntime>`, incompatível),
+        // por isso o e2e do caminho (A) é inviável e este é o fallback determinístico.
+        let base = dir_temp("entrada-parcial-erro");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        let a_de = origem.join("a.txt");
+        let b_de = origem.join("b.txt");
+        std::fs::write(&a_de, vec![1u8; 10]).unwrap();
+        std::fs::write(&b_de, vec![2u8; 20]).unwrap();
+        let a_para = base.join("a.txt");
+        let b_para = base.join("b.txt");
+        // renames mesmo-volume efetivados (como no loop do multi-move, ANTES da saída de erro).
+        mover(&a_de.to_string_lossy(), &a_para.to_string_lossy()).unwrap();
+        mover(&b_de.to_string_lossy(), &b_para.to_string_lossy()).unwrap();
+        let itens_renome =
+            vec![journal_item(&a_de, &a_para, true), journal_item(&b_de, &b_para, true)];
+
+        // Sem renames → None (no-op: nada a journalar; o funil não grava linha vazia).
+        assert!(entrada_parcial_renomes(1, 0, &[]).is_none());
+
+        // Com renames → manifesto partial/move cobrindo os dois (o que o funil grava no `Err`).
+        let entrada = entrada_parcial_renomes(99, 0, &itens_renome)
+            .expect("há renames efetivados → Some(manifesto parcial)");
+        assert_eq!(entrada.status, "partial", "rota de erro/cancel = manifesto parcial");
+        assert_eq!(entrada.kind, "move");
+        assert_eq!(entrada.items.len(), 2, "os dois renames entram no parcial");
+
+        // `executar_undo` do parcial reverte os renames (to→from) — reversibilidade preservada.
+        let rep = executar_undo(&entrada);
+        assert_eq!(rep.executados, 2, "os 2 renames revertidos pelo manifesto parcial");
+        assert!(rep.erros.is_empty());
+        assert!(a_de.exists() && b_de.exists(), "voltaram à origem");
+        assert!(!a_para.exists() && !b_para.exists(), "saíram do destino");
         std::fs::remove_dir_all(&base).ok();
     }
 
@@ -4250,13 +5483,16 @@ mod tests {
         mover(&s(&d2), &s(&d3)).unwrap();
         assert!(!d2.exists() && d3.join("dentro.txt").exists());
 
-        // delete permanente: recusa sem token, apaga com token
+        // delete permanente: recusa sem nonce válido, apaga com o nonce emitido.
+        // #1047 (SEC7): a assinatura mudou — nonce de sessão no lugar do token fixo.
+        let token = TokenExclusao::default();
         assert!(matches!(
-            excluir_permanente(&[s(&f2)], "errado").unwrap_err(),
+            excluir_permanente(&[s(&f2)], "errado", &token).unwrap_err(),
             FsError::InvalidPath(_)
         ));
         assert!(f2.exists());
-        excluir_permanente(&[s(&f2), s(&d3)], TOKEN_EXCLUSAO_PERMANENTE).unwrap();
+        let nonce = token.emitir();
+        excluir_permanente(&[s(&f2), s(&d3)], &nonce, &token).unwrap();
         assert!(!f2.exists() && !d3.exists());
 
         let _ = std::fs::remove_dir_all(&base);
@@ -4267,6 +5503,195 @@ mod tests {
         assert!(matches!(criar_dir("").unwrap_err(), FsError::InvalidPath(_)));
         assert!(matches!(renomear("", "x").unwrap_err(), FsError::InvalidPath(_)));
         assert!(matches!(copiar("a", "").unwrap_err(), FsError::InvalidPath(_)));
+    }
+
+    #[test]
+    fn validar_barra_vetores_de_injecao_e_aceita_absoluto() {
+        // #1046 (SEC2): defesa-em-profundidade léxica. No código ANTIGO só o
+        // caminho vazio falhava — todos os casos abaixo (menos o vazio) PASSAVAM,
+        // então este teste roda VERMELHO antes do fix.
+        //
+        // Limite honesto: o núcleo do fix é remover o `cmd.exe` de `abrir_caminho`
+        // e as aspas manuais de `revelar_no_explorer` — isso elimina a injeção POR
+        // CONSTRUÇÃO (não há mais linha de shell), e um teste não deve realmente
+        // spawnar `calc.exe`. Este teste cobre a camada de validação
+        // (defesa-em-profundidade) e o vetor de aspas do `revelar_no_explorer`.
+
+        // Vazio: já barrava antes.
+        assert!(matches!(validar(""), Err(FsError::InvalidPath(_))));
+
+        // Caractere de controle (cobre \0..\x1f) — cross-platform.
+        assert!(matches!(validar("x\u{0}y"), Err(FsError::InvalidPath(_))));
+
+        // Relativo com o comando embutido: rejeitado por NÃO ser absoluto
+        // (`x&calc.exe` não tem raiz nem no Windows nem no Unix).
+        assert!(matches!(validar("x&calc.exe"), Err(FsError::InvalidPath(_))));
+
+        // Aspas dupla: o vetor que furava o `/select,"..."` do revelar_no_explorer.
+        #[cfg(windows)]
+        assert!(matches!(
+            validar("C:\\tmp\\x\".txt"),
+            Err(FsError::InvalidPath(_))
+        ));
+
+        // Caractere de controle num caminho absoluto de Windows.
+        #[cfg(windows)]
+        assert!(matches!(
+            validar("C:\\tmp\\x\u{1}.txt"),
+            Err(FsError::InvalidPath(_))
+        ));
+
+        // Caminho absoluto normal continua ACEITO — não regride create/copy/rename.
+        #[cfg(windows)]
+        assert!(validar("C:\\Users\\x\\arquivo.txt").is_ok());
+    }
+
+    // ── #1047 (SEC7): traversal, dir sensível, reparse/data-loss e nonce ────────
+
+    #[test]
+    fn validar_rejeita_traversal_ponto_ponto() {
+        // Componente `..` barrado em qualquer posição (path traversal).
+        #[cfg(windows)]
+        {
+            assert!(matches!(
+                validar(r"C:\Users\x\..\y"),
+                Err(FsError::InvalidPath(_))
+            ));
+            assert!(matches!(validar(r"C:\..\Windows"), Err(FsError::InvalidPath(_))));
+            // Absoluto sem `..` continua ok — não regride.
+            assert!(validar(r"C:\Users\x\y.txt").is_ok());
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(matches!(validar("/home/x/../y"), Err(FsError::InvalidPath(_))));
+            assert!(validar("/home/x/y.txt").is_ok());
+        }
+    }
+
+    #[test]
+    fn dentro_de_dir_sensivel_puro() {
+        #[cfg(windows)]
+        {
+            let raizes = vec![PathBuf::from(r"C:\Windows\System32")];
+            // Dentro da raiz.
+            assert!(dentro_de_dir_sensivel(
+                Path::new(r"C:\Windows\System32\drivers\etc\hosts"),
+                &raizes
+            ));
+            // Caixa diferente → ainda casa (Windows é case-insensitive).
+            assert!(dentro_de_dir_sensivel(
+                Path::new(r"c:\windows\system32\cmd.exe"),
+                &raizes
+            ));
+            // Fora da raiz.
+            assert!(!dentro_de_dir_sensivel(
+                Path::new(r"C:\Users\wagner\doc.txt"),
+                &raizes
+            ));
+            // Prefixo parcial de componente NÃO casa (System32 ≠ System32Extra).
+            assert!(!dentro_de_dir_sensivel(
+                Path::new(r"C:\Windows\System32Extra\x"),
+                &raizes
+            ));
+        }
+        #[cfg(not(windows))]
+        {
+            let raizes = vec![PathBuf::from("/usr/bin")];
+            assert!(dentro_de_dir_sensivel(Path::new("/usr/bin/sh"), &raizes));
+            assert!(!dentro_de_dir_sensivel(Path::new("/home/user/x"), &raizes));
+            // Prefixo parcial de componente.
+            assert!(!dentro_de_dir_sensivel(Path::new("/usr/binary/x"), &raizes));
+        }
+    }
+
+    #[test]
+    fn deve_remover_como_link_decisao_pura() {
+        // Só dir + reparse = remover como link (o caso data-loss). Resto = não.
+        assert!(deve_remover_como_link(true, true), "dir-symlink → só o link");
+        assert!(!deve_remover_como_link(true, false), "dir normal → remove_dir_all");
+        assert!(!deve_remover_como_link(false, true), "symlink de arquivo → remove_file");
+        assert!(!deve_remover_como_link(false, false), "arquivo normal → remove_file");
+    }
+
+    #[test]
+    #[ignore = "requer privilégio de symlink (SeCreateSymbolicLink/Developer Mode); \
+                a decisão pura está coberta por deve_remover_como_link_decisao_pura"]
+    fn remover_symlink_de_dir_apaga_so_o_link_alvo_intacto() {
+        // ⚠️ Ponto data-loss-crítico: `remover` num dir-symlink apaga SÓ o link,
+        // NUNCA o alvo apontado. Criar symlink no Windows exige privilégio → #[ignore].
+        let base = temp_unico();
+        std::fs::create_dir_all(&base).unwrap();
+        let alvo = base.join("alvo-real");
+        std::fs::create_dir_all(&alvo).unwrap();
+        std::fs::write(alvo.join("conteudo.txt"), "intacto").unwrap();
+        let link = base.join("link-para-alvo");
+
+        #[cfg(windows)]
+        let criado = std::os::windows::fs::symlink_dir(&alvo, &link).is_ok();
+        #[cfg(not(windows))]
+        let criado = std::os::unix::fs::symlink(&alvo, &link).is_ok();
+        assert!(criado, "não conseguiu criar o symlink de dir (privilégio?)");
+
+        remover(&s(&link)).unwrap();
+        assert!(!link.exists(), "o link deveria ter sido removido");
+        assert!(alvo.exists(), "o alvo real NÃO pode ser apagado (data-loss)");
+        assert!(
+            alvo.join("conteudo.txt").exists(),
+            "o conteúdo do alvo deve ficar intacto"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn nonce_exclusao_single_use_hardcoded_e_expira() {
+        let token = TokenExclusao::default();
+        let n = token.emitir();
+        // Single-use: vale na 1ª, recusa na 2ª.
+        assert!(token.consumir(&n), "nonce válido na 1ª vez");
+        assert!(!token.consumir(&n), "mesmo nonce recusado na 2ª vez");
+        // O token hardcoded velho não vale mais.
+        let n2 = token.emitir();
+        assert!(
+            !token.consumir("galaxie-excluir-permanente"),
+            "token hardcoded velho recusado"
+        );
+        // Tentativa inválida não zera o nonce corrente.
+        assert!(token.consumir(&n2), "nonce corrente sobrevive à tentativa inválida");
+        // Expiração: TTL mínimo + sleep passa do prazo.
+        let expira = token.emitir_com_ttl(Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(5));
+        assert!(!token.consumir(&expira), "nonce expirado recusado");
+    }
+
+    #[test]
+    fn checar_entrada_pipeline_barra_traversal_e_aceita_normal() {
+        // O pipeline turbo (fs_*_with_progress) é o caminho REAL de cópia/move; a
+        // guarda de entrada tem que rejeitar traversal e aceitar caminho normal.
+        let base = temp_unico();
+        std::fs::create_dir_all(&base).unwrap();
+        let src = base.join("origem.txt");
+        let dst = base.join("destino.txt");
+
+        #[cfg(windows)]
+        let travessia = r"C:\Users\x\..\y";
+        #[cfg(not(windows))]
+        let travessia = "/home/x/../y";
+
+        // Traversal na origem OU no destino → recusado (copy e move).
+        assert!(checar_entrada_copia(travessia, &s(&dst)).is_err());
+        assert!(checar_entrada_copia(&s(&src), travessia).is_err());
+        assert!(checar_entrada_move(travessia, &s(&dst)).is_err());
+        assert!(checar_entrada_muitas(&[travessia.to_string()], &s(&base), false).is_err());
+        // Destino relativo (não-absoluto) também barra.
+        assert!(checar_entrada_muitas(&[s(&src)], "destino-relativo", false).is_err());
+
+        // Caminho normal dentro de tempdir (não sensível) → ok (origem inexistente
+        // é ok pra copy: `validar` é léxico, não exige existir).
+        assert!(checar_entrada_copia(&s(&src), &s(&dst)).is_ok());
+        assert!(checar_entrada_muitas(&[s(&src)], &s(&base), false).is_ok());
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -4297,5 +5722,102 @@ mod tests {
         assert!(confl.iter().any(|c| c.name == "b.txt" && c.is_dir));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ── #1066: perda-de-dado em copy/move ───────────────────────────────────
+
+    #[test]
+    fn copia_completa_reprova_plano_incompleto() {
+        // #1066: o gate que decide se um MOVE pode apagar a origem. Exige contagem
+        // de arquivos E bytes iguais ao plano E zero pulos de enumeração; qualquer
+        // folga = `false` = origem preservada. No código antigo o move removia a
+        // origem SEM esse gate (Ok mentiroso) — este teste encoda o contrato novo.
+        let mut plano = Plano { total_arquivos: 3, total_bytes: 300, ..Default::default() };
+        assert!(copia_completa(&plano, 3, 300), "cópia exata libera a remoção");
+        assert!(!copia_completa(&plano, 2, 300), "faltou arquivo → origem preservada");
+        assert!(!copia_completa(&plano, 3, 299), "faltaram bytes → origem preservada");
+        plano.erros.push("subpasta ilegível".into());
+        assert!(!copia_completa(&plano, 3, 300), "pulo de enumeração → origem preservada");
+    }
+
+    #[test]
+    fn copia_com_verify_confere_hash_do_disco() {
+        // #1066 (RB22/RB23): com verify o `copiar_arquivo` faz `sync_all` antes de
+        // reabrir pra hashear (hash do DISCO, não da page cache) e propaga o corte
+        // final. Este teste prova que o caminho verify segue verde (sem regressão) e
+        // que o gate aprova a remoção só com a cópia batendo exata.
+        let base = dir_temp("verify-sync");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        let grande = vec![7u8; (LIMITE_PEQUENO * 2) as usize]; // exercita prealloc+set_len
+        std::fs::write(origem.join("g.bin"), &grande).unwrap();
+        std::fs::write(origem.join("p.txt"), b"pequeno").unwrap();
+
+        let destino = base.join("dst");
+        let plano = planejar(&origem, &destino).unwrap();
+        for d in &plano.dirs {
+            std::fs::create_dir_all(com_long_path(d)).unwrap();
+        }
+        let ctx = ctx_teste(Some(VerifyAlg::Xxh3));
+        copiar_plano(&plano, 4, &ctx).unwrap();
+
+        assert_eq!(std::fs::read(destino.join("g.bin")).unwrap(), grande);
+        assert_eq!(std::fs::read(destino.join("p.txt")).unwrap(), b"pequeno");
+        let feitos = ctx.arquivos_feitos.load(Ordering::Relaxed);
+        let bytes = ctx.processados.load(Ordering::Relaxed);
+        assert!(copia_completa(&plano, feitos, bytes), "cópia verify bateu com o plano");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn planejar_acumula_erro_de_enumeracao_de_subpasta_ilegivel() {
+        // #1066 (RB19): árvore de origem com uma subpasta que a enumeração NÃO
+        // consegue ler (DACL nega leitura via icacls — enforcement independe de
+        // sharing). O código antigo (`let Ok(entry) = .. else { continue }`) pulava
+        // esse erro do jwalk em SILÊNCIO → o move depois apagaria a origem com a
+        // subpasta inteira não copiada = perda de dado. Agora o erro é ACUMULADO e o
+        // gate reprova a remoção da origem. Ambiente elevado que ignora a DACL
+        // (SeBackupPrivilege) torna a via de I/O real inviável → no-op documentado.
+        use std::process::Command;
+
+        let base = dir_temp("enum-erro");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        std::fs::write(origem.join("ok.txt"), b"enumeravel").unwrap();
+        let travada = origem.join("travada");
+        std::fs::create_dir_all(&travada).unwrap();
+        std::fs::write(travada.join("perdido.txt"), b"seria perdido no move").unwrap();
+
+        let travada_s = travada.to_string_lossy().to_string();
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "Users".into());
+        // Nega leitura/listagem da subpasta (DACL).
+        let _ = Command::new("icacls")
+            .args([travada_s.as_str(), "/deny", &format!("{user}:(RX)")])
+            .output();
+        let bloqueou = std::fs::read_dir(&travada).is_err();
+
+        let plano = planejar(&origem, &base.join("dst")).unwrap();
+
+        // Restaura o acesso ANTES de limpar (senão o remove_dir_all também é negado).
+        let _ = Command::new("icacls")
+            .args([travada_s.as_str(), "/remove:d", &user])
+            .output();
+        let _ = std::fs::remove_dir_all(&base);
+
+        if !bloqueou {
+            eprintln!("SKIP planejar_acumula_erro…: DACL não bloqueou a leitura (ambiente elevado)");
+            return;
+        }
+        // (a) NÃO é Ok silencioso: o erro de enumeração foi acumulado.
+        assert!(
+            !plano.erros.is_empty(),
+            "enumeração da subpasta negada tinha que virar erro (o código antigo pulava calado)"
+        );
+        // (b) o gate anti-perda REPROVA a remoção da origem → no move a origem fica.
+        assert!(
+            !copia_completa(&plano, plano.total_arquivos, plano.total_bytes),
+            "plano com pulo de enumeração não pode liberar a remoção da origem"
+        );
     }
 }

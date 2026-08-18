@@ -75,6 +75,57 @@ const GRAPH_MAX_TENTATIVAS: u8 = 4;
 /// servidor pedir um valor absurdo.
 const GRAPH_TETO_ESPERA_S: u64 = 10;
 
+/// Campos da LISTAGEM de mensagens (#1074 RB42).
+///
+/// Os três caminhos que listam e-mail — pasta, busca e filtro — precisam pedir
+/// exatamente os mesmos campos, porque os três montam o item pelo
+/// `montar_email_item`. Se um deles pedir um campo a menos, aquele caminho passa
+/// a devolver item incompleto SÓ NELE — e o sintoma aparece longe da causa.
+///
+/// Já era assim na prática, garantido por um COMENTÁRIO ("campos idênticos aos de
+/// cr_buscar/cr_folder_mensagens") e uma `const` local a uma função. Comentário não
+/// impede divergência; const de módulo impede.
+const SELECT_MENSAGEM: &str = "subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex";
+
+/// Teto para ESTABELECER a conexão (TCP+TLS). Nenhum connect legítimo ao Graph
+/// leva tanto; o que passa disso é conexão pendurada — e pendurada é o caso
+/// grave, porque ela segura uma das 4 vagas de `GRAPH_MAX_CONCORRENTES` sem
+/// nunca falhar. Com 4 penduradas, TODO o tráfego Graph do app para, sem erro.
+const GRAPH_CONNECT_TIMEOUT_S: u64 = 10;
+
+/// Teto TOTAL de uma requisição Graph.
+///
+/// ⚠️ É um LIMITE, não uma medição: ninguém mediu a cauda real de download de
+/// anexo grande. Escolhido folgado de propósito, porque o erro caro aqui é
+/// apertar demais e quebrar em silêncio um anexo que funcionava. Operação que
+/// legitimamente demore mais deve sobrescrever POR REQUISIÇÃO
+/// (`RequestBuilder::timeout`), não afrouxar este default.
+const GRAPH_TIMEOUT_TOTAL_S: u64 = 120;
+
+/// Client HTTP único do Graph (#1074 RB44).
+///
+/// Eram **87** `reqwest::blocking::Client::new()` espalhados, **nenhum** com
+/// timeout. Cada `new()` monta o próprio pool de conexão, então o app nem
+/// reaproveitava conexão TLS entre chamadas — e, sem timeout, uma conexão que
+/// pendura fica pendurada para sempre.
+///
+/// `Client` é barato de clonar (é `Arc` por dentro) e é `Send + Sync`, então um
+/// único `OnceLock` serve todas as chamadas — mesmo padrão do `POOL` do
+/// `fs_explorer.rs`.
+fn cliente() -> &'static reqwest::blocking::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::blocking::Client> =
+        std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(GRAPH_CONNECT_TIMEOUT_S))
+            .timeout(std::time::Duration::from_secs(GRAPH_TIMEOUT_TOTAL_S))
+            .build()
+            // Só falha se o backend TLS não subir; aí não há Graph nenhum e um
+            // client sem timeout é melhor que derrubar o app no boot.
+            .unwrap_or_else(|_| reqwest::blocking::Client::new())
+    })
+}
+
 struct Limitador {
     vagas: std::sync::Mutex<usize>,
     liberou: std::sync::Condvar,
@@ -360,7 +411,8 @@ fn key_from_weburl(web_url: &str) -> String {
 
 /// Conjunto de siteGuids que ja tem atalho no OneDrive do usuario.
 /// Consulta DELEGADA (/me/drive): diferente do app-only, aqui os remoteItem
-/// costumam aparecer. O log mostra o que veio, pra nao ficar no achismo.
+/// costumam aparecer. #1076 (RB48/LGPD): loga só a CONTAGEM agregada — nunca os
+/// NOMES dos itens do OneDrive (podem ser nome de cliente/projeto = PII).
 fn connected_site_guids(client: &reqwest::blocking::Client, token: &str) -> Vec<String> {
     let url = format!("{GRAPH}/me/drive/root/children?$select=id,name,remoteItem&$top=200");
     let mut out = Vec::new();
@@ -373,15 +425,13 @@ fn connected_site_guids(client: &reqwest::blocking::Client, token: &str) -> Vec<
                     let mut com_remote = 0;
                     if let Some(items) = v["value"].as_array() {
                         for it in items {
-                            let nome = it["name"].as_str().unwrap_or("?");
+                            // #1076 (RB48): NÃO logar o nome do item (PII); só coletar
+                            // o siteId e contar.
                             if let Some(sid) =
                                 it["remoteItem"]["sharepointIds"]["siteId"].as_str()
                             {
                                 com_remote += 1;
-                                log::info!("[atalho] '{nome}' -> siteId={sid}");
                                 out.push(sid.to_string());
-                            } else {
-                                log::info!("[atalho] '{nome}' (pasta normal)");
                             }
                         }
                     }
@@ -397,53 +447,13 @@ fn connected_site_guids(client: &reqwest::blocking::Client, token: &str) -> Vec<
     out
 }
 
-/// DIAGNOSTICO TEMPORARIO: sonda endpoints que talvez exponham os atalhos.
-/// O /drive/root/children comprovadamente nao devolve remoteItem.
-fn sondar_atalhos(client: &reqwest::blocking::Client, token: &str) {
-    let alvos = [
-        ("sharedWithMe", format!("{GRAPH}/me/drive/sharedWithMe")),
-        ("delta", format!("{GRAPH}/me/drive/root/delta")),
-        (
-            "children+expand",
-            format!("{GRAPH}/me/drive/root/children?$expand=remoteItem&$top=200"),
-        ),
-    ];
-    for (rotulo, url) in alvos {
-        match client.get(&url).bearer_auth(token).send() {
-            Ok(r) => {
-                let st = r.status();
-                match r.json::<serde_json::Value>() {
-                    Ok(v) => {
-                        let arr = v["value"].as_array();
-                        let total = arr.map(|a| a.len()).unwrap_or(0);
-                        let mut remotos = 0;
-                        if let Some(items) = arr {
-                            for it in items {
-                                if !it["remoteItem"].is_null() {
-                                    remotos += 1;
-                                    log::info!(
-                                        "[sonda:{rotulo}] REMOTO '{}' id={}",
-                                        it["name"].as_str().unwrap_or("?"),
-                                        it["id"].as_str().unwrap_or("?")
-                                    );
-                                }
-                            }
-                        }
-                        log::info!("[sonda:{rotulo}] {st}: {total} itens, {remotos} com remoteItem");
-                    }
-                    Err(e) => log::warn!("[sonda:{rotulo}] json: {e}"),
-                }
-            }
-            Err(e) => log::warn!("[sonda:{rotulo}] erro: {e}"),
-        }
-    }
-}
-
 /// Lista os sites do tenant que o usuario enxerga (delegado), com status.
 pub fn list_sites(store: &TokenStore) -> Result<Vec<SiteDto>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-    sondar_atalhos(&client, &token);
+    let client = cliente();
+    // #1073 (RB38): a sonda de diagnóstico `sondar_atalhos` foi REMOVIDA — rodava em
+    // produção a cada `list_sites` (3 GETs extras fora do pool + logava nomes de
+    // arquivo do usuário). Nada mais depende dela.
 
     let url = format!("{GRAPH}/sites?search=*&$top=200");
     let resp = client
@@ -540,7 +550,7 @@ pub fn site_details(
     web_url: &str,
 ) -> Result<SiteDetalhes, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let mut det = SiteDetalhes::default();
 
@@ -570,7 +580,7 @@ pub fn connect_site(
     web_url: &str,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     // sharepointIds da biblioteca padrao (drive root) do site.
     let sp_url = format!("{GRAPH}/sites/{site_id}/drive/root?$select=sharepointIds");
@@ -640,7 +650,7 @@ pub fn disconnect_site(store: &TokenStore, site_id: &str) -> Result<(), String> 
     let reg = crate::estado::buscar(guid)
         .ok_or("este atalho nao foi criado por aqui - remova pelo OneDrive web")?;
 
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let resp = client
         .delete(format!("{GRAPH}/me/drive/items/{}", reg.item_id))
         .bearer_auth(&token)
@@ -710,13 +720,20 @@ pub struct PastaOneDrive {
 /// Pastas de primeiro nivel do OneDrive do usuario, maiores primeiro.
 pub fn onedrive_folders(store: &TokenStore) -> Result<Vec<PastaOneDrive>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let mut pastas = Vec::new();
     let mut proxima = Some(format!(
         "{GRAPH}/me/drive/root/children?$select=id,name,size,webUrl,folder&$top=200"
     ));
+    let mut guarda = GuardaPaginacao::nova();
     while let Some(url) = proxima {
+        // #1074 RB41: este laço não tinha guarda NENHUMA — nem de host (#1068, que
+        // exfiltraria o token) nem de ciclo. Diferente das listagens de People, aqui
+        // a falha vira `Err` porque a função não acumula `failures`.
+        if let Err(motivo) = guarda.aceitar(&url) {
+            return Err(format!("listagem do OneDrive interrompida ({motivo:?})"));
+        }
         let resp = client
             .get(&url)
             .bearer_auth(&token)
@@ -761,7 +778,7 @@ pub fn onedrive_folder_details(
     web_url: &str,
 ) -> Result<PastaDetalhes, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     Ok(PastaDetalhes {
         files: contar_busca(&client, &token, &format!("path:\"{web_url}\" AND IsDocument:true")),
         folders: contar_busca(&client, &token, &format!("path:\"{web_url}\" AND IsContainer:true")),
@@ -780,7 +797,7 @@ pub struct UsoOneDrive {
 
 pub fn onedrive_quota(store: &TokenStore) -> Result<UsoOneDrive, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!("{GRAPH}/me/drive/root?$select=webUrl");
     let web_url = client
         .get(&url)
@@ -822,7 +839,7 @@ pub struct TipoArquivo {
 /// "quantos", nao "quanto pesam".
 pub fn onedrive_tipos(store: &TokenStore, web_url: &str) -> Result<Vec<TipoArquivo>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let kql = if web_url.is_empty() {
         "IsDocument:true".to_string()
@@ -874,58 +891,9 @@ pub fn onedrive_tipos(store: &TokenStore, web_url: &str) -> Result<Vec<TipoArqui
 // escopos sem admin consent (Calendars.Read, Mail.Read, Tasks.ReadWrite).
 // ============================================================================
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Reuniao {
-    pub assunto: String,
-    /// Inicio em ISO UTC (o front converte para o horario local).
-    pub inicio: String,
-    pub fim: String,
-    pub local: String,
-    pub online: bool,
-}
 
-/// Proximas reunioes (janela de 7 dias, ate 6). Calendars.Read.
-pub fn cr_reunioes(store: &TokenStore) -> Result<Vec<Reuniao>, String> {
-    use chrono::{Duration, Utc};
-    let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
 
-    let agora = Utc::now();
-    let ini = agora.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let fim = (agora + Duration::days(7)).format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let url = format!(
-        "{GRAPH}/me/calendarView?startDateTime={ini}&endDateTime={fim}\
-         &$select=subject,start,end,location,isAllDay,onlineMeeting\
-         &$orderby=start/dateTime&$top=6"
-    );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        // times em UTC, deterministico para o front converter.
-        .header("Prefer", "outlook.timezone=\"UTC\"")
-        .send()
-        .map_err(|e| format!("falha no calendario: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("/me/calendarView retornou {}", resp.status()));
-    }
-    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
-    let mut reunioes = Vec::new();
-    if let Some(items) = v["value"].as_array() {
-        for it in items {
-            reunioes.push(Reuniao {
-                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
-                inicio: it["start"]["dateTime"].as_str().unwrap_or("").to_string(),
-                fim: it["end"]["dateTime"].as_str().unwrap_or("").to_string(),
-                local: it["location"]["displayName"].as_str().unwrap_or("").to_string(),
-                online: it["onlineMeeting"].is_object(),
-            });
-        }
-    }
-    Ok(reunioes)
-}
-
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct EmailRecente {
     pub assunto: String,
@@ -933,70 +901,7 @@ pub struct EmailRecente {
     pub recebido: String,
 }
 
-#[derive(serde::Serialize, Default, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct CaixaEntrada {
-    pub nao_lidos: u64,
-    pub recentes: Vec<EmailRecente>,
-}
 
-/// Nao-lidos da Caixa de Entrada + ultimas mensagens nao lidas. Mail.Read.
-///
-/// #440 (A1): AGORA sob o pool (`graph_enviar` — retry/429), e a contagem de
-/// não-lidos PROPAGA erro em vez de devolver "0 silencioso" (o front tem de
-/// distinguir "caixa vazia" de "falhou"; AC4). Os recentes seguem best-effort: a
-/// contagem é o sinal principal e a lista é só enriquecimento.
-pub fn cr_email(store: &TokenStore) -> Result<CaixaEntrada, String> {
-    let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-
-    let mut cx = CaixaEntrada::default();
-
-    // Não-lidos: sinal-chave → um erro real vira Err (nunca "0" falso).
-    let url = format!("{GRAPH}/me/mailFolders/inbox?$select=unreadItemCount");
-    let resp = graph_enviar("mail:naolidos", GRAPH_TETO_ESPERA_S, || {
-        client.get(&url).bearer_auth(&token).send()
-    })
-    .map_err(|e| format!("falha ao ler não-lidos: {e}"))?;
-    if !resp.status().is_success() {
-        let st = resp.status();
-        log::warn!("[mail:naolidos] Graph retornou {st}");
-        return Err(format!("/me/mailFolders/inbox retornou {st}"));
-    }
-    if let Ok(v) = resp.json::<serde_json::Value>() {
-        cx.nao_lidos = v["unreadItemCount"].as_u64().unwrap_or(0);
-    }
-
-    // Recentes: enriquecimento. Se falhar, mantém a contagem e degrada.
-    let url = format!(
-        "{GRAPH}/me/mailFolders/inbox/messages?$filter=isRead eq false\
-         &$select=subject,from,receivedDateTime&$top=5&$orderby=receivedDateTime desc"
-    );
-    if let Ok(resp) = graph_enviar("mail:recentes", GRAPH_TETO_ESPERA_S, || {
-        client.get(&url).bearer_auth(&token).send()
-    }) {
-        if resp.status().is_success() {
-            if let Ok(v) = resp.json::<serde_json::Value>() {
-                if let Some(items) = v["value"].as_array() {
-                    for it in items {
-                        cx.recentes.push(EmailRecente {
-                            assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
-                            de: it["from"]["emailAddress"]["name"]
-                                .as_str()
-                                .or_else(|| it["from"]["emailAddress"]["address"].as_str())
-                                .unwrap_or("")
-                                .to_string(),
-                            recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
-                        });
-                    }
-                }
-            }
-        } else {
-            log::warn!("[mail:recentes] Graph retornou {} (degradando)", resp.status());
-        }
-    }
-    Ok(cx)
-}
 
 /// E-mail do dashboard Atoms (#440 A1): não-lidos + sinalizados + recentes num
 /// ÚNICO `$batch` sob o pool — 1 request, 1 caminho de erro. Substitui o
@@ -1005,12 +910,98 @@ pub fn cr_email(store: &TokenStore) -> Result<CaixaEntrada, String> {
 /// falhava (#187). Memoizado (single-flight + TTL curto) pra não competir com o
 /// Bridge no boot. Só o não-lido é sinal-chave (propaga erro); sinalizados e
 /// recentes degradam graciosamente. Mail.Read.
-#[derive(serde::Serialize, Default, Clone)]
+#[derive(serde::Serialize, Default, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct AtomsEmail {
     pub nao_lidos: u64,
     pub sinalizados: u64,
     pub recentes: Vec<EmailRecente>,
+    /// Sub-respostas do `$batch` que NÃO puderam ser lidas (#1075 RB46-a).
+    /// Vazio = o card está completo. Mesma forma do `TarefasResultado` da F2.
+    pub parciais: Vec<String>,
+}
+
+#[cfg(test)]
+mod testes_atoms_email_parcial {
+    use super::*;
+
+    fn resposta(itens: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "responses": itens })
+    }
+
+    fn ok_completo() -> serde_json::Value {
+        resposta(serde_json::json!([
+            { "id": "naoLidos", "status": 200, "body": { "unreadItemCount": 7 } },
+            { "id": "sinalizados", "status": 200, "body": 3 },
+            { "id": "recentes", "status": 200, "body": { "value": [] } },
+        ]))
+    }
+
+    #[test]
+    fn caminho_feliz_nao_marca_nada_como_parcial() {
+        let r = atoms_email_de_batch(&ok_completo()).expect("batch valido");
+        assert_eq!(r.nao_lidos, 7);
+        assert_eq!(r.sinalizados, 3);
+        assert!(r.parciais.is_empty(), "card completo nao tem parcial");
+    }
+
+    /// O RB46-a: 200 **sem o campo** virava `unwrap_or(0)` e a tela dizia
+    /// "0 nao lidos" como fato. Agora cai na mesma guarda da sub-resposta
+    /// ausente — nao temos o numero, entao nao inventamos um.
+    #[test]
+    fn duzentos_sem_o_campo_nao_vira_zero_nao_lidos() {
+        let v = resposta(serde_json::json!([
+            { "id": "naoLidos", "status": 200, "body": {} },
+        ]));
+        let e = atoms_email_de_batch(&v).expect_err("nao pode devolver 0 como fato");
+        assert!(e.contains("unreadItemCount"), "motivo tem que dizer o que faltou: {e}");
+    }
+
+    /// O guard `if status == 200` fazia o braco NAO CASAR e cair no `_ => {}`:
+    /// o valor ficava no default e a UI lia 0 como fato.
+    #[test]
+    fn sinalizados_com_erro_e_marcado_e_nao_vira_zero_silencioso() {
+        for status in [403, 429, 500] {
+            let v = resposta(serde_json::json!([
+                { "id": "naoLidos", "status": 200, "body": { "unreadItemCount": 4 } },
+                { "id": "sinalizados", "status": status, "body": 0 },
+            ]));
+            let r = atoms_email_de_batch(&v).expect("o card nao pode cair por causa do secundario");
+            assert_eq!(r.nao_lidos, 4, "o principal segue valendo");
+            assert_eq!(
+                r.parciais,
+                vec!["sinalizados"],
+                "status {status} tem que aparecer como parcial"
+            );
+        }
+    }
+
+    #[test]
+    fn recentes_com_erro_nao_vira_lista_vazia_silenciosa() {
+        let v = resposta(serde_json::json!([
+            { "id": "naoLidos", "status": 200, "body": { "unreadItemCount": 4 } },
+            { "id": "recentes", "status": 500, "body": { "value": [] } },
+        ]));
+        let r = atoms_email_de_batch(&v).expect("secundario nao derruba o card");
+        assert!(r.recentes.is_empty());
+        assert_eq!(r.parciais, vec!["recentes"], "lista vazia por erro tem que ser marcada");
+    }
+
+    /// Lista REALMENTE vazia (200) nao e parcial — a distincao que importa.
+    #[test]
+    fn lista_realmente_vazia_nao_e_parcial() {
+        let r = atoms_email_de_batch(&ok_completo()).expect("batch valido");
+        assert!(r.recentes.is_empty());
+        assert!(!r.parciais.contains(&"recentes".to_string()));
+    }
+
+    #[test]
+    fn sub_resposta_ausente_segue_derrubando() {
+        let v = resposta(serde_json::json!([
+            { "id": "sinalizados", "status": 200, "body": 1 },
+        ]));
+        assert!(atoms_email_de_batch(&v).is_err(), "sem naoLidos nao ha card");
+    }
 }
 
 pub fn atoms_email(store: &TokenStore) -> Result<AtomsEmail, String> {
@@ -1019,7 +1010,7 @@ pub fn atoms_email(store: &TokenStore) -> Result<AtomsEmail, String> {
 
 fn atoms_email_inner(store: &TokenStore) -> Result<AtomsEmail, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let requests = serde_json::json!({
         "requests": [
@@ -1071,21 +1062,40 @@ fn atoms_email_de_batch(v: &serde_json::Value) -> Result<AtomsEmail, String> {
             let id = it["id"].as_str().unwrap_or("");
             let status = it["status"].as_u64().unwrap_or(0);
             match id {
+                // #1075 RB46-a: o NÚMERO PRINCIPAL do card. Status não-200 já
+                // derrubava; o que faltava era o 200 **sem o campo** — que virava
+                // `unwrap_or(0)` e mostrava "0 não lidos" como se fosse fato.
+                // Agora cai na MESMA guarda que a sub-resposta ausente: se não
+                // temos o número, não inventamos um.
                 "naoLidos" => {
-                    if status != 200 {
+                    if !leitura_status_ok(status) {
                         return Err(format!("sub-resposta naoLidos: status {status}"));
                     }
-                    out.nao_lidos = it["body"]["unreadItemCount"].as_u64().unwrap_or(0);
+                    let Some(n) = it["body"]["unreadItemCount"].as_u64() else {
+                        return Err(
+                            "sub-resposta naoLidos sem `unreadItemCount`".to_string()
+                        );
+                    };
+                    out.nao_lidos = n;
                     viu_nao_lidos = true;
                 }
-                "sinalizados" if status == 200 => {
-                    out.sinalizados = it["body"]
+                // Secundários: aqui derrubar o card inteiro seria pior que o
+                // defeito (lição da F2). Mas o guard `if status == 200` fazia o
+                // braço NÃO CASAR e cair no `_ => {}` — o valor ficava no default
+                // (0 / lista vazia) e a UI lia isso como fato. Mesma forma do
+                // `if let Ok` sem `else`.
+                "sinalizados" => {
+                    match it["body"]
                         .as_u64()
                         .or_else(|| it["body"].as_str().and_then(|s| s.trim().parse().ok()))
-                        .unwrap_or(0);
+                        .filter(|_| leitura_status_ok(status))
+                    {
+                        Some(n) => out.sinalizados = n,
+                        None => out.parciais.push("sinalizados".to_string()),
+                    }
                 }
-                "recentes" if status == 200 => {
-                    if let Some(msgs) = it["body"]["value"].as_array() {
+                "recentes" => match it["body"]["value"].as_array() {
+                    Some(msgs) if leitura_status_ok(status) => {
                         for m in msgs {
                             out.recentes.push(EmailRecente {
                                 assunto: m["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
@@ -1098,7 +1108,8 @@ fn atoms_email_de_batch(v: &serde_json::Value) -> Result<AtomsEmail, String> {
                             });
                         }
                     }
-                }
+                    _ => out.parciais.push("recentes".to_string()),
+                },
                 _ => {}
             }
         }
@@ -1109,7 +1120,7 @@ fn atoms_email_de_batch(v: &serde_json::Value) -> Result<AtomsEmail, String> {
     Ok(out)
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Tarefa {
     pub titulo: String,
@@ -1127,13 +1138,151 @@ pub struct Tarefa {
 /// varredura de listas no boot. Era a causa do "Couldn't load" em Tasks: a
 /// chamada crua estourava 429 e o `Err` no 1º 429 derrubava o widget, com o
 /// Retry re-chamando a MESMA função desprotegida (#184).
-pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
+/// Tarefas agregadas + as listas que NÃO puderam ser lidas (#1075 RB46).
+///
+/// Antes, `cr_tarefas` devolvia `Vec<Tarefa>` e a agregação varria as listas com
+/// quatro `if let Ok` / `is_success()` **encadeados e sem um único `else`**. Uma
+/// lista que respondesse 403, caísse na rede ou devolvesse corpo ilegível
+/// contribuía com zero tarefas — **exatamente como uma lista realmente vazia**.
+/// O card do To Do mostrava a soma e parecia completa.
+///
+/// O erro não virava valor neutro: ele nem chegava a ser observado. Por isso a
+/// correção não é "propagar `Err`" — derrubar o widget inteiro porque UMA lista
+/// de oito falhou seria pior. É dar ao resultado um lugar onde caiba
+/// **"consegui parte"**, que é o que de fato aconteceu.
+#[derive(serde::Serialize, Clone, Default, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TarefasResultado {
+    pub tarefas: Vec<Tarefa>,
+    /// Nomes das listas cuja leitura falhou. Vazio = a agregação está completa.
+    pub listas_com_falha: Vec<String>,
+}
+
+impl TarefasResultado {
+    /// Registra a falha de UMA lista. O motivo vai para o log (diagnóstico); o
+    /// nome vai para a UI, que só precisa dizer "esta lista não entrou".
+    fn registrar_falha(&mut self, lista: &str, motivo: &str) {
+        log::warn!("[todo] lista '{lista}' nao pôde ser lida: {motivo}");
+        let nome = if lista.trim().is_empty() {
+            "(sem nome)"
+        } else {
+            lista
+        };
+        // Uma lista falha UMA vez por agregação; sem o dedup, um retry futuro
+        // dentro do mesmo passe duplicaria o aviso na tela.
+        if !self.listas_com_falha.iter().any(|n| n == nome) {
+            self.listas_com_falha.push(nome.to_string());
+        }
+    }
+}
+
+/// Extrai as tarefas de UMA resposta de lista. `None` = o corpo não tem a forma
+/// esperada (sem `value`), que é falha de leitura — não lista vazia.
+///
+/// Separado do laço de rede de propósito: é aqui que mora a distinção entre
+/// "li e não havia nada" e "não consegui ler", e é a única parte testável sem
+/// bater no Graph.
+fn tarefas_da_lista(
+    corpo: &serde_json::Value,
+    nome: &str,
+    lista_id: &str,
+    vagas: usize,
+) -> Option<Vec<Tarefa>> {
+    let items = corpo["value"].as_array()?;
+    Some(
+        items
+            .iter()
+            .take(vagas)
+            .map(|it| Tarefa {
+                titulo: it["title"].as_str().unwrap_or("").to_string(),
+                lista: nome.to_string(),
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                lista_id: lista_id.to_string(),
+                // dueDateTime é objeto { dateTime, timeZone } no Graph.
+                prazo: it["dueDateTime"]["dateTime"].as_str().map(|s| s.to_string()),
+            })
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+mod testes_tarefas_parciais {
+    use super::*;
+
+    /// A distinção que o RB46 apagava: corpo SEM `value` não é lista vazia.
+    #[test]
+    fn corpo_sem_value_e_falha_de_leitura_nao_lista_vazia() {
+        let vazia = serde_json::json!({ "value": [] });
+        assert_eq!(
+            tarefas_da_lista(&vazia, "Tarefas", "id1", 8).map(|v| v.len()),
+            Some(0),
+            "lista realmente vazia devolve Some(vazio)"
+        );
+
+        for corpo in [
+            serde_json::json!({}),
+            serde_json::json!({ "error": { "code": "ErrorAccessDenied" } }),
+            serde_json::json!({ "value": "nao é array" }),
+        ] {
+            assert!(
+                tarefas_da_lista(&corpo, "Tarefas", "id1", 8).is_none(),
+                "corpo sem `value` array tem que ser falha: {corpo}"
+            );
+        }
+    }
+
+    #[test]
+    fn respeita_as_vagas_restantes_do_teto() {
+        let corpo = serde_json::json!({
+            "value": [
+                { "id": "1", "title": "a" },
+                { "id": "2", "title": "b" },
+                { "id": "3", "title": "c" },
+            ]
+        });
+        let t = tarefas_da_lista(&corpo, "L", "id", 2).expect("corpo valido");
+        assert_eq!(t.len(), 2, "nao pode estourar o teto do card");
+        assert_eq!(t[0].titulo, "a");
+        assert_eq!(t[0].lista, "L");
+    }
+
+    /// A lista que falhou tem que APARECER. Era o defeito: ela sumia.
+    #[test]
+    fn lista_que_falha_aparece_e_nao_some() {
+        let mut r = TarefasResultado::default();
+        assert!(r.listas_com_falha.is_empty(), "agregacao completa comeca vazia");
+
+        r.registrar_falha("Trabalho", "403");
+        assert_eq!(r.listas_com_falha, vec!["Trabalho"]);
+    }
+
+    #[test]
+    fn a_mesma_lista_nao_duplica_o_aviso() {
+        let mut r = TarefasResultado::default();
+        r.registrar_falha("Trabalho", "403");
+        r.registrar_falha("Trabalho", "timeout");
+        assert_eq!(r.listas_com_falha, vec!["Trabalho"], "um aviso por lista");
+    }
+
+    #[test]
+    fn lista_sem_nome_ainda_e_reportada() {
+        let mut r = TarefasResultado::default();
+        r.registrar_falha("   ", "500");
+        assert_eq!(
+            r.listas_com_falha,
+            vec!["(sem nome)"],
+            "sem nome nao pode virar sumico"
+        );
+    }
+}
+
+pub fn cr_tarefas(store: &TokenStore) -> Result<TarefasResultado, String> {
     com_memo_curto("tarefas:atoms", || cr_tarefas_inner(store))
 }
 
-fn cr_tarefas_inner(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
+fn cr_tarefas_inner(store: &TokenStore) -> Result<TarefasResultado, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     // 1) listas
     let url = format!("{GRAPH}/me/todo/lists?$select=id,displayName&$top=50");
@@ -1148,10 +1297,10 @@ fn cr_tarefas_inner(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
 
-    let mut tarefas = Vec::new();
+    let mut resultado = TarefasResultado::default();
     if let Some(listas) = v["value"].as_array() {
         for l in listas {
-            if tarefas.len() >= 8 {
+            if resultado.tarefas.len() >= 8 {
                 break;
             }
             let id = l["id"].as_str().unwrap_or("");
@@ -1164,35 +1313,30 @@ fn cr_tarefas_inner(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
                 "{GRAPH}/me/todo/lists/{id}/tasks?$filter=status ne 'completed'\
                  &$select=id,title,dueDateTime&$top=8"
             );
-            if let Ok(r) = graph_enviar("todo:tarefas", GRAPH_TETO_ESPERA_S, || {
+            // #1075 RB46: antes eram QUATRO `if let Ok`/`is_success()` encadeados
+            // SEM um unico `else` — 403, queda de rede e corpo ilegivel produziam
+            // o mesmo resultado que uma lista vazia, e a soma do card parecia
+            // completa. Agora cada rota de falha tem um destino.
+            let vagas = 8usize.saturating_sub(resultado.tarefas.len());
+            match graph_enviar("todo:tarefas", GRAPH_TETO_ESPERA_S, || {
                 client.get(&url).bearer_auth(&token).send()
             }) {
-                if r.status().is_success() {
-                    if let Ok(vt) = r.json::<serde_json::Value>() {
-                        if let Some(items) = vt["value"].as_array() {
-                            for it in items {
-                                if tarefas.len() >= 8 {
-                                    break;
-                                }
-                                // dueDateTime é objeto { dateTime, timeZone } no Graph.
-                                let prazo = it["dueDateTime"]["dateTime"]
-                                    .as_str()
-                                    .map(|s| s.to_string());
-                                tarefas.push(Tarefa {
-                                    titulo: it["title"].as_str().unwrap_or("").to_string(),
-                                    lista: nome.clone(),
-                                    id: it["id"].as_str().unwrap_or("").to_string(),
-                                    lista_id: id.to_string(),
-                                    prazo,
-                                });
-                            }
-                        }
-                    }
+                Err(e) => resultado.registrar_falha(&nome, &format!("transporte: {e}")),
+                Ok(r) if !r.status().is_success() => {
+                    let st = r.status();
+                    resultado.registrar_falha(&nome, &format!("status {st}"));
                 }
+                Ok(r) => match r.json::<serde_json::Value>() {
+                    Err(e) => resultado.registrar_falha(&nome, &format!("corpo ilegivel: {e}")),
+                    Ok(vt) => match tarefas_da_lista(&vt, &nome, id, vagas) {
+                        Some(t) => resultado.tarefas.extend(t),
+                        None => resultado.registrar_falha(&nome, "resposta sem `value`"),
+                    },
+                },
             }
         }
     }
-    Ok(tarefas)
+    Ok(resultado)
 }
 
 /// Conclui uma tarefa do To Do (#184, Atoms S2): PATCH status=completed em
@@ -1208,7 +1352,7 @@ pub fn cr_tarefa_concluir(
         return Err("Invalid task.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/me/todo/lists/{}/tasks/{}",
         urlencoding::encode(lista_id),
@@ -1377,7 +1521,7 @@ fn parse_eventos(v: &serde_json::Value) -> Vec<EventoAgenda> {
 /// agenda até um F5 no app inteiro (#41).
 fn buscar_calendar_view(store: &TokenStore, url: &str) -> Result<Vec<EventoAgenda>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let resp = graph_enviar("agenda", GRAPH_TETO_ESPERA_S, || {
         client
             .get(url)
@@ -1486,7 +1630,7 @@ pub fn cr_calendarios(
     mailbox: Option<&str>,
 ) -> Result<Vec<Calendario>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     // #495: caixa própria = /me, caixa compartilhada = /users/{addr}.
     let prefix = mailbox_prefix(mailbox);
@@ -1567,7 +1711,7 @@ fn preset_para_hex(preset: &str) -> &'static str {
 /// Categorias mestras do usuario com a cor (hex) de cada uma. Calendars.Read / Mail.Read.
 pub fn cr_categorias(store: &TokenStore) -> Result<Vec<CategoriaCor>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let url = format!("{GRAPH}/me/outlook/masterCategories?$select=displayName,color");
     // Sob o pool + retry central (#64): faz parte da rajada de abertura, então
@@ -1603,7 +1747,7 @@ pub fn cr_criar_categoria(
     preset: &str,
 ) -> Result<CategoriaCor, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let url = format!("{GRAPH}/me/outlook/masterCategories");
     let body = serde_json::json!({ "displayName": nome, "color": preset });
@@ -1657,7 +1801,7 @@ pub struct EventoDetalhe {
 /// Detalhe completo de um evento (corpo + todos os convidados). Calendars.Read.
 pub fn cr_evento_corpo(store: &TokenStore, id: &str) -> Result<EventoDetalhe, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let url = format!(
         "{GRAPH}/me/events/{id}?$select=subject,start,end,location,onlineMeeting,\
@@ -1883,10 +2027,15 @@ fn recorrencia_de_json(recurrence: &serde_json::Value) -> Option<Recorrencia> {
 pub fn cr_evento_recorrencia(
     store: &TokenStore,
     id: &str,
+    mailbox: Option<&str>,
 ) -> Result<Option<Recorrencia>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}?$select=recurrence");
+    let client = cliente();
+    // #1069: recorrência da série na caixa RESOLVIDA — antes /me fixo, o que numa
+    // caixa compartilhada dava 404 e o form de "editar a série" não carregava os
+    // campos (só o fallback best-effort). Agora acompanha a escrita mailbox-aware.
+    let prefix = mailbox_prefix(mailbox);
+    let url = format!("{GRAPH}/{prefix}/events/{id}?$select=recurrence");
     let resp = graph_enviar("agenda:recorrencia", GRAPH_TETO_ESPERA_S, || {
         client.get(&url).bearer_auth(&token).send()
     })
@@ -1894,7 +2043,7 @@ pub fn cr_evento_recorrencia(
     if !resp.status().is_success() {
         let st = resp.status();
         log::warn!("[agenda:recorrencia] Graph retornou {st}");
-        return Err(format!("/me/events (recorrência) retornou {st}"));
+        return Err(format!("/{prefix}/events (recorrência) retornou {st}"));
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     Ok(recorrencia_de_json(&v["recurrence"]))
@@ -1907,8 +2056,127 @@ pub fn cr_evento_recorrencia(
 // Rodar: cargo test --lib graph::testes_recorrencia
 // ---------------------------------------------------------------------------
 #[cfg(test)]
+mod testes_select_mensagem {
+    use super::*;
+
+    #[test]
+    fn select_de_mensagem_cobre_o_que_o_montar_email_item_consome() {
+        // A const existe pra que os 3 caminhos peçam o MESMO conjunto. O risco real
+        // não é a string mudar — é ela perder um campo que o `montar_email_item`
+        // lê, e aí SÓ aquele caminho devolve item incompleto, com o sintoma
+        // aparecendo longe da causa. Este teste ancora os campos obrigatórios.
+        for campo in [
+            "subject",
+            "from",
+            "receivedDateTime",
+            "bodyPreview",
+            "isRead",
+            "hasAttachments",
+            "flag",
+            "conversationId",
+        ] {
+            assert!(
+                SELECT_MENSAGEM.split(',').any(|c| c == campo),
+                "SELECT_MENSAGEM perdeu o campo `{campo}` — a listagem passa a                  devolver item incompleto nos 3 caminhos de uma vez"
+            );
+        }
+    }
+
+    #[test]
+    fn select_de_mensagem_nao_tem_campo_repetido_nem_vazio() {
+        let campos: Vec<&str> = SELECT_MENSAGEM.split(',').collect();
+        assert!(
+            !campos.iter().any(|c| c.trim().is_empty()),
+            "campo vazio no SELECT_MENSAGEM (vírgula sobrando) — o Graph rejeita a query"
+        );
+        let mut unicos = campos.clone();
+        unicos.sort_unstable();
+        unicos.dedup();
+        assert_eq!(
+            unicos.len(),
+            campos.len(),
+            "campo repetido no SELECT_MENSAGEM"
+        );
+    }
+}
+
+#[cfg(test)]
+mod testes_cliente_graph {
+    use super::*;
+
+    #[test]
+    fn cliente_e_a_mesma_instancia_em_toda_chamada() {
+        // O ponto do OnceLock não é economizar alocação: é o POOL DE CONEXÃO ser
+        // um só. Com 87 `Client::new()`, cada chamada abria o próprio pool e o app
+        // não reaproveitava conexão TLS entre requisições ao mesmo host.
+        let a = cliente();
+        let b = cliente();
+        assert!(
+            std::ptr::eq(a, b),
+            "cliente() devolveu instâncias diferentes — o pool de conexão deixou de ser único"
+        );
+    }
+
+    #[test]
+    fn connect_timeout_e_menor_que_o_teto_total() {
+        // Se o connect pudesse durar tanto quanto a requisição inteira, o teto de
+        // connect não bloquearia nada — a conexão pendurada seguraria a vaga do
+        // pool até o fim do timeout total.
+        assert!(
+            GRAPH_CONNECT_TIMEOUT_S < GRAPH_TIMEOUT_TOTAL_S,
+            "connect ({GRAPH_CONNECT_TIMEOUT_S}s) tem que ser menor que o total ({GRAPH_TIMEOUT_TOTAL_S}s)"
+        );
+    }
+
+    #[test]
+    fn teto_total_cobre_o_backoff_do_retry_com_folga() {
+        // `graph_enviar` re-tenta até GRAPH_MAX_TENTATIVAS dormindo até
+        // GRAPH_TETO_ESPERA_S entre elas. O timeout TOTAL é por requisição (o
+        // reqwest reconta a cada tentativa), mas se ele fosse menor que uma espera
+        // inteira, a 1ª tentativa lenta já estouraria antes de qualquer retry ter
+        // chance — o retry viraria decoração.
+        let espera_total = GRAPH_TETO_ESPERA_S * u64::from(GRAPH_MAX_TENTATIVAS);
+        assert!(
+            GRAPH_TIMEOUT_TOTAL_S > espera_total,
+            "teto total ({GRAPH_TIMEOUT_TOTAL_S}s) não pode ser menor que o backoff acumulado ({espera_total}s)"
+        );
+    }
+}
+
+#[cfg(test)]
 mod testes_mail {
     use super::*;
+
+    /// O ponto do RB43 não é cada classificador isolado — é que a MESMA resposta
+    /// HTTP tinha veredito diferente dependendo de qual parser a lia. Estes casos
+    /// fixam onde as três divergem DE PROPÓSITO; se alguém uniformizar por engano,
+    /// um destes cai.
+    #[test]
+    fn as_tres_classes_divergem_de_proposito_nos_casos_que_importam() {
+        // 204: PATCH bem-sucedido não devolve corpo. Para leitura, resposta vazia
+        // não é o dado que o chamador pediu.
+        assert!(escrita_status_ok(204), "PATCH devolve 204 no caminho feliz");
+        assert!(delete_status_ok(204));
+        assert!(!leitura_status_ok(204), "leitura sem corpo não é leitura OK");
+
+        // 404: some no delete (idempotente), mas escrever/ler algo que não existe
+        // é falha real — e silenciar isso viraria sucesso fabricado.
+        assert!(delete_status_ok(404));
+        assert!(!escrita_status_ok(404), "PATCH em contato inexistente é falha");
+        assert!(!leitura_status_ok(404));
+
+        // 200 é sucesso nas três.
+        for f in [leitura_status_ok, escrita_status_ok, delete_status_ok] {
+            assert!(f(200));
+        }
+
+        // Erro real não passa em nenhuma — inclusive o 0 de "não veio status".
+        for status in [0, 400, 403, 429, 500] {
+            assert!(!leitura_status_ok(status), "leitura aceitou {status}");
+            assert!(!escrita_status_ok(status), "escrita aceitou {status}");
+            assert!(!delete_status_ok(status), "delete aceitou {status}");
+        }
+    }
 
     #[test]
     fn delete_status_ok_trata_404_410_como_sucesso() {
@@ -2045,42 +2313,72 @@ fn evento_json(input: &EventoInput) -> serde_json::Value {
     obj
 }
 
-/// Cria um evento no calendário do usuário (POST /me/events). Devolve o id do
-/// evento criado para o front trocar o id otimista pelo real. Calendars.ReadWrite.
-pub fn cr_criar_evento(store: &TokenStore, input: EventoInput) -> Result<String, String> {
+/// #1069: URL de um recurso de evento na caixa RESOLVIDA por `mailbox_prefix`.
+/// `sufixo` acrescenta a sub-ação ("" · "/cancel" · "/accept"…). O bug do #1069
+/// era a escrita de agenda presa em `/me/events`: numa caixa COMPARTILHADA isso
+/// mirava o calendário errado (e, no excluir/cancelar, o 404 da caixa errada
+/// virava sucesso → exclusão FANTASMA). Extraída pura pra provar em teste que a
+/// caixa certa endereça `/users/{addr}/events`.
+fn url_evento(prefix: &str, id: &str, sufixo: &str) -> String {
+    format!("{GRAPH}/{prefix}/events/{id}{sufixo}")
+}
+
+/// #1069: URL da COLEÇÃO de eventos na caixa resolvida (POST criar). Sem
+/// calendário-alvo mira `/{prefix}/events`; com id, `/{prefix}/calendars/{id}/events`.
+fn url_eventos_colecao(prefix: &str, calendario_id: Option<&str>) -> String {
+    match calendario_id.filter(|s| !s.is_empty()) {
+        Some(cal) => format!("{GRAPH}/{prefix}/calendars/{cal}/events"),
+        None => format!("{GRAPH}/{prefix}/events"),
+    }
+}
+
+/// Cria um evento no calendário da caixa ativa (POST /{prefix}/events). Devolve o
+/// id do evento criado para o front trocar o id otimista pelo real. #1069:
+/// `mailbox` endereça a caixa (própria ou compartilhada). Calendars.ReadWrite(.Shared).
+pub fn cr_criar_evento(
+    store: &TokenStore,
+    input: EventoInput,
+    mailbox: Option<&str>,
+) -> Result<String, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-    // Calendário-alvo (#233): com id, cria em /me/calendars/{id}/events; sem id,
-    // mantém o padrão (/me/events) — sem regressão do #211.
-    let url = match input.calendario_id.as_deref().filter(|s| !s.is_empty()) {
-        Some(cal) => format!("{GRAPH}/me/calendars/{cal}/events"),
-        None => format!("{GRAPH}/me/events"),
-    };
+    let client = cliente();
+    let prefix = mailbox_prefix(mailbox);
+    // Calendário-alvo (#233): com id, cria em /{prefix}/calendars/{id}/events; sem
+    // id, mantém o padrão (/{prefix}/events) — sem regressão do #211. #1069: agora
+    // na caixa resolvida, não mais no /me fixo.
+    let url = url_eventos_colecao(&prefix, input.calendario_id.as_deref());
     let body = evento_json(&input);
     let resp = graph_enviar("agenda:criar", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(&token).json(&body).send()
     })
     .map_err(|e| format!("falha ao criar o evento: {e}"))?;
     if !resp.status().is_success() {
-        return Err(erro_escrita("me/events", "criar evento", resp.status()));
+        return Err(erro_escrita(&format!("{prefix}/events"), "criar evento", resp.status()));
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
     memo_invalidar("agenda:"); // #440: agenda mudou → próximo read traz fresco
     Ok(v["id"].as_str().unwrap_or("").to_string())
 }
 
-/// Edita um evento existente (PATCH /me/events/{id}). Calendars.ReadWrite.
-pub fn cr_editar_evento(store: &TokenStore, id: &str, input: EventoInput) -> Result<(), String> {
+/// Edita um evento existente (PATCH /{prefix}/events/{id}). #1069: `mailbox`
+/// endereça a caixa (própria ou compartilhada). Calendars.ReadWrite(.Shared).
+pub fn cr_editar_evento(
+    store: &TokenStore,
+    id: &str,
+    input: EventoInput,
+    mailbox: Option<&str>,
+) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}");
+    let client = cliente();
+    let prefix = mailbox_prefix(mailbox);
+    let url = url_evento(&prefix, id, "");
     let body = evento_json(&input);
     let resp = graph_enviar("agenda:editar", GRAPH_TETO_ESPERA_S, || {
         client.patch(&url).bearer_auth(&token).json(&body).send()
     })
     .map_err(|e| format!("falha ao editar o evento: {e}"))?;
     if !resp.status().is_success() {
-        return Err(erro_escrita("me/events", "editar evento", resp.status()));
+        return Err(erro_escrita(&format!("{prefix}/events"), "editar evento", resp.status()));
     }
     memo_invalidar("agenda:"); // #440
     Ok(())
@@ -2099,10 +2397,12 @@ pub fn cr_reagendar_evento(
     fim: &str,
     dia_inteiro: bool,
     time_zone: &str,
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}");
+    let client = cliente();
+    let prefix = mailbox_prefix(mailbox);
+    let url = url_evento(&prefix, id, ""); // #1069: caixa resolvida, não /me fixo.
     let ini = inicio.trim_end_matches('Z');
     let f = fim.trim_end_matches('Z');
     let body = serde_json::json!({
@@ -2115,27 +2415,48 @@ pub fn cr_reagendar_evento(
     })
     .map_err(|e| format!("falha ao reagendar o evento: {e}"))?;
     if !resp.status().is_success() {
-        return Err(erro_escrita("me/events", "reagendar evento", resp.status()));
+        return Err(erro_escrita(&format!("{prefix}/events"), "reagendar evento", resp.status()));
     }
     memo_invalidar("agenda:"); // #440
     Ok(())
 }
 
-/// Exclui um evento (DELETE /me/events/{id}). 404 conta como sucesso
-/// (idempotente — já foi removido). Calendars.ReadWrite.
-pub fn cr_excluir_evento(store: &TokenStore, id: &str) -> Result<(), String> {
+/// Exclui um evento (DELETE /{prefix}/events/{id}). #1069: `mailbox` endereça a
+/// caixa (própria ou compartilhada) — antes era /me fixo, o que numa caixa
+/// compartilhada apagava do calendário errado (ou, mais grave, o Graph devolvia
+/// 404 "não é da minha caixa" e o código tratava como sucesso: a UI removia o
+/// card e o evento PERMANECIA na caixa real — exclusão FANTASMA).
+/// Calendars.ReadWrite(.Shared).
+pub fn cr_excluir_evento(
+    store: &TokenStore,
+    id: &str,
+    mailbox: Option<&str>,
+) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}");
+    let client = cliente();
+    let prefix = mailbox_prefix(mailbox);
+    let url = url_evento(&prefix, id, "");
     let resp = graph_enviar("agenda:excluir", GRAPH_TETO_ESPERA_S, || {
         client.delete(&url).bearer_auth(&token).send()
     })
     .map_err(|e| format!("falha ao excluir o evento: {e}"))?;
-    if resp.status().is_success() || resp.status().as_u16() == 404 {
+    if resp.status().is_success() {
+        memo_invalidar("agenda:"); // #440
+        Ok(())
+    } else if resp.status().as_u16() == 404 {
+        // #1069: 404 só é aceito como sucesso-idempotente PORQUE a chamada foi
+        // endereçada à caixa CORRETA (mailbox aplicado no `prefix`). Antes, com
+        // /me fixo, um 404 podia significar apenas "este evento não é da minha
+        // caixa" e ainda assim virava sucesso → exclusão fantasma. Agora,
+        // resolvida a caixa, 404 = o evento realmente não existe LÁ.
+        // Limite honesto: sem um GET de verificação prévio não dá pra separar
+        // "nunca existiu" de "já foi excluído antes" — ambos são idempotência
+        // legítima na caixa certa, então aceitamos como sucesso e logamos.
+        log::info!("[agenda:excluir] 404 na caixa /{prefix} — evento já não existe (idempotente)");
         memo_invalidar("agenda:"); // #440
         Ok(())
     } else {
-        Err(erro_escrita("me/events", "excluir evento", resp.status()))
+        Err(erro_escrita(&format!("{prefix}/events"), "excluir evento", resp.status()))
     }
 }
 
@@ -2144,21 +2465,35 @@ pub fn cr_excluir_evento(store: &TokenStore, id: &str) -> Result<(), String> {
 /// convidados e remove o evento. Só é válido quando o usuário é o organizador —
 /// a UI já restringe a ação; um 403/400 do Graph vira erro tratado. O
 /// `comentario` opcional entra no corpo como "Comment". Calendars.ReadWrite.
-pub fn cr_cancelar_evento(store: &TokenStore, id: &str, comentario: &str) -> Result<(), String> {
+pub fn cr_cancelar_evento(
+    store: &TokenStore,
+    id: &str,
+    comentario: &str,
+    mailbox: Option<&str>,
+) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}/cancel");
+    let client = cliente();
+    let prefix = mailbox_prefix(mailbox);
+    let url = url_evento(&prefix, id, "/cancel"); // #1069: caixa resolvida, não /me.
     let body = serde_json::json!({ "Comment": comentario });
     let resp = graph_enviar("agenda:cancelar", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(&token).json(&body).send()
     })
     .map_err(|e| format!("falha ao cancelar o evento: {e}"))?;
-    // 404 = já removido (idempotente, como no excluir).
-    if resp.status().is_success() || resp.status().as_u16() == 404 {
+    if resp.status().is_success() {
+        memo_invalidar("agenda:"); // #440
+        Ok(())
+    } else if resp.status().as_u16() == 404 {
+        // #1069: mesmo limite honesto do excluir — 404 só é sucesso-idempotente
+        // porque a chamada foi endereçada à caixa CORRETA (mailbox no `prefix`).
+        // Com /me fixo, cancelar evento de caixa compartilhada dava 404 "não é da
+        // minha caixa" tratado como sucesso (o front removia o card e o evento
+        // ficava). Resolvida a caixa, 404 = realmente não existe lá.
+        log::info!("[agenda:cancelar] 404 na caixa /{prefix} — evento já não existe (idempotente)");
         memo_invalidar("agenda:"); // #440
         Ok(())
     } else {
-        Err(erro_escrita("me/events", "cancelar evento", resp.status()))
+        Err(erro_escrita(&format!("{prefix}/events"), "cancelar evento", resp.status()))
     }
 }
 
@@ -2175,6 +2510,7 @@ pub fn cr_responder_evento(
     resposta: &str,
     enviar_resposta: bool,
     comentario: &str,
+    mailbox: Option<&str>,
 ) -> Result<(), String> {
     // Mapeia a ação semântica -> segmento do endpoint do Graph. Recusamos
     // valores desconhecidos em vez de montar uma URL inválida.
@@ -2185,8 +2521,10 @@ pub fn cr_responder_evento(
         outro => return Err(format!("resposta de convite inválida: {outro}")),
     };
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-    let url = format!("{GRAPH}/me/events/{id}/{acao}");
+    let client = cliente();
+    let prefix = mailbox_prefix(mailbox);
+    // #1069: RSVP na caixa resolvida (/{prefix}/events/{id}/{acao}), não /me fixo.
+    let url = url_evento(&prefix, id, &format!("/{acao}"));
     let body = serde_json::json!({
         "comment": comentario,
         "sendResponse": enviar_resposta,
@@ -2195,12 +2533,76 @@ pub fn cr_responder_evento(
         client.post(&url).bearer_auth(&token).json(&body).send()
     })
     .map_err(|e| format!("falha ao responder o convite: {e}"))?;
-    // 404 = evento já não existe (idempotente, como cancelar/excluir).
+    // 404 = evento já não existe na caixa CORRETA (idempotente, como cancelar/
+    // excluir): agora que o `prefix` endereça a caixa certa, aceitar é honesto.
     if resp.status().is_success() || resp.status().as_u16() == 404 {
         memo_invalidar("agenda:"); // #440
         Ok(())
     } else {
-        Err(erro_escrita("me/events", "responder convite", resp.status()))
+        Err(erro_escrita(&format!("{prefix}/events"), "responder convite", resp.status()))
+    }
+}
+
+#[cfg(test)]
+mod testes_agenda_1069 {
+    use super::{deve_limpar_rascunho, mailbox_prefix, url_evento, url_eventos_colecao};
+
+    // #1069 — RB35: prova que a ESCRITA de agenda numa caixa COMPARTILHADA
+    // endereça /users/{addr}/events, e não /me/events (o bug: escrita presa em
+    // /me → operação no calendário errado + 404 tratado como sucesso = exclusão
+    // fantasma). Reverter `url_evento`/`cr_excluir_evento` pro /me fixo faz este
+    // teste ficar VERMELHO (o `!contains("/me/events")`).
+    #[test]
+    fn escrita_de_evento_endereca_caixa_compartilhada() {
+        let prefix = mailbox_prefix(Some("shared@x.com"));
+        // O que `cr_excluir_evento(mailbox=Some("shared@x.com"))` monta:
+        let excluir = url_evento(&prefix, "AAA", "");
+        assert!(
+            excluir.ends_with("/users/shared%40x.com/events/AAA"),
+            "excluir deveria mirar a caixa compartilhada, veio: {excluir}"
+        );
+        assert!(
+            !excluir.contains("/me/events"),
+            "regressão: escrita voltou ao /me fixo: {excluir}"
+        );
+        // cancelar/RSVP acrescentam a sub-ação na MESMA caixa.
+        let cancelar = url_evento(&prefix, "AAA", "/cancel");
+        assert!(cancelar.ends_with("/users/shared%40x.com/events/AAA/cancel"));
+        let rsvp = url_evento(&prefix, "AAA", "/accept");
+        assert!(rsvp.ends_with("/users/shared%40x.com/events/AAA/accept"));
+    }
+
+    // #1069: a caixa PRÓPRia (None/"me") preserva o caminho pessoal — sem
+    // regressão do comportamento pré-#1069.
+    #[test]
+    fn escrita_de_evento_preserva_me_na_caixa_propria() {
+        let prefix = mailbox_prefix(None);
+        assert!(url_evento(&prefix, "AAA", "").ends_with("/me/events/AAA"));
+        assert!(url_eventos_colecao(&prefix, None).ends_with("/me/events"));
+        assert!(url_eventos_colecao(&prefix, Some("cal1")).ends_with("/me/calendars/cal1/events"));
+    }
+
+    // #1069: criar (coleção) também segue a caixa, com/sem calendário-alvo (#233).
+    #[test]
+    fn colecao_de_evento_endereca_caixa_compartilhada() {
+        let prefix = mailbox_prefix(Some("shared@x.com"));
+        assert!(url_eventos_colecao(&prefix, None).ends_with("/users/shared%40x.com/events"));
+        assert!(url_eventos_colecao(&prefix, Some(""))
+            .ends_with("/users/shared%40x.com/events")); // id vazio = sem calendário
+        assert!(url_eventos_colecao(&prefix, Some("cal1"))
+            .ends_with("/users/shared%40x.com/calendars/cal1/events"));
+    }
+
+    // #1069 — RB36: rascunho ÓRFÃO. A limpeza só dispara quando o rascunho já
+    // existe E um passo posterior falhou. Se a criação falha não há rascunho;
+    // se o envio conclui, o rascunho foi consumido. (Antes, os 4 passos rodavam
+    // fora do pool/retry e um 429 no meio deixava o rascunho parado em Drafts.)
+    #[test]
+    fn limpa_rascunho_so_apos_criar_e_em_falha() {
+        assert!(deve_limpar_rascunho(true, false)); // patch/anexo/send falhou → limpa
+        assert!(!deve_limpar_rascunho(false, false)); // createReply falhou → sem draft
+        assert!(!deve_limpar_rascunho(true, true)); // tudo ok → draft consumido
+        assert!(!deve_limpar_rascunho(false, true)); // impossível na prática
     }
 }
 
@@ -2219,54 +2621,6 @@ pub struct EmailItem {
     pub lido: bool,
     pub tem_anexos: bool,
     pub sinalizado: bool,
-}
-
-/// E-mails recebidos no dia escolhido (limites em ISO UTC). Mail.Read.
-pub fn cr_inbox_dia(store: &TokenStore, inicio: &str, fim: &str) -> Result<Vec<EmailItem>, String> {
-    let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-
-    let url = format!(
-        "{GRAPH}/me/mailFolders/inbox/messages\
-         ?$filter=receivedDateTime ge {inicio} and receivedDateTime lt {fim}\
-         &$select=subject,from,receivedDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex\
-         &$orderby=receivedDateTime desc&$top=50"
-    );
-    let resp = client
-        .get(&url)
-        .bearer_auth(&token)
-        .send()
-        .map_err(|e| format!("falha ao ler a inbox: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("/me/mailFolders/inbox/messages retornou {}", resp.status()));
-    }
-    let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
-    let mut itens = Vec::new();
-    if let Some(items) = v["value"].as_array() {
-        for it in items {
-            let de = it["from"]["emailAddress"]["name"]
-                .as_str()
-                .filter(|s| !s.is_empty())
-                .or_else(|| it["from"]["emailAddress"]["address"].as_str())
-                .unwrap_or("")
-                .to_string();
-            itens.push(EmailItem {
-                id: it["id"].as_str().unwrap_or("").to_string(),
-                conversation_id: it["conversationId"].as_str().map(str::to_string),
-                conversation_index: it["conversationIndex"].as_str().map(str::to_string),
-                assunto: it["subject"].as_str().unwrap_or("(sem assunto)").to_string(),
-                iniciais: iniciais(&de),
-                de,
-                de_email: it["from"]["emailAddress"]["address"].as_str().unwrap_or("").to_string(),
-                recebido: it["receivedDateTime"].as_str().unwrap_or("").to_string(),
-                preview: it["bodyPreview"].as_str().unwrap_or("").trim().to_string(),
-                lido: it["isRead"].as_bool().unwrap_or(true),
-                tem_anexos: it["hasAttachments"].as_bool().unwrap_or(false),
-                sinalizado: it["flag"]["flagStatus"].as_str() == Some("flagged"),
-            });
-        }
-    }
-    Ok(itens)
 }
 
 #[derive(serde::Serialize)]
@@ -2359,7 +2713,7 @@ pub fn cr_email_corpo(
     mailbox: Option<&str>,
 ) -> Result<EmailDetalhe, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -2480,7 +2834,7 @@ pub fn cr_email_seguranca(
     mailbox: Option<&str>,
 ) -> Result<SegurancaEmail, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -2541,7 +2895,7 @@ pub fn cr_baixar_anexo(
     use base64::{engine::general_purpose, Engine as _};
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -2612,7 +2966,7 @@ pub fn cr_ler_anexo(
     mailbox: Option<&str>,
 ) -> Result<AnexoConteudo, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -2653,7 +3007,7 @@ pub fn cr_ler_anexo_email(
     mailbox: Option<&str>,
 ) -> Result<EmailDetalhe, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -2724,7 +3078,7 @@ pub fn cr_anexo_link(
     mailbox: Option<&str>,
 ) -> Result<String, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let url =
         format!("{GRAPH}/{prefix}/messages/{message_id}/attachments/{attachment_id}");
@@ -2762,7 +3116,7 @@ pub fn cr_anexo_para_pdf(
     use base64::{engine::general_purpose, Engine as _};
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     // 1) Lê o anexo (bytes + nome).
@@ -2977,7 +3331,7 @@ pub fn cr_salvar_email_eml(
     }
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let mut salvos: Vec<String> = Vec::new();
@@ -3043,7 +3397,20 @@ fn anexo_json(a: &AnexoUp) -> serde_json::Value {
     })
 }
 
+/// #1069 (RB36): decide se um passo do `compor_e_enviar` deixou rascunho ÓRFÃO a
+/// limpar. O rascunho só existe DEPOIS do passo de criação (createReply/Forward);
+/// um envio BEM-sucedido consome o rascunho (nada a limpar). Pura, pra testar a
+/// regra sem rede: só limpamos quando o rascunho foi criado E um passo posterior
+/// falhou. Antes do RB36, os 4 passos rodavam fora do `graph_enviar` e um 429 no
+/// meio abortava deixando o rascunho parado em Drafts.
+fn deve_limpar_rascunho(rascunho_criado: bool, passo_ok: bool) -> bool {
+    rascunho_criado && !passo_ok
+}
+
 /// Cria um rascunho de resposta/encaminhamento, injeta o corpo e envia.
+/// #1069 (RB36): as 4 chamadas rodam sob `graph_enviar` (pool + retry 429), como
+/// o `cr_enviar_novo`; se um passo POSTERIOR à criação falhar, o rascunho é
+/// removido (DELETE) pra não ficar órfão em Drafts.
 fn compor_e_enviar(
     store: &TokenStore,
     id: &str,
@@ -3054,18 +3421,17 @@ fn compor_e_enviar(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
-    // 1) rascunho a partir da mensagem original
+    // 1) rascunho a partir da mensagem original — sob o pool + retry 429 (#1069).
     let url = format!("{GRAPH}/{prefix}/messages/{id}/{acao}");
-    let resp = client
-        .post(&url)
-        .bearer_auth(&token)
-        .header("Content-Length", "0")
-        .send()
-        .map_err(|e| format!("falha ao criar o rascunho: {e}"))?;
+    let resp = graph_enviar("mail:compor-rascunho", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).header("Content-Length", "0").send()
+    })
+    .map_err(|e| format!("falha ao criar o rascunho: {e}"))?;
     if !resp.status().is_success() {
+        // Criação falhou: `deve_limpar_rascunho(false, _)` = nada a limpar.
         return Err(erro_envio(&prefix, acao, resp.status()));
     }
     let rascunho: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
@@ -3073,6 +3439,20 @@ fn compor_e_enviar(
     // corpo original (com a citação) que o Graph montou — preservamos abaixo
     let citacao = rascunho["body"]["content"].as_str().unwrap_or("");
     let corpo_final = format!("{corpo_html}<br>{citacao}");
+
+    // #1069 (RB36): daqui pra frente o rascunho JÁ existe em Drafts. Qualquer
+    // falha de passo POSTERIOR (transporte ou 429 esgotado) tem de LIMPAR o
+    // rascunho, senão fica órfão. `limpar` faz o DELETE best-effort (via
+    // `deletar_msg`, que já roda sob o pool) e devolve o erro original.
+    let limpar = |erro: String| -> String {
+        // No caminho de falha, o passo NÃO teve ok (passo_ok = false).
+        if deve_limpar_rascunho(true, false) {
+            if let Err(e) = deletar_msg(&client, &token, &prefix, &draft_id) {
+                log::warn!("[mail:compor] rascunho órfão {draft_id} não pôde ser limpo: {e}");
+            }
+        }
+        erro
+    };
 
     // 2) PATCH: injeta o HTML composto (+ destinatários no encaminhamento)
     let mut patch = serde_json::json!({
@@ -3087,14 +3467,12 @@ fn compor_e_enviar(
         patch["toRecipients"] = serde_json::Value::Array(dest);
     }
     let url = format!("{GRAPH}/{prefix}/messages/{draft_id}");
-    let resp = client
-        .patch(&url)
-        .bearer_auth(&token)
-        .json(&patch)
-        .send()
-        .map_err(|e| format!("falha ao preencher o rascunho: {e}"))?;
+    let resp = graph_enviar("mail:compor-patch", GRAPH_TETO_ESPERA_S, || {
+        client.patch(&url).bearer_auth(&token).json(&patch).send()
+    })
+    .map_err(|e| limpar(format!("falha ao preencher o rascunho: {e}")))?;
     if !resp.status().is_success() {
-        return Err(erro_envio(&prefix, "PATCH do rascunho", resp.status()));
+        return Err(limpar(erro_envio(&prefix, "PATCH do rascunho", resp.status())));
     }
 
     // 2.5) anexa os arquivos no rascunho (POST /attachments), um por vez.
@@ -3103,31 +3481,27 @@ fn compor_e_enviar(
             continue;
         }
         let url = format!("{GRAPH}/{prefix}/messages/{draft_id}/attachments");
-        let resp = client
-            .post(&url)
-            .bearer_auth(&token)
-            .json(&anexo_json(a))
-            .send()
-            .map_err(|e| format!("falha ao anexar '{}': {e}", a.nome))?;
+        let resp = graph_enviar("mail:compor-anexo", GRAPH_TETO_ESPERA_S, || {
+            client.post(&url).bearer_auth(&token).json(&anexo_json(a)).send()
+        })
+        .map_err(|e| limpar(format!("falha ao anexar '{}': {e}", a.nome)))?;
         if !resp.status().is_success() {
-            return Err(erro_envio(
+            return Err(limpar(erro_envio(
                 &prefix,
                 &format!("anexar '{}'", a.nome),
                 resp.status(),
-            ));
+            )));
         }
     }
 
-    // 3) envia
+    // 3) envia — sucesso CONSOME o rascunho (não há o que limpar).
     let url = format!("{GRAPH}/{prefix}/messages/{draft_id}/send");
-    let resp = client
-        .post(&url)
-        .bearer_auth(&token)
-        .header("Content-Length", "0")
-        .send()
-        .map_err(|e| format!("falha ao enviar: {e}"))?;
+    let resp = graph_enviar("mail:compor-enviar", GRAPH_TETO_ESPERA_S, || {
+        client.post(&url).bearer_auth(&token).header("Content-Length", "0").send()
+    })
+    .map_err(|e| limpar(format!("falha ao enviar: {e}")))?;
     if !resp.status().is_success() {
-        return Err(erro_envio(&prefix, "envio", resp.status()));
+        return Err(limpar(erro_envio(&prefix, "envio", resp.status())));
     }
     Ok(())
 }
@@ -3174,19 +3548,16 @@ pub fn cr_encaminhar(
 ///
 /// PUT simples de conteúdo (bom até ~4 MB — anexos de e-mail cabem folgado);
 /// arquivos maiores exigiriam upload session, fora do escopo aqui. Files.ReadWrite.
-pub fn cr_compartilhar_onedrive(
+///
+/// Recebe os bytes já materializados: o comando lê o arquivo do disco no Rust, e
+/// o front nunca carrega o binário nem faz base64 do arquivo inteiro (SEC6 #1044).
+pub fn compartilhar_onedrive_bytes(
     store: &TokenStore,
     nome: &str,
-    conteudo_b64: &str,
+    bytes: Vec<u8>,
 ) -> Result<String, String> {
-    use base64::{engine::general_purpose, Engine as _};
-
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-
-    let bytes = general_purpose::STANDARD
-        .decode(conteudo_b64.trim())
-        .map_err(|e| format!("conteudo do arquivo invalido: {e}"))?;
+    let client = cliente();
 
     // Sanitiza: descarta qualquer componente de caminho no nome (sem traversal)
     // e percent-encoda para caber no addressing por path do Graph.
@@ -3268,7 +3639,7 @@ fn drive_item_tags(value: &serde_json::Value) -> (Option<String>, Option<String>
 /// Lê o JSON privado de configuração. 404 é o primeiro uso, não um erro.
 pub fn onedrive_settings_read(store: &TokenStore) -> Result<OneDriveSettingsReadResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let item = graph_enviar("onedrive:settings:item", GRAPH_TETO_ESPERA_S, || {
         client
             .get(ONEDRIVE_SETTINGS_ITEM_URL)
@@ -3335,7 +3706,7 @@ pub fn onedrive_settings_write(
     e_tag: Option<&str>,
 ) -> Result<OneDriveSettingsWriteResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let bytes = content.as_bytes().to_vec();
     let upload = || {
         graph_enviar("onedrive:settings:write", GRAPH_TETO_ESPERA_S, || {
@@ -3439,9 +3810,99 @@ pub struct PastaEmail {
     pub total: u64,
     /// nº de subpastas — o front só mostra o chevron de expandir quando > 0.
     pub filhos: u64,
-    /// A pasta existe, mas o token não tem acesso a ela nesta caixa. O front
-    /// mantém a árvore utilizável e mostra o aviso de acesso parcial (#112).
-    pub acesso_negado: bool,
+    /// Como foi a leitura desta pasta (#1075 RB46-b). Ver `LeituraPasta`.
+    pub leitura: LeituraPasta,
+}
+
+/// Como terminou a leitura dos contadores de UMA pasta (#1075 RB46-b).
+///
+/// O campo anterior era `acesso_negado: bool` — **dois estados para uma
+/// realidade de três**. As duas rotas de falha caíam no mesmo lugar:
+///
+/// ```ignore
+/// Ok(resp) => { acesso_negado = resp.status().as_u16() == 403; }  // 500/429 → false
+/// Err(e)   => { log::warn!(...); }                                 // transporte → false
+/// ```
+///
+/// …e a pasta era empurrada com `nao_lidos: 0, total: 0`. Ou seja: **um 500 ou
+/// uma queda de rede produziam uma pasta que a UI desenhava como VAZIA**, com
+/// contadores zerados apresentados como fato.
+///
+/// Faltava o terceiro estado — *não sei*. Sem ele, "não consegui ler" só tinha
+/// para onde ir: virava "li, e não tem nada".
+#[derive(serde::Serialize, Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub enum LeituraPasta {
+    /// Contadores lidos. `nao_lidos`/`total` são fato.
+    #[default]
+    Ok,
+    /// 403 — a pasta existe mas o token não tem acesso a ela nesta caixa. A
+    /// árvore segue utilizável e o front mostra acesso parcial (#112).
+    Negado,
+    /// Não deu para ler: transporte, 5xx, 429 esgotado. Os contadores **não são
+    /// fato** e o front não pode apresentá-los como se fossem.
+    Indisponivel,
+}
+
+// A regra de EXIBIÇÃO ("só `ok` autoriza mostrar o contador") vive no front, em
+// `control-room.tsx` (`contagemEhFato`), que é quem desenha. Aqui não há
+// consumidor — e inventar um só para o método não ficar sem uso seria o oposto
+// do que a F1 ensinou: dead code é sintoma, não sujeira a esconder.
+
+impl LeituraPasta {
+    /// Classifica o desfecho de uma resposta que CHEGOU (tem status).
+    fn da_resposta(status: reqwest::StatusCode) -> Self {
+        if status.is_success() {
+            LeituraPasta::Ok
+        } else if status.as_u16() == 403 {
+            LeituraPasta::Negado
+        } else {
+            LeituraPasta::Indisponivel
+        }
+    }
+}
+
+#[cfg(test)]
+mod testes_leitura_pasta {
+    use super::*;
+
+    fn cod(n: u16) -> reqwest::StatusCode {
+        reqwest::StatusCode::from_u16(n).expect("status valido")
+    }
+
+    /// O defeito do RB46-b em uma linha: 500 e queda de rede NAO podem virar
+    /// "pasta vazia". Antes os dois davam `acesso_negado = false` + 0/0.
+    #[test]
+    fn erro_que_nao_e_403_nao_pode_virar_pasta_vazia() {
+        for status in [429u16, 500, 502, 503] {
+            let l = LeituraPasta::da_resposta(cod(status));
+            assert_eq!(
+                l,
+                LeituraPasta::Indisponivel,
+                "{status} tem que ser Indisponivel"
+            );
+        }
+    }
+
+    #[test]
+    fn so_o_403_e_acesso_negado() {
+        assert_eq!(LeituraPasta::da_resposta(cod(403)), LeituraPasta::Negado);
+        for status in [400u16, 404, 500] {
+            assert_ne!(
+                LeituraPasta::da_resposta(cod(status)),
+                LeituraPasta::Negado,
+                "{status} nao e falta de permissao"
+            );
+        }
+    }
+
+    /// `Negado` continua distinto de `Indisponivel`: o #112 depende disso para
+    /// mostrar "acesso parcial" so quando e realmente permissao.
+    #[test]
+    fn negado_e_indisponivel_nao_se_confundem() {
+        assert_ne!(LeituraPasta::Negado, LeituraPasta::Indisponivel);
+        assert_eq!(LeituraPasta::default(), LeituraPasta::Ok);
+    }
 }
 
 /// Prefixo do recurso de e-mail no Graph. `None`/`"me"` preserva o caminho
@@ -3454,9 +3915,30 @@ fn mailbox_prefix(mailbox: Option<&str>) -> String {
     }
 }
 
+/// #1076 (RB48/LGPD): mascara o local-part de um e-mail pra uso em LOG — mantém só
+/// a 1ª letra e o domínio (`fulano@empresa.com` → `f***@empresa.com`). Sem `@` (não
+/// parece e-mail), preserva só a 1ª letra. Endereço de contato é PII de cliente
+/// real; nunca deve ir em claro pro log.
+fn mascarar_email(email: &str) -> String {
+    let email = email.trim();
+    match email.split_once('@') {
+        Some((local, dominio)) if !local.is_empty() => {
+            let inicial = local.chars().next().unwrap_or('*');
+            format!("{inicial}***@{dominio}")
+        }
+        _ => {
+            let mut chars = email.chars();
+            match chars.next() {
+                Some(c) => format!("{c}***"),
+                None => "***".to_string(),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod testes_mailbox_prefix {
-    use super::{erro_envio, erro_escrita, mailbox_prefix};
+    use super::{erro_envio, erro_escrita, mailbox_prefix, mascarar_email};
 
     #[test]
     fn preserva_me_como_default() {
@@ -3474,7 +3956,10 @@ mod testes_mailbox_prefix {
     }
 
     #[test]
-    fn escrita_403_expoe_erro_claro_da_caixa_ativa() {
+    fn escrita_403_nao_vaza_a_caixa_no_erro() {
+        // #1076 (RB48/LGPD): o `/{prefix}` de uma caixa compartilhada é
+        // `users/<email>` — PII do cliente. A mensagem que vai ao FRONT (toast) NÃO
+        // pode conter o endereço; a caixa fica só no log interno.
         let erro = erro_escrita(
             "users/financeiro%40empresa.com",
             "mover mensagem",
@@ -3482,11 +3967,18 @@ mod testes_mailbox_prefix {
         );
         assert!(erro.contains("sem permissão de escrita"));
         assert!(erro.contains("(403)"));
-        assert!(erro.contains("users/financeiro%40empresa.com"));
+        assert!(
+            !erro.contains("financeiro"),
+            "não pode vazar a caixa (PII) no erro: {erro}"
+        );
+        assert!(
+            !erro.contains("users/"),
+            "não pode vazar o prefix da caixa: {erro}"
+        );
     }
 
     #[test]
-    fn envio_403_expoe_erro_claro_da_caixa_ativa() {
+    fn envio_403_nao_vaza_a_caixa_no_erro() {
         let erro = erro_envio(
             "users/financeiro%40empresa.com",
             "envio",
@@ -3494,6 +3986,24 @@ mod testes_mailbox_prefix {
         );
         assert!(erro.contains("sem permissão para enviar"));
         assert!(erro.contains("(403)"));
+        // #1076 (RB48): também aqui a caixa não pode vazar no toast.
+        assert!(
+            !erro.contains("financeiro"),
+            "não pode vazar a caixa (PII) no erro: {erro}"
+        );
+    }
+
+    #[test]
+    fn mascarar_email_preserva_inicial_e_dominio() {
+        // #1076 (RB48): local-part vira `x***`, domínio intacto; sem `@` não vaza tudo.
+        assert_eq!(mascarar_email("fulano@empresa.com"), "f***@empresa.com");
+        assert_eq!(mascarar_email(" Ana.Silva@Cliente.com "), "A***@Cliente.com");
+        assert_eq!(mascarar_email("x@y.z"), "x***@y.z");
+        assert_eq!(mascarar_email(""), "***");
+        // sem '@' não expõe o valor inteiro.
+        let m = mascarar_email("naoehemail");
+        assert_ne!(m, "naoehemail");
+        assert!(m.starts_with('n') && m.ends_with("***"));
     }
 }
 
@@ -3504,7 +4014,7 @@ pub fn cr_mail_folders(
     mailbox: Option<&str>,
 ) -> Result<Vec<PastaEmail>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     // Pastas well-known (o id textual funciona direto no Graph).
@@ -3524,7 +4034,7 @@ pub fn cr_mail_folders(
         let mut total = 0;
         let mut filhos = 0;
         let mut nome = id.to_string();
-        let mut acesso_negado = false;
+        let mut leitura = LeituraPasta::Ok;
         // $expand=childFolders (não $select=childFolderCount): o childFolderCount
         // conta subpastas OCULTAS de sistema (ex.: em Deleted), fazendo aparecer
         // um chevron que expande pra nada. O $expand — como o /childFolders da
@@ -3548,10 +4058,15 @@ pub fn cr_mail_folders(
                 }
             }
             Ok(resp) => {
-                acesso_negado = resp.status().as_u16() == 403;
+                // #1075 RB46-b: 403 e "sem acesso"; qualquer outro nao-2xx e
+                // "nao sei". Antes os dois viravam `acesso_negado = false` com
+                // contadores 0/0 — a pasta saia da API parecendo VAZIA.
+                leitura = LeituraPasta::da_resposta(resp.status());
                 log::warn!("[mail] pasta '{id}' retornou {}", resp.status());
             }
             Err(e) => {
+                // Sem status: nao da para afirmar nada sobre os contadores.
+                leitura = LeituraPasta::Indisponivel;
                 log::warn!("[mail] pasta '{id}' falhou: {e}");
             }
         }
@@ -3562,7 +4077,7 @@ pub fn cr_mail_folders(
             nao_lidos,
             total,
             filhos,
-            acesso_negado,
+            leitura,
         });
     }
     Ok(pastas)
@@ -3592,7 +4107,8 @@ pub struct ValidacaoCaixa {
 /// compartilhadas. Assim uma sessão anterior à #113 pede relogin antes de
 /// oferecer mutações que inevitavelmente retornariam 403.
 pub fn mail_shared_disponivel(store: &TokenStore) -> Result<bool, String> {
-    // Renova se necessário (o refresh reusa a MESMA `config::SCOPES`, então um
+    // Renova se necessário (o refresh reusa o MESMO conjunto de `config::scopes_para`,
+    // então um
     // token renovado já reflete o escopo novo sem novo login interativo — desde
     // que o refresh_token original tenha o offline_access, que sempre pedimos).
     access_token(store)?;
@@ -3640,7 +4156,7 @@ pub fn cr_validar_caixa(store: &TokenStore, endereco: &str) -> Result<ValidacaoC
         return Err("endereco invalido".into());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/users/{}/mailFolders/inbox?$select=id",
         urlencoding::encode(&addr)
@@ -3808,7 +4324,7 @@ pub fn cr_folder_mensagens(
     mailbox: Option<&str>,
 ) -> Result<Vec<EmailItem>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
@@ -3817,7 +4333,7 @@ pub fn cr_folder_mensagens(
     // Página de 50, com $skip para o lazy load (rolar até o fim carrega mais).
     let base = format!(
         "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages\
-         ?$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex\
+         ?$select={SELECT_MENSAGEM}\
          &$top=50&$skip={skip}"
     );
     // Ordenação escolhida; se o Graph REJEITAR o $orderby (400 — ex.: alguns
@@ -3889,14 +4405,23 @@ pub fn cr_buscar(
     mailbox: Option<&str>,
 ) -> Result<BuscaPagina, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
     // Continuação: se veio um nextLink, ele já traz $search+$top+skiptoken —
     // usa-se tal e qual. Só na 1ª página montamos a URL inicial.
     let url = match next_link {
-        Some(link) => link,
+        Some(link) => {
+            // Segurança (#1068): o next_link chega do renderer via IPC e é usado com
+            // bearer_auth. Um XSS/script injetado poderia mandar uma URL de outro host
+            // e exfiltrar o access token delegado. Validamos que a continuação segue
+            // DENTRO do Graph ANTES de anexar o token.
+            if !url_continuacao_graph_valida(&link) {
+                return Err("next_link inválido: continuação fora do Microsoft Graph".to_string());
+            }
+            link
+        }
         None => {
             // As aspas duplas fazem parte da sintaxe do $search; as que vierem no
             // próprio termo são trocadas por espaço para não fechar a expressão
@@ -3907,7 +4432,7 @@ pub fn cr_buscar(
             format!(
                 "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages\
                  ?$search=\"{enc}\"\
-                 &$select=subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex\
+                 &$select={SELECT_MENSAGEM}\
                  &$top=50"
             )
         }
@@ -3980,18 +4505,25 @@ pub fn cr_filtrar(
     mailbox: Option<&str>,
 ) -> Result<BuscaPagina, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let saida = matches!(folder_id, "sentitems" | "drafts");
     // Campos idênticos aos de cr_buscar/cr_folder_mensagens: a lista fica igual
     // nos três caminhos (montados por montar_email_item).
-    const SELECT: &str = "subject,from,toRecipients,receivedDateTime,sentDateTime,bodyPreview,isRead,hasAttachments,flag,conversationId,conversationIndex";
+    const SELECT: &str = SELECT_MENSAGEM;
 
     // Continuação: o nextLink já traz filtro+select+top+skiptoken embutidos —
     // usa-se tal e qual. Só na 1ª página montamos a URL inicial por filtro.
     let url = match next_link {
-        Some(link) => link,
+        Some(link) => {
+            // Segurança (#1068): mesma proteção de cr_buscar — valida o next_link do
+            // renderer antes do bearer_auth pra não exfiltrar o token.
+            if !url_continuacao_graph_valida(&link) {
+                return Err("next_link inválido: continuação fora do Microsoft Graph".to_string());
+            }
+            link
+        }
         None => match filtro {
             "tome" => {
                 let email = mailbox
@@ -4073,46 +4605,287 @@ fn deletar_msg(
     token: &str,
     prefix: &str,
     id: &str,
-) -> Result<(), String> {
+) -> Result<(), ErroGraph> {
     let url = format!("{GRAPH}/{prefix}/messages/{id}");
     // Sob o pool + retry central (#64): Retry-After + jitter. 404 = idempotente.
     let resp = graph_enviar("mail:excluir", GRAPH_TETO_ESPERA_S, || {
         client.delete(&url).bearer_auth(token).send()
     })
-    .map_err(|e| format!("falha ao excluir o e-mail: {e}"))?;
+    .map_err(|e| ErroGraph::Transporte(format!("falha ao excluir o e-mail: {e}")))?;
     if resp.status().is_success() || resp.status().as_u16() == 404 {
         Ok(())
     } else {
-        Err(erro_escrita(prefix, "excluir mensagem", resp.status()))
+        Err(ErroGraph::da_resposta(prefix, "excluir mensagem", resp.status()))
     }
 }
 
+/// Mensagem de erro de escrita para o FRONT. #1076 (RB48/LGPD): NÃO inclui o
+/// `/{prefix}` — numa caixa compartilhada o prefix é `users/<email>`, e o endereço
+/// é PII do cliente; não pode vazar no toast do usuário. O prefix fica só no log
+/// interno (diagnóstico), nunca na string devolvida.
 fn erro_escrita(
     prefix: &str,
     operacao: &str,
     status: reqwest::StatusCode,
 ) -> String {
+    log::warn!("[escrita] {operacao} em /{prefix} retornou {status}");
     if status.as_u16() == 403 {
-        format!("sem permissão de escrita na caixa ativa (403): {operacao} em /{prefix}")
+        format!("sem permissão de escrita na caixa ativa (403): {operacao}")
     } else {
-        format!("{operacao} em /{prefix} retornou {status}")
+        format!("{operacao} na caixa ativa retornou {status}")
     }
 }
 
+/// Erro de uma escrita do Graph **com o status preservado** (#1075 RB47).
+///
+/// O problema que este tipo resolve: `deletar_msg`/`mover_msg`/`mover_pasta_graph`
+/// devolviam `String`, e quem precisava decidir *"aborto o lote inteiro?"* tinha
+/// de **adivinhar o status de volta** a partir do texto:
+///
+/// ```ignore
+/// fn eh_erro_permissao(erro: &str) -> bool {
+///     erro.contains("(403)") || erro.contains(" 403") || erro.contains("403 ")
+/// }
+/// ```
+///
+/// O `StatusCode` existia na resposta e era jogado fora ao formatar. Reconstruí-lo
+/// por substring erra nos dois sentidos: um erro de transporte cuja mensagem
+/// contenha "403" por acaso (um id, um timestamp, uma porta) **aborta o lote**; e
+/// uma mensagem futura que escreva o 403 de outro jeito **deixa de abortar**.
+///
+/// A mensagem viaja pronta dentro da variante — construída por `erro_escrita`,
+/// que já aplica a regra LGPD do #1076 (o `/{prefix}` é PII e não sai no toast).
+/// Assim o texto para o usuário não muda em nada; o que muda é que a **decisão**
+/// passa a ler um tipo em vez de um texto.
+///
+/// Escopo deliberado: `erro_escrita` continua devolvendo `String` para os ~30
+/// outros sítios de escrita. Só os três produtores cujo erro alimenta uma decisão
+/// de abortar lote passam a ser tipados — trocar os 30 seria raio de explosão sem
+/// achado que o justifique.
+#[derive(Debug)]
+pub(crate) enum ErroGraph {
+    /// 403 — sem permissão. É o ÚNICO caso que aborta o lote: insistir nos
+    /// próximos itens daria 403 de novo.
+    Permissao(String),
+    /// 404/410 — o alvo não existe. Em `deletar_msg`/`mover_msg` isto nem chega
+    /// a virar erro (é idempotente); sobra para quem não trata 404 como sucesso.
+    NaoEncontrado(String),
+    /// Qualquer outro status HTTP. Falha do item, não do lote.
+    Outro(reqwest::StatusCode, String),
+    /// Falhou ANTES de existir status: rede, DNS, timeout, corpo ilegível.
+    /// Guardar isto separado é o ponto — "não tenho status" deixa de ser
+    /// confundido com "tenho um status que por acaso tem 403 no texto".
+    Transporte(String),
+}
+
+impl ErroGraph {
+    /// Constrói a partir de uma resposta que chegou (tem status).
+    fn da_resposta(prefix: &str, operacao: &str, status: reqwest::StatusCode) -> Self {
+        // `erro_escrita` loga com o prefix e devolve o texto SEM ele (#1076).
+        let msg = erro_escrita(prefix, operacao, status);
+        match status.as_u16() {
+            403 => ErroGraph::Permissao(msg),
+            404 | 410 => ErroGraph::NaoEncontrado(msg),
+            _ => ErroGraph::Outro(status, msg),
+        }
+    }
+
+    /// Aborta o lote? Só o 403. Lê o TIPO, não o texto.
+    pub(crate) fn eh_permissao(&self) -> bool {
+        matches!(self, ErroGraph::Permissao(_))
+    }
+
+    /// O DELETE definitivo de pasta cabe como fallback? (#1075 RB47)
+    ///
+    /// O doc do `cr_excluir_pasta` sempre prometeu que o `DELETE` só entra
+    /// *"quando o move falhou por não ser suportado naquele item (4xx que não
+    /// seja 429)"* — mas o código caía no fallback em QUALQUER erro, porque com
+    /// `String` não dava para saber qual era. Resultado: **um blip de rede
+    /// escalava um "mover para a lixeira" (reversível) num DELETE (definitivo).**
+    ///
+    /// Com o status preservado, a promessa do doc vira código: só 4xx que não
+    /// seja 429. Transporte e 5xx são transitórios — a resposta certa é falhar e
+    /// deixar o usuário tentar de novo, não apagar de vez.
+    pub(crate) fn cabe_fallback_delete(&self) -> bool {
+        match self {
+            ErroGraph::NaoEncontrado(_) => true,
+            ErroGraph::Outro(st, _) => st.is_client_error() && st.as_u16() != 429,
+            // 403 nem chega aqui (barrado antes); transporte nunca cabe.
+            ErroGraph::Permissao(_) | ErroGraph::Transporte(_) => false,
+        }
+    }
+
+    /// Texto para a borda do IPC — é aqui, e só aqui, que o erro vira `String`.
+    pub(crate) fn mensagem(self) -> String {
+        match self {
+            ErroGraph::Permissao(m)
+            | ErroGraph::NaoEncontrado(m)
+            | ErroGraph::Outro(_, m)
+            | ErroGraph::Transporte(m) => m,
+        }
+    }
+}
+
+impl std::fmt::Display for ErroGraph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let m = match self {
+            ErroGraph::Permissao(m)
+            | ErroGraph::NaoEncontrado(m)
+            | ErroGraph::Outro(_, m)
+            | ErroGraph::Transporte(m) => m,
+        };
+        f.write_str(m)
+    }
+}
+
+#[cfg(test)]
+mod testes_erro_graph {
+    use super::*;
+
+    /// REPRODUZ o RB47. Antes, a decisão era `erro.contains(" 403")` — e esta
+    /// mensagem de transporte a satisfazia, abortando o lote inteiro por causa de
+    /// um número dentro de um id. Agora não há status, então não é permissão.
+    #[test]
+    fn transporte_com_403_no_texto_nao_e_permissao() {
+        for texto in [
+            "falha ao excluir o e-mail: error sending request for url (id AAMkAD 403 xyz)",
+            "falha ao mover o e-mail: connection closed before message completed (port 4030)",
+            "timeout apos 403 ms",
+        ] {
+            let e = ErroGraph::Transporte(texto.to_string());
+            assert!(
+                !e.eh_permissao(),
+                "erro de transporte foi classificado como permissao: {texto}"
+            );
+        }
+    }
+
+    /// Prova que o defeito era REAL, nao hipotetico: a heuristica antiga
+    /// classificaria TODAS as tres mensagens acima como "sem permissao" e
+    /// abortaria o lote. Se alguem reintroduzir a decisao por texto, este teste
+    /// e o de cima passam a discordar.
+    #[test]
+    fn a_heuristica_antiga_erraria_nos_tres_casos() {
+        // copia literal do `eh_erro_permissao` que a F1 removeu
+        fn antiga(erro: &str) -> bool {
+            erro.contains("(403)") || erro.contains(" 403") || erro.contains("403 ")
+        }
+        for texto in [
+            "falha ao excluir o e-mail: error sending request for url (id AAMkAD 403 xyz)",
+            "falha ao mover o e-mail: connection closed before message completed (port 4030)",
+            "timeout apos 403 ms",
+        ] {
+            assert!(
+                antiga(texto),
+                "o caso perdeu a graca — a heuristica antiga NAO erraria aqui: {texto}"
+            );
+            assert!(
+                !ErroGraph::Transporte(texto.to_string()).eh_permissao(),
+                "a nova classificacao repetiu o erro da antiga: {texto}"
+            );
+        }
+    }
+
+    #[test]
+    fn so_o_403_aborta_o_lote() {
+        let permissao = ErroGraph::da_resposta("me", "excluir mensagem", cod(403));
+        assert!(permissao.eh_permissao());
+
+        for status in [400u16, 404, 409, 410, 429, 500, 503] {
+            let e = ErroGraph::da_resposta("me", "excluir mensagem", cod(status));
+            assert!(!e.eh_permissao(), "{status} nao pode abortar o lote");
+        }
+    }
+
+    #[test]
+    fn classifica_por_status_e_nao_por_texto() {
+        assert!(matches!(
+            ErroGraph::da_resposta("me", "op", cod(403)),
+            ErroGraph::Permissao(_)
+        ));
+        assert!(matches!(
+            ErroGraph::da_resposta("me", "op", cod(404)),
+            ErroGraph::NaoEncontrado(_)
+        ));
+        assert!(matches!(
+            ErroGraph::da_resposta("me", "op", cod(410)),
+            ErroGraph::NaoEncontrado(_)
+        ));
+        assert!(matches!(
+            ErroGraph::da_resposta("me", "op", cod(500)),
+            ErroGraph::Outro(_, _)
+        ));
+    }
+
+    /// O texto entregue ao usuario nao pode mudar com a tipagem — e continua sem
+    /// o `/{prefix}`, que e PII (#1076 RB48/LGPD).
+    #[test]
+    fn a_mensagem_do_usuario_nao_muda_e_nao_vaza_prefix() {
+        let prefix = "users/cliente@empresa.com.br";
+
+        let e = ErroGraph::da_resposta(prefix, "excluir mensagem", cod(403));
+        let msg = e.mensagem();
+        assert_eq!(msg, erro_escrita(prefix, "excluir mensagem", cod(403)));
+        assert!(!msg.contains("cliente@empresa.com.br"), "vazou PII: {msg}");
+        assert!(!msg.contains("users/"), "vazou o prefix: {msg}");
+
+        let outro = ErroGraph::da_resposta(prefix, "mover mensagem", cod(500));
+        let msg = outro.mensagem();
+        assert_eq!(msg, erro_escrita(prefix, "mover mensagem", cod(500)));
+        assert!(!msg.contains("cliente@empresa.com.br"), "vazou PII: {msg}");
+    }
+
+    /// O DELETE de pasta e DEFINITIVO. Um erro TRANSITORIO nao pode escalar um
+    /// "mover para a lixeira" (reversivel) num apagamento irreversivel — era o
+    /// que acontecia quando a decisao so tinha `String` para olhar.
+    #[test]
+    fn erro_transitorio_nao_escala_para_o_delete_definitivo() {
+        assert!(
+            !ErroGraph::Transporte("connection reset".to_string()).cabe_fallback_delete(),
+            "queda de rede nao pode virar DELETE definitivo"
+        );
+        for status in [429u16, 500, 502, 503, 504] {
+            assert!(
+                !ErroGraph::da_resposta("me", "mover pasta", cod(status)).cabe_fallback_delete(),
+                "{status} e transitorio — nao pode virar DELETE definitivo"
+            );
+        }
+    }
+
+    /// O caso que o fallback existe para cobrir: o item nao suporta o move.
+    #[test]
+    fn quatro_xx_que_nao_seja_429_cabe_no_fallback() {
+        for status in [400u16, 405, 409, 422] {
+            assert!(
+                ErroGraph::da_resposta("me", "mover pasta", cod(status)).cabe_fallback_delete(),
+                "{status} deveria cair no fallback"
+            );
+        }
+        // 404: a pasta ja nao esta la; o DELETE tambem e idempotente.
+        assert!(ErroGraph::da_resposta("me", "mover pasta", cod(404)).cabe_fallback_delete());
+        // 403 nunca — e barrado antes, mas o tipo tambem nega.
+        assert!(!ErroGraph::da_resposta("me", "mover pasta", cod(403)).cabe_fallback_delete());
+    }
+
+    fn cod(n: u16) -> reqwest::StatusCode {
+        reqwest::StatusCode::from_u16(n).expect("status valido")
+    }
+}
+
+/// Mensagem de erro de envio para o FRONT. #1076 (RB48/LGPD): mesma regra do
+/// `erro_escrita` — o `/{prefix}` (`users/<email>` na caixa compartilhada) é PII e
+/// fica só no log interno, nunca no toast.
 fn erro_envio(
     prefix: &str,
     operacao: &str,
     status: reqwest::StatusCode,
 ) -> String {
+    log::warn!("[envio] {operacao} em /{prefix} retornou {status}");
     if prefix != "me" && status == reqwest::StatusCode::FORBIDDEN {
         format!("sem permissão para enviar usando a caixa ativa (403): {operacao}")
     } else {
-        format!("{operacao} em /{prefix} retornou {status}")
+        format!("{operacao} na caixa ativa retornou {status}")
     }
-}
-
-fn eh_erro_permissao(erro: &str) -> bool {
-    erro.contains("(403)") || erro.contains(" 403") || erro.contains("403 ")
 }
 
 /// Move uma mensagem para uma pasta (well-known como "deleteditems" ou id).
@@ -4124,18 +4897,18 @@ fn mover_msg(
     prefix: &str,
     id: &str,
     destino: &str,
-) -> Result<(), String> {
+) -> Result<(), ErroGraph> {
     let url = format!("{GRAPH}/{prefix}/messages/{id}/move");
     let body = serde_json::json!({ "destinationId": destino });
     // Sob o pool + retry central (#64): Retry-After + jitter. 404 = idempotente.
     let resp = graph_enviar("mail:mover", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(token).json(&body).send()
     })
-    .map_err(|e| format!("falha ao mover o e-mail: {e}"))?;
+    .map_err(|e| ErroGraph::Transporte(format!("falha ao mover o e-mail: {e}")))?;
     if resp.status().is_success() || resp.status().as_u16() == 404 {
         Ok(())
     } else {
-        Err(erro_escrita(prefix, "mover mensagem", resp.status()))
+        Err(ErroGraph::da_resposta(prefix, "mover mensagem", resp.status()))
     }
 }
 
@@ -4146,9 +4919,9 @@ pub fn cr_excluir_email(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
-    mover_msg(&client, &token, &prefix, id, "deleteditems")
+    mover_msg(&client, &token, &prefix, id, "deleteditems").map_err(ErroGraph::mensagem)
 }
 
 /// Exclui vários e-mails em série (evita a rajada concorrente que leva o Graph a
@@ -4163,7 +4936,7 @@ pub fn cr_excluir_emails(
     mailbox: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let mut ok = Vec::with_capacity(ids.len());
     for id in &ids {
@@ -4174,7 +4947,9 @@ pub fn cr_excluir_emails(
         };
         match r {
             Ok(()) => ok.push(id.clone()),
-            Err(e) if eh_erro_permissao(&e) => return Err(e),
+            // 403 aborta o lote: insistir daria 403 de novo. Agora e o TIPO que
+            // decide (#1075 RB47) — antes era `contains(" 403")` no texto.
+            Err(e) if e.eh_permissao() => return Err(e.mensagem()),
             Err(e) => log::warn!("[mail] excluir '{id}' falhou: {e}"),
         }
     }
@@ -4196,13 +4971,13 @@ pub fn cr_mover_emails(
     mailbox: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
     let mut ok = Vec::with_capacity(ids.len());
     for id in &ids {
         match mover_msg(&client, &token, &prefix, id, &destino) {
             Ok(()) => ok.push(id.clone()),
-            Err(e) if eh_erro_permissao(&e) => return Err(e),
+            Err(e) if e.eh_permissao() => return Err(e.mensagem()),
             Err(e) => log::warn!("[mail] mover '{id}' para '{destino}' falhou: {e}"),
         }
     }
@@ -4217,7 +4992,7 @@ pub fn cr_marcar_email(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let status = if sinalizado { "flagged" } else { "notFlagged" };
@@ -4246,7 +5021,7 @@ pub fn cr_marcar_lido(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let patch = serde_json::json!({ "isRead": lido });
@@ -4278,6 +5053,27 @@ const CR_PASTA_LIMITE: u64 = 1000;
 /// #788: no esvaziar em lote, um DELETE conta como sucesso se apagou (2xx) OU se
 /// o item já não existia (404/410) — idempotente, pra um item já removido não
 /// abortar o resto do "empty".
+/// Sucesso de uma sub-resposta de **LEITURA** dentro de um `$batch` (#1074 RB43).
+///
+/// GET no Graph responde `200` quando deu certo. `204` seria "sem conteúdo" — para
+/// uma leitura isso é resposta vazia, não sucesso: quem chamou espera dado.
+fn leitura_status_ok(status: u64) -> bool {
+    status == 200
+}
+
+/// Sucesso de uma sub-resposta de **ESCRITA** (PATCH/POST) dentro de um `$batch`.
+///
+/// Aqui `204 No Content` é o caso NORMAL do PATCH — por isso a faixa, e não `== 200`.
+/// E `404` **não** é sucesso: escrever num contato que não existe é falha real, ao
+/// contrário do delete, onde 404 é idempotência.
+fn escrita_status_ok(status: u64) -> bool {
+    (200..300).contains(&status)
+}
+
+/// Sucesso de uma sub-resposta de **DELETE**.
+///
+/// `404`/`410` contam como sucesso: o alvo já não existe, que é o estado desejado.
+/// É a única das três em que "não achei" é um bom resultado.
 fn delete_status_ok(status: u64) -> bool {
     (200..300).contains(&status) || status == 404 || status == 410
 }
@@ -4288,7 +5084,7 @@ pub fn cr_esvaziar_pasta(
     mailbox: Option<&str>,
 ) -> Result<u64, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let mut apagados: u64 = 0;
@@ -4400,7 +5196,7 @@ pub fn cr_marcar_pasta_lida(
     mailbox: Option<&str>,
 ) -> Result<u64, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let filtro = urlencoding::encode("isRead eq false");
@@ -4764,6 +5560,140 @@ fn url_continuacao_graph_valida(url: &str) -> bool {
         .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
+/// Teto de páginas de uma listagem do Graph (#1074 RB41).
+///
+/// Rede de segurança final: mesmo com detecção de ciclo, um servidor que devolva
+/// uma sequência INFINITA de URLs distintas manteria o laço vivo — e o `HashSet`
+/// de visitadas cresceria junto. 999 itens por página × 500 páginas cobre
+/// qualquer tenant real com folga.
+const GRAPH_MAX_PAGINAS: usize = 500;
+
+/// Por que a paginação parou.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ParadaPaginacao {
+    /// `next_link` fora do Graph — seguir vazaria o bearer token (#1068).
+    ForaDoGraph,
+    /// URL já visitada: ciclo. Sem isto, o laço é infinito.
+    Ciclo,
+    /// Passou do teto de páginas.
+    TetoDePaginas,
+}
+
+/// Guarda de paginação por `@odata.nextLink` (#1074 RB41).
+///
+/// Cada listagem do Graph parseia a resposta do seu jeito, mas TODAS precisam da
+/// mesma invariante antes de ir para a próxima página: **host do Graph, não
+/// repetida, dentro do teto.**
+///
+/// Antes disto, das 5 listagens paginadas só a `cr_people_directory` checava
+/// ciclo. `cr_grupos`, `cr_grupo_membros`, `cr_contact_folders` e
+/// `onedrive_folders` entravam em **laço infinito** com um `nextLink` cíclico —
+/// segurando uma vaga do pool de 4 para sempre.
+///
+/// Unifica a INVARIANTE, não a forma do laço: os laços diferem no que parseiam e
+/// nos erros que reportam; transformá-los num `paginar<T>` genérico mudaria 5
+/// caminhos de erro de uma vez, risco desproporcional ao ganho.
+pub(crate) struct GuardaPaginacao {
+    vistas: std::collections::HashSet<String>,
+}
+
+impl GuardaPaginacao {
+    pub(crate) fn nova() -> Self {
+        Self {
+            vistas: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Decide se `url` pode ser buscada. `Ok(())` segue; `Err(motivo)` para.
+    pub(crate) fn aceitar(&mut self, url: &str) -> Result<(), ParadaPaginacao> {
+        if !url_continuacao_graph_valida(url) {
+            return Err(ParadaPaginacao::ForaDoGraph);
+        }
+        if self.vistas.len() >= GRAPH_MAX_PAGINAS {
+            return Err(ParadaPaginacao::TetoDePaginas);
+        }
+        if !self.vistas.insert(url.to_string()) {
+            return Err(ParadaPaginacao::Ciclo);
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod testes_guarda_paginacao {
+    use super::*;
+
+    /// REPRODUZ o bug do RB41: o Graph devolve um `nextLink` apontando para a
+    /// página que acabou de ser lida. Sem guarda, o `while let Some(url)` nunca
+    /// termina. O teste tem um teto próprio de voltas — se a guarda não pegar, ele
+    /// falha por estouro em vez de travar a suíte.
+    #[test]
+    fn next_link_ciclico_para_em_vez_de_repetir_para_sempre() {
+        let mut g = GuardaPaginacao::nova();
+        let url = format!("{GRAPH}/groups?$top=999");
+
+        let mut voltas = 0usize;
+        let mut proxima = Some(url.clone());
+        while let Some(u) = proxima.take() {
+            if g.aceitar(&u).is_err() {
+                break;
+            }
+            voltas += 1;
+            assert!(voltas < 10, "o laço não parou — a guarda não pegou o ciclo");
+            proxima = Some(url.clone()); // o servidor devolve a MESMA URL
+        }
+        assert_eq!(voltas, 1, "deve buscar a 1ª página e parar na repetição");
+    }
+
+    #[test]
+    fn ciclo_alternando_duas_paginas_tambem_para() {
+        // A→B→A: o HashSet pega; guardar só "a última URL vista" não pegaria.
+        let mut g = GuardaPaginacao::nova();
+        let a = format!("{GRAPH}/groups?p=a");
+        let b = format!("{GRAPH}/groups?p=b");
+        assert_eq!(g.aceitar(&a), Ok(()));
+        assert_eq!(g.aceitar(&b), Ok(()));
+        assert_eq!(g.aceitar(&a), Err(ParadaPaginacao::Ciclo));
+    }
+
+    #[test]
+    fn next_link_fora_do_graph_para_antes_de_mandar_o_token() {
+        let mut g = GuardaPaginacao::nova();
+        for u in [
+            "https://evil.example/users",
+            "https://graph.microsoft.com.evil.example/users",
+            "",
+        ] {
+            assert_eq!(
+                g.aceitar(u),
+                Err(ParadaPaginacao::ForaDoGraph),
+                "aceitou URL de fora: {u}"
+            );
+        }
+    }
+
+    #[test]
+    fn paginacao_normal_com_paginas_distintas_segue() {
+        let mut g = GuardaPaginacao::nova();
+        for i in 0..50 {
+            assert_eq!(g.aceitar(&format!("{GRAPH}/users?skip={i}")), Ok(()));
+        }
+    }
+
+    #[test]
+    fn teto_barra_sequencia_infinita_de_urls_distintas() {
+        // Ciclo não pega este caso (URLs sempre novas). O teto pega.
+        let mut g = GuardaPaginacao::nova();
+        for i in 0..GRAPH_MAX_PAGINAS {
+            assert_eq!(g.aceitar(&format!("{GRAPH}/users?skip={i}")), Ok(()));
+        }
+        assert_eq!(
+            g.aceitar(&format!("{GRAPH}/users?skip={GRAPH_MAX_PAGINAS}")),
+            Err(ParadaPaginacao::TetoDePaginas)
+        );
+    }
+}
+
 /// `/me/people` mistura pessoas e objetos mail-enabled. `personType.class` é o
 /// sinal canônico do Graph para excluir Teams, listas de distribuição e sites
 /// SharePoint respaldados por Microsoft 365 Groups da lista de pessoas (#281).
@@ -4868,6 +5798,72 @@ mod testes_people_directory {
     }
 }
 
+#[cfg(test)]
+mod testes_next_link_1068 {
+    //! #1068 — o `next_link` (paginação) chega do renderer via IPC e é usado com
+    //! `bearer_auth` em 6 pontos (cr_buscar, cr_filtrar, cr_grupos, cr_grupo_membros,
+    //! cr_contact_folders, cr_pasta_contatos). Se a URL apontar pra fora do Graph, o
+    //! access token delegado vaza. A guarda tem que rejeitar ANTES do bearer_auth.
+    use super::{url_continuacao_graph_valida, GRAPH};
+
+    /// Vetores de exfiltração que a guarda DEVE rejeitar. Inclui os dois formatos que
+    /// o relatório de auditoria chama por nome.
+    const MALICIOSOS: &[&str] = &[
+        // sufixo colado no host — passa numa checagem ingênua de "contém graph.microsoft.com"
+        "https://graph.microsoft.com.evil.example/v1.0/users",
+        // sufixo colado no PATH v1.0 — este é o que fura a guarda fraca `starts_with(GRAPH)`
+        "https://graph.microsoft.com/v1.0.evil.example/users",
+        // userinfo trick: host real é evil.example
+        "https://graph.microsoft.com@evil.example/v1.0/users",
+        // host totalmente diferente
+        "https://evil.example/v1.0/users",
+        // downgrade de esquema
+        "http://graph.microsoft.com/v1.0/users",
+    ];
+
+    #[test]
+    fn rejeita_todos_os_vetores_de_exfiltracao() {
+        for u in MALICIOSOS {
+            assert!(
+                !url_continuacao_graph_valida(u),
+                "next_link malicioso passou pela guarda (exfiltra token): {u}"
+            );
+        }
+    }
+
+    #[test]
+    fn aceita_continuacao_legitima_do_graph() {
+        // não pode regredir a paginação real devolvida pelo próprio Graph.
+        for u in [
+            "https://graph.microsoft.com/v1.0/users?$skiptoken=abc",
+            "https://graph.microsoft.com/v1.0/me/contactFolders/AAA/contacts?$skip=100",
+            "https://graph.microsoft.com/v1.0/me/memberOf?$skiptoken=xyz",
+        ] {
+            assert!(
+                url_continuacao_graph_valida(u),
+                "continuação legítima do Graph foi rejeitada (regressão): {u}"
+            );
+        }
+    }
+
+    /// PROVA da vulnerabilidade que motivou o #1068: a guarda fraca `starts_with(GRAPH)`,
+    /// usada em 4 dos 6 pontos, ACEITA o bypass `v1.0.evil.example` — enviaria o token
+    /// pro atacante. A guarda forte (aplicada agora) o rejeita. Este teste ficaria
+    /// VERMELHO se alguém revertesse pro `starts_with(GRAPH)`.
+    #[test]
+    fn guarda_fraca_starts_with_era_exploravel() {
+        let bypass = "https://graph.microsoft.com/v1.0.evil.example/users";
+        assert!(
+            bypass.starts_with(GRAPH),
+            "pré-condição: o bypass passava pela guarda fraca"
+        );
+        assert!(
+            !url_continuacao_graph_valida(bypass),
+            "a guarda forte tem que fechar o bypass que a fraca deixava passar"
+        );
+    }
+}
+
 /// Lista inicial do People (#166): contatos explicitos + pessoas relevantes.
 /// Mantem as fontes separadas para o merge deterministico no front e preserva a
 /// ordem de relevancia de `/me/people` via `people_rank`.
@@ -4877,7 +5873,7 @@ pub fn cr_people_list(
     mailbox: Option<&str>,
 ) -> Result<PeopleListResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut result = PeopleListResult {
         records: Vec::new(),
         missing_scopes: Vec::new(),
@@ -5046,7 +6042,7 @@ pub fn cr_people_list(
 /// Organização do tenant atual, usando o nome canônico do Microsoft Graph.
 pub fn cr_organizacao(store: &TokenStore) -> Result<PeopleOrganizationResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut result = PeopleOrganizationResult {
         organization: None,
         missing_scopes: Vec::new(),
@@ -5099,7 +6095,7 @@ pub fn cr_organizacao(store: &TokenStore) -> Result<PeopleOrganizationResult, St
 /// local e nunca exponha uma lista silenciosamente truncada.
 pub fn cr_people_directory(store: &TokenStore) -> Result<PeopleDirectoryResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut result = PeopleDirectoryResult {
         records: Vec::new(),
         missing_scopes: Vec::new(),
@@ -5108,19 +6104,16 @@ pub fn cr_people_directory(store: &TokenStore) -> Result<PeopleDirectoryResult, 
     let mut proxima = Some(format!(
         "{GRAPH}/users?$top=999&$select=id,displayName,mail,userPrincipalName,businessPhones,mobilePhone,jobTitle,companyName,department,officeLocation"
     ));
-    let mut paginas_visitadas = std::collections::HashSet::new();
+    let mut guarda = GuardaPaginacao::nova();
 
     while let Some(url) = proxima.take() {
-        if !url_continuacao_graph_valida(&url) {
+        // #1074 RB41: era a ÚNICA listagem com anti-ciclo, escrita à mão aqui.
+        // Agora usa a mesma guarda das outras quatro — uma implementação da
+        // invariante, não cinco cópias que podem divergir.
+        if let Err(motivo) = guarda.aceitar(&url) {
             result
                 .failures
-                .push("Directory: continuation URL outside Microsoft Graph".to_string());
-            break;
-        }
-        if !paginas_visitadas.insert(url.clone()) {
-            result
-                .failures
-                .push("Directory: continuation URL repeated".to_string());
+                .push(format!("Directory: paginação interrompida ({motivo:?})"));
             break;
         }
         match graph_enviar("people:directory", GRAPH_TETO_ESPERA_S, || {
@@ -5177,7 +6170,7 @@ pub fn cr_people_directory(store: &TokenStore) -> Result<PeopleDirectoryResult, 
 /// A lista não dispara N+1: a contagem fica ausente até `cr_grupo_membros`.
 pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut result = PeopleGroupsResult {
         groups: Vec::new(),
         missing_scopes: Vec::new(),
@@ -5186,12 +6179,16 @@ pub fn cr_grupos(store: &TokenStore) -> Result<PeopleGroupsResult, String> {
     let mut proxima = Some(format!(
         "{GRAPH}/me/memberOf?$top=999&$select=id,displayName,description,mail,visibility,groupTypes,mailEnabled,securityEnabled"
     ));
+    let mut guarda = GuardaPaginacao::nova();
 
     while let Some(url) = proxima.take() {
-        if !url.starts_with(GRAPH) {
+        // #1068 (host) + #1074 RB41 (ciclo/teto) na MESMA guarda: antes só o host
+        // era checado aqui, e um `nextLink` cíclico deixava este laço rodando para
+        // sempre, segurando uma das 4 vagas do pool.
+        if let Err(motivo) = guarda.aceitar(&url) {
             result
                 .failures
-                .push("Groups: continuation URL outside Microsoft Graph".to_string());
+                .push(format!("Groups: paginação interrompida ({motivo:?})"));
             break;
         }
         match graph_enviar("people:groups", GRAPH_TETO_ESPERA_S, || {
@@ -5280,16 +6277,20 @@ pub fn cr_grupo_membros(
     }
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut records = Vec::new();
     let mut proxima = Some(format!(
         "{GRAPH}/groups/{}/members/microsoft.graph.user?$top=999&$select=id,displayName,mail,userPrincipalName,businessPhones,mobilePhone,jobTitle,companyName,department,officeLocation",
         urlencoding::encode(group_id)
     ));
+    let mut guarda = GuardaPaginacao::nova();
 
     while let Some(url) = proxima.take() {
-        if !url.starts_with(GRAPH) {
-            return Err("Groups: continuation URL outside Microsoft Graph".to_string());
+        // Segurança (#1068): guarda forte contra next_link fora do Graph (ver cr_grupos).
+        // #1068 (host) + #1074 RB41 (ciclo/teto). Aqui a falha vira `Err` porque a
+        // função não acumula `failures`.
+        if let Err(motivo) = guarda.aceitar(&url) {
+            return Err(format!("Group members: paginação interrompida ({motivo:?})"));
         }
         let resp = graph_enviar("people:group-members", GRAPH_TETO_ESPERA_S, || {
             client.get(&url).bearer_auth(&token).send()
@@ -5383,7 +6384,7 @@ pub fn cr_teams_disponivel(store: &TokenStore) -> Result<bool, String> {
 
 /// #206 (Org Admin S1): o token carrega os escopos de settings org-wide? Gate do
 /// painel Organization — só habilita pra quem tem admin consent + relogou depois
-/// de os escopos entrarem no `config::SCOPES`. Checa um escopo representativo do
+/// de os escopos entrarem na `config::SCOPES_ORG`. Checa um escopo representativo do
 /// conjunto OrgSettings (todos entram/saem juntos no mesmo consent).
 pub fn cr_org_admin_available(store: &TokenStore) -> Result<bool, String> {
     token_tem_escopo(store, "OrgSettings-AppsAndServices.Read.All")
@@ -5566,8 +6567,99 @@ pub struct OrgSettingsResult {
 /// Resultado bruto de um GET de OrgSettings, antes de virar card tipado.
 enum OrgGetOutcome {
     Ok(serde_json::Value),
+    /// 403 — o token não tem a permissão de admin para este grupo de settings.
     Forbidden,
+    /// 404/501 — o endpoint **não existe neste tenant**. É estado de mundo, não
+    /// falha nossa: não adianta tentar de novo nem pedir permissão (#1075 RB45).
+    Indisponivel,
+    /// Qualquer outra coisa: 5xx, 429 esgotado, transporte, corpo ilegível.
     Error,
+}
+
+/// Desfecho de uma resposta **não-2xx** de settings org-wide (#1075 RB45).
+///
+/// Antes, tudo que não fosse 200 ou 403 caía em `Error`:
+///
+/// ```ignore
+/// Ok(_)  => OrgGetOutcome::Error,   // 404 caía aqui
+/// Err(_) => OrgGetOutcome::Error,   // e a rede caindo, também
+/// ```
+///
+/// "Este endpoint beta não existe no seu tenant" e "a rede caiu" viravam o
+/// **mesmo card vermelho**. São coisas diferentes para quem lê: a primeira é
+/// permanente e não tem ação; a segunda pede tentar de novo.
+fn desfecho_org_nao_2xx(status: reqwest::StatusCode) -> OrgGetOutcome {
+    match status.as_u16() {
+        403 => OrgGetOutcome::Forbidden,
+        // 501 = o Graph responde "não implementado" para beta ausente em alguns
+        // tenants; é a mesma classe do 404 para quem lê o card.
+        404 | 501 => OrgGetOutcome::Indisponivel,
+        _ => OrgGetOutcome::Error,
+    }
+}
+
+#[cfg(test)]
+mod testes_org_settings {
+    use super::*;
+
+    fn cod(n: u16) -> reqwest::StatusCode {
+        reqwest::StatusCode::from_u16(n).expect("status valido")
+    }
+
+    /// O defeito do RB45: "endpoint nao existe no tenant" e "a rede caiu"
+    /// viravam o mesmo card vermelho.
+    #[test]
+    fn endpoint_ausente_nao_se_confunde_com_erro() {
+        assert!(matches!(
+            desfecho_org_nao_2xx(cod(404)),
+            OrgGetOutcome::Indisponivel
+        ));
+        assert!(matches!(
+            desfecho_org_nao_2xx(cod(501)),
+            OrgGetOutcome::Indisponivel
+        ));
+        for status in [429u16, 500, 502, 503] {
+            assert!(
+                matches!(desfecho_org_nao_2xx(cod(status)), OrgGetOutcome::Error),
+                "{status} e falha transitoria, nao ausencia de endpoint"
+            );
+        }
+    }
+
+    #[test]
+    fn so_o_403_e_falta_de_permissao() {
+        assert!(matches!(
+            desfecho_org_nao_2xx(cod(403)),
+            OrgGetOutcome::Forbidden
+        ));
+        for status in [401u16, 404, 500] {
+            assert!(
+                !matches!(desfecho_org_nao_2xx(cod(status)), OrgGetOutcome::Forbidden),
+                "{status} nao e falta de permissao"
+            );
+        }
+    }
+
+    /// Os tres desfechos de falha viram discriminantes DISTINTOS no JSON — e o
+    /// front tem um ramo para cada. Se alguem colapsar dois, este teste cai.
+    #[test]
+    fn os_tres_desfechos_de_falha_sao_distintos() {
+        let rotulo = |o: &OrgGetOutcome| match o {
+            OrgGetOutcome::Ok(_) => "ok",
+            OrgGetOutcome::Forbidden => "forbidden",
+            OrgGetOutcome::Indisponivel => "indisponivel",
+            OrgGetOutcome::Error => "error",
+        };
+        let vistos = [
+            rotulo(&desfecho_org_nao_2xx(cod(403))),
+            rotulo(&desfecho_org_nao_2xx(cod(404))),
+            rotulo(&desfecho_org_nao_2xx(cod(500))),
+        ];
+        let mut unicos = vistos.to_vec();
+        unicos.sort_unstable();
+        unicos.dedup();
+        assert_eq!(unicos.len(), 3, "403/404/500 tem que dar tres cards diferentes");
+    }
 }
 
 fn org_settings_get(
@@ -5583,8 +6675,9 @@ fn org_settings_get(
             Ok(body) => OrgGetOutcome::Ok(body),
             Err(_) => OrgGetOutcome::Error,
         },
-        Ok(resp) if resp.status().as_u16() == 403 => OrgGetOutcome::Forbidden,
-        Ok(_) => OrgGetOutcome::Error,
+        // #1075 RB45: 403, 404 e 5xx deixam de cair no mesmo balde.
+        Ok(resp) => desfecho_org_nao_2xx(resp.status()),
+        // Transporte nao tem status: e falha nossa, transitoria.
         Err(_) => OrgGetOutcome::Error,
     }
 }
@@ -5593,7 +6686,7 @@ fn org_settings_get(
 /// carrega seu próprio status pra a UI mostrar loading/erro/sem-permissão por card.
 pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let apps_and_services = match org_settings_get(
         &token,
@@ -5603,6 +6696,7 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
     ) {
         OrgGetOutcome::Ok(body) => AppsAndServicesCard::dos_settings(&body["value"]["settings"]),
         OrgGetOutcome::Forbidden => AppsAndServicesCard::vazio("forbidden"),
+        OrgGetOutcome::Indisponivel => AppsAndServicesCard::vazio("indisponivel"),
         OrgGetOutcome::Error => AppsAndServicesCard::vazio("error"),
     };
 
@@ -5614,6 +6708,7 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
     ) {
         OrgGetOutcome::Ok(body) => FormsCard::dos_settings(&body["value"]["settings"]),
         OrgGetOutcome::Forbidden => FormsCard::vazio("forbidden"),
+        OrgGetOutcome::Indisponivel => FormsCard::vazio("indisponivel"),
         OrgGetOutcome::Error => FormsCard::vazio("error"),
     };
 
@@ -5625,6 +6720,7 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
     ) {
         OrgGetOutcome::Ok(body) => M365InstallCard::da_raiz(&body),
         OrgGetOutcome::Forbidden => M365InstallCard::vazio("forbidden"),
+        OrgGetOutcome::Indisponivel => M365InstallCard::vazio("indisponivel"),
         OrgGetOutcome::Error => M365InstallCard::vazio("error"),
     };
 
@@ -5639,6 +6735,7 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
     ) {
         OrgGetOutcome::Ok(body) => OrgTodoCard::dos_settings(&body["value"]["settings"]),
         OrgGetOutcome::Forbidden => OrgTodoCard::vazio("forbidden"),
+        OrgGetOutcome::Indisponivel => OrgTodoCard::vazio("indisponivel"),
         OrgGetOutcome::Error => OrgTodoCard::vazio("error"),
     };
 
@@ -5656,6 +6753,9 @@ pub fn cr_org_settings(store: &TokenStore) -> Result<OrgSettingsResult, String> 
 /// arbitrário). ⚠️ O endpoint/shape do `/admin/todo` ainda NÃO foi confirmado no
 /// tenant real (auth-gate) — a UI mantém a escrita TRAVADA atrás de um gate até o
 /// live-QA de admin do Wagner validar; este comando fica pronto pra ativar (#208).
+/// #1076 (RB16): follow-up formal desta dívida (confirmar endpoint/shape em live-QA
+/// de admin) rastreado na auditoria #994. Enquanto não confirmado, a trava da UI
+/// permanece — não ativar sem o live-QA fechar.
 pub fn cr_org_todo_set(store: &TokenStore, campo: &str, valor: bool) -> Result<(), String> {
     if !matches!(
         campo,
@@ -5664,7 +6764,7 @@ pub fn cr_org_todo_set(store: &TokenStore, campo: &str, valor: bool) -> Result<(
         return Err(format!("campo de To Do desconhecido: {campo}"));
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let body = serde_json::json!({ "settings": { campo: valor } });
     let resp = graph_enviar("org:todo:set", GRAPH_TETO_ESPERA_S, || {
         client
@@ -5768,7 +6868,7 @@ fn tenant_app_do_sp(sp: &serde_json::Value) -> Option<TenantApp> {
 /// complemento curado ao catálogo, não um explorador completo de diretório.
 pub fn cr_tenant_apps(store: &TokenStore) -> Result<TenantAppsResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/servicePrincipals?$select=appId,displayName,accountEnabled,homepage,loginUrl,tags,servicePrincipalType\
          &$orderby=displayName&$count=true&$top=100"
@@ -5794,8 +6894,13 @@ pub fn cr_tenant_apps(store: &TokenStore) -> Result<TenantAppsResult, String> {
             }
             Err(_) => Ok(TenantAppsResult::vazio("error")),
         },
-        Ok(resp) if resp.status().as_u16() == 403 => Ok(TenantAppsResult::vazio("forbidden")),
-        Ok(_) => Ok(TenantAppsResult::vazio("error")),
+        // #1075 RB45: mesmo defeito do `org_settings_get`, escrito inline aqui.
+        // Buscar no escopo inteiro achou este segundo sitio.
+        Ok(resp) => Ok(TenantAppsResult::vazio(match desfecho_org_nao_2xx(resp.status()) {
+            OrgGetOutcome::Forbidden => "forbidden",
+            OrgGetOutcome::Indisponivel => "indisponivel",
+            _ => "error",
+        })),
         Err(_) => Ok(TenantAppsResult::vazio("error")),
     }
 }
@@ -5855,7 +6960,7 @@ fn baixar_branding_logo(
 /// #541: logo do tenant (claro + escuro) do branding default do Entra.
 pub fn cr_org_branding(store: &TokenStore) -> Result<OrgBranding, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     // orgId do usuário logado; sem ele não dá pra montar a URL de branding.
     let org_id = match graph_enviar("org:branding:orgId", GRAPH_TETO_ESPERA_S, || {
@@ -5950,7 +7055,7 @@ impl MultiTenantCard {
 /// estiver ativa. Degrada gracioso (403 → forbidden, não-membro → inactive).
 pub fn cr_multi_tenant(store: &TokenStore) -> Result<MultiTenantCard, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let org = match graph_enviar("org:multiTenant", GRAPH_TETO_ESPERA_S, || {
         client
@@ -6305,7 +7410,7 @@ pub fn cr_people_enrich_preview(
     }
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut failures = Vec::new();
     let mut contato = serde_json::json!({});
 
@@ -6633,7 +7738,7 @@ pub fn cr_people_enrich_apply(
         });
     }
 
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let contact_url = format!(
         "{GRAPH}/me/contacts/{}",
         urlencoding::encode(contact_id.trim())
@@ -6891,7 +7996,7 @@ pub fn cr_people_contact_update(
     }
     let body = contato_body(input)?;
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/me/contacts/{}",
         urlencoding::encode(contact_id)
@@ -6928,7 +8033,7 @@ pub fn cr_people_contact_categories(
     }
     let body = serde_json::json!({ "categories": categorias });
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!("{GRAPH}/me/contacts/{}", urlencoding::encode(contact_id));
     let resp = graph_enviar("people:contact-categories", GRAPH_TETO_ESPERA_S, || {
         client.patch(&url).bearer_auth(&token).json(&body).send()
@@ -6953,7 +8058,7 @@ pub fn cr_people_contact_create(
     }
     let body = contato_body(input)?;
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!("{GRAPH}/me/contacts");
     let resp = graph_enviar("people:contact-create", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(&token).json(&body).send()
@@ -6978,7 +8083,7 @@ pub fn cr_people_contact_delete(store: &TokenStore, contact_id: &str) -> Result<
         return Err("Invalid contact.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/me/contacts/{}",
         urlencoding::encode(contact_id)
@@ -7019,7 +8124,7 @@ pub struct ContactFoldersResult {
 /// Contacts.Read (subset do ReadWrite já concedido). Ordena por nome.
 pub fn cr_contact_folders(store: &TokenStore) -> Result<ContactFoldersResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let mut result = ContactFoldersResult {
         folders: Vec::new(),
         missing_scopes: Vec::new(),
@@ -7028,11 +8133,14 @@ pub fn cr_contact_folders(store: &TokenStore) -> Result<ContactFoldersResult, St
     let mut proxima = Some(format!(
         "{GRAPH}/me/contactFolders?$top=200&$select=id,displayName,parentFolderId"
     ));
+    let mut guarda = GuardaPaginacao::nova();
     while let Some(url) = proxima.take() {
-        if !url.starts_with(GRAPH) {
+        // Segurança (#1068): guarda forte contra next_link fora do Graph (ver cr_grupos).
+        // #1068 (host) + #1074 RB41 (ciclo/teto).
+        if let Err(motivo) = guarda.aceitar(&url) {
             result
                 .failures
-                .push("ContactFolders: continuation URL outside Microsoft Graph".to_string());
+                .push(format!("Contact folders: paginação interrompida ({motivo:?})"));
             break;
         }
         match graph_enviar("people:contact-folders", GRAPH_TETO_ESPERA_S, || {
@@ -7100,7 +8208,7 @@ pub fn cr_pasta_contatos(
     next_links: Vec<String>,
 ) -> Result<PeopleListResult, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let folder_id = folder_id.trim();
     let mut result = PeopleListResult {
         records: Vec::new(),
@@ -7120,9 +8228,11 @@ pub fn cr_pasta_contatos(
             "{base}?$top=100&$select=id,displayName,emailAddresses,businessPhones,homePhones,mobilePhone,companyName,jobTitle,department,officeLocation,manager,categories"
         )]
     } else {
+        // Segurança (#1068): guarda forte por next_link (ver cr_grupos) — descarta
+        // qualquer continuação fora do Graph antes do bearer_auth.
         next_links
             .into_iter()
-            .filter(|u| u.starts_with(GRAPH) && u.contains("/contactFolders/"))
+            .filter(|u| url_continuacao_graph_valida(u) && u.contains("/contactFolders/"))
             .collect()
     };
     for url in urls {
@@ -7194,7 +8304,7 @@ pub fn cr_criar_pasta_contato(store: &TokenStore, nome: &str) -> Result<ContactF
         return Err("Invalid folder name.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!("{GRAPH}/me/contactFolders");
     let body = serde_json::json!({ "displayName": nome });
     let resp = graph_enviar("people:folder-create", GRAPH_TETO_ESPERA_S, || {
@@ -7227,7 +8337,7 @@ pub fn cr_renomear_pasta_contato(
         return Err("Invalid folder.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/me/contactFolders/{}",
         urlencoding::encode(folder_id)
@@ -7254,7 +8364,7 @@ pub fn cr_excluir_pasta_contato(store: &TokenStore, folder_id: &str) -> Result<(
         return Err("Invalid folder.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!(
         "{GRAPH}/me/contactFolders/{}",
         urlencoding::encode(folder_id)
@@ -7287,7 +8397,7 @@ pub fn cr_mover_contato(
         return Err("Invalid contact or folder.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let url = format!("{GRAPH}/me/contacts/{}", urlencoding::encode(contact_id));
     let body = serde_json::json!({ "parentFolderId": folder_id });
     let resp = graph_enviar("people:contact-move", GRAPH_TETO_ESPERA_S, || {
@@ -7300,11 +8410,20 @@ pub fn cr_mover_contato(
     Ok(())
 }
 
+/// Resultado de uma escrita em lote sobre contatos pessoais (#1074 RB37).
+///
+/// Antes da F7 este shape existia DUAS vezes — `PeopleCompanyWriteResult` e
+/// `PeopleBulkDetailsWriteResult` — com os mesmos tres campos e a mesma
+/// serializacao. Dois nomes para uma forma so: o TS ja declarava as duas
+/// interfaces identicas, e nada no protocolo as distinguia.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PeopleCompanyWriteResult {
+pub struct PeopleWriteResult {
     pub write_available: bool,
+    /// IDs que o Graph confirmou (sub-resposta 2xx).
     pub saved_contact_ids: Vec<String>,
+    /// IDs que nao foram escritos — por transporte, por sub-resposta nao-2xx,
+    /// por falta de escopo ou por serem invalidos.
     pub failed_contact_ids: Vec<String>,
 }
 
@@ -7341,14 +8460,6 @@ where
     <Option<String> as serde::Deserialize>::deserialize(deserializer)
 }
 
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PeopleBulkDetailsWriteResult {
-    pub write_available: bool,
-    pub saved_contact_ids: Vec<String>,
-    pub failed_contact_ids: Vec<String>,
-}
-
 fn people_bulk_details_body(
     changes: Vec<PeopleBulkDetailsChange>,
 ) -> Result<serde_json::Map<String, serde_json::Value>, String> {
@@ -7383,159 +8494,87 @@ fn people_bulk_details_body(
     Ok(body)
 }
 
-/// Persiste a Organization escolhida explicitamente como `companyName`.
-/// O Graph limita JSON batches a 20 sub-requisições; cada envelope é casado
-/// pelo `id`, pois a ordem das respostas não é garantida.
-pub fn cr_people_company_write(
-    store: &TokenStore,
-    contact_ids: Vec<String>,
-    company_name: &str,
-) -> Result<PeopleCompanyWriteResult, String> {
-    let company_name = company_name.trim();
-    if company_name.is_empty() || company_name.len() > 256 {
-        return Err("Invalid company name.".to_string());
-    }
-
-    let mut seen = std::collections::HashSet::new();
-    let contact_ids: Vec<String> = contact_ids
-        .into_iter()
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty() && id.len() <= 512 && seen.insert(id.clone()))
-        .collect();
-    if contact_ids.is_empty() {
-        return Ok(PeopleCompanyWriteResult {
-            write_available: token_tem_escopo(store, "Contacts.ReadWrite")?,
-            saved_contact_ids: Vec::new(),
-            failed_contact_ids: Vec::new(),
-        });
-    }
-    if !token_tem_escopo(store, "Contacts.ReadWrite")? {
-        return Ok(PeopleCompanyWriteResult {
-            write_available: false,
-            saved_contact_ids: Vec::new(),
-            failed_contact_ids: contact_ids,
-        });
-    }
-
-    let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-    let mut saved_contact_ids = Vec::new();
-    let mut failed_contact_ids = Vec::new();
-
-    for chunk in contact_ids.chunks(20) {
-        let requests: Vec<serde_json::Value> = chunk
-            .iter()
-            .enumerate()
-            .map(|(index, contact_id)| {
-                serde_json::json!({
-                    "id": index.to_string(),
-                    "method": "PATCH",
-                    "url": format!(
-                        "/me/contacts/{}",
-                        urlencoding::encode(contact_id)
-                    ),
-                    "headers": { "Content-Type": "application/json" },
-                    "body": { "companyName": company_name },
-                })
-            })
-            .collect();
-        let body = serde_json::json!({ "requests": requests });
-        let url = format!("{GRAPH}/$batch");
-        let response = match graph_enviar("people:company-write", GRAPH_TETO_ESPERA_S, || {
-            client.post(&url).bearer_auth(&token).json(&body).send()
-        }) {
-            Ok(response) => response,
-            Err(_) => {
-                failed_contact_ids.extend(chunk.iter().cloned());
-                continue;
-            }
-        };
-        if !response.status().is_success() {
-            failed_contact_ids.extend(chunk.iter().cloned());
+/// Separa os IDs de contato em (aceitos, rejeitados), preservando a ordem.
+///
+/// **Decisao da F7.** As duas escritas em lote divergiam AQUI, e so aqui:
+/// `cr_people_company_write` descartava ID invalido em silencio
+/// (`.filter(|id| !id.is_empty() && id.len() <= 512 ...)`), enquanto
+/// `cr_people_details_write` devolvia `Err("Invalid contact ID.")` e derrubava
+/// o lote inteiro. A mesma entrada dava dois comportamentos.
+///
+/// Nenhum dos dois vira o padrao:
+///
+/// - descartar calado e a familia do #1017 — quem pediu N contatos recebe
+///   "sucesso" com N-k escritos e nenhum sinal de que k sumiram;
+/// - abortar tudo faz um unico ID torto matar um lote de 200 contatos bons.
+///
+/// O terceiro caminho usa o canal que o resultado JA tem: ID invalido cai em
+/// `failed_contact_ids`, como qualquer outra falha por item. Isso sustenta a
+/// invariante que os dois comportamentos antigos quebravam — **todo ID nao
+/// duplicado sai exatamente uma vez em `saved` uniao `failed`** — e e ela que o
+/// teste abaixo prende.
+///
+/// Duplicata nao e perda: o ID segue processado, so que uma vez so.
+fn normalizar_ids_contatos(contact_ids: Vec<String>) -> (Vec<String>, Vec<String>) {
+    let mut vistos = std::collections::HashSet::new();
+    let mut aceitos = Vec::new();
+    let mut rejeitados = Vec::new();
+    for contact_id in contact_ids {
+        let contact_id = contact_id.trim().to_string();
+        if contact_id.is_empty() || contact_id.len() > 512 {
+            rejeitados.push(contact_id);
             continue;
         }
-
-        let value: serde_json::Value = match response.json() {
-            Ok(value) => value,
-            Err(_) => {
-                failed_contact_ids.extend(chunk.iter().cloned());
-                continue;
-            }
-        };
-        let mut successful_indexes = std::collections::HashSet::new();
-        for item in value["responses"].as_array().into_iter().flatten() {
-            let Some(index) = item["id"]
-                .as_str()
-                .and_then(|id| id.parse::<usize>().ok())
-            else {
-                continue;
-            };
-            let status = item["status"].as_u64().unwrap_or_default();
-            if index < chunk.len() && (200..300).contains(&status) {
-                successful_indexes.insert(index);
-            }
-        }
-        for (index, contact_id) in chunk.iter().enumerate() {
-            if successful_indexes.contains(&index) {
-                saved_contact_ids.push(contact_id.clone());
-            } else {
-                failed_contact_ids.push(contact_id.clone());
-            }
+        if vistos.insert(contact_id.clone()) {
+            aceitos.push(contact_id);
         }
     }
-
-    Ok(PeopleCompanyWriteResult {
-        write_available: true,
-        saved_contact_ids,
-        failed_contact_ids,
-    })
+    (aceitos, rejeitados)
 }
 
-/// Aplica a mesma alteração de detalhes seguros a vários contatos pessoais.
-/// O Graph limita JSON batches a 20 sub-requisições; falhas de transporte ou
-/// sub-respostas não-2xx são isoladas nos IDs correspondentes.
-pub fn cr_people_details_write(
+/// PATCH do MESMO corpo em varios contatos pessoais, via `$batch` do Graph.
+///
+/// Motor unico das escritas de People (#1074 RB37). `cr_people_company_write` e
+/// `cr_people_details_write` eram ~100 e ~200 linhas que, da obtencao do token
+/// em diante, so diferiam no rotulo de telemetria e no corpo do PATCH — o
+/// chunking de 20, o isolamento de falha de transporte, a correlacao por
+/// `item["id"]` e a classificacao por `escrita_status_ok` eram identicos,
+/// duplicados linha a linha.
+///
+/// O Graph limita um JSON batch a 20 sub-requisicoes. Falha de transporte,
+/// resposta nao-2xx e corpo ilegivel reprovam so o chunk corrente; a sub-resposta
+/// decide contato a contato dentro do chunk.
+fn patch_contatos_em_lote(
     store: &TokenStore,
     contact_ids: Vec<String>,
-    changes: Vec<PeopleBulkDetailsChange>,
-) -> Result<PeopleBulkDetailsWriteResult, String> {
-    let body = people_bulk_details_body(changes)?;
-
-    let mut seen = std::collections::HashSet::new();
-    let mut normalized_contact_ids = Vec::new();
-    for contact_id in contact_ids {
-        let contact_id = contact_id.trim();
-        if contact_id.is_empty() || contact_id.len() > 512 {
-            return Err("Invalid contact ID.".to_string());
-        }
-        if seen.insert(contact_id.to_string()) {
-            normalized_contact_ids.push(contact_id.to_string());
-        }
-    }
+    body: serde_json::Map<String, serde_json::Value>,
+    rotulo: &'static str,
+) -> Result<PeopleWriteResult, String> {
+    let (aceitos, mut failed_contact_ids) = normalizar_ids_contatos(contact_ids);
 
     let write_available = token_tem_escopo(store, "Contacts.ReadWrite")?;
-    if normalized_contact_ids.is_empty() {
-        return Ok(PeopleBulkDetailsWriteResult {
+    if aceitos.is_empty() {
+        return Ok(PeopleWriteResult {
             write_available,
             saved_contact_ids: Vec::new(),
-            failed_contact_ids: Vec::new(),
+            failed_contact_ids,
         });
     }
     if !write_available {
-        return Ok(PeopleBulkDetailsWriteResult {
+        failed_contact_ids.extend(aceitos);
+        return Ok(PeopleWriteResult {
             write_available: false,
             saved_contact_ids: Vec::new(),
-            failed_contact_ids: normalized_contact_ids,
+            failed_contact_ids,
         });
     }
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let batch_url = format!("{GRAPH}/$batch");
     let mut saved_contact_ids = Vec::new();
-    let mut failed_contact_ids = Vec::new();
 
-    for chunk in normalized_contact_ids.chunks(20) {
+    for chunk in aceitos.chunks(20) {
         let requests: Vec<serde_json::Value> = chunk
             .iter()
             .enumerate()
@@ -7543,17 +8582,14 @@ pub fn cr_people_details_write(
                 serde_json::json!({
                     "id": index.to_string(),
                     "method": "PATCH",
-                    "url": format!(
-                        "/me/contacts/{}",
-                        urlencoding::encode(contact_id)
-                    ),
+                    "url": format!("/me/contacts/{}", urlencoding::encode(contact_id)),
                     "headers": { "Content-Type": "application/json" },
                     "body": body.clone(),
                 })
             })
             .collect();
         let batch_body = serde_json::json!({ "requests": requests });
-        let response = match graph_enviar("people:details-write", GRAPH_TETO_ESPERA_S, || {
+        let response = match graph_enviar(rotulo, GRAPH_TETO_ESPERA_S, || {
             client
                 .post(&batch_url)
                 .bearer_auth(&token)
@@ -7570,7 +8606,6 @@ pub fn cr_people_details_write(
             failed_contact_ids.extend(chunk.iter().cloned());
             continue;
         }
-
         let value: serde_json::Value = match response.json() {
             Ok(value) => value,
             Err(_) => {
@@ -7578,18 +8613,19 @@ pub fn cr_people_details_write(
                 continue;
             }
         };
-        let mut successful_indexes = std::collections::HashSet::new();
+
+        let mut indices_ok = std::collections::HashSet::new();
         for item in value["responses"].as_array().into_iter().flatten() {
             let Some(index) = item["id"].as_str().and_then(|id| id.parse::<usize>().ok()) else {
                 continue;
             };
             let status = item["status"].as_u64().unwrap_or_default();
-            if index < chunk.len() && (200..300).contains(&status) {
-                successful_indexes.insert(index);
+            if index < chunk.len() && escrita_status_ok(status) {
+                indices_ok.insert(index);
             }
         }
         for (index, contact_id) in chunk.iter().enumerate() {
-            if successful_indexes.contains(&index) {
+            if indices_ok.contains(&index) {
                 saved_contact_ids.push(contact_id.clone());
             } else {
                 failed_contact_ids.push(contact_id.clone());
@@ -7597,11 +8633,110 @@ pub fn cr_people_details_write(
         }
     }
 
-    Ok(PeopleBulkDetailsWriteResult {
+    Ok(PeopleWriteResult {
         write_available: true,
         saved_contact_ids,
         failed_contact_ids,
     })
+}
+
+#[cfg(test)]
+mod testes_escrita_contatos_em_lote {
+    use super::*;
+
+    /// A invariante que as DUAS formas antigas quebravam, cada uma do seu jeito.
+    #[test]
+    fn id_invalido_vira_falha_em_vez_de_sumir_ou_abortar() {
+        let (aceitos, rejeitados) = normalizar_ids_contatos(vec![
+            "  bom-1  ".to_string(),
+            String::new(),
+            "   ".to_string(),
+            "x".repeat(513),
+            "bom-2".to_string(),
+        ]);
+
+        assert_eq!(aceitos, vec!["bom-1", "bom-2"], "o trim tem que valer");
+        assert_eq!(
+            rejeitados.len(),
+            3,
+            "vazio, so-espaco e >512 sao falhas reportadas — nao descartes calados"
+        );
+        assert!(
+            !rejeitados.iter().any(|id| id == "bom-1" || id == "bom-2"),
+            "ID bom nao pode ser reprovado junto"
+        );
+    }
+
+    /// Prende a soma: nenhum ID entra e some. Com os comportamentos antigos este
+    /// teste nao passava — `company` perdia 3 no caminho e `details` nem chegava
+    /// aqui, devolvia `Err`.
+    #[test]
+    fn todo_id_nao_duplicado_sai_exatamente_uma_vez() {
+        let entrada: Vec<String> = vec!["a", "", "b", "  ", "c"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        let (aceitos, rejeitados) = normalizar_ids_contatos(entrada.clone());
+        assert_eq!(
+            aceitos.len() + rejeitados.len(),
+            entrada.len(),
+            "aceitos + rejeitados tem que fechar com a entrada"
+        );
+    }
+
+    /// Duplicata e colapsada, nao reprovada: o contato segue escrito uma vez.
+    #[test]
+    fn duplicata_e_colapsada_e_nao_conta_como_falha() {
+        let (aceitos, rejeitados) = normalizar_ids_contatos(vec![
+            "a".to_string(),
+            " a ".to_string(),
+            "a".to_string(),
+            "b".to_string(),
+        ]);
+        assert_eq!(aceitos, vec!["a", "b"]);
+        assert!(rejeitados.is_empty(), "duplicata nao e falha");
+    }
+
+    /// Lote sem nenhum ID aceito nao pode perder os invalidos pelo caminho.
+    #[test]
+    fn lote_vazio_nao_perde_os_invalidos() {
+        let (aceitos, rejeitados) = normalizar_ids_contatos(vec![String::new(), "  ".to_string()]);
+        assert!(aceitos.is_empty(), "nao ha o que mandar ao Graph");
+        assert_eq!(rejeitados.len(), 2, "mas os 2 invalidos seguem reportados");
+    }
+}
+
+/// Grava o mesmo nome de empresa em varios contatos pessoais (#288).
+///
+/// Caso particular de `patch_contatos_em_lote`: so monta o corpo de um campo.
+pub fn cr_people_company_write(
+    store: &TokenStore,
+    contact_ids: Vec<String>,
+    company_name: &str,
+) -> Result<PeopleWriteResult, String> {
+    let company_name = company_name.trim();
+    if company_name.is_empty() || company_name.len() > 256 {
+        return Err("Invalid company name.".to_string());
+    }
+    let mut body = serde_json::Map::new();
+    body.insert(
+        "companyName".to_string(),
+        serde_json::Value::String(company_name.to_string()),
+    );
+    patch_contatos_em_lote(store, contact_ids, body, "people:company-write")
+}
+
+/// Aplica a mesma alteracao de detalhes seguros a varios contatos pessoais.
+///
+/// Caso geral de `patch_contatos_em_lote`: o corpo vem do whitelist de campos
+/// em `people_bulk_details_body`, que continua validando ANTES de tocar em ID.
+pub fn cr_people_details_write(
+    store: &TokenStore,
+    contact_ids: Vec<String>,
+    changes: Vec<PeopleBulkDetailsChange>,
+) -> Result<PeopleWriteResult, String> {
+    let body = people_bulk_details_body(changes)?;
+    patch_contatos_em_lote(store, contact_ids, body, "people:details-write")
 }
 
 #[cfg(test)]
@@ -7702,7 +8837,7 @@ pub fn cr_people_interactions(
         return Err("Invalid email address.".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let search_expression = format!("from:{email} OR to:{email}");
     let search = urlencoding::encode(&search_expression);
     let url = format!(
@@ -7807,7 +8942,7 @@ pub fn cr_pessoas(store: &TokenStore, query: &str) -> Result<Vec<Pessoa>, String
         return Ok(Vec::new());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let enc = urlencoding::encode(q);
 
     let mut resultados: Vec<Pessoa> = Vec::new();
@@ -7920,7 +9055,7 @@ pub fn cr_enviar_novo(
     mailbox: Option<&str>,
 ) -> Result<(), String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     // Mapeia cada e-mail para o formato do Graph, descartando os vazios.
@@ -7976,11 +9111,110 @@ pub fn cr_enviar_novo(
 
 /// Salva os contatos informados na pasta pessoal do usuario, sem duplicar.
 /// Retorna quantos foram efetivamente criados. Contacts.ReadWrite.
-pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u64, String> {
-    let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+/// Resultado de gravar contatos pessoais (#1075 RB46-d).
+///
+/// Segue a forma do `SalvarEmailResultado`: o que deu certo e o que falhou, com
+/// motivo. Antes era `Result<u64, String>` — só `criados`. O chamador pedia N
+/// contatos, recebia um número, e **não havia canal** para dizer "pulei M
+/// porque não consegui checar".
+///
+/// `ja_existiam` é separado de `falhas` de propósito: já existir é o caminho
+/// feliz do dedup, não um problema.
+#[derive(serde::Serialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct SalvarContatosResultado {
+    pub criados: u64,
+    /// Dedup funcionou: o contato já estava lá. Não é falha.
+    pub ja_existiam: u64,
+    pub falhas: Vec<SalvarContatoFalha>,
+}
 
-    let mut criados: u64 = 0;
+#[derive(serde::Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SalvarContatoFalha {
+    /// E-mail do contato, **sem máscara**: o front precisa casar a falha com a
+    /// lista que ELE acabou de mandar, e mascarado não serve para isso. É o
+    /// mesmo dado que veio na requisição, no mesmo processo — não é exposição
+    /// nova. No LOG segue mascarado (#1076 RB48/LGPD), que é onde o endereço
+    /// sairia do contexto de quem o digitou.
+    pub email: String,
+    pub motivo: String,
+}
+
+/// A resposta do filtro de duplicata diz que o contato já existe?
+///
+/// `Some(true)` já existe · `Some(false)` não existe · `None` o corpo veio 2xx
+/// mas ilegível (sem `value` array) — que é "não sei", não "não existe".
+fn duplicata_do_corpo(v: &serde_json::Value) -> Option<bool> {
+    v["value"].as_array().map(|a| !a.is_empty())
+}
+
+#[cfg(test)]
+mod testes_salvar_contatos {
+    use super::*;
+
+    #[test]
+    fn corpo_com_resultado_diz_que_existe() {
+        let v = serde_json::json!({ "value": [{ "id": "abc" }] });
+        assert_eq!(duplicata_do_corpo(&v), Some(true));
+    }
+
+    #[test]
+    fn corpo_com_lista_vazia_diz_que_nao_existe() {
+        let v = serde_json::json!({ "value": [] });
+        assert_eq!(duplicata_do_corpo(&v), Some(false));
+    }
+
+    /// O caso que antes virava `unwrap_or(false)` = "nao existe" = CRIA, com
+    /// risco de duplicar. 2xx com corpo ilegivel e "nao sei".
+    #[test]
+    fn corpo_ilegivel_e_nao_sei_e_nao_nao_existe() {
+        for v in [
+            serde_json::json!({}),
+            serde_json::json!({ "value": "nao e array" }),
+            serde_json::json!({ "error": { "code": "x" } }),
+        ] {
+            assert_eq!(
+                duplicata_do_corpo(&v),
+                None,
+                "corpo sem `value` array tem que ser 'nao sei': {v}"
+            );
+        }
+    }
+
+    /// Ja existir NAO e falha — o dedup fez o trabalho dele.
+    #[test]
+    fn ja_existir_nao_conta_como_falha() {
+        let mut r = SalvarContatosResultado::default();
+        r.ja_existiam += 1;
+        assert!(r.falhas.is_empty());
+        assert_eq!(r.criados, 0);
+    }
+
+    /// A soma tem que fechar com o que foi pedido: nenhum contato entra e some.
+    #[test]
+    fn todo_contato_pedido_sai_em_alguma_coluna() {
+        let r = SalvarContatosResultado {
+            criados: 2,
+            ja_existiam: 1,
+            falhas: vec![SalvarContatoFalha {
+                email: "a@b.c".to_string(),
+                motivo: "nao foi possivel checar duplicata".to_string(),
+            }],
+        };
+        assert_eq!(
+            r.criados + r.ja_existiam + r.falhas.len() as u64,
+            4,
+            "criados + ja_existiam + falhas tem que fechar com o pedido"
+        );
+    }
+}
+
+pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<SalvarContatosResultado, String> {
+    let token = access_token(store)?;
+    let client = cliente();
+
+    let mut resultado = SalvarContatosResultado::default();
     for p in pessoas {
         let email = p.email.trim();
         if email.is_empty() {
@@ -7996,26 +9230,45 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
             urlencoding::encode(&filtro)
         );
         // Sob o pool + retry central (#64): Retry-After + jitter. GET idempotente.
-        let existe = match graph_enviar("contatos:existe", GRAPH_TETO_ESPERA_S, || {
+        // #1075 RB46-d: TRES vias explícitas. Antes o "não sei" tinha DUAS
+        // resoluções opostas dependendo de qual camada falhou: não-2xx virava
+        // `true` (pula, para não duplicar) e 2xx-com-corpo-ilegível virava
+        // `unwrap_or(false)` (CRIA, arriscando duplicar). A mesma incerteza,
+        // duas ações contrárias — e nenhuma delas contada.
+        let duplicata = match graph_enviar("contatos:existe", GRAPH_TETO_ESPERA_S, || {
             client.get(&url).bearer_auth(&token).send()
         }) {
             Ok(resp) if resp.status().is_success() => resp
                 .json::<serde_json::Value>()
                 .ok()
-                .and_then(|v| v["value"].as_array().map(|a| !a.is_empty()))
-                .unwrap_or(false),
+                .as_ref()
+                .and_then(duplicata_do_corpo),
             Ok(resp) => {
-                log::warn!("[contatos] filtro '{email}' retornou {}", resp.status());
-                // Nao da pra ter certeza: pula para nao arriscar duplicar.
-                true
+                // #1076 (RB48/LGPD): e-mail do contato mascarado no log (PII).
+                log::warn!("[contatos] filtro '{}' retornou {}", mascarar_email(email), resp.status());
+                None
             }
             Err(e) => {
-                log::warn!("[contatos] filtro '{email}' falhou: {e}");
-                true
+                log::warn!("[contatos] filtro '{}' falhou: {e}", mascarar_email(email));
+                None
             }
         };
-        if existe {
-            continue;
+        match duplicata {
+            Some(true) => {
+                resultado.ja_existiam += 1;
+                continue;
+            }
+            Some(false) => {}
+            None => {
+                // Segue pulando — criar às cegas arriscaria duplicar o contato
+                // do usuário. O que muda é que o pulo deixa de ser SILENCIOSO:
+                // vira falha contada, com motivo.
+                resultado.falhas.push(SalvarContatoFalha {
+                    email: email.to_string(),
+                    motivo: "nao foi possivel verificar se o contato ja existe".to_string(),
+                });
+                continue;
+            }
         }
 
         let nome = if p.nome.trim().is_empty() { email } else { p.nome.trim() };
@@ -8032,12 +9285,26 @@ pub fn cr_salvar_contatos(store: &TokenStore, pessoas: Vec<Pessoa>) -> Result<u6
         match graph_enviar("contatos:criar", GRAPH_TETO_ESPERA_S, || {
             client.post(&criar_url).bearer_auth(&token).json(&body).send()
         }) {
-            Ok(resp) if resp.status().is_success() => criados += 1,
-            Ok(resp) => log::warn!("[contatos] criar '{email}' retornou {}", resp.status()),
-            Err(e) => log::warn!("[contatos] criar '{email}' falhou: {e}"),
+            Ok(resp) if resp.status().is_success() => resultado.criados += 1,
+            // #1076 (RB48/LGPD): e-mail do contato mascarado no log (PII).
+            Ok(resp) => {
+                let status = resp.status();
+                log::warn!("[contatos] criar '{}' retornou {}", mascarar_email(email), status);
+                resultado.falhas.push(SalvarContatoFalha {
+                    email: email.to_string(),
+                    motivo: format!("criar contato retornou {status}"),
+                });
+            }
+            Err(e) => {
+                log::warn!("[contatos] criar '{}' falhou: {e}", mascarar_email(email));
+                resultado.falhas.push(SalvarContatoFalha {
+                    email: email.to_string(),
+                    motivo: format!("falha de transporte ao criar contato: {e}"),
+                });
+            }
         }
     }
-    Ok(criados)
+    Ok(resultado)
 }
 
 /// Subpastas de uma pasta de e-mail. O id do filho serve direto no endpoint de
@@ -8048,7 +9315,7 @@ pub fn cr_subpastas(
     mailbox: Option<&str>,
 ) -> Result<Vec<PastaEmail>, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!(
@@ -8080,7 +9347,8 @@ pub fn cr_subpastas(
                 nao_lidos: it["unreadItemCount"].as_u64().unwrap_or(0),
                 total: it["totalItemCount"].as_u64().unwrap_or(0),
                 filhos: it["childFolderCount"].as_u64().unwrap_or(0),
-                acesso_negado: false,
+                // Veio dentro de uma resposta 2xx: os contadores sao fato.
+                leitura: LeituraPasta::Ok,
             });
         }
     }
@@ -8112,7 +9380,8 @@ fn pasta_de_json(v: &serde_json::Value) -> PastaEmail {
         nao_lidos: v["unreadItemCount"].as_u64().unwrap_or(0),
         total: v["totalItemCount"].as_u64().unwrap_or(0),
         filhos: v["childFolderCount"].as_u64().unwrap_or(0),
-        acesso_negado: false,
+        // Veio dentro de uma resposta 2xx: os contadores sao fato.
+        leitura: LeituraPasta::Ok,
     }
 }
 
@@ -8136,7 +9405,7 @@ pub fn cr_criar_subpasta(
         return Err("o nome da pasta não pode ficar vazio".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!("{GRAPH}/{prefix}/mailFolders/{pai_id}/childFolders");
@@ -8167,7 +9436,7 @@ pub fn cr_renomear_pasta(
         return Err("o nome da pasta não pode ficar vazio".to_string());
     }
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     let url = format!("{GRAPH}/{prefix}/mailFolders/{id}");
@@ -8197,19 +9466,20 @@ fn mover_pasta_graph(
     prefix: &str,
     id: &str,
     destino: &str,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, ErroGraph> {
     let url = format!("{GRAPH}/{prefix}/mailFolders/{id}/move");
     let body = serde_json::json!({ "destinationId": destino });
     // Sob o pool + retry central (#64): Retry-After + jitter.
     let resp = graph_enviar("mail:mover-pasta", GRAPH_TETO_ESPERA_S, || {
         client.post(&url).bearer_auth(token).json(&body).send()
     })
-    .map_err(|e| format!("falha ao mover a pasta: {e}"))?;
+    .map_err(|e| ErroGraph::Transporte(format!("falha ao mover a pasta: {e}")))?;
     let st = resp.status();
     if !st.is_success() {
-        return Err(erro_escrita(prefix, "mover pasta", st));
+        return Err(ErroGraph::da_resposta(prefix, "mover pasta", st));
     }
-    resp.json::<serde_json::Value>().map_err(|e| e.to_string())
+    resp.json::<serde_json::Value>()
+        .map_err(|e| ErroGraph::Transporte(e.to_string()))
 }
 
 /// Move uma pasta para dentro de `novo_pai` (#90). O front impede escolher a
@@ -8222,9 +9492,10 @@ pub fn cr_mover_pasta(
     mailbox: Option<&str>,
 ) -> Result<PastaEmail, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
-    let v = mover_pasta_graph(&client, &token, &prefix, id, novo_pai)?;
+    let v = mover_pasta_graph(&client, &token, &prefix, id, novo_pai)
+        .map_err(ErroGraph::mensagem)?;
     Ok(pasta_de_json(&v))
 }
 
@@ -8248,12 +9519,22 @@ pub fn cr_excluir_pasta(
     mailbox: Option<&str>,
 ) -> Result<bool, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     match mover_pasta_graph(&client, &token, &prefix, id, "deleteditems") {
         Ok(_) => Ok(true),
-        Err(e) if eh_erro_permissao(&e) => Err(e),
+        // Sem permissao nao adianta tentar o DELETE — daria 403 igual. Nos
+        // demais casos o fallback vale a viagem. A decisao le o TIPO (#1075 RB47);
+        // antes um erro de TRANSPORTE com "403" no texto pulava o fallback.
+        Err(e) if e.eh_permissao() => Err(e.mensagem()),
+        // #1075 RB47: erro transitório (transporte/5xx/429) NÃO escala para o
+        // DELETE definitivo — o doc acima sempre prometeu isso, mas com `String`
+        // não dava para distinguir e o fallback pegava tudo.
+        Err(e) if !e.cabe_fallback_delete() => {
+            log::warn!("[mail] excluir pasta '{id}': falha transitória, sem fallback ({e})");
+            Err(e.mensagem())
+        }
         Err(e) => {
             log::warn!(
                 "[mail] excluir pasta '{id}': move p/ lixeira falhou ({e}); tentando DELETE"
@@ -8273,64 +9554,6 @@ pub fn cr_excluir_pasta(
             }
         }
     }
-}
-
-/// Conta, na PASTA inteira (não só no que está carregado), quantas mensagens
-/// batem com um filtro. Usa o endpoint /$count, que devolve um número puro
-/// (texto) no corpo — daí o parse para u64. O $filter exige o header
-/// ConsistencyLevel: eventual. Retry no 429. Mail.Read.
-///
-/// `filtro` aceita:
-///   - "flagged" → mensagens sinalizadas (flag/flagStatus eq 'flagged')
-///   - "anexos"  → mensagens com anexos (hasAttachments eq true)
-/// Qualquer outro valor é rejeitado com erro (em vez de contar tudo em
-/// silêncio, o que enganaria a UI): assim um filtro digitado errado aparece
-/// como falha em vez de virar um total sem sentido.
-pub fn cr_contar(
-    store: &TokenStore,
-    folder_id: &str,
-    filtro: &str,
-    mailbox: Option<&str>,
-) -> Result<u64, String> {
-    let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
-    let prefix = mailbox_prefix(mailbox);
-
-    // Mapeia o filtro lógico para a expressão OData. Desconhecido → erro.
-    let odata = match filtro {
-        "flagged" => "flag/flagStatus eq 'flagged'",
-        "anexos" => "hasAttachments eq true",
-        outro => return Err(format!("filtro desconhecido: '{outro}'")),
-    };
-
-    // O $filter vai percent-encodado; o /$count devolve o total como texto puro.
-    let url = format!(
-        "{GRAPH}/{prefix}/mailFolders/{folder_id}/messages/$count?$filter={}",
-        urlencoding::encode(odata)
-    );
-
-    // Sob o pool + retry central (#64): Retry-After + jitter. Contadores são a
-    // parte da rajada de abertura que mais tomava 429. O /$count com $filter
-    // exige ConsistencyLevel: eventual.
-    let resp = graph_enviar("mail:contar", GRAPH_TETO_ESPERA_S, || {
-        client
-            .get(&url)
-            .bearer_auth(&token)
-            .header("ConsistencyLevel", "eventual")
-            .send()
-    })
-    .map_err(|e| format!("falha ao contar: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!(
-            "/{prefix}/mailFolders/{folder_id}/messages/$count retornou {}",
-            resp.status()
-        ));
-    }
-    let corpo = resp.text().map_err(|e| e.to_string())?;
-    corpo
-        .trim()
-        .parse::<u64>()
-        .map_err(|e| format!("resposta do /$count não é um número ('{corpo}'): {e}"))
 }
 
 /// Os dois contadores por-pasta que a UI mostra nas abas (Sinalizados / Com
@@ -8364,7 +9587,7 @@ pub fn cr_contadores(
     mailbox: Option<&str>,
 ) -> Result<Contadores, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
     let prefix = mailbox_prefix(mailbox);
 
     // O `id` de cada sub-requisição casa a resposta de volta (o Graph não garante
@@ -8411,7 +9634,7 @@ fn contadores_de_batch(v: &serde_json::Value) -> Contadores {
     let mut out = Contadores::default();
     if let Some(items) = v["responses"].as_array() {
         for it in items {
-            if it["status"].as_u64().unwrap_or(0) != 200 {
+            if !leitura_status_ok(it["status"].as_u64().unwrap_or(0)) {
                 continue; // sub-falha → mantém 0 (degradação graciosa)
             }
             let n = it["body"]
@@ -9028,7 +10251,7 @@ mod testes_atoms_email {
 // `auth::buscar_foto` (bytes → data URI), mas aqui em LOTE via `$batch` do Graph
 // (até 20 sub-requisições por chamada) para não disparar 1 request por foto.
 //
-// Escopo: User.Read.All (admin consent já concedido; ver config::SCOPES). Só faz
+// Escopo: User.Read.All (admin consent já concedido; ver config::SCOPES_ORG). Só faz
 // sentido para remetente INTERNO — o filtro por domínio do tenant é do front
 // (fotos.ts), que já manda só e-mails internos.
 //
@@ -9065,7 +10288,7 @@ pub fn cr_fotos_contatos(
     use std::collections::{HashMap, HashSet};
 
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     // Normaliza (minúsculas), remove vazios/duplicatas e limita a 20 (teto do
     // $batch). O front já debouncia e manda no máximo 20, mas o teto aqui protege
@@ -9157,7 +10380,7 @@ fn batch_fotos(
                 None => continue,
             };
             let status = it["status"].as_u64().unwrap_or(0);
-            let res = if status == 200 {
+            let res = if leitura_status_ok(status) {
                 // O corpo binário vem base64 no próprio JSON do $batch. O
                 // content-type pode vir com capitalização variada.
                 let mime = it["headers"]["Content-Type"]
@@ -9235,7 +10458,7 @@ pub fn cr_insights_remetente(
     endereco: &str,
 ) -> Result<InsightsRemetente, String> {
     let token = access_token(store)?;
-    let client = reqwest::blocking::Client::new();
+    let client = cliente();
 
     let addr = endereco.trim().to_lowercase();
     if addr.is_empty() {
@@ -9376,4 +10599,65 @@ fn buscar_data(
     v["value"][0]["receivedDateTime"]
         .as_str()
         .map(|s| s.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::{Account, AccountKind, OrgStatus, Provider, TokenStore, Tokens};
+
+    /// Sessao com token vencido e SEM refresh: `access_token` falha na hora, sem
+    /// rede. E isso que torna os testes abaixo testes de COMPORTAMENTO e nao de
+    /// texto — se o gate do #803 sumir, a chamada escorrega ate o `access_token`
+    /// e o resultado vira `Err`.
+    fn store_sem_token(provider: Provider, tenant: &str) -> TokenStore {
+        let conta = Account {
+            display_name: "Teste".to_string(),
+            email: "teste@exemplo.com".to_string(),
+            initials: "T".to_string(),
+            photo: None,
+            organizacao: None,
+            provider,
+            account_kind: AccountKind::Personal,
+            org_status: OrgStatus::None,
+            domain: None,
+            tenant_id: None,
+            capabilities: Vec::new(),
+        };
+        TokenStore {
+            inner: std::sync::Mutex::new(Some(Tokens {
+                access_token: String::new(),
+                refresh_token: None,
+                expires_at: 0,
+                account: conta,
+                tenant: tenant.to_string(),
+                scopes: String::new(),
+            })),
+        }
+    }
+
+    /// #803 (gate perdido no PR #818): conta Google nao tem MS Graph People. O
+    /// gate tem que devolver lista vazia ANTES de pedir token — nunca tocar o
+    /// Graph nem gerar erro na cara do usuario.
+    #[test]
+    fn cr_pessoas_com_google_devolve_vazio_sem_pedir_token() {
+        let store = store_sem_token(Provider::Google, "common");
+        match cr_pessoas(&store, "ana") {
+            Ok(pessoas) => assert!(pessoas.is_empty(), "Google nao pode devolver pessoa"),
+            Err(e) => panic!("Google deveria sair pelo gate, veio erro: {e}"),
+        }
+    }
+
+    /// Controle adversarial do teste acima: se alguem "consertar" o gate
+    /// devolvendo vazio pra todo mundo, este teste quebra. Microsoft PRECISA
+    /// passar do gate e chegar no `access_token` (que aqui falha por falta de
+    /// sessao valida).
+    #[test]
+    fn cr_pessoas_com_microsoft_passa_do_gate_e_exige_token() {
+        let store = store_sem_token(Provider::Microsoft, crate::config::MS_PERSONAL_TENANT);
+        assert!(
+            cr_pessoas(&store, "ana").is_err(),
+            "Microsoft nao pode sair pelo gate do Google — tem que chegar no token"
+        );
+    }
 }

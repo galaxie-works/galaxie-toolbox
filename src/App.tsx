@@ -1,13 +1,18 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { telModuloAberto, telSessaoIniciada } from "@/lib/telemetria";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { registrarHandlersGlobais } from "@/lib/log";
 import { LoginScreen } from "@/screens/login";
-import { OnboardingEmpresaScreen } from "@/screens/onboarding-empresa";
 import { TierProvider } from "@/lib/tier-context";
 import { SitesScreen } from "@/screens/sites";
 import { AppsScreen } from "@/screens/apps";
-import { AtomsScreen } from "@/screens/atoms";
 import { ControlRoomScreen } from "@/screens/control-room";
 import { NavegadorScreen } from "@/screens/navegador";
 import {
@@ -32,10 +37,8 @@ import {
   type PeriodoLimpeza,
 } from "@/lib/navigator-history";
 import * as browser from "@/lib/browser";
-import { WindowsScreen } from "@/screens/windows";
 import { ArquivosScreen } from "@/screens/arquivos";
 import { ConfiguracoesScreen } from "@/screens/configuracoes";
-import { EmBreveScreen } from "@/screens/em-breve";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Atualizacao } from "@/components/atualizacao";
 import { TelaBloqueio } from "@/components/tela-bloqueio";
@@ -45,6 +48,19 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { MenuUsuario } from "@/components/user-menu";
+// #987: o sino do activity-dropdown vive na title bar (sempre visível). A máquina
+// de `ops` está no `useOpsAtivas` (montado UMA vez aqui); as transferências
+// seguem sendo disparadas pelo Explorer.
+import { ActivityDropdown } from "@/components/explorer/activity-dropdown";
+import { UndoPreviewDialog } from "@/components/explorer/undo-preview-dialog";
+import { useOpsAtivas } from "@/components/explorer/use-ops-ativas";
+// #1109: logo GALAXIE na title bar (clique = nova aba do Navigator).
+import { GalaxieLogo } from "@/components/ui/icons/marca/galaxie-logo";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Alert,
   AlertAction,
@@ -78,6 +94,39 @@ import {
   revelarAppEFecharSplash,
 } from "@/lib/splash";
 import { KeyRound } from "lucide-react";
+import { Spinner } from "@/components/ui/spinner";
+
+// #1025 (FE11, parte B): code-split das telas de baixa frequência — saem do
+// chunk `index` do boot e viram chunks próprios, carregados sob demanda quando o
+// usuário navega até elas. Bridge (control-room, keep-alive), Navigator e Login
+// seguem EAGER de propósito. Cada uso mora dentro de um <Suspense> (ver
+// TelaFallback) que só suspende no lazy — telas eager passam direto.
+const OnboardingEmpresaScreen = lazy(() =>
+  import("@/screens/onboarding-empresa").then((m) => ({
+    default: m.OnboardingEmpresaScreen,
+  })),
+);
+const AtomsScreen = lazy(() =>
+  import("@/screens/atoms").then((m) => ({ default: m.AtomsScreen })),
+);
+const WindowsScreen = lazy(() =>
+  import("@/screens/windows").then((m) => ({ default: m.WindowsScreen })),
+);
+const RemoteScreen = lazy(() =>
+  import("@/screens/remote").then((m) => ({ default: m.RemoteScreen })),
+);
+const EmBreveScreen = lazy(() =>
+  import("@/screens/em-breve").then((m) => ({ default: m.EmBreveScreen })),
+);
+
+/** Fallback centralizado enquanto o chunk da tela lazy chega (#1025). */
+function TelaFallback() {
+  return (
+    <div className="grid h-full place-items-center">
+      <Spinner className="size-6 text-muted-foreground" />
+    </div>
+  );
+}
 
 /**
  * Todo o app de verdade. Fica ABAIXO do ErrorBoundary (ver `App`): é esta árvore
@@ -86,6 +135,9 @@ import { KeyRound } from "lucide-react";
  */
 function AppInner() {
   const { idioma, t } = useIdioma();
+  // #987: assina o progresso das transferências (Tauri) UMA vez e expõe a fila +
+  // handlers pro sino da title bar e pro preview de undo (ambos app-level agora).
+  const atividade = useOpsAtivas();
   const setBridgeView = useAppStore((state) => state.setBridgeView);
   const reauthMissingScopes = useAppStore(
     (state) => state.reauthMissingScopes,
@@ -448,7 +500,7 @@ function AppInner() {
     // #555 (P0): fronteira de conta — zera TODO o estado tenant-scoped (mailbox,
     // agenda, organizations, branding, memos Rust, fotos…) antes de trocar de
     // conta, pra a conta nova não herdar dado do tenant anterior.
-    resetSessaoCompleta();
+    await resetSessaoCompleta();
     resetNavegadorSessao(); // #821: zera as abas in-memory da conta anterior
     try {
       // #695: `hint` = login_hint OPCIONAL; `provider` escolhe a porta (o backend
@@ -1002,7 +1054,7 @@ function AppInner() {
     await api.logout();
     // #555 (P0): fronteira de conta — reset completo de sessão (inclui fotos,
     // reauth, mailbox, agenda, organizations, branding, memos Rust…).
-    resetSessaoCompleta();
+    await resetSessaoCompleta();
     resetNavegadorSessao(); // #821: zera as abas in-memory da conta que saiu
     setUser(null);
     setEntrarComoPessoal(false); // #698: não herda o "entrar assim mesmo" pra próxima conta
@@ -1016,7 +1068,7 @@ function AppInner() {
     suspenderConfiguracaoNuvem();
     await api.logout();
     // #555 (P0): recuperação de bloqueio também sai da conta → reset completo.
-    resetSessaoCompleta();
+    await resetSessaoCompleta();
     resetNavegadorSessao(); // #821: zera as abas in-memory da conta que saiu
     setUser(null);
     setEntrarComoPessoal(false); // #698: idem — reset da fronteira de conta
@@ -1087,11 +1139,13 @@ function AppInner() {
   // AppUser do PS0).
   if (user.orgStatus === "uncontracted" && !entrarComoPessoal) {
     return (
-      <OnboardingEmpresaScreen
-        user={user}
-        onContinuar={() => setEntrarComoPessoal(true)}
-        onSair={() => void logout()}
-      />
+      <Suspense fallback={<TelaFallback />}>
+        <OnboardingEmpresaScreen
+          user={user}
+          onContinuar={() => setEntrarComoPessoal(true)}
+          onSair={() => void logout()}
+        />
+      </Suspense>
     );
   }
 
@@ -1145,12 +1199,12 @@ function AppInner() {
           />
         );
       case "remote":
+        // #1025: só o Remote é lazy aqui; o Bridge (control-room) segue eager e
+        // keep-alive, sem passar por Suspense — não suspende, não remonta.
         return (
-          <EmBreveScreen
-            titulo={t.emBreveRemote.titulo}
-            icone={TELAS.remote.icone}
-            descricao={t.emBreveRemote.descricao}
-          />
+          <Suspense fallback={<TelaFallback />}>
+            <RemoteScreen />
+          </Suspense>
         );
     }
   };
@@ -1168,12 +1222,20 @@ function AppInner() {
     <SidebarProvider className="h-svh" open={false} onOpenChange={() => {}}>
       <Atualizacao />
       <BarraJanela />
-      <AppSidebar
-        tela={tela}
-        onNavegar={navegarPara}
-        onAbrirApp={abrirUrlLivre}
-      />
+      <AppSidebar onAbrirApp={abrirUrlLivre} />
       <SidebarInset className="relative overflow-hidden">
+        {/* #1017: fora do Tauri (browser/pnpm dev) o app roda em MODO MOCK — as
+            leituras devolvem dado fake e as escrituras REJEITAM. Faixa fixa e não
+            dispensável avisa que NADA aqui é real, pra ninguém confundir o dev do
+            browser com o app de verdade (o mecanismo do "VERDE ≠ PRONTO"). */}
+        {!api.inTauri() && (
+          <div
+            role="status"
+            className="relative z-30 flex h-7 shrink-0 items-center justify-center bg-amber-500 px-4 text-center text-xs font-semibold text-amber-950"
+          >
+            {t.mockBanner.aviso}
+          </div>
+        )}
         <FundoApp className="pointer-events-none" />
 
         {/* #876: title bar estilo browser em UMA linha — sem breadcrumb nem busca
@@ -1186,6 +1248,36 @@ function AppInner() {
           data-tauri-drag-region
           className="relative z-10 flex h-11 shrink-0 items-stretch border-b border-border"
         >
+          {/* #1109 (AC do Wagner na #876): a marca GALAXIE mora aqui, no canto
+              esquerdo junto das tabs, em tamanho compatível com a altura de uma
+              tab (não mais ocupando a largura do rail). Clique = ABRE UMA ABA NOVA
+              com a home do Navigator ("Time to set sail" + command) — reusa o
+              `novaAba` do "+"/Ctrl+T; `setTela("navegador")` garante pousar no
+              Navigator mesmo vindo de outra tela. O botão é clicável apesar do
+              `data-tauri-drag-region` do pai (mesmo padrão do avatar/tabs). */}
+          <div
+            data-tauri-drag-region
+            className="flex shrink-0 items-center pr-1 pl-2.5"
+          >
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={t.sidebar.abrirNavegador}
+                  onClick={() => {
+                    setTela("navegador");
+                    novaAba();
+                  }}
+                  className="grid size-7 place-items-center rounded-lg transition-colors hover:bg-accent"
+                >
+                  <GalaxieLogo className="size-6" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" align="start">
+                {t.sidebar.abrirNavegador}
+              </TooltipContent>
+            </Tooltip>
+          </div>
           <div
             ref={setTabSlot}
             data-tauri-drag-region
@@ -1195,6 +1287,20 @@ function AppInner() {
             data-tauri-drag-region
             className="flex shrink-0 items-center gap-1.5 pr-[140px] pl-2"
           >
+            {/* #987: sino do activity-dropdown na fileira de chrome (à esquerda do
+                theme/avatar) — some quando não há atividade. Abre o dropdown
+                ANCORADO aqui (não flutua). */}
+            <ActivityDropdown
+              ops={atividade.ops}
+              agoraMs={atividade.agoraMs}
+              onCancelar={atividade.onCancelar}
+              onPausar={atividade.onPausar}
+              onResumir={atividade.onResumir}
+              onDispensar={atividade.onDispensar}
+              onDesfazer={atividade.onDesfazer}
+              desfeitos={atividade.desfeitos}
+              onLimparConcluidas={atividade.onLimparConcluidas}
+            />
             <ThemeToggle size="md" />
             <MenuUsuario
               user={user}
@@ -1204,6 +1310,15 @@ function AppInner() {
             />
           </div>
         </header>
+
+        {/* #987: preview de undo de transferência — app-level porque o "Desfazer"
+            é disparado pelo sino da title bar (visível em qualquer tela). */}
+        <UndoPreviewDialog
+          aberto={atividade.undoPreview !== null}
+          plan={atividade.undoPreview?.plan ?? null}
+          onConfirmar={atividade.confirmarUndo}
+          onCancelar={atividade.fecharUndoPreview}
+        />
 
         {reauthMissingScopes.length > 0 && !reauthDismissed && (
           <div className="relative z-20 px-4 pb-3">
@@ -1312,6 +1427,10 @@ function AppInner() {
             min-h-0: sem isso o flex-1 nao encolhe abaixo do conteudo e nao
             existe area rolavel nenhuma. */
         <ScrollArea className="relative z-10 min-h-0 flex-1">
+          {/* #1025: um único Suspense de nível alto cobre as telas lazy deste
+              bloco (Atoms, EmBreve, Windows). Sites é eager e passa direto —
+              Suspense só suspende no lazy. */}
+          <Suspense fallback={<TelaFallback />}>
           <main className="flex flex-col p-4 pt-0">
           {tela === "atoms" && (
             <AtomsScreen
@@ -1384,6 +1503,7 @@ function AppInner() {
               segue (label/rota são do S2/Vega). */}
           {tela === "caminhos-longos" && <WindowsScreen />}
           </main>
+          </Suspense>
         </ScrollArea>
         )}
       </SidebarInset>

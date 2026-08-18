@@ -1,12 +1,17 @@
 [package]
 name = "app"
-version = "0.40.1"
+version = "0.45.0"
 description = "GALAXIE"
 authors = ["Galaxie Works"]
 license = ""
 repository = ""
 edition = "2021"
-rust-version = "1.77.2"
+# #1076 (RB14): MSRV real do produto. `app` depende INCONDICIONALMENTE de
+# `galaxie-remote-net` (edition 2024) e, com `--features remote`, também de
+# remote-capture/remote-system-agent (edition 2024). Edition 2024 estabilizou no
+# Rust 1.85 — então 1.77.2 era uma declaração FALSA (o crate não compila em <1.85).
+# Ver a decisão registrada em AGENTS.md §8.
+rust-version = "1.85"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -22,12 +27,29 @@ tauri-build = { version = "2.6.3", features = [] }
 # por default pra o build padrão não precisar de OpenSSL. Os comandos `remote_*`
 # viram stubs (erro claro) quando OFF — o front degrada gracioso (#687-UI).
 default = []
-remote = ["dep:galaxie-remote-transport", "dep:galaxie-remote-capture"]
+# `openssl/vendored` faz o `openssl-sys` COMPILAR o OpenSSL a partir do fonte
+# (crate `openssl-src`) em vez de procurar um no sistema. Sem isso o build do
+# release quebra no runner do CI, que não tem toolchain OpenSSL instalado — e era
+# por isso que o instalador saía com o `remote_stub` em vez do Remote de verdade.
+# O atalho local continua valendo: `OPENSSL_NO_VENDOR=1` + `OPENSSL_DIR=...`
+# força o uso do OpenSSL do sistema e pula os ~10 min de compilação.
+remote = [
+  "dep:galaxie-remote-transport",
+  "dep:galaxie-remote-capture",
+  "dep:if-addrs",
+  "dep:openssl",
+  "openssl/vendored",
+]
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
+# #1129 L1: custódia da chave Ed25519 do device (identidade + DPAPI-NG). Núcleo
+# LEVE do remote-net (default features, SEM `client`/`authority`): só
+# assinatura/serde/windows_secret — nada de tokio/openssl no build default.
+galaxie-remote-net = { path = "../services/remote-net" }
+zeroize = "1"
 tauri = { version = "2.11.3", features = ["unstable"] }
 tauri-plugin-log = "2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
@@ -35,13 +57,15 @@ tiny_http = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
+# #1044 SEC8: sanitizador de árvore HTML (html5ever) — substitui o scrub textual
+# frágil do salvar_pdf por remoção real de conteúdo ativo (script/iframe/handlers).
+ammonia = "4"
 urlencoding = "2"
 open = "5"
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 tauri-plugin-window-state = "2.4.1"
 tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
 tauri-plugin-autostart = "2"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 argon2 = "0.5"
@@ -51,6 +75,10 @@ argon2 = "0.5"
 hickory-resolver = "0.24"
 # Explorer de Arquivos (#676): erro tipado, varredura paralela e pastas do SO.
 thiserror = "2"
+# #1047 (SEC7): canonicalização SEM o prefixo verbatim `\\?\` (que o
+# `std::fs::canonicalize` sempre adiciona no Windows) — assim a comparação
+# `starts_with` de diretório sensível não quebra por prefixo divergente.
+dunce = "1"
 rayon = "1"
 jwalk = "0.8"
 dirs = "5"
@@ -83,6 +111,16 @@ lru = "0.12"
 # Ligar só onde há toolchain OpenSSL: `cargo build --features remote`.
 galaxie-remote-transport = { path = "../services/remote-transport", features = ["webrtc", "input"], optional = true }
 galaxie-remote-capture = { path = "../services/remote-capture", optional = true }
+# Remote (#1108): enumeração de IPs de interface reais pra candidatos ICE host.
+# O bind fica em `0.0.0.0:0` (recebe em todas as interfaces), mas `0.0.0.0` NUNCA
+# pode virar candidato — o str0m rejeita ("ICE bad candidate: invalid ip
+# 0.0.0.0"). `if-addrs` dá todos os IPs de interface (cross-platform, sem
+# OpenSSL); geramos 1 candidato host por IP real. Gated na feature `remote` (só o
+# runtime Remote usa) pra o build padrão continuar enxuto.
+if-addrs = { version = "0.10.2", optional = true }
+# Dependência direta só pra poder ligar `openssl/vendored` na feature `remote`
+# (o consumidor real do OpenSSL é o str0m, via remote-transport).
+openssl = { version = "0.10", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
@@ -102,6 +140,9 @@ windows = { version = "0.61", features = [
     "Win32_System_Com",
     # #275 rework: SHCreateMemStream pro CapturePreview (snapshot-to-image).
     "Win32_UI_Shell",
+    # #1046 (SEC2): revelar_no_explorer sem shell — ILCreateFromPathW/ILFree/
+    # SHOpenFolderAndSelectItems (e o tipo ITEMIDLIST) vivem no submódulo Common.
+    "Win32_UI_Shell_Common",
     # #676 Explorer: GetLogicalDrives/GetDriveTypeW/GetDiskFreeSpaceExW/
     # GetVolumeInformationW pra listar drives com tipo, label e espaço.
     "Win32_Storage_FileSystem",

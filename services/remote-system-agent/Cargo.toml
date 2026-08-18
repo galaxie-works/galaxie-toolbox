@@ -8,13 +8,36 @@ publish = false
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 thiserror = "2.0.18"
+# Núcleo LEVE do remote-net (default = protocol/ticket/identity — gate do #971):
+# Capabilities + TicketVerifier sem arrastar tokio/opaque pro binário SYSTEM.
+galaxie-remote-net = { path = "../remote-net" }
+# Núcleo do remote-transport SEM webrtc (`default-features = false`): dá `Frame`/
+# `ControlMessage`/`InputEvent` pro `autorizar` (passo 3) sem puxar str0m/OpenSSL —
+# o pump com str0m liga a feature `webrtc` numa fatia posterior.
+galaxie-remote-transport = { path = "../remote-transport", default-features = false }
+
+[dev-dependencies]
+# só pra o teste do 2b-verify montar um ticket assinado real (SigningKey).
+ed25519-dalek = "2.2.0"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
   "Win32_Foundation",
   "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
+  # WTHelperProvDataFromStateData / WTHelperGetProvSignerFromChain / CRYPT_PROVIDER_*
+  # (extração do signer do estado do WinVerifyTrust — F1) exigem estes dois:
+  "Win32_Security_Cryptography_Catalog",
+  "Win32_Security_Cryptography_Sip",
+  "Win32_Security_WinTrust",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_Pipes",
   "Win32_System_RemoteDesktop",
   "Win32_System_StationsAndDesktops",
+  # GetSystemTimeAsFileTime (cinto de timing do F2).
+  "Win32_System_SystemInformation",
   "Win32_System_Threading",
 ] }
 

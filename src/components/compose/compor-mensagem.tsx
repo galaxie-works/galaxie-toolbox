@@ -19,20 +19,22 @@ import {
   FileIcon,
   FileSpreadsheetIcon,
   FileTextIcon,
-  FileType2Icon,
   HeadphonesIcon,
   ImageIcon,
-  StrikethroughIcon,
   Trash2Icon,
   UploadCloudIcon,
   UploadIcon,
   VideoIcon,
   XIcon,
 } from "lucide-react";
-// #500/#499: ícones animados da toolbar do composer (registry) + marca OneDrive.
+// #500/#499/#1062: ícones animados da toolbar do composer (registry) + marca
+// OneDrive. #1062 (UX12): Tachado e templates migrados do lucide cru pros
+// animados do registry, pra família ficar consistente com Bold/Italic/Underline.
 import { BoldIcon } from "@/components/ui/bold";
 import { ItalicIcon } from "@/components/ui/italic";
 import { UnderlineIcon } from "@/components/ui/underline";
+import { StrikethroughIcon } from "@/components/ui/strikethrough";
+import { FileType2Icon } from "@/components/ui/file-type-2";
 import { AttachFileIcon } from "@/components/ui/attach-file";
 import { PenToolIcon } from "@/components/ui/pen-tool";
 import { OneDriveIcon } from "@/components/ui/icons/marca/onedrive";
@@ -67,7 +69,11 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { crCompartilharOneDrive, type AnexoEnvio } from "@/lib/api";
+import {
+  crCompartilharOneDriveArquivo,
+  lerArquivoBytes,
+  type AnexoEnvio,
+} from "@/lib/api";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { type TemplateEmail } from "@/lib/templates";
 import { useAppStore } from "@/store";
@@ -238,23 +244,53 @@ function getFileIcon(file: File | FileMetadata) {
   return <FileIcon className={cls} />;
 }
 
+/** Decodifica base64 (do backend) em bytes, sem estourar a pilha. */
+function b64ParaBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
 /**
- * Abre o seletor de arquivo do sistema e devolve `{nome, bytes}` do que foi
- * escolhido, ou `null` se o usuário cancelou. Usa os plugins JS do Tauri
- * (dialog/fs), então só funciona dentro do app.
+ * Abre o seletor de arquivo do sistema e devolve os CAMINHOS escolhidos (ou vazio
+ * se o usuário cancelou). SEC6 #1044: o front não lê mais o disco — só o diálogo é
+ * do plugin JS; a leitura dos bytes é do backend (`lerArquivoBytes` /
+ * `crCompartilharOneDriveArquivo`), então a capability `fs:allow-read-file` some.
  */
-async function escolherArquivos(): Promise<{ nome: string; bytes: Uint8Array }[]> {
+async function escolherCaminhos(): Promise<string[]> {
   const { open } = await import("@tauri-apps/plugin-dialog");
-  const { readFile } = await import("@tauri-apps/plugin-fs");
   const escolhido = await open({ multiple: true, directory: false });
   if (!escolhido) return [];
   const caminhos = Array.isArray(escolhido) ? escolhido : [escolhido];
-  const arquivos: { nome: string; bytes: Uint8Array }[] = [];
-  for (const c of caminhos) {
-    if (typeof c !== "string") continue;
-    arquivos.push({ nome: nomeDoCaminho(c), bytes: await readFile(c) });
-  }
-  return arquivos;
+  return caminhos.filter((c): c is string => typeof c === "string");
+}
+
+/**
+ * #1062 (UX12): affordance de teclado nos ícones animados da toolbar. Os ícones
+ * do registry (bold/italic/underline/strikethrough/pen-tool/attach-file/file-type-2)
+ * expõem `startAnimation`/`stopAnimation` via ref (modo controlado). Este hook
+ * devolve [ref, handlers] pra pendurar os handlers NO BOTÃO — assim a mesma
+ * animação do hover dispara também no foco por Tab (o botão, dono do foco, dirige
+ * o ícone filho). Mantém o hover porque o modo controlado delega o mouse do ícone
+ * pros handlers do botão.
+ */
+interface AnimatedIconHandle {
+  startAnimation: () => void;
+  stopAnimation: () => void;
+}
+function useIconAnim() {
+  const ref = useRef<AnimatedIconHandle | null>(null);
+  const handlers = useMemo(
+    () => ({
+      onMouseEnter: () => ref.current?.startAnimation(),
+      onMouseLeave: () => ref.current?.stopAnimation(),
+      onFocus: () => ref.current?.startAnimation(),
+      onBlur: () => ref.current?.stopAnimation(),
+    }),
+    []
+  );
+  return [ref, handlers] as const;
 }
 
 export const ComporMensagem = forwardRef<
@@ -403,6 +439,17 @@ export const ComporMensagem = forwardRef<
   });
   const edRef = useRef<HTMLDivElement>(null);
 
+  // #1062 (UX12): um ref+handlers por ícone animado da toolbar (foco por Tab
+  // dispara a mesma animação do hover). PenTool aparece em 3 caminhos condicionais
+  // mas só 1 renderiza por vez → compartilha o mesmo ref.
+  const [boldRef, boldAnim] = useIconAnim();
+  const [italicRef, italicAnim] = useIconAnim();
+  const [underlineRef, underlineAnim] = useIconAnim();
+  const [strikeRef, strikeAnim] = useIconAnim();
+  const [penRef, penAnim] = useIconAnim();
+  const [fileTypeRef, fileTypeAnim] = useIconAnim();
+  const [attachRef, attachAnim] = useIconAnim();
+
   useImperativeHandle(ref, () => ({
     getPara: () => para,
     getCc: () => cc,
@@ -465,14 +512,20 @@ export const ComporMensagem = forwardRef<
    */
   async function anexarArquivo() {
     try {
-      const arqs = await escolherArquivos();
-      if (arqs.length === 0) return;
-      const novos = arqs.map((arq) => {
-        // Cópia para um ArrayBuffer "puro" (o Uint8Array do Tauri não casa com
-        // BlobPart por causa da união com SharedArrayBuffer).
-        const buffer = new ArrayBuffer(arq.bytes.byteLength);
-        new Uint8Array(buffer).set(arq.bytes);
-        return new File([buffer], arq.nome, { type: tipoPorNome(arq.nome) });
+      const caminhos = await escolherCaminhos();
+      if (caminhos.length === 0) return;
+      // SEC6 #1044: o backend lê os bytes (com guards + cap de 25MB) e devolve
+      // base64; montamos o `File` a partir disso — sem `readFile` do plugin `fs`.
+      const lidos = await Promise.all(caminhos.map((c) => lerArquivoBytes(c)));
+      const novos = lidos.map((ac) => {
+        const bytes = b64ParaBytes(ac.bytesB64);
+        // Cópia para um ArrayBuffer "puro" (o Uint8Array não casa com BlobPart
+        // por causa da união com SharedArrayBuffer).
+        const buffer = new ArrayBuffer(bytes.byteLength);
+        new Uint8Array(buffer).set(bytes);
+        return new File([buffer], ac.nome, {
+          type: ac.contentType || tipoPorNome(ac.nome),
+        });
       });
       addFiles(novos);
     } catch (e) {
@@ -488,25 +541,30 @@ export const ComporMensagem = forwardRef<
     if (compartilhando) return;
     setCompartilhando(true);
     try {
-      const arqs = await escolherArquivos();
-      if (arqs.length === 0) return;
-      for (const arq of arqs) {
-        const webUrl = await crCompartilharOneDrive(arq.nome, bytesParaB64(arq.bytes));
+      const caminhos = await escolherCaminhos();
+      if (caminhos.length === 0) return;
+      // SEC6 #1044: passamos o CAMINHO; o backend lê o disco e sobe os bytes crus
+      // (sem base64 do arquivo inteiro no WebView). Bom para arquivos grandes.
+      for (const caminho of caminhos) {
+        const nome = nomeDoCaminho(caminho);
+        const webUrl = await crCompartilharOneDriveArquivo(caminho);
         inserirNoFim([
           {
             type: "p",
             children: [
               { text: "" },
-              { type: KEYS.link, url: webUrl, children: [{ text: arq.nome }] },
+              { type: KEYS.link, url: webUrl, children: [{ text: nome }] },
               { text: "" },
             ],
           },
         ]);
       }
       toast.success(
-        arqs.length > 1
-          ? preencher(t.compose.linksInseridos, { n: arqs.length })
-          : preencher(t.compose.linkInserido, { nome: arqs[0]?.nome ?? "" })
+        caminhos.length > 1
+          ? preencher(t.compose.linksInseridos, { n: caminhos.length })
+          : preencher(t.compose.linkInserido, {
+              nome: nomeDoCaminho(caminhos[0] ?? ""),
+            })
       );
     } catch (e) {
       toast.error(t.compose.falhaOneDrive, {
@@ -590,29 +648,33 @@ export const ComporMensagem = forwardRef<
             nodeType={KEYS.bold}
             label={t.compose.negrito}
             shortcut={{ primary: true, key: "B" }}
+            {...boldAnim}
           >
-            <BoldIcon />
+            <BoldIcon ref={boldRef} />
           </ShortcutMarkToolbarButton>
           <ShortcutMarkToolbarButton
             nodeType={KEYS.italic}
             label={t.compose.italico}
             shortcut={{ primary: true, key: "I" }}
+            {...italicAnim}
           >
-            <ItalicIcon />
+            <ItalicIcon ref={italicRef} />
           </ShortcutMarkToolbarButton>
           <ShortcutMarkToolbarButton
             nodeType={KEYS.underline}
             label={t.compose.sublinhado}
             shortcut={{ primary: true, key: "U" }}
+            {...underlineAnim}
           >
-            <UnderlineIcon />
+            <UnderlineIcon ref={underlineRef} />
           </ShortcutMarkToolbarButton>
           <ShortcutMarkToolbarButton
             nodeType={KEYS.strikethrough}
             label={t.compose.tachado}
             shortcut={{ primary: true, shift: true, key: "M" }}
+            {...strikeAnim}
           >
-            <StrikethroughIcon />
+            <StrikethroughIcon ref={strikeRef} />
           </ShortcutMarkToolbarButton>
           <BulletedListToolbarButton />
           <LinkToolbarButton />
@@ -627,16 +689,18 @@ export const ComporMensagem = forwardRef<
                 fecharCompose();
                 abrirConfigAssinaturas();
               }}
+              {...penAnim}
             >
-              <PenToolIcon />
+              <PenToolIcon ref={penRef} />
             </ToolbarButton>
           ) : assinaturas.length === 1 ? (
             <ToolbarButton
               tooltip={t.compose.inserirAssinatura}
               aria-label={t.compose.inserirAssinatura}
               onClick={() => inserirAssinatura()}
+              {...penAnim}
             >
-              <PenToolIcon />
+              <PenToolIcon ref={penRef} />
             </ToolbarButton>
           ) : (
             <DropdownMenu modal={false}>
@@ -645,8 +709,9 @@ export const ComporMensagem = forwardRef<
                   tooltip={t.compose.assinaturaEscolher}
                   aria-label={t.compose.assinaturaEscolher}
                   isDropdown
+                  {...penAnim}
                 >
-                  <PenToolIcon />
+                  <PenToolIcon ref={penRef} />
                 </ToolbarButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
@@ -671,8 +736,9 @@ export const ComporMensagem = forwardRef<
                 tooltip={t.templates.inserir}
                 aria-label={t.templates.inserir}
                 isDropdown
+                {...fileTypeAnim}
               >
-                <FileType2Icon />
+                <FileType2Icon ref={fileTypeRef} />
               </ToolbarButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -699,8 +765,9 @@ export const ComporMensagem = forwardRef<
             tooltip={t.compose.anexarArquivo}
             aria-label={t.compose.anexarArquivo}
             onClick={anexarArquivo}
+            {...attachAnim}
           >
-            <AttachFileIcon />
+            <AttachFileIcon ref={attachRef} />
           </ToolbarButton>
           <ToolbarButton
             tooltip={t.compose.compartilharOneDrive}

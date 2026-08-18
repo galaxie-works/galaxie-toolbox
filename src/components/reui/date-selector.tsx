@@ -1233,6 +1233,7 @@ export function DateSelector({
               <button
                 type="button"
                 onClick={clearSelection}
+                aria-label={mergedI18n.clear}
                 className={cn(
                   // Base Styles
                   "rounded-xs absolute end-2.5 top-1/2 size-4 -translate-y-1/2 cursor-pointer",

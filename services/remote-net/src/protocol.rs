@@ -50,15 +50,13 @@ pub enum NetMessage {
     SessionSignal(SessionSignal),
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Capabilities {
-    pub screen: bool,
-    pub input: bool,
-    pub file_transfer: bool,
-    pub clipboard: bool,
-    pub audio: bool,
-}
+/// Capabilities da sessão remota — assinado no ticket S8 e o que cruza o IPC do app.
+///
+/// #1070 RB7 (decisão do Altair, #1234): o tipo agora MORA no crate folha
+/// `galaxie-remote-capabilities` — o contrato entre quem CONCEDE (aqui) e quem APLICA
+/// (`remote-transport`), num terceiro lugar em vez de dep entre irmãos. Reexportado
+/// aqui pra `galaxie_remote_net::protocol::Capabilities` seguir válido pros consumidores.
+pub use galaxie_remote_capabilities::Capabilities;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

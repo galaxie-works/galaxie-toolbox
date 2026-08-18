@@ -1,6 +1,31 @@
 //! Integracoes com o Windows: habilitar caminhos longos (>260) no registro e
 //! abrir a biblioteca no Explorer.
 
+// --- Decisoes puras (cross-platform, testaveis sem registro/Explorer) -------
+
+/// Predicado de match de conta OneDrive: casa por e-mail (case-insensitive) ou,
+/// se o e-mail estiver vazio, por tenant. Extraido de `onedrive_root` pra ser
+/// testavel sem HKCU. Mesma semantica do `if` inline original.
+pub(crate) fn conta_casa(email: &str, tenant: &str, mail: &str, tid: &str) -> bool {
+    (!email.is_empty() && mail.eq_ignore_ascii_case(email))
+        || (!tenant.is_empty() && tid.eq_ignore_ascii_case(tenant))
+}
+
+/// Escolhe o alvo a abrir no Explorer: a pasta da biblioteca se ela existe,
+/// senao a raiz do OneDrive. `alvo_existe` e o `target.exists()` calculado pelo
+/// caller (mantem esta funcao pura). Extraido de `open_in_explorer`.
+pub(crate) fn escolher_alvo(
+    base: &std::path::Path,
+    name: &str,
+    alvo_existe: bool,
+) -> std::path::PathBuf {
+    if alvo_existe {
+        base.join(name)
+    } else {
+        base.to_path_buf()
+    }
+}
+
 /// Le se LongPathsEnabled ja esta ligado (leitura de HKLM nao exige admin).
 #[cfg(windows)]
 pub fn long_paths_enabled() -> bool {
@@ -57,9 +82,7 @@ pub fn onedrive_root(email: &str, tenant: &str) -> Option<std::path::PathBuf> {
         let mail = k.get_value::<String, _>("UserEmail").unwrap_or_default();
         let tid = k.get_value::<String, _>("ConfiguredTenantId").unwrap_or_default();
 
-        if (!email.is_empty() && mail.eq_ignore_ascii_case(email))
-            || (!tenant.is_empty() && tid.eq_ignore_ascii_case(tenant))
-        {
+        if conta_casa(email, tenant, &mail, &tid) {
             log::info!("[explorer] conta '{nome}' casou ({mail}) -> {pasta}");
             return Some(std::path::PathBuf::from(pasta));
         }
@@ -82,38 +105,78 @@ pub fn open_in_explorer(name: &str, email: &str, tenant: &str) -> Result<(), Str
         .or_else(|| std::env::var("OneDrive").ok().map(Into::into))
         .ok_or("nao encontrei a pasta do OneDrive desta conta")?;
     let target = base.join(name);
-    let to_open = if target.exists() { target } else { base };
+    let existe = target.exists();
+    let to_open = escolher_alvo(&base, name, existe);
     open::that(to_open).map_err(|e| format!("falha ao abrir o Explorer: {e}"))
 }
 
-/// Abre um arquivo com o aplicativo padrao do Windows. O "" e o argumento de
-/// titulo do `start` (sem ele, um caminho entre aspas seria lido como titulo).
+/// Abre um arquivo com o aplicativo padrao do Windows.
+///
+/// #1046 (SEC2): ANTES usava `cmd /C start "" <path>`. O `cmd.exe` reinterpreta
+/// metacaracteres de shell (`&`, `|`, `^`, `>`), entao um `path` hostil como
+/// `arquivo & calc.exe` executava um comando extra (injecao de comando). Agora
+/// usa `open::that`, que entrega o caminho como ARGUMENTO UNICO ao ShellExecute
+/// (sem montar linha de shell) — a injecao deixa de existir por construcao.
 #[cfg(windows)]
 pub fn abrir_caminho(path: &str) -> Result<(), String> {
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", path])
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("falha ao abrir o arquivo: {e}"))
+    open::that(path).map_err(|e| format!("falha ao abrir o arquivo: {e}"))
 }
 
 /// Abre o Explorer com o arquivo selecionado e a pasta em foco.
 ///
-/// #639: o `path` do "Salvar como…" (nome = assunto sanitizado) quase sempre TEM
-/// ESPAÇO. Com `.arg("/select,{path}")` o Rust quota o TOKEN INTEIRO —
-/// `explorer "/select,C:\...\Fatura de julho.pdf"` — e o Explorer não reconhece o
-/// `/select,` dentro das aspas → ignora e abre o Documentos. Correção: `raw_arg`
-/// com o `/select,` FORA das aspas e só o PATH entre aspas
-/// (`explorer /select,"C:\...\arquivo.pdf"`), a forma que o Explorer aceita. O
-/// nome é sanitizado (sem `"`) e caminho do Windows não tem `"`, então é seguro.
+/// #1046 (SEC2): ANTES montava `explorer /select,"<path>"` concatenando as aspas
+/// à mão via `raw_arg` — um `path` contendo `"` quebrava o argumento (injeção de
+/// argumento pro `explorer`). Agora usa a API COM do Shell
+/// (`SHOpenFolderAndSelectItems`): o caminho vira um PIDL, sem NENHUMA linha de
+/// comando nem aspas pra escapar. Mesmo resultado visual do #639 (item
+/// selecionado, pasta em foco), sem o vetor de aspas.
 #[cfg(windows)]
 pub fn revelar_no_explorer(path: &str) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    std::process::Command::new("explorer")
-        .raw_arg(format!("/select,\"{path}\""))
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("falha ao abrir o Explorer: {e}"))
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED,
+    };
+    use windows::Win32::UI::Shell::{ILCreateFromPathW, ILFree, SHOpenFolderAndSelectItems};
+
+    // Caminho -> UTF-16 terminado em NUL pra PCWSTR (mantido vivo durante a chamada).
+    let wide: Vec<u16> = std::ffi::OsStr::new(path)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        // Inicializa COM neste thread (STA). RPC_E_CHANGED_MODE = COM já estava
+        // inicializado em outro modo → toleramos e seguimos. Só desfazemos com
+        // CoUninitialize se ESTE código inicializou (S_OK/S_FALSE), pra não
+        // desbalancear a contagem de quem já tinha COM montado.
+        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if hr.is_err() && hr != RPC_E_CHANGED_MODE {
+            return Err(format!("falha ao inicializar COM: {hr:?}"));
+        }
+        let deve_uninit = hr.is_ok();
+
+        // ILCreateFromPathW aloca um PIDL absoluto pro caminho.
+        let pidl = ILCreateFromPathW(PCWSTR(wide.as_ptr()));
+        if pidl.is_null() {
+            if deve_uninit {
+                CoUninitialize();
+            }
+            return Err("caminho inválido ou inexistente ao revelar no Explorer".into());
+        }
+
+        // apidl=None + dwflags=0 → seleciona o próprio item apontado pelo PIDL
+        // dentro da pasta-pai (abre a pasta e foca o arquivo).
+        let r = SHOpenFolderAndSelectItems(pidl, None, 0);
+
+        ILFree(Some(pidl));
+        if deve_uninit {
+            CoUninitialize();
+        }
+
+        r.map_err(|e| format!("falha ao abrir o Explorer: {e}"))
+    }
 }
 
 // --- Stubs para plataformas nao-Windows (dev/CI) ---
@@ -141,4 +204,37 @@ pub fn abrir_caminho(_path: &str) -> Result<(), String> {
 #[cfg(not(windows))]
 pub fn revelar_no_explorer(_path: &str) -> Result<(), String> {
     Err("disponivel apenas no Windows".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn conta_casa_por_email_exato_case_insensitive() {
+        assert!(conta_casa("wagner@voaz.com", "", "wagner@voaz.com", "tid-1"));
+        // caixa diferente nos dois lados -> ainda casa
+        assert!(conta_casa("A@B.com", "", "a@b.COM", ""));
+    }
+
+    #[test]
+    fn conta_casa_por_tenant_quando_email_vazio() {
+        assert!(conta_casa("", "TENANT-123", "outro@x.com", "tenant-123"));
+    }
+
+    #[test]
+    fn conta_casa_falha_sem_criterio_ou_com_valores_diferentes() {
+        // email e tenant vazios -> nunca casa
+        assert!(!conta_casa("", "", "qualquer@x.com", "tid"));
+        // mail/tid diferentes do procurado -> nao casa
+        assert!(!conta_casa("wagner@voaz.com", "tid-1", "outro@x.com", "tid-2"));
+    }
+
+    #[test]
+    fn escolher_alvo_usa_subpasta_se_existe_senao_a_base() {
+        let base = Path::new("C:/OneDrive");
+        assert_eq!(escolher_alvo(base, "Biblioteca", true), base.join("Biblioteca"));
+        assert_eq!(escolher_alvo(base, "Biblioteca", false), base.to_path_buf());
+    }
 }

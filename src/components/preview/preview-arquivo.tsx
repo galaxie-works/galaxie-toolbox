@@ -4,8 +4,9 @@
  * Extraído do `preview-anexo.tsx` do Bridge (#178 · #188 · #189 · #450 · #451 ·
  * #452 · #496 · #532 · #552) para ser REUSADO — não copiado — pelo Explorer de
  * Arquivos (#675). Renderiza **PDF** (pdf.js, canvas), **TXT** (`<pre>`), **docx**
- * (docx-preview → HTML sanitizado), **xlsx** (SheetJS → grid), **csv**, **imagem**
- * e **áudio/vídeo** direto no app, sem sair dele. Formatos fora do escopo e
+ * (docx-preview → HTML sanitizado), **xlsx** (Univer → grid canvas nativo, #942),
+ * **csv**, **imagem** e **áudio/vídeo** direto no app, sem sair dele. Formatos
+ * fora do escopo e
  * arquivos grandes caem para a ação primária (Salvar no Bridge / Abrir no Files).
  *
  * A fonte dos bytes é parametrizada (`FontePreview`):
@@ -20,9 +21,17 @@
  *   same-origin), o docx ainda com **CSP** (`default-src 'none'`). HTML
  *   sanitizado (DOMPurify) antes do `srcDoc` (nos módulos de render).
  * - PDF roda no pdf.js sem `PDFScriptingManager` e o v6 não usa `eval`
- *   (ver `lib/pdf-preview.ts`). xlsx nunca avalia fórmula. Sem rede.
+ *   (ver `lib/pdf-preview.ts`). Sem rede.
+ * - **xlsx (mudança de postura, #942):** desde a troca do render legado
+ *   (xlsx-preview/exceljs → HTML) pelo **Univer**, o xlsx NÃO passa mais pela
+ *   moldura `<iframe sandbox="">`+CSP que docx/txt/html ainda usam — o Univer
+ *   desenha num grid canvas/DOM DENTRO do app. A garantia passa a ser de DADO:
+ *   só valores/estilos JÁ PARSEADOS chegam ao Univer — nunca o campo `f`
+ *   (fórmula não é reavaliada), sem web worker (`workerURL` ausente) e sem rede.
+ *   Como nada do arquivo é executado, o conteúdo é inerte. Ver `lib/univer-xlsx.ts`.
  */
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import DOMPurify from "dompurify";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
@@ -48,9 +57,30 @@ import {
 import { renderDocxParaHtml } from "@/lib/docx-render";
 import { preencher, useIdioma } from "@/lib/idioma";
 import { carregarPdf, renderizarPagina } from "@/lib/pdf-preview";
-import { renderXlsxParaHtml, type XlsxRender } from "@/lib/xlsx-render";
-import { cn } from "@/lib/utils";
-import { parseCsv, type CsvTabela } from "@/lib/csv-render";
+// #942: viewer read-only do Univer carregado SOB DEMANDA (React.lazy). O Univer
+// + exceljs (~1.6 MB) só entram num chunk lazy separado quando o usuário abre um
+// xlsx — nunca no chunk `index` do boot (mesma falha do #873: chunk dinâmico que
+// não baixava no app empacotado; aqui o Univer é ESM e chunka limpo).
+const UniverXlsxViewer = lazy(() =>
+  import("@/components/preview/univer-xlsx-viewer").then((m) => ({
+    default: m.UniverXlsxViewer,
+  })),
+);
+// #956 (SPIKE, Path B): viewer de docx com MOLDURA endurecida (fit-to-width +
+// tema), carregado sob demanda espelhando o padrão do xlsx. O `docx-preview` em
+// si já é code-split dentro de `renderDocxParaHtml`; aqui a lazy é por paridade
+// de padrão e pra manter a moldura fora do chunk `index`.
+const DocxPreviewViewer = lazy(() =>
+  import("@/components/preview/docx-preview-viewer").then((m) => ({
+    default: m.DocxPreviewViewer,
+  })),
+);
+import {
+  parseCsv,
+  decodificarTexto,
+  calcularColunasCsv,
+  type CsvTabela,
+} from "@/lib/csv-render";
 import type { AnexoEmail } from "@/lib/types";
 import {
   Alert,
@@ -153,7 +183,8 @@ export function PreviewArquivo({
   const [docxHtml, setDocxHtml] = useState<string | null>(null);
   // #873 fix: HTML de arquivo local/anexo, já sanitizado, pro HtmlSandboxViewer.
   const [htmlDoc, setHtmlDoc] = useState<string | null>(null);
-  const [xlsxDados, setXlsxDados] = useState<XlsxRender | null>(null);
+  // #942: bytes crus do xlsx p/ o viewer Univer (parsing/render no viewer lazy).
+  const [xlsxBytes, setXlsxBytes] = useState<Uint8Array | null>(null);
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [csv, setCsv] = useState<CsvTabela | null>(null);
   const [midiaUrl, setMidiaUrl] = useState<string | null>(null);
@@ -201,10 +232,11 @@ export function PreviewArquivo({
           const html = await renderDocxParaHtml(bytes);
           if (vivo) setDocxHtml(html);
         } else if (tipo === "xlsx") {
-          const dados = await renderXlsxParaHtml(bytes);
-          if (vivo) setXlsxDados(dados);
+          // #942: guarda os bytes; o UniverXlsxViewer (lazy) parseia e renderiza.
+          if (vivo) setXlsxBytes(bytes);
         } else if (tipo === "csv") {
-          if (vivo) setCsv(parseCsv(new TextDecoder("utf-8").decode(bytes)));
+          // #941: decodifica com fallback Latin-1 (Excel pt-BR) antes do parse.
+          if (vivo) setCsv(parseCsv(decodificarTexto(bytes)));
         } else if (tipo === "imagem") {
           // Object URL do blob (não data URL gigante). SVG entra como `<img>`,
           // que roda a imagem em "modo imagem" — scripts embutidos NÃO executam.
@@ -359,23 +391,48 @@ export function PreviewArquivo({
         ) : tipo === "pdf" && pdf ? (
           <PdfViewer doc={pdf} tp={tp} />
         ) : tipo === "docx" && docxHtml !== null ? (
-          <HtmlSandboxViewer
-            html={docxHtml}
-            rotulo={nome}
-            vazioTexto={tp.previewVazio}
-          />
+          // #956 (Path B): o docx-preview (fiel) num viewer com moldura endurecida
+          // — fit-to-width reader-mode + tema-aware, mantendo sandbox=""+CSP. Trocou
+          // o `HtmlSandboxViewer` genérico (que ficava "zoado": página física A4
+          // estourando o pane + wrapper cinza + sem tema). Univer Docs seria overkill
+          // (documento é HTML fluido, não grid — ver o spike do #942).
+          <Suspense
+            fallback={
+              <div className="space-y-2 p-4">
+                <Skeleton className="h-4 w-1/3" />
+                <Skeleton className="h-40 w-full" />
+              </div>
+            }
+          >
+            <DocxPreviewViewer
+              html={docxHtml}
+              rotulo={nome}
+              vazioTexto={tp.previewVazio}
+            />
+          </Suspense>
         ) : tipo === "html" && htmlDoc !== null ? (
           <HtmlSandboxViewer
             html={htmlDoc}
             rotulo={nome}
             vazioTexto={tp.previewVazio}
           />
-        ) : tipo === "xlsx" && xlsxDados !== null ? (
-          <XlsxViewer
-            dados={xlsxDados}
-            rotulo={nome}
-            vazioTexto={tp.previewVazio}
-          />
+        ) : tipo === "xlsx" && xlsxBytes !== null ? (
+          // #942: render read-only via Univer (grid canvas nativo, offline),
+          // carregado sob demanda (lazy). Fallback = skeleton enquanto o chunk chega.
+          <Suspense
+            fallback={
+              <div className="space-y-2 p-4">
+                <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  {tp.previewCarregandoPlanilha}
+                </p>
+                <Skeleton className="h-4 w-1/3" />
+                <Skeleton className="h-40 w-full" />
+              </div>
+            }
+          >
+            <UniverXlsxViewer bytes={xlsxBytes} vazioTexto={tp.previewVazio} />
+          </Suspense>
         ) : tipo === "imagem" && imgUrl ? (
           <ImagemViewer url={imgUrl} rotulo={nome} tp={tp} />
         ) : tipo === "csv" && csv ? (
@@ -450,8 +507,15 @@ function MidiaViewer({
   );
 }
 
-/** CSV: tabela com header fixo + scroll H/V. Header = 1ª linha; cap com aviso
- *  "mostrando N de M". Valores como texto (sem HTML) — seguro (#451). */
+/** Altura fixa da linha do grid CSV (`text-xs` + py-1). Uniforme → virtualização
+ *  com `estimateSize` constante, como o content-pane do Explorer (#941). */
+const ALTURA_LINHA_CSV = 28;
+
+/** CSV/TSV/PSV: GRID VIRTUALIZADO (#941). Só as linhas visíveis vão ao DOM
+ *  (`@tanstack/react-virtual`, mesmo padrão do `content-pane.tsx`), então não
+ *  trava em arquivo grande. Header fixo (sticky top) + coluna de nº fixa (sticky
+ *  left) coexistem com a virtualização; colunas alinham por tipo (numérica → à
+ *  direita, `tabular-nums`). Valores como texto puro (sem HTML) — seguro (#451). */
 function CsvViewer({
   tabela,
   vazioTexto,
@@ -461,49 +525,111 @@ function CsvViewer({
   vazioTexto: string;
   tp: PreviewStrings;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const cabecalho = tabela.linhas[0] ?? [];
+  const corpo = useMemo(() => tabela.linhas.slice(1), [tabela.linhas]);
+  const meta = useMemo(() => calcularColunasCsv(tabela.linhas), [tabela.linhas]);
+
+  // Coluna de nº: largura pela contagem de dígitos do total exibido.
+  const larguraRownum = Math.max(44, String(corpo.length).length * 8 + 20);
+  const larguraTotal =
+    larguraRownum + meta.larguras.reduce((s, w) => s + w, 0);
+
+  // Virtualização vertical: conta só o corpo; header é linha fixa fora do spacer.
+  const virtualizer = useVirtualizer({
+    count: corpo.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ALTURA_LINHA_CSV,
+    overscan: 12,
+  });
+
   if (tabela.linhas.length === 0) return <PreviewVazio texto={vazioTexto} />;
-  const [cabecalho, ...corpo] = tabela.linhas;
+
+  const colWidth = (j: number) => meta.larguras[j] ?? 96;
+  const alinharDir = (j: number) => meta.alinhamentos[j] === "num";
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {tabela.truncado && (
         <p className="border-b bg-muted/30 px-3 py-1 text-[11px] text-muted-foreground">
           {preencher(tp.previewCsvTruncado, {
-            n: tabela.linhas.length,
-            m: tabela.total,
+            n: corpo.length,
+            m: tabela.total - 1,
           })}
         </p>
       )}
-      <ScrollArea className="min-h-0 w-full flex-1">
-        <table className="w-max border-collapse text-xs">
-          <thead className="sticky top-0 z-10 bg-muted">
-            <tr>
-              <th className="border px-2 py-1" />
-              {(cabecalho ?? []).map((celula, j) => (
-                <th
-                  key={j}
-                  className="whitespace-nowrap border px-2 py-1 text-left font-medium"
-                >
-                  {celula}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {corpo.map((linha, i) => (
-              <tr key={i}>
-                <td className="sticky left-0 z-10 border bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground">
-                  {i + 1}
-                </td>
-                {linha.map((celula, j) => (
-                  <td key={j} className="whitespace-nowrap border px-2 py-1">
-                    {celula}
-                  </td>
-                ))}
-              </tr>
+      {/* Único container de scroll (H e V) — a virtualização mede este elemento.
+          #958: `scrollbar-fina` = scrollbar custom do app (mesmo do Explorer/Bridge),
+          no lugar do scrollbar padrão do browser (bug recorrente, cf. #767). */}
+      <div
+        ref={scrollRef}
+        className="min-h-0 w-full flex-1 overflow-auto scrollbar-fina"
+      >
+        <div style={{ width: larguraTotal }} className="text-xs">
+          {/* Header: sticky top; a célula-canto é sticky nos dois eixos. */}
+          <div className="sticky top-0 z-20 flex bg-muted font-medium">
+            <div
+              className="sticky left-0 z-10 shrink-0 border-r border-b bg-muted px-2 py-1"
+              style={{ width: larguraRownum }}
+            />
+            {meta.larguras.map((_, j) => (
+              <div
+                key={j}
+                className={`shrink-0 truncate border-r border-b px-2 py-1 ${
+                  alinharDir(j) ? "text-right" : "text-left"
+                }`}
+                style={{ width: colWidth(j) }}
+                title={cabecalho[j] ?? ""}
+              >
+                {cabecalho[j] ?? ""}
+              </div>
             ))}
-          </tbody>
-        </table>
-      </ScrollArea>
+          </div>
+          {/* Corpo virtualizado: spacer com a altura total + linhas absolutas. */}
+          <div
+            style={{ height: virtualizer.getTotalSize(), position: "relative" }}
+          >
+            {virtualizer.getVirtualItems().map((vr) => {
+              const linha = corpo[vr.index];
+              return (
+                <div
+                  key={vr.key}
+                  data-index={vr.index}
+                  className="flex"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    height: ALTURA_LINHA_CSV,
+                    transform: `translateY(${vr.start}px)`,
+                  }}
+                >
+                  <div
+                    className="sticky left-0 z-10 shrink-0 border-r border-b bg-muted/60 px-2 py-1 text-right tabular-nums text-muted-foreground"
+                    style={{ width: larguraRownum }}
+                  >
+                    {vr.index + 1}
+                  </div>
+                  {meta.larguras.map((_, j) => (
+                    <div
+                      key={j}
+                      className={`shrink-0 truncate border-r border-b px-2 py-1 ${
+                        alinharDir(j)
+                          ? "text-right tabular-nums"
+                          : "text-left"
+                      }`}
+                      style={{ width: colWidth(j) }}
+                      title={linha[j] ?? ""}
+                    >
+                      {linha[j] ?? ""}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -622,16 +748,39 @@ function TxtViewer({ texto, rotulo }: { texto: string; rotulo: string }) {
 /** Viewer de PDF: canvas do pdf.js + paginação + zoom. */
 function PdfViewer({ doc, tp }: { doc: PDFDocumentProxy; tp: PreviewStrings }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const areaRef = useRef<HTMLDivElement>(null);
   const [pagina, setPagina] = useState(1);
-  const [escala, setEscala] = useState(1.2);
+  // #957: `zoom` é FATOR relativo ao fit-to-width (1 = página ocupa a largura do
+  // pane). A escala real de render = fit × zoom, onde `fit` vem da largura do
+  // container medida (ResizeObserver) ÷ largura nativa da página. Assim o PDF
+  // encaixa no pane e re-encaixa ao redimensionar (não fica num 1.2 fixo).
+  const [zoom, setZoom] = useState(1);
+  const [larguraPane, setLarguraPane] = useState(0);
   const total = doc.numPages;
+
+  // #957: mede a largura útil do container e reflui ao redimensionar o pane.
+  useEffect(() => {
+    const area = areaRef.current;
+    if (!area) return;
+    const medir = () => setLarguraPane(area.clientWidth);
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(area);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || larguraPane <= 0) return;
     let cancelado = false;
     (async () => {
       try {
+        // Largura nativa da página (escala 1) → fit-to-width no espaço disponível
+        // (menos o padding lateral do container). Clamp pra não explodir.
+        const page = await doc.getPage(pagina);
+        const nativa = page.getViewport({ scale: 1 }).width || 1;
+        const fit = Math.max(0.1, (larguraPane - 24) / nativa);
+        const escala = Math.min(6, Math.max(0.1, fit * zoom));
         if (!cancelado) await renderizarPagina(doc, pagina, canvas, escala);
       } catch {
         /* render cancelado/troca de página — ignora */
@@ -640,11 +789,11 @@ function PdfViewer({ doc, tp }: { doc: PDFDocumentProxy; tp: PreviewStrings }) {
     return () => {
       cancelado = true;
     };
-  }, [doc, pagina, escala]);
+  }, [doc, pagina, zoom, larguraPane]);
 
   const irPara = (n: number) => setPagina(Math.min(total, Math.max(1, n)));
   const ajustarZoom = (delta: number) =>
-    setEscala((e) => Math.min(3, Math.max(0.5, +(e + delta).toFixed(2))));
+    setZoom((z) => Math.min(4, Math.max(0.25, +(z + delta).toFixed(2))));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -687,7 +836,7 @@ function PdfViewer({ doc, tp }: { doc: PDFDocumentProxy; tp: PreviewStrings }) {
           variant="ghost"
           size="icon"
           className="size-7"
-          onClick={() => setEscala(1.2)}
+          onClick={() => setZoom(1)}
           aria-label={tp.previewZoomReset}
         >
           <RotateCcw className="size-3.5" />
@@ -704,7 +853,10 @@ function PdfViewer({ doc, tp }: { doc: PDFDocumentProxy; tp: PreviewStrings }) {
       </div>
       {/* Página */}
       <ScrollArea className="min-h-0 w-full flex-1 bg-muted/20">
-        <div className="flex min-h-full justify-center p-3">
+        {/* #957: `areaRef` mede a largura útil (ResizeObserver) → fit-to-width. No
+            fit (zoom=1) o canvas ocupa a largura do pane (sem scroll horizontal);
+            o zoom-in aumenta e aí o scroll é intencional. */}
+        <div ref={areaRef} className="flex min-h-full justify-center p-3">
           <canvas ref={canvasRef} className="h-fit shadow-sm" />
         </div>
       </ScrollArea>
@@ -712,7 +864,7 @@ function PdfViewer({ doc, tp }: { doc: PDFDocumentProxy; tp: PreviewStrings }) {
   );
 }
 
-/** Estado vazio (docx/xlsx sem conteúdo renderável). */
+/** Estado vazio (docx/html sem conteúdo renderável). */
 function PreviewVazio({ texto }: { texto: string }) {
   return (
     <div className="p-6 text-center text-xs text-muted-foreground">{texto}</div>
@@ -720,11 +872,12 @@ function PreviewVazio({ texto }: { texto: string }) {
 }
 
 /**
- * Viewer de HTML não-confiável (docx e xlsx) — injeta o HTML **já sanitizado**
- * (DOMPurify, nos módulos `docx-render`/`xlsx-render`) num `<iframe sandbox="">`
+ * Viewer de HTML não-confiável (docx e html) — injeta o HTML **já sanitizado**
+ * (DOMPurify, no módulo `docx-render` / no fetch de html) num `<iframe sandbox="">`
  * com **CSP** estrita: `default-src 'none'` mata rede/script; `img-src data:`
  * deixa só as imagens embutidas (base64); `style-src 'unsafe-inline'` mantém a
- * folha do docx-preview / xlsx-preview. Nenhum script do documento executa.
+ * folha do docx-preview. Nenhum script do documento executa. (xlsx migrou para o
+ * Univer em canvas, #942 — não usa mais esta moldura.)
  */
 function HtmlSandboxViewer({
   html,
@@ -747,57 +900,5 @@ function HtmlSandboxViewer({
       title={rotulo}
       className="min-h-0 w-full flex-1 border-0 bg-white"
     />
-  );
-}
-
-/**
- * Preview de xlsx (#552): as ABAS de planilha ficam em React (fora do iframe) e
- * só a planilha ATIVA é injetada como HTML estático no `HtmlSandboxViewer`.
- * Evita o modo multi-sheet do xlsx-preview (`<object data=blob:>` + `<script>`),
- * que o `iframe sandbox=""` + CSP `default-src 'none'` BLOQUEIA (grid em branco).
- * Barra de abas embaixo (estilo Excel); some quando há só uma planilha.
- */
-function XlsxViewer({
-  dados,
-  rotulo,
-  vazioTexto,
-}: {
-  dados: XlsxRender;
-  rotulo: string;
-  vazioTexto: string;
-}) {
-  const [aba, setAba] = useState(0);
-  // Novo arquivo (dados troca) → volta pra 1ª planilha.
-  useEffect(() => setAba(0), [dados]);
-  if (dados.sheets.length === 0) return <PreviewVazio texto={vazioTexto} />;
-  const idx = Math.min(aba, dados.sheets.length - 1);
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <HtmlSandboxViewer
-        html={dados.sheets[idx]}
-        rotulo={`${rotulo} — ${dados.nomes[idx] ?? ""}`}
-        vazioTexto={vazioTexto}
-      />
-      {dados.sheets.length > 1 && (
-        <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-t bg-muted/30 px-2 py-1">
-          {dados.nomes.map((nome, i) => (
-            <button
-              key={`${nome}-${i}`}
-              type="button"
-              onClick={() => setAba(i)}
-              aria-current={i === idx ? "true" : undefined}
-              className={cn(
-                "shrink-0 rounded px-2 py-0.5 text-xs transition-colors",
-                i === idx
-                  ? "bg-background font-medium shadow-sm"
-                  : "text-muted-foreground hover:bg-background/60"
-              )}
-            >
-              {nome}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
