@@ -276,6 +276,13 @@ pub mod windows_runtime {
         String::from_utf16(&buffer[..end]).map_err(|_| AgentError::DesktopName)
     }
 
+    /// Loop do worker LocalSystem: valida identidade/sessão, troca de desktop e
+    /// mantém o contexto de captura vivo até o `stop_event`.
+    ///
+    /// ⚠️ #1070 RB4: este `run` **NÃO cria o pipe de sessão nem verifica o ticket** —
+    /// o [`crate::pipe_server::PipeServer`] existe, é testado, e fica **não-integrado**
+    /// (marcado no doc dele) até o wiring do worker↔owner do S7 #690. Não confundir a
+    /// ausência do fio com abandono: é espera.
     pub fn run(args: &AgentArgs) -> Result<(), AgentError> {
         verify_system_identity()?;
         verify_session(args.session_id)?;

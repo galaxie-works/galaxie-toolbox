@@ -172,6 +172,7 @@ dependencies = [
 name = "galaxie-remote-transport"
 version = "0.1.0"
 dependencies = [
+ "galaxie-remote-capabilities",
  "hmac",
  "md-5",
  "rand",

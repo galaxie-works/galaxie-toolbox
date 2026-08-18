@@ -7,6 +7,13 @@
 //! Authenticode). A conectividade real (owner assinado conectando) é runtime do
 //! Wagner — aqui o que é testável é o **construtor da DACL** (SDDL), e o resto é
 //! `cfg(windows)` compilado.
+//!
+//! ⚠️ **NÃO INTEGRADO (#1070 RB4 — decisão do `Altair` no #1234).** Este `PipeServer`
+//! (e o `validar_hello`) é **compilado e testado no CI**, mas NUNCA é instanciado fora
+//! de `#[cfg(test)]`: o `windows_runtime::run` (deste crate) troca de desktop e captura,
+//! mas **não cria o pipe nem verifica o ticket**. É código **verificado esperando um
+//! fio** (o wiring do worker↔owner do S7 #690), NÃO código morto — por isso é MARCADO,
+//! não apagado. Ligar o fio é o passo 2b-io do S7 (runtime privilegiado do Wagner).
 
 use crate::session_channel::PresencaLocal;
 
