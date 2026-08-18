@@ -309,6 +309,37 @@ pub fn parse_error_unauthorized(resp: &[u8], txid: &[u8; 12]) -> Option<(String,
     Some((realm.to_string(), nonce.to_string()))
 }
 
+/// Extrai o NONCE fresco de um `438 Stale Nonce` (RFC 5766 §5). O coturn rotaciona o
+/// nonce; Refresh/CreatePermission com o nonce velho voltam 438 + NONCE novo. Não
+/// fixamos o tipo da mensagem: o Error Response varia por método (Refresh=`0x0114`,
+/// CreatePermission=`0x0118`), então validamos cookie + txid + ERROR-CODE == 438 e
+/// devolvemos o nonce novo pra reemitir o request. `None` se não é o nosso 438 ou
+/// falta o NONCE. O REALM não muda numa rotação de nonce (o chamador guarda o dele).
+pub fn parse_stale_nonce(resp: &[u8], txid: &[u8; 12]) -> Option<String> {
+    if resp.len() < HEADER_LEN {
+        return None;
+    }
+    if resp[4..8] != MAGIC_COOKIE.to_be_bytes() {
+        return None;
+    }
+    if resp[8..20] != txid[..] {
+        return None;
+    }
+    let msg_len = u16::from_be_bytes([resp[2], resp[3]]) as usize;
+    let attrs = resp.get(HEADER_LEN..HEADER_LEN + msg_len)?;
+    let err = find_attr(attrs, ATTR_ERROR_CODE)?;
+    if err.len() < 4 {
+        return None;
+    }
+    let class = (err[2] & 0x07) as u16;
+    let number = err[3] as u16;
+    if class * 100 + number != 438 {
+        return None;
+    }
+    let nonce = std::str::from_utf8(find_attr(attrs, ATTR_NONCE)?).ok()?;
+    Some(nonce.to_owned())
+}
+
 /// Lê um Allocate Success Response (RFC 5766 §6.3). Valida tipo `0x0103`, o cookie
 /// e o txid; lê XOR-RELAYED-ADDRESS (mesmo XOR do XOR-MAPPED — reusa o decoder do
 /// stun.rs) e LIFETIME, devolvendo `(endereço relay, lifetime em segundos)`. Se a
@@ -639,5 +670,42 @@ mod tests {
         set_length(&mut rf);
         assert_eq!(parse_refresh_success(&rf, &TXID), Some(300));
         assert_eq!(parse_refresh_success(&rf, &[0u8; 12]), None); // txid errado
+    }
+
+    /// Monta um Error Response `438 Stale Nonce` com ERROR-CODE + NONCE (novo). O
+    /// `tipo` varia por método — passamos o Refresh Error (0x0114) pra provar que o
+    /// parser NÃO fixa o tipo.
+    fn erro_438(tipo: u16, nonce: &str) -> Vec<u8> {
+        let mut buf = new_header(tipo, &TXID);
+        let mut err = vec![0x00, 0x00, 0x04, 0x26]; // class 4, number 38 = 438
+        err.extend_from_slice(b"Stale Nonce");
+        push_attr(&mut buf, ATTR_ERROR_CODE, &err);
+        push_attr(&mut buf, ATTR_NONCE, nonce.as_bytes());
+        set_length(&mut buf);
+        buf
+    }
+
+    #[test]
+    fn parse_stale_nonce_devolve_nonce_novo_qualquer_metodo() {
+        // Refresh Error (0x0114) e CreatePermission Error (0x0118): mesmo parser.
+        for tipo in [0x0114u16, 0x0118u16] {
+            let msg = erro_438(tipo, "nonce-rotacionado-42");
+            assert_eq!(
+                parse_stale_nonce(&msg, &TXID),
+                Some("nonce-rotacionado-42".to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn parse_stale_nonce_rejeita_txid_code_e_cookie() {
+        let msg = erro_438(0x0114, "n");
+        assert_eq!(parse_stale_nonce(&msg, &[0u8; 12]), None); // txid errado
+        // Cookie corrompido → None.
+        let mut ck = erro_438(0x0114, "n");
+        ck[4] ^= 0xFF;
+        assert_eq!(parse_stale_nonce(&ck, &TXID), None);
+        // 401 (não 438) → None: só o Stale Nonce renova; outro erro é fatal.
+        assert_eq!(parse_stale_nonce(&erro_401("r", "n"), &TXID), None);
     }
 }

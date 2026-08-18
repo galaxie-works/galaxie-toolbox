@@ -5,7 +5,7 @@
 //! bytes crus. O signaling continua na ponte TS/S0; credenciais TURN, SDP e ICE
 //! jamais são logados aqui.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError};
@@ -16,8 +16,8 @@ use std::time::{Duration, Instant};
 use galaxie_remote_transport::stun::{build_binding_request, parse_xor_mapped_address};
 use galaxie_remote_transport::turn::{
     build_allocate_request, build_allocate_request_auth, build_create_permission_request,
-    build_send_indication, derive_key, parse_allocate_success, parse_data_indication,
-    parse_error_unauthorized,
+    build_refresh_request, build_send_indication, derive_key, parse_allocate_success,
+    parse_data_indication, parse_error_unauthorized, parse_refresh_success, parse_stale_nonce,
 };
 use galaxie_remote_transport::{
     canal_de_comandos, decode, encode_input, CommandReceiver as TransportCommandReceiver,
@@ -49,6 +49,17 @@ const SRFLX_POLL_INTERVAL: Duration = Duration::from_millis(10);
 /// propósito — relay é aditivo e o startup não pode travar esperando um coturn
 /// inalcançável. Reusa o `SRFLX_POLL_INTERVAL` no recv NONBLOCKING.
 const RELAY_ALLOCATE_TIMEOUT: Duration = Duration::from_millis(1200);
+/// #1130 fatia 3c: a permissão de peer do coturn expira em ~300s (RFC 5766 §8).
+/// Reemitimos a 3/4 disso (225s) pra nunca deixar lapsar durante a sessão.
+const PERM_REFRESH: Duration = Duration::from_secs(225);
+
+/// Quando reenviar o Refresh da alocação: a 3/4 do lifetime concedido, com piso de
+/// 60s (se o coturn conceder um lifetime absurdamente curto, não martelamos o
+/// servidor). #1130 fatia 3c.
+fn intervalo_refresh(lifetime_s: u32) -> Duration {
+    let tres_quartos = u64::from(lifetime_s).saturating_mul(3) / 4;
+    Duration::from_secs(tres_quartos).max(Duration::from_secs(60))
+}
 
 #[derive(Default)]
 pub struct RemoteRuntime {
@@ -274,9 +285,19 @@ struct RelayState {
     realm: String,
     nonce: String,
     key: [u8; 16],
-    /// IPs de peer com CreatePermission já instalada (o coturn dropa tráfego de peer
-    /// sem permissão). Evita reenviar a permissão a cada pacote.
-    permitidos: HashSet<IpAddr>,
+    /// #1130 fatia 3c: lifetime (s) da alocação — usado pra reagendar o Refresh.
+    lifetime_s: u32,
+    /// Quando reenviar o Refresh da alocação (antes do lifetime expirar) — senão o
+    /// coturn libera o relay e a sessão CAI.
+    refresh_em: Instant,
+    /// Peers com CreatePermission instalada → quando REEMITIR (a permissão do coturn
+    /// expira em ~300s; sem reemitir, o relay dropa o peer no meio da sessão). Chave =
+    /// IP do peer (a permissão é por IP, RFC 5766 §9).
+    permitidos: HashMap<IpAddr, Instant>,
+    /// txid do ÚLTIMO request TURN (Refresh/CreatePermission) enviado. A manutenção
+    /// manda no máximo 1 por tick, então um `438 Stale Nonce` sempre casa com ESTE
+    /// txid — daí renovamos o nonce sem corrida.
+    ultimo_txid: [u8; 12],
 }
 
 struct RuntimeSession {
@@ -762,6 +783,7 @@ impl RuntimeSession {
             }
 
             self.receive_udp()?;
+            self.manutencao_relay()?;
             self.drain_capture()?;
             self.forward_encoder_commands();
             if self
@@ -847,6 +869,10 @@ impl RuntimeSession {
                                 self.transport
                                     .receber_udp(peer, relayed, &dados)
                                     .map_err(transport_error)?;
+                            } else {
+                                // Não é dado de peer: é controle TURN (resposta a um
+                                // Refresh/CreatePermission nosso). #1130 fatia 3c.
+                                self.tratar_controle_relay(pacote);
                             }
                             continue;
                         }
@@ -874,7 +900,7 @@ impl RuntimeSession {
     ) -> Result<(), RemoteError> {
         if let Some(relay) = self.relay.as_mut() {
             if origem == relay.relayed {
-                if relay.permitidos.insert(destino.ip()) {
+                if !relay.permitidos.contains_key(&destino.ip()) {
                     let mut txid = [0u8; 12];
                     rand::thread_rng().fill(&mut txid[..]);
                     let perm = build_create_permission_request(
@@ -888,6 +914,10 @@ impl RuntimeSession {
                     self.socket
                         .send_to(&perm, relay.turn_server)
                         .map_err(|e| RemoteError::Network(e.to_string()))?;
+                    relay.ultimo_txid = txid;
+                    relay
+                        .permitidos
+                        .insert(destino.ip(), Instant::now() + PERM_REFRESH);
                 }
                 let mut txid = [0u8; 12];
                 rand::thread_rng().fill(&mut txid[..]);
@@ -901,6 +931,86 @@ impl RuntimeSession {
         self.socket
             .send_to(dados, destino)
             .map_err(|e| RemoteError::Network(e.to_string()))?;
+        Ok(())
+    }
+
+    /// #1130 fatia 3c: reação a uma resposta de controle TURN (não-Data) do coturn.
+    /// Casa pelo `ultimo_txid` (a manutenção manda 1 req/tick, então sem corrida):
+    /// - `438 Stale Nonce` → adota o nonce novo e força reemissão IMEDIATA (refresh +
+    ///   todas as permissões) com o nonce fresco, senão a alocação/permissões CAEM.
+    /// - Refresh Success → reagenda pelo lifetime REALMENTE concedido (o coturn pode
+    ///   conceder menos do que pedimos).
+    fn tratar_controle_relay(&mut self, pacote: &[u8]) {
+        let Some(relay) = self.relay.as_mut() else {
+            return;
+        };
+        if let Some(nonce_novo) = parse_stale_nonce(pacote, &relay.ultimo_txid) {
+            relay.nonce = nonce_novo;
+            let agora = Instant::now();
+            relay.refresh_em = agora; // refaz o refresh já, com o nonce fresco
+            for prazo in relay.permitidos.values_mut() {
+                *prazo = agora; // e reemite todas as permissões
+            }
+        } else if let Some(lifetime) = parse_refresh_success(pacote, &relay.ultimo_txid) {
+            relay.lifetime_s = lifetime;
+            relay.refresh_em = Instant::now() + intervalo_refresh(lifetime);
+        }
+    }
+
+    /// #1130 fatia 3c: mantém a alocação e as permissões do relay VIVAS ("não cai").
+    /// Manda no MÁXIMO 1 request por tick (refresh tem prioridade; senão a 1ª permissão
+    /// vencida), pra que um `438 Stale Nonce` sempre case com o `ultimo_txid`. No-op se
+    /// a sessão é host/srflx puro.
+    fn manutencao_relay(&mut self) -> Result<(), RemoteError> {
+        let Some(relay) = self.relay.as_mut() else {
+            return Ok(());
+        };
+        let agora = Instant::now();
+        // 1. Refresh da alocação antes do lifetime expirar.
+        if agora >= relay.refresh_em {
+            let mut txid = [0u8; 12];
+            rand::thread_rng().fill(&mut txid[..]);
+            let req = build_refresh_request(
+                &txid,
+                relay.lifetime_s,
+                &relay.username,
+                &relay.realm,
+                &relay.nonce,
+                &relay.key,
+            );
+            self.socket
+                .send_to(&req, relay.turn_server)
+                .map_err(|e| RemoteError::Network(e.to_string()))?;
+            relay.ultimo_txid = txid;
+            // Reagenda otimista; a Success (recv) ajusta pelo lifetime concedido.
+            relay.refresh_em = agora + intervalo_refresh(relay.lifetime_s);
+            return Ok(());
+        }
+        // 2. Reemite UMA permissão vencida (a próxima entra no tick seguinte).
+        let vencida = relay
+            .permitidos
+            .iter()
+            .find(|(_, prazo)| agora >= **prazo)
+            .map(|(ip, _)| *ip);
+        if let Some(ip) = vencida {
+            let mut txid = [0u8; 12];
+            rand::thread_rng().fill(&mut txid[..]);
+            // A permissão é por IP (RFC 5766 §9); a porta do XOR-PEER-ADDRESS é ignorada.
+            let peer = SocketAddr::new(ip, 0);
+            let perm = build_create_permission_request(
+                &txid,
+                peer,
+                &relay.username,
+                &relay.realm,
+                &relay.nonce,
+                &relay.key,
+            );
+            self.socket
+                .send_to(&perm, relay.turn_server)
+                .map_err(|e| RemoteError::Network(e.to_string()))?;
+            relay.ultimo_txid = txid;
+            relay.permitidos.insert(ip, agora + PERM_REFRESH);
+        }
         Ok(())
     }
 
@@ -1445,9 +1555,8 @@ fn gather_relay(
         "[remote] relay TURN alocado via {turn_server}: relayed={relayed} lifetime={lifetime}s \
          (renovação do lifetime = fatia 3c; segredo NÃO logado)"
     );
-    // Guarda a credencial pro data-path (Send indication + CreatePermission). O
-    // `lifetime` não é guardado aqui: a renovação (Refresh) é a fatia 3c; a alocação
-    // inicial (#1050: 1800s) cobre a sessão até lá.
+    // Guarda a credencial pro data-path (Send indication + CreatePermission) e agenda
+    // o 1º Refresh a 3/4 do lifetime (#1130 fatia 3c — "não cai").
     Some(RelayState {
         turn_server,
         relayed,
@@ -1455,7 +1564,10 @@ fn gather_relay(
         realm,
         nonce,
         key,
-        permitidos: HashSet::new(),
+        lifetime_s: lifetime,
+        refresh_em: Instant::now() + intervalo_refresh(lifetime),
+        permitidos: HashMap::new(),
+        ultimo_txid: [0u8; 12],
     })
 }
 
