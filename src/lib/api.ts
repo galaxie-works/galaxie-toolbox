@@ -1896,13 +1896,17 @@ export async function crEnviarNovo(
  * Sobe um arquivo para "Bridge Anexos" no OneDrive do usuário e devolve um link
  * de compartilhamento (visualização, escopo da organização). O front insere
  * esse link no corpo do e-mail. Files.ReadWrite.
+ *
+ * SEC6 #1044: passamos só o CAMINHO escolhido no diálogo; o backend lê os bytes
+ * do disco (funil `ler_bytes_cru`: path válido, é arquivo, ≤25MB) e sobe os bytes
+ * crus — o front nunca carrega o binário nem faz base64 do arquivo inteiro, e não
+ * precisa mais da capability `fs:allow-read-file` aberta.
  */
-export async function crCompartilharOneDrive(
-  nome: string,
-  conteudoB64: string
+export async function crCompartilharOneDriveArquivo(
+  caminho: string
 ): Promise<string> {
   if (!inTauri()) mockEscritaBloqueada();
-  return invoke<string>("cr_compartilhar_onedrive", { nome, conteudoB64 });
+  return invoke<string>("cr_compartilhar_onedrive_arquivo", { caminho });
 }
 
 /**

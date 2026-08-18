@@ -726,15 +726,25 @@ async fn cr_enviar_novo(
 
 /// Compositor: sobe um arquivo pro OneDrive e devolve um link de
 /// compartilhamento (view/organization). Files.ReadWrite.
+///
+/// SEC6 #1044: o front passa só o CAMINHO escolhido no diálogo; o backend lê os
+/// bytes do disco pelo funil único de leitura (`ler_bytes_cru` — path válido, é
+/// arquivo, ≤25MB) e sobe os bytes CRUS, sem base64 do arquivo inteiro no WebView
+/// e sem a capability `fs:allow-read-file` aberta.
 #[tauri::command]
-async fn cr_compartilhar_onedrive(
+async fn cr_compartilhar_onedrive_arquivo(
     state: State<'_, Store>,
-    nome: String,
-    conteudo_b64: String,
+    caminho: String,
 ) -> Result<String, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_compartilhar_onedrive(&store, &nome, &conteudo_b64)
+        let bytes = fs_explorer::ler_bytes_cru(&caminho, None).map_err(|e| e.to_string())?;
+        let nome = std::path::Path::new(&caminho)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("arquivo");
+        graph::compartilhar_onedrive_bytes(&store, nome, bytes)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1940,10 +1950,11 @@ pub fn run() {
             MacosLauncher::LaunchAgent,
             None,
         ))
-        // Anexos e "compartilhar via OneDrive": seletor de arquivo (dialog) e
-        // leitura dos bytes (fs), ambos chamados pelo front (compor-mensagem).
+        // Anexos e "compartilhar via OneDrive": só o seletor de arquivo (dialog).
+        // A LEITURA dos bytes é do backend (`fs_read_file_bytes` /
+        // `cr_compartilhar_onedrive_arquivo`), não mais do plugin `fs` no front —
+        // SEC6 #1044 fechou a capability `fs:allow-read-file` aberta em `**`.
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
         // Lembra tamanho e posicao da janela entre execucoes (salva ao fechar,
         // restaura ao abrir).
         //
@@ -2154,7 +2165,7 @@ pub fn run() {
             cr_people_details_write,
             cr_people_interactions,
             cr_enviar_novo,
-            cr_compartilhar_onedrive,
+            cr_compartilhar_onedrive_arquivo,
             onedrive_settings_read,
             onedrive_settings_write,
             gdrive_settings_read,

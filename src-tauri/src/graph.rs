@@ -3548,19 +3548,16 @@ pub fn cr_encaminhar(
 ///
 /// PUT simples de conteúdo (bom até ~4 MB — anexos de e-mail cabem folgado);
 /// arquivos maiores exigiriam upload session, fora do escopo aqui. Files.ReadWrite.
-pub fn cr_compartilhar_onedrive(
+///
+/// Recebe os bytes já materializados: o comando lê o arquivo do disco no Rust, e
+/// o front nunca carrega o binário nem faz base64 do arquivo inteiro (SEC6 #1044).
+pub fn compartilhar_onedrive_bytes(
     store: &TokenStore,
     nome: &str,
-    conteudo_b64: &str,
+    bytes: Vec<u8>,
 ) -> Result<String, String> {
-    use base64::{engine::general_purpose, Engine as _};
-
     let token = access_token(store)?;
     let client = cliente();
-
-    let bytes = general_purpose::STANDARD
-        .decode(conteudo_b64.trim())
-        .map_err(|e| format!("conteudo do arquivo invalido: {e}"))?;
 
     // Sanitiza: descarta qualquer componente de caminho no nome (sem traversal)
     // e percent-encoda para caber no addressing por path do Graph.
