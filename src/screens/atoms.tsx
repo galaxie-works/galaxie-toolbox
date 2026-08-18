@@ -88,7 +88,7 @@ type Estado<T> =
 /**
  * Atoms — a nova tela inicial (épico #181, Slice 1 / #183). Greeting + grade
  * bento sobre o starfield, com dois widgets sobre dados que JÁ rodam
- * (Agenda via `crAgenda`, E-mail via `crEmail`/`crContadores`). Cada widget é
+ * (Agenda via `crAgenda`, E-mail via `crContadores`). Cada widget é
  * PORTA, não destino: clicar leva ao Bridge (`onNavegar("control-room")`).
  * Sem escopo/Rust novo, sem IA (o modelo de atenção em `lib/atoms.ts` é
  * determinístico e alimenta o feed unificado da Slice 3).
@@ -150,7 +150,7 @@ export function AtomsScreen({
     setEmail({ fase: "carregando" });
     try {
       // #440 (A1): um único $batch (não-lidos + sinalizados + recentes). Substitui
-      // o Promise.all([crEmail, crContadores]), que rejeitava tudo quando só o
+      // o Promise.all de duas leituras, que rejeitava tudo quando só o
       // contador falhava e derrubava o widget mesmo com o não-lido resolvido (#187).
       const email = await api.crAtomsEmail();
       setEmail({

@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   inTauri,
-  crEmail,
+  crContadores,
   crEnviarNovo,
   crResponder,
   crEncaminhar,
@@ -61,7 +61,10 @@ describe("#1017 mock não finge sucesso de escrita fora do Tauri", () => {
   });
 
   it("LEITURA segue mockada e resolve sem lançar", async () => {
-    const caixa = await crEmail();
-    expect(caixa).toBeTruthy();
+    // Era `crEmail`, apagado no #1074 F2 por não ter consumidor em produção.
+    // A asserção é sobre a CLASSE (leitura resolve mockada), não sobre a função —
+    // qualquer leitura viva serve, e `crContadores` é a que o Atoms usa de fato.
+    const contadores = await crContadores("inbox");
+    expect(contadores).toBeTruthy();
   });
 });
