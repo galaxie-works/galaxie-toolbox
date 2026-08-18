@@ -623,6 +623,8 @@ const pt = {
     densidadeCompacta: "Layout compacto",
     reordenar: "Reordenar",
     erroCarregar: "Não foi possível carregar.",
+    // #1075 RB46: o card tem dados, mas incompletos — antes isso era invisível.
+    todosListasComFalha: "Algumas listas não puderam ser lidas:",
     tentarNovamente: "Tentar de novo",
     semPermissao: "Permissão necessária.",
     conectar: "Conectar",
@@ -2918,6 +2920,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     densidadeCompacta: "Compact layout",
     reordenar: "Reorder",
     erroCarregar: "Couldn't load.",
+    // #1075 RB46: the card has data, but incomplete — this used to be invisible.
+    todosListasComFalha: "Some lists couldn't be read:",
     tentarNovamente: "Retry",
     semPermissao: "Permission needed.",
     conectar: "Connect",

@@ -308,7 +308,7 @@ async fn onedrive_tipos(
 
 /// Control room: tarefas pendentes do To Do.
 #[tauri::command]
-async fn cr_tarefas(state: State<'_, Store>) -> Result<Vec<graph::Tarefa>, String> {
+async fn cr_tarefas(state: State<'_, Store>) -> Result<graph::TarefasResultado, String> {
     let store = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || graph::cr_tarefas(&store))
         .await

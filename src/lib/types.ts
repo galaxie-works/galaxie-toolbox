@@ -110,6 +110,19 @@ export interface EmailRecente {
 
 
 
+/**
+ * Tarefas do To Do + as listas que NÃO puderam ser lidas (#1075 RB46).
+ *
+ * `listasComFalha` vazio = a agregação está completa. Não vazio = o card tem
+ * dados, mas parciais — estado que a UI antes não conseguia representar: uma
+ * lista que dava 403 contribuía zero tarefas e ficava idêntica a uma lista
+ * vazia.
+ */
+export interface TarefasResultado {
+  tarefas: Tarefa[];
+  listasComFalha: string[];
+}
+
 export interface Tarefa {
   titulo: string;
   lista: string;

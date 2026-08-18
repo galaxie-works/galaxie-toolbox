@@ -1014,7 +1014,7 @@ fn atoms_email_de_batch(v: &serde_json::Value) -> Result<AtomsEmail, String> {
     Ok(out)
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Tarefa {
     pub titulo: String,
@@ -1032,11 +1032,149 @@ pub struct Tarefa {
 /// varredura de listas no boot. Era a causa do "Couldn't load" em Tasks: a
 /// chamada crua estourava 429 e o `Err` no 1º 429 derrubava o widget, com o
 /// Retry re-chamando a MESMA função desprotegida (#184).
-pub fn cr_tarefas(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
+/// Tarefas agregadas + as listas que NÃO puderam ser lidas (#1075 RB46).
+///
+/// Antes, `cr_tarefas` devolvia `Vec<Tarefa>` e a agregação varria as listas com
+/// quatro `if let Ok` / `is_success()` **encadeados e sem um único `else`**. Uma
+/// lista que respondesse 403, caísse na rede ou devolvesse corpo ilegível
+/// contribuía com zero tarefas — **exatamente como uma lista realmente vazia**.
+/// O card do To Do mostrava a soma e parecia completa.
+///
+/// O erro não virava valor neutro: ele nem chegava a ser observado. Por isso a
+/// correção não é "propagar `Err`" — derrubar o widget inteiro porque UMA lista
+/// de oito falhou seria pior. É dar ao resultado um lugar onde caiba
+/// **"consegui parte"**, que é o que de fato aconteceu.
+#[derive(serde::Serialize, Clone, Default, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct TarefasResultado {
+    pub tarefas: Vec<Tarefa>,
+    /// Nomes das listas cuja leitura falhou. Vazio = a agregação está completa.
+    pub listas_com_falha: Vec<String>,
+}
+
+impl TarefasResultado {
+    /// Registra a falha de UMA lista. O motivo vai para o log (diagnóstico); o
+    /// nome vai para a UI, que só precisa dizer "esta lista não entrou".
+    fn registrar_falha(&mut self, lista: &str, motivo: &str) {
+        log::warn!("[todo] lista '{lista}' nao pôde ser lida: {motivo}");
+        let nome = if lista.trim().is_empty() {
+            "(sem nome)"
+        } else {
+            lista
+        };
+        // Uma lista falha UMA vez por agregação; sem o dedup, um retry futuro
+        // dentro do mesmo passe duplicaria o aviso na tela.
+        if !self.listas_com_falha.iter().any(|n| n == nome) {
+            self.listas_com_falha.push(nome.to_string());
+        }
+    }
+}
+
+/// Extrai as tarefas de UMA resposta de lista. `None` = o corpo não tem a forma
+/// esperada (sem `value`), que é falha de leitura — não lista vazia.
+///
+/// Separado do laço de rede de propósito: é aqui que mora a distinção entre
+/// "li e não havia nada" e "não consegui ler", e é a única parte testável sem
+/// bater no Graph.
+fn tarefas_da_lista(
+    corpo: &serde_json::Value,
+    nome: &str,
+    lista_id: &str,
+    vagas: usize,
+) -> Option<Vec<Tarefa>> {
+    let items = corpo["value"].as_array()?;
+    Some(
+        items
+            .iter()
+            .take(vagas)
+            .map(|it| Tarefa {
+                titulo: it["title"].as_str().unwrap_or("").to_string(),
+                lista: nome.to_string(),
+                id: it["id"].as_str().unwrap_or("").to_string(),
+                lista_id: lista_id.to_string(),
+                // dueDateTime é objeto { dateTime, timeZone } no Graph.
+                prazo: it["dueDateTime"]["dateTime"].as_str().map(|s| s.to_string()),
+            })
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+mod testes_tarefas_parciais {
+    use super::*;
+
+    /// A distinção que o RB46 apagava: corpo SEM `value` não é lista vazia.
+    #[test]
+    fn corpo_sem_value_e_falha_de_leitura_nao_lista_vazia() {
+        let vazia = serde_json::json!({ "value": [] });
+        assert_eq!(
+            tarefas_da_lista(&vazia, "Tarefas", "id1", 8).map(|v| v.len()),
+            Some(0),
+            "lista realmente vazia devolve Some(vazio)"
+        );
+
+        for corpo in [
+            serde_json::json!({}),
+            serde_json::json!({ "error": { "code": "ErrorAccessDenied" } }),
+            serde_json::json!({ "value": "nao é array" }),
+        ] {
+            assert!(
+                tarefas_da_lista(&corpo, "Tarefas", "id1", 8).is_none(),
+                "corpo sem `value` array tem que ser falha: {corpo}"
+            );
+        }
+    }
+
+    #[test]
+    fn respeita_as_vagas_restantes_do_teto() {
+        let corpo = serde_json::json!({
+            "value": [
+                { "id": "1", "title": "a" },
+                { "id": "2", "title": "b" },
+                { "id": "3", "title": "c" },
+            ]
+        });
+        let t = tarefas_da_lista(&corpo, "L", "id", 2).expect("corpo valido");
+        assert_eq!(t.len(), 2, "nao pode estourar o teto do card");
+        assert_eq!(t[0].titulo, "a");
+        assert_eq!(t[0].lista, "L");
+    }
+
+    /// A lista que falhou tem que APARECER. Era o defeito: ela sumia.
+    #[test]
+    fn lista_que_falha_aparece_e_nao_some() {
+        let mut r = TarefasResultado::default();
+        assert!(r.listas_com_falha.is_empty(), "agregacao completa comeca vazia");
+
+        r.registrar_falha("Trabalho", "403");
+        assert_eq!(r.listas_com_falha, vec!["Trabalho"]);
+    }
+
+    #[test]
+    fn a_mesma_lista_nao_duplica_o_aviso() {
+        let mut r = TarefasResultado::default();
+        r.registrar_falha("Trabalho", "403");
+        r.registrar_falha("Trabalho", "timeout");
+        assert_eq!(r.listas_com_falha, vec!["Trabalho"], "um aviso por lista");
+    }
+
+    #[test]
+    fn lista_sem_nome_ainda_e_reportada() {
+        let mut r = TarefasResultado::default();
+        r.registrar_falha("   ", "500");
+        assert_eq!(
+            r.listas_com_falha,
+            vec!["(sem nome)"],
+            "sem nome nao pode virar sumico"
+        );
+    }
+}
+
+pub fn cr_tarefas(store: &TokenStore) -> Result<TarefasResultado, String> {
     com_memo_curto("tarefas:atoms", || cr_tarefas_inner(store))
 }
 
-fn cr_tarefas_inner(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
+fn cr_tarefas_inner(store: &TokenStore) -> Result<TarefasResultado, String> {
     let token = access_token(store)?;
     let client = cliente();
 
@@ -1053,10 +1191,10 @@ fn cr_tarefas_inner(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
     }
     let v: serde_json::Value = resp.json().map_err(|e| e.to_string())?;
 
-    let mut tarefas = Vec::new();
+    let mut resultado = TarefasResultado::default();
     if let Some(listas) = v["value"].as_array() {
         for l in listas {
-            if tarefas.len() >= 8 {
+            if resultado.tarefas.len() >= 8 {
                 break;
             }
             let id = l["id"].as_str().unwrap_or("");
@@ -1069,35 +1207,30 @@ fn cr_tarefas_inner(store: &TokenStore) -> Result<Vec<Tarefa>, String> {
                 "{GRAPH}/me/todo/lists/{id}/tasks?$filter=status ne 'completed'\
                  &$select=id,title,dueDateTime&$top=8"
             );
-            if let Ok(r) = graph_enviar("todo:tarefas", GRAPH_TETO_ESPERA_S, || {
+            // #1075 RB46: antes eram QUATRO `if let Ok`/`is_success()` encadeados
+            // SEM um unico `else` — 403, queda de rede e corpo ilegivel produziam
+            // o mesmo resultado que uma lista vazia, e a soma do card parecia
+            // completa. Agora cada rota de falha tem um destino.
+            let vagas = 8usize.saturating_sub(resultado.tarefas.len());
+            match graph_enviar("todo:tarefas", GRAPH_TETO_ESPERA_S, || {
                 client.get(&url).bearer_auth(&token).send()
             }) {
-                if r.status().is_success() {
-                    if let Ok(vt) = r.json::<serde_json::Value>() {
-                        if let Some(items) = vt["value"].as_array() {
-                            for it in items {
-                                if tarefas.len() >= 8 {
-                                    break;
-                                }
-                                // dueDateTime é objeto { dateTime, timeZone } no Graph.
-                                let prazo = it["dueDateTime"]["dateTime"]
-                                    .as_str()
-                                    .map(|s| s.to_string());
-                                tarefas.push(Tarefa {
-                                    titulo: it["title"].as_str().unwrap_or("").to_string(),
-                                    lista: nome.clone(),
-                                    id: it["id"].as_str().unwrap_or("").to_string(),
-                                    lista_id: id.to_string(),
-                                    prazo,
-                                });
-                            }
-                        }
-                    }
+                Err(e) => resultado.registrar_falha(&nome, &format!("transporte: {e}")),
+                Ok(r) if !r.status().is_success() => {
+                    let st = r.status();
+                    resultado.registrar_falha(&nome, &format!("status {st}"));
                 }
+                Ok(r) => match r.json::<serde_json::Value>() {
+                    Err(e) => resultado.registrar_falha(&nome, &format!("corpo ilegivel: {e}")),
+                    Ok(vt) => match tarefas_da_lista(&vt, &nome, id, vagas) {
+                        Some(t) => resultado.tarefas.extend(t),
+                        None => resultado.registrar_falha(&nome, "resposta sem `value`"),
+                    },
+                },
             }
         }
     }
-    Ok(tarefas)
+    Ok(resultado)
 }
 
 /// Conclui uma tarefa do To Do (#184, Atoms S2): PATCH status=completed em
