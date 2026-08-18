@@ -668,10 +668,17 @@ mod tests {
         let secret = b"turn-secret-de-teste";
         let dev = "device-abc";
 
+        // `expect`/`unwrap` são deny no crate (clippy::expect_used); desembrulha via
+        // match com panic explícito (montar_ice_server só erra com secret inválido).
+        let montar = |exp: u64| match montar_ice_server(&urls, secret, dev, exp) {
+            Ok(v) => v,
+            Err(e) => panic!("montar_ice_server({exp}): {e:?}"),
+        };
+
         let t1 = 1_000_000u64;
         let t2 = t1 + 1800; // relógio adiantado 30min (um TTL)
-        let a = montar_ice_server(&urls, secret, dev, t1).expect("t1");
-        let b = montar_ice_server(&urls, secret, dev, t2).expect("t2");
+        let a = montar(t1);
+        let b = montar(t2);
 
         // expiração renovada pra frente.
         assert_eq!(a.expires_at_unix_seconds, t1);
@@ -685,7 +692,7 @@ mod tests {
         assert!(b.username.ends_with(dev));
         assert_eq!(a.urls, b.urls);
         // credencial não-vazia e determinística (mesmo instante → mesma credencial).
-        let b2 = montar_ice_server(&urls, secret, dev, t2).expect("t2 de novo");
+        let b2 = montar(t2);
         assert_eq!(b.credential, b2.credential, "mesmo expires_at → mesma credencial");
         assert!(!b.credential.is_empty());
     }
