@@ -70,6 +70,40 @@ e o `ControlRoomScreen`. **Estimativa: ~1.400 linhas**, de 7.692.
 
 ---
 
+## 1-bis. Helper compartilhado: o furo que a `Vega` achou no S6/S3 (nota de 2026-08-18)
+
+**O desenho original listava S6 e S3 sem esta dependência. Era omissão minha.** A `Vega` bateu nela ao começar o S6 e resolveu certo, com um enabler; registro aqui porque **vale para todo seam que ainda falta**, não só para esses dois.
+
+### A armadilha
+
+`EventoDialog` (S6) e `MessageList` (S3) usavam `faixaHora`/`quandoCurto`, que por sua vez usavam `comZ` — e o `comZ` era usado em ~9 pontos do próprio `control-room`. Isso cria uma escolha em que as duas saídas óbvias são ruins:
+
+- **levar o helper junto com o seam** → rouba dos outros ~9 consumidores;
+- **deixar o helper e importar de volta** → `control-room` ↔ seam, **dependência circular**.
+
+**A saída é a terceira: o helper sobe para `lib/` ANTES do seam descer.** Foi o que o enabler fez (`src/lib/data-email.ts`, PR #1171, integrado em `b93c49c`); hoje o `control-room` importa dele (`control-room.tsx:292`).
+
+### A regra, generalizada
+
+> **Antes de extrair um seam, listar o que ele consome que o resto do arquivo também consome. Todo helper compartilhado vira PR-enabler próprio, ANTES — e o enabler é movimento puro, revisável como recorte-e-cola.**
+
+Isso é o mesmo princípio do PR-de-movimento-puro da §5, um nível abaixo: o enabler é o *pré*-movimento que impede o ciclo.
+
+### ⚠️ O que o enabler NÃO resolveu — medido em `b93c49c`
+
+Extrair para `lib/` desfez o ciclo, **mas a duplicação continua**. Há **três** `comZ` na árvore hoje, e uma delas não é a mesma função:
+
+| Onde | Assinatura | Situação |
+|---|---|---|
+| `src/lib/data-email.ts:14` | `comZ(iso): string` | **canônica** — o `control-room` importa daqui |
+| `src/components/agenda/agenda-view.tsx:226` | `comZ(iso): string` | **duplicata literal** — corpo idêntico |
+| `src/screens/atoms.tsx:67` | `comZ(iso): **Date**` | **homônimo com outro tipo de retorno** — e testa com `/Z$/` em vez de `endsWith` |
+
+A terceira é a perigosa: **mesmo nome, contrato diferente.** Quem for "deduplicar por nome" troca um `Date` por um `string`. O `tsc` pega (as chamadas quebram na hora), então não é risco de runtime — é risco de alguém desistir no meio e deixar meia-migração.
+
+**É a mesma classe do `iniciais` (#1023, 11 implementações divergentes da mesma coisa).** Não bloqueia os seams; fica registrado para quem fizer a convergência — e a ordem certa é a mesma: **um helper canônico, depois os consumidores, nunca o inverso.**
+
+
 ## 2. As 30 props do `MessageList` — o diagnóstico é outro
 
 O card trata como "lista plana de 30 props". Lendo o componente, a causa é diferente:
