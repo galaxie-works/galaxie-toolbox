@@ -1,5 +1,7 @@
 # TEAM-CANON — GALAXIE
-**v1.0 · 2026-08-18 · ratificado pelo PO (Wagner) · dono: Bibliotecário**
+**v1.1 · 2026-08-18 · ratificado pelo PO (Wagner) · dono: Bibliotecário**
+
+> **Histórico de emendas:** v1.0 (2026-08-18) texto fundador · **v1.1 (2026-08-18)** adiciona **§5-bis Sweeps por fila** (redação: Hiparco; ratificação: PO).
 
 Este é o documento-lei do time GALAXIE. **Fonte ÚNICA de verdade.** Todo agente lê isto ao nascer, ANTES de qualquer memória. Onde qualquer outro doc, memória ou hábito divergir, **o canon vence** — o resto é histórico, não autoridade. Ele **absorve e substitui o `WORKFLOW.md`** e vive na **raiz do repo `galaxie-toolbox`** (versionado; todo worktree o enxerga).
 
@@ -94,6 +96,25 @@ Groomer errou o Size → o dev corrige e anota no card. O SM **não** revisa esc
 - **Teto: ~3-4k mensagens OU 1×/dia** — o que vier primeiro. Sinal de rot (mandamento 2) = troca imediata, sem esperar o teto.
 - **Boot de toda sessão nova, nesta ordem:** identidade do papel → **TEAM-CANON** → `<Papel>Context.md`. Context sempre currente é obrigação do dono (Bibliotecário cobra fóssil).
 - O degradado **nunca** cria o próprio sucessor.
+
+---
+
+## 5-bis. SWEEPS POR FILA — o batimento de quem tem fila que enche sozinha
+
+Sweep **não é exclusivo do SM**. É o batimento periódico de todo papel cuja fila enche sem ele agir. **Regra única: cada papel varre SÓ a própria fila — 1 query no board (a coluna/estado que lhe pertence) — nunca a #133 inteira.** A #133 se lê por menção/índice (mandamento 3), não por varredura.
+
+| Papel | Fila que varre (1 query) | Cadência |
+|---|---|---|
+| **Polaris (SM)** | `In review` (integrar) · `Rejected` (triar) · contagem de msgs do time (reciclagem, §5) | **~20 min** |
+| **QA-A (Lúmen) · QA-V (Íris)** | **só a coluna `Done`** (Íris: só os com superfície visual) | **~25 min** |
+| **Atlas (Deploy Manager)** | `PO Approved` (corte a ~3 cards, §6) | **1×/h** |
+| **Mira (Groomer)** | `Backlog` (groomar → Ready) | **diário** |
+| **Devs (Castor, Pollux, Mizar, Alcor)** | **NÃO varrem.** São acordados por **despacho do Polaris** ou pelo **PO** | — |
+| **Hiparco (Bibliotecário)** | Não é sweep de fila: **passadas** (§5) — Context fósseis, msgs do Polaris, consistência memória↔canon | periódico |
+
+- Sweep vazio = tick silencioso (não postar "nada a fazer"); sweep com item = agir e registrar na issue dona (+ índice na #133 se for evento do time).
+- Cadência é teto de latência, não obrigação de postar. Cron/loop de sweep é session-only — quem varre confere que o dele está vivo antes de afirmar que roda.
+- Dev livre não varre pra "achar o que fazer": pinga na #133 (regra comum de entrega) e espera despacho.
 
 ---
 
