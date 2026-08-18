@@ -1,6 +1,31 @@
 //! Integracoes com o Windows: habilitar caminhos longos (>260) no registro e
 //! abrir a biblioteca no Explorer.
 
+// --- Decisoes puras (cross-platform, testaveis sem registro/Explorer) -------
+
+/// Predicado de match de conta OneDrive: casa por e-mail (case-insensitive) ou,
+/// se o e-mail estiver vazio, por tenant. Extraido de `onedrive_root` pra ser
+/// testavel sem HKCU. Mesma semantica do `if` inline original.
+pub(crate) fn conta_casa(email: &str, tenant: &str, mail: &str, tid: &str) -> bool {
+    (!email.is_empty() && mail.eq_ignore_ascii_case(email))
+        || (!tenant.is_empty() && tid.eq_ignore_ascii_case(tenant))
+}
+
+/// Escolhe o alvo a abrir no Explorer: a pasta da biblioteca se ela existe,
+/// senao a raiz do OneDrive. `alvo_existe` e o `target.exists()` calculado pelo
+/// caller (mantem esta funcao pura). Extraido de `open_in_explorer`.
+pub(crate) fn escolher_alvo(
+    base: &std::path::Path,
+    name: &str,
+    alvo_existe: bool,
+) -> std::path::PathBuf {
+    if alvo_existe {
+        base.join(name)
+    } else {
+        base.to_path_buf()
+    }
+}
+
 /// Le se LongPathsEnabled ja esta ligado (leitura de HKLM nao exige admin).
 #[cfg(windows)]
 pub fn long_paths_enabled() -> bool {
@@ -57,9 +82,7 @@ pub fn onedrive_root(email: &str, tenant: &str) -> Option<std::path::PathBuf> {
         let mail = k.get_value::<String, _>("UserEmail").unwrap_or_default();
         let tid = k.get_value::<String, _>("ConfiguredTenantId").unwrap_or_default();
 
-        if (!email.is_empty() && mail.eq_ignore_ascii_case(email))
-            || (!tenant.is_empty() && tid.eq_ignore_ascii_case(tenant))
-        {
+        if conta_casa(email, tenant, &mail, &tid) {
             log::info!("[explorer] conta '{nome}' casou ({mail}) -> {pasta}");
             return Some(std::path::PathBuf::from(pasta));
         }
@@ -82,7 +105,8 @@ pub fn open_in_explorer(name: &str, email: &str, tenant: &str) -> Result<(), Str
         .or_else(|| std::env::var("OneDrive").ok().map(Into::into))
         .ok_or("nao encontrei a pasta do OneDrive desta conta")?;
     let target = base.join(name);
-    let to_open = if target.exists() { target } else { base };
+    let existe = target.exists();
+    let to_open = escolher_alvo(&base, name, existe);
     open::that(to_open).map_err(|e| format!("falha ao abrir o Explorer: {e}"))
 }
 
@@ -180,4 +204,37 @@ pub fn abrir_caminho(_path: &str) -> Result<(), String> {
 #[cfg(not(windows))]
 pub fn revelar_no_explorer(_path: &str) -> Result<(), String> {
     Err("disponivel apenas no Windows".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn conta_casa_por_email_exato_case_insensitive() {
+        assert!(conta_casa("wagner@voaz.com", "", "wagner@voaz.com", "tid-1"));
+        // caixa diferente nos dois lados -> ainda casa
+        assert!(conta_casa("A@B.com", "", "a@b.COM", ""));
+    }
+
+    #[test]
+    fn conta_casa_por_tenant_quando_email_vazio() {
+        assert!(conta_casa("", "TENANT-123", "outro@x.com", "tenant-123"));
+    }
+
+    #[test]
+    fn conta_casa_falha_sem_criterio_ou_com_valores_diferentes() {
+        // email e tenant vazios -> nunca casa
+        assert!(!conta_casa("", "", "qualquer@x.com", "tid"));
+        // mail/tid diferentes do procurado -> nao casa
+        assert!(!conta_casa("wagner@voaz.com", "tid-1", "outro@x.com", "tid-2"));
+    }
+
+    #[test]
+    fn escolher_alvo_usa_subpasta_se_existe_senao_a_base() {
+        let base = Path::new("C:/OneDrive");
+        assert_eq!(escolher_alvo(base, "Biblioteca", true), base.join("Biblioteca"));
+        assert_eq!(escolher_alvo(base, "Biblioteca", false), base.to_path_buf());
+    }
 }

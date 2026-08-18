@@ -31,19 +31,28 @@ impl OneDriveSync {
     }
 }
 
+/// Decide o OneDriveSync a partir dos dois sinais brutos (contas + processo).
+/// Pura, cross-platform: sem contas → naoConfigurado; com contas → ok/pausado
+/// conforme o processo. Extraida de `sondar` pra ser testavel sem registry.
+fn montar_estado(contas: usize, rodando: bool) -> OneDriveSync {
+    if contas == 0 {
+        return OneDriveSync::nao_configurado();
+    }
+    OneDriveSync {
+        estado: if rodando { "ok" } else { "pausado" }.to_string(),
+        contas,
+        ultimo_erro: None,
+    }
+}
+
 /// Lê o estado local do OneDrive. Fora do Windows (ou sem contas) → naoConfigurado.
 pub fn sondar() -> OneDriveSync {
     #[cfg(windows)]
     {
+        // Preserva o short-circuit: so consulta o processo se ha contas.
         let contas = contas_configuradas();
-        if contas == 0 {
-            return OneDriveSync::nao_configurado();
-        }
-        OneDriveSync {
-            estado: if processo_rodando() { "ok" } else { "pausado" }.to_string(),
-            contas,
-            ultimo_erro: None,
-        }
+        let rodando = contas > 0 && processo_rodando();
+        montar_estado(contas, rodando)
     }
     #[cfg(not(windows))]
     {
@@ -91,5 +100,31 @@ fn processo_rodando() -> bool {
         }
         // Sem conseguir consultar: não gera alarme falso (assume ok).
         Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn montar_estado_sem_contas_e_nao_configurado() {
+        // borda: 0 contas -> naoConfigurado (ignora o sinal de processo).
+        let s = montar_estado(0, true);
+        assert_eq!(s.estado, "naoConfigurado");
+        assert_eq!(s.contas, 0);
+        assert!(s.ultimo_erro.is_none());
+    }
+
+    #[test]
+    fn montar_estado_com_contas_reflete_o_processo() {
+        // processo rodando -> ok; parado -> pausado; contas preservado.
+        let ok = montar_estado(2, true);
+        assert_eq!(ok.estado, "ok");
+        assert_eq!(ok.contas, 2);
+
+        let pausado = montar_estado(2, false);
+        assert_eq!(pausado.estado, "pausado");
+        assert_eq!(pausado.contas, 2);
     }
 }
