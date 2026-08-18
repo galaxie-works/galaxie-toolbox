@@ -48,6 +48,7 @@ import type {
   SegurancaEmail,
   Site,
   Tarefa,
+  TarefasResultado,
   TipoArquivo,
   UsoOneDrive,
 } from "./types";
@@ -592,16 +593,19 @@ export async function crAtomsEmail(): Promise<AtomsEmail> {
   return invoke<AtomsEmail>("atoms_email");
 }
 
-export async function crTarefas(): Promise<Tarefa[]> {
+export async function crTarefas(): Promise<TarefasResultado> {
   if (!inTauri()) {
     await sleep(450);
     const ontem = new Date(Date.now() - 86_400_000).toISOString();
-    return [
-      { titulo: "Revisar migração PROJ-H", lista: "Trabalho", id: "t1", listaId: "l1", prazo: ontem },
-      { titulo: "Ligar para o suporte MS", lista: "Trabalho", id: "t2", listaId: "l1", prazo: null },
-    ];
+    return {
+      tarefas: [
+        { titulo: "Revisar migração PROJ-H", lista: "Trabalho", id: "t1", listaId: "l1", prazo: ontem },
+        { titulo: "Ligar para o suporte MS", lista: "Trabalho", id: "t2", listaId: "l1", prazo: null },
+      ],
+      listasComFalha: [],
+    };
   }
-  return invoke<Tarefa[]>("cr_tarefas");
+  return invoke<TarefasResultado>("cr_tarefas");
 }
 
 /** Atoms (#184): conclui uma tarefa do To Do (complete-in-place). */

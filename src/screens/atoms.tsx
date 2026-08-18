@@ -53,7 +53,13 @@ import { useIdioma, preencher } from "@/lib/idioma";
 import { logErro } from "@/lib/log";
 import { ordenarAtoms, criarAtom, type AtomItem } from "@/lib/atoms";
 import type { Tela } from "@/lib/navegacao";
-import type { AppUser, EmailRecente, EventoAgenda, Tarefa } from "@/lib/types";
+import type {
+  AppUser,
+  EmailRecente,
+  EventoAgenda,
+  Tarefa,
+  TarefasResultado,
+} from "@/lib/types";
 import * as api from "@/lib/api";
 
 /** Início/fim (ISO) da janela "agora → +7 dias" pra próximo evento + hoje. */
@@ -126,7 +132,7 @@ export function AtomsScreen({
       recentes: EmailRecente[];
     }>
   >({ fase: "carregando" });
-  const [todos, setTodos] = useState<Estado<Tarefa[]>>({ fase: "carregando" });
+  const [todos, setTodos] = useState<Estado<TarefasResultado>>({ fase: "carregando" });
   // #186 (S4): sonda local do OneDrive + gate do Teams. Silenciosos: só
   // aparecem quando há problema (OneDrive) ou como affordance gated (Teams).
   const [onedrive, setOnedrive] = useState<api.OneDriveSync | null>(null);
@@ -208,7 +214,13 @@ export function AtomsScreen({
   const removerTarefa = useCallback((id: string) => {
     setTodos((atual) =>
       atual.fase === "ok"
-        ? { fase: "ok", dados: atual.dados.filter((tf) => tf.id !== id) }
+        ? {
+            fase: "ok",
+            dados: {
+              ...atual.dados,
+              tarefas: atual.dados.tarefas.filter((tf) => tf.id !== id),
+            },
+          }
         : atual,
     );
   }, []);
@@ -220,7 +232,7 @@ export function AtomsScreen({
     email.fase === "ok" &&
     email.dados.naoLidos === 0 &&
     email.dados.sinalizados === 0;
-  const todosVazio = todos.fase === "ok" && todos.dados.length === 0;
+  const todosVazio = todos.fase === "ok" && todos.dados.tarefas.length === 0;
   const tudoEmDia = agendaVazia && emailVazio && todosVazio;
 
   // #187: widgets customizáveis visíveis, na ordem do usuário.
@@ -454,7 +466,7 @@ function FeedAtencao({
 }: {
   agenda: Estado<EventoAgenda[]>;
   email: Estado<{ naoLidos: number; sinalizados: number; recentes: EmailRecente[] }>;
-  todos: Estado<Tarefa[]>;
+  todos: Estado<TarefasResultado>;
   idioma: string;
   t: Dic;
   onNavegar: (tela: Tela) => void;
@@ -526,7 +538,7 @@ function FeedAtencao({
       }
     }
     if (todos.fase === "ok") {
-      for (const tf of todos.dados) {
+      for (const tf of todos.dados.tarefas) {
         out.push(criarAtom(`td-${tf.id}`, "todo", tf.titulo, sinalTarefa(tf), agora));
       }
     }
@@ -874,7 +886,7 @@ function TodosWidget({
   onConcluida,
   denso,
 }: {
-  estado: Estado<Tarefa[]>;
+  estado: Estado<TarefasResultado>;
   t: Dic;
   onRetry: () => void;
   onConcluida: (id: string) => void;
@@ -902,7 +914,7 @@ function TodosWidget({
   const corpo = () => {
     if (estado.fase === "carregando") return <SkeletonLinhas />;
     if (estado.fase === "erro") return <ErroCard t={t} onRetry={onRetry} />;
-    if (estado.dados.length === 0) {
+    if (estado.dados.tarefas.length === 0) {
       return (
         <div className="flex flex-col items-center gap-2 py-6 text-center">
           <IconStack>
@@ -916,14 +928,27 @@ function TodosWidget({
     // Ordena pelo score de atenção (vencidas/prazo primeiro), reusa lib/atoms.
     const agora = Date.now();
     const ordenadas = ordenarAtoms(
-      estado.dados.map((tf) =>
+      estado.dados.tarefas.map((tf) =>
         criarAtom(tf.id, "todo", tf.titulo, sinalTarefa(tf), agora),
       ),
     );
-    const porId = new Map(estado.dados.map((tf) => [tf.id, tf]));
+    const porId = new Map(estado.dados.tarefas.map((tf) => [tf.id, tf]));
 
     return (
-      <ul className="space-y-3.5">
+      <>
+        {/* #1075 RB46: o card tem dados, mas PARCIAIS. Antes uma lista que dava
+            403 contribuia zero tarefas e ficava identica a uma lista vazia — a
+            soma parecia completa. Aviso discreto: nao e erro do card (os outros
+            dados valem), e nao pode ser silencio. */}
+        {estado.dados.listasComFalha.length > 0 && (
+          <p className="mb-3 text-xs text-muted-foreground">
+            {t.atoms.todosListasComFalha}{" "}
+            <span className="font-medium">
+              {estado.dados.listasComFalha.join(", ")}
+            </span>
+          </p>
+        )}
+        <ul className="space-y-3.5">
         {ordenadas.map((item) => {
           const tf = porId.get(item.id)!;
           const marcada = concluindo.has(tf.id);
@@ -976,7 +1001,8 @@ function TodosWidget({
             </li>
           );
         })}
-      </ul>
+        </ul>
+      </>
     );
   };
 
