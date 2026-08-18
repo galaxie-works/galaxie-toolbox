@@ -50,21 +50,13 @@ pub enum NetMessage {
     SessionSignal(SessionSignal),
 }
 
-/// Capabilities da sessão remota — o tipo ÚNICO (#1070 RB7): assinado no ticket S8
-/// (remote-net) e, a partir de agora, o que cruza o IPC do app (substitui o antigo
-/// `RemoteCapabilities` de 2 campos). `#[serde(default)]`: um campo AUSENTE no payload
-/// desserializa como `false` = **DENY** (fail-closed) — casa com o `Default` e deixa o
-/// front atual (que manda só `screen`/`input`) válido, com file/clipboard/audio negados
-/// até serem concedidos. `Copy` porque são 5 bools (o app copia por valor).
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
-pub struct Capabilities {
-    pub screen: bool,
-    pub input: bool,
-    pub file_transfer: bool,
-    pub clipboard: bool,
-    pub audio: bool,
-}
+/// Capabilities da sessão remota — assinado no ticket S8 e o que cruza o IPC do app.
+///
+/// #1070 RB7 (decisão do Altair, #1234): o tipo agora MORA no crate folha
+/// `galaxie-remote-capabilities` — o contrato entre quem CONCEDE (aqui) e quem APLICA
+/// (`remote-transport`), num terceiro lugar em vez de dep entre irmãos. Reexportado
+/// aqui pra `galaxie_remote_net::protocol::Capabilities` seguir válido pros consumidores.
+pub use galaxie_remote_capabilities::Capabilities;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

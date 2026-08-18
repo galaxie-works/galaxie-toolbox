@@ -1470,6 +1470,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "galaxie-remote-capabilities"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "galaxie-remote-capture"
 version = "0.1.0"
 dependencies = [
@@ -1488,6 +1495,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "ed25519-dalek",
+ "galaxie-remote-capabilities",
  "rand 0.8.7",
  "serde",
  "serde_json",

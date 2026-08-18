@@ -310,6 +310,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "galaxie-remote-capabilities"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "galaxie-remote-net"
 version = "0.1.0"
 dependencies = [
@@ -317,6 +324,7 @@ dependencies = [
  "base64",
  "ed25519-dalek",
  "futures-util",
+ "galaxie-remote-capabilities",
  "opaque-ke",
  "rand 0.8.7",
  "rustls",

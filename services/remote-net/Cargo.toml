@@ -25,6 +25,8 @@ authority = ["dep:opaque-ke", "dep:argon2"]
 
 [dependencies]
 # ── núcleo leve (sempre) ──
+# #1070 RB7: vocabulário ÚNICO de capability mora no crate folha; aqui só reexporta.
+galaxie-remote-capabilities = { path = "../remote-capabilities" }
 base64 = "0.22.1"
 ed25519-dalek = { version = "2.2.0", features = ["rand_core"] }
 rand = "0.8.5"

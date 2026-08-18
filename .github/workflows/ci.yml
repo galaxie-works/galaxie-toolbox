@@ -140,6 +140,7 @@ jobs:
           # todos aqui faz o cache guardar cada target e economizar recompilação.
           workspaces: |
             src-tauri
+            services/remote-capabilities
             services/remote-transport
             services/remote-net
             services/remote-capture
@@ -167,8 +168,13 @@ jobs:
         working-directory: src-tauri
         run: cargo test --features remote
 
-      # ── services/: os 6 crates do Remote (cada um build próprio, fora do workspace
+      # ── services/: os crates do Remote (cada um build próprio, fora do workspace
       # do src-tauri). Cobrem o CÓDIGO REAL (features gated), não só o default. ──
+      # #1070 RB7: crate folha do vocabulário de capability (dep só serde).
+      - name: services/remote-capabilities
+        working-directory: services/remote-capabilities
+        run: cargo test
+
       - name: services/remote-transport (núcleo + input + audio)
         working-directory: services/remote-transport
         run: cargo test --features input,audio
