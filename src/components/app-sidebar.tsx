@@ -31,8 +31,9 @@ import { PinOff } from "lucide-react";
  *
  * ⚠️ P0 (webview #650/#358): NÃO amarrar esconder a webview do Navigator ao
  * estado PERSISTENTE do rail. Montar/desmontar o rail por PIN (abaixo) é gate de
- * pin, não de webview — o esconder da webview segue só TRANSIENTE (flyout/menu →
- * `galaxie:webview-ceder`).
+ * pin, não de webview — o esconder da webview segue só TRANSIENTE (menu de
+ * contexto de app fixado). Esse esconder-transiente é do #1163 D2: o próprio
+ * `ContextMenu` se registra na conta de overlays do store.
  */
 /**
  * #721 (SH3): seção de apps FIXADOS do rail. Lê os ids do store, resolve contra
@@ -55,17 +56,11 @@ function PinnedApps({
   if (fixados.length === 0) return null;
   return (
     <SidebarGroup className="items-center gap-1 px-1.5 py-1">
+      {/* #358 → #1163 D2: o menu abre à direita, sobre a webview do Navigator. O
+          ContextMenu (primitivo de `@/components/ui`) já cede a webview sozinho
+          (se registra no store) — o window-event manual virou redundante. */}
       {fixados.map((app) => (
-        <ContextMenu
-          key={app.id}
-          // #358: o menu abre à direita, sobre a webview do Navigator — avisa pra
-          // ela ceder enquanto aberto (TRANSIENTE; fora do Navigator é no-op).
-          onOpenChange={(aberto) =>
-            window.dispatchEvent(
-              new CustomEvent("galaxie:webview-ceder", { detail: aberto }),
-            )
-          }
-        >
+        <ContextMenu key={app.id}>
           <Tooltip>
             <ContextMenuTrigger asChild>
               <TooltipTrigger asChild>

@@ -4,6 +4,7 @@ import { XIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { textoUi } from "@/lib/idioma-core"
 import { Button } from "@/components/ui/button"
+import { useRegistroOverlayWebview } from "@/lib/navigator-overlay"
 /**
  * #480 (épico #476): dialogs migrados pro Animate UI. **Ponto único de troca** —
  * envolve o primitivo `radix` do Animate UI (overlay/content via `motion` +
@@ -33,8 +34,18 @@ import {
   type DialogDescriptionProps,
 } from "@/components/animate-ui/primitives/radix/dialog"
 
-function Dialog(props: DialogProps) {
-  return <DialogPrimitive data-slot="dialog" {...props} />
+function Dialog({ open, onOpenChange, ...props }: DialogProps) {
+  // #1163 D2: o dialog cede a webview do Navigator sozinho (controlado OU aberto
+  // por trigger). Antes era opt-in via `useOcultarWebviewEnquantoAberto` no chamador.
+  const aoMudarAbertura = useRegistroOverlayWebview(open, onOpenChange)
+  return (
+    <DialogPrimitive
+      data-slot="dialog"
+      open={open}
+      onOpenChange={aoMudarAbertura}
+      {...props}
+    />
+  )
 }
 
 function DialogTrigger(props: DialogTriggerProps) {

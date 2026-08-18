@@ -3,11 +3,23 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from "lucide-react"
 import { Select as SelectPrimitive } from "radix-ui"
 
 import { cn } from "@/lib/utils"
+import { useRegistroOverlayWebview } from "@/lib/navigator-overlay"
 
 function Select({
+  open,
+  onOpenChange,
   ...props
 }: React.ComponentProps<typeof SelectPrimitive.Root>) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />
+  // #1163 D2: o listbox do Select cede a webview do Navigator sozinho.
+  const aoMudarAbertura = useRegistroOverlayWebview(open, onOpenChange)
+  return (
+    <SelectPrimitive.Root
+      data-slot="select"
+      open={open}
+      onOpenChange={aoMudarAbertura}
+      {...props}
+    />
+  )
 }
 
 function SelectGroup({

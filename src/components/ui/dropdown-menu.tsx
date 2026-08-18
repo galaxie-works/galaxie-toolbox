@@ -20,6 +20,12 @@
 import * as React from "react"
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui"
 
+import { useRegistroOverlayWebview } from "@/lib/navigator-overlay"
+import {
+  DropdownMenu as DropdownMenuBase,
+  type DropdownMenuProps,
+} from "@/components/animate-ui/components/radix/dropdown-menu"
+
 function DropdownMenuPortal({
   ...props
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Portal>) {
@@ -28,8 +34,23 @@ function DropdownMenuPortal({
   )
 }
 
+/**
+ * #1163 D2: o dropdown cede a webview do Navigator sozinho (aberto por trigger ou
+ * controlado). Antes cada dropdown do Navegador passava `onOpenChange={registrar}`
+ * na mão — opt-in que o overlay novo esquecia. Agora é por construção.
+ */
+function DropdownMenu({ open, onOpenChange, ...props }: DropdownMenuProps) {
+  const aoMudarAbertura = useRegistroOverlayWebview(open, onOpenChange)
+  return (
+    <DropdownMenuBase
+      open={open}
+      onOpenChange={aoMudarAbertura}
+      {...props}
+    />
+  )
+}
+
 export {
-  DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -61,4 +82,4 @@ export {
   type DropdownMenuSubTriggerProps,
   type DropdownMenuSubContentProps,
 } from "@/components/animate-ui/components/radix/dropdown-menu"
-export { DropdownMenuPortal }
+export { DropdownMenu, DropdownMenuPortal }
