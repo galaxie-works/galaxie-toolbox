@@ -37,6 +37,8 @@ struct Inner {
     pairings: RwLock<HashMap<String, String>>,
     limiter: SlidingWindowLimiter,
     redeem_failures: Mutex<HashMap<IpAddr, RedeemFailState>>,
+    // #1049 T2: tentativas de Register por IP (reusa a mesma forma de janela+backoff).
+    register_attempts: Mutex<HashMap<IpAddr, RedeemFailState>>,
     unattended: Mutex<galaxie_remote_net::authority::UnattendedAuthority>,
     unattended_state_file: Option<PathBuf>,
     unattended_persistence: Mutex<()>,
@@ -89,6 +91,13 @@ const REDEEM_MAX_FALHAS: usize = 5;
 const REDEEM_JANELA: Duration = Duration::from_secs(60);
 const REDEEM_BACKOFF_BASE: Duration = Duration::from_secs(2);
 const REDEEM_BACKOFF_MAX: Duration = Duration::from_secs(300);
+// #1049 T2 (adendo §6 do Altair): limitador DEDICADO do Register. Cada Register cunha
+// credencial TURN de 30min; um cliente legítimo registra ~1×/sessão. 5/60s tolera
+// reconexão mas mata o 120/min do balde genérico. Reusa a forma do redeem (janela +
+// ciclos + `duracao_backoff`). NÃO fecha o T2 (isso é o OPAQUE do v2, #1132) — reduz a
+// exposição durante a janela.
+const REGISTER_MAX: usize = 5;
+const REGISTER_JANELA: Duration = Duration::from_secs(60);
 
 // Estado por-IP das falhas de redeem: janela deslizante de falhas + bloqueio ativo.
 #[derive(Default)]
@@ -200,6 +209,7 @@ impl AppState {
                     events: Mutex::new(HashMap::new()),
                 },
                 redeem_failures: Mutex::new(HashMap::new()),
+                register_attempts: Mutex::new(HashMap::new()),
                 unattended: Mutex::new(unattended),
                 unattended_state_file,
                 unattended_persistence: Mutex::new(()),
@@ -400,6 +410,36 @@ impl AppState {
     // SEC13: um redeem bem-sucedido zera todo o histórico de falhas do IP.
     pub async fn clear_redeem_failures(&self, ip: IpAddr) {
         self.inner.redeem_failures.lock().await.remove(&ip);
+    }
+
+    // #1049 T2 (adendo §6 do Altair): true se o IP pode registrar agora. Diferente do
+    // redeem (que conta FALHAS), aqui conta TODA tentativa — todo Register cunha
+    // credencial TURN, então a própria frequência é o abuso. Ao atingir o teto na
+    // janela, arma o backoff escalante (reusa `duracao_backoff`). Servidor puro,
+    // independente da janela de atualização do cliente.
+    pub async fn allow_register(&self, ip: IpAddr) -> bool {
+        let now = Instant::now();
+        let mut all = self.inner.register_attempts.lock().await;
+        let estado = all.entry(ip).or_default();
+        if let Some(ate) = estado.bloqueado_ate {
+            if ate > now {
+                return false;
+            }
+            // backoff expirou: libera (preserva `ciclos` p/ escalar se reincidir).
+            estado.bloqueado_ate = None;
+        }
+        let threshold = now.checked_sub(REGISTER_JANELA).unwrap_or(now);
+        while estado.falhas.front().is_some_and(|evento| *evento <= threshold) {
+            estado.falhas.pop_front();
+        }
+        if estado.falhas.len() >= REGISTER_MAX {
+            estado.ciclos = estado.ciclos.saturating_add(1);
+            estado.bloqueado_ate = Some(now + duracao_backoff(estado.ciclos));
+            estado.falhas.clear();
+            return false;
+        }
+        estado.falhas.push_back(now);
+        true
     }
 
     pub async fn register(
@@ -708,6 +748,25 @@ mod tests {
             120,
             Duration::from_secs(60),
         )
+    }
+
+    #[tokio::test]
+    async fn register_bloqueia_apos_teto_e_isola_por_ip() {
+        // #1049 T2: diferente do redeem, cada `allow_register` JÁ conta como tentativa
+        // (todo Register cunha credencial). As primeiras REGISTER_MAX passam; a próxima
+        // arma o backoff. Um IP acima do teto não emite mais credencial na janela.
+        let estado = estado_de_teste();
+        let alvo = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 10));
+        for _ in 0..REGISTER_MAX {
+            assert!(estado.allow_register(alvo).await);
+        }
+        assert!(
+            !estado.allow_register(alvo).await,
+            "IP acima do teto de Register deveria estar em backoff"
+        );
+        // Outro IP não é afetado (isolamento por-IP) — legítimo não sofre pelo abuso alheio.
+        let outro = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 11));
+        assert!(estado.allow_register(outro).await);
     }
 
     #[tokio::test]

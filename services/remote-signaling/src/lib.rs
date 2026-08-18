@@ -210,6 +210,21 @@ async fn process_message(
             device_id,
             public_key,
         } => {
+            // #1049 T2 (adendo §6 do Altair): limitador DEDICADO do Register — cada
+            // Register cunha credencial TURN de 30min, então a FREQUÊNCIA é o abuso.
+            // Antes o Register dividia o balde genérico (`allow_message`, 120/60s); um
+            // host emitia 120 credenciais/min. Agora um IP acima do teto é recusado
+            // ANTES de atestar/cunhar/inserir. Reduz a exposição do T2 (o fecho é o
+            // OPAQUE do v2, #1132); servidor puro, não espera a janela do cliente.
+            if !state.allow_register(client_ip).await {
+                send_error(
+                    outbound,
+                    ErrorCode::RateLimited,
+                    "muitos registros deste IP; tente novamente em instantes",
+                )
+                .await;
+                return;
+            }
             if !valid_device_id(&device_id) {
                 send_error(outbound, ErrorCode::InvalidDeviceId, "device_id invalido").await;
                 return;
