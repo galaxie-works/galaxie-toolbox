@@ -100,14 +100,7 @@ export interface TipoArquivo {
   quantidade: number;
 }
 
-// --- Control room (dashboard) --------------------------------------------
-export interface Reuniao {
-  assunto: string;
-  inicio: string; // ISO UTC (sem Z; o front adiciona)
-  fim: string;
-  local: string;
-  online: boolean;
-}
+
 
 export interface EmailRecente {
   assunto: string;
@@ -115,10 +108,7 @@ export interface EmailRecente {
   recebido: string;
 }
 
-export interface CaixaEntrada {
-  naoLidos: number;
-  recentes: EmailRecente[];
-}
+
 
 export interface Tarefa {
   titulo: string;
