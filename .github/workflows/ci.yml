@@ -27,6 +27,59 @@ jobs:
   frontend:
     uses: ./.github/workflows/gate-front.yml
 
+  # #786 + #1262: navegador REAL (Playwright/chromium) — o único canal que pega
+  # foco/ponteiro de verdade. Job SEPARADO e com TETO:
+  #   • separado, porque ele não pode bloquear o release (o `gate-front` bloqueia);
+  #   • com teto, porque em 18/08 ele ficou 45+ min pendurado sem reprovar nem
+  #     terminar, e "pendurado" se disfarça de "rodando" até alguém olhar o relógio.
+  # O teto transforma o travamento em FALHA VISÍVEL. Causa raiz: card à parte.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Descobrir o store do pnpm
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache do pnpm
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: Cache do browser (Playwright)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Instalar chromium (Playwright)
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Testes em navegador (vitest browser-mode)
+        run: pnpm test:browser
+
   # Rust/Tauri: compila e testa o Remote REAL (não o `remote_stub`) + os 6 crates
   # de services/. Roda no windows-latest (mesma plataforma do release, evita as
   # libs de sistema que o Tauri exige no Linux). O rust-cache deixa rápido quando

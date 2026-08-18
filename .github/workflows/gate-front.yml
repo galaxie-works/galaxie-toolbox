@@ -73,20 +73,15 @@ jobs:
       - name: Testes de componente (vitest)
         run: pnpm test:component
 
-      # #786: testes em NAVEGADOR REAL (vitest browser-mode / Playwright
-      # chromium) — foco/ponteiro de verdade, o único jeito de guardar a
-      # recorrência do erase do compose.
-      # #1056 (TST-09): sem cache, o chromium era baixado da rede em TODO run.
-      - name: Cache do browser (Playwright)
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            playwright-${{ runner.os }}-
-
-      - name: Instalar chromium (Playwright)
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Testes em navegador (vitest browser-mode)
-        run: pnpm test:browser
+      # ⚠️ O `test:browser` NÃO está aqui — ver `ci.yml`, job `browser`.
+      #
+      # #1262: este gate bloqueia o release (`release.yml` o chama com `needs:`).
+      # O canal de navegador ficou **45+ min pendurado** num run e travou o corte
+      # da v0.45.0. Reproduzi local: `campo-pessoas.browser.test.tsx` sozinho
+      # estoura 10 min; não é o volume de testes, é a subida do canal.
+      #
+      # Um passo que PENDURA num gate bloqueante é pior que um que reprova:
+      # reprovar avisa, pendurar só consome a janela de release. Por isso ele
+      # saiu daqui e virou job próprio, COM teto de tempo, que não bloqueia o
+      # release — alinhado com o §5.0-ter (o `Polaris II` já tinha decidido que
+      # o `test:browser` é CI-only para o gate manual, pelo mesmo motivo: custo).
