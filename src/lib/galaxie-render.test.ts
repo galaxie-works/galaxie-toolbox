@@ -23,7 +23,7 @@ const m365: AppM365[] = [
   { id: "sharepoint", nome: "SharePoint", resumo: { "pt-BR": "Sites", en: "Sites" }, url: "https://www.office.com/launch/sharepoint", icone: "sharepoint", categorias: ["conteudo"] },
 ];
 const catalogo: AppCatalogo[] = [
-  { id: "figma", name: "Figma", category: "Developer Tools", url: "https://figma.com", icon: true },
+  { id: "figma", name: "Figma", category: "Developer Tools", url: "https://figma.com", icon: true, desc: { "pt-BR": "d", en: "d" } },
 ];
 const resolver = (a: AppM365) => `/assets/apps/${a.icone}.svg`;
 
