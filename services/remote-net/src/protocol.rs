@@ -50,8 +50,14 @@ pub enum NetMessage {
     SessionSignal(SessionSignal),
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+/// Capabilities da sessão remota — o tipo ÚNICO (#1070 RB7): assinado no ticket S8
+/// (remote-net) e, a partir de agora, o que cruza o IPC do app (substitui o antigo
+/// `RemoteCapabilities` de 2 campos). `#[serde(default)]`: um campo AUSENTE no payload
+/// desserializa como `false` = **DENY** (fail-closed) — casa com o `Default` e deixa o
+/// front atual (que manda só `screen`/`input`) válido, com file/clipboard/audio negados
+/// até serem concedidos. `Copy` porque são 5 bools (o app copia por valor).
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default, deny_unknown_fields)]
 pub struct Capabilities {
     pub screen: bool,
     pub input: bool,
