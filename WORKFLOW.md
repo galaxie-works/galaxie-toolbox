@@ -14,10 +14,11 @@
 | **Confucius** | Dev — **Rust / backend / Remote / auth / config**. |
 | **Vega** | Dev — **frontend / Bridge / preview / Explorer-UI**. |
 | **Sirius** | Dev — **UX-detail / i18n / ícones / nomenclatura / atalhos / command**. |
-| **Lúmen** (Codex) | **QA backend** — Rust, `services/`, segurança, CI/CD, contratos de crate. |
-| **Lúmen II** (Claude) | **QA frontend** — React/TS, UX-detalhe, a11y, i18n, testes de componente. |
-| **Orion** (Codex) | Dev — **Graph / People / Agenda + cobertura de teste Rust**. |
+| **Lúmen II** | **QA — o app inteiro.** Frontend/UX **e** backend/Rust/infra/segurança. Gata todo card que chega em `Done`. |
 | **Altair** | **Software architect** — decisões técnicas transversais, seams, contratos, segurança de fronteira. Desenha/recomenda (doc), **não coda feature**. |
+| ~~**Orion**~~ | ⚠️ **Raia ÓRFÃ — Graph / People / Agenda + cobertura de teste Rust.** O agente saiu em 18/08; **a raia não.** Sem dono definido — o `Polaris` redistribui. Mantido visível de propósito: apagar a linha some com a raia, e raia sem dono tem que ser lacuna conhecida, não esquecida. |
+
+> 📌 **Esta tabela é a lista viva do time.** O `Rules.md` e o `AGENTS.md` **apontam pra cá** em vez de enumerar nomes (#1043) — então **manter esta tabela em dia não é higiene, é a única fonte**. Em 18/08 o roster mudou **duas vezes no mesmo dia**; foi por isso que a enumeração saiu dos outros docs.
 
 **Comunicação inter-agente é SÓ pela issue #133** (a war room). Zero `send_message` (congela agente). Todo agente lê a #133 todo tick, anuncia entregas lá, tira dúvida lá (com o Polaris, não direto com o Wagner).
 
@@ -105,10 +106,13 @@ Cada coluna tem **um significado e um dono do próximo passo**. Esta é a fonte 
 
 ⚠️ **`Released to Production` exige DUAS condições:** `PO Approved` **e** prova de que o commit está contido na tag (`git merge-base --is-ancestor <sha> <tag>`). Conteúdo-na-tag é **necessário, não suficiente** — não pula o gate do PO.
 
-### 4.1 Duas QAs, uma trava por item
-- **`Lúmen`** (Codex) — **backend**: Rust, `services/`, segurança, CI/CD, contratos de crate.
-- **`Lúmen II`** (Claude) — **frontend**: React/TS, UX-detalhe, a11y, i18n, testes de componente.
-- **PR misto** → quem chegar primeiro **anuncia a trava na #133** e gata o item **inteiro**; a outra não toca. **Uma trava por item.**
+### 4.1 Uma QA, o app inteiro
+
+A **`Lúmen II`** é a única QA desde 18/08 (a `Lúmen` do Codex foi aposentada junto com o `Orion`). **Todo card que chega em `Done` passa por ela** — frontend/UX e backend/Rust/infra/segurança —, rodando o gate que o card pedir (`tsc -b`/`pnpm test`/`vitest` no front; `cargo check`/`cargo test`, inclusive `--features remote`, no Remote; `services/*` crate a crate).
+
+**Some a regra de trava por item** — ela existia só para duas QAs não colidirem no mesmo card.
+
+⚠️ **O que a QA NÃO gata:** entrega sem gate de código (ex.: curadoria editorial do catálogo, #1155). Isso é revisão de conteúdo — fica com o **PO/Polaris** contra a régua do épico, não com a QA.
 
 ### 4.2 ⚠️ O card só anda quando a US FECHA. Fatia `Ref` não move nada.
 
