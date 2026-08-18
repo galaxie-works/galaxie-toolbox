@@ -200,20 +200,49 @@ const TELAS_IR_PARA_VISIVEIS: Tela[] = TELAS_IR_PARA.filter(
  * #719 (SH1): ícone da aba interna (Bridge/Files/Remote) na strip e no rail —
  * mesmos glifos do rail do shell (SH0) pra fidelidade visual. Fallback = globo.
  */
-function iconeTelaInterna(tela: TelaInterna | undefined): ReactNode {
+function iconeTelaInterna(
+  tela: TelaInterna | undefined,
+  // #1150: o command lista as telas do GALAXIE ao lado dos apps M365, cujos
+  // ícones Fluent são 20px — por isso o tamanho é parâmetro. `size` existe
+  // separado da classe porque o `IconeAnim` dimensiona por style inline (a
+  // classe sozinha não o alcança); os lucide estáticos vão só pela classe.
+  tamanho: { classe: string; px: number } = { classe: "size-4", px: 16 },
+): ReactNode {
   switch (tela) {
     case "control-room":
-      return <BridgeIcon className="size-4 shrink-0" />;
+      return (
+        <BridgeIcon className={cn(tamanho.classe, "shrink-0")} size={tamanho.px} />
+      );
     case "arquivos":
-      return <FolderTree className="size-4 shrink-0 text-muted-foreground" />;
+      return (
+        <FolderTree className={cn(tamanho.classe, "shrink-0 text-muted-foreground")} />
+      );
     case "remote":
       return (
-        <MonitorSmartphone className="size-4 shrink-0 text-muted-foreground" />
+        <MonitorSmartphone
+          className={cn(tamanho.classe, "shrink-0 text-muted-foreground")}
+        />
       );
     default:
-      return <Globe className="size-4 shrink-0 text-muted-foreground" />;
+      return <Globe className={cn(tamanho.classe, "shrink-0 text-muted-foreground")} />;
   }
 }
+
+/**
+ * #1150: as três telas do GALAXIE no command. O ícone delas tem que ser o MESMO
+ * glifo do rail e da strip de abas (`iconeTelaInterna`) — antes caíam no
+ * `AppIcon`, que serve o SVG estático de `public/app-icons/galaxie-*.svg`. O do
+ * Bridge é um envelope genérico; o ícone real do Bridge é o LEME (ship-wheel)
+ * animado. Dois símbolos diferentes pro mesmo app, na mesma tela.
+ */
+const TELA_GALAXIE: Record<string, TelaInterna> = {
+  "galaxie-bridge": "control-room",
+  "galaxie-files": "arquivos",
+  "galaxie-remote": "remote",
+};
+
+/** Tamanho do glifo no command: casa com os ícones Fluent do M365 (20px). */
+const TAMANHO_COMMAND = { classe: "size-5", px: 20 } as const;
 
 /**
  * Hero da aba vazia do Navigator (#74): a nave (lucide-animated) balançando em
@@ -932,7 +961,13 @@ function ItemUnificado({
       onSelect={onSelecionar}
       className="group gap-2.5"
     >
-      {app.fluentIcon ? (
+      {TELA_GALAXIE[app.id] ? (
+        // #1150: reusa o glifo do rail/strip. Vem ANTES do `fluentIcon` só por
+        // clareza — as telas do GALAXIE não têm Fluent —, e os M365 que abrem
+        // tela nativa (Outlook → control-room) seguem com o ícone da marca
+        // deles, porque o mapa é por id do app, não pela tela de destino.
+        iconeTelaInterna(TELA_GALAXIE[app.id], TAMANHO_COMMAND)
+      ) : app.fluentIcon ? (
         <img
           src={app.fluentIcon}
           alt=""

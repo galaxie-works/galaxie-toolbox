@@ -101,8 +101,10 @@ export function IconeItemAnim({ Comp, className }: { Comp: AnimIcon; className?:
 }
 
 /** Bridge (Control room) — timão (ship-wheel). */
-export function BridgeIcon({ className }: { className?: string }) {
-  return <IconeAnim Comp={ShipWheelIcon as unknown as AnimIcon} className={className} />;
+export function BridgeIcon({ className, size }: { className?: string; size?: number }) {
+  return (
+    <IconeAnim Comp={ShipWheelIcon as unknown as AnimIcon} className={className} size={size} />
+  );
 }
 
 /**
