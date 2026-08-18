@@ -97,7 +97,13 @@ impl IoDriver {
         let mut eventos = Vec::new();
         loop {
             match self.transport.passo()? {
-                Passo::Transmitir { destino, dados } => {
+                // O harness de loopback não usa relay TURN: `origem` (o candidato de
+                // saída) é irrelevante aqui — sempre manda direto ao `destino`.
+                Passo::Transmitir {
+                    origem: _,
+                    destino,
+                    dados,
+                } => {
                     // best-effort: WouldBlock (buffer cheio) não é fatal no loopback.
                     match self.socket.send_to(&dados, destino) {
                         Ok(_) => {}

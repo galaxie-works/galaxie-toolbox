@@ -15,7 +15,8 @@ use std::time::{Duration, Instant};
 
 use galaxie_remote_transport::stun::{build_binding_request, parse_xor_mapped_address};
 use galaxie_remote_transport::turn::{
-    build_allocate_request, build_allocate_request_auth, derive_key, parse_allocate_success,
+    build_allocate_request, build_allocate_request_auth, build_create_permission_request,
+    build_send_indication, derive_key, parse_allocate_success, parse_data_indication,
     parse_error_unauthorized,
 };
 use galaxie_remote_transport::{
@@ -260,6 +261,24 @@ enum RuntimeCommand {
     End { reason: String },
 }
 
+/// #1130 fatia 3: estado do relay TURN alocado, pra servir o data-path. Só existe se
+/// o `gather_relay` alocou (senão a sessão é host/srflx puro). `key`/`nonce` derivam
+/// da credencial efêmera do coturn e NUNCA são logados.
+struct RelayState {
+    /// Onde mandar as Send indications: o próprio servidor coturn.
+    turn_server: SocketAddr,
+    /// XOR-RELAYED-ADDRESS = o candidato local `relay`. `Passo::Transmitir` com
+    /// `origem == relayed` sai embrulhado pelo relay.
+    relayed: SocketAddr,
+    username: String,
+    realm: String,
+    nonce: String,
+    key: [u8; 16],
+    /// IPs de peer com CreatePermission já instalada (o coturn dropa tráfego de peer
+    /// sem permissão). Evita reenviar a permissão a cada pacote.
+    permitidos: HashSet<IpAddr>,
+}
+
 struct RuntimeSession {
     role: RemoteRole,
     capabilities: RemoteCapabilities,
@@ -276,6 +295,8 @@ struct RuntimeSession {
     pressed_keys: HashSet<galaxie_remote_transport::Tecla>,
     pressed_buttons: HashSet<galaxie_remote_transport::BotaoMouse>,
     injector: Option<galaxie_remote_transport::Injector>,
+    /// #1130 fatia 3: relay TURN alocado (data-path), ou `None` (host/srflx puro).
+    relay: Option<RelayState>,
     capture_frames: Option<Receiver<galaxie_remote_capture::CodedFrame>>,
     transport_encoder_commands: TransportCommandReceiver,
     capture_encoder_commands: Option<galaxie_remote_capture::contract::CommandChannel>,
@@ -628,21 +649,22 @@ impl RuntimeSession {
                 .map_err(transport_error)?;
         }
 
-        // #1130 fatia 2: PROBE do relay — roda o handshake Allocate no coturn (via o
-        // MESMO socket quieto, como o srflx) pra PROVAR que o relay aloca. Espelha o
-        // srflx e é NÃO-fatal (sem TURN/credencial/timeout → custa zero, host/srflx
-        // seguem). O `gather_relay` loga o `relayed` alocado (diagnóstico de runtime).
-        //
-        // NÃO anuncia o candidato relay ainda, DE PROPÓSITO: a str0m 0.6 é sans-I/O e
-        // NÃO faz o data-path do relay (embrulhar `Transmit{source=relayed}` em TURN
-        // ChannelData/Send + CreatePermission por peer). Sem isso — a FATIA 3 — o
-        // candidato seria INERTE: anunciá-lo só geraria checagens ICE mortas e faria a
-        // str0m emitir `Transmit{source=relayed}` que sairia CRU pelo socket errado.
-        // O candidato (`candidato_relay`) + trickle entram JUNTO com o data-path na
-        // fatia 3. Aqui a entrega é o handshake provado + a fundação.
-        let base_relay = SocketAddr::new(ips_locais[0], porta);
+        // #1130 fatia 3: aloca o relay E anuncia o candidato. Diferente da fatia 2
+        // (que só PROBAVA o Allocate), agora o data-path existe — o `drain_transport`
+        // embrulha `origem==relayed` numa Send indication e o `receive_udp`
+        // desembrulha a Data indication do coturn — então anunciar o candidato relay é
+        // ÚTIL, não inerte. Fica com o PRIMEIRO relay que alocar (um basta; vários
+        // coturn seriam fallback, improvável no MVP). NÃO-fatal: sem relay a sessão
+        // segue host/srflx, exatamente como antes.
+        let mut relay: Option<RelayState> = None;
         for (turn_server, username, credential) in &turn_alvos {
-            let _ = gather_relay(&socket, *turn_server, username, credential, base_relay);
+            if let Some(estado) = gather_relay(&socket, *turn_server, username, credential) {
+                transport
+                    .candidato_relay(estado.relayed)
+                    .map_err(transport_error)?;
+                relay = Some(estado);
+                break;
+            }
         }
 
         let mut session = Self {
@@ -661,6 +683,7 @@ impl RuntimeSession {
             pressed_keys: HashSet::new(),
             pressed_buttons: HashSet::new(),
             injector,
+            relay,
             capture_frames,
             transport_encoder_commands,
             capture_encoder_commands,
@@ -692,8 +715,16 @@ impl RuntimeSession {
                 .into(),
             })?;
         }
-        // #1130 fatia 2: NÃO faz trickle do candidato relay — ele não é anunciado até a
-        // fatia 3 (data-path). Ver o comentário do PROBE acima e `Transport::candidato_relay`.
+        // #1130 fatia 3: trickle do candidato relay (se alocou) — DEPOIS de host+srflx
+        // (ordem host-primeiro preservada). Só emite se o `gather_relay` alocou.
+        if let Some(relayed) = session.relay.as_ref().map(|r| r.relayed) {
+            session.send_event(RemoteSessionEvent::Signal {
+                signal: SignalMessage::IceCandidate {
+                    candidate: Transport::candidato_relay_sdp(relayed).map_err(transport_error)?,
+                }
+                .into(),
+            })?;
+        }
         if session.role == RemoteRole::Controller {
             let offer = session.transport.criar_offer().map_err(transport_error)?;
             session.send_event(RemoteSessionEvent::Signal {
@@ -798,16 +829,79 @@ impl RuntimeSession {
 
     fn receive_udp(&mut self) -> Result<(), RemoteError> {
         let mut buffer = [0u8; 65_536];
+        // #1130 fatia 3: snapshot Copy do (turn_server, relayed) pra demultiplexar sem
+        // segurar `&self.relay` enquanto chamamos `&mut self.transport`. O recv NÃO
+        // muta o relay (a permissão é instalada no caminho de ENVIO).
+        let relay_io = self.relay.as_ref().map(|r| (r.turn_server, r.relayed));
         loop {
             match self.socket.recv_from(&mut buffer) {
-                Ok((len, source)) => self
-                    .transport
-                    .receber_udp(source, self.local_addr, &buffer[..len])
-                    .map_err(transport_error)?,
+                Ok((len, source)) => {
+                    let pacote = &buffer[..len];
+                    // Tráfego vindo do coturn: só a Data indication interessa ao str0m
+                    // (é o pacote do peer embrulhado). O resto (CreatePermission
+                    // Success, Refresh…) é controle TURN e não vai pro str0m. Um pacote
+                    // do peer chega ao str0m como vindo do `peer` no candidato `relayed`.
+                    if let Some((turn_server, relayed)) = relay_io {
+                        if source == turn_server {
+                            if let Some((peer, dados)) = parse_data_indication(pacote) {
+                                self.transport
+                                    .receber_udp(peer, relayed, &dados)
+                                    .map_err(transport_error)?;
+                            }
+                            continue;
+                        }
+                    }
+                    self.transport
+                        .receber_udp(source, self.local_addr, pacote)
+                        .map_err(transport_error)?;
+                }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(()),
                 Err(error) => return Err(RemoteError::Network(error.to_string())),
             }
         }
+    }
+
+    /// #1130 fatia 3: caminho de SAÍDA de um datagrama do str0m. Host/srflx (`origem`
+    /// = base local) → UDP direto ao `destino`, como sempre. Relay (`origem` ==
+    /// `relayed`) → embrulha numa Send indication endereçada ao servidor TURN, com
+    /// CreatePermission instalada pro peer ANTES na 1ª vez (o coturn dropa tráfego de
+    /// peer sem permissão). `txid` aleatório: indication não tem resposta a casar.
+    fn enviar_datagrama(
+        &mut self,
+        origem: SocketAddr,
+        destino: SocketAddr,
+        dados: &[u8],
+    ) -> Result<(), RemoteError> {
+        if let Some(relay) = self.relay.as_mut() {
+            if origem == relay.relayed {
+                if relay.permitidos.insert(destino.ip()) {
+                    let mut txid = [0u8; 12];
+                    rand::thread_rng().fill(&mut txid[..]);
+                    let perm = build_create_permission_request(
+                        &txid,
+                        destino,
+                        &relay.username,
+                        &relay.realm,
+                        &relay.nonce,
+                        &relay.key,
+                    );
+                    self.socket
+                        .send_to(&perm, relay.turn_server)
+                        .map_err(|e| RemoteError::Network(e.to_string()))?;
+                }
+                let mut txid = [0u8; 12];
+                rand::thread_rng().fill(&mut txid[..]);
+                let ind = build_send_indication(&txid, destino, dados);
+                self.socket
+                    .send_to(&ind, relay.turn_server)
+                    .map_err(|e| RemoteError::Network(e.to_string()))?;
+                return Ok(());
+            }
+        }
+        self.socket
+            .send_to(dados, destino)
+            .map_err(|e| RemoteError::Network(e.to_string()))?;
+        Ok(())
     }
 
     fn drain_capture(&mut self) -> Result<(), RemoteError> {
@@ -857,10 +951,12 @@ impl RuntimeSession {
     fn drain_transport(&mut self) -> Result<bool, RemoteError> {
         for _ in 0..256 {
             match self.transport.passo().map_err(transport_error)? {
-                Passo::Transmitir { destino, dados } => {
-                    self.socket
-                        .send_to(&dados, destino)
-                        .map_err(|e| RemoteError::Network(e.to_string()))?;
+                Passo::Transmitir {
+                    origem,
+                    destino,
+                    dados,
+                } => {
+                    self.enviar_datagrama(origem, destino, &dados)?;
                 }
                 Passo::Aguardar(at) => {
                     self.next_timeout = Some(at);
@@ -1321,8 +1417,7 @@ fn gather_relay(
     turn_server: SocketAddr,
     username: &str,
     credential: &str,
-    base: SocketAddr,
-) -> Option<(SocketAddr, SocketAddr, u32)> {
+) -> Option<RelayState> {
     // Passo 1: Allocate sem auth → espera 401 Unauthorized com REALM/NONCE.
     let mut txid = [0u8; 12];
     rand::thread_rng().fill(&mut txid[..]);
@@ -1348,9 +1443,20 @@ fn gather_relay(
 
     log::info!(
         "[remote] relay TURN alocado via {turn_server}: relayed={relayed} lifetime={lifetime}s \
-         (data-path/refresh = fatia 3; segredo NÃO logado)"
+         (renovação do lifetime = fatia 3c; segredo NÃO logado)"
     );
-    Some((relayed, base, lifetime))
+    // Guarda a credencial pro data-path (Send indication + CreatePermission). O
+    // `lifetime` não é guardado aqui: a renovação (Refresh) é a fatia 3c; a alocação
+    // inicial (#1050: 1800s) cobre a sessão até lá.
+    Some(RelayState {
+        turn_server,
+        relayed,
+        username: username.to_owned(),
+        realm,
+        nonce,
+        key,
+        permitidos: HashSet::new(),
+    })
 }
 
 fn sanitize_reason(reason: String) -> String {

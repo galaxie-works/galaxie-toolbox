@@ -91,7 +91,17 @@ impl SessionConfig {
 /// O que o driver da sessão precisa que o app faça a cada passo (sans-I/O).
 pub enum Passo {
     /// Manda estes bytes por UDP pro destino.
-    Transmitir { destino: SocketAddr, dados: Vec<u8> },
+    ///
+    /// `origem` é o `Transmit.source` do str0m — o candidato local de onde o pacote
+    /// deve SAIR. Pra host/srflx é a base local (o app manda direto ao `destino`).
+    /// Pra o candidato RELAY, `origem == relayed`: o str0m é sans-I/O e NÃO faz o
+    /// data-path do TURN, então o app embrulha `dados` numa Send indication e manda
+    /// ao servidor TURN (não cru ao `destino`). #1130 fatia 3.
+    Transmitir {
+        origem: SocketAddr,
+        destino: SocketAddr,
+        dados: Vec<u8>,
+    },
     /// Nada a fazer até este instante (agende um timeout).
     Aguardar(Instant),
     /// Um evento de sessão (conectou, dado de controle recebido, etc.).
@@ -430,6 +440,7 @@ impl Transport {
         {
             Output::Timeout(t) => Ok(Passo::Aguardar(t)),
             Output::Transmit(t) => Ok(Passo::Transmitir {
+                origem: t.source,
                 destino: t.destination,
                 dados: t.contents.to_vec(),
             }),
