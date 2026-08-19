@@ -29,7 +29,6 @@ distribuição; o app se atualiza sozinho).
 |---|---|
 | **Bridge** | Cliente de e-mail (4 painéis) + **Agenda** (eventos, recorrência) + **People** (contatos M365, categorias, organizações) — tudo via Graph delegado |
 | **Navigator** | Navegador embutido (WebView2) com abas, sleeping tabs, command palette, favoritos, histórico/privacidade |
-| **Atoms** | Tela inicial / dashboard do usuário — widgets (agenda, e-mail, to-dos), feed "Atenção agora", personalização. ⚠️ Em **retrabalho** (ver `docs/atoms/atoms-ux-replan.md`) |
 | **Previews** | Preview de anexos (PDF/TXT/docx/xlsx/pptx) dentro do app, com sandbox de segurança |
 | **Telemetria** | Diagnóstico/observabilidade privacy-first (TelemetryPolicy em Rust → OpenObserve self-host; consent por categoria, PII-scrubbed) |
 
@@ -106,21 +105,21 @@ está em **[REGISTRO-APP.md](REGISTRO-APP.md)**.
 ```
 src/                    interface (React)
   components/           ui (shadcn/reui), agenda, people, bridge, animate-ui…
-  screens/              login, control-room (Bridge), navegador, atoms, configuracoes…
+  screens/              login, control-room (Bridge), navegador, configuracoes…
   lib/api.ts            ponte para o backend (mock fora do Tauri)
-  lib/                  atoms, tema, strings (i18n pt/en), telemetria, store zustand…
+  lib/                  tema, strings (i18n pt/en), telemetria, store zustand…
 src-tauri/src/
   auth.rs               PKCE, tenant, sessão (DPAPI), foto do perfil
   graph.rs              Microsoft Graph: mail, agenda, people, tarefas, sites (pool graph_enviar/429)
   telemetry.rs          TelemetryPolicy (consent/scrub/sampling) + transporte OTLP
-  onedrive.rs           sonda local de sync do OneDrive (Atoms)
   system.rs             registro do Windows e Explorer
   estado.rs             registro local dos atalhos criados
   config.rs             CLIENT_ID, endpoints e SCOPES_BASE/SCOPES_ORG
 ```
 
 Docs em [`docs/`](docs/), **escopados por área** (ver o índice [`docs/README.md`](docs/README.md)):
-`atoms/`, `bridge/`, `navigator/`, `astro/` (Galaxie AI) e `reference/`
+`bridge/`, `navigator/`, `astro/` (Galaxie AI), `reference/` e `arquivo/`
+(histórico de produtos removidos)
 (`graph-scopes.md`). Instruções operacionais dos agentes:
 [`AGENTS.md`](AGENTS.md) + [`Rules.md`](Rules.md).
 
@@ -142,8 +141,6 @@ precisa virar *multitenant* e o admin de cada cliente dar consent uma vez.
 
 ## Próximos passos
 
-Em andamento: retrabalho profundo do **Atoms** (dashboard) com fundação de dados
-resiliente e UX flagship (ver `docs/atoms/atoms-ux-replan.md`); telemetria live no
-build shipado; **Astro** (Galaxie AI — créditos de IA + meeting-assistant, ver
+Em andamento: telemetria live no build shipado; **Astro** (Galaxie AI — créditos de IA + meeting-assistant, ver
 `docs/astro/galaxie-ai-discovery.md`). O roadmap vive no board (GitHub Projects) — ver
 `AGENTS.md` §2.

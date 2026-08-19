@@ -39,7 +39,6 @@ export const CHAVES_CONFIG_NUVEM = [
   "agendaCalendariosSelecionados",
   "organizations",
   "idioma",
-  "atomsPrefs",
   "pularConfirmacaoConexao",
   // #721: apps fixados no rail — cloud-sync aditivo sobre o local-first do SH3.
   "appsFixados",

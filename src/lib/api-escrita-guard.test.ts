@@ -39,7 +39,7 @@ const ALLOWLIST_NAO_ESCRITA = new Set<string>([
   "login", "detectTenant", "logout", "currentAccount", "requiredScopesStatus",
   "cachedIdentity", "restoreSession", "onedriveSettingsRead", "gdriveSettingsRead",
   "lockStatus", "lockVerifyPin", "listSites", "siteDetails", "onedriveFolders",
-  "onedriveFolderDetails", "onedriveQuota", "onedriveTipos", "crAtomsEmail", "crTarefas", "atomsOnedriveSync", "crTeamsDisponivel", "crAgenda",
+  "onedriveFolderDetails", "onedriveQuota", "onedriveTipos", "crAgenda",
   "crCalendarios", "crAgendaCalendario", "crCategorias", "crEventoCorpo",
   "crEventoRecorrencia", "crEmailCorpo", "crEmailSeguranca",
   "crMailFolders", "crValidarCaixa", "crMailSharedDisponivel", "crMailSendSharedDisponivel",

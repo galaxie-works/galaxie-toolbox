@@ -1,10 +1,8 @@
-import { Gauge, Settings, Radar, FolderTree, MonitorSmartphone } from "lucide-react";
+import { Gauge, Settings, FolderTree, MonitorSmartphone } from "lucide-react";
 import type { ComponentType } from "react";
 import {
-  AtomIcon,
   BridgeIcon,
   NavigatorIcon,
-  CommsIcon,
   AstroIcon,
 } from "@/components/ui/icons/marca-anim";
 import { AppsIcon } from "@/components/ui/icons/apps-anim";
@@ -20,14 +18,11 @@ export type IconeNav = ComponentType<{ className?: string }>;
 
 /** Telas do canvas. Cada uma sabe onde fica no menu (para o breadcrumb). */
 export type Tela =
-  | "atoms"
   | "onedrive"
   | "apps"
   | "control-room"
   | "navegador"
-  | "comms"
   | "astro"
-  | "pulsar"
   | "outlook"
   | "performance"
   | "caminhos-longos"
@@ -78,14 +73,12 @@ export const NAV: GrupoNav[] = [
         titulo: "galaxie",
         icone: GalaxieSymbol,
         filhos: [
-          // #663 (RC): Atoms/Comms/Astro/Pulsar ocultos — sobram Bridge +
-          // Navigator (os prontos). Ocultos por flag, nada deletado.
-          { id: "atoms", titulo: "atoms", icone: AtomIcon, oculto: true },
+          // #663 (RC): Astro segue oculto por flag. Atoms/Comms/Pulsar foram
+          // REMOVIDOS do app em #1320 (decisão do PO 19/08) — não são ocultos,
+          // deixaram de existir.
           { id: "control-room", titulo: "controlRoom", icone: BridgeIcon },
           { id: "navegador", titulo: "navegador", icone: NavigatorIcon },
-          { id: "comms", titulo: "comms", icone: CommsIcon, oculto: true },
           { id: "astro", titulo: "astro", icone: AstroIcon, oculto: true },
-          { id: "pulsar", titulo: "pulsar", icone: Radar, oculto: true },
         ],
       },
       {
@@ -121,18 +114,53 @@ export const NAV: GrupoNav[] = [
   },
 ];
 
+/** Tela em que o app abre por padrão (#718 SH0). */
+export const TELA_PADRAO: Tela = "navegador";
+
+/** Só é `Tela` o que existe no `TELAS` — sem `as Tela`, a checagem é o próprio mapa. */
+function ehTela(valor: string): valor is Tela {
+  return Object.prototype.hasOwnProperty.call(TELAS, valor);
+}
+
+/**
+ * Tela inicial do app — FUNIL ÚNICO (#1299).
+ *
+ * Telas ocultas por flag (`oculto: true`, #663) não têm porta de entrada: o
+ * código está na `pre-prod`, mas nem QA nem script conseguem chegar nelas. Esta
+ * é a porta — `?tela=<id>` —, e ela vive aqui, num lugar só: o `App.tsx` NÃO lê
+ * `location.search`. Quem precisar de outra entrada muda esta função, não
+ * espalha leitura de URL pelo app.
+ *
+ * **A porta não existe em produção.** O corpo inteiro está atrás de
+ * `import.meta.env.DEV`, que o Vite substitui por `false` no build de produção —
+ * o bloco vira código morto e sai do bundle na minificação. Isso é AC de
+ * SEGURANÇA (#1299), não conveniência: abrir a tela oculta em produção seria
+ * fechar um buraco de QA criando um de produto, e o #663 continua de pé.
+ *
+ * Valor inválido, ausente ou fora do `TELAS` cai no padrão sem quebrar.
+ */
+export function telaInicial(): Tela {
+  if (!import.meta.env.DEV) return TELA_PADRAO;
+  if (typeof window === "undefined") return TELA_PADRAO;
+  const pedida = new URLSearchParams(window.location.search).get("tela");
+  if (!pedida) return TELA_PADRAO;
+  const alvo = ehTela(pedida) ? pedida : TELA_PADRAO;
+  // Sentinela do AC de segurança: esta string SÓ pode existir em build de dev.
+  // O gate (`porta-qa-ausente-em-prod.test.ts`) falha se ela aparecer no `dist/`.
+  // De quebra, a QA vê no console que a porta foi usada e para qual tela.
+  console.info("[porta-qa-1299]", pedida, "->", alvo);
+  return alvo;
+}
+
 /** Ícone e trilha de cada tela, usados no cabeçalho do canvas. */
 export const TELAS: Record<
   Tela,
   { titulo: ChaveNav; secao: ChaveNav; icone: IconeNav }
 > = {
   // Produtos Galaxie
-  atoms: { titulo: "atoms", secao: "galaxie", icone: AtomIcon },
   "control-room": { titulo: "controlRoom", secao: "galaxie", icone: BridgeIcon },
   navegador: { titulo: "navegador", secao: "galaxie", icone: NavigatorIcon },
-  comms: { titulo: "comms", secao: "galaxie", icone: CommsIcon },
   astro: { titulo: "astro", secao: "galaxie", icone: AstroIcon },
-  pulsar: { titulo: "pulsar", secao: "galaxie", icone: Radar },
   // Microsoft 365
   apps: { titulo: "apps", secao: "copilot", icone: AppsIcon },
   outlook: { titulo: "outlook", secao: "copilot", icone: OutlookIcon },

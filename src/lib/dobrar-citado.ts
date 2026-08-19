@@ -230,32 +230,6 @@ export function dobrarCitado(html: string, rotulo: string): string {
   return body.innerHTML;
 }
 
-/**
- * CSS do botão de dobra, injetado no baseline do `srcDoc`.
- *
- * SEMPRE autorado em CLARO (as cores do chip do Gmail): no tema escuro o botão
- * escurece junto com o resto via a inversão por CSS (`estiloInversaoEscuro`,
- * #1034) — não há mais Dark Reader nem cores por tema aqui. O `!important`
- * segura o `<style>` do próprio e-mail (que vem DEPOIS do nosso no documento)
- * pra ele não repintar o botão.
- */
-export function estiloDobra(): string {
-  const fundo = "#dadce0";
-  const fundoHover = "#c6cad0";
-  const cor = "#3c4043";
-  return (
-    `details.gt-aparado{margin:2px 0;display:block!important}` +
-    `details.gt-aparado>summary.gt-aparado-botao{` +
-    `display:inline-block!important;list-style:none!important;cursor:pointer;` +
-    `user-select:none;box-sizing:content-box;height:14px;line-height:14px;` +
-    `padding:0 8px;margin:4px 0;border:0!important;border-radius:8px;` +
-    `background:${fundo}!important;color:${cor}!important;` +
-    `font:700 14px/14px system-ui,-apple-system,Segoe UI,sans-serif;` +
-    `letter-spacing:1px;vertical-align:middle;zoom:1}` +
-    `details.gt-aparado>summary.gt-aparado-botao::-webkit-details-marker{display:none}` +
-    `details.gt-aparado>summary.gt-aparado-botao::marker{content:""}` +
-    `details.gt-aparado>summary.gt-aparado-botao:hover{background:${fundoHover}!important}` +
-    `details.gt-aparado>summary.gt-aparado-botao:focus-visible{` +
-    `outline:2px solid #7c3aed;outline-offset:2px}`
-  );
-}
+// #1278: o CSS do botão de dobra saiu daqui (era `estiloDobra()`) e mora em
+// `public/leitor-corpo.css`, servido pela origem do app — `<style>` inline no
+// srcDoc é bloqueado pela CSP herdada. Editar o visual da dobra é lá.

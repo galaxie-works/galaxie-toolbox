@@ -12,9 +12,9 @@ use futures_util::{SinkExt, StreamExt};
 use galaxie_remote_net::{
     authority::ControllerClaims,
     protocol::{
-        decode_net_message, AuthBegin, AuthFinish, DeviceEnrollBegin, DeviceEnrollFinish,
-        DeviceHeartbeat, DeviceRegister, Envelope, MessageType, SessionDecision, SessionRequest,
-        SessionSignal,
+        decode_net_message, AuthBegin, AuthFinish, Capabilities, DeviceEnrollBegin,
+        DeviceEnrollFinish, DeviceHeartbeat, DeviceRegister, Envelope, MessageType, SessionDecision,
+        SessionRequest, SessionSignal,
     },
     MAX_MESSAGE_BYTES, PROTOCOL_VERSION,
 };
@@ -25,12 +25,15 @@ use uuid::Uuid;
 
 use crate::state::AppState;
 
+// #1295: owner/org/capabilities vêm do GRANT do ticket (begin_enrollment), nunca do
+// payload. name/public_key são descritivos/keying do device (sem valor de privilégio).
 struct PendingEnrollment {
     owner_id: String,
     org_id: String,
     device_id: String,
     name: String,
     public_key: String,
+    capabilities: Capabilities,
 }
 
 pub async fn websocket_upgrade(
@@ -125,25 +128,33 @@ async fn process(
     };
     let result = match envelope.method.as_str() {
         "device.enroll.begin" => {
+            // #1295: valida o ticket de matrícula; owner/org/capabilities saem do GRANT
+            // (ticket assinado), nunca do payload. O ticket é uso único — consumido aqui,
+            // por isso persistimos o estado após um Ok (anti-replay sobrevive a restart).
             let body = match payload::<DeviceEnrollBegin>(envelope.payload) {
                 Ok(body) => body,
                 Err(error) => return error_response(&id, "invalid_payload", &error),
             };
-            match state.unattended().await.begin_enrollment(
-                &body.owner_id,
-                &body.org_id,
+            let grant = state.unattended().await.begin_enrollment(
                 &body.device_id,
+                &body.enrollment_ticket,
                 &body.opaque_request,
-            ) {
-                Ok(opaque_response) => {
+                now,
+            );
+            match grant {
+                Ok(grant) => {
+                    if state.persist_unattended().await.is_err() {
+                        return error_response(&id, "persistence", "state persistence failed");
+                    }
                     *pending_enrollment = Some(PendingEnrollment {
-                        owner_id: body.owner_id,
-                        org_id: body.org_id,
+                        owner_id: grant.owner_id,
+                        org_id: grant.org_id,
                         device_id: body.device_id,
                         name: body.name,
                         public_key: body.public_key,
+                        capabilities: grant.capabilities,
                     });
-                    Ok(json!({"opaqueResponse": opaque_response}))
+                    Ok(json!({"opaqueResponse": grant.opaque_response}))
                 }
                 Err(error) => Err(error),
             }
@@ -159,6 +170,7 @@ async fn process(
             if pending.device_id != body.device_id {
                 return error_response(&id, "binding", "device changed during enrollment");
             }
+            // #1295: capabilities e owner/org vêm do pending (derivado do ticket), não do wire.
             let result = state
                 .unattended()
                 .await
@@ -168,7 +180,7 @@ async fn process(
                     &pending.device_id,
                     &pending.name,
                     &pending.public_key,
-                    body.capabilities,
+                    pending.capabilities,
                     &body.opaque_upload,
                     now,
                 )
