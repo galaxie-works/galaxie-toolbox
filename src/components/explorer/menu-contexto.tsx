@@ -23,6 +23,8 @@ import {
   Info,
   Link2,
   Pencil,
+  Pin,
+  PinOff,
   Scissors,
   Trash2,
 } from "lucide-react";
@@ -54,6 +56,9 @@ const ICONES: Record<IconeMenu, ComponentType<{ className?: string }>> = {
   copiarCaminho: Link2,
   revelar: ExternalLink,
   propriedades: Info,
+  // #1283 B: fixar/desafixar no Acesso rápido, a partir do menu da árvore.
+  fixar: Pin,
+  desafixar: PinOff,
 };
 
 /** Renderiza recursivamente uma lista de `ItemMenu` como itens/submenus Radix. */
