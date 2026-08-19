@@ -4,6 +4,7 @@ Ledger "o que está no ar" (seed). Fonte: backfill 18/08/2026 a partir do `git l
 
 | Versão | Resumo |
 |---|---|
+| **v0.47.0** | 📬 Leitor do Bridge: corpo inteiro de novo (regressão dos 120px) + tema escuro; aviso de update com notas formatadas/roláveis e data legível; Atoms/Comms/Pulsar removidos (decisão do PO); Remote: PoP no registro (flag off), matrícula por ticket de enrollment, autorização por-frame no funil; pirata da aba privada pinado; CI clippy verde. |
 | **v0.46.0** | 🔔 Aviso de atualização só com versão mais nova + mostra o changelog (copy nova); controles de janela (min/max/fechar) corrigidos; telemetria fora da thread do IPC e falha-alto; guarda de teste do funil de sessão; browser-tests do CI destravados; notas de release versionadas (`docs/releases/`). |
 | **v0.45.1** | 🌌 Release inaugural do novo time: TEAM-CANON.md + RELEASES.md + docs/equipe no repo; branch de integração `feat/bridge-email-client` → `pre-prod`; `main` = produção. Sem mudança no app. |
 | **v0.45.0** | 🔒 Release de segurança: vazamento de sessão entre contas fechado no núcleo (P0); escopo de leitura de arquivos; allowlist M365; Remote endurecido (rate-limit + PoP + capability gate); gate CI=release unificado. Sob o capô: tsc typecheca testes, clippy no CI, oxlint-ratchet corrigido, browser-tests em job próprio; Rust/Graph consolidado (erros não viram sucesso falso; código morto removido); DPAPI stub fail-closed. *Última release do time fundador.* |
