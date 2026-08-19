@@ -101,7 +101,7 @@ Groomer errou o Size → o dev corrige e anota no card. O SM **não** revisa esc
 | **SM** | **Bibliotecário** | Bibliotecário: ordena o handoff, **cria o SM sucessor** e confere o boot |
 | **Bibliotecário** | **SM** | SM cria a passada nova do Bibliotecário |
 
-- **Teto: ~3-4k mensagens OU 1×/dia** — o que vier primeiro. Sinal de rot (mandamento 2) = troca imediata, sem esperar o teto.
+- **Teto: ~3-4k mensagens OU 1×/dia** — o que vier primeiro. Sinal de rot (mandamento 2) = troca imediata, sem esperar o teto. **Silêncio ≠ rot:** antes de reciclar por agente irresponsivo, conferir status da Anthropic (degradação de serviço já derrubou agentes em outros projetos) — sonda de liveness (wake-up do PO ou do vigia) primeiro, troca depois.
 - **Boot de toda sessão nova, nesta ordem:** identidade do papel → **TEAM-CANON** → `<Papel>Context.md`. Context sempre currente é obrigação do dono (Bibliotecário cobra fóssil).
 - O degradado **nunca** cria o próprio sucessor.
 
@@ -118,7 +118,7 @@ Sweep **não é exclusivo do SM**. É o batimento periódico de todo papel cuja 
 | **Atlas (Deploy Manager)** | `PO Approved` (corte a ~3 cards, §6) | **1×/h** |
 | **Mira (Groomer)** | `Backlog` (groomar → Ready) | **diário** |
 | **Altair (Arquiteto)** | cards com flag **`precisa design`** ainda **sem desenho** (Backlog) e, em `Done`, com flag aguardando revisão de design | **periódico (~1×/h)** |
-| **Devs (Castor, Pollux, Mizar, Alcor)** | **NÃO varrem fila.** São acordados por **despacho do Polaris** ou pelo **PO**. **Watch (v1.6):** dev **com fatia em voo** mantém *watch* da **própria fatia** — PR/CI dela + menção nominal (`castor`…) na issue dona e na #133 — até integrar; 1 query nominal, **não** a #133 inteira nem colunas do board. Dev **livre** não tem watch: pinga na #133 e espera despacho. **Wake-up/mensagem do PO não é ordem de varrer:** o dev acorda, lê o que lhe foi dirigido, age e volta a ficar quieto | watch **~30 min** enquanto houver fatia em voo |
+| **Devs (Castor, Pollux, Mizar, Alcor)** | **NÃO varrem fila.** São acordados por **despacho do Polaris** ou pelo **PO**. **Watch (v1.6):** dev **com fatia em voo** mantém *watch* da **própria fatia** — PR/CI dela + menção nominal (`castor`…) na issue dona e na #133 — até integrar; 1 query nominal, **não** a #133 inteira nem colunas do board. Dev **livre** não tem watch: pinga na #133 e espera despacho. **Wake-up/mensagem do PO não é ordem de varrer** — é sonda de liveness: o dev responde curto no próprio canal (vivo · em #X), age só no que lhe foi dirigido e volta a ficar quieto | watch **~30 min** enquanto houver fatia em voo |
 | **Hiparco (Bibliotecário)** | Não é sweep de fila: **passadas** (§5) — Context fósseis, msgs do Polaris, consistência memória↔canon | periódico |
 
 - Sweep vazio = tick silencioso (não postar "nada a fazer"); sweep com item = agir e registrar na issue dona (+ índice na #133 se for evento do time).
