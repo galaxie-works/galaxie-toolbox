@@ -121,6 +121,44 @@ export const NAV: GrupoNav[] = [
   },
 ];
 
+/** Tela em que o app abre por padrão (#718 SH0). */
+export const TELA_PADRAO: Tela = "navegador";
+
+/** Só é `Tela` o que existe no `TELAS` — sem `as Tela`, a checagem é o próprio mapa. */
+function ehTela(valor: string): valor is Tela {
+  return Object.prototype.hasOwnProperty.call(TELAS, valor);
+}
+
+/**
+ * Tela inicial do app — FUNIL ÚNICO (#1299).
+ *
+ * Telas ocultas por flag (`oculto: true`, #663) não têm porta de entrada: o
+ * código está na `pre-prod`, mas nem QA nem script conseguem chegar nelas. Esta
+ * é a porta — `?tela=<id>` —, e ela vive aqui, num lugar só: o `App.tsx` NÃO lê
+ * `location.search`. Quem precisar de outra entrada muda esta função, não
+ * espalha leitura de URL pelo app.
+ *
+ * **A porta não existe em produção.** O corpo inteiro está atrás de
+ * `import.meta.env.DEV`, que o Vite substitui por `false` no build de produção —
+ * o bloco vira código morto e sai do bundle na minificação. Isso é AC de
+ * SEGURANÇA (#1299), não conveniência: abrir a tela oculta em produção seria
+ * fechar um buraco de QA criando um de produto, e o #663 continua de pé.
+ *
+ * Valor inválido, ausente ou fora do `TELAS` cai no padrão sem quebrar.
+ */
+export function telaInicial(): Tela {
+  if (!import.meta.env.DEV) return TELA_PADRAO;
+  if (typeof window === "undefined") return TELA_PADRAO;
+  const pedida = new URLSearchParams(window.location.search).get("tela");
+  if (!pedida) return TELA_PADRAO;
+  const alvo = ehTela(pedida) ? pedida : TELA_PADRAO;
+  // Sentinela do AC de segurança: esta string SÓ pode existir em build de dev.
+  // O gate (`porta-qa-ausente-em-prod.test.ts`) falha se ela aparecer no `dist/`.
+  // De quebra, a QA vê no console que a porta foi usada e para qual tela.
+  console.info("[porta-qa-1299]", pedida, "->", alvo);
+  return alvo;
+}
+
 /** Ícone e trilha de cada tela, usados no cabeçalho do canvas. */
 export const TELAS: Record<
   Tela,
