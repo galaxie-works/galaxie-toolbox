@@ -59,8 +59,18 @@ const SCRIPT_CAPTURA_SCROLL: &str = r#"(function(){
 /// com alpha (a pagina nao tem as CSS vars do app), boas em claro/escuro; casa
 /// com o `.scrollbar-fina` do chrome (8px, thumb arredondado, track transparente).
 /// Best-effort: se a pagina tiver regra propria mais especifica, ela vence.
+///
+/// #1277 (regressao): o script SEGUE rodando (injecao intacta neste unico caminho
+/// de criacao de aba), mas o WebView2/Chromium da maquina atualiza sozinho e o
+/// Chromium moderno deixa de honrar `::-webkit-scrollbar` quando o scrollbar
+/// PADRAO (`scrollbar-width`/`scrollbar-color`) esta em jogo — entao regra
+/// so-`-webkit-` volta a pintar o nativo. Fix por FUNIL: emitimos TAMBEM as
+/// propriedades padrao (thin + cor), que o Chromium novo honra; as `-webkit-`
+/// ficam para runtimes antigos. A confirmacao de pixel (claro/escuro, 2 sites) e
+/// a lente da QA-V (Iris) + passe do PO, por ser card com superficie.
 const SCRIPT_SCROLLBAR: &str = r#"(function(){try{
-  var css='::-webkit-scrollbar{width:8px;height:8px}'
+  var css='html{scrollbar-width:thin;scrollbar-color:rgba(128,128,128,.5) transparent}'
+    +'::-webkit-scrollbar{width:8px;height:8px}'
     +'::-webkit-scrollbar-thumb{background-color:rgba(128,128,128,.5);border-radius:9999px}'
     +'::-webkit-scrollbar-thumb:hover{background-color:rgba(128,128,128,.75)}'
     +'::-webkit-scrollbar-track{background:transparent}';
@@ -567,6 +577,40 @@ fn capturar_snapshot(_wv: &tauri::webview::Webview) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrollbar_emite_padrao_e_webkit_e_e_injetado_na_criacao() {
+        // #1277: a regressao foi o Chromium novo ignorar `::-webkit-scrollbar`
+        // quando o scrollbar padrao esta em jogo. O fix precisa das DUAS familias:
+        // - padrao (`scrollbar-width`/`scrollbar-color`) — Chromium novo honra;
+        // - `-webkit-` — runtimes antigos. Faltar a padrao = a regressao de volta;
+        //   faltar a webkit = perde o thumb arredondado no runtime velho.
+        assert!(
+            SCRIPT_SCROLLBAR.contains("scrollbar-width:thin"),
+            "SCRIPT_SCROLLBAR sem `scrollbar-width` padrao — Chromium novo pinta o nativo (regressao #1277)",
+        );
+        assert!(
+            SCRIPT_SCROLLBAR.contains("scrollbar-color:"),
+            "SCRIPT_SCROLLBAR sem `scrollbar-color` padrao (#1277)",
+        );
+        assert!(
+            SCRIPT_SCROLLBAR.contains("::-webkit-scrollbar"),
+            "SCRIPT_SCROLLBAR perdeu as regras `-webkit-` (runtimes antigos)",
+        );
+        assert!(
+            SCRIPT_SCROLLBAR.contains("data-galaxie-scrollbar"),
+            "o <style> perdeu o marcador `data-galaxie-scrollbar` (o AC verifica por ele)",
+        );
+        // Contrato de cobertura: o unico caminho que cria aba de site
+        // (`browser_abrir`) injeta o script — o codigo-fonte da funcao tem a
+        // chamada. Se alguem adicionar OUTRO caminho de criacao sem o script, este
+        // arquivo precisa ganhar a chamada la tambem (nao ha bypass hoje).
+        let fonte = include_str!("browser.rs");
+        assert!(
+            fonte.contains(".initialization_script(SCRIPT_SCROLLBAR)"),
+            "nenhum caminho injeta SCRIPT_SCROLLBAR — a aba nasceria sem o scrollbar do app (#1277)",
+        );
+    }
 
     #[test]
     fn rotulo_prefixa_e_filtra_caracteres_invalidos() {
