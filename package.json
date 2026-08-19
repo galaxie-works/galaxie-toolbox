@@ -13,7 +13,8 @@
     "test:watch": "node --test --watch --experimental-strip-types \"src/**/*.test.ts\"",
     "test:component": "vitest run --project component",
     "test:component:watch": "vitest --project component",
-    "test:browser": "vitest run --project browser"
+    "test:browser": "vitest run --project browser",
+    "gate": "pwsh -NoProfile -File scripts/gate.ps1"
   },
   "dependencies": {
     "@ai-sdk/react": "^4.0.40",
