@@ -954,11 +954,15 @@ mod tests {
     /// Roda um future ate o fim numa thread current-thread, para que o log saia
     /// NA MESMA thread onde `capturar_tracing` abriu o escopo.
     fn futures_lite_block_on<T>(fut: impl std::future::Future<Output = T>) -> T {
-        tokio::runtime::Builder::new_current_thread()
+        // `expect` e deny neste crate (clippy::expect_used).
+        let rt = match tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("runtime de teste")
-            .block_on(fut)
+        {
+            Ok(rt) => rt,
+            Err(e) => panic!("nao consegui criar o runtime de teste: {e}"),
+        };
+        rt.block_on(fut)
     }
 
 }

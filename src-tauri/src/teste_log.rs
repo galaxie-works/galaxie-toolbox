@@ -26,6 +26,7 @@
 //! `tauri-plugin-log` do binário real nunca disputa o `set_logger` com ele.
 
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, Once};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
@@ -88,7 +89,10 @@ impl Log for LoggerDeTeste {
 
 static LOGGER: LoggerDeTeste = LoggerDeTeste;
 static INSTALACAO: Once = Once::new();
-static mut INSTALADO: bool = false;
+// `AtomicBool` e nao `static mut`: mesma garantia sem `unsafe` nenhum. (O par
+// deste modulo no signaling usa a mesma forma — helper de teste nao e lugar de
+// gastar orcamento de `unsafe`.)
+static INSTALADO: AtomicBool = AtomicBool::new(false);
 
 fn garantir_logger() {
     INSTALACAO.call_once(|| {
@@ -96,15 +100,11 @@ fn garantir_logger() {
         if ok {
             log::set_max_level(LevelFilter::Trace);
         }
-        // SAFETY: escrito uma única vez dentro do `Once`, antes de qualquer
-        // leitura (toda leitura passa por `garantir_logger` primeiro).
-        unsafe { INSTALADO = ok };
+        INSTALADO.store(ok, Ordering::SeqCst);
     });
 
-    // SAFETY: ver acima — o `Once` já rodou quando chegamos aqui.
-    let instalado = unsafe { INSTALADO };
     assert!(
-        instalado,
+        INSTALADO.load(Ordering::SeqCst),
         "#1301: outro logger já estava instalado neste processo de teste; \
          a captura NÃO funcionaria. Falho alto de propósito: devolver uma lista \
          vazia faria um `assert` de 'não logou' passar por engano."

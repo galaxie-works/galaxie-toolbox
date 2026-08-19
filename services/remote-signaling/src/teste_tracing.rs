@@ -45,7 +45,7 @@ impl Visit for Coletor {
             self.texto.push(' ');
         }
         if field.name() == "message" {
-            self.texto.push_str(&format!("{value:?}").trim_matches('"').to_string());
+            self.texto.push_str(format!("{value:?}").trim_matches('"'));
         } else {
             self.texto.push_str(&format!("{}={:?}", field.name(), value));
         }
@@ -197,7 +197,11 @@ mod testes {
             tracing::error!("DESTA");
             t.join().ok();
         });
-        let da_outra = rx.recv().expect("a outra thread devolveu");
+        // `expect`/`unwrap` sao deny neste crate (clippy::expect_used).
+        let da_outra = match rx.recv() {
+            Ok(v) => v,
+            Err(e) => panic!("a outra thread nao devolveu os logs: {e}"),
+        };
 
         assert!(logou(&desta, Level::ERROR, "DESTA"));
         assert!(
