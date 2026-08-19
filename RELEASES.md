@@ -5,7 +5,7 @@ Ledger "o que está no ar" (seed). Fonte: backfill 18/08/2026 a partir do `git l
 | Versão | Resumo |
 |---|---|
 | **v0.45.1** | 🌌 Release inaugural do novo time: TEAM-CANON.md + RELEASES.md + docs/equipe no repo; branch de integração `feat/bridge-email-client` → `pre-prod`; `main` = produção. Sem mudança no app. |
-| **v0.45.0** | 🔒 Release de segurança: vazamento de sessão entre contas fechado no núcleo (P0); escopo de leitura de arquivos; allowlist M365; Remote endurecido (rate-limit + PoP + capability gate); gate CI=release unificado. *Última release do time fundador.* |
+| **v0.45.0** | 🔒 Release de segurança: vazamento de sessão entre contas fechado no núcleo (P0); escopo de leitura de arquivos; allowlist M365; Remote endurecido (rate-limit + PoP + capability gate); gate CI=release unificado. Sob o capô: tsc typecheca testes, clippy no CI, oxlint-ratchet corrigido, browser-tests em job próprio; Rust/Graph consolidado (erros não viram sucesso falso; código morto removido); DPAPI stub fail-closed. *Última release do time fundador.* |
 | **v0.44.0** | Catálogo de apps curado (1.779→254); relay TURN operacional; erros de Contatos mais claros |
 | **v0.43.0** | Remote com bitrate adaptativo + relay TURN; correção do relay aberto |
 | **v0.42.0** | Rail sob demanda; Remote mais robusto (TURN/STUN); reforços de segurança |
