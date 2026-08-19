@@ -16,7 +16,7 @@ import { preencher } from "@/lib/idioma";
 import { ShieldAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { telUpdateVerificado } from "@/lib/telemetria";
-import { deveOferecerAtualizacao } from "@/lib/versao-update";
+import { deveOferecerAtualizacao, formatarDataFeed } from "@/lib/versao-update";
 
 interface Disponivel {
   versao: string;
@@ -37,7 +37,7 @@ const estaNoTauri = () =>
  * nao pode virar mensagem de erro no rosto de quem so queria trabalhar.
  */
 export function Atualizacao() {
-  const { t } = useIdioma();
+  const { t, idioma } = useIdioma();
   const [estado, setEstado] = useState<Estado>("oculto");
   const [info, setInfo] = useState<Disponivel | null>(null);
   const [progresso, setProgresso] = useState(0);
@@ -63,7 +63,11 @@ export function Atualizacao() {
         setPacote(novo);
         setInfo({
           versao: novo.version,
-          data: novo.date?.split(" ")[0],
+          // #1258: guarda a data CRUA do feed; quem formata e o badge, no
+          // render — assim trocar o idioma do app reformata sem novo `check()`.
+          // O `split(" ")` que morava aqui pressupunha data com espaco e
+          // devolvia o ISO inteiro (`2026-08-19T06:11:36Z`) pro usuario ver.
+          data: novo.date,
           notas: novo.body || undefined,
         });
         setEstado("disponivel");
@@ -122,7 +126,10 @@ export function Atualizacao() {
           <Badge variant="success-light">
             {preencher(t.atualizacao.versao, {
               v: info.versao,
-              d: info.data ?? "",
+              // #1258: data legivel no idioma do app (funil unico em
+              // `formatarDataFeed`); ilegivel/ausente vira "" e o `.trim()`
+              // deixa o badge so com a versao.
+              d: formatarDataFeed(info.data, idioma),
             }).trim()}
           </Badge>
         </div>
