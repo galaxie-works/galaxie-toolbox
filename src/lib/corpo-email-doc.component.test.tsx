@@ -7,8 +7,10 @@ import { render } from "@testing-library/react";
 import DOMPurify from "dompurify";
 import { montarDocEmail, SANDBOX_LEITOR } from "@/lib/corpo-email-doc";
 
-const NONCE = "nonce-fixo-para-teste";
-const base = { rotulo: "mostrar aparado", nonce: NONCE, fator: 1 };
+// #1278: o nonce saiu; o que libera a ponte e o css agora e a ORIGEM DO APP,
+// injetada em runtime. Aqui ela e fixa so pra o teste ser deterministico.
+const ORIGEM = "http://origem-de-teste.local";
+const base = { rotulo: "mostrar aparado", origem: ORIGEM, fator: 1 };
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -28,30 +30,55 @@ describe("SANDBOX_LEITOR — opaque origin (#1034 AC1)", () => {
   });
 });
 
-describe("montarDocEmail — CSP no srcDoc (#1034 AC2)", () => {
-  it("injeta a meta CSP e o nonce casa com o script da ponte", () => {
+describe("montarDocEmail — CSP no srcDoc (#1034 AC2 · #1278)", () => {
+  it("injeta a meta CSP e libera SÓ a origem do app", () => {
     const doc = montarDocEmail({ ...base, corpo: "<p>oi</p>", escuro: false });
     expect(doc).toContain('http-equiv="Content-Security-Policy"');
     expect(doc).toContain("default-src 'none'");
-    expect(doc).toContain(`script-src 'nonce-${NONCE}'`);
+    expect(doc).toContain(`script-src ${ORIGEM}`);
+    expect(doc).toContain(`style-src ${ORIGEM}`);
     expect(doc).toContain("frame-src 'none'");
     expect(doc).toContain("connect-src 'none'");
-    // O único script liberado é o NOSSO, com o mesmo nonce da CSP.
-    expect(doc).toContain(`<script nonce="${NONCE}">`);
+  });
+
+  // #1278 — os três guardas que impedem a REGRESSÃO de voltar. Cada um destes
+  // era o estado ANTIGO do código, e cada um morria em silêncio sob a CSP que o
+  // app herda (nonce/hash na diretiva ANULA o 'unsafe-inline' dela).
+  it("NÃO usa nonce nem `unsafe-inline` — eles são inertes sob a CSP herdada", () => {
+    const doc = montarDocEmail({ ...base, corpo: "<p>oi</p>", escuro: true });
+    expect(doc).not.toContain("nonce");
+    expect(doc).not.toContain("unsafe-inline");
+  });
+
+  it("NÃO tem `<script>` inline nem `<style>` inline — só arquivos da origem", () => {
+    const doc = montarDocEmail({ ...base, corpo: "<p>oi</p>", escuro: true });
+    // `<script src=...>` sim; `<script>` com corpo, não.
+    expect(doc).not.toMatch(/<script(?![^>]*\ssrc=)[^>]*>/);
+    expect(doc).not.toContain("<style");
+  });
+
+  it("carrega ponte e css COMO ARQUIVOS servidos pela origem do app", () => {
+    const doc = montarDocEmail({ ...base, corpo: "<p>oi</p>", escuro: false, fator: 1.5 });
+    expect(doc).toContain(`<link rel="stylesheet" href="${ORIGEM}/leitor-corpo.css">`);
+    expect(doc).toContain(`<script src="${ORIGEM}/leitor-ponte.js"`);
+    // O fator inicial (#76) viaja por atributo, já que não há mais script inline.
+    expect(doc).toContain('data-fator="1.5"');
   });
 });
 
-describe("montarDocEmail — dark mode por CSS, sem script (#1034 AC3)", () => {
-  it("escuro: inversão por filter e NENHUM Dark Reader", () => {
+describe("montarDocEmail — dark mode por CSS, sem script (#1034 AC3 · #1278)", () => {
+  // #1278: a inversão continua por CSS e sem script, mas mora no arquivo
+  // `leitor-corpo.css` (regra `html.gt-escuro`) em vez de um `<style>` inline
+  // que a CSP herdada bloqueava. O que o doc carrega agora é a CLASSE.
+  it("escuro: marca a classe de inversão no <html> e NENHUM Dark Reader", () => {
     const doc = montarDocEmail({ ...base, corpo: "<p>oi</p>", escuro: true });
-    expect(doc).toContain("filter:invert(1)");
-    // No código antigo o escuro injetava o bundle do Dark Reader + DarkReader.enable.
+    expect(doc).toContain('<html class="gt-escuro"');
     expect(doc.toLowerCase()).not.toContain("darkreader");
   });
 
-  it("claro: sem inversão", () => {
+  it("claro: sem a classe de inversão", () => {
     const doc = montarDocEmail({ ...base, corpo: "<p>oi</p>", escuro: false });
-    expect(doc).not.toContain("filter:invert(1)");
+    expect(doc).not.toContain("gt-escuro");
   });
 });
 

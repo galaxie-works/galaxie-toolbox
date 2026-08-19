@@ -1,103 +1,111 @@
-// PROVA #1278: um iframe `srcDoc` HERDA a CSP do documento pai (politica efetiva
-// = intersecao). Reproduz a estrutura do app: documento com a CSP do Tauri →
-// iframe srcDoc do leitor dentro dele. Se a ponte de medicao nao roda, a altura
-// nunca cresce e o leitor fica preso nos 120px iniciais.
-import { it, expect, vi } from "vitest";
-import { montarDocEmail } from "@/lib/corpo-email-doc";
+// GUARDA DE REGRESSÃO #1278 — em navegador real.
+//
+// O bug: o `srcDoc` do leitor HERDA a CSP do app; a política efetiva é a
+// INTERSEÇÃO. A CSP que o Tauri ENTREGA traz nonce/hashes próprios e, pela spec
+// de CSP, **nonce ou hash na diretiva ANULA o `'unsafe-inline'` dela**. Com isso
+// morriam em silêncio, de uma vez: a ponte de medição (`<script>` inline → corpo
+// preso em 120px), a inversão do escuro e o `overflow-y:hidden` do baseline
+// (`<style>` inline → barra de rolagem própria no iframe).
+//
+// ⚠️ A CSP abaixo espelha a ENTREGUE (medida no app buildado em 2026-08-19),
+// NÃO a do `tauri.conf.json` — a config diz `style-src 'self' 'unsafe-inline'`
+// e o efeito real é outro, porque o Tauri injeta o nonce. Foi exatamente por
+// copiar a config em vez de medir o header que eu cheguei a uma conclusão
+// errada neste card. Se algum dia a CSP do app mudar, o dado que vale é o
+// header, não o arquivo.
+import { it, expect } from "vitest";
+import { montarDocEmail, SANDBOX_LEITOR } from "@/lib/corpo-email-doc";
 
-// CSP REAL do app, verbatim de src-tauri/tauri.conf.json (linha 48).
-const CSP_TAURI =
-  "default-src 'self'; img-src 'self' data: blob: https: http: cid:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self' ipc: http://ipc.localhost https: wss:; media-src 'self' data: blob: https:; frame-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'self'";
+const ORIGEM = location.origin;
 
-const escaparAttr = (s: string) =>
+/** Forma da CSP ENTREGUE pelo app: `unsafe-inline` presente porém INERTE. */
+const CSP_APP_ENTREGUE =
+  "default-src 'self'; img-src 'self' data: blob: https: http: cid:; " +
+  "style-src 'self' 'unsafe-inline' 'nonce-13132143493429813339'; " +
+  "script-src 'self' 'wasm-unsafe-eval' 'sha256-ZERPGwTcBz8/GDc1Yq2msqRIhiJHMQfyDLx/3eKjq2E='; " +
+  "connect-src 'self'; frame-src 'self' blob:";
+
+const esc = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 /**
- * Monta pai-com-CSP contendo o iframe do leitor. O script da ponte foi ajustado
- * pra falar com `top` (o teste), em vez de `parent` (o iframe intermediario).
+ * Monta o documento do app (com a CSP entregue) contendo o iframe do leitor, e
+ * espera a ponte reportar. O pai NÃO é sandboxed — no app ele é documento
+ * normal same-origin; só o leitor é de origem opaca.
  */
-function montarPai(csp: string | null): string {
-  const docLeitor = montarDocEmail({
-    corpo: "<div>" + Array.from({ length: 40 }, (_, i) => `<p>linha ${i}</p>`).join("") + "</div>",
-    escuro: false,
-    rotulo: "citado",
-    nonce: crypto.randomUUID(),
-    fator: 1,
-  }).replace(/parent\.postMessage/g, "parent.parent.postMessage");
-  const meta = csp ? `<meta http-equiv="Content-Security-Policy" content="${escaparAttr(csp)}">` : "";
-  return `<!doctype html><html><head>${meta}</head><body style="margin:0">` +
-    `<iframe sandbox="allow-popups allow-scripts" srcdoc="${escaparAttr(docLeitor)}" style="width:100%;height:120px;border:0"></iframe>` +
+async function pontePassa(docLeitor: string, ms = 4000): Promise<boolean> {
+  const pai = document.createElement("iframe");
+  pai.style.cssText = "position:fixed;left:-9999px;width:600px;height:300px;border:0";
+  pai.srcdoc =
+    `<!doctype html><html><head>` +
+    `<meta http-equiv="Content-Security-Policy" content="${esc(CSP_APP_ENTREGUE)}">` +
+    `</head><body style="margin:0">` +
+    `<iframe sandbox="${SANDBOX_LEITOR}" srcdoc="${esc(docLeitor)}" style="width:100%;height:120px;border:0"></iframe>` +
     `</body></html>`;
-}
-
-/** Sobe o pai e espera (ou nao) a mensagem de altura da ponte. */
-async function pontePassa(csp: string | null, ms = 4000): Promise<boolean> {
-  const outer = document.createElement("iframe");
-  outer.setAttribute("sandbox", "allow-popups allow-scripts");
-  outer.style.cssText = "width:600px;height:200px;border:0";
-  outer.srcdoc = montarPai(csp);
   return await new Promise<boolean>((resolve) => {
-    let pronto = false;
+    let ok = false;
     const onMsg = (e: MessageEvent) => {
       const d = e.data as { tipo?: string } | null;
-      if (d && typeof d === "object" && d.tipo === "gt-reader-altura") {
-        pronto = true;
-        window.removeEventListener("message", onMsg);
-        outer.remove();
-        resolve(true);
-      }
+      if (d && typeof d === "object" && d.tipo === "gt-reader-altura") ok = true;
     };
-    window.addEventListener("message", onMsg);
-    document.body.appendChild(outer);
+    // A ponte posta para `parent` — que aqui é o documento-do-app intermediário,
+    // não a janela do teste. Como esse intermediário NÃO é sandboxed (é o app),
+    // ele é same-origin e dá para escutar nele de fora. Sem isto o teste mede o
+    // próprio arranjo, não o alvo: medido, um leitor que funciona parece morto.
+    pai.addEventListener("load", () => {
+      pai.contentWindow?.addEventListener("message", onMsg as EventListener);
+    });
+    document.body.appendChild(pai);
     setTimeout(() => {
-      if (pronto) return;
-      window.removeEventListener("message", onMsg);
-      outer.remove();
-      resolve(false);
+      pai.contentWindow?.removeEventListener("message", onMsg as EventListener);
+      pai.remove();
+      resolve(ok);
     }, ms);
   });
 }
 
-it("CONTROLE: sem CSP no pai, a ponte de medicao CHEGA", async () => {
-  expect(await pontePassa(null)).toBe(true);
-}, 20000);
+const CORPO = "<div>" + Array.from({ length: 30 }, (_, i) => `<p>linha ${i}</p>`).join("") + "</div>";
 
-it("#1278: com a CSP REAL do Tauri no pai, a ponte NAO chega", async () => {
-  expect(await pontePassa(CSP_TAURI)).toBe(false);
-}, 20000);
-
-/**
- * SONDA do sintoma 2 (tema escuro): sob a MESMA CSP herdada, um `<style>` inline
- * dentro do srcDoc ainda aplica? Aqui a sonda usa `allow-same-origin` SÓ pra o
- * teste conseguir ler o computed style — o produto continua opaque-origin.
- */
-async function estiloInlineAplica(csp: string | null): Promise<string> {
-  const docInterno =
-    `<!doctype html><html><head><style>body{background-color:rgb(1,2,3)}</style>` +
-    `</head><body></body></html>`;
-  const meta = csp ? `<meta http-equiv="Content-Security-Policy" content="${escaparAttr(csp)}">` : "";
-  const outer = document.createElement("iframe");
-  outer.setAttribute("sandbox", "allow-scripts allow-same-origin");
-  outer.srcdoc =
-    `<!doctype html><html><head>${meta}</head><body style="margin:0">` +
-    `<iframe id="alvo" sandbox="allow-scripts allow-same-origin" srcdoc="${escaparAttr(docInterno)}"></iframe>` +
-    `</body></html>`;
-  document.body.appendChild(outer);
-  try {
-    return await vi.waitFor(() => {
-      const interno = outer.contentDocument?.querySelector<HTMLIFrameElement>("#alvo");
-      const corpo = interno?.contentDocument?.body;
-      if (!corpo) throw new Error("ainda carregando");
-      const cor = getComputedStyle(corpo).backgroundColor;
-      if (!cor) throw new Error("sem cor");
-      return cor;
-    }, { timeout: 5000, interval: 150 });
-  } finally {
-    outer.remove();
-  }
+/** A FORMA ANTIGA, reconstruída aqui: ponte como `<script>` inline com nonce. */
+function docLeitorAntigo(): string {
+  const nonce = crypto.randomUUID();
+  return (
+    `<!doctype html><html><head>` +
+    `<meta http-equiv="Content-Security-Policy" content="${esc(`default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'`)}">` +
+    `<style>html{overflow-y:hidden}</style>` +
+    `</head><body>${CORPO}` +
+    `<script nonce="${nonce}">parent.postMessage({tipo:"gt-reader-altura",altura:999},"*");</script>` +
+    `</body></html>`
+  );
 }
 
-it("sintoma 2: sob a CSP do Tauri o <style> inline do srcDoc AINDA aplica", async () => {
-  expect(await estiloInlineAplica(null)).toBe("rgb(1, 2, 3)");
-  expect(await estiloInlineAplica(CSP_TAURI)).toBe("rgb(1, 2, 3)");
+it("#1278 a FORMA ANTIGA (script inline + nonce) é bloqueada pela CSP herdada", async () => {
+  // Este é o controle NEGATIVO: se ele passar a valer `true`, a herança deixou
+  // de morder e os outros testes deste arquivo perdem o sentido — não é motivo
+  // para comemorar, é motivo para reinvestigar.
+  expect(await pontePassa(docLeitorAntigo())).toBe(false);
 }, 20000);
+
+it("#1278 a FORMA NOVA (arquivos da origem do app) ATRAVESSA a CSP herdada", async () => {
+  const doc = montarDocEmail({
+    corpo: CORPO,
+    escuro: false,
+    rotulo: "mostrar aparado",
+    origem: ORIGEM,
+    fator: 1,
+  });
+  expect(await pontePassa(doc)).toBe(true);
+}, 20000);
+
+it("#1278 o doc gerado não reintroduz inline (a armadilha que causou o bug)", () => {
+  const doc = montarDocEmail({
+    corpo: CORPO,
+    escuro: true,
+    rotulo: "mostrar aparado",
+    origem: ORIGEM,
+    fator: 1,
+  });
+  expect(doc).not.toContain("<style");
+  expect(doc).not.toMatch(/<script(?![^>]*\ssrc=)[^>]*>/);
+  expect(doc).not.toContain("nonce");
+});

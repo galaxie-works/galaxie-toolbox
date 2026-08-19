@@ -72,21 +72,23 @@ function CorpoHtml({
   // (sem recarregar o iframe). Sem `fator` nas deps do `doc` de propósito.
   const fatorRef = useRef(fator);
   // Render ciente do tema do app (como leitores modernos). O baseline é SEMPRE
-  // claro; o tema escuro nasce da inversão por CSS (`estiloInversaoEscuro`, sem
-  // script) injetada por `montarDocEmail` (#1034).
+  // claro; o tema escuro nasce da inversão por CSS — hoje a classe `gt-escuro`
+  // no <html> do srcDoc, servida por `leitor-corpo.css` (#1034 + #1278).
   const escuro = useTemaEscuro();
   const { t } = useIdioma();
   const rotuloAparado = t.controlRoom.conteudoAparado;
 
-  // Nonce único por documento: casa com o `<script>` da ponte na CSP do srcDoc.
-  // Regenera junto com o `doc` (mesmas deps) — cada srcDoc tem o seu.
   const doc = useMemo(
     () =>
       montarDocEmail({
         corpo,
         escuro,
         rotulo: rotuloAparado,
-        nonce: crypto.randomUUID(),
+        // #1278: a origem do app entra em RUNTIME — a ponte e o css do leitor
+        // são arquivos servidos por ela, e é ela que a CSP do srcDoc libera.
+        // Nunca literal: em `tauri dev` é `localhost:1420`, no app buildado é
+        // `tauri.localhost`.
+        origem: window.location.origin,
         fator: fatorRef.current,
       }),
     [corpo, escuro, rotuloAparado],
@@ -159,7 +161,8 @@ function CorpoHtml({
         srcDoc={doc}
         // OPAQUE ORIGIN (#1034, SEC1): SEM allow-same-origin nos DOIS temas — o
         // e-mail não alcança a origem do app. `allow-scripts` fica só pela ponte
-        // de medição (a CSP do srcDoc só libera o nosso script, via nonce).
+        // de medição — a CSP do srcDoc libera SÓ a origem do app (#1278), então
+        // o script do remetente continua sem rodar.
         sandbox={SANDBOX_LEITOR}
         title={t.controlRoom.corpoEmail}
         className="w-full border-0 bg-white"

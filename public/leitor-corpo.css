@@ -1,0 +1,87 @@
+/*
+ * CSS do leitor de e-mail (#1278). Arquivo SERVIDO pela origem do app — nao
+ * `<style>` inline.
+ *
+ * POR QUE arquivo, e nao inline (a causa raiz do #1278): o `srcDoc` do leitor
+ * HERDA a CSP do app, e a CSP entregue pelo Tauri traz `style-src 'self'
+ * 'unsafe-inline' 'nonce-...'`. Pela spec de CSP, **nonce/hash na diretiva
+ * anula o `'unsafe-inline'`** — entao todo `<style>` inline do srcDoc morria em
+ * silencio (medido no app buildado, 2026-08-19). Com isso morriam DE UMA VEZ:
+ *   - `html{overflow-y:hidden}` -> o iframe ganhava barra de rolagem propria;
+ *   - a inversao do tema escuro  -> o corpo ficava claro no app escuro.
+ * Servido como arquivo, o `style-src <origem-do-app>` da CSP do srcDoc libera —
+ * e o e-mail continua sem poder injetar estilo proprio via `<style>`.
+ *
+ * O tema escuro vira `html.gt-escuro` (classe posta por `montarDocEmail`), em
+ * vez de um segundo `<style>` condicional.
+ */
+
+/* ---- baseline (era `baseline` em corpo-email-doc.ts) --------------------- */
+:root { color-scheme: light; }
+html {
+  margin: 0;
+  padding: 0;
+  /* ROOT rola no eixo X quando algo largo estoura mesmo no zoom minimo (#57);
+     overflow-y hidden — a altura e medida e aplicada por fora. */
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+body {
+  margin: 0;
+  background: #fff;
+  color: #111;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 6px;
+  overflow-wrap: anywhere;
+}
+img { max-width: 100%; height: auto; }
+a { color: #7c3aed; }
+
+/* ---- dobra do citado (#92) — era `estiloDobra()` ------------------------- */
+details.gt-aparado { margin: 2px 0; display: block !important; }
+details.gt-aparado > summary.gt-aparado-botao {
+  display: inline-block !important;
+  list-style: none !important;
+  cursor: pointer;
+  user-select: none;
+  box-sizing: content-box;
+  height: 14px;
+  line-height: 14px;
+  padding: 0 8px;
+  margin: 4px 0;
+  border: 0 !important;
+  border-radius: 8px;
+  background: #dadce0 !important;
+  color: #3c4043 !important;
+  font: 700 14px/14px system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: 1px;
+  vertical-align: middle;
+  zoom: 1;
+}
+details.gt-aparado > summary.gt-aparado-botao::-webkit-details-marker { display: none; }
+details.gt-aparado > summary.gt-aparado-botao::marker { content: ""; }
+details.gt-aparado > summary.gt-aparado-botao:hover { background: #c6cad0 !important; }
+details.gt-aparado > summary.gt-aparado-botao:focus-visible {
+  outline: 2px solid #7c3aed;
+  outline-offset: 2px;
+}
+
+/* ---- tema escuro (#73/#1034) — era `estiloInversaoEscuro()` --------------
+ * O documento e SEMPRE autorado em claro; o escuro nasce desta inversao.
+ * Fundo levemente claro pra, invertido, virar o cinza-escuro de "letterbox".
+ */
+html.gt-escuro {
+  filter: invert(1) hue-rotate(180deg);
+  background: #dcdcdc;
+}
+/* Re-inverte a midia pra ela voltar as cores reais (dupla inversao = neutro). */
+html.gt-escuro img,
+html.gt-escuro video,
+html.gt-escuro picture,
+html.gt-escuro svg,
+html.gt-escuro canvas,
+html.gt-escuro [style*="background-image"] {
+  filter: invert(1) hue-rotate(180deg);
+}
