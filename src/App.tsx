@@ -106,9 +106,6 @@ const OnboardingEmpresaScreen = lazy(() =>
     default: m.OnboardingEmpresaScreen,
   })),
 );
-const AtomsScreen = lazy(() =>
-  import("@/screens/atoms").then((m) => ({ default: m.AtomsScreen })),
-);
 const WindowsScreen = lazy(() =>
   import("@/screens/windows").then((m) => ({ default: m.WindowsScreen })),
 );
@@ -174,10 +171,9 @@ function AppInner() {
   >("checking");
   const [lockCheck, setLockCheck] = useState(0);
   const [cache, setCache] = useState<Identidade | null>(null);
-  // #183 (Atoms): a nova tela inicial. O usuário cai no dashboard Atoms ao
-  // logar/restaurar; o Bridge segue keep-alive (montado/escondido) pra voltar
-  // instantâneo.
-  // #718 (SH0): o app abre no Navigator (era Atoms) — estado inicial do shell.
+  // #718 (SH0): o app abre no Navigator. (Havia um dashboard Atoms como tela
+  // inicial — #183 —; Atoms foi REMOVIDO do app em #1320, decisão do PO 19/08.)
+  // O Bridge segue keep-alive (montado/escondido) pra voltar instantâneo.
   // #1299: quem decide é `telaInicial()` (funil único em `navegacao.ts`), que em
   // DEV honra `?tela=<id>` pra QA/script alcançarem telas ocultas por flag. Aqui
   // não se lê `location.search` — de propósito.
@@ -768,7 +764,7 @@ function AppInner() {
   /**
    * #719 (SH1): roteia navegação de tela. Bridge/Files/Remote viram ABAS do
    * Navigator (foca-se-aberto); todo o resto continua troca de tela top-level.
-   * Ponto único usado pelo rail (SH0), pelo Atoms e pelo command "Ir para".
+   * Ponto único usado pelo rail (SH0) e pelo command "Ir para".
    */
   function navegarPara(destino: Tela) {
     if (
@@ -1431,18 +1427,10 @@ function AppInner() {
             existe area rolavel nenhuma. */
         <ScrollArea className="relative z-10 min-h-0 flex-1">
           {/* #1025: um único Suspense de nível alto cobre as telas lazy deste
-              bloco (Atoms, EmBreve, Windows). Sites é eager e passa direto —
+              bloco (EmBreve, Windows). Sites é eager e passa direto —
               Suspense só suspende no lazy. */}
           <Suspense fallback={<TelaFallback />}>
           <main className="flex flex-col p-4 pt-0">
-          {tela === "atoms" && (
-            <AtomsScreen
-              user={user}
-              onNavegar={navegarPara}
-              onAbrirUrl={abrirUrl}
-              onAbrirApp={abrirAppAqui}
-            />
-          )}
           {tela === "onedrive" && (
             <SitesScreen
               sites={sites}
@@ -1454,13 +1442,6 @@ function AppInner() {
               onAbrirUrl={abrirUrl}
             />
           )}
-          {tela === "comms" && (
-            <EmBreveScreen
-              titulo={t.emBreveComms.titulo}
-              icone={TELAS.comms.icone}
-              descricao={t.emBreveComms.descricao}
-            />
-          )}
           {/* #719 (SH1): Remote virou ABA INTERNA do Navigator (renderTelaInterna);
               o placeholder #682 é renderizado lá dentro, não mais como tela top-level. */}
           {tela === "astro" && (
@@ -1468,13 +1449,6 @@ function AppInner() {
               titulo={t.emBreveAstro.titulo}
               icone={TELAS.astro.icone}
               descricao={t.emBreveAstro.descricao}
-            />
-          )}
-          {tela === "pulsar" && (
-            <EmBreveScreen
-              titulo={t.emBrevePulsar.titulo}
-              icone={TELAS.pulsar.icone}
-              descricao={t.emBrevePulsar.descricao}
             />
           )}
           {tela === "outlook" && (

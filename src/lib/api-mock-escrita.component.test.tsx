@@ -63,7 +63,7 @@ describe("#1017 mock não finge sucesso de escrita fora do Tauri", () => {
   it("LEITURA segue mockada e resolve sem lançar", async () => {
     // Era `crEmail`, apagado no #1074 F2 por não ter consumidor em produção.
     // A asserção é sobre a CLASSE (leitura resolve mockada), não sobre a função —
-    // qualquer leitura viva serve, e `crContadores` é a que o Atoms usa de fato.
+    // qualquer leitura viva serve; `crContadores` é uma delas.
     const contadores = await crContadores("inbox");
     expect(contadores).toBeTruthy();
   });

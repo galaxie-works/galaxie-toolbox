@@ -72,7 +72,7 @@ Os PNGs são evidência da PR, não artefatos versionados; a pasta de saída est
 
 | Cenário | Estado capturado |
 | --- | --- |
-| `atoms` | dashboard inicial após o login mock |
+| `astro` | tela oculta alcançada pela porta `?tela=` (o cenário era `atoms`, removido em #1320) |
 | `onedrive-my-files` | M365 Copilot > OneDrive > My files, com o card de uso em foco |
 
 Para incluir outra tela, adicione ao mapa `$scenarios` em

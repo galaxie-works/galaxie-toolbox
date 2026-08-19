@@ -14,11 +14,8 @@ export const TELAS_IR_PARA: Tela[] = [
   "apps",
   "onedrive",
   "outlook",
-  "atoms",
   "navegador",
-  "comms",
   "astro",
-  "pulsar",
   "configuracoes",
 ];
 

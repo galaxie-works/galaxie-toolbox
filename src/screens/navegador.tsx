@@ -180,8 +180,8 @@ import { formatShortcut } from "@/components/ui/shortcut";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 
 // #656 × #663 (RC): "Ir para" só oferece produtos VISÍVEIS no sidebar — filtra
-// os `oculto` do NAV (atoms/comms/astro/pulsar/outlook no RC). Reversível junto
-// com o flag: flipou o produto de volta no NAV, ele reaparece aqui também.
+// os `oculto` do NAV (astro/outlook no RC). Reversível junto com o flag: flipou
+// o produto de volta no NAV, ele reaparece aqui também.
 const OCULTOS_NAV = new Set<Tela>(
   NAV.flatMap((g) => g.itens)
     .flatMap((i) => i.filhos)
@@ -460,11 +460,8 @@ function ConteudoPaleta({
             apps: t.navegador.aliasApps,
             onedrive: t.navegador.aliasOnedrive,
             outlook: t.navegador.aliasOutlook,
-            atoms: t.navegador.aliasAtoms,
             navegador: t.navegador.aliasNavegador,
-            comms: t.navegador.aliasComms,
             astro: t.navegador.aliasAstro,
-            pulsar: t.navegador.aliasPulsar,
             configuracoes: t.navegador.aliasConfiguracoes,
           },
           (tela) => t.nav[TELAS[tela].titulo],

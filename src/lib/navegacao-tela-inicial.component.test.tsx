@@ -21,9 +21,11 @@ describe("#1299 telaInicial()", () => {
     expect(telaInicial()).toBe(TELA_PADRAO);
   });
 
-  it("?tela=atoms: abre a tela OCULTA (é o card inteiro)", () => {
-    comQuery("tela=atoms");
-    expect(telaInicial()).toBe("atoms");
+  it("?tela=astro: abre a tela OCULTA (é o card inteiro)", () => {
+    // Era `atoms`; a tela saiu do app em #1320. `astro` segue oculta e cumpre
+    // o mesmo papel: destino que NÃO tem caminho pela UI.
+    comQuery("tela=astro");
+    expect(telaInicial()).toBe("astro");
   });
 
   it("?tela=<inexistente>: cai no padrão sem quebrar", () => {

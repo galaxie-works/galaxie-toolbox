@@ -102,26 +102,7 @@ export interface TipoArquivo {
 
 
 
-export interface EmailRecente {
-  assunto: string;
-  de: string;
-  recebido: string;
-}
 
-
-
-/**
- * Tarefas do To Do + as listas que NÃO puderam ser lidas (#1075 RB46).
- *
- * `listasComFalha` vazio = a agregação está completa. Não vazio = o card tem
- * dados, mas parciais — estado que a UI antes não conseguia representar: uma
- * lista que dava 403 contribuía zero tarefas e ficava idêntica a uma lista
- * vazia.
- */
-export interface TarefasResultado {
-  tarefas: Tarefa[];
-  listasComFalha: string[];
-}
 
 /**
  * Resultado de gravar contatos pessoais (#1075 RB46-d).
@@ -136,15 +117,6 @@ export interface SalvarContatosResultado {
   criados: number;
   jaExistiam: number;
   falhas: { email: string; motivo: string }[];
-}
-
-export interface Tarefa {
-  titulo: string;
-  lista: string;
-  // #184 (Atoms S2): ids pra concluir in-place + prazo (ISO) pro score.
-  id: string;
-  listaId: string;
-  prazo?: string | null;
 }
 
 // --- Agenda do dia + inbox do dia (Control room rico) --------------------
