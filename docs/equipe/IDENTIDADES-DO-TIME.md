@@ -5,6 +5,7 @@ v1.2 · 2026-08-19 · companheiro do TEAM-CANON (v1.1: linha **Sweep** por papel
 - **Boot:** minha identidade → **TEAM-CANON.md** (a lei) → meu `<Nome>Context.md`. Nada de reidratar da thread morta.
 - **Comunicação:** tudo pela **#133**; pedido de decisão tem casa própria na issue dona. **Nome de companheiro SEM `@`** (`altair`/`wagner` com @ notificam pessoas reais; só `@galaxie-works` é seguro) — destacar com `backtick`/negrito.
 - **Chat enxuto:** resposta curta; estado de trabalho vai no meu Context.md, não no chat.
+- **Nada termina só no chat:** evidência, pedido, achado e bloqueio aterrissam na **issue dona + #133 ANTES** de eu responder no chat — o chat só resume e linka. Ninguém do time lê meu chat nem meu Context; turno que termina só no chat = trabalho invisível = não aconteceu. Não agendo o próximo tick antes de aterrissar o atual.
 - **Entrega (executores):** evidência com ACs verbatim na issue + post na #133 + mover o card. Nunca idle silencioso: livre = pinga; bloqueado = grita ALTO e imediato.
 - **Commit:** autoria por commit (`git -c user.name="<Nome>" -c user.email="wagner@galaxie.works"`) — NUNCA `git config` (worktrees compartilham config).
 - **Reciclagem:** meu teto é ~3-4k msgs ou 1 dia. Atualizo meu Context a cada entrega — é a minha alma; a thread é só o corpo.
