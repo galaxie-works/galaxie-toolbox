@@ -417,7 +417,10 @@ fn gravar_fila(itens: &[EnvelopeCarimbado]) {
 /// Mutex através da escrita porque nenhum chamador tem o guard na mão.
 fn snapshot_e_gravar(inner: &Arc<Mutex<Interno>>) {
     let snapshot: Vec<EnvelopeCarimbado> = {
-        let Ok(i) = inner.lock() else { return };
+        let Ok(i) = inner.lock() else {
+            log::error!("[telemetry] mutex envenenado: fila NÃO persistida (#1238)");
+            return;
+        };
         i.fila.iter().cloned().collect()
     };
     gravar_fila(&snapshot);
@@ -812,6 +815,16 @@ struct Persistidor {
     sino: Condvar,
 }
 
+/// O que o worker deve fazer ao acordar. Explícito de propósito (ver
+/// `esperar_sujo`).
+#[derive(Debug, PartialEq, Eq)]
+enum Espera {
+    /// Há mudança pendente: persistir.
+    Grave,
+    /// Estado irrecuperável (mutex envenenado): o worker morre — ruidosamente.
+    Encerrar,
+}
+
 impl Persistidor {
     fn novo() -> Self {
         Self {
@@ -829,39 +842,63 @@ impl Persistidor {
         }
     }
 
-    /// Espera ficar sujo, dorme a janela de debounce (para engolir a rajada) e
-    /// devolve `true` quando é hora de gravar.
-    fn esperar_sujo(&self, debounce: Duration) -> bool {
+    /// Espera ficar sujo e dorme a janela de debounce (para engolir a rajada).
+    ///
+    /// Devolve enum, não `bool`: `false` significava ao mesmo tempo "nada a
+    /// fazer" e "morri" — ambiguidade que faz erro virar sucesso falso.
+    fn esperar_sujo(&self, debounce: Duration) -> Espera {
         let Ok(mut sujo) = self.sujo.lock() else {
-            return false;
+            return Espera::Encerrar;
         };
         while !*sujo {
             let Ok((novo, _)) = self.sino.wait_timeout(sujo, Duration::from_secs(60)) else {
-                return false;
+                return Espera::Encerrar;
             };
             sujo = novo;
         }
         *sujo = false;
         drop(sujo);
         std::thread::sleep(debounce);
-        true
+        Espera::Grave
     }
 }
 
 /// Sobe o worker de persistência. Uma thread por `TelemetryState` vivo (na
 /// prática, uma por processo — o estado é gerenciado pelo Tauri).
-fn iniciar_persistidor(inner: Arc<Mutex<Interno>>, persist: Arc<Persistidor>, debounce: Duration) {
-    std::thread::Builder::new()
+/// Devolve `false` se o worker NÃO subiu. Quem chama tem de decidir o que fazer
+/// — engolir aqui deixaria a telemetria marcando sujo para sempre sem nunca
+/// gravar, que é o pior dos mundos: parece que funciona.
+#[must_use]
+fn iniciar_persistidor(
+    inner: Arc<Mutex<Interno>>,
+    persist: Arc<Persistidor>,
+    debounce: Duration,
+) -> bool {
+    let r = std::thread::Builder::new()
         .name("telemetry-persist".to_string())
         .spawn(move || loop {
-            if !persist.esperar_sujo(debounce) {
-                return;
+            match persist.esperar_sujo(debounce) {
+                Espera::Grave => snapshot_e_gravar(&inner),
+                Espera::Encerrar => {
+                    // Mutex envenenado: a fila em memória não é mais confiável e
+                    // este worker morre. Grita — senão a persistência morre em
+                    // silêncio e o resto da sessão só ACHA que está gravando.
+                    log::error!(
+                        "[telemetry] worker de persistência encerrando: mutex envenenado.                          A fila NÃO será mais gravada nesta sessão."
+                    );
+                    return;
+                }
             }
-            // Tudo o que é caro (serde + DPAPI + fs::write) roda AQUI, nesta
-            // thread, e o funil garante que sem o Mutex na mão.
-            snapshot_e_gravar(&inner);
-        })
-        .ok();
+        });
+    match r {
+        Ok(_) => true,
+        Err(e) => {
+            log::error!(
+                "[telemetry] worker de persistência NÃO subiu ({e}). A fila fica só em                  memória: eventos serão perdidos ao fechar. (#1238)"
+            );
+            false
+        }
+    }
 }
 
 struct Interno {
@@ -907,8 +944,10 @@ impl Default for TelemetryState {
             transporte_iniciado: false,
         }));
         let persist = Arc::new(Persistidor::novo());
-        // #1238: a partir daqui NINGUÉM grava a fila na thread do IPC.
-        iniciar_persistidor(Arc::clone(&inner), Arc::clone(&persist), PERSIST_DEBOUNCE);
+        // #1238: a partir daqui NINGUÉM grava a fila na thread do IPC — desde
+        // que o worker exista. Se não subir, o log acima é o aviso; o flush do
+        // `RunEvent::Exit` ainda salva o caminho de saída limpa.
+        let _ = iniciar_persistidor(Arc::clone(&inner), Arc::clone(&persist), PERSIST_DEBOUNCE);
         Self {
             inner,
             ctx,
@@ -1651,6 +1690,27 @@ mod testes {
         *SONDA_INNER.lock().unwrap() = None;
     }
 
+    /// O worker morre RUIDOSO, não em silêncio: mutex envenenado devolve
+    /// `Encerrar`, distinto de "nada a fazer". Sem isto, a persistência morre e
+    /// o resto da sessão só ACHA que está gravando (família #1057).
+    #[test]
+    fn mutex_envenenado_encerra_o_worker_em_vez_de_fingir_sucesso() {
+        let p = Arc::new(Persistidor::novo());
+        let clone = Arc::clone(&p);
+        // envenena o mutex do `sujo`
+        let _ = std::thread::spawn(move || {
+            let _g = clone.sujo.lock().unwrap();
+            panic!("envenena");
+        })
+        .join();
+        assert!(p.sujo.is_poisoned());
+        assert_eq!(
+            p.esperar_sujo(Duration::from_millis(0)),
+            Espera::Encerrar,
+            "mutex envenenado tem de ENCERRAR o worker, não parecer 'nada a fazer'"
+        );
+    }
+
     /// AC3 (o mecanismo): N marcações de sujo colapsam em UM flush pendente.
     #[test]
     fn persistidor_coalesce_marcacoes() {
@@ -1658,7 +1718,7 @@ mod testes {
         for _ in 0..100 {
             p.marcar_sujo();
         }
-        assert!(p.esperar_sujo(Duration::from_millis(0)));
+        assert_eq!(p.esperar_sujo(Duration::from_millis(0)), Espera::Grave);
         assert!(
             !*p.sujo.lock().unwrap(),
             "as 100 marcações têm de virar um único flush pendente"

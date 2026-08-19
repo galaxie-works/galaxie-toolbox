@@ -10,13 +10,14 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/reui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { NotasRelease } from "@/components/notas-release";
 import { Spinner } from "@/components/ui/spinner";
 import { useIdioma } from "@/lib/idioma";
 import { preencher } from "@/lib/idioma";
 import { ShieldAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { telUpdateVerificado } from "@/lib/telemetria";
-import { deveOferecerAtualizacao } from "@/lib/versao-update";
+import { deveOferecerAtualizacao, formatarDataFeed } from "@/lib/versao-update";
 
 interface Disponivel {
   versao: string;
@@ -37,7 +38,7 @@ const estaNoTauri = () =>
  * nao pode virar mensagem de erro no rosto de quem so queria trabalhar.
  */
 export function Atualizacao() {
-  const { t } = useIdioma();
+  const { t, idioma } = useIdioma();
   const [estado, setEstado] = useState<Estado>("oculto");
   const [info, setInfo] = useState<Disponivel | null>(null);
   const [progresso, setProgresso] = useState(0);
@@ -63,7 +64,11 @@ export function Atualizacao() {
         setPacote(novo);
         setInfo({
           versao: novo.version,
-          data: novo.date?.split(" ")[0],
+          // #1258: guarda a data CRUA do feed; quem formata e o badge, no
+          // render — assim trocar o idioma do app reformata sem novo `check()`.
+          // O `split(" ")` que morava aqui pressupunha data com espaco e
+          // devolvia o ISO inteiro (`2026-08-19T06:11:36Z`) pro usuario ver.
+          data: novo.date,
           notas: novo.body || undefined,
         });
         setEstado("disponivel");
@@ -122,7 +127,10 @@ export function Atualizacao() {
           <Badge variant="success-light">
             {preencher(t.atualizacao.versao, {
               v: info.versao,
-              d: info.data ?? "",
+              // #1258: data legivel no idioma do app (funil unico em
+              // `formatarDataFeed`); ilegivel/ausente vira "" e o `.trim()`
+              // deixa o badge so com a versao.
+              d: formatarDataFeed(info.data, idioma),
             }).trim()}
           </Badge>
         </div>
@@ -142,10 +150,13 @@ export function Atualizacao() {
               <h2 className="mb-1.5 text-xs font-medium text-foreground">
                 {t.atualizacao.notas}
               </h2>
-              <ScrollArea className="max-h-40 w-full rounded-lg border bg-background/60 p-3">
-                <p className="text-xs whitespace-pre-line text-muted-foreground">
-                  {info.notas}
-                </p>
+              {/* #1321: a altura vai no VIEWPORT, não no Root. O Root do Radix
+                  é só `relative`; quem tem overflow é o viewport, que é
+                  `size-full` — de um Root sem altura resolvida ele cresce com o
+                  conteúdo e nada clipa (foi assim que as notas vazaram do modal
+                  na v0.46.0). Padrão-ouro da casa: `campo-pessoas.tsx:400`. */}
+              <ScrollArea className="w-full rounded-lg border bg-background/60 p-3 **:data-[slot=scroll-area-viewport]:max-h-40">
+                <NotasRelease markdown={info.notas} />
               </ScrollArea>
             </section>
           )}

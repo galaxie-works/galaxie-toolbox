@@ -50,7 +50,7 @@ pub fn state_from_config(config: &AppConfig) -> Result<AppState> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => return Err(error).context("falha ao ler estado unattended v2"),
     };
-    AppState::new_with_opaque_snapshot(
+    let state = AppState::new_with_opaque_snapshot(
         SigningKey::from_bytes(&key_array),
         config.turn_secret.as_bytes().to_vec(),
         config.turn_urls.clone(),
@@ -63,7 +63,17 @@ pub fn state_from_config(config: &AppConfig) -> Result<AppState> {
         snapshot.as_deref(),
         Some(config.unattended_state_file.clone()),
     )
-    .context("estado unattended v2 invalido")
+    .context("estado unattended v2 invalido")?;
+    // #1049 passo 2: liga o enforce a partir da config de SERVIDOR. Logado no
+    // boot de propósito — quem opera tem de ver em qual estado o servidor subiu,
+    // sem adivinhar pelo comportamento.
+    state.set_require_device_pop(config.require_device_pop);
+    if config.require_device_pop {
+        tracing::warn!("#1049 enforce de PoP LIGADO: Register sem prova de posse sera recusado");
+    } else {
+        tracing::info!("#1049 enforce de PoP desligado: Register sem PoP e aceito e contado");
+    }
+    Ok(state)
 }
 
 pub fn app(state: AppState) -> Router {
@@ -209,6 +219,9 @@ async fn process_message(
         ClientMessage::Register {
             device_id,
             public_key,
+            nonce,
+            timestamp,
+            signature,
         } => {
             // #1049 T2 (adendo §6 do Altair): limitador DEDICADO do Register — cada
             // Register cunha credencial TURN de 30min, então a FREQUÊNCIA é o abuso.
@@ -229,6 +242,9 @@ async fn process_message(
                 send_error(outbound, ErrorCode::InvalidDeviceId, "device_id invalido").await;
                 return;
             }
+            // O `public_key` vira [u8;32] logo abaixo (sombreamento); o
+            // verificador da PoP quer o base64 original — guardo antes.
+            let public_key_base64 = public_key.clone();
             let public_key = match decode_public_key(&public_key) {
                 Some(public_key) => public_key,
                 None => {
@@ -241,6 +257,67 @@ async fn process_message(
                     return;
                 }
             };
+            // #1049 passo 2 — PROVA DE POSSE da chave.
+            //
+            // O buraco: `Register` aceitava qualquer (device_id, public_key) sem
+            // provar posse do segredo, entao um atacante registrava o device_id
+            // de outro com a PROPRIA chave e sequestrava o pareamento.
+            //
+            // Reusa o MESMO verificador do v2 (`v2.rs` device.register) —
+            // `galaxie_remote_net::identity::verify_registration`, que ja checa
+            // janela de clock e assinatura Ed25519 sobre (device_id, nonce, ts).
+            // Escrever um segundo verificador aqui seria a forma mais fácil de
+            // divergir do que o cliente assina em `remote_identity.rs`.
+            //
+            // Enforce atras de flag de SERVIDOR (default off): com a flag
+            // desligada o Register sem PoP segue aceito e apenas CONTADO; com
+            // ela ligada, recusado. A janela de virada e decisao do PO.
+            let pop_valida = match (&nonce, timestamp, &signature) {
+                (Some(nonce), Some(timestamp), Some(signature)) => match unix_seconds() {
+                    Ok(agora) => galaxie_remote_net::identity::verify_registration(
+                        &public_key_base64,
+                        &device_id,
+                        nonce,
+                        timestamp,
+                        agora,
+                        signature,
+                    )
+                    .is_ok(),
+                    Err(_) => false,
+                },
+                _ => false,
+            };
+            let exigir = state.require_device_pop();
+            if let Ok(agora) = unix_seconds() {
+                if let Some(dia_fechado) = state
+                    .contar_register_pop(pop_valida, exigir && !pop_valida, agora)
+                    .await
+                {
+                    // Resumo do dia FECHADO: e este numero que responde "quantos
+                    // clientes velhos ainda existem?" antes de ligar o enforce.
+                    tracing::info!(
+                        dia_utc = dia_fechado.dia_utc,
+                        com_pop = dia_fechado.com_pop,
+                        sem_pop = dia_fechado.sem_pop,
+                        recusados = dia_fechado.recusados,
+                        "#1049 register_pop: resumo do dia"
+                    );
+                }
+            }
+            if exigir && !pop_valida {
+                tracing::warn!(
+                    device_id = %device_id,
+                    "#1049 register recusado: PoP ausente ou invalida (enforce LIGADO)"
+                );
+                send_error(
+                    outbound,
+                    ErrorCode::InvalidPublicKey,
+                    "registro exige prova de posse da chave do device",
+                )
+                .await;
+                return;
+            }
+
             let attestation = match state.attest_key(&device_id, public_key) {
                 Ok(attestation) => attestation,
                 Err(_) => {
@@ -615,4 +692,210 @@ mod tests {
         assert_eq!(forwarded_client_ip(&headers, proxy), client);
         assert_eq!(forwarded_client_ip(&headers, direct), direct);
     }
+
+    // ── #1049 passo 2: enforce da PoP no Register ─────────────────────────────
+    //
+    // O `altair` foi explícito: testar os DOIS estados, não só o caminho novo.
+    // A flag existe justamente para NÃO derrubar cliente velho — um teste que só
+    // provasse "flag ligada recusa" deixaria passar o defeito que machuca de
+    // verdade: o enforce vazar pro default e derrubar quem ainda não atualizou.
+
+    use galaxie_remote_net::identity::DeviceIdentity;
+
+    fn estado_pop() -> AppState {
+        AppState::new(
+            ed25519_dalek::SigningKey::from_bytes(&[9_u8; 32]),
+            b"turn-secret-de-teste".to_vec(),
+            vec!["turn:localhost:3478".to_owned()],
+            std::time::Duration::from_secs(60),
+            std::time::Duration::from_secs(600),
+            std::time::Duration::from_secs(600),
+            1000,
+            std::time::Duration::from_secs(60),
+        )
+    }
+
+    /// Register com PoP VÁLIDA, assinada como o cliente Tauri assina
+    /// (`remote_identity::sign_registration` → `(device_id, nonce, timestamp)`).
+    fn register_com_pop(device_id: &str) -> ClientMessage {
+        let identidade = DeviceIdentity::generate();
+        let nonce = "nonce-de-teste-1049";
+        let timestamp = unix_seconds().unwrap_or(0);
+        let signature = identidade.sign_registration(device_id, nonce, timestamp);
+        ClientMessage::Register {
+            device_id: device_id.to_owned(),
+            public_key: identidade.public_key_base64(),
+            nonce: Some(nonce.to_owned()),
+            timestamp: Some(timestamp),
+            signature: Some(signature),
+        }
+    }
+
+    fn register_sem_pop(device_id: &str) -> ClientMessage {
+        let identidade = DeviceIdentity::generate();
+        ClientMessage::Register {
+            device_id: device_id.to_owned(),
+            public_key: identidade.public_key_base64(),
+            nonce: None,
+            timestamp: None,
+            signature: None,
+        }
+    }
+
+    async fn processar(state: &AppState, msg: ClientMessage) -> Vec<ServerMessage> {
+        let (tx, mut rx) = mpsc::channel(8);
+        let mut registrado = None;
+        process_message(
+            msg,
+            state,
+            Uuid::new_v4(),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(203, 0, 113, 9)),
+            &tx,
+            &mut registrado,
+        )
+        .await;
+        // NAO usar `rx.recv().await` ate fechar: `AppState::register` guarda um
+        // CLONE deste `Sender` no mapa de devices, entao o canal nunca fecha e o
+        // recv pendura para sempre. (Foi o que travou minha primeira rodada.)
+        // `process_message` envia tudo antes de retornar — drenar sem esperar e
+        // suficiente e nao pode pendurar.
+        drop(tx);
+        let mut saida = Vec::new();
+        while let Ok(m) = rx.try_recv() {
+            saida.push(m);
+        }
+        saida
+    }
+
+    fn tem_registered(saida: &[ServerMessage]) -> bool {
+        saida
+            .iter()
+            .any(|m| matches!(m, ServerMessage::Registered { .. }))
+    }
+
+    /// Flag DESLIGADA (default) — cliente velho continua entrando. É este o teste
+    /// que protege a migração; se ele quebrar, o enforce vazou pro default.
+    #[tokio::test]
+    async fn flag_desligada_aceita_register_sem_pop() {
+        let state = estado_pop();
+        assert!(!state.require_device_pop(), "o default TEM de ser desligado");
+
+        let saida = processar(&state, register_sem_pop("device-sem-pop-01")).await;
+
+        assert!(
+            tem_registered(&saida),
+            "com a flag desligada, Register sem PoP tem de ser aceito; saida={saida:?}"
+        );
+    }
+
+    /// Flag LIGADA — o caminho novo: recusa sem PoP, e diz o motivo.
+    #[tokio::test]
+    async fn flag_ligada_recusa_register_sem_pop() {
+        let state = estado_pop();
+        state.set_require_device_pop(true);
+
+        let saida = processar(&state, register_sem_pop("device-sem-pop-02")).await;
+
+        assert!(
+            !tem_registered(&saida),
+            "com a flag ligada, Register sem PoP NAO pode registrar"
+        );
+        assert!(
+            saida
+                .iter()
+                .any(|m| matches!(m, ServerMessage::Error { .. })),
+            "a recusa tem de dizer o motivo ao cliente; saida={saida:?}"
+        );
+    }
+
+    /// Flag LIGADA + PoP válida — quem já atualizou entra. Sem este teste,
+    /// "ligar a flag" poderia significar "derrubar todo mundo" sem ninguém ver.
+    #[tokio::test]
+    async fn flag_ligada_aceita_register_com_pop_valida() {
+        let state = estado_pop();
+        state.set_require_device_pop(true);
+
+        let saida = processar(&state, register_com_pop("device-com-pop-01")).await;
+
+        assert!(
+            tem_registered(&saida),
+            "PoP valida TEM de passar com a flag ligada; saida={saida:?}"
+        );
+    }
+
+    /// PoP assinada por OUTRA chave não vale — este é literalmente o sequestro
+    /// que o card fecha: registrar o device_id alheio com a própria chave.
+    #[tokio::test]
+    async fn flag_ligada_recusa_pop_de_outra_chave() {
+        let state = estado_pop();
+        state.set_require_device_pop(true);
+
+        let ClientMessage::Register {
+            device_id,
+            nonce,
+            timestamp,
+            signature,
+            ..
+        } = register_com_pop("device-vitima-01")
+        else {
+            panic!("register_com_pop deveria devolver Register");
+        };
+        // mesma PoP, chave pública do ATACANTE.
+        let atacante = DeviceIdentity::generate();
+        let forjado = ClientMessage::Register {
+            device_id,
+            public_key: atacante.public_key_base64(),
+            nonce,
+            timestamp,
+            signature,
+        };
+
+        let saida = processar(&state, forjado).await;
+
+        assert!(
+            !tem_registered(&saida),
+            "PoP assinada por outra chave NAO pode registrar — e o sequestro do #1049"
+        );
+    }
+
+    /// A métrica que torna a flag acionável (requisito 2 do desenho): sem ela
+    /// ninguém sabe quantos clientes velhos existem, e ninguém ousa ligar.
+    #[tokio::test]
+    async fn conta_register_com_e_sem_pop_no_dia() {
+        let state = estado_pop();
+
+        processar(&state, register_sem_pop("device-conta-01")).await;
+        processar(&state, register_sem_pop("device-conta-02")).await;
+        processar(&state, register_com_pop("device-conta-03")).await;
+
+        let c = state.pop_contadores().await;
+        assert_eq!(c.sem_pop, 2, "contagem de Register SEM PoP");
+        assert_eq!(c.com_pop, 1, "contagem de Register COM PoP");
+        assert_eq!(c.recusados, 0, "flag desligada nao recusa ninguem");
+    }
+
+    /// O balde vira no dia UTC e devolve o resumo do dia fechado — é o número que
+    /// vai pro log e embasa a decisão da janela de enforce.
+    #[tokio::test]
+    async fn contador_vira_no_dia_utc_e_devolve_o_dia_fechado() {
+        let state = estado_pop();
+        let dia1 = 20_000_u64 * 86_400 + 10;
+        let dia2 = 20_001_u64 * 86_400 + 10;
+
+        assert!(state.contar_register_pop(false, false, dia1).await.is_none());
+        assert!(state.contar_register_pop(false, false, dia1).await.is_none());
+
+        let fechado = match state.contar_register_pop(true, false, dia2).await {
+            Some(f) => f,
+            None => panic!("virar o dia tem de devolver o resumo do dia anterior"),
+        };
+        assert_eq!(fechado.sem_pop, 2);
+        assert_eq!(fechado.dia_utc, 20_000);
+        assert_eq!(
+            state.pop_contadores().await.com_pop,
+            1,
+            "dia novo comeca limpo"
+        );
+    }
+
 }

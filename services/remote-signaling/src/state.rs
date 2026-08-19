@@ -2,7 +2,10 @@ use std::{
     collections::{HashMap, VecDeque},
     net::IpAddr,
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -44,6 +47,28 @@ struct Inner {
     unattended_persistence: Mutex<()>,
     unattended_devices: RwLock<HashMap<String, UnattendedDeviceConnection>>,
     unattended_sessions: RwLock<HashMap<String, UnattendedSession>>,
+    // #1049 passo 2 — enforce da PoP no Register do v1.
+    //
+    // `AtomicBool` e nao campo de construtor de proposito: (a) nao quebra as 3
+    // assinaturas de `new*` que os testes usam; (b) deixa a porta aberta para
+    // virar a flag SEM reiniciar o processo, se o `altair` decidir que o
+    // requisito 1 do desenho exige isso — hoje ela e setada uma vez no boot.
+    require_device_pop: AtomicBool,
+    // O numero que o `wagner` precisa para decidir a janela: quantos Register
+    // chegam SEM PoP por dia. Sem isto a flag e inutil, porque ninguem sabe
+    // quantos clientes velhos existem (requisito 2 do desenho do `altair`).
+    pop_contadores: Mutex<PopContadores>,
+}
+
+/// Contagem diaria (dia UTC) de `Register` por presenca de PoP.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PopContadores {
+    /// Dia UTC (segundos unix / 86400) a que os contadores se referem.
+    pub dia_utc: u64,
+    pub com_pop: u64,
+    pub sem_pop: u64,
+    /// Recusados por falta/invalidez de PoP (so acontece com a flag LIGADA).
+    pub recusados: u64,
 }
 
 #[derive(Clone)]
@@ -121,6 +146,63 @@ fn duracao_backoff(ciclos: u32) -> Duration {
 }
 
 impl AppState {
+    /// #1049 passo 2 — liga/desliga o enforce da PoP. Chamado no boot a partir do
+    /// `AppConfig`; separado do construtor para nao quebrar as assinaturas
+    /// existentes e para permitir virar a quente no futuro.
+    pub fn set_require_device_pop(&self, exigir: bool) {
+        self.inner
+            .require_device_pop
+            .store(exigir, Ordering::Relaxed);
+    }
+
+    pub fn require_device_pop(&self) -> bool {
+        self.inner.require_device_pop.load(Ordering::Relaxed)
+    }
+
+    /// Registra UMA tentativa de `Register` na contagem do dia UTC corrente.
+    /// Vira o balde quando o dia muda e devolve o snapshot do dia FECHADO, para
+    /// quem chamou logar o resumo (o dado que embasa a decisao da janela).
+    pub async fn contar_register_pop(
+        &self,
+        com_pop: bool,
+        recusado: bool,
+        agora_unix: u64,
+    ) -> Option<PopContadores> {
+        let dia = agora_unix / 86_400;
+        let mut c = self.inner.pop_contadores.lock().await;
+        let fechado = if c.dia_utc != dia {
+            // Nao emite resumo do "dia zero" (estado recem-criado, sem tentativa).
+            let anterior = (c.dia_utc != 0
+                && (c.com_pop > 0 || c.sem_pop > 0 || c.recusados > 0))
+                .then_some(*c);
+            *c = PopContadores {
+                dia_utc: dia,
+                ..Default::default()
+            };
+            anterior
+        } else {
+            None
+        };
+        if com_pop {
+            c.com_pop += 1;
+        } else {
+            c.sem_pop += 1;
+        }
+        if recusado {
+            c.recusados += 1;
+        }
+        fechado
+    }
+
+    /// Snapshot do dia corrente (observabilidade e testes).
+    pub async fn pop_contadores(&self) -> PopContadores {
+        *self.inner.pop_contadores.lock().await
+    }
+
+    // #1330: o allow pertence AQUI — `new` tem 8 argumentos (teto do clippy é 7).
+    // Ele existia antes do #1049; a inserção dos métodos de PoP entrou ENTRE o
+    // atributo e a `fn`, deixando o atributo decorando um método de 1 argumento
+    // e o construtor descoberto. Clippy só reclamou no gate, não na compilação.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         signer: SigningKey,
@@ -210,6 +292,8 @@ impl AppState {
                 },
                 redeem_failures: Mutex::new(HashMap::new()),
                 register_attempts: Mutex::new(HashMap::new()),
+                require_device_pop: AtomicBool::new(false),
+                pop_contadores: Mutex::new(PopContadores::default()),
                 unattended: Mutex::new(unattended),
                 unattended_state_file,
                 unattended_persistence: Mutex::new(()),
@@ -247,6 +331,36 @@ impl AppState {
 
     pub fn server_public_key_base64(&self) -> String {
         BASE64.encode(self.inner.signer.verifying_key().as_bytes())
+    }
+
+    /// #1295 — CUNHAGEM do ticket de matrícula. Este é o método da SUPERFÍCIE
+    /// AUTENTICADA (identidade M365 já verificada pelo app), NÃO uma rota do `/v2/ws`:
+    /// não adiciona superfície de runtime na rede. owner/org vêm da identidade provada
+    /// pelo chamador; capabilities e teto são decididos aqui pela política do servidor.
+    /// O `/v2/ws` apenas VALIDA o ticket resultante.
+    pub async fn mint_enrollment_ticket(
+        &self,
+        owner_id: &str,
+        org_id: &str,
+        device_id: &str,
+    ) -> Result<String, EnrollmentMintError> {
+        let now = unix_seconds().map_err(|_| EnrollmentMintError::Clock)?;
+        let ticket = self
+            .inner
+            .unattended
+            .lock()
+            .await
+            .mint_enrollment_ticket(owner_id, org_id, device_id, now)
+            .map_err(EnrollmentMintError::Authority)?;
+        self.persist_unattended()
+            .await
+            .map_err(|_| EnrollmentMintError::Persistence)?;
+        Ok(ticket)
+    }
+
+    /// #1295 — política do operador: teto de devices por owner_id. Fora do wire.
+    pub async fn set_enrollment_cap(&self, cap: usize) {
+        self.inner.unattended.lock().await.set_enrollment_cap(cap);
     }
 
     pub async fn register_unattended_device(
@@ -626,6 +740,17 @@ pub enum TurnCredentialError {
     Clock(#[from] std::time::SystemTimeError),
     #[error("segredo TURN invalido")]
     InvalidSecret,
+}
+
+/// #1295 — falhas da cunhagem do ticket de matrícula (superfície autenticada).
+#[derive(Debug, Error)]
+pub enum EnrollmentMintError {
+    #[error("relogio do servidor invalido")]
+    Clock,
+    #[error(transparent)]
+    Authority(galaxie_remote_net::authority::AuthorityError),
+    #[error("falha ao persistir estado unattended")]
+    Persistence,
 }
 
 impl SlidingWindowLimiter {

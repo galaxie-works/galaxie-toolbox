@@ -18,6 +18,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ClientMessage::Register {
             device_id: format!("rate-probe-{}", &suffix[..12]),
             public_key: BASE64.encode(SigningKey::from_bytes(&rand::random()).verifying_key()),
+            nonce: None,
+            timestamp: None,
+            signature: None,
         },
     )
     .await?;
