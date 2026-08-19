@@ -575,6 +575,10 @@ const pt = {
     // #1258 copy v2 (cósmica) — mesmo tom do padrão-ouro em `reauth` (#584/#594)
     titulo: "A GALAXIE evoluiu",
     versao: "Versão {v} ({d})",
+    // #1334: sem data legível no feed, o badge NÃO pode sair com parênteses
+    // vazios. Chave própria em vez de remendo no texto — parêntese não é
+    // pontuação universal e regex em string de usuário quebra em tradução.
+    versaoSemData: "Versão {v}",
     descricao:
       "Novos recursos entraram em órbita. Ao atualizar, o app reinicia e volta já com tudo no lugar.",
     notas: "O que mudou",
@@ -2819,6 +2823,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #1258 copy v2 (cosmic) — same voice as the `reauth` gold standard (#584/#594)
     titulo: "GALAXIE has evolved",
     versao: "Version {v} ({d})",
+    // #1334: no readable date in the feed → no empty parentheses.
+    versaoSemData: "Version {v}",
     descricao:
       "New features have entered orbit. Updating restarts the app and brings it back with everything in place.",
     notas: "What's new",

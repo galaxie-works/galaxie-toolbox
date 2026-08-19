@@ -125,13 +125,17 @@ export function Atualizacao() {
             {t.atualizacao.titulo}
           </AlertDialogTitle>
           <Badge variant="success-light">
-            {preencher(t.atualizacao.versao, {
-              v: info.versao,
-              // #1258: data legivel no idioma do app (funil unico em
-              // `formatarDataFeed`); ilegivel/ausente vira "" e o `.trim()`
-              // deixa o badge so com a versao.
-              d: formatarDataFeed(info.data, idioma),
-            }).trim()}
+            {/* #1334: quando a data do feed é ausente/ilegível, `formatarDataFeed`
+                devolve "" — e o `.trim()` que estava aqui NÃO resolvia: ele só
+                corta as pontas, então sobrava "Versão X.Y.Z ()" na cara do
+                usuário (medido pela `iris` em produção). Agora a escolha é de
+                MODELO: sem data, outra chave de i18n, sem parêntese nenhum. */}
+            {(() => {
+              const data = formatarDataFeed(info.data, idioma);
+              return data
+                ? preencher(t.atualizacao.versao, { v: info.versao, d: data })
+                : preencher(t.atualizacao.versaoSemData, { v: info.versao });
+            })()}
           </Badge>
         </div>
 
