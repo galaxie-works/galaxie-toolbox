@@ -40,6 +40,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ClientMessage::Register {
             device_id: alpha_id.clone(),
             public_key: BASE64.encode(alpha_key.verifying_key().as_bytes()),
+            nonce: None,
+            timestamp: None,
+            signature: None,
         },
     )
     .await?;
@@ -51,6 +54,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ClientMessage::Register {
             device_id: bravo_id.clone(),
             public_key: BASE64.encode(bravo_key.verifying_key().as_bytes()),
+            nonce: None,
+            timestamp: None,
+            signature: None,
         },
     )
     .await?;

@@ -8,6 +8,16 @@ pub enum ClientMessage {
     Register {
         device_id: String,
         public_key: String,
+        /// #1049 passo 2 — PoP do device. **Opcionais de propósito**: o cliente
+        /// Tauri já os envia (`remote-signaling.ts`), o fallback de browser não.
+        /// Com a flag de enforce DESLIGADA o servidor aceita sem eles (só conta);
+        /// LIGADA, recusa. É a janela de migração desenhada pelo `altair`.
+        #[serde(default)]
+        nonce: Option<String>,
+        #[serde(default)]
+        timestamp: Option<u64>,
+        #[serde(default)]
+        signature: Option<String>,
     },
     Heartbeat,
     Presence {
