@@ -12,6 +12,9 @@ import { cn } from "@/lib/utils";
  * anulava o lazy. Em `public/` a URL é fixa e a fetch só acontece na viewport.
  * Sem ícone / erro de carga → fallback com a inicial do nome.
  */
+/** #1153: ordem de tentativa da extensão do ícone (a maioria é SVG de verdade). */
+const EXTENSOES_ICONE = ["svg", "png", "jpg", "webp"] as const;
+
 export function AppIcon({
   id,
   name,
@@ -24,11 +27,19 @@ export function AppIcon({
   const ref = useRef<HTMLSpanElement | null>(null);
   const [visivel, setVisivel] = useState(false);
   const [erro, setErro] = useState(false);
+  // #1153: nem todo ícone do catálogo é SVG. 26 arquivos servidos como `.svg`
+  // eram JPEG/PNG renomeados — o servidor rotulava `image/svg+xml`, o browser
+  // falhava ao parsear como XML e caía no fallback da inicial (o `wagner` viu
+  // isso em DeepSeek e Base44). Os arquivos passaram a ter a extensão VERDADEIRA;
+  // aqui a busca tenta na ordem e só desiste depois de todas. Só o ícone quebrado
+  // paga request extra — e ele hoje não aparecia de jeito nenhum.
+  const [tentativa, setTentativa] = useState(0);
 
   useEffect(() => {
     // Reseta ao trocar de app (reuso da instância numa lista virtualizada).
     setVisivel(false);
     setErro(false);
+    setTentativa(0);
     const el = ref.current;
     if (!el) return;
     const io = new IntersectionObserver(
@@ -54,11 +65,15 @@ export function AppIcon({
     >
       {visivel && !erro ? (
         <img
-          src={`/app-icons/${id}.svg`}
+          src={`/app-icons/${id}.${EXTENSOES_ICONE[tentativa]}`}
           alt=""
           className="size-full object-contain"
           loading="lazy"
-          onError={() => setErro(true)}
+          onError={() =>
+            setTentativa((t) =>
+              t + 1 < EXTENSOES_ICONE.length ? t + 1 : (setErro(true), t),
+            )
+          }
         />
       ) : (
         // Fallback: inicial do nome num quadradinho neutro (fora da viewport / erro).

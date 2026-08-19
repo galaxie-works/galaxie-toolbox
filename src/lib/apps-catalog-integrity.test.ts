@@ -78,11 +78,18 @@ test("#827 SU4: nenhum ícone SVG 0-byte em public/app-icons (asset quebrado)", 
 });
 
 test("#827 SU4: todo app com icon:true tem arquivo de ícone não-vazio", () => {
+  // #1153: o ícone deixou de ser sempre `.svg`. 26 arquivos do catálogo eram
+  // JPEG/PNG com extensão `.svg` — o browser não os renderizava e ESTE teste
+  // passava mesmo assim, porque só olhava nome e tamanho. Agora ele procura nas
+  // extensões que o `AppIcon` sabe resolver; quem verifica o CONTEÚDO (magic
+  // bytes) é o `apps-catalog-icones.test.ts`.
   const quebrados = catalogo
     .filter((a) => a.icon)
     .filter((a) => {
-      const p = new URL(`${a.id}.svg`, iconesDir);
-      return !existsSync(p) || statSync(p).size === 0;
+      const achado = ["svg", "png", "jpg", "webp"]
+        .map((ext) => new URL(`${a.id}.${ext}`, iconesDir))
+        .find((p) => existsSync(p) && statSync(p).size > 0);
+      return achado === undefined;
     })
     .map((a) => a.id);
   assert.deepEqual(quebrados, []);
@@ -119,58 +126,90 @@ test("#1196: descrição diz o que o app FAZ, não repete o nome", () => {
   assert.deepEqual(iguais, [], "desc pt-BR é só o nome repetido — não informa nada");
 });
 
-test("#1196: o ícone de todo app existe em disco e NÃO é raster renomeado .svg", () => {
+test("#1196/#1153: o ícone de todo app existe, é DECODIFICÁVEL e a extensão não mente", () => {
   // O `icon: true` do JSON é afirmação do gerador. Aqui o arquivo é ABERTO — foi
-  // assim que a curadoria achou 220 JPEG/PNG com extensão .svg (#1153).
+  // assim que a curadoria achou os JPEG/PNG com extensão `.svg` (#1153).
+  //
+  // #1153 (fatia 2, `pollux`): a dívida foi RESOLVIDA pelo caminho (b) do card —
+  // *"renomeado para a extensão correta com o `AppIcon` sabendo resolver"*. Os 26
+  // sobreviventes com ícone raster passaram a ter a extensão VERDADEIRA (`.png`/
+  // `.jpg`) e o `AppIcon` tenta `svg → png → jpg → webp`. Por isso o ratchet
+  // `RASTER_HERDADO` sumiu: a lista chegou a zero, que era a condição dele.
+  //
+  // O que este gate afirma agora, e é mais forte que antes: o arquivo existe em
+  // ALGUMA extensão suportada, o conteúdo é imagem reconhecível, e a extensão
+  // BATE com o conteúdo. Extensão que mente é o defeito original — o browser
+  // recebe `image/svg+xml`, falha ao parsear e cai na inicial.
+  const EXTENSOES = ["svg", "png", "jpg", "webp"] as const;
+
+  /** Formato REAL pelos primeiros bytes — nunca pela extensão. */
+  const formatoReal = (buf: Buffer): string | null => {
+    if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "jpg";
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47)
+      return "png";
+    if (
+      buf.subarray(0, 4).toString("latin1") === "RIFF" &&
+      buf.subarray(8, 12).toString("latin1") === "WEBP"
+    )
+      return "webp";
+    const texto = buf.toString("utf8").trimStart().toLowerCase();
+    if (texto.startsWith("<svg") || texto.startsWith("<?xml")) return "svg";
+    return null;
+  };
+
   const semArquivo: string[] = [];
-  const raster: string[] = [];
+  const ilegivel: string[] = [];
+  const mentirosos: string[] = [];
+
   for (const a of catalogo) {
     if (!a.icon) continue;
-    const arq = new URL(`${a.id}.svg`, iconesDir);
-    if (!existsSync(arq)) {
+    const achado = EXTENSOES.map((ext) => ({
+      ext,
+      url: new URL(`${a.id}.${ext}`, iconesDir),
+    })).find(({ url }) => existsSync(url));
+    if (!achado) {
       semArquivo.push(a.id);
       continue;
     }
-    const buf = readFileSync(arq);
-    const jpeg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
-    const png =
-      buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
-    const webp =
-      buf.subarray(0, 4).toString("latin1") === "RIFF" &&
-      buf.subarray(8, 12).toString("latin1") === "WEBP";
-    if (jpeg || png || webp) raster.push(a.id);
+    const real = formatoReal(readFileSync(achado.url).subarray(0, 64));
+    if (real === null) {
+      ilegivel.push(`${a.id} (.${achado.ext})`);
+    } else if (real !== achado.ext) {
+      mentirosos.push(`${a.id}: extensão .${achado.ext} mas conteúdo ${real}`);
+    }
   }
 
   assert.deepEqual(semArquivo, [], "`icon: true` sem arquivo em public/app-icons");
-
-  // Ratchet: os 30 sobreviventes com ícone raster são dívida CONHECIDA, herdada do
-  // scrape e escopo da fatia 2 do #1153. A lista só pode ENCOLHER — app novo com
-  // raster reprova na hora, e app que sair daqui sem sair da lista também.
-  const conhecidos = new Set(RASTER_HERDADO);
-  const novos = raster.filter((id) => !conhecidos.has(id));
-  const resolvidos = RASTER_HERDADO.filter((id) => !raster.includes(id));
+  assert.deepEqual(ilegivel, [], "arquivo que não é imagem reconhecível");
   assert.deepEqual(
-    [
-      ...novos.map((id) => `NOVO raster: ${id}`),
-      ...resolvidos.map((id) => `RESOLVIDO, tire da lista: ${id}`),
-    ],
+    mentirosos,
     [],
-    "ícone raster renomeado .svg — renderiza a inicial, não o ícone (#1153 fatia 2)",
+    "extensão que mente sobre o conteúdo — o browser não renderiza (#1153)",
   );
 });
 
-/**
- * Os 30 sobreviventes da curadoria cujo ícone ainda é raster renomeado `.svg`.
- * Medido em `7a5c3e5`. É o escopo REAL da fatia 2 do #1153: a baseline global
- * tinha 237, mas 207 eram de apps que a curadoria removeu.
- */
-const RASTER_HERDADO = [
-  "brevo", "claude", "copyai", "cursor", "deepseek", "elevenlabs", "framer",
-  "gamma", "gemini", "github-copilot", "google-ai-studio", "google-notebooklm",
-  "google-tasks", "grok", "heygen", "jasper", "jenkins", "microsoft-copilot",
-  "namecheap", "perplexity", "power-bi", "runway", "substack", "supabase",
-  "unifi", "veeam",
-];
+test("#1153: SVG do catálogo não pode ser branco-fixo (some no tema claro)", () => {
+  // Os brancos eram o segundo defeito do card: SVG válido, mas com `fill="white"`
+  // fixo e sem `currentColor`. O app abre no tema CLARO por padrão, então o ícone
+  // existia e ninguém via. Consertados via `currentColor` (`midjourney` precisou
+  // da raiz, porque as `path` herdavam `fill="none"` e não pintavam nada).
+  const invisiveis: string[] = [];
+  for (const a of catalogo) {
+    if (!a.icon) continue;
+    const url = new URL(`${a.id}.svg`, iconesDir);
+    if (!existsSync(url)) continue;
+    const texto = readFileSync(url, "utf8");
+    if (/currentColor/i.test(texto)) continue;
+    const temBranco = /fill\s*=\s*"(#fff(fff)?|white)"/i.test(texto);
+    const temOutraCor = /fill\s*=\s*"(?!#fff|#ffffff|white|none)[^"]+"/i.test(texto);
+    if (temBranco && !temOutraCor) invisiveis.push(a.id);
+  }
+  assert.deepEqual(
+    invisiveis,
+    [],
+    "SVG só-branco fica invisível no tema claro (#1153)",
+  );
+});
 
 // ───────────────── #1172: o catálogo não pode perder o Brasil ─────────────────
 // O scrape que originou o catálogo montou a lista por DISPONIBILIDADE DE
