@@ -1,7 +1,7 @@
 # TEAM-CANON — GALAXIE
-**v1.1 · 2026-08-18 · ratificado pelo PO (Wagner) · dono: Bibliotecário**
+**v1.2 · 2026-08-19 · ratificado pelo PO (Wagner) · dono: Bibliotecário**
 
-> **Histórico de emendas:** v1.0 (2026-08-18) texto fundador · **v1.1 (2026-08-18)** adiciona **§5-bis Sweeps por fila** e **§2 flag `precisa design` (Altair no fluxo)** (redação: Hiparco; ratificação: PO).
+> **Histórico de emendas:** v1.0 (2026-08-18) texto fundador · **v1.1 (2026-08-18)** adiciona **§5-bis Sweeps por fila** e **§2 flag `precisa design` (Altair no fluxo)** (redação: Hiparco; ratificação: PO) · **v1.2 (2026-08-19)** fixa em §2 a **regra de transição da flag `sem superfície de runtime`** — cards pré-canon classificados pelo SM + ratificação em lote do PO; card novo sem flag não entra em Ready; na dúvida, vai pro PO (origem: #1268).
 
 Este é o documento-lei do time GALAXIE. **Fonte ÚNICA de verdade.** Todo agente lê isto ao nascer, ANTES de qualquer memória. Onde qualquer outro doc, memória ou hábito divergir, **o canon vence** — o resto é histórico, não autoridade. Ele **absorve e substitui o `WORKFLOW.md`** e vive na **raiz do repo `galaxie-toolbox`** (versionado; todo worktree o enxerga).
 
@@ -58,6 +58,8 @@ Devs **não têm módulo fixo** (mandamento 6) — pegam a fatia que o SM despac
 | **PO Approved** | Validado; pronto pra promover | PO (ou SM p/ invisível) | No corte (~3 em PO Approved): Deploy Manager promove `pre-prod→main` + tag + changelog → **Released to Production** (Deploy Manager) |
 | **Rejected** | Fila de TRIAGEM do SM — nunca estacionamento | QA ou PO, com achado/evidência | Em **até 1 sweep**: SM re-rota pra executor FRESCO com a US original + achado verbatim como brief → **In progress** (SM) |
 | **Released to Production** | Na `main`, versão cortada, changelog publicado | Deploy Manager | Terminal ✅ |
+
+**Flag `sem superfície de runtime` — regra de transição (v1.2, #1268):** (1) **Card novo:** a flag é decisão da **Mira** na criação (tem/não tem superfície) — **card sem essa marcação não entra em Ready** (devolução, como AC faltando; mandamento 5). (2) **Card pré-canon** (criado antes de 2026-08-18, sem a marcação): o **SM classifica** (com/sem superfície) e registra critério + classificação **no card**; a promoção QA Approved → PO Approved desses cards vale só por **ratificação em lote do PO** (post ou/ou na issue dona ou na #133; o SM cita o comentário da ratificação em cada card). (3) **Na dúvida, vai pro PO** — nunca promoção automática: errar pro lado de mostrar ao PO é barato; pular a validação de runtime dele não é. A regra (2) morre por obsolescência quando não houver mais card pré-canon em voo.
 
 **Flag `precisa design` (Altair no fluxo — v1.1):** a **Mira** seta a flag no grooming quando a US exige decisão transversal de design; **obrigatória** em card de **security / remote / auth**. Card com a flag **só entra em Ready depois que o Altair postar o desenho na issue** (Mira não move antes). Em **Done**, card com a flag passa por **revisão de design do Altair** (implementação × desenho, na issue) **antes** do gate da Lúmen — a revisão do Altair não substitui o gate, antecede-o; reprovação dele = Rejected com achado verbatim, como qualquer lente.
 
