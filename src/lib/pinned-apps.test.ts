@@ -49,3 +49,62 @@ test("#721 resolverPinados: ordem dos pinados + descarta órfãos", () => {
     ["figma", "notion"]
   );
 });
+
+// --- #1152: o pin do command grava id da lista UNIFICADA ---------------------
+//
+// Os testes acima só exercitam ids do CATÁLOGO — foi por isso que o bug passou
+// verde: `outlook`, `word`, `galaxie-bridge` não existem no catálogo, e o
+// resolvedor os descartava em silêncio, deixando o rail sem renderizar.
+
+/** Recorte fiel das TRÊS origens de `unificar()` (GALAXIE, M365 curado, catálogo). */
+const unificado = [
+  { id: "galaxie-bridge", name: "Bridge" }, // tela GALAXIE — NÃO está no catálogo
+  { id: "outlook", name: "Outlook" }, // M365 curado — NÃO está no catálogo
+  { id: "figma", name: "Figma" }, // catálogo
+];
+
+test("#1152 pin de app M365 curado (Outlook) SOBREVIVE — era descartado", () => {
+  assert.deepEqual(
+    resolverPinados(["outlook"], unificado).map((a) => a.id),
+    ["outlook"]
+  );
+});
+
+test("#1152 pin de tela GALAXIE (galaxie-bridge) SOBREVIVE — era descartado", () => {
+  assert.deepEqual(
+    resolverPinados(["galaxie-bridge"], unificado).map((a) => a.id),
+    ["galaxie-bridge"]
+  );
+});
+
+test("#1152 as três origens convivem, na ordem do pin", () => {
+  assert.deepEqual(
+    resolverPinados(["figma", "galaxie-bridge", "outlook"], unificado).map(
+      (a) => a.id
+    ),
+    ["figma", "galaxie-bridge", "outlook"]
+  );
+});
+
+test("#1152 id órfão de verdade CONTINUA descartado — a proteção fica de pé", () => {
+  assert.deepEqual(
+    resolverPinados(["outlook", "nao-existe-em-lugar-nenhum"], unificado).map(
+      (a) => a.id
+    ),
+    ["outlook"]
+  );
+});
+
+test("#1152 descarte é ANUNCIADO — foi o silêncio que escondeu este bug", () => {
+  const descartados: string[] = [];
+  resolverPinados(["figma", "fantasma", "outro-fantasma"], unificado, (id) =>
+    descartados.push(id)
+  );
+  assert.deepEqual(descartados, ["fantasma", "outro-fantasma"]);
+});
+
+test("#1152 sem órfãos, ninguém é anunciado (nada de ruído no console)", () => {
+  const descartados: string[] = [];
+  resolverPinados(["figma", "outlook"], unificado, (id) => descartados.push(id));
+  assert.deepEqual(descartados, []);
+});

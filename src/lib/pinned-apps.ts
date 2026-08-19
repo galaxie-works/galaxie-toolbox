@@ -1,5 +1,3 @@
-import type { AppCatalogo } from "@/lib/apps-catalog-core";
-
 /**
  * #721 (SH3): estado PURO dos apps pinados no rail — lista ordenada de ids do
  * catálogo (#720). Sem React, sem persistência e sem importar o JSON do catálogo
@@ -27,19 +25,35 @@ export function removerPin(pinados: readonly string[], id: string): string[] {
 }
 
 /**
- * Resolve os ids pinados nos apps do `catalogo`, na ORDEM dos pinados. Ids órfãos
- * (app saiu do catálogo) são descartados — o rail nunca mostra um pin quebrado.
- * O caller passa `APPS_CATALOGO` (do apps-catalog.ts), mantendo isto puro.
+ * Resolve os ids pinados na LISTA em que eles foram criados, na ORDEM do pin.
+ *
+ * #1152: antes isto resolvia só contra `APPS_CATALOGO`, e o pin do command grava
+ * o id da lista UNIFICADA — que tem três origens (telas GALAXIE, M365 curado e
+ * catálogo). Como `outlook`, `word`, `galaxie-bridge` e companhia **não existem
+ * no catálogo**, todo pin de app M365 ou de tela GALAXIE era descartado aqui, em
+ * silêncio, e o rail não renderizava. A guarda contra pin quebrado engolia o
+ * caso comum.
+ *
+ * A proteção continua: id que não existe em NENHUMA origem é descartado — o rail
+ * nunca mostra pin quebrado. O que muda é que agora ele é **anunciado**
+ * (`aoDescartar`), porque foi justamente o descarte mudo que escondeu este bug
+ * do time até o PO reclamar.
+ *
+ * Genérico no item (`T extends { id: string }`) de propósito: o resolvedor não
+ * precisa saber se recebe `AppCatalogo` ou `AppUnificado`, e assim segue puro e
+ * testável sem importar o JSON do catálogo.
  */
-export function resolverPinados(
+export function resolverPinados<T extends { id: string }>(
   pinados: readonly string[],
-  catalogo: readonly AppCatalogo[]
-): AppCatalogo[] {
-  const porId = new Map(catalogo.map((a) => [a.id, a]));
-  const out: AppCatalogo[] = [];
+  apps: readonly T[],
+  aoDescartar?: (id: string) => void
+): T[] {
+  const porId = new Map(apps.map((a) => [a.id, a]));
+  const out: T[] = [];
   for (const id of pinados) {
     const app = porId.get(id);
     if (app) out.push(app);
+    else aoDescartar?.(id);
   }
   return out;
 }

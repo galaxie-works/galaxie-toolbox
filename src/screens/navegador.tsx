@@ -21,11 +21,12 @@ import {
   appsUnificadosPorCategoria,
   m365VisivelPara,
   type AppUnificado,
+  APPS_UNIFICADOS,
 } from "@/lib/apps-unificado";
 import { AppIcon } from "@/components/app-icon";
 // #721 (SH3): fixar/desafixar app no rail — estado no store, lógica pura.
 import { useAppStore } from "@/store";
-import { estaPinado } from "@/lib/pinned-apps";
+import { estaPinado, resolverPinados } from "@/lib/pinned-apps";
 import * as browser from "@/lib/browser";
 import { fetchFavicon } from "@/lib/api";
 import {
@@ -550,6 +551,14 @@ function ConteudoPaleta({
     onNavegar(app.url, app.name);
   };
 
+  // #1152 (pedido do Wagner): grupo PINNED no topo do command. Fonte é a mesma
+  // lista unificada de onde o pin tira o id — resolver contra outra coisa foi o
+  // bug deste card. Sem fixado, o grupo não existe (nada de cabeçalho vazio).
+  const fixadosUnificados = useMemo(
+    () => resolverPinados(appsFixados, APPS_UNIFICADOS),
+    [appsFixados],
+  );
+
   // Render de UMA categoria do command — reusado pelo grupo "From GALAXIE" (no
   // topo, #877) e pelas demais categorias. Extraído p/ não duplicar o corpo.
   const renderCategoria = (grupo: (typeof gruposUnificados)[number]) => {
@@ -788,6 +797,28 @@ function ConteudoPaleta({
                 Remote) ANTES do "Mais usados" — os produtos do app são a 1ª coisa
                 ao abrir o command. Só renderiza se o grupo casa (na busca pode
                 não existir). */}
+            {/* #1152: PINNED no topo — antes do "From GALAXIE". Some quando
+                não há fixado (sem cabeçalho órfão). Não deduplico o item da
+                categoria de origem DE PROPÓSITO: o command é busca, e sumir o
+                Outlook de "Produtividade" porque foi fixado quebraria a
+                expectativa de quem procura por ele lá. */}
+            {fixadosUnificados.length > 0 && (
+              <>
+                <CommandGroup heading={t.command.grupoFixados}>
+                  {fixadosUnificados.map((app) => (
+                    <ItemUnificado
+                      key={`pin-${app.id}`}
+                      app={app}
+                      termo={termo}
+                      fixado
+                      onSelecionar={() => executar(() => abrirUnificado(app))}
+                      onAlternarPin={() => alternarFixado(app.id)}
+                    />
+                  ))}
+                </CommandGroup>
+                <CommandSeparator />
+              </>
+            )}
             {grupoGalaxie && (
               <>
                 {renderCategoria(grupoGalaxie)}
