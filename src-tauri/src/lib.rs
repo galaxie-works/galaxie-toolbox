@@ -1816,25 +1816,41 @@ fn log_frontend_error(msg: String) {
     log::error!("[frontend] {msg}");
 }
 
-// --- Telemetria (#388, S2): TelemetryPolicy Rust-owned. Comandos sync,
-// fire-and-forget (como o log_frontend_error). A telemetria nunca deve quebrar o
-// app, então tudo é best-effort. Sem rede antes do opt-in + transporte (S1).
+// --- Telemetria (#388, S2): TelemetryPolicy Rust-owned. Fire-and-forget: a
+// telemetria nunca deve quebrar o app, então tudo é best-effort. Sem rede antes
+// do opt-in + transporte (S1).
+//
+// #1238: os comandos eram `fn` SÍNCRONA e o caminho por baixo gravava em disco
+// (serde + DPAPI + `fs::write`) na thread do IPC, segurando o Mutex, a CADA
+// evento. Agora: `track` não toca disco (o worker de persistência coalesce), e
+// consent/revoke — que precisam mesmo gravar — saem da thread do IPC via
+// `spawn_blocking` (padrão do #834).
 #[tauri::command]
-fn telemetry_track(state: State<'_, telemetry::TelemetryState>, envelope: telemetry::EnvelopeEntrada) {
+async fn telemetry_track(
+    state: State<'_, telemetry::TelemetryState>,
+    envelope: telemetry::EnvelopeEntrada,
+) -> Result<(), ()> {
+    // Só memória: policy + push na fila + marcar sujo. Não vai para o pool
+    // porque não há nada de bloqueante para tirar da thread.
     state.track(envelope);
+    Ok(())
 }
 
 #[tauri::command]
-fn telemetry_set_consent(
+async fn telemetry_set_consent(
     state: State<'_, telemetry::TelemetryState>,
     consent: telemetry::Consentimento,
-) {
-    state.definir_consent(consent);
+) -> Result<(), ()> {
+    let estado = (*state).clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || estado.definir_consent(consent)).await;
+    Ok(())
 }
 
 #[tauri::command]
-fn telemetry_revoke(state: State<'_, telemetry::TelemetryState>) {
-    state.revogar();
+async fn telemetry_revoke(state: State<'_, telemetry::TelemetryState>) -> Result<(), ()> {
+    let estado = (*state).clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || estado.revogar()).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1845,10 +1861,12 @@ fn telemetry_status(state: State<'_, telemetry::TelemetryState>) -> telemetry::S
 /// Inspetor DEV (#389): dump dos envelopes já na fila (scrubbed). Retorna vazio
 /// em release — o front só chama sob `import.meta.env.DEV`.
 #[tauri::command]
-fn telemetry_debug_dump(
+async fn telemetry_debug_dump(
     state: State<'_, telemetry::TelemetryState>,
-) -> Vec<telemetry::EnvelopeCarimbado> {
-    state.debug_dump()
+) -> Result<Vec<telemetry::EnvelopeCarimbado>, ()> {
+    // #1238 (item de DoD): conferido — `debug_dump` NÃO toca disco. Lê a fila
+    // sob o lock e clona; em release devolve vazio antes mesmo de travar.
+    Ok(state.debug_dump())
 }
 
 /// #1104 / fecha TODO(#687): URL de PROD do signaling Remote (S0). O front (WS em
@@ -2310,8 +2328,17 @@ pub fn run() {
             fs_explorer::fs_watch,
             fs_explorer::fs_unwatch,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, evento| {
+            // #1238: `track` deixou de gravar a cada evento (o worker de
+            // persistência coalesce), então o que caiu dentro da janela de
+            // debounce ainda não está no disco. Ao sair, drena — senão o ganho
+            // de IO viraria perda de fila.
+            if let tauri::RunEvent::Exit = evento {
+                app.state::<telemetry::TelemetryState>().flush_persistencia();
+            }
+        });
 }
 
 #[cfg(test)]
