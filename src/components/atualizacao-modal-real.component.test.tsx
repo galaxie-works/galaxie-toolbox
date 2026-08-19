@@ -16,8 +16,11 @@ const NOTAS = [
   ...Array.from({ length: 60 }, (_, i) => `- item longo número ${i}`),
 ].join("\n");
 
+// #1334: a data do feed vira variável de teste — o caso degenerado (ausente /
+// ilegível) é o que produzia "Versão X.Y.Z ()" na tela.
+let dataDoFeed: string | undefined = "2026-08-19 06:11:36";
 vi.mock("@tauri-apps/plugin-updater", () => ({
-  check: async () => ({ version: "9.9.9", date: "2026-08-19 06:11:36", body: NOTAS }),
+  check: async () => ({ version: "9.9.9", date: dataDoFeed, body: NOTAS }),
 }));
 vi.mock("@tauri-apps/api/app", () => ({ getVersion: async () => "0.46.0" }));
 vi.mock("@/lib/telemetria", () => ({ telUpdateVerificado: vi.fn() }));
@@ -79,5 +82,34 @@ describe("#1321 o modal REAL com o changelog real", () => {
     expect(texto).not.toContain("**");
     expect(container.querySelector("strong")?.textContent).toContain("O aviso só aparece");
     expect(container.querySelectorAll("li").length).toBeGreaterThan(60);
+  });
+});
+
+describe("#1334 badge de versão sem data legível", () => {
+  afterEach(() => {
+    dataDoFeed = "2026-08-19 06:11:36";
+  });
+
+  it("data AUSENTE não deixa parênteses vazios no badge", async () => {
+    dataDoFeed = undefined;
+    await abrirModal();
+    const texto = document.body.textContent ?? "";
+    // O defeito exato relatado: "Versão 9.9.9 ()".
+    expect(texto).not.toContain("()");
+    expect(texto).toContain("9.9.9");
+  });
+
+  it("data ILEGÍVEL também não deixa parênteses vazios", async () => {
+    dataDoFeed = "nao-e-uma-data";
+    await abrirModal();
+    const texto = document.body.textContent ?? "";
+    expect(texto).not.toContain("()");
+    expect(texto).toContain("9.9.9");
+  });
+
+  it("com data legível o badge SEGUE mostrando a data (não regredi o #1258)", async () => {
+    await abrirModal();
+    const texto = document.body.textContent ?? "";
+    expect(texto).toMatch(/9\.9\.9\s*\(/);
   });
 });
