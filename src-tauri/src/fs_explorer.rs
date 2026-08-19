@@ -6276,6 +6276,102 @@ mod tests {
         assert!(cl.is_empty(), "sem contas, sem mounts — e sem panico");
     }
 
+
+    // ── #1288: nome do drive de rede + locais de rede ────────────────────────
+    //
+    // O PO viu `Galaxie Network (W:)` onde o Explorer mostra
+    // `wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)`. O nome vinha do
+    // label do VOLUME; o certo é o leaf do remoto + o UNC do share + a letra.
+
+    #[test]
+    fn nome_de_drive_mapeado_espelha_o_explorer() {
+        // O caso exato do relato do PO.
+        assert_eq!(
+            nome_drive_rede(r"\\192.168.1.34\Galaxie Network\wagnao-marcenaria", "W:"),
+            r"wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)"
+        );
+    }
+
+    #[test]
+    fn mapeamento_na_raiz_do_share_usa_o_share_como_nome() {
+        // `\\server\share` (sem subpasta): leaf = share, base = \\server.
+        assert_eq!(
+            nome_drive_rede(r"\\192.168.1.34\Galaxie Network", "Z"),
+            r"Galaxie Network (\\192.168.1.34) (Z:)"
+        );
+    }
+
+    #[test]
+    fn nome_nao_depende_do_label_do_volume_nem_da_barra_final() {
+        // Barra final e letra em minúscula não podem mudar o resultado — é o
+        // mesmo mapeamento.
+        assert_eq!(
+            nome_drive_rede(r"\\srv\share\sub\", "w:\\"),
+            nome_drive_rede(r"\\srv\share\sub", "W:")
+        );
+    }
+
+    #[test]
+    fn sem_conexao_resolvivel_cai_na_letra_e_nao_no_volume() {
+        // `WNetGetConnectionW` falhou. O nome tem de continuar honesto — o bug
+        // era justamente cair no label do volume.
+        assert_eq!(nome_drive_rede("", "W:"), "(W:)");
+    }
+
+    #[test]
+    fn locais_de_rede_viram_entradas_ordenadas_por_nome() {
+        let atalhos = vec![
+            ("Galaxie Network".to_string(), r"\\192.168.1.34\Galaxie Network".to_string()),
+            ("Eir Network".to_string(), r"\\192.168.1.34\Eir".to_string()),
+        ];
+
+        let l = montar_locais_rede(&atalhos, |_| true);
+
+        assert_eq!(l.len(), 2);
+        assert_eq!(l[0].name, "Eir Network", "ordenado por nome");
+        assert_eq!(l[1].name, "Galaxie Network");
+        assert!(l.iter().all(|x| x.kind == "networkLocation"));
+        assert!(l.iter().all(|x| x.available));
+    }
+
+    #[test]
+    fn alvo_offline_continua_na_lista_marcado_como_indisponivel() {
+        let atalhos = vec![
+            ("Vivo".to_string(), r"\\srv\ok".to_string()),
+            ("Morto".to_string(), r"\\srv\offline".to_string()),
+        ];
+
+        let l = montar_locais_rede(&atalhos, |alvo| !alvo.contains("offline"));
+
+        assert_eq!(l.len(), 2, "offline NAO some da lista (AC)");
+        let morto = l.iter().find(|x| x.name == "Morto").unwrap();
+        assert!(!morto.available, "tem de aparecer marcado como indisponivel");
+        let vivo = l.iter().find(|x| x.name == "Vivo").unwrap();
+        assert!(vivo.available);
+    }
+
+    #[test]
+    fn atalho_sem_alvo_ou_sem_nome_e_ignorado() {
+        let atalhos = vec![
+            ("Sem alvo".to_string(), "   ".to_string()),
+            ("  ".to_string(), r"\\srv\share".to_string()),
+        ];
+        assert!(montar_locais_rede(&atalhos, |_| true).is_empty());
+    }
+
+    #[test]
+    fn dois_atalhos_pro_mesmo_alvo_nao_duplicam() {
+        let atalhos = vec![
+            ("Galaxie".to_string(), r"\\srv\Galaxie Network".to_string()),
+            ("Galaxie (copia)".to_string(), r"\\SRV\galaxie network\".to_string()),
+        ];
+        assert_eq!(
+            montar_locais_rede(&atalhos, |_| true).len(),
+            1,
+            "mesmo alvo, escrita diferente"
+        );
+    }
+
 }
 
 /// #1288 — o caminho remoto de um drive mapeado (`W:` → `\\server\share\sub`).

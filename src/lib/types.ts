@@ -651,6 +651,18 @@ export interface CloudLocation {
   kind: "folder" | "drive";
 }
 
+/** #1288: um "local de rede" do Windows (atalho SEM letra, de "Add a network
+ *  location"). Fica ao lado dos drives mapeados na seção "Network locations". */
+export interface NetworkLocation {
+  name: string;
+  /** Alvo UNC resolvido do `target.lnk`. */
+  path: string;
+  kind: "networkLocation";
+  /** `false` = alvo não respondeu no prazo. A entrada CONTINUA na lista — só
+   *  marcada como indisponível (nunca some em silêncio). */
+  available: boolean;
+}
+
 /** Tamanho agregado de uma pasta (varredura recursiva). */
 export interface DirSize {
   path: string;
