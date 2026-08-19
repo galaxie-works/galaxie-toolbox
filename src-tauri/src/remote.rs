@@ -21,7 +21,7 @@ use galaxie_remote_transport::turn::{
 };
 use galaxie_remote_net::protocol::Capabilities;
 use galaxie_remote_transport::{
-    canal_de_comandos, decode, encode_input, CapabilityPolicy,
+    canal_de_comandos, decode, encode_input, CapabilityPolicy, ControlMessage,
     CommandReceiver as TransportCommandReceiver, EncoderCommand as TransportEncoderCommand,
     EventoSessao, Frame as ControlFrame, IceServer, InputEvent, Papel, Passo, ScreenInfo,
     SessionConfig, SignalMessage, Transport,
@@ -298,6 +298,69 @@ struct RelayState {
     /// manda no máximo 1 por tick, então um `438 Stale Nonce` sempre casa com ESTE
     /// txid — daí renovamos o nonce sem corrida.
     ultimo_txid: [u8; 12],
+}
+
+/// #1000 (AC1/AC3) — veredito de autorização de UM frame de controle no host.
+/// A DECISÃO mora aqui (pura, testável); o `handle_control` só executa o efeito.
+#[derive(Debug, PartialEq)]
+enum FrameAcao {
+    /// `Screen` (host→controlador): o controlador recebe a geometria da tela.
+    EmitirScreen(ScreenInfo),
+    /// Input real (mouse/teclado) → o host injeta (o executor reconfere role/caps).
+    AplicarInput(InputEvent),
+    /// AC1: anúncio de `Capabilities` do CONTROLADOR — o host IGNORA, sempre.
+    IgnorarAnuncioDeCapabilities,
+    /// Controle (clipboard/file) permitido pela capability da sessão.
+    ControlePermitido(ControlMessage),
+    /// Controle negado pela capability — logado, nunca processado.
+    ControleBloqueado,
+    /// Chunk de arquivo dentro da capability (AC2/#688 exigirá oferta aceita).
+    ChunkPermitido,
+    /// Chunk com `file_transfer` desligado — rejeitado.
+    ChunkBloqueado,
+}
+
+/// #1000 — política de autorização por-frame do host, PURA (sem `RuntimeSession`)
+/// e testável. É a matriz do design do `altair` (canon v1.1 §2) em código:
+///
+/// - **AC1:** o anúncio de `Capabilities` do controlador é um braço EXPLÍCITO que
+///   o host ignora, ANTES de qualquer aplicação. Sem ele, quando o #688 ligar o
+///   `aplicar`, o controlador se auto-promoveria pelas capabilities do wire.
+/// - **AC3:** `Input(Screen)` é host→controlador; no host, aceitar reescreveria a
+///   geometria do mapeamento de coordenadas → barrado por direção.
+/// - **AC2** (chunk órfão exige oferta aceita) depende da direção do fluxo de
+///   arquivo do #688 — aqui o `Chunk` ainda é gateado só pela capability.
+fn autorizar_frame(
+    role: RemoteRole,
+    capabilities: Capabilities,
+    frame: &ControlFrame,
+) -> Result<FrameAcao, RemoteError> {
+    match frame {
+        ControlFrame::Input(InputEvent::Screen { info }) => {
+            if role != RemoteRole::Controller {
+                return Err(RemoteError::InvalidInputDirection);
+            }
+            Ok(FrameAcao::EmitirScreen(*info))
+        }
+        ControlFrame::Input(event) => Ok(FrameAcao::AplicarInput(event.clone())),
+        ControlFrame::Control(ControlMessage::Capabilities { .. }) => {
+            Ok(FrameAcao::IgnorarAnuncioDeCapabilities)
+        }
+        ControlFrame::Control(msg) => {
+            if CapabilityPolicy::nova(capabilities).permite(msg).is_err() {
+                Ok(FrameAcao::ControleBloqueado)
+            } else {
+                Ok(FrameAcao::ControlePermitido(msg.clone()))
+            }
+        }
+        ControlFrame::Chunk { .. } => {
+            if capabilities.file_transfer {
+                Ok(FrameAcao::ChunkPermitido)
+            } else {
+                Ok(FrameAcao::ChunkBloqueado)
+            }
+        }
+    }
 }
 
 struct RuntimeSession {
@@ -1126,36 +1189,35 @@ impl RuntimeSession {
     }
 
     fn handle_control(&mut self, bytes: Vec<u8>) -> Result<(), RemoteError> {
-        match decode(&bytes).map_err(|e| RemoteError::Transport(e.to_string()))? {
-            ControlFrame::Input(InputEvent::Screen { info }) => {
-                if self.role != RemoteRole::Controller {
-                    return Err(RemoteError::InvalidInputDirection);
-                }
+        let frame = decode(&bytes).map_err(|e| RemoteError::Transport(e.to_string()))?;
+        // #1000 (AC1/AC3): a DECISÃO de autorização por-frame mora em `autorizar_frame`
+        // (pura, testável — a matriz do design do Altair). Aqui só EXECUTAMOS o
+        // veredito; sem política enterrada no caminho de efeito.
+        match autorizar_frame(self.role, self.capabilities, &frame)? {
+            FrameAcao::EmitirScreen(info) => {
                 self.send_event(RemoteSessionEvent::Screen { info })?;
             }
-            ControlFrame::Input(event) => self.apply_host_input(event)?,
-            // #1070 RB6: aplica o gate de capability ANTES de qualquer processamento —
-            // não descarta em silêncio (o furo do §1). A política sai das capabilities
-            // da sessão (tipo único de 5 campos, RB7). Um frame negado é LOGADO e
-            // rejeitado. NUNCA logamos o conteúdo (ClipboardText carrega texto do
-            // usuário) — só o veredito. Os handlers de clipboard/file (S5-front) ainda
-            // não existem no app; até lá o frame permitido não é processado, mas o gate
-            // já vale e o negado já aparece no log.
-            ControlFrame::Control(msg) => {
-                if CapabilityPolicy::nova(self.capabilities).permite(&msg).is_err() {
-                    log::warn!(
-                        "[remote] frame de controle BLOQUEADO por capability \
-                         (clipboard/file desligado na sessão)"
-                    );
-                }
+            FrameAcao::AplicarInput(event) => self.apply_host_input(event)?,
+            // #1000 AC1: o anúncio de Capabilities do CONTROLADOR é ignorado pelo host.
+            FrameAcao::IgnorarAnuncioDeCapabilities => {}
+            // #1070 RB6: o gate já decidiu. O frame permitido de clipboard/file ainda
+            // não é processado (S5-front não existe no app), mas o gate já vale e o
+            // negado já aparece no log. NUNCA logamos o conteúdo — só o veredito.
+            FrameAcao::ControlePermitido(_msg) => {}
+            FrameAcao::ControleBloqueado => {
+                log::warn!(
+                    "[remote] frame de controle BLOQUEADO por capability \
+                     (clipboard/file desligado na sessão)"
+                );
             }
-            ControlFrame::Chunk { .. } => {
-                if !self.capabilities.file_transfer {
-                    log::warn!(
-                        "[remote] chunk de arquivo BLOQUEADO: capability file_transfer \
-                         desligada na sessão"
-                    );
-                }
+            // #1000 AC2 (#688): aqui entra a exigência de OFERTA ACEITA (accepted-set)
+            // — chunk órfão rejeitado. Depende da direção do fluxo de arquivo do #688.
+            FrameAcao::ChunkPermitido => {}
+            FrameAcao::ChunkBloqueado => {
+                log::warn!(
+                    "[remote] chunk de arquivo BLOQUEADO: capability file_transfer \
+                     desligada na sessão"
+                );
             }
         }
         Ok(())
@@ -1657,6 +1719,144 @@ mod tests {
     use super::*;
     use galaxie_remote_transport::{BotaoMouse, CodedFrame, Tecla};
     use std::net::{Ipv4Addr, Ipv6Addr};
+
+    // ---- #1000 (AC1/AC3): autorização por-frame do host -----------------------
+    // A matriz do design do `altair` (canon v1.1 §2), exercitada pela fn PURA
+    // `autorizar_frame` — sem montar `RuntimeSession`.
+
+    fn tela() -> ScreenInfo {
+        ScreenInfo {
+            origin_x: 0,
+            origin_y: 0,
+            width: 1920,
+            height: 1080,
+            device_pixel_ratio: 1.0,
+        }
+    }
+
+    /// AC3 — `Input(Screen)` é host→controlador. No HOST, aceitar reescreveria a
+    /// geometria do mapeamento de coordenadas: barrado por direção.
+    #[test]
+    fn ac3_input_screen_no_host_e_barrado_por_direcao() {
+        let frame = ControlFrame::Input(InputEvent::Screen { info: tela() });
+        // Todas as capabilities LIGADAS: a barreira é de DIREÇÃO, não de capability.
+        let caps = Capabilities {
+            screen: true,
+            input: true,
+            file_transfer: true,
+            clipboard: true,
+            audio: true,
+        };
+        assert!(
+            matches!(
+                autorizar_frame(RemoteRole::Host, caps, &frame),
+                Err(RemoteError::InvalidInputDirection)
+            ),
+            "Screen no host tem que ser barrado mesmo com todas as caps ligadas (#1000 AC3)",
+        );
+    }
+
+    /// AC3 (contraparte) — no CONTROLADOR, `Input(Screen)` é a geometria legítima
+    /// que ele recebe do host.
+    #[test]
+    fn ac3_input_screen_no_controlador_emite_geometria() {
+        let frame = ControlFrame::Input(InputEvent::Screen { info: tela() });
+        assert_eq!(
+            autorizar_frame(RemoteRole::Controller, Capabilities::default(), &frame).ok(),
+            Some(FrameAcao::EmitirScreen(tela())),
+        );
+    }
+
+    /// AC1 — o anúncio de `Capabilities` do controlador é SEMPRE ignorado pelo
+    /// host: nunca vira aplicação. É o braço explícito que impede a auto-promoção
+    /// pelo wire quando o #688 ligar o `aplicar`. Vale mesmo com tudo desligado
+    /// (não é "bloqueado", é "ignorado" — categorias diferentes).
+    #[test]
+    fn ac1_anuncio_de_capabilities_do_controlador_e_ignorado() {
+        let anuncio = ControlFrame::Control(ControlMessage::Capabilities {
+            clipboard: true,
+            file_transfer: true,
+        });
+        for caps in [
+            Capabilities::default(),
+            Capabilities {
+                screen: true,
+                input: true,
+                file_transfer: true,
+                clipboard: true,
+                audio: true,
+            },
+        ] {
+            assert_eq!(
+                autorizar_frame(RemoteRole::Host, caps, &anuncio).ok(),
+                Some(FrameAcao::IgnorarAnuncioDeCapabilities),
+                "o host NUNCA aplica o anúncio de Capabilities do controlador (#1000 AC1)",
+            );
+        }
+    }
+
+    /// Controle de clipboard/file segue o gate de capability (RB6): negado quando
+    /// desligado, permitido quando ligado — e o gate NÃO é o braço da AC1.
+    #[test]
+    fn controle_clipboard_respeita_o_gate_de_capability() {
+        let clip = ControlFrame::Control(ControlMessage::ClipboardText {
+            text: "x".to_owned(),
+        });
+        assert_eq!(
+            autorizar_frame(RemoteRole::Host, Capabilities::default(), &clip).ok(),
+            Some(FrameAcao::ControleBloqueado),
+        );
+        let caps = Capabilities {
+            clipboard: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            autorizar_frame(RemoteRole::Host, caps, &clip).ok(),
+            Some(FrameAcao::ControlePermitido(ControlMessage::ClipboardText {
+                text: "x".to_owned()
+            })),
+        );
+    }
+
+    /// Chunk segue a capability `file_transfer` (a exigência de OFERTA ACEITA é a
+    /// AC2, que espera a direção do #688).
+    #[test]
+    fn chunk_respeita_capability_file_transfer() {
+        let chunk = ControlFrame::Chunk {
+            transfer_id: 7,
+            offset: 0,
+            data: vec![1, 2, 3],
+        };
+        assert_eq!(
+            autorizar_frame(RemoteRole::Host, Capabilities::default(), &chunk).ok(),
+            Some(FrameAcao::ChunkBloqueado),
+        );
+        let caps = Capabilities {
+            file_transfer: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            autorizar_frame(RemoteRole::Host, caps, &chunk).ok(),
+            Some(FrameAcao::ChunkPermitido),
+        );
+    }
+
+    /// Input real (mouse/teclado) é classificado como `AplicarInput` — o executor
+    /// (`apply_host_input`) reconfere role Host + `caps.input` + injector.
+    #[test]
+    fn input_real_e_classificado_para_aplicar() {
+        let frame = ControlFrame::Input(InputEvent::Key {
+            tecla: Tecla::Enter,
+            pressed: true,
+        });
+        assert_eq!(
+            autorizar_frame(RemoteRole::Host, Capabilities::default(), &frame).ok(),
+            Some(FrameAcao::AplicarInput(InputEvent::Key {
+                tecla: Tecla::Enter,
+                pressed: true
+            })),
+        );
+    }
 
     #[test]
     fn filtro_de_ip_descarta_unspecified_loopback_e_link_local() {
