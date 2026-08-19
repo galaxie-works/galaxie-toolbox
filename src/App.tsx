@@ -510,9 +510,16 @@ function AppInner() {
       void reconciliarConfiguracaoNuvem().catch(() => {
         // Login não falha por indisponibilidade temporária da configuração.
       });
-      // #718 (SH0): home = Navigator. Login (nova conta ou re-login) sempre cai no
-      // Navigator, nunca herda o último módulo (o resetSessaoCompleta já zerou o nav).
-      setTela("navegador");
+      // #718 (SH0): home = Navigator. Login (nova conta ou re-login) nunca herda
+      // o último módulo (o resetSessaoCompleta já zerou o nav).
+      //
+      // #1299 (achado da Íris): aqui era `setTela("navegador")` LITERAL, e ele
+      // anulava a porta `?tela=` — fora do Tauri não existe sessão persistida,
+      // então TODO acesso pelo navegador passa por este caminho, que é
+      // exatamente o ambiente que o AC nomeia (`pnpm dev`). O #718 fica intacto:
+      // sem `?tela=`, `telaInicial()` devolve `TELA_PADRAO` = "navegador".
+      // Chamar o funil em vez do literal mantém UM lugar decidindo tela inicial.
+      setTela(telaInicial());
       // #783: Google não fala MS Graph (nuvem = Drive/appData). Mail/Cal/Contacts/
       // OneDrive pessoal existem no MS pessoal → People+scopes seguem pra qualquer MS.
       if (u.provider !== "google") {
