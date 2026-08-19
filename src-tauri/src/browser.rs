@@ -601,14 +601,124 @@ mod tests {
             SCRIPT_SCROLLBAR.contains("data-galaxie-scrollbar"),
             "o <style> perdeu o marcador `data-galaxie-scrollbar` (o AC verifica por ele)",
         );
-        // Contrato de cobertura: o unico caminho que cria aba de site
-        // (`browser_abrir`) injeta o script — o codigo-fonte da funcao tem a
-        // chamada. Se alguem adicionar OUTRO caminho de criacao sem o script, este
-        // arquivo precisa ganhar a chamada la tambem (nao ha bypass hoje).
-        let fonte = include_str!("browser.rs");
+        // #1277 (2ª volta) — GUARDA DE FIAÇÃO.
+        //
+        // A primeira versão era `include_str!` + `.contains(...)`: afirmava que a
+        // string existe **em algum lugar do arquivo**. A `lumen` mutou a injeção
+        // real para COMENTÁRIO e a suíte ficou verde — o bug inteiro voltaria sem
+        // nada falhar. `include_str!` lê comentário; `.contains` não distingue.
+        //
+        // O DoD pede outra coisa: que **TODO** caminho de criação de webview passe
+        // pelo script. Isso é contagem, não presença — e com o comentário fora do
+        // caminho, senão a mutação da `lumen` continua passando.
+        // `include_str!` traz o arquivo INTEIRO — inclusive este modulo de teste,
+        // onde as duas strings aparecem como literais. Contar sobre o arquivo todo
+        // faz a guarda contar a si mesma (o primeiro `cargo test` acusou 3x2). A
+        // fiacao que importa e a de PRODUCAO, entao a varredura para no
+        // `#[cfg(test)]`.
+        let fonte = sem_comentarios(include_str!("browser.rs"));
+        let producao = fonte.split("#[cfg(test)]").next().unwrap_or(&fonte);
+        let criacoes = producao.matches("WebviewBuilder::new(").count();
+        let injecoes = producao
+            .matches(".initialization_script(SCRIPT_SCROLLBAR)")
+            .count();
+
         assert!(
-            fonte.contains(".initialization_script(SCRIPT_SCROLLBAR)"),
-            "nenhum caminho injeta SCRIPT_SCROLLBAR — a aba nasceria sem o scrollbar do app (#1277)",
+            criacoes > 0,
+            "nao achei nenhum `WebviewBuilder::new(` — a guarda perdeu o alvo e \
+             estaria passando por vacuidade (o pior modo de falha de um ratchet)",
+        );
+        assert_eq!(
+            injecoes, criacoes,
+            "TODO caminho de criacao de webview tem de injetar SCRIPT_SCROLLBAR: \
+             achei {criacoes} criacao(oes) e {injecoes} injecao(oes) (comentarios \
+             ja descontados). Caminho novo sem o script = aba nasce com o \
+             scrollbar nativo (#1277).",
+        );
+    }
+
+
+    /// #1277 — zera comentários de Rust preservando o resto, para que uma
+    /// varredura de fonte não confunda **código** com **texto sobre código**.
+    ///
+    /// Foi exatamente essa confusão que deixou a guarda anterior passar quando a
+    /// `lumen` comentou a injeção real: `include_str!` entrega o arquivo inteiro,
+    /// comentário incluso.
+    ///
+    /// Cobre `//` até o fim da linha e `/* */` (com aninhamento, que o Rust
+    /// aceita). Strings NÃO são tratadas — aqui não há literal contendo `//`, e
+    /// um parser de Rust dentro de um teste seria remédio pior que a doença; se
+    /// isso mudar, o teste do próprio helper acusa.
+    fn sem_comentarios(fonte: &str) -> String {
+        let bytes: Vec<char> = fonte.chars().collect();
+        let mut out = String::with_capacity(fonte.len());
+        let mut i = 0;
+        let mut profundidade_bloco = 0usize;
+
+        while i < bytes.len() {
+            let dois: String = bytes[i..(i + 2).min(bytes.len())].iter().collect();
+            if profundidade_bloco > 0 {
+                if dois == "/*" {
+                    profundidade_bloco += 1;
+                    i += 2;
+                    continue;
+                }
+                if dois == "*/" {
+                    profundidade_bloco -= 1;
+                    i += 2;
+                    continue;
+                }
+                // preserva quebra de linha para a saída continuar legível
+                if bytes[i] == '\n' {
+                    out.push('\n');
+                }
+                i += 1;
+                continue;
+            }
+            if dois == "/*" {
+                profundidade_bloco = 1;
+                i += 2;
+                continue;
+            }
+            if dois == "//" {
+                while i < bytes.len() && bytes[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        out
+    }
+
+    /// O helper acima é o que faz a guarda de fiação valer — então ele mesmo
+    /// precisa de teste. Sem isto, um `sem_comentarios` quebrado devolveria a
+    /// guarda ao estado furado sem ninguém perceber.
+    #[test]
+    fn sem_comentarios_tira_linha_e_bloco_e_preserva_codigo() {
+        let src = "let a = 1; // some\nlet b = 2;\n/* bloco\n   com linhas */\nlet c = 3;";
+        let limpo = sem_comentarios(src);
+        assert!(limpo.contains("let a = 1;"));
+        assert!(limpo.contains("let b = 2;"));
+        assert!(limpo.contains("let c = 3;"));
+        assert!(!limpo.contains("some"), "comentario de linha tem de sumir");
+        assert!(!limpo.contains("bloco"), "comentario de bloco tem de sumir");
+    }
+
+    /// O caso EXATO da mutação da `lumen`: a chamada existe só como comentário.
+    #[test]
+    fn sem_comentarios_derruba_a_mutacao_da_lumen() {
+        let src = "\
+    .initialization_script(SCRIPT_CAPTURA_SCROLL);
+    // MUTANTE M1: a injecao REAL sumiu, mas a string continua no arquivo:
+    // .initialization_script(SCRIPT_SCROLLBAR)
+";
+        let limpo = sem_comentarios(src);
+        assert!(
+            !limpo.contains(".initialization_script(SCRIPT_SCROLLBAR)"),
+            "a chamada comentada NAO pode contar como fiacao — foi assim que o \
+             bug passou verde na 1a volta do #1277",
         );
     }
 
