@@ -69,6 +69,8 @@ const ALLOWLIST_NAO_ESCRITA = new Set<string>([
   "revelarCaminho", "abrirCaminhoFs",
   // — fs_explorer (subsistema de arquivos LOCAL via Tauri, não Bridge/Graph) —
   "listarDir", "statCaminho", "tamanhoDir", "listarDrives", "listarCloudLocations",
+  // #1288: leitura de locais de rede (fs_explorer) — nao e escrita do Bridge.
+  "listarNetworkLocations",
   "dirsConhecidos", "gerarThumbnail", "iniciarVerificacaoDominio", "verificarDominio",
   "configurarCacheThumbnail", "obterMetricasThumbnail", "resetarMetricasThumbnail",
   "lerArquivoBytes", "listarDirStreamed", "buscarArquivos", "criarPasta", "criarArquivo",

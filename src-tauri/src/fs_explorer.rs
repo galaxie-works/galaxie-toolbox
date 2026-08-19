@@ -654,11 +654,18 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
         };
 
         // Label do volume + filesystem name (#869) — best-effort (drive vazio fica sem).
+        //
+        // #1288: drive de REDE NAO passa por aqui. `GetVolumeInformationW` num
+        // share lento/offline bloqueia (licao RB do #1073) e, pior, devolve o
+        // label do VOLUME — nao o nome que o Explorer mostra. Para rede o nome
+        // sai do `WNetGetConnectionW`, que le o cache local do redirector.
         let mut label = [0u16; 261];
         let mut fsbuf = [0u16; 261];
         let mut nome = String::new();
         let mut fs_name = String::new();
-        if unsafe {
+        if kind == "network" {
+            nome = nome_drive_rede(&remoto_do_drive(&raiz).unwrap_or_default(), &raiz);
+        } else if unsafe {
             GetVolumeInformationW(pcw, Some(&mut label), None, None, None, Some(&mut fsbuf))
         }
         .is_ok()
@@ -708,6 +715,108 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
         total_space: 0,
         free_space: 0,
     }])
+}
+
+// ─── #1288: Network locations como o Explorer do Windows mostra ──────────────
+//
+// Dois defeitos distintos, reportados juntos pelo PO:
+//
+// 1. O RÓTULO do drive mapeado vinha do `GetVolumeInformationW` — que devolve o
+//    label do VOLUME do share ("Galaxie Network"). O Explorer mostra outra coisa:
+//    o leaf do caminho remoto + o UNC do share + a letra
+//    (`wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)`). Além de errado,
+//    `GetVolumeInformationW` num share lento BLOQUEIA — lição RB do #1073.
+// 2. Os LOCAIS de rede ("Add a network location", que viram atalhos em
+//    `%APPDATA%\Microsoft\Windows\Network Shortcuts\<Nome>\target.lnk`) não eram
+//    enumerados. Eles não têm letra, então nunca apareceram na lista de drives.
+
+/// Um "local de rede" do Windows (atalho sem letra) — o que o Explorer lista ao
+/// lado dos drives mapeados.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkLocation {
+    /// Nome do atalho (= nome da pasta em `Network Shortcuts`).
+    pub name: String,
+    /// Alvo UNC resolvido do `target.lnk`.
+    pub path: String,
+    /// Sempre `networkLocation` — o front distingue de `drive` mapeado.
+    pub kind: String,
+    /// O alvo respondeu dentro do prazo? `false` = offline/indisponível. A
+    /// entrada continua na lista (o AC proíbe sumir em silêncio), só marcada.
+    pub available: bool,
+}
+
+/// Normaliza uma letra para o formato `W:` (aceita `w`, `W`, `W:`, `W:\`).
+fn letra_normalizada(s: &str) -> String {
+    let t = s.trim().trim_end_matches(['\\', '/']).trim_end_matches(':');
+    match t.chars().next() {
+        Some(c) if c.is_ascii_alphabetic() && t.len() == 1 => {
+            format!("{}:", c.to_ascii_uppercase())
+        }
+        _ => t.to_string(),
+    }
+}
+
+/// #1288 — o nome que o **Explorer** mostra para um drive mapeado:
+/// `<leaf do remoto> (<resto do UNC>) (<Letra>:)`.
+///
+/// `\\192.168.1.34\Galaxie Network\wagnao-marcenaria` + `W:` vira
+/// `wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)`.
+///
+/// **Puro** — é o coração do card e não depende de rede nem do volume, então o
+/// teste cobre os formatos sem tocar em nada (é também o que tira o
+/// `GetVolumeInformationW` do caminho quente).
+fn nome_drive_rede(remoto: &str, letra: &str) -> String {
+    let l = letra_normalizada(letra);
+    let r = remoto.trim().trim_end_matches(['\\', '/']);
+    if r.is_empty() {
+        // Sem conexão resolvível: a letra ainda é um nome honesto (nunca cai no
+        // label do volume, que é o que estava errado).
+        return format!("({l})");
+    }
+    match r.rsplit_once('\\') {
+        // `\\server\share` → o rsplit devolve base `\\server`, leaf `share`.
+        Some((base, leaf)) if !base.is_empty() && !leaf.is_empty() => {
+            format!("{leaf} ({base}) ({l})")
+        }
+        _ => format!("{r} ({l})"),
+    }
+}
+
+/// #1288 — monta as entradas de local de rede a partir de pares
+/// (nome do atalho, alvo) já resolvidos. **Puro**: a resolução do `.lnk` e a
+/// sonda de disponibilidade entram injetadas, então o teste não toca COM,
+/// registro, disco nem rede.
+fn montar_locais_rede(
+    atalhos: &[(String, String)],
+    disponivel: impl Fn(&str) -> bool,
+) -> Vec<NetworkLocation> {
+    let mut out: Vec<NetworkLocation> = Vec::new();
+    for (nome, alvo) in atalhos {
+        let alvo = alvo.trim();
+        let nome = nome.trim();
+        if alvo.is_empty() || nome.is_empty() {
+            continue;
+        }
+        let chave = chave_caminho_rede(alvo);
+        if out.iter().any(|x| chave_caminho_rede(&x.path) == chave) {
+            continue;
+        }
+        out.push(NetworkLocation {
+            name: nome.to_string(),
+            path: alvo.to_string(),
+            kind: "networkLocation".into(),
+            // Offline NÃO some da lista: aparece marcado (AC).
+            available: disponivel(alvo),
+        });
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
+/// Dedupe de caminho de rede: sem separador final, minúsculo.
+fn chave_caminho_rede(p: &str) -> String {
+    p.trim().trim_end_matches(['\\', '/']).to_ascii_lowercase()
 }
 
 // ─── #869: detecção de Cloud drives (opção A do Wagner) ──────────────────────
@@ -1460,6 +1569,10 @@ fn remover(path: &str) -> Result<(), FsError> {
 fn caminho_existe(p: &str) -> bool {
     std::fs::symlink_metadata(com_long_path(Path::new(p))).is_ok()
 }
+
+/// #1288: prazo da sonda de disponibilidade de um alvo de rede. Curto de
+/// propósito — a lista tem de aparecer mesmo com share offline.
+const PRAZO_SONDA_REDE_MS: u64 = 800;
 
 /// Comprimento clássico do MAX_PATH do Windows (260, inclui o NUL). A Lixeira do
 /// shell (IFileOperation) não alcança caminhos a partir daqui.
@@ -3904,6 +4017,16 @@ pub async fn fs_cloud_locations() -> Result<Vec<CloudLocation>, FsError> {
         .map_err(spawn_err)?
 }
 
+/// #1288: locais de rede do usuário (os "Add a network location" — atalhos SEM
+/// letra). Complementam os drives mapeados na seção "Network locations".
+/// Todo IO (COM + sonda) roda em `spawn_blocking`.
+#[tauri::command]
+pub async fn fs_network_locations() -> Result<Vec<NetworkLocation>, FsError> {
+    tauri::async_runtime::spawn_blocking(|| Ok(listar_locais_rede()))
+        .await
+        .map_err(spawn_err)?
+}
+
 /// #871: mapeia um network drive (menu "New → Network drive" do ribbon).
 /// `letter` = letra livre ("Z:"), `remote` = UNC (`\\server\share`),
 /// `persistent` = reconecta no login.
@@ -6153,4 +6276,225 @@ mod tests {
         assert!(cl.is_empty(), "sem contas, sem mounts — e sem panico");
     }
 
+
+    // ── #1288: nome do drive de rede + locais de rede ────────────────────────
+    //
+    // O PO viu `Galaxie Network (W:)` onde o Explorer mostra
+    // `wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)`. O nome vinha do
+    // label do VOLUME; o certo é o leaf do remoto + o UNC do share + a letra.
+
+    #[test]
+    fn nome_de_drive_mapeado_espelha_o_explorer() {
+        // O caso exato do relato do PO.
+        assert_eq!(
+            nome_drive_rede(r"\\192.168.1.34\Galaxie Network\wagnao-marcenaria", "W:"),
+            r"wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)"
+        );
+    }
+
+    #[test]
+    fn mapeamento_na_raiz_do_share_usa_o_share_como_nome() {
+        // `\\server\share` (sem subpasta): leaf = share, base = \\server.
+        assert_eq!(
+            nome_drive_rede(r"\\192.168.1.34\Galaxie Network", "Z"),
+            r"Galaxie Network (\\192.168.1.34) (Z:)"
+        );
+    }
+
+    #[test]
+    fn nome_nao_depende_do_label_do_volume_nem_da_barra_final() {
+        // Barra final e letra em minúscula não podem mudar o resultado — é o
+        // mesmo mapeamento.
+        assert_eq!(
+            nome_drive_rede(r"\\srv\share\sub\", "w:\\"),
+            nome_drive_rede(r"\\srv\share\sub", "W:")
+        );
+    }
+
+    #[test]
+    fn sem_conexao_resolvivel_cai_na_letra_e_nao_no_volume() {
+        // `WNetGetConnectionW` falhou. O nome tem de continuar honesto — o bug
+        // era justamente cair no label do volume.
+        assert_eq!(nome_drive_rede("", "W:"), "(W:)");
+    }
+
+    #[test]
+    fn locais_de_rede_viram_entradas_ordenadas_por_nome() {
+        let atalhos = vec![
+            ("Galaxie Network".to_string(), r"\\192.168.1.34\Galaxie Network".to_string()),
+            ("Eir Network".to_string(), r"\\192.168.1.34\Eir".to_string()),
+        ];
+
+        let l = montar_locais_rede(&atalhos, |_| true);
+
+        assert_eq!(l.len(), 2);
+        assert_eq!(l[0].name, "Eir Network", "ordenado por nome");
+        assert_eq!(l[1].name, "Galaxie Network");
+        assert!(l.iter().all(|x| x.kind == "networkLocation"));
+        assert!(l.iter().all(|x| x.available));
+    }
+
+    #[test]
+    fn alvo_offline_continua_na_lista_marcado_como_indisponivel() {
+        let atalhos = vec![
+            ("Vivo".to_string(), r"\\srv\ok".to_string()),
+            ("Morto".to_string(), r"\\srv\offline".to_string()),
+        ];
+
+        let l = montar_locais_rede(&atalhos, |alvo| !alvo.contains("offline"));
+
+        assert_eq!(l.len(), 2, "offline NAO some da lista (AC)");
+        let morto = l.iter().find(|x| x.name == "Morto").unwrap();
+        assert!(!morto.available, "tem de aparecer marcado como indisponivel");
+        let vivo = l.iter().find(|x| x.name == "Vivo").unwrap();
+        assert!(vivo.available);
+    }
+
+    #[test]
+    fn atalho_sem_alvo_ou_sem_nome_e_ignorado() {
+        let atalhos = vec![
+            ("Sem alvo".to_string(), "   ".to_string()),
+            ("  ".to_string(), r"\\srv\share".to_string()),
+        ];
+        assert!(montar_locais_rede(&atalhos, |_| true).is_empty());
+    }
+
+    #[test]
+    fn dois_atalhos_pro_mesmo_alvo_nao_duplicam() {
+        let atalhos = vec![
+            ("Galaxie".to_string(), r"\\srv\Galaxie Network".to_string()),
+            ("Galaxie (copia)".to_string(), r"\\SRV\galaxie network\".to_string()),
+        ];
+        assert_eq!(
+            montar_locais_rede(&atalhos, |_| true).len(),
+            1,
+            "mesmo alvo, escrita diferente"
+        );
+    }
+
+}
+
+/// #1288 — o caminho remoto de um drive mapeado (`W:` → `\\server\share\sub`).
+/// `WNetGetConnectionW` responde do cache local do redirector: não vai à rede,
+/// então é seguro no caminho quente (ao contrário do `GetVolumeInformationW`).
+#[cfg(windows)]
+fn remoto_do_drive(letra: &str) -> Option<String> {
+    use windows::core::PCWSTR;
+    use windows::core::PWSTR;
+    use windows::Win32::NetworkManagement::WNet::WNetGetConnectionW;
+
+    let l = letra_normalizada(letra);
+    let wide: Vec<u16> = l.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut buf = [0u16; 1024];
+    let mut n = buf.len() as u32;
+    let rc = unsafe { WNetGetConnectionW(PCWSTR(wide.as_ptr()), Some(PWSTR(buf.as_mut_ptr())), &mut n) };
+    if rc.0 != 0 {
+        return None;
+    }
+    let fim = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let s = String::from_utf16_lossy(&buf[..fim]).trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// Pasta onde o Windows guarda os "locais de rede" (Add a network location).
+#[cfg(windows)]
+fn pasta_network_shortcuts() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|p| p.join(r"Microsoft\Windows\Network Shortcuts"))
+}
+
+/// Resolve o alvo de um `.lnk` via IShellLink (COM). Mesmo padrão de
+/// inicialização do `system.rs`: tolera COM já montado em outro modo e só
+/// desfaz se ESTE código inicializou.
+#[cfg(windows)]
+fn alvo_do_atalho(lnk: &Path) -> Option<String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::{Interface, PCWSTR};
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED, STGM_READ,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+
+    let wide: Vec<u16> = lnk.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if hr.is_err() && hr != RPC_E_CHANGED_MODE {
+            return None;
+        }
+        let deve_uninit = hr.is_ok();
+
+        let alvo = (|| -> Option<String> {
+            let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+            let persist: IPersistFile = link.cast().ok()?;
+            persist.Load(PCWSTR(wide.as_ptr()), STGM_READ).ok()?;
+            let mut buf = [0u16; 1024];
+            link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
+            let fim = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            let s = String::from_utf16_lossy(&buf[..fim]).trim().to_string();
+            (!s.is_empty()).then_some(s)
+        })();
+
+        if deve_uninit {
+            CoUninitialize();
+        }
+        alvo
+    }
+}
+
+/// Sonda de disponibilidade com PRAZO. Um UNC offline faz `metadata` pendurar
+/// por dezenas de segundos; aqui a thread pode ficar presa, mas a árvore do
+/// Files não — quem chama desiste no prazo e marca `available: false` (AC:
+/// nunca some em silêncio, nunca trava).
+#[cfg(windows)]
+fn alvo_responde(alvo: &str, prazo: Duration) -> bool {
+    let alvo = alvo.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(std::fs::metadata(&alvo).is_ok());
+    });
+    rx.recv_timeout(prazo).unwrap_or(false)
+}
+
+/// #1288 — enumera os locais de rede do usuário (atalhos sem letra).
+/// Best-effort: pasta ausente ou atalho ilegível não derruba o comando.
+#[cfg(windows)]
+fn listar_locais_rede() -> Vec<NetworkLocation> {
+    let Some(dir) = pasta_network_shortcuts() else {
+        return Vec::new();
+    };
+    let Ok(entradas) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+
+    let mut atalhos: Vec<(String, String)> = Vec::new();
+    for e in entradas.flatten() {
+        let caminho = e.path();
+        if !caminho.is_dir() {
+            continue;
+        }
+        let Some(nome) = caminho.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        let lnk = caminho.join("target.lnk");
+        if !lnk.exists() {
+            continue;
+        }
+        if let Some(alvo) = alvo_do_atalho(&lnk) {
+            atalhos.push((nome, alvo));
+        }
+    }
+
+    montar_locais_rede(&atalhos, |alvo| {
+        alvo_responde(alvo, Duration::from_millis(PRAZO_SONDA_REDE_MS))
+    })
+}
+
+/// Fora do Windows não há "Network Shortcuts".
+#[cfg(not(windows))]
+fn listar_locais_rede() -> Vec<NetworkLocation> {
+    Vec::new()
 }
