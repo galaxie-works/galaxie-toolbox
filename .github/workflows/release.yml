@@ -38,6 +38,22 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      # #1270: as notas da release saem de arquivo VERSIONADO
+      # (`docs/releases/<tag>.md`), nunca de placeholder. Este step vem ANTES do
+      # build porque falhar depois de ~20min de compilacao por um arquivo de
+      # texto que falta e desperdicio — e porque o defeito que ele fecha era
+      # justamente um default silencioso passar batido ate producao.
+      - name: Notas da release (obrigatórias)
+        id: notas
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag }}"
+          if (-not $tag) { $tag = "${{ github.ref_name }}" }
+          $destino = Join-Path $env:RUNNER_TEMP "notas-release.md"
+          ./scripts/notas-release.ps1 -Tag $tag -Saida $destino | Out-Null
+          "arquivo=$destino" | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "Notas lidas de docs/releases/$tag.md"
+
       - name: Node
         uses: actions/setup-node@v4
         with:
@@ -151,9 +167,16 @@ jobs:
           if ($nomeSeguro -match '[^A-Za-z0-9._-]') {
             throw "Nome do instalador ainda tem caractere problematico: $nomeSeguro"
           }
+          # #1270: fonte unica com o corpo da release (canon SS6.7). Antes:
+          # `notes = "GALAXIE $tag"` — placeholder que deixava o modal de update
+          # do usuario sem changelog.
+          $notas = (Get-Content "${{ steps.notas.outputs.arquivo }}" -Raw -Encoding utf8).Trim()
+          if ([string]::IsNullOrWhiteSpace($notas)) {
+            throw "Notas da release vazias apos a leitura de ${{ steps.notas.outputs.arquivo }} (#1270)"
+          }
           $manifesto = [ordered]@{
             version   = $versao
-            notes     = "GALAXIE $tag"
+            notes     = $notas
             pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
             platforms = [ordered]@{
               "windows-x86_64" = [ordered]@{
@@ -185,10 +208,11 @@ jobs:
           if ($?) {
             gh release upload $tag $exe "$exe.sig" latest.json --repo $env:REPO_DISTRIBUICAO --clobber
           } else {
+            # #1270: mesmo texto do latest.json — um unico changelog.
             gh release create $tag $exe "$exe.sig" latest.json `
               --repo $env:REPO_DISTRIBUICAO `
               --title "GALAXIE $tag" `
-              --notes "Instalador para Windows. O aplicativo se atualiza sozinho a partir daqui."
+              --notes-file "${{ steps.notas.outputs.arquivo }}"
           }
 
       - name: Guardar o instalador na execução
