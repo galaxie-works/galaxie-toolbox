@@ -15,6 +15,11 @@ const fechar = vi.fn(async () => {});
 const isMaximized = vi.fn(async () => false);
 const onResized = vi.fn(async () => () => {});
 
+const telAcaoConcluida = vi.fn();
+vi.mock("@/lib/telemetria", () => ({
+  telAcaoConcluida: (...a: unknown[]) => telAcaoConcluida(...a),
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     minimize,
@@ -104,5 +109,49 @@ describe("#1179 controles de janela respondem ao clique", () => {
       await Promise.resolve();
     });
     expect(minimize).toHaveBeenCalledTimes(1);
+  });
+});
+
+// O funil `comandoJanela` existe porque a falha nativa era ENGOLIDA: sem catch,
+// "clicável e inerte" não deixava rastro em lugar nenhum. Estes casos travam o
+// rastro — se alguém voltar ao handler cru, o CI reprova.
+describe("#1179 falha do comando de janela vira sinal, não silêncio", () => {
+  it("sucesso reporta telemetria ok", async () => {
+    const user = userEvent.setup();
+    await montar();
+    await user.click(screen.getByRole("button", { name: /minimizar|minimize/i }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(telAcaoConcluida).toHaveBeenCalledWith("janela_minimizar", "ok");
+  });
+
+  it("falha nativa NÃO é engolida: console.error + telemetria de erro", async () => {
+    const erro = new Error("window.minimize not allowed");
+    minimize.mockRejectedValueOnce(erro);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup();
+    await montar();
+    await user.click(screen.getByRole("button", { name: /minimizar|minimize/i }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(spy).toHaveBeenCalled();
+    expect(String(spy.mock.calls[0]?.[0])).toContain("minimizar");
+    expect(telAcaoConcluida).toHaveBeenCalledWith("janela_minimizar", "erro");
+    spy.mockRestore();
+  });
+
+  it("falha em fechar também é reportada (o funil vale para os três)", async () => {
+    fechar.mockRejectedValueOnce(new Error("denied"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const user = userEvent.setup();
+    await montar();
+    await user.click(screen.getByRole("button", { name: /fechar|close/i }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(telAcaoConcluida).toHaveBeenCalledWith("janela_fechar", "erro");
+    spy.mockRestore();
   });
 });
