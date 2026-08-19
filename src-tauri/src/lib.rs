@@ -2402,6 +2402,82 @@ mod tests {
         assert!(!v2.contains(".example"));
         assert_eq!(v2, derivar_signaling_endpoint_v2(&remote_signaling_endpoint()));
     }
+
+    // ── #1138: ratchet das majors do crate `windows` ─────────────────────────
+    //
+    // MEDIDO em `7822b2d` (`cargo tree -e normal --features remote`): a árvore
+    // linka **três** majors do `windows`, não duas como o card supunha.
+    //
+    //   0.61.3 (9 usos) — `src-tauri` + Tauri 2.11/wry, que a resolvem
+    //                     transitivamente. É 0.61 DE PROPÓSITO.
+    //   0.62.2 (2 usos) — `remote-capture` e o crate externo
+    //                     `windows-capture 2.0.1`, que pina 0.62.
+    //   0.56.0 (1 uso)  — o crate externo `trash 5.2.6` (Lixeira do shell).
+    //                     NÃO estava no card.
+    //
+    // DECISÃO: **esperar upstream**, com a dívida GUARDADA — não alinhável hoje.
+    // Os três donos são externos e cada um já está na sua última estável
+    // (conferido no crates.io em 19/08: `trash` 5.2.6, `windows-capture` 2.0.1):
+    //
+    //   • rebaixar `remote-capture` 0.62→0.61 NÃO tira o 0.62 da árvore — quem o
+    //     puxa também é o `windows-capture`, que é externo;
+    //   • subir `src-tauri` 0.61→0.62 não reduz nada: o Tauri continua trazendo
+    //     0.61, e mudaria a API contra a qual `browser.rs`/`fs_explorer.rs`
+    //     compilam;
+    //   • o 0.56 do `trash` está fora do nosso alcance sem trocar o crate.
+    //
+    // O que este teste faz é impedir que a dívida CRESÇA em silêncio: major
+    // nova entra só com decisão consciente. E quando um upstream subir, o teste
+    // falha também — é o sinal de que dá para pagar um pedaço.
+    #[test]
+    fn ratchet_majors_do_crate_windows() {
+        use std::collections::BTreeSet;
+
+        // `Cargo.lock` em vez de `cargo tree`: deterministico, sem invocar cargo
+        // dentro de teste e sem exigir a feature `remote` (que puxa OpenSSL).
+        let lock = include_str!("../Cargo.lock");
+
+        let mut majors: BTreeSet<String> = BTreeSet::new();
+        let mut e_windows = false;
+        for linha in lock.lines() {
+            let l = linha.trim();
+            if l == "name = \"windows\"" {
+                e_windows = true;
+                continue;
+            }
+            if e_windows {
+                if let Some(v) = l.strip_prefix("version = \"").and_then(|v| v.strip_suffix('"')) {
+                    let major: String = v.split('.').take(2).collect::<Vec<_>>().join(".");
+                    majors.insert(major);
+                }
+                e_windows = false;
+            }
+        }
+
+        let esperado: BTreeSet<String> = ["0.56", "0.61", "0.62"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        assert!(
+            !majors.is_empty(),
+            "nao achei nenhum `windows` no Cargo.lock — o ratchet perdeu o alvo e \
+             estaria passando por vacuidade"
+        );
+        assert_eq!(
+            majors, esperado,
+            "as majors do crate `windows` mudaram (#1138).\n\
+             \n\
+             Se ENTROU uma major: alguem acrescentou um consumidor novo e a \
+             divida cresceu — reverta ou justifique aqui.\n\
+             Se SAIU uma major: um upstream subiu e da pra pagar um pedaco da \
+             divida — atualize a lista e conte no #1138.\n\
+             \n\
+             Donos hoje: 0.61 = Tauri/wry + src-tauri · 0.62 = windows-capture \
+             (externo) · 0.56 = trash (externo)."
+        );
+    }
+
 }
 
 /// #1257 (P0/SEGURANÇA) — a guarda de COMPORTAMENTO do funil de fronteira de conta.
