@@ -4480,6 +4480,61 @@ mod tests {
         base
     }
 
+    // ── #1283 A: `ler_dir` devolve PASTAS, não só arquivos ──────────────────
+    //
+    // O card diz que as subpastas sumiram da view de conteúdo e aponta o backend
+    // como suspeito. O front já está guardado (teste de navegador em
+    // `pollux-1283-pastas-no-conteudo.browser.test.tsx`): ele MONTA as pastas
+    // quando as recebe. Faltava travar a outra ponta — se o Rust as entrega.
+    //
+    // Isto vale mais que a medição no app rodando que eu tentei antes: roda no
+    // CI, não ocupa a tela de ninguém e não depende de haver subpasta na máquina.
+
+    #[test]
+    fn ler_dir_1283_devolve_subpastas_junto_com_arquivos() {
+        let base = dir_temp("1283_dirs");
+        std::fs::create_dir_all(base.join("SubpastaUm")).unwrap();
+        std::fs::create_dir_all(base.join("SubpastaDois")).unwrap();
+        std::fs::write(base.join("arquivo.txt"), b"x").unwrap();
+
+        let itens = ler_dir(base.to_str().unwrap()).unwrap();
+
+        let dirs: Vec<&str> = itens
+            .iter()
+            .filter(|e| e.is_dir)
+            .map(|e| e.name.as_str())
+            .collect();
+        let arquivos: Vec<&str> = itens
+            .iter()
+            .filter(|e| !e.is_dir)
+            .map(|e| e.name.as_str())
+            .collect();
+
+        // O arquivo é o CONTROLE: se ele vier e as pastas não, o filtro é por is_dir.
+        assert_eq!(arquivos, vec!["arquivo.txt"], "o arquivo de controle sumiu");
+        assert!(
+            dirs.contains(&"SubpastaUm") && dirs.contains(&"SubpastaDois"),
+            "ler_dir NÃO devolveu as subpastas: {dirs:?}"
+        );
+        assert_eq!(itens.len(), 3, "esperava 2 pastas + 1 arquivo, veio {itens:?}");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn ler_dir_1283_pasta_so_com_subpastas_nao_vem_vazia() {
+        let base = dir_temp("1283_so_dirs");
+        std::fs::create_dir_all(base.join("SoPastaAqui")).unwrap();
+
+        let itens = ler_dir(base.to_str().unwrap()).unwrap();
+
+        assert_eq!(itens.len(), 1, "pasta com 1 subpasta veio como {itens:?}");
+        assert!(itens[0].is_dir, "a entrada devolvida não é pasta");
+        assert_eq!(itens[0].name, "SoPastaAqui");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     fn ctx_teste(verify: Option<VerifyAlg>) -> Contexto {
         Contexto {
             processados: Arc::new(AtomicU64::new(0)),
