@@ -1,7 +1,7 @@
 # TEAM-CANON — GALAXIE
-**v1.3 · 2026-08-19 · ratificado pelo PO (Wagner) · dono: Bibliotecário**
+**v1.4 · 2026-08-19 · ratificado pelo PO (Wagner) · dono: Bibliotecário**
 
-> **Histórico de emendas:** v1.0 (2026-08-18) texto fundador · **v1.1 (2026-08-18)** adiciona **§5-bis Sweeps por fila** e **§2 flag `precisa design` (Altair no fluxo)** (redação: Hiparco; ratificação: PO) · **v1.2 (2026-08-19)** fixa em §2 a **regra de transição da flag `sem superfície de runtime`** — cards pré-canon classificados pelo SM + ratificação em lote do PO; card novo sem flag não entra em Ready; na dúvida, vai pro PO (origem: #1268). · **v1.3 (2026-08-19)** fixa em §2 a **regra de transição da flag `precisa design`** (marcação retroativa em card já em voo — lacuna apontada pelo Altair).
+> **Histórico de emendas:** v1.0 (2026-08-18) texto fundador · **v1.1 (2026-08-18)** adiciona **§5-bis Sweeps por fila** e **§2 flag `precisa design` (Altair no fluxo)** (redação: Hiparco; ratificação: PO) · **v1.2 (2026-08-19)** fixa em §2 a **regra de transição da flag `sem superfície de runtime`** — cards pré-canon classificados pelo SM + ratificação em lote do PO; card novo sem flag não entra em Ready; na dúvida, vai pro PO (origem: #1268). · **v1.3 (2026-08-19)** fixa em §2 a **regra de transição da flag `precisa design`** (marcação retroativa em card já em voo — lacuna apontada pelo Altair). · **v1.4 (2026-08-19)** adiciona **§9 Máquina compartilhada — runtime** (navegadores, janela nativa, higiene de porta/processo) e torna `IDENTIDADES-DO-TIME.md` documento vinculante (§7).
 
 Este é o documento-lei do time GALAXIE. **Fonte ÚNICA de verdade.** Todo agente lê isto ao nascer, ANTES de qualquer memória. Onde qualquer outro doc, memória ou hábito divergir, **o canon vence** — o resto é histórico, não autoridade. Ele **absorve e substitui o `WORKFLOW.md`** e vive na **raiz do repo `galaxie-toolbox`** (versionado; todo worktree o enxerga).
 
@@ -136,6 +136,7 @@ Sweep **não é exclusivo do SM**. É o batimento periódico de todo papel cuja 
 | Arquivo | Onde | Dono |
 |---|---|---|
 | **TEAM-CANON.md** (este) | raiz do repo | Bibliotecário (emenda só c/ PO) |
+| **`docs/equipe/IDENTIDADES-DO-TIME.md`** (identidade de cada papel + **regras comuns — vinculantes**, detalham este canon sem contrariá-lo; fatiado em `identidade-<nome>.md` na memória) | repo | Bibliotecário (único autor; sem ratificação, salvo quando muda processo) |
 | `RELEASES.md` (ledger "o que está no ar") | raiz do repo | Deploy Manager |
 | `<Papel>Context.md` (estado vivo de cada papel) | pasta de memória do projeto NOVO | cada papel |
 | Pasta de memória nova (derivada do cwd `G:\galaxie_development\galaxie-toolbox`) | — | Hiparco (cura; "supersede, não duplique") |
@@ -160,5 +161,15 @@ Sweep **não é exclusivo do SM**. É o batimento periódico de todo papel cuja 
 7. Nascem as sessões novas (Polaris primeiro, depois o resto), boot do §5, todas na casa nova.
 8. Primeiro sweep do Polaris: reconciliar o board (cards presos já mapeados: #440/#441/#1000 → done; #717 fechar; Rejected drenado).
 9. **`C:\dev` (checkout velho + worktrees) = CONGELADO** como arquivo morto. Deletar só depois de 1-2 releases saírem do mundo novo, com go do PO. A memória _voaz idem — é onde os antepassados moram.
+
+---
+
+## 9. MÁQUINA COMPARTILHADA — runtime (v1.4)
+
+Os 11 papéis rodam **na mesma máquina do PO**. Tela, portas e processos são recurso comum.
+
+1. **Ver a fatia rodando = navegador, nunca janela nativa.** Todo papel tem dois navegadores: o **embutido do Claude** (`mcp__Claude_Browser__*`: `preview_start` no vite da própria worktree, `read_page`, `screenshot`, console/network) e o **Chrome da máquina, integrado** (`mcp__claude-in-chrome__*`: `navigate`, `screenshot`, `read_page`). Sobe-se **`pnpm dev` (vite)**, não `pnpm tauri dev` — a janela nativa abre **na tela do PO, do nada**. Tauri só quando o card exige IPC/arquivo local: avisar na #133 **antes**, fechar **depois**.
+2. **QA visual usa os dois antes de declarar "sem pixel".** Embutido: DOM sempre, pixel com o pane visível. Chrome integrado: pixel real sem depender do pane (limite: sem IPC Tauri — mock, sem arquivo local; `localhost:<porta>` alcançável). Screenshot real de qualquer um + classes conferidas no código = evidência visual válida (mandamento 7).
+3. **Higiene: o que sobe, derruba no fim do tick** — vite/tauri/preview, abas, capturadores. **Porta 1420 é de todos:** ocupada → **não matar processo de companheiro**; subir em outra (`--port`) e dizer na #133 qual. Terminou o teste = servidor parado, aba fechada, porta livre. Deixar rodando = consumo e bloqueio silencioso pros outros.
 
 *Assim está escrito. Vá, e não peque mais.* 🕊️
