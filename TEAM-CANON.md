@@ -1,7 +1,7 @@
 # TEAM-CANON — GALAXIE
 **v1.1 · 2026-08-18 · ratificado pelo PO (Wagner) · dono: Bibliotecário**
 
-> **Histórico de emendas:** v1.0 (2026-08-18) texto fundador · **v1.1 (2026-08-18)** adiciona **§5-bis Sweeps por fila** (redação: Hiparco; ratificação: PO).
+> **Histórico de emendas:** v1.0 (2026-08-18) texto fundador · **v1.1 (2026-08-18)** adiciona **§5-bis Sweeps por fila** e **§2 flag `precisa design` (Altair no fluxo)** (redação: Hiparco; ratificação: PO).
 
 Este é o documento-lei do time GALAXIE. **Fonte ÚNICA de verdade.** Todo agente lê isto ao nascer, ANTES de qualquer memória. Onde qualquer outro doc, memória ou hábito divergir, **o canon vence** — o resto é histórico, não autoridade. Ele **absorve e substitui o `WORKFLOW.md`** e vive na **raiz do repo `galaxie-toolbox`** (versionado; todo worktree o enxerga).
 
@@ -59,6 +59,8 @@ Devs **não têm módulo fixo** (mandamento 6) — pegam a fatia que o SM despac
 | **Rejected** | Fila de TRIAGEM do SM — nunca estacionamento | QA ou PO, com achado/evidência | Em **até 1 sweep**: SM re-rota pra executor FRESCO com a US original + achado verbatim como brief → **In progress** (SM) |
 | **Released to Production** | Na `main`, versão cortada, changelog publicado | Deploy Manager | Terminal ✅ |
 
+**Flag `precisa design` (Altair no fluxo — v1.1):** a **Mira** seta a flag no grooming quando a US exige decisão transversal de design; **obrigatória** em card de **security / remote / auth**. Card com a flag **só entra em Ready depois que o Altair postar o desenho na issue** (Mira não move antes). Em **Done**, card com a flag passa por **revisão de design do Altair** (implementação × desenho, na issue) **antes** do gate da Lúmen — a revisão do Altair não substitui o gate, antecede-o; reprovação dele = Rejected com achado verbatim, como qualquer lente.
+
 **DoD global de card:** ACs verbatim atendidos + gate verde + evidência na issue + i18n pt/en (quando UI) + teste que reproduz (quando bug). **Regra de PR:** `Closes #US` na 1ª linha quando fecha a US; `Ref #US` em fatia parcial (fatia `Ref` publica veredito mas **não move** o card da US).
 
 ---
@@ -109,6 +111,7 @@ Sweep **não é exclusivo do SM**. É o batimento periódico de todo papel cuja 
 | **QA-A (Lúmen) · QA-V (Íris)** | **só a coluna `Done`** (Íris: só os com superfície visual) | **~25 min** |
 | **Atlas (Deploy Manager)** | `PO Approved` (corte a ~3 cards, §6) | **1×/h** |
 | **Mira (Groomer)** | `Backlog` (groomar → Ready) | **diário** |
+| **Altair (Arquiteto)** | cards com flag **`precisa design`** ainda **sem desenho** (Backlog) e, em `Done`, com flag aguardando revisão de design | **periódico (~1×/h)** |
 | **Devs (Castor, Pollux, Mizar, Alcor)** | **NÃO varrem.** São acordados por **despacho do Polaris** ou pelo **PO** | — |
 | **Hiparco (Bibliotecário)** | Não é sweep de fila: **passadas** (§5) — Context fósseis, msgs do Polaris, consistência memória↔canon | periódico |
 
