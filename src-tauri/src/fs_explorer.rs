@@ -4505,7 +4505,7 @@ mod tests {
                 free_space: 0,
             },
         ];
-        let cl = montar_clouds(&pastas, drives);
+        let cl = montar_clouds(Vec::new(), &pastas, drives);
         assert_eq!(cl.len(), 2, "1 pasta (dedup) + 1 google");
         let folder = cl.iter().find(|c| c.kind == "folder").unwrap();
         assert_eq!(folder.name, "OneDrive - Contoso");
@@ -6009,4 +6009,148 @@ mod tests {
             "plano com pulo de enumeração não pode liberar a remoção da origem"
         );
     }
+
+    // ── #1286: TODAS as contas OneDrive, não só as 2 do env ──────────────────
+    //
+    // O PO tem 8 contas sincronizando e o Files mostrava 2, porque
+    // `detectar_clouds` lia só `%OneDriveConsumer%` / `%OneDriveCommercial%` /
+    // `%OneDrive%`. Estes testes exercitam a função PURA com a lista injetada:
+    // sem tocar registro e sem tocar disco (é o DoD do card).
+
+    fn conta(chave: &str, display: &str, pasta: &str) -> ContaOneDrive {
+        ContaOneDrive {
+            chave: chave.into(),
+            display_name: display.into(),
+            user_folder: pasta.into(),
+            bibliotecas: Vec::new(),
+        }
+    }
+
+    /// Existência injetada: tudo existe, menos o que estiver na lista de mortos.
+    fn existe_menos<'a>(mortos: &'a [&'a str]) -> impl Fn(&str) -> bool + 'a {
+        move |p: &str| !mortos.iter().any(|m| p.eq_ignore_ascii_case(m))
+    }
+
+    #[test]
+    fn oito_contas_do_registro_viram_oito_mounts() {
+        let mut contas = vec![conta("Personal", "OneDrive", r"C:\Users\po\OneDrive")];
+        for n in 1..=7 {
+            contas.push(conta(
+                &format!("Business{n}"),
+                &format!("OneDrive - Cliente {n}"),
+                &format!(r"C:\Users\po\OneDrive - Cliente {n}"),
+            ));
+        }
+
+        let cl = montar_clouds_onedrive(&contas, |_| true);
+
+        assert_eq!(cl.len(), 8, "as 8 contas do PO, nao as 2 do env");
+        assert_eq!(cl[0].name, "OneDrive");
+        assert_eq!(cl[0].provider, "onedrive", "Personal e pessoal");
+        assert!(
+            cl[1..].iter().all(|c| c.provider == "onedriveCommercial"),
+            "Business* e comercial"
+        );
+        assert_eq!(cl[7].name, "OneDrive - Cliente 7");
+    }
+
+    #[test]
+    fn conta_sem_display_name_usa_o_leaf_da_pasta() {
+        let cl = montar_clouds_onedrive(
+            &[conta("Business1", "  ", r"C:\Users\po\OneDrive - Contoso")],
+            |_| true,
+        );
+        assert_eq!(cl.len(), 1);
+        assert_eq!(cl[0].name, "OneDrive - Contoso");
+    }
+
+    #[test]
+    fn pasta_que_sumiu_do_disco_nao_vira_mount_morto() {
+        let morta = r"C:\Users\po\OneDrive - Ex-cliente";
+        let contas = vec![
+            conta("Personal", "OneDrive", r"C:\Users\po\OneDrive"),
+            conta("Business1", "OneDrive - Ex-cliente", morta),
+        ];
+
+        let cl = montar_clouds_onedrive(&contas, existe_menos(&[morta]));
+
+        assert_eq!(cl.len(), 1, "a conta desconectada fica de fora");
+        assert_eq!(cl[0].name, "OneDrive");
+    }
+
+    #[test]
+    fn bibliotecas_sharepoint_viram_mounts_agrupados_sob_a_conta() {
+        let mut c = conta("Business1", "OneDrive - Contoso", r"C:\Users\po\OneDrive - Contoso");
+        c.bibliotecas = vec![
+            ("Contoso".into(), r"C:\Users\po\Contoso\Documentos".into()),
+            ("Contoso".into(), r"C:\Users\po\Contoso\Engenharia".into()),
+        ];
+        let contas = vec![
+            c,
+            conta("Business2", "OneDrive - Fabrikam", r"C:\Users\po\OneDrive - Fabrikam"),
+        ];
+
+        let cl = montar_clouds_onedrive(&contas, |_| true);
+
+        assert_eq!(cl.len(), 4);
+        // as bibliotecas ficam LOGO ABAIXO da conta a que pertencem
+        assert_eq!(cl[0].name, "OneDrive - Contoso");
+        assert_eq!(cl[1].name, "Contoso — Documentos");
+        assert_eq!(cl[2].name, "Contoso — Engenharia");
+        assert_eq!(cl[3].name, "OneDrive - Fabrikam");
+        assert!(
+            cl.iter().all(|m| m.kind == "folder"),
+            "biblioteca sincronizada e pasta, nao letra"
+        );
+    }
+
+    #[test]
+    fn dedupe_por_caminho_ignora_caixa_e_barra_final() {
+        let mut c = conta("Business1", "OneDrive - Contoso", r"C:\Users\po\OneDrive - Contoso");
+        // mesma pasta, escrita diferente — o registro faz isso de verdade
+        c.bibliotecas = vec![("Contoso".into(), r"c:\users\po\onedrive - contoso\".into())];
+
+        let cl = montar_clouds_onedrive(&[c], |_| true);
+
+        assert_eq!(cl.len(), 1, "mesma pasta nao pode aparecer duas vezes");
+    }
+
+    /// O env NÃO pode duplicar o que o registro já trouxe — e continua servindo
+    /// de reserva na máquina sem a chave (edge do AC).
+    #[test]
+    fn env_complementa_o_registro_sem_duplicar() {
+        let base = dir_temp("clouds-1286");
+        let pessoal = base.join("OneDrive");
+        let so_no_env = base.join("OneDrive - SoEnv");
+        std::fs::create_dir_all(&pessoal).unwrap();
+        std::fs::create_dir_all(&so_no_env).unwrap();
+
+        let do_registro = montar_clouds_onedrive(
+            &[conta("Personal", "OneDrive", &pessoal.to_string_lossy())],
+            caminho_existe,
+        );
+        assert_eq!(do_registro.len(), 1);
+
+        let pastas = [
+            // mesma pasta do registro, com barra final → dedup
+            (Some(format!("{}\\", pessoal.to_string_lossy())), "onedrive"),
+            // esta só existe no env → entra
+            (Some(so_no_env.to_string_lossy().into_owned()), "onedriveCommercial"),
+        ];
+
+        let cl = montar_clouds(do_registro, &pastas, Vec::new());
+
+        assert_eq!(cl.len(), 2, "1 do registro + 1 so do env (a repetida some)");
+        assert_eq!(cl[0].name, "OneDrive");
+        assert_eq!(cl[1].name, "OneDrive - SoEnv");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// Máquina sem a chave de registro: lista vazia, o env assume, nada quebra.
+    #[test]
+    fn sem_registro_cai_no_env_sem_erro() {
+        let cl = montar_clouds_onedrive(&[], |_| true);
+        assert!(cl.is_empty(), "sem contas, sem mounts — e sem panico");
+    }
+
 }
