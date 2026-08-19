@@ -146,7 +146,6 @@ fn duracao_backoff(ciclos: u32) -> Duration {
 }
 
 impl AppState {
-    #[allow(clippy::too_many_arguments)]
     /// #1049 passo 2 — liga/desliga o enforce da PoP. Chamado no boot a partir do
     /// `AppConfig`; separado do construtor para nao quebrar as assinaturas
     /// existentes e para permitir virar a quente no futuro.
@@ -200,6 +199,11 @@ impl AppState {
         *self.inner.pop_contadores.lock().await
     }
 
+    // #1330: o allow pertence AQUI — `new` tem 8 argumentos (teto do clippy é 7).
+    // Ele existia antes do #1049; a inserção dos métodos de PoP entrou ENTRE o
+    // atributo e a `fn`, deixando o atributo decorando um método de 1 argumento
+    // e o construtor descoberto. Clippy só reclamou no gate, não na compilação.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         signer: SigningKey,
         turn_secret: impl Into<Vec<u8>>,
