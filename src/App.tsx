@@ -1228,7 +1228,20 @@ function AppInner() {
     <SidebarProvider className="h-svh" open={false} onOpenChange={() => {}}>
       <Atualizacao />
       <BarraJanela />
-      <AppSidebar onAbrirApp={abrirUrlLivre} />
+      <AppSidebar
+        onAbrirApp={abrirUrlLivre}
+        // #1152: app fixado que é tela interna (Bridge/Files/Remote, ou os M365
+        // que o app faz nativo) roteia como o command roteia — não abre aba web
+        // com `url` vazia.
+        onAbrirNativo={(app) => {
+          if (app.nativo === "agenda" || app.nativo === "people") {
+            setBridgeView(app.nativo);
+            abrirTelaInterna("control-room");
+            return;
+          }
+          if (app.nativo) abrirTelaInterna(app.nativo);
+        }}
+      />
       <SidebarInset className="relative overflow-hidden">
         {/* #1017: fora do Tauri (browser/pnpm dev) o app roda em MODO MOCK — as
             leituras devolvem dado fake e as escrituras REJEITAM. Faixa fixa e não

@@ -620,6 +620,8 @@ const pt = {
     catTravel: "Viagens",
     catWork: "Trabalho e negócios",
     catMisc: "Diversos",
+    // #1152 (pedido do Wagner): grupo dos fixados, no topo do command.
+    grupoFixados: "Fixados",
     // #721 (SH3): pin/unpin de apps no rail.
     pinar: "Fixar no menu",
     desafixar: "Desafixar",
@@ -2862,6 +2864,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     catWork: "Work & Business",
     catMisc: "Miscellaneous",
     // #721 (SH3): pin/unpin apps on the rail.
+    // #1152: group of pinned apps, at the top of the command.
+    grupoFixados: "Pinned",
     pinar: "Pin to sidebar",
     desafixar: "Unpin",
   },
