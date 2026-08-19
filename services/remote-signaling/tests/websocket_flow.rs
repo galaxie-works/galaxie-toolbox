@@ -288,6 +288,9 @@ async fn register(
         &ClientMessage::Register {
             device_id: device_id.to_owned(),
             public_key: BASE64.encode(key.verifying_key().as_bytes()),
+            nonce: None,
+            timestamp: None,
+            signature: None,
         },
     )
     .await

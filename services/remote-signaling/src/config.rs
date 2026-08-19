@@ -18,6 +18,13 @@ pub struct AppConfig {
     pub rate_limit_window: Duration,
     pub opaque_setup_base64: String,
     pub unattended_state_file: PathBuf,
+    /// #1049 passo 2 — exigir PoP no `Register` do v1.
+    ///
+    /// Default **false**: ligar é decisão de produto do PO (o dia em que cliente
+    /// velho para de conectar), e o desenho do `altair` pede que virar o enforce
+    /// **não exija release nova**. Como env var, virar = mudar o compose +
+    /// restart do container; sem build, sem esteira.
+    pub require_device_pop: bool,
 }
 
 impl AppConfig {
@@ -86,6 +93,8 @@ impl AppConfig {
             unattended_state_file: env::var("GALAXIE_REMOTE_UNATTENDED_STATE_FILE")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("/var/lib/galaxie-remote/unattended-v2.json")),
+            // #1049 passo 2: default DESLIGADO. A janela de enforce é decisão do PO.
+            require_device_pop: read_bool("GALAXIE_REMOTE_REQUIRE_POP", false)?,
         })
     }
 }
@@ -110,6 +119,23 @@ fn read_secret(value_name: &str, file_name: &str) -> Result<String> {
         bail!("{value_name} nao pode estar vazio");
     }
     Ok(value)
+}
+
+/// Flag booleana de servidor. Aceita as grafias que aparecem em compose/env de
+/// verdade; **qualquer outra coisa é erro**, nunca "false" silencioso — ligar o
+/// enforce por engano derruba cliente, e não ligar por typo dá falsa sensação de
+/// proteção. Os dois lados são caros, então o valor inválido para o boot.
+fn read_bool(name: &str, default: bool) -> Result<bool> {
+    match env::var(name) {
+        Err(_) => Ok(default),
+        Ok(raw) => match raw.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Ok(true),
+            "0" | "false" | "no" | "off" => Ok(false),
+            other => bail!(
+                "{name} invalido: {other:?}. Use 1/true/yes/on ou 0/false/no/off"
+            ),
+        },
+    }
 }
 
 fn read_u64(name: &str, default: u64) -> Result<u64> {
