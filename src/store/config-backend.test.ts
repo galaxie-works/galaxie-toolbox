@@ -172,11 +172,6 @@ test("projeção cloud cobre grupo A + organizations (#560) e exclui cache/sess�
   const projected = projetarConfigNuvem({
     zoom: 1.2,
     idioma: "en",
-    atomsPrefs: {
-      ordem: ["agenda", "email", "todos", "speeddial"],
-      ocultos: ["speeddial"],
-      densidade: "compacta",
-    },
     pularConfirmacaoConexao: true,
     gruposColapsados: { inbox: ["today"] },
     selectedSettingsItem: "bridge",
@@ -186,11 +181,6 @@ test("projeção cloud cobre grupo A + organizations (#560) e exclui cache/sess�
   assert.deepEqual(projected, {
     zoom: 1.2,
     idioma: "en",
-    atomsPrefs: {
-      ordem: ["agenda", "email", "todos", "speeddial"],
-      ocultos: ["speeddial"],
-      densidade: "compacta",
-    },
     pularConfirmacaoConexao: true,
     // #560: orgs agora entram na projeção cloud (antes excluídas); cache/sessão
     // (gruposColapsados, selectedSettingsItem) seguem fora.
@@ -259,7 +249,6 @@ test("matriz do grupo A + organizations (#560) fica explícita e completa", () =
     "agendaCalendariosSelecionados",
     "organizations",
     "idioma",
-    "atomsPrefs",
     "pularConfirmacaoConexao",
     "appsFixados",
   ]);
@@ -375,6 +364,42 @@ test("LayeredBackend usa nuvem como autoridade e completa schema antigo", async 
   assert.deepEqual(local.getSnapshot(), { zoom: 1.5, sidebarAberta: true });
   assert.deepEqual(cloud.saves.at(-1), { zoom: 1.5, sidebarAberta: true });
   layered.deactivate();
+});
+
+test("#1320: config antiga com `atomsPrefs` carrega sem erro e a chave é ignorada", async () => {
+  // AC do #1320. Atoms saiu do app, mas quem já usou o produto tem a chave
+  // gravada no localStorage e no OneDrive config. O caminho de carga NÃO pode
+  // explodir nem perder o resto da config por causa dela — a chave desconhecida
+  // simplesmente não é projetada de volta pra nuvem na próxima gravação.
+  const legado = {
+    zoom: 1.25,
+    idioma: "en",
+    atomsPrefs: { ordem: ["agenda", "email"], ocultos: [], densidade: "compacta" },
+    pularConfirmacaoConexao: true,
+  } as unknown as AppPersistido;
+
+  const local = new MemoryBackend(legado);
+  const cloud = new MemoryCloudBackend(legado);
+  const layered = new LayeredBackend(local, cloud);
+
+  layered.activate();
+  const carregado = await layered.load();
+  layered.deactivate();
+
+  // 1. não explodiu e o resto da config sobreviveu
+  assert.equal(carregado.zoom, 1.25);
+  assert.equal(carregado.idioma, "en");
+  assert.equal(carregado.pularConfirmacaoConexao, true);
+
+  // 2. a projeção pra nuvem não carrega mais a chave morta adiante
+  assert.ok(
+    !Object.hasOwn(projetarConfigNuvem(legado), "atomsPrefs"),
+    "atomsPrefs não pode voltar à projeção cloud depois do #1320",
+  );
+  assert.ok(
+    !(CHAVES_CONFIG_NUVEM as readonly string[]).includes("atomsPrefs"),
+    "atomsPrefs saiu da matriz de config de nuvem",
+  );
 });
 
 test("#560: troca de tenant — load traz as orgs do tenant novo, sem vazar o anterior", async () => {

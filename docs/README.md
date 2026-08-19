@@ -4,7 +4,7 @@ Docs escopados **por área do app**. Cada pasta agrupa specs, research e replans
 
 | Área | Pasta | Conteúdo |
 |---|---|---|
-| **Atoms** (dashboard) | [`atoms/`](atoms/) | [`atoms-ux-replan.md`](atoms/atoms-ux-replan.md) (retrabalho — **fonte de verdade**), [`atoms-dashboard-spec.md`](atoms/atoms-dashboard-spec.md) (spec original, superseded) |
+| **Arquivo** (histórico) | [`arquivo/`](arquivo/) | [`atoms-ux-replan.md`](arquivo/atoms-ux-replan.md), [`atoms-dashboard-spec.md`](arquivo/atoms-dashboard-spec.md) — Atoms foi **removido do app** em #1320 (decisão do PO 19/08); ficam como histórico, não como spec |
 | **Bridge** (e-mail · agenda · people · previews) | [`bridge/`](bridge/) | [`bridge-file-previews-spec.md`](bridge/bridge-file-previews-spec.md), [`bridge-people-ux.md`](bridge/bridge-people-ux.md), [`people-nav-detail-ux.md`](bridge/people-nav-detail-ux.md), [`people-bulk-edit-research.md`](bridge/people-bulk-edit-research.md) |
 | **Navigator** (navegador) | [`navigator/`](navigator/) | [`navigator-ux-spec.md`](navigator/navigator-ux-spec.md), [`navigator-arquitetura-research.md`](navigator/navigator-arquitetura-research.md), [`navigator-password-spike.md`](navigator/navigator-password-spike.md) |
 | **Astro** (Galaxie AI) | [`astro/`](astro/) | [`galaxie-ai-discovery.md`](astro/galaxie-ai-discovery.md), [`astro-architecture.md`](astro/astro-architecture.md), [`astro-financial-model.md`](astro/astro-financial-model.md) — **discovery, não construído** |

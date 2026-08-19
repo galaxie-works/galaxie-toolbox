@@ -1,3 +1,9 @@
+> **ARQUIVADO — Atoms foi REMOVIDO do app em #1320** (decisão do PO, 19/08/2026:
+> *"Vamos escrever pra matar Atoms como é. Isso não precisa mais fazer parte do
+> app. É recurso invisível e morto."*). Este documento fica como **histórico**:
+> descreve um produto que não existe mais no código. Um feed futuro dentro do
+> Navigator será outra US, quando o PO remodelar. Não usar como especificação.
+
 # Atoms — Galaxie Apps home / user dashboard — Design Spec
 
 Issue #181 · GALAXIE

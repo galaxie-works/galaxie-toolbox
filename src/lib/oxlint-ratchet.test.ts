@@ -16,8 +16,8 @@ import test from "node:test";
 // Não é "falta regra" — é **"o gate não morde"**.
 //
 // ── A prova de que isso custa ──────────────────────────────────────────────
-// A F2 do #1075 (minha) trocou `crTarefas(): Promise<Tarefa[]>` por
-// `Promise<TarefasResultado>` e deixou o `import type { Tarefa }` morto no
+// A F2 do #1075 trocou o retorno de uma função de lista por um resultado
+// agregado e deixou o `import type` correspondente morto no
 // `api.ts`. O oxlint apontou; ninguém reprovou; **foi shipado**. Removido junto
 // de outros 7 imports mortos na mesma fatia.
 //

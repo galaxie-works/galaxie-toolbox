@@ -17,11 +17,8 @@ const ALIAS: Partial<Record<Tela, string>> = {
   apps: "apps aplicativos aplicações",
   onedrive: "onedrive arquivos drive",
   outlook: "outlook",
-  atoms: "atoms atenção foco",
   navegador: "navegador navigator cruiser browser",
-  comms: "comms chat comunicação",
   astro: "astro ia assistente",
-  pulsar: "pulsar notificações alertas",
   configuracoes: "configurações ajustes preferências settings",
 };
 const ROTULO: Record<string, string> = {
@@ -29,11 +26,8 @@ const ROTULO: Record<string, string> = {
   apps: "Apps",
   onedrive: "OneDrive",
   outlook: "Outlook",
-  atoms: "Atoms",
   navegador: "Navigator",
-  comms: "Comms",
   astro: "Astro",
-  pulsar: "Pulsar",
   configuracoes: "Configurações",
 };
 const rotulo = (t: Tela) => ROTULO[t] ?? t;
@@ -76,22 +70,29 @@ test("não-app não casa (github.com, receita de bolo)", () => {
 });
 
 test("ranqueia exato acima de contém e limita a 5", () => {
-  // "atoms" é exato pra Atoms; não deve trazer nada acima dele.
-  assert.equal(casar("atoms")[0], "atoms");
+  // "onedrive" é exato pra OneDrive; não deve trazer nada acima dele.
+  assert.equal(casar("onedrive")[0], "onedrive");
   assert.ok(casar("a").length <= 5);
 });
 
-test("TELAS_IR_PARA cobre os 10 apps do escopo", () => {
-  assert.equal(TELAS_IR_PARA.length, 10);
+test("TELAS_IR_PARA cobre os 7 apps do escopo", () => {
+  // Eram 10; Atoms/Comms/Pulsar saíram do app em #1320 (decisão do PO 19/08).
+  assert.equal(TELAS_IR_PARA.length, 7);
   assert.ok(TELAS_IR_PARA.includes("control-room"));
   assert.ok(!TELAS_IR_PARA.includes("performance" as Tela));
+  // #1320: não voltam nem como candidatos ocultos.
+  for (const morta of ["atoms", "comms", "pulsar"]) {
+    assert.ok(
+      !TELAS_IR_PARA.includes(morta as Tela),
+      `${morta} foi removida do app e não pode voltar ao "Ir para"`,
+    );
+  }
 });
 
 test("só casa telas na lista de candidatos (respeita oculto do #663)", () => {
-  // Simula o RC: astro/comms/etc. filtrados fora → nem "astro" nem "comms" casam.
+  // Simula o RC: astro filtrado fora → "astro" não casa.
   const visiveis: Tela[] = ["control-room", "navegador", "apps", "onedrive"];
   assert.deepEqual(casar("astro", visiveis), []);
-  assert.deepEqual(casar("comms", visiveis), []);
   assert.equal(casar("bridge", visiveis)[0], "control-room");
   assert.equal(casar("onedrive", visiveis)[0], "onedrive");
 });

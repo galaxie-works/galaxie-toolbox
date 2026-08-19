@@ -187,7 +187,7 @@ export const useAppStore = create<AppStore>()(
       ...createOrganizationsSlice(...a),
       // Escopos ausentes descrevem somente o token atual (#235): session-only.
       ...createAuthSlice(...a),
-      // Idioma, layout do Atoms e confirmação também são config acionável.
+      // Idioma e confirmação também são config acionável.
       ...createCloudPrefsSlice(...a),
       // #721: apps fixados no rail — config comum, persistida local (+cloud aditiva).
       ...createPinnedSlice(...a),
@@ -231,7 +231,6 @@ export const useAppStore = create<AppStore>()(
         agendaCalendariosSelecionados: s.agendaCalendariosSelecionados,
         organizations: organizationsSemLogoPersistido(s.organizations),
         idioma: s.idioma,
-        atomsPrefs: s.atomsPrefs,
         pularConfirmacaoConexao: s.pularConfirmacaoConexao,
         appsFixados: s.appsFixados,
       }),

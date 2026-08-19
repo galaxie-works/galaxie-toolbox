@@ -1,10 +1,8 @@
-import { Gauge, Settings, Radar, FolderTree, MonitorSmartphone } from "lucide-react";
+import { Gauge, Settings, FolderTree, MonitorSmartphone } from "lucide-react";
 import type { ComponentType } from "react";
 import {
-  AtomIcon,
   BridgeIcon,
   NavigatorIcon,
-  CommsIcon,
   AstroIcon,
 } from "@/components/ui/icons/marca-anim";
 import { AppsIcon } from "@/components/ui/icons/apps-anim";
@@ -20,14 +18,11 @@ export type IconeNav = ComponentType<{ className?: string }>;
 
 /** Telas do canvas. Cada uma sabe onde fica no menu (para o breadcrumb). */
 export type Tela =
-  | "atoms"
   | "onedrive"
   | "apps"
   | "control-room"
   | "navegador"
-  | "comms"
   | "astro"
-  | "pulsar"
   | "outlook"
   | "performance"
   | "caminhos-longos"
@@ -78,14 +73,12 @@ export const NAV: GrupoNav[] = [
         titulo: "galaxie",
         icone: GalaxieSymbol,
         filhos: [
-          // #663 (RC): Atoms/Comms/Astro/Pulsar ocultos — sobram Bridge +
-          // Navigator (os prontos). Ocultos por flag, nada deletado.
-          { id: "atoms", titulo: "atoms", icone: AtomIcon, oculto: true },
+          // #663 (RC): Astro segue oculto por flag. Atoms/Comms/Pulsar foram
+          // REMOVIDOS do app em #1320 (decisão do PO 19/08) — não são ocultos,
+          // deixaram de existir.
           { id: "control-room", titulo: "controlRoom", icone: BridgeIcon },
           { id: "navegador", titulo: "navegador", icone: NavigatorIcon },
-          { id: "comms", titulo: "comms", icone: CommsIcon, oculto: true },
           { id: "astro", titulo: "astro", icone: AstroIcon, oculto: true },
-          { id: "pulsar", titulo: "pulsar", icone: Radar, oculto: true },
         ],
       },
       {
@@ -165,12 +158,9 @@ export const TELAS: Record<
   { titulo: ChaveNav; secao: ChaveNav; icone: IconeNav }
 > = {
   // Produtos Galaxie
-  atoms: { titulo: "atoms", secao: "galaxie", icone: AtomIcon },
   "control-room": { titulo: "controlRoom", secao: "galaxie", icone: BridgeIcon },
   navegador: { titulo: "navegador", secao: "galaxie", icone: NavigatorIcon },
-  comms: { titulo: "comms", secao: "galaxie", icone: CommsIcon },
   astro: { titulo: "astro", secao: "galaxie", icone: AstroIcon },
-  pulsar: { titulo: "pulsar", secao: "galaxie", icone: Radar },
   // Microsoft 365
   apps: { titulo: "apps", secao: "copilot", icone: AppsIcon },
   outlook: { titulo: "outlook", secao: "copilot", icone: OutlookIcon },

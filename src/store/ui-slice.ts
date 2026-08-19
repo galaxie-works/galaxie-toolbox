@@ -54,7 +54,7 @@ export interface UiSlice {
   setPeopleTab: (tab: PeopleTab) => void;
   /** #568: zera o estado de NAVEGAÇÃO na troca de conta (parte do seam do #555).
    *  Bridge volta pro E-mail e People pra Contatos — sem herdar a sub-tela da
-   *  conta anterior. (O módulo ativo/home = Atoms é resetado no App.tsx.) */
+   *  conta anterior. (O módulo ativo/home é resetado no App.tsx.) */
   resetNavegacao: () => void;
 }
 

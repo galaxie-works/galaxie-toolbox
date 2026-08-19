@@ -11,7 +11,6 @@ mod fs_explorer;
 mod gdrive;
 mod graph;
 mod lock_screen;
-mod onedrive;
 // #809/#834: o backend Remote real (str0m→OpenSSL) só compila com a feature
 // `remote`. Sem ela (build default do Wagner/CI, sem OpenSSL), carrega o stub:
 // mesmos comandos `remote_*`, mas retornam "não compilado" → o front degrada.
@@ -333,41 +332,6 @@ async fn onedrive_tipos(
     tauri::async_runtime::spawn_blocking(move || graph::onedrive_tipos(&store, &web_url))
         .await
         .map_err(|e| e.to_string())?
-}
-
-/// Control room: tarefas pendentes do To Do.
-#[tauri::command]
-async fn cr_tarefas(state: State<'_, Store>) -> Result<graph::TarefasResultado, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_tarefas(&store))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-/// Atoms (#440 A1): e-mail do dashboard num único $batch (não-lidos + sinalizados
-/// + recentes), sob o pool e memoizado. 1 request, 1 caminho de erro — substitui
-/// o Promise.all([cr_email, cr_contadores]) do front.
-#[tauri::command]
-async fn atoms_email(state: State<'_, Store>) -> Result<graph::AtomsEmail, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::atoms_email(&store))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-/// Atoms (#184): conclui uma tarefa do To Do (complete-in-place).
-#[tauri::command]
-async fn cr_tarefa_concluir(
-    state: State<'_, Store>,
-    lista_id: String,
-    tarefa_id: String,
-) -> Result<(), String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        graph::cr_tarefa_concluir(&store, &lista_id, &tarefa_id)
-    })
-    .await
-    .map_err(|e| e.to_string())?
 }
 
 /// Control room: eventos da agenda no dia escolhido (limites ISO UTC).
@@ -845,15 +809,6 @@ async fn cr_people_write_available(state: State<'_, Store>) -> Result<bool, Stri
         .map_err(|e| e.to_string())?
 }
 
-/// #186 (Atoms S4): Chat.Read presente? Gate do widget de chats do Teams.
-#[tauri::command]
-async fn cr_teams_disponivel(state: State<'_, Store>) -> Result<bool, String> {
-    let store = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || graph::cr_teams_disponivel(&store))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
 /// #206 (Org Admin S1): o token tem os escopos de settings org-wide? Gate do painel.
 #[tauri::command]
 async fn cr_org_admin_available(state: State<'_, Store>) -> Result<bool, String> {
@@ -922,14 +877,6 @@ async fn cr_multi_tenant(state: State<'_, Store>) -> Result<graph::MultiTenantCa
 #[tauri::command]
 fn reset_session_memo() {
     graph::limpar_memo_sessao();
-}
-
-/// #186 (Atoms S4): sonda LOCAL do sync do OneDrive (registry + processo).
-#[tauri::command]
-async fn atoms_onedrive_sync() -> onedrive::OneDriveSync {
-    tauri::async_runtime::spawn_blocking(onedrive::sondar)
-        .await
-        .unwrap_or_else(|_| onedrive::sondar())
 }
 
 #[tauri::command]
@@ -2161,9 +2108,6 @@ pub fn run() {
             onedrive_folder_details,
             onedrive_quota,
             onedrive_tipos,
-            cr_tarefas,
-            atoms_email,
-            cr_tarefa_concluir,
             cr_agenda,
             cr_calendarios,
             cr_agenda_calendario,
@@ -2189,8 +2133,6 @@ pub fn run() {
             cr_people_enrich_preview,
             cr_people_enrich_apply,
             cr_people_write_available,
-            cr_teams_disponivel,
-            atoms_onedrive_sync,
             cr_org_admin_available,
             cr_org_settings,
             cr_org_todo_set,

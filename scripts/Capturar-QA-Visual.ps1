@@ -1,6 +1,6 @@
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("atoms", "onedrive-my-files")]
+  [ValidateSet("astro", "onedrive-my-files")]
   [string]$Scenario,
 
   [string]$BaseUrl = "http://127.0.0.1:1420",
@@ -226,18 +226,19 @@ $($snapshot.data.snapshot)
 }
 
 $scenarios = @{
-  "atoms" = @{
-    # #1299: a tela Atoms e `oculto: true` (#663) — nao ha caminho pela UI. A
+  "astro" = @{
+    # #1299: a tela Astro e `oculto: true` (#663) — nao ha caminho pela UI. A
     # porta `?tela=<id>` (so em dev) da o destino determinístico; por isso
     # `Steps` continua vazio: nao ha o que clicar, e nao deve haver.
-    Tela = "atoms"
+    # (O cenario era `atoms`; a tela saiu do app em #1320.)
+    Tela = "astro"
     Steps = @()
-    ReadyText = "Customize"
+    ReadyText = "Astro"
     Focus = $null
   }
   "onedrive-my-files" = @{
     # Cenario alcancavel pela UI: segue pelos passos, sem porta (nao mexo no que
-    # ja funciona — a fatia do #1299 e o destino do cenario `atoms`).
+    # ja funciona — a fatia do #1299 e o destino do cenario com porta `?tela=`).
     Tela = $null
     Steps = @(
       @{ Args = @("find", "role", "button", "click", "--name", "M365 Copilot") },

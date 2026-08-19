@@ -1,5 +1,4 @@
 import type { PeopleOrg } from "@/lib/organizations";
-import { normalizarAtomsPrefs, type AtomsPrefs } from "@/lib/atoms-prefs";
 import type { Idioma } from "@/lib/strings";
 import {
   normalizarDescricao,
@@ -445,13 +444,6 @@ const localCacheCodec: LocalCacheCodec = {
       "en",
     ]);
     if (idioma !== undefined) state.idioma = idioma;
-    const atomsPrefs = lerChave<Partial<AtomsPrefs>>(
-      storage,
-      CLOUD_PREFS_KEYS.atomsPrefs,
-    );
-    if (atomsPrefs !== undefined) {
-      state.atomsPrefs = normalizarAtomsPrefs(atomsPrefs);
-    }
     try {
       const pular = storage.getItem(CLOUD_PREFS_KEYS.pularConfirmacaoConexao);
       if (pular !== null) state.pularConfirmacaoConexao = pular === "1";
@@ -535,7 +527,6 @@ const localCacheCodec: LocalCacheCodec = {
       );
     }
     gravarTexto(storage, CLOUD_PREFS_KEYS.idioma, state.idioma);
-    gravarChave(storage, CLOUD_PREFS_KEYS.atomsPrefs, state.atomsPrefs);
     if (state.pularConfirmacaoConexao !== undefined) {
       try {
         if (state.pularConfirmacaoConexao) {
