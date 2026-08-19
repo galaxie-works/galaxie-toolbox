@@ -5,6 +5,10 @@ services:
     build:
       context: ${GALAXIE_REMOTE_BUILD_CONTEXT:-../..}
       dockerfile: services/remote-signaling/Dockerfile
+      # #1311: carimba o commit no binario (responde no /healthz). Chave IRMA de
+      # `context` — a fatia 1 do #1307 NAO altera GALAXIE_REMOTE_BUILD_CONTEXT.
+      args:
+        GALAXIE_BUILD_SHA: ${GALAXIE_BUILD_SHA:-}
     image: ${GALAXIE_REMOTE_IMAGE:-galaxie-remote-signaling:local}
     restart: unless-stopped
     read_only: true
