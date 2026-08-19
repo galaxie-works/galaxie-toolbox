@@ -34,6 +34,12 @@ import { BarraJanela } from "@/components/barra-janela";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { IdiomaProvider } from "@/lib/idioma";
 
+// #1301: o spy ad hoc de console virou helper único do repo.
+import {
+  assertLogou,
+  capturarConsole,
+} from "@/test-utils/capturar-console";
+
 async function montar() {
   const r = render(
     <IdiomaProvider>
@@ -129,29 +135,37 @@ describe("#1179 falha do comando de janela vira sinal, não silêncio", () => {
   it("falha nativa NÃO é engolida: console.error + telemetria de erro", async () => {
     const erro = new Error("window.minimize not allowed");
     minimize.mockRejectedValueOnce(erro);
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const user = userEvent.setup();
     await montar();
-    await user.click(screen.getByRole("button", { name: /minimizar|minimize/i }));
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(spy).toHaveBeenCalled();
-    expect(String(spy.mock.calls[0]?.[0])).toContain("minimizar");
+    const capturado = capturarConsole();
+    try {
+      await user.click(screen.getByRole("button", { name: /minimizar|minimize/i }));
+      await act(async () => {
+        await Promise.resolve();
+      });
+    } finally {
+      capturado.restaurar();
+    }
+    assertLogou(capturado, "error", "minimizar");
     expect(telAcaoConcluida).toHaveBeenCalledWith("janela_minimizar", "erro");
-    spy.mockRestore();
   });
 
   it("falha em fechar também é reportada (o funil vale para os três)", async () => {
     fechar.mockRejectedValueOnce(new Error("denied"));
-    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const user = userEvent.setup();
     await montar();
-    await user.click(screen.getByRole("button", { name: /fechar|close/i }));
-    await act(async () => {
-      await Promise.resolve();
-    });
+    const capturado = capturarConsole();
+    try {
+      await user.click(screen.getByRole("button", { name: /fechar|close/i }));
+      await act(async () => {
+        await Promise.resolve();
+      });
+    } finally {
+      capturado.restaurar();
+    }
+    // #1301: antes este teste só conferia a telemetria e restaurava o spy sem
+    // afirmar nada sobre o log. Agora o log é afirmado de verdade.
+    assertLogou(capturado, "error", "fechar");
     expect(telAcaoConcluida).toHaveBeenCalledWith("janela_fechar", "erro");
-    spy.mockRestore();
   });
 });
