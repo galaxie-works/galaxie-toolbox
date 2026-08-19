@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
@@ -27,6 +27,10 @@ const SCHEMA_VERSION: u32 = 1;
 /// Teto da fila local (drop-oldest ao exceder) — evita crescer sem limite antes
 /// do transporte drenar (S1).
 const FILA_MAX: usize = 500;
+/// #1238 — janela de coalescência da persistência da fila. Rajada de N eventos
+/// vira UMA escrita por janela, não N. Curta o bastante para que um kill duro
+/// perca no máximo esta janela de eventos (a fila é buffer, não banco).
+const PERSIST_DEBOUNCE: Duration = Duration::from_millis(750);
 /// Caps defensivos por envelope.
 const MAX_ATRIBUTOS: usize = 32;
 const MAX_CHAVE_LEN: usize = 64;
@@ -357,13 +361,43 @@ fn carregar_fila() -> VecDeque<EnvelopeCarimbado> {
         .unwrap_or_default()
 }
 
-fn gravar_fila(fila: &VecDeque<EnvelopeCarimbado>) {
+/// #1238 — instrumentação de TESTE da persistência. Os ACs falam em "quantas
+/// escritas" e "o lock está livre durante a escrita", não no conteúdo do
+/// arquivo; então em teste a escrita é contada e sondada, não executada.
+#[cfg(test)]
+static ESCRITAS_FILA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Fila cujo Mutex deve estar LIVRE no instante da escrita (AC2).
+#[cfg(test)]
+static SONDA_INNER: Mutex<Option<Arc<Mutex<Interno>>>> = Mutex::new(None);
+#[cfg(test)]
+static SONDA_LIVRE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Serializa os testes que leem os contadores globais acima.
+#[cfg(test)]
+static TESTE_PERSIST: Mutex<()> = Mutex::new(());
+
+#[cfg(test)]
+fn gravar_fila(itens: &[EnvelopeCarimbado]) {
+    use std::sync::atomic::Ordering;
+    let _ = itens;
+    ESCRITAS_FILA.fetch_add(1, Ordering::Relaxed);
+    // AC2 verificado no instante exato da "escrita": se alguém tivesse chegado
+    // aqui segurando o guard, este `try_lock` falharia.
+    let sonda = SONDA_INNER.lock().ok().and_then(|s| s.clone());
+    if let Some(inner) = sonda {
+        SONDA_LIVRE.store(inner.try_lock().is_ok(), Ordering::Relaxed);
+    }
+}
+
+/// #1238 — recebe um SNAPSHOT já clonado, nunca a fila viva emprestada de um
+/// `MutexGuard`. É o funil: quem quiser gravar tem de ter soltado o lock antes,
+/// porque não existe mais assinatura que aceite `&i.fila`.
+#[cfg(not(test))]
+fn gravar_fila(itens: &[EnvelopeCarimbado]) {
     let Some(p) = caminho_fila() else { return };
-    if fila.is_empty() {
+    if itens.is_empty() {
         let _ = std::fs::remove_file(&p);
         return;
     }
-    let itens: Vec<&EnvelopeCarimbado> = fila.iter().collect();
     match serde_json::to_vec(&itens) {
         Ok(claro) => match crate::dpapi::cifrar(&claro) {
             Some(cifrado) => {
@@ -375,6 +409,18 @@ fn gravar_fila(fila: &VecDeque<EnvelopeCarimbado>) {
         },
         Err(e) => log::error!("[telemetry] falha ao serializar a fila: {e}"),
     }
+}
+
+/// #1238 (AC2) — FUNIL da persistência da fila. Recebe o `Arc`, nunca um guard:
+/// o lock é tomado, o snapshot clonado e o guard MORRE no fim do bloco; só então
+/// serde + DPAPI + `fs::write` acontecem. Nenhum chamador consegue segurar o
+/// Mutex através da escrita porque nenhum chamador tem o guard na mão.
+fn snapshot_e_gravar(inner: &Arc<Mutex<Interno>>) {
+    let snapshot: Vec<EnvelopeCarimbado> = {
+        let Ok(i) = inner.lock() else { return };
+        i.fila.iter().cloned().collect()
+    };
+    gravar_fila(&snapshot);
 }
 
 // --- Transporte OTLP/HTTP (#387, S1) --------------------------------------
@@ -646,26 +692,31 @@ fn drenar_uma_vez(
     }
     exporter.exportar(&batch)?;
     let mut removidos = 0;
-    if let Ok(mut i) = inner.lock() {
-        for esperado in &batch {
-            if i.fila.front() != Some(esperado) {
-                break;
+    // #1238 (AC2): o guard vive só neste bloco; a escrita acontece depois dele.
+    let snapshot: Option<Vec<EnvelopeCarimbado>> = match inner.lock() {
+        Ok(mut i) => {
+            for esperado in &batch {
+                if i.fila.front() != Some(esperado) {
+                    break;
+                }
+                i.fila.pop_front();
+                removidos += 1;
             }
-            i.fila.pop_front();
-            removidos += 1;
+            (removidos > 0).then(|| i.fila.iter().cloned().collect())
         }
-        if removidos > 0 {
-            persistir_fila_drenada(&i.fila);
-        }
+        Err(_) => None,
+    };
+    if let Some(snap) = snapshot {
+        persistir_fila_drenada(&snap);
     }
     Ok(ResultadoDreno::Enviado(removidos))
 }
 
-fn persistir_fila_drenada(fila: &VecDeque<EnvelopeCarimbado>) {
+fn persistir_fila_drenada(itens: &[EnvelopeCarimbado]) {
     #[cfg(not(test))]
-    gravar_fila(fila);
+    gravar_fila(itens);
     #[cfg(test)]
-    let _ = fila;
+    let _ = itens;
 }
 
 fn backoff_exponencial(config: &TransporteConfig, tentativa: u32, jitter: f64) -> Duration {
@@ -742,11 +793,76 @@ fn drenar_crashes_pendentes(
     }
     let _ = std::fs::remove_file(&p);
     if algum {
-        gravar_fila(fila);
+        let snapshot: Vec<EnvelopeCarimbado> = fila.iter().cloned().collect();
+        gravar_fila(&snapshot);
     }
 }
 
 // --- Estado gerenciado (Tauri State) ---------------------------------------
+
+/// #1238 (AC3) — coalescência da persistência. `track` só marca sujo e toca o
+/// sino; quem grava é o worker, uma vez por janela de debounce. Rajada de N
+/// eventos = 1 escrita, não N.
+///
+/// Sem `iniciar()` explícito nenhuma thread existe (mesmo contrato do
+/// transporte, §S1): em teste o worker não sobe e a persistência é exercitada
+/// chamando o funil direto.
+struct Persistidor {
+    sujo: Mutex<bool>,
+    sino: Condvar,
+}
+
+impl Persistidor {
+    fn novo() -> Self {
+        Self {
+            sujo: Mutex::new(false),
+            sino: Condvar::new(),
+        }
+    }
+
+    /// Marca que a fila mudou e acorda o worker. Custo: um lock de `bool` —
+    /// nenhum IO, nenhuma serialização, nada de disco na thread do IPC.
+    fn marcar_sujo(&self) {
+        if let Ok(mut sujo) = self.sujo.lock() {
+            *sujo = true;
+            self.sino.notify_one();
+        }
+    }
+
+    /// Espera ficar sujo, dorme a janela de debounce (para engolir a rajada) e
+    /// devolve `true` quando é hora de gravar.
+    fn esperar_sujo(&self, debounce: Duration) -> bool {
+        let Ok(mut sujo) = self.sujo.lock() else {
+            return false;
+        };
+        while !*sujo {
+            let Ok((novo, _)) = self.sino.wait_timeout(sujo, Duration::from_secs(60)) else {
+                return false;
+            };
+            sujo = novo;
+        }
+        *sujo = false;
+        drop(sujo);
+        std::thread::sleep(debounce);
+        true
+    }
+}
+
+/// Sobe o worker de persistência. Uma thread por `TelemetryState` vivo (na
+/// prática, uma por processo — o estado é gerenciado pelo Tauri).
+fn iniciar_persistidor(inner: Arc<Mutex<Interno>>, persist: Arc<Persistidor>, debounce: Duration) {
+    std::thread::Builder::new()
+        .name("telemetry-persist".to_string())
+        .spawn(move || loop {
+            if !persist.esperar_sujo(debounce) {
+                return;
+            }
+            // Tudo o que é caro (serde + DPAPI + fs::write) roda AQUI, nesta
+            // thread, e o funil garante que sem o Mutex na mão.
+            snapshot_e_gravar(&inner);
+        })
+        .ok();
+}
 
 struct Interno {
     consent: Consentimento,
@@ -760,6 +876,19 @@ struct Interno {
 pub struct TelemetryState {
     inner: Arc<Mutex<Interno>>,
     ctx: Contexto,
+    persist: Arc<Persistidor>,
+}
+
+/// Clone barato (dois `Arc` + contexto). Necessário para os comandos levarem o
+/// estado para dentro de `spawn_blocking` — `State<'_, _>` não é `'static`.
+impl Clone for TelemetryState {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            ctx: self.ctx.clone(),
+            persist: Arc::clone(&self.persist),
+        }
+    }
 }
 
 impl Default for TelemetryState {
@@ -771,14 +900,37 @@ impl Default for TelemetryState {
         // #391: crashes registrados pelo panic hook em runs anteriores viram
         // envelopes agora (fora do unwind), respeitando o consent.
         drenar_crashes_pendentes(&mut fila, &consent, &ctx, &session_id);
+        let inner = Arc::new(Mutex::new(Interno {
+            consent,
+            session_id,
+            fila,
+            transporte_iniciado: false,
+        }));
+        let persist = Arc::new(Persistidor::novo());
+        // #1238: a partir daqui NINGUÉM grava a fila na thread do IPC.
+        iniciar_persistidor(Arc::clone(&inner), Arc::clone(&persist), PERSIST_DEBOUNCE);
+        Self {
+            inner,
+            ctx,
+            persist,
+        }
+    }
+}
+
+#[cfg(test)]
+impl TelemetryState {
+    /// Estado de teste: não lê disco e NÃO sobe o worker de persistência — a
+    /// coalescência é exercitada chamando o funil na mão.
+    fn para_teste() -> Self {
         Self {
             inner: Arc::new(Mutex::new(Interno {
-                consent,
-                session_id,
-                fila,
+                consent: Consentimento::default(),
+                session_id: "sess".into(),
+                fila: VecDeque::new(),
                 transporte_iniciado: false,
             })),
-            ctx,
+            ctx: Contexto::atual(),
+            persist: Arc::new(Persistidor::novo()),
         }
     }
 }
@@ -796,27 +948,41 @@ pub struct StatusDto {
 }
 
 impl TelemetryState {
+    /// #1238: muta sob lock, grava DEPOIS de soltá-lo. A escrita é síncrona de
+    /// propósito (ao contrário de `track`): é escolha do usuário, é rara, e o
+    /// consent tem de estar no disco quando o comando volta. O que a corrige é
+    /// o `spawn_blocking` no comando — sai da thread do IPC, não vira fogo-e-
+    /// esquece.
     pub fn definir_consent(&self, consent: Consentimento) {
-        if let Ok(mut i) = self.inner.lock() {
-            i.consent = consent;
-            // Opt-out por categoria tambem vale para itens ainda nao enviados.
-            // Nao deixa um envelope antigo atravessar a rede depois da escolha.
-            i.fila.retain(|env| consent.permite(env.categoria));
-            gravar_consent(&consent);
-            gravar_fila(&i.fila);
-        }
+        let snapshot: Option<Vec<EnvelopeCarimbado>> = match self.inner.lock() {
+            Ok(mut i) => {
+                i.consent = consent;
+                // Opt-out por categoria tambem vale para itens ainda nao enviados.
+                // Nao deixa um envelope antigo atravessar a rede depois da escolha.
+                i.fila.retain(|env| consent.permite(env.categoria));
+                Some(i.fila.iter().cloned().collect())
+            }
+            Err(_) => None,
+        };
+        let Some(snap) = snapshot else { return };
+        gravar_consent(&consent);
+        gravar_fila(&snap);
     }
 
     /// Revoga tudo: consent OFF, apaga a fila (disco incluso) e reinicia o
     /// session-id efêmero.
     pub fn revogar(&self) {
-        if let Ok(mut i) = self.inner.lock() {
+        // #1238: apagar tem de ACONTECER (é revogação), então continua síncrono
+        // — mas fora do lock e, pelo comando, fora da thread do IPC.
+        let consent = {
+            let Ok(mut i) = self.inner.lock() else { return };
             i.consent = Consentimento::nenhum();
             i.fila.clear();
             i.session_id = novo_session_id();
-            gravar_consent(&i.consent);
-            gravar_fila(&i.fila);
-        }
+            i.consent
+        };
+        gravar_consent(&consent);
+        gravar_fila(&[]);
     }
 
     /// Aplica a policy e, se aceito, enfileira. Retorna se foi aceito. O worker
@@ -835,14 +1001,26 @@ impl TelemetryState {
             agora_unix(),
             &mut amostrar,
         );
-        match decisao {
+        let aceito = match decisao {
             Decisao::Aceito(env) => {
                 empurrar_bounded(&mut i.fila, *env, FILA_MAX);
-                gravar_fila(&i.fila);
                 true
             }
             Decisao::Rejeitado(_motivo) => false,
+        };
+        // #1238 (AC1/AC3): solta o lock e só marca sujo. Nenhuma serialização,
+        // nenhuma cifra, nenhum `fs::write` neste caminho — o worker coalesce.
+        drop(i);
+        if aceito {
+            self.persist.marcar_sujo();
         }
+        aceito
+    }
+
+    /// Grava a fila AGORA, fora do lock. Para o encerramento do app e para os
+    /// testes — o caminho quente (`track`) nunca chama isto.
+    pub fn flush_persistencia(&self) {
+        snapshot_e_gravar(&self.inner);
     }
 
     pub fn status(&self) -> StatusDto {
@@ -1412,4 +1590,100 @@ mod testes {
             .exportar(&[envelope(agora_unix(), Categoria::Analytics)])
             .unwrap();
     }
+
+    // --- #1238: telemetry_track fora da thread do IPC ----------------------
+
+    /// AC1 — "Dado um evento de telemetria, Quando `telemetry_track` roda,
+    /// Então nenhuma escrita em disco acontece na thread do IPC."
+    /// AC3 — "Dado N eventos em rajada, Então não há N escrituras completas."
+    #[test]
+    fn track_nao_persiste_e_rajada_coalesce_em_uma_escrita() {
+        use std::sync::atomic::Ordering;
+        let _guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
+        ESCRITAS_FILA.store(0, Ordering::Relaxed);
+        *SONDA_INNER.lock().unwrap() = None;
+
+        let estado = TelemetryState::para_teste();
+        for _ in 0..50 {
+            assert!(estado.track(entrada(Categoria::Crash, &[])));
+        }
+
+        // AC1: cinquenta eventos, zero escrita.
+        assert_eq!(
+            ESCRITAS_FILA.load(Ordering::Relaxed),
+            0,
+            "track gravou em disco no caminho do IPC"
+        );
+        assert_eq!(estado.inner.lock().unwrap().fila.len(), 50);
+        assert!(
+            *estado.persist.sujo.lock().unwrap(),
+            "a rajada tem de deixar a fila marcada como suja"
+        );
+
+        // AC3: a rajada inteira vira UMA escrita quando o worker acorda.
+        estado.flush_persistencia();
+        assert_eq!(
+            ESCRITAS_FILA.load(Ordering::Relaxed),
+            1,
+            "50 eventos deveriam coalescer em 1 escrita"
+        );
+    }
+
+    /// AC2 — "Dado o Mutex da telemetria, Quando a fila é persistida, Então o
+    /// lock não é mantido através da escrita." Sondado no instante da escrita.
+    #[test]
+    fn persistencia_nao_segura_o_mutex_durante_a_escrita() {
+        use std::sync::atomic::Ordering;
+        let _guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
+        ESCRITAS_FILA.store(0, Ordering::Relaxed);
+        SONDA_LIVRE.store(false, Ordering::Relaxed);
+
+        let estado = TelemetryState::para_teste();
+        estado.track(entrada(Categoria::Crash, &[]));
+        *SONDA_INNER.lock().unwrap() = Some(Arc::clone(&estado.inner));
+
+        estado.flush_persistencia();
+
+        assert!(
+            SONDA_LIVRE.load(Ordering::Relaxed),
+            "o Mutex estava OCUPADO durante a escrita — o lock atravessou a persistência"
+        );
+        *SONDA_INNER.lock().unwrap() = None;
+    }
+
+    /// AC3 (o mecanismo): N marcações de sujo colapsam em UM flush pendente.
+    #[test]
+    fn persistidor_coalesce_marcacoes() {
+        let p = Persistidor::novo();
+        for _ in 0..100 {
+            p.marcar_sujo();
+        }
+        assert!(p.esperar_sujo(Duration::from_millis(0)));
+        assert!(
+            !*p.sujo.lock().unwrap(),
+            "as 100 marcações têm de virar um único flush pendente"
+        );
+    }
+
+    /// `revogar` apaga de verdade: a escrita continua acontecendo (é revogação),
+    /// só que fora do lock — e o comando a tira da thread do IPC.
+    #[test]
+    fn revogar_persiste_fila_vazia() {
+        use std::sync::atomic::Ordering;
+        let _guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
+        ESCRITAS_FILA.store(0, Ordering::Relaxed);
+        *SONDA_INNER.lock().unwrap() = None;
+
+        let estado = TelemetryState::para_teste();
+        estado.track(entrada(Categoria::Crash, &[]));
+        estado.revogar();
+
+        assert!(estado.inner.lock().unwrap().fila.is_empty());
+        assert_eq!(
+            ESCRITAS_FILA.load(Ordering::Relaxed),
+            1,
+            "revogar tem de gravar (apagar) a fila"
+        );
+    }
+
 }
