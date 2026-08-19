@@ -1,5 +1,10 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+// #1154: sem isto o Tailwind NÃO é processado nos testes — nenhuma classe
+// utilitária tem efeito, e todo teste de layout só consegue afirmar STRING de
+// classe, nunca comportamento. Medido: `--primary` resolvia, mas `max-w-[45%]`
+// virava `max-width: none`.
+import tailwindcss from "@tailwindcss/vite";
 import { playwright } from "@vitest/browser-playwright";
 import path from "node:path";
 
@@ -10,7 +15,7 @@ import path from "node:path";
 //    navegador de verdade — é o único jeito de reproduzir o auto-select/erase do
 //    Combobox do compose (a recorrência crônica #268/#298/#606/#786) e travar o fix.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },
