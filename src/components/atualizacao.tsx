@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/reui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { NotasRelease } from "@/components/notas-release";
 import { Spinner } from "@/components/ui/spinner";
 import { useIdioma } from "@/lib/idioma";
 import { preencher } from "@/lib/idioma";
@@ -149,10 +150,13 @@ export function Atualizacao() {
               <h2 className="mb-1.5 text-xs font-medium text-foreground">
                 {t.atualizacao.notas}
               </h2>
-              <ScrollArea className="max-h-40 w-full rounded-lg border bg-background/60 p-3">
-                <p className="text-xs whitespace-pre-line text-muted-foreground">
-                  {info.notas}
-                </p>
+              {/* #1321: a altura vai no VIEWPORT, não no Root. O Root do Radix
+                  é só `relative`; quem tem overflow é o viewport, que é
+                  `size-full` — de um Root sem altura resolvida ele cresce com o
+                  conteúdo e nada clipa (foi assim que as notas vazaram do modal
+                  na v0.46.0). Padrão-ouro da casa: `campo-pessoas.tsx:400`. */}
+              <ScrollArea className="w-full rounded-lg border bg-background/60 p-3 **:data-[slot=scroll-area-viewport]:max-h-40">
+                <NotasRelease markdown={info.notas} />
               </ScrollArea>
             </section>
           )}
