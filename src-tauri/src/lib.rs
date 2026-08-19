@@ -26,6 +26,10 @@ mod remote_identity;
 mod salvar_pdf;
 mod system;
 mod telemetry;
+/// #1301: captura/asserção de log em teste. Só existe em `cfg(test)` — o
+/// `tauri-plugin-log` de produção nunca disputa o `set_logger` com ele.
+#[cfg(test)]
+mod teste_log;
 
 use std::sync::Arc;
 use tauri::{Manager, State};
