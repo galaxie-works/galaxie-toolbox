@@ -248,6 +248,34 @@
 }
 
 @layer utilities {
+  /* #1276 — o scrollbar NATIVO do viewport do ScrollArea (radix).
+     ------------------------------------------------------------------------
+     CAUSA RAIZ da regressao das 5 superficies (sidebars do Files/Bridge/People,
+     grid do People e o menu Filter): o proprio radix esconde o scrollbar nativo
+     injetando um `<style dangerouslySetInnerHTML>` DENTRO do Viewport
+     (`@radix-ui/react-scroll-area`, `ScrollAreaViewportStyle`). Esse style e
+     INLINE — e a CSP que o Tauri ENTREGA traz um nonce em `style-src`, o que
+     pela spec **anula o `unsafe-inline` da mesma diretiva** (medido no app
+     buildado em 19/08, #1278). Resultado: o style do radix nunca aplica no app,
+     e todo `<ScrollArea>` mostra a barra nativa do WebView2, com setas.
+
+     Nenhuma das 5 telas tinha sido tocada — o que mudou foi a politica, nao o
+     componente. Por isso o conserto e UM e mora aqui: as MESMAS regras do radix,
+     como CSS do app (arquivo externo, que `style-src self` libera).
+
+     Nao passamos o `nonce` do radix de proposito: ele existe, mas exigiria ler
+     em runtime o nonce que o Tauri gera por resposta e repassa-lo a cada
+     ScrollArea — acoplamento a detalhe interno do Tauri (que muda entre versoes)
+     para resolver o que uma regra de CSS resolve sem depender de ninguem. */
+  [data-radix-scroll-area-viewport] {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  [data-radix-scroll-area-viewport]::-webkit-scrollbar {
+    display: none;
+  }
+
   /* Barra de rolagem fina para listas dentro de card (launcher do Cruiser).
      Pedido explicito — customizacao com motivo, nao gratuita. WebView2 e
      Chromium, entao ::-webkit-scrollbar funciona. */
