@@ -35,6 +35,43 @@ prova Ed25519 da identidade do dispositivo e emite tickets Ed25519 curtos,
 single-use e vinculados a owner/org/device/controller/nonces/capabilities. A rota
 v1 e o pipe local `Galaxie.Remote.System.v1` permanecem inalterados.
 
+### Matrícula autorizada — ticket de enrollment (#1295)
+
+`device.enroll.*` NÃO confia mais no payload para autorização. A matrícula exige um
+**ticket de matrícula assinado pelo servidor**, cunhado onde a identidade M365 já foi
+verificada (superfície autenticada do app), **nunca** no `/v2/ws`. O handler do
+signaling apenas **valida** o ticket; fail-closed (default-deny).
+
+Propriedades do ticket (`Galaxie.Remote.Net.v2/enroll-ticket`, Ed25519, domínio de
+assinatura separado do ticket de sessão S8):
+
+- carrega `owner_id`, `org_id` e as `capabilities` de política (não vêm do cliente);
+- **uso único** (jti consumido; sobrevive a restart via snapshot),
+  **TTL curto** (60 s) e **amarrado ao `device_id`** — as três, senão vira credencial
+  portátil;
+- cunhado com **teto por `owner_id`** aplicado ANTES de emitir (erro tipado + `audit`).
+
+Contrato do wire (o que MUDOU — clientes v1 do enroll quebram de propósito):
+
+| Mensagem | Campos escolhidos pelo cliente | Removidos do wire (#1295) |
+| --- | --- | --- |
+| `device.enroll.begin` | `deviceId`, `name`, `publicKey`, `opaqueRequest`, `enrollmentTicket` | `ownerId`, `orgId` (agora saem do ticket) |
+| `device.enroll.finish` | `deviceId`, `opaqueUpload` | `capabilities` (agora política do servidor, no ticket) |
+
+`deny_unknown_fields` faz um payload que ainda traga `ownerId`/`orgId`/`capabilities`
+ser **rejeitado** — a remoção é definitiva, não transitória.
+
+Capabilities de política da matrícula: `screen` + `input` (conjunto mínimo funcional;
+`fileTransfer`/`clipboard`/`audio` ficam negados até decisão de política explícita).
+
+Erros tipados novos/relevantes: rejeição de ticket (assinatura, binding, expirado,
+replay), `owner has reached the enrollment device cap` (teto), `device was not found or
+is revoked` (register de device revogado). Toda recusa de matrícula é auditada como
+`enroll` com `success=false`; a revogação, como `revoke`.
+
+Revogação: `UnattendedAuthority::revoke_device` (caminho interno, com `audit`) marca
+`revoked=true`; `device.register` passa a recusar o device.
+
 ## Configuração
 
 O processo falha fechado quando os três segredos não estão presentes.

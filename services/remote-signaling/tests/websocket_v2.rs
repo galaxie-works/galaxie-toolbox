@@ -23,22 +23,26 @@ type TestSocket =
 #[tokio::test]
 async fn v2_enrolls_proves_key_and_issues_opaque_ticket() -> Result<(), Box<dyn std::error::Error>>
 {
-    let address = spawn_server().await?;
+    let (address, state) = spawn_server().await?;
     let (mut worker, _) = connect_async(format!("ws://{address}/v2/ws")).await?;
     let identity = DeviceIdentity::generate();
     let (registration, opaque_request) = ClientRegistrationFlow::start(b"permanent-password")?;
 
+    // #1295: o ticket é cunhado na superfície autenticada (aqui: direto no AppState);
+    // o /v2/ws só o valida. owner/org NÃO vão no payload de enroll.
+    let enrollment_ticket = state
+        .mint_enrollment_ticket("owner-1", "org-1", "device-1")
+        .await?;
     let enrollment: Value = request(
         &mut worker,
         "enroll-1",
         "device.enroll.begin",
         &DeviceEnrollBegin {
             device_id: "device-1".into(),
-            owner_id: "owner-1".into(),
-            org_id: "org-1".into(),
             name: "Workstation".into(),
             public_key: identity.public_key_base64(),
             opaque_request,
+            enrollment_ticket,
         },
     )
     .await?;
@@ -51,11 +55,6 @@ async fn v2_enrolls_proves_key_and_issues_opaque_ticket() -> Result<(), Box<dyn 
         &DeviceEnrollFinish {
             device_id: "device-1".into(),
             opaque_upload: registration.upload,
-            capabilities: Capabilities {
-                screen: true,
-                input: true,
-                ..Default::default()
-            },
         },
     )
     .await?;
@@ -168,7 +167,7 @@ async fn v2_enrolls_proves_key_and_issues_opaque_ticket() -> Result<(), Box<dyn 
 
 #[tokio::test]
 async fn v2_rejects_unknown_methods_and_binary_frames() -> Result<(), Box<dyn std::error::Error>> {
-    let address = spawn_server().await?;
+    let (address, _state) = spawn_server().await?;
     let (mut socket, _) = connect_async(format!("ws://{address}/v2/ws")).await?;
     socket
         .send(Message::Text(
@@ -185,7 +184,7 @@ async fn v2_rejects_unknown_methods_and_binary_frames() -> Result<(), Box<dyn st
     Ok(())
 }
 
-async fn spawn_server() -> Result<SocketAddr, Box<dyn std::error::Error>> {
+async fn spawn_server() -> Result<(SocketAddr, AppState), Box<dyn std::error::Error>> {
     let state = AppState::new_with_opaque(
         SigningKey::from_bytes(&[7_u8; 32]),
         b"test-turn-secret".to_vec(),
@@ -199,17 +198,20 @@ async fn spawn_server() -> Result<SocketAddr, Box<dyn std::error::Error>> {
     );
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
+    // #1295: devolve o AppState (superfície de cunhagem) para o teste cunhar tickets;
+    // clonável (Arc), então o servidor roda com uma cópia.
+    let served = state.clone();
     tokio::spawn(async move {
         if let Err(error) = axum::serve(
             listener,
-            app(state).into_make_service_with_connect_info::<SocketAddr>(),
+            app(served).into_make_service_with_connect_info::<SocketAddr>(),
         )
         .await
         {
             eprintln!("test server error: {error}");
         }
     });
-    Ok(address)
+    Ok((address, state))
 }
 
 async fn request<T: Serialize, R: DeserializeOwned>(

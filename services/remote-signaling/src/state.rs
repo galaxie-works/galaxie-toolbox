@@ -329,6 +329,36 @@ impl AppState {
         BASE64.encode(self.inner.signer.verifying_key().as_bytes())
     }
 
+    /// #1295 — CUNHAGEM do ticket de matrícula. Este é o método da SUPERFÍCIE
+    /// AUTENTICADA (identidade M365 já verificada pelo app), NÃO uma rota do `/v2/ws`:
+    /// não adiciona superfície de runtime na rede. owner/org vêm da identidade provada
+    /// pelo chamador; capabilities e teto são decididos aqui pela política do servidor.
+    /// O `/v2/ws` apenas VALIDA o ticket resultante.
+    pub async fn mint_enrollment_ticket(
+        &self,
+        owner_id: &str,
+        org_id: &str,
+        device_id: &str,
+    ) -> Result<String, EnrollmentMintError> {
+        let now = unix_seconds().map_err(|_| EnrollmentMintError::Clock)?;
+        let ticket = self
+            .inner
+            .unattended
+            .lock()
+            .await
+            .mint_enrollment_ticket(owner_id, org_id, device_id, now)
+            .map_err(EnrollmentMintError::Authority)?;
+        self.persist_unattended()
+            .await
+            .map_err(|_| EnrollmentMintError::Persistence)?;
+        Ok(ticket)
+    }
+
+    /// #1295 — política do operador: teto de devices por owner_id. Fora do wire.
+    pub async fn set_enrollment_cap(&self, cap: usize) {
+        self.inner.unattended.lock().await.set_enrollment_cap(cap);
+    }
+
     pub async fn register_unattended_device(
         &self,
         device_id: String,
@@ -706,6 +736,17 @@ pub enum TurnCredentialError {
     Clock(#[from] std::time::SystemTimeError),
     #[error("segredo TURN invalido")]
     InvalidSecret,
+}
+
+/// #1295 — falhas da cunhagem do ticket de matrícula (superfície autenticada).
+#[derive(Debug, Error)]
+pub enum EnrollmentMintError {
+    #[error("relogio do servidor invalido")]
+    Clock,
+    #[error(transparent)]
+    Authority(galaxie_remote_net::authority::AuthorityError),
+    #[error("falha ao persistir estado unattended")]
+    Persistence,
 }
 
 impl SlidingWindowLimiter {

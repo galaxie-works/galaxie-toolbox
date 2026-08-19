@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 use crate::protocol::Capabilities;
 
 const DOMAIN: &[u8] = b"Galaxie.Remote.Net.v2/session-ticket\0";
+// #1295: domínio SEPARADO do ticket de sessão (S8) — um ticket de matrícula NUNCA
+// pode ser aceito como ticket de sessão (nem o inverso), mesmo assinado pela mesma
+// chave do servidor. A troca de domínio garante que a assinatura não cruza os fluxos.
+const ENROLL_DOMAIN: &[u8] = b"Galaxie.Remote.Net.v2/enroll-ticket\0";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -172,12 +176,137 @@ fn claims_are_safe(claims: &TicketClaims) -> bool {
         &claims.controller_nonce,
     ]
     .into_iter()
-    .all(|value| {
-        (1..=128).contains(&value.len())
-            && value.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'@')
-            })
-    })
+    .all(|value| is_safe_ticket_field(value))
+}
+
+fn is_safe_ticket_field(value: &str) -> bool {
+    (1..=128).contains(&value.len())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':' | b'@')
+        })
+}
+
+// ---------------------------------------------------------------------------
+// #1295 — Ticket de MATRÍCULA (enrollment). Espelha o ticket de sessão (S8), mas:
+//   * domínio de assinatura próprio (`ENROLL_DOMAIN`) — não cruza com sessão;
+//   * carrega owner_id/org_id + as capabilities de POLÍTICA (decididas na cunhagem,
+//     onde a identidade M365 é conhecida) — o `/v2/ws` só valida, nunca confia no wire;
+//   * amarrado ao `device_id`, uso único (jti consumido) e TTL curto.
+// A cunhagem (`issue_enrollment_ticket`) mora na superfície autenticada do app; o
+// handler do signaling usa só o `EnrollmentTicketVerifier`.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EnrollmentTicketClaims {
+    pub jti: String,
+    pub device_id: String,
+    pub owner_id: String,
+    pub org_id: String,
+    pub capabilities: Capabilities,
+    pub issued_at: u64,
+    pub expires_at: u64,
+}
+
+pub fn issue_enrollment_ticket(
+    key: &SigningKey,
+    claims: &EnrollmentTicketClaims,
+) -> Result<String, TicketError> {
+    validate_enrollment_times(claims, claims.issued_at)?;
+    let claims_bytes = serde_json::to_vec(claims).map_err(|_| TicketError::Encoding)?;
+    let mut signed = Vec::with_capacity(ENROLL_DOMAIN.len() + claims_bytes.len());
+    signed.extend_from_slice(ENROLL_DOMAIN);
+    signed.extend_from_slice(&claims_bytes);
+    let ticket = SignedTicket {
+        claims: URL_SAFE_NO_PAD.encode(claims_bytes),
+        signature: URL_SAFE_NO_PAD.encode(key.sign(&signed).to_bytes()),
+    };
+    let bytes = serde_json::to_vec(&ticket).map_err(|_| TicketError::Encoding)?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
+pub struct EnrollmentTicketVerifier {
+    key: VerifyingKey,
+    consumed: HashMap<String, u64>,
+}
+
+impl EnrollmentTicketVerifier {
+    pub fn new(key: VerifyingKey) -> Self {
+        Self {
+            key,
+            consumed: HashMap::new(),
+        }
+    }
+
+    /// Valida assinatura + tempo + binding ao `device_id` e CONSOME o jti (uso único).
+    /// Fail-closed: qualquer divergência → erro tipado, nada é consumido de forma que
+    /// permita reuso posterior de um ticket já aceito.
+    pub fn verify_and_consume(
+        &mut self,
+        encoded: &str,
+        expected_device_id: &str,
+        now: u64,
+    ) -> Result<EnrollmentTicketClaims, TicketError> {
+        self.consumed.retain(|_, expiry| *expiry >= now);
+        let ticket_bytes = URL_SAFE_NO_PAD
+            .decode(encoded)
+            .map_err(|_| TicketError::Encoding)?;
+        let ticket: SignedTicket =
+            serde_json::from_slice(&ticket_bytes).map_err(|_| TicketError::Encoding)?;
+        let claims_bytes = URL_SAFE_NO_PAD
+            .decode(ticket.claims)
+            .map_err(|_| TicketError::Encoding)?;
+        let signature_bytes: [u8; 64] = URL_SAFE_NO_PAD
+            .decode(ticket.signature)
+            .map_err(|_| TicketError::Encoding)?
+            .try_into()
+            .map_err(|_| TicketError::Encoding)?;
+        let mut signed = Vec::with_capacity(ENROLL_DOMAIN.len() + claims_bytes.len());
+        signed.extend_from_slice(ENROLL_DOMAIN);
+        signed.extend_from_slice(&claims_bytes);
+        self.key
+            .verify(&signed, &Signature::from_bytes(&signature_bytes))
+            .map_err(|_| TicketError::Signature)?;
+        let claims: EnrollmentTicketClaims =
+            serde_json::from_slice(&claims_bytes).map_err(|_| TicketError::Encoding)?;
+        validate_enrollment_times(&claims, now)?;
+        if claims.device_id != expected_device_id {
+            return Err(TicketError::Binding);
+        }
+        if self.consumed.contains_key(&claims.jti) {
+            return Err(TicketError::Replay);
+        }
+        self.consumed.insert(claims.jti.clone(), claims.expires_at);
+        Ok(claims)
+    }
+
+    pub(crate) fn consumed_tickets(&self) -> &HashMap<String, u64> {
+        &self.consumed
+    }
+
+    pub(crate) fn restore_consumed_tickets(&mut self, consumed: HashMap<String, u64>) {
+        self.consumed = consumed;
+    }
+}
+
+fn validate_enrollment_times(claims: &EnrollmentTicketClaims, now: u64) -> Result<(), TicketError> {
+    const MAX_TTL_SECONDS: u64 = 120;
+    if claims.jti.is_empty()
+        || !enrollment_claims_are_safe(claims)
+        || claims.expires_at <= claims.issued_at
+        || claims.expires_at - claims.issued_at > MAX_TTL_SECONDS
+        || now < claims.issued_at
+        || now >= claims.expires_at
+    {
+        return Err(TicketError::Expired);
+    }
+    Ok(())
+}
+
+fn enrollment_claims_are_safe(claims: &EnrollmentTicketClaims) -> bool {
+    [&claims.jti, &claims.device_id, &claims.owner_id, &claims.org_id]
+        .into_iter()
+        .all(|value| is_safe_ticket_field(value))
 }
 
 #[cfg(test)]
@@ -304,5 +433,79 @@ mod tests {
         let mut invalid = original;
         invalid.session_id = "session\0bad".into();
         assert_eq!(issue_ticket(&key, &invalid), Err(TicketError::Expired));
+    }
+
+    // ---- #1295: enrollment ticket primitive ----
+
+    fn enrollment_claims() -> EnrollmentTicketClaims {
+        EnrollmentTicketClaims {
+            jti: "enroll-jti-1".into(),
+            device_id: "device-1".into(),
+            owner_id: "owner-1".into(),
+            org_id: "org-1".into(),
+            capabilities: Capabilities {
+                screen: true,
+                input: true,
+                ..Default::default()
+            },
+            issued_at: 100,
+            expires_at: 160,
+        }
+    }
+
+    #[test]
+    fn enrollment_ticket_is_bound_to_device_and_single_use() {
+        let key = SigningKey::generate(&mut OsRng);
+        let claims = enrollment_claims();
+        let ticket = issue_enrollment_ticket(&key, &claims).unwrap();
+        let mut verifier = EnrollmentTicketVerifier::new(key.verifying_key());
+        assert!(
+            verifier
+                .verify_and_consume(&ticket, "device-1", 120)
+                .is_ok()
+        );
+        // Reuso do MESMO ticket → replay.
+        assert_eq!(
+            verifier.verify_and_consume(&ticket, "device-1", 120),
+            Err(TicketError::Replay)
+        );
+    }
+
+    #[test]
+    fn enrollment_ticket_rejects_wrong_device_and_expiry() {
+        let key = SigningKey::generate(&mut OsRng);
+        let claims = enrollment_claims();
+        let ticket = issue_enrollment_ticket(&key, &claims).unwrap();
+        let mut verifier = EnrollmentTicketVerifier::new(key.verifying_key());
+        // device_id divergente → binding, sem consumir.
+        assert_eq!(
+            verifier.verify_and_consume(&ticket, "device-2", 120),
+            Err(TicketError::Binding)
+        );
+        // expirado (expires_at exclusivo).
+        assert_eq!(
+            verifier.verify_and_consume(&ticket, "device-1", claims.expires_at),
+            Err(TicketError::Expired)
+        );
+    }
+
+    #[test]
+    fn session_and_enrollment_domains_do_not_cross() {
+        // Um ticket de SESSÃO não pode ser aceito como ticket de MATRÍCULA (e vice-versa),
+        // mesmo assinado pela mesma chave: o domínio de assinatura difere.
+        let key = SigningKey::generate(&mut OsRng);
+        let session_ticket = issue_ticket(&key, &claims()).unwrap();
+        let mut enroll_verifier = EnrollmentTicketVerifier::new(key.verifying_key());
+        assert!(matches!(
+            enroll_verifier.verify_and_consume(&session_ticket, "device-1", 120),
+            Err(TicketError::Signature) | Err(TicketError::Encoding)
+        ));
+
+        let enroll_ticket = issue_enrollment_ticket(&key, &enrollment_claims()).unwrap();
+        let mut session_verifier = TicketVerifier::new(key.verifying_key());
+        assert!(matches!(
+            session_verifier.verify_and_consume_claims(&enroll_ticket, 120),
+            Err(TicketError::Signature) | Err(TicketError::Encoding)
+        ));
     }
 }

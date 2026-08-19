@@ -58,23 +58,31 @@ pub enum NetMessage {
 /// aqui pra `galaxie_remote_net::protocol::Capabilities` seguir válido pros consumidores.
 pub use galaxie_remote_capabilities::Capabilities;
 
+/// #1295 — matrícula autorizada. `owner_id`/`org_id` FORAM REMOVIDOS do wire: eram o
+/// buraco de autorização (o cliente escolhia sob qual owner/org matricular). Agora saem
+/// do `enrollment_ticket` assinado pelo servidor, cunhado na superfície autenticada M365.
+/// Campos escolhidos pelo cliente: apenas `device_id`, `opaque_request` (autorização) +
+/// `name`/`public_key` (descritivos/keying do próprio device, sem valor de privilégio).
+/// `deny_unknown_fields` faz um cliente v1 que ainda mande `owner_id`/`org_id` ser
+/// REJEITADO (fail-closed) — remoção definitiva, não transitória. Ref #1295.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeviceEnrollBegin {
     pub device_id: String,
-    pub owner_id: String,
-    pub org_id: String,
     pub name: String,
     pub public_key: String,
     pub opaque_request: String,
+    /// Ticket de matrícula assinado pelo servidor (owner/org/capabilities dentro dele).
+    pub enrollment_ticket: String,
 }
 
+/// #1295 — `capabilities` FOI REMOVIDO do wire: era auto-promoção (o cliente escolhia as
+/// próprias capabilities). A política do servidor (no ticket) é a única fonte. Ref #1295.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeviceEnrollFinish {
     pub device_id: String,
     pub opaque_upload: String,
-    pub capabilities: Capabilities,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
