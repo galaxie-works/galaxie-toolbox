@@ -659,22 +659,30 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
         // share lento/offline bloqueia (licao RB do #1073) e, pior, devolve o
         // label do VOLUME — nao o nome que o Explorer mostra. Para rede o nome
         // sai do `WNetGetConnectionW`, que le o cache local do redirector.
-        let mut label = [0u16; 261];
-        let mut fsbuf = [0u16; 261];
-        let mut nome = String::new();
-        let mut fs_name = String::new();
-        if kind == "network" {
-            nome = nome_drive_rede(&remoto_do_drive(&raiz).unwrap_or_default(), &raiz);
-        } else if unsafe {
-            GetVolumeInformationW(pcw, Some(&mut label), None, None, None, Some(&mut fsbuf))
-        }
-        .is_ok()
-        {
-            let fim = label.iter().position(|&c| c == 0).unwrap_or(label.len());
-            nome = String::from_utf16_lossy(&label[..fim]);
-            let ff = fsbuf.iter().position(|&c| c == 0).unwrap_or(fsbuf.len());
-            fs_name = String::from_utf16_lossy(&fsbuf[..ff]);
-        }
+        // A DECISÃO nome/fs sai para `nome_e_fs_do_drive` (pura), com a leitura do
+        // volume injetada como closure. Para `kind == "network"` a closure NUNCA
+        // roda — tira o `GetVolumeInformationW` do caminho quente (trava em share
+        // lento, RB #1073) e mantém o nome do redirector. Guardado por controle
+        // negativo em `rede_nunca_le_o_volume_*`.
+        let remoto = if kind == "network" { remoto_do_drive(&raiz) } else { None };
+        let (nome, fs_name) = nome_e_fs_do_drive(kind, &raiz, remoto, || {
+            let mut label = [0u16; 261];
+            let mut fsbuf = [0u16; 261];
+            if unsafe {
+                GetVolumeInformationW(pcw, Some(&mut label), None, None, None, Some(&mut fsbuf))
+            }
+            .is_ok()
+            {
+                let fim = label.iter().position(|&c| c == 0).unwrap_or(label.len());
+                let ff = fsbuf.iter().position(|&c| c == 0).unwrap_or(fsbuf.len());
+                Some((
+                    String::from_utf16_lossy(&label[..fim]),
+                    String::from_utf16_lossy(&fsbuf[..ff]),
+                ))
+            } else {
+                None
+            }
+        });
 
         // #869: mount de nuvem vira `cloud` (ícone dedicado no sidebar). Heurística
         // CONSERVADORA pelo filesystem name — só marca provedores conhecidos; qualquer
@@ -780,6 +788,30 @@ fn nome_drive_rede(remoto: &str, letra: &str) -> String {
             format!("{leaf} ({base}) ({l})")
         }
         _ => format!("{r} ({l})"),
+    }
+}
+
+/// #1288 — decide o `(nome, fs_name)` de um drive **sem tocar o volume quando é
+/// rede**. `ler_volume` é a leitura cara (`GetVolumeInformationW`), injetada como
+/// closure: para `kind == "network"` ela **nunca** é chamada — o nome sai do
+/// redirector (`nome_drive_rede`) e ler o volume de um share lento travaria (RB
+/// #1073), além de devolver o label errado do volume.
+///
+/// É esta função que costura o ramo de rede ao caminho de produção. Pura e
+/// testável por **controle negativo**: um teste afirma que a closure não roda na
+/// rede — guardando de uma vez o nome certo E o não-travamento. Apagar o ramo
+/// `if kind == "network"` mata esse teste (era o furo do #1288: o ramo podia
+/// sumir e a suíte ficava verde).
+fn nome_e_fs_do_drive(
+    kind: &str,
+    raiz: &str,
+    remoto: Option<String>,
+    ler_volume: impl FnOnce() -> Option<(String, String)>,
+) -> (String, String) {
+    if kind == "network" {
+        (nome_drive_rede(&remoto.unwrap_or_default(), raiz), String::new())
+    } else {
+        ler_volume().unwrap_or_default()
     }
 }
 
@@ -6316,6 +6348,59 @@ mod tests {
         // `WNetGetConnectionW` falhou. O nome tem de continuar honesto — o bug
         // era justamente cair no label do volume.
         assert_eq!(nome_drive_rede("", "W:"), "(W:)");
+    }
+
+    // #1288 (2º round) — a FIAÇÃO do call site, não só a função pura. O M3 da
+    // Lúmen apagou o ramo `if kind == "network"` e a suíte ficou 280/280 verde:
+    // o rótulo errado e o travamento (`GetVolumeInformationW` no share lento)
+    // voltavam sem quebrar teste. Controle negativo: a leitura do volume é uma
+    // closure e afirmamos que ela NÃO roda na rede.
+    #[test]
+    fn rede_nunca_le_o_volume_e_usa_o_nome_do_redirector() {
+        use std::cell::Cell;
+        let leu_o_volume = Cell::new(false);
+        let (nome, fs) = nome_e_fs_do_drive(
+            "network",
+            "W:",
+            Some(r"\\192.168.1.34\Galaxie Network\wagnao-marcenaria".to_string()),
+            || {
+                leu_o_volume.set(true);
+                Some(("LABEL_DO_VOLUME_ERRADO".into(), "NTFS".into()))
+            },
+        );
+        assert!(
+            !leu_o_volume.get(),
+            "rede NAO pode chamar GetVolumeInformationW — trava em share lento (RB #1073) e devolve label errado"
+        );
+        assert_eq!(
+            nome,
+            r"wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)",
+            "o nome sai do redirector, nunca do label do volume"
+        );
+        assert_eq!(fs, "", "rede nao carrega fs_name de volume");
+    }
+
+    #[test]
+    fn drive_local_le_o_volume_e_usa_label_e_fs() {
+        // Controle positivo: drive nao-rede LE o volume e usa (label, fs_name) —
+        // senao o `else` estaria morto e a deteccao de cloud (#869) quebraria.
+        use std::cell::Cell;
+        let leu_o_volume = Cell::new(false);
+        let (nome, fs) = nome_e_fs_do_drive("fixed", "C:", None, || {
+            leu_o_volume.set(true);
+            Some(("Windows".into(), "NTFS".into()))
+        });
+        assert!(leu_o_volume.get(), "drive local LE o volume");
+        assert_eq!(nome, "Windows");
+        assert_eq!(fs, "NTFS");
+    }
+
+    #[test]
+    fn drive_local_sem_volume_legivel_fica_com_nome_e_fs_vazios() {
+        // GetVolumeInformationW falhou (drive vazio): nome e fs vazios, sem panico.
+        let (nome, fs) = nome_e_fs_do_drive("fixed", "C:", None, || None);
+        assert_eq!(nome, "");
+        assert_eq!(fs, "");
     }
 
     #[test]
