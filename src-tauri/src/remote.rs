@@ -342,7 +342,20 @@ fn autorizar_frame(
             }
             Ok(FrameAcao::EmitirScreen(*info))
         }
-        ControlFrame::Input(event) => Ok(FrameAcao::AplicarInput(event.clone())),
+        // Input real (mouse/teclado) é controlador→host: só o HOST injeta, e só
+        // com `caps.input`. A AUTORIZAÇÃO mora aqui — `AplicarInput` só sai quando
+        // já autorizado, senão `autorizar_frame` mentiria por omissão sobre input.
+        // `apply_host_input` mantém o MESMO par de checagens (cinto-e-suspensórios:
+        // se alguém chamar o applier por outro caminho, ele ainda segura).
+        ControlFrame::Input(event) => {
+            if role != RemoteRole::Host {
+                return Err(RemoteError::InvalidInputDirection);
+            }
+            if !capabilities.input {
+                return Err(RemoteError::InputDisabled);
+            }
+            Ok(FrameAcao::AplicarInput(event.clone()))
+        }
         ControlFrame::Control(ControlMessage::Capabilities { .. }) => {
             Ok(FrameAcao::IgnorarAnuncioDeCapabilities)
         }
@@ -1841,21 +1854,61 @@ mod tests {
         );
     }
 
-    /// Input real (mouse/teclado) é classificado como `AplicarInput` — o executor
-    /// (`apply_host_input`) reconfere role Host + `caps.input` + injector.
+    /// Input real (mouse/teclado) no host COM `caps.input` → `AplicarInput`. O
+    /// executor (`apply_host_input`) reconfere role/caps/injector (cinto-e-
+    /// suspensórios), mas a autorização já é dada aqui.
     #[test]
-    fn input_real_e_classificado_para_aplicar() {
+    fn input_real_no_host_com_caps_input_autoriza_aplicar() {
         let frame = ControlFrame::Input(InputEvent::Key {
             tecla: Tecla::Enter,
             pressed: true,
         });
+        let caps = Capabilities {
+            input: true,
+            ..Default::default()
+        };
         assert_eq!(
-            autorizar_frame(RemoteRole::Host, Capabilities::default(), &frame).ok(),
+            autorizar_frame(RemoteRole::Host, caps, &frame).ok(),
             Some(FrameAcao::AplicarInput(InputEvent::Key {
                 tecla: Tecla::Enter,
                 pressed: true
             })),
         );
+    }
+
+    /// #1000 (revisão do `altair`, PR #1313): `autorizar_frame` tem que AUTORIZAR
+    /// input, não só classificá-lo — senão o gate de `caps.input` some quando o
+    /// pump aplicar o input pelo próprio caminho. Host SEM `caps.input` → o input
+    /// NÃO é autorizado (`InputDisabled`), nunca `AplicarInput`.
+    #[test]
+    fn input_no_host_sem_caps_input_nao_e_autorizado() {
+        let frame = ControlFrame::Input(InputEvent::Key {
+            tecla: Tecla::Enter,
+            pressed: true,
+        });
+        let acao = autorizar_frame(RemoteRole::Host, Capabilities::default(), &frame);
+        assert!(
+            matches!(acao, Err(RemoteError::InputDisabled)),
+            "host sem caps.input não pode obter AplicarInput (funil de autorização, #1000)",
+        );
+    }
+
+    /// Input real é controlador→host: no CONTROLADOR é direção inválida, mesmo com
+    /// todas as capabilities ligadas (não vira `AplicarInput`).
+    #[test]
+    fn input_real_no_controlador_e_direcao_invalida() {
+        let frame = ControlFrame::Input(InputEvent::Key {
+            tecla: Tecla::Enter,
+            pressed: true,
+        });
+        let caps = Capabilities {
+            input: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            autorizar_frame(RemoteRole::Controller, caps, &frame),
+            Err(RemoteError::InvalidInputDirection)
+        ));
     }
 
     #[test]
