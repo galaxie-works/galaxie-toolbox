@@ -578,14 +578,16 @@ const pt = {
   },
 
   atualizacao: {
-    titulo: "Atualização disponível!",
+    // #1258 copy v2 (cósmica) — mesmo tom do padrão-ouro em `reauth` (#584/#594)
+    titulo: "A GALAXIE evoluiu",
     versao: "Versão {v} ({d})",
     descricao:
-      "Uma nova versão do aplicativo está pronta. Ao atualizar agora, o app reinicia e volta com as últimas correções.",
-    baixando: "Baixando a atualização... {p}%",
+      "Novos recursos entraram em órbita. Ao atualizar, o app reinicia e volta já com tudo no lugar.",
+    notas: "O que mudou",
+    baixando: "Trazendo a bordo... {p}%",
     agora: "Atualizar agora",
     atualizando: "Atualizando",
-    depois: "Lembrar depois",
+    depois: "Agora não",
   },
 
   atoms: {
@@ -2882,14 +2884,16 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
   },
 
   atualizacao: {
-    titulo: "Update available!",
+    // #1258 copy v2 (cosmic) — same voice as the `reauth` gold standard (#584/#594)
+    titulo: "GALAXIE has evolved",
     versao: "Version {v} ({d})",
     descricao:
-      "A new version of the app is ready. Updating now restarts the app and brings the latest fixes.",
-    baixando: "Downloading the update... {p}%",
+      "New features have entered orbit. Updating restarts the app and brings it back with everything in place.",
+    notas: "What's new",
+    baixando: "Bringing it aboard... {p}%",
     agora: "Update now",
     atualizando: "Updating",
-    depois: "Remind me later",
+    depois: "Not now",
   },
 
   atoms: {

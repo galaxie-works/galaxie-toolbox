@@ -9,12 +9,14 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/reui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { useIdioma } from "@/lib/idioma";
 import { preencher } from "@/lib/idioma";
 import { ShieldAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { telUpdateVerificado } from "@/lib/telemetria";
+import { deveOferecerAtualizacao } from "@/lib/versao-update";
 
 interface Disponivel {
   versao: string;
@@ -48,11 +50,16 @@ export function Atualizacao() {
     (async () => {
       try {
         const { check } = await import("@tauri-apps/plugin-updater");
-        const novo = await check();
+        const { getVersion } = await import("@tauri-apps/api/app");
+        const [novo, instalada] = await Promise.all([check(), getVersion()]);
         if (!vivo) return;
+        // #1264: o `check()` ja devolveu pacote para a versao JA INSTALADA
+        // (feed republicado com data nova). Quem decide se o modal aparece e
+        // o compare de versao aqui — nunca a existencia do pacote.
+        const oferecer = deveOferecerAtualizacao(instalada, novo?.version);
         // Telemetria (#390): resultado da verificação de update (sem PII).
-        telUpdateVerificado(novo ? "disponivel" : "sem-atualizacao");
-        if (!novo) return;
+        telUpdateVerificado(oferecer ? "disponivel" : "sem-atualizacao");
+        if (!novo || !oferecer) return;
         setPacote(novo);
         setInfo({
           versao: novo.version,
@@ -126,6 +133,22 @@ export function Atualizacao() {
               ? preencher(t.atualizacao.baixando, { p: String(progresso) })
               : t.atualizacao.descricao}
           </AlertDialogDescription>
+
+          {/* #1258: as notas do feed (changelog do Atlas) chegavam ate aqui e
+              morriam sem render. Some no download para a barra de progresso
+              ficar sozinha na tela. */}
+          {!baixando && info.notas && (
+            <section className="w-full self-stretch">
+              <h2 className="mb-1.5 text-xs font-medium text-foreground">
+                {t.atualizacao.notas}
+              </h2>
+              <ScrollArea className="max-h-40 w-full rounded-lg border bg-background/60 p-3">
+                <p className="text-xs whitespace-pre-line text-muted-foreground">
+                  {info.notas}
+                </p>
+              </ScrollArea>
+            </section>
+          )}
 
           {/* O rodape mora dentro deste bloco com p-6, entao o breakout precisa
               cancelar ESSE padding para encostar nas bordas. self-stretch e
