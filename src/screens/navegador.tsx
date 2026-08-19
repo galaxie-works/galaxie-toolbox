@@ -27,6 +27,7 @@ import { AppIcon } from "@/components/app-icon";
 // #721 (SH3): fixar/desafixar app no rail — estado no store, lógica pura.
 import { useAppStore } from "@/store";
 import { estaPinado, resolverPinados } from "@/lib/pinned-apps";
+import { appVisivelPara, buscarUnificado } from "@/lib/apps-unificado-core";
 import * as browser from "@/lib/browser";
 import { fetchFavicon } from "@/lib/api";
 import {
@@ -366,7 +367,11 @@ function lerPrefixo(q: string): { modo: ModoPaleta; termo: string } {
  * fork, conforme a spec §4.3. A query é local (estado efêmero do input); as
  * abas e ações vêm por props. `onExecutou` fecha o overlay após uma seleção.
  */
-function ConteudoPaleta({
+// #1152: EXPORTADO para teste. A `lumen` reprovou a 1a entrega porque os ACs do
+// grupo Pinned nao tinham guarda — e nao tinham porque ninguem conseguia montar
+// a paleta. Exportar para testar e preco justo: o defeito que ela achou (o
+// command abrindo o app errado) so aparece com a paleta montada de verdade.
+export function ConteudoPaleta({
   abas,
   ativa,
   favoritos,
@@ -554,10 +559,21 @@ function ConteudoPaleta({
   // #1152 (pedido do Wagner): grupo PINNED no topo do command. Fonte é a mesma
   // lista unificada de onde o pin tira o id — resolver contra outra coisa foi o
   // bug deste card. Sem fixado, o grupo não existe (nada de cabeçalho vazio).
-  const fixadosUnificados = useMemo(
-    () => resolverPinados(appsFixados, APPS_UNIFICADOS),
-    [appsFixados],
-  );
+  //
+  // #1152 rework (achado da `lumen`): o grupo TAMBÉM passa pelo termo. Antes não
+  // passava, e o efeito não era cosmético: `ItemUnificado` embute o termo no
+  // `value` (para atravessar o filtro do cmdk, já que o match real acontece em
+  // `appsUnificadosPorCategoria`), então um fixado casava SEMPRE — e, como o
+  // grupo é o primeiro, buscar "excel" com o Outlook fixado punha o Outlook
+  // ACIMA do Excel. Reuso `buscarUnificado`/`appVisivelPara`, os mesmos que
+  // filtram as categorias: duas regras de match divergiriam com o tempo.
+  const fixadosUnificados = useMemo(() => {
+    const pinados = resolverPinados(appsFixados, APPS_UNIFICADOS);
+    const casam = termo ? buscarUnificado(pinados, termo) : pinados;
+    // Mesmo gate de provider das categorias: fixado que a conta atual não pode
+    // usar (trocou de provider depois de fixar) não deve aparecer.
+    return user === undefined ? casam : casam.filter((a) => appVisivelPara(a, user));
+  }, [appsFixados, termo, user]);
 
   // Render de UMA categoria do command — reusado pelo grupo "From GALAXIE" (no
   // topo, #877) e pelas demais categorias. Extraído p/ não duplicar o corpo.
