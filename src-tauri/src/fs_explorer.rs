@@ -756,13 +756,124 @@ fn cloud_pasta(valor: Option<String>, provider: &str) -> Option<CloudLocation> {
     })
 }
 
+/// #1286 — uma conta OneDrive lida do registro
+/// (`HKCU\Software\Microsoft\OneDrive\Accounts\<Personal|BusinessN>`).
+///
+/// As env vars cobrem **um** pessoal + **um** comercial; quem sincroniza vários
+/// tenants (o caso do PO: 8 contas) via só 2. O registro tem todas.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContaOneDrive {
+    /// Nome da chave: `Personal`, `Business1`, `Business2`… Decide o provider.
+    pub chave: String,
+    /// `DisplayName` (ou `UserEmail`) — rótulo legível.
+    pub display_name: String,
+    /// `UserFolder` — a pasta de sync da conta.
+    pub user_folder: String,
+    /// Bibliotecas SharePoint sincronizadas (`Tenants\<org>`): (org, caminho).
+    pub bibliotecas: Vec<(String, String)>,
+}
+
+impl ContaOneDrive {
+    fn comercial(&self) -> bool {
+        !self.chave.eq_ignore_ascii_case("Personal")
+    }
+
+    fn provider(&self) -> &'static str {
+        if self.comercial() {
+            "onedriveCommercial"
+        } else {
+            "onedrive"
+        }
+    }
+
+    /// Rótulo da conta: `DisplayName` quando existe; senão o leaf da pasta (que
+    /// o próprio cliente do OneDrive já nomeia "OneDrive - <org>").
+    fn rotulo(&self) -> String {
+        let d = self.display_name.trim();
+        if d.is_empty() {
+            nome_cloud_folder(&self.user_folder)
+        } else {
+            d.to_string()
+        }
+    }
+}
+
+/// Chave de dedupe: caminho sem separador final, minúsculo. O Windows não
+/// distingue caixa, e registro e env divergem na barra final.
+/// Onde o cliente do OneDrive registra as contas do usuario.
+#[cfg(windows)]
+const CAMINHO_CONTAS_ONEDRIVE: &str = r"Software\Microsoft\OneDrive\Accounts";
+
+fn chave_caminho(p: &str) -> String {
+    p.trim().trim_end_matches(['\\', '/']).to_ascii_lowercase()
+}
+
+/// #1286 — monta os mounts a partir das contas do registro.
+///
+/// **Puro de propósito**: recebe a lista E o verificador de existência, então o
+/// teste injeta os dois e não toca registro nem disco (é o DoD do card).
+///
+/// Ordem: conta por conta na ordem recebida (Personal primeiro), a raiz e logo
+/// abaixo as bibliotecas daquela conta — é o que agrupa cada biblioteca sob a
+/// org a que ela pertence.
+fn montar_clouds_onedrive(
+    contas: &[ContaOneDrive],
+    existe: impl Fn(&str) -> bool,
+) -> Vec<CloudLocation> {
+    let mut out: Vec<CloudLocation> = Vec::new();
+    let mut vistos: Vec<String> = Vec::new();
+
+    for conta in contas {
+        let provider = conta.provider();
+        let mut empurrar = |path: &str, name: String| {
+            let p = path.trim();
+            // Conta cuja pasta sumiu do disco NÃO vira mount morto (AC).
+            if p.is_empty() || !existe(p) {
+                return;
+            }
+            let chave = chave_caminho(p);
+            if vistos.contains(&chave) {
+                return;
+            }
+            vistos.push(chave);
+            out.push(CloudLocation {
+                path: p.to_string(),
+                name,
+                provider: provider.to_string(),
+                kind: "folder".into(),
+            });
+        };
+
+        empurrar(&conta.user_folder, conta.rotulo());
+        for (org, caminho) in &conta.bibliotecas {
+            let leaf = nome_cloud_folder(caminho);
+            let org = org.trim();
+            let nome = if org.is_empty() || leaf.contains(org) {
+                leaf
+            } else {
+                format!("{org} — {leaf}")
+            };
+            empurrar(caminho, nome);
+        }
+    }
+    out
+}
+
 /// Junta as pastas de nuvem (dedup por caminho, 1º provider ganha) com os drives
 /// kind=`cloud` (Google Drive por letra). Puro → testável sem env/FS real.
-fn montar_clouds(pastas: &[(Option<String>, &str)], drives: Vec<DriveInfo>) -> Vec<CloudLocation> {
-    let mut out: Vec<CloudLocation> = Vec::new();
+fn montar_clouds(
+    do_registro: Vec<CloudLocation>,
+    pastas: &[(Option<String>, &str)],
+    drives: Vec<DriveInfo>,
+) -> Vec<CloudLocation> {
+    // #1286: o registro e a fonte completa; o env vira COMPLEMENTO (maquina sem
+    // a chave -- edge do AC), nunca substituto. Entra depois, e o dedup por
+    // caminho o descarta quando o registro ja trouxe a mesma pasta.
+    let mut out: Vec<CloudLocation> = do_registro;
     for (valor, provider) in pastas {
         if let Some(c) = cloud_pasta(valor.clone(), provider) {
-            if !out.iter().any(|x| x.path.eq_ignore_ascii_case(&c.path)) {
+            let chave = chave_caminho(&c.path);
+            if !out.iter().any(|x| chave_caminho(&x.path) == chave) {
                 out.push(c);
             }
         }
@@ -792,9 +903,87 @@ fn detectar_clouds() -> Vec<CloudLocation> {
         // primário (dedup evita repetir se == a um dos acima).
         (std::env::var("OneDrive").ok(), "onedrive"),
     ];
+    // #1286: registro primeiro (todas as contas + bibliotecas), env de reserva.
+    let do_registro = montar_clouds_onedrive(&ler_contas_onedrive(), caminho_existe);
     let drives = listar_drives().unwrap_or_default();
-    montar_clouds(&pastas, drives)
+    montar_clouds(do_registro, &pastas, drives)
 }
+
+/// #1286 — lê TODAS as contas OneDrive do registro do usuário. Camada impura,
+/// isolada de propósito: quem tem teste é a `montar_clouds_onedrive`.
+///
+/// Best-effort em cada passo — máquina sem a chave (ou uma conta corrompida)
+/// devolve o que deu, e o `detectar_clouds` completa pelo env. O comando nunca
+/// falha inteiro por causa do registro.
+#[cfg(windows)]
+fn ler_contas_onedrive() -> Vec<ContaOneDrive> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let Ok(contas) = hkcu.open_subkey(CAMINHO_CONTAS_ONEDRIVE) else {
+        return Vec::new();
+    };
+
+    // `Personal` antes de `Business*` — é a ordem que o usuário espera ver.
+    let mut chaves: Vec<String> = contas.enum_keys().flatten().collect();
+    chaves.sort_by_key(|k| (!k.eq_ignore_ascii_case("Personal"), k.to_ascii_lowercase()));
+
+    let mut out = Vec::new();
+    for chave in chaves {
+        let Ok(k) = contas.open_subkey(&chave) else {
+            continue;
+        };
+        let Ok(user_folder) = k.get_value::<String, _>("UserFolder") else {
+            continue;
+        };
+        let display_name = k
+            .get_value::<String, _>("DisplayName")
+            .or_else(|_| k.get_value::<String, _>("UserEmail"))
+            .unwrap_or_default();
+
+        // `Tenants\<org>`: cada VALOR é uma biblioteca sincronizada. O nome do
+        // valor costuma ser o caminho local; em outras versões o caminho está no
+        // dado. Aceito os dois e fico com o que existe no disco — fixar um
+        // formato só deixaria bibliotecas de fora em silêncio.
+        let mut bibliotecas = Vec::new();
+        if let Ok(tenants) = k.open_subkey("Tenants") {
+            for org in tenants.enum_keys().flatten() {
+                let Ok(t) = tenants.open_subkey(&org) else {
+                    continue;
+                };
+                for (nome_valor, dado) in t.enum_values().flatten() {
+                    let do_dado = dado.to_string();
+                    let candidato = if caminho_existe(&nome_valor) {
+                        Some(nome_valor.clone())
+                    } else if caminho_existe(&do_dado) {
+                        Some(do_dado)
+                    } else {
+                        None
+                    };
+                    if let Some(c) = candidato {
+                        bibliotecas.push((org.clone(), c));
+                    }
+                }
+            }
+        }
+
+        out.push(ContaOneDrive {
+            chave,
+            display_name,
+            user_folder,
+            bibliotecas,
+        });
+    }
+    out
+}
+
+/// Fora do Windows não há registro — o `detectar_clouds` cai no env.
+#[cfg(not(windows))]
+fn ler_contas_onedrive() -> Vec<ContaOneDrive> {
+    Vec::new()
+}
+
 
 // ─── #871: mapear/desconectar network drive (menu "New → Network drive") ─────
 //
@@ -4316,7 +4505,7 @@ mod tests {
                 free_space: 0,
             },
         ];
-        let cl = montar_clouds(&pastas, drives);
+        let cl = montar_clouds(Vec::new(), &pastas, drives);
         assert_eq!(cl.len(), 2, "1 pasta (dedup) + 1 google");
         let folder = cl.iter().find(|c| c.kind == "folder").unwrap();
         assert_eq!(folder.name, "OneDrive - Contoso");
@@ -5820,4 +6009,148 @@ mod tests {
             "plano com pulo de enumeração não pode liberar a remoção da origem"
         );
     }
+
+    // ── #1286: TODAS as contas OneDrive, não só as 2 do env ──────────────────
+    //
+    // O PO tem 8 contas sincronizando e o Files mostrava 2, porque
+    // `detectar_clouds` lia só `%OneDriveConsumer%` / `%OneDriveCommercial%` /
+    // `%OneDrive%`. Estes testes exercitam a função PURA com a lista injetada:
+    // sem tocar registro e sem tocar disco (é o DoD do card).
+
+    fn conta(chave: &str, display: &str, pasta: &str) -> ContaOneDrive {
+        ContaOneDrive {
+            chave: chave.into(),
+            display_name: display.into(),
+            user_folder: pasta.into(),
+            bibliotecas: Vec::new(),
+        }
+    }
+
+    /// Existência injetada: tudo existe, menos o que estiver na lista de mortos.
+    fn existe_menos<'a>(mortos: &'a [&'a str]) -> impl Fn(&str) -> bool + 'a {
+        move |p: &str| !mortos.iter().any(|m| p.eq_ignore_ascii_case(m))
+    }
+
+    #[test]
+    fn oito_contas_do_registro_viram_oito_mounts() {
+        let mut contas = vec![conta("Personal", "OneDrive", r"C:\Users\po\OneDrive")];
+        for n in 1..=7 {
+            contas.push(conta(
+                &format!("Business{n}"),
+                &format!("OneDrive - Cliente {n}"),
+                &format!(r"C:\Users\po\OneDrive - Cliente {n}"),
+            ));
+        }
+
+        let cl = montar_clouds_onedrive(&contas, |_| true);
+
+        assert_eq!(cl.len(), 8, "as 8 contas do PO, nao as 2 do env");
+        assert_eq!(cl[0].name, "OneDrive");
+        assert_eq!(cl[0].provider, "onedrive", "Personal e pessoal");
+        assert!(
+            cl[1..].iter().all(|c| c.provider == "onedriveCommercial"),
+            "Business* e comercial"
+        );
+        assert_eq!(cl[7].name, "OneDrive - Cliente 7");
+    }
+
+    #[test]
+    fn conta_sem_display_name_usa_o_leaf_da_pasta() {
+        let cl = montar_clouds_onedrive(
+            &[conta("Business1", "  ", r"C:\Users\po\OneDrive - Contoso")],
+            |_| true,
+        );
+        assert_eq!(cl.len(), 1);
+        assert_eq!(cl[0].name, "OneDrive - Contoso");
+    }
+
+    #[test]
+    fn pasta_que_sumiu_do_disco_nao_vira_mount_morto() {
+        let morta = r"C:\Users\po\OneDrive - Ex-cliente";
+        let contas = vec![
+            conta("Personal", "OneDrive", r"C:\Users\po\OneDrive"),
+            conta("Business1", "OneDrive - Ex-cliente", morta),
+        ];
+
+        let cl = montar_clouds_onedrive(&contas, existe_menos(&[morta]));
+
+        assert_eq!(cl.len(), 1, "a conta desconectada fica de fora");
+        assert_eq!(cl[0].name, "OneDrive");
+    }
+
+    #[test]
+    fn bibliotecas_sharepoint_viram_mounts_agrupados_sob_a_conta() {
+        let mut c = conta("Business1", "OneDrive - Contoso", r"C:\Users\po\OneDrive - Contoso");
+        c.bibliotecas = vec![
+            ("Contoso".into(), r"C:\Users\po\Contoso\Documentos".into()),
+            ("Contoso".into(), r"C:\Users\po\Contoso\Engenharia".into()),
+        ];
+        let contas = vec![
+            c,
+            conta("Business2", "OneDrive - Fabrikam", r"C:\Users\po\OneDrive - Fabrikam"),
+        ];
+
+        let cl = montar_clouds_onedrive(&contas, |_| true);
+
+        assert_eq!(cl.len(), 4);
+        // as bibliotecas ficam LOGO ABAIXO da conta a que pertencem
+        assert_eq!(cl[0].name, "OneDrive - Contoso");
+        assert_eq!(cl[1].name, "Contoso — Documentos");
+        assert_eq!(cl[2].name, "Contoso — Engenharia");
+        assert_eq!(cl[3].name, "OneDrive - Fabrikam");
+        assert!(
+            cl.iter().all(|m| m.kind == "folder"),
+            "biblioteca sincronizada e pasta, nao letra"
+        );
+    }
+
+    #[test]
+    fn dedupe_por_caminho_ignora_caixa_e_barra_final() {
+        let mut c = conta("Business1", "OneDrive - Contoso", r"C:\Users\po\OneDrive - Contoso");
+        // mesma pasta, escrita diferente — o registro faz isso de verdade
+        c.bibliotecas = vec![("Contoso".into(), r"c:\users\po\onedrive - contoso\".into())];
+
+        let cl = montar_clouds_onedrive(&[c], |_| true);
+
+        assert_eq!(cl.len(), 1, "mesma pasta nao pode aparecer duas vezes");
+    }
+
+    /// O env NÃO pode duplicar o que o registro já trouxe — e continua servindo
+    /// de reserva na máquina sem a chave (edge do AC).
+    #[test]
+    fn env_complementa_o_registro_sem_duplicar() {
+        let base = dir_temp("clouds-1286");
+        let pessoal = base.join("OneDrive");
+        let so_no_env = base.join("OneDrive - SoEnv");
+        std::fs::create_dir_all(&pessoal).unwrap();
+        std::fs::create_dir_all(&so_no_env).unwrap();
+
+        let do_registro = montar_clouds_onedrive(
+            &[conta("Personal", "OneDrive", &pessoal.to_string_lossy())],
+            caminho_existe,
+        );
+        assert_eq!(do_registro.len(), 1);
+
+        let pastas = [
+            // mesma pasta do registro, com barra final → dedup
+            (Some(format!("{}\\", pessoal.to_string_lossy())), "onedrive"),
+            // esta só existe no env → entra
+            (Some(so_no_env.to_string_lossy().into_owned()), "onedriveCommercial"),
+        ];
+
+        let cl = montar_clouds(do_registro, &pastas, Vec::new());
+
+        assert_eq!(cl.len(), 2, "1 do registro + 1 so do env (a repetida some)");
+        assert_eq!(cl[0].name, "OneDrive");
+        assert_eq!(cl[1].name, "OneDrive - SoEnv");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// Máquina sem a chave de registro: lista vazia, o env assume, nada quebra.
+    #[test]
+    fn sem_registro_cai_no_env_sem_erro() {
+        let cl = montar_clouds_onedrive(&[], |_| true);
+        assert!(cl.is_empty(), "sem contas, sem mounts — e sem panico");
+    }
+
 }
