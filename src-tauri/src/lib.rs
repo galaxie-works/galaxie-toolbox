@@ -2456,3 +2456,180 @@ mod tests {
         assert_eq!(v2, derivar_signaling_endpoint_v2(&remote_signaling_endpoint()));
     }
 }
+
+/// #1257 (P0/SEGURANÇA) — a guarda de COMPORTAMENTO do funil de fronteira de conta.
+///
+/// Por que este módulo existe: o card foi reprovado pela QA-A com a prova de que
+/// o invariante NÃO era vigiado. O que havia era um tripwire de texto-fonte no
+/// front (`src/store/session-leak-1257-contract.test.ts`, `readFileSync` +
+/// regex) — ele assevera a FORMA do código, não o comportamento. Mutando
+/// `limpar_sessao_conta` para não limpar o token, o gate inteiro seguia verde:
+/// `cargo test` 270/270 e `pnpm test` 458/458. O #555 já tinha regredido
+/// exatamente assim, e o PO descobriu lendo e-mail de outra conta em PRODUÇÃO.
+/// Aqui a asserção é sobre o efeito observável, na camada onde o token vive.
+///
+/// **Isolamento (canon §9 — a máquina é do PO):** o funil chama `revoke()`, que
+/// apaga `%LOCALAPPDATA%\GALAXIE\sessao.bin` — o arquivo da sessão REAL de quem
+/// roda o teste. Sem isolar, rodar a suíte deslogaria o PO da própria máquina.
+/// Por isso todo teste daqui redireciona `LOCALAPPDATA` para um diretório
+/// temporário e o restaura no fim. Como a variável é do processo, os testes são
+/// serializados entre si por um mutex — nenhum outro teste do crate lê
+/// `LOCALAPPDATA` (o de `remote_identity` isola o próprio diretório de propósito).
+#[cfg(test)]
+mod tests_vazamento_sessao_1257 {
+    use super::*;
+    use auth::{AccountKind, Capability, OrgStatus, Provider, Tokens};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    /// Serializa os testes que mexem em `LOCALAPPDATA` (a variável é do processo).
+    fn trava_ambiente() -> MutexGuard<'static, ()> {
+        static TRAVA: OnceLock<Mutex<()>> = OnceLock::new();
+        TRAVA
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Aponta `LOCALAPPDATA` para um temp exclusivo do teste e restaura no drop
+    /// (inclusive se o teste entrar em pânico).
+    struct AppDataIsolado {
+        anterior: Option<String>,
+        dir: std::path::PathBuf,
+    }
+
+    impl AppDataIsolado {
+        fn novo(nome: &str) -> Self {
+            let anterior = std::env::var("LOCALAPPDATA").ok();
+            let dir = std::env::temp_dir().join(format!("galaxie-1257-{nome}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("criar temp de teste");
+            std::env::set_var("LOCALAPPDATA", &dir);
+            Self { anterior, dir }
+        }
+
+        /// O caminho que `auth::caminho_sessao` / `estado::caminho_arquivo` derivam.
+        fn arquivo(&self, nome: &str) -> std::path::PathBuf {
+            self.dir.join("GALAXIE").join(nome)
+        }
+    }
+
+    impl Drop for AppDataIsolado {
+        fn drop(&mut self) {
+            match &self.anterior {
+                Some(v) => std::env::set_var("LOCALAPPDATA", v),
+                None => std::env::remove_var("LOCALAPPDATA"),
+            }
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// Store da "conta anterior", com token válido por muito tempo — assim
+    /// `access_token` devolve o token SEM tentar refresh (nenhuma rede no teste).
+    fn store_da_conta_anterior(email: &str) -> Store {
+        let expira_longe = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+            + 86_400;
+        Arc::new(TokenStore {
+            inner: Mutex::new(Some(Tokens {
+                access_token: "token-da-conta-ANTERIOR".to_string(),
+                refresh_token: Some("refresh-da-conta-ANTERIOR".to_string()),
+                expires_at: expira_longe,
+                account: Account {
+                    display_name: "Conta Anterior".to_string(),
+                    email: email.to_string(),
+                    initials: "CA".to_string(),
+                    photo: None,
+                    organizacao: Some("Empresa Anterior".to_string()),
+                    provider: Provider::Microsoft,
+                    account_kind: AccountKind::Work,
+                    org_status: OrgStatus::Contracted,
+                    domain: Some("empresa.com".to_string()),
+                    tenant_id: Some("tenant-anterior".to_string()),
+                    capabilities: vec![Capability::Identity],
+                },
+                tenant: "tenant-anterior".to_string(),
+                scopes: String::new(),
+            })),
+        })
+    }
+
+    /// DoD item 3, verbatim: *"após troca de conta, uma leitura de mailbox da
+    /// conta anterior falha/retorna vazio, não a caixa real"*.
+    ///
+    /// `graph::access_token` é o gargalo por onde TODA leitura do Graph passa —
+    /// sem token, nenhuma caixa da conta anterior é lida. Antes do funil ele
+    /// entrega; depois, tem que falhar.
+    #[test]
+    fn apos_o_funil_nenhuma_leitura_da_conta_anterior_consegue_token() {
+        let _serial = trava_ambiente();
+        let _appdata = AppDataIsolado::novo("leitura");
+
+        let store = store_da_conta_anterior("anterior@empresa.com");
+        estado::salvar_identidade("Conta Anterior", "CA");
+
+        // Pré-condição: a conta anterior está VIVA (senão o teste passaria por
+        // vacuidade e não provaria nada).
+        assert_eq!(
+            graph::access_token(&store).as_deref(),
+            Ok("token-da-conta-ANTERIOR"),
+            "pré-condição falhou: a conta anterior deveria estar autenticada antes do funil",
+        );
+        assert!(
+            estado::ler_identidade().is_some(),
+            "pré-condição falhou: identidade da conta anterior deveria estar em cache",
+        );
+
+        limpar_sessao_conta(&store).expect("funil de fronteira de conta não pode falhar");
+
+        // O invariante do P0: a leitura da conta anterior não acontece mais.
+        assert_eq!(
+            graph::access_token(&store),
+            Err("nao autenticado".to_string()),
+            "VAZAMENTO (#1257): o token da conta anterior sobreviveu ao funil — o Bridge serviria a caixa dela sob a sessão da conta nova",
+        );
+        assert!(
+            estado::ler_identidade().is_none(),
+            "VAZAMENTO (#1257): a identidade em cache da conta anterior sobreviveu ao funil",
+        );
+    }
+
+    /// O vetor que produziu o P0 em produção: o `sessao.bin` sobrevivia à troca e
+    /// o `restore_session` do boot REHIDRATAVA a conta anterior — o app abria já
+    /// logado na caixa errada. Aqui o boot é exercitado de verdade
+    /// (`auth::restaurar`), não só a existência do arquivo.
+    ///
+    /// `#[cfg(windows)]` porque `salvar_sessao` cifra com DPAPI; fora do Windows
+    /// `dpapi::cifrar` devolve `None` (fail-closed, #1057) e nada é gravado — o
+    /// teste ficaria sem pré-condição. O `cargo test` do app roda em
+    /// `windows-latest` no CI, então a guarda vale onde o gate roda.
+    #[cfg(windows)]
+    #[test]
+    fn apos_o_funil_o_boot_nao_rehidrata_a_conta_anterior_do_disco() {
+        let _serial = trava_ambiente();
+        let appdata = AppDataIsolado::novo("boot");
+
+        let store = store_da_conta_anterior("anterior@empresa.com");
+        auth::salvar_sessao(Provider::Microsoft, "tenant-anterior", "refresh-da-conta-ANTERIOR");
+
+        // Pré-condição: existe sessão persistida — é o que o boot leria.
+        let sessao = appdata.arquivo("sessao.bin");
+        assert!(
+            sessao.exists(),
+            "pré-condição falhou: sessao.bin deveria existir antes do funil (em {})",
+            sessao.display(),
+        );
+
+        limpar_sessao_conta(&store).expect("funil de fronteira de conta não pode falhar");
+
+        assert!(
+            !sessao.exists(),
+            "VAZAMENTO (#1257): o sessao.bin da conta anterior sobreviveu ao funil — o próximo restore_session rehidrataria a caixa dela",
+        );
+        assert!(
+            auth::restaurar().is_err(),
+            "VAZAMENTO (#1257): o boot ainda consegue restaurar a sessão da conta anterior",
+        );
+    }
+}
