@@ -24,6 +24,18 @@ const TICKET_TTL_SECONDS: u64 = 60;
 // #1295: TTL curto do ticket de matrícula (uso único; a janela só precisa cobrir o
 // round-trip begin→finish do OPAQUE, não uma sessão de trabalho).
 const ENROLL_TICKET_TTL_SECONDS: u64 = 60;
+
+// #1295 — a metade que faltava do invariante da `lumen`:
+//     ENROLL_TICKET_TTL_SECONDS <= MAX_ENROLLMENT_TTL_SECONDS <= 120
+//
+// O M7 dela afrouxou os DOIS de uma vez (cunhagem 1 h + teto 1 ano) e nada
+// reclamou. Em compile-time, afrouxar a cunhagem sozinha ja quebra o build; e o
+// teto tem o proprio `const _` em `ticket.rs`. Para esticar a credencial agora e
+// preciso editar dois numeros em dois arquivos, e os dois gritam.
+const _: () = assert!(
+    ENROLL_TICKET_TTL_SECONDS <= crate::ticket::MAX_ENROLLMENT_TTL_SECONDS,
+    "TTL de cunhagem do ticket de matricula nao pode passar do teto de validacao (#1295)"
+);
 // #1295: teto (cap) DEFAULT de devices por owner_id, aplicado na cunhagem (onde a
 // identidade M365 é conhecida) e reforçado no finish. `set_enrollment_cap` permite ao
 // operador do servidor ajustar a política; não é alcançável pelo wire. INTERPRETAÇÃO:
