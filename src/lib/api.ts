@@ -4,6 +4,7 @@ import type {
   AppUser,
   DesafioDominio,
   CloudLocation,
+  NetworkLocation,
   DirSize,
   DriveInfo,
   FsChange,
@@ -2916,6 +2917,14 @@ export async function listarDrives(): Promise<DriveInfo[]> {
 export async function listarCloudLocations(): Promise<CloudLocation[]> {
   if (!inTauri()) return [];
   return invoke<CloudLocation[]>("fs_cloud_locations");
+}
+
+/** #1288: locais de rede do usuário ("Add a network location" — atalhos SEM
+ *  letra). Complementam os drives mapeados na seção "Network locations".
+ *  Vazio fora do Tauri e em máquina sem nenhum local configurado. */
+export async function listarNetworkLocations(): Promise<NetworkLocation[]> {
+  if (!inTauri()) return [];
+  return invoke<NetworkLocation[]>("fs_network_locations");
 }
 
 /** #871: mapeia um network drive ("New → Network drive"). `letter`="Z:",

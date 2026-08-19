@@ -1746,4 +1746,103 @@ mod testes {
         );
     }
 
+
+    // ── #1301 (dogfood): os caminhos de falha do #1296 agora são AFIRMADOS ────
+    //
+    // O #1296 fechou 3 caminhos de morte silenciosa da persistência. A `lumen`
+    // anotou que os ACs se apoiavam em "loga" — e o repo não tinha como afirmar
+    // log em teste. Com a infra do #1301, deixam de ser promessa.
+
+    use crate::teste_log::{
+        assert_logou, capturar_logs, capturar_logs_globais, esperar_log_global, logou,
+    };
+
+    /// #1296 (1/3) — lock envenenado no funil de escrita **loga** em vez de
+    /// voltar calado. Captura thread-local: o log acontece nesta thread.
+    #[test]
+    fn poisoned_no_funil_de_escrita_loga_em_vez_de_sair_calado() {
+        let inner = interno_com(vec![]);
+
+        // envenena de verdade (panic segurando o lock), não simula
+        let clone = Arc::clone(&inner);
+        let _ = std::thread::spawn(move || {
+            let _g = clone.lock().unwrap();
+            panic!("envenena o mutex da telemetria");
+        })
+        .join();
+        assert!(inner.is_poisoned(), "o mutex precisa estar envenenado");
+
+        let logs = capturar_logs(|| snapshot_e_gravar(&inner));
+
+        assert_logou(&logs, log::Level::Error, "mutex envenenado");
+        assert_logou(&logs, log::Level::Error, "#1238");
+    }
+
+    /// #1296 (1/3, par negativo) — o caminho FELIZ não pode logar erro. Sem
+    /// este, "loga no erro" passaria mesmo se o código logasse sempre.
+    #[test]
+    fn funil_de_escrita_sadio_nao_loga_erro() {
+        let inner = interno_com(vec![]);
+        let logs = capturar_logs(|| snapshot_e_gravar(&inner));
+        crate::teste_log::assert_nao_logou(&logs, log::Level::Error, "mutex envenenado");
+    }
+
+    /// #1296 (2/3) — o worker de persistência morre **RUIDOSO** quando o mutex
+    /// do sino é envenenado. Captura GLOBAL: o log sai de uma thread que o
+    /// código sob teste spawna, e captura thread-local não a alcança.
+    #[test]
+    fn worker_encerrando_por_mutex_envenenado_grita() {
+        let logs = capturar_logs_globais(|| {
+            let inner = interno_com(vec![]);
+            let persist = Arc::new(Persistidor::novo());
+
+            let clone = Arc::clone(&persist);
+            let _ = std::thread::spawn(move || {
+                let _g = clone.sujo.lock().unwrap();
+                panic!("envenena o sino do persistidor");
+            })
+            .join();
+            assert!(persist.sujo.is_poisoned());
+
+            let subiu = iniciar_persistidor(inner, persist, Duration::from_millis(0));
+            assert!(subiu, "a thread do worker precisa ter subido para o teste valer");
+
+            // espera o worker acordar, ver o veneno e gritar (sem sleep chutado)
+            esperar_log_global(
+                log::Level::Error,
+                "worker de persistência encerrando",
+                Duration::from_secs(5),
+            );
+        });
+
+        assert_logou(&logs, log::Level::Error, "worker de persistência encerrando");
+        assert!(
+            logou(&logs, log::Level::Error, "NÃO será mais gravada"),
+            "a linha tem de dizer a CONSEQUÊNCIA, não só que morreu"
+        );
+    }
+
+    /// #1296 (3/3) — o contrato de `iniciar_persistidor`: devolve se subiu, e o
+    /// caminho de sucesso NÃO grita.
+    ///
+    /// **Limite honesto:** o ramo de falha (`Err` do `thread::spawn`) só ocorre
+    /// com exaustão de recurso do SO e não é forçável de forma portável — não
+    /// há teste dele aqui. O que este teste garante é o par: o retorno existe
+    /// (`#[must_use]`, então ignorá-lo é warning) e o sucesso é silencioso, de
+    /// modo que a linha de erro só pode vir da falha real.
+    #[test]
+    fn iniciar_persistidor_devolve_se_subiu_e_sucesso_e_silencioso() {
+        let logs = capturar_logs_globais(|| {
+            let inner = interno_com(vec![]);
+            let persist = Arc::new(Persistidor::novo());
+            let subiu = iniciar_persistidor(inner, persist, Duration::from_millis(0));
+            assert!(subiu, "spawn normal tem de devolver true");
+        });
+
+        assert!(
+            !logou(&logs, log::Level::Error, "NÃO subiu"),
+            "worker que subiu não pode logar que não subiu"
+        );
+    }
+
 }

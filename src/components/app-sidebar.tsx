@@ -18,7 +18,8 @@ import { AppIcon } from "@/components/app-icon";
 import { useIdioma } from "@/lib/idioma";
 import { useAppStore } from "@/store";
 import { resolverPinados } from "@/lib/pinned-apps";
-import { APPS_CATALOGO } from "@/lib/apps-catalog";
+import { APPS_UNIFICADOS } from "@/lib/apps-unificado";
+import type { AppUnificado } from "@/lib/apps-unificado-core";
 import { useMemo } from "react";
 import { PinOff } from "lucide-react";
 
@@ -41,16 +42,33 @@ import { PinOff } from "lucide-react";
  * um como um botão ícone-only que abre a aba no Navigator. Desafixar via menu de
  * contexto.
  */
+/**
+ * #1152: id pinado que não existe em nenhuma origem continua sendo descartado —
+ * o rail nunca mostra pin quebrado —, mas **não em silêncio**. Foi o descarte
+ * mudo que escondeu este bug até o PO reclamar de "pin que não pina".
+ */
+function avisarPinOrfao(id: string) {
+  console.warn(
+    `[rail] pin descartado: o id "${id}" não existe na lista unificada de apps`,
+  );
+}
+
 function PinnedApps({
   onAbrirApp,
+  onAbrirNativo,
 }: {
   onAbrirApp: (url: string, nome: string) => void;
+  /** #1152: item com `nativo` abre TELA INTERNA — a `url` dele é "". */
+  onAbrirNativo: (app: AppUnificado) => void;
 }) {
   const { t } = useIdioma();
   const appsFixados = useAppStore((s) => s.appsFixados);
   const desafixarApp = useAppStore((s) => s.desafixarApp);
   const fixados = useMemo(
-    () => resolverPinados(appsFixados, APPS_CATALOGO),
+    // #1152: resolve contra a lista UNIFICADA (telas GALAXIE + M365 curado +
+    // catálogo) — é dela que o command tira o id do pin. Resolver só contra o
+    // catálogo descartava todo pin de M365/GALAXIE em silêncio.
+    () => resolverPinados(appsFixados, APPS_UNIFICADOS, avisarPinOrfao),
     [appsFixados],
   );
   if (fixados.length === 0) return null;
@@ -67,7 +85,14 @@ function PinnedApps({
                 <button
                   type="button"
                   aria-label={app.name}
-                  onClick={() => onAbrirApp(app.url, app.name)}
+                  // #1152: telas GALAXIE e alguns M365 curados têm `url: ""` e
+                  // `nativo` setado. Mandá-los pro `onAbrirApp` abriria uma aba
+                  // VAZIA — pin que "funciona" e não leva a lugar nenhum.
+                  onClick={() =>
+                    app.nativo
+                      ? onAbrirNativo(app)
+                      : onAbrirApp(app.url, app.name)
+                  }
                   className="grid aspect-square w-full place-items-center rounded-xl text-sidebar-foreground transition-colors hover:bg-sidebar-accent/60"
                 >
                   <AppIcon id={app.id} name={app.name} className="size-6" />
@@ -95,13 +120,19 @@ function PinnedApps({
 
 export function AppSidebar({
   onAbrirApp,
+  onAbrirNativo,
 }: {
   /** #721: abre um app FIXADO como aba do Navigator (mesma ponte da omnibox). */
   onAbrirApp: (url: string, nome: string) => void;
+  /** #1152: item fixado com `nativo` vai pra tela interna, não pra aba web. */
+  onAbrirNativo: (app: AppUnificado) => void;
 }) {
   const appsFixados = useAppStore((s) => s.appsFixados);
   const fixados = useMemo(
-    () => resolverPinados(appsFixados, APPS_CATALOGO),
+    // #1152: resolve contra a lista UNIFICADA (telas GALAXIE + M365 curado +
+    // catálogo) — é dela que o command tira o id do pin. Resolver só contra o
+    // catálogo descartava todo pin de M365/GALAXIE em silêncio.
+    () => resolverPinados(appsFixados, APPS_UNIFICADOS, avisarPinOrfao),
     [appsFixados],
   );
 
@@ -118,7 +149,7 @@ export function AppSidebar({
       <SidebarContent>
         {/* #721 (SH3): apps FIXADOS pelo command — ícone-only, abrem como aba do
             Navigator; menu de contexto pra desafixar. */}
-        <PinnedApps onAbrirApp={onAbrirApp} />
+        <PinnedApps onAbrirApp={onAbrirApp} onAbrirNativo={onAbrirNativo} />
       </SidebarContent>
       {/* #876: o avatar/menu do usuário vive na title bar (ver `MenuUsuario`).
           #1109: a marca GALAXIE também migrou pra title bar (ver `App.tsx`). */}

@@ -59,8 +59,18 @@ const SCRIPT_CAPTURA_SCROLL: &str = r#"(function(){
 /// com alpha (a pagina nao tem as CSS vars do app), boas em claro/escuro; casa
 /// com o `.scrollbar-fina` do chrome (8px, thumb arredondado, track transparente).
 /// Best-effort: se a pagina tiver regra propria mais especifica, ela vence.
+///
+/// #1277 (regressao): o script SEGUE rodando (injecao intacta neste unico caminho
+/// de criacao de aba), mas o WebView2/Chromium da maquina atualiza sozinho e o
+/// Chromium moderno deixa de honrar `::-webkit-scrollbar` quando o scrollbar
+/// PADRAO (`scrollbar-width`/`scrollbar-color`) esta em jogo — entao regra
+/// so-`-webkit-` volta a pintar o nativo. Fix por FUNIL: emitimos TAMBEM as
+/// propriedades padrao (thin + cor), que o Chromium novo honra; as `-webkit-`
+/// ficam para runtimes antigos. A confirmacao de pixel (claro/escuro, 2 sites) e
+/// a lente da QA-V (Iris) + passe do PO, por ser card com superficie.
 const SCRIPT_SCROLLBAR: &str = r#"(function(){try{
-  var css='::-webkit-scrollbar{width:8px;height:8px}'
+  var css='html{scrollbar-width:thin;scrollbar-color:rgba(128,128,128,.5) transparent}'
+    +'::-webkit-scrollbar{width:8px;height:8px}'
     +'::-webkit-scrollbar-thumb{background-color:rgba(128,128,128,.5);border-radius:9999px}'
     +'::-webkit-scrollbar-thumb:hover{background-color:rgba(128,128,128,.75)}'
     +'::-webkit-scrollbar-track{background:transparent}';
@@ -567,6 +577,150 @@ fn capturar_snapshot(_wv: &tauri::webview::Webview) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scrollbar_emite_padrao_e_webkit_e_e_injetado_na_criacao() {
+        // #1277: a regressao foi o Chromium novo ignorar `::-webkit-scrollbar`
+        // quando o scrollbar padrao esta em jogo. O fix precisa das DUAS familias:
+        // - padrao (`scrollbar-width`/`scrollbar-color`) — Chromium novo honra;
+        // - `-webkit-` — runtimes antigos. Faltar a padrao = a regressao de volta;
+        //   faltar a webkit = perde o thumb arredondado no runtime velho.
+        assert!(
+            SCRIPT_SCROLLBAR.contains("scrollbar-width:thin"),
+            "SCRIPT_SCROLLBAR sem `scrollbar-width` padrao — Chromium novo pinta o nativo (regressao #1277)",
+        );
+        assert!(
+            SCRIPT_SCROLLBAR.contains("scrollbar-color:"),
+            "SCRIPT_SCROLLBAR sem `scrollbar-color` padrao (#1277)",
+        );
+        assert!(
+            SCRIPT_SCROLLBAR.contains("::-webkit-scrollbar"),
+            "SCRIPT_SCROLLBAR perdeu as regras `-webkit-` (runtimes antigos)",
+        );
+        assert!(
+            SCRIPT_SCROLLBAR.contains("data-galaxie-scrollbar"),
+            "o <style> perdeu o marcador `data-galaxie-scrollbar` (o AC verifica por ele)",
+        );
+        // #1277 (2ª volta) — GUARDA DE FIAÇÃO.
+        //
+        // A primeira versão era `include_str!` + `.contains(...)`: afirmava que a
+        // string existe **em algum lugar do arquivo**. A `lumen` mutou a injeção
+        // real para COMENTÁRIO e a suíte ficou verde — o bug inteiro voltaria sem
+        // nada falhar. `include_str!` lê comentário; `.contains` não distingue.
+        //
+        // O DoD pede outra coisa: que **TODO** caminho de criação de webview passe
+        // pelo script. Isso é contagem, não presença — e com o comentário fora do
+        // caminho, senão a mutação da `lumen` continua passando.
+        // `include_str!` traz o arquivo INTEIRO — inclusive este modulo de teste,
+        // onde as duas strings aparecem como literais. Contar sobre o arquivo todo
+        // faz a guarda contar a si mesma (o primeiro `cargo test` acusou 3x2). A
+        // fiacao que importa e a de PRODUCAO, entao a varredura para no
+        // `#[cfg(test)]`.
+        let fonte = sem_comentarios(include_str!("browser.rs"));
+        let producao = fonte.split("#[cfg(test)]").next().unwrap_or(&fonte);
+        let criacoes = producao.matches("WebviewBuilder::new(").count();
+        let injecoes = producao
+            .matches(".initialization_script(SCRIPT_SCROLLBAR)")
+            .count();
+
+        assert!(
+            criacoes > 0,
+            "nao achei nenhum `WebviewBuilder::new(` — a guarda perdeu o alvo e \
+             estaria passando por vacuidade (o pior modo de falha de um ratchet)",
+        );
+        assert_eq!(
+            injecoes, criacoes,
+            "TODO caminho de criacao de webview tem de injetar SCRIPT_SCROLLBAR: \
+             achei {criacoes} criacao(oes) e {injecoes} injecao(oes) (comentarios \
+             ja descontados). Caminho novo sem o script = aba nasce com o \
+             scrollbar nativo (#1277).",
+        );
+    }
+
+
+    /// #1277 — zera comentários de Rust preservando o resto, para que uma
+    /// varredura de fonte não confunda **código** com **texto sobre código**.
+    ///
+    /// Foi exatamente essa confusão que deixou a guarda anterior passar quando a
+    /// `lumen` comentou a injeção real: `include_str!` entrega o arquivo inteiro,
+    /// comentário incluso.
+    ///
+    /// Cobre `//` até o fim da linha e `/* */` (com aninhamento, que o Rust
+    /// aceita). Strings NÃO são tratadas — aqui não há literal contendo `//`, e
+    /// um parser de Rust dentro de um teste seria remédio pior que a doença; se
+    /// isso mudar, o teste do próprio helper acusa.
+    fn sem_comentarios(fonte: &str) -> String {
+        let bytes: Vec<char> = fonte.chars().collect();
+        let mut out = String::with_capacity(fonte.len());
+        let mut i = 0;
+        let mut profundidade_bloco = 0usize;
+
+        while i < bytes.len() {
+            let dois: String = bytes[i..(i + 2).min(bytes.len())].iter().collect();
+            if profundidade_bloco > 0 {
+                if dois == "/*" {
+                    profundidade_bloco += 1;
+                    i += 2;
+                    continue;
+                }
+                if dois == "*/" {
+                    profundidade_bloco -= 1;
+                    i += 2;
+                    continue;
+                }
+                // preserva quebra de linha para a saída continuar legível
+                if bytes[i] == '\n' {
+                    out.push('\n');
+                }
+                i += 1;
+                continue;
+            }
+            if dois == "/*" {
+                profundidade_bloco = 1;
+                i += 2;
+                continue;
+            }
+            if dois == "//" {
+                while i < bytes.len() && bytes[i] != '\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+        out
+    }
+
+    /// O helper acima é o que faz a guarda de fiação valer — então ele mesmo
+    /// precisa de teste. Sem isto, um `sem_comentarios` quebrado devolveria a
+    /// guarda ao estado furado sem ninguém perceber.
+    #[test]
+    fn sem_comentarios_tira_linha_e_bloco_e_preserva_codigo() {
+        let src = "let a = 1; // some\nlet b = 2;\n/* bloco\n   com linhas */\nlet c = 3;";
+        let limpo = sem_comentarios(src);
+        assert!(limpo.contains("let a = 1;"));
+        assert!(limpo.contains("let b = 2;"));
+        assert!(limpo.contains("let c = 3;"));
+        assert!(!limpo.contains("some"), "comentario de linha tem de sumir");
+        assert!(!limpo.contains("bloco"), "comentario de bloco tem de sumir");
+    }
+
+    /// O caso EXATO da mutação da `lumen`: a chamada existe só como comentário.
+    #[test]
+    fn sem_comentarios_derruba_a_mutacao_da_lumen() {
+        let src = "\
+    .initialization_script(SCRIPT_CAPTURA_SCROLL);
+    // MUTANTE M1: a injecao REAL sumiu, mas a string continua no arquivo:
+    // .initialization_script(SCRIPT_SCROLLBAR)
+";
+        let limpo = sem_comentarios(src);
+        assert!(
+            !limpo.contains(".initialization_script(SCRIPT_SCROLLBAR)"),
+            "a chamada comentada NAO pode contar como fiacao — foi assim que o \
+             bug passou verde na 1a volta do #1277",
+        );
+    }
 
     #[test]
     fn rotulo_prefixa_e_filtra_caracteres_invalidos() {

@@ -1,0 +1,26 @@
+# Auditoria v2 — 01 CANON (churn, coerência, carga) — 19/08/2026
+Auditor: subagent read-only. Fontes: 17 commits do TEAM-CANON (v1.0→v1.11), identidades, seeds, AUDITORIA-POLARIS (Hiparco), memória nova (PolarisContext 76KB/450 linhas!), feedback-*.md.
+
+## Veredito (5 linhas)
+(a) Canon DOBROU em 20h: 2.108→4.789 palavras, 17 commits, **10 das 11 emendas são reação a UM incidente** (6 com nº de caso na letra da lei; 5 versões entre 01:22 e 02:46 da madrugada; v1.6 e v1.11 reescritas 3× em minutos).
+(b) SM acumula **~25 obrigações por tick de 13-20 min** — várias inexecutáveis como escritas (ex.: "contagem de msgs" — a API só dá lastActivityAt; `pnpm gate` "quando existir").
+(c) **O aparato de honestidade institucionalizou a desculpa**: ledger de linhagem lido no boot ANTES do Context; blocos "🩸 MEU ERRO Nº N" no Context; gatilho "2 erros/dia = reciclagem"; Polaris IV cunhou 6 "REGRA:" pessoais em 2h. Sucessor nasce com prioridade "não repetir 13 erros", não "mover o board".
+(d) **11 contradições vivas** canon × identidades × feedback × ordens do PO não-canonizadas.
+(e) Solução NÃO é mais emenda: é **v2 enxuto (≤1.200 palavras) + moratória + ferramenta no lugar de rito**.
+
+## Achados rankeados
+1. **SM carrega rito manual que não cabe no tick e é punido por cada passo pulado.** Tick 3 do IV: 6 PRs × gate de 6 comandos = 36 comandos em 13 min → `test:component` "nunca rodou o dia inteiro" não é descuido, é aritmética. → **Tirar integração do SM** (CI checks + `pnpm gate` como job + `gh pr merge` quando verde; ou script único). Cortar do SM: vigilância de 10 papéis (→Hiparco), higiene do board (§7 ainda diz SM apesar da v1.11), classificação de superfície. **Tick = evento** (PR aberta/card movido) + varredura 30-40min, não cron de 13.
+2. **Churn:** moratória 72h; depois máx 1 emenda/dia em lote, **ratificação ESCRITA do PO na PR** (hoje: "ratificado" no header antes de ratificar; v1.1 sem PR; Hiparco ratifica "em nome dele" pelo chat); regra de caso (com #) vai pra `docs/equipe/CASOS.md`, só vira lei se repetir; regra de transição nasce com data de morte.
+3. **Máquina de desculpa:** erro = **1 linha de correção na issue**, sem bloco no Context, sem regra pessoal; `polaris-linhagem-erros.md` → ≤10 linhas de antídotos mecânicos; `<Papel>Context.md` com **teto ~150 linhas rolling** (>48h vai pra historico/); **retirar gatilho "2 erros = reciclagem"**; reciclagem por carga medida.
+4. **Classificação de superfície empurra pro PO o que M9 proíbe:** v1.2 "na dúvida vai pro PO" → IV levou #1049 ao PO 2× em 15min tendo escrito "zero UI"; PO respondeu "tá óbvio" e MOVEU o card (trabalho do SM). 3 donos da marcação em 3 versões. → **1 frase: "Sem tela = sem superfície. Quem cria marca; quem perceber faltar, marca e segue. Promoção é do SM, sem pedir."** Apagar v1.2(2)(3)/v1.7.
+5. **11 contradições** (send_message M3 × v1.8 × ordem do PO 19/08 "PERMITIDO cobrar via send_message" não-canonizada · §7 "Board — SM (higiene)" × v1.11 Mira · "card que mente" (Mira cobraria o SM por estado normal) · dev livre (v1.6 × v1.10 × fila-por-dev do PO não-canonizada) · 4 definições de "tick silencioso" · épico sem linha no §2 e dono mudou 3× em 20min · ratificação (lei × prática) · `@dono` literal × regra sem-@ · cadência 20/13/40 · "contagem de msgs" inexecutável · M9 × "na dúvida vai pro PO").
+6. **Armadilhas de julgamento (11, cada uma já gerou erro)** vs mecânicas boas (Closes 1ª linha, --no-ff, -c user.name, porta 1420, boot, DoD release, reler card, ID colado). → armadilha vira **ferramenta/estado do board** (label, `pnpm gate`, `board.ps1`) ou **default sem exceção**. Regra com 3 ramos = regra-mãe errada.
+7. **Cortar do canon (~60% do texto):** histórico de emendas no topo (~450 palavras com narrativa do PO) → CHANGELOG-CANON.md · §8 cutover (já executado) → docs/historia · §9 máquina compartilhada → runbook · nºs de caso · piadas/aforismos · mistura nome×papel (canon usa PAPEL; nome no ROSTER) · transições com prazo. **Falta no canon** (inventado fora): fila por dev ordenada · despacho com linha nominal · IDs colados · cadência adaptativa/tick vazio não posta · teto de post · rota ao PO via SM com ou/ou · precedentes de board (cancelado→Backlog etc.).
+8. **Fantasmas de ferramenta:** regras que pressupõem `pnpm gate`/`board.ps1`/contagem de msgs/status da Anthropic — nada existe. **Ferramenta primeiro (#1326/#1327), regra depois.**
+
+## Proposta v2 (estrutura, ≤1.200 palavras / ≤70 linhas)
+§0 cabeçalho (2 linhas, link CHANGELOG) · §1 7 princípios (fundir M1-M10) · §2 Board (tabela 9 linhas + épico; 1 frase/célula; 3 flags em 3 linhas) · §3 Papéis (12 linhas; papel genérico + nunca-faz; nomes no ROSTER) · §4 Batimento (tabela papel·fila·cadência·gatilho de post; "tick vazio = zero post") · §5 Código (6 linhas: branches, `pnpm gate` É o gate, merge por PR c/ checks, Closes) · §6 Release (4 linhas + runbook Atlas) · §7 Reciclagem (5 linhas) · §8 Como emendar (PR Bibliotecário · ratificação ESCRITA na PR · máx 1/dia · caso→CASOS.md · transição c/ data de morte).
+Satélites: CHANGELOG-CANON.md · CASOS.md · runbooks/{integracao,release,runtime} · ROSTER.md · historia/cutover.
+
+## 3 decisões > qualquer redação
+(1) moratória + `pnpm gate` no ar · (2) integração sai da cabeça do SM · (3) erro = 1 linha, Context com teto, ledger reduzido — **acabar com o ritual de confissão**.

@@ -654,11 +654,18 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
         };
 
         // Label do volume + filesystem name (#869) — best-effort (drive vazio fica sem).
+        //
+        // #1288: drive de REDE NAO passa por aqui. `GetVolumeInformationW` num
+        // share lento/offline bloqueia (licao RB do #1073) e, pior, devolve o
+        // label do VOLUME — nao o nome que o Explorer mostra. Para rede o nome
+        // sai do `WNetGetConnectionW`, que le o cache local do redirector.
         let mut label = [0u16; 261];
         let mut fsbuf = [0u16; 261];
         let mut nome = String::new();
         let mut fs_name = String::new();
-        if unsafe {
+        if kind == "network" {
+            nome = nome_drive_rede(&remoto_do_drive(&raiz).unwrap_or_default(), &raiz);
+        } else if unsafe {
             GetVolumeInformationW(pcw, Some(&mut label), None, None, None, Some(&mut fsbuf))
         }
         .is_ok()
@@ -710,6 +717,108 @@ fn listar_drives() -> Result<Vec<DriveInfo>, FsError> {
     }])
 }
 
+// ─── #1288: Network locations como o Explorer do Windows mostra ──────────────
+//
+// Dois defeitos distintos, reportados juntos pelo PO:
+//
+// 1. O RÓTULO do drive mapeado vinha do `GetVolumeInformationW` — que devolve o
+//    label do VOLUME do share ("Galaxie Network"). O Explorer mostra outra coisa:
+//    o leaf do caminho remoto + o UNC do share + a letra
+//    (`wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)`). Além de errado,
+//    `GetVolumeInformationW` num share lento BLOQUEIA — lição RB do #1073.
+// 2. Os LOCAIS de rede ("Add a network location", que viram atalhos em
+//    `%APPDATA%\Microsoft\Windows\Network Shortcuts\<Nome>\target.lnk`) não eram
+//    enumerados. Eles não têm letra, então nunca apareceram na lista de drives.
+
+/// Um "local de rede" do Windows (atalho sem letra) — o que o Explorer lista ao
+/// lado dos drives mapeados.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkLocation {
+    /// Nome do atalho (= nome da pasta em `Network Shortcuts`).
+    pub name: String,
+    /// Alvo UNC resolvido do `target.lnk`.
+    pub path: String,
+    /// Sempre `networkLocation` — o front distingue de `drive` mapeado.
+    pub kind: String,
+    /// O alvo respondeu dentro do prazo? `false` = offline/indisponível. A
+    /// entrada continua na lista (o AC proíbe sumir em silêncio), só marcada.
+    pub available: bool,
+}
+
+/// Normaliza uma letra para o formato `W:` (aceita `w`, `W`, `W:`, `W:\`).
+fn letra_normalizada(s: &str) -> String {
+    let t = s.trim().trim_end_matches(['\\', '/']).trim_end_matches(':');
+    match t.chars().next() {
+        Some(c) if c.is_ascii_alphabetic() && t.len() == 1 => {
+            format!("{}:", c.to_ascii_uppercase())
+        }
+        _ => t.to_string(),
+    }
+}
+
+/// #1288 — o nome que o **Explorer** mostra para um drive mapeado:
+/// `<leaf do remoto> (<resto do UNC>) (<Letra>:)`.
+///
+/// `\\192.168.1.34\Galaxie Network\wagnao-marcenaria` + `W:` vira
+/// `wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)`.
+///
+/// **Puro** — é o coração do card e não depende de rede nem do volume, então o
+/// teste cobre os formatos sem tocar em nada (é também o que tira o
+/// `GetVolumeInformationW` do caminho quente).
+fn nome_drive_rede(remoto: &str, letra: &str) -> String {
+    let l = letra_normalizada(letra);
+    let r = remoto.trim().trim_end_matches(['\\', '/']);
+    if r.is_empty() {
+        // Sem conexão resolvível: a letra ainda é um nome honesto (nunca cai no
+        // label do volume, que é o que estava errado).
+        return format!("({l})");
+    }
+    match r.rsplit_once('\\') {
+        // `\\server\share` → o rsplit devolve base `\\server`, leaf `share`.
+        Some((base, leaf)) if !base.is_empty() && !leaf.is_empty() => {
+            format!("{leaf} ({base}) ({l})")
+        }
+        _ => format!("{r} ({l})"),
+    }
+}
+
+/// #1288 — monta as entradas de local de rede a partir de pares
+/// (nome do atalho, alvo) já resolvidos. **Puro**: a resolução do `.lnk` e a
+/// sonda de disponibilidade entram injetadas, então o teste não toca COM,
+/// registro, disco nem rede.
+fn montar_locais_rede(
+    atalhos: &[(String, String)],
+    disponivel: impl Fn(&str) -> bool,
+) -> Vec<NetworkLocation> {
+    let mut out: Vec<NetworkLocation> = Vec::new();
+    for (nome, alvo) in atalhos {
+        let alvo = alvo.trim();
+        let nome = nome.trim();
+        if alvo.is_empty() || nome.is_empty() {
+            continue;
+        }
+        let chave = chave_caminho_rede(alvo);
+        if out.iter().any(|x| chave_caminho_rede(&x.path) == chave) {
+            continue;
+        }
+        out.push(NetworkLocation {
+            name: nome.to_string(),
+            path: alvo.to_string(),
+            kind: "networkLocation".into(),
+            // Offline NÃO some da lista: aparece marcado (AC).
+            available: disponivel(alvo),
+        });
+    }
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
+/// Dedupe de caminho de rede: sem separador final, minúsculo.
+fn chave_caminho_rede(p: &str) -> String {
+    p.trim().trim_end_matches(['\\', '/']).to_ascii_lowercase()
+}
+
 // ─── #869: detecção de Cloud drives (opção A do Wagner) ──────────────────────
 //
 // OneDrive sincroniza pra uma PASTA (não uma letra) sob o perfil — exposta pelas
@@ -756,13 +865,124 @@ fn cloud_pasta(valor: Option<String>, provider: &str) -> Option<CloudLocation> {
     })
 }
 
+/// #1286 — uma conta OneDrive lida do registro
+/// (`HKCU\Software\Microsoft\OneDrive\Accounts\<Personal|BusinessN>`).
+///
+/// As env vars cobrem **um** pessoal + **um** comercial; quem sincroniza vários
+/// tenants (o caso do PO: 8 contas) via só 2. O registro tem todas.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContaOneDrive {
+    /// Nome da chave: `Personal`, `Business1`, `Business2`… Decide o provider.
+    pub chave: String,
+    /// `DisplayName` (ou `UserEmail`) — rótulo legível.
+    pub display_name: String,
+    /// `UserFolder` — a pasta de sync da conta.
+    pub user_folder: String,
+    /// Bibliotecas SharePoint sincronizadas (`Tenants\<org>`): (org, caminho).
+    pub bibliotecas: Vec<(String, String)>,
+}
+
+impl ContaOneDrive {
+    fn comercial(&self) -> bool {
+        !self.chave.eq_ignore_ascii_case("Personal")
+    }
+
+    fn provider(&self) -> &'static str {
+        if self.comercial() {
+            "onedriveCommercial"
+        } else {
+            "onedrive"
+        }
+    }
+
+    /// Rótulo da conta: `DisplayName` quando existe; senão o leaf da pasta (que
+    /// o próprio cliente do OneDrive já nomeia "OneDrive - <org>").
+    fn rotulo(&self) -> String {
+        let d = self.display_name.trim();
+        if d.is_empty() {
+            nome_cloud_folder(&self.user_folder)
+        } else {
+            d.to_string()
+        }
+    }
+}
+
+/// Chave de dedupe: caminho sem separador final, minúsculo. O Windows não
+/// distingue caixa, e registro e env divergem na barra final.
+/// Onde o cliente do OneDrive registra as contas do usuario.
+#[cfg(windows)]
+const CAMINHO_CONTAS_ONEDRIVE: &str = r"Software\Microsoft\OneDrive\Accounts";
+
+fn chave_caminho(p: &str) -> String {
+    p.trim().trim_end_matches(['\\', '/']).to_ascii_lowercase()
+}
+
+/// #1286 — monta os mounts a partir das contas do registro.
+///
+/// **Puro de propósito**: recebe a lista E o verificador de existência, então o
+/// teste injeta os dois e não toca registro nem disco (é o DoD do card).
+///
+/// Ordem: conta por conta na ordem recebida (Personal primeiro), a raiz e logo
+/// abaixo as bibliotecas daquela conta — é o que agrupa cada biblioteca sob a
+/// org a que ela pertence.
+fn montar_clouds_onedrive(
+    contas: &[ContaOneDrive],
+    existe: impl Fn(&str) -> bool,
+) -> Vec<CloudLocation> {
+    let mut out: Vec<CloudLocation> = Vec::new();
+    let mut vistos: Vec<String> = Vec::new();
+
+    for conta in contas {
+        let provider = conta.provider();
+        let mut empurrar = |path: &str, name: String| {
+            let p = path.trim();
+            // Conta cuja pasta sumiu do disco NÃO vira mount morto (AC).
+            if p.is_empty() || !existe(p) {
+                return;
+            }
+            let chave = chave_caminho(p);
+            if vistos.contains(&chave) {
+                return;
+            }
+            vistos.push(chave);
+            out.push(CloudLocation {
+                path: p.to_string(),
+                name,
+                provider: provider.to_string(),
+                kind: "folder".into(),
+            });
+        };
+
+        empurrar(&conta.user_folder, conta.rotulo());
+        for (org, caminho) in &conta.bibliotecas {
+            let leaf = nome_cloud_folder(caminho);
+            let org = org.trim();
+            let nome = if org.is_empty() || leaf.contains(org) {
+                leaf
+            } else {
+                format!("{org} — {leaf}")
+            };
+            empurrar(caminho, nome);
+        }
+    }
+    out
+}
+
 /// Junta as pastas de nuvem (dedup por caminho, 1º provider ganha) com os drives
 /// kind=`cloud` (Google Drive por letra). Puro → testável sem env/FS real.
-fn montar_clouds(pastas: &[(Option<String>, &str)], drives: Vec<DriveInfo>) -> Vec<CloudLocation> {
-    let mut out: Vec<CloudLocation> = Vec::new();
+fn montar_clouds(
+    do_registro: Vec<CloudLocation>,
+    pastas: &[(Option<String>, &str)],
+    drives: Vec<DriveInfo>,
+) -> Vec<CloudLocation> {
+    // #1286: o registro e a fonte completa; o env vira COMPLEMENTO (maquina sem
+    // a chave -- edge do AC), nunca substituto. Entra depois, e o dedup por
+    // caminho o descarta quando o registro ja trouxe a mesma pasta.
+    let mut out: Vec<CloudLocation> = do_registro;
     for (valor, provider) in pastas {
         if let Some(c) = cloud_pasta(valor.clone(), provider) {
-            if !out.iter().any(|x| x.path.eq_ignore_ascii_case(&c.path)) {
+            let chave = chave_caminho(&c.path);
+            if !out.iter().any(|x| chave_caminho(&x.path) == chave) {
                 out.push(c);
             }
         }
@@ -792,9 +1012,87 @@ fn detectar_clouds() -> Vec<CloudLocation> {
         // primário (dedup evita repetir se == a um dos acima).
         (std::env::var("OneDrive").ok(), "onedrive"),
     ];
+    // #1286: registro primeiro (todas as contas + bibliotecas), env de reserva.
+    let do_registro = montar_clouds_onedrive(&ler_contas_onedrive(), caminho_existe);
     let drives = listar_drives().unwrap_or_default();
-    montar_clouds(&pastas, drives)
+    montar_clouds(do_registro, &pastas, drives)
 }
+
+/// #1286 — lê TODAS as contas OneDrive do registro do usuário. Camada impura,
+/// isolada de propósito: quem tem teste é a `montar_clouds_onedrive`.
+///
+/// Best-effort em cada passo — máquina sem a chave (ou uma conta corrompida)
+/// devolve o que deu, e o `detectar_clouds` completa pelo env. O comando nunca
+/// falha inteiro por causa do registro.
+#[cfg(windows)]
+fn ler_contas_onedrive() -> Vec<ContaOneDrive> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let Ok(contas) = hkcu.open_subkey(CAMINHO_CONTAS_ONEDRIVE) else {
+        return Vec::new();
+    };
+
+    // `Personal` antes de `Business*` — é a ordem que o usuário espera ver.
+    let mut chaves: Vec<String> = contas.enum_keys().flatten().collect();
+    chaves.sort_by_key(|k| (!k.eq_ignore_ascii_case("Personal"), k.to_ascii_lowercase()));
+
+    let mut out = Vec::new();
+    for chave in chaves {
+        let Ok(k) = contas.open_subkey(&chave) else {
+            continue;
+        };
+        let Ok(user_folder) = k.get_value::<String, _>("UserFolder") else {
+            continue;
+        };
+        let display_name = k
+            .get_value::<String, _>("DisplayName")
+            .or_else(|_| k.get_value::<String, _>("UserEmail"))
+            .unwrap_or_default();
+
+        // `Tenants\<org>`: cada VALOR é uma biblioteca sincronizada. O nome do
+        // valor costuma ser o caminho local; em outras versões o caminho está no
+        // dado. Aceito os dois e fico com o que existe no disco — fixar um
+        // formato só deixaria bibliotecas de fora em silêncio.
+        let mut bibliotecas = Vec::new();
+        if let Ok(tenants) = k.open_subkey("Tenants") {
+            for org in tenants.enum_keys().flatten() {
+                let Ok(t) = tenants.open_subkey(&org) else {
+                    continue;
+                };
+                for (nome_valor, dado) in t.enum_values().flatten() {
+                    let do_dado = dado.to_string();
+                    let candidato = if caminho_existe(&nome_valor) {
+                        Some(nome_valor.clone())
+                    } else if caminho_existe(&do_dado) {
+                        Some(do_dado)
+                    } else {
+                        None
+                    };
+                    if let Some(c) = candidato {
+                        bibliotecas.push((org.clone(), c));
+                    }
+                }
+            }
+        }
+
+        out.push(ContaOneDrive {
+            chave,
+            display_name,
+            user_folder,
+            bibliotecas,
+        });
+    }
+    out
+}
+
+/// Fora do Windows não há registro — o `detectar_clouds` cai no env.
+#[cfg(not(windows))]
+fn ler_contas_onedrive() -> Vec<ContaOneDrive> {
+    Vec::new()
+}
+
 
 // ─── #871: mapear/desconectar network drive (menu "New → Network drive") ─────
 //
@@ -1271,6 +1569,10 @@ fn remover(path: &str) -> Result<(), FsError> {
 fn caminho_existe(p: &str) -> bool {
     std::fs::symlink_metadata(com_long_path(Path::new(p))).is_ok()
 }
+
+/// #1288: prazo da sonda de disponibilidade de um alvo de rede. Curto de
+/// propósito — a lista tem de aparecer mesmo com share offline.
+const PRAZO_SONDA_REDE_MS: u64 = 800;
 
 /// Comprimento clássico do MAX_PATH do Windows (260, inclui o NUL). A Lixeira do
 /// shell (IFileOperation) não alcança caminhos a partir daqui.
@@ -3715,6 +4017,16 @@ pub async fn fs_cloud_locations() -> Result<Vec<CloudLocation>, FsError> {
         .map_err(spawn_err)?
 }
 
+/// #1288: locais de rede do usuário (os "Add a network location" — atalhos SEM
+/// letra). Complementam os drives mapeados na seção "Network locations".
+/// Todo IO (COM + sonda) roda em `spawn_blocking`.
+#[tauri::command]
+pub async fn fs_network_locations() -> Result<Vec<NetworkLocation>, FsError> {
+    tauri::async_runtime::spawn_blocking(|| Ok(listar_locais_rede()))
+        .await
+        .map_err(spawn_err)?
+}
+
 /// #871: mapeia um network drive (menu "New → Network drive" do ribbon).
 /// `letter` = letra livre ("Z:"), `remote` = UNC (`\\server\share`),
 /// `persistent` = reconecta no login.
@@ -4316,7 +4628,7 @@ mod tests {
                 free_space: 0,
             },
         ];
-        let cl = montar_clouds(&pastas, drives);
+        let cl = montar_clouds(Vec::new(), &pastas, drives);
         assert_eq!(cl.len(), 2, "1 pasta (dedup) + 1 google");
         let folder = cl.iter().find(|c| c.kind == "folder").unwrap();
         assert_eq!(folder.name, "OneDrive - Contoso");
@@ -5820,4 +6132,369 @@ mod tests {
             "plano com pulo de enumeração não pode liberar a remoção da origem"
         );
     }
+
+    // ── #1286: TODAS as contas OneDrive, não só as 2 do env ──────────────────
+    //
+    // O PO tem 8 contas sincronizando e o Files mostrava 2, porque
+    // `detectar_clouds` lia só `%OneDriveConsumer%` / `%OneDriveCommercial%` /
+    // `%OneDrive%`. Estes testes exercitam a função PURA com a lista injetada:
+    // sem tocar registro e sem tocar disco (é o DoD do card).
+
+    fn conta(chave: &str, display: &str, pasta: &str) -> ContaOneDrive {
+        ContaOneDrive {
+            chave: chave.into(),
+            display_name: display.into(),
+            user_folder: pasta.into(),
+            bibliotecas: Vec::new(),
+        }
+    }
+
+    /// Existência injetada: tudo existe, menos o que estiver na lista de mortos.
+    fn existe_menos<'a>(mortos: &'a [&'a str]) -> impl Fn(&str) -> bool + 'a {
+        move |p: &str| !mortos.iter().any(|m| p.eq_ignore_ascii_case(m))
+    }
+
+    #[test]
+    fn oito_contas_do_registro_viram_oito_mounts() {
+        let mut contas = vec![conta("Personal", "OneDrive", r"C:\Users\po\OneDrive")];
+        for n in 1..=7 {
+            contas.push(conta(
+                &format!("Business{n}"),
+                &format!("OneDrive - Cliente {n}"),
+                &format!(r"C:\Users\po\OneDrive - Cliente {n}"),
+            ));
+        }
+
+        let cl = montar_clouds_onedrive(&contas, |_| true);
+
+        assert_eq!(cl.len(), 8, "as 8 contas do PO, nao as 2 do env");
+        assert_eq!(cl[0].name, "OneDrive");
+        assert_eq!(cl[0].provider, "onedrive", "Personal e pessoal");
+        assert!(
+            cl[1..].iter().all(|c| c.provider == "onedriveCommercial"),
+            "Business* e comercial"
+        );
+        assert_eq!(cl[7].name, "OneDrive - Cliente 7");
+    }
+
+    #[test]
+    fn conta_sem_display_name_usa_o_leaf_da_pasta() {
+        let cl = montar_clouds_onedrive(
+            &[conta("Business1", "  ", r"C:\Users\po\OneDrive - Contoso")],
+            |_| true,
+        );
+        assert_eq!(cl.len(), 1);
+        assert_eq!(cl[0].name, "OneDrive - Contoso");
+    }
+
+    #[test]
+    fn pasta_que_sumiu_do_disco_nao_vira_mount_morto() {
+        let morta = r"C:\Users\po\OneDrive - Ex-cliente";
+        let contas = vec![
+            conta("Personal", "OneDrive", r"C:\Users\po\OneDrive"),
+            conta("Business1", "OneDrive - Ex-cliente", morta),
+        ];
+
+        let cl = montar_clouds_onedrive(&contas, existe_menos(&[morta]));
+
+        assert_eq!(cl.len(), 1, "a conta desconectada fica de fora");
+        assert_eq!(cl[0].name, "OneDrive");
+    }
+
+    #[test]
+    fn bibliotecas_sharepoint_viram_mounts_agrupados_sob_a_conta() {
+        let mut c = conta("Business1", "OneDrive - Contoso", r"C:\Users\po\OneDrive - Contoso");
+        c.bibliotecas = vec![
+            ("Contoso".into(), r"C:\Users\po\Contoso\Documentos".into()),
+            ("Contoso".into(), r"C:\Users\po\Contoso\Engenharia".into()),
+        ];
+        let contas = vec![
+            c,
+            conta("Business2", "OneDrive - Fabrikam", r"C:\Users\po\OneDrive - Fabrikam"),
+        ];
+
+        let cl = montar_clouds_onedrive(&contas, |_| true);
+
+        assert_eq!(cl.len(), 4);
+        // as bibliotecas ficam LOGO ABAIXO da conta a que pertencem
+        assert_eq!(cl[0].name, "OneDrive - Contoso");
+        assert_eq!(cl[1].name, "Contoso — Documentos");
+        assert_eq!(cl[2].name, "Contoso — Engenharia");
+        assert_eq!(cl[3].name, "OneDrive - Fabrikam");
+        assert!(
+            cl.iter().all(|m| m.kind == "folder"),
+            "biblioteca sincronizada e pasta, nao letra"
+        );
+    }
+
+    #[test]
+    fn dedupe_por_caminho_ignora_caixa_e_barra_final() {
+        let mut c = conta("Business1", "OneDrive - Contoso", r"C:\Users\po\OneDrive - Contoso");
+        // mesma pasta, escrita diferente — o registro faz isso de verdade
+        c.bibliotecas = vec![("Contoso".into(), r"c:\users\po\onedrive - contoso\".into())];
+
+        let cl = montar_clouds_onedrive(&[c], |_| true);
+
+        assert_eq!(cl.len(), 1, "mesma pasta nao pode aparecer duas vezes");
+    }
+
+    /// O env NÃO pode duplicar o que o registro já trouxe — e continua servindo
+    /// de reserva na máquina sem a chave (edge do AC).
+    #[test]
+    fn env_complementa_o_registro_sem_duplicar() {
+        let base = dir_temp("clouds-1286");
+        let pessoal = base.join("OneDrive");
+        let so_no_env = base.join("OneDrive - SoEnv");
+        std::fs::create_dir_all(&pessoal).unwrap();
+        std::fs::create_dir_all(&so_no_env).unwrap();
+
+        let do_registro = montar_clouds_onedrive(
+            &[conta("Personal", "OneDrive", &pessoal.to_string_lossy())],
+            caminho_existe,
+        );
+        assert_eq!(do_registro.len(), 1);
+
+        let pastas = [
+            // mesma pasta do registro, com barra final → dedup
+            (Some(format!("{}\\", pessoal.to_string_lossy())), "onedrive"),
+            // esta só existe no env → entra
+            (Some(so_no_env.to_string_lossy().into_owned()), "onedriveCommercial"),
+        ];
+
+        let cl = montar_clouds(do_registro, &pastas, Vec::new());
+
+        assert_eq!(cl.len(), 2, "1 do registro + 1 so do env (a repetida some)");
+        assert_eq!(cl[0].name, "OneDrive");
+        assert_eq!(cl[1].name, "OneDrive - SoEnv");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// Máquina sem a chave de registro: lista vazia, o env assume, nada quebra.
+    #[test]
+    fn sem_registro_cai_no_env_sem_erro() {
+        let cl = montar_clouds_onedrive(&[], |_| true);
+        assert!(cl.is_empty(), "sem contas, sem mounts — e sem panico");
+    }
+
+
+    // ── #1288: nome do drive de rede + locais de rede ────────────────────────
+    //
+    // O PO viu `Galaxie Network (W:)` onde o Explorer mostra
+    // `wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)`. O nome vinha do
+    // label do VOLUME; o certo é o leaf do remoto + o UNC do share + a letra.
+
+    #[test]
+    fn nome_de_drive_mapeado_espelha_o_explorer() {
+        // O caso exato do relato do PO.
+        assert_eq!(
+            nome_drive_rede(r"\\192.168.1.34\Galaxie Network\wagnao-marcenaria", "W:"),
+            r"wagnao-marcenaria (\\192.168.1.34\Galaxie Network) (W:)"
+        );
+    }
+
+    #[test]
+    fn mapeamento_na_raiz_do_share_usa_o_share_como_nome() {
+        // `\\server\share` (sem subpasta): leaf = share, base = \\server.
+        assert_eq!(
+            nome_drive_rede(r"\\192.168.1.34\Galaxie Network", "Z"),
+            r"Galaxie Network (\\192.168.1.34) (Z:)"
+        );
+    }
+
+    #[test]
+    fn nome_nao_depende_do_label_do_volume_nem_da_barra_final() {
+        // Barra final e letra em minúscula não podem mudar o resultado — é o
+        // mesmo mapeamento.
+        assert_eq!(
+            nome_drive_rede(r"\\srv\share\sub\", "w:\\"),
+            nome_drive_rede(r"\\srv\share\sub", "W:")
+        );
+    }
+
+    #[test]
+    fn sem_conexao_resolvivel_cai_na_letra_e_nao_no_volume() {
+        // `WNetGetConnectionW` falhou. O nome tem de continuar honesto — o bug
+        // era justamente cair no label do volume.
+        assert_eq!(nome_drive_rede("", "W:"), "(W:)");
+    }
+
+    #[test]
+    fn locais_de_rede_viram_entradas_ordenadas_por_nome() {
+        let atalhos = vec![
+            ("Galaxie Network".to_string(), r"\\192.168.1.34\Galaxie Network".to_string()),
+            ("Eir Network".to_string(), r"\\192.168.1.34\Eir".to_string()),
+        ];
+
+        let l = montar_locais_rede(&atalhos, |_| true);
+
+        assert_eq!(l.len(), 2);
+        assert_eq!(l[0].name, "Eir Network", "ordenado por nome");
+        assert_eq!(l[1].name, "Galaxie Network");
+        assert!(l.iter().all(|x| x.kind == "networkLocation"));
+        assert!(l.iter().all(|x| x.available));
+    }
+
+    #[test]
+    fn alvo_offline_continua_na_lista_marcado_como_indisponivel() {
+        let atalhos = vec![
+            ("Vivo".to_string(), r"\\srv\ok".to_string()),
+            ("Morto".to_string(), r"\\srv\offline".to_string()),
+        ];
+
+        let l = montar_locais_rede(&atalhos, |alvo| !alvo.contains("offline"));
+
+        assert_eq!(l.len(), 2, "offline NAO some da lista (AC)");
+        let morto = l.iter().find(|x| x.name == "Morto").unwrap();
+        assert!(!morto.available, "tem de aparecer marcado como indisponivel");
+        let vivo = l.iter().find(|x| x.name == "Vivo").unwrap();
+        assert!(vivo.available);
+    }
+
+    #[test]
+    fn atalho_sem_alvo_ou_sem_nome_e_ignorado() {
+        let atalhos = vec![
+            ("Sem alvo".to_string(), "   ".to_string()),
+            ("  ".to_string(), r"\\srv\share".to_string()),
+        ];
+        assert!(montar_locais_rede(&atalhos, |_| true).is_empty());
+    }
+
+    #[test]
+    fn dois_atalhos_pro_mesmo_alvo_nao_duplicam() {
+        let atalhos = vec![
+            ("Galaxie".to_string(), r"\\srv\Galaxie Network".to_string()),
+            ("Galaxie (copia)".to_string(), r"\\SRV\galaxie network\".to_string()),
+        ];
+        assert_eq!(
+            montar_locais_rede(&atalhos, |_| true).len(),
+            1,
+            "mesmo alvo, escrita diferente"
+        );
+    }
+
+}
+
+/// #1288 — o caminho remoto de um drive mapeado (`W:` → `\\server\share\sub`).
+/// `WNetGetConnectionW` responde do cache local do redirector: não vai à rede,
+/// então é seguro no caminho quente (ao contrário do `GetVolumeInformationW`).
+#[cfg(windows)]
+fn remoto_do_drive(letra: &str) -> Option<String> {
+    use windows::core::PCWSTR;
+    use windows::core::PWSTR;
+    use windows::Win32::NetworkManagement::WNet::WNetGetConnectionW;
+
+    let l = letra_normalizada(letra);
+    let wide: Vec<u16> = l.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut buf = [0u16; 1024];
+    let mut n = buf.len() as u32;
+    let rc = unsafe { WNetGetConnectionW(PCWSTR(wide.as_ptr()), Some(PWSTR(buf.as_mut_ptr())), &mut n) };
+    if rc.0 != 0 {
+        return None;
+    }
+    let fim = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    let s = String::from_utf16_lossy(&buf[..fim]).trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// Pasta onde o Windows guarda os "locais de rede" (Add a network location).
+#[cfg(windows)]
+fn pasta_network_shortcuts() -> Option<PathBuf> {
+    std::env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .map(|p| p.join(r"Microsoft\Windows\Network Shortcuts"))
+}
+
+/// Resolve o alvo de um `.lnk` via IShellLink (COM). Mesmo padrão de
+/// inicialização do `system.rs`: tolera COM já montado em outro modo e só
+/// desfaz se ESTE código inicializou.
+#[cfg(windows)]
+fn alvo_do_atalho(lnk: &Path) -> Option<String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::{Interface, PCWSTR};
+    use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_INPROC_SERVER,
+        COINIT_APARTMENTTHREADED, STGM_READ,
+    };
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+
+    let wide: Vec<u16> = lnk.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        if hr.is_err() && hr != RPC_E_CHANGED_MODE {
+            return None;
+        }
+        let deve_uninit = hr.is_ok();
+
+        let alvo = (|| -> Option<String> {
+            let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER).ok()?;
+            let persist: IPersistFile = link.cast().ok()?;
+            persist.Load(PCWSTR(wide.as_ptr()), STGM_READ).ok()?;
+            let mut buf = [0u16; 1024];
+            link.GetPath(&mut buf, std::ptr::null_mut(), 0).ok()?;
+            let fim = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+            let s = String::from_utf16_lossy(&buf[..fim]).trim().to_string();
+            (!s.is_empty()).then_some(s)
+        })();
+
+        if deve_uninit {
+            CoUninitialize();
+        }
+        alvo
+    }
+}
+
+/// Sonda de disponibilidade com PRAZO. Um UNC offline faz `metadata` pendurar
+/// por dezenas de segundos; aqui a thread pode ficar presa, mas a árvore do
+/// Files não — quem chama desiste no prazo e marca `available: false` (AC:
+/// nunca some em silêncio, nunca trava).
+#[cfg(windows)]
+fn alvo_responde(alvo: &str, prazo: Duration) -> bool {
+    let alvo = alvo.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(std::fs::metadata(&alvo).is_ok());
+    });
+    rx.recv_timeout(prazo).unwrap_or(false)
+}
+
+/// #1288 — enumera os locais de rede do usuário (atalhos sem letra).
+/// Best-effort: pasta ausente ou atalho ilegível não derruba o comando.
+#[cfg(windows)]
+fn listar_locais_rede() -> Vec<NetworkLocation> {
+    let Some(dir) = pasta_network_shortcuts() else {
+        return Vec::new();
+    };
+    let Ok(entradas) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+
+    let mut atalhos: Vec<(String, String)> = Vec::new();
+    for e in entradas.flatten() {
+        let caminho = e.path();
+        if !caminho.is_dir() {
+            continue;
+        }
+        let Some(nome) = caminho.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        let lnk = caminho.join("target.lnk");
+        if !lnk.exists() {
+            continue;
+        }
+        if let Some(alvo) = alvo_do_atalho(&lnk) {
+            atalhos.push((nome, alvo));
+        }
+    }
+
+    montar_locais_rede(&atalhos, |alvo| {
+        alvo_responde(alvo, Duration::from_millis(PRAZO_SONDA_REDE_MS))
+    })
+}
+
+/// Fora do Windows não há "Network Shortcuts".
+#[cfg(not(windows))]
+fn listar_locais_rede() -> Vec<NetworkLocation> {
+    Vec::new()
 }

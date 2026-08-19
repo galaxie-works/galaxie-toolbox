@@ -1,6 +1,10 @@
 #![deny(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
+/// #1301: captura/asserção de eventos `tracing` em teste. Só em `cfg(test)` —
+/// o subscriber de produção nunca disputa o global default com ele.
+#[cfg(test)]
+mod teste_tracing;
 pub mod config;
 pub mod protocol;
 pub mod state;
@@ -896,6 +900,69 @@ mod tests {
             1,
             "dia novo comeca limpo"
         );
+    }
+
+
+    // ── #1301 (dogfood no signaling): a recusa por PoP LOGA ───────────────────
+    //
+    // O #1049 recusa `Register` sem prova de posse quando o enforce está ligado.
+    // Até aqui isso era só comportamento; agora a LINHA DE LOG é afirmada — é
+    // por ela que quem opera descobre, no dia da virada, quem está sendo cortado.
+
+    // `#[test]` e nao `#[tokio::test]`: o runtime do tokio::test roda o corpo
+    // numa thread dele, e `block_on` dentro dele e erro ("runtime within a
+    // runtime"). Mais importante: a captura e THREAD-LOCAL, entao o log tem de
+    // sair na MESMA thread onde o escopo foi aberto — o `current_thread`
+    // garante isso.
+    #[test]
+    fn recusa_por_pop_loga_o_device_e_o_motivo() {
+        use crate::teste_tracing::{assert_logou, assert_nao_logou, capturar_tracing};
+
+        let state = estado_pop();
+        state.set_require_device_pop(true);
+
+        // `capturar_tracing` é síncrono; a recusa acontece dentro do await, então
+        // capturamos o bloco inteiro executando-o aqui e guardando a saída.
+        let mut saida = Vec::new();
+        let logs = capturar_tracing(|| {
+            saida = futures_lite_block_on(processar(&state, register_sem_pop("device-log-01")));
+        });
+
+        assert!(!tem_registered(&saida), "sem PoP e com enforce, nao registra");
+        assert_logou(&logs, tracing::Level::WARN, "register recusado");
+        assert_logou(&logs, tracing::Level::WARN, "device-log-01");
+        assert_nao_logou(&logs, tracing::Level::ERROR, "panic");
+    }
+
+    /// Par negativo: com a flag DESLIGADA (default) ninguem e recusado, entao a
+    /// linha de recusa NAO pode aparecer. Sem este, "loga ao recusar" passaria
+    /// mesmo se o codigo logasse sempre.
+    #[test]
+    fn sem_enforce_nao_loga_recusa() {
+        use crate::teste_tracing::{assert_nao_logou, capturar_tracing};
+
+        let state = estado_pop();
+        let mut saida = Vec::new();
+        let logs = capturar_tracing(|| {
+            saida = futures_lite_block_on(processar(&state, register_sem_pop("device-log-02")));
+        });
+
+        assert!(tem_registered(&saida), "com a flag off o registro passa");
+        assert_nao_logou(&logs, tracing::Level::WARN, "register recusado");
+    }
+
+    /// Roda um future ate o fim numa thread current-thread, para que o log saia
+    /// NA MESMA thread onde `capturar_tracing` abriu o escopo.
+    fn futures_lite_block_on<T>(fut: impl std::future::Future<Output = T>) -> T {
+        // `expect` e deny neste crate (clippy::expect_used).
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(e) => panic!("nao consegui criar o runtime de teste: {e}"),
+        };
+        rt.block_on(fut)
     }
 
 }
