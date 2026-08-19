@@ -490,6 +490,22 @@ mod tests {
     }
 
     #[test]
+    fn enrollment_ticket_with_wrong_signature_is_rejected() {
+        // #1295 (revisão adversarial do Mizar): a assinatura do servidor é a base do
+        // esquema inteiro. Um ticket BEM-FORMADO mas assinado por OUTRA chave (forjado)
+        // tem que cair em `Signature` — senão qualquer um cunha a própria matrícula.
+        let real_key = SigningKey::generate(&mut OsRng);
+        let attacker_key = SigningKey::generate(&mut OsRng);
+        let forged = issue_enrollment_ticket(&attacker_key, &enrollment_claims()).unwrap();
+        let mut verifier = EnrollmentTicketVerifier::new(real_key.verifying_key());
+        assert_eq!(
+            verifier.verify_and_consume(&forged, "device-1", 120),
+            Err(TicketError::Signature),
+            "ticket forjado (assinado por chave que nao e a do servidor) foi aceito",
+        );
+    }
+
+    #[test]
     fn session_and_enrollment_domains_do_not_cross() {
         // Um ticket de SESSÃO não pode ser aceito como ticket de MATRÍCULA (e vice-versa),
         // mesmo assinado pela mesma chave: o domínio de assinatura difere.
