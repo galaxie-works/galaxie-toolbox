@@ -73,10 +73,11 @@ async fn v2_protocol_boundary_fails_closed_for_invalid_type_version_id_and_overs
 #[tokio::test]
 async fn registration_proof_replay_stale_and_connection_substitution_fail_closed(
 ) -> Result<(), TestError> {
-    let address = spawn_server(test_state(None, None, ServerSecrets::generate())?).await?;
+    let state = test_state(None, None, ServerSecrets::generate())?;
+    let address = spawn_server(state.clone()).await?;
     let identity = DeviceIdentity::generate();
     let (mut original, _) = connect_async(format!("ws://{address}/v2/ws")).await?;
-    enroll(&mut original, &identity).await?;
+    enroll(&mut original, &identity, &state).await?;
 
     let now = unix_seconds();
     register(&mut original, &identity, "nonce-original", now).await?;
@@ -168,10 +169,11 @@ async fn registration_proof_replay_stale_and_connection_substitution_fail_closed
 #[tokio::test]
 async fn opaque_wrong_password_and_auth_finish_binding_changes_never_issue_ticket(
 ) -> Result<(), TestError> {
-    let address = spawn_server(test_state(None, None, ServerSecrets::generate())?).await?;
+    let state = test_state(None, None, ServerSecrets::generate())?;
+    let address = spawn_server(state.clone()).await?;
     let identity = DeviceIdentity::generate();
     let (mut worker, _) = connect_async(format!("ws://{address}/v2/ws")).await?;
-    enroll(&mut worker, &identity).await?;
+    enroll(&mut worker, &identity, &state).await?;
     register(&mut worker, &identity, "device-nonce", unix_seconds()).await?;
     let (mut controller, _) = connect_async(format!("ws://{address}/v2/ws")).await?;
 
@@ -266,10 +268,10 @@ async fn socket_lifecycle_persists_audit_without_secrets_and_replay_survives_res
     let serialized_setup = setup.serialize().to_vec();
     let snapshot_path = snapshot_path();
     let state = test_state(Some(snapshot_path.clone()), None, setup)?;
-    let address = spawn_server(state).await?;
+    let address = spawn_server(state.clone()).await?;
     let identity = DeviceIdentity::generate();
     let (mut worker, _) = connect_async(format!("ws://{address}/v2/ws")).await?;
-    let opaque_upload = enroll(&mut worker, &identity).await?;
+    let opaque_upload = enroll(&mut worker, &identity, &state).await?;
     register(&mut worker, &identity, "device-nonce", unix_seconds()).await?;
     let (mut controller, _) = connect_async(format!("ws://{address}/v2/ws")).await?;
     let (ticket, session_id, finalization) = authenticate(&mut controller).await?;
@@ -418,7 +420,15 @@ async fn spawn_server(state: AppState) -> Result<SocketAddr, TestError> {
     Ok(address)
 }
 
-async fn enroll(socket: &mut TestSocket, identity: &DeviceIdentity) -> Result<String, TestError> {
+async fn enroll(
+    socket: &mut TestSocket,
+    identity: &DeviceIdentity,
+    state: &AppState,
+) -> Result<String, TestError> {
+    // #1295: cunha o ticket na superfície autenticada (AppState) e o apresenta no wire.
+    let enrollment_ticket = state
+        .mint_enrollment_ticket(OWNER_ID, ORG_ID, DEVICE_ID)
+        .await?;
     let (registration, opaque_request) = ClientRegistrationFlow::start(PASSWORD)?;
     let begin: Value = request(
         socket,
@@ -426,11 +436,10 @@ async fn enroll(socket: &mut TestSocket, identity: &DeviceIdentity) -> Result<St
         "device.enroll.begin",
         &DeviceEnrollBegin {
             device_id: DEVICE_ID.into(),
-            owner_id: OWNER_ID.into(),
-            org_id: ORG_ID.into(),
             name: "Lumen workstation".into(),
             public_key: identity.public_key_base64(),
             opaque_request,
+            enrollment_ticket,
         },
     )
     .await?;
@@ -443,11 +452,6 @@ async fn enroll(socket: &mut TestSocket, identity: &DeviceIdentity) -> Result<St
         &DeviceEnrollFinish {
             device_id: DEVICE_ID.into(),
             opaque_upload: registration.upload,
-            capabilities: Capabilities {
-                screen: true,
-                input: true,
-                ..Default::default()
-            },
         },
     )
     .await?;
