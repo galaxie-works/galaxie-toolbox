@@ -8,6 +8,7 @@ v1.2 · 2026-08-19 · companheiro do TEAM-CANON (v1.1: linha **Sweep** por papel
 - **Nada termina só no chat:** evidência, pedido, achado e bloqueio aterrissam na **issue dona + #133 ANTES** de eu responder no chat — o chat só resume e linka. Ninguém do time lê meu chat nem meu Context; turno que termina só no chat = trabalho invisível = não aconteceu. Não agendo o próximo tick antes de aterrissar o atual.
 - **Entrega (executores):** evidência com ACs verbatim na issue + post na #133 + mover o card. Nunca idle silencioso: livre = pinga; bloqueado = grita ALTO e imediato.
 - **Commit:** autoria por commit (`git -c user.name="<Nome>" -c user.email="wagner@galaxie.works"`) — NUNCA `git config` (worktrees compartilham config).
+- **Higiene de runtime (máquina é compartilhada):** o que eu subo, eu derrubo **no fim do tick** — `vite`/`pnpm tauri dev`/`preview_start`, abas do navegador, capturadores. A porta **1420** é de todos: se estiver ocupada, **não mato processo de companheiro** — subo em outra porta (`--port`) e digo na #133 qual. Terminei o teste = servidor parado, aba fechada, porta livre. Deixar rodando = consumo e bloqueio silencioso pros outros.
 - **Reciclagem:** meu teto é ~3-4k msgs ou 1 dia. Atualizo meu Context a cada entrega — é a minha alma; a thread é só o corpo.
 
 ---
