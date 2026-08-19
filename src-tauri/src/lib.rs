@@ -2237,6 +2237,7 @@ pub fn run() {
             fs_explorer::fs_list_drives,
             // #869: mounts de nuvem locais (OneDrive pasta + Google Drive letra).
             fs_explorer::fs_cloud_locations,
+            fs_explorer::fs_network_locations,
             // #871: mapear/desconectar network drive (menu "New" do ribbon).
             fs_explorer::fs_map_network_drive,
             fs_explorer::fs_disconnect_network_drive,
