@@ -64,7 +64,11 @@ param(
     [switch]$SkipBrowser,
     [switch]$Explicar,
     [string]$Base = "origin/pre-prod",
-    [string[]]$Arquivos
+    [string[]]$Arquivos,
+    # Forca o ramo "nao achei arquivo nenhum". Existe para TESTE: esse ramo so
+    # dispara em worktree limpa com base inalcancavel, e teste que depende da
+    # arvore estar suja passa local e reprova no CI (foi o que aconteceu aqui).
+    [switch]$SemArquivos
 )
 
 $ErrorActionPreference = "Stop"
@@ -172,17 +176,17 @@ function ArquivosDoDiff {
     $tocados += & $ler @("diff", "--name-only")
     $tocados = @($tocados | Where-Object { $_ } | Select-Object -Unique)
 
-    if ($tocados.Count -eq 0) {
-        # Nada em lugar nenhum: ou a base e inalcancavel, ou a worktree esta
-        # limpa. Assume que tocou Rust — errar pro lado de rodar demais custa
-        # minutos; pular canal em silencio e o defeito que este card fecha.
-        return @("src-tauri/src/lib.rs")
-    }
     return $tocados
 }
 
 # ── Plano ────────────────────────────────────────────────────────────────────
-$tocados = if ($Arquivos) { $Arquivos } else { ArquivosDoDiff -Base $Base }
+$tocados = if ($SemArquivos) { @() } elseif ($Arquivos) { $Arquivos } else { ArquivosDoDiff -Base $Base }
+if ($tocados.Count -eq 0) {
+    # Nada em lugar nenhum: assume que tocou Rust. Errar pro lado de rodar
+    # demais custa minutos; pular canal em silencio e o defeito que este card
+    # fecha.
+    $tocados = @("src-tauri/src/lib.rs")
+}
 # `@(...)` obrigatorio: o `return` do PowerShell desenrola a lista, e com UM
 # canal o `$plano` viraria um hashtable — onde `.Count` devolve o numero de
 # CHAVES (3), nao 1. Seria um "nenhum canal a rodar" mentiroso.

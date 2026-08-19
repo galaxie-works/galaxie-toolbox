@@ -94,23 +94,19 @@ test("#1326: -Only reduz a um canal", () => {
   );
 });
 
-test("#1326: base inalcançável cai na ÁRVORE DE AGORA, não num chute", () => {
-  // Contrato: o gate decide pelos arquivos realmente tocados — diff contra a
-  // base MAIS staged MAIS working tree. Se a base não existe, o que sobrou
-  // ainda vale; só quando não há absolutamente nada é que ele assume Rust.
-  //
-  // Este teste roda numa worktree suja (a própria fatia), então o esperado é
-  // que ele use a árvore e NÃO invente canais de Rust.
-  const p = plano(["-Base", "nao-existe/ref-inventada"]);
-  assert.deepEqual(
-    p.filter((c) => c.startsWith("cargo") || c.startsWith("clippy")),
-    [],
-    "fatia que não toca Rust não paga o custo de Rust só porque a base sumiu",
+test("#1326: sem NENHUM arquivo encontrado, assume Rust (errar pro lado de rodar)", () => {
+  // Este ramo só dispara em worktree LIMPA com base inalcançável. A primeira
+  // versão deste teste dependia da árvore estar suja: passou local e REPROVOU
+  // no CI, que faz checkout limpo. Agora o script expõe `-SemArquivos` só para
+  // forçar o ramo — o teste não depende mais do ambiente.
+  const p = plano(["-SemArquivos"]);
+  assert.ok(
+    p.includes("cargo check"),
+    "na dúvida roda: pular canal em silêncio é o defeito que este card fecha",
   );
-  assert.ok(p.includes("tsc"), "os canais de front rodam sempre");
 });
 
-// LIMITE HONESTO: o ramo "nada em lugar nenhum → assume que tocou Rust" só
-// dispara em worktree limpa com base inalcançável. Não dá para forçar isso
-// daqui sem mexer no repo do teste, então ele não tem teste automatizado — está
-// declarado no script, em vez de fingir cobertura.
+test("#1326: com arquivos conhecidos, NÃO cai no fallback", () => {
+  const p = plano(["-Arquivos", "src/App.tsx"]);
+  assert.ok(!p.some((c) => c.startsWith("cargo")), "o fallback não pode vazar");
+});
