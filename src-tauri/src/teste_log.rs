@@ -26,7 +26,7 @@
 //! `tauri-plugin-log` do binário real nunca disputa o `set_logger` com ele.
 
 use std::cell::RefCell;
-use std::sync::Once;
+use std::sync::{Mutex, Once};
 
 use log::{Level, LevelFilter, Log, Metadata, Record};
 
@@ -43,6 +43,11 @@ thread_local! {
     static SINK: RefCell<Option<Vec<Registro>>> = const { RefCell::new(None) };
 }
 
+/// Destino GLOBAL (todas as threads), usado só por [`capturar_logs_globais`].
+static SINK_GLOBAL: Mutex<Option<Vec<Registro>>> = Mutex::new(None);
+/// Serializa as capturas globais entre si (duas ao mesmo tempo se misturariam).
+static TRAVA_GLOBAL: Mutex<()> = Mutex::new(());
+
 struct LoggerDeTeste;
 
 impl Log for LoggerDeTeste {
@@ -56,13 +61,23 @@ impl Log for LoggerDeTeste {
             // causaria reentrância. Nesse caso perdemos a linha em vez de dar
             // panic dentro do logger — panic aqui derrubaria o teste com um
             // erro que não tem nada a ver com o que ele está verificando.
+            let registro = Registro {
+                level: record.level(),
+                target: record.target().to_string(),
+                msg: record.args().to_string(),
+            };
+            // 1) escopo desta thread, se houver
             if let Ok(mut b) = sink.try_borrow_mut() {
                 if let Some(registros) = b.as_mut() {
-                    registros.push(Registro {
-                        level: record.level(),
-                        target: record.target().to_string(),
-                        msg: record.args().to_string(),
-                    });
+                    registros.push(registro.clone());
+                    return;
+                }
+            }
+            // 2) senão, escopo global (se algum teste o abriu) — é o que
+            //    alcança log emitido por thread que o código sob teste spawna.
+            if let Ok(mut g) = SINK_GLOBAL.lock() {
+                if let Some(registros) = g.as_mut() {
+                    registros.push(registro);
                 }
             }
         });
@@ -113,6 +128,57 @@ pub fn capturar_logs(f: impl FnOnce()) -> Vec<Registro> {
         capturado
     });
     capturado
+}
+
+/// Como [`capturar_logs`], mas alcança **todas as threads** — inclusive as que
+/// o código sob teste spawna. Necessário para provar log de worker de fundo.
+///
+/// **Trade-off, explícito:** enquanto este escopo está aberto, log de OUTROS
+/// testes rodando em paralelo também cai aqui. Chamadas concorrentes deste
+/// helper são serializadas entre si, mas não contra o resto da suíte. Portanto:
+///
+/// - use para afirmar **presença** (`assert_logou`) — ruído alheio não causa
+///   falso negativo;
+/// - **não** use para afirmar **ausência** (`assert_nao_logou`) — aí o ruído
+///   viraria falha intermitente. Para ausência, use [`capturar_logs`].
+pub fn capturar_logs_globais(f: impl FnOnce()) -> Vec<Registro> {
+    garantir_logger();
+    let _trava = TRAVA_GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+
+    if let Ok(mut g) = SINK_GLOBAL.lock() {
+        *g = Some(Vec::new());
+    }
+    f();
+    let capturado = SINK_GLOBAL
+        .lock()
+        .map(|mut g| g.take().unwrap_or_default())
+        .unwrap_or_default();
+    capturado
+}
+
+/// Espia o buffer global SEM fechá-lo. Existe para esperar log de thread de
+/// fundo sem `sleep` cego: o teste pergunta "já apareceu?" até um prazo.
+pub fn espiar_globais() -> Vec<Registro> {
+    SINK_GLOBAL
+        .lock()
+        .map(|g| g.clone().unwrap_or_default())
+        .unwrap_or_default()
+}
+
+/// Espera até `prazo` por uma linha `nivel` contendo `trecho` no buffer global.
+/// Devolve `true` se apareceu. Sem isto, testar worker vira `sleep` chutado —
+/// que ou é lento demais ou falha em máquina carregada.
+pub fn esperar_log_global(nivel: Level, trecho: &str, prazo: std::time::Duration) -> bool {
+    let ate = std::time::Instant::now() + prazo;
+    loop {
+        if logou(&espiar_globais(), nivel, trecho) {
+            return true;
+        }
+        if std::time::Instant::now() >= ate {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
 }
 
 /// Alguma linha capturada tem esse nível E contém `trecho` (na mensagem ou no
