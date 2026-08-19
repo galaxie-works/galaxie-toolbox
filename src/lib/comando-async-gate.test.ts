@@ -45,7 +45,8 @@ const SINCRONOS_CONHECIDOS: Record<string, string> = {
   dominio_iniciar_verificacao: "1 linha: `iniciar_desafio` (gera nonce em memória)",
   reset_session_memo: "1 linha: `limpar_memo_sessao` (limpa HashMap)",
   log_frontend_error: "1 linha: `log::error!`",
-  telemetry_status: "1 linha: lê estado em memória",
+  telemetry_status:
+    "DÍVIDA #1238 (achado): a justificativa antiga dizia 'só memória' e está ERRADA — `status()` chama `consent_existe()` → `Path::exists()` (stat de disco) DENTRO do lock. Severidade baixa (metadado, sem serde/DPAPI/escrita), mas é IO na thread do IPC e a lista não pode mentir. Fica registrado como dívida honesta, não como 'trivialmente seguro'",
   remote_log: "1 linha: `log::*`",
   remote_signaling_endpoint: "resolve string de config (sem rede)",
   remote_signaling_endpoint_v2: "deriva string a partir do v1 (sem rede)",
@@ -53,11 +54,11 @@ const SINCRONOS_CONHECIDOS: Record<string, string> = {
   // ── DÍVIDA CONHECIDA: fazem IO/bloqueio na thread do IPC ──────────────────
   // Achados ao montar esta lista. Não são "trivialmente seguros" — estão aqui
   // porque a baseline congela o que existe, não porque estão certos.
-  telemetry_track:
-    "DÍVIDA #1238: `gravar_fila` → serde + DPAPI + fs::write, com o Mutex na mão, A CADA EVENTO",
-  telemetry_set_consent: "DÍVIDA #1238: `gravar_consent` + `gravar_fila` (2 escritas em disco)",
-  telemetry_revoke: "DÍVIDA #1238: `gravar_consent` + `gravar_fila` (2 escritas em disco)",
-  telemetry_debug_dump: "DÍVIDA #1238: lê estado sob Mutex; conferir se toca disco",
+  //
+  // A família `telemetry_*` (track/set_consent/revoke/debug_dump) SAIU daqui em
+  // #1238: os quatro viraram `async`. `track` não toca mais disco (worker de
+  // persistência coalesce a fila), consent/revoke gravam via `spawn_blocking`, e
+  // `debug_dump` foi conferido — só lê memória.
   remote_session_start:
     "DÍVIDA (#1070 §5.3, item de DoD ABERTO): o ramo de limpeza chama `session.stop()` → `worker.join()` segurando `active.lock()`. Severidade baixa hoje (só roda com `finished == true`), mas é a metade do DoD que o RB9 não cobriu",
   remote_session_signal: "envia por canal já aberto (`send_to_session`), sem join",

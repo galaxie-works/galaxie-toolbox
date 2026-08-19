@@ -1,5 +1,7 @@
 # TEAM-CANON — GALAXIE
-**v1.0 · 2026-08-18 · ratificado pelo PO (Wagner) · dono: Bibliotecário**
+**v1.6 · 2026-08-19 · ratificado pelo PO (Wagner) · dono: Bibliotecário**
+
+> **Histórico de emendas:** v1.0 (2026-08-18) texto fundador · **v1.1 (2026-08-18)** adiciona **§5-bis Sweeps por fila** e **§2 flag `precisa design` (Altair no fluxo)** (redação: Hiparco; ratificação: PO) · **v1.2 (2026-08-19)** fixa em §2 a **regra de transição da flag `sem superfície de runtime`** — cards pré-canon classificados pelo SM + ratificação em lote do PO; card novo sem flag não entra em Ready; na dúvida, vai pro PO (origem: #1268). · **v1.3 (2026-08-19)** fixa em §2 a **regra de transição da flag `precisa design`** (marcação retroativa em card já em voo — lacuna apontada pelo Altair). · **v1.4 (2026-08-19)** adiciona **§9 Máquina compartilhada — runtime** (navegadores, janela nativa, higiene de porta/processo) e torna `IDENTIDADES-DO-TIME.md` documento vinculante (§7). · **v1.5 (2026-08-19)** fixa em §2 que **toda PR tem card em voo** — `Ref` só em Ready/In progress; achado sobre card já em Done = issue-filha + card (caso PR #1289). · **v1.6 (2026-08-19)** §5-bis: **watch de dev** (própria fatia em voo, não é sweep de fila; pedido de Mizar/Pollux, que leram um wake-up do PO como ordem de varrer — não era) · §2: estado **bloqueado por dependência** (label `bloqueado`, caso #1052 do Polaris).
 
 Este é o documento-lei do time GALAXIE. **Fonte ÚNICA de verdade.** Todo agente lê isto ao nascer, ANTES de qualquer memória. Onde qualquer outro doc, memória ou hábito divergir, **o canon vence** — o resto é histórico, não autoridade. Ele **absorve e substitui o `WORKFLOW.md`** e vive na **raiz do repo `galaxie-toolbox`** (versionado; todo worktree o enxerga).
 
@@ -57,7 +59,15 @@ Devs **não têm módulo fixo** (mandamento 6) — pegam a fatia que o SM despac
 | **Rejected** | Fila de TRIAGEM do SM — nunca estacionamento | QA ou PO, com achado/evidência | Em **até 1 sweep**: SM re-rota pra executor FRESCO com a US original + achado verbatim como brief → **In progress** (SM) |
 | **Released to Production** | Na `main`, versão cortada, changelog publicado | Deploy Manager | Terminal ✅ |
 
-**DoD global de card:** ACs verbatim atendidos + gate verde + evidência na issue + i18n pt/en (quando UI) + teste que reproduz (quando bug). **Regra de PR:** `Closes #US` na 1ª linha quando fecha a US; `Ref #US` em fatia parcial (fatia `Ref` publica veredito mas **não move** o card da US).
+**Bloqueado por dependência (v1.6):** card groomado (e desenhado, se flagado) que **não pode andar por causa de terceiro** (outro card, decisão do PO, medição pendente) **fica na coluna em que está** com label **`bloqueado`** + linha no card "**bloqueado por #N / decisão X**". SM **não despacha** card `bloqueado`; a coluna Ready segue significando "esperando capacidade" só para os sem label. Quem resolve a dependência (fecha #N, decide X) **retira o label e avisa na issue** — se esquecer, o SM retira no sweep ao ver #N fechado. Não existe coluna nova: `Rejected` é achado de QA/PO, `Backlog` é não-groomado.
+
+**Flag `sem superfície de runtime` — regra de transição (v1.2, #1268):** (1) **Card novo:** a flag é decisão da **Mira** na criação (tem/não tem superfície) — **card sem essa marcação não entra em Ready** (devolução, como AC faltando; mandamento 5). (2) **Card pré-canon** (criado antes de 2026-08-18, sem a marcação): o **SM classifica** (com/sem superfície) e registra critério + classificação **no card**; a promoção QA Approved → PO Approved desses cards vale só por **ratificação em lote do PO** (post ou/ou na issue dona ou na #133; o SM cita o comentário da ratificação em cada card). (3) **Na dúvida, vai pro PO** — nunca promoção automática: errar pro lado de mostrar ao PO é barato; pular a validação de runtime dele não é. A regra (2) morre por obsolescência quando não houver mais card pré-canon em voo.
+
+**Flag `precisa design` (Altair no fluxo — v1.1):** a **Mira** seta a flag no grooming quando a US exige decisão transversal de design; **obrigatória** em card de **security / remote / auth**. Card com a flag **só entra em Ready depois que o Altair postar o desenho na issue** (Mira não move antes). Em **Done**, card com a flag passa por **revisão de design do Altair** (implementação × desenho, na issue) **antes** do gate da Lúmen — a revisão do Altair não substitui o gate, antecede-o; reprovação dele = Rejected com achado verbatim, como qualquer lente.
+
+**Flag `precisa design` — regra de transição (v1.3):** a flag pode ser posta **retroativamente** por Mira, Altair ou Polaris (a Mira é dona na criação; qualquer um dos três pode marcar depois — registrando o porquê no card). Card que **já estava em voo** quando recebeu a flag: (1) **em Ready** — não volta pro Backlog, mas o **Polaris não despacha** enquanto não houver desenho do Altair na issue; o Altair posta o desenho em até **1 sweep dele (~1 h)** ou registra "**sem desenho necessário**" (o que também libera); (2) **em In progress / In review** — segue; a **revisão de design em Done** cobre (o Altair pode postar orientação na issue antes, sem travar o dev); (3) **em Done ou além** — se ainda não gateado pela Lúmen, revisão de design antes do gate; se já **QA Approved+**, a flag **não retroage** (fica como dívida registrada no card, Altair decide se abre issue-filha). Card **novo** com flag continua a regra da v1.1: só entra em Ready após o desenho.
+
+**DoD global de card:** ACs verbatim atendidos + gate verde + evidência na issue + i18n pt/en (quando UI) + teste que reproduz (quando bug). **Regra de PR:** `Closes #US` na 1ª linha quando fecha a US; `Ref #US` em fatia parcial (fatia `Ref` publica veredito mas **não move** o card da US). **Toda PR tem card em voo (v1.5):** `Ref` só vale pra card em **Ready / In progress**. Card em **Done ou além não recebe PR** — achado da **QA** vira **Rejected** (§2); achado do **próprio dev** (ou de qualquer um) vira **issue-filha (bug) + card**, referenciando o pai, despachada pelo SM → PR **`Closes #filha`**. Sem card, sem PR: PR órfã não entra na fila de integração (o SM varre `In review`, não a lista de PRs).
 
 ---
 
@@ -91,9 +101,29 @@ Groomer errou o Size → o dev corrige e anota no card. O SM **não** revisa esc
 | **SM** | **Bibliotecário** | Bibliotecário: ordena o handoff, **cria o SM sucessor** e confere o boot |
 | **Bibliotecário** | **SM** | SM cria a passada nova do Bibliotecário |
 
-- **Teto: ~3-4k mensagens OU 1×/dia** — o que vier primeiro. Sinal de rot (mandamento 2) = troca imediata, sem esperar o teto.
+- **Teto: ~3-4k mensagens OU 1×/dia** — o que vier primeiro. Sinal de rot (mandamento 2) = troca imediata, sem esperar o teto. **Silêncio ≠ rot:** antes de reciclar por agente irresponsivo, conferir status da Anthropic (degradação de serviço já derrubou agentes em outros projetos) — sonda de liveness (wake-up do PO ou do vigia) primeiro, troca depois.
 - **Boot de toda sessão nova, nesta ordem:** identidade do papel → **TEAM-CANON** → `<Papel>Context.md`. Context sempre currente é obrigação do dono (Bibliotecário cobra fóssil).
 - O degradado **nunca** cria o próprio sucessor.
+
+---
+
+## 5-bis. SWEEPS POR FILA — o batimento de quem tem fila que enche sozinha
+
+Sweep **não é exclusivo do SM**. É o batimento periódico de todo papel cuja fila enche sem ele agir. **Regra única: cada papel varre SÓ a própria fila — 1 query no board (a coluna/estado que lhe pertence) — nunca a #133 inteira.** A #133 se lê por menção/índice (mandamento 3), não por varredura.
+
+| Papel | Fila que varre (1 query) | Cadência |
+|---|---|---|
+| **Polaris (SM)** | `In review` (integrar) · `Rejected` (triar) · contagem de msgs do time (reciclagem, §5) | **~20 min** |
+| **QA-A (Lúmen) · QA-V (Íris)** | **só a coluna `Done`** (Íris: só os com superfície visual) | **~25 min** |
+| **Atlas (Deploy Manager)** | `PO Approved` (corte a ~3 cards, §6) | **1×/h** |
+| **Mira (Groomer)** | `Backlog` (groomar → Ready) | **diário** |
+| **Altair (Arquiteto)** | cards com flag **`precisa design`** ainda **sem desenho** (Backlog) e, em `Done`, com flag aguardando revisão de design | **periódico (~1×/h)** |
+| **Devs (Castor, Pollux, Mizar, Alcor)** | **NÃO varrem fila.** São acordados por **despacho do Polaris** ou pelo **PO**. **Watch (v1.6):** dev **com fatia em voo** mantém *watch* da **própria fatia** — PR/CI dela + menção nominal (`castor`…) na issue dona e na #133 — até integrar; 1 query nominal, **não** a #133 inteira nem colunas do board. Dev **livre** não tem watch: pinga na #133 e espera despacho. **Wake-up/mensagem do PO não é ordem de varrer** — é sonda de liveness: o dev responde curto no próprio canal (vivo · em #X), age só no que lhe foi dirigido e volta a ficar quieto | watch **~30 min** enquanto houver fatia em voo |
+| **Hiparco (Bibliotecário)** | Não é sweep de fila: **passadas** (§5) — Context fósseis, msgs do Polaris, consistência memória↔canon | periódico |
+
+- Sweep vazio = tick silencioso (não postar "nada a fazer"); sweep com item = agir e registrar na issue dona (+ índice na #133 se for evento do time).
+- Cadência é teto de latência, não obrigação de postar. Cron/loop de sweep é session-only — quem varre confere que o dele está vivo antes de afirmar que roda.
+- Dev livre não varre pra "achar o que fazer": pinga na #133 (regra comum de entrega) e espera despacho.
 
 ---
 
@@ -108,6 +138,7 @@ Groomer errou o Size → o dev corrige e anota no card. O SM **não** revisa esc
 | Arquivo | Onde | Dono |
 |---|---|---|
 | **TEAM-CANON.md** (este) | raiz do repo | Bibliotecário (emenda só c/ PO) |
+| **`docs/equipe/IDENTIDADES-DO-TIME.md`** (identidade de cada papel + **regras comuns — vinculantes**, detalham este canon sem contrariá-lo; fatiado em `identidade-<nome>.md` na memória) | repo | Bibliotecário (único autor; sem ratificação, salvo quando muda processo) |
 | `RELEASES.md` (ledger "o que está no ar") | raiz do repo | Deploy Manager |
 | `<Papel>Context.md` (estado vivo de cada papel) | pasta de memória do projeto NOVO | cada papel |
 | Pasta de memória nova (derivada do cwd `G:\galaxie_development\galaxie-toolbox`) | — | Hiparco (cura; "supersede, não duplique") |
@@ -132,5 +163,15 @@ Groomer errou o Size → o dev corrige e anota no card. O SM **não** revisa esc
 7. Nascem as sessões novas (Polaris primeiro, depois o resto), boot do §5, todas na casa nova.
 8. Primeiro sweep do Polaris: reconciliar o board (cards presos já mapeados: #440/#441/#1000 → done; #717 fechar; Rejected drenado).
 9. **`C:\dev` (checkout velho + worktrees) = CONGELADO** como arquivo morto. Deletar só depois de 1-2 releases saírem do mundo novo, com go do PO. A memória _voaz idem — é onde os antepassados moram.
+
+---
+
+## 9. MÁQUINA COMPARTILHADA — runtime (v1.4)
+
+Os 11 papéis rodam **na mesma máquina do PO**. Tela, portas e processos são recurso comum.
+
+1. **Ver a fatia rodando = navegador, nunca janela nativa.** Todo papel tem dois navegadores: o **embutido do Claude** (`mcp__Claude_Browser__*`: `preview_start` no vite da própria worktree, `read_page`, `screenshot`, console/network) e o **Chrome da máquina, integrado** (`mcp__claude-in-chrome__*`: `navigate`, `screenshot`, `read_page`). Sobe-se **`pnpm dev` (vite)**, não `pnpm tauri dev` — a janela nativa abre **na tela do PO, do nada**. Tauri só quando o card exige IPC/arquivo local: avisar na #133 **antes**, fechar **depois**.
+2. **QA visual usa os dois antes de declarar "sem pixel".** Embutido: DOM sempre, pixel com o pane visível. Chrome integrado: pixel real sem depender do pane (limite: sem IPC Tauri — mock, sem arquivo local; `localhost:<porta>` alcançável). Screenshot real de qualquer um + classes conferidas no código = evidência visual válida (mandamento 7).
+3. **Higiene: o que sobe, derruba no fim do tick** — vite/tauri/preview, abas, capturadores. **Porta 1420 é de todos:** ocupada → **não matar processo de companheiro**; subir em outra (`--port`) e dizer na #133 qual. Terminou o teste = servidor parado, aba fechada, porta livre. Deixar rodando = consumo e bloqueio silencioso pros outros.
 
 *Assim está escrito. Vá, e não peque mais.* 🕊️

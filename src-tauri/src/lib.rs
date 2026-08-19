@@ -1816,25 +1816,41 @@ fn log_frontend_error(msg: String) {
     log::error!("[frontend] {msg}");
 }
 
-// --- Telemetria (#388, S2): TelemetryPolicy Rust-owned. Comandos sync,
-// fire-and-forget (como o log_frontend_error). A telemetria nunca deve quebrar o
-// app, então tudo é best-effort. Sem rede antes do opt-in + transporte (S1).
+// --- Telemetria (#388, S2): TelemetryPolicy Rust-owned. Fire-and-forget: a
+// telemetria nunca deve quebrar o app, então tudo é best-effort. Sem rede antes
+// do opt-in + transporte (S1).
+//
+// #1238: os comandos eram `fn` SÍNCRONA e o caminho por baixo gravava em disco
+// (serde + DPAPI + `fs::write`) na thread do IPC, segurando o Mutex, a CADA
+// evento. Agora: `track` não toca disco (o worker de persistência coalesce), e
+// consent/revoke — que precisam mesmo gravar — saem da thread do IPC via
+// `spawn_blocking` (padrão do #834).
 #[tauri::command]
-fn telemetry_track(state: State<'_, telemetry::TelemetryState>, envelope: telemetry::EnvelopeEntrada) {
+async fn telemetry_track(
+    state: State<'_, telemetry::TelemetryState>,
+    envelope: telemetry::EnvelopeEntrada,
+) -> Result<(), ()> {
+    // Só memória: policy + push na fila + marcar sujo. Não vai para o pool
+    // porque não há nada de bloqueante para tirar da thread.
     state.track(envelope);
+    Ok(())
 }
 
 #[tauri::command]
-fn telemetry_set_consent(
+async fn telemetry_set_consent(
     state: State<'_, telemetry::TelemetryState>,
     consent: telemetry::Consentimento,
-) {
-    state.definir_consent(consent);
+) -> Result<(), ()> {
+    let estado = (*state).clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || estado.definir_consent(consent)).await;
+    Ok(())
 }
 
 #[tauri::command]
-fn telemetry_revoke(state: State<'_, telemetry::TelemetryState>) {
-    state.revogar();
+async fn telemetry_revoke(state: State<'_, telemetry::TelemetryState>) -> Result<(), ()> {
+    let estado = (*state).clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || estado.revogar()).await;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1845,10 +1861,12 @@ fn telemetry_status(state: State<'_, telemetry::TelemetryState>) -> telemetry::S
 /// Inspetor DEV (#389): dump dos envelopes já na fila (scrubbed). Retorna vazio
 /// em release — o front só chama sob `import.meta.env.DEV`.
 #[tauri::command]
-fn telemetry_debug_dump(
+async fn telemetry_debug_dump(
     state: State<'_, telemetry::TelemetryState>,
-) -> Vec<telemetry::EnvelopeCarimbado> {
-    state.debug_dump()
+) -> Result<Vec<telemetry::EnvelopeCarimbado>, ()> {
+    // #1238 (item de DoD): conferido — `debug_dump` NÃO toca disco. Lê a fila
+    // sob o lock e clona; em release devolve vazio antes mesmo de travar.
+    Ok(state.debug_dump())
 }
 
 /// #1104 / fecha TODO(#687): URL de PROD do signaling Remote (S0). O front (WS em
@@ -2310,8 +2328,17 @@ pub fn run() {
             fs_explorer::fs_watch,
             fs_explorer::fs_unwatch,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, evento| {
+            // #1238: `track` deixou de gravar a cada evento (o worker de
+            // persistência coalesce), então o que caiu dentro da janela de
+            // debounce ainda não está no disco. Ao sair, drena — senão o ganho
+            // de IO viraria perda de fila.
+            if let tauri::RunEvent::Exit = evento {
+                app.state::<telemetry::TelemetryState>().flush_persistencia();
+            }
+        });
 }
 
 #[cfg(test)]
@@ -2427,5 +2454,182 @@ mod tests {
         let v2 = remote_signaling_endpoint_v2();
         assert!(!v2.contains(".example"));
         assert_eq!(v2, derivar_signaling_endpoint_v2(&remote_signaling_endpoint()));
+    }
+}
+
+/// #1257 (P0/SEGURANÇA) — a guarda de COMPORTAMENTO do funil de fronteira de conta.
+///
+/// Por que este módulo existe: o card foi reprovado pela QA-A com a prova de que
+/// o invariante NÃO era vigiado. O que havia era um tripwire de texto-fonte no
+/// front (`src/store/session-leak-1257-contract.test.ts`, `readFileSync` +
+/// regex) — ele assevera a FORMA do código, não o comportamento. Mutando
+/// `limpar_sessao_conta` para não limpar o token, o gate inteiro seguia verde:
+/// `cargo test` 270/270 e `pnpm test` 458/458. O #555 já tinha regredido
+/// exatamente assim, e o PO descobriu lendo e-mail de outra conta em PRODUÇÃO.
+/// Aqui a asserção é sobre o efeito observável, na camada onde o token vive.
+///
+/// **Isolamento (canon §9 — a máquina é do PO):** o funil chama `revoke()`, que
+/// apaga `%LOCALAPPDATA%\GALAXIE\sessao.bin` — o arquivo da sessão REAL de quem
+/// roda o teste. Sem isolar, rodar a suíte deslogaria o PO da própria máquina.
+/// Por isso todo teste daqui redireciona `LOCALAPPDATA` para um diretório
+/// temporário e o restaura no fim. Como a variável é do processo, os testes são
+/// serializados entre si por um mutex — nenhum outro teste do crate lê
+/// `LOCALAPPDATA` (o de `remote_identity` isola o próprio diretório de propósito).
+#[cfg(test)]
+mod tests_vazamento_sessao_1257 {
+    use super::*;
+    use auth::{AccountKind, Capability, OrgStatus, Provider, Tokens};
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    /// Serializa os testes que mexem em `LOCALAPPDATA` (a variável é do processo).
+    fn trava_ambiente() -> MutexGuard<'static, ()> {
+        static TRAVA: OnceLock<Mutex<()>> = OnceLock::new();
+        TRAVA
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Aponta `LOCALAPPDATA` para um temp exclusivo do teste e restaura no drop
+    /// (inclusive se o teste entrar em pânico).
+    struct AppDataIsolado {
+        anterior: Option<String>,
+        dir: std::path::PathBuf,
+    }
+
+    impl AppDataIsolado {
+        fn novo(nome: &str) -> Self {
+            let anterior = std::env::var("LOCALAPPDATA").ok();
+            let dir = std::env::temp_dir().join(format!("galaxie-1257-{nome}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("criar temp de teste");
+            std::env::set_var("LOCALAPPDATA", &dir);
+            Self { anterior, dir }
+        }
+
+        /// O caminho que `auth::caminho_sessao` / `estado::caminho_arquivo` derivam.
+        fn arquivo(&self, nome: &str) -> std::path::PathBuf {
+            self.dir.join("GALAXIE").join(nome)
+        }
+    }
+
+    impl Drop for AppDataIsolado {
+        fn drop(&mut self) {
+            match &self.anterior {
+                Some(v) => std::env::set_var("LOCALAPPDATA", v),
+                None => std::env::remove_var("LOCALAPPDATA"),
+            }
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// Store da "conta anterior", com token válido por muito tempo — assim
+    /// `access_token` devolve o token SEM tentar refresh (nenhuma rede no teste).
+    fn store_da_conta_anterior(email: &str) -> Store {
+        let expira_longe = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+            + 86_400;
+        Arc::new(TokenStore {
+            inner: Mutex::new(Some(Tokens {
+                access_token: "token-da-conta-ANTERIOR".to_string(),
+                refresh_token: Some("refresh-da-conta-ANTERIOR".to_string()),
+                expires_at: expira_longe,
+                account: Account {
+                    display_name: "Conta Anterior".to_string(),
+                    email: email.to_string(),
+                    initials: "CA".to_string(),
+                    photo: None,
+                    organizacao: Some("Empresa Anterior".to_string()),
+                    provider: Provider::Microsoft,
+                    account_kind: AccountKind::Work,
+                    org_status: OrgStatus::Contracted,
+                    domain: Some("empresa.com".to_string()),
+                    tenant_id: Some("tenant-anterior".to_string()),
+                    capabilities: vec![Capability::Identity],
+                },
+                tenant: "tenant-anterior".to_string(),
+                scopes: String::new(),
+            })),
+        })
+    }
+
+    /// DoD item 3, verbatim: *"após troca de conta, uma leitura de mailbox da
+    /// conta anterior falha/retorna vazio, não a caixa real"*.
+    ///
+    /// `graph::access_token` é o gargalo por onde TODA leitura do Graph passa —
+    /// sem token, nenhuma caixa da conta anterior é lida. Antes do funil ele
+    /// entrega; depois, tem que falhar.
+    #[test]
+    fn apos_o_funil_nenhuma_leitura_da_conta_anterior_consegue_token() {
+        let _serial = trava_ambiente();
+        let _appdata = AppDataIsolado::novo("leitura");
+
+        let store = store_da_conta_anterior("anterior@empresa.com");
+        estado::salvar_identidade("Conta Anterior", "CA");
+
+        // Pré-condição: a conta anterior está VIVA (senão o teste passaria por
+        // vacuidade e não provaria nada).
+        assert_eq!(
+            graph::access_token(&store).as_deref(),
+            Ok("token-da-conta-ANTERIOR"),
+            "pré-condição falhou: a conta anterior deveria estar autenticada antes do funil",
+        );
+        assert!(
+            estado::ler_identidade().is_some(),
+            "pré-condição falhou: identidade da conta anterior deveria estar em cache",
+        );
+
+        limpar_sessao_conta(&store).expect("funil de fronteira de conta não pode falhar");
+
+        // O invariante do P0: a leitura da conta anterior não acontece mais.
+        assert_eq!(
+            graph::access_token(&store),
+            Err("nao autenticado".to_string()),
+            "VAZAMENTO (#1257): o token da conta anterior sobreviveu ao funil — o Bridge serviria a caixa dela sob a sessão da conta nova",
+        );
+        assert!(
+            estado::ler_identidade().is_none(),
+            "VAZAMENTO (#1257): a identidade em cache da conta anterior sobreviveu ao funil",
+        );
+    }
+
+    /// O vetor que produziu o P0 em produção: o `sessao.bin` sobrevivia à troca e
+    /// o `restore_session` do boot REHIDRATAVA a conta anterior — o app abria já
+    /// logado na caixa errada. Aqui o boot é exercitado de verdade
+    /// (`auth::restaurar`), não só a existência do arquivo.
+    ///
+    /// `#[cfg(windows)]` porque `salvar_sessao` cifra com DPAPI; fora do Windows
+    /// `dpapi::cifrar` devolve `None` (fail-closed, #1057) e nada é gravado — o
+    /// teste ficaria sem pré-condição. O `cargo test` do app roda em
+    /// `windows-latest` no CI, então a guarda vale onde o gate roda.
+    #[cfg(windows)]
+    #[test]
+    fn apos_o_funil_o_boot_nao_rehidrata_a_conta_anterior_do_disco() {
+        let _serial = trava_ambiente();
+        let appdata = AppDataIsolado::novo("boot");
+
+        let store = store_da_conta_anterior("anterior@empresa.com");
+        auth::salvar_sessao(Provider::Microsoft, "tenant-anterior", "refresh-da-conta-ANTERIOR");
+
+        // Pré-condição: existe sessão persistida — é o que o boot leria.
+        let sessao = appdata.arquivo("sessao.bin");
+        assert!(
+            sessao.exists(),
+            "pré-condição falhou: sessao.bin deveria existir antes do funil (em {})",
+            sessao.display(),
+        );
+
+        limpar_sessao_conta(&store).expect("funil de fronteira de conta não pode falhar");
+
+        assert!(
+            !sessao.exists(),
+            "VAZAMENTO (#1257): o sessao.bin da conta anterior sobreviveu ao funil — o próximo restore_session rehidrataria a caixa dela",
+        );
+        assert!(
+            auth::restaurar().is_err(),
+            "VAZAMENTO (#1257): o boot ainda consegue restaurar a sessão da conta anterior",
+        );
     }
 }

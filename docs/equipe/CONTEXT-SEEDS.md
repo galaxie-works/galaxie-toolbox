@@ -23,7 +23,7 @@ v1.0 · 2026-08-18 · No cutover, o Hiparco fatia em `<Nome>Context.md` na memó
 
 ## Castor / Pollux / Mizar / AlcorContext (Devs)
 - **Raia vazia — big-bang.** Aguardo primeiro despacho do `Polaris` (não pego card sozinho; livre = pingo na #133).
-- Convenções: worktree `C:\dev\gt-<meunome>-<issue>` off pre-prod · core.autocrlf=true + conferir `git diff --cached` (EOL LF) · pnpm · gate local verde antes de In review · commit com `-c user.name` · PR `Closes #US` (ou `Ref` em fatia).
+- Convenções: worktree `G:\galaxie_development\wt\<meunome>-<issue>` off pre-prod (canon §8.2; o path antigo `C:\dev\gt-…` está congelado) · core.autocrlf=true + conferir `git diff --cached` (EOL LF) · pnpm · gate local verde antes de In review · commit com `-c user.name` · PR `Closes #US` (ou `Ref` em fatia).
 - (BE) OPENSSL_DIR do PostgreSQL 16 + OPENSSL_NO_VENDOR=1 só quando compilar str0m de fato; default é openssl-free.
 
 ## LumenContext (QA-A)
@@ -33,7 +33,7 @@ v1.0 · 2026-08-18 · No cutover, o Hiparco fatia em `<Nome>Context.md` na memó
 - Casos-lição: #1067 (rejeitei manifesto parcial 2×, ambas certas) — o padrão é reproduzir o caminho adversarial do AC, não re-rodar o teste do autor.
 
 ## IrisContext (QA-V)
-- Ferramentas e limites: `preview_start http://localhost:1420` fora do Tauri = dados MOCK (loga qualquer email); `read_page` funciona headless, `screenshot` só com pane visível; Chrome do Wagner (claude-in-chrome) liberado mas NÃO alcança arquivo local (sem IPC Tauri).
+- Ferramentas e limites: `preview_start http://localhost:1420` fora do Tauri = dados MOCK (loga qualquer email); `read_page` funciona headless, `screenshot` do embutido só com pane visível → **usar o Chrome da máquina (`mcp__claude-in-chrome__*`) pra pixel sem pane**; ele não alcança arquivo local (sem IPC Tauri), mas o app em localhost:1420 sim.
 - Regra de ouro: visual = screenshot real + classes conferidas NO CÓDIGO (padrão-ouro: FolderSidebar do Bridge / `SidebarNavItem`). Jornada completa: atalho precisa entrada E saída (rejeição #968).
 - Primeiro alvo previsível: #1258+#1264 (modal de update — copy cósmica + loop do updater) quando integrarem.
 

@@ -11,23 +11,30 @@ import { useState, type ReactNode } from "react";
 
 import { IdiomaProvider } from "@/lib/idioma";
 import type { Pessoa } from "@/lib/types";
+import * as api from "@/lib/api";
+import * as fotos from "@/lib/fotos";
 
 // O Graph devolve um contato "por relevância" pra QUALQUER query — inclusive
 // enquanto se digita um endereço externo. É o gatilho do auto-select do Base UI.
-// Tipagem via implementação / cast (sem type-arg em `vi.fn`/`importOriginal`)
-// pra não depender da assinatura genérica do vitest entre versões.
-const crPessoasMock = vi.fn(async (_q: string): Promise<Pessoa[]> => []);
-vi.mock("@/lib/api", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/api");
-  return { ...actual, crPessoas: (q: string) => crPessoasMock(q) };
-});
-vi.mock("@/lib/fotos", async (importOriginal) => {
-  const actual = (await importOriginal()) as typeof import("@/lib/fotos");
-  return {
-    ...actual,
-    useFotos: () => ({ getFoto: () => undefined, pedirFotos: () => {} }),
-  };
-});
+//
+// ⚠️ #1267 — NÃO troque isto por `vi.mock("@/lib/api", async (importOriginal) => …)`.
+// No browser-mode aquele padrão PENDURA o arquivo pra sempre (>2h no CI; foi o P0
+// que travava toda release). É deadlock de CARREGAMENTO de módulo: este arquivo
+// importa `campo-pessoas`, que importa o `@/lib/api` MOCKADO; resolver o mock exige
+// rodar a factory, que fica esperando o `importOriginal()` do MESMO módulo que já
+// está em resolução. Nada roda — nenhuma ação chega ao Playwright, o navegador fica
+// ocioso (0% de CPU) e o `testTimeout` NÃO dispara, porque o timer dele também vive
+// dentro do browser. Medido: com `importOriginal` >5 min sem sair do lugar; com
+// `{ spy: true }` 2,4 s. O irmão happy-dom (`campo-pessoas.component.test.tsx`) pode
+// usar `importOriginal` — lá o module runner do vitest resolve; só o browser trava.
+// `{ spy: true }` mantém os demais exports REAIS (o grafo do módulo importa o
+// `@/lib/api` inteiro) e deixa sobrescrever só a busca de pessoas.
+vi.mock("@/lib/api", { spy: true });
+// Fotos: no-op (sem rede/cache no teste). Aqui também é `{ spy: true }`, e pelo
+// mesmo motivo do `@/lib/api`: factory TOTAL quebra o import (o grafo puxa outros
+// exports, ex. `limparFotos`) e `importOriginal` pendura. O no-op vem do
+// `mockReturnValue` no `beforeEach`.
+vi.mock("@/lib/fotos", { spy: true });
 vi.mock("@/components/people/person-hover-card", () => ({
   PersonHoverCard: ({ children }: { children: ReactNode }) => children,
 }));
@@ -57,8 +64,12 @@ function Harness({ onChange }: { onChange?: (v: string[]) => void }) {
 }
 
 beforeEach(() => {
-  crPessoasMock.mockReset();
-  crPessoasMock.mockResolvedValue([CONTATO]);
+  vi.mocked(api.crPessoas).mockReset();
+  vi.mocked(api.crPessoas).mockResolvedValue([CONTATO]);
+  vi.mocked(fotos.useFotos).mockReturnValue({
+    getFoto: () => undefined,
+    pedirFotos: () => {},
+  });
 });
 
 describe("CampoPessoas (navegador real) — destinatário externo #786", () => {
