@@ -73,3 +73,73 @@ export function deveOferecerAtualizacao(
   if (!instalada?.trim()) return false;
   return comparaVersoes(disponivel, instalada) > 0;
 }
+
+/**
+ * Formata a data do feed para o BADGE do modal (#1258).
+ *
+ * O bug (achado da `Iris`): `atualizacao.tsx` fazia `novo.date?.split(" ")[0]`,
+ * que so funcionaria em `"2026-08-19 06:11:36"`. O feed REAL publica
+ * `pub_date: "2026-08-19T06:11:36Z"` (conferido no `latest.json` da v0.46.0),
+ * sem espaco — o split devolvia a string inteira e o usuario via
+ * `Versao 0.46.0 (2026-08-19T06:11:36Z)`, um timestamp de maquina na cara dele.
+ *
+ * Apresentacao escolhida: data NUMERICA na ordem do idioma (pt `19/08/2026`,
+ * en `08/19/2026`). O badge e estreito, entao mes por extenso ("19 de ago. de
+ * 2026") ocupa demais; e ano com 4 digitos porque `dateStyle:"short"` em en-US
+ * vira `8/19/26`, que envelhece mal num aviso de versao.
+ *
+ * ⚠️ FUSO — as duas metades da regra, e elas sao diferentes de proposito:
+ *  - String com HORA (instante real): converte para o fuso LOCAL. Em `-03`,
+ *    `2026-08-19T01:00:00Z` e mesmo dia **18** para quem le — mostrar 19 seria
+ *    mentir sobre o relogio do usuario.
+ *  - String SO com data (`2026-08-19`, sem hora): renderiza LITERAL, sem passar
+ *    por `Date`. `new Date("2026-08-19")` e meia-noite UTC e voltaria 18/08 em
+ *    fuso negativo — a armadilha classica, aqui evitada em vez de "corrigida".
+ *
+ * @param bruto    `update.date` do plugin (ISO, forma com espaco, ou ausente).
+ * @param idioma   locale do app (`pt`/`en`) — define a ORDEM dos campos.
+ * @param timeZone fuso explicito; so os testes passam (produção usa o da maquina).
+ * @returns data formatada, ou `""` quando nao da para ler — o badge entao mostra
+ *          so a versao (o consumidor ja faz `?? ""` + `.trim()`).
+ */
+export function formatarDataFeed(
+  bruto: string | undefined | null,
+  idioma: string,
+  timeZone?: string
+): string {
+  const s = bruto?.trim();
+  if (!s) return "";
+
+  const formatar = (d: Date, tz?: string) =>
+    new Intl.DateTimeFormat(idioma, {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      ...(tz ? { timeZone: tz } : {}),
+    }).format(d);
+
+  // Caso 1 — SO data: literal, sem conversao de fuso (ver aviso acima).
+  const soData = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (soData) {
+    const [, a, m, d] = soData;
+    // UTC + timeZone UTC: os campos saem exatamente como vieram, e o Intl
+    // continua decidindo a ORDEM pelo idioma.
+    return formatar(new Date(Date.UTC(+a, +m - 1, +d)), "UTC");
+  }
+
+  // Caso 2 — instante completo (ISO, o formato real do feed): converte pro local.
+  const dt = new Date(s);
+  if (!Number.isNaN(dt.getTime())) return formatar(dt, timeZone);
+
+  // Caso 3 — forma com espaco que o `Date` nao parseia (ex.: o RFC3339 folgado
+  // `2026-08-19 06:11:36.0 +00:00:00` que o Tauri ja emitiu). Cai no prefixo de
+  // data, que e literal — mesma regra do caso 1.
+  const prefixo = /^(\d{4})-(\d{2})-(\d{2})\b/.exec(s);
+  if (prefixo) {
+    const [, a, m, d] = prefixo;
+    return formatar(new Date(Date.UTC(+a, +m - 1, +d)), "UTC");
+  }
+
+  // Ilegivel: melhor badge so com a versao do que lixo na cara do usuario.
+  return "";
+}
