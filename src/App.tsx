@@ -73,7 +73,7 @@ import {
   SidebarProvider,
 } from "@/components/animate-ui/components/radix/sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { TELAS, type Tela } from "@/lib/navegacao";
+import { TELAS, telaInicial, type Tela } from "@/lib/navegacao";
 import {
   useAppStore,
   prepararConfiguracaoNuvem,
@@ -178,7 +178,10 @@ function AppInner() {
   // logar/restaurar; o Bridge segue keep-alive (montado/escondido) pra voltar
   // instantâneo.
   // #718 (SH0): o app abre no Navigator (era Atoms) — estado inicial do shell.
-  const [tela, setTela] = useState<Tela>("navegador");
+  // #1299: quem decide é `telaInicial()` (funil único em `navegacao.ts`), que em
+  // DEV honra `?tela=<id>` pra QA/script alcançarem telas ocultas por flag. Aqui
+  // não se lê `location.search` — de propósito.
+  const [tela, setTela] = useState<Tela>(telaInicial);
   // #498 rework: quando o composer pede a config de assinaturas (bumpa o nonce),
   // troca pra tela de Settings (a ação de store já selecionou Bridge > Envio).
   useEffect(() => {
