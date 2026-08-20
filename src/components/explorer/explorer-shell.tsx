@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import {
   Cloud,
   House,
@@ -48,7 +55,8 @@ import { HomeView } from "./home-view";
 import { RootView, type ItemRaiz } from "./root-view";
 import { iconeDaPasta } from "./home-view-icones";
 import { rotuloDrive } from "./rotulo-drive";
-import { ArvoreArquivos, RailArvore } from "./arvore";
+import { ArvoreArquivos, RailArvore, type MenuArvore } from "./arvore";
+import { useAcoesPublicadas } from "./acoes-publicadas";
 import { larguraIdealPct, temLayoutSalvo } from "@/lib/largura-painel";
 import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
@@ -70,7 +78,12 @@ import {
   nomeBase,
   pathPai,
 } from "./caminho";
-import type { Clipboard, OperacaoClipboard } from "./menu-arquivo";
+import {
+  rotulosMenuDe,
+  type AcoesMenu,
+  type Clipboard,
+  type OperacaoClipboard,
+} from "./menu-arquivo";
 import {
   CHAVE_OCULTOS_ACESSO_RAPIDO,
   CHAVE_PINS_ACESSO_RAPIDO,
@@ -233,6 +246,11 @@ export function ExplorerShell({
   // pra sobreviver à navegação entre pastas.
   const [clipboard, setClipboard] = useState<Clipboard | null>(null);
 
+  // #1386: os handlers do content-pane, publicados pra fora. O menu de contexto
+  // da ÁRVORE monta com ESTES — o AC pede reuso, não um segundo menu.
+  const { obter: obterAcoes, publicar: publicarAcoes, agendar } =
+    useAcoesPublicadas();
+
   // #871 (fatia 2b/2c): busca recursiva. `null` = sem busca (mostra a
   // lista/DrivesView normal). Na PASTA (fatia 2b) = uma raiz; no This PC (fatia 2c)
   // = fan-out sobre TODOS os drives. Os handles vivos ficam na ref (LISTA — um por
@@ -260,6 +278,8 @@ export function ExplorerShell({
   const [conflito, setConflito] = useState<ConflitoPendente | null>(null);
   const [watcherNonce, setWatcherNonce] = useState(0);
   // t via ref → os toasts dos produtores saem no idioma atual sem re-render.
+  // #1386: os MESMOS rótulos do menu do conteúdo — uma fonte só.
+  const rotulosMenu = useMemo(() => rotulosMenuDe(t.arquivos), [t.arquivos]);
   const tRef = useRef(t);
   tRef.current = t;
 
@@ -365,6 +385,20 @@ export function ExplorerShell({
   }, [nav.currentPath]);
 
   const navegar = (path: string) => dispatch({ type: "navegar", path });
+
+  // #1386: navega até `dir` e só ENTÃO roda a ação. Se o painel JÁ está lá e já
+  // leu a pasta, o `agendar` roda na hora e devolve `true` — navegar pro mesmo
+  // caminho não republicaria nada e a pendência ficaria pendurada pra sempre.
+  const navegarEAgir = (dir: string, agir: (acoes: AcoesMenu) => void) => {
+    if (!agendar(dir, agir)) navegar(dir);
+  };
+
+  const menuArvore: MenuArvore = {
+    obterAcoes: () => obterAcoes()?.acoes ?? null,
+    rotulos: rotulosMenu,
+    clipboard,
+    navegarEAgir,
+  };
 
   // #869: fixa/desafixa a pasta no Acesso rápido (toggle pelo estado atual do
   // pin). Guardamos o `name` junto pra rotular o nó sem reler o disco.
@@ -766,6 +800,7 @@ export function ExplorerShell({
                       homePath={homePath}
                       currentPath={nav.currentPath}
                       onNavegar={navegar}
+                      menu={menuArvore}
                     />
                   )}
                 </div>
@@ -874,6 +909,8 @@ export function ExplorerShell({
                 onSelecaoChange={setSelecionados}
                 clipboard={clipboard}
                 onClipboardChange={setClipboard}
+                // #1386: publica os handlers pro menu da árvore consumir.
+                onAcoesProntas={publicarAcoes}
                 onTransferir={iniciarTransferencia}
                 refreshSignal={watcherNonce}
                 mostrarInspector={mostrarInspector}
