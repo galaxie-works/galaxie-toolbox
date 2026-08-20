@@ -14,10 +14,12 @@ import { ehImagem, iconeParaEntry } from "./icones-arquivo";
 import { formatarDataArquivo, rotuloTipo } from "./format";
 import { atributosAtivos, type AtributoArquivo } from "./filtro";
 import { solicitarThumb } from "./thumb-fila";
+import { inTauri } from "@/lib/tauri";
 
 // Mesmo gate do painel de conteúdo (S2): thumbnails só existem dentro do Tauri;
 // no browser/mock degrada pro ícone grande.
-const TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// #1033: ponto único em `@/lib/tauri`; constante no import, como era.
+const TAURI = inTauri();
 
 /**
  * #681: InspectorPane — o 3º painel (direita) do Explorer, dirigido pela seleção

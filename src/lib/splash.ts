@@ -1,4 +1,5 @@
-/**
+
+import { inTauri } from "./tauri.ts";/**
  * Coordenação do splash de boot (#164) entre as duas janelas Tauri.
  *
  * A janela `splashscreen` (círculo #171A30) abre visível já no launch; a janela
@@ -32,8 +33,8 @@ export const LONGSTOP_SPLASH_MS = 20_000;
 
 let revelado = false;
 
-const emTauri = () =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// #1033: ponto único em `./tauri.ts`. Continua função (runtime).
+const emTauri = inTauri;
 
 /**
  * Mostra a janela principal e fecha a splash circular. Idempotente de propósito:
