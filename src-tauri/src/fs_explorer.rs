@@ -2220,8 +2220,41 @@ fn montar_plano_undo(entry: &OperationJournalEntry) -> UndoPlan {
 /// Executa o undo (re-classificando cada item na hora = anti-TOCTOU). Cópia:
 /// junta os seguros e manda em batch pra Lixeira. Move: volta `to`→`from`
 /// (recria o pai do retorno se sumiu). Depois limpa dirs vazios criados.
+/// #1282 — mantido com a assinatura antiga (8 chamadores em teste dependem
+/// dela). O nucleo observavel esta em [`executar_undo_observado`].
 fn executar_undo(entry: &OperationJournalEntry) -> UndoReport {
+    executar_undo_observado(entry, &mut |_, _, _| {}).0
+}
+
+/// #1282 — o `fs_undo_op` era MUDO: rodava e devolvia o relatorio sem emitir
+/// `fs-op-progress` nem `fs-change` (medicao do `castor`). Resultado pro usuario:
+/// undo sem progresso na central, sem marca "desfeito" visivel e sem pasta
+/// recarregando.
+///
+/// O nucleo recebe um OBSERVADOR em vez de um `AppHandle`: quem emite evento e a
+/// borda (`fs_undo_op`). Assim o progresso e os diretorios afetados sao
+/// testaveis sem runtime do Tauri — e os 8 testes que ja existiam continuam
+/// chamando `executar_undo` sem mudanca.
+///
+/// Devolve tambem os diretorios AFETADOS, que a borda usa pro `fs-change`:
+/// - move: o pai do `from` (recebe de volta) e o pai do `to` (perde);
+/// - copy: o pai do `to` (foi pra Lixeira);
+/// - mais os pais dos diretorios vazios removidos.
+fn executar_undo_observado(
+    entry: &OperationJournalEntry,
+    on_item: &mut dyn FnMut(usize, usize, &str),
+) -> (UndoReport, Vec<String>) {
     let eh_move = entry.kind == "move";
+    let total = entry.items.iter().filter(|i| !i.is_dir).count();
+    let mut feitos = 0usize;
+    let mut afetados: Vec<String> = Vec::new();
+    let mut marcar = |p: &str, afetados: &mut Vec<String>| {
+        if let Some(pai) = Path::new(p).parent().map(|d| d.to_string_lossy().into_owned()) {
+            if !pai.is_empty() && !afetados.iter().any(|d| d.eq_ignore_ascii_case(&pai)) {
+                afetados.push(pai);
+            }
+        }
+    };
     let (mut executados, mut pulados, mut nao_reversiveis) = (0usize, 0usize, 0usize);
     let mut erros = Vec::new();
     let mut trash_alvos: Vec<String> = Vec::new();
@@ -2229,39 +2262,52 @@ fn executar_undo(entry: &OperationJournalEntry) -> UndoReport {
     for it in entry.items.iter().filter(|i| !i.is_dir) {
         // re-verifica IMEDIATAMENTE antes de agir (§8 anti-TOCTOU).
         let (estado, _motivo) = classificar_item(it, eh_move);
-        match estado.as_str() {
-            "naoReversivel" => {
-                nao_reversiveis += 1;
-                continue;
-            }
-            "pulado" => {
-                pulados += 1;
-                continue;
-            }
-            _ => {}
+        // #1282: SEM `continue` aqui. O `continue` pulava o reporte de progresso
+        // no fim do laco, entao item pulado/nao-reversivel travava a barra — foi
+        // o proprio teste `undo_conta_no_progresso_...` que pegou isto em mim.
+        let seguro = !matches!(estado.as_str(), "naoReversivel" | "pulado");
+        if estado == "naoReversivel" {
+            nao_reversiveis += 1;
+        } else if estado == "pulado" {
+            pulados += 1;
         }
-        if eh_move {
+        if seguro && eh_move {
             // recria o diretório-pai do retorno (a op removeu a origem).
             if let Some(pai) = Path::new(&it.from).parent() {
                 let _ = std::fs::create_dir_all(com_long_path(pai));
             }
             match mover(&it.to, &it.from) {
-                Ok(()) => executados += 1,
+                Ok(()) => {
+                    executados += 1;
+                    // origem recebe de volta; destino perde.
+                    marcar(&it.from, &mut afetados);
+                    marcar(&it.to, &mut afetados);
+                }
                 Err(e) => {
                     log::error!("undo move {} → {}: {e}", it.to, it.from);
                     erros.push(it.to.clone());
                 }
             }
-        } else {
+        } else if seguro {
             trash_alvos.push(it.to.clone());
         }
+        // #1282: progresso por item processado — e o que da o "em andamento"
+        // (AC1). Emitido para TODO item que saiu da fila, inclusive pulado e
+        // nao-reversivel: barra que so anda no sucesso trava e mente.
+        feitos += 1;
+        on_item(feitos, total, &it.to);
     }
 
     // Cópia: os criados vão pra Lixeira em batch (undo revogável — §8).
     if !eh_move && !trash_alvos.is_empty() {
         let n = trash_alvos.len();
         match para_lixeira(&trash_alvos) {
-            Ok(()) => executados += n,
+            Ok(()) => {
+                executados += n;
+                for alvo in &trash_alvos {
+                    marcar(alvo, &mut afetados);
+                }
+            }
             Err(e) => {
                 log::error!("undo trash ({n} alvo(s)): {e}");
                 erros.push(format!("lixeira: {e}"));
@@ -2275,19 +2321,22 @@ fn executar_undo(entry: &OperationJournalEntry) -> UndoReport {
     for d in dirs {
         let p = com_long_path(Path::new(d));
         let vazio = std::fs::read_dir(&p).map(|mut r| r.next().is_none()).unwrap_or(false);
-        if vazio {
-            let _ = std::fs::remove_dir(&p);
+        if vazio && std::fs::remove_dir(&p).is_ok() {
+            marcar(d, &mut afetados);
         }
     }
 
-    UndoReport {
-        op_id: entry.op_id,
-        kind: entry.kind.clone(),
-        executados,
-        pulados,
-        nao_reversiveis,
-        erros,
-    }
+    (
+        UndoReport {
+            op_id: entry.op_id,
+            kind: entry.kind.clone(),
+            executados,
+            pulados,
+            nao_reversiveis,
+            erros,
+        },
+        afetados,
+    )
 }
 
 // ─── Engine turbo de cópia (#680 rework) ─────────────────────────────────────
@@ -4417,7 +4466,72 @@ pub async fn fs_undo_op(op_id: u64, app: AppHandle) -> Result<UndoReport, FsErro
         let Some(entry) = entrada_por_op(&app, op_id) else {
             return Err(FsError::InvalidPath(format!("op {op_id} não está no journal")));
         };
-        let report = executar_undo(&entry);
+
+        // #1282: o undo vira op RASTREADA. Antes ele rodava mudo — sem
+        // `fs-op-progress` (central sem progresso, sem card, sem marca
+        // "desfeito" visivel) e sem `fs-change` (pasta nao recarregava).
+        //
+        // op_id PROPRIO, do mesmo contador de copy/move: reusar o `op_id` da op
+        // original faria o front sobrescrever o card daquela op com o do undo.
+        let undo_op_id = app
+            .state::<ProgressManager>()
+            .proximo_id
+            .fetch_add(1, Ordering::Relaxed);
+        let started_at_ms = agora_ms();
+
+        let app_prog = app.clone();
+        let (report, afetados) = executar_undo_observado(&entry, &mut |feitos, total, atual| {
+            let percent = if total == 0 {
+                100.0
+            } else {
+                (feitos as f64 / total as f64) * 100.0
+            };
+            let _ = app_prog.emit(
+                "fs-op-progress",
+                OpProgress {
+                    op_id: undo_op_id,
+                    processed_bytes: 0,
+                    total_bytes: 0,
+                    percent,
+                    eta_ms: None,
+                    files_total: total as u64,
+                    files_done: feitos as u64,
+                    bytes_per_sec: 0,
+                    verifying: false,
+                    done: false,
+                    canceled: false,
+                    error: None,
+                    op_kind: "undo",
+                    phase: "copying",
+                    status: "running",
+                    current_file: Some(atual.to_string()),
+                    started_at_ms,
+                    completed_at_ms: None,
+                },
+            );
+        });
+
+        // Terminal: o front RETEM a op na fila por este evento (#875).
+        emitir_final(
+            &app,
+            undo_op_id,
+            "undo",
+            started_at_ms,
+            false,
+            report.executados as u64
+                + report.pulados as u64
+                + report.nao_reversiveis as u64,
+            report.executados as u64,
+            None,
+        );
+
+        // `fs-change` por diretorio AFETADO — e a arquitetura de reload do
+        // Explorer (watcher -> nonce -> re-leitura). Sem isto a pasta so
+        // atualiza quando o usuario navega de novo.
+        for dir in &afetados {
+            let _ = app.emit("fs-change", dir);
+        }
+
         remover_entrada_journal(&app, op_id);
         log::info!(
             "fs_undo_op op={op_id}: {} revertido(s), {} pulado(s), {} não-reversível(is), {} erro(s)",
@@ -6512,6 +6626,163 @@ mod tests {
         );
     }
 
+
+    // ── #1282: o undo deixa de ser mudo ──────────────────────────────────────
+    //
+    // Medição do `castor`: `fs_undo_op` rodava sem emitir `fs-op-progress` nem
+    // `fs-change`. Os três sintomas do card (sem progresso na central, sem marca
+    // "desfeito" visível, pasta não recarrega) vinham daí — o FE já estava ligado.
+    //
+    // O núcleo recebe um OBSERVADOR em vez de `AppHandle`, então progresso e
+    // diretórios afetados são testáveis sem runtime do Tauri.
+
+    /// Monta a entrada de journal de um move JÁ efetivado, no mesmo formato dos
+    /// testes de undo que já existiam.
+    fn entrada_undo(kind: &str, itens: Vec<JournalItem>) -> OperationJournalEntry {
+        OperationJournalEntry {
+            op_id: 1282,
+            kind: kind.into(),
+            started_at_ms: 0,
+            ended_at_ms: 1,
+            status: "success".into(),
+            resolucao: None,
+            items: itens,
+            trash_record_ids: Vec::new(),
+            undo_granularidade: String::new(),
+        }
+    }
+
+    #[test]
+    fn undo_reporta_progresso_item_a_item_ate_o_total() {
+        let base = dir_temp("undo-progresso-1282");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        for n in 0..3 {
+            std::fs::write(origem.join(format!("f{n}.txt")), vec![7u8; 4]).unwrap();
+        }
+        let destino = base.join("dst");
+        mover(&origem.to_string_lossy(), &destino.to_string_lossy()).unwrap();
+
+        let itens: Vec<JournalItem> = (0..3)
+            .map(|n| {
+                journal_item(
+                    &origem.join(format!("f{n}.txt")),
+                    &destino.join(format!("f{n}.txt")),
+                    true,
+                )
+            })
+            .collect();
+        let entry = entrada_undo("move", itens);
+
+        let mut vistos: Vec<(usize, usize)> = Vec::new();
+        let (rep, _) = executar_undo_observado(&entry, &mut |feitos, total, _| {
+            vistos.push((feitos, total));
+        });
+
+        assert_eq!(rep.executados, 3);
+        assert_eq!(
+            vistos,
+            vec![(1, 3), (2, 3), (3, 3)],
+            "o progresso tem de andar item a item ate o total — barra que pula \
+             direto pro fim nao e 'em andamento' (AC1 do card)"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// O contador anda mesmo quando o item é pulado/não-reversível. Barra que só
+    /// avança no sucesso TRAVA no meio e mente sobre o que está acontecendo.
+    #[test]
+    fn undo_conta_no_progresso_o_item_que_nao_foi_revertido() {
+        let base = dir_temp("undo-pulado-1282");
+        std::fs::create_dir_all(&base).unwrap();
+        let origem = base.join("o.txt");
+        let destino = base.join("d.txt");
+        std::fs::write(&destino, vec![3u8; 6]).unwrap();
+        // caminho de retorno OCUPADO → o item e "pulado", nao revertido.
+        std::fs::write(&origem, vec![9u8; 6]).unwrap();
+
+        let entry = entrada_undo("move", vec![journal_item(&origem, &destino, true)]);
+
+        let mut chamadas = 0usize;
+        let (rep, _) = executar_undo_observado(&entry, &mut |_, _, _| chamadas += 1);
+
+        assert_eq!(rep.executados, 0, "nada revertido");
+        assert_eq!(rep.pulados, 1);
+        assert_eq!(
+            chamadas, 1,
+            "o item saiu da fila, entao o progresso tem de reporta-lo — senao a \
+             barra trava sem explicacao"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// `fs-change` é a arquitetura de reload do Explorer. O undo de um MOVE mexe
+    /// em DOIS diretórios: a origem recebe de volta, o destino perde.
+    #[test]
+    fn undo_de_move_marca_origem_e_destino_como_afetados() {
+        let base = dir_temp("undo-afetados-move-1282");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        std::fs::write(origem.join("a.txt"), vec![5u8; 12]).unwrap();
+        let destino = base.join("dst");
+        mover(&origem.to_string_lossy(), &destino.to_string_lossy()).unwrap();
+
+        let entry = entrada_undo(
+            "move",
+            vec![journal_item(&origem.join("a.txt"), &destino.join("a.txt"), true)],
+        );
+
+        let (rep, afetados) = executar_undo_observado(&entry, &mut |_, _, _| {});
+        assert_eq!(rep.executados, 1);
+
+        let tem = |p: &std::path::Path| {
+            afetados
+                .iter()
+                .any(|d| d.eq_ignore_ascii_case(&p.to_string_lossy()))
+        };
+        assert!(tem(&origem), "a origem recebe o arquivo de volta");
+        assert!(tem(&destino), "o destino perde o arquivo");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// O conjunto de afetados não pode repetir o mesmo diretório: cada `fs-change`
+    /// vira uma re-leitura de pasta no front.
+    #[test]
+    fn afetados_nao_repetem_o_mesmo_diretorio() {
+        let base = dir_temp("undo-dedupe-1282");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        for n in 0..3 {
+            std::fs::write(origem.join(format!("f{n}.txt")), vec![1u8; 4]).unwrap();
+        }
+        let destino = base.join("dst");
+        mover(&origem.to_string_lossy(), &destino.to_string_lossy()).unwrap();
+
+        let itens: Vec<JournalItem> = (0..3)
+            .map(|n| {
+                journal_item(
+                    &origem.join(format!("f{n}.txt")),
+                    &destino.join(format!("f{n}.txt")),
+                    true,
+                )
+            })
+            .collect();
+
+        let (_, afetados) = executar_undo_observado(&entrada_undo("move", itens), &mut |_, _, _| {});
+
+        let mut ordenados: Vec<String> = afetados.iter().map(|d| d.to_lowercase()).collect();
+        let antes = ordenados.len();
+        ordenados.sort();
+        ordenados.dedup();
+        assert_eq!(
+            ordenados.len(),
+            antes,
+            "3 arquivos nos MESMOS dois diretorios nao podem gerar 6 entradas — \
+             cada uma vira uma re-leitura de pasta no front"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
 }
 
 /// #1288 — o caminho remoto de um drive mapeado (`W:` → `\\server\share\sub`).
@@ -6637,4 +6908,5 @@ fn listar_locais_rede() -> Vec<NetworkLocation> {
 #[cfg(not(windows))]
 fn listar_locais_rede() -> Vec<NetworkLocation> {
     Vec::new()
+
 }
