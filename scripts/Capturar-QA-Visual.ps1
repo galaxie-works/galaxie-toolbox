@@ -237,14 +237,25 @@ $scenarios = @{
     Focus = $null
   }
   "onedrive-my-files" = @{
-    # Cenario alcancavel pela UI: segue pelos passos, sem porta (nao mexo no que
-    # ja funciona — a fatia do #1299 e o destino do cenario com porta `?tela=`).
-    Tela = $null
+    # #1393: os passos assumiam a home ANTIGA. `button "M365 Copilot"` deixou de
+    # existir quando a home virou o Navigator (#718), e o cenario morria no
+    # primeiro clique — parecendo falha de captura.
+    #
+    # O conserto NAO foi reescrever os tres cliques: foi tirar dois deles. A
+    # porta de dev `?tela=<id>` (a mesma que o `astro` usa desde o #1299) leva
+    # direto a tela do OneDrive, e so a ABA continua sendo navegacao de verdade.
+    # Cada clique a menos e um rotulo a menos que pode morrer sem ninguem ver —
+    # e foram exatamente os dois cliques de travessia que envelheceram.
+    #
+    # Medido no dev server em 20/08, nao deduzido do codigo: `?tela=onedrive`
+    # cai na tela com as abas "Online libraries" / "My files" / "Troubleshooting"
+    # e a aba responde por `role=tab`.
+    Tela = "onedrive"
     Steps = @(
-      @{ Args = @("find", "role", "button", "click", "--name", "M365 Copilot") },
-      @{ Args = @("find", "role", "link", "click", "--name", "OneDrive") },
       @{ Args = @("find", "role", "tab", "click", "--name", "My files") }
     )
+    # `usoTitulo` (src/lib/strings.ts) — copy estatica do cabecalho do card de
+    # uso, entao a prontidao NAO depende de dado do Graph ter chegado.
     ReadyText = "OneDrive usage"
     Focus = @{ Role = "button"; Name = "OneDrive usage" }
   }
