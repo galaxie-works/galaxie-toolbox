@@ -70,15 +70,20 @@ const VENDOR = [
  * exportam um Provider e o hook dele juntos — padrão legítimo de contexto, não
  * defeito. Fica congelado; se alguém dividir os arquivos, o número cai.
  *
- * `eslint(no-unused-vars)` está em **1**, e o que sobra é um achado de verdade,
- * não ruído: `navegador.tsx:1185` recebe a prop `onAlternarModoPrivado` e
- * **nunca a chama**, enquanto o `App.tsx:1402` passa um handler real
- * (`setModoPrivado((v) => !v)`). É **fio morto** — o chamador acha que está
- * ligado. Despachado pra `Vega` no #1037; sai daqui quando ligar ou remover.
+ * `eslint(no-unused-vars)` **zerou** no #1037. O que havia era um achado de
+ * verdade, não ruído: o `navegador.tsx` recebia `onAlternarModoPrivado` e nunca
+ * a chamava, enquanto o `App.tsx` passava um handler real — fio morto, com o
+ * chamador achando que estava ligado. Medi antes de remover: o modo privado
+ * continua alcançável por `novaAbaPrivada()`, então o toggle era um SEGUNDO
+ * caminho que ninguém ligou, não a única porta. Removido dos dois lados.
+ *
+ * Fica em 0 de propósito, não some do mapa: chave ausente e chave em zero dizem
+ * coisas diferentes — a primeira é "nunca mediram", a segunda é "medimos e está
+ * limpo", e é a segunda que faz o ratchet reprovar se alguém reintroduzir.
  */
 const BASELINE: Record<string, number> = {
   "react(only-export-components)": 15,
-  "eslint(no-unused-vars)": 1,
+  "eslint(no-unused-vars)": 0,
 };
 
 interface DiagnosticoOxlint {

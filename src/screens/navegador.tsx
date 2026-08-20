@@ -1226,7 +1226,6 @@ export function NavegadorScreen({
   onDispensarSessao,
   onLimparHistorico,
   modoPrivado,
-  onAlternarModoPrivado,
   launcherNonce,
   visivel,
   tabStripSlot,
@@ -1267,7 +1266,6 @@ export function NavegadorScreen({
   onDispensarSessao: () => void;
   onLimparHistorico: (periodo: PeriodoLimpeza) => void;
   modoPrivado: boolean;
-  onAlternarModoPrivado: () => void;
   /** #719 (SH1): o Navigator é o shell keep-alive (sempre montado). `visivel`
    *  = ele é a tela ativa do app; quando false, esconde TODAS as webviews. */
   visivel: boolean;
