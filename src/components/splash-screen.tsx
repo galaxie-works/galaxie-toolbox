@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import splashVideo from "@/assets/splash-animation.mp4";
+import splashVideo from "@/assets/splash-animation.webm";
 import { EVENTO_VIDEO_SPLASH } from "@/lib/splash";
 
 /**
