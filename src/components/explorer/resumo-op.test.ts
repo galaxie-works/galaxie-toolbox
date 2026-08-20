@@ -13,10 +13,14 @@ const R: RotulosResumo = {
   copiadoUm: "Copiado {n} {arq}",
   movidos: "Movidos {n} {arq}",
   movidoUm: "Movido {n} {arq}",
+  desfeitos: "Desfeitos {n} {arq}",
+  desfeitoUm: "Desfeito {n} {arq}",
   canceladoCopia: "Cancelado: cópia de {n} {arq}",
   canceladoMove: "Cancelado: movimentação de {n} {arq}",
+  canceladoUndo: "Cancelado: desfazer de {n} {arq}",
   falhaCopia: "Falha ao copiar {n} {arq}",
   falhaMove: "Falha ao mover {n} {arq}",
+  falhaUndo: "Falha ao desfazer {n} {arq}",
   parcial: "Parcial: {done} de {total} {arq}",
   paraDestino: "→ {destino}",
   arquivoUm: "arquivo",
@@ -26,7 +30,7 @@ const R: RotulosResumo = {
 /** Fixture mínima de OpAtiva terminal. */
 function op(
   campos: {
-    tipo?: "copy" | "move";
+    tipo?: "copy" | "move" | "undo";
     status: string;
     filesTotal?: number;
     filesDone?: number;
@@ -127,6 +131,41 @@ test("error move → 'Falha ao mover N arquivos'", () => {
     R,
   );
   assert.equal(r.titulo, "Falha ao mover 5 arquivos");
+});
+
+// #1282: undo tem participio proprio — antes caia no ramo de "move" (else do
+// binario copy/move) e mentia "Movido". Agora tem o seu.
+test("undo success (plural) → 'Desfeitos N arquivos'", () => {
+  const r = montarResumoOp(
+    op({ tipo: "undo", status: "success", filesTotal: 4, destino: "Downloads" }),
+    R,
+  );
+  assert.equal(r.titulo, "Desfeitos 4 arquivos");
+  assert.equal(r.subtitulo, "→ Downloads");
+});
+
+test("undo success (singular) → 'Desfeito 1 arquivo'", () => {
+  const r = montarResumoOp(
+    op({ tipo: "undo", status: "success", filesTotal: 1 }),
+    R,
+  );
+  assert.equal(r.titulo, "Desfeito 1 arquivo");
+});
+
+test("canceled undo → 'Cancelado: desfazer de N arquivos'", () => {
+  const r = montarResumoOp(
+    op({ tipo: "undo", status: "canceled", filesTotal: 2 }),
+    R,
+  );
+  assert.equal(r.titulo, "Cancelado: desfazer de 2 arquivos");
+});
+
+test("error undo → 'Falha ao desfazer N arquivos'", () => {
+  const r = montarResumoOp(
+    op({ tipo: "undo", status: "error", filesTotal: 5 }),
+    R,
+  );
+  assert.equal(r.titulo, "Falha ao desfazer 5 arquivos");
 });
 
 test("partial → 'Parcial: done de total arquivos'", () => {

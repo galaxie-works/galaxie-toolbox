@@ -9,7 +9,7 @@
 // no canto inferior direito. Reusa Card/Button/Progress/Badge/Collapsible/Spinner
 // + formatBytes/i18n. A velocidade é derivada no shell entre eventos.
 import { useRef, useState } from "react";
-import { AlertCircle, Ban, Check, ChevronDown, Copy, Scissors, X } from "lucide-react";
+import { AlertCircle, Ban, Check, ChevronDown, Copy, Scissors, Undo2, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,14 +23,15 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn, formatBytes } from "@/lib/utils";
 import { preencher, useIdioma } from "@/lib/idioma";
 import type { FsOpProgress } from "@/lib/types";
+import type { TipoOp } from "./tipo-op";
 
 import { formatarEta } from "./operacao";
 import { TooltipAcao } from "./tooltip-acao";
 
-/** Uma op de copy/move rastreada por opId no shell (ativa OU terminal retida). */
+/** Uma op de copy/move/undo rastreada por opId no shell (ativa OU terminal retida). */
 export interface OpAtiva {
   opId: number;
-  tipo: "copy" | "move";
+  tipo: TipoOp;
   progresso: FsOpProgress;
   /** Velocidade instantânea (bytes/s) derivada entre eventos de progresso. */
   velocidade: number;
@@ -140,7 +141,8 @@ function IconeOp({ op }: { op: OpAtiva }) {
     return <Check className="size-4 shrink-0 text-success" />;
   if (op.progresso.phase === "discovering")
     return <Spinner className="size-4 shrink-0 text-muted-foreground" />;
-  const Icon = op.tipo === "copy" ? Copy : Scissors;
+  // #1282: undo tem ícone próprio (Undo2, o mesmo do botão da activity-dropdown).
+  const Icon = op.tipo === "undo" ? Undo2 : op.tipo === "copy" ? Copy : Scissors;
   return <Icon className="size-4 shrink-0 text-muted-foreground" />;
 }
 
@@ -186,9 +188,11 @@ function LinhaOp({
           ? t.arquivos.statusCancelado
           : s === "partial"
             ? t.arquivos.statusParcial
-            : op.tipo === "copy"
-              ? t.arquivos.copiando
-              : t.arquivos.movendo;
+            : op.tipo === "undo"
+              ? t.arquivos.desfazendo
+              : op.tipo === "copy"
+                ? t.arquivos.copiando
+                : t.arquivos.movendo;
 
   // Acento do card por estado: erro/parcial → vermelho; concluído/cancelado →
   // muted; em curso → card normal.

@@ -21,12 +21,19 @@ export interface RotulosResumo {
   /** Sucesso de mover — plural ("Movidos {n} {arq}") e singular ("Movido {n} {arq}"). */
   movidos: string;
   movidoUm: string;
+  /** #1282: sucesso de desfazer — plural ("Desfeitos {n} {arq}") e singular. */
+  desfeitos: string;
+  desfeitoUm: string;
   /** Cancelamento por tipo ("Cancelado: copia de {n} {arq}" / "... movimentacao de ..."). */
   canceladoCopia: string;
   canceladoMove: string;
+  /** #1282: cancelamento de desfazer ("Cancelado: desfazer de {n} {arq}"). */
+  canceladoUndo: string;
   /** Falha por tipo ("Falha ao copiar {n} {arq}" / "Falha ao mover {n} {arq}"). */
   falhaCopia: string;
   falhaMove: string;
+  /** #1282: falha ao desfazer ("Falha ao desfazer {n} {arq}"). */
+  falhaUndo: string;
   /** Parcial ("Parcial: {done} de {total} {arq}") — o prefixo ja vem na string. */
   parcial: string;
   /** Subtitulo de destino ("→ {destino}"). */
@@ -79,30 +86,42 @@ export function montarResumoOp(
 
   let titulo: string;
   switch (p.status) {
-    case "success":
-      if (op.tipo === "copy") {
-        titulo = preencher(total === 1 ? r.copiadoUm : r.copiados, {
-          n: total,
-          arq,
-        });
-      } else {
-        titulo = preencher(total === 1 ? r.movidoUm : r.movidos, {
-          n: total,
-          arq,
-        });
-      }
+    case "success": {
+      // #1282: undo tem participio proprio; senao copy (plural/singular) ou move.
+      const modelo =
+        op.tipo === "undo"
+          ? total === 1
+            ? r.desfeitoUm
+            : r.desfeitos
+          : op.tipo === "copy"
+            ? total === 1
+              ? r.copiadoUm
+              : r.copiados
+            : total === 1
+              ? r.movidoUm
+              : r.movidos;
+      titulo = preencher(modelo, { n: total, arq });
       break;
+    }
     case "canceled":
       titulo = preencher(
-        op.tipo === "copy" ? r.canceladoCopia : r.canceladoMove,
+        op.tipo === "undo"
+          ? r.canceladoUndo
+          : op.tipo === "copy"
+            ? r.canceladoCopia
+            : r.canceladoMove,
         { n: total, arq },
       );
       break;
     case "error":
-      titulo = preencher(op.tipo === "copy" ? r.falhaCopia : r.falhaMove, {
-        n: total,
-        arq,
-      });
+      titulo = preencher(
+        op.tipo === "undo"
+          ? r.falhaUndo
+          : op.tipo === "copy"
+            ? r.falhaCopia
+            : r.falhaMove,
+        { n: total, arq },
+      );
       break;
     case "partial":
       titulo = preencher(r.parcial, {
