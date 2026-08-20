@@ -131,3 +131,17 @@ export function shortcutBridge(id: string): ShortcutDefinition {
 export function atalhosBridgeDe(categoria: CategoriaAtalhoBridge): AtalhoBridge[] {
   return ATALHOS_BRIDGE.filter((a) => a.categoria === categoria);
 }
+
+// #1019: atalhos usados por MAIS DE UM seam do Bridge (a lista de mensagens e
+// a tela). Moram aqui, e não num dos dois, porque este é o catálogo — e
+// porque um `.tsx` de componente que exporta constantes acende o
+// `react(only-export-components)`, warning novo num repo com catraca (#1056).
+export const ATALHO_SINALIZAR = shortcutBridge("sinalizar");
+export const ATALHO_EXCLUIR = shortcutBridge("excluir");
+export const ATALHO_LER_NAO_LIDO = shortcutBridge("lidoNaoLido");
+export const ATALHO_RESPONDER = shortcutBridge("responder");
+export const ATALHO_RESPONDER_TODOS = shortcutBridge("responderTodos");
+export const ATALHO_ENCAMINHAR = shortcutBridge("encaminhar");
+export const ATALHO_FECHAR_PREVIEW = shortcutBridge("fecharPreview");
+export const ATALHO_SALVAR_COMO = shortcutBridge("salvarComo");
+export const ATALHO_IMPRIMIR = shortcutBridge("imprimir");
