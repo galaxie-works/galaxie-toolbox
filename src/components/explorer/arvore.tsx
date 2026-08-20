@@ -23,7 +23,12 @@ import type {
   FsEntry,
   NetworkLocation,
 } from "@/lib/types";
-import { CAMINHO_ESTE_PC } from "./caminho";
+import {
+  CAMINHO_ACESSO_RAPIDO,
+  CAMINHO_CLOUD,
+  CAMINHO_ESTE_PC,
+  CAMINHO_REDE,
+} from "./caminho";
 import { estaFixado, mesmoCaminho, type PinAcessoRapido } from "./quick-access";
 import { rotuloDrive } from "./rotulo-drive";
 import { TooltipAcao } from "./tooltip-acao";
@@ -34,11 +39,12 @@ import { TooltipAcao } from "./tooltip-acao";
 // ESTÁTICA (filhos vêm por prop) de um caminho LAZY (filhos vêm do disco) só pelo
 // valor, sem uma flag extra por nó.
 const RAIZ_ESTE_PC = "::este-pc::";
-const RAIZ_ACESSO_RAPIDO = "::acesso-rapido::";
-// #869: seções-irmãs dedicadas — nuvem (OneDrive/Google Drive) e locais de rede
-// (drives `kind==="network"`, tirados do This PC à moda do Explorer do Windows).
-const RAIZ_CLOUD = "::cloud::";
-const RAIZ_REDE = "::locais-rede::";
+// #1287: as outras raízes usam a MESMA sentinela como `value` do accordion e
+// como `navPath` (o clique no cabeçalho navega pra view de tiles) — fonte única
+// em `caminho.ts`, então o header ativo casa com o `currentPath` da view.
+const RAIZ_ACESSO_RAPIDO = CAMINHO_ACESSO_RAPIDO;
+const RAIZ_CLOUD = CAMINHO_CLOUD;
+const RAIZ_REDE = CAMINHO_REDE;
 
 /** Um valor de accordion é "lazy" (carrega filhos do disco ao abrir) quando é um
  *  caminho real; as raízes estáticas usam o prefixo-sentinela "::". */
@@ -268,6 +274,7 @@ export function ArvoreArquivos({
         <SecaoRaiz
           value={RAIZ_CLOUD}
           label={t.arquivos.driveSecaoCloud}
+          navPath={CAMINHO_CLOUD}
           icon={Cloud}
           currentPath={currentPath}
           onNavegar={onNavegar}
@@ -300,6 +307,7 @@ export function ArvoreArquivos({
         <SecaoRaiz
           value={RAIZ_REDE}
           label={t.arquivos.driveSecaoRede}
+          navPath={CAMINHO_REDE}
           icon={Network}
           currentPath={currentPath}
           onNavegar={onNavegar}
@@ -333,11 +341,12 @@ export function ArvoreArquivos({
 
       {/* #869: "Acesso rápido" como raiz-IRMÃ na MESMA árvore (dados de
           `dirsConhecidos`). Os itens são pastas — expansíveis/lazy como as demais.
-          O cabeçalho é só rótulo: sem `navPath`, não navega ao clicar. */}
+          #1287: o cabeçalho navega pra view de tiles do Acesso rápido. */}
       {acessoRapido && acessoRapido.length > 0 && (
         <SecaoRaiz
           value={RAIZ_ACESSO_RAPIDO}
           label={t.arquivos.acessoRapido}
+          navPath={CAMINHO_ACESSO_RAPIDO}
           icon={Pin}
           currentPath={currentPath}
           onNavegar={onNavegar}

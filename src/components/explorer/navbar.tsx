@@ -21,7 +21,15 @@ import {
 import { cn } from "@/lib/utils";
 import { useIdioma, preencher } from "@/lib/idioma";
 import { statCaminho } from "@/lib/api";
-import { CAMINHO_ESTE_PC, nomeBase, segmentosCaminho } from "./caminho";
+import {
+  CAMINHO_ACESSO_RAPIDO,
+  CAMINHO_CLOUD,
+  CAMINHO_ESTE_PC,
+  CAMINHO_REDE,
+  ehRaizVirtual,
+  nomeBase,
+  segmentosCaminho,
+} from "./caminho";
 import { TooltipAcao } from "./tooltip-acao";
 
 /**
@@ -112,7 +120,29 @@ export function NavBarArquivos({
     }
   }
 
-  const segmentos = segmentosCaminho(currentPath);
+  // #1287: rótulo amigável de uma raiz virtual (Cloud/Rede/Acesso rápido) — o
+  // This PC já é a raiz fixa do breadcrumb, então ele não entra aqui.
+  const rotuloRaizVirtual =
+    currentPath === CAMINHO_CLOUD
+      ? t.arquivos.driveSecaoCloud
+      : currentPath === CAMINHO_REDE
+        ? t.arquivos.driveSecaoRede
+        : currentPath === CAMINHO_ACESSO_RAPIDO
+          ? t.arquivos.acessoRapido
+          : null;
+  // Sentinel não é caminho: numa raiz virtual o breadcrumb tem um único
+  // segmento com o rótulo da raiz (nunca o "::x::" cru de `segmentosCaminho`).
+  const segmentos = rotuloRaizVirtual
+    ? [{ label: rotuloRaizVirtual, path: currentPath }]
+    : ehRaizVirtual(currentPath)
+      ? [] // This PC: só a raiz fixa
+      : segmentosCaminho(currentPath);
+
+  // #1287: placeholder/aria da busca — raiz virtual (This PC/Cloud/Rede/Acesso)
+  // varre os drives ("Buscar Este PC"); pasta real busca a própria pasta.
+  const rotuloBusca = ehRaizVirtual(currentPath)
+    ? t.arquivos.buscarThisPc
+    : preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) });
 
   return (
     <div className="flex shrink-0 items-center gap-1">
@@ -286,16 +316,8 @@ export function NavBarArquivos({
               else e.currentTarget.blur();
             }
           }}
-          placeholder={
-            currentPath
-              ? preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) })
-              : t.arquivos.buscarThisPc
-          }
-          aria-label={
-            currentPath
-              ? preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) })
-              : t.arquivos.buscarThisPc
-          }
+          placeholder={rotuloBusca}
+          aria-label={rotuloBusca}
           className="h-8 pl-8 pr-8"
         />
         {busca && (

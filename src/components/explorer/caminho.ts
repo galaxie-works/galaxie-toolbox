@@ -11,6 +11,31 @@
 export const CAMINHO_ESTE_PC = "";
 
 /**
+ * #1287: sentinelas de caminho das outras raízes semânticas (Cloud drives,
+ * Locais de rede, Acesso rápido) — cada uma tem uma view de tiles no estilo do
+ * This PC. Como o `CAMINHO_ESTE_PC`, NÃO são pastas reais do FS: o `::x::` nunca
+ * colide com um caminho Windows. Servem de `currentPath` (roteia a view) e de
+ * `value` do accordion na árvore — uma fonte só pros dois.
+ */
+export const CAMINHO_CLOUD = "::cloud::";
+export const CAMINHO_REDE = "::locais-rede::";
+export const CAMINHO_ACESSO_RAPIDO = "::acesso-rapido::";
+
+/**
+ * Raiz "virtual" = sentinel sem pasta real por trás (This PC + as três do
+ * #1287). O shell usa isto pra NÃO observar/listar/buscar o caminho como se
+ * fosse disco (senão o watcher e o `listarDir` batem num alvo inexistente).
+ */
+export function ehRaizVirtual(path: string): boolean {
+  return (
+    path === CAMINHO_ESTE_PC ||
+    path === CAMINHO_CLOUD ||
+    path === CAMINHO_REDE ||
+    path === CAMINHO_ACESSO_RAPIDO
+  );
+}
+
+/**
  * Caminho pai (sobe um nível). O drive-root ("C:\") não tem pai — devolve ele
  * mesmo, então `up()` no topo vira no-op.
  */

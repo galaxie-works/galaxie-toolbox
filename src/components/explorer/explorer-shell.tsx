@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import {
+  Cloud,
+  House,
+  Network,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pin,
+} from "lucide-react";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { toast } from "sonner";
 
@@ -38,6 +45,9 @@ import type {
 } from "@/lib/types";
 import { DrivesView } from "./drives-view";
 import { HomeView } from "./home-view";
+import { RootView, type ItemRaiz } from "./root-view";
+import { iconeDaPasta } from "./home-view-icones";
+import { rotuloDrive } from "./rotulo-drive";
 import { ArvoreArquivos, RailArvore } from "./arvore";
 import { larguraIdealPct, temLayoutSalvo } from "@/lib/largura-painel";
 import { NavBarArquivos } from "./navbar";
@@ -51,7 +61,15 @@ import { registrarOp } from "./use-ops-ativas";
 import { ConflitoDialog } from "./conflito-dialog";
 import { TooltipAcao } from "./tooltip-acao";
 import { planejarTransferencia, type ResolucaoConflito } from "./operacao";
-import { CAMINHO_ESTE_PC, nomeBase, pathPai } from "./caminho";
+import {
+  CAMINHO_ACESSO_RAPIDO,
+  CAMINHO_CLOUD,
+  CAMINHO_ESTE_PC,
+  CAMINHO_REDE,
+  ehRaizVirtual,
+  nomeBase,
+  pathPai,
+} from "./caminho";
 import type { Clipboard, OperacaoClipboard } from "./menu-arquivo";
 import {
   CHAVE_OCULTOS_ACESSO_RAPIDO,
@@ -285,10 +303,28 @@ export function ExplorerShell({
   // no caminho + no rótulo do This PC (i18n) — o callback vai por ref.
   useEffect(() => {
     const p = nav.currentPath;
-    const rotulo = p === CAMINHO_ESTE_PC ? t.arquivos.drives : nomeBase(p);
-    const caminho = p === CAMINHO_ESTE_PC ? t.arquivos.drives : p;
+    // #1287: as raízes virtuais (This PC + Cloud/Rede/Acesso rápido) reportam o
+    // rótulo da raiz, não o `nomeBase` do sentinel (que seria "::cloud::").
+    const rotuloRaiz =
+      p === CAMINHO_ESTE_PC
+        ? t.arquivos.drives
+        : p === CAMINHO_CLOUD
+          ? t.arquivos.driveSecaoCloud
+          : p === CAMINHO_REDE
+            ? t.arquivos.driveSecaoRede
+            : p === CAMINHO_ACESSO_RAPIDO
+              ? t.arquivos.acessoRapido
+              : null;
+    const rotulo = rotuloRaiz ?? nomeBase(p);
+    const caminho = rotuloRaiz ?? p;
     onLocalChangeRef.current?.({ rotulo, caminho });
-  }, [nav.currentPath, t.arquivos.drives]);
+  }, [
+    nav.currentPath,
+    t.arquivos.drives,
+    t.arquivos.driveSecaoCloud,
+    t.arquivos.driveSecaoRede,
+    t.arquivos.acessoRapido,
+  ]);
 
   // #724: watcher de disco na pasta atual (live refresh). CRÍTICO — a `parar` que
   // a promise resolve DEVE ser chamada ao trocar de pasta / desmontar, e a
@@ -298,7 +334,9 @@ export function ExplorerShell({
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const path = nav.currentPath;
-    if (!path) return;
+    // #1287: raiz virtual (This PC / Cloud / Rede / Acesso rápido) não é pasta —
+    // observar bateria num alvo inexistente. Só pastas reais têm watcher.
+    if (ehRaizVirtual(path)) return;
     let cancelado = false;
     let parar: (() => Promise<void>) | null = null;
     void observarPasta(path, false, () => {
@@ -373,6 +411,39 @@ export function ExplorerShell({
   // Serve pra rotular o item como "Home"/"Início" na árvore e rotear a Home view.
   const homePath = acessoRapido?.[0]?.path ?? null;
 
+  // #1287: itens das três views de raiz (tiles no estilo This PC). Mapeiam os
+  // MESMOS dados da árvore (cloud/rede/acesso) — sem novo fetch, o shell já os
+  // tem. Listas pequenas (<~20), montadas a cada render sem custo relevante.
+  const itensCloud: ItemRaiz[] = (cloudLocations ?? []).map((c) => ({
+    path: c.path,
+    label: c.name,
+    Icon: Cloud,
+  }));
+  const itensRede: ItemRaiz[] = [
+    // Drives mapeados (com letra) + atalhos sem letra, na MESMA seção (#1288).
+    ...(drives ?? [])
+      .filter((d) => d.kind === "network")
+      .map((d) => ({
+        path: d.path,
+        label: rotuloDrive(d.name, d.path),
+        Icon: Network,
+      })),
+    ...(networkLocations ?? []).map((n) => ({
+      path: n.path,
+      label: n.name,
+      Icon: Network,
+      indisponivel: !n.available,
+    })),
+  ];
+  const itensAcesso: ItemRaiz[] = acessoRapidoMesclado.map((e) => {
+    const ehHome = homePath !== null && mesmoCaminho(e.path, homePath);
+    return {
+      path: e.path,
+      label: ehHome ? t.arquivos.home : e.name,
+      Icon: ehHome ? House : iconeDaPasta(e.name),
+    };
+  });
+
   // #871 (fatia 2b/2c): dispara a busca recursiva. Numa PASTA (2b) = uma raiz; no
   // This PC (2c) = fan-out sobre TODOS os drives. Cancela os handles anteriores,
   // zera os resultados e consome os streams (`buscarArquivos`), MESCLANDO os lotes
@@ -384,9 +455,11 @@ export function ExplorerShell({
   // decrementa — não derruba a busca das outras.
   const onBuscar = useCallback(
     (query: string) => {
-      const roots = nav.currentPath
-        ? [nav.currentPath]
-        : (drives ?? []).map((d) => d.path); // This PC: raiz de cada drive
+      // #1287: numa raiz virtual (This PC / Cloud / Rede / Acesso rápido) a busca
+      // varre cada drive — não há UMA pasta pra ancorar. Pasta real: só ela.
+      const roots = ehRaizVirtual(nav.currentPath)
+        ? (drives ?? []).map((d) => d.path)
+        : [nav.currentPath];
       if (roots.length === 0) return;
       buscaHandlesRef.current.forEach((h) => void h.cancelar());
       buscaHandlesRef.current = [];
@@ -762,6 +835,35 @@ export function ExplorerShell({
               // Por CAMINHO: vale pra qualquer forma de chegar na home (clique,
               // caminho digitado, subir a partir de Desktop).
               <HomeView homePath={nav.currentPath} onNavegar={navegar} />
+            ) : nav.currentPath === CAMINHO_CLOUD ? (
+              // #1287: raiz Cloud drives → grade de mounts (OneDrive/Google
+              // Drive), no estilo do This PC. Sentinela de caminho (caminho.ts).
+              <RootView
+                titulo={t.arquivos.driveSecaoCloud}
+                icone={Cloud}
+                itens={itensCloud}
+                vazioLabel={t.arquivos.vazio}
+                onNavegar={navegar}
+              />
+            ) : nav.currentPath === CAMINHO_REDE ? (
+              // #1287: raiz Locais de rede → drives mapeados + atalhos sem letra.
+              <RootView
+                titulo={t.arquivos.driveSecaoRede}
+                icone={Network}
+                itens={itensRede}
+                vazioLabel={t.arquivos.vazio}
+                onNavegar={navegar}
+              />
+            ) : nav.currentPath === CAMINHO_ACESSO_RAPIDO ? (
+              // #1287: raiz Acesso rápido → tiles dos itens fixados/conhecidos,
+              // ícone semântico (Home/pasta conhecida) reusando `iconeDaPasta`.
+              <RootView
+                titulo={t.arquivos.acessoRapido}
+                icone={Pin}
+                itens={itensAcesso}
+                vazioLabel={t.arquivos.vazio}
+                onNavegar={navegar}
+              />
             ) : nav.currentPath ? (
               <ContentPane
                 currentPath={nav.currentPath}
