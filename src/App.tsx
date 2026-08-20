@@ -1430,7 +1430,6 @@ function AppInner() {
             historico={historico}
             onLimparHistorico={limparHistoricoPeriodo}
             modoPrivado={modoPrivado}
-            onAlternarModoPrivado={() => setModoPrivado((v) => !v)}
           />
         </div>
 

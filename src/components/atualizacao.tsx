@@ -16,6 +16,7 @@ import { useIdioma } from "@/lib/idioma";
 import { preencher } from "@/lib/idioma";
 import { ShieldAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import type { Update } from "@tauri-apps/plugin-updater";
 import { telUpdateVerificado } from "@/lib/telemetria";
 import { deveOferecerAtualizacao, formatarDataFeed } from "@/lib/versao-update";
 
@@ -42,8 +43,12 @@ export function Atualizacao() {
   const [estado, setEstado] = useState<Estado>("oculto");
   const [info, setInfo] = useState<Disponivel | null>(null);
   const [progresso, setProgresso] = useState(0);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [pacote, setPacote] = useState<any>(null);
+  // #1037 (FE15): era `useState<any>` com um `eslint-disable` por cima. `any` no
+  // fluxo de atualização é caro de um jeito específico: erro de shape aqui não
+  // quebra a tela, vira "o update não instala" — sem hotfix possível, porque o
+  // caminho do hotfix É o updater. O tipo vem do próprio plugin, por
+  // `import type` (custo zero de bundle: some na compilação).
+  const [pacote, setPacote] = useState<Update | null>(null);
 
   useEffect(() => {
     if (!estaNoTauri()) return;
