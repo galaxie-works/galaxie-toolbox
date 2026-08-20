@@ -96,7 +96,7 @@ test("estaOculto: case-insensitive e ignora barra final", () => {
 });
 
 test("ocultar dedupe e nao muta; restaurar tira por caminho normalizado", () => {
-  const base = [];
+  const base: string[] = [];
   const um = ocultar(base, "C:/Users/consa/Desktop");
   assert.deepEqual(base, []);
   assert.equal(um.length, 1);

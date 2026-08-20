@@ -353,6 +353,11 @@ export function ExplorerShell({
     ocultos,
   );
 
+  // #1285 (B): a HOME é o 1º item de `dirsConhecidos` (contrato do Rust
+  // `dirs_conhecidos`, fs_explorer.rs:606 — home antes de desktop/docs/downloads).
+  // Serve pra rotular o item como "Home"/"Início" na árvore e rotear a Home view.
+  const homePath = acessoRapido?.[0]?.path ?? null;
+
   // #871 (fatia 2b/2c): dispara a busca recursiva. Numa PASTA (2b) = uma raiz; no
   // This PC (2c) = fan-out sobre TODOS os drives. Cancela os handles anteriores,
   // zera os resultados e consome os streams (`buscarArquivos`), MESCLANDO os lotes
@@ -668,6 +673,7 @@ export function ExplorerShell({
                       pins={pins}
                       onAlternarFixar={alternarFixar}
                       onRemoverAcessoRapido={removerDoAcessoRapido}
+                      homePath={homePath}
                       currentPath={nav.currentPath}
                       onNavegar={navegar}
                     />

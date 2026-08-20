@@ -1619,6 +1619,9 @@ const pt = {
     acima: "Acima",
     drives: "Este computador",
     acessoRapido: "Acesso rápido",
+    // #1285 (B) — a pasta home do usuário no Acesso rápido aparece como "Início"
+    // (não o nome cru da pasta), com ícone de casa.
+    home: "Início",
     // #869 — itens do menu de contexto (fixar/desafixar pasta no Acesso rápido)
     fixarAcessoRapido: "Fixar no Acesso rápido",
     desafixarAcessoRapido: "Desafixar do Acesso rápido",
@@ -3855,6 +3858,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     acima: "Up",
     drives: "This PC",
     acessoRapido: "Quick access",
+    // #1285 (B) — the user's home folder in Quick access shows as "Home" (not
+    // the raw folder name), with a house icon.
+    home: "Home",
     // #869 — context menu items (pin/unpin a folder to Quick access)
     fixarAcessoRapido: "Pin to Quick access",
     desafixarAcessoRapido: "Unpin from Quick access",

@@ -1,5 +1,5 @@
 import { useCallback, useState, type ElementType, type ReactNode } from "react";
-import { Cloud, Disc, HardDrive, Monitor, Network, Pin, PinOff, Usb } from "lucide-react";
+import { Cloud, Disc, HardDrive, House, Monitor, Network, Pin, PinOff, Usb } from "lucide-react";
 
 import {
   Files,
@@ -19,7 +19,7 @@ import { useIdioma } from "@/lib/idioma";
 import { listarDir } from "@/lib/api";
 import type { CloudLocation, DriveInfo, FsEntry } from "@/lib/types";
 import { CAMINHO_ESTE_PC } from "./caminho";
-import { estaFixado, type PinAcessoRapido } from "./quick-access";
+import { estaFixado, mesmoCaminho, type PinAcessoRapido } from "./quick-access";
 import { TooltipAcao } from "./tooltip-acao";
 
 // #869: valores-sentinela dos nós-RAIZ do accordion (This PC / Acesso rápido).
@@ -115,6 +115,7 @@ export function ArvoreArquivos({
   pins,
   onAlternarFixar,
   onRemoverAcessoRapido,
+  homePath,
   currentPath,
   onNavegar,
 }: {
@@ -129,6 +130,9 @@ export function ArvoreArquivos({
   // Só os itens DE TOPO da seção Quick access recebem — os filhos lazy seguem com
   // o toggle Fixar normal.
   onRemoverAcessoRapido: (entry: FsEntry) => void;
+  // #1285 (B): caminho da home (1º de dirsConhecidos) — o item correspondente no
+  // Quick access vira "Home"/"Início" com ícone House, em vez do nome cru da pasta.
+  homePath: string | null;
   currentPath: string;
   onNavegar: (path: string) => void;
 }) {
@@ -289,25 +293,32 @@ export function ArvoreArquivos({
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
-          {acessoRapido.map((e) => (
-            <NoArvore
-              key={e.path}
-              entry={e}
-              filhosPorPath={filhosPorPath}
-              carregando={carregando}
-              currentPath={currentPath}
-              onNavegar={onNavegar}
-              pins={pins}
-              onAlternarFixar={onAlternarFixar}
-              // #1285 (A): item de topo do Quick access → menu "Desafixar" que
-              // remove (pin ou oculta). Os filhos NÃO recebem `acaoRemover`.
-              acaoRemover={onRemoverAcessoRapido}
-              fixarLabel={t.arquivos.fixarAcessoRapido}
-              desafixarLabel={t.arquivos.desafixarAcessoRapido}
-              carregandoLabel={t.arquivos.carregando}
-              vazioLabel={t.arquivos.vazio}
-            />
-          ))}
+          {acessoRapido.map((e) => {
+            // #1285 (B): a home vira "Home"/"Início" + ícone House. Rótulo trocado
+            // por override do `name` (o `path` — navegação e chave — não muda).
+            const ehHome = homePath !== null && mesmoCaminho(e.path, homePath);
+            const item = ehHome ? { ...e, name: t.arquivos.home } : e;
+            return (
+              <NoArvore
+                key={e.path}
+                entry={item}
+                icone={ehHome ? House : undefined}
+                filhosPorPath={filhosPorPath}
+                carregando={carregando}
+                currentPath={currentPath}
+                onNavegar={onNavegar}
+                pins={pins}
+                onAlternarFixar={onAlternarFixar}
+                // #1285 (A): item de topo do Quick access → menu "Desafixar" que
+                // remove (pin ou oculta). Os filhos NÃO recebem `acaoRemover`.
+                acaoRemover={onRemoverAcessoRapido}
+                fixarLabel={t.arquivos.fixarAcessoRapido}
+                desafixarLabel={t.arquivos.desafixarAcessoRapido}
+                carregandoLabel={t.arquivos.carregando}
+                vazioLabel={t.arquivos.vazio}
+              />
+            );
+          })}
         </SecaoRaiz>
       )}
     </Files>

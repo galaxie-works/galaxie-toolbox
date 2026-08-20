@@ -28,6 +28,11 @@ function normalizar(path: string): string {
   return path.replace(/\\+$/, "").toLowerCase();
 }
 
+/** `true` se os dois caminhos são o mesmo (comparação normalizada). #1285 (B). */
+export function mesmoCaminho(a: string, b: string): boolean {
+  return normalizar(a) === normalizar(b);
+}
+
 /**
  * `true` se o caminho já está fixado (comparação normalizada). SÍNCRONO — lê
  * direto do array persistido, então serve pra decidir o rótulo do menu no ATO de
