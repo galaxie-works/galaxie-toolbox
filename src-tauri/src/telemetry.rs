@@ -388,6 +388,36 @@ fn gravar_fila(itens: &[EnvelopeCarimbado]) {
     }
 }
 
+/// Isola um teste que toca a persistência: segura `TESTE_PERSIST` e zera o
+/// estado global de sondagem. Solta o lock sozinho no fim do teste.
+///
+/// **Por que existe (#1384).** `ESCRITAS_FILA` é global e `gravar_fila` também
+/// mexe em `SONDA_INNER`/`SONDA_LIVRE`. A disciplina era três linhas repetidas em
+/// cada teste — e disciplina que se repete é disciplina que se esquece:
+/// `funil_de_escrita_sadio_nao_loga_erro` grava e **não** pegava o lock, então
+/// o incremento dele caía no meio de `revogar_persiste_fila_vazia` e virava
+/// `left: 2, right: 1`. Falhava ~1 em 25 rodadas paralelas e nunca em
+/// `--test-threads=1` — ou seja, reprovava PR de qualquer pessoa por sorte de
+/// escalonamento, num check obrigatório.
+///
+/// Uma linha só, num lugar só: quem escrever o próximo teste de persistência
+/// não precisa lembrar de três coisas, só desta.
+#[cfg(test)]
+#[must_use]
+fn persistencia_isolada() -> PersistenciaIsolada {
+    use std::sync::atomic::Ordering;
+    let guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
+    ESCRITAS_FILA.store(0, Ordering::Relaxed);
+    SONDA_LIVRE.store(false, Ordering::Relaxed);
+    if let Ok(mut s) = SONDA_INNER.lock() {
+        *s = None;
+    }
+    PersistenciaIsolada(guarda)
+}
+
+#[cfg(test)]
+struct PersistenciaIsolada(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
 /// #1238 — recebe um SNAPSHOT já clonado, nunca a fila viva emprestada de um
 /// `MutexGuard`. É o funil: quem quiser gravar tem de ter soltado o lock antes,
 /// porque não existe mais assinatura que aceite `&i.fila`.
@@ -1638,9 +1668,7 @@ mod testes {
     #[test]
     fn track_nao_persiste_e_rajada_coalesce_em_uma_escrita() {
         use std::sync::atomic::Ordering;
-        let _guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
-        ESCRITAS_FILA.store(0, Ordering::Relaxed);
-        *SONDA_INNER.lock().unwrap() = None;
+        let _iso = persistencia_isolada();
 
         let estado = TelemetryState::para_teste();
         for _ in 0..50 {
@@ -1673,9 +1701,7 @@ mod testes {
     #[test]
     fn persistencia_nao_segura_o_mutex_durante_a_escrita() {
         use std::sync::atomic::Ordering;
-        let _guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
-        ESCRITAS_FILA.store(0, Ordering::Relaxed);
-        SONDA_LIVRE.store(false, Ordering::Relaxed);
+        let _iso = persistencia_isolada();
 
         let estado = TelemetryState::para_teste();
         estado.track(entrada(Categoria::Crash, &[]));
@@ -1730,9 +1756,7 @@ mod testes {
     #[test]
     fn revogar_persiste_fila_vazia() {
         use std::sync::atomic::Ordering;
-        let _guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
-        ESCRITAS_FILA.store(0, Ordering::Relaxed);
-        *SONDA_INNER.lock().unwrap() = None;
+        let _iso = persistencia_isolada();
 
         let estado = TelemetryState::para_teste();
         estado.track(entrada(Categoria::Crash, &[]));
@@ -1782,6 +1806,10 @@ mod testes {
     /// este, "loga no erro" passaria mesmo se o código logasse sempre.
     #[test]
     fn funil_de_escrita_sadio_nao_loga_erro() {
+        // #1384: ESTE grava de verdade (inner sadio -> `gravar_fila`). Sem o
+        // isolamento, o incremento dele contaminava o contador global de quem
+        // estivesse rodando em paralelo.
+        let _iso = persistencia_isolada();
         let inner = interno_com(vec![]);
         let logs = capturar_logs(|| snapshot_e_gravar(&inner));
         crate::teste_log::assert_nao_logou(&logs, log::Level::Error, "mutex envenenado");
@@ -1842,6 +1870,88 @@ mod testes {
         assert!(
             !logou(&logs, log::Level::Error, "NÃO subiu"),
             "worker que subiu não pode logar que não subiu"
+        );
+    }
+
+
+    // ── #1055: as MITIGAÇÕES do runbook passam a ter guarda ──────────────────
+    //
+    // O `docs/reference/rotacao-segredos.md` tem uma seção "Mitigações já no
+    // código (não dependem de rotação)". Ela é o que sustenta a decisão de
+    // manter o token embutido — quem audita lê aquilo e aceita o risco.
+    //
+    // Só que a seção AFIRMA e nada conferia. É exatamente o modo de falha que o
+    // gate deste card (`segredos-embutidos-gate.test.ts`) existe pra fechar — mas
+    // ele guarda o INVENTÁRIO, não as mitigações. Um `set_sensitive` removido num
+    // refactor derrubaria a mitigação e o runbook seguiria dizendo que ela existe.
+
+    /// Runbook: *"o `Authorization` é marcado `set_sensitive(true)` → nunca entra
+    /// em log"*. Sem isto, o token de ingestão vaza em qualquer dump de headers.
+    #[test]
+    fn authorization_da_telemetria_e_marcado_sensivel() {
+        let auth = OpenObserveAuthProvider::novo(
+            "telemetry@galaxie.test",
+            "token-de-teste",
+            "galaxie_toolbox",
+        )
+        .expect("config valida");
+
+        assert!(
+            auth.authorization.is_sensitive(),
+            "o header Authorization TEM de ser sensivel — e o que impede o token \
+             de ingestao de aparecer em log/dump. O runbook (rotacao-segredos.md) \
+             lista isto como mitigacao ativa; sem o marcador, o documento mente.",
+        );
+    }
+
+    /// Runbook: *"config parcial → transporte desativado, nunca meio-ligado"*.
+    /// Cada campo que falta derruba a construção com um código PRÓPRIO — sem o
+    /// código exato, o teste passaria mesmo se todos os ramos colapsassem num
+    /// erro só, e a mensagem de diagnóstico deixaria de apontar o campo errado.
+    #[test]
+    fn config_parcial_de_telemetria_e_fail_closed_campo_a_campo() {
+        let casos: [(&str, &str, &str, &str); 3] = [
+            ("", "token", "stream", "email-invalido"),
+            ("email@x.test", "", "stream", "token-vazio"),
+            ("email@x.test", "token", "", "stream-vazio"),
+        ];
+
+        for (email, token, stream, esperado) in casos {
+            assert_eq!(
+                OpenObserveAuthProvider::novo(email, token, stream).err(),
+                Some(TransporteErro::Configuracao(esperado)),
+                "config parcial (email={email:?} token={token:?} stream={stream:?})                  tem de FALHAR — meio-ligado parece telemetria funcionando",
+            );
+        }
+
+        // Par positivo: config completa passa. Sem ele, o bloco acima passaria
+        // mesmo se `novo` recusasse tudo — e a telemetria legitima quebraria.
+        assert!(
+            OpenObserveAuthProvider::novo("email@x.test", "token", "stream").is_ok(),
+            "config COMPLETA tem de passar",
+        );
+    }
+
+    /// O header é `Basic base64(email:token)`. Um `:` dentro do e-mail MOVE a
+    /// fronteira da credencial: `a@x:forjado` + token `t` gera exatamente o
+    /// mesmo header que o e-mail `a@x` com token `forjado:t`. O codigo ja recusa;
+    /// esta guarda impede que a recusa seja relaxada sem que ninguem perceba.
+    #[test]
+    fn email_com_dois_pontos_nao_pode_forjar_a_credencial() {
+        assert_eq!(
+            OpenObserveAuthProvider::novo("a@x:forjado", "t", "stream").err(),
+            Some(TransporteErro::Configuracao("email-invalido")),
+            "`:` no e-mail desloca a fronteira do Basic auth",
+        );
+    }
+
+    /// Espaço em branco conta como ausente — senão um secret mal preenchido na
+    /// esteira (`GALAXIE_TELEMETRY_INGEST_TOKEN=" "`) viraria credencial válida.
+    #[test]
+    fn espaco_em_branco_nao_vale_como_token() {
+        assert_eq!(
+            OpenObserveAuthProvider::novo("email@x.test", " ", "stream").err(),
+            Some(TransporteErro::Configuracao("token-vazio")),
         );
     }
 

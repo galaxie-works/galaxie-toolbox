@@ -4,6 +4,7 @@
 // (DriveCard) reusa o Card do registry, uma barra de uso colorida por token de
 // tema (success/warning/destructive por faixa de %), tooltip com o detalhe e
 // clique que navega PARA dentro do drive.
+import { rotuloDrive } from "./rotulo-drive";
 import { HardDrive } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -90,8 +91,9 @@ function DriveCard({
 }) {
   const { t } = useIdioma();
 
-  const letra = drive.path.replace(/\\+$/, "");
-  const rotulo = `${drive.name} (${letra})`;
+  // #1288: a letra sai do helper, que nao duplica quando o nome ja a traz (e o
+  // caso dos drives de rede, cujo nome vem do redirector com a letra dentro).
+  const rotulo = rotuloDrive(drive.name, drive.path);
 
   const total = drive.totalSpace;
   const livre = Math.max(0, drive.freeSpace);

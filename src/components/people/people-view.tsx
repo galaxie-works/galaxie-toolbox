@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   getCoreRowModel,
   getSortedRowModel,
@@ -2550,6 +2550,43 @@ export function PeopleView({
     },
   });
 
+  // #1020: handlers do grid memoizados. O único que MOVE o ponteiro é
+  // `handleFetchMore` — ele é prop do `MemoizedVirtualBody` (`memo(...)` em
+  // data-grid-table-virtual.tsx:575), então inline (novo a cada render) quebra
+  // esse memo e re-renderiza o corpo virtual a cada render de PeopleView.
+  // `handleRowClick` o grid já EXCLUI do seu context-memo (data-grid.tsx:289) e
+  // `tableLayout` ele compara por `JSON.stringify` (data-grid.tsx:315) — nenhum
+  // dos dois quebra memo; memoizo por consistência + evitar trabalho por render.
+  const handleRowClick = useCallback(
+    (contact: PeopleContact) => {
+      tableFocusRef.current?.focus({ preventScroll: true });
+      setKeyboardActiveId(contact.id);
+      selectPerson(contact.id);
+      selectionAnchorRef.current = contact.id;
+    },
+    [selectPerson],
+  );
+  const handleFetchMore = useCallback(() => {
+    if (peopleTab === "contacts") {
+      void loadMorePeople();
+    }
+  }, [peopleTab, loadMorePeople]);
+  const tableLayout = useMemo(
+    () => ({
+      dense: true,
+      stripped: true,
+      rowBorder: false,
+      headerBackground: true,
+      headerSticky: true,
+      columnsVisibility: true,
+      columnsResizable: true,
+      columnsResizeMode: "onChange" as const,
+      columnsMovable: true,
+      width: "fixed" as const,
+    }),
+    [],
+  );
+
   const activeRowIndex = keyboardActiveId
     ? table.getRowModel().rows.findIndex((row) => row.id === keyboardActiveId)
     : -1;
@@ -2945,24 +2982,8 @@ export function PeopleView({
                         />
                       )
                     }
-                    onRowClick={(contact) => {
-                      tableFocusRef.current?.focus({ preventScroll: true });
-                      setKeyboardActiveId(contact.id);
-                      selectPerson(contact.id);
-                      selectionAnchorRef.current = contact.id;
-                    }}
-                    tableLayout={{
-                      dense: true,
-                      stripped: true,
-                      rowBorder: false,
-                      headerBackground: true,
-                      headerSticky: true,
-                      columnsVisibility: true,
-                      columnsResizable: true,
-                      columnsResizeMode: "onChange",
-                      columnsMovable: true,
-                      width: "fixed",
-                    }}
+                    onRowClick={handleRowClick}
+                    tableLayout={tableLayout}
                   >
                     <div
                       ref={tableFocusRef}
@@ -2986,11 +3007,7 @@ export function PeopleView({
                       <DataGridContainer className="h-full">
                         <ScrollArea className="h-full">
                           <DataGridTableVirtual
-                            onFetchMore={() => {
-                              if (peopleTab === "contacts") {
-                                void loadMorePeople();
-                              }
-                            }}
+                            onFetchMore={handleFetchMore}
                             isFetchingMore={
                               peopleTab === "contacts" && fetchingMore
                             }

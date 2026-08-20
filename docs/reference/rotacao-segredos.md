@@ -25,8 +25,12 @@ Este documento lista o que é **público-na-prática**, por que isso é aceitáv
   hardcoded no repositório (que é público).
 - **Fail-closed**: config parcial (falta endpoint/email/token/stream) → transporte de
   telemetria **desativado**, nunca meio-ligado (`iniciar_transporte_configurado`).
+  Guarda: `config_parcial_de_telemetria_e_fail_closed_campo_a_campo`.
 - **Header sensível**: o `Authorization` é marcado `set_sensitive(true)` → nunca entra
-  em log.
+  em log. Guarda: `authorization_da_telemetria_e_marcado_sensivel`.
+- **Fronteira do Basic auth**: `:` no e-mail é recusado — o header é
+  `base64(email:token)`, então um `:` a mais desloca onde a credencial começa.
+  Guarda: `email_com_dois_pontos_nao_pode_forjar_a_credencial`.
 - **Seam pronto pro fim do embutido**: o trait `AuthProvider` (`telemetry.rs`) permite
   plugar o *installation-token flow* (token de curta duração emitido por endpoint
   próprio) **sem alterar o dreno da fila nem embutir segredo** — quando/se o PO
@@ -56,6 +60,25 @@ Executar **a cada release** (ou imediatamente ao suspeitar de vazamento):
 > **Cadência mínima:** por-release. Como cada binário carrega o token da sua versão,
 > revogar o antigo a cada rotação limita a janela de um token vazado ao intervalo entre
 > dois releases.
+
+### O que o CI garante deste processo — e o que não garante
+
+Os passos acima são ação humana no OpenObserve e no GitHub; nenhum teste pode
+executá-los. O que o CI **consegue** garantir é que a corrente por onde a rotação
+passa continua inteira — porque ela arrebenta calada de dois jeitos:
+
+| Modo de falha | O que o operador vê | Guarda |
+| --- | --- | --- |
+| A injeção some do `release.yml` | `option_env!` vira `None`, telemetria cai fail-closed, **release verde sem credencial** | `todo valor embutido que o release deve injetar está no workflow` |
+| O secret injetado tem outro nome (`X: ${{ secrets.X_ANTIGO }}`) | o passo 2 é feito, o release é cortado, e o **token velho continua embarcando** — a rotação parece ter acontecido | `rotacionar o secret alcança o build (nomes não divergem)` |
+
+O segundo é o perigoso: transforma "revoguei" numa crença falsa, e é exatamente a
+crença que faz ninguém procurar mais. Ambas as guardas vivem em
+`src/lib/segredos-embutidos-gate.test.ts`.
+
+**Fora do alcance do CI** (segue sendo passo humano, do checklist acima): o escopo
+ingest-only do token, a confirmação de ingestão no stream e a revogação do token
+anterior — nada disso é observável a partir do repositório.
 
 ## Rotação do `GOOGLE_CLIENT_SECRET`
 
