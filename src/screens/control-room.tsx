@@ -44,6 +44,7 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { BridgeSplit } from "@/components/bridge/bridge-split";
 import {
   Sheet,
   SheetContent,
@@ -1316,15 +1317,14 @@ function FolderSidebar({
         // divisória SÓ à direita (border-r) + o fundo de chrome do app (bg-muted/30,
         // o mesmo padrão in-content das rails do Navigator), destacando o sidebar do
         // content area. Splitter (resize) = follow-up (interage com o colapsar).
-        "flex shrink-0 flex-col gap-3 border-r border-border bg-muted/30 p-3 transition-[width] duration-200",
-        // #466: o w-52 (208px) cortava "Caixa de entrada" (pt). Fit-content NÃO
-        // resolve aqui — os rótulos são `min-w-0 flex-1 truncate` (o min-w-0 do
-        // truncate faz o fit-content colapsar pro min-content e ficar no min). Então
-        // largura fixa que cabe o MAIOR rótulo padrão nos 2 idiomas: "Caixa de
-        // entrada" (pt) mede ~224px com o chrome do row; w-64 (256px) cabe com folga
-        // e o en (mais curto) sobra. A lista de e-mails ao lado pega o resto (flex-1
-        // min-w-0); nomes de pasta custom gigantes ainda truncam com tooltip.
-        colapsada ? "w-16 items-center" : "w-64"
+        // #912: a largura agora e do PAINEL (splitter), nao do `aside`. O que
+        // era `w-64`/`w-16` virou `defaultSize`/`collapsedSize` no `BridgeSplit`
+        // — a largura de 256px que o #466 escolheu a dedo (cabe "Caixa de
+        // entrada" em pt sem truncar) esta la, em px, convertida na fatia do
+        // grupo. Duas fontes de verdade pra mesma largura era o que fazia o
+        // splitter brigar com o colapsar, e por isso ele tinha ficado de fora.
+        "flex h-full w-full min-w-0 flex-col gap-3 border-r border-border bg-muted/30 p-3",
+        colapsada && "items-center"
       )}
     >
       <div
@@ -6133,9 +6133,16 @@ export function ControlRoomScreen({
         </div>
       )}
 
-      {/* Sidebar de módulos + conteúdo do módulo ativo. */}
-      <div className="flex min-h-0 flex-1 gap-4">
-        <FolderSidebar
+      {/* #912: sidebar e conteudo agora sao PAINEIS, com splitter entre eles.
+          O `gap-4` saiu de proposito: com folga no meio, a `border-r` do
+          sidebar ficava solta no vao em vez de ser a divisoria que o card
+          pede. O botao de colapsar continua sendo o mesmo, mandando na store;
+          o painel obedece — e avisa de volta se quem colapsar for o arrasto. */}
+      <BridgeSplit
+        colapsada={!sidebarAberta}
+        onColapsadaMudou={(c) => setSidebarAberta(!c)}
+        sidebar={
+          <FolderSidebar
           pastas={pastas}
           subpastas={subpastas}
           onCarregarSubpastas={carregarSubpastas}
@@ -6172,6 +6179,8 @@ export function ControlRoomScreen({
           }}
           t={t}
         />
+        }
+      >
 
         {/* #1065: busca do Bridge REMONTADA no toolbar do conteúdo (OPÇÃO A).
             O #876 orfanou o UniversalSearch ao tirar o mount da title bar; aqui
@@ -6275,7 +6284,7 @@ export function ControlRoomScreen({
           </ResizablePanelGroup>
         )}
         </div>
-      </div>
+      </BridgeSplit>
 
       <EventoDialog userEmail={user.email} />
       <NovaMensagemModal
