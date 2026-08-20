@@ -268,6 +268,7 @@ export function ArvoreArquivos({
         <SecaoRaiz
           value={RAIZ_CLOUD}
           label={t.arquivos.driveSecaoCloud}
+          icon={Cloud}
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
@@ -299,6 +300,7 @@ export function ArvoreArquivos({
         <SecaoRaiz
           value={RAIZ_REDE}
           label={t.arquivos.driveSecaoRede}
+          icon={Network}
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
@@ -336,6 +338,7 @@ export function ArvoreArquivos({
         <SecaoRaiz
           value={RAIZ_ACESSO_RAPIDO}
           label={t.arquivos.acessoRapido}
+          icon={Pin}
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
