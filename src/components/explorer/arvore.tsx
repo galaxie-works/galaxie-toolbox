@@ -1,5 +1,5 @@
 import { useCallback, useState, type ElementType, type ReactNode } from "react";
-import { Cloud, Disc, HardDrive, House, Monitor, Network, Pin, PinOff, Usb } from "lucide-react";
+import { Cloud, Disc, HardDrive, House, Monitor, Network, Pin, Usb } from "lucide-react";
 
 import {
   Files,
@@ -7,12 +7,15 @@ import {
   FolderTrigger,
   FolderContent,
 } from "@/components/animate-ui/components/radix/files";
+import { ComMenu } from "./menu-contexto";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+  getTreeContextMenu,
+  type AcoesMenu,
+  type Clipboard,
+  type ItemMenu,
+  type RotulosMenu,
+  type TipoNoArvore,
+} from "./menu-arquivo";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { useIdioma } from "@/lib/idioma";
@@ -27,8 +30,7 @@ import {
   CAMINHO_ACESSO_RAPIDO,
   CAMINHO_CLOUD,
   CAMINHO_ESTE_PC,
-  CAMINHO_REDE,
-} from "./caminho";
+  CAMINHO_REDE, pathPai,} from "./caminho";
 import { estaFixado, mesmoCaminho, type PinAcessoRapido } from "./quick-access";
 import { rotuloDrive } from "./rotulo-drive";
 import { TooltipAcao } from "./tooltip-acao";
@@ -67,6 +69,45 @@ function driveParaEntry(d: DriveInfo): FsEntry {
     extension: null,
     isHidden: false,
     isReadonly: false,
+  };
+}
+
+/**
+ * #1386: o que a árvore precisa pra montar o menu ACIONAVEL de um nó.
+ *
+ * Os handlers são os MESMOS do content-pane — o AC pede REUSO, não uma segunda
+ * implementação (dois menus separados divergem, e a divergência é o próximo
+ * bug). O painel publica seu `AcoesMenu` pro shell; o shell entrega aqui.
+ */
+export interface MenuArvore {
+  /**
+   * As ações do painel, lidas NO ATO de abrir o menu — elas trocam de
+   * identidade a cada render do painel, então guardá-las em estado (e
+   * re-renderizar a árvore por isso) fecharia um laço. `null` = nenhum painel
+   * montado ainda (This PC, boot) → menu só de fixar/desafixar.
+   */
+  obterAcoes: () => AcoesMenu | null;
+  rotulos: RotulosMenu;
+  clipboard: Clipboard | null;
+  /**
+   * Navega até `dir` e SÓ ENTÃO age. Três das treze ações são presas à VIEW do
+   * painel: `renomear` acende o input inline NA LINHA da lista, e `novaPasta`/
+   * `novoArquivo` tiram o nome único das `entradas` CARREGADAS. Disparadas de
+   * fora sem navegar, ou não apareceriam ou checariam colisão na pasta errada.
+   * As outras dez operam por CAMINHO e agem sem tirar o usuário do lugar —
+   * clicar "Copiar" numa pasta da árvore não deve mudar o que ele está vendo.
+   */
+  navegarEAgir: (dir: string, agir: (acoes: AcoesMenu) => void) => void;
+}
+
+/** Envolve as três presas à view; as outras dez passam intactas. */
+function acoesDaArvore(menu: MenuArvore, acoes: AcoesMenu): AcoesMenu {
+  return {
+    ...acoes,
+    // O input de rename mora na listagem do PAI — é pra lá que o painel vai.
+    renomear: (e) => menu.navegarEAgir(pathPai(e.path), (a) => a.renomear(e)),
+    novaPasta: (dir) => menu.navegarEAgir(dir, (a) => a.novaPasta(dir)),
+    novoArquivo: (dir) => menu.navegarEAgir(dir, (a) => a.novoArquivo(dir)),
   };
 }
 
@@ -206,6 +247,7 @@ export function ArvoreArquivos({
   homePath,
   currentPath,
   onNavegar,
+  menu,
 }: {
   drives: DriveInfo[];
   cloudLocations: CloudLocation[] | null;
@@ -225,6 +267,9 @@ export function ArvoreArquivos({
   homePath: string | null;
   currentPath: string;
   onNavegar: (path: string) => void;
+  // #1386: ações do content-pane pro menu de contexto dos nós. Opcional — sem
+  // ele a árvore segue com o menu de fixar/desafixar que sempre teve.
+  menu?: MenuArvore;
 }) {
   const { t } = useIdioma();
   // As raízes começam ABERTAS — drives, nuvem, rede e acesso rápido ficam visíveis
@@ -300,6 +345,8 @@ export function ArvoreArquivos({
             key={d.path}
             entry={driveParaEntry(d)}
             icone={iconePorKind(d.kind)}
+            menu={menu}
+            tipoNo="drive"
             filhosPorPath={filhosPorPath}
             carregando={carregando}
             currentPath={currentPath}
@@ -331,6 +378,8 @@ export function ArvoreArquivos({
               key={c.path}
               entry={cloudParaEntry(c)}
               icone={iconeDoProvider(c.provider)}
+              menu={menu}
+              tipoNo="drive"
               filhosPorPath={filhosPorPath}
               carregando={carregando}
               currentPath={currentPath}
@@ -371,6 +420,8 @@ export function ArvoreArquivos({
               key={entry.path}
               entry={entry}
               icone={Network}
+              menu={menu}
+              tipoNo="drive"
               filhosPorPath={filhosPorPath}
               carregando={carregando}
               currentPath={currentPath}
@@ -408,6 +459,8 @@ export function ArvoreArquivos({
                 key={e.path}
                 entry={item}
                 icone={ehHome ? House : undefined}
+                menu={menu}
+                tipoNo="pasta"
                 filhosPorPath={filhosPorPath}
                 carregando={carregando}
                 currentPath={currentPath}
@@ -493,6 +546,8 @@ function NoArvore({
   desafixarLabel,
   carregandoLabel,
   vazioLabel,
+  menu,
+  tipoNo = "pasta",
 }: {
   entry: FsEntry;
   // #869: ícone só do nó-raiz do seu grupo (drive/mount de nuvem). Os filhos
@@ -512,6 +567,11 @@ function NoArvore({
   desafixarLabel: string;
   carregandoLabel: string;
   vazioLabel: string;
+  // #1386: ações do painel; ausente = menu só de fixar/desafixar.
+  menu?: MenuArvore;
+  // #1283 B: drive perde o que destrói/move ele mesmo (Recortar/Renomear/
+  // Excluir). Filho recursivo é sempre pasta de verdade.
+  tipoNo?: TipoNoArvore;
 }) {
   const { t } = useIdioma();
   const filhos = filhosPorPath.get(entry.path);
@@ -522,45 +582,59 @@ function NoArvore({
   // async (lição do P0 #778: conteúdo de menu Radix presente/decidido na abertura).
   const fixado = estaFixado(pins, entry.path);
 
+  // #1386: os itens são montados DURANTE o render (o `ComMenu` avalia a thunk),
+  // como no conteúdo — o Radix precisa dos filhos já montados quando abre, era
+  // o #778. `shift` chega do clique direito e troca Lixeira por permanente.
+  const itensMenu = (shift: boolean): ItemMenu[] => {
+    // #1285 (A): item de TOPO do Quick access é sempre "Desafixar" — remove o
+    // pin ou oculta o de sistema. Os filhos caem no toggle normal.
+    const pin = acaoRemover
+      ? { fixado: true, rotulo: desafixarLabel, aoAlternar: () => acaoRemover(entry) }
+      : {
+          fixado,
+          rotulo: fixado ? desafixarLabel : fixarLabel,
+          aoAlternar: () => onAlternarFixar(entry),
+        };
+    const acoes = menu ? menu.obterAcoes() : null;
+    if (!menu || !acoes) {
+      return [
+        {
+          id: "fixar",
+          label: pin.rotulo,
+          icon: pin.fixado ? "desafixar" : "fixar",
+          onClick: pin.aoAlternar,
+        },
+      ];
+    }
+    return getTreeContextMenu(
+      entry,
+      tipoNo,
+      menu.clipboard,
+      acoesDaArvore(menu, acoes),
+      menu.rotulos,
+      pin,
+      { permanente: shift },
+    );
+  };
+
   return (
     <FolderItem value={entry.path}>
-      {/* #869: menu de contexto (Radix) pra fixar/desafixar do Acesso rápido. O
-          ContextMenuTrigger é `asChild` no MESMO container que já navega ao
-          clicar (o clique-esquerdo navega; o direito abre o menu). O item é
-          renderizado EAGER no open — `fixado` é sync, então não há gate async. */}
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          {/* O conteúdo do `FolderTrigger` do animate-ui é `pointer-events-none`:
-              o clique cai no botão do acordeão (expande/colapsa). Envolvemos num
-              container que captura o MESMO clique por bubbling pra também NAVEGAR
-              até a pasta. Sem lint de a11y no projeto; o gatilho por baixo é um
-              <button> real (teclado cobre via `aoAbrir`). */}
-          <div
-            onClick={() => onNavegar(entry.path)}
-            className={cn("rounded-md", ativo && "bg-secondary")}
-          >
-            <FolderTrigger icon={icone} expandLabel={t.arquivos.expandirColapsar}>
-              {entry.name}
-            </FolderTrigger>
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          {acaoRemover ? (
-            // #1285 (A): item de topo do Quick access — sempre "Desafixar"
-            // (remove o pin, ou oculta o item de sistema). O usuário controla a
-            // seção por completo, incluindo os dirs conhecidos.
-            <ContextMenuItem onSelect={() => acaoRemover(entry)}>
-              <PinOff />
-              {desafixarLabel}
-            </ContextMenuItem>
-          ) : (
-            <ContextMenuItem onSelect={() => onAlternarFixar(entry)}>
-              {fixado ? <PinOff /> : <Pin />}
-              {fixado ? desafixarLabel : fixarLabel}
-            </ContextMenuItem>
-          )}
-        </ContextMenuContent>
-      </ContextMenu>
+      {/* #1386: o MESMO `ComMenu` do conteúdo (mesmo renderizador de `ItemMenu`,
+          mesmo aninhamento Radix) — o menu da árvore deixou de ser feito à mão.
+          O clique-esquerdo navega; o direito abre. O conteúdo do `FolderTrigger`
+          do animate-ui é `pointer-events-none`, então o clique cai no botão do
+          acordeão e o container por fora captura o MESMO clique por bubbling pra
+          também NAVEGAR. Sem lint de a11y no projeto; o gatilho por baixo é um
+          <button> real (teclado cobre via `aoAbrir`). */}
+      <ComMenu
+        itens={itensMenu}
+        onClick={() => onNavegar(entry.path)}
+        className={cn("rounded-md", ativo && "bg-secondary")}
+      >
+        <FolderTrigger icon={icone} expandLabel={t.arquivos.expandirColapsar}>
+          {entry.name}
+        </FolderTrigger>
+      </ComMenu>
       <FolderContent>
         {estaCarregando ? (
           <div className="flex items-center gap-2 p-2">
@@ -580,6 +654,7 @@ function NoArvore({
               onNavegar={onNavegar}
               pins={pins}
               onAlternarFixar={onAlternarFixar}
+              menu={menu}
               fixarLabel={fixarLabel}
               desafixarLabel={desafixarLabel}
               carregandoLabel={carregandoLabel}
