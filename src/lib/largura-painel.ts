@@ -1,8 +1,11 @@
-// #869 (adendo de layout do Wagner, item 1): a largura DEFAULT do painel da
-// árvore acompanha o caption mais largo, "sem cortar/truncar".
+// Aritmética de largura de painel redimensionável — a parte que erra é a conta
+// (px → % do grupo, limites, storage indisponível), não a fiação em React.
 //
-// A conta vive aqui, separada do React, porque a parte que erra é a aritmética
-// (converter px em % do grupo e respeitar os limites do painel), não a fiação.
+// Nasceu no #869 (largura default do sidebar do Files acompanha o caption mais
+// largo) e mudou pra `lib/` no #912, quando o sidebar do Bridge precisou da
+// mesma conta pra virar painel com splitter sem perder a largura que o #466
+// escolheu a dedo. Dois consumidores em features diferentes é o que prova que
+// isto nunca foi coisa do Explorer.
 
 /** Chave que o `react-resizable-panels` usa pra guardar o layout do grupo. */
 export function chaveLayout(autoSaveId: string): string {

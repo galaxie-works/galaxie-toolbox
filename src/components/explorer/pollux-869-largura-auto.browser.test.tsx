@@ -3,7 +3,7 @@
 //
 // Guarda por EFEITO: mede a largura que o painel REALMENTE assume e compara com
 // a largura NATURAL do texto renderizado. A aritmética tem teste próprio e
-// headless em `largura-sidebar.test.ts`.
+// headless em `lib/largura-painel.test.ts`.
 //
 // Navegador real: largura de painel e largura natural de texto não existem em
 // happy-dom.
@@ -27,7 +27,7 @@ import { cleanup, render } from "vitest-browser-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { IdiomaProvider } from "@/lib/idioma";
 import { ExplorerShell } from "./explorer-shell";
-import { chaveLayout } from "./largura-sidebar";
+import { chaveLayout } from "@/lib/largura-painel";
 
 const AUTO_SAVE = "explorer.layout.v1";
 const DEFAULT_NORMALIZADO_PCT = 29.33;

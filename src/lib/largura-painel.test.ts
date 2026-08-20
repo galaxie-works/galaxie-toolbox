@@ -1,6 +1,6 @@
 // #869: a aritmética da largura-auto do sidebar (adendo do Wagner, item 1).
 // Rode com:
-//   node --test --experimental-strip-types src/components/explorer/largura-sidebar.test.ts
+//   node --test --experimental-strip-types src/lib/largura-painel.test.ts
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
@@ -8,7 +8,7 @@ import {
   chaveLayout,
   larguraIdealPct,
   temLayoutSalvo,
-} from "./largura-sidebar.ts";
+} from "./largura-painel.ts";
 
 function storage(valor: string | null): Pick<Storage, "getItem"> {
   return { getItem: () => valor };

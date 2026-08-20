@@ -36,7 +36,7 @@ import type {
 } from "@/lib/types";
 import { DrivesView } from "./drives-view";
 import { ArvoreArquivos, RailArvore } from "./arvore";
-import { larguraIdealPct, temLayoutSalvo } from "./largura-sidebar";
+import { larguraIdealPct, temLayoutSalvo } from "@/lib/largura-painel";
 import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
 import { ResultadosBusca } from "./resultados-busca";
