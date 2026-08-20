@@ -77,7 +77,32 @@ pub struct FsEntry {
     pub is_readonly: bool,
 }
 
-/// Um drive montado (letra no Windows) com espaço e tipo.
+/// #1404 — qual diretório conhecido é este. O consumidor precisa PERGUNTAR
+/// "qual destes é a home?", e antes disto ele só podia contar posição.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum KnownKind {
+    Home,
+    Desktop,
+    Documents,
+    Downloads,
+}
+
+/// Uma entrada de `fs_known_dirs` com a sua origem declarada.
+///
+/// #1404 — o `kind` fica AQUI e não no `FsEntry` de propósito: `FsEntry`
+/// serializa em toda listagem de diretório (milhares de itens), e um campo que
+/// só faz sentido para quatro entradas não deve viajar em todas elas. O
+/// `serde(flatten)` mantém o JSON que o front já consome, com um campo a mais.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnownDir {
+    #[serde(flatten)]
+    pub entry: FsEntry,
+    pub kind: KnownKind,
+}
+
+/// Um drive montado (letra no Windows) com tipo e espaço.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DriveInfo {
@@ -602,17 +627,44 @@ fn tamanho_dir(path: &str) -> Result<DirSize, FsError> {
 }
 
 /// Pastas de acesso rápido (home/desktop/documentos/downloads) que existem.
-fn dirs_conhecidos() -> Vec<FsEntry> {
-    [
-        dirs::home_dir(),
-        dirs::desktop_dir(),
-        dirs::document_dir(),
-        dirs::download_dir(),
+/// #1404 — as quatro origens, cada uma JÁ EMPARELHADA com o que ela é.
+///
+/// Antes isto era um array anônimo de `Option<PathBuf>` e a identidade de cada
+/// entrada dependia de ela sobreviver a dois filtros silenciosos (`flatten` +
+/// `metadata().ok()`). Com a home irresolvível — perfil de rede fora, permissão
+/// negada, `$HOME` ausente — o índice 0 passava a ser a Área de Trabalho e a UI
+/// a rotulava como "Home", sem erro e sem log.
+fn fontes_conhecidas() -> Vec<(KnownKind, Option<PathBuf>)> {
+    vec![
+        (KnownKind::Home, dirs::home_dir()),
+        (KnownKind::Desktop, dirs::desktop_dir()),
+        (KnownKind::Documents, dirs::document_dir()),
+        (KnownKind::Downloads, dirs::download_dir()),
     ]
-    .into_iter()
-    .flatten()
-    .filter_map(|p| std::fs::metadata(&p).ok().map(|m| entry_de(&p, &m, false)))
-    .collect()
+}
+
+fn dirs_conhecidos() -> Vec<KnownDir> {
+    dirs_conhecidos_de(fontes_conhecidas())
+}
+
+/// Núcleo testável: recebe as origens injetadas, então o teste pode simular
+/// "a home não resolveu" sem mexer no ambiente da máquina.
+///
+/// O filtro continua descartando o que não existe — isso está certo, uma pasta
+/// ausente não deve aparecer. O que muda é que **quem sobrevive carrega o que
+/// é**, então descartar uma entrada não promove outra ao papel dela.
+fn dirs_conhecidos_de(fontes: Vec<(KnownKind, Option<PathBuf>)>) -> Vec<KnownDir> {
+    fontes
+        .into_iter()
+        .filter_map(|(kind, caminho)| {
+            let caminho = caminho?;
+            let meta = std::fs::metadata(&caminho).ok()?;
+            Some(KnownDir {
+                entry: entry_de(&caminho, &meta, false),
+                kind,
+            })
+        })
+        .collect()
 }
 
 // ─────────────────────────────── Drives ─────────────────────────────────────
@@ -4132,7 +4184,7 @@ pub async fn fs_disconnect_network_drive(letter: String, force: bool) -> Result<
 }
 
 #[tauri::command]
-pub async fn fs_known_dirs() -> Result<Vec<FsEntry>, FsError> {
+pub async fn fs_known_dirs() -> Result<Vec<KnownDir>, FsError> {
     tauri::async_runtime::spawn_blocking(|| Ok(dirs_conhecidos()))
         .await
         .map_err(spawn_err)?
@@ -6910,6 +6962,115 @@ mod tests {
         assert_eq!(changes.len(), dedup.len(), "fs-change nao pode repetir diretorio: {changes:?}");
         assert_eq!(changes.len(), 2, "undo de move afeta origem + destino = 2 fs-change: {changes:?}");
 
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+
+    // ── #1404: a home deixa de ser "o primeiro da lista" ─────────────────────
+    //
+    // O contrato era POSICIONAL: o front lia `acessoRapido[0]` como home. Dois
+    // filtros silenciosos (`flatten` do `Option` + `metadata().ok()`) decidiam
+    // quem sobrevivia — então bastava a home não resolver (perfil de rede fora,
+    // permissão negada, `$HOME` ausente) para o índice 0 virar a Área de
+    // Trabalho e a UI rotulá-la "Home", sem erro, sem log, sem sintoma.
+    //
+    // Achado do `altair` sobre a pendência que a `lumen` registrou no #1285.
+    // O núcleo recebe as origens INJETADAS, então o teste simula "a home não
+    // resolveu" sem tocar no ambiente da máquina.
+
+    #[test]
+    fn home_ausente_nao_promove_a_area_de_trabalho_a_home() {
+        let base = dir_temp("conhecidos-sem-home-1404");
+        let desktop = base.join("Desktop");
+        let documentos = base.join("Documentos");
+        std::fs::create_dir_all(&desktop).unwrap();
+        std::fs::create_dir_all(&documentos).unwrap();
+
+        // A home NÃO resolve — é o cenário que o card nomeia.
+        let dirs = dirs_conhecidos_de(vec![
+            (KnownKind::Home, None),
+            (KnownKind::Desktop, Some(desktop.clone())),
+            (KnownKind::Documents, Some(documentos)),
+            (KnownKind::Downloads, None),
+        ]);
+
+        assert_eq!(dirs.len(), 2, "só as duas que existem entram");
+        assert!(
+            !dirs.iter().any(|d| d.kind == KnownKind::Home),
+            "sem home resolvida, NENHUMA entrada pode alegar ser a home"
+        );
+        // O ponto do card: o índice 0 agora é a Desktop E SE DECLARA Desktop.
+        assert_eq!(
+            dirs[0].kind,
+            KnownKind::Desktop,
+            "a Area de Trabalho continua sendo a 1a da lista — o que nao pode \
+             mais acontecer e ela ser LIDA como home"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// Par positivo: com as quatro presentes, cada entrada carrega a SUA origem.
+    /// Sem isto, um `kind` cravado (todos `Home`, por exemplo) passaria no teste
+    /// de cima.
+    #[test]
+    fn cada_diretorio_conhecido_carrega_a_propria_origem() {
+        let base = dir_temp("conhecidos-todos-1404");
+        let quatro = [
+            (KnownKind::Home, "Home"),
+            (KnownKind::Desktop, "Desktop"),
+            (KnownKind::Documents, "Documentos"),
+            (KnownKind::Downloads, "Downloads"),
+        ];
+        let fontes: Vec<(KnownKind, Option<PathBuf>)> = quatro
+            .iter()
+            .map(|(kind, nome)| {
+                let p = base.join(nome);
+                std::fs::create_dir_all(&p).unwrap();
+                (*kind, Some(p))
+            })
+            .collect();
+
+        let dirs = dirs_conhecidos_de(fontes);
+
+        assert_eq!(dirs.len(), 4);
+        for (esperado, nome) in quatro {
+            let achado = dirs
+                .iter()
+                .find(|d| d.kind == esperado)
+                .unwrap_or_else(|| panic!("faltou a entrada {esperado:?}"));
+            assert_eq!(
+                achado.entry.name, nome,
+                "o kind {esperado:?} tem de apontar para o diretorio de origem"
+            );
+        }
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// Reordenar as origens não pode mudar quem é a home — era o segundo modo
+    /// de falha do card (acrescentar um diretório no começo do array movia a
+    /// home em silêncio).
+    #[test]
+    fn reordenar_as_fontes_nao_muda_quem_e_a_home() {
+        let base = dir_temp("conhecidos-ordem-1404");
+        let home = base.join("Home");
+        let desktop = base.join("Desktop");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&desktop).unwrap();
+
+        let invertido = dirs_conhecidos_de(vec![
+            (KnownKind::Desktop, Some(desktop)),
+            (KnownKind::Home, Some(home.clone())),
+        ]);
+
+        let achada = invertido
+            .iter()
+            .find(|d| d.kind == KnownKind::Home)
+            .expect("a home esta na lista, so nao em primeiro");
+        assert!(
+            achada.entry.path.ends_with("Home"),
+            "com a home em 2o lugar, quem pergunta por kind ainda a encontra: {}",
+            achada.entry.path
+        );
         std::fs::remove_dir_all(&base).ok();
     }
 

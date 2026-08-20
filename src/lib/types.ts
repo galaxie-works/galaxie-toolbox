@@ -621,6 +621,21 @@ export interface FsEntry {
   isReadonly: boolean;
 }
 
+/** #1404: qual diretório conhecido é este. Espelha `KnownKind` do Rust. */
+export type KnownKind = "home" | "desktop" | "documents" | "downloads";
+
+/**
+ * Uma entrada de `fs_known_dirs` com a origem declarada.
+ *
+ * #1404 — o `kind` vive aqui e não no `FsEntry` porque `FsEntry` viaja em toda
+ * listagem de diretório; um campo que só faz sentido para quatro entradas não
+ * deve pesar em milhares. No Rust é `serde(flatten)`, então o JSON é o mesmo
+ * `FsEntry` com um campo a mais.
+ */
+export interface KnownDir extends FsEntry {
+  kind: KnownKind;
+}
+
 /** Um drive montado (letra no Windows) com tipo e espaço. */
 export interface DriveInfo {
   path: string;
