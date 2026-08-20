@@ -1845,4 +1845,86 @@ mod testes {
         );
     }
 
+
+    // ── #1055: as MITIGAÇÕES do runbook passam a ter guarda ──────────────────
+    //
+    // O `docs/reference/rotacao-segredos.md` tem uma seção "Mitigações já no
+    // código (não dependem de rotação)". Ela é o que sustenta a decisão de
+    // manter o token embutido — quem audita lê aquilo e aceita o risco.
+    //
+    // Só que a seção AFIRMA e nada conferia. É exatamente o modo de falha que o
+    // gate deste card (`segredos-embutidos-gate.test.ts`) existe pra fechar — mas
+    // ele guarda o INVENTÁRIO, não as mitigações. Um `set_sensitive` removido num
+    // refactor derrubaria a mitigação e o runbook seguiria dizendo que ela existe.
+
+    /// Runbook: *"o `Authorization` é marcado `set_sensitive(true)` → nunca entra
+    /// em log"*. Sem isto, o token de ingestão vaza em qualquer dump de headers.
+    #[test]
+    fn authorization_da_telemetria_e_marcado_sensivel() {
+        let auth = OpenObserveAuthProvider::novo(
+            "telemetry@galaxie.test",
+            "token-de-teste",
+            "galaxie_toolbox",
+        )
+        .expect("config valida");
+
+        assert!(
+            auth.authorization.is_sensitive(),
+            "o header Authorization TEM de ser sensivel — e o que impede o token \
+             de ingestao de aparecer em log/dump. O runbook (rotacao-segredos.md) \
+             lista isto como mitigacao ativa; sem o marcador, o documento mente.",
+        );
+    }
+
+    /// Runbook: *"config parcial → transporte desativado, nunca meio-ligado"*.
+    /// Cada campo que falta derruba a construção com um código PRÓPRIO — sem o
+    /// código exato, o teste passaria mesmo se todos os ramos colapsassem num
+    /// erro só, e a mensagem de diagnóstico deixaria de apontar o campo errado.
+    #[test]
+    fn config_parcial_de_telemetria_e_fail_closed_campo_a_campo() {
+        let casos: [(&str, &str, &str, &str); 3] = [
+            ("", "token", "stream", "email-invalido"),
+            ("email@x.test", "", "stream", "token-vazio"),
+            ("email@x.test", "token", "", "stream-vazio"),
+        ];
+
+        for (email, token, stream, esperado) in casos {
+            assert_eq!(
+                OpenObserveAuthProvider::novo(email, token, stream).err(),
+                Some(TransporteErro::Configuracao(esperado)),
+                "config parcial (email={email:?} token={token:?} stream={stream:?})                  tem de FALHAR — meio-ligado parece telemetria funcionando",
+            );
+        }
+
+        // Par positivo: config completa passa. Sem ele, o bloco acima passaria
+        // mesmo se `novo` recusasse tudo — e a telemetria legitima quebraria.
+        assert!(
+            OpenObserveAuthProvider::novo("email@x.test", "token", "stream").is_ok(),
+            "config COMPLETA tem de passar",
+        );
+    }
+
+    /// O header é `Basic base64(email:token)`. Um `:` dentro do e-mail MOVE a
+    /// fronteira da credencial: `a@x:forjado` + token `t` gera exatamente o
+    /// mesmo header que o e-mail `a@x` com token `forjado:t`. O codigo ja recusa;
+    /// esta guarda impede que a recusa seja relaxada sem que ninguem perceba.
+    #[test]
+    fn email_com_dois_pontos_nao_pode_forjar_a_credencial() {
+        assert_eq!(
+            OpenObserveAuthProvider::novo("a@x:forjado", "t", "stream").err(),
+            Some(TransporteErro::Configuracao("email-invalido")),
+            "`:` no e-mail desloca a fronteira do Basic auth",
+        );
+    }
+
+    /// Espaço em branco conta como ausente — senão um secret mal preenchido na
+    /// esteira (`GALAXIE_TELEMETRY_INGEST_TOKEN=" "`) viraria credencial válida.
+    #[test]
+    fn espaco_em_branco_nao_vale_como_token() {
+        assert_eq!(
+            OpenObserveAuthProvider::novo("email@x.test", " ", "stream").err(),
+            Some(TransporteErro::Configuracao("token-vazio")),
+        );
+    }
+
 }
