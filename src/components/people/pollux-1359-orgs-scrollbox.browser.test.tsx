@@ -25,13 +25,18 @@ const ORG: PeopleOrg = {
   updatedAt: 1,
 };
 
-/** Muitos contatos: é o cenário do card (lista que cresce por contato). */
+/** Muitos contatos: é o cenário do card (lista que cresce por contato). Sem
+ *  `as` — o cast escondia campos obrigatórios e o `tsc -b` do gate pegou. */
 const CONTATOS: PeopleContact[] = Array.from({ length: 60 }, (_, i) => ({
   id: `c${i}`,
   name: `Contato ${i}`,
-  emails: [{ address: `c${i}@acme.com`, kind: "work" }],
+  emails: [{ address: `c${i}@acme.com` }],
   phones: [],
-})) as PeopleContact[];
+  organization: false,
+  frequent: false,
+  sources: [],
+  categories: [],
+}));
 
 async function ate(busca: () => Element | null, ms = 5000) {
   const fim = Date.now() + ms;
