@@ -4265,7 +4265,63 @@ struct ResumoOp {
     files_done: u64,
 }
 
-/// #875: evento terminal (`phase=done`) — status agregado (success/canceled/error),
+/// #1282: emissor de eventos injetável — torna a FIAÇÃO do undo testável sem
+/// runtime do Tauri. O impl real encaminha pro `AppHandle`; o teste usa um duplo
+/// que grava `(evento, payload)` numa Vec e afirma as emissões. (A Lúmen silenciou
+/// a emissão de produção e a suíte ficou 292/292 verde — era fiação sem guarda.)
+trait EmissorEventos {
+    fn emitir<T: Serialize>(&self, evento: &str, payload: &T);
+}
+
+/// Impl de produção: encaminha pro `AppHandle`.
+struct EmissorApp<'a>(&'a AppHandle);
+impl EmissorEventos for EmissorApp<'_> {
+    fn emitir<T: Serialize>(&self, evento: &str, payload: &T) {
+        let _ = self.0.emit(evento, payload);
+    }
+}
+
+/// #875: payload do evento terminal (`phase=done`). Extraído pra ser compartilhado
+/// entre `emitir_final` (borda com AppHandle) e `emitir_undo` (via emissor).
+fn op_progress_final(
+    op_id: u64,
+    op_kind: &'static str,
+    started_at_ms: u64,
+    canceled: bool,
+    files_total: u64,
+    files_done: u64,
+    error: Option<FsError>,
+) -> OpProgress {
+    let status = if error.is_some() {
+        "error"
+    } else if canceled {
+        "canceled"
+    } else {
+        "success"
+    };
+    OpProgress {
+        op_id,
+        processed_bytes: 0,
+        total_bytes: 0,
+        percent: if error.is_some() { 0.0 } else { 100.0 },
+        eta_ms: None,
+        files_total,
+        files_done,
+        bytes_per_sec: 0,
+        verifying: false,
+        done: true,
+        canceled,
+        error,
+        op_kind,
+        phase: "done",
+        status,
+        current_file: None,
+        started_at_ms,
+        completed_at_ms: Some(agora_ms()),
+    }
+}
+
+/// #875: evento terminal — status agregado (success/canceled/error),
 /// `completed_at_ms`. O front RETÉM a op na fila por isto (não descarta no terminal).
 /// #989: emite a contagem REAL de arquivos (não mais 0 hardcoded).
 fn emitir_final(
@@ -4278,36 +4334,80 @@ fn emitir_final(
     files_done: u64,
     error: Option<FsError>,
 ) {
-    let status = if error.is_some() {
-        "error"
-    } else if canceled {
-        "canceled"
-    } else {
-        "success"
-    };
     let _ = app.emit(
         "fs-op-progress",
-        OpProgress {
+        op_progress_final(
             op_id,
-            processed_bytes: 0,
-            total_bytes: 0,
-            percent: if error.is_some() { 0.0 } else { 100.0 },
-            eta_ms: None,
+            op_kind,
+            started_at_ms,
+            canceled,
             files_total,
             files_done,
-            bytes_per_sec: 0,
-            verifying: false,
-            done: true,
-            canceled,
             error,
-            op_kind,
-            phase: "done",
-            status,
-            current_file: None,
-            started_at_ms,
-            completed_at_ms: Some(agora_ms()),
-        },
+        ),
     );
+}
+
+/// #1282: a FIAÇÃO do undo, atrás do emissor injetável (por isso testável). Roda o
+/// núcleo puro `executar_undo_observado` e emite as TRÊS coisas que o card pede:
+/// `fs-op-progress` de progresso (op_id PRÓPRIO, `op_kind="undo"`), o terminal, e
+/// UM `fs-change` por diretório afetado. Silenciar qualquer uma faz o teste falhar.
+fn emitir_undo<E: EmissorEventos>(
+    emissor: &E,
+    entry: &OperationJournalEntry,
+    undo_op_id: u64,
+    started_at_ms: u64,
+) -> UndoReport {
+    let (report, afetados) = executar_undo_observado(entry, &mut |feitos, total, atual| {
+        let percent = if total == 0 {
+            100.0
+        } else {
+            (feitos as f64 / total as f64) * 100.0
+        };
+        emissor.emitir(
+            "fs-op-progress",
+            &OpProgress {
+                op_id: undo_op_id,
+                processed_bytes: 0,
+                total_bytes: 0,
+                percent,
+                eta_ms: None,
+                files_total: total as u64,
+                files_done: feitos as u64,
+                bytes_per_sec: 0,
+                verifying: false,
+                done: false,
+                canceled: false,
+                error: None,
+                op_kind: "undo",
+                phase: "copying",
+                status: "running",
+                current_file: Some(atual.to_string()),
+                started_at_ms,
+                completed_at_ms: None,
+            },
+        );
+    });
+
+    let total = report.executados as u64 + report.pulados as u64 + report.nao_reversiveis as u64;
+    emissor.emitir(
+        "fs-op-progress",
+        &op_progress_final(
+            undo_op_id,
+            "undo",
+            started_at_ms,
+            false,
+            total,
+            report.executados as u64,
+            None,
+        ),
+    );
+
+    for dir in &afetados {
+        emissor.emitir("fs-change", dir);
+    }
+
+    report
 }
 
 /// #850 (fatia B): versão multi-origem do [`spawn_progresso`] — UMA op/op_id pro
@@ -4479,58 +4579,11 @@ pub async fn fs_undo_op(op_id: u64, app: AppHandle) -> Result<UndoReport, FsErro
             .fetch_add(1, Ordering::Relaxed);
         let started_at_ms = agora_ms();
 
-        let app_prog = app.clone();
-        let (report, afetados) = executar_undo_observado(&entry, &mut |feitos, total, atual| {
-            let percent = if total == 0 {
-                100.0
-            } else {
-                (feitos as f64 / total as f64) * 100.0
-            };
-            let _ = app_prog.emit(
-                "fs-op-progress",
-                OpProgress {
-                    op_id: undo_op_id,
-                    processed_bytes: 0,
-                    total_bytes: 0,
-                    percent,
-                    eta_ms: None,
-                    files_total: total as u64,
-                    files_done: feitos as u64,
-                    bytes_per_sec: 0,
-                    verifying: false,
-                    done: false,
-                    canceled: false,
-                    error: None,
-                    op_kind: "undo",
-                    phase: "copying",
-                    status: "running",
-                    current_file: Some(atual.to_string()),
-                    started_at_ms,
-                    completed_at_ms: None,
-                },
-            );
-        });
-
-        // Terminal: o front RETEM a op na fila por este evento (#875).
-        emitir_final(
-            &app,
-            undo_op_id,
-            "undo",
-            started_at_ms,
-            false,
-            report.executados as u64
-                + report.pulados as u64
-                + report.nao_reversiveis as u64,
-            report.executados as u64,
-            None,
-        );
-
-        // `fs-change` por diretorio AFETADO — e a arquitetura de reload do
-        // Explorer (watcher -> nonce -> re-leitura). Sem isto a pasta so
-        // atualiza quando o usuario navega de novo.
-        for dir in &afetados {
-            let _ = app.emit("fs-change", dir);
-        }
+        // #1282: emissão de progresso + terminal + `fs-change` por diretório vive
+        // em `emitir_undo`, atrás do emissor injetável — é o que torna a fiação
+        // testável (a Lúmen silenciou isto e a suíte ficou verde). A borda só
+        // injeta o `AppHandle` real.
+        let report = emitir_undo(&EmissorApp(&app), &entry, undo_op_id, started_at_ms);
 
         remover_entrada_journal(&app, op_id);
         log::info!(
@@ -6780,6 +6833,83 @@ mod tests {
             "3 arquivos nos MESMOS dois diretorios nao podem gerar 6 entradas — \
              cada uma vira uma re-leitura de pasta no front"
         );
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // ── #1282: a FIAÇÃO da emissão do undo (o que a Lúmen silenciou e ficou verde) ──
+    /// Duplo do emissor: grava `(evento, payload)` numa Vec pra o teste afirmar
+    /// as emissões sem runtime do Tauri.
+    #[derive(Default)]
+    struct EmissorFake {
+        eventos: std::cell::RefCell<Vec<(String, serde_json::Value)>>,
+    }
+    impl EmissorEventos for EmissorFake {
+        fn emitir<T: Serialize>(&self, evento: &str, payload: &T) {
+            self.eventos
+                .borrow_mut()
+                .push((evento.to_string(), serde_json::to_value(payload).unwrap()));
+        }
+    }
+
+    /// Controle da fiação: `emitir_undo` tem de emitir (a) progresso com op_id
+    /// PRÓPRIO + `op_kind="undo"`, (b) o terminal (`done=true`), (c) UM `fs-change`
+    /// por diretório afetado, sem repetir. Silenciar qualquer uma mata este teste
+    /// (foi o furo: a borda emitia, mas nada guardava a emissão).
+    #[test]
+    fn emitir_undo_emite_progresso_terminal_e_fs_change_por_diretorio() {
+        let base = dir_temp("undo-emissor-1282");
+        let origem = base.join("src");
+        std::fs::create_dir_all(&origem).unwrap();
+        for n in 0..2 {
+            std::fs::write(origem.join(format!("f{n}.txt")), vec![7u8; 4]).unwrap();
+        }
+        let destino = base.join("dst");
+        mover(&origem.to_string_lossy(), &destino.to_string_lossy()).unwrap();
+        let itens: Vec<JournalItem> = (0..2)
+            .map(|n| {
+                journal_item(
+                    &origem.join(format!("f{n}.txt")),
+                    &destino.join(format!("f{n}.txt")),
+                    true,
+                )
+            })
+            .collect();
+        let entry = entrada_undo("move", itens);
+
+        let fake = EmissorFake::default();
+        let undo_op_id = 4242u64;
+        let report = emitir_undo(&fake, &entry, undo_op_id, 111);
+        assert_eq!(report.executados, 2, "os 2 arquivos revertem");
+
+        let eventos = fake.eventos.borrow();
+        // (a) progresso "em andamento" com op_id PRÓPRIO e op_kind "undo"
+        // NB: `OpProgress` serializa em camelCase (`opKind`/`opId`).
+        assert!(
+            eventos.iter().any(|(e, v)| e == "fs-op-progress"
+                && v["done"] == serde_json::json!(false)
+                && v["opKind"] == serde_json::json!("undo")
+                && v["opId"] == serde_json::json!(undo_op_id)),
+            "faltou fs-op-progress de PROGRESSO (done=false, opKind=undo, opId proprio): {eventos:?}"
+        );
+        // (b) terminal — o front RETEM a op por ele (#875)
+        assert!(
+            eventos.iter().any(|(e, v)| e == "fs-op-progress"
+                && v["done"] == serde_json::json!(true)
+                && v["opId"] == serde_json::json!(undo_op_id)),
+            "faltou o evento TERMINAL (done=true): {eventos:?}"
+        );
+        // (c) um fs-change por diretorio afetado (move mexe em 2), sem repetir
+        let changes: Vec<String> = eventos
+            .iter()
+            .filter(|(e, _)| e == "fs-change")
+            .map(|(_, v)| v.as_str().unwrap().to_lowercase())
+            .collect();
+        let mut dedup = changes.clone();
+        dedup.sort();
+        dedup.dedup();
+        assert_eq!(changes.len(), dedup.len(), "fs-change nao pode repetir diretorio: {changes:?}");
+        assert_eq!(changes.len(), 2, "undo de move afeta origem + destino = 2 fs-change: {changes:?}");
+
         std::fs::remove_dir_all(&base).ok();
     }
 
