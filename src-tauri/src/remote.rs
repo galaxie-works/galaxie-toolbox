@@ -2181,7 +2181,6 @@ mod tests {
             urls: vec![url.to_string()],
             username: "usuario-efemero".into(),
             credential: SEGREDO.into(),
-            expires_at_unix_seconds: 0,
         }
     }
 
@@ -2193,7 +2192,6 @@ mod tests {
                 urls: vec!["stun:127.0.0.1:3478".into()],
                 username: String::new(),
                 credential: String::new(),
-                expires_at_unix_seconds: 0,
             },
         ];
 
