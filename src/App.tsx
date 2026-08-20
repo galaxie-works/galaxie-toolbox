@@ -194,6 +194,11 @@ function AppInner() {
   // teleportar a strip pra cá. Null enquanto o header não montou (ou telas sem
   // title bar) → a strip cai no fallback inline.
   const [tabSlot, setTabSlot] = useState<HTMLElement | null>(null);
+  // #1290: 2º slot da title bar, logo DEPOIS do sino. O Navigator teleporta
+  // seus ícones (favoritos/histórico/paleta) pra cá, e é ESTE arquivo que
+  // decide a ordem da fileira — antes ela era um acidente de quem portalizava
+  // primeiro, e o sino acabava à direita dos três.
+  const [chromeSlot, setChromeSlot] = useState<HTMLElement | null>(null);
   // #454: bump a cada nova aba pra REMONTAR o Launcher (key) e re-focar o command
   // mesmo quando já estávamos na aba vazia (setAbaAtiva(null) seria no-op).
   const [launcherNonce, setLauncherNonce] = useState(0);
@@ -1306,9 +1311,11 @@ function AppInner() {
             data-tauri-drag-region
             className="flex shrink-0 items-center gap-1.5 pr-[140px] pl-2"
           >
-            {/* #987: sino do activity-dropdown na fileira de chrome (à esquerda do
-                theme/avatar) — some quando não há atividade. Abre o dropdown
-                ANCORADO aqui (não flutua). */}
+            {/* #987/#1290: sino do activity-dropdown — PRIMEIRO da fileira de
+                chrome, como o PO pediu. Some quando não há atividade; como o
+                cluster é `shrink-0` colado na direita e o sino é o item mais à
+                esquerda, sumir/voltar não desloca os vizinhos (medido, ver o
+                teste `pollux-1290-ordem-chrome`). Abre o dropdown ANCORADO. */}
             <ActivityDropdown
               ops={atividade.ops}
               agoraMs={atividade.agoraMs}
@@ -1320,6 +1327,10 @@ function AppInner() {
               desfeitos={atividade.desfeitos}
               onLimparConcluidas={atividade.onLimparConcluidas}
             />
+            {/* #1290: aqui pousam os ícones do Navigator (favoritos/histórico/
+                paleta), por portal. Vazio nas outras telas — o `gap` do pai não
+                abre buraco porque um div sem filhos não ocupa largura. */}
+            <div ref={setChromeSlot} className="flex items-center" />
             <ThemeToggle size="md" />
             <MenuUsuario
               user={user}
@@ -1388,6 +1399,7 @@ function AppInner() {
             // escondido) → nenhuma aba na title bar dessas telas, e clicar aba
             // não fica dessincronizado com a tela mostrada.
             tabStripSlot={tela === "navegador" ? tabSlot : null}
+            chromeSlot={tela === "navegador" ? chromeSlot : null}
             renderTelaInterna={renderTelaInterna}
             onTrocar={trocarAba}
             onFechar={fecharAba}
