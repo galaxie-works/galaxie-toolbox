@@ -35,6 +35,7 @@ import type {
   FsEntry,
 } from "@/lib/types";
 import { DrivesView } from "./drives-view";
+import { HomeView } from "./home-view";
 import { ArvoreArquivos, RailArvore } from "./arvore";
 import { larguraIdealPct, temLayoutSalvo } from "@/lib/largura-painel";
 import { NavBarArquivos } from "./navbar";
@@ -56,6 +57,7 @@ import {
   adicionarPin,
   estaFixado,
   mesclarAcessoRapido,
+  mesmoCaminho,
   ocultar,
   removerPin,
   restaurar,
@@ -737,6 +739,14 @@ export function ExplorerShell({
                 }}
                 onFechar={onLimparBusca}
               />
+            ) : homePath &&
+              nav.currentPath &&
+              mesmoCaminho(nav.currentPath, homePath) ? (
+              // #1285 (B2): a home tem view semântica própria (tiles das
+              // subpastas), no estilo do This PC — não a lista crua do ContentPane.
+              // Por CAMINHO: vale pra qualquer forma de chegar na home (clique,
+              // caminho digitado, subir a partir de Desktop).
+              <HomeView homePath={nav.currentPath} onNavegar={navegar} />
             ) : nav.currentPath ? (
               <ContentPane
                 currentPath={nav.currentPath}
