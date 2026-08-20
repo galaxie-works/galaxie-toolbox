@@ -28,7 +28,10 @@ export type IconeMenu =
   | "novoArquivo"
   | "copiarCaminho"
   | "revelar"
-  | "propriedades";
+  | "propriedades"
+  // #1283 B: o menu da ÁRVORE termina com Fixar/Desafixar no Acesso rápido.
+  | "fixar"
+  | "desafixar";
 
 /** Um item do menu de contexto (data-driven). `submenu` aninha recursivamente. */
 export interface ItemMenu {
@@ -97,6 +100,65 @@ export function alvosDe(entry: FsEntry, selecionados: string[]): string[] {
  * Renomear (single) · Copiar caminho · Revelar · Excluir. `opts.permanente`
  * (Shift no open) troca "Excluir (Lixeira)" por "Excluir permanentemente".
  */
+/** #1283 B: que tipo de nó da ÁRVORE foi clicado — decide o que o menu perde. */
+export type TipoNoArvore = "pasta" | "drive" | "raiz";
+
+/** Ações que destroem ou movem o próprio nó — proibidas em drive e raiz. */
+const DESTRUTIVOS = new Set(["recortar", "renomear", "excluir", "excluirPerm"]);
+/** Ações que só fazem sentido DENTRO de uma pasta real. */
+const SO_EM_PASTA_REAL = new Set(["colar", "novaPasta", "novoArquivo", "abrirCom"]);
+
+/**
+ * #1283 B: menu de contexto de um nó da ÁRVORE (sidebar do Files).
+ *
+ * Até aqui a árvore tinha um `ContextMenu` feito à mão com **só Fixar/Desafixar**
+ * (`arvore.tsx`), enquanto o conteúdo tinha o menu completo. O AC do card pede as
+ * mesmas ações nos dois — **reusando os handlers, sem duplicar lógica**. Por isso
+ * isto **compõe** a partir do `getFileContextMenu` em vez de montar um menu
+ * paralelo: dois menus separados divergem, e a divergência é o próximo bug.
+ *
+ * O que a árvore tira do menu do conteúdo:
+ *  - **drive** (`C:`, `W:`, mount de nuvem) — some o que destrói/move o próprio
+ *    drive: Recortar, Renomear, Excluir. Fixar, Propriedades e Copiar caminho
+ *    ficam (AC).
+ *  - **raiz especial** (This PC, Cloud drives, Quick access) — não é caminho de
+ *    verdade: além dos destrutivos, saem Colar, Nova pasta, Novo arquivo e Abrir
+ *    com. Sobra o que faz sentido num nó virtual.
+ *
+ * A árvore não tem multi-seleção, então os alvos são sempre o nó clicado.
+ */
+export function getTreeContextMenu(
+  entry: FsEntry,
+  tipo: TipoNoArvore,
+  clipboard: Clipboard | null,
+  acoes: AcoesMenu,
+  rotulos: RotulosMenu,
+  pin: { fixado: boolean; rotulo: string; aoAlternar: () => void },
+  opts: { permanente?: boolean } = {},
+): ItemMenu[] {
+  const base = getFileContextMenu(entry, [], clipboard, acoes, rotulos, opts);
+  const podados = base.filter((item) => {
+    if (tipo === "pasta") return true;
+    if (DESTRUTIVOS.has(item.id)) return false;
+    if (tipo === "raiz" && SO_EM_PASTA_REAL.has(item.id)) return false;
+    return true;
+  });
+  // O último item herdado pode ter ficado com `separatorAfter` de um vizinho que
+  // saiu; normaliza pra não sobrar linha solta acima do pin.
+  const limpos = podados.map((item, i) =>
+    i === podados.length - 1 ? { ...item, separatorAfter: true } : item,
+  );
+  return [
+    ...limpos,
+    {
+      id: "fixar",
+      label: pin.rotulo,
+      icon: pin.fixado ? "desafixar" : "fixar",
+      onClick: pin.aoAlternar,
+    },
+  ];
+}
+
 export function getFileContextMenu(
   entry: FsEntry,
   selecionados: string[],

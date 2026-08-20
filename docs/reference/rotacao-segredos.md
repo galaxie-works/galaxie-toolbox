@@ -95,6 +95,7 @@ como um segredo novo entra sem ninguém notar.
 | `GALAXIE_REMOTE_SIGNALING_URL` | `src-tauri/src/lib.rs` | ⚙️ config (URL do signaling) | só se o host mudar |
 | `GALAXIE_SIGN_PIN_ISSUER` | `services/remote-system-agent/src/pipe_server.rs` | 📌 **pin de publisher** (não é segredo: atributo público do cert) | quando o cert EV existir (S7/F5) |
 | `GALAXIE_SIGN_PIN_SUBJECT_O` | `services/remote-system-agent/src/pipe_server.rs` | 📌 **pin de publisher** | idem |
+| `GALAXIE_BUILD_SHA` | `services/remote-signaling/src/lib.rs` | 📢 **público POR DESIGN** — é o commit que gerou o binário, e o `/healthz` o publica de propósito (#1311/#1303: a alternativa é a deriva invisível) | nunca: muda a cada build, por definição |
 
 ### Os dois pins estão VAZIOS hoje — e isso é fail-closed, não buraco
 

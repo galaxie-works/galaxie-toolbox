@@ -89,8 +89,33 @@ pub fn app(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn healthz() -> &'static str {
-    "ok"
+/// #1311 — SHA do commit que gerou ESTE binario, carimbado em build-time
+/// (`--build-arg GALAXIE_BUILD_SHA=$(git rev-parse HEAD)` → `ENV` → `option_env!`).
+///
+/// `option_env!` e nao `std::env::var`: o valor tem de vir do BUILD, nao do
+/// runtime. Se viesse do runtime, qualquer um poderia carimbar o SHA que
+/// quisesse num container ja rodando — e o campo existe justamente para
+/// responder "qual commit esta no ar" sem confiar em quem responde.
+///
+/// Ausente (build local sem o arg) = `"desconhecido"`. NAO invento um valor:
+/// SHA falso e pior que SHA nenhum, porque some a deriva em vez de mostra-la.
+const BUILD_SHA: &str = match option_env!("GALAXIE_BUILD_SHA") {
+    Some(sha) => sha,
+    None => "desconhecido",
+};
+
+/// #1311 — responde "qual commit esta no ar" a um `curl`, sem inspecionar
+/// imagem nem binario. Expoe SO versao e SHA: nada de config nem env (o
+/// endpoint e publico).
+///
+/// Continua devolvendo o campo `status: "ok"` para nao quebrar healthcheck que
+/// procure por ele.
+async fn healthz() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "commit": BUILD_SHA,
+    }))
 }
 
 async fn server_key(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -963,6 +988,60 @@ mod tests {
             Err(e) => panic!("nao consegui criar o runtime de teste: {e}"),
         };
         rt.block_on(fut)
+    }
+
+
+    // ── #1311: o /healthz responde "qual commit esta no ar" ──────────────────
+    //
+    // A deriva invisivel do #1303 nasceu de nao existir resposta pra essa
+    // pergunta sem inspecionar imagem ou binario. Estes testes guardam o
+    // CONTRATO do campo — o valor em si vem do build.
+
+    #[tokio::test]
+    async fn healthz_responde_status_versao_e_commit() {
+        let corpo = healthz().await.0;
+
+        assert_eq!(
+            corpo["status"], "ok",
+            "o campo `status` continua — healthcheck que procure por ele nao pode quebrar"
+        );
+        assert_eq!(corpo["version"], env!("CARGO_PKG_VERSION"));
+        assert!(
+            corpo.get("commit").is_some(),
+            "sem o campo `commit` a pergunta 'qual commit esta no ar' volta a exigir              inspecionar a imagem — que e a deriva invisivel do #1303"
+        );
+    }
+
+    /// O endpoint e PUBLICO. Ele responde SO versao e SHA — nada de config,
+    /// segredo ou env. Este teste e o guarda contra alguem "enriquecer" o
+    /// healthz um dia.
+    #[tokio::test]
+    async fn healthz_nao_vaza_config_nem_segredo() {
+        let corpo = healthz().await.0;
+        let objeto = match corpo.as_object() {
+            Some(o) => o,
+            None => panic!("healthz deveria devolver um objeto JSON"),
+        };
+
+        let permitidos = ["status", "version", "commit"];
+        for chave in objeto.keys() {
+            assert!(
+                permitidos.contains(&chave.as_str()),
+                "campo `{chave}` novo no /healthz publico — so {permitidos:?} sao permitidos                  (o endpoint nao pode virar janela pra config/env)"
+            );
+        }
+    }
+
+    /// Sem o build-arg o valor e `"desconhecido"` — NUNCA um SHA inventado.
+    /// SHA falso e pior que SHA nenhum: some com a deriva em vez de mostra-la.
+    #[test]
+    fn sem_build_arg_o_commit_e_desconhecido_e_nao_um_valor_falso() {
+        if option_env!("GALAXIE_BUILD_SHA").is_none() {
+            assert_eq!(BUILD_SHA, "desconhecido");
+        } else {
+            assert_ne!(BUILD_SHA, "desconhecido");
+            assert!(!BUILD_SHA.trim().is_empty(), "build-arg vazio nao vale como SHA");
+        }
     }
 
 }

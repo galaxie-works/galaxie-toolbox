@@ -27,6 +27,7 @@ import { AppIcon } from "@/components/app-icon";
 // #721 (SH3): fixar/desafixar app no rail — estado no store, lógica pura.
 import { useAppStore } from "@/store";
 import { estaPinado, resolverPinados } from "@/lib/pinned-apps";
+import { appVisivelPara, buscarUnificado } from "@/lib/apps-unificado-core";
 import * as browser from "@/lib/browser";
 import { fetchFavicon } from "@/lib/api";
 import {
@@ -135,12 +136,10 @@ import { UsersIcon } from "@/components/ui/users";
 import { CalendarDaysIcon } from "@/components/ui/calendar-days";
 import {
   BedDouble,
-  Bookmark,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Coffee,
-  Command as CommandIcon,
   Compass,
   FolderMinus,
   FolderPlus,
@@ -177,6 +176,8 @@ import { PirataIcon } from "@/components/ui/icons/marca/pirata";
 import { PirateSkullIcon } from "@/components/ui/icons/marca/pirate-skull";
 import { Kbd } from "@/components/ui/kbd";
 import { ShortcutTooltip } from "@/components/ui/shortcut-tooltip";
+
+import { ChromeNavegador } from "./chrome-navegador";
 import { formatShortcut } from "@/components/ui/shortcut";
 import SoftBlurIn from "@/components/smoothui/soft-blur-in";
 
@@ -366,7 +367,11 @@ function lerPrefixo(q: string): { modo: ModoPaleta; termo: string } {
  * fork, conforme a spec §4.3. A query é local (estado efêmero do input); as
  * abas e ações vêm por props. `onExecutou` fecha o overlay após uma seleção.
  */
-function ConteudoPaleta({
+// #1152: EXPORTADO para teste. A `lumen` reprovou a 1a entrega porque os ACs do
+// grupo Pinned nao tinham guarda — e nao tinham porque ninguem conseguia montar
+// a paleta. Exportar para testar e preco justo: o defeito que ela achou (o
+// command abrindo o app errado) so aparece com a paleta montada de verdade.
+export function ConteudoPaleta({
   abas,
   ativa,
   favoritos,
@@ -554,10 +559,21 @@ function ConteudoPaleta({
   // #1152 (pedido do Wagner): grupo PINNED no topo do command. Fonte é a mesma
   // lista unificada de onde o pin tira o id — resolver contra outra coisa foi o
   // bug deste card. Sem fixado, o grupo não existe (nada de cabeçalho vazio).
-  const fixadosUnificados = useMemo(
-    () => resolverPinados(appsFixados, APPS_UNIFICADOS),
-    [appsFixados],
-  );
+  //
+  // #1152 rework (achado da `lumen`): o grupo TAMBÉM passa pelo termo. Antes não
+  // passava, e o efeito não era cosmético: `ItemUnificado` embute o termo no
+  // `value` (para atravessar o filtro do cmdk, já que o match real acontece em
+  // `appsUnificadosPorCategoria`), então um fixado casava SEMPRE — e, como o
+  // grupo é o primeiro, buscar "excel" com o Outlook fixado punha o Outlook
+  // ACIMA do Excel. Reuso `buscarUnificado`/`appVisivelPara`, os mesmos que
+  // filtram as categorias: duas regras de match divergiriam com o tempo.
+  const fixadosUnificados = useMemo(() => {
+    const pinados = resolverPinados(appsFixados, APPS_UNIFICADOS);
+    const casam = termo ? buscarUnificado(pinados, termo) : pinados;
+    // Mesmo gate de provider das categorias: fixado que a conta atual não pode
+    // usar (trocou de provider depois de fixar) não deve aparecer.
+    return user === undefined ? casam : casam.filter((a) => appVisivelPara(a, user));
+  }, [appsFixados, termo, user]);
 
   // Render de UMA categoria do command — reusado pelo grupo "From GALAXIE" (no
   // topo, #877) e pelas demais categorias. Extraído p/ não duplicar o corpo.
@@ -1214,6 +1230,7 @@ export function NavegadorScreen({
   launcherNonce,
   visivel,
   tabStripSlot,
+  chromeSlot,
   renderTelaInterna,
 }: {
   abas: AbaBrowser[];
@@ -1258,6 +1275,11 @@ export function NavegadorScreen({
    *  Null enquanto o header não montou / em mock/teste → a barra cai inline. O
    *  estado + os efeitos de webview z-order ficam AQUI; só o DOM viaja. */
   tabStripSlot?: HTMLElement | null;
+  /** #1290: nó do cluster de chrome da title bar (App.tsx), logo DEPOIS do
+   *  sino. Os três ícones (favoritos/histórico/paleta) são teleportados pra
+   *  cá pra que a ordem seja `sino · favoritos · histórico · paleta · tema ·
+   *  avatar`. Null em mock/teste/web → caem inline na barra de abas. */
+  chromeSlot?: HTMLElement | null;
   /** #719 (SH1): renderiza a tela React (Bridge/Files/Remote) de uma aba
    *  interna. `ativa` = a aba é a atual (dá foco/polling à tela certa). O App é
    *  dono das telas e do keep-alive; o Navigator só as encaixa no slot. */
@@ -1788,6 +1810,17 @@ export function NavegadorScreen({
     if (ativa === null) focarComandoInline();
     else setPaletaAberta(true);
   }, [ativa, focarComandoInline]);
+
+  // #1290: um objeto só pros ícones de chrome, porque eles são renderizados em
+  // DOIS lugares (portal do `App.tsx` quando há slot, inline aqui quando não há)
+  // — e duas listas de props seria a chance de uma divergir da outra.
+  const propsChrome = {
+    mostrarBarraFav,
+    onAlternarBarraFav: alternarBarraFav,
+    historicoAberto,
+    onAlternarHistorico: () => setHistoricoAberto((v) => !v),
+    onAbrirPaleta: focarOmnibox,
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -2389,78 +2422,21 @@ export function NavegadorScreen({
             {t.navegador.modoPrivadoAtivo}
           </Badge>
         )}
-        {/* #856: ícone dedicado que liga/desliga a barra de favoritos (padrão de
-            browser · Ctrl/Cmd+Shift+B). Ativo = barra visível (bg-accent). */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={t.navegador.barraFavoritosToggle}
-              aria-pressed={mostrarBarraFav}
-              onClick={alternarBarraFav}
-              className={cn(
-                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
-                "hover:bg-accent hover:text-foreground",
-                mostrarBarraFav && "bg-accent text-foreground",
-              )}
-            >
-              <Bookmark className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <ShortcutTooltip
-              label={t.navegador.barraFavoritosToggle}
-              shortcut={{ key: "B", primary: true, shift: true }}
-            />
-          </TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={t.navegador.historicoTitulo}
-              aria-pressed={historicoAberto}
-              onClick={() => setHistoricoAberto((v) => !v)}
-              className={cn(
-                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
-                "hover:bg-accent hover:text-foreground",
-                historicoAberto && "bg-accent text-foreground",
-              )}
-            >
-              <History className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>{t.navegador.historicoTitulo}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              aria-label={t.navegador.paleta}
-              onClick={() =>
-                ativa === null ? focarComandoInline() : setPaletaAberta(true)
-              }
-              className={cn(
-                "m-1 grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
-                "hover:bg-accent hover:text-foreground"
-              )}
-            >
-              <CommandIcon className="size-4" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <ShortcutTooltip
-              label={t.navegador.paleta}
-              shortcut={{ key: "K", primary: true }}
-            />
-          </TooltipContent>
-        </Tooltip>
+        {/* #1290: os três ícones de chrome saíram daqui — agora o `App.tsx`
+            manda na ordem da title bar e eles viajam pro slot dele, à
+            DIREITA do sino. Sem slot (mock/teste/web) caem inline aqui,
+            como sempre — mesmo padrão da barra de abas. */}
+        {chromeSlot ? null : <ChromeNavegador {...propsChrome} />}
       </div>
         );
         return tabStripSlot
           ? createPortal(barraAbas, tabStripSlot)
           : barraAbas;
       })()}
+
+      {/* #1290: os ícones de chrome vão pro slot do `App.tsx` (à direita do
+          sino). Sem slot eles já saíram inline junto da barra de abas. */}
+      {chromeSlot ? createPortal(<ChromeNavegador {...propsChrome} />, chromeSlot) : null}
 
       {/* Oferecer restaurar a sessão anterior (#274) — banner discreto, sem
           restaurar automático; some ao restaurar ou dispensar. */}

@@ -292,7 +292,10 @@ function OrganizationForm({
   );
 }
 
-function AssignContactsDialog({
+// #1359: exportado pra guarda. A lista de contatos deste diálogo cresce sem
+// limite, e medir isso exige DOM real — montar a view inteira levaria store,
+// dados e navegação junto, e o teste passaria a medir tudo menos o que importa.
+export function AssignContactsDialog({
   open,
   organization,
   contacts,

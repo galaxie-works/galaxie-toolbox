@@ -1,5 +1,11 @@
 FROM rust:1.89-bookworm AS builder
 
+# #1311: SHA do commit que gerou este binario. Chega por --build-arg (o compose
+# passa `git rev-parse HEAD`) e vira env de COMPILACAO, lido por `option_env!`.
+# Sem o arg, o binario responde "desconhecido" — nunca um SHA inventado.
+ARG GALAXIE_BUILD_SHA
+ENV GALAXIE_BUILD_SHA=${GALAXIE_BUILD_SHA}
+
 WORKDIR /build
 COPY services/remote-net/Cargo.toml services/remote-net/Cargo.lock ./services/remote-net/
 COPY services/remote-net/src ./services/remote-net/src
