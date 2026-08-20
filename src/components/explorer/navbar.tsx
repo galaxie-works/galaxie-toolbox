@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  Monitor,
   RefreshCw,
   Search,
   X,
@@ -22,14 +21,13 @@ import { cn } from "@/lib/utils";
 import { useIdioma, preencher } from "@/lib/idioma";
 import { statCaminho } from "@/lib/api";
 import {
-  CAMINHO_ACESSO_RAPIDO,
-  CAMINHO_CLOUD,
   CAMINHO_ESTE_PC,
-  CAMINHO_REDE,
   ehRaizVirtual,
+  raizVirtual,
   nomeBase,
   segmentosCaminho,
 } from "./caminho";
+import { ICONE_DA_RAIZ } from "./icone-raiz";
 import { TooltipAcao } from "./tooltip-acao";
 
 /**
@@ -122,14 +120,16 @@ export function NavBarArquivos({
 
   // #1287: rótulo amigável de uma raiz virtual (Cloud/Rede/Acesso rápido) — o
   // This PC já é a raiz fixa do breadcrumb, então ele não entra aqui.
+  // #1287: o rótulo sai do MESMO mapa que dá o ícone da árvore e o título da
+  // view — antes esta ternária era a 4ª cópia do fato. O This PC fica de fora
+  // aqui de propósito: o breadcrumb dele já é a raiz fixa (`[]` abaixo).
+  const RAIZ_ESTE_PC = raizVirtual(CAMINHO_ESTE_PC)!;
+  const IconeEstePc = ICONE_DA_RAIZ[RAIZ_ESTE_PC.icone];
+  const raiz = raizVirtual(currentPath);
   const rotuloRaizVirtual =
-    currentPath === CAMINHO_CLOUD
-      ? t.arquivos.driveSecaoCloud
-      : currentPath === CAMINHO_REDE
-        ? t.arquivos.driveSecaoRede
-        : currentPath === CAMINHO_ACESSO_RAPIDO
-          ? t.arquivos.acessoRapido
-          : null;
+    raiz && raiz.sentinela !== CAMINHO_ESTE_PC
+      ? t.arquivos[raiz.titulo]
+      : null;
   // Sentinel não é caminho: numa raiz virtual o breadcrumb tem um único
   // segmento com o rótulo da raiz (nunca o "::x::" cru de `segmentosCaminho`).
   const segmentos = rotuloRaizVirtual
@@ -263,8 +263,10 @@ export function NavBarArquivos({
                   className="h-6 gap-1 px-1.5 text-xs font-normal"
                   onClick={() => onNavegar(CAMINHO_ESTE_PC)}
                 >
-                  <Monitor className="size-3.5 shrink-0" />
-                  {t.arquivos.drives}
+                  {/* #1287: a raiz fixa do breadcrumb era a 5ª cópia do fato
+                      (ícone + rótulo cravados). Sai do mesmo mapa. */}
+                  <IconeEstePc className="size-3.5 shrink-0" />
+                  {t.arquivos[RAIZ_ESTE_PC.titulo]}
                 </Button>
               </span>
               {segmentos.map((seg) => (
