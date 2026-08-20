@@ -30,6 +30,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { inTauri } from "@/lib/tauri";
 import { formatBytes } from "@/lib/utils";
 import { preencher, useIdioma } from "@/lib/idioma";
 import {
@@ -85,8 +86,10 @@ type ModoView = "detalhes" | "lista" | "grade";
 
 // Estamos dentro do Tauri? (thumbnails via convertFileSrc só existem lá; no
 // browser/mock degradamos pro ícone). Mesmo gate de `api.ts`.
-const TAURI =
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// #1033: ponto único em `@/lib/tauri`. Continua CONSTANTE avaliada no
+// import — trocar por chamada em runtime mudaria QUANDO a decisão é tomada,
+// e consolidação não pode mudar comportamento.
+const TAURI = inTauri();
 
 // --- Virtualização: alturas por view + métricas do grid --------------------
 const ALTURA_DETALHES = 34; // linha de tabela (altura fixa)

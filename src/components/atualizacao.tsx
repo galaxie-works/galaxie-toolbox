@@ -19,6 +19,7 @@ import { useEffect, useState } from "react";
 import type { Update } from "@tauri-apps/plugin-updater";
 import { telUpdateVerificado } from "@/lib/telemetria";
 import { deveOferecerAtualizacao, formatarDataFeed } from "@/lib/versao-update";
+import { inTauri } from "@/lib/tauri";
 
 interface Disponivel {
   versao: string;
@@ -28,8 +29,9 @@ interface Disponivel {
 
 type Estado = "oculto" | "disponivel" | "baixando" | "pronto";
 
-const estaNoTauri = () =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// #1033: ponto único em `@/lib/tauri`. Segue sendo FUNÇÃO — este módulo
+// pergunta em runtime, não no import.
+const estaNoTauri = inTauri;
 
 /**
  * Verifica se ha versao nova e conduz a atualizacao.

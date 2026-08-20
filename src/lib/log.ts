@@ -7,11 +7,9 @@
  */
 
 import { telAppCrashed } from "./telemetria.ts";
+import { inTauri } from "./tauri.ts";
 
-/** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
-function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
+
 
 /**
  * Encaminha uma linha de erro pro log do backend (Rust). Silencioso fora do

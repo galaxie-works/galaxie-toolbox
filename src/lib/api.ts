@@ -55,16 +55,12 @@ import type {
 } from "./types";
 import { iniciais } from "./iniciais.ts";
 import { logErro } from "./log.ts";
+import { inTauri, invoke } from "./tauri.ts";
 
-/** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
-export function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const core = await import("@tauri-apps/api/core");
-  return core.invoke<T>(cmd, args);
-}
+// #1033: a checagem e o wrapper vivem em `./tauri.ts`. O reexport de `inTauri`
+// fica porque MUITO consumidor já importa daqui — mover todos seria um diff
+// grande sem ganho, e o ponto de verdade continua sendo um só.
+export { inTauri } from "./tauri.ts";
 
 /**
  * #1104 / fecha TODO(#687): URL de PROD do signaling Remote (S0). Fallback pro

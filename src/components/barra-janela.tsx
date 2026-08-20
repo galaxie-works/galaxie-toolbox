@@ -7,9 +7,10 @@ import {
 } from "@/components/ui/tooltip";
 import { useEffect, useState } from "react";
 import { telAcaoConcluida } from "@/lib/telemetria";
+import { inTauri } from "@/lib/tauri";
 
-const noTauri = () =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// #1033: ponto único em `@/lib/tauri`. Continua função (runtime).
+const noTauri = inTauri;
 
 /** Ícones no traço fino do Windows 11, não os do lucide (que são grossos demais nesse tamanho). */
 const Minimizar = () => (

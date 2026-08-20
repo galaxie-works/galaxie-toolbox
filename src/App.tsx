@@ -445,7 +445,7 @@ function AppInner() {
   // EVENTO_VIDEO_SPLASH quando o vídeo termina. Fora do Tauri (dev no browser)
   // não há splash nem evento: libera o gate para não bloquear o render.
   useEffect(() => {
-    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+    if (!api.inTauri()) {
       setVideoPronto(true);
       return;
     }
