@@ -21,6 +21,7 @@ import {
   copiarVariasComProgresso,
   dirsConhecidos,
   listarCloudLocations,
+  listarNetworkLocations,
   listarDir,
   listarDrives,
   moverComProgresso,
@@ -33,6 +34,7 @@ import type {
   DriveInfo,
   FsConflict,
   FsEntry,
+  NetworkLocation,
 } from "@/lib/types";
 import { DrivesView } from "./drives-view";
 import { HomeView } from "./home-view";
@@ -178,6 +180,11 @@ export function ExplorerShell({
   const [cloudLocations, setCloudLocations] = useState<CloudLocation[] | null>(
     null,
   );
+  // #1288: atalhos de rede (Network Shortcuts) — os que NAO tem letra. Sao a
+  // metade da secao "Locais de rede" que faltava:  so traz mapeados.
+  const [networkLocations, setNetworkLocations] = useState<
+    NetworkLocation[] | null
+  >(null);
   const [acessoRapido, setAcessoRapido] = useState<FsEntry[] | null>(null);
   // #869 (Quick access pin/sort): pins do usuário PERSISTIDOS (localStorage puro
   // via usePersistedState — conveniência de UI local, não tenant-scoped). A seção
@@ -261,6 +268,12 @@ export function ExplorerShell({
       .then((c) => vivo && setCloudLocations(c))
       .catch(() => {
         /* nuvem é opcional; degrada sem a seção */
+      });
+    // #1288: atalhos de rede (opcional — degrada sem a secao, como a nuvem).
+    void listarNetworkLocations()
+      .then((n) => vivo && setNetworkLocations(n))
+      .catch(() => {
+        /* rede e opcional; degrada sem os atalhos */
       });
     return () => {
       vivo = false;
@@ -663,6 +676,7 @@ export function ExplorerShell({
                     <RailArvore
                       drives={drives}
                       cloudLocations={cloudLocations}
+                      networkLocations={networkLocations}
                       acessoRapido={acessoRapidoMesclado}
                       currentPath={nav.currentPath}
                       onNavegar={navegar}
@@ -671,6 +685,7 @@ export function ExplorerShell({
                     <ArvoreArquivos
                       drives={drives}
                       cloudLocations={cloudLocations}
+                      networkLocations={networkLocations}
                       acessoRapido={acessoRapidoMesclado}
                       pins={pins}
                       onAlternarFixar={alternarFixar}

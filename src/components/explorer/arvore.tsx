@@ -17,9 +17,15 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { useIdioma } from "@/lib/idioma";
 import { listarDir } from "@/lib/api";
-import type { CloudLocation, DriveInfo, FsEntry } from "@/lib/types";
+import type {
+  CloudLocation,
+  DriveInfo,
+  FsEntry,
+  NetworkLocation,
+} from "@/lib/types";
 import { CAMINHO_ESTE_PC } from "./caminho";
 import { estaFixado, mesmoCaminho, type PinAcessoRapido } from "./quick-access";
+import { rotuloDrive } from "./rotulo-drive";
 import { TooltipAcao } from "./tooltip-acao";
 
 // #869: valores-sentinela dos nós-RAIZ do accordion (This PC / Acesso rápido).
@@ -43,8 +49,36 @@ function ehLazy(value: string): boolean {
 /** Sintetiza um `FsEntry` de pasta para um drive-root (nó da árvore). */
 function driveParaEntry(d: DriveInfo): FsEntry {
   return {
-    name: `${d.name} (${d.path.replace(/\\+$/, "")})`,
+    // #1288: mesmo defeito de letra dupla que o `drives-view` tinha — o nome
+    // de drive de REDE já vem com a letra do redirector. O helper resolve.
+    name: rotuloDrive(d.name, d.path),
     path: d.path,
+    isDir: true,
+    isSymlink: false,
+    size: 0,
+    modifiedMs: null,
+    createdMs: null,
+    extension: null,
+    isHidden: false,
+    isReadonly: false,
+  };
+}
+
+/**
+ * #1288: `FsEntry` para um ATALHO de rede (`.lnk` de `Network Shortcuts`).
+ *
+ * Diferente do drive mapeado, ele não tem letra — e era por isso que sumia:
+ * a seção montava só de `drives.filter(kind === "network")`, e quem não tem
+ * letra não está em `drives`.
+ *
+ * `available: false` NÃO esconde a entrada — o backend já decidiu isso de
+ * propósito (`types.ts:661`: "a entrada CONTINUA na lista"). Filtrar aqui
+ * seria desfazer aquela decisão em silêncio.
+ */
+function redeParaEntry(n: NetworkLocation): FsEntry {
+  return {
+    name: n.name,
+    path: n.path,
     isDir: true,
     isSymlink: false,
     size: 0,
@@ -111,6 +145,7 @@ function iconePorKind(kind: DriveInfo["kind"]): ElementType {
 export function ArvoreArquivos({
   drives,
   cloudLocations,
+  networkLocations,
   acessoRapido,
   pins,
   onAlternarFixar,
@@ -121,6 +156,8 @@ export function ArvoreArquivos({
 }: {
   drives: DriveInfo[];
   cloudLocations: CloudLocation[] | null;
+  /** #1288: atalhos de rede (sem letra) — `null` enquanto carrega/degrada. */
+  networkLocations: NetworkLocation[] | null;
   acessoRapido: FsEntry[] | null;
   // #869: pins do usuário (persistidos) — cada `NoArvore` checa `estaFixado` de
   // forma SÍNCRONA pra rotular o item do menu; e `onAlternarFixar` fixa/desafixa.
@@ -254,20 +291,29 @@ export function ArvoreArquivos({
         </SecaoRaiz>
       )}
 
-      {/* #869: "Locais de rede" — drives `kind==="network"` tirados do This PC.
-          Some quando não há drive de rede. Reusa o rótulo do #855 (drives-view). */}
-      {drivesRede.length > 0 && (
+      {/* #869/#1288: "Locais de rede" — drives mapeados (`kind==="network"`) E
+          atalhos sem letra (`Network Shortcuts`), na MESMA seção, como o Explorer
+          do Windows faz. Antes só os mapeados apareciam: a seção montava de
+          `drives.filter(...)`, e atalho sem letra não está em `drives`. */}
+      {(drivesRede.length > 0 || (networkLocations?.length ?? 0) > 0) && (
         <SecaoRaiz
           value={RAIZ_REDE}
           label={t.arquivos.driveSecaoRede}
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
-          {drivesRede.map((d) => (
+          {[
+            ...drivesRede.map((d) => driveParaEntry(d)),
+            ...(networkLocations ?? []).map((n) => redeParaEntry(n)),
+          ]
+            // Ordem por nome, como o Explorer: o usuário não precisa saber se
+            // aquilo é drive mapeado ou atalho pra achar o que procura.
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((entry) => (
             <NoArvore
-              key={d.path}
-              entry={driveParaEntry(d)}
-              icone={iconePorKind(d.kind)}
+              key={entry.path}
+              entry={entry}
+              icone={Network}
               filhosPorPath={filhosPorPath}
               carregando={carregando}
               currentPath={currentPath}
@@ -505,12 +551,14 @@ function NoArvore({
 export function RailArvore({
   drives,
   cloudLocations,
+  networkLocations,
   acessoRapido,
   currentPath,
   onNavegar,
 }: {
   drives: DriveInfo[];
   cloudLocations: CloudLocation[] | null;
+  networkLocations: NetworkLocation[] | null;
   acessoRapido: FsEntry[] | null;
   currentPath: string;
   onNavegar: (path: string) => void;
@@ -541,6 +589,13 @@ export function RailArvore({
         label: driveParaEntry(d).name,
         icone: Network as ElementType,
       })),
+    // #1288: atalhos de rede sem letra tambem sao destino — colapsado o usuario
+    // precisa alcanca-los igual.
+    ...(networkLocations ?? []).map((n) => ({
+      path: n.path,
+      label: n.name,
+      icone: Network as ElementType,
+    })),
     ...(acessoRapido ?? []).map((e) => ({
       path: e.path,
       label: e.name,

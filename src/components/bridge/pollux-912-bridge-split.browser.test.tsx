@@ -35,7 +35,7 @@ const painelSidebar = () =>
 
 async function montar(larguraGrupoPx: number, colapsada = false) {
   render(
-    <div style={{ width: larguraGrupoPx, height: 500, display: "flex" }}>
+    <div id="palco-1392" style={{ width: larguraGrupoPx, height: 500, display: "flex" }}>
       <BridgeSplit
         colapsada={colapsada}
         onColapsadaMudou={() => {}}
@@ -77,6 +77,33 @@ describe("#912 splitter do Bridge", () => {
     expect(
       Math.abs(largura - LARGURA_SIDEBAR_PX),
       `sidebar nasceu com ${largura.toFixed(1)}px, esperado ~${LARGURA_SIDEBAR_PX}px`
+    ).toBeLessThanOrEqual(8);
+  });
+
+  it("#1392: numa tela LARGA continua ~256px — onde o clamp percentual mordia", async () => {
+    // Esta e a largura que faltava na guarda original. Em 1200 e 800, 256px cai
+    // DENTRO da faixa min/max, entao a regua percentual nao aparecia. Em 3000px
+    // ela aparecia: o painel ia a 358px (o  de 12%) e, no app real, a
+    //  mediu 591px. Escolher so pontos dentro da regiao segura foi o que
+    // fez a guarda anterior passar com o defeito vivo.
+    const largura = px(await montar(3000));
+    expect(
+      Math.abs(largura - LARGURA_SIDEBAR_PX),
+      `numa tela de 3000px o sidebar deu ${largura.toFixed(1)}px — a regua voltou a ser percentual`
+    ).toBeLessThanOrEqual(8);
+  });
+
+  it("#1392: MAXIMIZAR a janela nao engorda o sidebar", async () => {
+    // Medir no mount bastaria se a janela nunca mudasse. Ela muda — e era af
+    // que a fatia calculada pra 1280 continuava valendo.
+    await montar(1200);
+    const palco = document.getElementById("palco-1392")!;
+    palco.style.width = "3000px";
+    await new Promise((r) => setTimeout(r, 600));
+    const largura = px(painelSidebar()!);
+    expect(
+      Math.abs(largura - LARGURA_SIDEBAR_PX),
+      `depois de maximizar o sidebar foi pra ${largura.toFixed(1)}px`
     ).toBeLessThanOrEqual(8);
   });
 
