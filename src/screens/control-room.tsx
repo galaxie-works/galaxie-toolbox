@@ -1671,37 +1671,44 @@ export function ControlRoomScreen({
           >
           <ResizablePanel defaultSize={38} minSize={24} maxSize={55} className="overflow-hidden">
             <MessageList
-              ativo={ativo}
-              titulo={tituloLista}
-              mensagens={fonteListaAtiva}
-              erroLeitura={
-                pastaAtual?.leitura === "negado"
-                  ? t.controlRoom.caixaAcessoParcial
-                  : undefined
-              }
-              onRefresh={() => setRecarga((n) => n + 1)}
-              pastaId={pastaSel}
-              pastaTipo={pastaAtual?.tipo ?? ""}
-              onEsvaziar={() => esvaziarPasta(pastaSel)}
-              onCarregarMais={onCarregarMaisLista}
-              carregandoMais={carregandoMais}
-              temMais={temMaisLista}
-              onFlag={acaoFlag}
-              onExcluir={acaoExcluir}
-              onMarcarLido={acaoMarcarLido}
-              onSalvarComo={salvarComo}
-              onImprimir={imprimir}
-              onAbrirMaisAcoes={() => detalheRef.current?.abrirMaisAcoes()}
-              pastasDestino={pastasDestino}
-              pastasCarregando={arvorePendentes.length > 0}
-              onAbrirMover={() => setPedirArvore(true)}
-              onMover={acaoMover}
-              filtrosOcultos={FILTROS_OCULTOS}
-              onResponder={() => detalheRef.current?.responder()}
-              onResponderTodos={() => detalheRef.current?.responderTodos()}
-              onEncaminhar={() => detalheRef.current?.encaminhar()}
-              onCompor={novoEmailModal}
-              envioBloqueado={caixaCompartilhadaAtiva && !sharedEnvioEscopoOk}
+              lista={{
+                ativo,
+                titulo: tituloLista,
+                mensagens: fonteListaAtiva,
+                erroLeitura:
+                  pastaAtual?.leitura === "negado"
+                    ? t.controlRoom.caixaAcessoParcial
+                    : undefined,
+                pastaId: pastaSel,
+                pastaTipo: pastaAtual?.tipo ?? "",
+                filtrosOcultos: FILTROS_OCULTOS,
+              }}
+              paginacao={{
+                onRefresh: () => setRecarga((n) => n + 1),
+                onCarregarMais: onCarregarMaisLista,
+                carregandoMais,
+                temMais: temMaisLista,
+              }}
+              acoes={{
+                onFlag: acaoFlag,
+                onExcluir: acaoExcluir,
+                onMarcarLido: acaoMarcarLido,
+                onSalvarComo: salvarComo,
+                onImprimir: imprimir,
+                onAbrirMaisAcoes: () => detalheRef.current?.abrirMaisAcoes(),
+                onEsvaziar: () => esvaziarPasta(pastaSel),
+                pastasDestino,
+                pastasCarregando: arvorePendentes.length > 0,
+                onAbrirMover: () => setPedirArvore(true),
+                onMover: acaoMover,
+              }}
+              composicao={{
+                onResponder: () => detalheRef.current?.responder(),
+                onResponderTodos: () => detalheRef.current?.responderTodos(),
+                onEncaminhar: () => detalheRef.current?.encaminhar(),
+                onCompor: novoEmailModal,
+                envioBloqueado: caixaCompartilhadaAtiva && !sharedEnvioEscopoOk,
+              }}
               t={t}
               idioma={idioma}
             />
