@@ -135,13 +135,19 @@ export function CampoPessoas({
           if (meu !== pedidoRef.current) return; // resposta obsoleta
           setSugestoes(res);
           setCarregando(false);
-          setAberto(res.length > 0 || emailValido(q));
+          // #1374 (4ª volta): NÃO fechar enquanto há texto digitado. Fechar o
+          // combobox (modo multiple) faz o Base UI LIMPAR o inputValue → o texto
+          // que o usuário ainda está digitando some (repro do PO: `9`, medido pela
+          // iris — apaga só quando `res` é vazio E não é e-mail). Com `q` não-vazio
+          // aqui, manter aberto preserva o input; a lista vazia mostra o empty.
+          setAberto(true);
         })
         .catch(() => {
           if (meu !== pedidoRef.current) return;
           setSugestoes([]);
           setCarregando(false);
-          setAberto(emailValido(q));
+          // idem: manter aberto (input preservado) mesmo se a busca falhar.
+          setAberto(true);
         });
     }, 250);
 

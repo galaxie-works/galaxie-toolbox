@@ -96,4 +96,24 @@ describe("CampoPessoas (navegador real) — destinatário externo #786", () => {
 
     expect(onChange).toHaveBeenCalledWith(["externo@cliente.com"]);
   });
+
+  it("NÃO apaga ao digitar texto que dá ZERO sugestões e não é e-mail (repro do PO: '9')", async () => {
+    // #1374 (4ª volta) — repro FIEL medido pela `iris` em `00a2f0c`: o que separa
+    // "apaga" de "sobrevive" NÃO é o auto-highlight (o popup nem abre), é a
+    // combinação `res.length === 0 && !emailValido(q)`. Aí o efeito de busca faz
+    // `setAberto(false)` (`campo-pessoas.tsx:139`), o combobox fecha e o Base UI
+    // (modo multiple) limpa o `inputValue` → `onInputValueChange("")` → o texto
+    // some ~550 ms depois. O teste do #786 passava porque o mock devolvia sugestão
+    // (o ramo vazio nunca rodava). Aqui o mock devolve ZERO — a condição do PO.
+    vi.mocked(api.crPessoas).mockReset();
+    vi.mocked(api.crPessoas).mockResolvedValue([]); // nenhuma sugestão pra "9"
+    render(<Harness />);
+    const input = page.getByLabelText("Para");
+
+    await userEvent.type(input, "9"); // não casa com ninguém e não é e-mail
+    // Debounce 250 ms + crPessoas([]) + o fechamento que apagava vinha ~550 ms.
+    await new Promise((r) => setTimeout(r, 800));
+
+    await expect.element(input).toHaveValue("9");
+  });
 });
