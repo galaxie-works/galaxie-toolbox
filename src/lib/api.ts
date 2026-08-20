@@ -59,8 +59,8 @@ import { logErro } from "./log.ts";
 // #1033: a fronteira mock/real mora em `./tauri` (ponto único). Re-exporto
 // `inTauri` porque o resto do app o consome como `api.inTauri()` (ex.: App.tsx);
 // `invoke` é uso interno deste módulo.
-export { inTauri } from "./tauri";
-import { inTauri, invoke } from "./tauri";
+export { inTauri } from "./tauri.ts";
+import { inTauri, invoke } from "./tauri.ts";
 
 /**
  * #1104 / fecha TODO(#687): URL de PROD do signaling Remote (S0). Fallback pro

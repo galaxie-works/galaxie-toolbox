@@ -9,7 +9,7 @@
 
 import { urlDeBusca } from "@/lib/navigator-tabs";
 // #1033: fronteira mock/real no ponto único (`./tauri`), não mais duplicada aqui.
-import { inTauri, invoke } from "./tauri";
+import { inTauri, invoke } from "./tauri.ts";
 
 export interface Retangulo {
   x: number;
