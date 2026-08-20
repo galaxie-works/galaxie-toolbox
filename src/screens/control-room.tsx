@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { BridgeSplit } from "@/components/bridge/bridge-split";
+import { PAGINA, useListaMensagens } from "@/hooks/use-lista-mensagens";
 import { FolderSidebar } from "@/components/bridge/folder-sidebar";
 import { MessageList, type FormatoSalvar } from "@/components/bridge/message-list";
 import { MessageDetail, type MessageDetailHandle } from "@/components/bridge/message-detail";
@@ -492,47 +493,34 @@ export function ControlRoomScreen({
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
   const carregandoMaisRef = useRef(false);
-  // pasta atual (pra closures assíncronas que precisam do valor mais novo).
-  const pastaSelRef = useRef(pastaSel);
-  pastaSelRef.current = pastaSel;
-  // Âncora de paginação: nº já buscado do servidor (skip). NÃO é mensagens.length
-  // — a lista encolhe ao excluir, mas o skip do Graph continua avançando.
+  // #1019: os espelhos, a chave de cache e a junção de páginas vivem no
+  // `useListaMensagens`. Ele devolve só FUNÇÕES — nenhum `.current` chega
+  // aqui, que é o que o AC pede ("não vazam pro componente que consome").
+  const {
+    chaveCache,
+    juntar,
+    atual: atualLista,
+    marcarDeletadas,
+    desmarcarDeletadas,
+    limparDeletadas,
+    naoDeletada,
+    idsDeletadas,
+  } = useListaMensagens({
+    pastaSel,
+    caixaAtiva,
+    ordenar,
+    ordemDesc,
+    mensagens,
+  });
+  // Âncora de paginação: nº já buscado do servidor (skip). NÃO é
+  // `mensagens.length` — a lista encolhe ao excluir, mas o skip do Graph
+  // continua avançando. Vai pro hook na fatia 4b, junto com os efeitos que o
+  // usam; sozinho aqui ele ainda é lido por 7 pontos.
   const carregadosRef = useRef(0);
-  // Refs espelhando o estado atual pra montar a chave de cache (#108) mesmo
-  // dentro de closures assíncronas (poll, carregarMais) sem capturar valor velho.
-  const caixaAtivaRef = useRef(caixaAtiva);
-  caixaAtivaRef.current = caixaAtiva;
-  const ordenarRef = useRef(ordenar);
-  ordenarRef.current = ordenar;
-  const ordemDescRef = useRef(ordemDesc);
-  ordemDescRef.current = ordemDesc;
-  // Espelho de `mensagens` pro carregarMais montar a lista concatenada a gravar
-  // no cache sem depender de uma closure de valor antigo.
-  const mensagensRef = useRef(mensagens);
-  mensagensRef.current = mensagens;
-  // Chave do cache de sessão da pasta (#108). Escopada por caixa ativa (#111) +
-  // ordenação (#32) pra que caixa compartilhada e troca de sort não colidam.
-  const chaveCache = useCallback(
-    (pasta: string, caixa = caixaAtivaRef.current) =>
-      `${caixa}|${pasta}|${ordenarRef.current}|${ordemDescRef.current}`,
-    []
-  );
   // Detecta se o efeito de carga foi disparado por refresh (recarga mudou) —
   // nesse caso invalida o cache e refaz o fetch em vez de restaurar (#108).
   const recargaAnteriorRef = useRef(recarga);
-  // Ids excluídos de forma otimista: filtrados de qualquer fetch/append até o
-  // Graph processar (evita a msg deletada "voltar" ao paginar/backfill).
-  const deletadasRef = useRef<Set<string>>(new Set());
-  const PAGINA = 50;
 
-  // Junta páginas deduplicando por id e removendo o que foi excluído otimista.
-  const juntar = (prev: EmailItem[], nova: EmailItem[]) => {
-    const vistos = new Set(prev.map((m) => m.id));
-    return [
-      ...prev,
-      ...nova.filter((m) => !vistos.has(m.id) && !deletadasRef.current.has(m.id)),
-    ];
-  };
 
   // pastas (recarrega as contagens junto com as ações e no refresh manual)
   useEffect(() => {
@@ -568,11 +556,11 @@ export function ControlRoomScreen({
       api
         .crSubpastas(id, caixaAtiva)
         .then((cs) => {
-          if (caixaAtivaRef.current !== caixaPedido) return;
+          if (atualLista().caixaAtiva !== caixaPedido) return;
           setSubpastas((f) => ({ ...f, [id]: cs }));
         })
         .catch((e) => {
-          if (caixaAtivaRef.current !== caixaPedido) return;
+          if (atualLista().caixaAtiva !== caixaPedido) return;
           setSubpastas((f) => ({ ...f, [id]: [] }));
           if (String(e).toLowerCase().includes("acesso parcial")) {
             toast.warning(t.controlRoom.caixaAcessoParcial);
@@ -596,7 +584,7 @@ export function ControlRoomScreen({
     limparConsultas();
     setTemMais(false);
     carregadosRef.current = 0;
-    deletadasRef.current.clear();
+    limparDeletadas();
     ultimoVistoRef.current = null;
   }, [
     caixaAtiva,
@@ -719,18 +707,18 @@ export function ControlRoomScreen({
         if (novos > 0) {
           const st = useAppStore.getState();
           const espelhaInbox =
-            pastaSelRef.current === "inbox" &&
-            caixaAtivaRef.current === CAIXA_PROPRIA &&
-            ordenarRef.current === "data" &&
-            ordemDescRef.current === true &&
+            atualLista().pastaSel === "inbox" &&
+            atualLista().caixaAtiva === CAIXA_PROPRIA &&
+            atualLista().ordenar === "data" &&
+            atualLista().ordemDesc === true &&
             st.caixaDados === CAIXA_PROPRIA &&
             st.busca.trim() === "" &&
             st.filtros.length === 0;
-          const atuais = mensagensRef.current ?? [];
+          const atuais = atualLista().mensagens ?? [];
           const vistos = new Set(atuais.map((m) => m.id));
           const aPrepender = espelhaInbox
             ? msgs.filter(
-                (m) => !vistos.has(m.id) && !deletadasRef.current.has(m.id)
+                (m) => !vistos.has(m.id) && naoDeletada(m.id)
               )
             : [];
           if (aPrepender.length > 0) {
@@ -771,7 +759,7 @@ export function ControlRoomScreen({
   // sempre; a LISTA só quando a pasta mexida é a que está aberta (senão a lista
   // perderia scroll/páginas à toa).
   function recarregarAposPasta(folderId: string) {
-    if (folderId === pastaSelRef.current) setRecarga((x) => x + 1);
+    if (folderId === atualLista().pastaSel) setRecarga((x) => x + 1);
     else setRecargaPastas((x) => x + 1);
   }
 
@@ -890,7 +878,7 @@ export function ControlRoomScreen({
       recarregarSubpastas(paiId, "deleteditems");
       // Estava aberta? O id morreu junto: cai na inbox em vez de ficar numa
       // pasta fantasma com a lista vazia.
-      if (pastaSelRef.current === id) setPastaSel("inbox");
+      if (atualLista().pastaSel === id) setPastaSel("inbox");
     } catch (e) {
       toast.error(t.controlRoom.erroAcao, {
         id: aviso,
@@ -914,7 +902,7 @@ export function ControlRoomScreen({
       recarregarSubpastas(paiId, destino);
       // O move do Graph devolve a pasta com id NOVO: se ela estava selecionada,
       // seguir com o id antigo deixaria a lista quebrada.
-      if (pastaSelRef.current === id) setPastaSel(nova.id);
+      if (atualLista().pastaSel === id) setPastaSel(nova.id);
     } catch (e) {
       toast.error(t.controlRoom.erroAcao, {
         id: aviso,
@@ -1044,7 +1032,7 @@ export function ControlRoomScreen({
 
     // 1) OTIMISTA: tira da tela na hora (das duas listas) + marca como
     //    "deletada" (pro backfill não trazê-las de volta) + toast imediato.
-    ids.forEach((id) => deletadasRef.current.add(id));
+    marcarDeletadas(ids);
     removerNasListas(idsSet);
     if (msgSel && idsSet.has(msgSel)) setMsgSel(null);
     // NÃO limpamos a seleção aqui: o BotaoExcluir precisa ficar montado pra
@@ -1086,7 +1074,7 @@ export function ControlRoomScreen({
       // pra não ficar parado até o fim (o move é sequencial e pode demorar).
       const pulso = setInterval(() => {
         setRecargaPastas((x) => x + 1);
-        if (pastaSelRef.current === "deleteditems") setRecarga((x) => x + 1);
+        if (atualLista().pastaSel === "deleteditems") setRecarga((x) => x + 1);
       }, 2500);
       let ok: string[] = [];
       let erro: unknown = null;
@@ -1101,14 +1089,14 @@ export function ControlRoomScreen({
       }
       const falharam = ids.filter((id) => !ok.includes(id));
       if (falharam.length > 0) {
-        falharam.forEach((id) => deletadasRef.current.delete(id));
+        desmarcarDeletadas(falharam);
         toast.error(t.controlRoom.erroAcao, {
           description: erro ? descricaoErroEscrita(erro, t) : undefined,
         });
         setRecarga((n) => n + 1); // ressincroniza lista + contagens do zero
       } else {
         setRecargaPastas((x) => x + 1); // reconcilia contagens reais
-        if (pastaSelRef.current === "deleteditems") setRecarga((x) => x + 1);
+        if (atualLista().pastaSel === "deleteditems") setRecarga((x) => x + 1);
       }
     })();
   }
@@ -1198,7 +1186,7 @@ export function ControlRoomScreen({
 
     // 1) OTIMISTA: tira da tela e marca como "saiu daqui" (mesmo registro que o
     //    excluir usa) pra o backfill/paginação não trazer as mensagens de volta.
-    ids.forEach((id) => deletadasRef.current.add(id));
+    marcarDeletadas(ids);
     removerNasListas(idsSet);
     // Invalida o cache do DESTINO (#108): a lista de lá agora está desatualizada
     // (ganhou estes itens) — força rebusca na próxima visita em vez de servir stale.
@@ -1244,7 +1232,7 @@ export function ControlRoomScreen({
     }
     const falharam = ids.filter((id) => !ok.includes(id));
     if (falharam.length > 0) {
-      falharam.forEach((id) => deletadasRef.current.delete(id));
+      desmarcarDeletadas(falharam);
       toast.error(t.controlRoom.erroAcao, {
         description: erro ? descricaoErroEscrita(erro, t) : undefined,
       });
@@ -1276,7 +1264,7 @@ export function ControlRoomScreen({
     limparSelecao();
     setBusca("");
     carregandoMaisRef.current = false;
-    deletadasRef.current = new Set();
+    limparDeletadas();
 
     // A pasta continua visível no sidebar para explicar o acesso parcial, mas
     // não insistimos em novos requests que o Graph já informou que serão 403.
@@ -1379,9 +1367,9 @@ export function ControlRoomScreen({
         ordemDesc,
         caixaAtiva
       );
-      if (caixaAtivaRef.current !== caixaPedido) return;
+      if (atualLista().caixaAtiva !== caixaPedido) return;
       carregadosRef.current += pagina.length; // avança pelo offset do servidor
-      const proximo = juntar(mensagensRef.current ?? [], pagina);
+      const proximo = juntar(atualLista().mensagens ?? [], pagina);
       const tem = pagina.length === PAGINA;
       setMensagens(proximo);
       setTemMais(tem);
@@ -1425,7 +1413,7 @@ export function ControlRoomScreen({
         pastaId: pastaSel,
         termo,
         caixa: caixaAtiva,
-        ignorarIds: deletadasRef.current,
+        ignorarIds: idsDeletadas(),
       });
     }, 300);
     return () => {
@@ -1465,7 +1453,7 @@ export function ControlRoomScreen({
       pastaId: pastaSel,
       escopo: filtroServidor,
       caixa: caixaAtiva,
-      ignorarIds: deletadasRef.current,
+      ignorarIds: idsDeletadas(),
     });
     return cancelarFiltroGraph;
   }, [
@@ -1495,7 +1483,7 @@ export function ControlRoomScreen({
         pastaId: pastaSel,
         escopo: filtroServidor,
         caixa: caixaAtiva,
-        ignorarIds: deletadasRef.current,
+        ignorarIds: idsDeletadas(),
       });
     } finally {
       carregandoMaisRef.current = false;
@@ -1522,7 +1510,7 @@ export function ControlRoomScreen({
         pastaId: pastaSel,
         termo,
         caixa: caixaAtiva,
-        ignorarIds: deletadasRef.current,
+        ignorarIds: idsDeletadas(),
       });
     } finally {
       carregandoMaisRef.current = false;
