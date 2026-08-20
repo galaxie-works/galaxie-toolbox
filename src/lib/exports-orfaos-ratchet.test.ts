@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import test from "node:test";
 
 // #1421 — ratchet de código exportado sem consumidor.
@@ -75,13 +75,40 @@ interface AchadoKnip {
   types?: unknown[];
 }
 
+const BIN_KNIP = "node_modules/knip/bin/knip.js";
+
+/**
+ * #1431: a checagem que faltava. Sem ela, `node_modules` sem knip caía no
+ * `catch` do spawn, virava "não devolveu JSON válido" e o dev ia investigar o
+ * PARSE — que está certo. A saída crua aparecia (isso o #1262 já garantia), mas
+ * a CAUSA e o REMÉDIO não: guarda que detecta o problema e esconde o conserto é
+ * meio caminho.
+ *
+ * O caso concreto: worktree cujo `node_modules` é junction para o do repo
+ * principal. O knip entrou no lockfile no #1421, então só existe onde alguém
+ * rodou `pnpm install` depois disso.
+ */
+function exigirKnipInstalado(): void {
+  if (existsSync(BIN_KNIP)) return;
+  throw new Error(
+    `o knip não está instalado (${BIN_KNIP} não existe), então este ratchet não ` +
+      "tem como medir nada.\n" +
+      "Remédio: `pnpm install`.\n" +
+      "Se este worktree usa junction para o `node_modules` do repo principal, o " +
+      "knip só chega aqui depois de um `pnpm install` NO PRINCIPAL (ele entrou no " +
+      "lockfile no #1421) — ou dê ao worktree um `node_modules` próprio.\n" +
+      "Isto NÃO é falha do gate: no CI o lockfile instala a dep.",
+  );
+}
+
 /** Saída crua — guardada para a mensagem de erro poder mostrá-la (#1262). */
 function rodarKnip(): string {
+  exigirKnipInstalado();
   try {
     return execFileSync(
       process.execPath,
       [
-        "node_modules/knip/bin/knip.js",
+        BIN_KNIP,
         "--include",
         "exports",
         "--include",
