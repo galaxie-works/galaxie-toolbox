@@ -1,5 +1,5 @@
 import { useCallback, useState, type ElementType, type ReactNode } from "react";
-import { Cloud, Disc, HardDrive, Network, Pin, PinOff, Usb } from "lucide-react";
+import { Cloud, Disc, HardDrive, Monitor, Network, Pin, PinOff, Usb } from "lucide-react";
 
 import {
   Files,
@@ -20,6 +20,7 @@ import { listarDir } from "@/lib/api";
 import type { CloudLocation, DriveInfo, FsEntry } from "@/lib/types";
 import { CAMINHO_ESTE_PC } from "./caminho";
 import { estaFixado, type PinAcessoRapido } from "./quick-access";
+import { TooltipAcao } from "./tooltip-acao";
 
 // #869: valores-sentinela dos nós-RAIZ do accordion (This PC / Acesso rápido).
 // Não são caminhos reais — o prefixo "::" nunca colide com um caminho Windows (só
@@ -446,5 +447,86 @@ function NoArvore({
         ) : null}
       </FolderContent>
     </FolderItem>
+  );
+}
+
+/**
+ * #869 (adendo de layout do Wagner): o RAIL — o que o sidebar vira quando
+ * colapsa. Só ícones, e cada um com o tooltip do caption, que é o pedido
+ * literal: *"colapsado, hover em cada drive/pasta mostra o tooltip com o nome"*.
+ *
+ * O que entra: os DESTINOS de navegação de primeiro nível — Este computador,
+ * cada drive local, cada mount de nuvem, cada local de rede e cada item do
+ * acesso rápido. As pastas-filhas ficam de fora de propósito: são lazy e só
+ * existem depois de expandir um nó que, colapsado, não existe.
+ *
+ * Reusa `iconePorKind` e os mesmos rótulos da árvore — se o ícone de um tipo de
+ * drive mudar lá, muda aqui junto.
+ */
+export function RailArvore({
+  drives,
+  cloudLocations,
+  acessoRapido,
+  currentPath,
+  onNavegar,
+}: {
+  drives: DriveInfo[];
+  cloudLocations: CloudLocation[] | null;
+  acessoRapido: FsEntry[] | null;
+  currentPath: string;
+  onNavegar: (path: string) => void;
+}) {
+  const { t } = useIdioma();
+  const itens: { path: string; label: string; icone: ElementType }[] = [
+    {
+      path: CAMINHO_ESTE_PC,
+      label: t.arquivos.drives,
+      icone: Monitor,
+    },
+    ...drives
+      .filter((d) => d.kind !== "network")
+      .map((d) => ({
+        path: d.path,
+        label: driveParaEntry(d).name,
+        icone: iconePorKind(d.kind),
+      })),
+    ...(cloudLocations ?? []).map((c) => ({
+      path: c.path,
+      label: cloudParaEntry(c).name,
+      icone: Cloud as ElementType,
+    })),
+    ...drives
+      .filter((d) => d.kind === "network")
+      .map((d) => ({
+        path: d.path,
+        label: driveParaEntry(d).name,
+        icone: Network as ElementType,
+      })),
+    ...(acessoRapido ?? []).map((e) => ({
+      path: e.path,
+      label: e.name,
+      icone: Pin as ElementType,
+    })),
+  ];
+
+  return (
+    <div className="flex flex-col items-center gap-1 py-1">
+      {itens.map(({ path, label, icone: Icone }) => (
+        <TooltipAcao key={path || "::este-pc::"} label={label}>
+          <button
+            type="button"
+            aria-label={label}
+            onClick={() => onNavegar(path)}
+            className={cn(
+              "grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground",
+              "hover:bg-accent hover:text-foreground",
+              path === currentPath && "bg-accent text-foreground",
+            )}
+          >
+            <Icone className="size-4" />
+          </button>
+        </TooltipAcao>
+      ))}
+    </div>
   );
 }
