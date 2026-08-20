@@ -4,6 +4,7 @@ Ledger "o que está no ar" (seed). Fonte: backfill 18/08/2026 a partir do `git l
 
 | Versão | Resumo |
 |---|---|
+| **v0.52.0** | 📁 Files: raízes/mounts com ícones e logos, Home view em tiles, menu de contexto na árvore, desafixar itens do sistema; Bridge: sidebar não engorda com a janela; Remote: ice_servers com credencial TURN efêmera (segredo fora de log); telemetria fail-closed com guarda; limpeza (LottieIcon) e guardas por AST. |
 | **v0.51.0** | 📦 1.539 ícones órfãos fora do instalador (com catraca); grade de Pessoas mais fluida (memoização); rotação de segredos testável (corrente telemetria); coturn fail-closed; previews de anexo com erro tratado. |
 | **v0.50.0** | 📬 Bridge: card arredondado do sidebar de volta + splitter de largura; Files: undo com progresso e recarga automática, sidebar colapsável em rail; refactors internos do leitor (control-room fatiado). Tudo validado pelo PO em runtime no `86bc63fa`. |
 | **v0.49.0** | 🚀 Pin de apps funcional (rail + grupo Fixados pela busca); 210 ícones do catálogo consertados (+10 do tema claro); "Mover para pasta" rola; sino primeiro na title bar; Remote v2: matrícula autorizada completa (owner/org da sessão, default-deny, teto compile-time, revogação); infra VPS versionada + /healthz com SHA. |
