@@ -10,7 +10,7 @@
 // exercita a fiação real do `react-resizable-panels`.
 import "@/index.css";
 import { describe, it, expect, beforeEach } from "vitest";
-import { render } from "vitest-browser-react";
+import { cleanup, render } from "vitest-browser-react";
 import { userEvent } from "vitest/browser";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -37,6 +37,11 @@ function botaoColapso(): HTMLButtonElement | null {
 
 describe("#869 sidebar do Files colapsável", () => {
   beforeEach(() => {
+    // #1019 (flake que a CI pegou e a minha máquina não): sem `cleanup()`, a
+    // árvore do teste anterior fica montada E o tooltip que ela abriu continua
+    // no DOM — então a asserção "nenhum tooltip aberto ainda" via o tooltip
+    // VELHO. Passava local por timing e falhava na CI.
+    cleanup();
     // O layout é persistido pelo `autoSaveId` (#819) — sem limpar, o estado de
     // um teste vazaria pro outro e eu estaria medindo a sessão anterior.
     localStorage.clear();
@@ -105,7 +110,13 @@ describe("#869 sidebar do Files colapsável", () => {
 
     const nome = itemRail.getAttribute("aria-label")!;
     expect(nome.length, "item do rail sem nome").toBeGreaterThan(0);
-    expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+    // Espera a ausência em vez de exigi-la no instante: tooltip FECHA de forma
+    // assíncrona, então "não há nenhum agora" é uma pergunta com timing.
+    const semTooltip = await ate(
+      () => (document.querySelector('[data-slot="tooltip-content"]') ? null : document.body),
+      2000,
+    );
+    expect(semTooltip, "havia tooltip aberto antes do hover").toBeTruthy();
 
     await userEvent.hover(itemRail);
 

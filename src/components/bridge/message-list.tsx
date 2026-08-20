@@ -453,47 +453,31 @@ const ATALHO_ORDENAR = shortcutBridge("ordenar");
 /** #636: formatos de "Salvar como…". Um comando por formato (S2–S5). */
 export type FormatoSalvar = "pdf" | "eml";
 
-export function MessageList({
-  titulo,
-  mensagens,
-  erroLeitura,
-  onRefresh,
-  pastaId,
-  pastaTipo,
-  onEsvaziar,
-  onCarregarMais,
-  carregandoMais,
-  temMais,
-  onFlag,
-  onExcluir,
-  onMarcarLido,
-  onSalvarComo,
-  onImprimir,
-  onAbrirMaisAcoes,
-  pastasDestino,
-  pastasCarregando,
-  onAbrirMover,
-  onMover,
-  filtrosOcultos,
-  onResponder,
-  onResponderTodos,
-  onEncaminhar,
-  onCompor,
-  envioBloqueado,
-  t,
-  idioma,
-  ativo = true,
-}: {
+/** O que a lista É: identidade da pasta e o conteúdo que ela mostra. */
+export interface MessageListLista {
   titulo: string;
   mensagens: EmailItem[] | null;
   erroLeitura?: string;
-  onRefresh: () => void;
   pastaId: string;
   pastaTipo: string;
-  onEsvaziar: () => void;
+  /** #454: só instala o atalho GLOBAL quando o Bridge é a tela ATIVA. O
+  * control-room fica montado (keep-alive) apenas escondido ao trocar de tela;
+  * sem este gate o listener de `window` seguia vivo e teclas como 'a'
+  * (reply-all) disparavam com o usuário já no Navigator. */
+  ativo?: boolean;
+  filtrosOcultos: Set<string>;
+}
+
+/** Trazer mais itens — e saber se ainda há o que trazer. */
+export interface MessageListPaginacao {
+  onRefresh: () => void;
   onCarregarMais: () => void;
   carregandoMais: boolean;
   temMais: boolean;
+}
+
+/** O que se FAZ com as mensagens (inclui mover, com os destinos). */
+export interface MessageListAcoes {
   onFlag: (id: string, novo: boolean) => void;
   onExcluir: (ids: string[]) => void | Promise<void>;
   onMarcarLido: (id: string, lido: boolean) => void;
@@ -502,11 +486,15 @@ export function MessageList({
   onSalvarComo: (ids: string[], formato: FormatoSalvar) => void;
   onImprimir: (ids: string[]) => void;
   onAbrirMaisAcoes: () => void;
+  onEsvaziar: () => void;
   pastasDestino: PastaDestino[];
   pastasCarregando: boolean;
   onAbrirMover: () => void;
   onMover: (ids: string[], destino: string, rotulo: string) => void;
-  filtrosOcultos: Set<string>;
+}
+
+/** Escrever: responder, encaminhar, compor — e o gate de envio. */
+export interface MessageListComposicao {
   // Atalhos de teclado (#28): ações que vivem no LEITOR (reply/forward via
   // handle imperativo) e no PAI (compor). MessageList só dispara a tecla.
   onResponder: () => void;
@@ -514,14 +502,48 @@ export function MessageList({
   onEncaminhar: () => void;
   onCompor: () => void;
   envioBloqueado: boolean;
+}
+
+export function MessageList({
+  lista,
+  paginacao,
+  acoes,
+  composicao,
+  t,
+  idioma,
+}: {
+  /** Identidade e conteúdo da lista. */
+  lista: MessageListLista;
+  /** Paginação (carregar mais / refresh). */
+  paginacao: MessageListPaginacao;
+  /** Ações sobre as mensagens, mover incluído. */
+  acoes: MessageListAcoes;
+  /** Composição e resposta. */
+  composicao: MessageListComposicao;
   t: ReturnType<typeof useIdioma>["t"];
   idioma: string;
-  /** #454: só instala o atalho GLOBAL quando o Bridge é a tela ATIVA. O
-   * control-room fica montado (keep-alive) apenas escondido ao trocar de tela;
-   * sem este gate o listener de `window` seguia vivo e teclas como 'a'
-   * (reply-all) disparavam com o usuário já no Navigator. */
-  ativo?: boolean;
 }) {
+  // #1019 (4c): o CONTRATO virou 4 objetos; os nomes locais seguem os
+  // mesmos de propósito. Renomear aqui dentro obrigaria a tocar ~1.970
+  // linhas de corpo por nada — o AC é sobre a interface do componente, e
+  // diff grande em refactor é onde erro entra sem ser visto.
+  const { titulo, mensagens, erroLeitura, pastaId, pastaTipo, ativo, filtrosOcultos } = lista;
+  const { onRefresh, onCarregarMais, carregandoMais, temMais } = paginacao;
+  const {
+    onFlag,
+    onExcluir,
+    onMarcarLido,
+    onSalvarComo,
+    onImprimir,
+    onAbrirMaisAcoes,
+    onEsvaziar,
+    pastasDestino,
+    pastasCarregando,
+    onAbrirMover,
+    onMover,
+  } = acoes;
+  const { onResponder, onResponderTodos, onEncaminhar, onCompor, envioBloqueado } = composicao;
+
   const listaRef = useRef<HTMLDivElement>(null);
   const selecionados = useAppStore((s) => s.selecionados);
   const msgSel = useAppStore((s) => s.msgSel);
