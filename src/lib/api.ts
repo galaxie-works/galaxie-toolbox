@@ -56,15 +56,11 @@ import type {
 import { iniciais } from "./iniciais.ts";
 import { logErro } from "./log.ts";
 
-/** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
-export function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const core = await import("@tauri-apps/api/core");
-  return core.invoke<T>(cmd, args);
-}
+// #1033: a fronteira mock/real mora em `./tauri` (ponto único). Re-exporto
+// `inTauri` porque o resto do app o consome como `api.inTauri()` (ex.: App.tsx);
+// `invoke` é uso interno deste módulo.
+export { inTauri } from "./tauri";
+import { inTauri, invoke } from "./tauri";
 
 /**
  * #1104 / fecha TODO(#687): URL de PROD do signaling Remote (S0). Fallback pro

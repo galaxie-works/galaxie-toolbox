@@ -7,11 +7,8 @@
  */
 
 import { telAppCrashed } from "./telemetria.ts";
-
-/** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
-function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
+// #1033: fronteira mock/real no ponto único (`./tauri`), não mais duplicada aqui.
+import { inTauri, invoke } from "./tauri.ts";
 
 /**
  * Encaminha uma linha de erro pro log do backend (Rust). Silencioso fora do
@@ -21,8 +18,7 @@ function inTauri(): boolean {
 async function enviarParaBackend(msg: string): Promise<void> {
   if (!inTauri()) return;
   try {
-    const core = await import("@tauri-apps/api/core");
-    await core.invoke("log_frontend_error", { msg });
+    await invoke("log_frontend_error", { msg });
   } catch {
     // Se nem o canal de log responde, não há muito a fazer — mas engolimos a
     // falha pra não transformar o log de um erro em outro erro.
