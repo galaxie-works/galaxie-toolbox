@@ -1,5 +1,5 @@
 import { useCallback, useState, type ElementType, type ReactNode } from "react";
-import { Cloud, Disc, HardDrive, Monitor, Network, Pin, PinOff, Usb } from "lucide-react";
+import { Cloud, Disc, HardDrive, House, Monitor, Network, Pin, PinOff, Usb } from "lucide-react";
 
 import {
   Files,
@@ -24,7 +24,7 @@ import type {
   NetworkLocation,
 } from "@/lib/types";
 import { CAMINHO_ESTE_PC } from "./caminho";
-import { estaFixado, type PinAcessoRapido } from "./quick-access";
+import { estaFixado, mesmoCaminho, type PinAcessoRapido } from "./quick-access";
 import { rotuloDrive } from "./rotulo-drive";
 import { TooltipAcao } from "./tooltip-acao";
 
@@ -149,6 +149,8 @@ export function ArvoreArquivos({
   acessoRapido,
   pins,
   onAlternarFixar,
+  onRemoverAcessoRapido,
+  homePath,
   currentPath,
   onNavegar,
 }: {
@@ -161,6 +163,13 @@ export function ArvoreArquivos({
   // forma SÍNCRONA pra rotular o item do menu; e `onAlternarFixar` fixa/desafixa.
   pins: PinAcessoRapido[];
   onAlternarFixar: (entry: FsEntry) => void;
+  // #1285 (A): remove um item do Acesso rápido (pin → desafixa; sistema → oculta).
+  // Só os itens DE TOPO da seção Quick access recebem — os filhos lazy seguem com
+  // o toggle Fixar normal.
+  onRemoverAcessoRapido: (entry: FsEntry) => void;
+  // #1285 (B): caminho da home (1º de dirsConhecidos) — o item correspondente no
+  // Quick access vira "Home"/"Início" com ícone House, em vez do nome cru da pasta.
+  homePath: string | null;
   currentPath: string;
   onNavegar: (path: string) => void;
 }) {
@@ -229,6 +238,7 @@ export function ArvoreArquivos({
         value={RAIZ_ESTE_PC}
         label={t.arquivos.drives}
         navPath={CAMINHO_ESTE_PC}
+        icon={Monitor}
         currentPath={currentPath}
         onNavegar={onNavegar}
       >
@@ -329,22 +339,32 @@ export function ArvoreArquivos({
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
-          {acessoRapido.map((e) => (
-            <NoArvore
-              key={e.path}
-              entry={e}
-              filhosPorPath={filhosPorPath}
-              carregando={carregando}
-              currentPath={currentPath}
-              onNavegar={onNavegar}
-              pins={pins}
-              onAlternarFixar={onAlternarFixar}
-              fixarLabel={t.arquivos.fixarAcessoRapido}
-              desafixarLabel={t.arquivos.desafixarAcessoRapido}
-              carregandoLabel={t.arquivos.carregando}
-              vazioLabel={t.arquivos.vazio}
-            />
-          ))}
+          {acessoRapido.map((e) => {
+            // #1285 (B): a home vira "Home"/"Início" + ícone House. Rótulo trocado
+            // por override do `name` (o `path` — navegação e chave — não muda).
+            const ehHome = homePath !== null && mesmoCaminho(e.path, homePath);
+            const item = ehHome ? { ...e, name: t.arquivos.home } : e;
+            return (
+              <NoArvore
+                key={e.path}
+                entry={item}
+                icone={ehHome ? House : undefined}
+                filhosPorPath={filhosPorPath}
+                carregando={carregando}
+                currentPath={currentPath}
+                onNavegar={onNavegar}
+                pins={pins}
+                onAlternarFixar={onAlternarFixar}
+                // #1285 (A): item de topo do Quick access → menu "Desafixar" que
+                // remove (pin ou oculta). Os filhos NÃO recebem `acaoRemover`.
+                acaoRemover={onRemoverAcessoRapido}
+                fixarLabel={t.arquivos.fixarAcessoRapido}
+                desafixarLabel={t.arquivos.desafixarAcessoRapido}
+                carregandoLabel={t.arquivos.carregando}
+                vazioLabel={t.arquivos.vazio}
+              />
+            );
+          })}
         </SecaoRaiz>
       )}
     </Files>
@@ -362,6 +382,7 @@ function SecaoRaiz({
   value,
   label,
   navPath,
+  icon,
   currentPath,
   onNavegar,
   children,
@@ -369,6 +390,9 @@ function SecaoRaiz({
   value: string;
   label: string;
   navPath?: string;
+  // #1285 (C): ícone da raiz. Sem `icon`, o `FolderTrigger` usa o de pasta
+  // (comportamento das seções sem ícone semântico). This PC passa `Monitor`.
+  icon?: ElementType;
   currentPath: string;
   onNavegar: (path: string) => void;
   children: ReactNode;
@@ -382,12 +406,12 @@ function SecaoRaiz({
           onClick={() => onNavegar(navPath)}
           className={cn("rounded-md", ativo && "bg-secondary")}
         >
-          <FolderTrigger expandLabel={t.arquivos.expandirColapsar}>
+          <FolderTrigger expandLabel={t.arquivos.expandirColapsar} icon={icon}>
             {label}
           </FolderTrigger>
         </div>
       ) : (
-        <FolderTrigger expandLabel={t.arquivos.expandirColapsar}>
+        <FolderTrigger expandLabel={t.arquivos.expandirColapsar} icon={icon}>
           {label}
         </FolderTrigger>
       )}
@@ -405,6 +429,7 @@ function NoArvore({
   onNavegar,
   pins,
   onAlternarFixar,
+  acaoRemover,
   fixarLabel,
   desafixarLabel,
   carregandoLabel,
@@ -420,6 +445,10 @@ function NoArvore({
   onNavegar: (path: string) => void;
   pins: PinAcessoRapido[];
   onAlternarFixar: (entry: FsEntry) => void;
+  // #1285 (A): quando presente (item de TOPO do Quick access), o menu vira
+  // "Desafixar" e chama isto — remove o item (pin ou oculta o de sistema). NÃO
+  // é repassado aos filhos, então pasta interna segue com o toggle Fixar normal.
+  acaoRemover?: (entry: FsEntry) => void;
   fixarLabel: string;
   desafixarLabel: string;
   carregandoLabel: string;
@@ -457,10 +486,20 @@ function NoArvore({
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
-          <ContextMenuItem onSelect={() => onAlternarFixar(entry)}>
-            {fixado ? <PinOff /> : <Pin />}
-            {fixado ? desafixarLabel : fixarLabel}
-          </ContextMenuItem>
+          {acaoRemover ? (
+            // #1285 (A): item de topo do Quick access — sempre "Desafixar"
+            // (remove o pin, ou oculta o item de sistema). O usuário controla a
+            // seção por completo, incluindo os dirs conhecidos.
+            <ContextMenuItem onSelect={() => acaoRemover(entry)}>
+              <PinOff />
+              {desafixarLabel}
+            </ContextMenuItem>
+          ) : (
+            <ContextMenuItem onSelect={() => onAlternarFixar(entry)}>
+              {fixado ? <PinOff /> : <Pin />}
+              {fixado ? desafixarLabel : fixarLabel}
+            </ContextMenuItem>
+          )}
         </ContextMenuContent>
       </ContextMenu>
       <FolderContent>

@@ -53,6 +53,8 @@ function montar(networkLocations: NetworkLocation[] | null, drives: DriveInfo[])
           acessoRapido={[]}
           pins={[]}
           onAlternarFixar={() => {}}
+          onRemoverAcessoRapido={() => {}}
+          homePath={null}
           currentPath=""
           onNavegar={() => {}}
         />

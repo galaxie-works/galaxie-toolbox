@@ -37,6 +37,7 @@ import type {
   NetworkLocation,
 } from "@/lib/types";
 import { DrivesView } from "./drives-view";
+import { HomeView } from "./home-view";
 import { ArvoreArquivos, RailArvore } from "./arvore";
 import { larguraIdealPct, temLayoutSalvo } from "@/lib/largura-painel";
 import { NavBarArquivos } from "./navbar";
@@ -53,11 +54,15 @@ import { planejarTransferencia, type ResolucaoConflito } from "./operacao";
 import { CAMINHO_ESTE_PC, nomeBase, pathPai } from "./caminho";
 import type { Clipboard, OperacaoClipboard } from "./menu-arquivo";
 import {
+  CHAVE_OCULTOS_ACESSO_RAPIDO,
   CHAVE_PINS_ACESSO_RAPIDO,
   adicionarPin,
   estaFixado,
   mesclarAcessoRapido,
+  mesmoCaminho,
+  ocultar,
   removerPin,
+  restaurar,
   type PinAcessoRapido,
 } from "./quick-access";
 
@@ -187,6 +192,12 @@ export function ExplorerShell({
   // ordenados por nome (mesclarAcessoRapido).
   const [pins, setPins] = usePersistedState<PinAcessoRapido[]>(
     CHAVE_PINS_ACESSO_RAPIDO,
+    [],
+  );
+  // #1285 (A): itens de SISTEMA (dirs conhecidos) que o usuário escondeu do
+  // Acesso rápido. Mesma persistência local dos pins.
+  const [ocultos, setOcultos] = usePersistedState<string[]>(
+    CHAVE_OCULTOS_ACESSO_RAPIDO,
     [],
   );
   // #681: seleção liftada do ContentPane → alimenta o InspectorPane.
@@ -326,14 +337,41 @@ export function ExplorerShell({
           ? removerPin(prev, entry.path)
           : adicionarPin(prev, { path: entry.path, name: entry.name }),
       );
+      // #1285 (A): Fixar um item antes oculto restaura-o (des-oculta) — é o
+      // caminho de volta do AC "navego até ele e uso Fixar, então ele volta".
+      setOcultos((prev) => restaurar(prev, entry.path));
     },
-    [setPins],
+    [setPins, setOcultos],
+  );
+
+  // #1285 (A): "Desafixar" de um item do Acesso rápido. Pin do usuário → remove o
+  // pin; item de sistema (dir conhecido) → oculta (persistido). Um só handler
+  // porque o menu do Quick access oferece "Desafixar" para os dois.
+  const removerDoAcessoRapido = useCallback(
+    (entry: FsEntry) => {
+      if (estaFixado(pins, entry.path)) {
+        setPins((prev) => removerPin(prev, entry.path));
+      } else {
+        setOcultos((prev) => ocultar(prev, entry.path));
+      }
+    },
+    [pins, setPins, setOcultos],
   );
 
   // #869: lista final do Acesso rápido (pins + sistema, dedupada e ordenada por
   // nome). `acessoRapido` pode ser null enquanto carrega — os pins ainda
   // aparecem. Array vazio → a árvore omite a seção (como hoje).
-  const acessoRapidoMesclado = mesclarAcessoRapido(pins, acessoRapido ?? []);
+  // #1285 (A): `ocultos` filtra itens de sistema escondidos.
+  const acessoRapidoMesclado = mesclarAcessoRapido(
+    pins,
+    acessoRapido ?? [],
+    ocultos,
+  );
+
+  // #1285 (B): a HOME é o 1º item de `dirsConhecidos` (contrato do Rust
+  // `dirs_conhecidos`, fs_explorer.rs:606 — home antes de desktop/docs/downloads).
+  // Serve pra rotular o item como "Home"/"Início" na árvore e rotear a Home view.
+  const homePath = acessoRapido?.[0]?.path ?? null;
 
   // #871 (fatia 2b/2c): dispara a busca recursiva. Numa PASTA (2b) = uma raiz; no
   // This PC (2c) = fan-out sobre TODOS os drives. Cancela os handles anteriores,
@@ -651,6 +689,8 @@ export function ExplorerShell({
                       acessoRapido={acessoRapidoMesclado}
                       pins={pins}
                       onAlternarFixar={alternarFixar}
+                      onRemoverAcessoRapido={removerDoAcessoRapido}
+                      homePath={homePath}
                       currentPath={nav.currentPath}
                       onNavegar={navegar}
                     />
@@ -714,6 +754,14 @@ export function ExplorerShell({
                 }}
                 onFechar={onLimparBusca}
               />
+            ) : homePath &&
+              nav.currentPath &&
+              mesmoCaminho(nav.currentPath, homePath) ? (
+              // #1285 (B2): a home tem view semântica própria (tiles das
+              // subpastas), no estilo do This PC — não a lista crua do ContentPane.
+              // Por CAMINHO: vale pra qualquer forma de chegar na home (clique,
+              // caminho digitado, subir a partir de Desktop).
+              <HomeView homePath={nav.currentPath} onNavegar={navegar} />
             ) : nav.currentPath ? (
               <ContentPane
                 currentPath={nav.currentPath}
