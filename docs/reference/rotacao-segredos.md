@@ -24,8 +24,12 @@ Este documento lista o que é **público-na-prática**, por que isso é aceitáv
 - **Sem literal no source**: os valores vêm de `option_env!` (Actions secrets), nunca
   hardcoded no repositório (que é público).
 - **Fail-closed**: config parcial (falta endpoint/email/token/stream) → transporte de
-  telemetria **desativado**, nunca meio-ligado (`iniciar_transporte_configurado`).
-  Guarda: `config_parcial_de_telemetria_e_fail_closed_campo_a_campo`.
+  telemetria **recusado com erro nomeado** (`config-incompleta`), nunca meio-ligado e
+  nunca desligado em silêncio. A decisão é a função pura `decidir_transporte`
+  (#1398); `iniciar_transporte_configurado` só lê o ambiente e traduz.
+  Guardas: `decisao_do_transporte_classifica_as_16_combinacoes` (as 16 combinações
+  presente/ausente) e `desligado_e_incompleta_nao_sao_a_mesma_coisa`.
+  Guarda do componente abaixo: `config_parcial_de_telemetria_e_fail_closed_campo_a_campo`.
 - **Header sensível**: o `Authorization` é marcado `set_sensitive(true)` → nunca entra
   em log. Guarda: `authorization_da_telemetria_e_marcado_sensivel`.
 - **Fronteira do Basic auth**: `:` no e-mail é recusado — o header é

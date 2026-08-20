@@ -1016,6 +1016,52 @@ pub struct StatusDto {
     pub configurado: bool,
 }
 
+
+/// O que fazer com o transporte, decidido **só** a partir da config.
+///
+/// #1398 — o runbook de segredos nomeia o fail-closed como mitigação ativa, mas
+/// a decisão morava dentro de `iniciar_transporte_configurado`, que lê
+/// `std::env::var`/`option_env!`. Testar aquilo exigiria mutar variável de
+/// ambiente: global ao processo, racy em suíte paralela e `unsafe` no edition
+/// novo — trocaria um buraco por um flake (foi o #1384).
+///
+/// Separando a decisão da leitura, as 16 combinações presente/ausente ficam
+/// afirmáveis sem tocar em ambiente nenhum.
+#[derive(Debug, PartialEq, Eq)]
+enum DecisaoTransporte {
+    /// Nada configurado: build sem secret. Telemetria off e **sem erro** — é o
+    /// caso legítimo, não uma falha.
+    Desligado,
+    /// Tudo presente: liga.
+    Ligar {
+        endpoint: String,
+        email: String,
+        token: String,
+        stream: String,
+    },
+    /// Alguns presentes e outros não: **recusa explícita**. Meio-ligado é o pior
+    /// dos mundos — parece telemetria funcionando e carrega credencial parcial.
+    Incompleta,
+}
+
+fn decidir_transporte(
+    endpoint: Option<String>,
+    email: Option<String>,
+    token: Option<String>,
+    stream: Option<String>,
+) -> DecisaoTransporte {
+    match (endpoint, email, token, stream) {
+        (None, None, None, None) => DecisaoTransporte::Desligado,
+        (Some(endpoint), Some(email), Some(token), Some(stream)) => DecisaoTransporte::Ligar {
+            endpoint,
+            email,
+            token,
+            stream,
+        },
+        _ => DecisaoTransporte::Incompleta,
+    }
+}
+
 impl TelemetryState {
     /// #1238: muta sob lock, grava DEPOIS de soltá-lo. A escrita é síncrona de
     /// propósito (ao contrário de `track`): é escolha do usuário, é rara, e o
@@ -1209,16 +1255,24 @@ impl TelemetryState {
             "GALAXIE_TELEMETRY_STREAM_NAME",
             option_env!("GALAXIE_TELEMETRY_STREAM_NAME"),
         );
-        match (endpoint, email, token, stream) {
-            (None, None, None, None) => Ok(false),
-            (Some(endpoint), Some(email), Some(token), Some(stream)) => {
+        // #1398: a DECISÃO é pura; só a leitura acima toca o ambiente.
+        match decidir_transporte(endpoint, email, token, stream) {
+            DecisaoTransporte::Desligado => Ok(false),
+            DecisaoTransporte::Ligar {
+                endpoint,
+                email,
+                token,
+                stream,
+            } => {
                 let config = TransporteConfig::nova(endpoint);
                 let auth = OpenObserveAuthProvider::novo(&email, &token, &stream)?;
                 let exporter = OtlpHttpExporter::novo(config.clone(), auth)?;
                 self.iniciar_transporte(exporter, config)?;
                 Ok(true)
             }
-            _ => Err(TransporteErro::Configuracao("config-incompleta")),
+            DecisaoTransporte::Incompleta => {
+                Err(TransporteErro::Configuracao("config-incompleta"))
+            }
         }
     }
 }
@@ -1954,5 +2008,70 @@ mod testes {
             Some(TransporteErro::Configuracao("token-vazio")),
         );
     }
+
+
+    // ── #1398: a decisão do fail-closed passa a ter guarda ───────────────────
+    //
+    // Achado aplicando à minha própria entrega (#1055) a lente que a `lumen` usou
+    // no #1282: o teste provava o componente de baixo (`novo` recusa campo
+    // vazio) e nada afirmava a DECISÃO que o runbook nomeia. Trocar o braço `_`
+    // por `Ok(false)` deixava a suíte inteira verde.
+    //
+    // As 16 combinações, sem tocar em variável de ambiente — o que torna isto
+    // testável foi separar a decisão da leitura.
+
+    fn v(presente: bool, valor: &str) -> Option<String> {
+        presente.then(|| valor.to_string())
+    }
+
+    #[test]
+    fn decisao_do_transporte_classifica_as_16_combinacoes() {
+        for bits in 0u8..16 {
+            let (e, m, t, st) = (
+                bits & 1 != 0,
+                bits & 2 != 0,
+                bits & 4 != 0,
+                bits & 8 != 0,
+            );
+            let d = decidir_transporte(
+                v(e, "https://x.test/v1/logs"),
+                v(m, "tel@x.test"),
+                v(t, "token"),
+                v(st, "stream"),
+            );
+            let presentes = [e, m, t, st].iter().filter(|b| **b).count();
+            let esperado = match presentes {
+                0 => DecisaoTransporte::Desligado,
+                4 => DecisaoTransporte::Ligar {
+                    endpoint: "https://x.test/v1/logs".into(),
+                    email: "tel@x.test".into(),
+                    token: "token".into(),
+                    stream: "stream".into(),
+                },
+                _ => DecisaoTransporte::Incompleta,
+            };
+            assert_eq!(
+                d, esperado,
+                "combinacao {bits:04b} (endpoint={e} email={m} token={t} stream={st}):                  config parcial tem de ser RECUSA EXPLICITA — nunca meio-ligada e                  nunca desligada em silencio",
+            );
+        }
+    }
+
+    /// O `Desligado` é caso legítimo (build sem secret), não falha — e tem de
+    /// continuar distinguível do `Incompleta`. Se os dois colapsarem no mesmo
+    /// resultado, um build com metade dos secrets vira "telemetria off" em
+    /// silêncio, que é precisamente o que o runbook promete que NÃO acontece.
+    #[test]
+    fn desligado_e_incompleta_nao_sao_a_mesma_coisa() {
+        let nada = decidir_transporte(None, None, None, None);
+        let meio = decidir_transporte(Some("https://x.test".into()), None, None, None);
+        assert_eq!(nada, DecisaoTransporte::Desligado);
+        assert_eq!(meio, DecisaoTransporte::Incompleta);
+        assert_ne!(
+            nada, meio,
+            "'nada configurado' e 'metade configurada' precisam de destinos diferentes",
+        );
+    }
+
 
 }
