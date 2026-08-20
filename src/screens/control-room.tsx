@@ -492,7 +492,6 @@ export function ControlRoomScreen({
   const detalheRef = useRef<MessageDetailHandle>(null);
   const filtroServidor = escopoDeFiltros(filtros);
   const filtroGraph = filtroServidor !== null;
-  const carregandoMaisRef = useRef(false);
   // #1019: os espelhos, a chave de cache e a junção de páginas vivem no
   // `useListaMensagens`. Ele devolve só FUNÇÕES — nenhum `.current` chega
   // aqui, que é o que o AC pede ("não vazam pro componente que consome").
@@ -505,6 +504,12 @@ export function ControlRoomScreen({
     limparDeletadas,
     naoDeletada,
     idsDeletadas,
+    carregados,
+    definirCarregados,
+    avancarCarregados,
+    paginaEmVoo,
+    definirPaginaEmVoo,
+    foiRefresh,
   } = useListaMensagens({
     pastaSel,
     caixaAtiva,
@@ -512,14 +517,6 @@ export function ControlRoomScreen({
     ordemDesc,
     mensagens,
   });
-  // Âncora de paginação: nº já buscado do servidor (skip). NÃO é
-  // `mensagens.length` — a lista encolhe ao excluir, mas o skip do Graph
-  // continua avançando. Vai pro hook na fatia 4b, junto com os efeitos que o
-  // usam; sozinho aqui ele ainda é lido por 7 pontos.
-  const carregadosRef = useRef(0);
-  // Detecta se o efeito de carga foi disparado por refresh (recarga mudou) —
-  // nesse caso invalida o cache e refaz o fetch em vez de restaurar (#108).
-  const recargaAnteriorRef = useRef(recarga);
 
 
   // pastas (recarrega as contagens junto com as ações e no refresh manual)
@@ -583,7 +580,7 @@ export function ControlRoomScreen({
     limparSelecao();
     limparConsultas();
     setTemMais(false);
-    carregadosRef.current = 0;
+    definirCarregados(0);
     limparDeletadas();
     ultimoVistoRef.current = null;
   }, [
@@ -596,6 +593,7 @@ export function ControlRoomScreen({
     setSubpastas,
     setTemMais,
     limparDeletadas,
+    definirCarregados,
   ]);
 
   // O submenu "Mover para…" precisa da árvore INTEIRA (não só do que o usuário
@@ -1257,8 +1255,7 @@ export function ControlRoomScreen({
     let vivo = true;
     const chave = chaveCache(pastaCarga);
     // Refresh manual/ressincronização mudou `recarga`: invalida e refaz o fetch.
-    const refreshForcado = recargaAnteriorRef.current !== recarga;
-    recargaAnteriorRef.current = recarga;
+    const refreshForcado = foiRefresh(recarga);
     const store = useAppStore.getState();
     if (refreshForcado) store.limparCachePasta(chave);
     const cacheEntry = refreshForcado ? undefined : store.cachePastas[chave];
@@ -1266,13 +1263,13 @@ export function ControlRoomScreen({
     // Comum às duas vias: troca de pasta zera seleção e busca.
     limparSelecao();
     setBusca("");
-    carregandoMaisRef.current = false;
+    definirPaginaEmVoo(false);
     limparDeletadas();
 
     // A pasta continua visível no sidebar para explicar o acesso parcial, mas
     // não insistimos em novos requests que o Graph já informou que serão 403.
     if (pastaCargaAcessoNegado) {
-      carregadosRef.current = 0;
+      definirCarregados(0);
       setMensagens([]);
       setCaixaDados(caixaAtiva);
       setTemMais(false);
@@ -1284,7 +1281,7 @@ export function ControlRoomScreen({
 
     // VIA RESTAURAÇÃO: cache tem a pasta → repõe sem null-flash e sem rede.
     if (cacheEntry) {
-      carregadosRef.current = cacheEntry.carregados;
+      definirCarregados(cacheEntry.carregados);
       setMensagens(cacheEntry.mensagens);
       setCaixaDados(caixaAtiva);
       setTemMais(cacheEntry.temMais);
@@ -1302,12 +1299,12 @@ export function ControlRoomScreen({
     // VIA FETCH: cache vazio (1ª visita ou invalidado) → busca página 0 e semeia.
     setMensagens(null);
     setTemMais(false);
-    carregadosRef.current = 0;
+    definirCarregados(0);
     api
       .crFolderMensagens(pastaCarga, 0, ordenar, ordemDesc, caixaAtiva)
       .then((ms) => {
         if (!vivo) return;
-        carregadosRef.current = ms.length;
+        definirCarregados(ms.length);
         setMensagens(ms);
         setCaixaDados(caixaAtiva);
         // mantém a mensagem já selecionada se ela existir na lista nova (ex.:
@@ -1358,20 +1355,20 @@ export function ControlRoomScreen({
   // buscado, não o tamanho da lista) e concatena deduplicando. Serve tanto pro
   // scroll (90%) quanto pro backfill pós-exclusão.
   async function carregarMais() {
-    if (carregandoMaisRef.current || !temMais) return;
-    carregandoMaisRef.current = true;
+    if (paginaEmVoo() || !temMais) return;
+    definirPaginaEmVoo(true);
     setCarregandoMais(true);
     const caixaPedido = caixaAtiva;
     try {
       const pagina = await api.crFolderMensagens(
         pastaCarga,
-        carregadosRef.current,
+        carregados(),
         ordenar,
         ordemDesc,
         caixaAtiva
       );
       if (atualLista().caixaAtiva !== caixaPedido) return;
-      carregadosRef.current += pagina.length; // avança pelo offset do servidor
+      avancarCarregados(pagina.length); // avança pelo offset do servidor
       const proximo = juntar(atualLista().mensagens ?? [], pagina);
       const tem = pagina.length === PAGINA;
       setMensagens(proximo);
@@ -1380,13 +1377,13 @@ export function ControlRoomScreen({
       // volta inteira sem refetch. Usa a chave da pasta que ESTÁ carregada.
       setCachePasta(chaveCache(pastaCarga), {
         mensagens: proximo,
-        carregados: carregadosRef.current,
+        carregados: carregados(),
         temMais: tem,
       });
     } catch {
       /* silencioso */
     } finally {
-      carregandoMaisRef.current = false;
+      definirPaginaEmVoo(false);
       setCarregandoMais(false);
     }
   }
@@ -1395,7 +1392,7 @@ export function ControlRoomScreen({
   // mais no servidor, repõe automaticamente — o usuário nunca vê a lista vazia
   // com mensagens sobrando na pasta.
   useEffect(() => {
-    if (mensagens && mensagens.length < PAGINA && temMais && !carregandoMaisRef.current) {
+    if (mensagens && mensagens.length < PAGINA && temMais && !paginaEmVoo()) {
       carregarMais();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1474,14 +1471,14 @@ export function ControlRoomScreen({
   // Paginação do filtro Graph via @odata.nextLink; dedup igual à busca.
   async function carregarMaisFiltro() {
     if (
-      carregandoMaisRef.current ||
+      paginaEmVoo() ||
       !filtroServidor ||
       !temMaisFiltro ||
       pastaCargaAcessoNegado
     ) {
       return;
     }
-    carregandoMaisRef.current = true;
+    definirPaginaEmVoo(true);
     setCarregandoMais(true);
     try {
       await carregarMaisFiltroStore({
@@ -1491,7 +1488,7 @@ export function ControlRoomScreen({
         ignorarIds: idsDeletadas(),
       });
     } finally {
-      carregandoMaisRef.current = false;
+      definirPaginaEmVoo(false);
       setCarregandoMais(false);
     }
   }
@@ -1501,14 +1498,14 @@ export function ControlRoomScreen({
   async function carregarMaisBusca() {
     const termo = busca.trim();
     if (
-      carregandoMaisRef.current ||
+      paginaEmVoo() ||
       !termo ||
       !temMaisBusca ||
       pastaCargaAcessoNegado
     ) {
       return;
     }
-    carregandoMaisRef.current = true;
+    definirPaginaEmVoo(true);
     setCarregandoMais(true);
     try {
       await carregarMaisBuscaStore({
@@ -1518,7 +1515,7 @@ export function ControlRoomScreen({
         ignorarIds: idsDeletadas(),
       });
     } finally {
-      carregandoMaisRef.current = false;
+      definirPaginaEmVoo(false);
       setCarregandoMais(false);
     }
   }
