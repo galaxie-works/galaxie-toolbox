@@ -33,6 +33,7 @@ import {
   eventoMouseMove,
   eventoScroll,
   eventoTecla,
+  posNoFrame,
   type Retangulo,
 } from "@/components/remote/input-mapa";
 import {
@@ -285,8 +286,9 @@ export function RemoteScreen() {
       width: r?.width ?? 0,
       height: r?.height ?? 0,
     };
-    // TODO(#687): quando o vídeo é letterboxed (razão do host ≠ da viewport), o
-    // rect da viewport inclui as bordas pretas — mapear pela área REAL do frame.
+    // #1444: devolve o rect CRU da viewport (inclui as bordas do letterbox); o
+    // desconto das bordas — mapear pela área real do frame — mora no `posNoFrame`/
+    // `areaFrame` do input-mapa, com a geometria do host (`screenInfo`).
   }
 
   function enviarEvento(
@@ -592,6 +594,13 @@ function PainelController({
       screenInfo && screenInfo.height > 0
         ? `${screenInfo.width} / ${screenInfo.height}`
         : undefined;
+    // #1444: geometria do host pra mapear o clique pela ÁREA REAL do frame (não
+    // pela viewport, que inclui as bordas do letterbox). `dentroDoFrame` guarda os
+    // botões: clique na borda preta não vira evento (não há ponto remoto ali).
+    const frameW = screenInfo?.width ?? 0;
+    const frameH = screenInfo?.height ?? 0;
+    const dentroDoFrame = (e: React.PointerEvent): boolean =>
+      posNoFrame(e.clientX, e.clientY, retangulo(), frameW, frameH) !== null;
     return (
       <div className="flex h-full flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
@@ -620,16 +629,20 @@ function PainelController({
             style={aspecto ? { aspectRatio: aspecto } : undefined}
             className="relative max-h-full w-full max-w-full overflow-hidden rounded-lg bg-black outline-none ring-1 ring-border focus-visible:ring-2 focus-visible:ring-ring"
             onPointerMove={(e) =>
-              enviarEvento(eventoMouseMove(e.clientX, e.clientY, retangulo()))
+              enviarEvento(
+                eventoMouseMove(e.clientX, e.clientY, retangulo(), frameW, frameH),
+              )
             }
             onPointerDown={(e) => {
               e.preventDefault();
               viewportRef.current?.focus();
-              enviarEvento(eventoMouseBotao(e.button, true));
+              // #1444: só emite o botão se o clique cai DENTRO do frame; na borda
+              // preta não há ponto remoto. O foco/preventDefault valem sempre.
+              if (dentroDoFrame(e)) enviarEvento(eventoMouseBotao(e.button, true));
             }}
             onPointerUp={(e) => {
               e.preventDefault();
-              enviarEvento(eventoMouseBotao(e.button, false));
+              if (dentroDoFrame(e)) enviarEvento(eventoMouseBotao(e.button, false));
             }}
             onContextMenu={(e) => e.preventDefault()}
             // TODO(#687): onWheel é passivo no root do React — o preventDefault

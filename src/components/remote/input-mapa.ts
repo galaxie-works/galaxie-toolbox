@@ -26,6 +26,55 @@ export function posNormalizada(
   };
 }
 
+/**
+ * #1444: a ÁREA REAL do frame dentro da viewport, com letterbox (object-fit:
+ * contain). Quando a razão do host (`frameW/frameH`, do `screenInfo`) difere da
+ * viewport, o vídeo entra com bordas pretas em cima/baixo OU nas laterais; a área
+ * do frame é o retângulo centrado que preserva a razão. Sem a geometria do host
+ * (0) ou viewport degenerada, devolve a viewport inteira — o mapa antigo, sem
+ * regressão quando não sabemos a razão. Razões iguais também devolvem a viewport
+ * (a escala casa nos dois eixos → offset 0).
+ */
+export function areaFrame(
+  rect: Retangulo,
+  frameW: number,
+  frameH: number,
+): Retangulo {
+  if (frameW <= 0 || frameH <= 0 || rect.width <= 0 || rect.height <= 0) {
+    return rect;
+  }
+  const escala = Math.min(rect.width / frameW, rect.height / frameH);
+  const w = frameW * escala;
+  const h = frameH * escala;
+  return {
+    left: rect.left + (rect.width - w) / 2,
+    top: rect.top + (rect.height - h) / 2,
+    width: w,
+    height: h,
+  };
+}
+
+/**
+ * #1444: coord de tela → normalizada 0..1 na ÁREA REAL do frame (não na viewport,
+ * que inclui as bordas do letterbox — era o bug: o clique caía em coordenada
+ * errada na máquina remota). Devolve `null` quando o ponto cai na BORDA preta —
+ * não há ponto remoto ali, então nenhum evento deve ser enviado.
+ */
+export function posNoFrame(
+  clientX: number,
+  clientY: number,
+  rect: Retangulo,
+  frameW: number,
+  frameH: number,
+): { x: number; y: number } | null {
+  const area = areaFrame(rect, frameW, frameH);
+  if (area.width <= 0 || area.height <= 0) return null;
+  const x = (clientX - area.left) / area.width;
+  const y = (clientY - area.top) / area.height;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return null; // borda (letterbox)
+  return { x, y };
+}
+
 /** `MouseEvent.button` (0/1/2) → `BotaoMouse`; outros botões → null (ignora). */
 export function botaoMouse(button: number): BotaoMouse | null {
   switch (button) {
@@ -76,14 +125,19 @@ export function mapearTecla(key: string): Tecla | null {
   return null;
 }
 
-/** Mouse move na viewport → `InputEvent` normalizado. */
+/**
+ * Mouse move → `InputEvent` normalizado na ÁREA REAL do frame (#1444). `null`
+ * quando o ponto cai na borda do letterbox — nada a enviar (não há ponto remoto).
+ */
 export function eventoMouseMove(
   clientX: number,
   clientY: number,
   rect: Retangulo,
-): InputEvent {
-  const { x, y } = posNormalizada(clientX, clientY, rect);
-  return { e: "mouseMove", x, y };
+  frameW: number,
+  frameH: number,
+): InputEvent | null {
+  const pos = posNoFrame(clientX, clientY, rect, frameW, frameH);
+  return pos ? { e: "mouseMove", x: pos.x, y: pos.y } : null;
 }
 
 /** Botão do mouse pressionado/solto → `InputEvent` (ou null se botão ignorado). */
