@@ -48,6 +48,24 @@ export interface ListaMensagens {
   limparDeletadas: () => void;
   /** `false` quando o id está marcado como excluído otimista. */
   naoDeletada: (id: string) => boolean;
+  /** Quantos itens já foram buscados do servidor (skip da paginação). */
+  carregados: () => number;
+  /** Define o skip — em troca de pasta, restauração de cache ou fetch novo. */
+  definirCarregados: (n: number) => void;
+  /** Avança o skip pelo offset do servidor, depois de uma página. */
+  avancarCarregados: (n: number) => void;
+  /** Há uma página em voo? Evita disparar duas ao mesmo tempo. */
+  paginaEmVoo: () => boolean;
+  /** Liga/desliga a trava de página em voo. */
+  definirPaginaEmVoo: (v: boolean) => void;
+  /**
+   * O disparo veio de um refresh manual (o `recarga` mudou desde a última vez)?
+   *
+   * Encapsula o `recargaAnteriorRef`: o consumidor pergunta e o hook já atualiza
+   * o espelho. Deixar essa comparação do lado de fora significava lembrar de
+   * escrever no ref logo depois de ler — e é o tipo de par que alguém esquece.
+   */
+  foiRefresh: (recarga: number) => boolean;
   /**
    * Os ids excluídos otimistas, como VISTA somente-leitura.
    *
@@ -104,6 +122,32 @@ export function useListaMensagens(estado: EstadoLista): ListaMensagens {
     deletadas.current = new Set();
   }, []);
 
+  // Âncora de paginação: nº já buscado do servidor (skip). NÃO é
+  // `mensagens.length` — a lista encolhe ao excluir, mas o skip do Graph
+  // continua avançando.
+  const carregadosRef = useRef(0);
+  /** Uma pagina em voo? Evita duas requisicoes simultaneas de paginacao. */
+  const paginaEmVooRef = useRef(false);
+  const recargaAnteriorRef = useRef<number | null>(null);
+
+  const carregados = useCallback(() => carregadosRef.current, []);
+  const definirCarregados = useCallback((n: number) => {
+    carregadosRef.current = n;
+  }, []);
+  const avancarCarregados = useCallback((n: number) => {
+    carregadosRef.current += n;
+  }, []);
+  const paginaEmVoo = useCallback(() => paginaEmVooRef.current, []);
+  const definirPaginaEmVoo = useCallback((v: boolean) => {
+    paginaEmVooRef.current = v;
+  }, []);
+  const foiRefresh = useCallback((recarga: number) => {
+    const mudou =
+      recargaAnteriorRef.current !== null && recargaAnteriorRef.current !== recarga;
+    recargaAnteriorRef.current = recarga;
+    return mudou;
+  }, []);
+
   const idsDeletadas = useCallback(
     () => deletadas.current as ReadonlySet<string>,
     [],
@@ -118,5 +162,11 @@ export function useListaMensagens(estado: EstadoLista): ListaMensagens {
     limparDeletadas,
     naoDeletada,
     idsDeletadas,
+    carregados,
+    definirCarregados,
+    avancarCarregados,
+    paginaEmVoo,
+    definirPaginaEmVoo,
+    foiRefresh,
   };
 }
