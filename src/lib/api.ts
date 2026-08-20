@@ -12,6 +12,8 @@ import type {
   FsDirBatch,
   FsSearchBatch,
   FsEntry,
+  KnownDir,
+  KnownKind,
   FsOpProgress,
   UndoPlan,
   UndoReport,
@@ -2945,12 +2947,17 @@ export async function desconectarNetworkDrive(letter: string, force: boolean): P
 }
 
 /** Pastas de acesso rápido do SO (home/desktop/documentos/downloads). */
-export async function dirsConhecidos(): Promise<FsEntry[]> {
+export async function dirsConhecidos(): Promise<KnownDir[]> {
   if (!inTauri()) {
     await sleep(60);
-    return MOCK_FS_ENTRIES.filter((e) => e.isDir).map((e) => ({ ...e }));
+    // #1404: no fixture a POSIÇÃO é autoritativa — a lista é nossa e não passa
+    // pelos filtros do Rust. Fora daqui, ninguém mais conta posição.
+    const kinds: KnownKind[] = ["home", "desktop", "documents", "downloads"];
+    return MOCK_FS_ENTRIES.filter((e) => e.isDir)
+      .slice(0, kinds.length)
+      .map((e, i) => ({ ...e, kind: kinds[i] }));
   }
-  return invoke<FsEntry[]>("fs_known_dirs");
+  return invoke<KnownDir[]>("fs_known_dirs");
 }
 
 /**
