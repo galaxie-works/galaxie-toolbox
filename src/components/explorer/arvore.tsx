@@ -71,6 +71,53 @@ function driveParaEntry(d: DriveInfo): FsEntry {
 }
 
 /**
+ * #869 (item 3): o logo do SERVIÇO em cada mount de nuvem.
+ *
+ * O código antes usava o `Cloud` genérico pra todos, com a justificativa
+ * "sem arte por provider, nao-inventar-ui". A justificativa caiu quando eu medi:
+ * os ativos JÁ ESTÃO no repo (`public/app-icons/onedrive.svg` e
+ * `google-drive.svg`), usados pelo catálogo de apps. Usar o que já existe não é
+ * inventar UI.
+ *
+ * Os componentes são ESTÁTICOS, de propósito: criar o componente dentro do
+ * render faria o React remontar a imagem a cada passada (identidade nova a cada
+ * vez), e num accordion isso pisca.
+ *
+ * `alt=""` + `aria-hidden`: o nome do mount já está no rótulo ao lado, então a
+ * imagem é decorativa. Repetir "OneDrive" pro leitor de tela seria ruído.
+ */
+function LogoNuvem({ id, className }: { id: string; className?: string }) {
+  return (
+    <img
+      src={`/app-icons/${id}.svg`}
+      alt=""
+      aria-hidden
+      className={cn("size-4 shrink-0", className)}
+    />
+  );
+}
+
+const LogoOneDrive = ({ className }: { className?: string }) => (
+  <LogoNuvem id="onedrive" className={className} />
+);
+const LogoGoogleDrive = ({ className }: { className?: string }) => (
+  <LogoNuvem id="google-drive" className={className} />
+);
+
+/** Logo do provider; `Cloud` genérico se algum provider novo aparecer. */
+function iconeDoProvider(provider: CloudLocation["provider"]): ElementType {
+  switch (provider) {
+    case "onedrive":
+    case "onedriveCommercial":
+      return LogoOneDrive;
+    case "googledrive":
+      return LogoGoogleDrive;
+    default:
+      return Cloud;
+  }
+}
+
+/**
  * #1288: `FsEntry` para um ATALHO de rede (`.lnk` de `Network Shortcuts`).
  *
  * Diferente do drive mapeado, ele não tem letra — e era por isso que sumia:
@@ -268,8 +315,8 @@ export function ArvoreArquivos({
       </SecaoRaiz>
 
       {/* #869: "Cloud drives" — mounts de nuvem locais (OneDrive/Google Drive). Só
-          renderiza quando há ≥1 mount; ícone Cloud pra todos (sem arte por
-          provider, nao-inventar-ui). Cada item é pasta lazy (navega pro `path`). */}
+          renderiza quando há ≥1 mount; logo do serviço em cada mount (#869
+          item 3 — os ativos já existiam no repo). Cada item é pasta lazy (navega pro `path`). */}
       {cloudLocations && cloudLocations.length > 0 && (
         <SecaoRaiz
           value={RAIZ_CLOUD}
@@ -283,7 +330,7 @@ export function ArvoreArquivos({
             <NoArvore
               key={c.path}
               entry={cloudParaEntry(c)}
-              icone={Cloud}
+              icone={iconeDoProvider(c.provider)}
               filhosPorPath={filhosPorPath}
               carregando={carregando}
               currentPath={currentPath}
