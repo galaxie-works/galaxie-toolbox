@@ -127,10 +127,13 @@ export function BridgeSplit({
       >
         {sidebar}
       </ResizablePanel>
-      {/* Sem `withHandle`: a divisória do sidebar é a `border-r` dele, e um
-          punho no meio dela brigaria com o desenho borderless que o card pede.
-          A área de arrasto continua lá — o handle é fino, não invisível. */}
-      <ResizableHandle className="bg-transparent" />
+      {/* #1373: com o card arredondado de volta, o handle precisa de margem —
+          encostado, ele cortaria o canto arredondado. Uso o mesmo `mx-1.5
+          bg-transparent` que o Explorer já usa entre os cards dele
+          (`explorer-shell.tsx`), em vez de inventar espaçamento novo. Segue sem
+          `withHandle`: o punho no meio do vão entre dois cards seria enfeite, e
+          a área de arrasto continua lá — o handle é fino, não invisível. */}
+      <ResizableHandle className="mx-1.5 bg-transparent" />
       <ResizablePanel id="bridge-content" order={2} className="flex min-w-0 flex-col">
         {children}
       </ResizablePanel>
