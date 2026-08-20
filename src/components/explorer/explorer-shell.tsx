@@ -1,5 +1,18 @@
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
+import {
+  Cloud,
+  House,
+  Network,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { toast } from "sonner";
 
@@ -37,7 +50,13 @@ import type {
   NetworkLocation,
 } from "@/lib/types";
 import { DrivesView } from "./drives-view";
-import { ArvoreArquivos, RailArvore } from "./arvore";
+import { HomeView } from "./home-view";
+import { RootView, type ItemRaiz } from "./root-view";
+import { iconeDaPasta } from "./home-view-icones";
+import { rotuloDrive } from "./rotulo-drive";
+import { ArvoreArquivos, RailArvore, type MenuArvore } from "./arvore";
+import { useAcoesPublicadas } from "./acoes-publicadas";
+import { ICONE_DA_RAIZ } from "./icone-raiz";
 import { larguraIdealPct, temLayoutSalvo } from "@/lib/largura-painel";
 import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
@@ -50,14 +69,32 @@ import { registrarOp } from "./use-ops-ativas";
 import { ConflitoDialog } from "./conflito-dialog";
 import { TooltipAcao } from "./tooltip-acao";
 import { planejarTransferencia, type ResolucaoConflito } from "./operacao";
-import { CAMINHO_ESTE_PC, nomeBase, pathPai } from "./caminho";
-import type { Clipboard, OperacaoClipboard } from "./menu-arquivo";
 import {
+  CAMINHO_ACESSO_RAPIDO,
+  CAMINHO_CLOUD,
+  CAMINHO_ESTE_PC,
+  CAMINHO_REDE,
+  ehRaizVirtual,
+  raizVirtual,
+  nomeBase,
+  pathPai,
+} from "./caminho";
+import {
+  rotulosMenuDe,
+  type AcoesMenu,
+  type Clipboard,
+  type OperacaoClipboard,
+} from "./menu-arquivo";
+import {
+  CHAVE_OCULTOS_ACESSO_RAPIDO,
   CHAVE_PINS_ACESSO_RAPIDO,
   adicionarPin,
   estaFixado,
   mesclarAcessoRapido,
+  mesmoCaminho,
+  ocultar,
   removerPin,
+  restaurar,
   type PinAcessoRapido,
 } from "./quick-access";
 
@@ -189,6 +226,12 @@ export function ExplorerShell({
     CHAVE_PINS_ACESSO_RAPIDO,
     [],
   );
+  // #1285 (A): itens de SISTEMA (dirs conhecidos) que o usuário escondeu do
+  // Acesso rápido. Mesma persistência local dos pins.
+  const [ocultos, setOcultos] = usePersistedState<string[]>(
+    CHAVE_OCULTOS_ACESSO_RAPIDO,
+    [],
+  );
   // #681: seleção liftada do ContentPane → alimenta o InspectorPane.
   const [selecionados, setSelecionados] = useState<FsEntry[]>([]);
   // #819/#854: visibilidade do painel de detalhes PERSISTE entre sessões (local).
@@ -203,6 +246,11 @@ export function ExplorerShell({
   // #714: área de transferência interna (recortar/copiar/colar). Vive no shell
   // pra sobreviver à navegação entre pastas.
   const [clipboard, setClipboard] = useState<Clipboard | null>(null);
+
+  // #1386: os handlers do content-pane, publicados pra fora. O menu de contexto
+  // da ÁRVORE monta com ESTES — o AC pede reuso, não um segundo menu.
+  const { obter: obterAcoes, publicar: publicarAcoes, agendar } =
+    useAcoesPublicadas();
 
   // #871 (fatia 2b/2c): busca recursiva. `null` = sem busca (mostra a
   // lista/DrivesView normal). Na PASTA (fatia 2b) = uma raiz; no This PC (fatia 2c)
@@ -231,6 +279,8 @@ export function ExplorerShell({
   const [conflito, setConflito] = useState<ConflitoPendente | null>(null);
   const [watcherNonce, setWatcherNonce] = useState(0);
   // t via ref → os toasts dos produtores saem no idioma atual sem re-render.
+  // #1386: os MESMOS rótulos do menu do conteúdo — uma fonte só.
+  const rotulosMenu = useMemo(() => rotulosMenuDe(t.arquivos), [t.arquivos]);
   const tRef = useRef(t);
   tRef.current = t;
 
@@ -274,10 +324,18 @@ export function ExplorerShell({
   // no caminho + no rótulo do This PC (i18n) — o callback vai por ref.
   useEffect(() => {
     const p = nav.currentPath;
-    const rotulo = p === CAMINHO_ESTE_PC ? t.arquivos.drives : nomeBase(p);
-    const caminho = p === CAMINHO_ESTE_PC ? t.arquivos.drives : p;
+    // #1287: as raízes virtuais (This PC + Cloud/Rede/Acesso rápido) reportam o
+    // rótulo da raiz, não o `nomeBase` do sentinel (que seria "::cloud::").
+    const raiz = raizVirtual(p);
+    const rotuloRaiz = raiz ? t.arquivos[raiz.titulo] : null;
+    const rotulo = rotuloRaiz ?? nomeBase(p);
+    const caminho = rotuloRaiz ?? p;
     onLocalChangeRef.current?.({ rotulo, caminho });
-  }, [nav.currentPath, t.arquivos.drives]);
+    // A dep é `t.arquivos` inteiro porque o título agora vem por CHAVE do mapa
+    // (`t.arquivos[raiz.titulo]`) — o lint não consegue, e não deveria, provar
+    // quais chaves são lidas. `t.arquivos` só troca quando o idioma troca, que é
+    // exatamente quando este efeito precisa rodar de novo.
+  }, [nav.currentPath, t.arquivos]);
 
   // #724: watcher de disco na pasta atual (live refresh). CRÍTICO — a `parar` que
   // a promise resolve DEVE ser chamada ao trocar de pasta / desmontar, e a
@@ -287,7 +345,9 @@ export function ExplorerShell({
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const path = nav.currentPath;
-    if (!path) return;
+    // #1287: raiz virtual (This PC / Cloud / Rede / Acesso rápido) não é pasta —
+    // observar bateria num alvo inexistente. Só pastas reais têm watcher.
+    if (ehRaizVirtual(path)) return;
     let cancelado = false;
     let parar: (() => Promise<void>) | null = null;
     void observarPasta(path, false, () => {
@@ -317,6 +377,20 @@ export function ExplorerShell({
 
   const navegar = (path: string) => dispatch({ type: "navegar", path });
 
+  // #1386: navega até `dir` e só ENTÃO roda a ação. Se o painel JÁ está lá e já
+  // leu a pasta, o `agendar` roda na hora e devolve `true` — navegar pro mesmo
+  // caminho não republicaria nada e a pendência ficaria pendurada pra sempre.
+  const navegarEAgir = (dir: string, agir: (acoes: AcoesMenu) => void) => {
+    if (!agendar(dir, agir)) navegar(dir);
+  };
+
+  const menuArvore: MenuArvore = {
+    obterAcoes: () => obterAcoes()?.acoes ?? null,
+    rotulos: rotulosMenu,
+    clipboard,
+    navegarEAgir,
+  };
+
   // #869: fixa/desafixa a pasta no Acesso rápido (toggle pelo estado atual do
   // pin). Guardamos o `name` junto pra rotular o nó sem reler o disco.
   const alternarFixar = useCallback(
@@ -326,14 +400,86 @@ export function ExplorerShell({
           ? removerPin(prev, entry.path)
           : adicionarPin(prev, { path: entry.path, name: entry.name }),
       );
+      // #1285 (A): Fixar um item antes oculto restaura-o (des-oculta) — é o
+      // caminho de volta do AC "navego até ele e uso Fixar, então ele volta".
+      setOcultos((prev) => restaurar(prev, entry.path));
     },
-    [setPins],
+    [setPins, setOcultos],
+  );
+
+  // #1285 (A): "Desafixar" de um item do Acesso rápido. Pin do usuário → remove o
+  // pin; item de sistema (dir conhecido) → oculta (persistido). Um só handler
+  // porque o menu do Quick access oferece "Desafixar" para os dois.
+  const removerDoAcessoRapido = useCallback(
+    (entry: FsEntry) => {
+      if (estaFixado(pins, entry.path)) {
+        setPins((prev) => removerPin(prev, entry.path));
+      } else {
+        setOcultos((prev) => ocultar(prev, entry.path));
+      }
+    },
+    [pins, setPins, setOcultos],
   );
 
   // #869: lista final do Acesso rápido (pins + sistema, dedupada e ordenada por
   // nome). `acessoRapido` pode ser null enquanto carrega — os pins ainda
   // aparecem. Array vazio → a árvore omite a seção (como hoje).
-  const acessoRapidoMesclado = mesclarAcessoRapido(pins, acessoRapido ?? []);
+  // #1285 (A): `ocultos` filtra itens de sistema escondidos.
+  const acessoRapidoMesclado = mesclarAcessoRapido(
+    pins,
+    acessoRapido ?? [],
+    ocultos,
+  );
+
+  // #1285 (B): a HOME é o 1º item de `dirsConhecidos` (contrato do Rust
+  // `dirs_conhecidos`, fs_explorer.rs:606 — home antes de desktop/docs/downloads).
+  // Serve pra rotular o item como "Home"/"Início" na árvore e rotear a Home view.
+  const homePath = acessoRapido?.[0]?.path ?? null;
+
+  // #1287: itens das três views de raiz (tiles no estilo This PC). Mapeiam os
+  // MESMOS dados da árvore (cloud/rede/acesso) — sem novo fetch, o shell já os
+  // tem. Listas pequenas (<~20), montadas a cada render sem custo relevante.
+  const itensCloud: ItemRaiz[] = (cloudLocations ?? []).map((c) => ({
+    path: c.path,
+    label: c.name,
+    Icon: Cloud,
+  }));
+  const itensRede: ItemRaiz[] = [
+    // Drives mapeados (com letra) + atalhos sem letra, na MESMA seção (#1288).
+    ...(drives ?? [])
+      .filter((d) => d.kind === "network")
+      .map((d) => ({
+        path: d.path,
+        label: rotuloDrive(d.name, d.path),
+        Icon: Network,
+      })),
+    ...(networkLocations ?? []).map((n) => ({
+      path: n.path,
+      label: n.name,
+      Icon: Network,
+      indisponivel: !n.available,
+    })),
+  ];
+  const itensAcesso: ItemRaiz[] = acessoRapidoMesclado.map((e) => {
+    const ehHome = homePath !== null && mesmoCaminho(e.path, homePath);
+    return {
+      path: e.path,
+      label: ehHome ? t.arquivos.home : e.name,
+      Icon: ehHome ? House : iconeDaPasta(e.name),
+    };
+  });
+
+  // #1287: a lista de tiles POR raiz. Só isto é específico de cada uma — título
+  // e ícone vêm do mapa. This PC fica de fora: ele tem a `DrivesView` própria.
+  const itensDaRaiz: Record<string, ItemRaiz[]> = {
+    [CAMINHO_CLOUD]: itensCloud,
+    [CAMINHO_REDE]: itensRede,
+    [CAMINHO_ACESSO_RAPIDO]: itensAcesso,
+  };
+  const raizAtual = raizVirtual(nav.currentPath);
+  // O This PC não passa por aqui (view de drives própria, mais acima).
+  const raizDaView =
+    raizAtual && raizAtual.sentinela !== CAMINHO_ESTE_PC ? raizAtual : null;
 
   // #871 (fatia 2b/2c): dispara a busca recursiva. Numa PASTA (2b) = uma raiz; no
   // This PC (2c) = fan-out sobre TODOS os drives. Cancela os handles anteriores,
@@ -346,9 +492,11 @@ export function ExplorerShell({
   // decrementa — não derruba a busca das outras.
   const onBuscar = useCallback(
     (query: string) => {
-      const roots = nav.currentPath
-        ? [nav.currentPath]
-        : (drives ?? []).map((d) => d.path); // This PC: raiz de cada drive
+      // #1287: numa raiz virtual (This PC / Cloud / Rede / Acesso rápido) a busca
+      // varre cada drive — não há UMA pasta pra ancorar. Pasta real: só ela.
+      const roots = ehRaizVirtual(nav.currentPath)
+        ? (drives ?? []).map((d) => d.path)
+        : [nav.currentPath];
       if (roots.length === 0) return;
       buscaHandlesRef.current.forEach((h) => void h.cancelar());
       buscaHandlesRef.current = [];
@@ -651,8 +799,11 @@ export function ExplorerShell({
                       acessoRapido={acessoRapidoMesclado}
                       pins={pins}
                       onAlternarFixar={alternarFixar}
+                      onRemoverAcessoRapido={removerDoAcessoRapido}
+                      homePath={homePath}
                       currentPath={nav.currentPath}
                       onNavegar={navegar}
+                      menu={menuArvore}
                     />
                   )}
                 </div>
@@ -714,6 +865,28 @@ export function ExplorerShell({
                 }}
                 onFechar={onLimparBusca}
               />
+            ) : homePath &&
+              nav.currentPath &&
+              mesmoCaminho(nav.currentPath, homePath) ? (
+              // #1285 (B2): a home tem view semântica própria (tiles das
+              // subpastas), no estilo do This PC — não a lista crua do ContentPane.
+              // Por CAMINHO: vale pra qualquer forma de chegar na home (clique,
+              // caminho digitado, subir a partir de Desktop).
+              <HomeView homePath={nav.currentPath} onNavegar={navegar} />
+            ) : raizDaView ? (
+              // #1287: as três raízes semânticas (Cloud drives / Locais de rede
+              // / Acesso rápido) viram UMA passagem, no estilo do This PC. Antes
+              // eram três blocos com título e ícone escritos à mão — e foi por
+              // isso que trocar o ícone só aqui deixava a página discordando do
+              // sidebar com a suíte inteira verde. Título e ícone saem do MESMO
+              // mapa que a árvore lê; só a LISTA é por raiz.
+              <RootView
+                titulo={t.arquivos[raizDaView.titulo]}
+                icone={ICONE_DA_RAIZ[raizDaView.icone]}
+                itens={itensDaRaiz[raizDaView.sentinela] ?? []}
+                vazioLabel={t.arquivos.vazio}
+                onNavegar={navegar}
+              />
             ) : nav.currentPath ? (
               <ContentPane
                 currentPath={nav.currentPath}
@@ -724,6 +897,8 @@ export function ExplorerShell({
                 onSelecaoChange={setSelecionados}
                 clipboard={clipboard}
                 onClipboardChange={setClipboard}
+                // #1386: publica os handlers pro menu da árvore consumir.
+                onAcoesProntas={publicarAcoes}
                 onTransferir={iniciarTransferencia}
                 refreshSignal={watcherNonce}
                 mostrarInspector={mostrarInspector}

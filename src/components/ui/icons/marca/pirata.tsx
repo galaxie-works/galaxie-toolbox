@@ -8,8 +8,11 @@ import { cn } from "@/lib/utils";
  * cores (teal + preto); aqui forçamos fill/stroke pra a **cor primária do tema**
  * via CSS (`!fill-primary`/`!stroke-primary`), então fica numa cor só e
  * **theme-aware** (segue claro/escuro pelo token `--primary`), sem editar o JSON.
- * Mesmo padrão de dimensionamento do LottieIcon (canvas 500x500 com padding →
- * `[&_svg]:size-full` + `scale` pra casar com os ícones da marca).
+ * O canvas do asset é 500x500 COM padding, então o desenho visível fica menor
+ * que o box: `[&_svg]:size-full` + `scale` compensam pra casar com os ícones da
+ * marca. (#1328: aqui havia uma remissão a um wrapper Lottie genérico que era
+ * código morto e foi removido. A regra do apontamento vale pro comentário
+ * também: nome de símbolo apagado é a mesma armadilha em outro lugar.)
  */
 export function PirataIcon({ className }: { className?: string }) {
   const { View } = useLottie({

@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUp,
-  Monitor,
   RefreshCw,
   Search,
   X,
@@ -21,7 +20,14 @@ import {
 import { cn } from "@/lib/utils";
 import { useIdioma, preencher } from "@/lib/idioma";
 import { statCaminho } from "@/lib/api";
-import { CAMINHO_ESTE_PC, nomeBase, segmentosCaminho } from "./caminho";
+import {
+  CAMINHO_ESTE_PC,
+  ehRaizVirtual,
+  raizVirtual,
+  nomeBase,
+  segmentosCaminho,
+} from "./caminho";
+import { ICONE_DA_RAIZ } from "./icone-raiz";
 import { TooltipAcao } from "./tooltip-acao";
 
 /**
@@ -112,7 +118,31 @@ export function NavBarArquivos({
     }
   }
 
-  const segmentos = segmentosCaminho(currentPath);
+  // #1287: rótulo amigável de uma raiz virtual (Cloud/Rede/Acesso rápido) — o
+  // This PC já é a raiz fixa do breadcrumb, então ele não entra aqui.
+  // #1287: o rótulo sai do MESMO mapa que dá o ícone da árvore e o título da
+  // view — antes esta ternária era a 4ª cópia do fato. O This PC fica de fora
+  // aqui de propósito: o breadcrumb dele já é a raiz fixa (`[]` abaixo).
+  const RAIZ_ESTE_PC = raizVirtual(CAMINHO_ESTE_PC)!;
+  const IconeEstePc = ICONE_DA_RAIZ[RAIZ_ESTE_PC.icone];
+  const raiz = raizVirtual(currentPath);
+  const rotuloRaizVirtual =
+    raiz && raiz.sentinela !== CAMINHO_ESTE_PC
+      ? t.arquivos[raiz.titulo]
+      : null;
+  // Sentinel não é caminho: numa raiz virtual o breadcrumb tem um único
+  // segmento com o rótulo da raiz (nunca o "::x::" cru de `segmentosCaminho`).
+  const segmentos = rotuloRaizVirtual
+    ? [{ label: rotuloRaizVirtual, path: currentPath }]
+    : ehRaizVirtual(currentPath)
+      ? [] // This PC: só a raiz fixa
+      : segmentosCaminho(currentPath);
+
+  // #1287: placeholder/aria da busca — raiz virtual (This PC/Cloud/Rede/Acesso)
+  // varre os drives ("Buscar Este PC"); pasta real busca a própria pasta.
+  const rotuloBusca = ehRaizVirtual(currentPath)
+    ? t.arquivos.buscarThisPc
+    : preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) });
 
   return (
     <div className="flex shrink-0 items-center gap-1">
@@ -233,8 +263,10 @@ export function NavBarArquivos({
                   className="h-6 gap-1 px-1.5 text-xs font-normal"
                   onClick={() => onNavegar(CAMINHO_ESTE_PC)}
                 >
-                  <Monitor className="size-3.5 shrink-0" />
-                  {t.arquivos.drives}
+                  {/* #1287: a raiz fixa do breadcrumb era a 5ª cópia do fato
+                      (ícone + rótulo cravados). Sai do mesmo mapa. */}
+                  <IconeEstePc className="size-3.5 shrink-0" />
+                  {t.arquivos[RAIZ_ESTE_PC.titulo]}
                 </Button>
               </span>
               {segmentos.map((seg) => (
@@ -286,16 +318,8 @@ export function NavBarArquivos({
               else e.currentTarget.blur();
             }
           }}
-          placeholder={
-            currentPath
-              ? preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) })
-              : t.arquivos.buscarThisPc
-          }
-          aria-label={
-            currentPath
-              ? preencher(t.arquivos.buscarPasta, { pasta: nomeBase(currentPath) })
-              : t.arquivos.buscarThisPc
-          }
+          placeholder={rotuloBusca}
+          aria-label={rotuloBusca}
           className="h-8 pl-8 pr-8"
         />
         {busca && (

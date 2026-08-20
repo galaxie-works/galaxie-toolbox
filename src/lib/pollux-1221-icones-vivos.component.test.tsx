@@ -36,11 +36,22 @@ function idsEmDisco(): Set<string> {
   );
 }
 
+/**
+ * #869 (item 3): a árvore do Files passou a mostrar o logo do serviço em cada
+ * mount de nuvem, lendo daqui por id. São dois arquivos que o SIDEBAR precisa —
+ * não só o catálogo de apps.
+ *
+ * Sem esta linha, uma limpeza futura guiada pelo catálogo poderia levar o
+ * `google-drive.svg` embora e o sidebar ficaria com buraco, sem nada acusando.
+ */
+const LOGOS_NUVEM_DO_SIDEBAR = ["onedrive", "google-drive"];
+
 /** Quem renderiza a partir deste diretório: falta de arquivo = buraco na tela. */
 function idsQuePrecisamExistir(): Set<string> {
   return new Set<string>([
     ...APPS_CATALOGO.filter((a) => a.icon).map((a) => a.id),
     ...APPS_GALAXIE.map((a) => a.id),
+    ...LOGOS_NUVEM_DO_SIDEBAR,
   ]);
 }
 

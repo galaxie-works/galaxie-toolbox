@@ -202,6 +202,9 @@ async fn process(
                 now,
                 &body.signature,
             );
+            // #1133: o device_id é usado DEPOIS do move abaixo, pra derivar a
+            // credencial TURN efêmera da resposta.
+            let device_id = body.device_id.clone();
             if result.is_ok() {
                 state
                     .register_unattended_device(
@@ -213,7 +216,34 @@ async fn process(
                     .await;
                 *registered_device = Some((body.device_id, body.nonce));
             }
-            result.map(|_| json!({"registered": true}))
+            result.map(|_| {
+                // #1133: a resposta do register v2 passa a carregar `ice_servers`
+                // com a credencial TURN efêmera — antes era só `{registered:true}`,
+                // e o device do caminho S8 ficava sem STUN/TURN.
+                //
+                // REUSA `state.ice_servers()`, o mesmo `use-auth-secret` (HMAC do
+                // coturn) que o v1 já usa no `Registered` e na renovação do #1148.
+                // O AC do card é explícito: mesmo esquema, **sem duplicar segredo**.
+                let ice_servers = match state.ice_servers(&device_id) {
+                    Ok(ice_servers) => ice_servers,
+                    Err(error) => {
+                        // Relay é ADITIVO: TURN mal configurado não pode impedir a
+                        // matrícula do device. Degrada pra lista vazia e GRITA a
+                        // causa REAL — `Clock` e `InvalidSecret` são problemas de
+                        // operação completamente diferentes, e quem for diagnosticar
+                        // precisa saber qual dos dois é.
+                        //
+                        // (O v1 faz `Err(_)` e crava "relogio do servidor invalido"
+                        // mesmo quando o problema é o segredo. Não replico o engano.)
+                        tracing::warn!(
+                            causa = %error,
+                            "v2 device.register: sem credencial TURN — device registrado, ice_servers vazio (relay indisponível)"
+                        );
+                        Vec::new()
+                    }
+                };
+                json!({"registered": true, "ice_servers": ice_servers})
+            })
         }
         "device.heartbeat" => {
             let body = match payload::<DeviceHeartbeat>(envelope.payload) {

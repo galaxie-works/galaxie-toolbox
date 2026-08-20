@@ -12,6 +12,10 @@ use galaxie_remote_net::{
     PROTOCOL_VERSION,
 };
 use galaxie_remote_signaling::{app, state::AppState};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use hmac::{Hmac, Mac};
+use sha1::Sha1;
+
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -268,4 +272,130 @@ fn unix_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
+}
+
+// ── #1133: o register do v2 entrega `ice_servers` com credencial efêmera ─────
+//
+// Antes, o `device.register` do v2 respondia `{"registered": true}` e nada mais:
+// o device do caminho S8 (não-supervisionado) ficava sem STUN/TURN, enquanto o
+// v1 já entregava a credencial no `Registered`.
+//
+// O AC do card é explícito quanto ao COMO: a credencial tem de sair do **mesmo**
+// esquema `use-auth-secret` do v1, **sem duplicar segredo**. Por isso este teste
+// não se contenta com "não-vazio" — ele **recalcula o HMAC** e exige igualdade.
+// Um segundo esquema, ainda que funcionasse contra o coturn, ficaria vermelho.
+#[tokio::test]
+async fn v2_register_entrega_ice_servers_com_credencial_do_mesmo_esquema_do_v1(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (address, state) = spawn_server().await?;
+    let (mut worker, _) = connect_async(format!("ws://{address}/v2/ws")).await?;
+    let identity = DeviceIdentity::generate();
+    let (registration, opaque_request) = ClientRegistrationFlow::start(b"permanent-password")?;
+
+    let enrollment_ticket = state
+        .mint_enrollment_ticket("owner-ice", "org-ice", "device-ice")
+        .await?;
+    let enrollment: Value = request(
+        &mut worker,
+        "enroll-ice-1",
+        "device.enroll.begin",
+        &DeviceEnrollBegin {
+            device_id: "device-ice".into(),
+            name: "Workstation ICE".into(),
+            public_key: identity.public_key_base64(),
+            opaque_request,
+            enrollment_ticket,
+        },
+    )
+    .await?;
+    let opaque_response = field(&enrollment, "opaqueResponse")?;
+    let registration = registration.finish(opaque_response)?;
+    let _: Value = request(
+        &mut worker,
+        "enroll-ice-2",
+        "device.enroll.finish",
+        &DeviceEnrollFinish {
+            device_id: "device-ice".into(),
+            opaque_upload: registration.upload,
+        },
+    )
+    .await?;
+
+    let timestamp = unix_seconds();
+    let signature = identity.sign_registration("device-ice", "nonce-ice", timestamp);
+    let resposta: Value = request(
+        &mut worker,
+        "register-ice",
+        "device.register",
+        &DeviceRegister {
+            device_id: "device-ice".into(),
+            nonce: "nonce-ice".into(),
+            timestamp,
+            signature,
+        },
+    )
+    .await?;
+
+    assert_eq!(
+        resposta.get("registered").and_then(Value::as_bool),
+        Some(true),
+        "o register continua registrando: {resposta}"
+    );
+
+    let ice = resposta
+        .get("ice_servers")
+        .and_then(Value::as_array)
+        .ok_or("a resposta do register v2 nao trouxe ice_servers")?;
+    assert!(
+        !ice.is_empty(),
+        "com turn_secret configurado, ice_servers tem de vir NAO-VAZIO (DoD do #1133): {resposta}"
+    );
+
+    let servidor = &ice[0];
+    let username = servidor
+        .get("username")
+        .and_then(Value::as_str)
+        .ok_or("ice_server sem username")?;
+    let credential = servidor
+        .get("credential")
+        .and_then(Value::as_str)
+        .ok_or("ice_server sem credential")?;
+    assert!(
+        servidor
+            .get("urls")
+            .and_then(Value::as_array)
+            .is_some_and(|u| !u.is_empty()),
+        "ice_server sem urls: {servidor}"
+    );
+
+    // `use-auth-secret` do coturn: username = "{expires_at}:{device_id}".
+    let (expires_at, dono) = username
+        .split_once(':')
+        .ok_or("username fora do formato use-auth-secret")?;
+    assert_eq!(dono, "device-ice", "a credencial e do device que registrou");
+    let expires_at: u64 = expires_at.parse()?;
+    assert!(
+        expires_at > unix_seconds(),
+        "credencial efemera tem de expirar no FUTURO (expires_at={expires_at})"
+    );
+
+    // O ponto do AC: MESMO esquema, sem segundo segredo. Recalculo o HMAC com o
+    // segredo que o servidor de teste recebeu e exijo igualdade.
+    let mut mac = <Hmac<Sha1> as Mac>::new_from_slice(b"test-turn-secret")?;
+    mac.update(username.as_bytes());
+    let esperado = BASE64.encode(mac.finalize().into_bytes());
+    assert_eq!(
+        credential, esperado,
+        "a credencial do v2 tem de ser o MESMO HMAC use-auth-secret do v1 — um \
+         segundo esquema significaria segredo duplicado (AC do #1133)"
+    );
+
+    // E o segredo em si nunca pode atravessar o fio.
+    let bruto = serde_json::to_string(&resposta)?;
+    assert!(
+        !bruto.contains("test-turn-secret"),
+        "o turn_secret VAZOU na resposta do register: {bruto}"
+    );
+
+    Ok(())
 }

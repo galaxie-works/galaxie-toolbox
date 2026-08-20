@@ -5,6 +5,7 @@
 // de itens. Espelha o padrão do menu de pastas do Bridge (control-room): uma
 // lista tipada de itens montada por um builder, renderizada por `renderItens`.
 import type { FsEntry } from "@/lib/types";
+import type { Dicionario } from "@/lib/strings";
 
 /** Operação pendente da área de transferência interna do Explorer. */
 export type OperacaoClipboard = "copy" | "cut";
@@ -62,6 +63,31 @@ export interface RotulosMenu {
   copiarCaminho: string;
   revelar: string;
   propriedades: string;
+}
+
+/**
+ * #1386: os rótulos do menu, montados do dicionário. Passou a ser função porque
+ * a ÁRVORE também monta menu agora, e ela nem sempre tem um content-pane vivo
+ * pra herdar os rótulos (This PC, boot). Duas cópias do mesmo literal divergem
+ * na primeira tradução nova — e rótulo divergente é bug que ninguém vê.
+ */
+export function rotulosMenuDe(a: Dicionario["arquivos"]): RotulosMenu {
+  return {
+    abrir: a.abrir,
+    abrirCom: a.abrirCom,
+    abrirComPadrao: a.abrirComPadrao,
+    recortar: a.recortar,
+    copiar: a.copiar,
+    colar: a.colar,
+    renomear: a.renomear,
+    excluir: a.excluir,
+    excluirPerm: a.excluirPerm,
+    novaPasta: a.novaPasta,
+    novoArquivo: a.novoArquivo,
+    copiarCaminho: a.copiarCaminho,
+    revelar: a.revelar,
+    propriedades: a.propriedades,
+  };
 }
 
 /** Callbacks de ação — a UI (content-pane) passa os handlers reais (que chamam a
@@ -136,7 +162,23 @@ export function getTreeContextMenu(
   pin: { fixado: boolean; rotulo: string; aoAlternar: () => void },
   opts: { permanente?: boolean } = {},
 ): ItemMenu[] {
-  const base = getFileContextMenu(entry, [], clipboard, acoes, rotulos, opts);
+  const heranca = getFileContextMenu(entry, [], clipboard, acoes, rotulos, opts);
+  // #1386: "Nova pasta"/"Novo arquivo" só existiam no menu do ESPAÇO VAZIO, e o
+  // AC pede as duas aqui — é o que o Explorer faz: botão direito numa pasta cria
+  // DENTRO dela. Reusa o MESMO builder pra não nascer uma terceira cópia; o
+  // "Colar" dele sai porque o menu herdado já traz um, com o gate de clipboard.
+  const criar = getEmptySpaceContextMenu(
+    entry.path,
+    clipboard,
+    acoes,
+    rotulos,
+  ).filter((item) => item.id !== "colar");
+  const base = [
+    ...heranca.map((item, i) =>
+      i === heranca.length - 1 ? { ...item, separatorAfter: true } : item,
+    ),
+    ...criar,
+  ];
   const podados = base.filter((item) => {
     if (tipo === "pasta") return true;
     if (DESTRUTIVOS.has(item.id)) return false;

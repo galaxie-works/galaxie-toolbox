@@ -1,5 +1,5 @@
 import { useCallback, useState, type ElementType, type ReactNode } from "react";
-import { Cloud, Disc, HardDrive, Monitor, Network, Pin, PinOff, Usb } from "lucide-react";
+import { Cloud, Disc, HardDrive, House, Monitor, Network, Pin, Usb } from "lucide-react";
 
 import {
   Files,
@@ -7,12 +7,16 @@ import {
   FolderTrigger,
   FolderContent,
 } from "@/components/animate-ui/components/radix/files";
+import { ComMenu } from "./menu-contexto";
 import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+  getTreeContextMenu,
+  type AcoesMenu,
+  type Clipboard,
+  type ItemMenu,
+  type RotulosMenu,
+  type TipoNoArvore,
+} from "./menu-arquivo";
+import { ICONE_DA_RAIZ } from "./icone-raiz";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { useIdioma } from "@/lib/idioma";
@@ -23,8 +27,14 @@ import type {
   FsEntry,
   NetworkLocation,
 } from "@/lib/types";
-import { CAMINHO_ESTE_PC } from "./caminho";
-import { estaFixado, type PinAcessoRapido } from "./quick-access";
+import {
+  RAIZES_VIRTUAIS,
+  type ChaveTituloRaiz,
+  type RaizVirtual,
+  CAMINHO_ESTE_PC,
+  pathPai,
+} from "./caminho";
+import { estaFixado, mesmoCaminho, type PinAcessoRapido } from "./quick-access";
 import { rotuloDrive } from "./rotulo-drive";
 import { TooltipAcao } from "./tooltip-acao";
 
@@ -33,12 +43,12 @@ import { TooltipAcao } from "./tooltip-acao";
 // existe ':' logo após a letra do drive), então dá pra distinguir uma raiz
 // ESTÁTICA (filhos vêm por prop) de um caminho LAZY (filhos vêm do disco) só pelo
 // valor, sem uma flag extra por nó.
-const RAIZ_ESTE_PC = "::este-pc::";
-const RAIZ_ACESSO_RAPIDO = "::acesso-rapido::";
-// #869: seções-irmãs dedicadas — nuvem (OneDrive/Google Drive) e locais de rede
-// (drives `kind==="network"`, tirados do This PC à moda do Explorer do Windows).
-const RAIZ_CLOUD = "::cloud::";
-const RAIZ_REDE = "::locais-rede::";
+// #1287 (reprovação da Lúmen): sentinela, ícone e título de cada raiz vêm do
+// `RAIZES_VIRTUAIS` do `caminho.ts`. Antes o ícone era escrito à mão aqui E na
+// view — trocar num só deixava sidebar e página discordando, com a suíte verde.
+const RAIZ = Object.fromEntries(
+  RAIZES_VIRTUAIS.map((r) => [r.titulo, r]),
+) as Record<ChaveTituloRaiz, RaizVirtual>;
 
 /** Um valor de accordion é "lazy" (carrega filhos do disco ao abrir) quando é um
  *  caminho real; as raízes estáticas usam o prefixo-sentinela "::". */
@@ -62,6 +72,92 @@ function driveParaEntry(d: DriveInfo): FsEntry {
     isHidden: false,
     isReadonly: false,
   };
+}
+
+/**
+ * #1386: o que a árvore precisa pra montar o menu ACIONAVEL de um nó.
+ *
+ * Os handlers são os MESMOS do content-pane — o AC pede REUSO, não uma segunda
+ * implementação (dois menus separados divergem, e a divergência é o próximo
+ * bug). O painel publica seu `AcoesMenu` pro shell; o shell entrega aqui.
+ */
+export interface MenuArvore {
+  /**
+   * As ações do painel, lidas NO ATO de abrir o menu — elas trocam de
+   * identidade a cada render do painel, então guardá-las em estado (e
+   * re-renderizar a árvore por isso) fecharia um laço. `null` = nenhum painel
+   * montado ainda (This PC, boot) → menu só de fixar/desafixar.
+   */
+  obterAcoes: () => AcoesMenu | null;
+  rotulos: RotulosMenu;
+  clipboard: Clipboard | null;
+  /**
+   * Navega até `dir` e SÓ ENTÃO age. Três das treze ações são presas à VIEW do
+   * painel: `renomear` acende o input inline NA LINHA da lista, e `novaPasta`/
+   * `novoArquivo` tiram o nome único das `entradas` CARREGADAS. Disparadas de
+   * fora sem navegar, ou não apareceriam ou checariam colisão na pasta errada.
+   * As outras dez operam por CAMINHO e agem sem tirar o usuário do lugar —
+   * clicar "Copiar" numa pasta da árvore não deve mudar o que ele está vendo.
+   */
+  navegarEAgir: (dir: string, agir: (acoes: AcoesMenu) => void) => void;
+}
+
+/** Envolve as três presas à view; as outras dez passam intactas. */
+function acoesDaArvore(menu: MenuArvore, acoes: AcoesMenu): AcoesMenu {
+  return {
+    ...acoes,
+    // O input de rename mora na listagem do PAI — é pra lá que o painel vai.
+    renomear: (e) => menu.navegarEAgir(pathPai(e.path), (a) => a.renomear(e)),
+    novaPasta: (dir) => menu.navegarEAgir(dir, (a) => a.novaPasta(dir)),
+    novoArquivo: (dir) => menu.navegarEAgir(dir, (a) => a.novoArquivo(dir)),
+  };
+}
+
+/**
+ * #869 (item 3): o logo do SERVIÇO em cada mount de nuvem.
+ *
+ * O código antes usava o `Cloud` genérico pra todos, com a justificativa
+ * "sem arte por provider, nao-inventar-ui". A justificativa caiu quando eu medi:
+ * os ativos JÁ ESTÃO no repo (`public/app-icons/onedrive.svg` e
+ * `google-drive.svg`), usados pelo catálogo de apps. Usar o que já existe não é
+ * inventar UI.
+ *
+ * Os componentes são ESTÁTICOS, de propósito: criar o componente dentro do
+ * render faria o React remontar a imagem a cada passada (identidade nova a cada
+ * vez), e num accordion isso pisca.
+ *
+ * `alt=""` + `aria-hidden`: o nome do mount já está no rótulo ao lado, então a
+ * imagem é decorativa. Repetir "OneDrive" pro leitor de tela seria ruído.
+ */
+function LogoNuvem({ id, className }: { id: string; className?: string }) {
+  return (
+    <img
+      src={`/app-icons/${id}.svg`}
+      alt=""
+      aria-hidden
+      className={cn("size-4 shrink-0", className)}
+    />
+  );
+}
+
+const LogoOneDrive = ({ className }: { className?: string }) => (
+  <LogoNuvem id="onedrive" className={className} />
+);
+const LogoGoogleDrive = ({ className }: { className?: string }) => (
+  <LogoNuvem id="google-drive" className={className} />
+);
+
+/** Logo do provider; `Cloud` genérico se algum provider novo aparecer. */
+function iconeDoProvider(provider: CloudLocation["provider"]): ElementType {
+  switch (provider) {
+    case "onedrive":
+    case "onedriveCommercial":
+      return LogoOneDrive;
+    case "googledrive":
+      return LogoGoogleDrive;
+    default:
+      return Cloud;
+  }
 }
 
 /**
@@ -149,8 +245,11 @@ export function ArvoreArquivos({
   acessoRapido,
   pins,
   onAlternarFixar,
+  onRemoverAcessoRapido,
+  homePath,
   currentPath,
   onNavegar,
+  menu,
 }: {
   drives: DriveInfo[];
   cloudLocations: CloudLocation[] | null;
@@ -161,8 +260,18 @@ export function ArvoreArquivos({
   // forma SÍNCRONA pra rotular o item do menu; e `onAlternarFixar` fixa/desafixa.
   pins: PinAcessoRapido[];
   onAlternarFixar: (entry: FsEntry) => void;
+  // #1285 (A): remove um item do Acesso rápido (pin → desafixa; sistema → oculta).
+  // Só os itens DE TOPO da seção Quick access recebem — os filhos lazy seguem com
+  // o toggle Fixar normal.
+  onRemoverAcessoRapido: (entry: FsEntry) => void;
+  // #1285 (B): caminho da home (1º de dirsConhecidos) — o item correspondente no
+  // Quick access vira "Home"/"Início" com ícone House, em vez do nome cru da pasta.
+  homePath: string | null;
   currentPath: string;
   onNavegar: (path: string) => void;
+  // #1386: ações do content-pane pro menu de contexto dos nós. Opcional — sem
+  // ele a árvore segue com o menu de fixar/desafixar que sempre teve.
+  menu?: MenuArvore;
 }) {
   const { t } = useIdioma();
   // As raízes começam ABERTAS — drives, nuvem, rede e acesso rápido ficam visíveis
@@ -170,10 +279,10 @@ export function ArvoreArquivos({
   // Manter um sentinela em `open` sem FolderItem correspondente (ex.: seção de
   // nuvem/rede ausente) é inofensivo — o Radix ignora valores desconhecidos.
   const [open, setOpen] = useState<string[]>(() => [
-    RAIZ_ESTE_PC,
-    RAIZ_CLOUD,
-    RAIZ_REDE,
-    RAIZ_ACESSO_RAPIDO,
+    RAIZ.drives.valorArvore,
+    RAIZ.driveSecaoCloud.valorArvore,
+    RAIZ.driveSecaoRede.valorArvore,
+    RAIZ.acessoRapido.valorArvore,
   ]);
   // #869: separa locais de rede (kind `network`) dos demais — cada grupo vira uma
   // seção-irmã (This PC só locais/removíveis/etc.; "Locais de rede" à parte).
@@ -226,9 +335,10 @@ export function ArvoreArquivos({
       {/* Raiz "Este computador" → drives (estáticos) → pastas (lazy). Clicar o
           cabeçalho navega pro This PC (grade de drives, #855). */}
       <SecaoRaiz
-        value={RAIZ_ESTE_PC}
+        value={RAIZ.drives.valorArvore}
         label={t.arquivos.drives}
-        navPath={CAMINHO_ESTE_PC}
+        navPath={RAIZ.drives.sentinela}
+        icon={ICONE_DA_RAIZ[RAIZ.drives.icone]}
         currentPath={currentPath}
         onNavegar={onNavegar}
       >
@@ -237,6 +347,8 @@ export function ArvoreArquivos({
             key={d.path}
             entry={driveParaEntry(d)}
             icone={iconePorKind(d.kind)}
+            menu={menu}
+            tipoNo="drive"
             filhosPorPath={filhosPorPath}
             carregando={carregando}
             currentPath={currentPath}
@@ -252,12 +364,14 @@ export function ArvoreArquivos({
       </SecaoRaiz>
 
       {/* #869: "Cloud drives" — mounts de nuvem locais (OneDrive/Google Drive). Só
-          renderiza quando há ≥1 mount; ícone Cloud pra todos (sem arte por
-          provider, nao-inventar-ui). Cada item é pasta lazy (navega pro `path`). */}
+          renderiza quando há ≥1 mount; logo do serviço em cada mount (#869
+          item 3 — os ativos já existiam no repo). Cada item é pasta lazy (navega pro `path`). */}
       {cloudLocations && cloudLocations.length > 0 && (
         <SecaoRaiz
-          value={RAIZ_CLOUD}
+          value={RAIZ.driveSecaoCloud.valorArvore}
           label={t.arquivos.driveSecaoCloud}
+          navPath={RAIZ.driveSecaoCloud.sentinela}
+          icon={ICONE_DA_RAIZ[RAIZ.driveSecaoCloud.icone]}
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
@@ -265,7 +379,9 @@ export function ArvoreArquivos({
             <NoArvore
               key={c.path}
               entry={cloudParaEntry(c)}
-              icone={Cloud}
+              icone={iconeDoProvider(c.provider)}
+              menu={menu}
+              tipoNo="drive"
               filhosPorPath={filhosPorPath}
               carregando={carregando}
               currentPath={currentPath}
@@ -287,8 +403,10 @@ export function ArvoreArquivos({
           `drives.filter(...)`, e atalho sem letra não está em `drives`. */}
       {(drivesRede.length > 0 || (networkLocations?.length ?? 0) > 0) && (
         <SecaoRaiz
-          value={RAIZ_REDE}
+          value={RAIZ.driveSecaoRede.valorArvore}
           label={t.arquivos.driveSecaoRede}
+          navPath={RAIZ.driveSecaoRede.sentinela}
+          icon={ICONE_DA_RAIZ[RAIZ.driveSecaoRede.icone]}
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
@@ -304,6 +422,8 @@ export function ArvoreArquivos({
               key={entry.path}
               entry={entry}
               icone={Network}
+              menu={menu}
+              tipoNo="drive"
               filhosPorPath={filhosPorPath}
               carregando={carregando}
               currentPath={currentPath}
@@ -321,30 +441,44 @@ export function ArvoreArquivos({
 
       {/* #869: "Acesso rápido" como raiz-IRMÃ na MESMA árvore (dados de
           `dirsConhecidos`). Os itens são pastas — expansíveis/lazy como as demais.
-          O cabeçalho é só rótulo: sem `navPath`, não navega ao clicar. */}
+          #1287: o cabeçalho navega pra view de tiles do Acesso rápido. */}
       {acessoRapido && acessoRapido.length > 0 && (
         <SecaoRaiz
-          value={RAIZ_ACESSO_RAPIDO}
+          value={RAIZ.acessoRapido.valorArvore}
           label={t.arquivos.acessoRapido}
+          navPath={RAIZ.acessoRapido.sentinela}
+          icon={ICONE_DA_RAIZ[RAIZ.acessoRapido.icone]}
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
-          {acessoRapido.map((e) => (
-            <NoArvore
-              key={e.path}
-              entry={e}
-              filhosPorPath={filhosPorPath}
-              carregando={carregando}
-              currentPath={currentPath}
-              onNavegar={onNavegar}
-              pins={pins}
-              onAlternarFixar={onAlternarFixar}
-              fixarLabel={t.arquivos.fixarAcessoRapido}
-              desafixarLabel={t.arquivos.desafixarAcessoRapido}
-              carregandoLabel={t.arquivos.carregando}
-              vazioLabel={t.arquivos.vazio}
-            />
-          ))}
+          {acessoRapido.map((e) => {
+            // #1285 (B): a home vira "Home"/"Início" + ícone House. Rótulo trocado
+            // por override do `name` (o `path` — navegação e chave — não muda).
+            const ehHome = homePath !== null && mesmoCaminho(e.path, homePath);
+            const item = ehHome ? { ...e, name: t.arquivos.home } : e;
+            return (
+              <NoArvore
+                key={e.path}
+                entry={item}
+                icone={ehHome ? House : undefined}
+                menu={menu}
+                tipoNo="pasta"
+                filhosPorPath={filhosPorPath}
+                carregando={carregando}
+                currentPath={currentPath}
+                onNavegar={onNavegar}
+                pins={pins}
+                onAlternarFixar={onAlternarFixar}
+                // #1285 (A): item de topo do Quick access → menu "Desafixar" que
+                // remove (pin ou oculta). Os filhos NÃO recebem `acaoRemover`.
+                acaoRemover={onRemoverAcessoRapido}
+                fixarLabel={t.arquivos.fixarAcessoRapido}
+                desafixarLabel={t.arquivos.desafixarAcessoRapido}
+                carregandoLabel={t.arquivos.carregando}
+                vazioLabel={t.arquivos.vazio}
+              />
+            );
+          })}
         </SecaoRaiz>
       )}
     </Files>
@@ -362,6 +496,7 @@ function SecaoRaiz({
   value,
   label,
   navPath,
+  icon,
   currentPath,
   onNavegar,
   children,
@@ -369,6 +504,9 @@ function SecaoRaiz({
   value: string;
   label: string;
   navPath?: string;
+  // #1285 (C): ícone da raiz. Sem `icon`, o `FolderTrigger` usa o de pasta
+  // (comportamento das seções sem ícone semântico). This PC passa `Monitor`.
+  icon?: ElementType;
   currentPath: string;
   onNavegar: (path: string) => void;
   children: ReactNode;
@@ -382,12 +520,12 @@ function SecaoRaiz({
           onClick={() => onNavegar(navPath)}
           className={cn("rounded-md", ativo && "bg-secondary")}
         >
-          <FolderTrigger expandLabel={t.arquivos.expandirColapsar}>
+          <FolderTrigger expandLabel={t.arquivos.expandirColapsar} icon={icon}>
             {label}
           </FolderTrigger>
         </div>
       ) : (
-        <FolderTrigger expandLabel={t.arquivos.expandirColapsar}>
+        <FolderTrigger expandLabel={t.arquivos.expandirColapsar} icon={icon}>
           {label}
         </FolderTrigger>
       )}
@@ -405,10 +543,13 @@ function NoArvore({
   onNavegar,
   pins,
   onAlternarFixar,
+  acaoRemover,
   fixarLabel,
   desafixarLabel,
   carregandoLabel,
   vazioLabel,
+  menu,
+  tipoNo = "pasta",
 }: {
   entry: FsEntry;
   // #869: ícone só do nó-raiz do seu grupo (drive/mount de nuvem). Os filhos
@@ -420,10 +561,19 @@ function NoArvore({
   onNavegar: (path: string) => void;
   pins: PinAcessoRapido[];
   onAlternarFixar: (entry: FsEntry) => void;
+  // #1285 (A): quando presente (item de TOPO do Quick access), o menu vira
+  // "Desafixar" e chama isto — remove o item (pin ou oculta o de sistema). NÃO
+  // é repassado aos filhos, então pasta interna segue com o toggle Fixar normal.
+  acaoRemover?: (entry: FsEntry) => void;
   fixarLabel: string;
   desafixarLabel: string;
   carregandoLabel: string;
   vazioLabel: string;
+  // #1386: ações do painel; ausente = menu só de fixar/desafixar.
+  menu?: MenuArvore;
+  // #1283 B: drive perde o que destrói/move ele mesmo (Recortar/Renomear/
+  // Excluir). Filho recursivo é sempre pasta de verdade.
+  tipoNo?: TipoNoArvore;
 }) {
   const { t } = useIdioma();
   const filhos = filhosPorPath.get(entry.path);
@@ -434,35 +584,59 @@ function NoArvore({
   // async (lição do P0 #778: conteúdo de menu Radix presente/decidido na abertura).
   const fixado = estaFixado(pins, entry.path);
 
+  // #1386: os itens são montados DURANTE o render (o `ComMenu` avalia a thunk),
+  // como no conteúdo — o Radix precisa dos filhos já montados quando abre, era
+  // o #778. `shift` chega do clique direito e troca Lixeira por permanente.
+  const itensMenu = (shift: boolean): ItemMenu[] => {
+    // #1285 (A): item de TOPO do Quick access é sempre "Desafixar" — remove o
+    // pin ou oculta o de sistema. Os filhos caem no toggle normal.
+    const pin = acaoRemover
+      ? { fixado: true, rotulo: desafixarLabel, aoAlternar: () => acaoRemover(entry) }
+      : {
+          fixado,
+          rotulo: fixado ? desafixarLabel : fixarLabel,
+          aoAlternar: () => onAlternarFixar(entry),
+        };
+    const acoes = menu ? menu.obterAcoes() : null;
+    if (!menu || !acoes) {
+      return [
+        {
+          id: "fixar",
+          label: pin.rotulo,
+          icon: pin.fixado ? "desafixar" : "fixar",
+          onClick: pin.aoAlternar,
+        },
+      ];
+    }
+    return getTreeContextMenu(
+      entry,
+      tipoNo,
+      menu.clipboard,
+      acoesDaArvore(menu, acoes),
+      menu.rotulos,
+      pin,
+      { permanente: shift },
+    );
+  };
+
   return (
     <FolderItem value={entry.path}>
-      {/* #869: menu de contexto (Radix) pra fixar/desafixar do Acesso rápido. O
-          ContextMenuTrigger é `asChild` no MESMO container que já navega ao
-          clicar (o clique-esquerdo navega; o direito abre o menu). O item é
-          renderizado EAGER no open — `fixado` é sync, então não há gate async. */}
-      <ContextMenu>
-        <ContextMenuTrigger asChild>
-          {/* O conteúdo do `FolderTrigger` do animate-ui é `pointer-events-none`:
-              o clique cai no botão do acordeão (expande/colapsa). Envolvemos num
-              container que captura o MESMO clique por bubbling pra também NAVEGAR
-              até a pasta. Sem lint de a11y no projeto; o gatilho por baixo é um
-              <button> real (teclado cobre via `aoAbrir`). */}
-          <div
-            onClick={() => onNavegar(entry.path)}
-            className={cn("rounded-md", ativo && "bg-secondary")}
-          >
-            <FolderTrigger icon={icone} expandLabel={t.arquivos.expandirColapsar}>
-              {entry.name}
-            </FolderTrigger>
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onSelect={() => onAlternarFixar(entry)}>
-            {fixado ? <PinOff /> : <Pin />}
-            {fixado ? desafixarLabel : fixarLabel}
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
+      {/* #1386: o MESMO `ComMenu` do conteúdo (mesmo renderizador de `ItemMenu`,
+          mesmo aninhamento Radix) — o menu da árvore deixou de ser feito à mão.
+          O clique-esquerdo navega; o direito abre. O conteúdo do `FolderTrigger`
+          do animate-ui é `pointer-events-none`, então o clique cai no botão do
+          acordeão e o container por fora captura o MESMO clique por bubbling pra
+          também NAVEGAR. Sem lint de a11y no projeto; o gatilho por baixo é um
+          <button> real (teclado cobre via `aoAbrir`). */}
+      <ComMenu
+        itens={itensMenu}
+        onClick={() => onNavegar(entry.path)}
+        className={cn("rounded-md", ativo && "bg-secondary")}
+      >
+        <FolderTrigger icon={icone} expandLabel={t.arquivos.expandirColapsar}>
+          {entry.name}
+        </FolderTrigger>
+      </ComMenu>
       <FolderContent>
         {estaCarregando ? (
           <div className="flex items-center gap-2 p-2">
@@ -482,6 +656,7 @@ function NoArvore({
               onNavegar={onNavegar}
               pins={pins}
               onAlternarFixar={onAlternarFixar}
+              menu={menu}
               fixarLabel={fixarLabel}
               desafixarLabel={desafixarLabel}
               carregandoLabel={carregandoLabel}

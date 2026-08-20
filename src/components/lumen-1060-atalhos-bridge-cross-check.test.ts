@@ -109,6 +109,54 @@ function fonteAoTeclar(): string {
   assert.fail("não achei a função `aoTeclar` em nenhuma fonte do Bridge");
 }
 
+/**
+ * #1370: o atalho 'filters' vive nas PROPS `enableShortcut` + `shortcutKey="f"`
+ * de um `<Filters>` (o listener é da reui, não do `aoTeclar`). A guarda antiga
+ * casava as duas strings por TEXTO no fonte sem-comentários — frágil: um literal
+ * (`const x = 'shortcutKey="f"'`) sobrevive ao `semComentarios` (o próprio
+ * docstring gaba disso), e os dois matches podiam vir de lugares DESCONEXOS,
+ * validando um Filtro morto. Aqui exijo o ELEMENTO JSX real: um `<Filters>` com
+ * as duas props como ATRIBUTOS. Comentário e string não viram `JsxAttribute`,
+ * então não enganam; e as duas têm que estar no MESMO elemento.
+ */
+function filtersComAtalhoF(texto: string): boolean {
+  const src = ts.createSourceFile(
+    "fixture.tsx",
+    texto,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  let achou = false;
+  (function visit(n: ts.Node) {
+    if (
+      (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) &&
+      n.tagName.getText(src) === "Filters"
+    ) {
+      const attrs = n.attributes.properties.filter(ts.isJsxAttribute);
+      const temEnable = attrs.some((a) => a.name.getText(src) === "enableShortcut");
+      const temKeyF = attrs.some((a) => {
+        if (a.name.getText(src) !== "shortcutKey") return false;
+        const init = a.initializer;
+        // `shortcutKey="f"` ou `shortcutKey={"f"}`.
+        if (init && ts.isStringLiteral(init)) return init.text === "f";
+        if (
+          init &&
+          ts.isJsxExpression(init) &&
+          init.expression &&
+          ts.isStringLiteralLike(init.expression)
+        ) {
+          return init.expression.text === "f";
+        }
+        return false;
+      });
+      if (temEnable && temKeyF) achou = true;
+    }
+    ts.forEachChild(n, visit);
+  })(src);
+  return achou;
+}
+
 /** A tecla `e.key` está referenciada no handler? (letra = qualquer caso). */
 function teclaNoHandler(literal: string, handler: string): boolean {
   if (/^[A-Za-z]$/.test(literal)) {
@@ -149,12 +197,38 @@ test("#1060: todo atalho 'central' do catálogo do Bridge tem handler no aoTecla
   );
 });
 
-test("#1060: o atalho 'filters' (Filtro/F) está cabeado no <Filters enableShortcut>", () => {
+test("#1060/#1370: o atalho 'filters' (Filtro/F) tem <Filters enableShortcut shortcutKey=\"f\"> REAL no Bridge (AST, não texto)", () => {
   const filtro = ATALHOS_BRIDGE.filter((a) => a.fonte === "filters");
   assert.ok(filtro.length > 0, "esperava ao menos um atalho fonte:'filters' (o Filtro)");
-  const texto = fonteBridge();
-  assert.match(texto, /enableShortcut/, "o <Filters> do Bridge precisa de enableShortcut");
-  assert.match(texto, /shortcutKey="f"/, 'o <Filters> precisa de shortcutKey="f" (o atalho catalogado)');
+  const achou = FONTES_BRIDGE.some((u) => filtersComAtalhoF(readFileSync(u, "utf8")));
+  assert.ok(
+    achou,
+    'nenhum <Filters> do Bridge tem enableShortcut + shortcutKey="f" como ATRIBUTOS reais — o atalho F morreu (props tiradas) ou virou só comentário/string. Cabeie as props no <Filters> ou tire o atalho do catálogo.',
+  );
+});
+
+test("#1370: a guarda 'filters' por AST não é enganada por comentário, string, nem props desconexas", () => {
+  // Real → verde (com e sem type-argument genérico do <Filters<string>>).
+  assert.ok(filtersComAtalhoF('const X = () => <Filters enableShortcut shortcutKey="f" />;'));
+  assert.ok(filtersComAtalhoF('const X = () => <Filters<string> a={1} enableShortcut shortcutKey="f" />;'));
+  assert.ok(filtersComAtalhoF('const X = () => <Filters enableShortcut shortcutKey={"f"}>oi</Filters>;'));
+
+  // Props MORTAS (Filtro quebrado), tokens só num COMENTÁRIO → vermelho (o furo do #1290).
+  assert.ok(!filtersComAtalhoF('/* <Filters enableShortcut shortcutKey="f"> */\nconst X = () => <Filters />;'));
+  assert.ok(!filtersComAtalhoF('// enableShortcut shortcutKey="f"\nconst X = () => <Filters />;'));
+
+  // Props MORTAS, tokens num LITERAL de string → vermelho (o furo residual: string sobrevive ao semComentarios).
+  assert.ok(!filtersComAtalhoF('const dica = \'use enableShortcut e shortcutKey="f"\';\nconst X = () => <Filters />;'));
+
+  // enableShortcut e shortcutKey em elementos DESCONEXOS → vermelho (têm que estar no mesmo <Filters>).
+  assert.ok(!filtersComAtalhoF('const X = () => <><Outro enableShortcut /><Filters shortcutKey="f" /></>;'));
+
+  // shortcutKey com OUTRA letra → vermelho (não é o atalho catalogado).
+  assert.ok(!filtersComAtalhoF('const X = () => <Filters enableShortcut shortcutKey="g" />;'));
+
+  // Só uma das duas props → vermelho.
+  assert.ok(!filtersComAtalhoF('const X = () => <Filters enableShortcut />;'));
+  assert.ok(!filtersComAtalhoF('const X = () => <Filters shortcutKey="f" />;'));
 });
 
 test("#1060: todo shortcutBridge(id) usado nos tooltips do control-room existe no catálogo com shortcut", () => {

@@ -62,6 +62,7 @@ import {
   type AcoesMenu,
   type Clipboard,
   type ItemMenu,
+  rotulosMenuDe,
   type RotulosMenu,
 } from "./menu-arquivo";
 import {
@@ -402,6 +403,7 @@ export function ContentPane({
   onSelecaoChange,
   clipboard,
   onClipboardChange,
+  onAcoesProntas,
   onTransferir,
   refreshSignal,
   mostrarInspector,
@@ -422,6 +424,14 @@ export function ContentPane({
   /** #714: área de transferência interna (recortar/copiar/colar), no shell. */
   clipboard?: Clipboard | null;
   onClipboardChange?: (c: Clipboard | null) => void;
+  /**
+   * #1386: publica o `acoesMenu` pra quem está FORA do painel — hoje a árvore
+   * do sidebar, que precisa das mesmas ações no menu de contexto dela.
+   *
+   * Publicar é o menor corte: subir a construção inteira pro shell mexeria em
+   * tudo que já usa estes handlers aqui dentro, e o card é S.
+   */
+  onAcoesProntas?: (acoes: AcoesMenu, dirPronto: string | null) => void;
   /** #724: dispara colar/copiar/mover via o fluxo de progresso + conflito (shell). */
   onTransferir?: (
     sources: string[],
@@ -825,23 +835,17 @@ export function ContentPane({
     ],
   );
 
+  // #1386: entrega o objeto de ações pra fora sempre que ele muda. O 2º
+  // argumento diz de QUAL pasta são as `entradas` que ele carrega — `null`
+  // enquanto lê o disco. Sem esse selo, quem age de fora (a árvore, logo depois
+  // de navegar) dispararia "Nova pasta" com a lista da pasta ANTERIOR e
+  // calcularia o nome único contra os arquivos errados.
+  useEffect(() => {
+    onAcoesProntas?.(acoesMenu, carregando ? null : currentPath);
+  }, [acoesMenu, carregando, currentPath, onAcoesProntas]);
+
   const rotulosMenu = useMemo<RotulosMenu>(
-    () => ({
-      abrir: t.arquivos.abrir,
-      abrirCom: t.arquivos.abrirCom,
-      abrirComPadrao: t.arquivos.abrirComPadrao,
-      recortar: t.arquivos.recortar,
-      copiar: t.arquivos.copiar,
-      colar: t.arquivos.colar,
-      renomear: t.arquivos.renomear,
-      excluir: t.arquivos.excluir,
-      excluirPerm: t.arquivos.excluirPerm,
-      novaPasta: t.arquivos.novaPasta,
-      novoArquivo: t.arquivos.novoArquivo,
-      copiarCaminho: t.arquivos.copiarCaminho,
-      revelar: t.arquivos.revelar,
-      propriedades: t.arquivos.propriedades,
-    }),
+    () => rotulosMenuDe(t.arquivos),
     [t.arquivos],
   );
 
