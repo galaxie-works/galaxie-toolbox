@@ -696,25 +696,7 @@ impl RuntimeSession {
         // vazios (provisionamento pendente no VPS)? Loga SÓ contagem + presença; o
         // `username`/`credential` (o segredo efêmero HMAC) NUNCA é logado. Um servidor
         // conta como "TURN utilizável" só se tem url `turn:`/`turns:` E credencial não-vazia.
-        {
-            let total = request.ice_servers.len();
-            let com_turn_utilizavel = request
-                .ice_servers
-                .iter()
-                .filter(|s| s.tem_turn() && !s.credential.is_empty() && !s.username.is_empty())
-                .count();
-            let com_stun = request
-                .ice_servers
-                .iter()
-                .filter(|s| s.urls.iter().any(|u| u.starts_with("stun:")))
-                .count();
-            log::info!(
-                "[remote] ice_servers recebidos: {total} servidor(es) ({com_stun} com STUN, \
-                 {com_turn_utilizavel} com TURN+credencial preenchida) — segredo NÃO logado \
-                 (sondagem #1108: TURN {})",
-                if com_turn_utilizavel > 0 { "PRONTO p/ relay" } else { "sem credencial (relay bloqueado)" }
-            );
-        }
+        logar_sondagem_ice_servers(&request.ice_servers);
         // #1182: limites do bitrate adaptativo nos defaults (300 kbps..12 Mbps,
         // início 3 Mbps). O BWE do str0m sobe daí conforme a banda dá folga.
         let mut transport = Transport::novo(
@@ -1553,6 +1535,38 @@ fn gather_srflx(
     resultados
 }
 
+/// Sondagem #1108: diagnóstico de infra pra decidir o relay — o coturn de produção
+/// já entrega credencial TURN efêmera no `ice_servers`, ou os campos vêm vazios
+/// (provisionamento pendente no VPS)?
+///
+/// **Loga SÓ contagem e presença.** O `username`/`credential` (o segredo efêmero
+/// HMAC) nunca entra na linha.
+///
+/// #1130 — extraída do meio de `iniciar_sessao` para virar AFIRMÁVEL. O card exige
+/// *"Dado o segredo TURN, Então ele nunca aparece em log"*, e isso era só um
+/// comentário: o `remote.rs` não tinha **uma única** asserção de log. Comentário
+/// não segura refactor; teste segura.
+fn logar_sondagem_ice_servers(ice_servers: &[IceServer]) {
+    let total = ice_servers.len();
+    let com_turn_utilizavel = ice_servers
+        .iter()
+        .filter(|s| s.tem_turn() && !s.credential.is_empty() && !s.username.is_empty())
+        .count();
+    let com_stun = ice_servers
+        .iter()
+        .filter(|s| s.urls.iter().any(|u| u.starts_with("stun:")))
+        .count();
+    log::info!(
+        "[remote] ice_servers recebidos: {total} servidor(es) ({com_stun} com STUN, {com_turn_utilizavel} com TURN+credencial preenchida) — segredo NÃO logado (sondagem #1108: TURN {})",
+        if com_turn_utilizavel > 0 {
+            "PRONTO p/ relay"
+        } else {
+            "sem credencial (relay bloqueado)"
+        }
+    );
+}
+
+
 /// #1130 fatia 2: resolve os TURN servers UDP dos `IceServer` em
 /// `(SocketAddr, username, credential)`. Só entra servidor com `username` E
 /// `credential` NÃO-vazios (o coturn de prod entrega credencial efêmera; sem ela o
@@ -2138,4 +2152,94 @@ mod tests {
         assert_eq!(json["payload"], "candidate:1");
         assert_eq!(json.as_object().unwrap().len(), 2);
     }
+
+    // ── #1130: o AC "o segredo TURN nunca aparece em log" ganha guarda ───────
+    //
+    // O card exige, literalmente: *"Dado o segredo TURN, Então ele nunca aparece
+    // em log"*. Isso vinha sendo sustentado por COMENTÁRIO — `remote.rs:697` e
+    // `:1562` dizem "NUNCA é logado" — e o arquivo inteiro não tinha uma única
+    // asserção de log (`grep capturar_logs` voltava vazio).
+    //
+    // Comentário não segura refactor. Quem acrescentar um `{server:?}` numa linha
+    // de diagnóstico derruba o AC sem que nada fique vermelho, e a credencial
+    // efêmera HMAC vai pro arquivo de log do cliente.
+    //
+    // Nota de método: `assert_nao_logou` exige um nível, e um segredo vaza em
+    // QUALQUER nível. Por isso a varredura abaixo é por nível nenhum — olha todos
+    // os registros capturados.
+
+    /// O segredo não pode aparecer em nível nenhum. `assert_nao_logou` pergunta
+    /// por um nível só; aqui a pergunta é "apareceu em algum lugar?".
+    fn nenhum_registro_contem(registros: &[crate::teste_log::Registro], agulha: &str) -> bool {
+        !registros.iter().any(|r| r.msg.contains(agulha))
+    }
+
+    const SEGREDO: &str = "SEGREDO-EFEMERO-NAO-PODE-VAZAR";
+
+    fn ice_server_com_segredo(url: &str) -> IceServer {
+        IceServer {
+            urls: vec![url.to_string()],
+            username: "usuario-efemero".into(),
+            credential: SEGREDO.into(),
+        }
+    }
+
+    #[test]
+    fn sondagem_de_ice_servers_nao_loga_o_segredo() {
+        let servers = vec![
+            ice_server_com_segredo("turn:127.0.0.1:3478?transport=udp"),
+            IceServer {
+                urls: vec!["stun:127.0.0.1:3478".into()],
+                username: String::new(),
+                credential: String::new(),
+            },
+        ];
+
+        let logs = crate::teste_log::capturar_logs(|| logar_sondagem_ice_servers(&servers));
+
+        // Par positivo: a sondagem TEM de logar. Sem isto, apagar a linha inteira
+        // faria o teste passar — e a sondagem #1108 existe justamente pra dizer
+        // se o coturn já entrega credencial.
+        crate::teste_log::assert_logou(
+            &logs,
+            log::Level::Info,
+            "ice_servers recebidos: 2 servidor(es)",
+        );
+        crate::teste_log::assert_logou(&logs, log::Level::Info, "PRONTO p/ relay");
+
+        // E o par negativo, que é o AC do card.
+        assert!(
+            nenhum_registro_contem(&logs, SEGREDO),
+            "o segredo TURN VAZOU para o log — AC do #1130. Capturado: {logs:?}",
+        );
+        assert!(
+            nenhum_registro_contem(&logs, "usuario-efemero"),
+            "o username efemero tambem identifica a credencial e nao deve ir pro log",
+        );
+    }
+
+    /// O caminho de FALHA é onde diagnóstico costuma vazar segredo: alguém quer
+    /// "ver o servidor inteiro" e imprime a struct. Aqui o host não resolve, então
+    /// o ramo de erro roda de verdade.
+    #[test]
+    fn resolver_turn_alvos_nao_loga_o_segredo_quando_o_host_nao_resolve() {
+        let servers = vec![ice_server_com_segredo(
+            "turn:host-que-nao-existe.invalid:3478?transport=udp",
+        )];
+
+        let logs = crate::teste_log::capturar_logs(|| {
+            let alvos = resolver_turn_alvos(&servers);
+            assert!(alvos.is_empty(), "host inexistente nao vira alvo");
+        });
+
+        // Par positivo: o ramo de erro tem de FALAR (senão o relay some calado).
+        crate::teste_log::assert_logou(&logs, log::Level::Warn, "relay pulado");
+
+        assert!(
+            nenhum_registro_contem(&logs, SEGREDO),
+            "o segredo TURN vazou no caminho de FALHA — que e exatamente onde \
+             alguem imprime a struct inteira pra 'ver o que veio'. Capturado: {logs:?}",
+        );
+    }
+
 }
