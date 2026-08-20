@@ -33,9 +33,34 @@ const FONTES_BRIDGE = [
 
 const CONTROL_ROOM = new URL("../screens/control-room.tsx", import.meta.url);
 
+/**
+ * #1290 (medição da `lumen`): esta catraca podia ser satisfeita por um
+ * COMENTÁRIO. Ela reproduziu o furo tirando as props reais
+ * `enableShortcut`/`shortcutKey="f"` — o atalho F morre — e a guarda seguia
+ * verde, porque um comentário do arquivo cita as duas strings. Eu tinha acabado
+ * de AMPLIAR o alcance dela pro conjunto do Bridge (#1019), o que aumentaria a
+ * superfície do furo; fechá-lo virou dívida minha.
+ *
+ * Uso o transpiler do TypeScript em vez de regex: ele sabe separar comentário de
+ * string, então `"https://…"` dentro de um literal não some junto. (Tentei o
+ * scanner antes — em TSX ele não emite os comentários, e o furo continuava
+ * aberto com a guarda verde. Medi.)
+ */
+function semComentarios(texto: string): string {
+  return ts.transpileModule(texto, {
+    compilerOptions: {
+      removeComments: true,
+      jsx: ts.JsxEmit.Preserve,
+      target: ts.ScriptTarget.Latest,
+      module: ts.ModuleKind.ESNext,
+    },
+    reportDiagnostics: false,
+  }).outputText;
+}
+
 /** Todo o fonte do Bridge concatenado — para as checagens de texto. */
 function fonteBridge(): string {
-  return FONTES_BRIDGE.map((u) => readFileSync(u, "utf8")).join("\n");
+  return FONTES_BRIDGE.map((u) => semComentarios(readFileSync(u, "utf8"))).join("\n");
 }
 
 // Nome canônico do catálogo → literais `e.key` aceitos (letras tratadas à parte).
@@ -79,7 +104,7 @@ function fonteAoTeclar(): string {
       }
       ts.forEachChild(n, visit);
     })(src);
-    if (corpo !== "") return corpo;
+    if (corpo !== "") return semComentarios(corpo);
   }
   assert.fail("não achei a função `aoTeclar` em nenhuma fonte do Bridge");
 }
@@ -154,7 +179,7 @@ test("#1065: a busca universal (alvo do atalho '/') está MONTADA no control-roo
   // esse input → atalho morto. Este guard trava o re-orfanamento cruzando três
   // fatos: (1) o handler '/' mira o seletor; (2) o UniversalSearch está montado
   // como JSX no control-room; (3) o UniversalSearch renderiza aquele seletor.
-  const controlRoom = readFileSync(CONTROL_ROOM, "utf8");
+  const controlRoom = semComentarios(readFileSync(CONTROL_ROOM, "utf8"));
   const handler = fonteAoTeclar();
 
   // (1) o atalho '/' foca o input da busca universal.
