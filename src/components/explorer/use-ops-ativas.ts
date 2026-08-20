@@ -15,6 +15,7 @@ import { useAppStore } from "@/store";
 
 import { calcVelocidade } from "./operacao";
 import type { OpAtiva } from "./progresso-panel";
+import { tipoDoEvento } from "./tipo-op";
 
 /**
  * #987: máquina de atividades de transferência (copy/move), ANTES no estado local
@@ -33,7 +34,8 @@ import type { OpAtiva } from "./progresso-panel";
 
 /** Último byte/tempo por opId → deriva a velocidade instantânea entre eventos. */
 const ultimoPorOp = new Map<number, { bytes: number; ms: number }>();
-/** Tipo (copy/move) por opId — o payload de progresso não o carrega. */
+/** Tipo (copy/move) por opId, registrado pelos produtores. #1282: hoje o payload
+ *  JÁ traz `opKind` (inclui "undo") e tem prioridade; este map é o fallback. */
 const tipoPorOp = new Map<number, "copy" | "move">();
 /** Basename do destino por opId → alimenta o resumo terminal ("→ Downloads"). */
 const destinoPorOp = new Map<number, string>();
@@ -135,6 +137,7 @@ export function useOpsAtivas(): OpsAtivas {
         ultimoPorOp.delete(p.opId);
         setOps((prev) => {
           const tipo =
+            tipoDoEvento(p.opKind) ??
             tipoPorOp.get(p.opId) ??
             prev.find((o) => o.opId === p.opId)?.tipo ??
             "copy";
@@ -153,7 +156,11 @@ export function useOpsAtivas(): OpsAtivas {
       }
 
       setOps((prev) => {
-        const tipo = tipoPorOp.get(p.opId) ?? "copy";
+        const tipo =
+          tipoDoEvento(p.opKind) ??
+          tipoPorOp.get(p.opId) ??
+          prev.find((o) => o.opId === p.opId)?.tipo ??
+          "copy";
         const novo: OpAtiva = {
           opId: p.opId,
           tipo,
