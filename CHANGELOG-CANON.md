@@ -1,6 +1,9 @@
 # CHANGELOG — TEAM-CANON
 Histórico de emendas do canon (texto integral de cada versão no git: `git log -- TEAM-CANON.md`). O canon vivo não carrega histórico (v1.12 §8).
 
+## v1.13.1 · 2026-08-20 — correção de custódia (defeito achado pelo PO + Polaris IV)
+A cláusula da moratória (§0, linha 4) dizia 'após a v1.12' enquanto a v1.13 já estava promulgada — a v1.13 aparecia nula por violar a moratória da própria versão que ela superseda. Corrigido para 'após a v1.13 (expira 23/08 04:09Z)' + registro de que a v1.13 rompeu a moratória da v1.12 por ordem direta do PO. Correção de referência interna (custódia), não emenda nova. Defeito ficou ~9h vivo; achado pelo `wagner`+`polaris`.
+
 ## v1.13 · 2026-08-20 — heartbeat obrigatório
 Cron de 20 min por papel (session-only, fase escalonada) vira lei em §4 — ordem direta do PO rompendo a moratória, após o SM (Polaris IV) sumir 5h12 (22:50→04:03Z) porque `ScheduleWakeup` não dispara em sessão de fundo. Mapa de fases em `FATOS.md`.
 
