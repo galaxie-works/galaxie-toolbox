@@ -388,6 +388,36 @@ fn gravar_fila(itens: &[EnvelopeCarimbado]) {
     }
 }
 
+/// Isola um teste que toca a persistência: segura `TESTE_PERSIST` e zera o
+/// estado global de sondagem. Solta o lock sozinho no fim do teste.
+///
+/// **Por que existe (#1384).** `ESCRITAS_FILA` é global e `gravar_fila` também
+/// mexe em `SONDA_INNER`/`SONDA_LIVRE`. A disciplina era três linhas repetidas em
+/// cada teste — e disciplina que se repete é disciplina que se esquece:
+/// `funil_de_escrita_sadio_nao_loga_erro` grava e **não** pegava o lock, então
+/// o incremento dele caía no meio de `revogar_persiste_fila_vazia` e virava
+/// `left: 2, right: 1`. Falhava ~1 em 25 rodadas paralelas e nunca em
+/// `--test-threads=1` — ou seja, reprovava PR de qualquer pessoa por sorte de
+/// escalonamento, num check obrigatório.
+///
+/// Uma linha só, num lugar só: quem escrever o próximo teste de persistência
+/// não precisa lembrar de três coisas, só desta.
+#[cfg(test)]
+#[must_use]
+fn persistencia_isolada() -> PersistenciaIsolada {
+    use std::sync::atomic::Ordering;
+    let guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
+    ESCRITAS_FILA.store(0, Ordering::Relaxed);
+    SONDA_LIVRE.store(false, Ordering::Relaxed);
+    if let Ok(mut s) = SONDA_INNER.lock() {
+        *s = None;
+    }
+    PersistenciaIsolada(guarda)
+}
+
+#[cfg(test)]
+struct PersistenciaIsolada(#[allow(dead_code)] std::sync::MutexGuard<'static, ()>);
+
 /// #1238 — recebe um SNAPSHOT já clonado, nunca a fila viva emprestada de um
 /// `MutexGuard`. É o funil: quem quiser gravar tem de ter soltado o lock antes,
 /// porque não existe mais assinatura que aceite `&i.fila`.
@@ -1638,9 +1668,7 @@ mod testes {
     #[test]
     fn track_nao_persiste_e_rajada_coalesce_em_uma_escrita() {
         use std::sync::atomic::Ordering;
-        let _guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
-        ESCRITAS_FILA.store(0, Ordering::Relaxed);
-        *SONDA_INNER.lock().unwrap() = None;
+        let _iso = persistencia_isolada();
 
         let estado = TelemetryState::para_teste();
         for _ in 0..50 {
@@ -1673,9 +1701,7 @@ mod testes {
     #[test]
     fn persistencia_nao_segura_o_mutex_durante_a_escrita() {
         use std::sync::atomic::Ordering;
-        let _guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
-        ESCRITAS_FILA.store(0, Ordering::Relaxed);
-        SONDA_LIVRE.store(false, Ordering::Relaxed);
+        let _iso = persistencia_isolada();
 
         let estado = TelemetryState::para_teste();
         estado.track(entrada(Categoria::Crash, &[]));
@@ -1730,9 +1756,7 @@ mod testes {
     #[test]
     fn revogar_persiste_fila_vazia() {
         use std::sync::atomic::Ordering;
-        let _guarda = TESTE_PERSIST.lock().unwrap_or_else(|e| e.into_inner());
-        ESCRITAS_FILA.store(0, Ordering::Relaxed);
-        *SONDA_INNER.lock().unwrap() = None;
+        let _iso = persistencia_isolada();
 
         let estado = TelemetryState::para_teste();
         estado.track(entrada(Categoria::Crash, &[]));
@@ -1782,6 +1806,10 @@ mod testes {
     /// este, "loga no erro" passaria mesmo se o código logasse sempre.
     #[test]
     fn funil_de_escrita_sadio_nao_loga_erro() {
+        // #1384: ESTE grava de verdade (inner sadio -> `gravar_fila`). Sem o
+        // isolamento, o incremento dele contaminava o contador global de quem
+        // estivesse rodando em paralelo.
+        let _iso = persistencia_isolada();
         let inner = interno_com(vec![]);
         let logs = capturar_logs(|| snapshot_e_gravar(&inner));
         crate::teste_log::assert_nao_logou(&logs, log::Level::Error, "mutex envenenado");
