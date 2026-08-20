@@ -14,11 +14,10 @@ import { cleanup, render } from "vitest-browser-react";
 
 import {
   BridgeSplit,
-  BRIDGE_SIDEBAR_LAYOUT,
   LARGURA_RAIL_PX,
   LARGURA_SIDEBAR_PX,
 } from "./bridge-split";
-import { chaveLayout } from "@/lib/largura-painel";
+import { CHAVE_LARGURA_PX } from "@/lib/largura-sidebar-px";
 
 async function ate<T extends Element>(busca: () => T | null, ms = 5000) {
   const fim = Date.now() + ms;
@@ -123,15 +122,42 @@ describe("#912 splitter do Bridge", () => {
     ).toBeLessThanOrEqual(8);
   });
 
-  it("com layout salvo, a largura default NÃO é aplicada por mim", async () => {
-    // Presença basta: quem já arrastou manda, e quem lê o layout é a biblioteca.
-    localStorage.setItem(chaveLayout(BRIDGE_SIDEBAR_LAYOUT), "{}");
-    const largura = px(await montar(1200));
-    // Sem o meu ajuste sobra o `defaultSize` cru, calculado sobre a janela
-    // suposta de 1280px — num grupo de 1200 isso dá ~240px, não 256.
+  it("#1392: a largura ESCOLHIDA (px) sobrevive à janela crescendo", async () => {
+    // O caso do PO, na 2ª reprovação: "o sidebar fica aumentado em width quando
+    // a janela cresce. Ele precisa ter tamanho fixo."
+    //
+    // Este é o teste que faltava. O anterior no lugar dele pinava a TRAVA que eu
+    // tinha posto ("com layout salvo, não ajusto") — ou seja, guardava
+    // exatamente o comportamento que o PO reprovou. Guarda pode pinar o defeito
+    // quando a premissa está errada, e essa pinou.
+    localStorage.setItem(CHAVE_LARGURA_PX, "320");
+    const largura1200 = px(await montar(1200));
     expect(
-      Math.abs(largura - LARGURA_SIDEBAR_PX),
-      `largura ficou em ${largura.toFixed(1)}px: o ajuste rodou apesar do layout salvo`
-    ).toBeGreaterThan(8);
+      Math.abs(largura1200 - 320),
+      `a escolha de 320px virou ${largura1200.toFixed(1)}px num grupo de 1200`
+    ).toBeLessThanOrEqual(8);
+
+    const palco = document.getElementById("palco-1392")!;
+    palco.style.width = "3000px";
+    await new Promise((r) => setTimeout(r, 600));
+    const largura3000 = px(painelSidebar()!);
+    expect(
+      Math.abs(largura3000 - 320),
+      `depois de maximizar, a escolha de 320px virou ${largura3000.toFixed(1)}px — está seguindo a janela`
+    ).toBeLessThanOrEqual(8);
   });
+
+  it("#1392: em janela estreita o TETO de 40% ganha do px escolhido", async () => {
+    // A regra tem duas metades e a segunda quase nunca é exercitada: numa
+    // janela pequena, respeitar 320px comeria quase metade da tela. Testar só a
+    // metade folgada foi o erro que me custou a 1ª reprovação — escolhi
+    // larguras onde o clamp nunca mordia e chamei o verde de prova.
+    localStorage.setItem(CHAVE_LARGURA_PX, "320");
+    const largura = px(await montar(600));
+    expect(
+      largura,
+      `num grupo de 600px o sidebar deu ${largura.toFixed(1)}px — o teto de 40% (240px) não mordeu`
+    ).toBeLessThanOrEqual(250);
+  });
+
 });
