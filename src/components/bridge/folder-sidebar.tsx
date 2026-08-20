@@ -879,17 +879,20 @@ export function FolderSidebar({
   return (
     <aside
       className={cn(
-        // #912: borderless — sai o "card" (rounded-xl border bg-card) e entra a
-        // divisória SÓ à direita (border-r) + o fundo de chrome do app (bg-muted/30,
-        // o mesmo padrão in-content das rails do Navigator), destacando o sidebar do
-        // content area. Splitter (resize) = follow-up (interage com o colapsar).
-        // #912: a largura agora e do PAINEL (splitter), nao do `aside`. O que
-        // era `w-64`/`w-16` virou `defaultSize`/`collapsedSize` no `BridgeSplit`
-        // — a largura de 256px que o #466 escolheu a dedo (cabe "Caixa de
-        // entrada" em pt sem truncar) esta la, em px, convertida na fatia do
-        // grupo. Duas fontes de verdade pra mesma largura era o que fazia o
-        // splitter brigar com o colapsar, e por isso ele tinha ficado de fora.
-        "flex h-full w-full min-w-0 flex-col gap-3 border-r border-border bg-muted/30 p-3",
+        // #1373: o CARD arredondado de volta, por decisão do PO — ele reverteu o
+        // borderless que ele mesmo tinha pedido no #912. A `border-r` que fazia
+        // de divisória saiu junto: com a borda do card, ela vira uma segunda
+        // fronteira no mesmo lugar. O splitter do #1366 FICA (o card manda isso
+        // com todas as letras); quem dá respiro entre o card e o conteúdo é a
+        // margem do handle, não uma borda extra.
+        //
+        // #912: a largura é do PAINEL (splitter), não do `aside`. O que era
+        // `w-64`/`w-16` virou `defaultSize`/`collapsedSize` no `BridgeSplit` — a
+        // largura de 256px que o #466 escolheu a dedo (cabe "Caixa de entrada"
+        // em pt sem truncar) está lá, em px, convertida na fatia do grupo. Duas
+        // fontes de verdade pra mesma largura era o que fazia o splitter brigar
+        // com o colapsar, e por isso ele tinha ficado de fora.
+        "flex h-full w-full min-w-0 flex-col gap-3 rounded-xl border bg-card p-3",
         colapsada && "items-center"
       )}
     >
