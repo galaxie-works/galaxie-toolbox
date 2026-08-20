@@ -26,8 +26,18 @@ const WRAP = /(Trigger|Close|Cancel|Action)$/; // wrappers Radix asChild injetam
 
 // Dívida PRÉ-EXISTENTE (medida no feat). Corrigir na fonte (aria-label i18n) e
 // remover a entrada. NÃO adicionar novas — botão novo assim = corrigir na fonte.
+//
+// #1020: o caminho mudou porque o `BulkCategoriaPicker` saiu do `people-view.tsx`
+// pro `bulk-edit-details-sheet.tsx` numa extração PURA. É a MESMA dívida, não
+// uma nova — o botão não foi tocado. Esta guarda casa por caminho, então ela
+// acusou o movimento; atualizar a entrada é mover o registro junto com o código.
+//
+// Não consertei na fonte de propósito: pôr `aria-label` muda o que o leitor de
+// tela anuncia (comportamento observável) e exige escolher a copy i18n — as duas
+// coisas fora de um card de code-org. A dívida segue registrada aqui, que é
+// exatamente o papel desta lista.
 const BASELINE_ICON = new Set<string>([
-  'src/components/people/people-view.tsx::<button type="button" className="ml-0.5 rounded-sm opacity-70 hover:opacity-100" onClick={() => onToggle(nome)} >',
+  'src/components/people/bulk-edit-details-sheet.tsx::<button type="button" className="ml-0.5 rounded-sm opacity-70 hover:opacity-100" onClick={() => onToggle(nome)} >',
 ]);
 const BASELINE_MORTO = new Set<string>([]);
 
