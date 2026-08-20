@@ -17,7 +17,51 @@ import { ATALHOS_BRIDGE } from "./atalhos-bridge.ts";
 // Conservador (como o #863): só acusa quando a tecla do combo NÃO aparece no
 // handler (entrada morta de verdade), sem validar modificador.
 
+// #1019: o Bridge deixou de morar num arquivo so. O `control-room.tsx` foi
+// fatiado por seam (MessageList, FolderSidebar, o enabler compartilhado), e esta
+// catraca quebrou nao porque a fiacao sumiu, mas porque ela mudou de endereco. O
+// que ela garante nunca foi "esta NESTE arquivo" — e "esta no Bridge". Entao ela
+// le o CONJUNTO, e segue acusando entrada morta do mesmo jeito: se o handler nao
+// existir em lugar nenhum, o `fonteAoTeclar()` falha em vez de devolver vazio.
+const FONTES_BRIDGE = [
+  new URL("../screens/control-room.tsx", import.meta.url),
+  new URL("./bridge/message-list.tsx", import.meta.url),
+  new URL("./bridge/folder-sidebar.tsx", import.meta.url),
+  new URL("./bridge/message-shared.tsx", import.meta.url),
+  new URL("./bridge/bridge-split.tsx", import.meta.url),
+];
+
 const CONTROL_ROOM = new URL("../screens/control-room.tsx", import.meta.url);
+
+/**
+ * #1290 (medição da `lumen`): esta catraca podia ser satisfeita por um
+ * COMENTÁRIO. Ela reproduziu o furo tirando as props reais
+ * `enableShortcut`/`shortcutKey="f"` — o atalho F morre — e a guarda seguia
+ * verde, porque um comentário do arquivo cita as duas strings. Eu tinha acabado
+ * de AMPLIAR o alcance dela pro conjunto do Bridge (#1019), o que aumentaria a
+ * superfície do furo; fechá-lo virou dívida minha.
+ *
+ * Uso o transpiler do TypeScript em vez de regex: ele sabe separar comentário de
+ * string, então `"https://…"` dentro de um literal não some junto. (Tentei o
+ * scanner antes — em TSX ele não emite os comentários, e o furo continuava
+ * aberto com a guarda verde. Medi.)
+ */
+function semComentarios(texto: string): string {
+  return ts.transpileModule(texto, {
+    compilerOptions: {
+      removeComments: true,
+      jsx: ts.JsxEmit.Preserve,
+      target: ts.ScriptTarget.Latest,
+      module: ts.ModuleKind.ESNext,
+    },
+    reportDiagnostics: false,
+  }).outputText;
+}
+
+/** Todo o fonte do Bridge concatenado — para as checagens de texto. */
+function fonteBridge(): string {
+  return FONTES_BRIDGE.map((u) => semComentarios(readFileSync(u, "utf8"))).join("\n");
+}
 
 // Nome canônico do catálogo → literais `e.key` aceitos (letras tratadas à parte).
 const MAP: Record<string, string[]> = {
@@ -30,36 +74,39 @@ const MOUSE = new Set(["Clique", "Arrastar"]);
 
 /** Extrai o texto-fonte da `function aoTeclar(...)` do control-room (via AST). */
 function fonteAoTeclar(): string {
-  const texto = readFileSync(CONTROL_ROOM, "utf8");
-  const src = ts.createSourceFile(
-    CONTROL_ROOM.pathname,
-    texto,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
-  let corpo = "";
+  for (const url of FONTES_BRIDGE) {
+    const texto = readFileSync(url, "utf8");
+    if (!texto.includes("aoTeclar")) continue;
+    const src = ts.createSourceFile(
+      url.pathname,
+      texto,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
+    let corpo = "";
   (function visit(n: ts.Node) {
-    // No control-room o handler é uma FunctionDeclaration; no Explorer é uma
-    // VariableDeclaration — cobrimos os dois pra o gate ser reusável.
-    if (
-      ts.isFunctionDeclaration(n) &&
-      n.name?.getText() === "aoTeclar" &&
-      n.body
-    ) {
-      corpo = n.getText();
-    }
-    if (
-      ts.isVariableDeclaration(n) &&
-      n.name.getText() === "aoTeclar" &&
-      n.initializer
-    ) {
-      corpo = n.initializer.getText();
-    }
-    ts.forEachChild(n, visit);
-  })(src);
-  assert.notEqual(corpo, "", "não achei a função `aoTeclar` no control-room");
-  return corpo;
+      // No control-room o handler é uma FunctionDeclaration; no Explorer é uma
+      // VariableDeclaration — cobrimos os dois pra o gate ser reusável.
+      if (
+        ts.isFunctionDeclaration(n) &&
+        n.name?.getText() === "aoTeclar" &&
+        n.body
+      ) {
+        corpo = n.getText();
+      }
+      if (
+        ts.isVariableDeclaration(n) &&
+        n.name.getText() === "aoTeclar" &&
+        n.initializer
+      ) {
+        corpo = n.initializer.getText();
+      }
+      ts.forEachChild(n, visit);
+    })(src);
+    if (corpo !== "") return semComentarios(corpo);
+  }
+  assert.fail("não achei a função `aoTeclar` em nenhuma fonte do Bridge");
 }
 
 /** A tecla `e.key` está referenciada no handler? (letra = qualquer caso). */
@@ -105,15 +152,15 @@ test("#1060: todo atalho 'central' do catálogo do Bridge tem handler no aoTecla
 test("#1060: o atalho 'filters' (Filtro/F) está cabeado no <Filters enableShortcut>", () => {
   const filtro = ATALHOS_BRIDGE.filter((a) => a.fonte === "filters");
   assert.ok(filtro.length > 0, "esperava ao menos um atalho fonte:'filters' (o Filtro)");
-  const texto = readFileSync(CONTROL_ROOM, "utf8");
-  assert.match(texto, /enableShortcut/, "o <Filters> do control-room precisa de enableShortcut");
+  const texto = fonteBridge();
+  assert.match(texto, /enableShortcut/, "o <Filters> do Bridge precisa de enableShortcut");
   assert.match(texto, /shortcutKey="f"/, 'o <Filters> precisa de shortcutKey="f" (o atalho catalogado)');
 });
 
 test("#1060: todo shortcutBridge(id) usado nos tooltips do control-room existe no catálogo com shortcut", () => {
-  const texto = readFileSync(CONTROL_ROOM, "utf8");
+  const texto = fonteBridge();
   const ids = [...texto.matchAll(/shortcutBridge\("([^"]+)"\)/g)].map((m) => m[1]);
-  assert.ok(ids.length > 0, "esperava chamadas shortcutBridge(...) no control-room");
+  assert.ok(ids.length > 0, "esperava chamadas shortcutBridge(...) no Bridge");
   const semShortcut: string[] = [];
   for (const id of ids) {
     const a = ATALHOS_BRIDGE.find((x) => x.id === id);
@@ -132,7 +179,7 @@ test("#1065: a busca universal (alvo do atalho '/') está MONTADA no control-roo
   // esse input → atalho morto. Este guard trava o re-orfanamento cruzando três
   // fatos: (1) o handler '/' mira o seletor; (2) o UniversalSearch está montado
   // como JSX no control-room; (3) o UniversalSearch renderiza aquele seletor.
-  const controlRoom = readFileSync(CONTROL_ROOM, "utf8");
+  const controlRoom = semComentarios(readFileSync(CONTROL_ROOM, "utf8"));
   const handler = fonteAoTeclar();
 
   // (1) o atalho '/' foca o input da busca universal.

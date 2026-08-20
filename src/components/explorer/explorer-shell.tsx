@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import type { ImperativePanelHandle } from "react-resizable-panels";
 import { toast } from "sonner";
 
 import {
@@ -10,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { useIdioma } from "@/lib/idioma";
 import { usePersistedState } from "@/lib/persist";
+import { cn } from "@/lib/utils";
 import {
   abrirCaminhoFs,
   buscarArquivos,
@@ -32,7 +35,8 @@ import type {
   FsEntry,
 } from "@/lib/types";
 import { DrivesView } from "./drives-view";
-import { ArvoreArquivos } from "./arvore";
+import { ArvoreArquivos, RailArvore } from "./arvore";
+import { larguraIdealPct, temLayoutSalvo } from "@/lib/largura-painel";
 import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
 import { ResultadosBusca } from "./resultados-busca";
@@ -42,6 +46,7 @@ import { InspectorPane } from "./inspector";
 // transferências e registramos tipo/destino por opId ao iniciá-las.
 import { registrarOp } from "./use-ops-ativas";
 import { ConflitoDialog } from "./conflito-dialog";
+import { TooltipAcao } from "./tooltip-acao";
 import { planejarTransferencia, type ResolucaoConflito } from "./operacao";
 import { CAMINHO_ESTE_PC, nomeBase, pathPai } from "./caminho";
 import type { Clipboard, OperacaoClipboard } from "./menu-arquivo";
@@ -123,6 +128,19 @@ interface ConflitoPendente {
  * painel da árvore = card no estilo do sidebar de Apps/Bridge; painel de
  * conteúdo = NavBar + ContentPane virtualizado.
  */
+// #869 (adendo do Wagner): largura do rail em % do grupo. O `collapsedSize`
+// do react-resizable-panels e percentual, entao esta e a fatia do painel que
+// sobra colapsada — o suficiente pra um icone de 32px com respiro.
+const TAMANHO_RAIL = 4;
+// #869: limites do painel da arvore. Ficam em constantes porque a conta da
+// largura-auto precisa dos MESMOS numeros que o JSX — dois literais soltos
+// seriam duas verdades.
+const ARVORE_MIN_PCT = 16;
+const ARVORE_MAX_PCT = 42;
+const AUTO_SAVE_LAYOUT = "explorer.layout.v1";
+// Padding do `aside` (p-3 nos dois lados) + respiro do scroll (`pr-2`) + borda.
+const FOLGA_SIDEBAR_PX = 34;
+
 export function ExplorerShell({
   onLocalChange,
 }: {
@@ -133,6 +151,17 @@ export function ExplorerShell({
   onLocalChange?: (info: { rotulo: string; caminho: string }) => void;
 } = {}) {
   const { t } = useIdioma();
+  // #869: colapso do painel da arvore. O estado VIVE no proprio painel
+  // (`collapsible` do react-resizable-panels, persistido pelo `autoSaveId`
+  // do #819); este booleano so espelha o que o painel avisa por
+  // `onCollapse`/`onExpand`, pra escolher entre arvore e rail na renderizacao.
+  const painelArvore = useRef<ImperativePanelHandle>(null);
+  const [arvoreColapsada, setArvoreColapsada] = useState(false);
+  const conteudoArvore = useRef<HTMLDivElement>(null);
+  // #869: a largura-auto e uma DEFAULT, nao uma regra continua — roda uma vez,
+  // quando a arvore ja tem conteudo medivel. Sem esta trava o efeito brigaria
+  // com o arrasto do usuario a cada render.
+  const larguraAjustada = useRef(false);
   const [nav, dispatch] = useReducer(navReducer, NAV_INICIAL);
   // #872: via ref pra o efeito de report depender SÓ do caminho (o callback do
   // App é recriado a cada render; sem a ref, o efeito dispararia todo render).
@@ -459,6 +488,57 @@ export function ExplorerShell({
     [executarMulti],
   );
 
+  // #869 (adendo do Wagner, item 1): a largura DEFAULT do painel acompanha o
+  // caption mais largo, sem cortar. Duas condicoes, as duas do proprio adendo:
+  //  - so quando NAO ha layout salvo (#819) — quem ja arrastou manda;
+  //  - so com a arvore aberta e medivel (colapsada nao ha caption pra medir).
+  // Mede o `scrollWidth` do conteudo real em vez de estimar largura de fonte:
+  // o texto renderizado e a unica medida que nao mente sobre si mesma.
+  useEffect(() => {
+    if (larguraAjustada.current || arvoreColapsada) return;
+    if (drives === null) return;
+    const conteudo = conteudoArvore.current;
+    const painel = painelArvore.current;
+    if (!conteudo || !painel) return;
+    if (temLayoutSalvo(AUTO_SAVE_LAYOUT, localStorage)) {
+      larguraAjustada.current = true;
+      return;
+    }
+    const grupo = conteudo.closest<HTMLElement>("[data-panel-group]");
+    // Medida NAO-circular: o conteudo normalmente ocupa a largura do painel
+    // (`min-w-full`, pra faixa de hover pegar a linha toda), entao ler o
+    // `scrollWidth` assim seria medir o proprio painel e concluir que ele ja
+    // cabe em si mesmo. Aqui eu solto pra `max-content`, leio a largura
+    // NATURAL do texto e devolvo tudo como estava — o navegador nao chega a
+    // pintar o estado intermediario.
+    const larguraAntes = conteudo.style.width;
+    const minAntes = conteudo.style.minWidth;
+    // O `min-w-full` TEM de sair junto: min-width ganha de width, entao so
+    // trocar a largura pra `max-content` media o painel de novo. Foi
+    // exatamente o furo que me fez medir 260px num painel de 257px.
+    conteudo.style.minWidth = "0";
+    conteudo.style.width = "max-content";
+    const natural = conteudo.scrollWidth;
+    conteudo.style.width = larguraAntes;
+    conteudo.style.minWidth = minAntes;
+    const pct = larguraIdealPct({
+      conteudoPx: natural,
+      folgaPx: FOLGA_SIDEBAR_PX,
+      grupoPx: grupo?.getBoundingClientRect().width ?? 0,
+      minPct: ARVORE_MIN_PCT,
+      maxPct: ARVORE_MAX_PCT,
+    });
+    if (pct === null) return; // cedo demais: tenta no proximo render
+    larguraAjustada.current = true;
+    painel.resize(pct);
+  }, [arvoreColapsada, drives]);
+
+  // #1290 me ensinou: tooltip e `aria-label` saem do MESMO rotulo, senao um
+  // muda e o outro fica pra tras.
+  const rotuloColapso = arvoreColapsada
+    ? t.arquivos.sidebarExpandir
+    : t.arquivos.sidebarColapsar;
+
   return (
     <div className="relative h-full">
       {/* #819: `autoSaveId` persiste as larguras dos painéis (árvore/conteúdo/
@@ -467,11 +547,60 @@ export function ExplorerShell({
           os `id`+`order` estáveis), então casa com o toggle persistido acima. */}
       <ResizablePanelGroup
         direction="horizontal"
-        autoSaveId="explorer.layout.v1"
+        autoSaveId={AUTO_SAVE_LAYOUT}
         className="h-full"
       >
-        <ResizablePanel id="tree" order={1} defaultSize={22} minSize={16} maxSize={42}>
-          <aside className="flex h-full flex-col rounded-xl border bg-card p-3">
+        {/* #869 (adendo do Wagner): o painel da árvore COLAPSA pra um rail de
+            ícones. `collapsible` + `collapsedSize` são do próprio
+            react-resizable-panels, então o estado colapsado entra no MESMO
+            layout que o `autoSaveId` do #819 já persiste — não inventei uma
+            segunda memória que pudesse divergir daquela. O handle manual
+            continua valendo: colapsar é atalho, não substituto do arrasto. */}
+        <ResizablePanel
+          id="tree"
+          order={1}
+          ref={painelArvore}
+          collapsible
+          collapsedSize={TAMANHO_RAIL}
+          defaultSize={22}
+          minSize={ARVORE_MIN_PCT}
+          maxSize={ARVORE_MAX_PCT}
+          onCollapse={() => setArvoreColapsada(true)}
+          onExpand={() => setArvoreColapsada(false)}
+        >
+          <aside
+            className={cn(
+              "flex h-full flex-col rounded-xl border bg-card",
+              arvoreColapsada ? "items-center p-1.5" : "p-3",
+            )}
+          >
+            <div
+              className={cn(
+                "flex shrink-0",
+                arvoreColapsada ? "justify-center" : "justify-end",
+              )}
+            >
+              <TooltipAcao label={rotuloColapso}>
+                <button
+                  type="button"
+                  aria-label={rotuloColapso}
+                  aria-expanded={!arvoreColapsada}
+                  onClick={() => {
+                    const painel = painelArvore.current;
+                    if (!painel) return;
+                    if (painel.isCollapsed()) painel.expand();
+                    else painel.collapse();
+                  }}
+                  className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  {arvoreColapsada ? (
+                    <PanelLeftOpen className="size-4" />
+                  ) : (
+                    <PanelLeftClose className="size-4" />
+                  )}
+                </button>
+              </TooltipAcao>
+            </div>
             {drives === null ? (
               <div className="flex flex-1 items-center justify-center py-6">
                 <Spinner className="size-4 text-muted-foreground" />
@@ -480,17 +609,37 @@ export function ExplorerShell({
               <ScrollArea className="min-h-0 w-full flex-1">
                 {/* #869: árvore ÚNICA — Este computador → drives → pastas (lazy) e
                     Acesso rápido como raiz-irmã. Substitui o `LocaisSidebar` flat
-                    + a seção "Pastas" separada. */}
-                <div className="pr-2">
-                  <ArvoreArquivos
-                    drives={drives}
-                    cloudLocations={cloudLocations}
-                    acessoRapido={acessoRapidoMesclado}
-                    pins={pins}
-                    onAlternarFixar={alternarFixar}
-                    currentPath={nav.currentPath}
-                    onNavegar={navegar}
-                  />
+                    + a seção "Pastas" separada. Colapsada, vira o rail: os mesmos
+                    destinos de 1º nível, só ícone + tooltip com o nome. */}
+                <div
+                  ref={conteudoArvore}
+                  className={cn(
+                    arvoreColapsada ? undefined : "pr-2",
+                    // #869: `w-fit` deixa o conteudo ter largura NATURAL dentro
+                    // do viewport do ScrollArea — sem isso o `scrollWidth` seria
+                    // sempre o do painel, e eu estaria medindo a caixa, nao o texto.
+                    !arvoreColapsada && "w-fit min-w-full",
+                  )}
+                >
+                  {arvoreColapsada ? (
+                    <RailArvore
+                      drives={drives}
+                      cloudLocations={cloudLocations}
+                      acessoRapido={acessoRapidoMesclado}
+                      currentPath={nav.currentPath}
+                      onNavegar={navegar}
+                    />
+                  ) : (
+                    <ArvoreArquivos
+                      drives={drives}
+                      cloudLocations={cloudLocations}
+                      acessoRapido={acessoRapidoMesclado}
+                      pins={pins}
+                      onAlternarFixar={alternarFixar}
+                      currentPath={nav.currentPath}
+                      onNavegar={navegar}
+                    />
+                  )}
                 </div>
               </ScrollArea>
             )}

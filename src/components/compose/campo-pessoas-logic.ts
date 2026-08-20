@@ -10,6 +10,27 @@ export function mesmoEmail(a: string, b: string): boolean {
 }
 
 /**
+ * #1374 (4a volta de #268/#606/#786): decide se, ao SAIR do campo, o texto
+ * digitado vira destinatario.
+ *
+ * O furo que deixou esta volta acontecer: as rotas de commit eram virgula,
+ * ponto-e-virgula e Enter. Sair do campo nao era rota nenhuma — o Base UI limpa
+ * o input no blur e o endereco sumia sem virar chip e sem onChange. Medido em
+ * navegador real: depois de um Tab, input.value vazio e ZERO chamadas de
+ * onChange.
+ *
+ * Regra: commita so quando o texto JA E um e-mail completo. Query parcial
+ * ("ful") nao vira destinatario — quem digita parcial e sai do campo estava
+ * desistindo ou indo clicar numa sugestao, e transformar isso em destinatario
+ * seria pior que perder. Diferente do Enter, aqui NAO excluimos o texto que
+ * coincide com uma sugestao: se coincidir, o endereco e o mesmo e o
+ * adicionarDigitado deduplica.
+ */
+export function deveCommitarBlur(texto: string): boolean {
+  return emailValido(texto.trim().replace(/[,;]+$/, "").trim());
+}
+
+/**
  * Decide se o Enter deve commitar o e-mail digitado como convidado livre, em vez
  * de deixar o combobox selecionar uma sugestão (#268).
  *
