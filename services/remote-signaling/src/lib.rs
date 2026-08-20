@@ -361,13 +361,11 @@ async fn process_message(
             };
             let ice_servers = match state.ice_servers(&device_id) {
                 Ok(ice_servers) => ice_servers,
-                Err(_) => {
-                    send_error(
-                        outbound,
-                        ErrorCode::Internal,
-                        "relogio do servidor invalido",
-                    )
-                    .await;
+                Err(erro) => {
+                    // #1420: propaga a causa REAL. Antes era `Err(_)` com a
+                    // mensagem de relogio cravada, entao `turn_secret` ausente
+                    // aparecia pro operador como problema de relogio.
+                    send_error(outbound, ErrorCode::Internal, &erro.to_string()).await;
                     return;
                 }
             };
@@ -539,11 +537,12 @@ async fn process_message(
                         .send(ServerMessage::IceServersRenewed { ice_servers })
                         .await;
                 }
-                Err(_) => {
+                Err(erro) => {
+                    // #1420: a causa real, nao um rotulo generico.
                     send_error(
                         outbound,
                         ErrorCode::Internal,
-                        "falha ao renovar credencial TURN",
+                        &format!("falha ao renovar credencial TURN: {erro}"),
                     )
                     .await;
                 }

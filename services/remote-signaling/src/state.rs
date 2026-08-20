@@ -740,6 +740,10 @@ pub enum TurnCredentialError {
     Clock(#[from] std::time::SystemTimeError),
     #[error("segredo TURN invalido")]
     InvalidSecret,
+    /// #1420 — `turn_secret` vazio ou so espaco. Distinto de `InvalidSecret`
+    /// porque a acao do operador e outra: aqui falta configurar, nao corrigir.
+    #[error("segredo TURN ausente (turn_secret vazio)")]
+    SegredoAusente,
 }
 
 /// #1295 — falhas da cunhagem do ticket de matrícula (superfície autenticada).
@@ -805,6 +809,15 @@ fn montar_ice_server(
     device_id: &str,
     expires_at: u64,
 ) -> Result<IceServer, TurnCredentialError> {
+    // #1420: `Hmac::new_from_slice` aceita chave de QUALQUER tamanho, inclusive
+    // vazia — e propriedade do HMAC, nao detalhe do crate. Sem esta guarda, um
+    // servidor com `turn_secret` ausente NAO falha: ele devolve uma credencial
+    // perfeitamente bem formada, com HMAC de chave vazia, que o coturn (que tem
+    // um segredo de verdade do outro lado) vai rejeitar. O sintoma chega ao
+    // usuario como "relay nao funciona", tres camadas longe da causa.
+    if turn_secret.iter().all(|b| b.is_ascii_whitespace()) {
+        return Err(TurnCredentialError::SegredoAusente);
+    }
     let username = format!("{expires_at}:{device_id}");
     let mut mac =
         HmacSha1::new_from_slice(turn_secret).map_err(|_| TurnCredentialError::InvalidSecret)?;
@@ -934,4 +947,87 @@ mod tests {
         assert_eq!(duracao_backoff(20), Duration::from_secs(300));
         assert_eq!(duracao_backoff(1000), Duration::from_secs(300));
     }
+
+    // ── #1420: `turn_secret` ausente falha ALTO ──────────────────────────────
+    //
+    // `Hmac::new_from_slice` aceita chave de qualquer tamanho, inclusive vazia —
+    // é propriedade do HMAC, não detalhe do crate. Sem guarda, um servidor com
+    // `turn_secret` ausente devolvia uma credencial perfeitamente bem formada
+    // (HMAC de chave vazia) que o coturn rejeita do outro lado. O sintoma chega
+    // ao usuário como "o relay não funciona", três camadas longe da causa.
+    //
+    // Achado medindo o #1133, ao descobrir que o ramo de erro que eu tinha
+    // acabado de escrever era inalcançável — pelo motivo errado.
+    //
+    // Nota: este crate NEGA `unwrap`/`expect` (lint do #1057), então os testes
+    // abaixo usam `match`/`let else` com panic explícito.
+
+    fn estado_com_segredo(segredo: &[u8]) -> AppState {
+        AppState::new(
+            SigningKey::from_bytes(&[7_u8; 32]),
+            segredo.to_vec(),
+            vec!["turn:localhost:3478".to_owned()],
+            Duration::from_secs(60),
+            Duration::from_secs(600),
+            Duration::from_secs(600),
+            120,
+            Duration::from_secs(60),
+        )
+    }
+
+    #[test]
+    fn turn_secret_vazio_recusa_em_vez_de_entregar_credencial_que_o_coturn_rejeita() {
+        for (rotulo, segredo) in [
+            ("vazio", b"".as_slice()),
+            ("so espaco", b"   ".as_slice()),
+            ("so quebra de linha", b"\n".as_slice()),
+            ("espaco e tab", b" \t ".as_slice()),
+        ] {
+            match estado_com_segredo(segredo).ice_servers("device-1") {
+                Err(TurnCredentialError::SegredoAusente) => {}
+                Err(outro) => panic!(
+                    "com turn_secret {rotulo} o erro tem de dizer AUSENTE — a acao do operador e configurar, nao corrigir: {outro:?}"
+                ),
+                Ok(ice) => panic!(
+                    "com turn_secret {rotulo} o servidor ENTREGOU credencial ({n} servidor(es)): ela passa no cliente e morre no coturn",
+                    n = ice.len()
+                ),
+            }
+        }
+    }
+
+    /// Par positivo: segredo de verdade continua produzindo credencial. Sem isto,
+    /// recusar tudo passaria no teste acima e derrubaria o relay inteiro.
+    #[test]
+    fn turn_secret_valido_continua_entregando_credencial() {
+        let ice = match estado_com_segredo(b"turn-secret-de-teste").ice_servers("device-1") {
+            Ok(ice) => ice,
+            Err(erro) => panic!("segredo valido tem de produzir credencial: {erro}"),
+        };
+        let Some(primeiro) = ice.first() else {
+            panic!("esperava ao menos um servidor TURN, veio lista vazia")
+        };
+        assert!(!primeiro.credential.is_empty());
+        assert!(
+            primeiro.username.ends_with(":device-1"),
+            "username no formato use-auth-secret: {}",
+            primeiro.username
+        );
+    }
+
+    /// A mensagem é o contrato com quem vai diagnosticar às 3h da manhã: "ausente"
+    /// e "relógio inválido" mandam a pessoa para lados opostos da infra.
+    #[test]
+    fn a_mensagem_de_erro_distingue_ausente_de_relogio() {
+        let ausente = TurnCredentialError::SegredoAusente.to_string();
+        assert!(
+            ausente.contains("ausente") && ausente.contains("turn_secret"),
+            "a mensagem tem de NOMEAR o que falta: {ausente:?}"
+        );
+        assert!(
+            !ausente.contains("relogio"),
+            "segredo ausente nao pode ser reportado como problema de relogio — era exatamente o que o `Err(_)` do v1 fazia: {ausente:?}"
+        );
+    }
+
 }
