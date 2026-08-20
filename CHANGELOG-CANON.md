@@ -1,6 +1,9 @@
 # CHANGELOG — TEAM-CANON
 Histórico de emendas do canon (texto integral de cada versão no git: `git log -- TEAM-CANON.md`). O canon vivo não carrega histórico (v1.12 §8).
 
+## v1.13 · 2026-08-20 — heartbeat obrigatório
+Cron de 20 min por papel (session-only, fase escalonada) vira lei em §4 — ordem direta do PO rompendo a moratória, após o SM (Polaris IV) sumir 5h12 (22:50→04:03Z) porque `ScheduleWakeup` não dispara em sessão de fundo. Mapa de fases em `FATOS.md`.
+
 ## v1.12 · 2026-08-19 — PLANO ÚNICO (pós-auditoria de 6 lentes, `docs/equipe/auditoria-2026-08-19/`)
 Reescrita pra estrutura v2 (≤1.300 palavras). Integração = CI + `gh pr merge` pelo dev da fatia · SM de exceção (Polaris IV não recicla; o cargo muda em volta) · pull system (dev puxa topo de Ready da sua área, WIP 2) · superfície em 1 frase (PO nunca move card) · épico com linha própria, saída "Closed – sem entrega", `bloqueado`+`po-decisao`, campo Executor · 11 contradições resolvidas · correção = editar + 1 linha `CORRIJO:` · #133 ≤800 chars, template, 1 post/papel/tick · como emendar: 1 PR/dia, ratificação ESCRITA na PR, CASOS.md, transição com data de morte · satélites: este arquivo, `docs/historia/cutover-2026-08-18.md`, `docs/runbooks/maquina-compartilhada.md`, `docs/equipe/CASOS.md`. **Moratória de 72 h** após esta.
 

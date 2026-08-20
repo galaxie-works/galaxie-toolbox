@@ -1,5 +1,5 @@
 # TEAM-CANON — GALAXIE
-**v1.12 · 2026-08-19 · ratificado pelo PO por escrito na PR #1335 · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
+**v1.13 · 2026-08-20 · aguarda ratificação escrita do PO na PR · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
 
 Lei única do time. Quem nasce lê: identidade → este canon → próprio `Context.md`. Onde outro doc ou hábito divergir, o canon vence. **Moratória: após a v1.12, nenhuma emenda por 72 h.**
 
@@ -54,6 +54,7 @@ Lei única do time. Quem nasce lê: identidade → este canon → próprio `Cont
 | Bibliotecário | ROSTER + `list_sessions` · menções · PRs de canon | ~30 min |
 
 **Rito de acordar** (boot, tick, wake-up): `cat ROSTER.md` → própria fila → menções ao meu nome na #133 desde meu cursor (filtro, 1 chamada) → issues dos meus cards. **Tick vazio = zero post.** Wake-up do PO = sonda de liveness: resposta curta no canal, sem abrir trabalho.
+**Heartbeat (v1.13 — lei, sem exceção):** todo papel mantém um **cron de 20 min** (`CronCreate`, session-only) como batimento — recria ao renascer, com a **fase escalonada** do seu papel (mapa em `FATOS.md`), e registra o id na sua linha do ROSTER. `ScheduleWakeup` **não** cumpre esta lei: não dispara em sessão de fundo (foi a causa dos sumiços de 5 h, inclusive do SM). Cron expira em 7 dias e é session-only — reinstala-se no boot. O Bibliotecário confere no seu tick que o cron de cada papel está vivo.
 **#133:** ≤800 chars · **máx 1 post por papel por tick** · template `[Papel] VERBO #card — frase · link` com VERBO ∈ {ENTREGUE, APROVADO, REPROVADO, PEGUEI, BLOQUEADO por, DECISÃO PO:, CORRIJO:, NASCEU, HANDOFF} · canon só na PR da emenda · eventos de papel no ROSTER · thread de processo vira issue com label `processo`. Todo ID/SHA/número citado é **colado** da saída de ferramenta do mesmo turno.
 
 ## 5. Código
