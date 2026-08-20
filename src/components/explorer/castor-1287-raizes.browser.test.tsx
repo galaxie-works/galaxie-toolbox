@@ -9,6 +9,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { cleanup, render } from "vitest-browser-react";
 
 import { IdiomaProvider } from "@/lib/idioma";
+import { DICIONARIOS } from "@/lib/strings";
+import { useAppStore } from "@/store";
 import type { CloudLocation, DriveInfo, FsEntry, NetworkLocation } from "@/lib/types";
 import {
   CAMINHO_ACESSO_RAPIDO,
@@ -16,6 +18,12 @@ import {
   CAMINHO_REDE,
 } from "./caminho";
 import { ArvoreArquivos } from "./arvore";
+
+// O `idioma` sai do store, que detecta pelo locale (`idiomaAtual()`). Em CI
+// (locale en) os rótulos saem em inglês — então fixo o idioma e leio os rótulos
+// do MESMO dicionário, em vez de cravar strings pt (o que quebrava só no CI).
+const IDIOMA = "pt-BR" as const;
+const t = DICIONARIOS[IDIOMA];
 
 const CLOUD: CloudLocation[] = [
   { path: "C:\\Users\\consa\\OneDrive", name: "OneDrive", provider: "onedrive", kind: "folder" },
@@ -78,26 +86,29 @@ async function clicarCabecalho(texto: string) {
 }
 
 describe("#1287 raízes semânticas navegam", () => {
-  beforeEach(() => cleanup());
+  beforeEach(() => {
+    cleanup();
+    useAppStore.setState({ idioma: IDIOMA }); // determinístico em qualquer locale
+  });
 
   it("Drives na nuvem → sentinela Cloud", async () => {
     const onNavegar = vi.fn();
     montar(onNavegar);
-    await clicarCabecalho("Drives na nuvem");
+    await clicarCabecalho(t.arquivos.driveSecaoCloud);
     expect(onNavegar).toHaveBeenCalledWith(CAMINHO_CLOUD);
   });
 
   it("Locais de rede → sentinela Rede", async () => {
     const onNavegar = vi.fn();
     montar(onNavegar);
-    await clicarCabecalho("Locais de rede");
+    await clicarCabecalho(t.arquivos.driveSecaoRede);
     expect(onNavegar).toHaveBeenCalledWith(CAMINHO_REDE);
   });
 
   it("Acesso rápido → sentinela Acesso rápido", async () => {
     const onNavegar = vi.fn();
     montar(onNavegar);
-    await clicarCabecalho("Acesso rápido");
+    await clicarCabecalho(t.arquivos.acessoRapido);
     expect(onNavegar).toHaveBeenCalledWith(CAMINHO_ACESSO_RAPIDO);
   });
 });
