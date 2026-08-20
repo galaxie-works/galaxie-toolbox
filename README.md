@@ -2,8 +2,10 @@
 
 Aplicativo desktop (workspace de produtividade Microsoft 365) que dá aos
 usuários de um cliente acesso simples aos arquivos da empresa no SharePoint **e**
-um conjunto de ferramentas integradas de e-mail, agenda, contatos, navegação e
-dashboard — tudo sobre Microsoft Graph delegado (`/me`), sem IMAP.
+um conjunto de ferramentas integradas de e-mail, agenda, contatos, navegação,
+arquivos locais e acesso remoto. O dado vem de **três caminhos**: Microsoft
+Graph delegado (`/me`, sem IMAP) nas contas M365, Google (Drive/appData) nas
+contas pessoais, e o **filesystem local** (Explorer de Arquivos).
 
 A pessoa entra com o e-mail corporativo, o app descobre o tenant, ela faz login
 na página oficial da Microsoft e cai no workspace. Feito pela
@@ -29,8 +31,14 @@ distribuição; o app se atualiza sozinho).
 |---|---|
 | **Bridge** | Cliente de e-mail (4 painéis) + **Agenda** (eventos, recorrência) + **People** (contatos M365, categorias, organizações) — tudo via Graph delegado |
 | **Navigator** | Navegador embutido (WebView2) com abas, sleeping tabs, command palette, favoritos, histórico/privacidade |
+| **Explorer** (Files) | Gerenciador de arquivos locais (épico #675): árvore This PC/Cloud/Network, copy/move com engine paralela e progresso na central, undo (journal), previews. Backend Rust `fs_explorer.rs` |
+| **Remote** | Acesso remoto (épico #682): captura de tela, input, transporte WebRTC/str0m, agente SYSTEM. Crates em `services/` (feature `remote`); infra de relay em `infra/remote/` |
 | **Previews** | Preview de anexos (PDF/TXT/docx/xlsx/pptx) dentro do app, com sandbox de segurança |
 | **Telemetria** | Diagnóstico/observabilidade privacy-first (TelemetryPolicy em Rust → OpenObserve self-host; consent por categoria, PII-scrubbed) |
+
+Contas: além do M365 (Graph), o app também loga em **conta Microsoft pessoal** e
+**Google** (provider `google`, épico #692 — nuvem via Drive/appData). Recursos
+que dependem de org (SharePoint/`/sites`) ficam gateados por provider.
 
 ## Como funciona a autenticação
 
@@ -108,19 +116,35 @@ src/                    interface (React)
   screens/              login, control-room (Bridge), navegador, configuracoes…
   lib/api.ts            ponte para o backend (mock fora do Tauri)
   lib/                  tema, strings (i18n pt/en), telemetria, store zustand…
-src-tauri/src/
+src-tauri/src/          backend (Rust/Tauri) — comandos em lib.rs
   auth.rs               PKCE, tenant, sessão (DPAPI), foto do perfil
+  dpapi.rs              wrapper único do DPAPI (cifra a sessão em disco)
   graph.rs              Microsoft Graph: mail, agenda, people, tarefas, sites (pool graph_enviar/429)
+  gdrive.rs             backend de nuvem do Google (config em Drive/appData, conta pessoal)
+  fs_explorer.rs        Explorer de arquivos local: listar, copy/move (engine paralela), undo/journal, watcher
+  browser.rs            Navigator: abas, sessão, histórico (WebView2)
+  bookmarks.rs          importação de favoritos do Chrome/Edge
+  favicon.rs            busca de favicon dos sites das abas
+  remote.rs             fronteira congelada FE↔Remote (feature `remote`)
+  remote_stub.rs        stub do Remote quando a feature está OFF
+  remote_identity.rs    custódia da identidade Ed25519 do device (signaling /v2/ws)
+  domain_claim.rs       prova de posse de domínio (absorção de tenant)
+  lock_screen.rs        PIN local da tela de bloqueio
+  salvar_pdf.rs         "Salvar como…" → PDF do corpo do e-mail
   telemetry.rs          TelemetryPolicy (consent/scrub/sampling) + transporte OTLP
   system.rs             registro do Windows e Explorer
   estado.rs             registro local dos atalhos criados
   config.rs             CLIENT_ID, endpoints e SCOPES_BASE/SCOPES_ORG
+services/               crates do Remote (captura, input, transporte, signaling, agente SYSTEM)
+infra/                  stacks de infra: relay do Remote (coturn), OpenObserve, traefik
 ```
 
 Docs em [`docs/`](docs/), **escopados por área** (ver o índice [`docs/README.md`](docs/README.md)):
-`bridge/`, `navigator/`, `astro/` (Galaxie AI), `reference/` e `arquivo/`
-(histórico de produtos removidos)
-(`graph-scopes.md`). Instruções operacionais dos agentes:
+módulos em `bridge/`, `navigator/`, `explorer/`, `remote/`, `astro/` (Galaxie AI);
+cross-cutting em `reference/`; histórico em `arquivo/` (produtos removidos) e
+`historia/`; processo em `equipe/`, release notes em `releases/`, runbooks em
+`runbooks/`. A **lei do processo** é o [`TEAM-CANON.md`](TEAM-CANON.md) na raiz
+(o antigo `WORKFLOW.md` é só um redirect pra ele); instruções operacionais em
 [`AGENTS.md`](AGENTS.md) + [`Rules.md`](Rules.md).
 
 ## Limitações conhecidas
