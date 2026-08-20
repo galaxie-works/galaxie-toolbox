@@ -4,6 +4,7 @@ Ledger "o que está no ar" (seed). Fonte: backfill 18/08/2026 a partir do `git l
 
 | Versão | Resumo |
 |---|---|
+| **v0.50.0** | 📬 Bridge: card arredondado do sidebar de volta + splitter de largura; Files: undo com progresso e recarga automática, sidebar colapsável em rail; refactors internos do leitor (control-room fatiado). Tudo validado pelo PO em runtime no `86bc63fa`. |
 | **v0.49.0** | 🚀 Pin de apps funcional (rail + grupo Fixados pela busca); 210 ícones do catálogo consertados (+10 do tema claro); "Mover para pasta" rola; sino primeiro na title bar; Remote v2: matrícula autorizada completa (owner/org da sessão, default-deny, teto compile-time, revogação); infra VPS versionada + /healthz com SHA. |
 | **v0.48.0** | 📁 Files: todas as contas OneDrive em Cloud drives + locais de rede/drives mapeados como o Explorer; scrollbars padronizadas (sidebars, app); pin no rail do Navigator; badge de update sem parênteses vazios; infra de teste de log (Rust/TS), porta `?tela` só dev, Tailwind nos testes, `pnpm gate`, `board.ps1`. |
 | **v0.47.0** | 📬 Leitor do Bridge: corpo inteiro de novo (regressão dos 120px) + tema escuro; aviso de update com notas formatadas/roláveis e data legível; Atoms/Comms/Pulsar removidos (decisão do PO); Remote: PoP no registro (flag off), matrícula por ticket de enrollment, autorização por-frame no funil; pirata da aba privada pinado; CI clippy verde. |
