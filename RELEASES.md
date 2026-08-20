@@ -4,6 +4,7 @@ Ledger "o que está no ar" (seed). Fonte: backfill 18/08/2026 a partir do `git l
 
 | Versão | Resumo |
 |---|---|
+| **v0.53.0** | 📬 Compositor não apaga To/Cc/Bcc sem sugestões; undo como "Desfazer" na central; Home por nome; turn_secret ausente falha alto; mídia comprimida (9,1→1,6 MB) + ícones órfãos com catraca; ratchet knip; fronteira mock/real gateada. |
 | **v0.52.0** | 📁 Files: raízes/mounts com ícones e logos, Home view em tiles, menu de contexto na árvore, desafixar itens do sistema; Bridge: sidebar não engorda com a janela; Remote: ice_servers com credencial TURN efêmera (segredo fora de log); telemetria fail-closed com guarda; limpeza (LottieIcon) e guardas por AST. |
 | **v0.51.0** | 📦 1.539 ícones órfãos fora do instalador (com catraca); grade de Pessoas mais fluida (memoização); rotação de segredos testável (corrente telemetria); coturn fail-closed; previews de anexo com erro tratado. |
 | **v0.50.0** | 📬 Bridge: card arredondado do sidebar de volta + splitter de largura; Files: undo com progresso e recarga automática, sidebar colapsável em rail; refactors internos do leitor (control-room fatiado). Tudo validado pelo PO em runtime no `86bc63fa`. |
