@@ -200,6 +200,50 @@ function fontesRust(): string {
     .join("\n");
 }
 
+/**
+ * #1406: zera comentários (linha e bloco) preservando comprimento —
+ * mesma ferramenta dos gates `graph-enviar`/`comando-async`. SEM isto o gate
+ * casava `fn X` deixado num COMENTÁRIO (`// antes: fn X`): renomear o teste e
+ * deixar essa migalha mantinha o gate VERDE — o furo que reprovou o #1406.
+ * Limite: não trata `//` dentro de string literal (nenhum símbolo/título citado
+ * hoje carrega `//`; se um dia carregar, trocar por strip via transpiler).
+ */
+function semComentarios(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith("//", i)) {
+      const fim = src.indexOf("\n", i);
+      const ate = fim === -1 ? src.length : fim;
+      out += " ".repeat(ate - i);
+      i = ate;
+    } else if (src.startsWith("/*", i)) {
+      const fim = src.indexOf("*/", i + 2);
+      const ate = fim === -1 ? src.length : fim + 2;
+      for (let k = i; k < ate; k++) out += src[k] === "\n" ? "\n" : " ";
+      i = ate;
+    } else {
+      out += src[i];
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/** #1406: identificadores citados que NÃO existem como `fn` no código — comentário
+ * NÃO conta como definição. Puro e testável (guard `citacao_so_em_comentario`). */
+function citacoesFantasmasRust(citados: string[], rustSrc: string): string[] {
+  const codigo = semComentarios(rustSrc);
+  return citados.filter((nome) => !codigo.includes(`fn ${nome}`));
+}
+
+/** #1406: títulos de teste TS citados que NÃO existem no arquivo — idem, comentário
+ * não conta. */
+function citacoesFantasmasTitulos(titulos: string[], arquivoSrc: string): string[] {
+  const codigo = semComentarios(arquivoSrc);
+  return titulos.filter((t) => !codigo.includes(t));
+}
+
 test("#1406: todo identificador que o runbook cita existe no código", () => {
   const runbook = readFileSync(RUNBOOK, "utf8");
   const citados = [...new Set([...runbook.matchAll(IDENT_CITADO)].map((m) => m[1]))];
@@ -211,8 +255,7 @@ test("#1406: todo identificador que o runbook cita existe no código", () => {
       "o regex quebrou, não o runbook",
   );
 
-  const rust = fontesRust();
-  const fantasmas = citados.filter((nome) => !rust.includes(`fn ${nome}`));
+  const fantasmas = citacoesFantasmasRust(citados, fontesRust());
 
   assert.deepEqual(
     fantasmas,
@@ -249,11 +292,45 @@ test("#1406: todo título de teste TS citado no runbook existe neste arquivo", (
       "o parser da tabela quebrou, não o runbook",
   );
 
-  const fantasmas = titulos.filter((t) => !esteArquivo.includes(t));
+  const fantasmas = citacoesFantasmasTitulos(titulos, esteArquivo);
   assert.deepEqual(
     fantasmas,
     [],
     "o runbook cita título de teste que não existe mais neste arquivo — " +
       "renomear o teste não pode deixar o documento apontando para o vazio",
+  );
+});
+
+test("#1406: citação que só aparece em COMENTÁRIO não satisfaz o gate (o furo)", () => {
+  // Rust: `// antes: fn X` carrega "fn X" mas NÃO é definição — o furo que a
+  // Lúmen reprovou (alcor mediu: `// antes: fn X` passava; `// renomeado de X` não,
+  // porque só o prefixo `fn ` satisfazia o `includes`).
+  assert.deepEqual(
+    citacoesFantasmasRust(
+      ["fantasma_so_no_comentario_1406"],
+      "// antes: fn fantasma_so_no_comentario_1406\nfn outra_coisa() {}\n",
+    ),
+    ["fantasma_so_no_comentario_1406"],
+    "comentário com `fn X` não pode contar como definição — era o furo do #1406",
+  );
+  // Definição REAL satisfaz (não vira falso-fantasma).
+  assert.deepEqual(
+    citacoesFantasmasRust(["existe_de_verdade_1406"], "pub fn existe_de_verdade_1406() {}"),
+    [],
+  );
+  // TS: título citado só num comentário também não conta; o real conta.
+  assert.deepEqual(
+    citacoesFantasmasTitulos(
+      ["titulo so no comentario 1406"],
+      '// test("titulo so no comentario 1406")\n',
+    ),
+    ["titulo so no comentario 1406"],
+  );
+  assert.deepEqual(
+    citacoesFantasmasTitulos(
+      ["titulo real 1406"],
+      'test("titulo real 1406", () => {});',
+    ),
+    [],
   );
 });
