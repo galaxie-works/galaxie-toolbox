@@ -12,6 +12,8 @@ import type {
   FsDirBatch,
   FsSearchBatch,
   FsEntry,
+  KnownDir,
+  KnownKind,
   FsOpProgress,
   UndoPlan,
   UndoReport,
@@ -53,16 +55,12 @@ import type {
 } from "./types";
 import { iniciais } from "./iniciais.ts";
 import { logErro } from "./log.ts";
+import { inTauri, invoke } from "./tauri.ts";
 
-/** Estamos dentro do Tauri (webview do app) ou num browser comum (pnpm dev)? */
-export function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const core = await import("@tauri-apps/api/core");
-  return core.invoke<T>(cmd, args);
-}
+// #1033: a checagem e o wrapper vivem em `./tauri.ts`. O reexport de `inTauri`
+// fica porque MUITO consumidor já importa daqui — mover todos seria um diff
+// grande sem ganho, e o ponto de verdade continua sendo um só.
+export { inTauri } from "./tauri.ts";
 
 /**
  * #1104 / fecha TODO(#687): URL de PROD do signaling Remote (S0). Fallback pro
@@ -2874,6 +2872,70 @@ const MOCK_DRIVES: DriveInfo[] = [
     totalSpace: 1_000_000_000_000,
     freeSpace: 640_000_000_000,
   },
+  // #1407: um drive MAPEADO de rede. Sem ele a seção "Locais de rede" nem
+  // renderiza no dev (ela só aparece com >=1 item), e a QA-V não conseguia
+  // gatear as views de raiz — precisava sempre da máquina do PO. O nome segue o
+  // formato que o Rust monta (`nome_drive_rede`, fs_explorer.rs): o rótulo da
+  // árvore é derivado dele, então mock com formato diferente esconderia bug de
+  // rótulo em vez de revelar.
+  {
+    path: "W:\\",
+    name: "acervo-mock (\\\\10.0.0.9\\Acervo) (W:)",
+    kind: "network",
+    fsName: "NTFS",
+    totalSpace: 4_000_000_000_000,
+    freeSpace: 1_200_000_000_000,
+  },
+];
+
+/**
+ * #1407: mounts de nuvem do dev. Cobre os TRÊS providers que a UI distingue —
+ * OneDrive pessoal e comercial (pasta no perfil) e Google Drive (letra) — porque
+ * o que a QA-V precisa validar é justamente o logo POR provider (#869 item 3);
+ * um provider só deixaria o `Cloud` genérico passar batido.
+ *
+ * "(mock)" no nome é AC do card: dado fictício tem de se anunciar, senão alguém
+ * abre um print do dev achando que é a máquina de verdade.
+ */
+const MOCK_CLOUD_LOCATIONS: CloudLocation[] = [
+  {
+    path: "C:\\Users\\dev\\OneDrive",
+    name: "OneDrive - Pessoal (mock)",
+    provider: "onedrive",
+    kind: "folder",
+  },
+  {
+    path: "C:\\Users\\dev\\OneDrive - Contoso",
+    name: "OneDrive - Contoso (mock)",
+    provider: "onedriveCommercial",
+    kind: "folder",
+  },
+  {
+    path: "G:\\",
+    name: "Google Drive (mock)",
+    provider: "googledrive",
+    kind: "drive",
+  },
+];
+
+/**
+ * #1407: locais de rede SEM letra. Um disponível e um indisponível de propósito:
+ * o `available: false` é um estado que a UI trata (a entrada continua na lista,
+ * só marcada) e que a QA-V nunca conseguia ver no dev.
+ */
+const MOCK_NETWORK_LOCATIONS: NetworkLocation[] = [
+  {
+    name: "Acervo (mock)",
+    path: "\\\\10.0.0.9\\Acervo",
+    kind: "networkLocation",
+    available: true,
+  },
+  {
+    name: "Backup antigo (mock)",
+    path: "\\\\10.0.0.4\\Backup",
+    kind: "networkLocation",
+    available: false,
+  },
 ];
 
 /** Lista um diretório, pastas-primeiro. Caminho primário pra pastas normais. */
@@ -2915,7 +2977,10 @@ export async function listarDrives(): Promise<DriveInfo[]> {
 /** #869: mounts de nuvem locais (OneDrive pasta + Google Drive letra) pra seção
  *  "Cloud drives" do sidebar. Vazio se nenhum cliente de nuvem está instalado. */
 export async function listarCloudLocations(): Promise<CloudLocation[]> {
-  if (!inTauri()) return [];
+  // #1407: no dev devolve mounts fictícios; DENTRO do Tauri nada muda — a
+  // guarda do mock é a mesma `inTauri()` de sempre, e o AC3 do card é
+  // exatamente isso.
+  if (!inTauri()) return MOCK_CLOUD_LOCATIONS.map((c) => ({ ...c }));
   return invoke<CloudLocation[]>("fs_cloud_locations");
 }
 
@@ -2923,7 +2988,7 @@ export async function listarCloudLocations(): Promise<CloudLocation[]> {
  *  letra). Complementam os drives mapeados na seção "Network locations".
  *  Vazio fora do Tauri e em máquina sem nenhum local configurado. */
 export async function listarNetworkLocations(): Promise<NetworkLocation[]> {
-  if (!inTauri()) return [];
+  if (!inTauri()) return MOCK_NETWORK_LOCATIONS.map((n) => ({ ...n }));
   return invoke<NetworkLocation[]>("fs_network_locations");
 }
 
@@ -2945,12 +3010,17 @@ export async function desconectarNetworkDrive(letter: string, force: boolean): P
 }
 
 /** Pastas de acesso rápido do SO (home/desktop/documentos/downloads). */
-export async function dirsConhecidos(): Promise<FsEntry[]> {
+export async function dirsConhecidos(): Promise<KnownDir[]> {
   if (!inTauri()) {
     await sleep(60);
-    return MOCK_FS_ENTRIES.filter((e) => e.isDir).map((e) => ({ ...e }));
+    // #1404: no fixture a POSIÇÃO é autoritativa — a lista é nossa e não passa
+    // pelos filtros do Rust. Fora daqui, ninguém mais conta posição.
+    const kinds: KnownKind[] = ["home", "desktop", "documents", "downloads"];
+    return MOCK_FS_ENTRIES.filter((e) => e.isDir)
+      .slice(0, kinds.length)
+      .map((e, i) => ({ ...e, kind: kinds[i] }));
   }
-  return invoke<FsEntry[]>("fs_known_dirs");
+  return invoke<KnownDir[]>("fs_known_dirs");
 }
 
 /**

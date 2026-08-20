@@ -47,8 +47,10 @@ import type {
   DriveInfo,
   FsConflict,
   FsEntry,
+  KnownDir,
   NetworkLocation,
 } from "@/lib/types";
+import { caminhoDaHome } from "@/lib/explorer-home";
 import { DrivesView } from "./drives-view";
 import { HomeView } from "./home-view";
 import { RootView, type ItemRaiz } from "./root-view";
@@ -217,7 +219,7 @@ export function ExplorerShell({
   const [networkLocations, setNetworkLocations] = useState<
     NetworkLocation[] | null
   >(null);
-  const [acessoRapido, setAcessoRapido] = useState<FsEntry[] | null>(null);
+  const [acessoRapido, setAcessoRapido] = useState<KnownDir[] | null>(null);
   // #869 (Quick access pin/sort): pins do usuário PERSISTIDOS (localStorage puro
   // via usePersistedState — conveniência de UI local, não tenant-scoped). A seção
   // "Acesso rápido" da árvore = pins + dirs conhecidos do sistema, dedupados e
@@ -431,10 +433,9 @@ export function ExplorerShell({
     ocultos,
   );
 
-  // #1285 (B): a HOME é o 1º item de `dirsConhecidos` (contrato do Rust
-  // `dirs_conhecidos`, fs_explorer.rs:606 — home antes de desktop/docs/downloads).
-  // Serve pra rotular o item como "Home"/"Início" na árvore e rotear a Home view.
-  const homePath = acessoRapido?.[0]?.path ?? null;
+  // #1404: a HOME é achada pelo `kind`, nunca pela posição. O contrato
+  // posicional quebrava sozinho — ver `caminhoDaHome`.
+  const homePath = caminhoDaHome(acessoRapido);
 
   // #1287: itens das três views de raiz (tiles no estilo This PC). Mapeiam os
   // MESMOS dados da árvore (cloud/rede/acesso) — sem novo fetch, o shell já os

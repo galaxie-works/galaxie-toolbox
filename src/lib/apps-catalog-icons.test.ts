@@ -15,10 +15,20 @@ import {
  * passavam "verdes". Este teste lê os MAGIC BYTES de todo `public/app-icons/*.svg`
  * e faz `icon:true` significar VERIFICADO.
  *
- * Sequenciamento (baseline-ratchet): os 210 já existentes ficam numa baseline
+ * Sequenciamento (baseline-ratchet): os já existentes ficam numa baseline
  * explícita (`icones-baseline.json`) pra o CI não quebrar ANTES da remediação
  * (fatia 2, dependente da curadoria #1155). O gate barra QUALQUER violação NOVA
- * na hora; a baseline só encolhe. Quando zerar, vira hard-fail puro e o card fecha.
+ * na hora; a baseline só encolhe.
+ *
+ * #1221 (AC4): "a baseline só encolhe" era afirmação SEM mecanismo — o teste só
+ * olhava `atual → baseline` (raster novo fora da lista), nunca a volta. Depois da
+ * limpeza (fatia 2) a baseline tinha 210 raster / 27 branco, mas 233/237
+ * apontavam pra arquivo que não existe mais — 98% de ficção, e o gate seguia
+ * verde. O RATCHET REVERSO abaixo fecha isso: toda entrada da baseline TEM que
+ * existir no disco E ainda ser da classe que alega; entrada órfã reprova. Assim a
+ * baseline é obrigada a encolher junto com a remediação (não dá pra deixar entrada
+ * morta). Baseline podada pro real: raster ZEROU (agora é hard-fail puro — nenhum
+ * raster passa), branco = os 2 que sobraram (`linktree`, `malwarebytes`).
  */
 
 const iconesDir = new URL("../../public/app-icons/", import.meta.url);
@@ -128,11 +138,32 @@ test("#1153 (RATCHET): nenhum SVG só-branco NOVO fora da baseline", () => {
   );
 });
 
-test("#1153: a baseline não regrediu além do medido (210 raster / é o teto)", () => {
-  // O gate nasce com 210 raster conhecidos; a baseline só pode ENCOLHER (fatia 2).
-  // Este teto prova que a medição do card (210) é a que está no gate — não maior.
+test("#1153: a baseline não regrediu além do medido (raster é o teto)", () => {
+  // A baseline só pode ENCOLHER (fatia 2). Este teto prova que o raster no gate
+  // não cresceu além da baseline. Com a baseline podada (#1221) o raster zerou.
   assert.ok(
     atual.raster.length <= baseline.raster.length,
     `raster atual (${atual.raster.length}) não pode passar da baseline (${baseline.raster.length})`,
+  );
+});
+
+test("#1221 (RATCHET REVERSO): nenhuma entrada da baseline sem arquivo real da mesma classe", () => {
+  // A direção que faltava. Sem ela a baseline podia congelar em ficção: 233 de 237
+  // entradas apontavam pra arquivo apagado e o gate ficava verde. Aqui toda
+  // entrada TEM que reaparecer no scan do disco (`atual`) — existir E ainda ser da
+  // classe alegada. Entrada órfã (arquivo removido, ou já virou SVG real) reprova,
+  // forçando a remediação a TIRÁ-LA da baseline. É o mecanismo que faz "a baseline
+  // só encolhe" ser verdade, não promessa.
+  const rasterOrfao = baseline.raster.filter((id) => !atual.raster.includes(id));
+  const brancoOrfao = baseline.branco.filter((id) => !atual.branco.includes(id));
+  assert.deepEqual(
+    rasterOrfao,
+    [],
+    "baseline lista raster que não existe mais (ou já é SVG real) — remova da baseline; ela só encolhe (#1221).",
+  );
+  assert.deepEqual(
+    brancoOrfao,
+    [],
+    "baseline lista só-branco que não existe mais (ou já usa currentColor/cor) — remova da baseline; ela só encolhe (#1221).",
   );
 });

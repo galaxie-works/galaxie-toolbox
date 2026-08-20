@@ -10,9 +10,10 @@
 //  - RemoteSignal {kind, payload} pra a ponte de signaling (S0);
 //  - InputEvent normalizado 0..1 (só controller, capability input).
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { inTauri } from "./tauri.ts";
 
-const TAURI =
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+// #1033: ponto único em `./tauri.ts`; constante no import, como era.
+const TAURI = inTauri();
 
 // --- Tipos do contrato (camelCase, como o serde do Rust expõe) --------------
 

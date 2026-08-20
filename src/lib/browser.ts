@@ -8,15 +8,9 @@
  */
 
 import { urlDeBusca } from "@/lib/navigator-tabs";
+import { inTauri, invoke } from "./tauri.ts";
 
-function inTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
 
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const core = await import("@tauri-apps/api/core");
-  return core.invoke<T>(cmd, args);
-}
 
 export interface Retangulo {
   x: number;

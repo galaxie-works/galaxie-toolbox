@@ -7,6 +7,7 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { inTauri } from "./tauri.ts";
 
 export const CHAVE_MODO_TEMA = "galaxie-theme";
 export const CHAVE_TEMA_VISUAL = "galaxie-toolbox.theme";
@@ -92,7 +93,7 @@ export function temaEscuro(modo = modoTemaSalvo()): boolean {
 }
 
 function sincronizarTemaJanela(escuro: boolean) {
-  if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) {
+  if (!inTauri()) {
     return;
   }
 

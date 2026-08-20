@@ -88,6 +88,30 @@ describe("CampoPessoas — destinatário externo (recorrência #268/#298/#606/#7
     expect(input.value).toBe("externo@cliente.com");
   });
 
+  it("NÃO apaga com ZERO sugestões e não-e-mail (repro do PO: '9')", async () => {
+    // #1374, 5ª volta. Este é o repro literal do `wagner`: digitar `9` no Para
+    // apagava o texto. O gatilho (isolado pela `iris`) é
+    // `res.length === 0 && !emailValido(q)` → `setAberto(false)` → o Base UI
+    // limpa o `inputValue` ao fechar.
+    //
+    // As cinco voltas deste card têm um padrão: a guarda nasce no `browser`,
+    // que NÃO barra merge, e a regressão seguinte entra verde. A `lumen` mediu
+    // que este caso cabe no canal obrigatório — é comportamento de input, não
+    // geometria — e é por isso que ele vive aqui, e não só no navegador.
+    const user = userEvent.setup();
+    crPessoasMock.mockResolvedValue([]); // zero sugestões: o gatilho
+    render(<Harness />);
+    const input = screen.getByLabelText("Para") as HTMLInputElement;
+
+    await user.type(input, "9");
+
+    // Espera passar o debounce + a resposta vazia + o efeito que fecha o popup.
+    // Sem esta espera o teste passa trivial: o apagamento acontece DEPOIS.
+    await new Promise((r) => setTimeout(r, 800));
+
+    expect(input.value).toBe("9");
+  });
+
   it("Enter transforma o e-mail externo em destinatário (onChange com o endereço)", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

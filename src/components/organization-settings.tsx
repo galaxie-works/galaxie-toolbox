@@ -75,10 +75,23 @@ function LinhaSetting({ label, valor }: { label: string; valor: boolean | null }
 }
 
 /**
- * #208 (RW): a escrita org-wide de To Do fica TRAVADA até o endpoint `/admin/todo`
- * ser confirmado no live-QA de admin real (não dá pra testar Graph em dev). O
- * código do RW já está pronto (backend `cr_org_todo_set` + `crOrgTodoSet` + a UI
- * abaixo); ATIVAR é só virar isto pra `true` depois de validar o endpoint/shape.
+ * #208 (RW) — **flag travada com dono e condição de saída** (#1037/FE13).
+ *
+ * A escrita org-wide de To Do fica travada até o endpoint `/admin/todo` ser
+ * confirmado no live-QA de admin real (não dá pra testar Graph em dev). O código
+ * do RW já está pronto (backend `cr_org_todo_set` + `crOrgTodoSet` + a UI
+ * abaixo); ATIVAR é virar isto pra `true` depois de validar endpoint/shape.
+ *
+ * **Dono: `wagner` (PO)** — é ele que tem o tenant de admin real; nenhum dev
+ * consegue destravar isto sozinho, e foi por isso que a flag ficou sem dono.
+ * **Sai daqui quando:** o live-QA confirmar o shape do `/admin/todo` — aí vira
+ * `true` (ou o caminho RW é removido, se a decisão for não ter escrita org-wide).
+ * **Registrada em 2026-08-20**; antes disso estava sem dono e sem data, que é o
+ * defeito que o #1037 trata: dívida em código envelhece em silêncio até alguém
+ * tropeçar nela sem contexto.
+ *
+ * Não removi o caminho RW: ele está completo dos dois lados e a decisão de
+ * descartá-lo é de produto, não minha.
  */
 const TODO_RW_HABILITADO = false;
 
