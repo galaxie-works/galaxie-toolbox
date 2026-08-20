@@ -1,7 +1,7 @@
 /**
  * Catálogo de sons de notificação do Bridge (#48).
  *
- * Os 13 WAV vivem em `src/assets/sons/` (importados como URL pelo Vite via
+ * Os 13 sons (OGG/Opus, #1136) vivem em `src/assets/sons/` (importados como URL pelo Vite via
  * `vite/client`). Cada som ganha um nome de exibição com EXATAMENTE 19
  * caracteres — regra do PO. O `id` estável é o nome do arquivo (sem extensão),
  * o que a preferência guarda em localStorage (`"<id>"` ou `"none"`).
@@ -12,19 +12,19 @@
  *    localStorage cru fora do React.
  */
 
-import somAeroporto from "@/assets/sons/mixkit-airport-announcement-ding-1569.wav";
-import somSinoNotif from "@/assets/sons/mixkit-bell-notification-933.wav";
-import somBike from "@/assets/sons/mixkit-bike-bell-ring-595.wav";
-import somCoralBencao from "@/assets/sons/mixkit-bless-choir-655.wav";
-import somApitoBrinquedo from "@/assets/sons/mixkit-cartoon-toy-whistle-616.wav";
-import somAssobio from "@/assets/sons/mixkit-cartoon-whistling-738.wav";
-import somHarpa from "@/assets/sons/mixkit-choir-harp-bless-657.wav";
-import somPalhaco from "@/assets/sons/mixkit-clown-horn-at-circus-715.wav";
-import somRangente from "@/assets/sons/mixkit-funny-squeaky-toy-hits-2813.wav";
-import somGuitarraAlerta from "@/assets/sons/mixkit-guitar-notification-alert-2320.wav";
-import somViolao from "@/assets/sons/mixkit-guitar-stroke-down-slow-2339.wav";
-import somInterface from "@/assets/sons/mixkit-software-interface-back-2575.wav";
-import somPortaLoja from "@/assets/sons/mixkit-store-door-bell-ring-934.wav";
+import somAeroporto from "@/assets/sons/mixkit-airport-announcement-ding-1569.ogg";
+import somSinoNotif from "@/assets/sons/mixkit-bell-notification-933.ogg";
+import somBike from "@/assets/sons/mixkit-bike-bell-ring-595.ogg";
+import somCoralBencao from "@/assets/sons/mixkit-bless-choir-655.ogg";
+import somApitoBrinquedo from "@/assets/sons/mixkit-cartoon-toy-whistle-616.ogg";
+import somAssobio from "@/assets/sons/mixkit-cartoon-whistling-738.ogg";
+import somHarpa from "@/assets/sons/mixkit-choir-harp-bless-657.ogg";
+import somPalhaco from "@/assets/sons/mixkit-clown-horn-at-circus-715.ogg";
+import somRangente from "@/assets/sons/mixkit-funny-squeaky-toy-hits-2813.ogg";
+import somGuitarraAlerta from "@/assets/sons/mixkit-guitar-notification-alert-2320.ogg";
+import somViolao from "@/assets/sons/mixkit-guitar-stroke-down-slow-2339.ogg";
+import somInterface from "@/assets/sons/mixkit-software-interface-back-2575.ogg";
+import somPortaLoja from "@/assets/sons/mixkit-store-door-bell-ring-934.ogg";
 
 import { DICIONARIOS } from "@/lib/strings";
 import { idiomaAtual } from "@/lib/idioma-core";
