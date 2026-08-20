@@ -173,3 +173,87 @@ test("#1055: rotacionar o secret alcança o build (nomes não divergem)", () => 
       "é pior que rotação não feita.",
   );
 });
+
+// ── #1406: o runbook aponta nomes — e os nomes têm de existir ────────────────
+//
+// Achado da `lumen` ao aprovar o #1398: *"o runbook cita nomes de teste sem
+// guarda: renomear deixa tudo verde."* Ela está certa, e a dívida é de quem
+// escreveu as citações — eu.
+//
+// O laço que eu tinha fechado era metade: o runbook passou a dizer "esta
+// mitigação é guardada pelo teste `X`". Só que nada exigia que `X` existisse.
+// Renomear o teste num refactor deixa a suíte verde, o gate verde, e o runbook
+// apontando para o vazio. Quem for auditar no meio de um incidente lê
+// "guarda: `X`", não encontra `X`, e não sabe se a guarda sumiu ou se só mudou
+// de nome — que é a pior hora possível para essa dúvida.
+//
+// Mesmo modo de falha do resto deste arquivo, num terceiro nível: o gate do
+// #1055 fecha o INVENTÁRIO, o #1398 fechou a DECISÃO, este fecha as REFERÊNCIAS.
+
+/** Identificadores `snake_case` entre crases: testes Rust e funções citadas. */
+const IDENT_CITADO = /`([a-z][a-z0-9_]{14,})`/g;
+
+function fontesRust(): string {
+  return ["src-tauri/**/*.rs", "services/**/*.rs"]
+    .flatMap((p) => globSync(p, { exclude: (f) => f.includes("target") }))
+    .map((f) => readFileSync(f, "utf8"))
+    .join("\n");
+}
+
+test("#1406: todo identificador que o runbook cita existe no código", () => {
+  const runbook = readFileSync(RUNBOOK, "utf8");
+  const citados = [...new Set([...runbook.matchAll(IDENT_CITADO)].map((m) => m[1]))];
+
+  // Piso de sanidade: scanner que não vê nada passa para sempre (#1153).
+  assert.ok(
+    citados.length >= 4,
+    `o scanner achou só ${citados.length} identificadores citados em ${RUNBOOK} — ` +
+      "o regex quebrou, não o runbook",
+  );
+
+  const rust = fontesRust();
+  const fantasmas = citados.filter((nome) => !rust.includes(`fn ${nome}`));
+
+  assert.deepEqual(
+    fantasmas,
+    [],
+    `o runbook cita símbolo que não existe mais no código. "Guarda: \`X\`" com X ` +
+      "inexistente é pior que não citar nada: quem audita não sabe se a guarda " +
+      "sumiu ou só mudou de nome. Renomeou? Atualize a citação.",
+  );
+});
+
+test("#1406: todo título de teste TS citado no runbook existe neste arquivo", () => {
+  const runbook = readFileSync(RUNBOOK, "utf8");
+  const esteArquivo = readFileSync("src/lib/segredos-embutidos-gate.test.ts", "utf8");
+
+  // Âncora ESTRUTURAL, não auto-referencial: a última célula das linhas de
+  // tabela do runbook é a coluna "Guarda". Filtrar por "já existe no arquivo"
+  // seria vacuidade — descartaria justamente o teste renomeado, que é o caso
+  // que este gate existe para pegar.
+  const titulos = [
+    ...new Set(
+      runbook
+        .split(String.fromCharCode(10))
+        .map((l) => l.replace(String.fromCharCode(13), ""))
+        .filter((l) => l.trimStart().startsWith("|"))
+        .map((l) => l.split("|").filter((c) => c.trim() !== "").at(-1) ?? "")
+        .flatMap((celula) => [...celula.matchAll(/`([^`]+)`/g)].map((m) => m[1]))
+        .filter((t) => t.includes(" ")),
+    ),
+  ];
+
+  assert.ok(
+    titulos.length >= 2,
+    `esperava ao menos 2 títulos TS citados na coluna Guarda, achei ${titulos.length} — ` +
+      "o parser da tabela quebrou, não o runbook",
+  );
+
+  const fantasmas = titulos.filter((t) => !esteArquivo.includes(t));
+  assert.deepEqual(
+    fantasmas,
+    [],
+    "o runbook cita título de teste que não existe mais neste arquivo — " +
+      "renomear o teste não pode deixar o documento apontando para o vazio",
+  );
+});
