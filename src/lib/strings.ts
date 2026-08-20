@@ -1783,6 +1783,11 @@ const pt = {
     // #898 (spike) — Status Center como activity-dropdown + histórico de sessão
     atividadesTitulo: "{n} novas atividades",
     atividadesTituloVazio: "Atividades",
+    // #1290: rótulo do SINO na title bar (tooltip = aria-label). O título do
+    // painel continua sendo `atividadesTitulo`; aqui o nome é o do lugar
+    // ("Central de status"), que é o que o hover precisa dizer sem clicar.
+    centralStatus: "Central de status",
+    centralStatusNovas: "Central de status — {n} novas",
     atividadesSubtitulo: "O que aconteceu nos seus arquivos",
     desfazer: "Desfazer",
     // #898 (fatia 1) — controles de linha ATIVA no Status Center (pausar/retomar)
@@ -4010,6 +4015,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #898 (spike) — Status Center as activity-dropdown + session history
     atividadesTitulo: "{n} new activities",
     atividadesTituloVazio: "Activity",
+    // #1290: label of the BELL in the title bar (tooltip = aria-label).
+    centralStatus: "Status center",
+    centralStatusNovas: "Status center — {n} new",
     atividadesSubtitulo: "What happened with your files",
     desfazer: "Undo",
     // #898 (slice 1) — ACTIVE-row controls in the Status Center (pause/resume)

@@ -195,43 +195,53 @@ export function ActivityDropdown({
     (a, b) => b.progresso.startedAtMs - a.progresso.startedAtMs,
   );
 
+  // #1290: um rótulo só pro sino — tooltip E `aria-label` saem daqui, então
+  // não há como um mudar e o outro ficar pra trás.
+  const rotuloSino =
+    naoVistas > 0
+      ? preencher(t.arquivos.centralStatusNovas, { n: naoVistas })
+      : t.arquivos.centralStatus;
+
   return (
     <Popover open={aberto} onOpenChange={setAberto}>
       {/* #987: trigger = botão-ícone de chrome na title bar (sino + badge de
           NÃO-VISTAS no canto). Some quando não há atividade nenhuma (o guard
           `ops.length === 0` acima) — o sino só aparece quando há o que mostrar. */}
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg",
-            "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-            aberto && "bg-muted text-foreground",
-          )}
-          aria-label={
-            naoVistas > 0
-              ? preencher(t.arquivos.atividadesTitulo, { n: naoVistas })
-              : t.arquivos.atividadesTituloVazio
-          }
-        >
-          <Bell className="size-5" />
-          {/* #898 fatia 3 (#966): badge de NÃO-VISTAS ("N novas") — some quando
-              zero (tudo visto). Cor pelo estado agregado (erro>ativo>concluído). */}
-          {naoVistas > 0 && (
-            <Badge
-              variant={badgeVariant}
-              className={cn(
-                "absolute -right-1 -top-1 min-w-4 justify-center rounded-full px-1 py-0 text-[10px] leading-4 tabular-nums",
-                badgeExtra,
-              )}
-              aria-hidden
-            >
-              {naoVistas}
-            </Badge>
-          )}
-        </button>
-      </PopoverTrigger>
+      {/* #1290: o sino era o único ícone de chrome sem tooltip — tinha só o
+          `aria-label`, que o mouse não lê. Uso o `TooltipAcao` (padrão-ouro do
+          Explorer, `side="bottom"`, mesmo delay dos vizinhos) e o rótulo é o
+          MESMO texto do `aria-label`: quem lê com o olho e quem lê com leitor
+          de tela ouvem a mesma coisa. Sem `atalhoId` — o sino não tem atalho. */}
+      <TooltipAcao label={rotuloSino}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg",
+              "text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              aberto && "bg-muted text-foreground",
+            )}
+            aria-label={rotuloSino}
+          >
+            <Bell className="size-5" />
+            {/* #898 fatia 3 (#966): badge de NÃO-VISTAS ("N novas") — some quando
+                zero (tudo visto). Cor pelo estado agregado (erro>ativo>concluído). */}
+            {naoVistas > 0 && (
+              <Badge
+                variant={badgeVariant}
+                className={cn(
+                  "absolute -right-1 -top-1 min-w-4 justify-center rounded-full px-1 py-0 text-[10px] leading-4 tabular-nums",
+                  badgeExtra,
+                )}
+                aria-hidden
+              >
+                {naoVistas}
+              </Badge>
+            )}
+          </button>
+        </PopoverTrigger>
+      </TooltipAcao>
 
       {/* Conteúdo ANCORADO no sino (align end → alinha à direita, sob o chrome).
           Cabeçalho (título + subtítulo) + "Limpar concluídas" + lista escalonada. */}
