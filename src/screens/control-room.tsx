@@ -567,7 +567,7 @@ export function ControlRoomScreen({
           }
         });
     },
-    [caixaAtiva, setSubpastas, t]
+    [atualLista, caixaAtiva, setSubpastas, t]
   );
 
   // Trocar de caixa é uma fronteira de dados: nenhuma seleção, paginação,
@@ -595,6 +595,7 @@ export function ControlRoomScreen({
     setPastaSel,
     setSubpastas,
     setTemMais,
+    limparDeletadas,
   ]);
 
   // O submenu "Mover para…" precisa da árvore INTEIRA (não só do que o usuário
@@ -753,6 +754,8 @@ export function ControlRoomScreen({
     chaveCache,
     setMensagens,
     atualizarCachePasta,
+    naoDeletada,
+    atualLista,
   ]);
 
   // Recarrega o que a mutação de uma PASTA invalidou: as contagens do sidebar
@@ -1428,6 +1431,7 @@ export function ControlRoomScreen({
     filtroGraph,
     pastaCargaAcessoNegado,
     pastaSel,
+    idsDeletadas,
   ]);
 
   // Reset visual do filtro ao TROCAR de pasta (#31 / D3): um filtro Graph da
@@ -1464,6 +1468,7 @@ export function ControlRoomScreen({
     pastaSel,
     pastaCargaAcessoNegado,
     recarga,
+    idsDeletadas,
   ]);
 
   // Paginação do filtro Graph via @odata.nextLink; dedup igual à busca.
