@@ -31,6 +31,7 @@ import { iniciais } from "@/lib/iniciais";
 import { preencher, useIdioma } from "@/lib/idioma";
 import type { Pessoa } from "@/lib/types";
 import {
+  deveCommitarBlur,
   deveCommitarEnter,
   deveLimparAposAplicar,
   emailValido,
@@ -240,8 +241,8 @@ export function CampoPessoas({
   }
 
   /** Commita o texto cru do input (endereço fora do diretório). */
-  function adicionarDigitado() {
-    const email = texto.trim().replace(/[,;]+$/, "").trim();
+  function adicionarDigitado(cru: string = texto) {
+    const email = cru.trim().replace(/[,;]+$/, "").trim();
     if (!email) return;
     if (valor.some((e) => mesmoEmail(e, email))) {
       setTexto("");
@@ -249,6 +250,30 @@ export function CampoPessoas({
       return;
     }
     aplicar([...selecionados, { nome: email, email }]);
+  }
+
+  /**
+   * #1374: sair do campo COMMITA o que foi digitado. Antes, blur nao era rota de
+   * commit nenhuma: o Base UI limpava o input e o endereco sumia sem virar chip
+   * e sem onChange (medido: input vazio, zero chamadas). Quem digita um e-mail e
+   * clica no Cc perdia o que escreveu.
+   */
+  /**
+   * #1374: commit ao sair do campo, na fase de CAPTURA.
+   *
+   * Medi por que o handler normal nao servia: quando o `onBlur` do input roda, o
+   * Base UI JA limpou o campo — o handler via string vazia tanto no estado
+   * quanto no `event.currentTarget.value` (medido: `data-blur-visto="vazio"`).
+   * A captura roda no ancestral ANTES dos handlers do proprio input, e ali o
+   * valor digitado ainda existe.
+   *
+   * So trata o INPUT: os chips tambem sao focaveis e passam por aqui.
+   */
+  function onBlurCapture(e: React.FocusEvent<HTMLElement>) {
+    const alvo = e.target as HTMLElement;
+    if (alvo.tagName !== "INPUT") return;
+    const cru = (alvo as HTMLInputElement).value;
+    if (deveCommitarBlur(cru)) adicionarDigitado(cru);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -272,7 +297,7 @@ export function CampoPessoas({
   }
 
   return (
-    <div className="flex items-start gap-2 px-3 py-2">
+    <div className="flex items-start gap-2 px-3 py-2" onBlurCapture={onBlurCapture}>
       <span className="mt-1.5 shrink-0 select-none text-xs text-muted-foreground">
         {rotulo}
       </span>

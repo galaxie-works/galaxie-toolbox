@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import type { Pessoa } from "../../lib/types.ts";
 import {
+  deveCommitarBlur,
   deveCommitarEnter,
   deveLimparAposAplicar,
 } from "./campo-pessoas-logic.ts";
@@ -71,4 +72,30 @@ test("#606 value-change: limpa numa seleção de sugestão com query parcial", (
 
 test("#606 value-change: texto vazio (remoção de chip) limpa/fecha normal", () => {
   assert.equal(deveLimparAposAplicar("", ["ana@voaz.com.br"]), true);
+});
+
+// #1374 (4ª volta): sair do campo passou a ser rota de commit. As tres voltas
+// anteriores so blindaram teclas (Enter, virgula, ponto-e-virgula) — e o blur,
+// que e como a maioria das pessoas sai de um campo, nao commitava nada.
+test("blur commita e-mail completo (era o caminho da 4a volta do #268)", () => {
+  assert.equal(deveCommitarBlur("externo@cliente.com"), true);
+});
+
+test("blur NAO commita query parcial — sair sem terminar nao vira destinatario", () => {
+  assert.equal(deveCommitarBlur("ful"), false);
+  assert.equal(deveCommitarBlur("externo@"), false);
+  assert.equal(deveCommitarBlur(""), false);
+  assert.equal(deveCommitarBlur("   "), false);
+});
+
+test("blur tolera separador solto no fim, como o Enter ja tolerava", () => {
+  assert.equal(deveCommitarBlur("externo@cliente.com,"), true);
+  assert.equal(deveCommitarBlur("externo@cliente.com; "), true);
+});
+
+test("blur commita mesmo quando o texto coincide com uma sugestao", () => {
+  // Diferente do Enter: ali excluimos o texto que casa com sugestao pra deixar o
+  // combobox selecionar. No blur nao ha selecao pendente — e o endereco e o
+  // mesmo, entao o adicionarDigitado deduplica.
+  assert.equal(deveCommitarBlur("fulano@contoso.com"), true);
 });
