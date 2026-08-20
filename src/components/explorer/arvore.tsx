@@ -16,6 +16,7 @@ import {
   type RotulosMenu,
   type TipoNoArvore,
 } from "./menu-arquivo";
+import { ICONE_DA_RAIZ } from "./icone-raiz";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import { useIdioma } from "@/lib/idioma";
@@ -27,10 +28,12 @@ import type {
   NetworkLocation,
 } from "@/lib/types";
 import {
-  CAMINHO_ACESSO_RAPIDO,
-  CAMINHO_CLOUD,
+  RAIZES_VIRTUAIS,
+  type ChaveTituloRaiz,
+  type RaizVirtual,
   CAMINHO_ESTE_PC,
-  CAMINHO_REDE, pathPai,} from "./caminho";
+  pathPai,
+} from "./caminho";
 import { estaFixado, mesmoCaminho, type PinAcessoRapido } from "./quick-access";
 import { rotuloDrive } from "./rotulo-drive";
 import { TooltipAcao } from "./tooltip-acao";
@@ -40,13 +43,12 @@ import { TooltipAcao } from "./tooltip-acao";
 // existe ':' logo após a letra do drive), então dá pra distinguir uma raiz
 // ESTÁTICA (filhos vêm por prop) de um caminho LAZY (filhos vêm do disco) só pelo
 // valor, sem uma flag extra por nó.
-const RAIZ_ESTE_PC = "::este-pc::";
-// #1287: as outras raízes usam a MESMA sentinela como `value` do accordion e
-// como `navPath` (o clique no cabeçalho navega pra view de tiles) — fonte única
-// em `caminho.ts`, então o header ativo casa com o `currentPath` da view.
-const RAIZ_ACESSO_RAPIDO = CAMINHO_ACESSO_RAPIDO;
-const RAIZ_CLOUD = CAMINHO_CLOUD;
-const RAIZ_REDE = CAMINHO_REDE;
+// #1287 (reprovação da Lúmen): sentinela, ícone e título de cada raiz vêm do
+// `RAIZES_VIRTUAIS` do `caminho.ts`. Antes o ícone era escrito à mão aqui E na
+// view — trocar num só deixava sidebar e página discordando, com a suíte verde.
+const RAIZ = Object.fromEntries(
+  RAIZES_VIRTUAIS.map((r) => [r.titulo, r]),
+) as Record<ChaveTituloRaiz, RaizVirtual>;
 
 /** Um valor de accordion é "lazy" (carrega filhos do disco ao abrir) quando é um
  *  caminho real; as raízes estáticas usam o prefixo-sentinela "::". */
@@ -277,10 +279,10 @@ export function ArvoreArquivos({
   // Manter um sentinela em `open` sem FolderItem correspondente (ex.: seção de
   // nuvem/rede ausente) é inofensivo — o Radix ignora valores desconhecidos.
   const [open, setOpen] = useState<string[]>(() => [
-    RAIZ_ESTE_PC,
-    RAIZ_CLOUD,
-    RAIZ_REDE,
-    RAIZ_ACESSO_RAPIDO,
+    RAIZ.drives.valorArvore,
+    RAIZ.driveSecaoCloud.valorArvore,
+    RAIZ.driveSecaoRede.valorArvore,
+    RAIZ.acessoRapido.valorArvore,
   ]);
   // #869: separa locais de rede (kind `network`) dos demais — cada grupo vira uma
   // seção-irmã (This PC só locais/removíveis/etc.; "Locais de rede" à parte).
@@ -333,10 +335,10 @@ export function ArvoreArquivos({
       {/* Raiz "Este computador" → drives (estáticos) → pastas (lazy). Clicar o
           cabeçalho navega pro This PC (grade de drives, #855). */}
       <SecaoRaiz
-        value={RAIZ_ESTE_PC}
+        value={RAIZ.drives.valorArvore}
         label={t.arquivos.drives}
-        navPath={CAMINHO_ESTE_PC}
-        icon={Monitor}
+        navPath={RAIZ.drives.sentinela}
+        icon={ICONE_DA_RAIZ[RAIZ.drives.icone]}
         currentPath={currentPath}
         onNavegar={onNavegar}
       >
@@ -366,10 +368,10 @@ export function ArvoreArquivos({
           item 3 — os ativos já existiam no repo). Cada item é pasta lazy (navega pro `path`). */}
       {cloudLocations && cloudLocations.length > 0 && (
         <SecaoRaiz
-          value={RAIZ_CLOUD}
+          value={RAIZ.driveSecaoCloud.valorArvore}
           label={t.arquivos.driveSecaoCloud}
-          navPath={CAMINHO_CLOUD}
-          icon={Cloud}
+          navPath={RAIZ.driveSecaoCloud.sentinela}
+          icon={ICONE_DA_RAIZ[RAIZ.driveSecaoCloud.icone]}
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
@@ -401,10 +403,10 @@ export function ArvoreArquivos({
           `drives.filter(...)`, e atalho sem letra não está em `drives`. */}
       {(drivesRede.length > 0 || (networkLocations?.length ?? 0) > 0) && (
         <SecaoRaiz
-          value={RAIZ_REDE}
+          value={RAIZ.driveSecaoRede.valorArvore}
           label={t.arquivos.driveSecaoRede}
-          navPath={CAMINHO_REDE}
-          icon={Network}
+          navPath={RAIZ.driveSecaoRede.sentinela}
+          icon={ICONE_DA_RAIZ[RAIZ.driveSecaoRede.icone]}
           currentPath={currentPath}
           onNavegar={onNavegar}
         >
@@ -442,10 +444,10 @@ export function ArvoreArquivos({
           #1287: o cabeçalho navega pra view de tiles do Acesso rápido. */}
       {acessoRapido && acessoRapido.length > 0 && (
         <SecaoRaiz
-          value={RAIZ_ACESSO_RAPIDO}
+          value={RAIZ.acessoRapido.valorArvore}
           label={t.arquivos.acessoRapido}
-          navPath={CAMINHO_ACESSO_RAPIDO}
-          icon={Pin}
+          navPath={RAIZ.acessoRapido.sentinela}
+          icon={ICONE_DA_RAIZ[RAIZ.acessoRapido.icone]}
           currentPath={currentPath}
           onNavegar={onNavegar}
         >

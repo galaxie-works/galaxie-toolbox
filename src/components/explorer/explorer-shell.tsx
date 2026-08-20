@@ -12,7 +12,6 @@ import {
   Network,
   PanelLeftClose,
   PanelLeftOpen,
-  Pin,
 } from "lucide-react";
 import type { ImperativePanelHandle } from "react-resizable-panels";
 import { toast } from "sonner";
@@ -57,6 +56,7 @@ import { iconeDaPasta } from "./home-view-icones";
 import { rotuloDrive } from "./rotulo-drive";
 import { ArvoreArquivos, RailArvore, type MenuArvore } from "./arvore";
 import { useAcoesPublicadas } from "./acoes-publicadas";
+import { ICONE_DA_RAIZ } from "./icone-raiz";
 import { larguraIdealPct, temLayoutSalvo } from "@/lib/largura-painel";
 import { NavBarArquivos } from "./navbar";
 import { ContentPane } from "./content-pane";
@@ -75,6 +75,7 @@ import {
   CAMINHO_ESTE_PC,
   CAMINHO_REDE,
   ehRaizVirtual,
+  raizVirtual,
   nomeBase,
   pathPai,
 } from "./caminho";
@@ -325,26 +326,16 @@ export function ExplorerShell({
     const p = nav.currentPath;
     // #1287: as raízes virtuais (This PC + Cloud/Rede/Acesso rápido) reportam o
     // rótulo da raiz, não o `nomeBase` do sentinel (que seria "::cloud::").
-    const rotuloRaiz =
-      p === CAMINHO_ESTE_PC
-        ? t.arquivos.drives
-        : p === CAMINHO_CLOUD
-          ? t.arquivos.driveSecaoCloud
-          : p === CAMINHO_REDE
-            ? t.arquivos.driveSecaoRede
-            : p === CAMINHO_ACESSO_RAPIDO
-              ? t.arquivos.acessoRapido
-              : null;
+    const raiz = raizVirtual(p);
+    const rotuloRaiz = raiz ? t.arquivos[raiz.titulo] : null;
     const rotulo = rotuloRaiz ?? nomeBase(p);
     const caminho = rotuloRaiz ?? p;
     onLocalChangeRef.current?.({ rotulo, caminho });
-  }, [
-    nav.currentPath,
-    t.arquivos.drives,
-    t.arquivos.driveSecaoCloud,
-    t.arquivos.driveSecaoRede,
-    t.arquivos.acessoRapido,
-  ]);
+    // A dep é `t.arquivos` inteiro porque o título agora vem por CHAVE do mapa
+    // (`t.arquivos[raiz.titulo]`) — o lint não consegue, e não deveria, provar
+    // quais chaves são lidas. `t.arquivos` só troca quando o idioma troca, que é
+    // exatamente quando este efeito precisa rodar de novo.
+  }, [nav.currentPath, t.arquivos]);
 
   // #724: watcher de disco na pasta atual (live refresh). CRÍTICO — a `parar` que
   // a promise resolve DEVE ser chamada ao trocar de pasta / desmontar, e a
@@ -477,6 +468,18 @@ export function ExplorerShell({
       Icon: ehHome ? House : iconeDaPasta(e.name),
     };
   });
+
+  // #1287: a lista de tiles POR raiz. Só isto é específico de cada uma — título
+  // e ícone vêm do mapa. This PC fica de fora: ele tem a `DrivesView` própria.
+  const itensDaRaiz: Record<string, ItemRaiz[]> = {
+    [CAMINHO_CLOUD]: itensCloud,
+    [CAMINHO_REDE]: itensRede,
+    [CAMINHO_ACESSO_RAPIDO]: itensAcesso,
+  };
+  const raizAtual = raizVirtual(nav.currentPath);
+  // O This PC não passa por aqui (view de drives própria, mais acima).
+  const raizDaView =
+    raizAtual && raizAtual.sentinela !== CAMINHO_ESTE_PC ? raizAtual : null;
 
   // #871 (fatia 2b/2c): dispara a busca recursiva. Numa PASTA (2b) = uma raiz; no
   // This PC (2c) = fan-out sobre TODOS os drives. Cancela os handles anteriores,
@@ -870,32 +873,17 @@ export function ExplorerShell({
               // Por CAMINHO: vale pra qualquer forma de chegar na home (clique,
               // caminho digitado, subir a partir de Desktop).
               <HomeView homePath={nav.currentPath} onNavegar={navegar} />
-            ) : nav.currentPath === CAMINHO_CLOUD ? (
-              // #1287: raiz Cloud drives → grade de mounts (OneDrive/Google
-              // Drive), no estilo do This PC. Sentinela de caminho (caminho.ts).
+            ) : raizDaView ? (
+              // #1287: as três raízes semânticas (Cloud drives / Locais de rede
+              // / Acesso rápido) viram UMA passagem, no estilo do This PC. Antes
+              // eram três blocos com título e ícone escritos à mão — e foi por
+              // isso que trocar o ícone só aqui deixava a página discordando do
+              // sidebar com a suíte inteira verde. Título e ícone saem do MESMO
+              // mapa que a árvore lê; só a LISTA é por raiz.
               <RootView
-                titulo={t.arquivos.driveSecaoCloud}
-                icone={Cloud}
-                itens={itensCloud}
-                vazioLabel={t.arquivos.vazio}
-                onNavegar={navegar}
-              />
-            ) : nav.currentPath === CAMINHO_REDE ? (
-              // #1287: raiz Locais de rede → drives mapeados + atalhos sem letra.
-              <RootView
-                titulo={t.arquivos.driveSecaoRede}
-                icone={Network}
-                itens={itensRede}
-                vazioLabel={t.arquivos.vazio}
-                onNavegar={navegar}
-              />
-            ) : nav.currentPath === CAMINHO_ACESSO_RAPIDO ? (
-              // #1287: raiz Acesso rápido → tiles dos itens fixados/conhecidos,
-              // ícone semântico (Home/pasta conhecida) reusando `iconeDaPasta`.
-              <RootView
-                titulo={t.arquivos.acessoRapido}
-                icone={Pin}
-                itens={itensAcesso}
+                titulo={t.arquivos[raizDaView.titulo]}
+                icone={ICONE_DA_RAIZ[raizDaView.icone]}
+                itens={itensDaRaiz[raizDaView.sentinela] ?? []}
                 vazioLabel={t.arquivos.vazio}
                 onNavegar={navegar}
               />
