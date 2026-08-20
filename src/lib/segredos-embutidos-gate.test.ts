@@ -89,3 +89,87 @@ test("#1055: o runbook não lista valor que já saiu do código", () => {
       "inventário que descreve o passado dá falsa sensação de cobertura",
   );
 });
+
+// ── #1055 (DoD 3): a rotação deixa de ser só documentada e passa a ser TESTÁVEL ─
+//
+// O runbook manda "rotacione o secret X no GitHub". Isso só funciona enquanto a
+// CORRENTE estiver inteira: o código lê `option_env!("X")`, e o `release.yml`
+// precisa injetar `X` a partir do secret `X`.
+//
+// Dois elos arrebentam calados:
+//
+// 1. **A injeção some** (alguém limpa o workflow). `option_env!` vira `None`, a
+//    telemetria cai fail-closed e o build passa verde — sem credencial e sem
+//    aviso. O operador só descobre quando for procurar dado que nunca chegou.
+//
+// 2. **Os nomes divergem** (`X: ${{ secrets.X_ANTIGO }}`). Aí é pior: rotacionar
+//    `X` no GitHub não muda NADA no binário, e o token velho — o que se queria
+//    justamente revogar — continua embarcando em todo release. A rotação
+//    *parece* ter acontecido.
+//
+// O elo 2 é o que transforma um incidente de segurança em incidente longo: a
+// pessoa acredita ter revogado. Por isso o gate confere o nome dos DOIS lados.
+
+const WORKFLOW = ".github/workflows/release.yml";
+
+/**
+ * Valores embutidos que o `release.yml` legitimamente NÃO injeta — cada um com
+ * o motivo que o runbook registra. O default é o contrário (tem de injetar):
+ * `option_env!` novo entra cobrado, e quem souber que é exceção declara aqui.
+ */
+const FORA_DO_RELEASE: Record<string, string> = {
+  GALAXIE_BUILD_SHA: "sai do build do signaling (Docker), não do instalador — #1311",
+  GALAXIE_REMOTE_SIGNALING_URL: "config de host, não credencial; só muda se o host mudar",
+  GALAXIE_SIGN_PIN_ISSUER: "pin de publisher: fica vazio até o cert EV existir (S7/F5)",
+  GALAXIE_SIGN_PIN_SUBJECT_O: "pin de publisher: idem",
+};
+
+/** `NOME: ${{ secrets.ORIGEM }}` / `${{ vars.ORIGEM }}` → NOME ⇒ ORIGEM. */
+function injecoesDoRelease(): Map<string, string> {
+  const yml = readFileSync(WORKFLOW, "utf8");
+  const re = /^\s*([A-Z0-9_]+):\s*\$\{\{\s*(?:secrets|vars)\.([A-Z0-9_]+)\s*\}\}/gm;
+  return new Map([...yml.matchAll(re)].map((m): [string, string] => [m[1], m[2]]));
+}
+
+test("#1055: todo valor embutido que o release deve injetar está no workflow", () => {
+  const injetados = injecoesDoRelease();
+
+  // Sanidade: gate que não enxerga nada passa para sempre (lição do `icon: true`).
+  assert.ok(
+    injetados.size >= 5,
+    `o parser achou só ${injetados.size} injeções em ${WORKFLOW} — o regex quebrou, não o workflow`,
+  );
+
+  const ausentes = [...nomesEmbutidos().keys()]
+    .filter((n) => !(n in FORA_DO_RELEASE))
+    .filter((n) => !injetados.has(n));
+
+  assert.deepEqual(
+    ausentes,
+    [],
+    `valor lido por \`option_env!\` que ${WORKFLOW} não injeta. No binário entregue ` +
+      "isso vira `None` em silêncio: a telemetria cai fail-closed e o release passa " +
+      "verde sem credencial. Se a ausência for proposital, declare em FORA_DO_RELEASE " +
+      "com o motivo.",
+  );
+});
+
+test("#1055: rotacionar o secret alcança o build (nomes não divergem)", () => {
+  // Só os valores que o código EMBUTE. Um `GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}`
+  // diverge de propósito — `GH_TOKEN` é o nome que o `gh` exige, e nada disso
+  // entra no binário. A corrente que importa aqui é a do `option_env!`.
+  const embutidos = nomesEmbutidos();
+  const divergentes = [...injecoesDoRelease().entries()]
+    .filter(([env]) => embutidos.has(env) && !(env in FORA_DO_RELEASE))
+    .filter(([env, origem]) => env !== origem)
+    .map(([env, origem]) => `${env} lê secrets/vars.${origem}`);
+
+  assert.deepEqual(
+    divergentes,
+    [],
+    "a variável embutida e o secret que a alimenta têm nomes diferentes: rotacionar " +
+      "o secret que o runbook nomeia NÃO troca o valor que vai no binário, e o token " +
+      "que se queria revogar continua embarcando. Rotação que parece ter acontecido " +
+      "é pior que rotação não feita.",
+  );
+});
