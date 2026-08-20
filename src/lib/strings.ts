@@ -1783,6 +1783,9 @@ const pt = {
     // #898 (spike) — Status Center como activity-dropdown + histórico de sessão
     atividadesTitulo: "{n} novas atividades",
     atividadesTituloVazio: "Atividades",
+    // #869 (adendo do Wagner): colapso do painel da arvore do Files.
+    sidebarColapsar: "Recolher a barra lateral",
+    sidebarExpandir: "Expandir a barra lateral",
     // #1290: rótulo do SINO na title bar (tooltip = aria-label). O título do
     // painel continua sendo `atividadesTitulo`; aqui o nome é o do lugar
     // ("Central de status"), que é o que o hover precisa dizer sem clicar.
@@ -4015,6 +4018,9 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     // #898 (spike) — Status Center as activity-dropdown + session history
     atividadesTitulo: "{n} new activities",
     atividadesTituloVazio: "Activity",
+    // #869: collapse of the Files tree panel.
+    sidebarColapsar: "Collapse sidebar",
+    sidebarExpandir: "Expand sidebar",
     // #1290: label of the BELL in the title bar (tooltip = aria-label).
     centralStatus: "Status center",
     centralStatusNovas: "Status center — {n} new",
