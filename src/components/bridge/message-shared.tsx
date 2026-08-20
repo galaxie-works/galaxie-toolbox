@@ -225,7 +225,10 @@ export function SubmenuMover({
             {carregando ? t.controlRoom.moverCarregandoPastas : t.controlRoom.moverSemPastas}
           </p>
         ) : (
-          <ScrollArea className="max-h-64">
+          /* O teto vai no VIEWPORT: o `ScrollArea` renderiza por dentro um
+             viewport `size-full`, então `max-h-*` no Root não clipa nada e o
+             menu estica com a lista (#1324, mesmo defeito do #1321). */
+          <ScrollArea className="**:data-[slot=scroll-area-viewport]:max-h-64">
             <div className="p-1">
               {filtradas.map((p) => (
                 <ContextMenuItem
