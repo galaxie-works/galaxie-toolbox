@@ -91,6 +91,16 @@ test("#1270: o release.yml realmente usa a fonte única — sem placeholder sobr
     /notes\s*=\s*"GALAXIE \$tag"/,
     "o placeholder do latest.json voltou — era ESTE o bug do #1270",
   );
+  // #1305: o guard acima só pega a FORMA HISTÓRICA (`notes = "..."` direto). O fix
+  // do #1270 introduziu a variável intermediária `$notas`, e é por ela que a
+  // regressão passa hoje: `$notas = "GALAXIE $tag"` deixa `latest.json.notes`
+  // literal com a suíte 463/463 verde. Barra a atribuição literal de `$notas`; o
+  // release.yml bom recebe `$notas` de `Get-Content` (=`(`, não `"`) → sem falso positivo.
+  assert.doesNotMatch(
+    yml,
+    /\$notas\s*=\s*"/,
+    "as notas viraram literal no workflow — tem de sair do arquivo (Get-Content), não de uma string",
+  );
   assert.doesNotMatch(
     yml,
     /--notes\s+"Instalador para Windows/,
