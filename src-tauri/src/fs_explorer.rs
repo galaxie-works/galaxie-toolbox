@@ -2274,6 +2274,10 @@ fn montar_plano_undo(entry: &OperationJournalEntry) -> UndoPlan {
 /// (recria o pai do retorno se sumiu). Depois limpa dirs vazios criados.
 /// #1282 — mantido com a assinatura antiga (8 chamadores em teste dependem
 /// dela). O nucleo observavel esta em [`executar_undo_observado`].
+/// #1437 — a producao migrou pro `fs_undo_op`/`executar_undo_observado`; hoje os
+/// unicos chamadores estao em `mod tests`. `#[cfg(test)]` deixa esse fato
+/// explicito (era "dead code que parece vivo" no build de release).
+#[cfg(test)]
 fn executar_undo(entry: &OperationJournalEntry) -> UndoReport {
     executar_undo_observado(entry, &mut |_, _, _| {}).0
 }
@@ -2300,7 +2304,7 @@ fn executar_undo_observado(
     let total = entry.items.iter().filter(|i| !i.is_dir).count();
     let mut feitos = 0usize;
     let mut afetados: Vec<String> = Vec::new();
-    let mut marcar = |p: &str, afetados: &mut Vec<String>| {
+    let marcar = |p: &str, afetados: &mut Vec<String>| {
         if let Some(pai) = Path::new(p).parent().map(|d| d.to_string_lossy().into_owned()) {
             if !pai.is_empty() && !afetados.iter().any(|d| d.eq_ignore_ascii_case(&pai)) {
                 afetados.push(pai);
