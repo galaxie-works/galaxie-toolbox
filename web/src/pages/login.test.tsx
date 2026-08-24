@@ -1,42 +1,57 @@
-// #1484 AC1 — o scaffold sobe e SERVE a rota de login. Este teste trava o
-// contrato mínimo: a rota /login existe, o catch-all cai nela, e a tela de login
-// renderiza (nos dois idiomas). O wiring de auth (AC2/AC3) é a fatia pós-#1469.
-import { describe, it, expect } from "vitest";
+// #1484 — login por IDENTIDADE FEDERADA (decisão do Altair #1503): 3 provedores
+// (microsoft/microsoft-personal/google, os do desktop), SEM e-mail/senha. Este
+// teste trava: a rota /login existe + catch-all; renderiza os 3 botões de provedor
+// nos 2 idiomas; NÃO há campo de senha (o produto não guarda senha); e clicar um
+// provedor inicia o redirect OAuth pro caminho do provedor.
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
-import { afterEach } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { LoginPage } from "./login";
 import { rotas } from "@/rotas";
 import { DICIONARIOS } from "@/i18n";
 
-afterEach(cleanup);
+const assign = vi.fn();
+beforeEach(() => {
+  vi.spyOn(window.location, "assign").mockImplementation(assign);
+});
+afterEach(() => {
+  cleanup();
+  assign.mockReset();
+  vi.restoreAllMocks();
+});
 
-describe("#1484 scaffold — rota de login", () => {
+describe("#1484 login federado", () => {
   it("o roteador serve /login e manda o resto pra lá (catch-all)", () => {
     const caminhos = rotas.routes.map((r) => r.path);
     expect(caminhos).toContain("/login");
     expect(caminhos).toContain("*");
   });
 
-  it("renderiza a tela de login em pt-BR", () => {
+  it("renderiza os 3 botões de provedor em pt-BR e NÃO tem campo de senha", () => {
     render(<LoginPage idioma="pt-BR" />);
-    expect(
-      screen.getByRole("button", { name: DICIONARIOS["pt-BR"].entrar }),
-    ).toBeTruthy();
-    expect(screen.getByText(DICIONARIOS["pt-BR"].bemVindo)).toBeTruthy();
+    const t = DICIONARIOS["pt-BR"];
+    expect(screen.getByRole("button", { name: t.entrarCom.microsoft })).toBeTruthy();
+    expect(screen.getByRole("button", { name: t.entrarCom["microsoft-personal"] })).toBeTruthy();
+    expect(screen.getByRole("button", { name: t.entrarCom.google })).toBeTruthy();
+    // o produto NUNCA guardou senha — a tela não pode ter campo de senha
+    expect(document.querySelector('input[type="password"]')).toBeNull();
   });
 
-  it("renderiza a tela de login em en (i18n)", () => {
+  it("renderiza os provedores em en (i18n)", () => {
     render(<LoginPage idioma="en" />);
-    expect(
-      screen.getByRole("button", { name: DICIONARIOS.en.entrar }),
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: DICIONARIOS.en.entrarCom.google })).toBeTruthy();
   });
 
-  it("a UI de login não decide autorização — o submit é inerte por ora (barreira é server-side)", () => {
+  it("clicar um provedor inicia o redirect OAuth pro caminho do provedor", async () => {
+    const u = userEvent.setup();
     render(<LoginPage idioma="pt-BR" />);
-    // Sem sessão/rede: a tela existe mas não concede acesso. A decisão é do BE
-    // (#1469, default-deny). Aqui só garantimos que os campos estão presentes.
-    expect(screen.getByLabelText(DICIONARIOS["pt-BR"].email)).toBeTruthy();
-    expect(screen.getByLabelText(DICIONARIOS["pt-BR"].senha)).toBeTruthy();
+    await u.click(screen.getByRole("button", { name: DICIONARIOS["pt-BR"].entrarCom.google }));
+    expect(assign).toHaveBeenCalledWith("/api/v1/session/google");
+  });
+
+  it("a UI de login não decide autorização — só INICIA o fluxo (principal vem do provedor, sessão do BE)", () => {
+    render(<LoginPage idioma="pt-BR" />);
+    // sem sessão/rede a tela existe mas não concede acesso; a barreira é server-side.
+    expect(screen.getByText(DICIONARIOS["pt-BR"].semSenha)).toBeTruthy();
   });
 });
