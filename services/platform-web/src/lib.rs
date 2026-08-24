@@ -14,6 +14,10 @@
 
 #![forbid(unsafe_code)]
 
+/// Contrato HTTP web↔platform (#1503) — tabela de rotas + códigos, espelho de
+/// `docs/plataforma/contrato-http-v1.md`, com os invariantes amarrados por teste.
+pub mod contrato;
+
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use rand::rngs::OsRng;
 use rand::RngCore;
