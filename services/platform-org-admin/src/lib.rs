@@ -60,8 +60,11 @@ pub enum AdminErro {
 ///    `Operacao::GerirOrg` da própria org — `AdminOrg` no escopo (AC4). Um `Member` (mesmo
 ///    que o M365 o chame de "owner") ⇒ `Negado` (AC1/AC3).
 ///
-/// **AC3 estrutural:** não há parâmetro de role do M365 nesta assinatura — a única fonte de
-/// autorização é a `Sessao` (o `Principal` da Galaxie).
+/// **AC3 (corrigido no #1475):** NÃO é "estrutural por falta de parâmetro" — o claim do M365
+/// (`Org.tenant_m365`) está DENTRO do `org_alvo: &Org`, alcançável aqui. A garantia é
+/// COMPORTAMENTAL: esta função **nunca lê** `org_alvo.tenant_m365`; a única fonte de
+/// autorização é a `Sessao` (o `Principal` da Galaxie). Provado por `ac3_claim_m365_nao_concede_admin`
+/// (planta o claim + Member ⇒ `Negado`), que mata o mutante que leria o claim pra conceder.
 #[must_use = "a decisão de autorização admin tem de ser respeitada — ignorá-la reabre AC1/AC2/AC3"]
 pub fn autorizar_acao_admin(
     sessao: &Sessao,
@@ -128,6 +131,42 @@ mod tests {
             autorizar_acao_admin(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA")),
             Err(AdminErro::Negado)
         );
+    }
+
+    // AC3 (correção do #1475 — o teste que FALTAVA; reprovação da @Lumen procedente): o
+    // claim do M365 na `Org` (`tenant_m365: Some(...)`) NÃO concede admin. Um MEMBER da
+    // própria org, MESMO com a org carregando um tenant M365, segue NEGADO —
+    // `autorizar_acao_admin` nunca lê `org_alvo.tenant_m365`. Os fixtures antigos tinham
+    // `tenant_m365: None` em todos, então o cenário "M365 presente" só existia no comentário;
+    // um mutante lendo o claim pra conceder passaria com o CI verde. Este planta o claim e o mata.
+    #[test]
+    fn ac3_claim_m365_nao_concede_admin() {
+        let org_com_m365 = Org {
+            id: OrgId("orgA".into()),
+            dominios: BTreeSet::new(),
+            tenant_m365: Some("tenant-graph-do-cliente".into()),
+        };
+        let membro = sessao_membro("u1", "orgA");
+        // TODAS as 8 ações, não só uma (medição da @Lumen no re-gate): testar uma célula
+        // deixa fuga POR AÇÃO — um mutante escopado a `GerirAssinatura` (o dano máximo que o
+        // @Altair nomeou: "a Microsoft passa a decidir quem gere a ASSINATURA") passaria com
+        // uma ação só. O laço mata a fuga ampla E qualquer fuga por ação. Mesmo idiom do ac4.
+        for acao in [
+            AcaoAdminOrg::ListarMembros,
+            AcaoAdminOrg::ConvidarMembro,
+            AcaoAdminOrg::RemoverMembro,
+            AcaoAdminOrg::MudarPapelMembro,
+            AcaoAdminOrg::ReivindicarDominio,
+            AcaoAdminOrg::VerificarDominio,
+            AcaoAdminOrg::EditarSettings,
+            AcaoAdminOrg::GerirAssinatura,
+        ] {
+            assert_eq!(
+                autorizar_acao_admin(&membro, &acao, &org_com_m365),
+                Err(AdminErro::Negado),
+                "o tenant M365 na Org não pode conceder {acao:?} a um member (role do Graph ≠ autz)"
+            );
+        }
     }
 
     // AC2 — `org_admin` de A tenta gerir a org B ⇒ 404 (NaoEncontrada), não 403.
