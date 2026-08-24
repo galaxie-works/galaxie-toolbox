@@ -101,6 +101,19 @@ test("#1270: o release.yml realmente usa a fonte única — sem placeholder sobr
     /\$notas\s*=\s*"/,
     "as notas viraram literal no workflow — tem de sair do arquivo (Get-Content), não de uma string",
   );
+  // #1305 (2ª volta): o doesNotMatch acima é DENYLIST — só pega aspas DUPLAS. A
+  // `lumen` mediu que `$notas = 'GALAXIE $tag'` (aspas simples) passa por ele verde
+  // e vaza `$tag` LITERAL no latest.json.notes (PowerShell não interpola aspas
+  // simples — o usuário lê "GALAXIE $tag" cru no modal de update). Fecho a CLASSE
+  // com uma asserção POSITIVA (allowlist): `$notas` TEM de vir de `(Get-Content` —
+  // qualquer literal (simples, dupla, backtick, here-string, variável) reprova
+  // sozinho, inclusive o que eu não pensei. O release.yml bom
+  // (`$notas = (Get-Content "…" -Raw …).Trim()`) casa → sem falso positivo.
+  assert.match(
+    yml,
+    /\$notas\s*=\s*\(Get-Content\b/,
+    "as notas têm de vir do arquivo de notas (Get-Content), não de literal nenhum",
+  );
   assert.doesNotMatch(
     yml,
     /--notes\s+"Instalador para Windows/,
