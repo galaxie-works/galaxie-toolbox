@@ -85,8 +85,12 @@ impl ArmazemSessao for ArmazemMemoria {
     }
 }
 
-/// Nome do cookie de sessão da plataforma.
-pub const NOME_COOKIE_SESSAO: &str = "gx_sess";
+/// Nome do cookie de sessão da plataforma. O prefixo **`__Host-`** (achado do @Altair na
+/// revisão da fatia 3) mata cookie-shadowing POR IMPOSIÇÃO DO NAVEGADOR: um cookie
+/// `__Host-` só é aceito se for `Secure`, `Path=/` e SEM `Domain` — que é exatamente a
+/// política abaixo. Assim um subdomínio não pode plantar um `gx_sess` que sombreie o nosso.
+/// Barato só AGORA: renomear depois desloga toda sessão viva.
+pub const NOME_COOKIE_SESSAO: &str = "__Host-gx_sess";
 
 /// Valor do header `Set-Cookie` da sessão, com a política da fatia 2: `HttpOnly` (script
 /// nunca lê — mata roubo por XSS) + `Secure` (só HTTPS) + `SameSite=Lax` (mesma origem via
@@ -168,11 +172,13 @@ mod tests {
     #[test]
     fn cookie_carrega_httponly_secure_samesite() {
         let c = montar_cookie_sessao(&sid("abc123"));
-        assert!(c.contains("gx_sess=abc123"));
+        assert!(c.starts_with("__Host-"), "prefixo __Host- mata shadowing (imposto pelo browser)");
+        assert!(c.contains("__Host-gx_sess=abc123"));
         assert!(c.contains("HttpOnly"), "script nunca lê o valor");
-        assert!(c.contains("Secure"), "só HTTPS");
+        assert!(c.contains("Secure"), "só HTTPS (exigido pelo __Host-)");
         assert!(c.contains("SameSite=Lax"), "mesma origem, sem CORS");
-        assert!(c.contains("Path=/"));
+        assert!(c.contains("Path=/"), "exigido pelo __Host-");
+        assert!(!c.contains("Domain="), "__Host- proíbe Domain");
     }
 
     // Expurgo apaga no cliente (Max-Age=0) — complemento de `invalidar`, não substituto.

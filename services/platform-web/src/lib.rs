@@ -53,27 +53,25 @@ pub fn encerrar_sessao<A: ArmazemSessao>(armazem: &mut A, id: &SessaoId) -> Stri
     montar_cookie_expurgo()
 }
 
-/// Extrai o `SessaoId` do header `Cookie` do request (ex.: `gx_sess=abc; outro=1`).
-/// Devolve `None` se o cookie de sessão não está presente — e aí a borda trata como
-/// não-autenticado (default-deny; nunca "sessão vazia = todos").
+/// Extrai o `SessaoId` do header `Cookie` do request (ex.: `__Host-gx_sess=abc; outro=1`).
+/// Semântica EXATAMENTE-UM (achado do @Altair): zero cookie de sessão = não-autenticado;
+/// DOIS ou mais = **recusa** (`None`), não escolhe um. Dois `gx_sess` é sinal de
+/// shadowing/injeção — resolver por "o primeiro" deixaria o atacante plantar o que a
+/// borda lê. (O prefixo `__Host-` já dificulta plantar; isto é o cinto por cima.)
 pub fn sessao_id_do_cookie(header_cookie: &str) -> Option<SessaoId> {
-    header_cookie
-        .split(';')
-        .filter_map(|par| {
-            let par = par.trim();
-            let (nome, valor) = par.split_once('=')?;
-            if nome.trim() == NOME_COOKIE_SESSAO {
-                let v = valor.trim();
-                if v.is_empty() {
-                    None
-                } else {
-                    Some(SessaoId(v.to_string()))
-                }
-            } else {
-                None
-            }
-        })
-        .next()
+    let mut achados = header_cookie.split(';').filter_map(|par| {
+        let (nome, valor) = par.trim().split_once('=')?;
+        if nome.trim() == NOME_COOKIE_SESSAO {
+            let v = valor.trim();
+            (!v.is_empty()).then(|| SessaoId(v.to_string()))
+        } else {
+            None
+        }
+    });
+    match (achados.next(), achados.next()) {
+        (Some(id), None) => Some(id), // exatamente um
+        _ => None,                    // zero (não-auth) OU ≥2 (recusa por shadowing)
+    }
 }
 
 /// Resolve a sessão viva a partir do header `Cookie`: parse do id + `validar` no armazém.
@@ -167,5 +165,19 @@ mod tests {
         let (id, cookie) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"));
         assert!(!cookie.contains("orgA"), "o cookie não vaza escopo/org, só o id");
         assert!(cookie.contains(&id.0));
+    }
+
+    // Achado do @Altair: DOIS cookies de sessão = shadowing → RECUSA (None), não "o primeiro".
+    // Mesmo que um deles seja um id VÁLIDO no armazém, a presença de dois derruba a resolução.
+    #[test]
+    fn cookie_duplicado_recusa_nao_escolhe_um() {
+        let mut a = ArmazemMemoria::novo();
+        let (id, _) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"));
+        let dois = format!("{NOME_COOKIE_SESSAO}={}; {NOME_COOKIE_SESSAO}=plantado", id.0);
+        assert_eq!(sessao_id_do_cookie(&dois), None, "dois gx_sess = recusa");
+        assert!(
+            sessao_do_cookie(&a, &dois).is_none(),
+            "nem o id válido resolve quando há um segundo cookie (anti-shadowing)"
+        );
     }
 }
