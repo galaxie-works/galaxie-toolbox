@@ -205,6 +205,7 @@ jobs:
             services/platform-web
             services/platform-conta
             services/platform-org-admin
+            services/platform-config
 
       # ── src-tauri: caminho STUB (Remote OFF) — build default que sai pra quem não
       # usa o Remote. Barato (sem OpenSSL). Mantido pra guardar que o stub degrada. ──
@@ -277,6 +278,11 @@ jobs:
       # #1475: admin da org — autorização das ações admin sobre a fundação (dominio puro).
       - name: services/platform-org-admin (admin da org)
         working-directory: services/platform-org-admin
+        run: cargo test
+
+      # #1471: config do uso do app (prefs owner-scoped + allowlist) — domínio puro.
+      - name: services/platform-config (config do app)
+        working-directory: services/platform-config
         run: cargo test
 
   # #1193: o gate de clippy que NÃO existia. Até aqui o `#![deny(clippy::unwrap_used,
@@ -357,4 +363,9 @@ jobs:
       # #1475: admin da org entra no gate de clippy no mesmo PR do teste (RB7).
       - name: clippy platform-org-admin (-D warnings)
         working-directory: services/platform-org-admin
+        run: cargo clippy --all-targets -- -D warnings
+
+      # #1471: config do app entra no gate de clippy no mesmo PR do teste (RB7).
+      - name: clippy platform-config (-D warnings)
+        working-directory: services/platform-config
         run: cargo clippy --all-targets -- -D warnings
