@@ -17,6 +17,9 @@ pub mod pipe_server;
 /// Enforcement de capability por-frame, fail-closed (S7 #690, passo 3 — porteiro).
 pub mod autorizacao;
 
+/// Porteiro de comandos do pipe SYSTEM pós-`helloAck`, default-deny (S7.1 #1456, AC6).
+pub mod comando;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DesktopMode {
     Auto,
