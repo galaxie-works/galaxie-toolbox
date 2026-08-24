@@ -30,6 +30,9 @@
 
 use std::collections::BTreeSet;
 
+/// Ciclo de vida da sessão web (fatia 2): armazém server-side + política de cookie.
+pub mod sessao;
+
 /// Id opaco de um humano. Newtype pra não confundir com `OrgId` nem com um id de device.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UserId(pub String);
@@ -81,6 +84,16 @@ impl Principal {
 
     pub fn eh_staff(&self) -> bool {
         matches!(self, Principal::Staff { .. })
+    }
+
+    /// O usuário por trás do principal. Todo tipo carrega um `UserId` (inclusive staff) —
+    /// é a âncora pra invalidar TODAS as sessões de um humano na troca de senha (fatia 2).
+    pub fn usuario(&self) -> &UserId {
+        match self {
+            Principal::UsuarioFinal { usuario, .. }
+            | Principal::AdminOrg { usuario, .. }
+            | Principal::Staff { usuario } => usuario,
+        }
     }
 }
 
