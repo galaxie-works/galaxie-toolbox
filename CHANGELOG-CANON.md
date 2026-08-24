@@ -1,6 +1,9 @@
 # CHANGELOG — TEAM-CANON
 Histórico de emendas do canon (texto integral de cada versão no git: `git log -- TEAM-CANON.md`). O canon vivo não carrega histórico (v1.12 §8).
 
+## v1.16 · 2026-08-24 — war-room de-hardcodeado (#133 congelou em 2500)
+A #133 atingiu o teto do GitHub (2500 comentários, comentar desabilitado). Em vez de trocar #133→#1493 no texto (que congela de novo no próximo 2500), **de-hardcodeei**: o canon e o IDENTIDADES passam a dizer "o índice / war-room" e **o número vive no FATOS** (hoje #1493, sucessor da #133 legado). §4 registra o legado + aponta pro FATOS. Rollover feito com go do PO; time avisado por ccd (10 sessões); corpo da #133 aponta pra #1493. Próximo rollover = nova issue + trocar 1 número no FATOS, sem tocar a lei.
+
 ## v1.15 · 2026-08-24 — higiene de branch (Pollux mediu: 128 remotas, ~80% resíduo)
 - **Config (feita, não só escrita):** `delete_branch_on_merge = true` ligado no repo — branch de PR integrada some no merge, sem depender de memória. Registrado no FATOS.
 - **§2 higiene de branch:** cada um limpa a sua; **ninguém apaga branch de outro**. Mergeada em pre-prod = resíduo (some sem rito); não-mergeada = trabalho (só sai por triagem do dono).
