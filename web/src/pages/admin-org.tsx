@@ -20,16 +20,33 @@ import { buscar, CAMINHOS, type Membro } from "@/lib/org";
 // provado aqui é a metade do cliente (a UI reage à negativa e nunca endereça
 // org alheia). A outra metade nasce com o BE.
 
-type Aba = "membros" | "dominios" | "configuracoes" | "assinatura";
+type Aba = "membros" | "dominios" | "settings" | "assinatura";
 
-const ABAS: readonly Aba[] = [
-  "membros",
-  "dominios",
-  "configuracoes",
-  "assinatura",
-];
+const ABAS: readonly Aba[] = ["membros", "dominios", "settings", "assinatura"];
 
-export function AdminOrgPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
+/** Rótulo de cada aba — `settings` reusa `configuracoes` do dicionário. */
+const ROTULO: Record<Aba, keyof typeof DICIONARIOS["pt-BR"]> = {
+  membros: "membros",
+  dominios: "dominios",
+  settings: "configuracoes",
+  assinatura: "assinatura",
+};
+
+/**
+ * `org` é o identificador da organização, exigido pelo contrato (`/orgs/{org}`).
+ *
+ * É opcional porque **ainda não existe fonte pra ele**: `GET /me` não devolve a
+ * org e não há `GET /me/orgs`. Levantei a lacuna com o @alcor/@Altair. Enquanto
+ * não fecha, a tela DIZ que não sabe qual org — em vez de eu escolher um lugar
+ * de onde tirar o valor, que é o que o invariante 6 do contrato impede.
+ */
+export function AdminOrgPage({
+  idioma = idiomaAtual(),
+  org,
+}: {
+  idioma?: Idioma;
+  org?: string;
+}) {
   const t = DICIONARIOS[idioma];
   const [aba, setAba] = useState<Aba>("membros");
 
@@ -52,16 +69,22 @@ export function AdminOrgPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
                 : "rounded-lg px-3 py-1.5 text-sm text-neutral-600 hover:bg-neutral-200"
             }
           >
-            {t[chave]}
+            {t[ROTULO[chave]]}
           </button>
         ))}
       </nav>
 
       <section className="mx-auto mt-4 max-w-4xl rounded-2xl border border-neutral-200 bg-white p-6">
-        {aba === "membros" ? (
-          <PainelMembros idioma={idioma} />
+        {!org ? (
+          <Aviso titulo={t.orgIndefinida} detalhe={t.orgIndefinidaDetalhe} />
+        ) : aba === "membros" ? (
+          <PainelMembros idioma={idioma} org={org} />
         ) : (
-          <PainelPendente titulo={t[aba]} idioma={idioma} caminho={CAMINHOS[aba]} />
+          <PainelPendente
+            titulo={t[ROTULO[aba]]}
+            idioma={idioma}
+            caminho={CAMINHOS[aba](org)}
+          />
         )}
       </section>
     </main>
@@ -72,7 +95,7 @@ export function AdminOrgPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {
  * Membros — o painel que já fala com a porta de rede. Os outros três esperam o
  * formato do #1475-BE; ver `PainelPendente`.
  */
-function PainelMembros({ idioma }: { idioma: Idioma }) {
+function PainelMembros({ idioma, org }: { idioma: Idioma; org: string }) {
   const t = DICIONARIOS[idioma];
   const [estado, setEstado] = useState<
     "carregando" | "naoEhAdmin" | "naoEhSuaOrg" | "erro" | "pronto"
@@ -81,7 +104,7 @@ function PainelMembros({ idioma }: { idioma: Idioma }) {
 
   useEffect(() => {
     let vivo = true;
-    void buscar<Membro[]>(CAMINHOS.membros).then((r) => {
+    void buscar<Membro[]>(CAMINHOS.membros(org)).then((r) => {
       if (!vivo) return;
       setEstado(r.estado === "pronto" ? "pronto" : r.estado);
       if (r.estado === "pronto") setMembros(r.dados);
@@ -89,7 +112,7 @@ function PainelMembros({ idioma }: { idioma: Idioma }) {
     return () => {
       vivo = false;
     };
-  }, []);
+  }, [org]);
 
   if (estado === "carregando") return <p>{t.carregando}</p>;
   // Duas negativas, duas mensagens. Ver `lib/org.ts`: quem leva 403 já é da org

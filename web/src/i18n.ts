@@ -57,6 +57,11 @@ export interface Dicionario {
   semPermissaoDetalhe: string;
   naoEhSuaOrg: string;
   naoEhSuaOrgDetalhe: string;
+  // Estado TEMPORÁRIO: o contrato exige `/orgs/{org}` mas não há rota de onde
+  // o cliente descubra o `{org}` (`GET /me` não devolve org). Some quando a
+  // lacuna fechar; até lá a tela diz o que não sabe, em vez de eu inventar.
+  orgIndefinida: string;
+  orgIndefinidaDetalhe: string;
 }
 
 export const DICIONARIOS: Record<Idioma, Dicionario> = {
@@ -104,6 +109,9 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     // Deliberadamente vago: não confirma nem nega que a organização exista.
     naoEhSuaOrg: "Organização não encontrada",
     naoEhSuaOrgDetalhe: "Confira se você está na conta certa.",
+    orgIndefinida: "Organização não identificada",
+    orgIndefinidaDetalhe:
+      "Ainda não é possível saber a qual organização esta sessão pertence.",
   },
   en: {
     email: "Email",
@@ -149,6 +157,9 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     // Deliberadamente vago: não confirma nem nega que a organização exista.
     naoEhSuaOrg: "Organization not found",
     naoEhSuaOrgDetalhe: "Check whether you're in the right account.",
+    orgIndefinida: "Organization not identified",
+    orgIndefinidaDetalhe:
+      "We can't yet tell which organization this session belongs to.",
   },
 };
 
