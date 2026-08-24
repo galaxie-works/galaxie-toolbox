@@ -5,20 +5,22 @@ import { DICIONARIOS, idiomaAtual, type Idioma } from "@/i18n";
 // `src/lib/api.ts:232`). Decisão do Altair (#1503): NEM e-mail/senha (o produto
 // nunca guardou senha; senha = superfície nova de vazamento e de enumeração no
 // "esqueci minha senha") NEM só M365-work (excluiria conta pessoal/Google que o
-// produto já serve). A UI NÃO decide autorização — só INICIA o fluxo; o principal
-// é resolvido pelo provedor (upstream) e a sessão nasce no `POST /api/v1/session`.
+// produto já serve). A UI NÃO decide autorização — só INICIA o fluxo.
 //
-// O endpoint que INICIA o redirect OAuth ainda não está no contrato (§2 sendo
-// atualizada p/ federado; auth M365-web sem card) — `iniciarLogin` aponta pro
-// caminho assumido e é confirmado quando o fluxo landar.
+// Rota do contrato v1.2 §2 (federada, aprovada Altair #1514): o início é
+// **`GET /api/v1/auth/{provedor}`** — o servidor grava state+PKCE e responde 302
+// pro provedor; o provedor volta em `/auth/{provedor}/callback`, onde o servidor
+// resolve `(provedor, subject)` e emite o cookie de sessão. **NÃO existe `POST
+// /session`**: o cliente entregar token/credencial é o padrão proibido — o login
+// nasce do callback verificado pelo backend. O cliente só navega pro início.
 
 type Provedor = "microsoft" | "microsoft-personal" | "google";
 const PROVEDORES: Provedor[] = ["microsoft", "microsoft-personal", "google"];
 
 function iniciarLogin(provedor: Provedor) {
-  // Redirect iniciado pelo servidor (padrão OAuth): o servidor manda pro provedor,
-  // este volta, o servidor resolve o principal e emite o cookie de sessão.
-  window.location.assign(`/api/v1/session/${provedor}`);
+  // Navegação de topo pro início do fluxo OAuth (não passa pela porta `chamar` —
+  // é redirect, não fetch; por isso o prefixo `/api/v1` vai explícito aqui).
+  window.location.assign(`/api/v1/auth/${provedor}`);
 }
 
 export function LoginPage({ idioma = idiomaAtual() }: { idioma?: Idioma }) {

@@ -42,11 +42,11 @@ describe("#1484 login federado", () => {
     expect(screen.getByRole("button", { name: DICIONARIOS.en.entrarCom.google })).toBeTruthy();
   });
 
-  it("clicar um provedor inicia o redirect OAuth pro caminho do provedor", async () => {
+  it("clicar um provedor inicia o fluxo em GET /api/v1/auth/{provedor} (contrato v1.2 §2; NÃO /session)", async () => {
     const u = userEvent.setup();
     render(<LoginPage idioma="pt-BR" />);
     await u.click(screen.getByRole("button", { name: DICIONARIOS["pt-BR"].entrarCom.google }));
-    expect(assign).toHaveBeenCalledWith("/api/v1/session/google");
+    expect(assign).toHaveBeenCalledWith("/api/v1/auth/google");
   });
 
   it("a UI de login não decide autorização — só INICIA o fluxo (principal vem do provedor, sessão do BE)", () => {
