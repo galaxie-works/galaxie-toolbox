@@ -33,14 +33,40 @@ divergir** (há um teste que amarra os invariantes; a borda #1505 implementa con
 
 ---
 
-## 2. Sessão e autenticação
+## 2. Sessão e autenticação — **identidade FEDERADA multi-provedor** (decisão @Altair)
 
-- A sessão é o cookie **`__Host-gx_sess`** (`HttpOnly; Secure; SameSite=Lax; Path=/`, sem `Domain`).
-  O SPA **nunca** lê o valor. Ver `platform-identity::sessao` + `platform-web`.
-- **Sem cookie / cookie inválido / sessão revogada ⇒ `401`** em qualquer rota autenticada.
-- **Dois cookies `__Host-gx_sess` ⇒ `401`** (recusa por shadowing — `sessao_id_do_cookie` é exatamente-um).
-- A resolução do **principal** no login (OAuth M365-web) é **upstream** e ainda não tem card — quando
-  existir, alimenta `emitir_sessao`. As rotas de sessão abaixo assumem o principal já resolvido.
+O app **já** federa identidade e **nunca teve senha própria** (medido em `api.ts:232`: `microsoft`,
+`microsoft-personal`, `google`). Logo o login **não** é `email/senha` (introduziria a classe de
+enumeração do "esqueci a senha" que este contrato fecha em todo o resto, e senha que não guardamos é
+vazamento que não podemos ter) **nem** M365-only (excluiria usuários que já existem). É **OAuth
+federado** contra os provedores acima.
+
+### A sessão
+- Cookie **`__Host-gx_sess`** (`HttpOnly; Secure; SameSite=Lax; Path=/`, sem `Domain`). O SPA **nunca**
+  lê o valor. Ver `platform-identity::sessao` + `platform-web`. Expira (TTL absoluto, #1504) e o
+  servidor invalida no logout/troca-de-provedor (fato, não "apagar cookie").
+- **Sem cookie / inválido / revogada / EXPIRADA / dois cookies ⇒ `401`** em rota autenticada.
+
+### O fluxo (Authorization Code + PKCE) — invariantes do @Altair
+1. **O cliente NUNCA entrega um token.** Não existe `POST /session {id_token}`: se o backend confiasse
+   num token do corpo, "quem tem um token" viraria "quem é o usuário". Quem troca o `code` é o **backend**.
+2. **`state` uso-único amarrado ao navegador + PKCE.** O `state` é o anti-CSRF do fluxo; consumido uma vez.
+3. **`redirect_uri` por allowlist EXATA** (sem wildcard, sem sufixo).
+4. **Identidade = `(provedor, subject)` VERIFICADO**, nunca a string de e-mail — senão é tomada de conta
+   por pré-cadastro (quem registra `vc@dominio` primeiro rouba quem loga por outro provedor no mesmo e-mail).
+5. **Rotação no callback** (sessão nova ao autenticar — fecha *fixation*).
+6. **Falha de login UNIFORME:** provedor desconhecido, `state` ruim, troca de `code` falha, usuário
+   inexistente — **mesma resposta**. Senão o próprio login vira o oráculo que fechamos no resto.
+
+### Rotas de sessão
+| Método | Rota | Muta? | Sucesso | Notas |
+|---|---|---|---|---|
+| `GET` | `/auth/{provedor}` | inicia | `302` → provedor | `provedor ∈ {microsoft, microsoft-personal, google}`; grava `state`+PKCE. Provedor fora da allowlist ⇒ resposta uniforme (não confirma quais existem). |
+| `GET` | `/auth/{provedor}/callback` | sim | `302` → app + `Set-Cookie` | **Exceção consciente ao invariante 3 (GET que muda estado):** o callback OAuth é `GET` por necessidade do protocolo (o provedor redireciona o navegador). O anti-CSRF aqui é o **`state` uso-único + PKCE**, não o método — é o único `GET` mutante do contrato, e só porque o guarda de CSRF é outro. Valida `state`, troca `code` (PKCE), resolve `(provedor, subject)`, `emitir_sessao` (rotação). Falha ⇒ resposta uniforme. |
+| `DELETE` | `/session` | sim | `204` + expurgo | logout idempotente e não-autenticado (§4.1). |
+
+> `POST /session` **não existe** — é o padrão proibido (cliente entregando credencial/token). O login
+> só nasce do callback verificado pelo backend.
 
 ---
 
@@ -74,9 +100,9 @@ Prefixo: `/api/v1`. Toda rota (exceto as de sessão) exige sessão viva (senão 
 passa por `autorizar`/`autorizar_acao_admin` (invariante 5). Escopo vem da sessão (invariante 6).
 
 ### 4.1 Sessão — `#1469`/`platform-web`
+As rotas de LOGIN são federadas — ver **§2** (`GET /auth/{provedor}` + callback). Aqui só o logout:
 | Método | Rota | Muta? | Sucesso | Erros | Notas |
 |---|---|---|---|---|---|
-| `POST` | `/session` | sim | `204` + `Set-Cookie` | `401` | login: shape depende do MODELO DE AUTH — **decisão pendente** (§2). `emitir_sessao` (id fresco = rotação). |
 | `DELETE` | `/session` | sim | `204` + `Set-Cookie` expurgo | — | logout **idempotente e NÃO-autenticado**: sempre `204`+expurgo, com ou sem sessão. *Exigir sessão vazaria a validade do cookie (Altair).* Se havia sessão, `invalidar` no servidor. |
 
 ### 4.2 Conta própria (`/me`) — `#1473`/`platform-conta` (shapes do @Castor, medidas no FE)
@@ -84,12 +110,20 @@ passa por `autorizar`/`autorizar_acao_admin` (invariante 5). Escopo vem da sess�
 |---|---|---|---|---|
 | `GET` | `/me` | não | `200` `{ nome, email, idioma? }` | `401` |
 | `PATCH` | `/me` | sim | `200` Perfil `{ nome, email, idioma? }` | `401`,`400` |
+| `GET` | `/me/orgs` | não | `200` `[{ org, papel }]` | `401` |
 | `GET` | `/me/assinatura` | não | `200` `{ plano, status: "ativa"\|"inadimplente"\|"cancelada"\|"nenhuma", consumo?: { usado, limite\|null, unidade } }` | `401` |
 | `GET` | `/me/dispositivos` | não | `200` `[{ id, nome, ultimoAcesso: ISO-8601, sessaoAtual: bool }]` | `401` |
 | `DELETE` | `/me/dispositivos/{id}` | sim | `204` | `401`,`404` (dispositivo de outro ⇒ `404`, inv. 1) |
 
 `/me` **não** aceita id de usuário na URL — o "eu" é a sessão (inv. 6). `/usuarios/{id}` não existe
 de propósito (seria enumeração).
+
+> **`GET /me/orgs` (decisão do @Altair sobre a lacuna do `{org}`):** lista as orgs do principal com
+> `{org, papel}`. Hoje é **uma org por principal**, mas `me.org` (singular) seria correto agora e
+> **mentira depois** (o consumidor quebraria ou leria só a primeira ao virar multi-org); a lista vale
+> nos dois mundos pelo mesmo custo. **Amarras:** a lista é **conveniência do cliente, nunca concessão**
+> — o `{org}` das rotas de admin (§4.3) segue conferido contra a sessão; e o `papel` decide o que
+> **mostrar**, jamais o que **permitir** (isso é sempre do `autorizar`).
 
 ### 4.3 Admin da org — `#1475`/`platform-org-admin` (mapeia `AcaoAdminOrg`)
 Sob `/orgs/{org}`; `{org}` é conferido contra a sessão via `autorizar_acao_admin` (org alheia ⇒
@@ -135,6 +169,11 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 | `POST` | `/admin/orgs/{org}/suspensao` | sim | `202` | **suspende (destrutivo); auditado à parte** |
 
 > Não-staff recebe **`404`** em todo `/admin/*` (invariante 1: back-office não se anuncia a cliente).
+> Isso vale ATÉ para `BackOfficeErro::Negado` (@Altair, revisão do #1474): mapeia pra **`404`, não
+> `403`** — um `403` já ensinaria o cliente que o back-office existe. Nota de contexto: o **mesmo**
+> nome de erro (`Negado`) vira `403` no admin-org (§4.3, o solicitante JÁ é da org) e `404` aqui — **não
+> é incoerência a harmonizar**, é o invariante 1 aplicado a cada contexto. A auditoria grava a
+> `AcaoBackOffice` específica (provisionar/suspender/…), não uma `Operacao` genérica.
 
 > **Escopo dos testes de `contrato.rs` (nota do @Altair — não sobrevender):** os testes amarram
 > estruturalmente só os invariantes **3** (GET nunca muta) e **4** (staff auditado), que são
@@ -148,6 +187,11 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 `v1` é este documento + `platform-web/src/contrato.rs`. Mudança incompatível ⇒ `/api/v2` + nova
 tabela; o FE fixa a versão. Adição compatível (rota nova) ⇒ append, sem bump.
 
-**Aberto (fora deste card, sinalizado):** o **auth M365-web** (OAuth que resolve o principal no
-`POST /session`) não tem card — a rota de login está especificada, mas o servidor (#1505) precisa
-desse upstream pra preencher o principal.
+**v1.2 (24/08):** §2 reescrita pro **modelo federado** (decisão @Altair — nem M365-only nem
+email/senha); `POST /session` removido (o login nasce do callback verificado); `GET /me/orgs`
+adicionado (lacuna do `{org}`); back-office `Negado`→`404` documentado.
+
+**Pendente do PO (não bloqueia a borda):** (1) atendemos usuário sem NENHUM dos 3 provedores? Não ⇒
+federado basta; Sim ⇒ credencial local com o custo inteiro (pergunta fechada do @Altair). (2) valores
+de TTL — absoluto (12h é default meu, não decisão) e ocioso (#1512). A borda #1505 usa constantes;
+trocar o valor não muda o contrato.
