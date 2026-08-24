@@ -61,15 +61,20 @@ export function ehEscopadoNaSessao(caminho: string): boolean {
 /**
  * Única saída de rede do app web. Recusa caminho não-escopado ANTES de chamar.
  *
- * O `credentials: "include"` existe porque a sessão é cookie HttpOnly conjunto
- * com a fundação #1469 (restrição que o Altair registrou no #1484): a SPA e a
- * API vivem na mesma origem via Traefik, então o cookie viaja sozinho e o
- * cliente nunca manuseia o token.
+ * A sessão é cookie HttpOnly conjunto com a fundação #1469 (restrição que o
+ * Altair registrou no #1484): a SPA e a API vivem na mesma origem via Traefik,
+ * então o cookie viaja sozinho e o cliente nunca manuseia o token.
+ *
+ * `same-origin` e não `include`: eu tinha escrito `include` e o `api-me.ts` do
+ * #1489 (castor) usava `same-origin` — ele está certo e eu estava errado. Numa
+ * implantação de mesma origem os dois funcionam igual, mas `include` também
+ * mandaria o cookie numa requisição cross-origin, se um dia alguém apontar um
+ * caminho pra fora. `same-origin` é o default que falha do lado seguro.
  */
 export async function chamar(
   caminho: string,
   init?: RequestInit,
 ): Promise<Response> {
   if (!ehEscopadoNaSessao(caminho)) throw new CaminhoNaoEscopado(caminho);
-  return fetch(caminho, { credentials: "include", ...init });
+  return fetch(caminho, { credentials: "same-origin", ...init });
 }

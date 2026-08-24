@@ -45,13 +45,16 @@ describe("#1490 porta de rede — escopo vem da sessão", () => {
     expect(rede).not.toHaveBeenCalled();
   });
 
-  it("`chamar` manda o cookie da sessão (HttpOnly, mesma origem)", async () => {
+  it("`chamar` manda o cookie da sessão, e só na mesma origem", async () => {
+    // `same-origin`, não `include`: numa implantação de mesma origem os dois
+    // funcionam, mas `include` mandaria o cookie também numa requisição
+    // cross-origin. O default tem que falhar do lado seguro.
     const rede = vi.fn(() => Promise.resolve(new Response("{}")));
     vi.stubGlobal("fetch", rede);
     await chamar("/me/org/membros");
     expect(rede).toHaveBeenCalledWith(
       "/me/org/membros",
-      expect.objectContaining({ credentials: "include" }),
+      expect.objectContaining({ credentials: "same-origin" }),
     );
   });
 });

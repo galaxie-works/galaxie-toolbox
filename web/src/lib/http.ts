@@ -3,6 +3,10 @@
 // o mesmo dialeto). Doutrina do Altair (#1265): cookie HttpOnly (o FE nunca toca
 // no token) + mesma origem (caminhos relativos, sem CORS); 401 = sem sessão;
 // 404 (não 403) pra recurso alheio.
+//
+// #1490: o `fetch` cru saiu daqui — `pedir` passa pela porta única `chamar`.
+
+import { chamar } from "@/lib/api";
 
 /** Erro de uma chamada `/me/*` com o status HTTP preservado (401/404/…). */
 export class ErroApi extends Error {
@@ -21,9 +25,19 @@ export function ehNaoAutenticado(e: unknown): boolean {
 
 /** GET/PATCH/DELETE em rota relativa, com o cookie de sessão anexado pelo navegador. */
 export async function pedir<T>(caminho: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(caminho, {
-    // Mesma origem: o cookie de sessão viaja sozinho; não montamos token.
-    credentials: "same-origin",
+  // Porta única (#1490) em vez de `fetch` direto. A guarda de tenancy no canal
+  // que BARRA diz "ninguém usa `fetch` cru fora da porta", e este era o segundo
+  // `fetch` do app. Abrir exceção na guarda pra cada camada nova a corrói até
+  // virar enfeite.
+  //
+  // O ganho não é burocrático: a checagem de escopo passa a valer pros caminhos
+  // montados em RUNTIME (`/me/dispositivos/${id}`) — exatamente onde uma
+  // varredura de fonte não alcança.
+  //
+  // `credentials` vem da porta, e é o `same-origin` que ESTE arquivo já usava:
+  // a escolha daqui era a mais conservadora e virou a da casa. (Eu tinha escrito
+  // `include` no #1490 e estava errado — mandaria o cookie cross-origin também.)
+  const resp = await chamar(caminho, {
     headers: { Accept: "application/json", ...(init?.body ? { "Content-Type": "application/json" } : {}) },
     ...init,
   });
