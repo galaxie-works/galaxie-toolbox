@@ -1,0 +1,19 @@
+# Borda HTTP da plataforma — #1505 (costura vertical 3/3 do #1265). O Router axum que serve
+# o contrato (#1503) sobre os crates de domínio. axum/tokio (sem OpenSSL — o TLS é do Traefik,
+# mesma origem). Esta 1ª fatia é o NÚCLEO DE SEGURANÇA: o mapeamento erro→HTTP (condição 1 do
+# Altair, "404 idêntico no fio") + o extractor de sessão. Router/rotas/OAuth vêm em cima.
+[package]
+name = "galaxie-platform-http"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+axum = { version = "0.8", default-features = false }
+galaxie-platform-identity = { path = "../platform-identity" }
+galaxie-platform-web = { path = "../platform-web" }
+galaxie-platform-conta = { path = "../platform-conta" }
+galaxie-platform-org-admin = { path = "../platform-org-admin" }
+galaxie-platform-config = { path = "../platform-config" }
+galaxie-platform-back-office = { path = "../platform-back-office" }
