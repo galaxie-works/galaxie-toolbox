@@ -4,10 +4,16 @@
 // `/orgs/<id>/...` — a org é a do principal da sessão, e é o backend que
 // resolve qual é (delta do @Altair no #1475). O cliente nunca escolhe inquilino.
 //
-// ⚠️ CONTRATO AINDA NÃO EXISTE. O par #1475-BE está em `Ready` sem dono; os
-// formatos abaixo são o mínimo que as telas deste card precisam, e vão ser
-// reconciliados com o BE quando ele nascer. O que NÃO muda com o contrato é o
-// formato do CAMINHO — é isso que a guarda da raiz pina.
+// ⚠️ CONTRATO AINDA NÃO EXISTE. Atualizado 24/08 21:5xZ: o par #1475-BE foi
+// entregue (autorização como domínio puro) e está em `Rejected` na QA-A; mas o
+// que falta pra este arquivo não é ele — é a BORDA HTTP. O @Altair mediu que os
+// crates `platform-*` são bibliotecas: zero `main.rs`, zero axum. O contrato do
+// fio está sendo escrito no #1503 (@alcor) com as 6 condições do #1265.
+//
+// Os formatos abaixo são o mínimo que as telas precisam e serão reconciliados
+// com esse contrato. O que NÃO muda é o formato do CAMINHO — é isso que a
+// guarda da raiz pina — nem a distinção 403/404, que é decisão de desenho já
+// tomada e está explicada em `Resultado`.
 
 import { chamar } from "@/lib/api";
 
@@ -35,17 +41,33 @@ export const CAMINHOS = {
 /**
  * O que o backend respondeu, traduzido para o que a tela precisa decidir.
  *
- * `negado` é caso de primeira classe, não um erro genérico: o AC2 deste card
- * diz que a UI reflete a negativa do backend — esconder botão não é autorizar.
- * Uma tela que tratasse 403/404 como "erro de rede" ofereceria "tentar de novo"
- * pra quem simplesmente não tem acesso, e esconderia o fato de o backend ter
- * barrado. 404 entra aqui junto com 403 de propósito: o BE responde 404 para
- * org alheia (não enumerar), e do lado do cliente os dois significam "não é
- * seu".
+ * A negativa é caso de primeira classe, não erro genérico: uma tela que
+ * tratasse 403/404 como "erro de rede" ofereceria "tentar de novo" a quem
+ * simplesmente não tem acesso, e esconderia o fato de o backend ter barrado.
+ *
+ * ── 403 e 404 são DIFERENTES, e a fatia 1 errou ao colapsá-los ─────────────
+ * Eu tinha os dois como um estado só (`negado`), com o comentário de que "do
+ * lado do cliente os dois significam não é seu". O @Altair mostrou na revisão
+ * do #1475 por que isso está errado:
+ *
+ *   "Colapsar os dois perderia a capacidade de dizer a um membro 'isto exige
+ *    admin' — pior experiência, zero ganho de segurança."
+ *
+ * A razão é a ORDEM no servidor. `resolver_org` roda primeiro: quem não
+ * pertence à org leva **404 e para ali**, e nunca chega a ver um 403. Logo o
+ * 403 só alcança quem **já é da org** — e portanto já sabe que ela existe.
+ * Dizer-lhe "isto exige admin" não revela nada.
+ *
+ * O sigilo vem de o 404 vir ANTES do 403 no backend, não de o cliente fingir
+ * que são iguais. Colapsar aqui não protegia ninguém: só piorava a mensagem
+ * pra quem é membro legítimo e ficava sem saber o que fazer.
  */
 export type Resultado<T> =
   | { estado: "pronto"; dados: T }
-  | { estado: "negado" }
+  /** 403 — é da org, mas não é admin dela. Pode saber que a org existe. */
+  | { estado: "naoEhAdmin" }
+  /** 404 — não pertence à org (ou ela não existe). Não pode saber qual dos dois. */
+  | { estado: "naoEhSuaOrg" }
   | { estado: "erro"; motivo: string };
 
 export async function buscar<T>(caminho: string): Promise<Resultado<T>> {
@@ -55,9 +77,8 @@ export async function buscar<T>(caminho: string): Promise<Resultado<T>> {
   } catch (e) {
     return { estado: "erro", motivo: e instanceof Error ? e.message : "rede" };
   }
-  if (resposta.status === 403 || resposta.status === 404) {
-    return { estado: "negado" };
-  }
+  if (resposta.status === 403) return { estado: "naoEhAdmin" };
+  if (resposta.status === 404) return { estado: "naoEhSuaOrg" };
   if (!resposta.ok) {
     return { estado: "erro", motivo: `HTTP ${resposta.status}` };
   }
