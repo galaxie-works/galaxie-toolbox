@@ -1,6 +1,17 @@
 # CHANGELOG — TEAM-CANON
 Histórico de emendas do canon (texto integral de cada versão no git: `git log -- TEAM-CANON.md`). O canon vivo não carrega histórico (v1.12 §8).
 
+## v1.14 · 2026-08-24 — leva pós-moratória (backlog acumulado)
+Seis correções destiladas de casos vivos, redação do Hiparco, aguarda ratificação escrita do PO na PR.
+- **§1.4 corrigido:** "o PO nunca move card" estava ERRADO — o PO move no passe de runtime (QA Approved → PO Approved/Rejected), comentando na issue; card em estado inesperado → ler a issue antes de reverter (quem moveu explica lá).
+- **§2 auto-close:** `Closes #N` fecha a issue mas não move o card; quem integra move no mesmo ato; órfãos reconciliados pela saúde do board da Groomer (detector no `board.ps1`, tie-in #1464). Classe recorrente (~7 casos medidos em 24/08).
+- **§2 Rejected / fresco em área de 2 devs:** sem fresco possível, o SM reusa o mesmo dev só quando o achado é mecanicamente verificável (teste que falha), nunca por julgamento (caso #1282).
+- **§2 Autorização:** card de superfície nova que aceita chamada externa inclui `## Autorização` no DoD (quem pode chamar / não-autorizado → resultado / como se testa o negado); a QA-A gata o caso "não-autorizado = negado" (tie-in #1310).
+- **§7 par de vigias NÃO é fechado:** o PO é o cheque externo; cada vigia apresenta o caso de reciclagem do outro, não a defesa; verifica a autoria de todo catch; eloquência não é evidência (defeito de conluio Hiparco↔Polaris IV).
+- **§7 detecção de mudez:** cron morre e o papel não se auto-detecta → carimbo UTC na linha do ROSTER a cada tick; vigia lê o ROSTER, carimbo velho = mudo → cutuca.
+- **§8 carve-out:** ratificação escrita na PR é a norma; em emergência declarada, ordem direta do PO registrada no commit+header vale, regularizada por comentário escrito assim que possível (foi a v1.13).
+- Header limpo: removida a cláusula de moratória (v1.12/v1.13) já expirada.
+
 ## v1.13.1 · 2026-08-20 — correção de custódia (defeito achado pelo PO + Polaris IV)
 A cláusula da moratória (§0, linha 4) dizia 'após a v1.12' enquanto a v1.13 já estava promulgada — a v1.13 aparecia nula por violar a moratória da própria versão que ela superseda. Corrigido para 'após a v1.13 (expira 23/08 04:09Z)' + registro de que a v1.13 rompeu a moratória da v1.12 por ordem direta do PO. Correção de referência interna (custódia), não emenda nova. Defeito ficou ~9h vivo; achado pelo `wagner`+`polaris`.
 
