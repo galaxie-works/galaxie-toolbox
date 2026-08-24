@@ -174,12 +174,20 @@ export function BridgeSplit({
         {sidebar}
       </ResizablePanel>
       {/* #1373: com o card arredondado de volta, o handle precisa de margem —
-          encostado, ele cortaria o canto arredondado. Uso o mesmo `mx-1.5
-          bg-transparent` que o Explorer já usa entre os cards dele. Segue sem
-          `withHandle`: o punho no meio do vão entre dois cards seria enfeite, e
-          a área de arrasto continua lá — o handle é fino, não invisível. */}
+          encostado, ele cortaria o canto arredondado. Daí o `mx-1.5
+          bg-transparent`, o mesmo que o Explorer usa entre os cards dele.
+          #1453: mas o `withHandle` e o `hover:bg-border` voltaram, e a lição é
+          o motivo de eu os ter tirado. No #1373 eu escrevi que "o punho no meio
+          do vão entre dois cards seria enfeite" — uma decisão de gosto, tomada
+          sem olhar os VIZINHOS. O Bridge tem outras duas divisórias, entre os
+          mesmos cards arredondados (`control-room.tsx` lista⇄leitor e
+          `message-detail.tsx` leitor⇄preview), e as duas têm punho e realce.
+          O `wagner` viu a diferença de primeira no passe de runtime.
+          Consistência entre irmãos ganha de preferência local: um handle que
+          não dá sinal nenhum no hover não avisa que é arrastável. */}
       <ResizableHandle
-        className="mx-1.5 bg-transparent"
+        withHandle
+        className="mx-1.5 bg-transparent hover:bg-border"
         onDragging={(arrastando) => {
           if (!arrastando) aoTerminarArrasto();
         }}
