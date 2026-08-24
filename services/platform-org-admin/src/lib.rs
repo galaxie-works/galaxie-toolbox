@@ -147,11 +147,26 @@ mod tests {
             tenant_m365: Some("tenant-graph-do-cliente".into()),
         };
         let membro = sessao_membro("u1", "orgA");
-        assert_eq!(
-            autorizar_acao_admin(&membro, &AcaoAdminOrg::EditarSettings, &org_com_m365),
-            Err(AdminErro::Negado),
-            "o tenant M365 na Org não pode virar org_admin — role do Graph ≠ autz da Galaxie"
-        );
+        // TODAS as 8 ações, não só uma (medição da @Lumen no re-gate): testar uma célula
+        // deixa fuga POR AÇÃO — um mutante escopado a `GerirAssinatura` (o dano máximo que o
+        // @Altair nomeou: "a Microsoft passa a decidir quem gere a ASSINATURA") passaria com
+        // uma ação só. O laço mata a fuga ampla E qualquer fuga por ação. Mesmo idiom do ac4.
+        for acao in [
+            AcaoAdminOrg::ListarMembros,
+            AcaoAdminOrg::ConvidarMembro,
+            AcaoAdminOrg::RemoverMembro,
+            AcaoAdminOrg::MudarPapelMembro,
+            AcaoAdminOrg::ReivindicarDominio,
+            AcaoAdminOrg::VerificarDominio,
+            AcaoAdminOrg::EditarSettings,
+            AcaoAdminOrg::GerirAssinatura,
+        ] {
+            assert_eq!(
+                autorizar_acao_admin(&membro, &acao, &org_com_m365),
+                Err(AdminErro::Negado),
+                "o tenant M365 na Org não pode conceder {acao:?} a um member (role do Graph ≠ autz)"
+            );
+        }
     }
 
     // AC2 — `org_admin` de A tenta gerir a org B ⇒ 404 (NaoEncontrada), não 403.
