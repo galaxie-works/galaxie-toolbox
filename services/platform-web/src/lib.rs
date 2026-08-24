@@ -23,8 +23,8 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 
 use galaxie_platform_identity::sessao::{
-    montar_cookie_expurgo, montar_cookie_sessao, ArmazemSessao, SessaoId, NOME_COOKIE_SESSAO,
-    TTL_SESSAO_SEG,
+    montar_cookie_expurgo, montar_cookie_sessao, ArmazemSessao, SessaoId, IDLE_TTL_SEG,
+    NOME_COOKIE_SESSAO, TTL_SESSAO_SEG,
 };
 use galaxie_platform_identity::Sessao;
 
@@ -51,7 +51,12 @@ pub fn emitir_sessao<A: ArmazemSessao>(
     agora_unix: u64,
 ) -> (SessaoId, String) {
     let id = gerar_sessao_id();
-    armazem.estabelecer(id.clone(), sessao, agora_unix + TTL_SESSAO_SEG);
+    armazem.estabelecer(
+        id.clone(),
+        sessao,
+        agora_unix + TTL_SESSAO_SEG,
+        agora_unix + IDLE_TTL_SEG,
+    );
     let cookie = montar_cookie_sessao(&id);
     (id, cookie)
 }
@@ -95,6 +100,19 @@ pub fn sessao_do_cookie<'a, A: ArmazemSessao>(
 ) -> Option<&'a Sessao> {
     let id = sessao_id_do_cookie(header_cookie)?;
     armazem.validar(&id, agora_unix)
+}
+
+/// Acesso COM atividade (#1512): igual a [`sessao_do_cookie`], mas **desliza a janela de
+/// ociosidade** (`tocar` — para `agora + IDLE_TTL_SEG`, capado no absoluto pelo armazém). É o
+/// que a borda chama em cada request AUTENTICADO: o uso mantém a sessão viva; a inatividade a
+/// mata. O teto absoluto (#1504) segue inviolável.
+pub fn tocar_sessao_do_cookie<'a, A: ArmazemSessao>(
+    armazem: &'a mut A,
+    header_cookie: &str,
+    agora_unix: u64,
+) -> Option<&'a Sessao> {
+    let id = sessao_id_do_cookie(header_cookie)?;
+    armazem.tocar(&id, agora_unix, agora_unix + IDLE_TTL_SEG)
 }
 
 #[cfg(test)]
@@ -143,18 +161,34 @@ mod tests {
         assert!(cookie.contains("HttpOnly") && cookie.contains("Secure"));
     }
 
-    // #1504 ponta-a-ponta: a sessão emitida em `AGORA` vale até `AGORA+TTL` e expira depois.
+    // #1512 ponta-a-ponta: SEM atividade, a sessão morre no prazo OCIOSO (o menor dos dois),
+    // muito antes do absoluto — o `sessao_do_cookie` é read-only (não desliza).
     #[test]
-    fn sessao_emitida_expira_apos_o_ttl() {
+    fn sessao_ociosa_morre_no_prazo_ocioso() {
+        let mut a = ArmazemMemoria::novo();
+        let (id, _) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"), AGORA);
+        let cookie_req = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        assert!(sessao_do_cookie(&a, &cookie_req, AGORA + IDLE_TTL_SEG - 1).is_some(), "antes do ocioso: viva");
+        assert!(sessao_do_cookie(&a, &cookie_req, AGORA + IDLE_TTL_SEG).is_none(), "ociosa vence (antes do absoluto)");
+    }
+
+    // #1512 ponta-a-ponta: ATIVIDADE (`tocar`) desliza a janela — a sessão sobrevive além do
+    // ocioso ORIGINAL. (O teto absoluto segue inviolável — provado no armazém, `ocioso_ac2`.)
+    #[test]
+    fn atividade_desliza_o_ocioso() {
         let mut a = ArmazemMemoria::novo();
         let cookie_req;
         {
             let (id, _) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"), AGORA);
             cookie_req = format!("{NOME_COOKIE_SESSAO}={}", id.0);
         }
-        assert!(sessao_do_cookie(&a, &cookie_req, AGORA + TTL_SESSAO_SEG - 1).is_some(), "antes do TTL: viva");
-        assert!(sessao_do_cookie(&a, &cookie_req, AGORA + TTL_SESSAO_SEG).is_none(), "no TTL: vencida");
-        assert!(sessao_do_cookie(&a, &cookie_req, AGORA + TTL_SESSAO_SEG + 99).is_none(), "depois: recusa");
+        // Uso logo antes do ocioso original renova a janela pra AGORA+IDLE-1 + IDLE.
+        assert!(tocar_sessao_do_cookie(&mut a, &cookie_req, AGORA + IDLE_TTL_SEG - 1).is_some());
+        // Agora vive PASSADO o ocioso original (sem a atividade, teria morrido em AGORA+IDLE).
+        assert!(
+            sessao_do_cookie(&a, &cookie_req, AGORA + IDLE_TTL_SEG + 10).is_some(),
+            "a atividade manteve a sessão do usuário ativo viva além do ocioso original"
+        );
     }
 
     // Logout: invalida no servidor E devolve o expurgo. Depois, o mesmo cookie não resolve.
