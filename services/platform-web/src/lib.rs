@@ -20,6 +20,7 @@ use rand::RngCore;
 
 use galaxie_platform_identity::sessao::{
     montar_cookie_expurgo, montar_cookie_sessao, ArmazemSessao, SessaoId, NOME_COOKIE_SESSAO,
+    TTL_SESSAO_SEG,
 };
 use galaxie_platform_identity::Sessao;
 
@@ -38,9 +39,15 @@ pub fn gerar_sessao_id() -> SessaoId {
 /// cliente poderia ter plantado), persiste a sessão sob ele e devolve o `Set-Cookie`.
 /// O `principal` e o `escopo` de `sessao` já vêm resolvidos PELO SERVIDOR (fatia 1/2).
 /// Devolve `(id, Set-Cookie)` — a borda põe o header na resposta.
-pub fn emitir_sessao<A: ArmazemSessao>(armazem: &mut A, sessao: Sessao) -> (SessaoId, String) {
+/// `agora_unix` (epoch em segundos) vem da borda (`SystemTime`) — a expiração é `agora + TTL`
+/// (#1504); o crate puro não tem relógio. A sessão expira sozinha no servidor a partir daí.
+pub fn emitir_sessao<A: ArmazemSessao>(
+    armazem: &mut A,
+    sessao: Sessao,
+    agora_unix: u64,
+) -> (SessaoId, String) {
     let id = gerar_sessao_id();
-    armazem.estabelecer(id.clone(), sessao);
+    armazem.estabelecer(id.clone(), sessao, agora_unix + TTL_SESSAO_SEG);
     let cookie = montar_cookie_sessao(&id);
     (id, cookie)
 }
@@ -80,9 +87,10 @@ pub fn sessao_id_do_cookie(header_cookie: &str) -> Option<SessaoId> {
 pub fn sessao_do_cookie<'a, A: ArmazemSessao>(
     armazem: &'a A,
     header_cookie: &str,
+    agora_unix: u64,
 ) -> Option<&'a Sessao> {
     let id = sessao_id_do_cookie(header_cookie)?;
-    armazem.validar(&id)
+    armazem.validar(&id, agora_unix)
 }
 
 #[cfg(test)]
@@ -117,28 +125,45 @@ mod tests {
         assert!(a.0.len() >= 40, "256 bits em base64 dão ~43 chars");
     }
 
+    // Relógio de teste injetado (a borda real passa `SystemTime`).
+    const AGORA: u64 = 1_000;
+
     // Emitir no login: a sessão passa a valer sob o id novo, e o cookie carrega esse id
     // com a política de segurança (HttpOnly etc., herdada da fatia 2).
     #[test]
     fn emitir_persiste_e_devolve_cookie() {
         let mut a = ArmazemMemoria::novo();
-        let (id, cookie) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"));
-        assert!(a.validar(&id).is_some(), "sessão vive sob o id emitido");
+        let (id, cookie) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"), AGORA);
+        assert!(a.validar(&id, AGORA).is_some(), "sessão vive sob o id emitido");
         assert!(cookie.contains(&format!("{NOME_COOKIE_SESSAO}={}", id.0)));
         assert!(cookie.contains("HttpOnly") && cookie.contains("Secure"));
+    }
+
+    // #1504 ponta-a-ponta: a sessão emitida em `AGORA` vale até `AGORA+TTL` e expira depois.
+    #[test]
+    fn sessao_emitida_expira_apos_o_ttl() {
+        let mut a = ArmazemMemoria::novo();
+        let cookie_req;
+        {
+            let (id, _) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"), AGORA);
+            cookie_req = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        }
+        assert!(sessao_do_cookie(&a, &cookie_req, AGORA + TTL_SESSAO_SEG - 1).is_some(), "antes do TTL: viva");
+        assert!(sessao_do_cookie(&a, &cookie_req, AGORA + TTL_SESSAO_SEG).is_none(), "no TTL: vencida");
+        assert!(sessao_do_cookie(&a, &cookie_req, AGORA + TTL_SESSAO_SEG + 99).is_none(), "depois: recusa");
     }
 
     // Logout: invalida no servidor E devolve o expurgo. Depois, o mesmo cookie não resolve.
     #[test]
     fn encerrar_invalida_e_expurga() {
         let mut a = ArmazemMemoria::novo();
-        let (id, _) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"));
+        let (id, _) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"), AGORA);
         let cookie_req = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        assert!(sessao_do_cookie(&a, &cookie_req).is_some());
+        assert!(sessao_do_cookie(&a, &cookie_req, AGORA).is_some());
         let expurgo = encerrar_sessao(&mut a, &id);
         assert!(expurgo.contains("Max-Age=0"));
         assert!(
-            sessao_do_cookie(&a, &cookie_req).is_none(),
+            sessao_do_cookie(&a, &cookie_req, AGORA).is_none(),
             "sessão morta não resolve mais, mesmo com o cookie"
         );
     }
@@ -162,7 +187,7 @@ mod tests {
     #[test]
     fn cookie_carrega_so_o_id_nao_o_escopo() {
         let mut a = ArmazemMemoria::novo();
-        let (id, cookie) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"));
+        let (id, cookie) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"), AGORA);
         assert!(!cookie.contains("orgA"), "o cookie não vaza escopo/org, só o id");
         assert!(cookie.contains(&id.0));
     }
@@ -172,11 +197,11 @@ mod tests {
     #[test]
     fn cookie_duplicado_recusa_nao_escolhe_um() {
         let mut a = ArmazemMemoria::novo();
-        let (id, _) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"));
+        let (id, _) = emitir_sessao(&mut a, sessao_admin("u1", "orgA"), AGORA);
         let dois = format!("{NOME_COOKIE_SESSAO}={}; {NOME_COOKIE_SESSAO}=plantado", id.0);
         assert_eq!(sessao_id_do_cookie(&dois), None, "dois gx_sess = recusa");
         assert!(
-            sessao_do_cookie(&a, &dois).is_none(),
+            sessao_do_cookie(&a, &dois, AGORA).is_none(),
             "nem o id válido resolve quando há um segundo cookie (anti-shadowing)"
         );
     }
