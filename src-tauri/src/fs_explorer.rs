@@ -2705,6 +2705,28 @@ fn agora_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// #961: a pausa é BLOQUEIO (`esperar_se_pausado`), não checkpoint — enquanto pausada,
+/// o handle da origem (inclusive rede/SMB) fica aberto, o destino fica parcial e os
+/// workers rayon daquela op ficam estacionados. Pra não reter indefinidamente, há um
+/// TETO: ao vencer, a op resolve sozinha conforme a política. Sem UI nova — o teto é
+/// uma constante e a política default é auto-retomar (preserva o trabalho já feito;
+/// auto-cancelar existe pro caso de a origem ter sumido e limpa o parcial).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PoliticaTeto {
+    /// Ao vencer o teto, retoma a op (libera o handle e reativa os workers).
+    AutoRetomar,
+    /// Ao vencer o teto, cancela a op (mesmo caminho do cancel manual: limpa o parcial).
+    /// #961: política SUPORTADA e coberta por teste (AC2), mas produção usa `AutoRetomar`
+    /// por default — ainda não há UI/config pra selecionar a política. `allow(dead_code)`
+    /// porque no build de release ninguém a constrói; some quando um seletor for ligado.
+    #[allow(dead_code)]
+    AutoCancelar,
+}
+
+/// #961: teto de pausa em produção — 10 min. Constante (sem config de UI). Uma op
+/// pausada além disso resolve sozinha em vez de estacionar handle/workers pra sempre.
+const TETO_PAUSA: Duration = Duration::from_secs(10 * 60);
+
 /// Contexto compartilhado entre os workers (atômicos de progresso + cancel/pause).
 struct Contexto {
     processados: Arc<AtomicU64>,
@@ -2717,18 +2739,43 @@ struct Contexto {
     /// #875: nome do arquivo em processamento agora — os workers escrevem, o ticker
     /// lê pro `current_file` do evento (o card mostra "copiando X").
     atual: Arc<Mutex<String>>,
+    /// #961: teto de uma pausa contínua. Injetável (o teste usa ms; produção usa
+    /// `TETO_PAUSA`). O relógio zera a cada `esperar_se_pausado` — resume manual antes
+    /// do teto não deixa resíduo (o próximo pause começa do zero).
+    teto_pausa: Duration,
+    /// #961: o que fazer quando o teto vence (default de produção: `AutoRetomar`).
+    politica_teto: PoliticaTeto,
 }
 
 /// #898: bloqueia enquanto a op estiver pausada; retorna `true` se ela foi CANCELADA
 /// (o worker deve abortar). Cancel vence pause — cancelar durante a pausa sai na hora.
 /// Poll de 50 ms: barato (só quando pausado) e responde rápido ao resume/cancel.
+/// #961: mede a duração DESTA pausa (relógio local à chamada — zera no resume manual,
+/// que faz o `while` sair); ao atingir `teto_pausa`, aplica a política — `AutoRetomar`
+/// libera o `pausar` (como um resume), `AutoCancelar` seta o `cancelar` (o worker limpa
+/// o parcial no mesmo caminho do cancel manual). Cada op tem seu próprio `Contexto`, então
+/// N ops pausadas resolvem independentemente (não estacionam N×workers além do teto).
 fn esperar_se_pausado(ctx: &Contexto) -> bool {
     if ctx.cancelar.load(Ordering::Relaxed) {
         return true;
     }
+    let mut inicio_pausa: Option<Instant> = None;
     while ctx.pausar.load(Ordering::Relaxed) {
         if ctx.cancelar.load(Ordering::Relaxed) {
             return true;
+        }
+        if inicio_pausa.get_or_insert_with(Instant::now).elapsed() >= ctx.teto_pausa {
+            match ctx.politica_teto {
+                PoliticaTeto::AutoRetomar => {
+                    ctx.pausar.store(false, Ordering::Relaxed);
+                    return false;
+                }
+                PoliticaTeto::AutoCancelar => {
+                    ctx.cancelar.store(true, Ordering::Relaxed);
+                    ctx.pausar.store(false, Ordering::Relaxed);
+                    return true;
+                }
+            }
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -3054,6 +3101,9 @@ fn executar_progresso(
         pausar: pausar.clone(),
         verify,
         atual: Arc::new(Mutex::new(String::new())),
+        // #961: teto de pausa de produção; default auto-retomar.
+        teto_pausa: TETO_PAUSA,
+        politica_teto: PoliticaTeto::AutoRetomar,
     };
     let ticker = iniciar_ticker(
         app,
@@ -3273,6 +3323,9 @@ fn planejar_e_copiar_muitas(
         pausar: pausar.clone(),
         verify,
         atual: Arc::new(Mutex::new(String::new())),
+        // #961: teto de pausa de produção; default auto-retomar.
+        teto_pausa: TETO_PAUSA,
+        politica_teto: PoliticaTeto::AutoRetomar,
     };
     let ticker = iniciar_ticker(
         app,
@@ -4766,6 +4819,10 @@ mod tests {
             pausar: Arc::new(AtomicBool::new(false)),
             verify,
             atual: Arc::new(Mutex::new(String::new())),
+            // #961: teto largo por padrão — os testes de pause/resume existentes NÃO
+            // devem bater no auto-ação; os testes de teto constroem o Contexto na mão.
+            teto_pausa: Duration::from_secs(3600),
+            politica_teto: PoliticaTeto::AutoRetomar,
         }
     }
 
@@ -5256,6 +5313,91 @@ mod tests {
         copiar_plano(&plano, 2, &ctx).unwrap();
         assert_eq!(ctx.arquivos_feitos.load(Ordering::Relaxed), 0);
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    // #961: teto de pausa. `esperar_se_pausado` BLOQUEIA enquanto pausado; sem o teto
+    // (código antigo) uma op pausada e nunca resumida trava o worker pra sempre — estes
+    // testes travariam. Com o teto, a op resolve sozinha conforme a política. Uso um teto
+    // curto (ms) pra não esperar minutos; produção usa `TETO_PAUSA` (10 min).
+    fn ctx_com_teto(teto: Duration, politica: PoliticaTeto) -> Contexto {
+        let ctx = ctx_teste(None);
+        Contexto {
+            teto_pausa: teto,
+            politica_teto: politica,
+            ..ctx
+        }
+    }
+
+    /// AC1 — teto vence com política auto-retomar: a op retoma (libera o `pausar`) e o
+    /// worker NÃO aborta. Sem o teto isto travaria (pausar nunca é limpo).
+    #[test]
+    fn teto_pausa_auto_retomar_libera_o_worker() {
+        let ctx = ctx_com_teto(Duration::from_millis(80), PoliticaTeto::AutoRetomar);
+        ctx.pausar.store(true, Ordering::Relaxed);
+        let t0 = Instant::now();
+        let cancelado = esperar_se_pausado(&ctx);
+        assert!(!cancelado, "auto-retomar NÃO deve abortar o worker");
+        assert!(!ctx.pausar.load(Ordering::Relaxed), "o teto deve ter liberado o pausar");
+        assert!(!ctx.cancelar.load(Ordering::Relaxed), "auto-retomar não cancela");
+        assert!(t0.elapsed() >= Duration::from_millis(80), "resolveu antes do teto");
+    }
+
+    /// AC2 — teto vence com política auto-cancelar: a op cancela (mesmo caminho do cancel
+    /// manual — o worker aborta e o parcial é limpo lá). Aqui provo o sinal (`cancelar`);
+    /// a limpeza do parcial no cancel já é coberta pelos testes de cancel existentes.
+    #[test]
+    fn teto_pausa_auto_cancelar_aborta_a_op() {
+        let ctx = ctx_com_teto(Duration::from_millis(80), PoliticaTeto::AutoCancelar);
+        ctx.pausar.store(true, Ordering::Relaxed);
+        let cancelado = esperar_se_pausado(&ctx);
+        assert!(cancelado, "auto-cancelar deve abortar o worker (como o cancel manual)");
+        assert!(ctx.cancelar.load(Ordering::Relaxed), "o teto deve ter setado o cancelar");
+        assert!(!ctx.pausar.load(Ordering::Relaxed), "não fica pausado após cancelar");
+    }
+
+    /// AC3 — resume MANUAL antes do teto: nenhuma auto-ação, e o relógio do teto zera (é
+    /// local à chamada). Teto folgado (5 s); resumo em ~50 ms; a espera sai rápido, sem
+    /// cancelar. O "zera ao retomar" é estrutural: o próximo `esperar_se_pausado` recomeça
+    /// a contagem do zero.
+    #[test]
+    fn teto_pausa_resume_manual_nao_dispara_auto_acao() {
+        let ctx = Arc::new(ctx_com_teto(Duration::from_secs(5), PoliticaTeto::AutoCancelar));
+        ctx.pausar.store(true, Ordering::Relaxed);
+        let ctx2 = ctx.clone();
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            ctx2.pausar.store(false, Ordering::Relaxed); // resume manual, bem antes do teto
+        });
+        let t0 = Instant::now();
+        let cancelado = esperar_se_pausado(&ctx);
+        h.join().unwrap();
+        assert!(!cancelado, "resume manual não deve abortar");
+        assert!(!ctx.cancelar.load(Ordering::Relaxed), "nenhuma auto-ação antes do teto");
+        assert!(t0.elapsed() < Duration::from_secs(5), "saiu no resume, não no teto");
+    }
+
+    /// AC4 — N ops pausadas resolvem INDEPENDENTEMENTE (cada uma tem seu `Contexto`, com
+    /// seus próprios flags e seu próprio relógio) — nenhuma estaciona além do seu teto por
+    /// causa das outras.
+    #[test]
+    fn teto_pausa_ops_resolvem_independentes() {
+        let ctxs: Vec<Arc<Contexto>> = (0..3)
+            .map(|_| Arc::new(ctx_com_teto(Duration::from_millis(80), PoliticaTeto::AutoCancelar)))
+            .collect();
+        for c in &ctxs {
+            c.pausar.store(true, Ordering::Relaxed);
+        }
+        let handles: Vec<_> = ctxs
+            .iter()
+            .cloned()
+            .map(|c| std::thread::spawn(move || esperar_se_pausado(&c)))
+            .collect();
+        for h in handles {
+            assert!(h.join().unwrap(), "cada op deve resolver pelo seu próprio teto");
+        }
+        for c in &ctxs {
+            assert!(c.cancelar.load(Ordering::Relaxed), "cada op cancelou a si mesma");
+        }
     }
 
     /// A UI do S4 traduz "Substituir" para o mesmo caminho de destino. O
