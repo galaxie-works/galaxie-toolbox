@@ -24,24 +24,36 @@ pub struct SessaoId(pub String);
 /// Armazém de sessões server-side. `invalidar` remove do SERVIDOR (fato), não do cliente.
 /// Trait pra a borda plugar memória agora e persistência depois, sem tocar na lógica.
 pub trait ArmazemSessao {
-    /// Registra uma sessão sob um id (o login já rotacionou — ver [`Self::rotacionar`]).
-    fn estabelecer(&mut self, id: SessaoId, sessao: Sessao);
-    /// Valida um id vindo do cookie: devolve a sessão viva, ou `None` se não existe/foi morta.
-    fn validar(&self, id: &SessaoId) -> Option<&Sessao>;
+    /// Registra uma sessão sob um id, com o instante ABSOLUTO em que expira (`expira_em_unix`,
+    /// epoch em segundos) — #1504. A borda computa `agora + TTL` (ver [`TTL_SESSAO_SEG`]); o
+    /// armazém não escolhe relógio (AC2). O login já rotacionou (ver [`Self::rotacionar`]).
+    fn estabelecer(&mut self, id: SessaoId, sessao: Sessao, expira_em_unix: u64);
+    /// Valida um id do cookie CONTRA `agora_unix` (injetado pela borda — sem relógio
+    /// hardcodado, AC2): devolve a sessão viva só se existe, não foi morta E ainda não
+    /// expirou (`agora < expira`). Sessão vencida recusa como se não existisse (AC1).
+    fn validar(&self, id: &SessaoId, agora_unix: u64) -> Option<&Sessao>;
     /// Logout: mata ESTA sessão no servidor. `true` se existia.
     fn invalidar(&mut self, id: &SessaoId) -> bool;
     /// Troca de senha: mata TODAS as sessões do usuário (não só a atual). Devolve quantas.
     fn invalidar_do_usuario(&mut self, usuario: &UserId) -> usize;
-    /// Rotação: a sessão do `velho` id passa a valer sob um id NOVO e o velho morre no mesmo
-    /// ato (fecha fixation). `true` se o velho existia.
+    /// Rotação: a sessão do `velho` id passa a valer sob um id NOVO (e o velho morre no mesmo
+    /// ato — fecha fixation), PRESERVANDO a expiração. `true` se o velho existia.
     fn rotacionar(&mut self, velho: &SessaoId, novo: SessaoId) -> bool;
 }
 
-/// Primeira impl: em memória (HashMap id→sessão). Persistência é fatia posterior — a trait
+/// Uma sessão viva no armazém + quando ela expira (#1504). A expiração é ABSOLUTA (epoch),
+/// não relativa: o armazém não precisa de relógio, só compara com o `agora` que a borda passa.
+#[derive(Debug)]
+struct EntradaSessao {
+    sessao: Sessao,
+    expira_em_unix: u64,
+}
+
+/// Primeira impl: em memória (HashMap id→entrada). Persistência é fatia posterior — a trait
 /// deixa trocar sem mexer em quem consome.
 #[derive(Debug, Default)]
 pub struct ArmazemMemoria {
-    sessoes: HashMap<SessaoId, Sessao>,
+    sessoes: HashMap<SessaoId, EntradaSessao>,
 }
 
 impl ArmazemMemoria {
@@ -55,12 +67,17 @@ impl ArmazemMemoria {
 }
 
 impl ArmazemSessao for ArmazemMemoria {
-    fn estabelecer(&mut self, id: SessaoId, sessao: Sessao) {
-        self.sessoes.insert(id, sessao);
+    fn estabelecer(&mut self, id: SessaoId, sessao: Sessao, expira_em_unix: u64) {
+        self.sessoes.insert(id, EntradaSessao { sessao, expira_em_unix });
     }
 
-    fn validar(&self, id: &SessaoId) -> Option<&Sessao> {
-        self.sessoes.get(id)
+    fn validar(&self, id: &SessaoId, agora_unix: u64) -> Option<&Sessao> {
+        // Expiração LAZY: a entrada vencida fica no mapa mas não valida (um sweep de memória
+        // é fatia de persistência). `agora < expira` — no instante exato do TTL já venceu.
+        self.sessoes
+            .get(id)
+            .filter(|e| agora_unix < e.expira_em_unix)
+            .map(|e| &e.sessao)
     }
 
     fn invalidar(&mut self, id: &SessaoId) -> bool {
@@ -70,20 +87,24 @@ impl ArmazemSessao for ArmazemMemoria {
     fn invalidar_do_usuario(&mut self, usuario: &UserId) -> usize {
         let antes = self.sessoes.len();
         self.sessoes
-            .retain(|_, s| s.principal().usuario() != usuario);
+            .retain(|_, e| e.sessao.principal().usuario() != usuario);
         antes - self.sessoes.len()
     }
 
     fn rotacionar(&mut self, velho: &SessaoId, novo: SessaoId) -> bool {
         match self.sessoes.remove(velho) {
-            Some(s) => {
-                self.sessoes.insert(novo, s);
+            Some(e) => {
+                self.sessoes.insert(novo, e);
                 true
             }
             None => false,
         }
     }
 }
+
+/// TTL default de uma sessão web (#1504): 12 h. A BORDA computa `expira_em = agora + TTL` e
+/// passa o absoluto pra [`ArmazemSessao::estabelecer`]. Constante (sem UI); encurtar é barato.
+pub const TTL_SESSAO_SEG: u64 = 12 * 60 * 60;
 
 /// Nome do cookie de sessão da plataforma. O prefixo **`__Host-`** (achado do @Altair na
 /// revisão da fatia 3) mata cookie-shadowing POR IMPOSIÇÃO DO NAVEGADOR: um cookie
@@ -122,21 +143,25 @@ mod tests {
         SessaoId(s.into())
     }
 
+    // Relógio de teste (injetado — o armazém não tem relógio próprio, AC2).
+    const AGORA: u64 = 1_000;
+    const FUTURO: u64 = AGORA + 10_000; // expira bem além de AGORA ⇒ sessão fresca
+
     #[test]
     fn estabelecer_e_validar() {
         let mut a = ArmazemMemoria::novo();
-        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"));
-        assert!(a.validar(&sid("s1")).is_some());
-        assert!(a.validar(&sid("naoexiste")).is_none());
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), FUTURO);
+        assert!(a.validar(&sid("s1"), AGORA).is_some());
+        assert!(a.validar(&sid("naoexiste"), AGORA).is_none());
     }
 
     // Logout é FATO no servidor: depois de invalidar, o mesmo id do cookie não vale mais.
     #[test]
     fn invalidar_mata_a_sessao_no_servidor() {
         let mut a = ArmazemMemoria::novo();
-        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"));
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), FUTURO);
         assert!(a.invalidar(&sid("s1")));
-        assert!(a.validar(&sid("s1")).is_none(), "sessão morta não valida");
+        assert!(a.validar(&sid("s1"), AGORA).is_none(), "sessão morta não valida");
         assert!(!a.invalidar(&sid("s1")), "invalidar de novo é no-op");
     }
 
@@ -145,27 +170,49 @@ mod tests {
     #[test]
     fn troca_de_senha_invalida_todas_do_usuario() {
         let mut a = ArmazemMemoria::novo();
-        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"));
-        a.estabelecer(sid("s2"), sessao_de("u1", "orgA")); // 2ª sessão do mesmo user
-        a.estabelecer(sid("s3"), sessao_de("outro", "orgA"));
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), FUTURO);
+        a.estabelecer(sid("s2"), sessao_de("u1", "orgA"), FUTURO); // 2ª sessão do mesmo user
+        a.estabelecer(sid("s3"), sessao_de("outro", "orgA"), FUTURO);
         let mortas = a.invalidar_do_usuario(&UserId("u1".into()));
         assert_eq!(mortas, 2);
-        assert!(a.validar(&sid("s1")).is_none());
-        assert!(a.validar(&sid("s2")).is_none());
-        assert!(a.validar(&sid("s3")).is_some(), "sessão de outro usuário fica");
+        assert!(a.validar(&sid("s1"), AGORA).is_none());
+        assert!(a.validar(&sid("s2"), AGORA).is_none());
+        assert!(a.validar(&sid("s3"), AGORA).is_some(), "sessão de outro usuário fica");
     }
 
     // Rotação no login fecha fixation: o id velho (que um atacante poderia ter plantado)
-    // morre no mesmo ato em que o novo nasce, carregando a MESMA sessão.
+    // morre no mesmo ato em que o novo nasce, carregando a MESMA sessão (e a expiração).
     #[test]
     fn rotacao_mata_o_velho_e_preserva_a_sessao() {
         let mut a = ArmazemMemoria::novo();
-        a.estabelecer(sid("velho"), sessao_de("u1", "orgA"));
-        let antes = a.validar(&sid("velho")).cloned();
+        a.estabelecer(sid("velho"), sessao_de("u1", "orgA"), FUTURO);
+        let antes = a.validar(&sid("velho"), AGORA).cloned();
         assert!(a.rotacionar(&sid("velho"), sid("novo")));
-        assert!(a.validar(&sid("velho")).is_none(), "id velho morre (fixation)");
-        assert_eq!(a.validar(&sid("novo")).cloned(), antes, "sessão preservada no id novo");
+        assert!(a.validar(&sid("velho"), AGORA).is_none(), "id velho morre (fixation)");
+        assert_eq!(a.validar(&sid("novo"), AGORA).cloned(), antes, "sessão preservada no id novo");
         assert!(!a.rotacionar(&sid("velho"), sid("outro")), "rotacionar id morto é no-op");
+    }
+
+    // AC1/AC3 (#1504) — sessão além do TTL é RECUSADA como se não existisse. `estabelece` num
+    // instante que expira em `expira`; `validar` DEPOIS de `expira` devolve None; ANTES, Some.
+    #[test]
+    fn ac1_sessao_vencida_recusa() {
+        let mut a = ArmazemMemoria::novo();
+        let expira = 5_000;
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), expira);
+        assert!(a.validar(&sid("s1"), expira - 1).is_some(), "1s antes do TTL: viva");
+        assert!(a.validar(&sid("s1"), expira).is_none(), "no instante do TTL: já venceu");
+        assert!(a.validar(&sid("s1"), expira + 3600).is_none(), "muito depois: recusa");
+    }
+
+    // AC2 — `validar` NÃO tem relógio hardcodado: o mesmo id dá vivo ou vencido só mudando o
+    // `agora` injetado. (Se houvesse relógio interno, este teste não conseguiria os dois.)
+    #[test]
+    fn ac2_agora_e_injetado_nao_hardcodado() {
+        let mut a = ArmazemMemoria::novo();
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), 5_000);
+        assert!(a.validar(&sid("s1"), 4_999).is_some());
+        assert!(a.validar(&sid("s1"), 5_001).is_none());
     }
 
     // A política do cookie: os 3 atributos que impedem roubo/cross-site (fatia 2).
