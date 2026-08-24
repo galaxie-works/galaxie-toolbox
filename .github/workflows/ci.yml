@@ -80,6 +80,49 @@ jobs:
       - name: Testes em navegador (vitest browser-mode)
         run: pnpm test:browser
 
+  # #1484: scaffold do app web da plataforma (platform.thegalaxie.cloud). É o
+  # pacote `web/` (Vite SPA, workspace pnpm próprio, SEPARADO do app Tauri). Gate
+  # próprio — typecheck+build+testes do pacote web — pra não misturar com o
+  # `gate-front.yml`, que é do app Tauri. Ubuntu (é só JS; sem Rust/OpenSSL).
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Descobrir o store do pnpm
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache do pnpm
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Instalar dependências
+        run: pnpm install --frozen-lockfile
+
+      - name: Build do app web (tsc -b + vite build)
+        run: pnpm --filter @galaxie/web build
+
+      - name: Testes do app web (vitest)
+        run: pnpm --filter @galaxie/web test
+
   # Rust/Tauri: compila e testa o Remote REAL (não o `remote_stub`) + os 6 crates
   # de services/. Roda no windows-latest (mesma plataforma do release, evita as
   # libs de sistema que o Tauri exige no Linux). O rust-cache deixa rápido quando
