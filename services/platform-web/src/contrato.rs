@@ -30,36 +30,43 @@ pub struct Rota {
     pub so_staff: bool,
     /// Registrada no sink de auditoria (invariante 4: toda ação de staff é auditada).
     pub auditada: bool,
+    /// #1503 v1.2: `true` SÓ pro callback OAuth — o único GET que muda estado no contrato, e só
+    /// porque o anti-CSRF ali é o `state` uso-único + PKCE (não o método). Exceção consciente ao
+    /// invariante 3, marcada no tipo pra o teste permitir exatamente ESTA e nenhuma outra.
+    pub csrf_por_state: bool,
 }
 
 /// A tabela canônica. Espelha `docs/plataforma/contrato-http-v1.md §4`.
 pub const CONTRATO: &[Rota] = &[
-    // 4.1 Sessão. Logout é idempotente e NÃO-autenticado (exigir sessão vazaria a validade do cookie).
-    Rota { metodo: Metodo::Post,   caminho: "/api/v1/session",                             muta: true,  sucesso: 204, autenticada: false, so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Delete, caminho: "/api/v1/session",                             muta: true,  sucesso: 204, autenticada: false, so_staff: false, auditada: false },
+    // 4.1/§2 Sessão FEDERADA. Login = OAuth (start + callback); logout idempotente e não-autenticado.
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/auth/{provedor}",                     muta: false, sucesso: 302, autenticada: false, so_staff: false, auditada: false, csrf_por_state: false },
+    // Callback: ÚNICO GET mutante — anti-CSRF é o `state`+PKCE, não o método (exceção consciente).
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/auth/{provedor}/callback",            muta: true,  sucesso: 302, autenticada: false, so_staff: false, auditada: false, csrf_por_state: true },
+    Rota { metodo: Metodo::Delete, caminho: "/api/v1/session",                             muta: true,  sucesso: 204, autenticada: false, so_staff: false, auditada: false, csrf_por_state: false },
     // 4.2 Conta própria (/me) — shapes do FE (@Castor)
-    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me",                                  muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/me",                                  muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/assinatura",                       muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/dispositivos",                     muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Delete, caminho: "/api/v1/me/dispositivos/{id}",                muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me",                                  muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/me",                                  muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/orgs",                             muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/assinatura",                       muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/dispositivos",                     muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Delete, caminho: "/api/v1/me/dispositivos/{id}",                muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     // 4.3 Admin da org (AcaoAdminOrg)
-    Rota { metodo: Metodo::Get,    caminho: "/api/v1/orgs/{org}/membros",                  muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/membros",                  muta: true,  sucesso: 201, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Delete, caminho: "/api/v1/orgs/{org}/membros/{uid}",            muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/orgs/{org}/membros/{uid}",            muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/orgs/{org}/membros",                  muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/membros",                  muta: true,  sucesso: 201, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Delete, caminho: "/api/v1/orgs/{org}/membros/{uid}",            muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/orgs/{org}/membros/{uid}",            muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     // Reivindicar é livre/pendente (201) — SEM 409 cross-tenant (era oráculo); a guarda é a verificação.
-    Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/dominios",                 muta: true,  sucesso: 201, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/dominios/{dom}/verificacao", muta: true, sucesso: 200, autenticada: true, so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/orgs/{org}/settings",                 muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Put,    caminho: "/api/v1/orgs/{org}/assinatura",               muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
+    Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/dominios",                 muta: true,  sucesso: 201, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/dominios/{dom}/verificacao", muta: true, sucesso: 200, autenticada: true, so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/orgs/{org}/settings",                 muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Put,    caminho: "/api/v1/orgs/{org}/assinatura",               muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     // 4.4 Config do app — user-scoped (/me/config), NÃO org (fix @Castor)
-    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/config",                           muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/me/config",                           muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/config",                           muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
+    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/me/config",                           muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false, csrf_por_state: false },
     // 4.5 Back-office (staff, auditado). Provisionar e suspender SEPARADOS (fix @Altair; suspender é destrutivo).
-    Rota { metodo: Metodo::Get,    caminho: "/api/v1/admin/orgs",                          muta: false, sucesso: 200, autenticada: true,  so_staff: true,  auditada: true },
-    Rota { metodo: Metodo::Post,   caminho: "/api/v1/admin/orgs/{org}/provisionamento",    muta: true,  sucesso: 202, autenticada: true,  so_staff: true,  auditada: true },
-    Rota { metodo: Metodo::Post,   caminho: "/api/v1/admin/orgs/{org}/suspensao",          muta: true,  sucesso: 202, autenticada: true,  so_staff: true,  auditada: true },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/admin/orgs",                          muta: false, sucesso: 200, autenticada: true,  so_staff: true,  auditada: true,  csrf_por_state: false },
+    Rota { metodo: Metodo::Post,   caminho: "/api/v1/admin/orgs/{org}/provisionamento",    muta: true,  sucesso: 202, autenticada: true,  so_staff: true,  auditada: true,  csrf_por_state: false },
+    Rota { metodo: Metodo::Post,   caminho: "/api/v1/admin/orgs/{org}/suspensao",          muta: true,  sucesso: 202, autenticada: true,  so_staff: true,  auditada: true,  csrf_por_state: false },
 ];
 
 /// Códigos de erro do contrato (§3). O 404 é IDÊNTICO para inexistente e cross-tenant.
@@ -103,17 +110,29 @@ impl CodigoErro {
 mod tests {
     use super::*;
 
-    // Invariante 3: NENHUMA rota que muda estado é GET; e todo GET é não-mutante.
+    // Invariante 3: GET não muda estado — com UMA exceção consciente (o callback OAuth, cujo
+    // anti-CSRF é o `state`+PKCE, não o método). Um GET mutante só é aceito se marcado
+    // `csrf_por_state`, e tem de haver EXATAMENTE UM (senão alguém abriu um GET mutante novo
+    // sem o guarda de CSRF certo, disfarçado de exceção).
     #[test]
-    fn get_nunca_muda_estado() {
+    fn get_muda_estado_so_o_callback_oauth() {
+        let mut gets_mutantes = 0;
         for r in CONTRATO {
-            if r.muta {
-                assert_ne!(r.metodo, Metodo::Get, "rota mutante não pode ser GET: {}", r.caminho);
+            if r.metodo == Metodo::Get && r.muta {
+                assert!(
+                    r.csrf_por_state,
+                    "GET mutante sem o guarda de CSRF por `state`: {} — não é a exceção, é furo",
+                    r.caminho
+                );
+                gets_mutantes += 1;
             }
-            if r.metodo == Metodo::Get {
-                assert!(!r.muta, "GET não pode mudar estado: {}", r.caminho);
+            // `csrf_por_state` só faz sentido num GET mutante (o callback). Em qualquer outra
+            // rota é bandeira solta.
+            if r.csrf_por_state {
+                assert!(r.metodo == Metodo::Get && r.muta, "csrf_por_state só no callback: {}", r.caminho);
             }
         }
+        assert_eq!(gets_mutantes, 1, "só o callback OAuth pode ser um GET mutante");
     }
 
     // Invariante 4: toda rota de staff (back-office) é auditada.
@@ -131,27 +150,24 @@ mod tests {
     fn sucesso_e_2xx_conhecido() {
         for r in CONTRATO {
             assert!(
-                matches!(r.sucesso, 200 | 201 | 202 | 204),
-                "código de sucesso fora do contrato: {} em {}",
+                matches!(r.sucesso, 200 | 201 | 202 | 204 | 302),
+                "código de sucesso fora do contrato: {} em {} (302 só nas rotas OAuth)",
                 r.sucesso,
                 r.caminho
             );
         }
     }
 
-    // Só as rotas de SESSÃO são não-autenticadas: login (`POST /session`) e logout
-    // (`DELETE /session`, idempotente — exigir sessão vazaria a validade do cookie). Todo o
-    // resto exige sessão (invariante 6: principal/escopo vêm da sessão).
+    // Só as rotas de SESSÃO são não-autenticadas: o fluxo federado de login (`/auth/{provedor}`
+    // + callback) e o logout (`DELETE /session`, idempotente). Todo o resto exige sessão
+    // (invariante 6: principal/escopo vêm da sessão). NENHUMA rota `/me`, `/orgs`, `/admin` pode
+    // ser não-autenticada.
     #[test]
     fn so_sessao_e_nao_autenticada() {
         for r in CONTRATO {
             if !r.autenticada {
-                assert_eq!(r.caminho, "/api/v1/session", "só /session é não-autenticada: {}", r.caminho);
-                assert!(
-                    matches!(r.metodo, Metodo::Post | Metodo::Delete),
-                    "só login(POST)/logout(DELETE): {:?}",
-                    r.metodo
-                );
+                let e_de_sessao = r.caminho.starts_with("/api/v1/auth/") || r.caminho == "/api/v1/session";
+                assert!(e_de_sessao, "rota não-autenticada fora do fluxo de sessão: {}", r.caminho);
             }
         }
     }
