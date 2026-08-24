@@ -1,0 +1,33 @@
+# OpenObserve — CONFERIDO CONTRA O HOST `telemetry` em 2026-08-24 (altair, #1307).
+#
+# Isto é o que ESTÁ rodando (diretório do host: `/docker/openobserve-pwch/`),
+# copiado como está. Não corrigi nada aqui: espelhar e melhorar são atos
+# diferentes, e misturá-los é como a deriva do #1303 voltaria parecendo
+# resolvida.
+#
+# ⚠️ `:latest` NÃO é pin — reinício pode trocar a versão sem ninguém pedir.
+# ⚠️ `healthcheck: disable: true` — o container não reporta saúde ao Docker,
+#    então `docker ps` dizer "Up" não é evidência de que o serviço responde.
+# ⚠️ O nome do projeto (`COMPOSE_PROJECT_NAME`) entra nos nomes dos routers;
+#    no host ele vem do nome da pasta: `openobserve-pwch`.
+# Ambos viram card próprio; aqui fica o retrato fiel.
+services:
+  openobserve:
+    image: public.ecr.aws/zinclabs/openobserve:latest
+    restart: unless-stopped
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.rule=Host(`telemetry.thegalaxie.cloud`)
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.entrypoints=websecure
+      - traefik.http.routers.${COMPOSE_PROJECT_NAME}.tls.certresolver=letsencrypt
+      - traefik.http.services.${COMPOSE_PROJECT_NAME}.loadbalancer.server.port=5080
+    environment:
+      - ZO_ROOT_USER_EMAIL=${ZO_ROOT_USER_EMAIL}
+      - ZO_ROOT_USER_PASSWORD=${ZO_ROOT_USER_PASSWORD}
+    volumes:
+      - openobserve_data:/data
+    healthcheck:
+      disable: true
+
+volumes:
+  openobserve_data:
