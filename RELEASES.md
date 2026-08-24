@@ -4,6 +4,7 @@ Ledger "o que está no ar" (seed). Fonte: backfill 18/08/2026 a partir do `git l
 
 | Versão | Resumo |
 |---|---|
+| **v0.56.0** | 📁 Pausa de cópia/mover com teto (auto-retoma/cancela); Remote: portão de chunk órfão default-deny; LICENSE Apache-2.0 + docs de comunidade (OSS 1/2); board.ps1 -Inconsistentes; runbook do toolchain Remote. |
 | **v0.55.0** | 📬 Splitter do Bridge consistente (punho + hover nas três divisórias); pipe SYSTEM com porteiro de comando default-deny; turn_secret fora do argv; guarda de notas do release por allowlist. |
 | **v0.54.0** | 🖥️ Remote: clique certo com vídeo letterboxed; Bridge: sidebar em px (não engorda em monitor largo); Pessoas fatiada e mais responsiva; guardas de fiação (modal de update, release.yml, docx sandbox/CSP); warnings Rust zerados. |
 | **v0.53.0** | 📬 Compositor não apaga To/Cc/Bcc sem sugestões; undo como "Desfazer" na central; Home por nome; turn_secret ausente falha alto; mídia comprimida (9,1→1,6 MB) + ícones órfãos com catraca; ratchet knip; fronteira mock/real gateada. |
