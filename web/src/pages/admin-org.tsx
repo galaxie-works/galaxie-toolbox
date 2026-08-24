@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { DICIONARIOS, idiomaAtual, type Idioma } from "@/i18n";
+import {
+  DICIONARIOS,
+  idiomaAtual,
+  type Idioma,
+  type Dicionario,
+} from "@/i18n";
 import { buscar, CAMINHOS, type Membro } from "@/lib/org";
 
 // Admin da org (#1490) — UI de membros / domínios / settings / assinatura.
@@ -24,8 +29,23 @@ type Aba = "membros" | "dominios" | "settings" | "assinatura";
 
 const ABAS: readonly Aba[] = ["membros", "dominios", "settings", "assinatura"];
 
+/**
+ * Chaves do dicionário cujo valor é TEXTO.
+ *
+ * Não é purismo: `keyof Dicionario` deixava passar entradas que não são string
+ * — e passou. O #1484 acrescentou `entrarCom: Record<provedor, string>` (rótulo
+ * por provedor federado) e o `tsc` do CI reprovou o meu `t[ROTULO[aba]]` como
+ * `ReactNode` inválido. Eu não tinha visto porque **o CI compila a merge-ref e
+ * eu compilava só a minha branch**: o erro nasceu da COMBINAÇÃO, não de nenhum
+ * dos dois lados. Restringir o tipo aqui faz a próxima entrada não-string
+ * reprovar na hora de escrever, não na de mesclar.
+ */
+type ChaveDeTexto = {
+  [K in keyof Dicionario]: Dicionario[K] extends string ? K : never;
+}[keyof Dicionario];
+
 /** Rótulo de cada aba — `settings` reusa `configuracoes` do dicionário. */
-const ROTULO: Record<Aba, keyof typeof DICIONARIOS["pt-BR"]> = {
+const ROTULO: Record<Aba, ChaveDeTexto> = {
   membros: "membros",
   dominios: "dominios",
   settings: "configuracoes",
