@@ -30,12 +30,26 @@ export interface Membro {
 // deles esperam o formato do #1475-BE, que não existe. Tipo inventado antes do
 // contrato é palpite com cara de contrato; nasce junto com o endpoint.
 
-/** Caminhos do admin da org. Um lugar só — a tela não monta caminho. */
+/**
+ * Caminhos do admin da org, **do contrato** (§4.3) — um lugar só; a tela não
+ * monta caminho.
+ *
+ * Eram `/me/org/...`, que eu inventei quando não havia contrato. O contrato diz
+ * `/orgs/{org}/...`, com `{org}` conferido contra a sessão no backend (org
+ * alheia ⇒ 404). Viraram funções porque agora dependem do identificador da org.
+ *
+ * ⚠️ De onde vem o `{org}`: **ainda não há resposta.** `GET /me` devolve
+ * `{ nome, email, idioma? }` — sem org, sem papel — e não existe `GET /me/orgs`
+ * no contrato. Levantei a lacuna ao @alcor/@Altair em vez de escolher um lugar
+ * por conta: guardar um slug vindo de qualquer lugar é exatamente o que o
+ * invariante 6 impede. Enquanto não fecha, quem chama passa o valor e a tela
+ * declara que não o tem.
+ */
 export const CAMINHOS = {
-  membros: "/me/org/membros",
-  dominios: "/me/org/dominios",
-  configuracoes: "/me/org/configuracoes",
-  assinatura: "/me/org/assinatura",
+  membros: (org: string) => `/orgs/${org}/membros`,
+  dominios: (org: string) => `/orgs/${org}/dominios`,
+  settings: (org: string) => `/orgs/${org}/settings`,
+  assinatura: (org: string) => `/orgs/${org}/assinatura`,
 } as const;
 
 /**

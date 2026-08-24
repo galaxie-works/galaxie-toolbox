@@ -31,21 +31,21 @@ describe("#1489 api-me — rotas escopadas à sessão", () => {
     const p = await obterPerfil();
     expect(p.nome).toBe("Ana");
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/me");
+    expect(url).toBe("/api/v1/me");
     expect(init.credentials).toBe("same-origin");
   });
 
   it("listarDispositivos chama /me/dispositivos", async () => {
     fetchMock.mockResolvedValueOnce(respostaOk([]));
     await listarDispositivos();
-    expect(fetchMock.mock.calls[0][0]).toBe("/me/dispositivos");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/me/dispositivos");
   });
 
   it("revogarDispositivo usa DELETE em /me/dispositivos/<id> e encoda o id", async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
     await revogarDispositivo("a b/c");
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/me/dispositivos/a%20b%2Fc");
+    expect(url).toBe("/api/v1/me/dispositivos/a%20b%2Fc");
     expect(init.method).toBe("DELETE");
   });
 
@@ -53,7 +53,7 @@ describe("#1489 api-me — rotas escopadas à sessão", () => {
     fetchMock.mockResolvedValueOnce(respostaOk({ nome: "Novo", email: "ana@x.com" }));
     await atualizarPerfil({ nome: "Novo" });
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/me");
+    expect(url).toBe("/api/v1/me");
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body)).toEqual({ nome: "Novo" });
     expect(init.headers["Content-Type"]).toBe("application/json");
@@ -66,7 +66,7 @@ describe("#1489 api-me — rotas escopadas à sessão", () => {
     await atualizarPerfil({ nome: "x" });
     await listarDispositivos().catch(() => {});
     for (const [url] of fetchMock.mock.calls) {
-      expect(String(url).startsWith("/me")).toBe(true);
+      expect(String(url).startsWith("/api/v1/me")).toBe(true);
       expect(String(url)).not.toContain("/users/");
     }
   });

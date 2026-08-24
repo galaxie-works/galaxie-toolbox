@@ -19,7 +19,7 @@ describe("#1491 api-config", () => {
     fetchMock.mockResolvedValueOnce(respostaOk([]));
     await obterConfig();
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/me/config");
+    expect(url).toBe("/api/v1/me/config");
     expect(init.credentials).toBe("same-origin");
   });
 
@@ -27,7 +27,7 @@ describe("#1491 api-config", () => {
     fetchMock.mockResolvedValueOnce(respostaOk([]));
     await salvarConfig({ tema: "escuro" });
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("/me/config");
+    expect(url).toBe("/api/v1/me/config");
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body)).toEqual({ tema: "escuro" });
   });
@@ -37,7 +37,7 @@ describe("#1491 api-config", () => {
     await obterConfig();
     await salvarConfig({ x: true });
     for (const [url] of fetchMock.mock.calls) {
-      expect(String(url)).toBe("/me/config");
+      expect(String(url)).toBe("/api/v1/me/config");
       expect(String(url)).not.toContain("/users/");
     }
   });

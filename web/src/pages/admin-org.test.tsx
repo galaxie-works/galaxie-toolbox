@@ -6,13 +6,13 @@
 //    nenhum da org — mostra o aviso de sem permissão. Isso é testável sem o BE
 //    porque o que se mede é a REAÇÃO da UI a uma negativa, não a negativa.
 // ❌ A metade SERVIDOR do AC2/AC3 (o backend negar de fato, o 404 de org
-//    alheia): depende do #1475-BE, que está em `Ready` sem dono. Fica aberto e
-//    declarado no card — não vou chamar isto de AC cumprido.
+//    alheia): depende da BORDA HTTP (#1505), que ainda não existe — os crates
+//    `platform-*` são bibliotecas. Fica aberto e declarado no card; não chamo
+//    isto de AC cumprido.
 //
 // O `fetch` é trocado por um duplo aqui de propósito: quero exercitar a porta
-// de rede real (`chamar`), não pular por cima dela. Se alguém tirar a checagem
-// de escopo da porta, o teste do caminho continua valendo porque ele mede o que
-// SAIU — a URL que a tela pediu.
+// de rede real (`chamar`), não pular por cima dela. Assim o que os testes medem
+// é o que SAIU — a URL de verdade, com prefixo e tudo.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, waitFor } from "@testing-library/react";
 import { AdminOrgPage } from "./admin-org";
@@ -43,7 +43,7 @@ const json = (corpo: unknown, status = 200) =>
 describe("#1490 admin da org — a UI reflete, não decide", () => {
   it("AC2 (metade FE): backend negando ⇒ nenhum dado da org na tela", async () => {
     fetchFalso(() => json({ erro: "negado" }, 403));
-    render(<AdminOrgPage idioma="pt-BR" />);
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
 
     await waitFor(() =>
       expect(
@@ -66,7 +66,7 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
 
   it("403 (é da org, não é admin) ⇒ mensagem ACIONÁVEL: peça a um admin", async () => {
     fetchFalso(() => json({}, 403));
-    render(<AdminOrgPage idioma="pt-BR" />);
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
     await waitFor(() =>
       expect(screen.getByText(DICIONARIOS["pt-BR"].semPermissao)).toBeTruthy(),
     );
@@ -80,7 +80,7 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
 
   it("404 (não pertence) ⇒ mensagem VAGA, que não confirma que a org existe", async () => {
     fetchFalso(() => json({}, 404));
-    render(<AdminOrgPage idioma="pt-BR" />);
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
     await waitFor(() =>
       expect(screen.getByText(DICIONARIOS["pt-BR"].naoEhSuaOrg)).toBeTruthy(),
     );
@@ -107,7 +107,7 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
         }),
       ),
     );
-    render(<AdminOrgPage idioma="pt-BR" />);
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
     await waitFor(() =>
       expect(screen.getByText(DICIONARIOS["pt-BR"].erroCarregar)).toBeTruthy(),
     );
@@ -121,7 +121,7 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
         { id: "2", email: "bo@galaxie.works", papel: "member" },
       ]),
     );
-    render(<AdminOrgPage idioma="pt-BR" />);
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
     await waitFor(() =>
       expect(screen.getByText("ana@galaxie.works")).toBeTruthy(),
     );
@@ -129,24 +129,40 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
     expect(screen.getByText(DICIONARIOS["pt-BR"].papelMembro)).toBeTruthy();
   });
 
-  it("AC3: o pedido é escopado na sessão — nenhum id de org na URL", async () => {
+  // O nome deste teste era "nenhum id de org na URL" — e envelheceu junto com a
+  // minha premissa. O contrato v1 PÕE a org na URL (`/orgs/{org}`), conferida
+  // contra a sessão no servidor. O que o cliente pode afirmar não é a ausência
+  // do id; é que a rota pedida é **a do contrato**, com o prefixo, e que a org
+  // pedida é a que lhe deram — nunca uma que ele escolheu.
+  it("pede exatamente a rota do contrato, com prefixo, para a org recebida", async () => {
     const pedidos = fetchFalso(() => json([]));
-    render(<AdminOrgPage idioma="pt-BR" />);
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
     await waitFor(() => expect(pedidos.length).toBeGreaterThan(0));
 
-    // Anti-vazio: se a tela parasse de pedir, o `every` abaixo passaria à toa.
-    expect(pedidos).toContain(CAMINHOS.membros);
+    // Anti-vazio: se a tela parasse de pedir, o `for` abaixo passaria à toa.
+    expect(pedidos).toContain(`/api/v1${CAMINHOS.membros("acme")}`);
     for (const url of pedidos) {
-      expect(url.startsWith("/me/")).toBe(true);
+      expect(url.startsWith("/api/v1/orgs/acme/")).toBe(true);
     }
+  });
+
+  it("sem org conhecida, a tela DIZ que não sabe e não chama a rede", async () => {
+    // Não há rota no contrato de onde o cliente descubra o `{org}` (`GET /me`
+    // não devolve org). A tentação é o FE guardar um slug vindo de qualquer
+    // lugar — o que o invariante 6 impede. Enquanto a lacuna não fecha, a tela
+    // declara o que não sabe, e **não inventa uma chamada**.
+    const pedidos = fetchFalso(() => json([]));
+    render(<AdminOrgPage idioma="pt-BR" />);
+    expect(screen.getByText(DICIONARIOS["pt-BR"].orgIndefinida)).toBeTruthy();
+    expect(pedidos).toEqual([]);
   });
 
   it("i18n: as duas línguas do DoD renderizam", () => {
     fetchFalso(() => json([]));
-    render(<AdminOrgPage idioma="en" />);
+    render(<AdminOrgPage idioma="en" org="acme" />);
     expect(screen.getByText(DICIONARIOS.en.adminOrg)).toBeTruthy();
     cleanup();
-    render(<AdminOrgPage idioma="pt-BR" />);
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
     expect(screen.getByText(DICIONARIOS["pt-BR"].adminOrg)).toBeTruthy();
   });
 });
