@@ -25,19 +25,35 @@
 .PARAMETER Fresh
   Ignora o cache e refaz a query.
 
+.PARAMETER Inconsistentes
+  #1464 — modo de RECONCILIAÇÃO (consumido pela Groomer na saúde ~2×/dia): lista os
+  cards onde a issue está CLOSED mas a coluna NÃO é terminal, classificando cada um em
+  "ficou pra tras (orfao)" (Backlog/Ready/In progress/In review) ou "a frente (fechado
+  sem/antes do gate)" (Done/QA Approved/PO Approved/Rejected). SÓ lista — não move nada
+  (mover é do dono; canon §2). Reaproveita a paginação do board (nenhuma query nova).
+
+.PARAMETER FixtureFile
+  #1464 — hook de TESTE: caminho de um JSON de itens (mesmo shape do Get-BoardItems) que
+  substitui a query real no modo -Inconsistentes. Permite testar a classificação offline
+  (sem gh/rede). Uso interno do board.Tests.ps1.
+
 .EXAMPLE
   pwsh scripts/board.ps1 -Coluna "In review"
 .EXAMPLE
   pwsh scripts/board.ps1            # contagem por coluna
 .EXAMPLE
   pwsh scripts/board.ps1 -Epico 682 -Json
+.EXAMPLE
+  pwsh scripts/board.ps1 -Inconsistentes    # rede de reconciliação da Groomer
 #>
 [CmdletBinding()]
 param(
   [string]$Coluna,
   [int]$Epico,
   [switch]$Json,
-  [switch]$Fresh
+  [switch]$Fresh,
+  [switch]$Inconsistentes,
+  [string]$FixtureFile
 )
 
 Set-StrictMode -Version Latest
@@ -170,7 +186,56 @@ query($owner: String!, $repo: String!, $num: Int!, $cursor: String) {
   return $subs
 }
 
+# --- #1464: reconciliação (issue CLOSED × coluna ativa) ------------------------
+# Predicado por ESTADO×COLUNA (não por "veio de Closes") — pega tanto o auto-close no
+# merge quanto o close explícito sem commit (o @Altair mediu os dois). Função pura:
+# recebe os itens (do board ou de um fixture) e devolve os inconsistentes, classificados.
+# Nenhuma coluna fica indefinida (fecha o vão apontado pelo @Altair) — o que não é
+# terminal nem cai nas duas classes conhecidas vira "sem coluna/desconhecida".
+function Select-Inconsistentes {
+  param([object[]]$Items)
+  # As colunas terminais do board. Hoje só existe "Released to Production" (medi as 9
+  # opções de Status); "Closed - sem entrega" entra por fidelidade ao predicado do card
+  # e à prova de futuro — simplesmente nunca casa enquanto a coluna não existir.
+  $terminais = @('Released to Production', 'Closed - sem entrega')
+  $atras  = @('Backlog', 'Ready', 'In progress', 'In review')
+  $frente = @('Done', 'QA Approved', 'PO Approved', 'Rejected')
+  $out = [System.Collections.Generic.List[object]]::new()
+  foreach ($it in $Items) {
+    if ($it.Estado -ne 'CLOSED') { continue }        # OPEN em qualquer coluna: consistente (AC3)
+    if ($terminais -contains $it.Coluna) { continue } # CLOSED terminal: consistente (AC3)
+    $classe =
+      if     ($atras  -contains $it.Coluna) { 'ficou pra tras (orfao)' }          # AC1
+      elseif ($frente -contains $it.Coluna) { 'a frente (fechado sem/antes do gate)' } # AC2
+      else                                  { 'sem coluna/desconhecida' }
+    $out.Add([pscustomobject]@{
+      Numero = $it.Numero
+      Coluna = $it.Coluna
+      Estado = $it.Estado
+      Classe = $classe
+      Titulo = $it.Titulo
+      Url    = $it.Url
+    })
+  }
+  return $out
+}
+
 # --- Saída ---------------------------------------------------------------------
+if ($Inconsistentes) {
+  # FixtureFile (teste) substitui a query real; senão reaproveita a paginação do board.
+  $fonte = if ($FixtureFile) { @(Get-Content -Raw -LiteralPath $FixtureFile | ConvertFrom-Json) }
+           else              { Get-BoardItems }
+  $inc = Select-Inconsistentes -Items $fonte
+  if ($Json) { $inc | ConvertTo-Json -Depth 5; return }
+  if ($inc.Count -eq 0) {
+    Write-Host "Reconciliacao: 0 cards inconsistentes (issue CLOSED x coluna ativa)." -ForegroundColor Green
+    return
+  }
+  Write-Host "Reconciliacao: $($inc.Count) card(s) inconsistente(s) — issue CLOSED x coluna ativa:"
+  $inc | Sort-Object Classe, Numero | Format-Table Numero, Coluna, Estado, Classe, Titulo -AutoSize
+  return
+}
+
 if ($Epico) {
   $subs = Get-EpicoSubIssues -Numero $Epico
   if ($Json) { $subs | ConvertTo-Json -Depth 5; return }

@@ -1,0 +1,40 @@
+# Traefik — CONFERIDO CONTRA O HOST `telemetry` em 2026-08-24 (altair, #1307).
+#
+# Isto é o que ESTÁ rodando, copiado do host, não uma versão melhorada.
+# Divergências conhecidas entre o que roda e o que seria bom estão anotadas
+# abaixo como comentário e viram card próprio — corrigir aqui sem corrigir no
+# host recriaria a deriva invisível do #1303 com aparência de resolvida.
+#
+# ⚠️ `image: traefik:latest` NÃO é pin. O que roda hoje é **v3.7.10** (medido:
+#    `docker exec traefik-traefik-1 traefik version`). Um `:latest` reinicia
+#    para uma versão diferente sem ninguém pedir. Fica registrado como está,
+#    porque é a verdade; o pin é mudança de produção e vai em card próprio.
+#
+# ⚠️ `network_mode: host` — por isso este serviço não tem labels de roteamento;
+#    ele É a borda. As rotas vêm dos labels dos OUTROS containers, via
+#    `providers.docker`.
+services:
+  traefik:
+    image: traefik:latest
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - --api.dashboard=false
+      - --api.insecure=false
+      - --log.level=WARN
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+    volumes:
+      - traefik-letsencrypt:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  traefik-letsencrypt:

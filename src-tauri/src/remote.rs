@@ -314,10 +314,14 @@ enum FrameAcao {
     ControlePermitido(ControlMessage),
     /// Controle negado pela capability — logado, nunca processado.
     ControleBloqueado,
-    /// Chunk de arquivo dentro da capability (AC2/#688 exigirá oferta aceita).
+    /// Chunk de arquivo COM oferta aceita (transfer_id no accepted-set) E capability.
     ChunkPermitido,
     /// Chunk com `file_transfer` desligado — rejeitado.
     ChunkBloqueado,
+    /// #1000 AC2: chunk cujo `transfer_id` NÃO tem oferta aceita (accepted-set) —
+    /// rejeitado ANTES e INDEPENDENTE da capability (chunk órfão = escrita por índice).
+    /// Negativa DISTINTA de `ChunkBloqueado`: nenhuma substitui a outra.
+    ChunkOrfao,
 }
 
 /// #1000 — política de autorização por-frame do host, PURA (sem `RuntimeSession`)
@@ -328,12 +332,19 @@ enum FrameAcao {
 ///   `aplicar`, o controlador se auto-promoveria pelas capabilities do wire.
 /// - **AC3:** `Input(Screen)` é host→controlador; no host, aceitar reescreveria a
 ///   geometria do mapeamento de coordenadas → barrado por direção.
-/// - **AC2** (chunk órfão exige oferta aceita) depende da direção do fluxo de
-///   arquivo do #688 — aqui o `Chunk` ainda é gateado só pela capability.
+/// - **AC2** (chunk órfão): um `Chunk` cujo `transfer_id` NÃO está no accepted-set
+///   (`transfers_aceitos`) é recusado (`ChunkOrfao`) ANTES e INDEPENDENTE da
+///   capability `file_transfer` — duas negativas distintas. O conjunto nasce VAZIO
+///   por construção (quem RECEBE `Chunk` é quem EMITIU `FileAccept`; popular do
+///   frame que chega deixaria o peer autorizar a si próprio — classe #1310, dir. do
+///   Altair). Vazio ⇒ todo `Chunk` é órfão hoje ⇒ recusado (fail-closed; #691
+///   omissão = lista vazia). O ponto de inserção — quando o HOST emite `FileAccept`
+///   — é o card do fluxo de recebimento, que depende DESTE portão, não o contrário.
 fn autorizar_frame(
     role: RemoteRole,
     capabilities: Capabilities,
     frame: &ControlFrame,
+    transfers_aceitos: &HashSet<u32>,
 ) -> Result<FrameAcao, RemoteError> {
     match frame {
         ControlFrame::Input(InputEvent::Screen { info }) => {
@@ -366,8 +377,14 @@ fn autorizar_frame(
                 Ok(FrameAcao::ControlePermitido(msg.clone()))
             }
         }
-        ControlFrame::Chunk { .. } => {
-            if capabilities.file_transfer {
+        ControlFrame::Chunk { transfer_id, .. } => {
+            // AC2 (dir. Altair): DUAS negativas distintas, nenhuma substitui a outra.
+            // (1) órfão — transfer_id sem oferta aceita — checado ANTES e INDEPENDENTE
+            //     da capability (capability ligada + oferta não aceita ⇒ ainda recusa).
+            // O accepted-set é VAZIO por construção hoje ⇒ todo Chunk é órfão.
+            if !transfers_aceitos.contains(transfer_id) {
+                Ok(FrameAcao::ChunkOrfao)
+            } else if capabilities.file_transfer {
                 Ok(FrameAcao::ChunkPermitido)
             } else {
                 Ok(FrameAcao::ChunkBloqueado)
@@ -1188,7 +1205,10 @@ impl RuntimeSession {
         // #1000 (AC1/AC3): a DECISÃO de autorização por-frame mora em `autorizar_frame`
         // (pura, testável — a matriz do design do Altair). Aqui só EXECUTAMOS o
         // veredito; sem política enterrada no caminho de efeito.
-        match autorizar_frame(self.role, self.capabilities, &frame)? {
+        // #1000 AC2: accepted-set VAZIO por construção — nada o popula ainda (o ponto
+        // de inserção é quando o HOST emite `FileAccept`, no card do fluxo de
+        // recebimento). Vazio ⇒ todo `Chunk` é órfão ⇒ recusado (fail-closed).
+        match autorizar_frame(self.role, self.capabilities, &frame, &HashSet::new())? {
             FrameAcao::EmitirScreen(info) => {
                 self.send_event(RemoteSessionEvent::Screen { info })?;
             }
@@ -1205,13 +1225,22 @@ impl RuntimeSession {
                      (clipboard/file desligado na sessão)"
                 );
             }
-            // #1000 AC2 (#688): aqui entra a exigência de OFERTA ACEITA (accepted-set)
-            // — chunk órfão rejeitado. Depende da direção do fluxo de arquivo do #688.
+            // #1000 AC2: chunk com oferta ACEITA (transfer_id no accepted-set) E
+            // capability. Sem consumidor ainda (o fluxo de recebimento é outro card);
+            // trocar "permitido e ignorado" por gate NÃO regride comportamento.
             FrameAcao::ChunkPermitido => {}
             FrameAcao::ChunkBloqueado => {
                 log::warn!(
                     "[remote] chunk de arquivo BLOQUEADO: capability file_transfer \
                      desligada na sessão"
+                );
+            }
+            // #1000 AC2: chunk órfão (transfer_id sem oferta aceita) — negativa
+            // distinta da capability; NUNCA logamos o conteúdo, só o veredito.
+            FrameAcao::ChunkOrfao => {
+                log::warn!(
+                    "[remote] chunk de arquivo BLOQUEADO: transfer_id sem oferta \
+                     aceita (chunk órfão = escrita por índice)"
                 );
             }
         }
@@ -1776,7 +1805,7 @@ mod tests {
         };
         assert!(
             matches!(
-                autorizar_frame(RemoteRole::Host, caps, &frame),
+                autorizar_frame(RemoteRole::Host, caps, &frame, &HashSet::new()),
                 Err(RemoteError::InvalidInputDirection)
             ),
             "Screen no host tem que ser barrado mesmo com todas as caps ligadas (#1000 AC3)",
@@ -1789,7 +1818,7 @@ mod tests {
     fn ac3_input_screen_no_controlador_emite_geometria() {
         let frame = ControlFrame::Input(InputEvent::Screen { info: tela() });
         assert_eq!(
-            autorizar_frame(RemoteRole::Controller, Capabilities::default(), &frame).ok(),
+            autorizar_frame(RemoteRole::Controller, Capabilities::default(), &frame, &HashSet::new()).ok(),
             Some(FrameAcao::EmitirScreen(tela())),
         );
     }
@@ -1815,7 +1844,7 @@ mod tests {
             },
         ] {
             assert_eq!(
-                autorizar_frame(RemoteRole::Host, caps, &anuncio).ok(),
+                autorizar_frame(RemoteRole::Host, caps, &anuncio, &HashSet::new()).ok(),
                 Some(FrameAcao::IgnorarAnuncioDeCapabilities),
                 "o host NUNCA aplica o anúncio de Capabilities do controlador (#1000 AC1)",
             );
@@ -1830,7 +1859,7 @@ mod tests {
             text: "x".to_owned(),
         });
         assert_eq!(
-            autorizar_frame(RemoteRole::Host, Capabilities::default(), &clip).ok(),
+            autorizar_frame(RemoteRole::Host, Capabilities::default(), &clip, &HashSet::new()).ok(),
             Some(FrameAcao::ControleBloqueado),
         );
         let caps = Capabilities {
@@ -1838,33 +1867,74 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            autorizar_frame(RemoteRole::Host, caps, &clip).ok(),
+            autorizar_frame(RemoteRole::Host, caps, &clip, &HashSet::new()).ok(),
             Some(FrameAcao::ControlePermitido(ControlMessage::ClipboardText {
                 text: "x".to_owned()
             })),
         );
     }
 
-    /// Chunk segue a capability `file_transfer` (a exigência de OFERTA ACEITA é a
-    /// AC2, que espera a direção do #688).
+    /// #1000 AC2 — o accepted-set VAZIO barra TODO chunk (órfão), ANTES e INDEPENDENTE
+    /// da capability: `file_transfer` ligado NÃO salva um chunk sem oferta aceita.
+    /// Documenta o estado de hoje (nada popula o conjunto ⇒ vazio por construção).
+    /// **Mutação:** trocar `!transfers_aceitos.contains` por `false` faz este teste
+    /// virar `ChunkPermitido` e ficar vermelho.
     #[test]
-    fn chunk_respeita_capability_file_transfer() {
+    fn chunk_orfao_recusado_mesmo_com_file_transfer_ligado() {
         let chunk = ControlFrame::Chunk {
             transfer_id: 7,
             offset: 0,
             data: vec![1, 2, 3],
         };
+        let com_file = Capabilities {
+            file_transfer: true,
+            ..Default::default()
+        };
+        // conjunto VAZIO + file_transfer LIGADO ⇒ órfão (a capability não salva).
         assert_eq!(
-            autorizar_frame(RemoteRole::Host, Capabilities::default(), &chunk).ok(),
+            autorizar_frame(RemoteRole::Host, com_file, &chunk, &HashSet::new()).ok(),
+            Some(FrameAcao::ChunkOrfao),
+        );
+        // conjunto VAZIO + file_transfer DESLIGADO ⇒ órfão (checado ANTES da capability).
+        assert_eq!(
+            autorizar_frame(RemoteRole::Host, Capabilities::default(), &chunk, &HashSet::new()).ok(),
+            Some(FrameAcao::ChunkOrfao),
+        );
+    }
+
+    /// #1000 AC2 — com a oferta ACEITA (transfer_id no conjunto), o chunk volta a
+    /// seguir a capability: as duas negativas (órfão × capability) são independentes.
+    #[test]
+    fn chunk_com_oferta_aceita_segue_a_capability() {
+        let chunk = ControlFrame::Chunk {
+            transfer_id: 7,
+            offset: 0,
+            data: vec![1, 2, 3],
+        };
+        let aceitos: HashSet<u32> = [7].into_iter().collect();
+        // aceito + SEM capability ⇒ bloqueado por CAPABILITY (não órfão).
+        assert_eq!(
+            autorizar_frame(RemoteRole::Host, Capabilities::default(), &chunk, &aceitos).ok(),
             Some(FrameAcao::ChunkBloqueado),
         );
-        let caps = Capabilities {
+        // aceito + COM capability ⇒ permitido.
+        let com_file = Capabilities {
             file_transfer: true,
             ..Default::default()
         };
         assert_eq!(
-            autorizar_frame(RemoteRole::Host, caps, &chunk).ok(),
+            autorizar_frame(RemoteRole::Host, com_file, &chunk, &aceitos).ok(),
             Some(FrameAcao::ChunkPermitido),
+        );
+        // chunk de OUTRO transfer_id (fora do conjunto) ⇒ órfão, mesmo com conjunto não-vazio.
+        let outro = ControlFrame::Chunk {
+            transfer_id: 9,
+            offset: 0,
+            data: vec![9],
+        };
+        assert_eq!(
+            autorizar_frame(RemoteRole::Host, com_file, &outro, &aceitos).ok(),
+            Some(FrameAcao::ChunkOrfao),
         );
     }
 
@@ -1882,7 +1952,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            autorizar_frame(RemoteRole::Host, caps, &frame).ok(),
+            autorizar_frame(RemoteRole::Host, caps, &frame, &HashSet::new()).ok(),
             Some(FrameAcao::AplicarInput(InputEvent::Key {
                 tecla: Tecla::Enter,
                 pressed: true
@@ -1900,7 +1970,7 @@ mod tests {
             tecla: Tecla::Enter,
             pressed: true,
         });
-        let acao = autorizar_frame(RemoteRole::Host, Capabilities::default(), &frame);
+        let acao = autorizar_frame(RemoteRole::Host, Capabilities::default(), &frame, &HashSet::new());
         assert!(
             matches!(acao, Err(RemoteError::InputDisabled)),
             "host sem caps.input não pode obter AplicarInput (funil de autorização, #1000)",
@@ -1920,7 +1990,7 @@ mod tests {
             ..Default::default()
         };
         assert!(matches!(
-            autorizar_frame(RemoteRole::Controller, caps, &frame),
+            autorizar_frame(RemoteRole::Controller, caps, &frame, &HashSet::new()),
             Err(RemoteError::InvalidInputDirection)
         ));
     }
