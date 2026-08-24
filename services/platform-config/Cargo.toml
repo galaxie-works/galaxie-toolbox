@@ -1,0 +1,15 @@
+# Config do uso do app (prefs owner-scoped + allowlist) da plataforma web — #1471 (épico #1265).
+# Crate STANDALONE (padrão da casa em services/*) — DOMÍNIO PURO: o scoping das prefs à
+# sessão + a allowlist do que a web pode gravar, sem I/O → `cargo test` local e instantâneo.
+# A borda HTTP e a persistência das prefs são fatias seguintes que CHAMAM esta lógica.
+[package]
+name = "galaxie-platform-config"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+# A fundação de identidade/autorização (#1469): Principal, Sessao, UserId. O escopo das
+# prefs sai da SESSÃO (regra 5), nunca de um id/payload do cliente.
+galaxie-platform-identity = { path = "../platform-identity" }
