@@ -1,5 +1,5 @@
 # TEAM-CANON — GALAXIE
-**v1.14 · 2026-08-24 · aguarda ratificação escrita do PO na PR · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
+**v1.14 · 2026-08-24 · ratificado pelo PO na PR #1476 (17:21Z) · dono: Bibliotecário** · histórico em [`CHANGELOG-CANON.md`](CHANGELOG-CANON.md) · casos em [`docs/equipe/CASOS.md`](docs/equipe/CASOS.md) · nomes e sessões em `ROSTER.md` (memória)
 
 Lei única do time. Quem nasce lê: identidade → este canon → próprio `Context.md`. Onde outro doc ou hábito divergir, o canon vence. Cadência de emenda em §8.
 
@@ -22,13 +22,13 @@ Lei única do time. Quem nasce lê: identidade → este canon → próprio `Cont
 | **In progress** | Um executor (campo **Executor**) trabalha | PR aberta + evidência dos ACs na issue → In review (executor) |
 | **In review** | CI da PR rodando | **CI verde** → executor faz `gh pr merge --merge`, confere `merge-base` na `pre-prod`, move → Done (executor); `Ref` não move. CI vermelho > 1 h sem dev → SM cobra |
 | **Done** | Na `pre-prod`; fila das QAs | QA-A gata todo card; QA-V soma-se se há superfície. **Última lente que aprova move** → QA Approved (sem superfície: → **PO Approved direto**, sem pedir). Reprovou → Rejected + **nomeia o executor fresco** (a QA) |
-| **QA Approved** | Tem superfície; aguarda passe de runtime do PO | PO testa a pre-prod → PO Approved ou Rejected (PO comenta; **quem move é a QA**) |
+| **QA Approved** | Tem superfície; aguarda passe de runtime do PO | PO testa a pre-prod → PO Approved ou Rejected (**PO comenta na issue e move o card**, §1.4) |
 | **PO Approved** | Pronto pra promover | ~3 cards → Deploy Manager promove `pre-prod→main` + tag + changelog → Released (DM) |
 | **Rejected** | Achado verbatim na issue; já tem executor fresco nomeado | Executor fresco puxa → In progress (executor); sem dono > 1 tick → SM nomeia. **Área de 2 devs, ambos autores** (sem fresco possível): o SM pode reusar o mesmo dev **só quando o achado é mecanicamente verificável** (teste que falha), nunca por julgamento |
 | **Released** | Na `main`, versão cortada | Terminal. Épico: DM move quando as **sub-issues** estão 100 % Released |
 | **Closed – sem entrega** | Não reproduz / medição / contenção / duplicata | Quem apura fecha a issue e arquiva o card; não passa por Done→QA→PO |
 
-**Superfície:** sem tela = sem superfície. Quem cria a issue marca; quem perceber faltar, marca e segue. **Design:** Groomer põe `precisa design` (obrigatório em security/remote/auth); Arquiteto responde na issue (desenho ou "sem desenho necessário") em ≤1 passada; em Done, revisão de design antecede o gate. **Bloqueio:** todo card travado por terceiro ou **todo pedido de decisão ao PO** recebe `bloqueado` (+ `po-decisao` quando é do PO) e fica onde está; quem resolve retira. **Épico** mede completude por **sub-issues do GitHub**, nunca por texto. **Auto-close:** `Closes #N` fecha a issue no merge mas **não move o card** — quem integra move o card no mesmo ato; órfãos (issue fechada × card em coluna ativa, ou o inverso) são reconciliados pela saúde do board da Groomer (detector no `board.ps1`). **Autorização:** card com superfície nova que aceita chamada externa (API/pipe/endpoint) inclui no DoD a seção `## Autorização` — (1) quem pode chamar, (2) chamador não-autorizado → resultado, (3) como se testa o negado; a QA-A gata o caso "não-autorizado = negado".
+**Superfície:** sem tela = sem superfície. Quem cria a issue marca; quem perceber faltar, marca e segue. **Design:** Groomer põe `precisa design` (obrigatório em security/remote/auth); Arquiteto responde na issue (desenho ou "sem desenho necessário") em ≤1 passada; em Done, revisão de design antecede o gate. **Bloqueio:** todo card travado por terceiro ou **todo pedido de decisão ao PO** recebe `bloqueado` (+ `po-decisao` quando é do PO) e fica onde está; quem resolve retira. **Épico** mede completude por **sub-issues do GitHub**, nunca por texto. **Auto-close:** `Closes #N` fecha a issue no merge mas **não move o card** — quem integra move o card no mesmo ato; órfãos (issue fechada × card em coluna ativa, ou o inverso) são reconciliados pela saúde do board da Groomer (detector a construir em #1464, estende o `board.ps1`).
 
 ## 3. Papéis (nome e sessão no ROSTER)
 | Papel | Faz | Nunca |
