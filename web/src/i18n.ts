@@ -51,8 +51,14 @@ export interface Dicionario {
   papel: string;
   papelAdmin: string;
   papelMembro: string;
+  // #1490 fatia 2 — 403 e 404 têm mensagens DIFERENTES de propósito. Ver o
+  // cabeçalho de `lib/org.ts`: quem leva 403 já é da org e já sabe que ela
+  // existe, então "peça a um admin" é acionável e não revela nada; quem leva
+  // 404 não pertence, e a mensagem não pode confirmar que a org existe.
   semPermissao: string;
   semPermissaoDetalhe: string;
+  naoEhSuaOrg: string;
+  naoEhSuaOrgDetalhe: string;
 }
 
 export const DICIONARIOS: Record<Idioma, Dicionario> = {
@@ -97,6 +103,9 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     semPermissao: "Você não administra esta organização",
     semPermissaoDetalhe:
       "Peça a um administrador da sua organização para conceder o acesso.",
+    // Deliberadamente vago: não confirma nem nega que a organização exista.
+    naoEhSuaOrg: "Organização não encontrada",
+    naoEhSuaOrgDetalhe: "Confira se você está na conta certa.",
   },
   en: {
     entrar: "Sign in",
@@ -139,6 +148,9 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     semPermissao: "You don't administer this organization",
     semPermissaoDetalhe:
       "Ask an administrator of your organization to grant access.",
+    // Deliberadamente vago: não confirma nem nega que a organização exista.
+    naoEhSuaOrg: "Organization not found",
+    naoEhSuaOrgDetalhe: "Check whether you're in the right account.",
   },
 };
 

@@ -42,8 +42,6 @@ const json = (corpo: unknown, status = 200) =>
 
 describe("#1490 admin da org — a UI reflete, não decide", () => {
   it("AC2 (metade FE): backend negando ⇒ nenhum dado da org na tela", async () => {
-    // 403 e 404 significam a mesma coisa pro cliente: não é seu. O BE responde
-    // 404 pra org alheia (não enumerar) — ver delta do @Altair no #1475.
     fetchFalso(() => json({ erro: "negado" }, 403));
     render(<AdminOrgPage idioma="pt-BR" />);
 
@@ -56,14 +54,43 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
     expect(screen.queryByRole("table")).toBeNull();
   });
 
-  it("AC2 (metade FE): 404 cai no mesmo caminho que 403", async () => {
+  // ── 403 ≠ 404 ────────────────────────────────────────────────────────────
+  // A fatia 1 colapsava os dois e o teste de então AFIRMAVA o colapso ("404 cai
+  // no mesmo caminho que 403"). Estes dois testes afirmam o oposto, e o mutante
+  // que os mata é trocar um status pelo outro — exatamente a regressão possível.
+  //
+  // Por que são diferentes (nota do @Altair no #1475): quem leva 403 já é da
+  // org e já sabe que ela existe; dizer "peça a um admin" é acionável e não
+  // revela nada. Quem leva 404 não pertence, e a mensagem não pode confirmar
+  // que a org existe. O sigilo vem da ORDEM no servidor, não do colapso aqui.
+
+  it("403 (é da org, não é admin) ⇒ mensagem ACIONÁVEL: peça a um admin", async () => {
+    fetchFalso(() => json({}, 403));
+    render(<AdminOrgPage idioma="pt-BR" />);
+    await waitFor(() =>
+      expect(screen.getByText(DICIONARIOS["pt-BR"].semPermissao)).toBeTruthy(),
+    );
+    expect(
+      screen.getByText(DICIONARIOS["pt-BR"].semPermissaoDetalhe),
+    ).toBeTruthy();
+    // E não pode cair na mensagem do 404.
+    expect(screen.queryByText(DICIONARIOS["pt-BR"].naoEhSuaOrg)).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("404 (não pertence) ⇒ mensagem VAGA, que não confirma que a org existe", async () => {
     fetchFalso(() => json({}, 404));
     render(<AdminOrgPage idioma="pt-BR" />);
     await waitFor(() =>
-      expect(
-        screen.getByText(DICIONARIOS["pt-BR"].semPermissao),
-      ).toBeTruthy(),
+      expect(screen.getByText(DICIONARIOS["pt-BR"].naoEhSuaOrg)).toBeTruthy(),
     );
+    // O texto do 403 admite que a org é sua ("da SUA organização"). Se ele
+    // aparecesse aqui, o cliente confirmaria a existência de uma org alheia —
+    // devolvendo por texto o que o backend recusou dizer pelo status.
+    expect(screen.queryByText(DICIONARIOS["pt-BR"].semPermissao)).toBeNull();
+    expect(
+      screen.queryByText(DICIONARIOS["pt-BR"].semPermissaoDetalhe),
+    ).toBeNull();
     expect(screen.queryByRole("table")).toBeNull();
   });
 
