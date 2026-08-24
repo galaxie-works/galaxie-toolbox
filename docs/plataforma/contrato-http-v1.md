@@ -61,7 +61,7 @@ quer o recurso não exista, quer exista e não seja do solicitante. A razão **n
 | `404` | `nao_encontrado` | recurso inexistente **ou** de outro tenant (invariante 1) |
 | `403` | `negado` | recurso **visível** (própria org), mas papel insuficiente (`AdminErro::Negado`) |
 | `400` | `payload_invalido` | corpo malformado / campo faltando |
-| `409` | `conflito` | ex.: domínio já reivindicado |
+| `409` | `conflito` | conflito **dentro da própria org** (ex.: reivindicar 2× o mesmo domínio na MESMA org). Nunca cross-tenant — ver §4.3 |
 
 > `404` vs `403`: cross-tenant é **sempre** `404` (não enumerar). `403` só quando o recurso é
 > comprovadamente da própria org do principal e o que falta é **papel** (member tentando ação de admin).
@@ -76,50 +76,70 @@ passa por `autorizar`/`autorizar_acao_admin` (invariante 5). Escopo vem da sess�
 ### 4.1 Sessão — `#1469`/`platform-web`
 | Método | Rota | Muta? | Sucesso | Erros | Notas |
 |---|---|---|---|---|---|
-| `POST` | `/session` | sim | `204` + `Set-Cookie` | `401` | login: principal já resolvido (upstream) → `emitir_sessao` (id fresco = rotação) |
-| `DELETE` | `/session` | sim | `204` + `Set-Cookie` expurgo | — | logout: `invalidar` no servidor (fato) + expurgo |
+| `POST` | `/session` | sim | `204` + `Set-Cookie` | `401` | login: shape depende do MODELO DE AUTH — **decisão pendente** (§2). `emitir_sessao` (id fresco = rotação). |
+| `DELETE` | `/session` | sim | `204` + `Set-Cookie` expurgo | — | logout **idempotente e NÃO-autenticado**: sempre `204`+expurgo, com ou sem sessão. *Exigir sessão vazaria a validade do cookie (Altair).* Se havia sessão, `invalidar` no servidor. |
 
-### 4.2 Conta própria (`/me`) — `#1473`/`platform-conta`
-| Método | Rota | Muta? | Sucesso | Erros | Fonte |
-|---|---|---|---|---|---|
-| `GET` | `/me` | não | `200` perfil próprio | `401` | `resolver_conta_propria` (escopo = sessão, invariante 6) |
-| `DELETE` | `/me/recursos/{id}` | sim | `204` | `401`,`404` | `pode_revogar_recurso_proprio`; recurso de outro ⇒ `404` (inv. 1) |
+### 4.2 Conta própria (`/me`) — `#1473`/`platform-conta` (shapes do @Castor, medidas no FE)
+| Método | Rota | Muta? | Sucesso (shape) | Erros |
+|---|---|---|---|---|
+| `GET` | `/me` | não | `200` `{ nome, email, idioma? }` | `401` |
+| `PATCH` | `/me` | sim | `200` Perfil `{ nome, email, idioma? }` | `401`,`400` |
+| `GET` | `/me/assinatura` | não | `200` `{ plano, status: "ativa"\|"inadimplente"\|"cancelada"\|"nenhuma", consumo?: { usado, limite\|null, unidade } }` | `401` |
+| `GET` | `/me/dispositivos` | não | `200` `[{ id, nome, ultimoAcesso: ISO-8601, sessaoAtual: bool }]` | `401` |
+| `DELETE` | `/me/dispositivos/{id}` | sim | `204` | `401`,`404` (dispositivo de outro ⇒ `404`, inv. 1) |
 
-`/me` **não** aceita id de usuário na URL — o "eu" é a sessão. Pedir `/usuarios/{id}` não existe de
-propósito (seria enumeração).
+`/me` **não** aceita id de usuário na URL — o "eu" é a sessão (inv. 6). `/usuarios/{id}` não existe
+de propósito (seria enumeração).
 
 ### 4.3 Admin da org — `#1475`/`platform-org-admin` (mapeia `AcaoAdminOrg`)
-Todas sob `/orgs/{org}` e todas conferem `{org}` contra a sessão via `autorizar_acao_admin`
-(org alheia ⇒ `404`; própria org sem papel `org_admin` ⇒ `403`).
+Sob `/orgs/{org}`; `{org}` é conferido contra a sessão via `autorizar_acao_admin` (org alheia ⇒
+`404`; própria org sem papel `org_admin` ⇒ `403`).
 
 | Método | Rota | Muta? | `AcaoAdminOrg` | Sucesso |
 |---|---|---|---|---|
-| `GET` | `/orgs/{org}/membros` | não | `ListarMembros` | `200` |
+| `GET` | `/orgs/{org}/membros` | não | `ListarMembros` | `200` `[{ uid, nome, email, papel }]` |
 | `POST` | `/orgs/{org}/membros` | sim | `ConvidarMembro` | `201` |
 | `DELETE` | `/orgs/{org}/membros/{uid}` | sim | `RemoverMembro` | `204` |
 | `PATCH` | `/orgs/{org}/membros/{uid}` | sim | `MudarPapelMembro` | `200` |
-| `POST` | `/orgs/{org}/dominios` | sim | `ReivindicarDominio` | `201` / `409` (já reivindicado) |
-| `POST` | `/orgs/{org}/dominios/{dom}/verificacao` | sim | `VerificarDominio` | `200` |
+| `POST` | `/orgs/{org}/dominios` | sim | `ReivindicarDominio` | `201` pendente |
+| `POST` | `/orgs/{org}/dominios/{dom}/verificacao` | sim | `VerificarDominio` | `200` \| `422` (DNS não confere) |
 | `PATCH` | `/orgs/{org}/settings` | sim | `EditarSettings` | `200` |
 | `PUT` | `/orgs/{org}/assinatura` | sim | `GerirAssinatura` | `200` |
 
-### 4.4 Config do app — `#1471` (member basta: `Operacao::ConfigurarAppDaOrg`)
-| Método | Rota | Muta? | Sucesso | Notas |
-|---|---|---|---|---|
-| `GET` | `/orgs/{org}/config` | não | `200` | member OU admin da própria org |
-| `PATCH` | `/orgs/{org}/config` | sim | `200` | idem |
+> **⚠️ Reivindicar domínio NÃO devolve `409` cross-tenant (fix do @Altair — era um ORÁCULO):** se a
+> org A pede `acme.com` e leva `409` porque a org B reivindicou, A **descobre que a Acme é cliente** —
+> exatamente o que o invariante 1 proíbe. Então **reivindicar é livre e fica PENDENTE** (`201`), e a
+> guarda real é a **verificação** (quem não controla o DNS nunca passa; dois pendentes, um só verifica).
+> `409` só existe **dentro da própria org** (reivindicar o mesmo domínio 2×) — aí não vaza nada alheio.
 
-> Crate de config (#1471) ainda não landou; a rota entra no contrato agora (desbloqueia FE) e a
-> borda a liga quando o crate expuser a operação.
+### 4.4 Config do app — `#1471` (fix @Castor: é **user-scoped**, não org)
+O #1471 é "prefs **owner-scoped**" e o FE já usa `/me/config` **data-driven** (a allowlist é do BE; a
+UI só renderiza o que vier). Corrigido de `/orgs/{org}/config` para:
+
+| Método | Rota | Muta? | Sucesso (shape) | Erros |
+|---|---|---|---|---|
+| `GET` | `/me/config` | não | `200` `[{ chave, valor: bool\|string, tipo: "bool"\|"texto"\|"opcao", opcoes?: string[], rotulo?: {"pt-BR","en"} }]` | `401` |
+| `PATCH` | `/me/config` | sim | `200` mesmo shape | `401`, `400` (chave fora da allowlist ⇒ recusa) |
+
+> Crate de config ainda não landou; a rota entra agora (desbloqueia FE) e a borda a liga quando o
+> crate expuser a operação.
 
 ### 4.5 Back-office (staff) — `#1474` (`Operacao::ProvisionarOrg`, staff-only)
-Toda rota aqui é **auditada** (invariante 4): registra `staff_id` + ação + alvo.
+Toda rota aqui é **auditada** (invariante 4): registra `staff_id` + ação + alvo. **Provisionar e
+suspender são rotas SEPARADAS (fix do @Altair):** colapsá-las tornaria a auditoria dependente de
+payload, e **suspender é a operação mais destrutiva do produto** — merece a sua própria linha e log.
 | Método | Rota | Muta? | Sucesso | Notas |
 |---|---|---|---|---|
-| `GET` | `/admin/orgs` | não | `200` | só staff; não-staff ⇒ `404` (não revela a existência do back-office) |
-| `POST` | `/admin/orgs/{org}/provisionamento` | sim | `202` | provisiona/suspende; auditado |
+| `GET` | `/admin/orgs` | não | `200` | só staff; não-staff ⇒ `404` (não revela o back-office) |
+| `POST` | `/admin/orgs/{org}/provisionamento` | sim | `202` | provisiona; auditado |
+| `POST` | `/admin/orgs/{org}/suspensao` | sim | `202` | **suspende (destrutivo); auditado à parte** |
 
 > Não-staff recebe **`404`** em todo `/admin/*` (invariante 1: back-office não se anuncia a cliente).
+
+> **Escopo dos testes de `contrato.rs` (nota do @Altair — não sobrevender):** os testes amarram
+> estruturalmente só os invariantes **3** (GET nunca muta) e **4** (staff auditado), que são
+> propriedades da TABELA. Os invariantes **1, 2, 5, 6** são comportamentais — vivem na borda (#1505)
+> e são provados **lá**, não aqui. Não leia "6 testes" como "6 invariantes guardados".
 
 ---
 

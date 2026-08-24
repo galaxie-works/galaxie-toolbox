@@ -34,27 +34,32 @@ pub struct Rota {
 
 /// A tabela canônica. Espelha `docs/plataforma/contrato-http-v1.md §4`.
 pub const CONTRATO: &[Rota] = &[
-    // 4.1 Sessão
+    // 4.1 Sessão. Logout é idempotente e NÃO-autenticado (exigir sessão vazaria a validade do cookie).
     Rota { metodo: Metodo::Post,   caminho: "/api/v1/session",                             muta: true,  sucesso: 204, autenticada: false, so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Delete, caminho: "/api/v1/session",                             muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false },
-    // 4.2 Conta própria
+    Rota { metodo: Metodo::Delete, caminho: "/api/v1/session",                             muta: true,  sucesso: 204, autenticada: false, so_staff: false, auditada: false },
+    // 4.2 Conta própria (/me) — shapes do FE (@Castor)
     Rota { metodo: Metodo::Get,    caminho: "/api/v1/me",                                  muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Delete, caminho: "/api/v1/me/recursos/{id}",                    muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false },
+    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/me",                                  muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/assinatura",                       muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/dispositivos",                     muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
+    Rota { metodo: Metodo::Delete, caminho: "/api/v1/me/dispositivos/{id}",                muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false },
     // 4.3 Admin da org (AcaoAdminOrg)
     Rota { metodo: Metodo::Get,    caminho: "/api/v1/orgs/{org}/membros",                  muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
     Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/membros",                  muta: true,  sucesso: 201, autenticada: true,  so_staff: false, auditada: false },
     Rota { metodo: Metodo::Delete, caminho: "/api/v1/orgs/{org}/membros/{uid}",            muta: true,  sucesso: 204, autenticada: true,  so_staff: false, auditada: false },
     Rota { metodo: Metodo::Patch,  caminho: "/api/v1/orgs/{org}/membros/{uid}",            muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
+    // Reivindicar é livre/pendente (201) — SEM 409 cross-tenant (era oráculo); a guarda é a verificação.
     Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/dominios",                 muta: true,  sucesso: 201, autenticada: true,  so_staff: false, auditada: false },
     Rota { metodo: Metodo::Post,   caminho: "/api/v1/orgs/{org}/dominios/{dom}/verificacao", muta: true, sucesso: 200, autenticada: true, so_staff: false, auditada: false },
     Rota { metodo: Metodo::Patch,  caminho: "/api/v1/orgs/{org}/settings",                 muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
     Rota { metodo: Metodo::Put,    caminho: "/api/v1/orgs/{org}/assinatura",               muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    // 4.4 Config do app (member basta)
-    Rota { metodo: Metodo::Get,    caminho: "/api/v1/orgs/{org}/config",                   muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/orgs/{org}/config",                   muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
-    // 4.5 Back-office (staff, auditado)
+    // 4.4 Config do app — user-scoped (/me/config), NÃO org (fix @Castor)
+    Rota { metodo: Metodo::Get,    caminho: "/api/v1/me/config",                           muta: false, sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
+    Rota { metodo: Metodo::Patch,  caminho: "/api/v1/me/config",                           muta: true,  sucesso: 200, autenticada: true,  so_staff: false, auditada: false },
+    // 4.5 Back-office (staff, auditado). Provisionar e suspender SEPARADOS (fix @Altair; suspender é destrutivo).
     Rota { metodo: Metodo::Get,    caminho: "/api/v1/admin/orgs",                          muta: false, sucesso: 200, autenticada: true,  so_staff: true,  auditada: true },
     Rota { metodo: Metodo::Post,   caminho: "/api/v1/admin/orgs/{org}/provisionamento",    muta: true,  sucesso: 202, autenticada: true,  so_staff: true,  auditada: true },
+    Rota { metodo: Metodo::Post,   caminho: "/api/v1/admin/orgs/{org}/suspensao",          muta: true,  sucesso: 202, autenticada: true,  so_staff: true,  auditada: true },
 ];
 
 /// Códigos de erro do contrato (§3). O 404 é IDÊNTICO para inexistente e cross-tenant.
@@ -134,14 +139,19 @@ mod tests {
         }
     }
 
-    // Só as rotas de sessão são não-autenticadas (o login). Todo o resto exige sessão
-    // (invariante 6: principal/escopo vêm da sessão).
+    // Só as rotas de SESSÃO são não-autenticadas: login (`POST /session`) e logout
+    // (`DELETE /session`, idempotente — exigir sessão vazaria a validade do cookie). Todo o
+    // resto exige sessão (invariante 6: principal/escopo vêm da sessão).
     #[test]
-    fn so_login_e_nao_autenticada() {
+    fn so_sessao_e_nao_autenticada() {
         for r in CONTRATO {
             if !r.autenticada {
-                assert_eq!(r.caminho, "/api/v1/session", "só o login é não-autenticado: {}", r.caminho);
-                assert_eq!(r.metodo, Metodo::Post);
+                assert_eq!(r.caminho, "/api/v1/session", "só /session é não-autenticada: {}", r.caminho);
+                assert!(
+                    matches!(r.metodo, Metodo::Post | Metodo::Delete),
+                    "só login(POST)/logout(DELETE): {:?}",
+                    r.metodo
+                );
             }
         }
     }
