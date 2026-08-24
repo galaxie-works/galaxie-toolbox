@@ -158,6 +158,7 @@ jobs:
             services/remote-system-agent
             services/remote-signaling
             services/remote-broker-client
+            services/platform-identity
 
       # ── src-tauri: caminho STUB (Remote OFF) — build default que sai pra quem não
       # usa o Remote. Barato (sem OpenSSL). Mantido pra guardar que o stub degrada. ──
@@ -208,6 +209,12 @@ jobs:
 
       - name: services/remote-broker-client
         working-directory: services/remote-broker-client
+        run: cargo test
+
+      # #1469 RB: fundação de identidade/autorização da plataforma web (só lógica de
+      # domínio; std, sem OpenSSL). Gate a fundação que os 7 cards da plataforma herdam.
+      - name: services/platform-identity (fundação identidade/autz)
+        working-directory: services/platform-identity
         run: cargo test
 
   # #1193: o gate de clippy que NÃO existia. Até aqui o `#![deny(clippy::unwrap_used,
@@ -268,4 +275,10 @@ jobs:
 
       - name: clippy remote-capture (-D warnings — limpo)
         working-directory: services/remote-capture
+        run: cargo clippy --all-targets -- -D warnings
+
+      # #1469: fundação nasceu limpa (medido) — entra no gate de clippy no mesmo PR em
+      # que entra no de teste, fechando o modo de falha do comentário acima (RB7).
+      - name: clippy platform-identity (-D warnings — nasceu limpo)
+        working-directory: services/platform-identity
         run: cargo clippy --all-targets -- -D warnings
