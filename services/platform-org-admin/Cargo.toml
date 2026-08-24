@@ -1,0 +1,15 @@
+# Admin da org (membros/domínios/settings/assinatura) da plataforma web — #1475 (épico #1265).
+# Crate STANDALONE (padrão da casa em services/*) — DOMÍNIO PURO: a autorização das ações
+# admin-org sobre a fundação #1469, sem I/O → `cargo test` local e instantâneo. A borda HTTP
+# e a persistência dos recursos (membros/domínios/…) são fatias seguintes que CHAMAM esta lógica.
+[package]
+name = "galaxie-platform-org-admin"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+# A fundação de identidade/autorização (#1469): Principal, Sessao, autorizar(GerirOrg),
+# resolver_org. É dela que a autorização admin sai — NUNCA de um role do M365 (AC3).
+galaxie-platform-identity = { path = "../platform-identity" }

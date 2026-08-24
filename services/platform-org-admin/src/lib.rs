@@ -1,0 +1,209 @@
+//! Admin da org (membros / domínios / settings / assinatura) — #1475 (épico #1265).
+//! Camada de AUTORIZAÇÃO sobre a fundação #1469 (`galaxie-platform-identity`).
+//!
+//! ## Delta crítica (Altair): a armadilha do `role` do M365
+//! `MultiTenantMember` traz `role: "owner"|"member"` do Graph — é topologia de tenant do
+//! M365, **NÃO** autorização da Galaxie. Se ele virasse a fonte de `org_admin`, a Microsoft
+//! passaria a decidir quem gere membros/domínios/**assinatura** de uma org. Aqui o
+//! `org_admin` é papel da Galaxie (fundação #1469), e esta camada **nunca aceita um role de
+//! Graph como entrada**: a assinatura de [`autorizar_acao_admin`] só conhece a `Sessao` — um
+//! claim de M365 não tem por onde entrar (AC3, estrutural).
+//!
+//! ## Como autoriza
+//! Toda ação admin-org exige `org_admin` da **própria** org, com a org no escopo da sessão.
+//! Isso é exatamente o [`Operacao::GerirOrg`](galaxie_platform_identity::Operacao) da
+//! fundação (default-deny, escopo da sessão). Antes disso, a org é RESOLVIDA: org alheia
+//! responde 404 (não 403 — não enumerar), via [`resolver_org`].
+//!
+//! Domínio PURO (como a fundação): a decisão é testável sem I/O. A borda HTTP e a
+//! persistência dos recursos são fatias seguintes que chamam esta lógica.
+
+#![forbid(unsafe_code)]
+
+use galaxie_platform_identity::{
+    autorizar, resolver_org, Decisao, Operacao, Org, ResolveErro, Sessao,
+};
+
+/// Ações administrativas de uma org. Enum FECHADO: [`autorizar_acao_admin`] faz um `match`
+/// EXAUSTIVO sem catch-all (doutrina #1000/#1456), então **acrescentar uma ação obriga a
+/// decidir sua política** — não compila sem braço. Hoje todas colapsam pro mesmo gate
+/// (`org_admin` da própria org); o `match` mantém a porta fechada por construção pra uma
+/// ação futura que precise de política diferente (ex.: assinatura só pelo dono).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AcaoAdminOrg {
+    ListarMembros,
+    ConvidarMembro,
+    RemoverMembro,
+    MudarPapelMembro,
+    ReivindicarDominio,
+    VerificarDominio,
+    EditarSettings,
+    GerirAssinatura,
+}
+
+/// Resultado negativo de uma ação admin. Dois motivos DISTINTOS, na ordem que não vaza
+/// existência: `NaoEncontrada` (404) vem ANTES de `Negado` (403) — pedir org alheia não
+/// confirma que ela existe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdminErro {
+    /// Org alheia (ou inexistente) para o solicitante: **404** (AC2) — não enumera.
+    NaoEncontrada,
+    /// Org visível, mas o principal não é `org_admin` dela: **negado** (AC1/AC3).
+    Negado,
+}
+
+/// Autoriza uma `acao` admin sobre `org_alvo` para a `sessao`.
+///
+/// 1. **Visibilidade** ([`resolver_org`]): se o solicitante não vê a org (não é dela nem
+///    staff) ⇒ `NaoEncontrada` (404, AC2), antes de qualquer 403.
+/// 2. **Autorização** ([`autorizar`] da fundação): toda ação admin-org exige
+///    `Operacao::GerirOrg` da própria org — `AdminOrg` no escopo (AC4). Um `Member` (mesmo
+///    que o M365 o chame de "owner") ⇒ `Negado` (AC1/AC3).
+///
+/// **AC3 estrutural:** não há parâmetro de role do M365 nesta assinatura — a única fonte de
+/// autorização é a `Sessao` (o `Principal` da Galaxie).
+#[must_use = "a decisão de autorização admin tem de ser respeitada — ignorá-la reabre AC1/AC2/AC3"]
+pub fn autorizar_acao_admin(
+    sessao: &Sessao,
+    acao: &AcaoAdminOrg,
+    org_alvo: &Org,
+) -> Result<(), AdminErro> {
+    // (1) 404 antes de 403 (regra 6 da fundação / AC2): org que o solicitante não vê "não existe".
+    resolver_org(sessao.principal(), org_alvo).map_err(|e| match e {
+        ResolveErro::NaoEncontrada => AdminErro::NaoEncontrada,
+    })?;
+
+    // (2) `match` EXAUSTIVO por ação: hoje toda ação admin-org exige `GerirOrg` da própria
+    // org. Ação nova NÃO COMPILA até ganhar um braço aqui (default-deny por construção).
+    let op = match acao {
+        AcaoAdminOrg::ListarMembros
+        | AcaoAdminOrg::ConvidarMembro
+        | AcaoAdminOrg::RemoverMembro
+        | AcaoAdminOrg::MudarPapelMembro
+        | AcaoAdminOrg::ReivindicarDominio
+        | AcaoAdminOrg::VerificarDominio
+        | AcaoAdminOrg::EditarSettings
+        | AcaoAdminOrg::GerirAssinatura => Operacao::GerirOrg {
+            alvo: org_alvo.id.clone(),
+        },
+    };
+
+    match autorizar(sessao, &op) {
+        Decisao::Permitido => Ok(()),
+        Decisao::Negado => Err(AdminErro::Negado),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use galaxie_platform_identity::{Escopo, OrgId, Principal, Sessao, UserId};
+    use std::collections::BTreeSet;
+
+    fn org(id: &str) -> Org {
+        Org {
+            id: OrgId(id.into()),
+            dominios: BTreeSet::new(),
+            tenant_m365: None,
+        }
+    }
+    fn sessao_admin(user: &str, org_id: &str) -> Sessao {
+        Sessao::estabelecer(
+            Principal::AdminOrg { usuario: UserId(user.into()), org: OrgId(org_id.into()) },
+            Escopo::de_orgs([OrgId(org_id.into())]),
+        )
+    }
+    fn sessao_membro(user: &str, org_id: &str) -> Sessao {
+        Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId(user.into()), org: OrgId(org_id.into()) },
+            Escopo::de_orgs([OrgId(org_id.into())]),
+        )
+    }
+
+    // AC1 — `member` (não admin) da própria org chama ação admin ⇒ negado (default-deny).
+    #[test]
+    fn ac1_member_nao_administra() {
+        let s = sessao_membro("u1", "orgA");
+        assert_eq!(
+            autorizar_acao_admin(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA")),
+            Err(AdminErro::Negado)
+        );
+    }
+
+    // AC2 — `org_admin` de A tenta gerir a org B ⇒ 404 (NaoEncontrada), não 403.
+    #[test]
+    fn ac2_org_alheia_e_404_nao_403() {
+        let s = sessao_admin("u1", "orgA");
+        assert_eq!(
+            autorizar_acao_admin(&s, &AcaoAdminOrg::ListarMembros, &org("orgB")),
+            Err(AdminErro::NaoEncontrada)
+        );
+    }
+
+    // AC3 — o `role` do M365 NÃO concede. Modelamos o usuário que a Microsoft chamaria de
+    // "owner", mas que na Galaxie é só `Member` (o `org_admin` não foi concedido no nosso
+    // backend). A autorização lê o `Principal` (Member) — não há por onde um role de Graph
+    // entrar — ⇒ negado. É a armadilha central do card.
+    #[test]
+    fn ac3_role_m365_owner_nao_vira_autorizacao() {
+        // "seria owner no M365"; na Galaxie, Member:
+        let quase_admin = sessao_membro("u1", "orgA");
+        assert_eq!(
+            autorizar_acao_admin(&quase_admin, &AcaoAdminOrg::GerirAssinatura, &org("orgA")),
+            Err(AdminErro::Negado),
+            "role 'owner' do M365 não pode virar autorização — só AdminOrg da Galaxie"
+        );
+    }
+
+    // AC4 — `org_admin` Galaxie gere a PRÓPRIA org (com a org no escopo) ⇒ permitido, em
+    // todas as ações admin.
+    #[test]
+    fn ac4_org_admin_gere_a_propria_org() {
+        let s = sessao_admin("u1", "orgA");
+        for acao in [
+            AcaoAdminOrg::ListarMembros,
+            AcaoAdminOrg::ConvidarMembro,
+            AcaoAdminOrg::RemoverMembro,
+            AcaoAdminOrg::MudarPapelMembro,
+            AcaoAdminOrg::ReivindicarDominio,
+            AcaoAdminOrg::VerificarDominio,
+            AcaoAdminOrg::EditarSettings,
+            AcaoAdminOrg::GerirAssinatura,
+        ] {
+            assert_eq!(
+                autorizar_acao_admin(&s, &acao, &org("orgA")),
+                Ok(()),
+                "org_admin devia poder {acao:?} na própria org"
+            );
+        }
+    }
+
+    // Fronteira staff: staff VÊ qualquer org (resolver_org), mas NÃO é `org_admin` — o
+    // back-office (provisionar/suspender) é ProvisionarOrg, não GerirOrg. Então staff não
+    // gere membros de uma org cliente por aqui ⇒ negado (separação staff↔admin-de-org).
+    #[test]
+    fn staff_ve_a_org_mas_nao_e_org_admin() {
+        let s = Sessao::estabelecer(
+            Principal::Staff { usuario: UserId("s1".into()) },
+            Escopo::vazio(),
+        );
+        assert_eq!(
+            autorizar_acao_admin(&s, &AcaoAdminOrg::RemoverMembro, &org("orgA")),
+            Err(AdminErro::Negado)
+        );
+    }
+
+    // AC4/escopo — admin legítimo mas SEM a org no escopo da sessão ⇒ negado (escopo vem da
+    // sessão, não do payload; regra 5 da fundação).
+    #[test]
+    fn admin_sem_org_no_escopo_e_negado() {
+        let s = Sessao::estabelecer(
+            Principal::AdminOrg { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        assert_eq!(
+            autorizar_acao_admin(&s, &AcaoAdminOrg::EditarSettings, &org("orgA")),
+            Err(AdminErro::Negado)
+        );
+    }
+}
