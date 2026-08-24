@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.55.0"
+version = "0.56.0"
 description = "GALAXIE"
 authors = ["Galaxie Works"]
 license = "Apache-2.0"
