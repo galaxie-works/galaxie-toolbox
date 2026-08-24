@@ -24,14 +24,24 @@ pub struct SessaoId(pub String);
 /// Armazém de sessões server-side. `invalidar` remove do SERVIDOR (fato), não do cliente.
 /// Trait pra a borda plugar memória agora e persistência depois, sem tocar na lógica.
 pub trait ArmazemSessao {
-    /// Registra uma sessão sob um id, com o instante ABSOLUTO em que expira (`expira_em_unix`,
-    /// epoch em segundos) — #1504. A borda computa `agora + TTL` (ver [`TTL_SESSAO_SEG`]); o
-    /// armazém não escolhe relógio (AC2). O login já rotacionou (ver [`Self::rotacionar`]).
-    fn estabelecer(&mut self, id: SessaoId, sessao: Sessao, expira_em_unix: u64);
-    /// Valida um id do cookie CONTRA `agora_unix` (injetado pela borda — sem relógio
-    /// hardcodado, AC2): devolve a sessão viva só se existe, não foi morta E ainda não
-    /// expirou (`agora < expira`). Sessão vencida recusa como se não existisse (AC1).
+    /// Registra uma sessão sob um id, com DOIS prazos (epoch em segundos): `expira_absoluto_unix`
+    /// (o teto, #1504) e `expira_ocioso_unix` (a janela de inatividade, #1512). A borda computa
+    /// ambos de `agora` (ver [`TTL_SESSAO_SEG`]/[`IDLE_TTL_SEG`]); o armazém não escolhe relógio (AC2).
+    fn estabelecer(
+        &mut self,
+        id: SessaoId,
+        sessao: Sessao,
+        expira_absoluto_unix: u64,
+        expira_ocioso_unix: u64,
+    );
+    /// Valida um id do cookie CONTRA `agora_unix` (injetado — sem relógio hardcodado, AC2), SEM
+    /// renovar: devolve a sessão só se não foi morta E `agora` está dentro de AMBOS os prazos
+    /// (absoluto E ocioso). Vencida por qualquer um recusa como se não existisse (#1504 AC1 / #1512 AC1).
     fn validar(&self, id: &SessaoId, agora_unix: u64) -> Option<&Sessao>;
+    /// Acesso COM atividade (#1512): valida (como [`Self::validar`]) e, se viva, DESLIZA a janela
+    /// de ociosidade para `novo_ocioso_unix` — mas **capada no prazo absoluto** (atividade NUNCA
+    /// move o teto, #1512 AC2). Devolve a sessão renovada, ou `None` se vencida/inexistente.
+    fn tocar(&mut self, id: &SessaoId, agora_unix: u64, novo_ocioso_unix: u64) -> Option<&Sessao>;
     /// Logout: mata ESTA sessão no servidor. `true` se existia.
     fn invalidar(&mut self, id: &SessaoId) -> bool;
     /// Troca de senha: mata TODAS as sessões do usuário (não só a atual). Devolve quantas.
@@ -46,7 +56,10 @@ pub trait ArmazemSessao {
 #[derive(Debug)]
 struct EntradaSessao {
     sessao: Sessao,
-    expira_em_unix: u64,
+    /// Teto ABSOLUTO (#1504) — nunca se move; a atividade não o estende.
+    expira_absoluto_unix: u64,
+    /// Janela de ociosidade (#1512) — desliza com a atividade (`tocar`), mas capada no absoluto.
+    expira_ocioso_unix: u64,
 }
 
 /// Primeira impl: em memória (HashMap id→entrada). Persistência é fatia posterior — a trait
@@ -67,17 +80,39 @@ impl ArmazemMemoria {
 }
 
 impl ArmazemSessao for ArmazemMemoria {
-    fn estabelecer(&mut self, id: SessaoId, sessao: Sessao, expira_em_unix: u64) {
-        self.sessoes.insert(id, EntradaSessao { sessao, expira_em_unix });
+    fn estabelecer(
+        &mut self,
+        id: SessaoId,
+        sessao: Sessao,
+        expira_absoluto_unix: u64,
+        expira_ocioso_unix: u64,
+    ) {
+        self.sessoes.insert(
+            id,
+            EntradaSessao { sessao, expira_absoluto_unix, expira_ocioso_unix },
+        );
     }
 
     fn validar(&self, id: &SessaoId, agora_unix: u64) -> Option<&Sessao> {
-        // Expiração LAZY: a entrada vencida fica no mapa mas não valida (um sweep de memória
-        // é fatia de persistência). `agora < expira` — no instante exato do TTL já venceu.
+        // Expiração LAZY: a entrada vencida fica no mapa mas não valida (sweep é fatia de
+        // persistência). Viva = dentro de AMBOS os prazos (`agora < absoluto` E `agora < ocioso`).
         self.sessoes
             .get(id)
-            .filter(|e| agora_unix < e.expira_em_unix)
+            .filter(|e| agora_unix < e.expira_absoluto_unix && agora_unix < e.expira_ocioso_unix)
             .map(|e| &e.sessao)
+    }
+
+    fn tocar(&mut self, id: &SessaoId, agora_unix: u64, novo_ocioso_unix: u64) -> Option<&Sessao> {
+        let e = self.sessoes.get_mut(id)?;
+        // Mesma checagem de `validar` (os dois prazos) ANTES de renovar — sessão vencida não
+        // ressuscita por atividade (AC1).
+        if agora_unix >= e.expira_absoluto_unix || agora_unix >= e.expira_ocioso_unix {
+            return None;
+        }
+        // Desliza a janela de ociosidade, CAPADA no absoluto: a atividade nunca move o teto
+        // (#1512 AC2). O `min` é a garantia — mora aqui, não na borda.
+        e.expira_ocioso_unix = novo_ocioso_unix.min(e.expira_absoluto_unix);
+        Some(&e.sessao)
     }
 
     fn invalidar(&mut self, id: &SessaoId) -> bool {
@@ -102,9 +137,15 @@ impl ArmazemSessao for ArmazemMemoria {
     }
 }
 
-/// TTL default de uma sessão web (#1504): 12 h. A BORDA computa `expira_em = agora + TTL` e
-/// passa o absoluto pra [`ArmazemSessao::estabelecer`]. Constante (sem UI); encurtar é barato.
+/// TTL ABSOLUTO default de uma sessão web (#1504): 12 h — o teto que a atividade NÃO move.
+/// **DEFAULT do dev, não decisão de produto** — pendente do PO (#1504). A borda computa
+/// `expira_absoluto = agora + TTL`. Constante (sem UI); encurtar é barato.
 pub const TTL_SESSAO_SEG: u64 = 12 * 60 * 60;
+
+/// Prazo OCIOSO default (#1512): 30 min sem atividade ⇒ a sessão morre, mesmo dentro do
+/// absoluto. Cada acesso (`tocar`) desliza a janela pra `agora + IDLE_TTL_SEG`, capada no
+/// absoluto. **DEFAULT do dev, não decisão** — pendente do PO junto com o valor absoluto.
+pub const IDLE_TTL_SEG: u64 = 30 * 60;
 
 /// Nome do cookie de sessão da plataforma. O prefixo **`__Host-`** (achado do @Altair na
 /// revisão da fatia 3) mata cookie-shadowing POR IMPOSIÇÃO DO NAVEGADOR: um cookie
@@ -150,7 +191,7 @@ mod tests {
     #[test]
     fn estabelecer_e_validar() {
         let mut a = ArmazemMemoria::novo();
-        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), FUTURO);
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), FUTURO, FUTURO);
         assert!(a.validar(&sid("s1"), AGORA).is_some());
         assert!(a.validar(&sid("naoexiste"), AGORA).is_none());
     }
@@ -159,7 +200,7 @@ mod tests {
     #[test]
     fn invalidar_mata_a_sessao_no_servidor() {
         let mut a = ArmazemMemoria::novo();
-        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), FUTURO);
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), FUTURO, FUTURO);
         assert!(a.invalidar(&sid("s1")));
         assert!(a.validar(&sid("s1"), AGORA).is_none(), "sessão morta não valida");
         assert!(!a.invalidar(&sid("s1")), "invalidar de novo é no-op");
@@ -170,9 +211,9 @@ mod tests {
     #[test]
     fn troca_de_senha_invalida_todas_do_usuario() {
         let mut a = ArmazemMemoria::novo();
-        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), FUTURO);
-        a.estabelecer(sid("s2"), sessao_de("u1", "orgA"), FUTURO); // 2ª sessão do mesmo user
-        a.estabelecer(sid("s3"), sessao_de("outro", "orgA"), FUTURO);
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), FUTURO, FUTURO);
+        a.estabelecer(sid("s2"), sessao_de("u1", "orgA"), FUTURO, FUTURO); // 2ª sessão do mesmo user
+        a.estabelecer(sid("s3"), sessao_de("outro", "orgA"), FUTURO, FUTURO);
         let mortas = a.invalidar_do_usuario(&UserId("u1".into()));
         assert_eq!(mortas, 2);
         assert!(a.validar(&sid("s1"), AGORA).is_none());
@@ -185,7 +226,7 @@ mod tests {
     #[test]
     fn rotacao_mata_o_velho_e_preserva_a_sessao() {
         let mut a = ArmazemMemoria::novo();
-        a.estabelecer(sid("velho"), sessao_de("u1", "orgA"), FUTURO);
+        a.estabelecer(sid("velho"), sessao_de("u1", "orgA"), FUTURO, FUTURO);
         let antes = a.validar(&sid("velho"), AGORA).cloned();
         assert!(a.rotacionar(&sid("velho"), sid("novo")));
         assert!(a.validar(&sid("velho"), AGORA).is_none(), "id velho morre (fixation)");
@@ -199,7 +240,7 @@ mod tests {
     fn ac1_sessao_vencida_recusa() {
         let mut a = ArmazemMemoria::novo();
         let expira = 5_000;
-        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), expira);
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), expira, FUTURO);
         assert!(a.validar(&sid("s1"), expira - 1).is_some(), "1s antes do TTL: viva");
         assert!(a.validar(&sid("s1"), expira).is_none(), "no instante do TTL: já venceu");
         assert!(a.validar(&sid("s1"), expira + 3600).is_none(), "muito depois: recusa");
@@ -210,8 +251,44 @@ mod tests {
     #[test]
     fn ac2_agora_e_injetado_nao_hardcodado() {
         let mut a = ArmazemMemoria::novo();
-        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), 5_000);
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), 5_000, FUTURO);
         assert!(a.validar(&sid("s1"), 4_999).is_some());
+        assert!(a.validar(&sid("s1"), 5_001).is_none());
+    }
+
+    // #1512 AC1 — sessão OCIOSA (sem atividade além do prazo ocioso) recusa, MESMO dentro do
+    // absoluto. Absoluto longe (FUTURO), ocioso vence em 2_000.
+    #[test]
+    fn ocioso_ac1_sem_atividade_vence_dentro_do_absoluto() {
+        let mut a = ArmazemMemoria::novo();
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), FUTURO, 2_000);
+        assert!(a.validar(&sid("s1"), 1_999).is_some(), "antes do ocioso: viva");
+        assert!(a.validar(&sid("s1"), 2_000).is_none(), "ocioso vencido recusa, mesmo com absoluto longe");
+    }
+
+    // #1512 AC2 — `tocar` (atividade) DESLIZA o ocioso, mas o absoluto NÃO se move; e o novo
+    // ocioso é CAPADO no absoluto (atividade perto do teto não estende além dele).
+    #[test]
+    fn ocioso_ac2_tocar_desliza_mas_nao_move_o_absoluto() {
+        let mut a = ArmazemMemoria::novo();
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), 10_000, 2_000);
+        // Atividade em 1_500 (dentro do ocioso): desliza pra 1_500+3_000 = 4_500.
+        assert!(a.tocar(&sid("s1"), 1_500, 1_500 + 3_000).is_some());
+        assert!(a.validar(&sid("s1"), 4_499).is_some(), "ocioso renovado: viva em 4_499 (antes seria morta em 2_000)");
+        assert!(a.validar(&sid("s1"), 4_500).is_none(), "novo ocioso vence em 4_500");
+        // Atividade perto do teto: o novo ocioso é capado no absoluto (10_000), não além.
+        assert!(a.tocar(&sid("s1"), 4_000, 4_000 + 9_999).is_some());
+        assert!(a.validar(&sid("s1"), 9_999).is_some(), "capado no absoluto: vivo até 10_000");
+        assert!(a.validar(&sid("s1"), 10_000).is_none(), "o ABSOLUTO não se moveu — teto inviolável");
+    }
+
+    // #1512 AC3 (repro) — sessão além do ABSOLUTO recusa mesmo com atividade: `tocar` não
+    // ressuscita quem passou do teto.
+    #[test]
+    fn ocioso_ac3_atividade_nao_passa_do_absoluto() {
+        let mut a = ArmazemMemoria::novo();
+        a.estabelecer(sid("s1"), sessao_de("u1", "orgA"), 5_000, 5_000);
+        assert!(a.tocar(&sid("s1"), 5_001, 5_001 + 3_000).is_none(), "além do absoluto: tocar recusa");
         assert!(a.validar(&sid("s1"), 5_001).is_none());
     }
 
