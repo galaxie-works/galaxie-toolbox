@@ -47,8 +47,30 @@ function Get-ColunaManual {
 }
 
 Write-Host "board.ps1 — teste de contrato"
+
+# 0) #1464 -Inconsistentes — classificação por estado×coluna, OFFLINE (fixture, sem gh).
+#    DoD: um inconsistente listado, um consistente ignorado. Roda ANTES do gate de gh
+#    porque o -FixtureFile substitui a query real — é teste de unidade do predicado.
+$fix = @(
+  [pscustomobject]@{ Numero = 1; Estado = 'CLOSED'; Coluna = 'Ready';                  Titulo = 'orfao (ficou pra tras)'; Url = 'u1' },
+  [pscustomobject]@{ Numero = 2; Estado = 'OPEN';   Coluna = 'Ready';                  Titulo = 'aberto — consistente';   Url = 'u2' },
+  [pscustomobject]@{ Numero = 3; Estado = 'CLOSED'; Coluna = 'Released to Production'; Titulo = 'terminal — consistente'; Url = 'u3' },
+  [pscustomobject]@{ Numero = 4; Estado = 'CLOSED'; Coluna = 'Done';                   Titulo = 'a frente (sem gate)';    Url = 'u4' }
+)
+$tmp = New-TemporaryFile
+try {
+  $fix | ConvertTo-Json | Set-Content -LiteralPath $tmp -Encoding UTF8
+  $res = @(& pwsh -NoProfile -File $board -Inconsistentes -FixtureFile $tmp -Json | ConvertFrom-Json)
+  # AC1/AC2 listados; AC3 (OPEN #2, terminal #3) ignorados
+  Assert-Igual @(1, 4) (@($res | ForEach-Object { $_.Numero } | Sort-Object)) "-Inconsistentes lista só CLOSED em coluna ativa (ign. OPEN e terminal)"
+  Assert-Igual 'ficou pra tras (orfao)' (($res | Where-Object { $_.Numero -eq 1 }).Classe) "classe 'ficou pra tras' (AC1)"
+  Assert-Igual 'a frente (fechado sem/antes do gate)' (($res | Where-Object { $_.Numero -eq 4 }).Classe) "classe 'a frente' (AC2)"
+}
+finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
+
 if (-not (Test-GhPronto)) {
-  Write-Host "  SKIP  gh não autenticado (integração precisa da API do board)" -ForegroundColor Yellow
+  Write-Host "  SKIP  integração (gh) não autenticado; unidade offline acima rodou." -ForegroundColor Yellow
+  if ($fail -gt 0) { exit 1 }
   exit 0
 }
 
