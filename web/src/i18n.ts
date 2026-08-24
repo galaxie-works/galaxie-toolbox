@@ -3,15 +3,13 @@
 export type Idioma = "pt-BR" | "en";
 
 export interface Dicionario {
-  entrar: string;
-  cadastrar: string;
-  recuperarSenha: string;
+  // #1484 — login (identidade federada, sem senha própria). `entrarCom` é o rótulo
+  // por provedor (os mesmos do desktop, `api.ts:232`); a chave garante os 3 no tsc.
   email: string;
-  senha: string;
   bemVindo: string;
   subtitulo: string;
-  semConta: string;
-  jaTemConta: string;
+  entrarCom: Record<"microsoft" | "microsoft-personal" | "google", string>;
+  semSenha: string;
   // #1489 — conta/perfil
   minhaConta: string;
   perfil: string;
@@ -63,15 +61,15 @@ export interface Dicionario {
 
 export const DICIONARIOS: Record<Idioma, Dicionario> = {
   "pt-BR": {
-    entrar: "Entrar",
-    cadastrar: "Criar conta",
-    recuperarSenha: "Esqueci minha senha",
     email: "E-mail",
-    senha: "Senha",
     bemVindo: "Bem-vindo à Galaxie",
-    subtitulo: "Acesse sua conta para continuar",
-    semConta: "Não tem conta?",
-    jaTemConta: "Já tem conta?",
+    subtitulo: "Entre com sua conta para continuar",
+    entrarCom: {
+      microsoft: "Entrar com Microsoft",
+      "microsoft-personal": "Conta Microsoft pessoal",
+      google: "Entrar com Google",
+    },
+    semSenha: "A Galaxie usa sua conta federada — sem senha própria.",
     minhaConta: "Minha conta",
     perfil: "Perfil",
     nome: "Nome",
@@ -108,15 +106,15 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     naoEhSuaOrgDetalhe: "Confira se você está na conta certa.",
   },
   en: {
-    entrar: "Sign in",
-    cadastrar: "Create account",
-    recuperarSenha: "Forgot my password",
     email: "Email",
-    senha: "Password",
     bemVindo: "Welcome to Galaxie",
-    subtitulo: "Sign in to your account to continue",
-    semConta: "No account yet?",
-    jaTemConta: "Already have an account?",
+    subtitulo: "Sign in with your account to continue",
+    entrarCom: {
+      microsoft: "Sign in with Microsoft",
+      "microsoft-personal": "Personal Microsoft account",
+      google: "Sign in with Google",
+    },
+    semSenha: "Galaxie uses your federated account — no password of its own.",
     minhaConta: "My account",
     perfil: "Profile",
     nome: "Name",
