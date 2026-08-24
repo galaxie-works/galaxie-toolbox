@@ -34,6 +34,25 @@ export interface Dicionario {
   // #1491 — config do app
   configuracoes: string;
   semConfig: string;
+  // #1490 — admin da org. O TIPO é a lista: campo sem tradução nos dois idiomas
+  // não compila — o pt/en do DoD fica provado pelo `tsc`, não pela boa vontade
+  // de quem editar o dicionário depois.
+  //
+  // Reuso em vez de duplicar: `assinatura`/`carregando`/`erroCarregar` vieram do
+  // #1489 e `configuracoes` do #1491, todos com o mesmo sentido. Eu tinha escrito
+  // `tentarDeNovo` e o #1489 já trazia `tentarNovamente` — mesma frase, dois
+  // nomes; fiquei com o dele. Dicionário com dois nomes pro mesmo texto diverge
+  // na primeira tradução que esquecer um dos dois.
+  adminOrg: string;
+  membros: string;
+  dominios: string;
+  convidarMembro: string;
+  remover: string;
+  papel: string;
+  papelAdmin: string;
+  papelMembro: string;
+  semPermissao: string;
+  semPermissaoDetalhe: string;
 }
 
 export const DICIONARIOS: Record<Idioma, Dicionario> = {
@@ -67,6 +86,17 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     sair: "Sair",
     configuracoes: "Configurações",
     semConfig: "Nada para configurar",
+    adminOrg: "Administração da organização",
+    membros: "Membros",
+    dominios: "Domínios",
+    convidarMembro: "Convidar membro",
+    remover: "Remover",
+    papel: "Papel",
+    papelAdmin: "Administrador",
+    papelMembro: "Membro",
+    semPermissao: "Você não administra esta organização",
+    semPermissaoDetalhe:
+      "Peça a um administrador da sua organização para conceder o acesso.",
   },
   en: {
     entrar: "Sign in",
@@ -98,6 +128,17 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     sair: "Sign out",
     configuracoes: "Settings",
     semConfig: "Nothing to configure",
+    adminOrg: "Organization admin",
+    membros: "Members",
+    dominios: "Domains",
+    convidarMembro: "Invite member",
+    remover: "Remove",
+    papel: "Role",
+    papelAdmin: "Admin",
+    papelMembro: "Member",
+    semPermissao: "You don't administer this organization",
+    semPermissaoDetalhe:
+      "Ask an administrator of your organization to grant access.",
   },
 };
 
