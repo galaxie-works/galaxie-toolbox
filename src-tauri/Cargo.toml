@@ -3,7 +3,7 @@ name = "app"
 version = "0.55.0"
 description = "GALAXIE"
 authors = ["Galaxie Works"]
-license = ""
+license = "Apache-2.0"
 repository = ""
 edition = "2021"
 # #1076 (RB14): MSRV real do produto. `app` depende INCONDICIONALMENTE de
