@@ -1,0 +1,17 @@
+# Borda web da plataforma — fatia 3 do #1469. Aqui vivem as peças que a fatia 1/2
+# (domínio puro) deixou de fora DE PROPÓSITO: a fonte de aleatoriedade (CSPRNG que gera
+# o SessaoId) e o parse do cookie do request. Depende de platform-identity; a fundação
+# segue pura. O Router axum + as rotas login/logout entram em cima disto (ver lib.rs).
+[package]
+name = "galaxie-platform-web"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+galaxie-platform-identity = { path = "../platform-identity" }
+# CSPRNG do sistema (mesmo padrão da casa: rand 0.8 + OsRng, como authority.rs:740).
+rand = "0.8"
+# Encoding URL-safe do id (mesmo padrão do remote-net: URL_SAFE_NO_PAD).
+base64 = "0.22"
