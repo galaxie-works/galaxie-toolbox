@@ -3,6 +3,7 @@ import { LoginPage } from "@/pages/login";
 import { ContaPage } from "@/pages/conta";
 import { ConfigPage } from "@/pages/config";
 import { AdminOrgPage } from "@/pages/admin-org";
+import { BackOfficePage } from "@/pages/back-office";
 
 // Config de rotas do app web. Fica em módulo próprio (não em App.tsx) pra
 // App.tsx exportar só o componente — Fast Refresh e o lint da casa
@@ -25,5 +26,9 @@ export const rotas = createBrowserRouter([
   { path: "/conta", element: <ContaPage /> },
   { path: "/config", element: <ConfigPage /> },
   { path: "/admin/org", element: <AdminOrgPage /> },
+  // #1492: back-office de staff. A rota EXISTE pra todo mundo de propósito —
+  // esconder no cliente seria conforto, não proteção (qualquer um lê o JS), e o
+  // backend responde 404 pra não-staff. Ver o cabeçalho de `back-office.tsx`.
+  { path: "/admin/back-office", element: <BackOfficePage /> },
   { path: "*", element: <Navigate to="/login" replace /> },
 ]);

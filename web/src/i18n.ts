@@ -62,6 +62,16 @@ export interface Dicionario {
   // lacuna fechar; até lá a tela diz o que não sabe, em vez de eu inventar.
   orgIndefinida: string;
   orgIndefinidaDetalhe: string;
+  // #1492 — back-office (staff). `naoEncontrado` é o texto de rota inexistente:
+  // o contrato manda 404 pra não-staff "não revela o back-office", então a tela
+  // não pode ter frase sobre staff nem permissão — dizer desfaz o 404.
+  backOffice: string;
+  listaPendente: string;
+  naoEncontrado: string;
+  suspender: string;
+  suspenderConfirmacao: string;
+  suspenderAviso: string;
+  cancelar: string;
 }
 
 export const DICIONARIOS: Record<Idioma, Dicionario> = {
@@ -112,6 +122,13 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     orgIndefinida: "Organização não identificada",
     orgIndefinidaDetalhe:
       "Ainda não é possível saber a qual organização esta sessão pertence.",
+    backOffice: "Back-office",
+    listaPendente: "A lista de organizações entra quando o contrato definir o formato.",
+    naoEncontrado: "Página não encontrada",
+    suspender: "Suspender",
+    suspenderConfirmacao: "Isto vai suspender a organização",
+    suspenderAviso: "A ação é destrutiva e fica registrada em auditoria.",
+    cancelar: "Cancelar",
   },
   en: {
     email: "Email",
@@ -160,6 +177,13 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     orgIndefinida: "Organization not identified",
     orgIndefinidaDetalhe:
       "We can't yet tell which organization this session belongs to.",
+    backOffice: "Back office",
+    listaPendente: "The organization list lands once the contract defines its shape.",
+    naoEncontrado: "Page not found",
+    suspender: "Suspend",
+    suspenderConfirmacao: "This will suspend the organization",
+    suspenderAviso: "This action is destructive and is recorded in the audit log.",
+    cancelar: "Cancel",
   },
 };
 
