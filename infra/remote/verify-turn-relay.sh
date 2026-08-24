@@ -25,13 +25,23 @@ sleep 1
 
 peer_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$peer_container")
 turn_ip=$(docker network inspect -f '{{(index .IPAM.Config 0).Gateway}}' "$client_network")
-turn_secret=$(tr -d '\r\n' < secrets/turn_secret)
+# SEC (#1415): o turn_secret mestre NUNCA entra em argv. O python abre secrets/turn_secret
+# diretamente e devolve só a credencial REST derivada (time-limited): o argv deste processo
+# carrega apenas o caminho do arquivo e o usuario. No uclient entra a credencial derivada via
+# -u/-w, nao o -W <segredo>. Raio de explosao cai de "ate a rotacao" para "uma janela de TTL".
+turn_user="$(( $(date +%s) + 1800 )):galaxie-probe"
+turn_cred=$(python3 -c '
+import hmac, hashlib, base64, sys
+key = open("secrets/turn_secret", "rb").read().strip()
+username = sys.argv[1]
+print(base64.b64encode(hmac.new(key, username.encode(), hashlib.sha1).digest()).decode())
+' "$turn_user")
 
 docker run --rm --network "$client_network" --entrypoint turnutils_uclient \
   coturn/coturn:4.15.0-r0-alpine \
-  -v -c -n 20 -u galaxie-probe -W "$turn_secret" -p 3478 \
+  -v -c -n 20 -u "$turn_user" -w "$turn_cred" -p 3478 \
   -e "$peer_ip" -r 3480 "$turn_ip" > "$log_file" 2>&1
-unset turn_secret
+unset turn_cred turn_user
 
 grep -Eq 'tot_recv_msgs=[1-9][0-9]*' "$log_file"
 grep -Eq 'Total lost packets 0 \(0\.000000%\)' "$log_file"
