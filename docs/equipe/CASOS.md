@@ -4,6 +4,7 @@ Regra que nasce de **um** incidente entra aqui, com número e data. Só vira lei
 | Data | Caso | Regra de caso (aplicar se bater) | Morre em |
 |---|---|---|---|
 | 2026-08-18 | #1268 — 11 cards pré-canon sem marcação de superfície presos em QA Approved | Card pré-canon (criado antes de 2026-08-18) sem marcação: quem perceber marca e segue (canon §2); promoção em lote ratificada pelo PO em 18/08 cobre os 11 | 2026-08-26 (não há mais card pré-canon em voo) |
+| 2026-08-24 | 2ª PR de canon no dia (v1.14 de manhã + v1.15 à tarde) — §8 diz "máx 1/dia" sem cláusula de exceção | Exceção de cadência autorizada por escrito pelo PO (ratifico na PR #1482, "senão a gente esquece amanhã"). NÃO emenda §8. Promover a carve-out de §8 (como a de emergência) só se REPETIR | ao 2º caso (aí vira carve-out de §8) |
 | 2026-08-19 | #1132/#1295 — flag `precisa design` posta retroativamente em card já em Ready | Card em Ready que ganha a flag fica em Ready e **não é puxável** até o Arquiteto responder (≤1 passada); em In progress/In review segue, revisão em Done cobre; QA Approved+ não retroage | 2026-08-26 |
 | 2026-08-19 | PR #1289 (`Ref #1238`, card já em Done) — PR sem lane | Achado sobre card em Done+ = issue-filha + card; PR `Closes #filha`. (Já é canon §5 — fica aqui como origem) | — |
 | 2026-08-19 | #1012/#675/#692 — épicos fechados por regex no corpo (48/49 e 17/18 lidos como 11/11) | Completude de épico só por sub-issues do GitHub (`subIssuesSummary`). (Canon §2) | — |
