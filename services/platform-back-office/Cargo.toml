@@ -1,0 +1,15 @@
+# Back-office Galaxie (provisionar/verificar/suspender orgs) da plataforma web — #1474
+# (épico #1265). Crate STANDALONE (padrão da casa em services/*) — DOMÍNIO PURO: a
+# autorização STAFF-ONLY das ops de back-office sobre a fundação #1469, sem I/O → `cargo test`
+# local e instantâneo. A borda HTTP e a auditoria persistida são fatias seguintes.
+[package]
+name = "galaxie-platform-back-office"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+# A fundação de identidade/autorização (#1469): Sessao, autorizar(ProvisionarOrg = staff-only).
+# A autz de back-office lê só o Principal da SESSÃO — nunca um claim de org nem um payload.
+galaxie-platform-identity = { path = "../platform-identity" }
