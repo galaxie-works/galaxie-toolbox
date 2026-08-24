@@ -31,6 +31,9 @@ export interface Dicionario {
   erroCarregar: string;
   tentarNovamente: string;
   sair: string;
+  // #1491 — config do app
+  configuracoes: string;
+  semConfig: string;
 }
 
 export const DICIONARIOS: Record<Idioma, Dicionario> = {
@@ -62,6 +65,8 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     erroCarregar: "Não foi possível carregar",
     tentarNovamente: "Tentar novamente",
     sair: "Sair",
+    configuracoes: "Configurações",
+    semConfig: "Nada para configurar",
   },
   en: {
     entrar: "Sign in",
@@ -91,6 +96,8 @@ export const DICIONARIOS: Record<Idioma, Dicionario> = {
     erroCarregar: "Couldn't load",
     tentarNovamente: "Try again",
     sair: "Sign out",
+    configuracoes: "Settings",
+    semConfig: "Nothing to configure",
   },
 };
 
