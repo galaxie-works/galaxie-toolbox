@@ -141,10 +141,14 @@ impl TicketVerifier {
         Ok(claims)
     }
 
+    // #1437 — snapshot do anti-replay (#1295): caller de producao so em `authority.rs`
+    // (feature `authority`), fora do build default. Sem uso em teste.
+    #[cfg(feature = "authority")]
     pub(crate) fn consumed_tickets(&self) -> &HashMap<String, u64> {
         &self.consumed
     }
 
+    #[cfg(feature = "authority")]
     pub(crate) fn restore_consumed_tickets(&mut self, consumed: HashMap<String, u64>) {
         self.consumed = consumed;
     }
@@ -280,10 +284,12 @@ impl EnrollmentTicketVerifier {
         Ok(claims)
     }
 
+    #[cfg(any(feature = "authority", test))]
     pub(crate) fn consumed_tickets(&self) -> &HashMap<String, u64> {
         &self.consumed
     }
 
+    #[cfg(feature = "authority")]
     pub(crate) fn restore_consumed_tickets(&mut self, consumed: HashMap<String, u64>) {
         self.consumed = consumed;
     }

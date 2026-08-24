@@ -2274,6 +2274,10 @@ fn montar_plano_undo(entry: &OperationJournalEntry) -> UndoPlan {
 /// (recria o pai do retorno se sumiu). Depois limpa dirs vazios criados.
 /// #1282 — mantido com a assinatura antiga (8 chamadores em teste dependem
 /// dela). O nucleo observavel esta em [`executar_undo_observado`].
+/// #1437 — a producao migrou pro `fs_undo_op`/`executar_undo_observado`; hoje os
+/// unicos chamadores estao em `mod tests`. `#[cfg(test)]` deixa esse fato
+/// explicito (era "dead code que parece vivo" no build de release).
+#[cfg(test)]
 fn executar_undo(entry: &OperationJournalEntry) -> UndoReport {
     executar_undo_observado(entry, &mut |_, _, _| {}).0
 }
@@ -2300,7 +2304,7 @@ fn executar_undo_observado(
     let total = entry.items.iter().filter(|i| !i.is_dir).count();
     let mut feitos = 0usize;
     let mut afetados: Vec<String> = Vec::new();
-    let mut marcar = |p: &str, afetados: &mut Vec<String>| {
+    let marcar = |p: &str, afetados: &mut Vec<String>| {
         if let Some(pai) = Path::new(p).parent().map(|d| d.to_string_lossy().into_owned()) {
             if !pai.is_empty() && !afetados.iter().any(|d| d.eq_ignore_ascii_case(&pai)) {
                 afetados.push(pai);
@@ -7044,6 +7048,34 @@ mod tests {
             );
         }
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// Guarda o PAREAMENTO DE PRODUÇÃO: `fontes_conhecidas()` é quem DECIDE qual
+    /// `dirs::*_dir()` recebe qual `kind`. O teste acima monta fontes sintéticas e
+    /// prova só que o núcleo puro preserva o par que RECEBE — nunca exercita quem
+    /// decide. Sem esta guarda, trocar `(Home, home_dir())` por `(Desktop, home_dir())`
+    /// no vec (o copy-paste que uma 5ª pasta convida) passa verde e a Área de
+    /// Trabalho volta a se chamar "Home" — o defeito que abriu o #1404, por outra
+    /// porta. (Receita da Lúmen no veredito; só lê `dirs::*_dir()`, não toca ambiente.)
+    #[test]
+    fn fontes_conhecidas_pareia_cada_kind_com_a_sua_origem() {
+        let fontes = fontes_conhecidas();
+        for (kind, esperado) in [
+            (KnownKind::Home, dirs::home_dir()),
+            (KnownKind::Desktop, dirs::desktop_dir()),
+            (KnownKind::Documents, dirs::document_dir()),
+            (KnownKind::Downloads, dirs::download_dir()),
+        ] {
+            let achado = fontes
+                .iter()
+                .find(|(k, _)| *k == kind)
+                .map(|(_, p)| p.clone());
+            assert_eq!(
+                achado,
+                Some(esperado),
+                "kind {kind:?} pareado com a origem errada em fontes_conhecidas()"
+            );
+        }
     }
 
     /// Reordenar as origens não pode mudar quem é a home — era o segundo modo
