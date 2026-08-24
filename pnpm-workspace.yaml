@@ -1,3 +1,6 @@
+packages:
+  - "web"
+
 allowBuilds:
   msgpackr-extract: false
   protobufjs: false
