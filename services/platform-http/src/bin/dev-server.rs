@@ -25,6 +25,7 @@ use galaxie_platform_identity::armazem::{
     ArmazemDominioMemoria, ArmazemMembroMemoria, ArmazemOrgMemoria, Dominio, EstadoDominio, Membro,
 };
 use galaxie_platform_identity::sessao::{ArmazemMemoria, NOME_COOKIE_SESSAO};
+use galaxie_platform_conta::{ArmazemPerfilMemoria, Perfil};
 use galaxie_platform_identity::{Escopo, Org, OrgId, Papel, Principal, Sessao, UserId};
 use galaxie_platform_http::servidor::{agora_de_producao, servir, Config};
 use galaxie_platform_http::Borda;
@@ -85,6 +86,13 @@ async fn main() -> Result<()> {
     dominios.inserir(OrgId(ORG_DEV.into()), Dominio { dominio: format!("{ORG_DEV}.com"), estado: EstadoDominio::Verificado });
     dominios.inserir(OrgId(ORG_DEV.into()), Dominio { dominio: format!("{ORG_DEV}.io"), estado: EstadoDominio::Pendente });
 
+    // Perfil do dev-user pro `GET /me` (fatia #1489 do @Castor): em prod, o callback OAuth grava.
+    let mut perfis = ArmazemPerfilMemoria::novo();
+    perfis.inserir(
+        UserId("dev-user".into()),
+        Perfil { nome: "Dev User".into(), email: "dev@dev-org.com".into(), idioma: Some("pt-BR".into()) },
+    );
+
     let borda = Borda::nova(
         armazem,
         agora_de_producao,
@@ -92,6 +100,7 @@ async fn main() -> Result<()> {
         Arc::new(orgs),
         Arc::new(membros),
         Arc::new(dominios),
+        Arc::new(perfis),
     );
 
     // Imprime o cookie pronto pro dev/@Pollux injetar. `__Host-` exige `Secure`; em http://localhost
