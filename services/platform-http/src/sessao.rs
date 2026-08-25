@@ -14,16 +14,17 @@ use axum::response::Response;
 use galaxie_platform_identity::sessao::ArmazemMemoria;
 use galaxie_platform_identity::Sessao;
 use galaxie_platform_web::contrato::CodigoErro;
-use galaxie_platform_web::sessao_do_cookie;
+use galaxie_platform_web::tocar_sessao_do_cookie;
 
 use crate::erro::resposta_de_erro;
 
 /// Estado compartilhado da borda.
 ///
-/// O armazém fica atrás de um `Mutex` porque o caminho autenticado COM atividade (`tocar`, #1512)
-/// precisa de `&mut` — a leitura de hoje (`validar`) não, mas o mesmo estado serve os dois. O
-/// **relógio é injetável** (`agora`) porque a expiração (#1504 absoluto / #1512 ocioso) é
-/// time-aware: os testes fixam o tempo em vez de dormir, e a prod passa `SystemTime`.
+/// O armazém fica atrás de um `Mutex` porque TODO request autenticado é o caminho de ATIVIDADE
+/// (`tocar`, #1512): ele desliza a janela de ociosidade, e `tocar` precisa de `&mut`. O `Mutex`
+/// existe exatamente pra isso. O **relógio é injetável** (`agora`) porque a expiração (#1504
+/// absoluto / #1512 ocioso) é time-aware: os testes controlam o tempo em vez de dormir, e a prod
+/// passa `SystemTime`.
 pub struct Borda {
     pub armazem: Mutex<ArmazemMemoria>,
     pub agora: fn() -> u64,
@@ -43,23 +44,29 @@ impl Borda {
 /// O tipo de estado que o `Router` carrega.
 pub type EstadoBorda = Arc<Borda>;
 
-/// Resolve a sessão viva do request (cookie `__Host-gx_sess` → `validar` no armazém do servidor),
-/// COMPARTILHADO pelos dois extractors. A diferença entre eles é SÓ a resposta de rejeição — a
-/// leitura é a mesma, num lugar só.
+/// Resolve a sessão viva do request e **DESLIZA a janela de ociosidade** (`tocar`, #1512),
+/// COMPARTILHADO pelos dois extractors. A diferença entre eles é SÓ a resposta de rejeição.
+///
+/// **#1512 (defeito achado pelo @Altair — "teste não é consumidor"):** este extractor É o
+/// consumidor de `tocar_sessao_do_cookie`. Antes chamava `sessao_do_cookie` (read-only, só
+/// `validar`), e como NENHUM caminho de produção deslizava, o `IDLE_TTL_SEG` virava um 2º teto
+/// absoluto — todo mundo deslogado aos 30 min, trabalhando ou não. Agora todo request autenticado
+/// desliza o ocioso pra `agora + IDLE_TTL_SEG` (capado no absoluto pelo armazém): a atividade
+/// mantém a sessão viva; só a INATIVIDADE a mata. O teto absoluto (#1504) segue inviolável.
 fn resolver_sessao(parts: &Parts, estado: &EstadoBorda) -> Option<Sessao> {
-    // Header ausente ou não-UTF8 vira string vazia ⇒ `sessao_do_cookie` devolve `None`.
+    // Header ausente ou não-UTF8 vira string vazia ⇒ `tocar_sessao_do_cookie` devolve `None`.
     let header_cookie = parts
         .headers
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     let agora = (estado.agora)();
-    let armazem = estado
+    let mut armazem = estado
         .armazem
         .lock()
         .expect("armazém de sessão não deve estar envenenado");
     // Clona pra soltar o lock/borrow do armazém antes de o handler rodar.
-    sessao_do_cookie(&*armazem, header_cookie, agora).cloned()
+    tocar_sessao_do_cookie(&mut *armazem, header_cookie, agora).cloned()
 }
 
 /// A sessão VIVA do request, extraída do cookie `__Host-gx_sess` e validada no armazém do
