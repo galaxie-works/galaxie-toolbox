@@ -185,6 +185,14 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 > nome de erro (`Negado`) vira `403` no admin-org (§4.3, o solicitante JÁ é da org) e `404` aqui — **não
 > é incoerência a harmonizar**, é o invariante 1 aplicado a cada contexto. A auditoria grava a
 > `AcaoBackOffice` específica (provisionar/suspender/…), não uma `Operacao` genérica.
+>
+> **O `404` vale também pro NÃO-AUTENTICADO (v1.3, achado do @Altair na borda #1505 fatia 2):** sem
+> sessão, `/admin/*` devolve **`404`, não `401`** — um `401` já revelaria a existência do back-office
+> a quem nem sessão tem ("fechar a porta e deixar a janela"). É o único ponto do contrato onde a
+> AUSÊNCIA de sessão não vira `401`: nas superfícies visíveis (`/me`, `/orgs/{org}/…`) sem sessão é
+> `401` (dizer "autentique-se" não revela nada); só onde a existência é o segredo o não-autenticado
+> cai no mesmo `404`. **Custo aceito e nomeado:** um staff com sessão expirada recebe `404` e não
+> distingue "não sou staff" de "minha sessão venceu" — o preço de o back-office não se anunciar.
 
 > **`estado` da org (v1.3, ratifico @Altair pendente):** a lista de back-office precisa mostrar
 > `provisionada`/`suspensa` pra ser acionável (senão o staff não sabe se provisiona ou suspende). É um
