@@ -10,7 +10,7 @@
 //! **toda assinatura e todo consumidor** (o apodrecimento que custou três fatias na expiração de
 //! sessão). O backing real (Postgres) é fatia própria; o banco não entra de carona aqui.
 
-use crate::{Org, OrgId};
+use crate::{Org, OrgId, Papel, UserId};
 
 /// Falha de INFRAESTRUTURA do armazém (conexão/IO caiu) — **não** "não encontrado", que é um
 /// `Option` dentro do `Ok`. Genérico de propósito: a impl em memória nunca o produz, mas a
@@ -78,6 +78,60 @@ impl ArmazemOrg for ArmazemOrgMemoria {
     }
 }
 
+/// Um membro de uma org, como o contrato §4.3 (`GET /orgs/{org}/membros`) o projeta:
+/// `{ uid, nome, email, papel }`. É a PROJEÇÃO que sai no fio — sem claims de tenant, sem segredo.
+/// O `papel` decide o que a UI mostra, jamais o que o servidor permite (a autz é da sessão).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Membro {
+    pub uid: UserId,
+    pub nome: String,
+    pub email: String,
+    pub papel: Papel,
+}
+
+/// Armazém de membros por org. `listar` serve `GET /orgs/{org}/membros`. Mesma doutrina do
+/// [`ArmazemOrg`]: mora no domínio, `Result` desde já, `ErroArmazem` só pra falha de infra.
+///
+/// Org sem membros (ou inexistente) devolve `Ok(vec![])` — a EXISTÊNCIA/visibilidade da org é
+/// decidida ANTES, por `autorizar_acao_admin` sobre o `Org` carregado (org alheia ⇒ 404); aqui já
+/// se sabe que o solicitante pode ver. `listar` não reintroduz essa checagem (seria dois donos da
+/// verdade), só devolve os membros.
+pub trait ArmazemMembro {
+    /// Os membros da org `org`. `Result` porque o backing real pode falhar; lista vazia = zero
+    /// membros (não erro).
+    fn listar(&self, org: &OrgId) -> Result<Vec<Membro>, ErroArmazem>;
+}
+
+/// Primeira impl: em memória (por org). Nunca falha; carrega `Result` pra a troca por Postgres não
+/// rippar os consumidores.
+#[derive(Debug, Default, Clone)]
+pub struct ArmazemMembroMemoria {
+    /// (org, membro) — flat pra o teste semear fácil; a impl real indexa por org.
+    membros: Vec<(OrgId, Membro)>,
+}
+
+impl ArmazemMembroMemoria {
+    pub fn novo() -> Self {
+        Self::default()
+    }
+
+    /// Semeia um membro numa org.
+    pub fn inserir(&mut self, org: OrgId, membro: Membro) {
+        self.membros.push((org, membro));
+    }
+}
+
+impl ArmazemMembro for ArmazemMembroMemoria {
+    fn listar(&self, org: &OrgId) -> Result<Vec<Membro>, ErroArmazem> {
+        Ok(self
+            .membros
+            .iter()
+            .filter(|(o, _)| o == org)
+            .map(|(_, m)| m.clone())
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,5 +187,43 @@ mod tests {
         assert!(r.is_ok());
         let b: Result<Option<Org>, ErroArmazem> = a.buscar(&OrgId("x".into()));
         assert!(b.is_ok());
+    }
+
+    fn membro(uid: &str, papel: Papel) -> Membro {
+        Membro {
+            uid: UserId(uid.into()),
+            nome: format!("Nome {uid}"),
+            email: format!("{uid}@acme.com"),
+            papel,
+        }
+    }
+
+    #[test]
+    fn membros_lista_por_org_e_isola_entre_orgs() {
+        let mut a = ArmazemMembroMemoria::novo();
+        a.inserir(OrgId("acme".into()), membro("u1", Papel::OrgAdmin));
+        a.inserir(OrgId("acme".into()), membro("u2", Papel::Member));
+        a.inserir(OrgId("globex".into()), membro("u3", Papel::Member));
+
+        let acme: Vec<_> = a.listar(&OrgId("acme".into())).unwrap().into_iter().map(|m| m.uid).collect();
+        assert_eq!(acme, vec![UserId("u1".into()), UserId("u2".into())]);
+        // ISOLAMENTO: listar uma org não vaza membros de outra (base do 404 de recurso alheio).
+        let globex: Vec<_> = a.listar(&OrgId("globex".into())).unwrap().into_iter().map(|m| m.uid).collect();
+        assert_eq!(globex, vec![UserId("u3".into())]);
+    }
+
+    #[test]
+    fn org_sem_membros_e_vec_vazio_nao_erro() {
+        let a = ArmazemMembroMemoria::novo();
+        // Org sem membros (ou cuja visibilidade já foi decidida antes) ⇒ lista vazia, NÃO Err.
+        assert_eq!(a.listar(&OrgId("nao".into())).unwrap(), vec![]);
+    }
+
+    // Mesma amarra do `Result` pro ArmazemMembro (exigência @Altair).
+    #[test]
+    fn membro_assinatura_carrega_result() {
+        let a = ArmazemMembroMemoria::novo();
+        let r: Result<Vec<Membro>, ErroArmazem> = a.listar(&OrgId("x".into()));
+        assert!(r.is_ok());
     }
 }
