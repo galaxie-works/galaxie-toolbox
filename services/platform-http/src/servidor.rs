@@ -121,6 +121,20 @@ pub async fn serve(config: Config) -> Result<()> {
         Arc::new(ArmazemMembroMemoria::novo()),
         Arc::new(ArmazemDominioMemoria::novo()),
     );
+    servir(borda, config).await
+}
+
+/// Relógio de produção exposto: o `dev-server` (fatia 2) usa o MESMO `SystemTime` — a sessão
+/// semeada tem prazos NORMAIS (condição 2 do @Altair: sessão de dev não é mais poderosa que a real).
+pub fn agora_de_producao() -> u64 {
+    agora_unix()
+}
+
+/// Serve uma `Borda` JÁ MONTADA — o mecanismo de bind+serve, compartilhado pelo binário de produção
+/// ([`serve`], que monta a Borda vazia sem auth) e pelo `dev-server` (fatia 2, que monta a Borda com
+/// uma sessão semeada). A SEMEADURA não mora aqui — mora no bin do dev-server (condição 1 do @Altair:
+/// se ficasse na lib atrás de flag, alguém a ligaria um dia).
+pub async fn servir(borda: crate::EstadoBorda, config: Config) -> Result<()> {
     let app = rotas(borda);
 
     // `0.0.0.0`: atrás do Traefik, que termina o TLS de entrada e encaminha na mesma origem.
