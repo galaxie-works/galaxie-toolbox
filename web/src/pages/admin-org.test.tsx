@@ -270,7 +270,76 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
     expect(screen.queryByText(t.semPermissao)).toBeNull();
   });
 
-  it("i18n: as duas línguas do DoD renderizam", () => {
+  // -- 403 `org_suspensa` != 403 `negado` (contrato v1.4, #1544) ------------
+  // O servidor gasta uma ordem inteira de checagem (visibilidade -> suspensao ->
+  // papel) pra que um membro de org suspensa NAO veja "papel insuficiente". Se
+  // o cliente colapsar os dois no mesmo aviso, ele desfaz no ultimo metro a
+  // distincao que o servidor fez -- e o resultado pratico e a pessoa pedir a um
+  // admin um acesso que nenhum admin pode conceder.
+
+  it("403 `org_suspensa` diz que a ORG esta suspensa, nao que falta papel", async () => {
+    fetchFalso(() => json({ erro: "org_suspensa" }, 403));
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    const t = DICIONARIOS["pt-BR"];
+
+    await waitFor(() => expect(screen.getByText(t.orgSuspensa)).toBeTruthy());
+    expect(screen.getByText(t.orgSuspensaDetalhe)).toBeTruthy();
+    // O mutante que este `queryByText` mata e o colapso: mapear os dois codigos
+    // de 403 pro mesmo estado faria a mensagem de papel aparecer aqui.
+    expect(screen.queryByText(t.semPermissao)).toBeNull();
+    expect(screen.queryByText(t.semPermissaoDetalhe)).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("403 `negado` continua na mensagem de PAPEL -- a distincao corta dos dois lados", async () => {
+    // Sem esta, um mapeamento invertido (tudo vira `orgSuspensa`) passaria: o
+    // teste de cima so cobra uma direcao.
+    fetchFalso(() => json({ erro: "negado" }, 403));
+    render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    const t = DICIONARIOS["pt-BR"];
+
+    await waitFor(() => expect(screen.getByText(t.semPermissao)).toBeTruthy());
+    expect(screen.queryByText(t.orgSuspensa)).toBeNull();
+  });
+
+  it("403 com codigo DESCONHECIDO cai no restritivo, nunca no permissivo", async () => {
+    // Condicao (2) do @Altair na v1.4: "desconhecido no FE = neutro, nunca
+    // permissivo". Um build velho contra um servidor novo tem que continuar
+    // barrando. O que NAO pode acontecer e a tela mostrar dado, ou oferecer
+    // "tente de novo" a quem foi negado.
+    const corpos = [
+      () => json({ erro: "codigo_que_ainda_nao_existe" }, 403),
+      () => json({}, 403),
+      () => json({ erro: 7 }, 403),
+      () => new Response("<!doctype html>", { status: 403 }), // nem JSON e
+    ];
+    for (const corpo of corpos) {
+      cleanup();
+      fetchFalso(corpo);
+      render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+      const t = DICIONARIOS["pt-BR"];
+      await waitFor(() => expect(screen.getByText(t.semPermissao)).toBeTruthy());
+      expect(screen.queryByRole("table")).toBeNull();
+      expect(screen.queryByText(t.erroCarregar)).toBeNull();
+    }
+  });
+
+  it("a suspensao vale nos DOIS paineis -- o aviso mora num ponto so", async () => {
+    // Irmao do teste de 403!=404 em dominios. Se alguem voltar a escrever a
+    // escada de estados dentro de cada painel, um deles esquece o estado novo --
+    // e e este teste que cobra.
+    fetchFalso(() => json({ erro: "org_suspensa" }, 403));
+    const { container } = render(<AdminOrgPage idioma="pt-BR" org="acme" />);
+    const t = DICIONARIOS["pt-BR"];
+    [...container.querySelectorAll("nav button")]
+      .find((b) => b.textContent === t.dominios)
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await waitFor(() => expect(screen.getByText(t.orgSuspensa)).toBeTruthy());
+    expect(screen.queryByText(t.semPermissao)).toBeNull();
+  });
+
+  it("i18n: as duas linguas do DoD renderizam", () => {
     fetchFalso(() => json([]));
     render(<AdminOrgPage idioma="en" org="acme" />);
     expect(screen.getByText(DICIONARIOS.en.adminOrg)).toBeTruthy();
