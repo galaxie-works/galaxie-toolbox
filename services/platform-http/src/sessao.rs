@@ -12,7 +12,7 @@ use axum::http::request::Parts;
 use axum::response::Response;
 
 use galaxie_platform_back_office::Auditor;
-use galaxie_platform_identity::armazem::{ArmazemMembro, ArmazemOrg};
+use galaxie_platform_identity::armazem::{ArmazemDominio, ArmazemMembro, ArmazemOrg};
 use galaxie_platform_identity::sessao::ArmazemMemoria;
 use galaxie_platform_identity::Sessao;
 use galaxie_platform_web::contrato::CodigoErro;
@@ -40,6 +40,7 @@ pub struct Borda {
     /// pra o axum compartilhar e a impl (memória agora, Postgres depois) trocar sem tocar a borda.
     pub orgs: Arc<dyn ArmazemOrg + Send + Sync>,
     pub membros: Arc<dyn ArmazemMembro + Send + Sync>,
+    pub dominios: Arc<dyn ArmazemDominio + Send + Sync>,
 }
 
 impl Borda {
@@ -51,6 +52,7 @@ impl Borda {
         auditor: Arc<dyn Auditor + Send + Sync>,
         orgs: Arc<dyn ArmazemOrg + Send + Sync>,
         membros: Arc<dyn ArmazemMembro + Send + Sync>,
+        dominios: Arc<dyn ArmazemDominio + Send + Sync>,
     ) -> Arc<Self> {
         Arc::new(Borda {
             armazem: Mutex::new(armazem),
@@ -58,6 +60,7 @@ impl Borda {
             auditor,
             orgs,
             membros,
+            dominios,
         })
     }
 }

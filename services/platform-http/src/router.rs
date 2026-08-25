@@ -17,7 +17,7 @@ use axum::routing::{delete, get};
 use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
-use galaxie_platform_identity::armazem::{ErroArmazem, Membro};
+use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
 use galaxie_platform_identity::{OrgId, Papel};
 use galaxie_platform_org_admin::{autorizar_acao_admin, AcaoAdminOrg, AdminErro};
 use galaxie_platform_web::contrato::CodigoErro;
@@ -162,11 +162,74 @@ async fn listar_membros(
     }
 }
 
+/// O estado do domínio como o contrato §4.3 o projeta no fio. Explícito, não `derive` — o valor de
+/// contrato não muda se alguém renomear a variante Rust.
+fn estado_dominio_str(estado: &EstadoDominio) -> &'static str {
+    match estado {
+        EstadoDominio::Pendente => "pendente",
+        EstadoDominio::Verificado => "verificado",
+    }
+}
+
+/// Domínio como sai no fio (contrato §4.3: `{ dominio, estado: "pendente"|"verificado" }`).
+#[derive(serde::Serialize)]
+struct DominioDto<'a> {
+    dominio: &'a str,
+    estado: &'a str,
+}
+
+impl<'a> From<&'a Dominio> for DominioDto<'a> {
+    fn from(d: &'a Dominio) -> Self {
+        DominioDto { dominio: &d.dominio, estado: estado_dominio_str(&d.estado) }
+    }
+}
+
+/// `GET /api/v1/orgs/{org}/dominios` (contrato §4.3) — lista os domínios da org com seu estado de
+/// verificação. Mesmo esqueleto do `listar_membros` (o padrão ratificado no #1536): 404 antes de
+/// 403, `resposta_de_falha` no lugar único, DTO na borda. A leitura é autorizada IGUAL à escrita de
+/// domínio (`autorizar_acao_admin` com `ListarDominios`).
+async fn listar_dominios(
+    State(estado): State<EstadoBorda>,
+    SessaoAtual(sessao): SessaoAtual,
+    Path(org): Path<String>,
+) -> Response {
+    let org_id = OrgId(org);
+
+    // (1) Carrega o Org pra autz. Infra ⇒ 500 (visível); NÃO existe ⇒ 404 (alheia/inexistente).
+    let org = match estado.orgs.buscar(&org_id) {
+        Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
+        Ok(None) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        Ok(Some(o)) => o,
+    };
+
+    // (2) Autz: 404 (alheia) antes de 403 (própria sem papel).
+    match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarDominios, &org) {
+        Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
+        Ok(()) => {}
+    }
+
+    // (3) Dados.
+    match estado.dominios.listar(&org_id) {
+        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
+        Ok(dominios) => {
+            let dto: Vec<DominioDto> = dominios.iter().map(DominioDto::from).collect();
+            let corpo = serde_json::to_string(&dto).expect("Vec<DominioDto> serializa sempre");
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(corpo))
+                .expect("resposta 200 é sempre construível")
+        }
+    }
+}
+
 /// Monta o `Router` da borda com o estado (armazéns + relógio + auditor) já resolvido.
 pub fn rotas(estado: EstadoBorda) -> Router {
     Router::new()
         .route("/api/v1/admin/orgs", get(listar_orgs))
         .route("/api/v1/orgs/{org}/membros", get(listar_membros))
+        .route("/api/v1/orgs/{org}/dominios", get(listar_dominios))
         .route("/api/v1/session", delete(encerrar))
         .fallback(fallback_nao_encontrado)
         .with_state(estado)
@@ -186,7 +249,8 @@ mod tests {
     use crate::sessao::{Borda, SessaoAtual};
     use galaxie_platform_back_office::{Auditor, EventoAutz, ResultadoAutz};
     use galaxie_platform_identity::armazem::{
-        ArmazemMembro, ArmazemMembroMemoria, ArmazemOrg, ArmazemOrgMemoria, ErroArmazem, Membro,
+        ArmazemDominio, ArmazemDominioMemoria, ArmazemMembro, ArmazemMembroMemoria, ArmazemOrg,
+        ArmazemOrgMemoria, Dominio, ErroArmazem, EstadoDominio, Membro,
     };
     use galaxie_platform_identity::Papel;
     use std::sync::{Arc, Mutex as MutexStd};
@@ -197,6 +261,9 @@ mod tests {
     }
     fn sem_membros() -> Arc<dyn ArmazemMembro + Send + Sync> {
         Arc::new(ArmazemMembroMemoria::novo())
+    }
+    fn sem_dominios() -> Arc<dyn ArmazemDominio + Send + Sync> {
+        Arc::new(ArmazemDominioMemoria::novo())
     }
 
     /// Auditor no-op pros testes que não checam a emissão.
@@ -249,7 +316,7 @@ mod tests {
         );
         let (id, _set_cookie) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie_req = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        (Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros()), cookie_req)
+        (Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios()), cookie_req)
     }
 
     async fn resposta_crua(estado: EstadoBorda, cookie: &str, caminho: &str) -> (StatusCode, Vec<(String, String)>, Vec<u8>) {
@@ -345,7 +412,7 @@ mod tests {
         );
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios());
 
         let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/admin/orgs").await;
         assert_eq!(status, StatusCode::OK);
@@ -378,7 +445,7 @@ mod tests {
         RELOGIO_DESLIZA.store(AGORA, Ordering::SeqCst);
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_desliza, nulo(), sem_orgs(), sem_membros());
+        let estado = Borda::nova(armazem, relogio_desliza, nulo(), sem_orgs(), sem_membros(), sem_dominios());
 
         async fn bater(estado: EstadoBorda, cookie: &str) -> StatusCode {
             async fn visivel(SessaoAtual(_): SessaoAtual) -> Response {
@@ -433,7 +500,7 @@ mod tests {
         }
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_depois, nulo(), sem_orgs(), sem_membros());
+        let estado = Borda::nova(armazem, relogio_depois, nulo(), sem_orgs(), sem_membros(), sem_dominios());
 
         let router = Router::new()
             .route("/api/v1/visivel", get(visivel))
@@ -522,7 +589,7 @@ mod tests {
         let (id2, _) = emitir_sessao(&mut armazem, nova(), AGORA);
         // header com DOIS cookies de sessão (shadowing/injeção na própria origem).
         let cookie = format!("{NOME_COOKIE_SESSAO}={}; {NOME_COOKIE_SESSAO}={}", id1.0, id2.0);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios());
 
         assert!(estado.armazem.lock().unwrap().validar(&id1, AGORA).is_some());
         assert!(estado.armazem.lock().unwrap().validar(&id2, AGORA).is_some());
@@ -564,7 +631,7 @@ mod tests {
             ),
             AGORA,
         );
-        let estado = Borda::nova(ar, relogio_fixo, espiao.clone(), sem_orgs(), sem_membros());
+        let estado = Borda::nova(ar, relogio_fixo, espiao.clone(), sem_orgs(), sem_membros(), sem_dominios());
         let cookie_staff = format!("{NOME_COOKIE_SESSAO}={}", id_staff.0);
         let cookie_admin = format!("{NOME_COOKIE_SESSAO}={}", id_admin.0);
 
@@ -636,6 +703,7 @@ mod tests {
             nulo(),
             Arc::new(org_store),
             Arc::new(membro_store),
+            sem_dominios(),
         );
         (estado, cookie)
     }
@@ -730,6 +798,7 @@ mod tests {
             nulo(),
             Arc::new(OrgsFalho),
             sem_membros(),
+            sem_dominios(),
         );
         let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/membros").await;
         assert_eq!(
@@ -737,5 +806,85 @@ mod tests {
             StatusCode::INTERNAL_SERVER_ERROR,
             "store fora do ar em superfície visível é 500 (tratado, não panic)"
         );
+    }
+
+    // ---- GET /orgs/{org}/dominios (2º handler de DADOS, contrato §4.3) ----
+
+    /// Borda com sessão + store de orgs + store de dominios semeados (membros vazio).
+    fn borda_dominios(
+        sessao: galaxie_platform_identity::Sessao,
+        orgs: Vec<Org>,
+        dominios: Vec<(OrgId, Dominio)>,
+    ) -> (EstadoBorda, String) {
+        let mut armazem = ArmazemMemoria::novo();
+        let (id, _) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut org_store = ArmazemOrgMemoria::novo();
+        for o in orgs {
+            org_store.inserir(o);
+        }
+        let mut dom_store = ArmazemDominioMemoria::novo();
+        for (org, d) in dominios {
+            dom_store.inserir(org, d);
+        }
+        let estado = Borda::nova(
+            armazem,
+            relogio_fixo,
+            nulo(),
+            Arc::new(org_store),
+            sem_membros(),
+            Arc::new(dom_store),
+        );
+        (estado, cookie)
+    }
+
+    fn dom(nome: &str, estado: EstadoDominio) -> Dominio {
+        Dominio { dominio: nome.into(), estado }
+    }
+
+    /// Happy: org_admin → 200 com `[{dominio, estado}]`, estado projetado como o contrato
+    /// (`pendente`/`verificado`).
+    #[tokio::test]
+    async fn dominios_200_com_estado_projetado() {
+        let (estado, cookie) = borda_dominios(
+            admin_de("acme"),
+            vec![org_teste("acme")],
+            vec![
+                (OrgId("acme".into()), dom("acme.com", EstadoDominio::Verificado)),
+                (OrgId("acme".into()), dom("acme.io", EstadoDominio::Pendente)),
+            ],
+        );
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/dominios").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["dominio"], "acme.com");
+        assert_eq!(arr[0]["estado"], "verificado", "estado projetado como o contrato");
+        assert_eq!(arr[1]["estado"], "pendente");
+    }
+
+    /// Org alheia ⇒ 404 (não 403) — mesma ordem 404-antes-de-403 do membros (padrão ratificado).
+    #[tokio::test]
+    async fn dominios_org_alheia_e_404() {
+        let (estado, cookie) = borda_dominios(
+            admin_de("acme"),
+            vec![org_teste("acme"), org_teste("globex")],
+            vec![(OrgId("globex".into()), dom("globex.com", EstadoDominio::Verificado))],
+        );
+        let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/globex/dominios").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "org alheia é 404, não 403");
+    }
+
+    /// Própria org, member (sem papel org_admin) ⇒ 403.
+    #[tokio::test]
+    async fn dominios_propria_org_sem_papel_e_403() {
+        let (estado, cookie) = borda_dominios(
+            membro_de("acme"),
+            vec![org_teste("acme")],
+            vec![(OrgId("acme".into()), dom("acme.com", EstadoDominio::Verificado))],
+        );
+        let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/dominios").await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 }
