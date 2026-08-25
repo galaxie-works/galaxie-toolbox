@@ -1,0 +1,15 @@
+# Modelo de concessão (capabilities) — o 2º EIXO da autorização (#1562, épico #1265). Crate
+# STANDALONE (padrão da casa em services/*), DOMÍNIO PURO: tipos + resolução (união das concessões),
+# sem I/O, sem rede, sem OpenSSL → `cargo test` local e instantâneo. NENHUM consumidor hoje
+# (declarado no card): o 1º será o gate de recurso (Bridge/Astro) via a fatia de FIAÇÃO (separada,
+# review do @Altair). A fiação usa injeção (passa as concessões), então NÃO há ciclo identity↔este.
+[package]
+name = "galaxie-platform-concessao"
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
+
+[dependencies]
+# UserId/OrgId da fundação (#1469): o sujeito e o alvo de uma concessão. Reusa, não redefine.
+galaxie-platform-identity = { path = "../platform-identity" }
