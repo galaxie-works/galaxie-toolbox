@@ -1289,10 +1289,7 @@ export const MessageDetail = forwardRef<
         </ResizablePanel>
         {previewAtual && id && (
           <>
-            <ResizableHandle
-              withHandle
-              className="mx-1.5 bg-transparent hover:bg-border print:hidden"
-            />
+            <ResizableHandle withHandle className="print:hidden" />
             <ResizablePanel
               order={2}
               minSize={25}
