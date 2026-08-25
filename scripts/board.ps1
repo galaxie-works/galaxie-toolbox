@@ -225,7 +225,10 @@ if ($Inconsistentes) {
   # FixtureFile (teste) substitui a query real; senão reaproveita a paginação do board.
   $fonte = if ($FixtureFile) { @(Get-Content -Raw -LiteralPath $FixtureFile | ConvertFrom-Json) }
            else              { Get-BoardItems }
-  $inc = Select-Inconsistentes -Items $fonte
+  # @() FORÇA array: a função devolve um List que o PS DESEMBRULHA pra escalar quando há UM item
+  # só — e aí `.Count` some ("cannot be found on this object"). A catraca falhava em silêncio com
+  # exatamente 1 inconsistente, que é justo quando ela mais importa (achado da @Mira).
+  $inc = @(Select-Inconsistentes -Items $fonte)
   if ($Json) { $inc | ConvertTo-Json -Depth 5; return }
   if ($inc.Count -eq 0) {
     Write-Host "Reconciliacao: 0 cards inconsistentes (issue CLOSED x coluna ativa)." -ForegroundColor Green
@@ -237,7 +240,7 @@ if ($Inconsistentes) {
 }
 
 if ($Epico) {
-  $subs = Get-EpicoSubIssues -Numero $Epico
+  $subs = @(Get-EpicoSubIssues -Numero $Epico)  # @() idem: épico com 1 sub-issue não pode perder .Count
   if ($Json) { $subs | ConvertTo-Json -Depth 5; return }
   $total = $subs.Count
   $released = @($subs | Where-Object { $_.Coluna -eq 'Released to Production' }).Count
