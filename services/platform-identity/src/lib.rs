@@ -33,6 +33,10 @@ use std::collections::BTreeSet;
 /// Ciclo de vida da sessão web (fatia 2): armazém server-side + política de cookie.
 pub mod sessao;
 
+/// Persistência do domínio (#1505 (a), @Altair): traits de armazém das entidades (`ArmazemOrg`, …)
+/// no crate que POSSUI a entidade, com `Result` desde o dia um. Impl em memória; Postgres é fatia.
+pub mod armazem;
+
 /// Id opaco de um humano. Newtype pra não confundir com `OrgId` nem com um id de device.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UserId(pub String);
