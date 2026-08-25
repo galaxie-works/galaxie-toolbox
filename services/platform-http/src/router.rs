@@ -17,9 +17,8 @@ use axum::routing::{delete, get};
 use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
-use galaxie_platform_identity::sessao::montar_cookie_expurgo;
 use galaxie_platform_web::contrato::CodigoErro;
-use galaxie_platform_web::{encerrar_sessao, sessao_id_do_cookie};
+use galaxie_platform_web::encerrar_sessoes_do_cookie;
 
 use crate::erro::resposta_de_erro;
 use crate::sessao::{EstadoBorda, SessaoOculta};
@@ -63,21 +62,21 @@ async fn listar_orgs(SessaoOculta(sessao): SessaoOculta) -> Response {
 /// Invalida no SERVIDOR o que houver (fato) **E** devolve o cookie de expurgo (apaga no cliente).
 /// Os dois juntos, sempre: invalidar sem expurgar deixa lixo no browser; expurgar sem invalidar
 /// deixa a sessão viva pra quem copiou o valor do cookie (o servidor é a fonte da verdade).
+///
+/// **#1526 (fix @Altair): cookie DUPLICADO ⇒ invalida TODOS os candidatos**, não nenhum. A leitura
+/// recusa a ambiguidade (fail-closed); a revogação a resolve agindo, senão o logout seria fail-open
+/// (usuário "sai", sessão vive). Por isso usa `encerrar_sessoes_do_cookie`, não `sessao_id_do_cookie`.
 async fn encerrar(State(estado): State<EstadoBorda>, headers: HeaderMap) -> Response {
     let header_cookie = headers
         .get(header::COOKIE)
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    let expurgo = match sessao_id_do_cookie(header_cookie) {
-        Some(id) => {
-            let mut armazem = estado
-                .armazem
-                .lock()
-                .expect("armazém de sessão não deve estar envenenado");
-            encerrar_sessao(&mut *armazem, &id)
-        }
-        // Sem cookie de sessão (ou duplicado/inválido): nada a invalidar, mas expurga mesmo assim.
-        None => montar_cookie_expurgo(),
+    let expurgo = {
+        let mut armazem = estado
+            .armazem
+            .lock()
+            .expect("armazém de sessão não deve estar envenenado");
+        encerrar_sessoes_do_cookie(&mut *armazem, header_cookie)
     };
     Response::builder()
         .status(StatusCode::NO_CONTENT)
@@ -388,5 +387,41 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NO_CONTENT, "deslogar sem sessão é 204 igual");
         let set = resp.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap();
         assert!(set.contains("Max-Age=0"), "expurga mesmo sem sessão a invalidar");
+    }
+
+    /// **#1526 (fix @Altair — o fail-open que ele pegou):** logout com cookie DUPLICADO invalida
+    /// TODOS os candidatos, não nenhum. Antes, `sessao_id_do_cookie` devolvia `None` na ambiguidade
+    /// e o `encerrar` só expurgava: 204 com as DUAS sessões VIVAS no servidor (o usuário "sai" e não
+    /// sai — falha silenciosa). Prova pelo consumidor: bate no handler com dois `__Host-gx_sess` e
+    /// exige que as duas morram. Mutante (voltar pra `sessao_id_do_cookie`/exatamente-um) MATA isto.
+    #[tokio::test]
+    async fn logout_com_cookie_duplicado_invalida_todos() {
+        let mut armazem = ArmazemMemoria::novo();
+        let nova = || {
+            galaxie_platform_identity::Sessao::estabelecer(
+                Principal::AdminOrg { usuario: UserId("u".into()), org: OrgId("o".into()) },
+                Escopo::de_orgs([OrgId("o".into())]),
+            )
+        };
+        let (id1, _) = emitir_sessao(&mut armazem, nova(), AGORA);
+        let (id2, _) = emitir_sessao(&mut armazem, nova(), AGORA);
+        // header com DOIS cookies de sessão (shadowing/injeção na própria origem).
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}; {NOME_COOKIE_SESSAO}={}", id1.0, id2.0);
+        let estado = Borda::nova(armazem, relogio_fixo);
+
+        assert!(estado.armazem.lock().unwrap().validar(&id1, AGORA).is_some());
+        assert!(estado.armazem.lock().unwrap().validar(&id2, AGORA).is_some());
+
+        let resp = deletar(estado.clone(), Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+        assert!(
+            estado.armazem.lock().unwrap().validar(&id1, AGORA).is_none(),
+            "1º candidato invalidado no logout"
+        );
+        assert!(
+            estado.armazem.lock().unwrap().validar(&id2, AGORA).is_none(),
+            "2º candidato invalidado — logout duplicado não deixa sessão viva (não é fail-open)"
+        );
     }
 }
