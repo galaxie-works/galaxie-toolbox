@@ -12,6 +12,7 @@ use axum::http::request::Parts;
 use axum::response::Response;
 
 use galaxie_platform_back_office::Auditor;
+use galaxie_platform_conta::ArmazemPerfil;
 use galaxie_platform_identity::armazem::{ArmazemDominio, ArmazemMembro, ArmazemOrg};
 use galaxie_platform_identity::sessao::ArmazemMemoria;
 use galaxie_platform_identity::Sessao;
@@ -41,6 +42,9 @@ pub struct Borda {
     pub orgs: Arc<dyn ArmazemOrg + Send + Sync>,
     pub membros: Arc<dyn ArmazemMembro + Send + Sync>,
     pub dominios: Arc<dyn ArmazemDominio + Send + Sync>,
+    /// Perfil do humano (`GET /me`, #1505/#1473). Mesmo padrão: a borda consome, a impl troca sem
+    /// tocar aqui. O perfil real nasce no callback OAuth; hoje o dev-server semeia pro e2e do FE.
+    pub perfis: Arc<dyn ArmazemPerfil + Send + Sync>,
 }
 
 impl Borda {
@@ -53,6 +57,7 @@ impl Borda {
         orgs: Arc<dyn ArmazemOrg + Send + Sync>,
         membros: Arc<dyn ArmazemMembro + Send + Sync>,
         dominios: Arc<dyn ArmazemDominio + Send + Sync>,
+        perfis: Arc<dyn ArmazemPerfil + Send + Sync>,
     ) -> Arc<Self> {
         Arc::new(Borda {
             armazem: Mutex::new(armazem),
@@ -61,6 +66,7 @@ impl Borda {
             orgs,
             membros,
             dominios,
+            perfis,
         })
     }
 }

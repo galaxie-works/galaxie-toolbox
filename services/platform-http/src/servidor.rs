@@ -17,6 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 
 use galaxie_platform_back_office::{AcaoBackOffice, Auditor, EventoAutz, ResultadoAutz};
+use galaxie_platform_conta::ArmazemPerfilMemoria;
 use galaxie_platform_identity::armazem::{
     ArmazemDominioMemoria, ArmazemMembroMemoria, ArmazemOrgMemoria,
 };
@@ -120,6 +121,7 @@ pub async fn serve(config: Config) -> Result<()> {
         Arc::new(ArmazemOrgMemoria::novo()),
         Arc::new(ArmazemMembroMemoria::novo()),
         Arc::new(ArmazemDominioMemoria::novo()),
+        Arc::new(ArmazemPerfilMemoria::novo()),
     );
     // Produção escuta em `0.0.0.0`: certo ATRÁS DO TRAEFIK (mesma origem, TLS terminado nele).
     servir(borda, SocketAddr::from(([0, 0, 0, 0], config.porta))).await

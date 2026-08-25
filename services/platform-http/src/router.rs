@@ -17,6 +17,7 @@ use axum::routing::{delete, get};
 use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
+use galaxie_platform_conta::usuario_da_sessao;
 use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
 use galaxie_platform_identity::{EstadoOrg, OrgId, Papel};
 use galaxie_platform_org_admin::{autorizar_acao_admin, AcaoAdminOrg, AdminErro};
@@ -226,6 +227,42 @@ async fn listar_dominios(
     }
 }
 
+/// O perfil como sai no fio (contrato §4.1: `{ nome, email, idioma? }`). DTO na borda; `idioma`
+/// some do JSON quando ausente (`idioma?` — o cliente cai no default). Domínio fica serde-free.
+#[derive(serde::Serialize)]
+struct PerfilDto<'a> {
+    nome: &'a str,
+    email: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    idioma: Option<&'a str>,
+}
+
+/// `GET /api/v1/me` (contrato §4.1) — o perfil do PRÓPRIO principal. **User-scoped:** o `uid` vem
+/// da SESSÃO (`usuario_da_sessao`, delta do @Altair "a conta é sua e só sua"), NUNCA da rota —
+/// não há como pedir o perfil de outro. `401` sem sessão (extractor visível: `/me` não é segredo).
+/// Perfil ausente para um autenticado = **inconsistência de infra** (`resposta_de_falha`, 500), não
+/// 404: a sessão é válida, então o perfil DEVERIA existir (nasce no callback OAuth).
+async fn get_me(State(estado): State<EstadoBorda>, SessaoAtual(sessao): SessaoAtual) -> Response {
+    let uid = usuario_da_sessao(&sessao);
+    match estado.perfis.buscar(uid) {
+        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
+        Ok(None) => resposta_de_falha(Visibilidade::Visivel),
+        Ok(Some(perfil)) => {
+            let dto = PerfilDto {
+                nome: &perfil.nome,
+                email: &perfil.email,
+                idioma: perfil.idioma.as_deref(),
+            };
+            let corpo = serde_json::to_string(&dto).expect("PerfilDto serializa sempre");
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(corpo))
+                .expect("resposta 200 é sempre construível")
+        }
+    }
+}
+
 /// O `estado` da org como o contrato §4.5/v1.4 o projeta no fio. Explícito (não `Debug`/derive):
 /// o valor é PARTE DO CONTRATO — a tela do FE lê "suspensa" pra mostrar "fale com o admin".
 fn estado_org_str(estado: EstadoOrg) -> &'static str {
@@ -290,6 +327,7 @@ async fn listar_minhas_orgs(
 pub fn rotas(estado: EstadoBorda) -> Router {
     Router::new()
         .route("/api/v1/admin/orgs", get(listar_orgs))
+        .route("/api/v1/me", get(get_me))
         .route("/api/v1/me/orgs", get(listar_minhas_orgs))
         .route("/api/v1/orgs/{org}/membros", get(listar_membros))
         .route("/api/v1/orgs/{org}/dominios", get(listar_dominios))
@@ -327,6 +365,59 @@ mod tests {
     }
     fn sem_dominios() -> Arc<dyn ArmazemDominio + Send + Sync> {
         Arc::new(ArmazemDominioMemoria::novo())
+    }
+    fn sem_perfis() -> Arc<dyn galaxie_platform_conta::ArmazemPerfil + Send + Sync> {
+        Arc::new(galaxie_platform_conta::ArmazemPerfilMemoria::novo())
+    }
+    use galaxie_platform_conta::{ArmazemPerfilMemoria, Perfil};
+
+    /// Borda com o perfil de `u1` semeado + sessão viva de `u1`. `idioma` controlável pra provar o
+    /// `idioma?` (some do JSON quando `None`).
+    fn borda_com_perfil(idioma: Option<&str>) -> (EstadoBorda, String) {
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut perfis = ArmazemPerfilMemoria::novo();
+        perfis.inserir(
+            UserId("u1".into()),
+            Perfil { nome: "Ana".into(), email: "ana@x.com".into(), idioma: idioma.map(str::to_owned) },
+        );
+        let borda = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), Arc::new(perfis));
+        (borda, cookie)
+    }
+
+    /// GET /me devolve o perfil do PRÓPRIO principal (uid da sessão, nunca da rota).
+    #[tokio::test]
+    async fn get_me_devolve_o_perfil_do_principal() {
+        let (estado, cookie) = borda_com_perfil(Some("pt-BR"));
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        assert_eq!(json["nome"], "Ana");
+        assert_eq!(json["email"], "ana@x.com");
+        assert_eq!(json["idioma"], "pt-BR");
+    }
+
+    /// `idioma?` — ausente no perfil ⇒ o campo SOME do JSON (não vira `null`), pro cliente cair no default.
+    #[tokio::test]
+    async fn get_me_omite_idioma_quando_ausente() {
+        let (estado, cookie) = borda_com_perfil(None);
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        assert!(json.get("idioma").is_none(), "idioma ausente some do JSON: {corpo:?}");
+    }
+
+    /// GET /me sem sessão ⇒ 401 (superfície visível; `/me` não é segredo).
+    #[tokio::test]
+    async fn get_me_sem_sessao_e_401() {
+        let estado = Borda::nova(ArmazemMemoria::novo(), relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
+        let (status, ..) = resposta_crua(estado, "", "/api/v1/me").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     /// Auditor no-op pros testes que não checam a emissão.
@@ -379,7 +470,7 @@ mod tests {
         );
         let (id, _set_cookie) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie_req = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        (Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios()), cookie_req)
+        (Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis()), cookie_req)
     }
 
     async fn resposta_crua(estado: EstadoBorda, cookie: &str, caminho: &str) -> (StatusCode, Vec<(String, String)>, Vec<u8>) {
@@ -446,7 +537,7 @@ mod tests {
             Membro { uid: UserId("u1".into()), nome: "U1".into(), email: "u1@a.com".into(), papel: Papel::OrgAdmin },
         );
 
-        let borda = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios());
+        let borda = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios(), sem_perfis());
         (borda, cookie)
     }
 
@@ -538,7 +629,7 @@ mod tests {
         );
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
 
         let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/admin/orgs").await;
         assert_eq!(status, StatusCode::OK);
@@ -571,7 +662,7 @@ mod tests {
         RELOGIO_DESLIZA.store(AGORA, Ordering::SeqCst);
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_desliza, nulo(), sem_orgs(), sem_membros(), sem_dominios());
+        let estado = Borda::nova(armazem, relogio_desliza, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
 
         async fn bater(estado: EstadoBorda, cookie: &str) -> StatusCode {
             async fn visivel(SessaoAtual(_): SessaoAtual) -> Response {
@@ -626,7 +717,7 @@ mod tests {
         }
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_depois, nulo(), sem_orgs(), sem_membros(), sem_dominios());
+        let estado = Borda::nova(armazem, relogio_depois, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
 
         let router = Router::new()
             .route("/api/v1/visivel", get(visivel))
@@ -715,7 +806,7 @@ mod tests {
         let (id2, _) = emitir_sessao(&mut armazem, nova(), AGORA);
         // header com DOIS cookies de sessão (shadowing/injeção na própria origem).
         let cookie = format!("{NOME_COOKIE_SESSAO}={}; {NOME_COOKIE_SESSAO}={}", id1.0, id2.0);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
 
         assert!(estado.armazem.lock().unwrap().validar(&id1, AGORA).is_some());
         assert!(estado.armazem.lock().unwrap().validar(&id2, AGORA).is_some());
@@ -757,7 +848,7 @@ mod tests {
             ),
             AGORA,
         );
-        let estado = Borda::nova(ar, relogio_fixo, espiao.clone(), sem_orgs(), sem_membros(), sem_dominios());
+        let estado = Borda::nova(ar, relogio_fixo, espiao.clone(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
         let cookie_staff = format!("{NOME_COOKIE_SESSAO}={}", id_staff.0);
         let cookie_admin = format!("{NOME_COOKIE_SESSAO}={}", id_admin.0);
 
@@ -830,6 +921,7 @@ mod tests {
             Arc::new(org_store),
             Arc::new(membro_store),
             sem_dominios(),
+            sem_perfis(),
         );
         (estado, cookie)
     }
@@ -925,6 +1017,7 @@ mod tests {
             Arc::new(OrgsFalho),
             sem_membros(),
             sem_dominios(),
+            sem_perfis(),
         );
         let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/membros").await;
         assert_eq!(
@@ -960,6 +1053,7 @@ mod tests {
             Arc::new(org_store),
             sem_membros(),
             Arc::new(dom_store),
+            sem_perfis(),
         );
         (estado, cookie)
     }
