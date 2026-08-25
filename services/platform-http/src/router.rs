@@ -18,6 +18,7 @@ use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
 use galaxie_platform_conta::usuario_da_sessao;
+use galaxie_platform_config::{configs_do_usuario, ConfigErro, ConfigItem};
 use galaxie_platform_identity::armazem::{Dominio, ErroArmazem, EstadoDominio, Membro};
 use galaxie_platform_identity::sessao::ArmazemSessao;
 use galaxie_platform_identity::{EstadoOrg, OrgId, Papel, UserId};
@@ -396,6 +397,58 @@ async fn get_me(State(estado): State<EstadoBorda>, SessaoAtual(sessao): SessaoAt
     }
 }
 
+/// Projeta um [`ConfigItem`] (domínio, validado por construção pelo #1563) na forma plana do
+/// contrato §4.4: `{ chave, valor: bool|string, tipo, opcoes? }`. `match` EXAUSTIVO — variante nova
+/// de `ConfigItem` (ex.: um tipo de valor futuro) OBRIGA a decidir a projeção aqui, não compila sem.
+/// **`rotulo` é OMITIDO** (opcional no §4.4; é conteúdo de produto/labels, entra quando o PO definir —
+/// o FE do @Castor renderiza data-driven sem ele).
+fn config_item_para_fio(item: &ConfigItem) -> serde_json::Value {
+    use serde_json::json;
+    match item {
+        ConfigItem::Booleano(b) => json!({ "chave": b.chave(), "valor": b.valor(), "tipo": "bool" }),
+        ConfigItem::Texto(t) => json!({ "chave": t.chave(), "valor": t.valor(), "tipo": "texto" }),
+        ConfigItem::Opcao(o) => json!({ "chave": o.chave(), "valor": o.valor(), "tipo": "opcao", "opcoes": o.opcoes() }),
+    }
+}
+
+/// `GET /api/v1/me/config` (contrato §4.4) — as prefs de config do PRÓPRIO principal. User-scoped: o
+/// `uid` vem da SESSÃO; `configs_do_usuario` (#1563) aplica owner-scope + allowlist + validação por
+/// construção. **Survive-list (#1544):** NÃO passa pela autz de org (config é pref do USUÁRIO, não
+/// recurso de org) ⇒ sobrevive à suspensão — guardado por `me_config_sobrevive_a_suspensao`.
+async fn get_me_config(State(estado): State<EstadoBorda>, SessaoAtual(sessao): SessaoAtual) -> Response {
+    let uid = usuario_da_sessao(&sessao);
+    let prefs_brutas = match estado.prefs.prefs_do_usuario(uid) {
+        Err(ErroArmazem::Indisponivel) => return resposta_de_falha(Visibilidade::Visivel),
+        Ok(p) => p,
+    };
+    // O domínio decide (owner-scope/allowlist/validação). A borda NÃO achata as variantes (2 achados
+    // do @Altair na PR #1579): cada uma tem a sua direção segura, e o log NÃO pode afirmar uma causa
+    // pelas três.
+    let itens = match configs_do_usuario(&sessao, None, prefs_brutas) {
+        Ok(itens) => itens,
+        // `NaoEncontrado` = owner-scope: config de OUTRO principal. **Hoje LATENTE** (passo `None` como
+        // alvo ⇒ o scope resolve pro próprio e nunca nega), mas a borda PROPAGA o 404 anti-oráculo do
+        // domínio em vez de o converter em 500 — senão, quando `/users/{id}/config` existir, pedir a
+        // config alheia viraria oráculo pela DIFERENÇA de status. Rejeição uniforme, cliente-causada.
+        Err(ConfigErro::NaoEncontrado) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        // As outras = INCONSISTÊNCIA de dado no read path (pref gravada fora do tipo; ou `ChaveNaoPermitida`,
+        // que só o write path emite — inalcançável aqui, mas o `match` é EXAUSTIVO por desenho): o cliente
+        // não conserta ⇒ 500. O log NOMEIA a variante (`erro = ?e`), não afirma UMA causa pelas três
+        // (a lição do "diagnóstico ≠ falha") — e não confunde dado ruim com infra fora.
+        Err(e @ (ConfigErro::ValorInvalido | ConfigErro::ChaveNaoPermitida)) => {
+            tracing::error!(uid = %uid.0, erro = ?e, "GET /me/config: pref inconsistente com o registro (dado, não infra)");
+            return resposta_de_falha(Visibilidade::Visivel);
+        }
+    };
+    let fio: Vec<serde_json::Value> = itens.iter().map(config_item_para_fio).collect();
+    let corpo = serde_json::to_string(&fio).expect("Vec<Value> serializa sempre");
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(corpo))
+        .expect("resposta 200 é sempre construível")
+}
+
 /// O `estado` da org como o contrato §4.5/v1.4 o projeta no fio. Explícito (não `Debug`/derive):
 /// o valor é PARTE DO CONTRATO — a tela do FE lê "suspensa" pra mostrar "fale com o admin".
 fn estado_org_str(estado: EstadoOrg) -> &'static str {
@@ -461,6 +514,7 @@ pub fn rotas(estado: EstadoBorda) -> Router {
     Router::new()
         .route("/api/v1/admin/orgs", get(listar_orgs))
         .route("/api/v1/me", get(get_me))
+        .route("/api/v1/me/config", get(get_me_config))
         .route("/api/v1/me/orgs", get(listar_minhas_orgs))
         .route("/api/v1/orgs/{org}/membros", get(listar_membros))
         .route(
@@ -506,6 +560,9 @@ mod tests {
     fn sem_perfis() -> Arc<dyn galaxie_platform_conta::ArmazemPerfil + Send + Sync> {
         Arc::new(galaxie_platform_conta::ArmazemPerfilMemoria::novo())
     }
+    fn sem_prefs() -> Arc<dyn galaxie_platform_config::ArmazemPref + Send + Sync> {
+        Arc::new(galaxie_platform_config::ArmazemPrefMemoria::novo())
+    }
     use galaxie_platform_conta::{ArmazemPerfilMemoria, Perfil};
 
     /// Borda com o perfil de `u1` semeado + sessão viva de `u1`. `idioma` controlável pra provar o
@@ -523,7 +580,7 @@ mod tests {
             UserId("u1".into()),
             Perfil { nome: "Ana".into(), email: "ana@x.com".into(), idioma: idioma.map(str::to_owned) },
         );
-        let borda = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), Arc::new(perfis));
+        let borda = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), Arc::new(perfis), sem_prefs());
         (borda, cookie)
     }
 
@@ -569,7 +626,7 @@ mod tests {
         let mut org = Org::nova(OrgId("orgA".into()), Default::default(), None);
         org.suspender();
         orgs.inserir(org);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), sem_membros(), sem_dominios(), Arc::new(perfis));
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), sem_membros(), sem_dominios(), Arc::new(perfis), sem_prefs());
         let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me").await;
         assert_eq!(status, StatusCode::OK, "/me SOBREVIVE à suspensão (survive-list #1544)");
         assert!(String::from_utf8_lossy(&corpo).contains("Ana"), "com o perfil, pra tela poder explicar");
@@ -578,9 +635,113 @@ mod tests {
     /// GET /me sem sessão ⇒ 401 (superfície visível; `/me` não é segredo).
     #[tokio::test]
     async fn get_me_sem_sessao_e_401() {
-        let estado = Borda::nova(ArmazemMemoria::novo(), relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
+        let estado = Borda::nova(ArmazemMemoria::novo(), relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(), sem_prefs());
         let (status, ..) = resposta_crua(estado, "", "/api/v1/me").await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// Borda com 2 prefs allowlisted semeadas pro `u1` (uma `Opcao`, uma `Booleano`) + sessão viva.
+    fn borda_com_prefs() -> (EstadoBorda, String) {
+        use galaxie_platform_config::{ArmazemPrefMemoria, FormaDaChave};
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut prefs = ArmazemPrefMemoria::novo();
+        prefs.semear(
+            UserId("u1".into()),
+            vec![
+                (
+                    "app.tema".into(),
+                    "escuro".into(),
+                    FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into(), "sistema".into()] },
+                ),
+                ("app.notificacoes".into(), "true".into(), FormaDaChave::Booleano),
+            ],
+        );
+        let borda = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(), Arc::new(prefs));
+        (borda, cookie)
+    }
+
+    /// GET /me/config devolve as prefs do PRÓPRIO principal (uid da sessão), mapeadas pro fio pelo
+    /// tipo: `Opcao` carrega `opcoes`; `Booleano` carrega `valor` bool. `rotulo` é opcional (§4.4) e
+    /// OMITIDO — é conteúdo de produto, não contrato da borda.
+    #[tokio::test]
+    async fn get_me_config_devolve_as_prefs_do_principal() {
+        let (estado, cookie) = borda_com_prefs();
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me/config").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        let itens = json.as_array().expect("corpo é um array de itens de config");
+        assert_eq!(itens.len(), 2, "as 2 prefs allowlisted semeadas: {corpo:?}");
+        let tema = itens.iter().find(|i| i["chave"] == "app.tema").expect("app.tema presente");
+        assert_eq!(tema["valor"], "escuro");
+        assert_eq!(tema["tipo"], "opcao");
+        assert_eq!(tema["opcoes"], serde_json::json!(["claro", "escuro", "sistema"]));
+        assert!(tema.get("rotulo").is_none(), "rotulo omitido (§4.4, opcional)");
+        let notif = itens.iter().find(|i| i["chave"] == "app.notificacoes").expect("app.notificacoes presente");
+        assert_eq!(notif["valor"], true);
+        assert_eq!(notif["tipo"], "bool");
+    }
+
+    /// **#1544 — GET /me/config na SURVIVE-LIST (regra do @Altair: toda rota da survive-list nasce
+    /// com seu teste de sobrevivência).** `u1` é membro da orgA SUSPENSA e tem prefs ⇒ `/me/config` =
+    /// 200 com as prefs (config é pref do USUÁRIO, não recurso de org — não passa pela autz de org).
+    /// Se alguém "harmonizar" e meter a suspensão no caminho do `/me/config`, SÓ este teste fica vermelho.
+    #[tokio::test]
+    async fn me_config_sobrevive_a_suspensao() {
+        use galaxie_platform_config::{ArmazemPrefMemoria, FormaDaChave};
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut prefs = ArmazemPrefMemoria::novo();
+        prefs.semear(
+            UserId("u1".into()),
+            vec![("app.notificacoes".into(), "true".into(), FormaDaChave::Booleano)],
+        );
+        let mut orgs = ArmazemOrgMemoria::novo();
+        let mut org = Org::nova(OrgId("orgA".into()), Default::default(), None);
+        org.suspender();
+        orgs.inserir(org);
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), sem_membros(), sem_dominios(), sem_perfis(), Arc::new(prefs));
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me/config").await;
+        assert_eq!(status, StatusCode::OK, "/me/config SOBREVIVE à suspensão (survive-list #1544)");
+        let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        assert_eq!(json.as_array().map(Vec::len), Some(1), "a pref do usuário volta com a org suspensa: {corpo:?}");
+    }
+
+    /// **Achado do @Altair na #1579 (arm de dado-inconsistente).** Pref gravada que NÃO cabe no tipo da
+    /// chave (`app.notificacoes` é `Booleano`, mas o store tem `"sim"`) ⇒ `configs_do_usuario` devolve
+    /// `ValorInvalido` = INCONSISTÊNCIA de DADO (não falha do cliente, não infra) ⇒ a borda responde 500
+    /// e loga a variante nomeada. Guarda a direção segura: dado ruim é 500, não um item ilegal no fio nem
+    /// um panic. (O arm `NaoEncontrado`→404 anti-oráculo é LATENTE via `/me/config` — só o alcança uma
+    /// rota com alvo na path; nasce com o teste dela quando `/users/{id}/config` existir.)
+    #[tokio::test]
+    async fn me_config_pref_inconsistente_da_500() {
+        use galaxie_platform_config::{ArmazemPrefMemoria, FormaDaChave};
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::vazio(),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut prefs = ArmazemPrefMemoria::novo();
+        // `"sim"` não é `"true"`/`"false"`: o construtor de `Booleano` recusa ⇒ `ValorInvalido`.
+        prefs.semear(
+            UserId("u1".into()),
+            vec![("app.notificacoes".into(), "sim".into(), FormaDaChave::Booleano)],
+        );
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(), Arc::new(prefs));
+        let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/me/config").await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "pref fora do tipo = dado inconsistente ⇒ 500");
     }
 
     /// Auditor no-op pros testes que não checam a emissão.
@@ -633,7 +794,7 @@ mod tests {
         );
         let (id, _set_cookie) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie_req = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        (Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis()), cookie_req)
+        (Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(), sem_prefs()), cookie_req)
     }
 
     async fn resposta_crua(estado: EstadoBorda, cookie: &str, caminho: &str) -> (StatusCode, Vec<(String, String)>, Vec<u8>) {
@@ -700,7 +861,7 @@ mod tests {
             Membro { uid: UserId("u1".into()), nome: "U1".into(), email: "u1@a.com".into(), papel: Papel::OrgAdmin },
         );
 
-        let borda = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios(), sem_perfis());
+        let borda = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios(), sem_perfis(), sem_prefs());
         (borda, cookie)
     }
 
@@ -792,7 +953,7 @@ mod tests {
         );
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(), sem_prefs());
 
         let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/admin/orgs").await;
         assert_eq!(status, StatusCode::OK);
@@ -825,7 +986,7 @@ mod tests {
         RELOGIO_DESLIZA.store(AGORA, Ordering::SeqCst);
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_desliza, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
+        let estado = Borda::nova(armazem, relogio_desliza, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(), sem_prefs());
 
         async fn bater(estado: EstadoBorda, cookie: &str) -> StatusCode {
             async fn visivel(SessaoAtual(_): SessaoAtual) -> Response {
@@ -880,7 +1041,7 @@ mod tests {
         }
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_depois, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
+        let estado = Borda::nova(armazem, relogio_depois, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(), sem_prefs());
 
         let router = Router::new()
             .route("/api/v1/visivel", get(visivel))
@@ -969,7 +1130,7 @@ mod tests {
         let (id2, _) = emitir_sessao(&mut armazem, nova(), AGORA);
         // header com DOIS cookies de sessão (shadowing/injeção na própria origem).
         let cookie = format!("{NOME_COOKIE_SESSAO}={}; {NOME_COOKIE_SESSAO}={}", id1.0, id2.0);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(), sem_prefs());
 
         assert!(estado.armazem.lock().unwrap().validar(&id1, AGORA).is_some());
         assert!(estado.armazem.lock().unwrap().validar(&id2, AGORA).is_some());
@@ -1011,7 +1172,7 @@ mod tests {
             ),
             AGORA,
         );
-        let estado = Borda::nova(ar, relogio_fixo, espiao.clone(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis());
+        let estado = Borda::nova(ar, relogio_fixo, espiao.clone(), sem_orgs(), sem_membros(), sem_dominios(), sem_perfis(), sem_prefs());
         let cookie_staff = format!("{NOME_COOKIE_SESSAO}={}", id_staff.0);
         let cookie_admin = format!("{NOME_COOKIE_SESSAO}={}", id_admin.0);
 
@@ -1085,6 +1246,7 @@ mod tests {
             Arc::new(membro_store),
             sem_dominios(),
             sem_perfis(),
+            sem_prefs(),
         );
         (estado, cookie)
     }
@@ -1207,7 +1369,7 @@ mod tests {
         let mut membros = ArmazemMembroMemoria::novo();
         membros.inserir(OrgId("acme".into()), membro_teste("adm", Papel::OrgAdmin));
         membros.inserir(OrgId("acme".into()), membro_teste("u2", Papel::Member));
-        let estado = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios(), sem_perfis());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios(), sem_perfis(), sem_prefs());
         (estado, cookie_adm, cookie_u2)
     }
 
@@ -1339,6 +1501,7 @@ mod tests {
             sem_membros(),
             sem_dominios(),
             sem_perfis(),
+            sem_prefs(),
         );
         let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/membros").await;
         assert_eq!(
@@ -1375,6 +1538,7 @@ mod tests {
             sem_membros(),
             Arc::new(dom_store),
             sem_perfis(),
+            sem_prefs(),
         );
         (estado, cookie)
     }

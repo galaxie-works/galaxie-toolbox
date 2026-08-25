@@ -26,6 +26,7 @@ use galaxie_platform_identity::armazem::{
 };
 use galaxie_platform_identity::sessao::{ArmazemMemoria, NOME_COOKIE_SESSAO};
 use galaxie_platform_conta::{ArmazemPerfilMemoria, Perfil};
+use galaxie_platform_config::{ArmazemPrefMemoria, FormaDaChave};
 use galaxie_platform_identity::{Escopo, Org, OrgId, Papel, Principal, Sessao, UserId};
 use galaxie_platform_http::servidor::{agora_de_producao, servir, Config};
 use galaxie_platform_http::Borda;
@@ -128,6 +129,21 @@ async fn main() -> Result<()> {
         Perfil { nome: "Dev User".into(), email: "dev@dev-org.com".into(), idioma: Some("pt-BR".into()) },
     );
 
+    // Prefs de config do dev-user pro `GET /me/config` (#1505/#1563, e2e do @Castor #1491): em prod,
+    // a escrita grava. Duas chaves allowlisted, uma `Opcao` e uma `Booleano`, pra provar os dois tipos.
+    let mut prefs = ArmazemPrefMemoria::novo();
+    prefs.semear(
+        UserId("dev-user".into()),
+        vec![
+            (
+                "app.tema".into(),
+                "escuro".into(),
+                FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into(), "sistema".into()] },
+            ),
+            ("app.notificacoes".into(), "true".into(), FormaDaChave::Booleano),
+        ],
+    );
+
     let borda = Borda::nova(
         armazem,
         agora_de_producao,
@@ -136,6 +152,7 @@ async fn main() -> Result<()> {
         Arc::new(membros),
         Arc::new(dominios),
         Arc::new(perfis),
+        Arc::new(prefs),
     );
 
     // Imprime o cookie pronto pro dev/@Pollux injetar. `__Host-` exige `Secure`; em http://localhost
