@@ -71,7 +71,7 @@ mod tests {
     use galaxie_platform_identity::{Escopo, OrgId, Principal, UserId};
     use galaxie_platform_web::emitir_sessao;
 
-    use crate::sessao::Borda;
+    use crate::sessao::{Borda, SessaoAtual};
 
     const AGORA: u64 = 1_000_000;
 
@@ -140,7 +140,6 @@ mod tests {
     /// segredo). Rota de teste (o `/me` real é fatia 3) só pra exercitar o extractor visível.
     #[tokio::test]
     async fn sem_sessao_em_rota_visivel_da_401() {
-        use crate::sessao::SessaoAtual;
         async fn visivel(SessaoAtual(_): SessaoAtual) -> Response {
             Response::builder()
                 .status(StatusCode::OK)
@@ -194,5 +193,104 @@ mod tests {
         let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/admin/orgs").await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(&corpo, b"[]", "sem store de org ainda, a lista é vazia (correto, não stub)");
+    }
+
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // Relógio VARIÁVEL só deste teste (single-consumer; os demais usam `relogio_fixo`). Um `fn`
+    // ponteiro não captura estado, então o tempo mora num `static` que o teste avança entre requests.
+    static RELOGIO_DESLIZA: AtomicU64 = AtomicU64::new(AGORA);
+    fn relogio_desliza() -> u64 {
+        RELOGIO_DESLIZA.load(Ordering::SeqCst)
+    }
+
+    /// **#1512 — o defeito do @Altair, provado pelo CONSUMIDOR (não pela função):** a atividade
+    /// DESLIZA a janela de ociosidade, testado ATRAVÉS da borda (requests de verdade). Uma sessão
+    /// emitida em `AGORA` venceria de ociosidade em `AGORA + IDLE_TTL_SEG`. Um request no meio dá
+    /// vida nova (desliza o ocioso), e um 2º request DEPOIS do prazo ORIGINAL ainda passa. Com a
+    /// fiação antiga (read-only `validar`), o 2º request seria **401** — é o mutante que este teste
+    /// mata. "Teste não é consumidor": aqui o consumidor é o extractor, exercido pelo Router.
+    #[tokio::test]
+    async fn atividade_desliza_o_ocioso_pela_borda() {
+        use galaxie_platform_identity::sessao::IDLE_TTL_SEG;
+
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::AdminOrg { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::de_orgs([OrgId("orgA".into())]),
+        );
+        RELOGIO_DESLIZA.store(AGORA, Ordering::SeqCst);
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let estado = Borda::nova(armazem, relogio_desliza);
+
+        async fn bater(estado: EstadoBorda, cookie: &str) -> StatusCode {
+            async fn visivel(SessaoAtual(_): SessaoAtual) -> Response {
+                Response::builder().status(StatusCode::OK).body(Body::from("ok")).unwrap()
+            }
+            let router = Router::new()
+                .route("/api/v1/visivel", get(visivel))
+                .fallback(fallback_nao_encontrado)
+                .with_state(estado);
+            let req = Request::builder()
+                .uri("/api/v1/visivel")
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .unwrap();
+            router.oneshot(req).await.unwrap().status()
+        }
+
+        // Request 1 ANTES do prazo original: vivo, E desliza o ocioso pra t1 + IDLE_TTL_SEG.
+        let t1 = AGORA + IDLE_TTL_SEG - 100;
+        RELOGIO_DESLIZA.store(t1, Ordering::SeqCst);
+        assert_eq!(bater(estado.clone(), &cookie).await, StatusCode::OK, "vivo antes do prazo ocioso");
+
+        // Request 2 DEPOIS do prazo ORIGINAL (AGORA+IDLE_TTL_SEG), antes do NOVO (t1+IDLE_TTL_SEG):
+        // só passa porque o request 1 deslizou. Sem a fiação (#1512), aqui seria 401.
+        let t2 = AGORA + IDLE_TTL_SEG + 100;
+        RELOGIO_DESLIZA.store(t2, Ordering::SeqCst);
+        assert_eq!(
+            bater(estado, &cookie).await,
+            StatusCode::OK,
+            "a atividade do request 1 deslizou o ocioso além do prazo original"
+        );
+    }
+
+    /// Controle do #1512: SEM atividade no meio, a sessão morre de ociosidade no prazo — o deslize
+    /// não vira "sessão imortal". Emite em AGORA e só bate DEPOIS de `AGORA + IDLE_TTL_SEG` ⇒ 401.
+    #[tokio::test]
+    async fn sem_atividade_a_sessao_morre_no_prazo_ocioso() {
+        use galaxie_platform_identity::sessao::IDLE_TTL_SEG;
+
+        async fn visivel(SessaoAtual(_): SessaoAtual) -> Response {
+            Response::builder().status(StatusCode::OK).body(Body::from("ok")).unwrap()
+        }
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::AdminOrg { usuario: UserId("u2".into()), org: OrgId("orgB".into()) },
+            Escopo::de_orgs([OrgId("orgB".into())]),
+        );
+        // relógio fixo bem depois do prazo ocioso — nenhuma atividade prévia deslizou nada.
+        const DEPOIS: u64 = AGORA + IDLE_TTL_SEG + 1;
+        fn relogio_depois() -> u64 {
+            DEPOIS
+        }
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let estado = Borda::nova(armazem, relogio_depois);
+
+        let router = Router::new()
+            .route("/api/v1/visivel", get(visivel))
+            .fallback(fallback_nao_encontrado)
+            .with_state(estado);
+        let req = Request::builder()
+            .uri("/api/v1/visivel")
+            .header(header::COOKIE, &cookie)
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            router.oneshot(req).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED,
+            "sem atividade, o ocioso mata a sessão no prazo (o deslize não a torna imortal)"
+        );
     }
 }
