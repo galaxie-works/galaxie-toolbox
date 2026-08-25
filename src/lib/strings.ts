@@ -1579,6 +1579,8 @@ const pt = {
     reconectando: "Reconectando…",
     sessaoEncerrada: "Sessão encerrada",
     erroConexao: "Erro de conexão",
+    renovacaoEmRisco:
+      "Não foi possível renovar a credencial de conexão — a sessão pode cair em instantes. Tentando de novo…",
     novaSessao: "Nova sessão",
     // Vídeo (WebCodecs) sem suporte no dispositivo.
     codecNaoSuportado: "Vídeo não suportado neste dispositivo.",
@@ -3825,6 +3827,8 @@ const en: { [K in keyof Dicionario]: { [C in keyof Dicionario[K]]: string } } = 
     reconectando: "Reconnecting…",
     sessaoEncerrada: "Session ended",
     erroConexao: "Connection error",
+    renovacaoEmRisco:
+      "Couldn't renew the connection credential — the session may drop shortly. Retrying…",
     novaSessao: "New session",
     // Video (WebCodecs) not supported on this device.
     codecNaoSuportado: "Video not supported on this device.",

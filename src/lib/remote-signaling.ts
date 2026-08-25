@@ -79,6 +79,9 @@ export type ClientMessage =
   | { type: "presence"; device_id: string }
   | { type: "create_assisted_session"; ttl_seconds?: number }
   | { type: "redeem_assisted_session"; code: string }
+  // #1148: device JÁ registrado pede credencial TURN fresca (sem re-pareamento,
+  // sem código). O servidor responde `ice_servers_renewed` (fatia 1, `ea15b87`).
+  | { type: "renew_ice_servers" }
   | { type: "signal"; peer_id: string; kind: SignalKind; payload: string };
 
 /** Mensagens que o SERVER envia (tag `type`, snake_case). */
@@ -94,6 +97,9 @@ export type ServerMessage =
   | { type: "presence"; device_id: string; online: boolean }
   | { type: "assisted_session_code"; code: string; expires_at_unix_seconds: number }
   | { type: "session_paired"; peer_id: string }
+  // #1148: credencial TURN renovada (resposta ao `renew_ice_servers`). Mesmo
+  // formato do `ice_servers` do `registered`, com `expires_at` novo.
+  | { type: "ice_servers_renewed"; ice_servers: IceServer[] }
   | { type: "signal"; peer_id: string; kind: SignalKind; payload: string }
   | { type: "error"; code: ErrorCodeS0; message: string };
 
@@ -111,6 +117,8 @@ export interface SinalizadorHandlers {
   onPareado: (peerId: string) => void;
   /** Relay: um signal chegou do peer (encaminhe pro `remote_session_signal`). */
   onSinal: (peerId: string, sinal: Sinal) => void;
+  /** #1148: credencial TURN renovada chegou — aplicar na PC (str0m/Rust) e reagendar. */
+  onIceServersRenovados?: (iceServers: IceServer[]) => void;
   /** Erro do S0 (código inválido/expirado/peer offline/etc.). */
   onErro: (code: ErrorCodeS0, message: string) => void;
   /** Conexão do WS caiu. */
@@ -128,6 +136,8 @@ export interface SinalizadorS0 {
   criarSessao(ttlSegundos?: number): void;
   /** Controller: resgata um código (dispara `onPareado` ou `onErro`). */
   resgatarSessao(code: string): void;
+  /** #1148: pede credencial TURN fresca pela conexão já autenticada (dispara `onIceServersRenovados`). */
+  renovarIceServers(): void;
   /** Encaminha um signal (SDP/ICE) pro peer pareado. */
   enviarSinal(peerId: string, sinal: Sinal): void;
   /** Fecha o WS. */
@@ -284,6 +294,11 @@ export function criarSinalizadorWs(endpoint: string): SinalizadorS0 {
       case "session_paired":
         handlers?.onPareado(msg.peer_id);
         break;
+      case "ice_servers_renewed":
+        handlers?.onIceServersRenovados?.(
+          mapearIceServers(msg.ice_servers as unknown as IceServerBruto[]),
+        );
+        break;
       case "signal":
         handlers?.onSinal(msg.peer_id, {
           kind: msg.kind,
@@ -401,6 +416,9 @@ export function criarSinalizadorWs(endpoint: string): SinalizadorS0 {
     },
     resgatarSessao(code) {
       enviar({ type: "redeem_assisted_session", code });
+    },
+    renovarIceServers() {
+      enviar({ type: "renew_ice_servers" });
     },
     enviarSinal(peerId, sinal) {
       enviar({

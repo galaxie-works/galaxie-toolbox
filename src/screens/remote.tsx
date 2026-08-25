@@ -52,6 +52,10 @@ import {
   type IceServer,
   type SinalizadorS0,
 } from "@/lib/remote-signaling";
+import {
+  criarAgendadorRenovacao,
+  type AgendadorRenovacao,
+} from "@/lib/remote-renovacao";
 import { useIdioma } from "@/lib/idioma";
 
 type Modo = "escolha" | "host" | "controller";
@@ -70,18 +74,52 @@ export function RemoteScreen() {
   const [copiado, setCopiado] = useState(false);
   const [codigoInput, setCodigoInput] = useState("");
   const [screenInfo, setScreenInfo] = useState<ScreenInfo | null>(null);
+  // #1148: renovação da credencial TURN em risco (a renovação não voltou na
+  // janela; a sessão relayed pode cair). Só aparece se o relay estiver em uso.
+  const [renovacaoEmRisco, setRenovacaoEmRisco] = useState(false);
 
   // Refs de sessão (não disparam render; lidos nos callbacks assíncronos).
   const sinalizadorRef = useRef<SinalizadorS0 | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const peerIdRef = useRef<string | null>(null);
   const iceServersRef = useRef<IceServer[]>([]);
+  const renovadorRef = useRef<AgendadorRenovacao | null>(null);
   const videoRef = useRef<RemoteVideoHandle | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
+
+  // #1148: monta o agendador de renovação da credencial TURN. A fatia 1 do
+  // servidor responde `renew_ice_servers` → `ice_servers_renewed` (ea15b87); aqui
+  // o cliente agenda a 3/4 do `expires_at` e, ao receber a credencial nova,
+  // atualiza `iceServersRef`. O APPLY na PeerConnection viva (str0m/Rust) é a
+  // fatia BE companheira do #1148 — um comando Tauri (ex. `remote_session_renew_ice`)
+  // que reconfigura os ICE servers + ICE restart preservando a PC. Enquanto ele
+  // não existe, guardamos a credencial nova (usada por qualquer (re)início de
+  // sessão) e a str0m PC viva ainda não é reconfigurada — sem inventar `invoke`.
+  function iniciarRenovador(sinal: SinalizadorS0, iceServers: IceServer[]): void {
+    renovadorRef.current?.parar();
+    const ag = criarAgendadorRenovacao({
+      agoraUnixSeconds: () => Math.floor(Date.now() / 1000),
+      agendar: (fn, ms) => window.setTimeout(fn, ms),
+      cancelar: (id) => window.clearTimeout(id),
+      pedirRenovacao: () => sinal.renovarIceServers(),
+      aplicar: (ice) => {
+        iceServersRef.current = ice;
+        // TODO(#1148 fatia BE): comando Tauri que aplica `ice` na str0m PC viva
+        // (reconfigure + ICE restart, PC preservada). Sem ele, a renovação é
+        // guardada mas não reconfigura a sessão relayed em curso.
+      },
+      aoAvisar: (emRisco) => setRenovacaoEmRisco(emRisco),
+    });
+    renovadorRef.current = ag;
+    ag.iniciar(iceServers);
+  }
 
   // --- Ciclo de vida da sessão ---------------------------------------------
 
   function limpar(): void {
+    renovadorRef.current?.parar();
+    renovadorRef.current = null;
+    setRenovacaoEmRisco(false);
     sinalizadorRef.current = null;
     sessionIdRef.current = null;
     peerIdRef.current = null;
@@ -211,6 +249,7 @@ export function RemoteScreen() {
           const id = sessionIdRef.current;
           if (id) void sinalizarSessao(id, s);
         },
+        onIceServersRenovados: (ice) => renovadorRef.current?.aoRenovado(ice),
         onErro: (code, message) => {
           setConectandoS0(false);
           setErro(traduzErro(code, message));
@@ -221,6 +260,7 @@ export function RemoteScreen() {
         },
       });
       iceServersRef.current = iceServers;
+      iniciarRenovador(sinal, iceServers);
       setConectandoS0(false);
       sinal.criarSessao();
     } catch (e) {
@@ -260,6 +300,7 @@ export function RemoteScreen() {
           const id = sessionIdRef.current;
           if (id) void sinalizarSessao(id, s);
         },
+        onIceServersRenovados: (ice) => renovadorRef.current?.aoRenovado(ice),
         onErro: (code, message) => {
           setConectandoS0(false);
           setErro(traduzErro(code, message));
@@ -269,6 +310,7 @@ export function RemoteScreen() {
         },
       });
       iceServersRef.current = iceServers;
+      iniciarRenovador(sinal, iceServers);
       sinal.resgatarSessao(code);
     } catch (e) {
       setConectandoS0(false);
@@ -340,6 +382,16 @@ export function RemoteScreen() {
       </div>
 
       <div className="min-h-0 flex-1">
+        {/* #1148: renovação da credencial TURN em risco — vale pros dois papéis
+            (host e controller), por isso o aviso vive aqui, acima dos painéis. */}
+        {renovacaoEmRisco && (
+          <p
+            role="status"
+            className="mb-3 rounded-md bg-yellow-100 px-3 py-2 text-center text-sm text-yellow-900"
+          >
+            {t.remote.renovacaoEmRisco}
+          </p>
+        )}
         {modo === "escolha" && (
           <EscolhaModo t={t} onHost={iniciarHost} onController={() => setModo("controller")} />
         )}
