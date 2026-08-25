@@ -10,18 +10,42 @@ Esta pasta é a resposta para as duas metades do problema:
 | pergunta | resposta |
 |---|---|
 | *o que roda?* | está aqui, versionado |
-| *qual commit?* | `curl https://<host>/healthz` |
+| *qual commit?* | `curl https://<host>/remote/healthz` — ⚠️ **ainda NÃO em produção**, ver abaixo |
 
 ---
 
 ## Qual commit está no ar
 
+> 🔴 **CONFERIDO EM PRODUÇÃO em 2026-08-25 (altair, #1480): isto ainda NÃO funciona.**
+> Duas coisas estavam erradas nesta seção, e as duas enganavam justamente sobre deriva:
+>
+> 1. **A URL estava errada.** `telemetry.thegalaxie.cloud/healthz` (host **sem path**) é o
+>    **OpenObserve**, não o signaling — o signaling está atrás de `PathPrefix(/remote)`.
+>    Os dois devolvem `200`, então o erro não aparecia: só o `Content-Type` os separa
+>    (`application/json` vs `text/plain`).
+> 2. **O carimbo não está no ar.** O `/remote/healthz` de produção responde `ok`, texto
+>    puro — sem `commit`, sem `version`. O `docker-compose.yml` **deste repo** passa o
+>    `GALAXIE_BUILD_SHA`; o **do host não tem esse build-arg**. O #1311 está escrito
+>    aqui e nunca foi implantado.
+>
+> Ou seja: **a pergunta "qual commit está no ar?" continua sem resposta em produção**, e
+> este README afirmava o contrário. O bloco abaixo descreve o comportamento PRETENDIDO —
+> ele passa a valer quando o compose do host for atualizado (ver #1307/#1311).
+
 ```bash
-curl -s https://telemetry.thegalaxie.cloud/healthz
+curl -s https://telemetry.thegalaxie.cloud/remote/healthz
 ```
+
+Pretendido:
 
 ```json
 { "status": "ok", "version": "0.1.0", "commit": "943ee66…" }
+```
+
+Hoje, de fato:
+
+```
+ok
 ```
 
 - `commit` é carimbado em **build-time** (`--build-arg GALAXIE_BUILD_SHA` → `ENV`
