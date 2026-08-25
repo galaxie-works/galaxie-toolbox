@@ -152,6 +152,66 @@ impl Opcao {
     }
 }
 
+/// O que o registro sabe sobre o TIPO de uma chave — se é booleana, texto, ou escolha (e,
+/// pra escolha, quais valores). O CONTEÚDO (as opções, os rótulos pt/en) é dado do PO que
+/// popula isto; o domínio não o inventa, recebe. `tipo` é tipo de VALOR, não widget.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FormaDaChave {
+    Booleano,
+    Texto,
+    Opcao { opcoes: Vec<String> },
+}
+
+/// Constrói um [`ConfigItem`] VALIDADO a partir do valor BRUTO (a string como veio do store)
+/// e da forma da chave. É o ponto único onde a forma plana vira domínio — a validação mora
+/// nos construtores, então valor que não cabe no tipo ⇒ [`ConfigErro::ValorInvalido`], nunca
+/// um item ilegal. Um `Booleano` só aceita exatamente `"true"`/`"false"` (não "1"/"sim"/""):
+/// tolerância no parsing de bool é onde config vira lixo silencioso.
+pub fn item_da_forma(
+    chave: impl Into<String>,
+    valor_bruto: &str,
+    forma: &FormaDaChave,
+) -> Result<ConfigItem, ConfigErro> {
+    match forma {
+        FormaDaChave::Booleano => {
+            let valor = match valor_bruto {
+                "true" => true,
+                "false" => false,
+                _ => return Err(ConfigErro::ValorInvalido),
+            };
+            Ok(ConfigItem::Booleano(Booleano::novo(chave, valor)))
+        }
+        FormaDaChave::Texto => Ok(ConfigItem::Texto(Texto::novo(chave, valor_bruto)?)),
+        FormaDaChave::Opcao { opcoes } => {
+            Ok(ConfigItem::Opcao(Opcao::nova(chave, valor_bruto, opcoes.clone())?))
+        }
+    }
+}
+
+/// Monta a lista de configs do PRÓPRIO usuário (leitura do `/me/config`, AC2). Owner-scope
+/// primeiro (via [`resolver_pref_propria`]): pedir a config de outro ⇒ `NaoEncontrado` (404,
+/// não enumera) ANTES de montar item nenhum. Só chaves da allowlist ([`chave_configuravel`])
+/// saem pra web — uma pref interna que porventura esteja no store é ignorada (default-deny),
+/// não vira erro. `prefs_brutas` = o que o store devolveu (a I/O é da borda; o domínio recebe
+/// os pares `(chave, valor_bruto, forma)` já lidos). A org suspensa NÃO entra aqui: config é
+/// pref do USUÁRIO, não recurso de org — a survive-list é propriedade da rota (borda), e este
+/// domínio, por não ter gate de org, não pode violá-la.
+pub fn configs_do_usuario(
+    sessao: &Sessao,
+    alvo_na_rota: Option<&UserId>,
+    prefs_brutas: impl IntoIterator<Item = (String, String, FormaDaChave)>,
+) -> Result<Vec<ConfigItem>, ConfigErro> {
+    resolver_pref_propria(sessao, alvo_na_rota)?; // 404 se de outro (AC2, antes de tudo)
+    let mut itens = Vec::new();
+    for (chave, valor_bruto, forma) in prefs_brutas {
+        if !chave_configuravel(&chave) {
+            continue; // fora da allowlist não sai pra web (default-deny, não erro)
+        }
+        itens.push(item_da_forma(chave, &valor_bruto, &forma)?);
+    }
+    Ok(itens)
+}
+
 /// O `UserId` do humano dono da sessão — é daqui que sai o escopo das prefs (regra 5),
 /// nunca de um id/payload do cliente.
 fn usuario_da_sessao(sessao: &Sessao) -> &UserId {
@@ -326,5 +386,85 @@ mod tests {
         let b = Booleano::novo("app.notificacoes", true);
         assert_eq!(b.chave(), "app.notificacoes");
         assert!(b.valor());
+    }
+
+    // item_da_forma — bool é ESTRITO: só "true"/"false". "1"/"sim"/"" ⇒ ValorInvalido
+    // (tolerância no parsing de bool é onde config vira lixo silencioso).
+    #[test]
+    fn item_bool_so_aceita_true_ou_false_literais() {
+        assert_eq!(
+            item_da_forma("app.notificacoes", "true", &FormaDaChave::Booleano),
+            Ok(ConfigItem::Booleano(Booleano::novo("app.notificacoes", true)))
+        );
+        assert_eq!(
+            item_da_forma("app.notificacoes", "false", &FormaDaChave::Booleano),
+            Ok(ConfigItem::Booleano(Booleano::novo("app.notificacoes", false)))
+        );
+        for lixo in ["1", "0", "sim", "True", "", "verdadeiro"] {
+            assert_eq!(
+                item_da_forma("app.notificacoes", lixo, &FormaDaChave::Booleano),
+                Err(ConfigErro::ValorInvalido),
+                "bool não pode aceitar {lixo:?}"
+            );
+        }
+    }
+
+    // item_da_forma — Opcao propaga o invariante valor∈opcoes; Texto propaga o teto.
+    #[test]
+    fn item_da_forma_propaga_validacao_do_tipo() {
+        let forma = FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] };
+        assert!(item_da_forma("app.tema", "escuro", &forma).is_ok());
+        assert_eq!(
+            item_da_forma("app.tema", "arco-iris", &forma),
+            Err(ConfigErro::ValorInvalido)
+        );
+        let grande = "a".repeat(TETO_TEXTO_BYTES + 1);
+        assert_eq!(
+            item_da_forma("app.rotulo", &grande, &FormaDaChave::Texto),
+            Err(ConfigErro::ValorInvalido)
+        );
+    }
+
+    // AC2 — configs_do_usuario: pedir a config de OUTRO ⇒ 404, antes de montar item nenhum.
+    #[test]
+    fn configs_do_usuario_de_outro_e_404() {
+        let s = sessao_de("A");
+        let prefs = vec![("app.tema".to_string(), "escuro".to_string(),
+            FormaDaChave::Opcao { opcoes: vec!["escuro".into()] })];
+        assert_eq!(
+            configs_do_usuario(&s, Some(&UserId("B".into())), prefs),
+            Err(ConfigErro::NaoEncontrado),
+            "config de outro usuário não vira lista — vira 404"
+        );
+    }
+
+    // configs_do_usuario — só as chaves da allowlist saem; uma pref interna no store é
+    // IGNORADA (default-deny), não vira erro nem vaza pra web.
+    #[test]
+    fn configs_do_usuario_filtra_pela_allowlist() {
+        let s = sessao_de("A");
+        let prefs = vec![
+            ("app.notificacoes".to_string(), "true".to_string(), FormaDaChave::Booleano),
+            ("interna.privilegiada".to_string(), "x".to_string(), FormaDaChave::Texto),
+            ("app.tema".to_string(), "escuro".to_string(),
+                FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] }),
+        ];
+        let itens = configs_do_usuario(&s, None, prefs).expect("própria conta monta a lista");
+        assert_eq!(itens.len(), 2, "só as 2 chaves web saem; a interna foi ignorada");
+        assert!(itens.iter().all(|i| match i {
+            ConfigItem::Booleano(b) => chave_configuravel(b.chave()),
+            ConfigItem::Texto(t) => chave_configuravel(t.chave()),
+            ConfigItem::Opcao(o) => chave_configuravel(o.chave()),
+        }));
+    }
+
+    // configs_do_usuario — valor corrompido no store (fora do tipo) surface como ValorInvalido,
+    // não passa em silêncio. (parsing como validação também na leitura.)
+    #[test]
+    fn configs_do_usuario_recusa_valor_corrompido_no_store() {
+        let s = sessao_de("A");
+        let prefs = vec![("app.tema".to_string(), "invalido".to_string(),
+            FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] })];
+        assert_eq!(configs_do_usuario(&s, None, prefs), Err(ConfigErro::ValorInvalido));
     }
 }
