@@ -145,21 +145,39 @@ pub struct FluxoPendente {
     pub expira_unix: u64,
 }
 
+/// Falha de INFRA do armazém — NÃO de auth. O backing em memória nunca falha, mas a assinatura
+/// devolve `Result` desde o dia 1 (regra do @Altair, já aplicada ao `ArmazemOrg`): quando o backing
+/// real entrar — e ele PRECISA entrar antes de haver 2ª instância da borda, senão o callback não
+/// acha o `state` entre requests — muda UMA linha na trait, não toda assinatura + todo consumidor.
+///
+/// E aqui a distinção MUDA a resposta (review do @Altair no #1543): `Err` (armazém fora do ar) vira
+/// **falha de INFRA** (`resposta_de_falha` na borda), distinta de `Ok(None)` (state inválido/vencido/
+/// amarra errada = **falha uniforme de AUTH**). Conflar as duas — uma queda virar "login inválido" —
+/// é seguro pro cliente e CEGO pra nós: ninguém vê incidente e o log não distingue queda de ataque.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErroArmazem {
+    /// Armazém indisponível (backing real fora do ar). Nunca ocorre na impl em memória.
+    Indisponivel,
+}
+
 /// Armazém dos fluxos OAuth EM CURSO, indexado pelo `state`. `iniciar` grava; `consumir` valida e
-/// REMOVE — uso único **atômico**: o mesmo `state` não completa duas vezes, nem em corrida.
+/// REMOVE — uso único **atômico**: o mesmo `state` não completa duas vezes, nem em corrida. Ambos
+/// devolvem `Result` (ver [`ErroArmazem`]): `Err` é queda de infra, nunca "auth negada".
 pub trait ArmazemEstadoOAuth {
-    /// Grava um fluxo pendente sob o seu `state` (chamado por `/auth/{provedor}`).
-    fn iniciar(&mut self, state: Estado, fluxo: FluxoPendente);
+    /// Grava um fluxo pendente sob o seu `state` (chamado por `/auth/{provedor}`). `Err` só em queda
+    /// de infra do backing real.
+    fn iniciar(&mut self, state: Estado, fluxo: FluxoPendente) -> Result<(), ErroArmazem>;
 
     /// Consome o `state` (chamado pelo callback): sai do armazém SEMPRE (uso único — o `state` é
     /// queimado ao ser tocado) e devolve o fluxo SÓ se não venceu **E** a amarra do browser confere.
-    /// `None` = inexistente / vencido / amarra errada — o handler transforma em **falha uniforme**.
+    /// `Ok(None)` = inexistente / vencido / amarra errada — o handler transforma em **falha uniforme
+    /// de auth**. `Err` = armazém indisponível — o handler transforma em **falha de infra**, distinta.
     fn consumir(
         &mut self,
         state: &Estado,
         amarra: &AmarraNavegador,
         agora_unix: u64,
-    ) -> Option<FluxoPendente>;
+    ) -> Result<Option<FluxoPendente>, ErroArmazem>;
 }
 
 /// Primeira impl: em memória. O `remove` é o ponto ATÔMICO do uso único — exatamente um chamador
@@ -177,8 +195,9 @@ impl ArmazemMemoria {
 }
 
 impl ArmazemEstadoOAuth for ArmazemMemoria {
-    fn iniciar(&mut self, state: Estado, fluxo: FluxoPendente) {
+    fn iniciar(&mut self, state: Estado, fluxo: FluxoPendente) -> Result<(), ErroArmazem> {
         self.fluxos.insert(state, fluxo);
+        Ok(()) // memória nunca cai; o `Result` é a assinatura à prova do backing real
     }
 
     fn consumir(
@@ -186,16 +205,20 @@ impl ArmazemEstadoOAuth for ArmazemMemoria {
         state: &Estado,
         amarra: &AmarraNavegador,
         agora_unix: u64,
-    ) -> Option<FluxoPendente> {
+    ) -> Result<Option<FluxoPendente>, ErroArmazem> {
         // Tira SEMPRE (uso único queima o state ao ser tocado); só então valida prazo + amarra.
-        let fluxo = self.fluxos.remove(state)?;
+        // `Ok(None)` nos três casos de auth (inexistente/vencido/amarra) — indistinguíveis por
+        // design; `Err` ficaria reservado à queda de infra (impossível em memória, daí só `Ok`).
+        let Some(fluxo) = self.fluxos.remove(state) else {
+            return Ok(None); // inexistente (ou já queimado)
+        };
         if agora_unix >= fluxo.expira_unix {
-            return None; // vencido
+            return Ok(None); // vencido
         }
         if fluxo.amarra != *amarra {
-            return None; // outro browser
+            return Ok(None); // outro browser
         }
-        Some(fluxo)
+        Ok(Some(fluxo))
     }
 }
 
@@ -268,12 +291,14 @@ mod tests {
         let mut a = ArmazemMemoria::novo();
         let state = Estado::gerar();
         let amarra = AmarraNavegador::gerar();
-        a.iniciar(state.clone(), fluxo(&amarra, 1000));
+        a.iniciar(state.clone(), fluxo(&amarra, 1000)).unwrap();
 
-        // 1º consumo confere (dentro do prazo, amarra certa).
-        assert!(a.consumir(&state, &amarra, 500).is_some());
-        // 2º consumo do MESMO state ⇒ None: já foi queimado (uso único).
-        assert!(a.consumir(&state, &amarra, 500).is_none(), "state não completa duas vezes");
+        // 1º consumo confere (dentro do prazo, amarra certa). `.unwrap()` prova que é `Ok` (não
+        // `Err` de infra) e `.is_some()` que achou o fluxo.
+        assert!(a.consumir(&state, &amarra, 500).unwrap().is_some());
+        // 2º consumo do MESMO state ⇒ Ok(None): já foi queimado (uso único). `.unwrap()` prova `Ok`
+        // (não `Err` de infra) e `.is_none()` que não achou — "não achei" é falha de AUTH, não de infra.
+        assert!(a.consumir(&state, &amarra, 500).unwrap().is_none(), "state não completa duas vezes");
     }
 
     #[test]
@@ -284,16 +309,16 @@ mod tests {
         // Vencido: agora >= expira ⇒ None.
         let mut a = ArmazemMemoria::novo();
         let s1 = Estado::gerar();
-        a.iniciar(s1.clone(), fluxo(&amarra, 1000));
-        assert!(a.consumir(&s1, &amarra, 1000).is_none(), "vencido recusa");
+        a.iniciar(s1.clone(), fluxo(&amarra, 1000)).unwrap();
+        assert!(a.consumir(&s1, &amarra, 1000).unwrap().is_none(), "vencido recusa");
 
-        // Amarra errada (outro browser) ⇒ None, mesmo dentro do prazo.
+        // Amarra errada (outro browser) ⇒ Ok(None), mesmo dentro do prazo.
         let mut b = ArmazemMemoria::novo();
         let s2 = Estado::gerar();
-        b.iniciar(s2.clone(), fluxo(&amarra, 1000));
-        assert!(b.consumir(&s2, &outra, 500).is_none(), "browser errado recusa");
+        b.iniciar(s2.clone(), fluxo(&amarra, 1000)).unwrap();
+        assert!(b.consumir(&s2, &outra, 500).unwrap().is_none(), "browser errado recusa");
         // E queimou (uso único ao tocar): nem o browser certo completa depois.
-        assert!(b.consumir(&s2, &amarra, 500).is_none(), "tocar queima o state");
+        assert!(b.consumir(&s2, &amarra, 500).unwrap().is_none(), "tocar queima o state");
     }
 
     #[test]
