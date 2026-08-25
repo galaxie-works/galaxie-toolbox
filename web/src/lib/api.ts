@@ -54,6 +54,7 @@ const SUPERFICIES = [
   // próprio contrato. Quando o modelo de auth fechar, a rota entra no DOC
   // primeiro e aqui depois.
   "/me",
+  "/me/orgs",
   "/me/assinatura",
   "/me/config",
   "/me/dispositivos",

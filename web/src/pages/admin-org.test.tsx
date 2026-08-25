@@ -117,8 +117,8 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
   it("AC1: autorizado ⇒ lista os membros da PRÓPRIA org", async () => {
     fetchFalso(() =>
       json([
-        { id: "1", email: "ana@galaxie.works", papel: "org_admin" },
-        { id: "2", email: "bo@galaxie.works", papel: "member" },
+        { uid: "1", nome: "Ana", email: "ana@galaxie.works", papel: "org_admin" },
+        { uid: "2", nome: "Bo", email: "bo@galaxie.works", papel: "member" },
       ]),
     );
     render(<AdminOrgPage idioma="pt-BR" org="acme" />);
@@ -146,15 +146,32 @@ describe("#1490 admin da org — a UI reflete, não decide", () => {
     }
   });
 
-  it("sem org conhecida, a tela DIZ que não sabe e não chama a rede", async () => {
-    // Não há rota no contrato de onde o cliente descubra o `{org}` (`GET /me`
-    // não devolve org). A tentação é o FE guardar um slug vindo de qualquer
-    // lugar — o que o invariante 6 impede. Enquanto a lacuna não fecha, a tela
-    // declara o que não sabe, e **não inventa uma chamada**.
+  it("sem org injetada, DESCOBRE pelo `/me/orgs` — não guarda slug", async () => {
+    // A fonte do `{org}` é o servidor, não a memória do cliente: o @Altair criou
+    // o `GET /me/orgs` exatamente pra fechar esta lacuna. Guardar um slug vindo
+    // de qualquer lugar é o que o invariante 6 impede.
+    const pedidos = fetchFalso(() =>
+      json([{ org: "acme", papel: "org_admin" }]),
+    );
+    render(<AdminOrgPage idioma="pt-BR" />);
+    await waitFor(() => expect(pedidos.length).toBeGreaterThan(0));
+    // A PRIMEIRA coisa que a tela faz é perguntar quem ela é.
+    expect(pedidos[0]).toBe("/api/v1/me/orgs");
+    // E só então endereça a org que o servidor devolveu.
+    await waitFor(() =>
+      expect(pedidos).toContain(`/api/v1${CAMINHOS.membros("acme")}`),
+    );
+  });
+
+  it("lista de orgs VAZIA ⇒ a tela diz que não sabe, e não chuta uma org", async () => {
+    // O caminho que importa: sem org, nada de `/orgs/...`. Uma tela que
+    // "escolhesse" um valor aqui estaria inventando inquilino.
     const pedidos = fetchFalso(() => json([]));
     render(<AdminOrgPage idioma="pt-BR" />);
-    expect(screen.getByText(DICIONARIOS["pt-BR"].orgIndefinida)).toBeTruthy();
-    expect(pedidos).toEqual([]);
+    await waitFor(() =>
+      expect(screen.getByText(DICIONARIOS["pt-BR"].orgIndefinida)).toBeTruthy(),
+    );
+    expect(pedidos.some((u) => u.includes("/orgs/"))).toBe(false);
   });
 
   it("i18n: as duas línguas do DoD renderizam", () => {

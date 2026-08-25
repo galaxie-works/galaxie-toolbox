@@ -147,6 +147,89 @@ test("#1490 — a porta não declara rota que o contrato não tem", () => {
   );
 });
 
+/**
+ * Os nomes de campo do corpo de sucesso de uma rota, lidos da tabela do doc.
+ *
+ * A célula tem a forma `` `200` `[{ uid, nome, email, papel }]` `` — pega-se o
+ * miolo do último bloco entre crases e extraem-se os identificadores antes de
+ * `:` ou `,`. Aproximação deliberada: o objetivo não é validar o tipo, é
+ * detectar **campo que o FE usa e o contrato não tem**.
+ */
+function camposDaRota(rota: string): Set<string> | null {
+  const doc = readFileSync(CONTRATO, "utf8");
+  for (const linha of doc.split("\n")) {
+    if (!linha.startsWith("|")) continue;
+    const celulas = linha.split("|").map((c) => c.trim());
+    if (celulas[2]?.replace(/`/g, "") !== rota) continue;
+    // Varre as células DEPOIS da rota, em vez de escolher uma por posição.
+    // Duas armadilhas, ambas expostas por asserção e não por leitura:
+    //  1. as tabelas do doc têm colunas diferentes por seção (a de admin tem
+    //     `Operação`, a de conta não) — pegar `length-2` lia a coluna errada;
+    //  2. incluir a célula da ROTA fazia o regex casar o `{org}` do caminho
+    //     como se fosse campo do corpo, e aí TODO campo real virava "inventado".
+    const chaves = celulas.slice(3).join(" ").match(/\{([^}]*)\}/);
+    if (!chaves?.[1]) continue;
+    const campos = new Set<string>();
+    for (const parte of chaves[1].split(",")) {
+      const nome = parte.trim().split(":")[0]?.trim().replace(/[`?]/g, "");
+      if (nome && /^[A-Za-z_][A-Za-z0-9_]*$/.test(nome)) campos.add(nome);
+    }
+    return campos;
+  }
+  return null;
+}
+
+/** Os campos declarados numa `interface` do `web/src`. */
+function camposDaInterface(arquivo: string, nome: string): string[] {
+  const fonte = readFileSync(arquivo, "utf8");
+  const i = fonte.indexOf(`interface ${nome} {`);
+  assert.ok(i >= 0, `não achei \`interface ${nome}\` em ${arquivo}`);
+  const fim = fonte.indexOf("}", i);
+  return fonte
+    .slice(fonte.indexOf("{", i) + 1, fim)
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+    .map((l) => l.trim().split(":")[0]?.trim().replace("?", "") ?? "")
+    .filter((n) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n));
+}
+
+test("#1490 — o FE não inventa CAMPO que o contrato não tem", () => {
+  // A guarda de rotas confere o CAMINHO; esta confere o CORPO. Precisou existir
+  // porque eu tinha escrito `Membro { id, email, papel }` enquanto o contrato
+  // diz `{ uid, nome, email, papel }` — inventei `id` e perdi `nome`, e nada
+  // acusou. Rota certa com campo errado quebra igual na integração.
+  const casos = [
+    {
+      rota: "/orgs/{org}/membros",
+      arquivo: join(WEB_SRC, "lib", "org.ts"),
+      tipo: "Membro",
+    },
+    {
+      rota: "/me/orgs",
+      arquivo: join(WEB_SRC, "lib", "org.ts"),
+      tipo: "OrgDoPrincipal",
+    },
+  ];
+
+  for (const caso of casos) {
+    const doContrato = camposDaRota(caso.rota);
+    assert.ok(
+      doContrato && doContrato.size > 0,
+      `não li campo nenhum de \`${caso.rota}\` no contrato — parse quebrado ` +
+        `deixaria esta asserção passar pra sempre`,
+    );
+    const inventados = camposDaInterface(caso.arquivo, caso.tipo).filter(
+      (c) => !doContrato.has(c),
+    );
+    assert.deepEqual(
+      inventados,
+      [],
+      `\`${caso.tipo}\` declara campo que \`${caso.rota}\` não devolve — o FE ` +
+        `está inventando o corpo:\n  ${inventados.join("\n  ")}`,
+    );
+  }
+});
+
 test("#1490 — ninguém contorna a porta de rede (fetch cru fora do api.ts)", () => {
   const fora: string[] = [];
   for (const arquivo of fontesDoWeb()) {
