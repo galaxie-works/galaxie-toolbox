@@ -22,37 +22,12 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
+use galaxie_platform_identity::auditoria::{Auditor, EventoAutz, ResultadoAutz};
 use galaxie_platform_identity::{autorizar, Decisao, Operacao, OrgId, Sessao, UserId};
 
-/// Resultado de uma decisão de autz, para a AUDITORIA (cond. 4 do @Altair). **Permitido E Negado**
-/// são registrados: auditoria que só grava sucesso perde exatamente o ataque — dez `Negado`
-/// seguidos é o sinal, e ele some se só o sucesso for logado.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResultadoAutz {
-    Permitido,
-    Negado,
-}
-
-/// Evento SEMÂNTICO de uma decisão de autz de back-office, para o [`Auditor`]. Carrega só o que a
-/// decisão conhece; o `ts` e o id de correlação do request são carimbados pela IMPL (request-scoped,
-/// onde o evento sai da caixa). 🔑 **NUNCA `tenant_m365` nem `dominios`** — claim sensível não se
-/// acumula em log de retenção longa e leitura ampla (mesma regra da projeção sem claims do #1469);
-/// o alvo, quando existir (provisionar/suspender), é o **id** da org, não seus claims.
-pub struct EventoAutz<'a> {
-    /// Quem tentou: `staff` num `Permitido`, qualquer principal num `Negado`.
-    pub ator: &'a UserId,
-    pub acao: &'a AcaoBackOffice,
-    pub resultado: ResultadoAutz,
-}
-
-/// Sink de auditoria. A decisão de segurança não é ONDE escrever, é **QUEM escreve**: como
-/// `autorizar_back_office` emite (não o handler), superfície nova nasce auditada sem ninguém
-/// combinar — casa com a invariante 5 (toda autz passa pela função). A impl real leva o evento pra
-/// FORA do processo (OpenObserve): a integridade vem de sair da caixa, não de assinar em processo
-/// (quem tem o processo tem a chave junto).
-pub trait Auditor {
-    fn registrar(&self, evento: &EventoAutz);
-}
+// `Auditor`/`EventoAutz`/`ResultadoAutz` foram para a FUNDAÇÃO (`platform-identity::auditoria`,
+// #1571 caminho A do @Altair): back-office e admin-de-org emitem pelo MESMO sink. `EventoAutz`
+// agora carrega `acao: &str` (do `acao_nome()` abaixo, nunca literal) + o `alvo` (OrgId).
 
 /// Ações de back-office (staff operando SOBRE orgs de clientes). Enum FECHADO: a autz faz um
 /// `match` EXAUSTIVO sem catch-all (doutrina #1000/#1456), então **acrescentar uma ação
@@ -87,6 +62,20 @@ impl AcaoBackOffice {
             AcaoBackOffice::ProvisionarOrg(id)
             | AcaoBackOffice::VerificarOrg(id)
             | AcaoBackOffice::SuspenderOrg(id) => Some(id),
+        }
+    }
+
+    /// Nome ESTÁVEL e namespaced da ação, para a auditoria (#1571 cond. 1 do @Altair). `match`
+    /// EXAUSTIVO sem `_`: ação nova não compila até ganhar seu nome aqui — o `&str` do fio é
+    /// produzido pelo enum FECHADO, nunca por um literal de call site (typo não vira registro
+    /// errado). Namespace `back_office.` não colide com `org_admin.` na mesma trilha.
+    #[must_use]
+    pub fn acao_nome(&self) -> &'static str {
+        match self {
+            AcaoBackOffice::ListarOrgs => "back_office.listar_orgs",
+            AcaoBackOffice::ProvisionarOrg(_) => "back_office.provisionar_org",
+            AcaoBackOffice::VerificarOrg(_) => "back_office.verificar_org",
+            AcaoBackOffice::SuspenderOrg(_) => "back_office.suspender_org",
         }
     }
 }
@@ -133,7 +122,8 @@ pub fn autorizar_back_office(
     // permitido, qualquer um no negado); nunca um claim, só o id.
     auditor.registrar(&EventoAutz {
         ator: sessao.principal().usuario(),
-        acao,
+        acao: acao.acao_nome(),
+        alvo: acao.alvo(),
         resultado,
     });
     match decisao {
@@ -150,7 +140,9 @@ pub fn autorizar_back_office(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EventoAuditado {
     /// Uma decisão de autz (o caso normal), com o mesmo conteúdo do [`EventoAutz`], agora possuído.
-    Autz { ator: UserId, acao: AcaoBackOffice, resultado: ResultadoAutz },
+    /// `acao` é o nome estável (do `acao_nome()`, de QUALQUER crate de autz — o buffer é agnóstico
+    /// à ação desde o #1571); `alvo` é o **id** da org, quando a ação tem alvo.
+    Autz { ator: UserId, acao: String, alvo: Option<OrgId>, resultado: ResultadoAutz },
     /// `n` eventos foram PERDIDOS por transbordo do buffer antes deste dreno. Nunca silencioso.
     Perda { n: u64 },
 }
@@ -209,7 +201,8 @@ impl Auditor for AuditorBuffer {
         }
         estado.eventos.push_back(EventoAuditado::Autz {
             ator: evento.ator.clone(),
-            acao: evento.acao.clone(),
+            acao: evento.acao.to_string(),
+            alvo: evento.alvo.cloned(),
             resultado: evento.resultado,
         });
     }
@@ -230,13 +223,13 @@ mod tests {
     /// Auditor que CAPTURA os eventos, pros testes da cond. 4 (emitiu? permitido e negado?).
     #[derive(Default)]
     struct AuditorEspiao {
-        eventos: RefCell<Vec<(UserId, AcaoBackOffice, ResultadoAutz)>>,
+        eventos: RefCell<Vec<(UserId, String, ResultadoAutz)>>,
     }
     impl Auditor for AuditorEspiao {
         fn registrar(&self, e: &EventoAutz) {
             self.eventos
                 .borrow_mut()
-                .push((e.ator.clone(), e.acao.clone(), e.resultado));
+                .push((e.ator.clone(), e.acao.to_string(), e.resultado));
         }
     }
 
@@ -355,11 +348,11 @@ mod tests {
         assert_eq!(ev.len(), 2, "toda decisão emite — não só o sucesso");
         assert_eq!(
             ev[0],
-            (UserId("s1".into()), AcaoBackOffice::ListarOrgs, ResultadoAutz::Permitido)
+            (UserId("s1".into()), "back_office.listar_orgs".to_string(), ResultadoAutz::Permitido)
         );
         assert_eq!(
             ev[1],
-            (UserId("u1".into()), AcaoBackOffice::SuspenderOrg(OrgId("orgA".into())), ResultadoAutz::Negado),
+            (UserId("u1".into()), "back_office.suspender_org".to_string(), ResultadoAutz::Negado),
             "o negado registra o ATOR que tentou (não-staff), não some"
         );
     }
@@ -371,8 +364,8 @@ mod tests {
         let buf = AuditorBuffer::novo(10);
         let ator = UserId("s1".into());
         let acao = AcaoBackOffice::ListarOrgs;
-        buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Permitido });
-        buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Negado });
+        buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Permitido });
+        buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Negado });
         let drenado = buf.drenar();
         assert_eq!(drenado.len(), 2);
         assert!(matches!(&drenado[0], EventoAuditado::Autz { resultado: ResultadoAutz::Permitido, .. }));
@@ -389,7 +382,7 @@ mod tests {
         let ator = UserId("s1".into());
         let acao = AcaoBackOffice::ListarOrgs;
         for _ in 0..5 {
-            buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Negado });
+            buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Negado });
         }
         let drenado = buf.drenar();
         assert_eq!(drenado.len(), 3, "2 retidos (teto) + 1 Perda");
@@ -403,7 +396,7 @@ mod tests {
         let buf = AuditorBuffer::novo(10);
         let ator = UserId("s1".into());
         let acao = AcaoBackOffice::ListarOrgs;
-        buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Permitido });
+        buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Permitido });
         let drenado = buf.drenar();
         assert_eq!(drenado.len(), 1);
         assert!(drenado.iter().all(|e| matches!(e, EventoAuditado::Autz { .. })), "nenhuma Perda que não houve");
@@ -416,7 +409,7 @@ mod tests {
         let ator = UserId("s1".into());
         let acao = AcaoBackOffice::ListarOrgs;
         for _ in 0..3 {
-            buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Negado });
+            buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Negado });
         }
         let d1 = buf.drenar();
         assert!(d1.iter().any(|e| matches!(e, EventoAuditado::Perda { n: 2 })), "1 retido, 2 perdidos");
@@ -431,7 +424,7 @@ mod tests {
         let ator = UserId("s1".into());
         let acao = AcaoBackOffice::ListarOrgs;
         for _ in 0..10_000 {
-            buf.registrar(&EventoAutz { ator: &ator, acao: &acao, resultado: ResultadoAutz::Permitido });
+            buf.registrar(&EventoAutz { ator: &ator, acao: acao.acao_nome(), alvo: acao.alvo(), resultado: ResultadoAutz::Permitido });
         }
         let drenado = buf.drenar();
         let autz = drenado.iter().filter(|e| matches!(e, EventoAuditado::Autz { .. })).count();
