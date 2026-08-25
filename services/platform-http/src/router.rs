@@ -10,13 +10,16 @@
 //! rotas OAuth. O corpo de sucesso do back-office é `[]` até a fatia de persistência (ver o handler).
 
 use axum::body::Body;
-use axum::http::{header, StatusCode};
+use axum::extract::State;
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::Response;
-use axum::routing::get;
+use axum::routing::{delete, get};
 use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
+use galaxie_platform_identity::sessao::montar_cookie_expurgo;
 use galaxie_platform_web::contrato::CodigoErro;
+use galaxie_platform_web::{encerrar_sessao, sessao_id_do_cookie};
 
 use crate::erro::resposta_de_erro;
 use crate::sessao::{EstadoBorda, SessaoOculta};
@@ -52,10 +55,42 @@ async fn listar_orgs(SessaoOculta(sessao): SessaoOculta) -> Response {
     }
 }
 
+/// `DELETE /api/v1/session` — logout. **Não-autenticada e IDEMPOTENTE** (contrato §4.1): NÃO usa o
+/// extractor de sessão (que exigiria uma sessão viva e daria 401), porque deslogar de uma sessão
+/// já morta/ausente tem de dar o MESMO 204 — o estado desejado (nenhuma sessão viva no cliente) já
+/// vale, e um 401 aqui só vazaria se o cookie era válido.
+///
+/// Invalida no SERVIDOR o que houver (fato) **E** devolve o cookie de expurgo (apaga no cliente).
+/// Os dois juntos, sempre: invalidar sem expurgar deixa lixo no browser; expurgar sem invalidar
+/// deixa a sessão viva pra quem copiou o valor do cookie (o servidor é a fonte da verdade).
+async fn encerrar(State(estado): State<EstadoBorda>, headers: HeaderMap) -> Response {
+    let header_cookie = headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let expurgo = match sessao_id_do_cookie(header_cookie) {
+        Some(id) => {
+            let mut armazem = estado
+                .armazem
+                .lock()
+                .expect("armazém de sessão não deve estar envenenado");
+            encerrar_sessao(&mut *armazem, &id)
+        }
+        // Sem cookie de sessão (ou duplicado/inválido): nada a invalidar, mas expurga mesmo assim.
+        None => montar_cookie_expurgo(),
+    };
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header(header::SET_COOKIE, expurgo)
+        .body(Body::empty())
+        .expect("resposta 204 é sempre construível")
+}
+
 /// Monta o `Router` da borda com o estado (armazém de sessão + relógio) já resolvido.
 pub fn rotas(estado: EstadoBorda) -> Router {
     Router::new()
         .route("/api/v1/admin/orgs", get(listar_orgs))
+        .route("/api/v1/session", delete(encerrar))
         .fallback(fallback_nao_encontrado)
         .with_state(estado)
 }
@@ -67,11 +102,19 @@ mod tests {
     use tower::ServiceExt; // oneshot
 
     use axum::http::Request;
-    use galaxie_platform_identity::sessao::{ArmazemMemoria, NOME_COOKIE_SESSAO};
+    use galaxie_platform_identity::sessao::{ArmazemMemoria, ArmazemSessao, SessaoId, NOME_COOKIE_SESSAO};
     use galaxie_platform_identity::{Escopo, OrgId, Principal, UserId};
     use galaxie_platform_web::emitir_sessao;
 
     use crate::sessao::{Borda, SessaoAtual};
+
+    /// Extrai o `SessaoId` de um cookie de request `__Host-gx_sess=<id>` (só nos testes).
+    fn id_do_cookie(cookie: &str) -> SessaoId {
+        let valor = cookie
+            .strip_prefix(&format!("{NOME_COOKIE_SESSAO}="))
+            .expect("cookie de teste começa com o nome da sessão");
+        SessaoId(valor.to_owned())
+    }
 
     const AGORA: u64 = 1_000_000;
 
@@ -292,5 +335,58 @@ mod tests {
             StatusCode::UNAUTHORIZED,
             "sem atividade, o ocioso mata a sessão no prazo (o deslize não a torna imortal)"
         );
+    }
+
+    async fn deletar(estado: EstadoBorda, cookie: Option<&str>) -> Response {
+        let mut req = Request::builder().method("DELETE").uri("/api/v1/session");
+        if let Some(c) = cookie {
+            req = req.header(header::COOKIE, c);
+        }
+        rotas(estado)
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+    }
+
+    /// `DELETE /session` (logout): invalida no SERVIDOR **e** expurga o cookie no cliente. O ponto
+    /// de segurança é a invalidação no servidor — checo que, após o logout, a MESMA `SessaoId` não
+    /// revalida (uma cópia do cookie não ressuscita a sessão). Se o handler só expurgasse (sem
+    /// `invalidar`), este assert do `validar` pós-logout falharia.
+    #[tokio::test]
+    async fn logout_invalida_no_servidor_e_expurga_o_cookie() {
+        let (estado, cookie) = borda_com_sessao_admin();
+        let id = id_do_cookie(&cookie);
+        assert!(
+            estado.armazem.lock().unwrap().validar(&id, AGORA).is_some(),
+            "pré-condição: a sessão vale antes do logout"
+        );
+
+        let resp = deletar(estado.clone(), Some(&cookie)).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        let set = resp
+            .headers()
+            .get(header::SET_COOKIE)
+            .expect("logout devolve Set-Cookie de expurgo")
+            .to_str()
+            .unwrap();
+        assert!(set.starts_with(NOME_COOKIE_SESSAO));
+        assert!(set.contains("Max-Age=0"), "expurga o cookie no cliente");
+
+        assert!(
+            estado.armazem.lock().unwrap().validar(&id, AGORA).is_none(),
+            "logout invalida no servidor — cópia do cookie não revalida"
+        );
+    }
+
+    /// Idempotente e sem-auth (contrato §4.1): deslogar SEM cookie de sessão é o MESMO 204 com
+    /// expurgo — o resultado desejado (nenhuma sessão viva no cliente) já vale, e um 401 aqui só
+    /// existiria se a rota exigisse sessão, o que ela não faz.
+    #[tokio::test]
+    async fn logout_sem_cookie_e_204_com_expurgo() {
+        let (estado, _cookie) = borda_com_sessao_admin();
+        let resp = deletar(estado, None).await;
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT, "deslogar sem sessão é 204 igual");
+        let set = resp.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap();
+        assert!(set.contains("Max-Age=0"), "expurga mesmo sem sessão a invalidar");
     }
 }
