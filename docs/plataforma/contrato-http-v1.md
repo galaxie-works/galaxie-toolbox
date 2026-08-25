@@ -175,7 +175,7 @@ suspender são rotas SEPARADAS (fix do @Altair):** colapsá-las tornaria a audit
 payload, e **suspender é a operação mais destrutiva do produto** — merece a sua própria linha e log.
 | Método | Rota | Muta? | Sucesso | Notas |
 |---|---|---|---|---|
-| `GET` | `/admin/orgs` | não | `200` `[{ org, dominios: [string], estado: "provisionada"\|"suspensa" }]` | só staff; não-staff ⇒ `404` (não revela o back-office) |
+| `GET` | `/admin/orgs` | não | `200` (corpo em aberto — ver nota `estado`) | só staff; não-staff ⇒ `404` (não revela o back-office) |
 | `POST` | `/admin/orgs/{org}/provisionamento` | sim | `202` | provisiona; auditado |
 | `POST` | `/admin/orgs/{org}/suspensao` | sim | `202` | **suspende (destrutivo); auditado à parte** |
 
@@ -194,29 +194,12 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 > cai no mesmo `404`. **Custo aceito e nomeado:** um staff com sessão expirada recebe `404` e não
 > distingue "não sou staff" de "minha sessão venceu" — o preço de o back-office não se anunciar.
 
-> **`estado` da org (v1.3, RATIFICADO pelo @Altair com 3 condições):** a lista de back-office precisa
-> mostrar `provisionada`/`suspensa` pra ser acionável (senão o staff não sabe se provisiona ou
-> suspende). É um conceito de **ciclo de vida** que `provisionar`/`suspender` já implicam, mas que
-> `Org` (hoje `{ id, dominios, tenant_m365 }`) ainda não carrega — modelado na fatia de persistência.
-> **NÃO** expõe `tenant_m365` (claim sensível; mínimo necessário).
->
-> 1. **No modelo, `estado` é PRIVADO e só muda por transição** (`provisionar`/`suspender`) — nunca
->    campo livre em `Org`. Um `pub estado` daria um segundo caminho pra suspender, e o tipo é que
->    garante a ausência de porta lateral (mesma doutrina de `Sessao::estabelecer`/`Escopo`), não a
->    revisão. (Constraint da fatia de persistência que introduzir o campo.)
-> 2. **No FE, `estado` é união ABERTA: valor desconhecido ⇒ neutro e SEM AÇÃO, jamais `provisionada`.**
->    Um terceiro estado vai existir (`em_provisionamento`, `encerrada`); o cliente TOLERA desconhecido
->    (renderiza neutro) em vez de uma união fechada que quebraria — acrescentar variante **não** é
->    breaking de `/v1`. Cair pro permissivo (mostrar suspensa como ativa) é **falha de segurança com
->    cara de bug de UI**, proibido.
-> 3. ⚠️ **O que `suspensa` FAZ é decisão de PRODUTO (PO), roteada via @Mira — o `estado` só entra
->    fechado quando esta frase existir.** Sem ponto de imposição, `suspender` não suspende nada (os
->    membros seguem entrando) e vira botão-que-mente — o *"gate que nasce cego é pior que gate nenhum"*
->    (#1428). Duas saídas, ambas ESCRITAS no contrato quando o PO decidir: **(a) `suspensa` NEGA** — a
->    autz de ações com escopo de org consulta o estado; org suspensa ⇒ negado com o **mesmo código das
->    outras negativas** (não pode virar oráculo "existe e está suspensa"); **(b) `suspensa` é RÓTULO
->    administrativo** e o contrato diz explicitamente que **não** corta acesso. **Até o PO responder,
->    o contrato NÃO afirma corte de acesso** e o back-office-list não deve ser lido como imposição.
+> **`estado` da org + corpo do `GET /admin/orgs` — DEFERIDOS (separados desta v1.3 a pedido do
+> @Altair):** o campo `estado` foi ratificado com 3 condições, mas a 3ª — **o que `suspensa` FAZ**
+> (nega acesso vs. rótulo administrativo) — é decisão de PRODUTO (PO), roteada via @Mira. O `estado`
+> só entra fechado quando essa frase existir, e não vale acoplar as leituras §4.3 (aprovadas sem
+> ressalva) a uma pergunta sobre outra seção. Volta num PR próprio quando o PO decidir; até lá, o
+> corpo de `GET /admin/orgs` fica em aberto (o back-office ainda devolve `[]` honesto, sem store).
 >
 > **Escopo dos testes de `contrato.rs` (nota do @Altair — não sobrevender):** os testes amarram
 > estruturalmente só os invariantes **3** (GET nunca muta) e **4** (staff auditado), que são
@@ -232,8 +215,10 @@ tabela; o FE fixa a versão. Adição compatível (rota nova) ⇒ append, sem bu
 
 **v1.3 (25/08):** leituras que faltavam em §4.3 (`GET` de `dominios`/`settings`/`assinatura` — lacuna
 do @Pollux #1490, "não se gere o que não se vê"; um `GET` por recurso, autorizado igual à escrita) +
-shape do corpo de `GET /admin/orgs` em §4.5 (`[{ org, dominios, estado }]`; `estado` = ratifico @Altair).
-Tudo adição compatível (append), sem bump de `/v1`.
+a regra do NÃO-autenticado→`404` em `/admin/*` (§4.5, achado do @Altair na borda). O corpo de
+`GET /admin/orgs` com `estado` foi **separado** (decisão do @Altair) e volta num PR próprio quando o
+PO decidir o que `suspensa` FAZ — não vale prender as leituras a uma pergunta de produto sobre outra
+seção. Tudo adição compatível (append), sem bump de `/v1`.
 
 **v1.2 (24/08):** §2 reescrita pro **modelo federado** (decisão @Altair — nem M365-only nem
 email/senha); `POST /session` removido (o login nasce do callback verificado); `GET /me/orgs`
