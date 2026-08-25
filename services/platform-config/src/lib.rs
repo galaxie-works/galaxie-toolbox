@@ -14,6 +14,7 @@
 
 #![forbid(unsafe_code)]
 
+use galaxie_platform_identity::armazem::ErroArmazem;
 use galaxie_platform_identity::{Principal, Sessao, UserId};
 
 /// Chaves de pref de USO DO APP que a plataforma web pode configurar — **allowlist
@@ -56,8 +57,9 @@ pub fn chave_configuravel(chave: &str) -> bool {
 /// **impossíveis por construção**: os campos são privados e só os construtores (que validam)
 /// criam um item. "Parsing como validação" (#1563 AC1): quem tem um `ConfigItem` tem a
 /// garantia, não a promessa; o inverso — do fio pro domínio — passa pelos construtores, que
-/// devolvem [`ConfigErro::ValorInvalido`] em vez de aceitar. Serializa pra forma plana em
-/// [`ConfigItem::para_fio`]; o widget é escolha do FE (o `tipo` aqui é tipo de VALOR).
+/// devolvem [`ConfigErro::ValorInvalido`] em vez de aceitar. A serialização pra forma plana
+/// do fio é da BORDA (padrão "DTO na borda"): ela lê via os acessores (`.chave()/.valor()/
+/// .opcoes()`) e monta o DTO. O `tipo` aqui é tipo de VALOR; o widget é escolha do FE.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigItem {
     Booleano(Booleano),
@@ -210,6 +212,51 @@ pub fn configs_do_usuario(
         itens.push(item_da_forma(chave, &valor_bruto, &forma)?);
     }
     Ok(itens)
+}
+
+/// Store das prefs do usuário — a I/O da leitura do `/me/config`. O domínio define a forma
+/// (o que a borda tem de devolver pro [`configs_do_usuario`] consumir); a impl real (Postgres)
+/// mora fora, no mesmo padrão do `ArmazemPerfil` (#1473) e do `ArmazemSessao`. `Err`
+/// ([`ErroArmazem`]) distingue armazém-fora-do-ar de "sem prefs" (`Ok(vazio)`) — não confla
+/// infra com estado (a lição do armazém de estado do OAuth): queda de infra não pode virar
+/// "usuário sem config" em silêncio.
+pub trait ArmazemPref {
+    /// As prefs cruas do `uid`: `(chave, valor_bruto, forma)`. `Ok(vazio)` = sem prefs.
+    fn prefs_do_usuario(
+        &self,
+        uid: &UserId,
+    ) -> Result<Vec<(String, String, FormaDaChave)>, ErroArmazem>;
+}
+
+/// Primeira impl: em memória. As prefs REAIS nascerão da persistência (fatia adiante); aqui a
+/// semeadura é do dev-server, pro FE fiar o e2e do `/me/config` antes da persistência real —
+/// mesmo papel do `ArmazemPerfilMemoria`.
+#[derive(Debug, Default)]
+pub struct ArmazemPrefMemoria {
+    por_usuario: std::collections::HashMap<UserId, Vec<(String, String, FormaDaChave)>>,
+}
+
+impl ArmazemPrefMemoria {
+    #[must_use]
+    pub fn novo() -> Self {
+        Self::default()
+    }
+
+    /// Semeia as prefs de um usuário (dev-server/testes). Sobrescreve o que houver.
+    pub fn semear(&mut self, uid: UserId, prefs: Vec<(String, String, FormaDaChave)>) {
+        self.por_usuario.insert(uid, prefs);
+    }
+}
+
+impl ArmazemPref for ArmazemPrefMemoria {
+    fn prefs_do_usuario(
+        &self,
+        uid: &UserId,
+    ) -> Result<Vec<(String, String, FormaDaChave)>, ErroArmazem> {
+        // Em memória não há modo de falha de I/O — `Ok(vazio)` pra quem não foi semeado, nunca
+        // `Err` (o `Err` existe pro dia da persistência real, não pra fingir infra aqui).
+        Ok(self.por_usuario.get(uid).cloned().unwrap_or_default())
+    }
 }
 
 /// O `UserId` do humano dono da sessão — é daqui que sai o escopo das prefs (regra 5),
@@ -466,5 +513,42 @@ mod tests {
         let prefs = vec![("app.tema".to_string(), "invalido".to_string(),
             FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] })];
         assert_eq!(configs_do_usuario(&s, None, prefs), Err(ConfigErro::ValorInvalido));
+    }
+
+    // ArmazemPrefMemoria — semeado devolve as prefs; usuário não-semeado devolve VAZIO (não Err:
+    // "sem prefs" ≠ "armazém fora do ar").
+    #[test]
+    fn armazem_pref_memoria_semeado_e_vazio() {
+        let mut arm = ArmazemPrefMemoria::novo();
+        arm.semear(
+            UserId("A".into()),
+            vec![("app.tema".into(), "escuro".into(),
+                FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] })],
+        );
+        assert_eq!(arm.prefs_do_usuario(&UserId("A".into())).unwrap().len(), 1);
+        assert_eq!(
+            arm.prefs_do_usuario(&UserId("B".into())),
+            Ok(vec![]),
+            "usuário não-semeado = vazio, não erro"
+        );
+    }
+
+    // Fluxo completo store→domínio: a borda lê pelo ArmazemPref e passa pro configs_do_usuario,
+    // que aplica owner-scope + allowlist + validação. Prova que o trait casa com a operação.
+    #[test]
+    fn fluxo_armazem_ate_configs_do_usuario() {
+        let mut arm = ArmazemPrefMemoria::novo();
+        arm.semear(
+            UserId("A".into()),
+            vec![
+                ("app.notificacoes".into(), "true".into(), FormaDaChave::Booleano),
+                ("app.tema".into(), "escuro".into(),
+                    FormaDaChave::Opcao { opcoes: vec!["claro".into(), "escuro".into()] }),
+            ],
+        );
+        let s = sessao_de("A");
+        let brutas = arm.prefs_do_usuario(&UserId("A".into())).unwrap();
+        let itens = configs_do_usuario(&s, None, brutas).expect("própria conta monta a lista");
+        assert_eq!(itens.len(), 2);
     }
 }
