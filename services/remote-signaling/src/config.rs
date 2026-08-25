@@ -72,14 +72,16 @@ impl AppConfig {
             // "próximo do tempo real de uma sessão", não 1h fixa). Tunável pelo env
             // `GALAXIE_REMOTE_TURN_TTL_SECONDS`.
             //
-            // ⚠️ ATENÇÃO (#1148): o cliente NÃO renova a credencial. `ice_servers`
-            // chega uma única vez no `Registered` e não há ICE restart em lugar
-            // nenhum — verificado no `feat`: zero `restartIce`/`iceRestart` em TS ou
-            // Rust, e `conectar()` resolve uma Promise que ninguém repete. Logo uma
-            // sessão RELAYED morre ao atingir este TTL, sem recuperação. Baixar este
-            // valor ANTECIPA essa morte; não a causa. A correção é a renovação
-            // (#1148) — enquanto ela não existir, este número é o teto real de uma
-            // sessão via relay.
+            // ⚠️ ATENÇÃO (#1148): a renovação existe pela METADE. A fatia 1 (server,
+            // `ea15b87`) já reemite credencial fresca — `RenewIceServers` →
+            // `IceServersRenewed` (mesmo shape do `Registered`, `expires_at` novo),
+            // pela conexão de signaling JÁ autenticada, sem re-pareamento. Mas o
+            // CLIENTE ainda não a usa: não agenda a renovação antes do TTL (do
+            // `expires_at_unix_seconds`, 3/4 do restante) nem aplica a nova credencial
+            // (`setConfiguration({iceServers})` + `restartIce()`). Enquanto essa fatia
+            // FE não entrar, uma sessão RELAYED ainda morre ao atingir este TTL —
+            // então este número segue sendo o teto real de uma sessão via relay.
+            // Baixar o valor ANTECIPA essa morte; não a causa.
             turn_credential_ttl: Duration::from_secs(read_u64(
                 "GALAXIE_REMOTE_TURN_TTL_SECONDS",
                 1800,
