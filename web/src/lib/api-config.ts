@@ -7,6 +7,7 @@ import { pedir } from "@/lib/http";
 
 export type ValorConfig = boolean | string;
 
+/** @rota /me/config */
 export interface ItemConfig {
   chave: string;
   valor: ValorConfig;

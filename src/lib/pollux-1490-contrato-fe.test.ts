@@ -179,53 +179,110 @@ function camposDaRota(rota: string): Set<string> | null {
   return null;
 }
 
-/** Os campos declarados numa `interface` do `web/src`. */
-function camposDaInterface(arquivo: string, nome: string): string[] {
-  const fonte = readFileSync(arquivo, "utf8");
-  const i = fonte.indexOf(`interface ${nome} {`);
-  assert.ok(i >= 0, `não achei \`interface ${nome}\` em ${arquivo}`);
-  const fim = fonte.indexOf("}", i);
-  return fonte
-    .slice(fonte.indexOf("{", i) + 1, fim)
-    .split("\n")
-    .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
-    .map((l) => l.trim().split(":")[0]?.trim().replace("?", "") ?? "")
-    .filter((n) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n));
+/**
+ * Toda `interface` de `web/src/lib`, com a marca que ela declara e seus campos.
+ *
+ * **Por que não há lista curada aqui.** A 1ª versão desta guarda trazia um
+ * `casos = [...]` escrito à mão, e o @Altair pegou o furo: tipo novo descrevendo
+ * corpo do contrato, ninguém registra, **guarda segue verde** — e verde diz
+ * "conferido", que é pior que errado. É o padrão que ele recusou no #1421 e que
+ * eu reintroduzi sem perceber.
+ *
+ * A inversão que ele propôs — enumerar do CONTRATO e exigir o tipo — reprovaria
+ * toda rota que o FE ainda não consome, e o BE legitimamente expõe superfície
+ * antes do FE chegar nela. Então o que se inverte é o **default do tipo**: cada
+ * interface declara `@rota <caminho>` (e os campos são conferidos) ou
+ * `@nao-contrato <razão>`. Sem marca, **falha**.
+ *
+ * O `@nao-contrato` é exceção — mas por-tipo, inline e com razão escrita, não
+ * uma lista central que ninguém relê. É a diferença que ele mesmo nomeou no
+ * `csrf_por_state`: a forma obriga o próximo autor a responder.
+ */
+function interfacesDoLib(): {
+  arquivo: string;
+  nome: string;
+  rota: string | null;
+  naoContrato: boolean;
+  campos: string[];
+}[] {
+  const dir = join(WEB_SRC, "lib");
+  const achadas = [];
+  for (const arquivo of readdirSync(dir)) {
+    if (!arquivo.endsWith(".ts") || /\.test\.ts$/.test(arquivo)) continue;
+    const caminho = join(dir, arquivo);
+    const fonte = readFileSync(caminho, "utf8");
+    for (const m of fonte.matchAll(/(?:export )?interface (\w+)(?:<[^>]*>)? \{/g)) {
+      const inicio = m.index ?? 0;
+      // O doc-comment que precede a declaração: da última `/**` até aqui.
+      const antes = fonte.slice(0, inicio);
+      const abreDoc = antes.lastIndexOf("/**");
+      const doc = abreDoc >= 0 ? antes.slice(abreDoc) : "";
+      const rota = doc.match(/@rota\s+(\S+)/)?.[1] ?? null;
+      const fim = fonte.indexOf("}", inicio);
+      const campos = fonte
+        .slice(fonte.indexOf("{", inicio) + 1, fim)
+        .split("\n")
+        .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+        .map((l) => l.trim().split(":")[0]?.trim().replace("?", "") ?? "")
+        .filter((n) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n));
+      achadas.push({
+        arquivo: relative(RAIZ, caminho),
+        nome: m[1] as string,
+        rota,
+        naoContrato: /@nao-contrato\s+\S/.test(doc),
+        campos,
+      });
+    }
+  }
+  return achadas;
 }
+
+test("#1490 — toda interface do lib se declara: `@rota` ou `@nao-contrato`", () => {
+  // O default invertido. Sem isto, tipo novo entra sem ninguém conferir e a
+  // guarda fica CEGA passando por conferida — o furo que o @Altair achou.
+  const tipos = interfacesDoLib();
+  assert.ok(
+    tipos.length >= 5,
+    `li ${tipos.length} interfaces em web/src/lib — esperava ≥5; varredura ` +
+      `vazia faria as asserções de baixo passarem pra sempre`,
+  );
+  const semMarca = tipos
+    .filter((t) => !t.rota && !t.naoContrato)
+    .map((t) => `${t.arquivo}: ${t.nome}`);
+  assert.deepEqual(
+    semMarca,
+    [],
+    `interface sem declarar o que é. Ponha no doc-comment ou ` +
+      `\`@rota /caminho/do/contrato\` (os campos passam a ser conferidos) ou ` +
+      `\`@nao-contrato <razão>\`:\n  ${semMarca.join("\n  ")}`,
+  );
+});
 
 test("#1490 — o FE não inventa CAMPO que o contrato não tem", () => {
   // A guarda de rotas confere o CAMINHO; esta confere o CORPO. Precisou existir
   // porque eu tinha escrito `Membro { id, email, papel }` enquanto o contrato
   // diz `{ uid, nome, email, papel }` — inventei `id` e perdi `nome`, e nada
   // acusou. Rota certa com campo errado quebra igual na integração.
-  const casos = [
-    {
-      rota: "/orgs/{org}/membros",
-      arquivo: join(WEB_SRC, "lib", "org.ts"),
-      tipo: "Membro",
-    },
-    {
-      rota: "/me/orgs",
-      arquivo: join(WEB_SRC, "lib", "org.ts"),
-      tipo: "OrgDoPrincipal",
-    },
-  ];
+  const comRota = interfacesDoLib().filter((t) => t.rota);
+  assert.ok(
+    comRota.length >= 4,
+    `só ${comRota.length} interfaces declaram \`@rota\` — esperava ≥4`,
+  );
 
-  for (const caso of casos) {
-    const doContrato = camposDaRota(caso.rota);
+  for (const tipo of comRota) {
+    const doContrato = camposDaRota(tipo.rota as string);
     assert.ok(
       doContrato && doContrato.size > 0,
-      `não li campo nenhum de \`${caso.rota}\` no contrato — parse quebrado ` +
-        `deixaria esta asserção passar pra sempre`,
+      `\`${tipo.nome}\` diz \`@rota ${tipo.rota}\`, mas não li campo nenhum ` +
+        `dessa rota no contrato. Ou a rota não existe (o FE inventou), ou ela ` +
+        `não declara corpo — nos dois casos, o contrato é quem decide primeiro.`,
     );
-    const inventados = camposDaInterface(caso.arquivo, caso.tipo).filter(
-      (c) => !doContrato.has(c),
-    );
+    const inventados = tipo.campos.filter((c) => !doContrato.has(c));
     assert.deepEqual(
       inventados,
       [],
-      `\`${caso.tipo}\` declara campo que \`${caso.rota}\` não devolve — o FE ` +
-        `está inventando o corpo:\n  ${inventados.join("\n  ")}`,
+      `\`${tipo.nome}\` (${tipo.arquivo}) declara campo que \`${tipo.rota}\` ` +
+        `não devolve — o FE está inventando o corpo:\n  ${inventados.join("\n  ")}`,
     );
   }
 });

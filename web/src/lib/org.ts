@@ -20,13 +20,13 @@ import { chamar } from "@/lib/api";
 type Papel = "org_admin" | "member";
 
 /**
- * Um membro da org, **como o contrato devolve** em `GET /orgs/{org}/membros`:
- * `[{ uid, nome, email, papel }]`.
+ * Um membro da org, **como o contrato devolve**: `[{ uid, nome, email, papel }]`.
  *
  * Eu tinha escrito `{ id, email, papel }` — inventei `id` e perdi `nome`, porque
  * quando escrevi não havia shape no contrato. A guarda de rotas não pegou: ela
- * confere CAMINHO, não CORPO. Por isso esta fatia acrescenta a asserção de
- * campos (`pollux-1490-contrato-fe.test.ts`), que teria pego no ato.
+ * confere CAMINHO, não CORPO. Daí a asserção de campos, que teria pego no ato.
+ *
+ * @rota /orgs/{org}/membros
  */
 export interface Membro {
   uid: string;
@@ -48,12 +48,15 @@ export interface Membro {
  * `/orgs/{org}/...`, com `{org}` conferido contra a sessão no backend (org
  * alheia ⇒ 404). Viraram funções porque agora dependem do identificador da org.
  *
- * ⚠️ De onde vem o `{org}`: **ainda não há resposta.** `GET /me` devolve
- * `{ nome, email, idioma? }` — sem org, sem papel — e não existe `GET /me/orgs`
- * no contrato. Levantei a lacuna ao @alcor/@Altair em vez de escolher um lugar
- * por conta: guardar um slug vindo de qualquer lugar é exatamente o que o
- * invariante 6 impede. Enquanto não fecha, quem chama passa o valor e a tela
- * declara que não o tem.
+ * De onde vem o `{org}`: do **`GET /me/orgs`** (`minhasOrgs`). O @Altair criou a
+ * rota pra fechar a lacuna que eu levantei — o cliente não guarda slug de lugar
+ * nenhum, pergunta ao servidor quais orgs a SESSÃO tem. Guardar um slug vindo de
+ * qualquer lugar é o que o invariante 6 impede.
+ *
+ * ⚠️ Só `membros` tem `GET` no contrato. `dominios`, `settings` e `assinatura`
+ * têm apenas mutação (`POST`/`PATCH`/`PUT`), então a UI **não tem como ler** o
+ * estado atual dos três. Lacuna medida e levada ao @alcor/@Altair; até fechar,
+ * os painéis declaram o que falta em vez de fingir dados.
  */
 export const CAMINHOS = {
   membros: (org: string) => `/orgs/${org}/membros`,
@@ -103,6 +106,8 @@ export type Resultado<T> =
  * de admin segue conferido contra a sessão. Se algum dia esta tela liberar uma
  * ação porque `papel === "org_admin"`, o defeito não é a UI ficar bonita demais
  * — é ter transformado uma dica de renderização em decisão de acesso.
+ *
+ * @rota /me/orgs
  */
 export interface OrgDoPrincipal {
   org: string;
