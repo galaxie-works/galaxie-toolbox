@@ -19,7 +19,7 @@
 
 #![forbid(unsafe_code)]
 
-use galaxie_platform_identity::{autorizar, Decisao, Operacao, Sessao, UserId};
+use galaxie_platform_identity::{autorizar, Decisao, Operacao, OrgId, Sessao, UserId};
 
 /// Resultado de uma decisão de autz, para a AUDITORIA (cond. 4 do @Altair). **Permitido E Negado**
 /// são registrados: auditoria que só grava sucesso perde exatamente o ataque — dez `Negado`
@@ -54,17 +54,38 @@ pub trait Auditor {
 /// Ações de back-office (staff operando SOBRE orgs de clientes). Enum FECHADO: a autz faz um
 /// `match` EXAUSTIVO sem catch-all (doutrina #1000/#1456), então **acrescentar uma ação
 /// obriga a decidir sua política** — não compila sem braço. Todas são staff-only.
+///
+/// As ops que agem SOBRE uma org carregam o **`OrgId`** — o **alvo** que a auditoria precisa nomear
+/// (correção do @Altair na review do #1534: sem ele, o log de `SuspenderOrg`, a op mais destrutiva,
+/// não diz QUEM foi suspensa). ⚠️ **`OrgId` sim, `Org` NUNCA:** um id opaco não é claim; o furo do
+/// #1475 era o `Org` carregando `tenant_m365`/`dominios` dentro da autz. Se um dia a autz precisar do
+/// `Org`, é sinal de que está querendo decidir por claim — o #1475 voltando. A DECISÃO aqui **não
+/// consulta** o `OrgId` (o `match` o ignora com `_`); ele só nomeia o alvo no evento.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AcaoBackOffice {
-    /// Lista as orgs da base (`GET /admin/orgs` do contrato §4.5). Leitura, mas staff-only e
-    /// auditada como as demais — saber que o back-office existe já é a informação (invariante 1).
+    /// Lista as orgs da base (`GET /admin/orgs` do contrato §4.5). Leitura, sem alvo específico;
+    /// staff-only e auditada como as demais — saber que o back-office existe já é a informação (inv. 1).
     ListarOrgs,
     /// Cria uma org na base (sem seed manual).
-    ProvisionarOrg,
+    ProvisionarOrg(OrgId),
     /// Verifica/marca o estado de uma org.
-    VerificarOrg,
+    VerificarOrg(OrgId),
     /// SUSPENDE uma org — a operação mais destrutiva do produto.
-    SuspenderOrg,
+    SuspenderOrg(OrgId),
+}
+
+impl AcaoBackOffice {
+    /// O `OrgId` alvo da ação, se houver (`ListarOrgs` não tem). É o que o [`Auditor`] nomeia no
+    /// registro — o "quem" da operação, sem depender de o sink conhecer cada variante.
+    #[must_use]
+    pub fn alvo(&self) -> Option<&OrgId> {
+        match self {
+            AcaoBackOffice::ListarOrgs => None,
+            AcaoBackOffice::ProvisionarOrg(id)
+            | AcaoBackOffice::VerificarOrg(id)
+            | AcaoBackOffice::SuspenderOrg(id) => Some(id),
+        }
+    }
 }
 
 /// Resultado negativo do back-office. Sem terceiro estado: staff passa, o resto é negado.
@@ -92,11 +113,13 @@ pub fn autorizar_back_office(
 ) -> Result<(), BackOfficeErro> {
     // `match` EXAUSTIVO: toda ação de back-office é staff-only. Ação nova não compila até
     // ganhar um braço aqui (default-deny por construção).
+    // A DECISÃO é staff-only pra TODAS — o `OrgId` alvo é IGNORADO aqui de propósito (`_`): a autz
+    // não decide por dado do chamador (senão seria o #1475). O alvo só vive pra nomear a auditoria.
     let op = match acao {
         AcaoBackOffice::ListarOrgs
-        | AcaoBackOffice::ProvisionarOrg
-        | AcaoBackOffice::VerificarOrg
-        | AcaoBackOffice::SuspenderOrg => Operacao::ProvisionarOrg,
+        | AcaoBackOffice::ProvisionarOrg(_)
+        | AcaoBackOffice::VerificarOrg(_)
+        | AcaoBackOffice::SuspenderOrg(_) => Operacao::ProvisionarOrg,
     };
     let decisao = autorizar(sessao, &op);
     let resultado = match decisao {
@@ -146,12 +169,16 @@ mod tests {
         autorizar_back_office(s, acao, &AuditorNulo)
     }
 
-    const TODAS: [AcaoBackOffice; 4] = [
-        AcaoBackOffice::ListarOrgs,
-        AcaoBackOffice::ProvisionarOrg,
-        AcaoBackOffice::VerificarOrg,
-        AcaoBackOffice::SuspenderOrg,
-    ];
+    // Fn (não `const`): as variantes com `OrgId(String)` não são const-construíveis.
+    fn todas() -> [AcaoBackOffice; 4] {
+        let alvo = OrgId("orgA".into());
+        [
+            AcaoBackOffice::ListarOrgs,
+            AcaoBackOffice::ProvisionarOrg(alvo.clone()),
+            AcaoBackOffice::VerificarOrg(alvo.clone()),
+            AcaoBackOffice::SuspenderOrg(alvo),
+        ]
+    }
 
     fn sessao_staff() -> Sessao {
         Sessao::estabelecer(Principal::Staff { usuario: UserId("s1".into()) }, Escopo::vazio())
@@ -173,7 +200,7 @@ mod tests {
     // AC1 — `member` E `org_admin` (não staff) ⇒ negado em TODAS as ações de back-office.
     #[test]
     fn ac1_nao_staff_e_negado() {
-        for acao in &TODAS {
+        for acao in &todas() {
             assert_eq!(
                 autoriza(&sessao_membro("orgA"), acao),
                 Err(BackOfficeErro::Negado)
@@ -189,7 +216,7 @@ mod tests {
     #[test]
     fn ac2_staff_provisiona_verifica_suspende() {
         let s = sessao_staff();
-        for acao in &TODAS {
+        for acao in &todas() {
             assert_eq!(autoriza(&s, acao), Ok(()));
         }
     }
@@ -204,7 +231,7 @@ mod tests {
         let admin = sessao_admin("orgA");
         assert!(!admin.principal().eh_staff()); // é admin de org, e NUNCA staff
         assert_eq!(
-            autoriza(&admin, &AcaoBackOffice::SuspenderOrg),
+            autoriza(&admin, &AcaoBackOffice::SuspenderOrg(OrgId("orgA".into()))),
             Err(BackOfficeErro::Negado),
             "org_admin não pode suspender orgs — staff só fora de banda"
         );
@@ -214,10 +241,26 @@ mod tests {
     // org_admin — prova que o gate discrimina pelo TIPO do principal, não por "nega tudo".
     #[test]
     fn suspender_separa_staff_de_org_admin() {
-        assert_eq!(autoriza(&sessao_staff(), &AcaoBackOffice::SuspenderOrg), Ok(()));
+        assert_eq!(autoriza(&sessao_staff(), &AcaoBackOffice::SuspenderOrg(OrgId("orgA".into()))), Ok(()));
         assert_eq!(
-            autoriza(&sessao_admin("orgA"), &AcaoBackOffice::SuspenderOrg),
+            autoriza(&sessao_admin("orgA"), &AcaoBackOffice::SuspenderOrg(OrgId("orgA".into()))),
             Err(BackOfficeErro::Negado)
+        );
+    }
+
+    // O alvo nomeia a org das ops destrutivas (correção @Altair #1534): sem isto o log de
+    // `SuspenderOrg` não diz QUEM. `ListarOrgs` não tem alvo.
+    #[test]
+    fn alvo_nomeia_a_org_das_ops_sobre_org() {
+        assert_eq!(AcaoBackOffice::ListarOrgs.alvo(), None);
+        assert_eq!(
+            AcaoBackOffice::SuspenderOrg(OrgId("acme".into())).alvo(),
+            Some(&OrgId("acme".into())),
+            "a op mais destrutiva nomeia a org suspensa no registro"
+        );
+        assert_eq!(
+            AcaoBackOffice::ProvisionarOrg(OrgId("globex".into())).alvo(),
+            Some(&OrgId("globex".into()))
         );
     }
 
@@ -229,7 +272,7 @@ mod tests {
         let espiao = AuditorEspiao::default();
         assert!(autorizar_back_office(&sessao_staff(), &AcaoBackOffice::ListarOrgs, &espiao).is_ok());
         assert!(
-            autorizar_back_office(&sessao_admin("orgA"), &AcaoBackOffice::SuspenderOrg, &espiao).is_err()
+            autorizar_back_office(&sessao_admin("orgA"), &AcaoBackOffice::SuspenderOrg(OrgId("orgA".into())), &espiao).is_err()
         );
 
         let ev = espiao.eventos.borrow();
@@ -240,7 +283,7 @@ mod tests {
         );
         assert_eq!(
             ev[1],
-            (UserId("u1".into()), AcaoBackOffice::SuspenderOrg, ResultadoAutz::Negado),
+            (UserId("u1".into()), AcaoBackOffice::SuspenderOrg(OrgId("orgA".into())), ResultadoAutz::Negado),
             "o negado registra o ATOR que tentou (não-staff), não some"
         );
     }
