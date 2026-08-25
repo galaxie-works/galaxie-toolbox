@@ -35,6 +35,9 @@ pub enum AcaoAdminOrg {
     ConvidarMembro,
     RemoverMembro,
     MudarPapelMembro,
+    /// Leitura dos domínios da org (`GET /orgs/{org}/dominios`, contrato §4.3 v1.3). Autorizada
+    /// IGUAL à escrita de domínio (mesma org, papel org_admin) — "não se gere o que não se vê".
+    ListarDominios,
     ReivindicarDominio,
     VerificarDominio,
     EditarSettings,
@@ -83,6 +86,7 @@ pub fn autorizar_acao_admin(
         | AcaoAdminOrg::ConvidarMembro
         | AcaoAdminOrg::RemoverMembro
         | AcaoAdminOrg::MudarPapelMembro
+        | AcaoAdminOrg::ListarDominios
         | AcaoAdminOrg::ReivindicarDominio
         | AcaoAdminOrg::VerificarDominio
         | AcaoAdminOrg::EditarSettings
