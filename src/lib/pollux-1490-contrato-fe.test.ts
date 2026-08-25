@@ -241,6 +241,8 @@ function interfacesDoLib(): {
   rota: string | null;
   naoContrato: boolean;
   campos: string[];
+  /** Declaração crua por campo (`estado` -> `"pendente" | "verificado"`). */
+  declaracoes: Map<string, string>;
 }[] {
   const dir = join(WEB_SRC, "lib");
   const achadas = [];
@@ -256,18 +258,28 @@ function interfacesDoLib(): {
       const doc = abreDoc >= 0 ? antes.slice(abreDoc) : "";
       const rota = doc.match(/@rota\s+(\S+)/)?.[1] ?? null;
       const fim = fonte.indexOf("}", inicio);
-      const campos = fonte
+      const linhas = fonte
         .slice(fonte.indexOf("{", inicio) + 1, fim)
         .split("\n")
-        .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"))
+        .filter((l) => !l.trim().startsWith("//") && !l.trim().startsWith("*"));
+      const campos = linhas
         .map((l) => l.trim().split(":")[0]?.trim().replace("?", "") ?? "")
         .filter((n) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(n));
+      const declaracoes = new Map<string, string>();
+      for (const l of linhas) {
+        const corte = l.indexOf(":");
+        if (corte < 0) continue;
+        const nome = l.slice(0, corte).trim().replace("?", "");
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(nome)) continue;
+        declaracoes.set(nome, l.slice(corte + 1).trim().replace(/;$/, ""));
+      }
       achadas.push({
         arquivo: relative(RAIZ, caminho),
         nome: m[1] as string,
         rota,
         naoContrato: /@nao-contrato\s+\S/.test(doc),
         campos,
+        declaracoes,
       });
     }
   }
@@ -367,6 +379,139 @@ test("#1490 — a leitura de campos não confunde NOTA com corpo (regressão)", 
   const assinatura = camposDaRota("/me/assinatura");
   assert.ok(assinatura?.has("plano") && assinatura.has("status"),
     `união com \`\\|\` deslocou as colunas (li: ${assinatura ? [...assinatura].join(", ") : "null"})`);
+});
+
+/**
+ * As uniões de literais que o contrato declara, por campo, na célula de sucesso
+ * de uma rota — `estado: "pendente"\|"verificado"` vira `estado -> {pendente,
+ * verificado}`.
+ *
+ * Existe porque o VOCABULÁRIO some sem barulho. O `estado` da org vive como
+ * literal dos DOIS lados do fio, em duas linguagens: o @alcor afirma
+ * `"estado":"suspensa"` num teste Rust, e eu comparo `=== "suspensa"` no TS.
+ * Nada amarrava os dois. Se o contrato renomeasse o valor, o BE mudaria, o meu
+ * `estaSuspensa` nunca mais casaria, o aviso de org suspensa **simplesmente não
+ * apareceria** — e os 65 testes do web seguiriam verdes, porque todo duplo meu
+ * usa a mesma string que o código.
+ *
+ * É a mesma amarra que eu já tinha posto no #1148 pros nomes de mensagem do
+ * sinalizador (TS ↔ Rust). Aqui a fonte é o contrato, não o `protocol.rs`.
+ */
+function unioesDaRota(rota: string): Map<string, Set<string>> {
+  const doc = readFileSync(CONTRATO, "utf8");
+  const achadas = new Map<string, Set<string>>();
+  for (const linha of doc.split("\n")) {
+    if (!linha.startsWith("|")) continue;
+    const celulas = celulasDaLinha(linha);
+    if (celulas[2]?.replace(/`/g, "") !== rota) continue;
+    const sucesso = celulaDeSucesso(celulas);
+    if (!sucesso) break;
+    // `campo: "a" | "b"` — o `|` já vem desescapado por `celulasDaLinha`.
+    for (const m of sucesso.matchAll(
+      /([A-Za-z_][A-Za-z0-9_]*)\??\s*:\s*((?:"[^"]*"\s*\|\s*)+"[^"]*")/g,
+    )) {
+      const valores = [...(m[2] as string).matchAll(/"([^"]*)"/g)].map((v) => v[1] as string);
+      achadas.set(m[1] as string, new Set(valores));
+    }
+    break;
+  }
+  return achadas;
+}
+
+/** As uniões de literais que uma DECLARAÇÃO TypeScript traz (`"a" | "b"`). */
+function unioesDaDeclaracao(decl: string): Set<string> | null {
+  if (!/^(?:"[^"]*"\s*\|\s*)+"[^"]*"$/.test(decl.trim())) return null;
+  return new Set([...decl.matchAll(/"([^"]*)"/g)].map((m) => m[1] as string));
+}
+
+test("#1490 — o VOCABULÁRIO do FE é o do contrato, não uma cópia que envelhece", () => {
+  // Anti-cegueira primeiro: se o parser parar de achar união nenhuma, este teste
+  // passaria vazio — e vazio diz "conferido", que é pior que errado.
+  const doOrgs = unioesDaRota("/orgs/{org}/dominios");
+  assert.ok(
+    doOrgs.get("estado")?.size === 2,
+    `não li a união de \`estado\` em /orgs/{org}/dominios — parser cego passa igual`,
+  );
+
+  let conferidas = 0;
+  for (const tipo of interfacesDoLib()) {
+    if (!tipo.rota) continue;
+    const doContrato = unioesDaRota(tipo.rota);
+    for (const [campo, decl] of tipo.declaracoes) {
+      const noFE = unioesDaDeclaracao(decl);
+      const noDoc = doContrato.get(campo);
+      if (!noFE) {
+        // FE declarou `string` — legítimo quando o contrato MANDA aguentar
+        // valor desconhecido (é o caso do `estado` de org, condição (2) do
+        // @Altair). Não é este teste que cobra isso; quem cobra é o teste
+        // tipado do `estaSuspensa`, no web.
+        continue;
+      }
+      assert.ok(
+        noDoc,
+        `\`${tipo.nome}.${campo}\` (${tipo.arquivo}) fecha uma união de literais ` +
+          `que o contrato NÃO declara para \`${tipo.rota}\`. O vocabulário está ` +
+          `sendo inventado no cliente: ${[...noFE].join(" | ")}`,
+      );
+      assert.deepEqual(
+        [...noFE].sort(),
+        [...noDoc].sort(),
+        `\`${tipo.nome}.${campo}\` (${tipo.arquivo}) e o contrato discordam sobre ` +
+          `os valores de \`${tipo.rota}\`. Renomear um valor no doc e esquecer o ` +
+          `cliente não quebra teste nenhum — o código só para de casar, em silêncio.`,
+      );
+      conferidas++;
+    }
+  }
+
+  assert.ok(
+    conferidas >= 1,
+    `nenhuma união conferida — ou os tipos pararam de declarar literais, ou a ` +
+      `varredura quebrou. Nos dois casos esta guarda virou decoração.`,
+  );
+
+  // ── O caso que motivou tudo isto, e que a varredura acima NÃO alcança ─────
+  // `OrgDoPrincipal.estado` é `string` de propósito (o contrato MANDA aguentar
+  // valor desconhecido), então não há união no tipo pra conferir. Mas o literal
+  // existe: mora dentro do `estaSuspensa`. É EXATAMENTE o par que ninguém
+  // amarrava — o @alcor afirma `"estado":"suspensa"` num teste Rust, eu comparo
+  // `=== "suspensa"` no TS, e um rename no contrato calaria o aviso sem
+  // derrubar teste nenhum.
+  //
+  // Esta asserção é deliberadamente ESTREITA: uma função, um arquivo. Ampliá-la
+  // pra "todo literal comparado com `.estado`" daria falso positivo em massa,
+  // porque `estado` também é o discriminante do MEU `Resultado` (`"pronto"`,
+  // `"naoAutenticado"`, …), que não é vocabulário de contrato. Guarda que grita
+  // no lugar errado é guarda que se aprende a ignorar.
+  const doMeOrgs = unioesDaRota("/me/orgs").get("estado");
+  assert.ok(
+    doMeOrgs?.size,
+    "não li a união de `estado` em /me/orgs — sem ela a asserção abaixo é vácuo",
+  );
+  const fonteOrg = readFileSync(join(WEB_SRC, "lib", "org.ts"), "utf8");
+  const corpo = fonteOrg.match(
+    /export function estaSuspensa\([^)]*\)[^{]*\{([\s\S]*?)\n\}/,
+  )?.[1];
+  assert.ok(
+    corpo,
+    "não achei o corpo de `estaSuspensa` em web/src/lib/org.ts — se ela foi " +
+      "renomeada ou removida, esta guarda parou de guardar e tem que dizer isso",
+  );
+  const literais = [...corpo.matchAll(/"([^"]*)"/g)].map((m) => m[1] as string);
+  assert.ok(
+    literais.length >= 1,
+    "`estaSuspensa` não compara literal nenhum — parser cego passa igual",
+  );
+  const forasteiros = literais.filter((l) => !doMeOrgs.has(l));
+  assert.deepEqual(
+    forasteiros,
+    [],
+    `\`estaSuspensa\` compara \`estado\` com valor que o contrato NÃO declara ` +
+      `para /me/orgs (${[...doMeOrgs].join(" | ")}). Um rename no doc deixaria a ` +
+      `comparação nunca casar, o aviso de org suspensa nunca aparecer, e todo ` +
+      `teste do web seguir verde — porque os duplos usam a mesma string do ` +
+      `código:\n  ${forasteiros.join("\n  ")}`,
+  );
 });
 
 test("#1490 — ninguém contorna a porta de rede (fetch cru fora do api.ts)", () => {
