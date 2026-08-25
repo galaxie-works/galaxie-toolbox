@@ -135,10 +135,21 @@ Sob `/orgs/{org}`; `{org}` é conferido contra a sessão via `autorizar_acao_adm
 | `POST` | `/orgs/{org}/membros` | sim | `ConvidarMembro` | `201` |
 | `DELETE` | `/orgs/{org}/membros/{uid}` | sim | `RemoverMembro` | `204` |
 | `PATCH` | `/orgs/{org}/membros/{uid}` | sim | `MudarPapelMembro` | `200` |
+| `GET` | `/orgs/{org}/dominios` | não | `ListarDominios` | `200` `[{ dominio, estado: "pendente"\|"verificado" }]` |
 | `POST` | `/orgs/{org}/dominios` | sim | `ReivindicarDominio` | `201` pendente |
 | `POST` | `/orgs/{org}/dominios/{dom}/verificacao` | sim | `VerificarDominio` | `200` \| `422` (DNS não confere) |
+| `GET` | `/orgs/{org}/settings` | não | `LerSettings` | `200` (mesmo shape do `PATCH`) |
 | `PATCH` | `/orgs/{org}/settings` | sim | `EditarSettings` | `200` |
+| `GET` | `/orgs/{org}/assinatura` | não | `LerAssinatura` | `200` (espelha o corpo do `PUT`) |
 | `PUT` | `/orgs/{org}/assinatura` | sim | `GerirAssinatura` | `200` |
+
+> **v1.3 — leituras que faltavam (lacuna do @Pollux no #1490):** só `membros` tinha `GET`; "não se
+> gere o que não se vê". Escolha de desenho (o @Pollux ofereceu `GET` agregado `/orgs/{org}` **ou** um
+> por recurso, "à escolha do BE): **um `GET` por recurso**, espelhando cada escrita 1:1 — cada leitura
+> é autorizada **igual à sua escrita** (mesmo `{org}` conferido contra a sessão; org alheia ⇒ `404`,
+> própria org sem papel ⇒ `403`), sem acoplar recursos e sem o cliente supor estado antes de um `PATCH`.
+> `assinatura`: a shape concreta nasce com o **#1470** (Stripe, bloqueado no PO) — a leitura só espelha
+> o corpo do `PUT` quando ele existir. Novas `AcaoAdminOrg`: `ListarDominios`/`LerSettings`/`LerAssinatura`.
 
 > **⚠️ Reivindicar domínio NÃO devolve `409` cross-tenant (fix do @Altair — era um ORÁCULO):** se a
 > org A pede `acme.com` e leva `409` porque a org B reivindicou, A **descobre que a Acme é cliente** —
@@ -164,7 +175,7 @@ suspender são rotas SEPARADAS (fix do @Altair):** colapsá-las tornaria a audit
 payload, e **suspender é a operação mais destrutiva do produto** — merece a sua própria linha e log.
 | Método | Rota | Muta? | Sucesso | Notas |
 |---|---|---|---|---|
-| `GET` | `/admin/orgs` | não | `200` | só staff; não-staff ⇒ `404` (não revela o back-office) |
+| `GET` | `/admin/orgs` | não | `200` `[{ org, dominios: [string], estado: "provisionada"\|"suspensa" }]` | só staff; não-staff ⇒ `404` (não revela o back-office) |
 | `POST` | `/admin/orgs/{org}/provisionamento` | sim | `202` | provisiona; auditado |
 | `POST` | `/admin/orgs/{org}/suspensao` | sim | `202` | **suspende (destrutivo); auditado à parte** |
 
@@ -175,6 +186,12 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 > é incoerência a harmonizar**, é o invariante 1 aplicado a cada contexto. A auditoria grava a
 > `AcaoBackOffice` específica (provisionar/suspender/…), não uma `Operacao` genérica.
 
+> **`estado` da org (v1.3, ratifico @Altair pendente):** a lista de back-office precisa mostrar
+> `provisionada`/`suspensa` pra ser acionável (senão o staff não sabe se provisiona ou suspende). É um
+> conceito de **ciclo de vida** que `provisionar`/`suspender` já implicam, mas que `Org` (hoje `{ id,
+> dominios, tenant_m365 }`) ainda não carrega — modelado na fatia de persistência. **NÃO** expõe
+> `tenant_m365` (claim sensível; o staff não precisa dele pra provisionar/suspender — mínimo necessário).
+>
 > **Escopo dos testes de `contrato.rs` (nota do @Altair — não sobrevender):** os testes amarram
 > estruturalmente só os invariantes **3** (GET nunca muta) e **4** (staff auditado), que são
 > propriedades da TABELA. Os invariantes **1, 2, 5, 6** são comportamentais — vivem na borda (#1505)
@@ -186,6 +203,11 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 
 `v1` é este documento + `platform-web/src/contrato.rs`. Mudança incompatível ⇒ `/api/v2` + nova
 tabela; o FE fixa a versão. Adição compatível (rota nova) ⇒ append, sem bump.
+
+**v1.3 (25/08):** leituras que faltavam em §4.3 (`GET` de `dominios`/`settings`/`assinatura` — lacuna
+do @Pollux #1490, "não se gere o que não se vê"; um `GET` por recurso, autorizado igual à escrita) +
+shape do corpo de `GET /admin/orgs` em §4.5 (`[{ org, dominios, estado }]`; `estado` = ratifico @Altair).
+Tudo adição compatível (append), sem bump de `/v1`.
 
 **v1.2 (24/08):** §2 reescrita pro **modelo federado** (decisão @Altair — nem M365-only nem
 email/senha); `POST /session` removido (o login nasce do callback verificado); `GET /me/orgs`
