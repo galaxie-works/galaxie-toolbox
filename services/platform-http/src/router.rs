@@ -42,8 +42,13 @@ async fn fallback_nao_encontrado() -> Response {
 /// própria) e HOJE não há store de org — então zero orgs é a resposta correta, não um stub que
 /// mente. Quando o repositório existir, o `Ok` troca `[]` pela lista `[{org,dominios,estado}]`
 /// (contrato v1.3), e a autorização/rota já estarão provadas aqui.
-async fn listar_orgs(SessaoOculta(sessao): SessaoOculta) -> Response {
-    match autorizar_back_office(&sessao, &AcaoBackOffice::ListarOrgs) {
+async fn listar_orgs(
+    State(estado): State<EstadoBorda>,
+    SessaoOculta(sessao): SessaoOculta,
+) -> Response {
+    // Autz + AUDITORIA num passo (cond. 4): `autorizar_back_office` emite o evento (permitido E
+    // negado) pelo auditor da borda — o handler não decide auditar, só passa o sink.
+    match autorizar_back_office(&sessao, &AcaoBackOffice::ListarOrgs, &*estado.auditor) {
         Ok(()) => Response::builder()
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json")
@@ -106,6 +111,31 @@ mod tests {
     use galaxie_platform_web::emitir_sessao;
 
     use crate::sessao::{Borda, SessaoAtual};
+    use galaxie_platform_back_office::{Auditor, EventoAutz, ResultadoAutz};
+    use std::sync::{Arc, Mutex as MutexStd};
+
+    /// Auditor no-op pros testes que não checam a emissão.
+    struct AuditorNulo;
+    impl Auditor for AuditorNulo {
+        fn registrar(&self, _e: &EventoAutz) {}
+    }
+    fn nulo() -> Arc<dyn Auditor + Send + Sync> {
+        Arc::new(AuditorNulo)
+    }
+
+    /// Auditor que CAPTURA (Mutex — é `Send + Sync` pro estado da borda) pros testes da cond. 4.
+    #[derive(Default)]
+    struct AuditorEspiao {
+        eventos: MutexStd<Vec<(UserId, AcaoBackOffice, ResultadoAutz)>>,
+    }
+    impl Auditor for AuditorEspiao {
+        fn registrar(&self, e: &EventoAutz) {
+            self.eventos
+                .lock()
+                .unwrap()
+                .push((e.ator.clone(), e.acao.clone(), e.resultado));
+        }
+    }
 
     /// Extrai o `SessaoId` de um cookie de request `__Host-gx_sess=<id>` (só nos testes).
     fn id_do_cookie(cookie: &str) -> SessaoId {
@@ -134,7 +164,7 @@ mod tests {
         );
         let (id, _set_cookie) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie_req = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        (Borda::nova(armazem, relogio_fixo), cookie_req)
+        (Borda::nova(armazem, relogio_fixo, nulo()), cookie_req)
     }
 
     async fn resposta_crua(estado: EstadoBorda, cookie: &str, caminho: &str) -> (StatusCode, Vec<(String, String)>, Vec<u8>) {
@@ -230,7 +260,7 @@ mod tests {
         );
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_fixo);
+        let estado = Borda::nova(armazem, relogio_fixo, nulo());
 
         let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/admin/orgs").await;
         assert_eq!(status, StatusCode::OK);
@@ -263,7 +293,7 @@ mod tests {
         RELOGIO_DESLIZA.store(AGORA, Ordering::SeqCst);
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_desliza);
+        let estado = Borda::nova(armazem, relogio_desliza, nulo());
 
         async fn bater(estado: EstadoBorda, cookie: &str) -> StatusCode {
             async fn visivel(SessaoAtual(_): SessaoAtual) -> Response {
@@ -318,7 +348,7 @@ mod tests {
         }
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_depois);
+        let estado = Borda::nova(armazem, relogio_depois, nulo());
 
         let router = Router::new()
             .route("/api/v1/visivel", get(visivel))
@@ -407,7 +437,7 @@ mod tests {
         let (id2, _) = emitir_sessao(&mut armazem, nova(), AGORA);
         // header com DOIS cookies de sessão (shadowing/injeção na própria origem).
         let cookie = format!("{NOME_COOKIE_SESSAO}={}; {NOME_COOKIE_SESSAO}={}", id1.0, id2.0);
-        let estado = Borda::nova(armazem, relogio_fixo);
+        let estado = Borda::nova(armazem, relogio_fixo, nulo());
 
         assert!(estado.armazem.lock().unwrap().validar(&id1, AGORA).is_some());
         assert!(estado.armazem.lock().unwrap().validar(&id2, AGORA).is_some());
@@ -422,6 +452,53 @@ mod tests {
         assert!(
             estado.armazem.lock().unwrap().validar(&id2, AGORA).is_none(),
             "2º candidato invalidado — logout duplicado não deixa sessão viva (não é fail-open)"
+        );
+    }
+
+    /// **Cond. 4 pelo CONSUMIDOR (a borda):** `GET /admin/orgs` faz `autorizar_back_office` EMITIR
+    /// pelo auditor da borda — staff→permitido, não-staff→negado, os DOIS capturados. Prova que a
+    /// borda passa o sink (a emissão em si é testada no back-office). Trocar o auditor por `nulo()`
+    /// some com os eventos aqui; tirar o `State` do handler nem compila.
+    #[tokio::test]
+    async fn a_borda_audita_admin_orgs_permitido_e_negado() {
+        let espiao = Arc::new(AuditorEspiao::default());
+        let mut ar = ArmazemMemoria::novo();
+        let (id_staff, _) = emitir_sessao(
+            &mut ar,
+            galaxie_platform_identity::Sessao::estabelecer(
+                Principal::Staff { usuario: UserId("s1".into()) },
+                Escopo::vazio(),
+            ),
+            AGORA,
+        );
+        let (id_admin, _) = emitir_sessao(
+            &mut ar,
+            galaxie_platform_identity::Sessao::estabelecer(
+                Principal::AdminOrg { usuario: UserId("u1".into()), org: OrgId("o".into()) },
+                Escopo::de_orgs([OrgId("o".into())]),
+            ),
+            AGORA,
+        );
+        let estado = Borda::nova(ar, relogio_fixo, espiao.clone());
+        let cookie_staff = format!("{NOME_COOKIE_SESSAO}={}", id_staff.0);
+        let cookie_admin = format!("{NOME_COOKIE_SESSAO}={}", id_admin.0);
+
+        assert_eq!(
+            resposta_crua(estado.clone(), &cookie_staff, "/api/v1/admin/orgs").await.0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            resposta_crua(estado.clone(), &cookie_admin, "/api/v1/admin/orgs").await.0,
+            StatusCode::NOT_FOUND
+        );
+
+        let ev = espiao.eventos.lock().unwrap();
+        assert_eq!(ev.len(), 2, "a borda audita as DUAS decisões — permitido e negado");
+        assert_eq!(ev[0].2, ResultadoAutz::Permitido, "staff → permitido auditado");
+        assert_eq!(
+            ev[1],
+            (UserId("u1".into()), AcaoBackOffice::ListarOrgs, ResultadoAutz::Negado),
+            "não-staff → negado auditado, com o ator que tentou (não some)"
         );
     }
 }
