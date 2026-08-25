@@ -6,7 +6,7 @@
 name = "galaxie-platform-identity"
 version = "0.1.0"
 edition = "2021"
-license = "UNLICENSED"
+license = "Apache-2.0"
 publish = false
 
 # Fatia 1 é pura (std). Nenhuma dependência de propósito: a fundação de autorização
