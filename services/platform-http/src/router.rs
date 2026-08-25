@@ -10,18 +10,21 @@
 //! rotas OAuth. O corpo de sucesso do back-office é `[]` até a fatia de persistência (ver o handler).
 
 use axum::body::Body;
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::routing::{delete, get};
 use axum::Router;
 
 use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
+use galaxie_platform_identity::armazem::{ErroArmazem, Membro};
+use galaxie_platform_identity::{OrgId, Papel};
+use galaxie_platform_org_admin::{autorizar_acao_admin, AcaoAdminOrg, AdminErro};
 use galaxie_platform_web::contrato::CodigoErro;
 use galaxie_platform_web::encerrar_sessoes_do_cookie;
 
 use crate::erro::resposta_de_erro;
-use crate::sessao::{EstadoBorda, SessaoOculta};
+use crate::sessao::{EstadoBorda, SessaoAtual, SessaoOculta};
 
 /// Fallback do `Router` — a peça que o @Altair **travou** para a fatia 2. Sem ele, uma rota
 /// inexistente cai no fallback PADRÃO do axum (corpo vazio, sem content-type) ≠ o meu 404 de
@@ -90,10 +93,92 @@ async fn encerrar(State(estado): State<EstadoBorda>, headers: HeaderMap) -> Resp
         .expect("resposta 204 é sempre construível")
 }
 
-/// Monta o `Router` da borda com o estado (armazém de sessão + relógio) já resolvido.
+/// O `papel` como o contrato §4.3 o projeta no fio. Explícito (não `Debug`/derive): o valor de
+/// contrato não pode mudar sozinho se alguém renomear a variante Rust.
+fn papel_str(papel: &Papel) -> &'static str {
+    match papel {
+        Papel::Member => "member",
+        Papel::OrgAdmin => "org_admin",
+    }
+}
+
+/// O membro como sai no fio (contrato §4.3: `{ uid, nome, email, papel }`). DTO na borda (com
+/// `serde`) — o tipo de domínio [`Membro`] fica serde-free. `serde_json` cuida do escaping de
+/// `nome`/`email` (dado de usuário) — por isso não é hand-roll como o corpo de erro.
+#[derive(serde::Serialize)]
+struct MembroDto<'a> {
+    uid: &'a str,
+    nome: &'a str,
+    email: &'a str,
+    papel: &'a str,
+}
+
+impl<'a> From<&'a Membro> for MembroDto<'a> {
+    fn from(m: &'a Membro) -> Self {
+        MembroDto { uid: &m.uid.0, nome: &m.nome, email: &m.email, papel: papel_str(&m.papel) }
+    }
+}
+
+/// `500` de armazém indisponível numa superfície VISÍVEL (`/orgs/{org}`). Falha de INFRA, não erro
+/// de contrato — segue o formato `{"erro":...}` por consistência, mas fica fora do `CodigoErro`
+/// (que é 4xx de cliente). ⚠️ Em superfície OCULTA (`/admin/*`) a falha de store sai pelo **mesmo
+/// 404**, não por aqui (regra do @Altair) — isso entra quando o `/admin/orgs` ganhar store real.
+fn resposta_indisponivel() -> Response {
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"erro":"indisponivel"}"#))
+        .expect("resposta 500 é sempre construível")
+}
+
+/// `GET /api/v1/orgs/{org}/membros` (contrato §4.3) — lista os membros da org.
+///
+/// Ordem que É a segurança (fundação #1469): **404 antes de 403**. Carrega o `Org` (o
+/// `autorizar_acao_admin` precisa dele pra resolver visibilidade); se o store não vê a org
+/// (`Ok(None)`) ⇒ **404** (não existe / é alheia — invariante 1). Se vê, a autz decide: org alheia
+/// ⇒ **404** (`NaoEncontrada`), própria org sem papel `org_admin` ⇒ **403** (`Negado`). Só então os
+/// dados. O `papel` que volta decide o que a UI MOSTRA, jamais o que o servidor permite.
+async fn listar_membros(
+    State(estado): State<EstadoBorda>,
+    SessaoAtual(sessao): SessaoAtual,
+    Path(org): Path<String>,
+) -> Response {
+    let org_id = OrgId(org);
+
+    // (1) Carrega o Org pra autz. Infra caiu ⇒ 500 (superfície visível). NÃO existe ⇒ 404.
+    let org = match estado.orgs.buscar(&org_id) {
+        Err(ErroArmazem::Indisponivel) => return resposta_indisponivel(),
+        Ok(None) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        Ok(Some(o)) => o,
+    };
+
+    // (2) Autz: 404 (alheia) antes de 403 (própria sem papel) — o `autorizar_acao_admin` faz a ordem.
+    match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarMembros, &org) {
+        Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
+        Ok(()) => {}
+    }
+
+    // (3) Dados. Infra caiu ⇒ 500; senão 200 com a projeção do contrato.
+    match estado.membros.listar(&org_id) {
+        Err(ErroArmazem::Indisponivel) => resposta_indisponivel(),
+        Ok(membros) => {
+            let dto: Vec<MembroDto> = membros.iter().map(MembroDto::from).collect();
+            let corpo = serde_json::to_string(&dto).expect("Vec<MembroDto> serializa sempre");
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(corpo))
+                .expect("resposta 200 é sempre construível")
+        }
+    }
+}
+
+/// Monta o `Router` da borda com o estado (armazéns + relógio + auditor) já resolvido.
 pub fn rotas(estado: EstadoBorda) -> Router {
     Router::new()
         .route("/api/v1/admin/orgs", get(listar_orgs))
+        .route("/api/v1/orgs/{org}/membros", get(listar_membros))
         .route("/api/v1/session", delete(encerrar))
         .fallback(fallback_nao_encontrado)
         .with_state(estado)
@@ -107,12 +192,24 @@ mod tests {
 
     use axum::http::Request;
     use galaxie_platform_identity::sessao::{ArmazemMemoria, ArmazemSessao, SessaoId, NOME_COOKIE_SESSAO};
-    use galaxie_platform_identity::{Escopo, OrgId, Principal, UserId};
+    use galaxie_platform_identity::{Escopo, Org, OrgId, Principal, UserId};
     use galaxie_platform_web::emitir_sessao;
 
     use crate::sessao::{Borda, SessaoAtual};
     use galaxie_platform_back_office::{Auditor, EventoAutz, ResultadoAutz};
+    use galaxie_platform_identity::armazem::{
+        ArmazemMembro, ArmazemMembroMemoria, ArmazemOrg, ArmazemOrgMemoria, ErroArmazem, Membro,
+    };
+    use galaxie_platform_identity::Papel;
     use std::sync::{Arc, Mutex as MutexStd};
+
+    /// Armazéns de domínio VAZIOS pros testes que não exercem dados (a maioria).
+    fn sem_orgs() -> Arc<dyn ArmazemOrg + Send + Sync> {
+        Arc::new(ArmazemOrgMemoria::novo())
+    }
+    fn sem_membros() -> Arc<dyn ArmazemMembro + Send + Sync> {
+        Arc::new(ArmazemMembroMemoria::novo())
+    }
 
     /// Auditor no-op pros testes que não checam a emissão.
     struct AuditorNulo;
@@ -164,7 +261,7 @@ mod tests {
         );
         let (id, _set_cookie) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie_req = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        (Borda::nova(armazem, relogio_fixo, nulo()), cookie_req)
+        (Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros()), cookie_req)
     }
 
     async fn resposta_crua(estado: EstadoBorda, cookie: &str, caminho: &str) -> (StatusCode, Vec<(String, String)>, Vec<u8>) {
@@ -260,7 +357,7 @@ mod tests {
         );
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros());
 
         let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/admin/orgs").await;
         assert_eq!(status, StatusCode::OK);
@@ -293,7 +390,7 @@ mod tests {
         RELOGIO_DESLIZA.store(AGORA, Ordering::SeqCst);
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_desliza, nulo());
+        let estado = Borda::nova(armazem, relogio_desliza, nulo(), sem_orgs(), sem_membros());
 
         async fn bater(estado: EstadoBorda, cookie: &str) -> StatusCode {
             async fn visivel(SessaoAtual(_): SessaoAtual) -> Response {
@@ -348,7 +445,7 @@ mod tests {
         }
         let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
         let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
-        let estado = Borda::nova(armazem, relogio_depois, nulo());
+        let estado = Borda::nova(armazem, relogio_depois, nulo(), sem_orgs(), sem_membros());
 
         let router = Router::new()
             .route("/api/v1/visivel", get(visivel))
@@ -437,7 +534,7 @@ mod tests {
         let (id2, _) = emitir_sessao(&mut armazem, nova(), AGORA);
         // header com DOIS cookies de sessão (shadowing/injeção na própria origem).
         let cookie = format!("{NOME_COOKIE_SESSAO}={}; {NOME_COOKIE_SESSAO}={}", id1.0, id2.0);
-        let estado = Borda::nova(armazem, relogio_fixo, nulo());
+        let estado = Borda::nova(armazem, relogio_fixo, nulo(), sem_orgs(), sem_membros());
 
         assert!(estado.armazem.lock().unwrap().validar(&id1, AGORA).is_some());
         assert!(estado.armazem.lock().unwrap().validar(&id2, AGORA).is_some());
@@ -479,7 +576,7 @@ mod tests {
             ),
             AGORA,
         );
-        let estado = Borda::nova(ar, relogio_fixo, espiao.clone());
+        let estado = Borda::nova(ar, relogio_fixo, espiao.clone(), sem_orgs(), sem_membros());
         let cookie_staff = format!("{NOME_COOKIE_SESSAO}={}", id_staff.0);
         let cookie_admin = format!("{NOME_COOKIE_SESSAO}={}", id_admin.0);
 
@@ -499,6 +596,158 @@ mod tests {
             ev[1],
             (UserId("u1".into()), AcaoBackOffice::ListarOrgs, ResultadoAutz::Negado),
             "não-staff → negado auditado, com o ator que tentou (não some)"
+        );
+    }
+
+    // ---- GET /orgs/{org}/membros (1º handler de DADOS, contrato §4.3) ----
+
+    fn org_teste(id: &str) -> Org {
+        Org { id: OrgId(id.into()), dominios: Default::default(), tenant_m365: None }
+    }
+    fn membro_teste(uid: &str, papel: Papel) -> Membro {
+        Membro {
+            uid: UserId(uid.into()),
+            nome: format!("Nome {uid}"),
+            email: format!("{uid}@acme.com"),
+            papel,
+        }
+    }
+    fn admin_de(org: &str) -> galaxie_platform_identity::Sessao {
+        galaxie_platform_identity::Sessao::estabelecer(
+            Principal::AdminOrg { usuario: UserId("adm".into()), org: OrgId(org.into()) },
+            Escopo::de_orgs([OrgId(org.into())]),
+        )
+    }
+    fn membro_de(org: &str) -> galaxie_platform_identity::Sessao {
+        galaxie_platform_identity::Sessao::estabelecer(
+            Principal::UsuarioFinal { usuario: UserId("mem".into()), org: OrgId(org.into()) },
+            Escopo::de_orgs([OrgId(org.into())]),
+        )
+    }
+
+    /// Borda com sessão + stores semeados. `orgs`/`membros` já prontos pro handler consumir.
+    fn borda_membros(
+        sessao: galaxie_platform_identity::Sessao,
+        orgs: Vec<Org>,
+        membros: Vec<(OrgId, Membro)>,
+    ) -> (EstadoBorda, String) {
+        let mut armazem = ArmazemMemoria::novo();
+        let (id, _) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let mut org_store = ArmazemOrgMemoria::novo();
+        for o in orgs {
+            org_store.inserir(o);
+        }
+        let mut membro_store = ArmazemMembroMemoria::novo();
+        for (org, m) in membros {
+            membro_store.inserir(org, m);
+        }
+        let estado = Borda::nova(
+            armazem,
+            relogio_fixo,
+            nulo(),
+            Arc::new(org_store),
+            Arc::new(membro_store),
+        );
+        (estado, cookie)
+    }
+
+    /// Happy path: org_admin da própria org → 200 com a projeção §4.3 `[{uid,nome,email,papel}]`,
+    /// papel serializado como o contrato (`org_admin`/`member`), escaping de dado de usuário via serde.
+    #[tokio::test]
+    async fn membros_200_com_a_projecao_do_contrato() {
+        let (estado, cookie) = borda_membros(
+            admin_de("acme"),
+            vec![org_teste("acme")],
+            vec![
+                (OrgId("acme".into()), membro_teste("u1", Papel::OrgAdmin)),
+                (OrgId("acme".into()), membro_teste("u2", Papel::Member)),
+            ],
+        );
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/membros").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["uid"], "u1");
+        assert_eq!(arr[0]["papel"], "org_admin", "papel projetado como o contrato");
+        assert_eq!(arr[0]["email"], "u1@acme.com");
+        assert_eq!(arr[1]["papel"], "member");
+    }
+
+    /// Org que NÃO existe no store ⇒ 404 (`Ok(None)`), antes de qualquer autz — indistinguível de
+    /// org alheia (invariante 1).
+    #[tokio::test]
+    async fn membros_org_inexistente_e_404() {
+        let (estado, cookie) = borda_membros(admin_de("acme"), vec![], vec![]);
+        let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/membros").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// Org ALHEIA (existe, mas não é a do solicitante) ⇒ **404**, não 403 — pedir org de outro não
+    /// revela que ela existe (AC2 da fundação). É a ordem 404-antes-de-403.
+    #[tokio::test]
+    async fn membros_org_alheia_e_404_nao_403() {
+        // admin de "acme" pede "globex" (que existe) → 404.
+        let (estado, cookie) = borda_membros(
+            admin_de("acme"),
+            vec![org_teste("acme"), org_teste("globex")],
+            vec![(OrgId("globex".into()), membro_teste("x", Papel::Member))],
+        );
+        let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/globex/membros").await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "org alheia é 404, não 403");
+    }
+
+    /// Própria org, mas o solicitante é `member` (não `org_admin`) ⇒ **403**: ele VÊ a org (por isso
+    /// não é 404), só não pode gerir. A distinção 403≠404 vale porque a org é visível a ele.
+    #[tokio::test]
+    async fn membros_propria_org_sem_papel_e_403() {
+        let (estado, cookie) = borda_membros(
+            membro_de("acme"),
+            vec![org_teste("acme")],
+            vec![(OrgId("acme".into()), membro_teste("u1", Papel::Member))],
+        );
+        let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/membros").await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "própria org sem papel org_admin é 403");
+    }
+
+    /// Sem sessão ⇒ 401 (superfície VISÍVEL: `/orgs/{org}` não é segredo, dizer "autentique-se" não
+    /// revela nada). O extractor barra antes de tocar store algum.
+    #[tokio::test]
+    async fn membros_sem_sessao_e_401() {
+        let (estado, _cookie) = borda_membros(admin_de("acme"), vec![org_teste("acme")], vec![]);
+        let (status, ..) = resposta_crua(estado, "", "/api/v1/orgs/acme/membros").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// Armazém INDISPONÍVEL (infra) numa superfície visível ⇒ **500**, não 200 nem panic — a borda
+    /// TRATA o `Err` do `Result` (a razão de o `Result` existir desde já). Store-duplo que falha.
+    #[tokio::test]
+    async fn membros_store_indisponivel_e_500() {
+        struct OrgsFalho;
+        impl ArmazemOrg for OrgsFalho {
+            fn listar(&self) -> Result<Vec<Org>, ErroArmazem> {
+                Err(ErroArmazem::Indisponivel)
+            }
+            fn buscar(&self, _id: &OrgId) -> Result<Option<Org>, ErroArmazem> {
+                Err(ErroArmazem::Indisponivel)
+            }
+        }
+        let mut armazem = ArmazemMemoria::novo();
+        let (id, _) = emitir_sessao(&mut armazem, admin_de("acme"), AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+        let estado = Borda::nova(
+            armazem,
+            relogio_fixo,
+            nulo(),
+            Arc::new(OrgsFalho),
+            sem_membros(),
+        );
+        let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/membros").await;
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "store fora do ar em superfície visível é 500 (tratado, não panic)"
         );
     }
 }

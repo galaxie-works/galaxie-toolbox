@@ -12,6 +12,7 @@ use axum::http::request::Parts;
 use axum::response::Response;
 
 use galaxie_platform_back_office::Auditor;
+use galaxie_platform_identity::armazem::{ArmazemMembro, ArmazemOrg};
 use galaxie_platform_identity::sessao::ArmazemMemoria;
 use galaxie_platform_identity::Sessao;
 use galaxie_platform_web::contrato::CodigoErro;
@@ -35,20 +36,28 @@ pub struct Borda {
     pub armazem: Mutex<ArmazemMemoria>,
     pub agora: fn() -> u64,
     pub auditor: Arc<dyn Auditor + Send + Sync>,
+    /// Armazéns de domínio (persistência #1505 (a)) — a borda os CONSOME, não os define. `Arc<dyn>`
+    /// pra o axum compartilhar e a impl (memória agora, Postgres depois) trocar sem tocar a borda.
+    pub orgs: Arc<dyn ArmazemOrg + Send + Sync>,
+    pub membros: Arc<dyn ArmazemMembro + Send + Sync>,
 }
 
 impl Borda {
-    /// Constrói o estado a partir de um armazém, um relógio e um auditor. Envolve em `Arc` para o
-    /// axum clonar barato entre handlers.
+    /// Constrói o estado: armazém de sessão + relógio + auditor + os armazéns de domínio. Envolve
+    /// em `Arc` para o axum clonar barato entre handlers.
     pub fn nova(
         armazem: ArmazemMemoria,
         agora: fn() -> u64,
         auditor: Arc<dyn Auditor + Send + Sync>,
+        orgs: Arc<dyn ArmazemOrg + Send + Sync>,
+        membros: Arc<dyn ArmazemMembro + Send + Sync>,
     ) -> Arc<Self> {
         Arc::new(Borda {
             armazem: Mutex::new(armazem),
             agora,
             auditor,
+            orgs,
+            membros,
         })
     }
 }
