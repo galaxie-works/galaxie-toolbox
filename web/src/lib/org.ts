@@ -154,6 +154,45 @@ export type Resultado<T> =
 export interface OrgDoPrincipal {
   org: string;
   papel: string;
+  /**
+   * `"provisionada" | "suspensa"` no contrato, **`string` aqui de propósito**.
+   *
+   * É o oposto do que fiz no `Dominio.estado`, e a diferença não é descuido: lá
+   * o doc declara dois valores e cala sobre o terceiro, então fechar a união faz
+   * o `tsc` cobrar quem inventar. Aqui o contrato **manda** o cliente aguentar
+   * valor que não conhece — condição (2) do @Altair na v1.4: *"desconhecido no
+   * FE = neutro, nunca permissivo (forward-compat da string do lado do cliente;
+   * no BE o enum é fechado)"*.
+   *
+   * Fechar a união aqui seria desobedecer: um servidor novo com um estado novo
+   * faria este build tratar o campo como impossível, e o jeito de "resolver"
+   * isso na correria é um `as` — que mente pro compilador em vez de tratar o
+   * caso. `string` + `estaSuspensa` deixa o desconhecido cair sozinho no neutro.
+   */
+  estado: string;
+}
+
+/**
+ * A org está suspensa?
+ *
+ * ⚠️ **Isto decide o que MOSTRAR, jamais o que PERMITIR** — a mesma amarra que
+ * o contrato já põe sobre `papel`, e pela mesma razão. Quem corta o acesso é a
+ * autz no servidor (#1544, `403 org_suspensa`); esta função só faz a explicação
+ * chegar ANTES de o usuário esbarrar no 403, em vez de depois.
+ *
+ * Por isso ela é usada para renderizar um aviso e **nada mais**. Se um dia
+ * aparecer um `if (!estaSuspensa(...))` guardando uma ação, o defeito não é a
+ * tela ficar otimista — é ter promovido uma dica de renderização a decisão de
+ * acesso, e aí um servidor que respondesse `estado: "provisionada"` por engano
+ * viraria autorização.
+ *
+ * Desconhecido devolve `false` — **neutro, não permissivo**: o build não inventa
+ * um aviso de suspensão que talvez não seja verdade, e não libera nada, porque
+ * não é ele quem libera. Se o servidor de fato estiver cortando, o `403
+ * org_suspensa` chega na primeira leitura e a tela diz a mesma coisa.
+ */
+export function estaSuspensa(org: OrgDoPrincipal): boolean {
+  return org.estado === "suspensa";
 }
 
 /**

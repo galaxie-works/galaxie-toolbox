@@ -9,6 +9,7 @@ import {
 import {
   buscar,
   minhasOrgs,
+  estaSuspensa,
   CAMINHOS,
   type Membro,
   type Dominio,
@@ -83,6 +84,8 @@ export function AdminOrgPage({
   const [aba, setAba] = useState<Aba>("membros");
   const [descoberta, setDescoberta] = useState<string | null>(org ?? null);
   const [semSessao, setSemSessao] = useState(false);
+  // Só ANUNCIA a suspensão; não guarda nada. Ver `estaSuspensa` em `lib/org.ts`.
+  const [suspensa, setSuspensa] = useState(false);
 
   useEffect(() => {
     if (org) return; // injetada: não perguntar
@@ -100,7 +103,14 @@ export function AdminOrgPage({
       // Pegar a primeira é escolha do CLIENTE sobre o que exibir — não sobre o
       // que pode. Quando houver mais de uma, isto vira um seletor.
       if (r.estado === "pronto" && r.dados.length > 0) {
-        setDescoberta(r.dados[0]?.org ?? null);
+        const primeira = r.dados[0];
+        setDescoberta(primeira?.org ?? null);
+        // `/me/orgs` SOBREVIVE a suspensao por decisao de contrato (v1.4):
+        // "senao o usuario nao alcanca a tela que explica". E daqui, portanto,
+        // que a explicacao pode chegar antes do primeiro 403 -- e nao em vez
+        // dele: o painel continua pedindo o recurso e continua reagindo ao que
+        // o servidor responder.
+        setSuspensa(primeira ? estaSuspensa(primeira) : false);
       }
     });
     return () => {
@@ -137,6 +147,21 @@ export function AdminOrgPage({
           </button>
         ))}
       </nav>
+
+      {/* O `Aviso` dos painéis também é `role="status"`. Sem um NOME, as duas
+          regiões vivas ficam indistinguíveis — pro teste e, o que importa mais,
+          pra quem usa leitor de tela: duas coisas diferentes anunciando-se com
+          a mesma identidade. */}
+      {suspensa ? (
+        <div
+          role="status"
+          aria-label={t.orgSuspensa}
+          className="mx-auto mt-4 max-w-4xl rounded-2xl border border-amber-300 bg-amber-50 p-4"
+        >
+          <p className="text-sm font-medium text-amber-900">{t.orgSuspensa}</p>
+          <p className="mt-1 text-sm text-amber-800">{t.orgSuspensaDetalhe}</p>
+        </div>
+      ) : null}
 
       <section className="mx-auto mt-4 max-w-4xl rounded-2xl border border-neutral-200 bg-white p-6">
         {!orgAtual ? (
