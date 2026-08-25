@@ -3,6 +3,12 @@ import { ehNaoAutenticado } from "@/lib/api-me";
 
 export type EstadoCarga = "carregando" | "ok" | "erro" | "nao-autenticado";
 
+/**
+ * Estado de um carregamento na UI — não é corpo de resposta de rota nenhuma.
+ *
+ * @nao-contrato estado local do hook. O `T` é que vem do contrato, e quem o
+ * declara é o tipo dele, com o próprio `@rota`.
+ */
 export interface Carga<T> {
   dados: T | null;
   estado: EstadoCarga;

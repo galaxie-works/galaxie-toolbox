@@ -16,6 +16,7 @@
 import { pedir } from "@/lib/http";
 export { ErroApi, ehNaoAutenticado } from "@/lib/http";
 
+/** @rota /me */
 export interface Perfil {
   nome: string;
   email: string;
@@ -23,6 +24,7 @@ export interface Perfil {
   idioma?: string | null;
 }
 
+/** @rota /me/assinatura */
 export interface Assinatura {
   plano: string;
   status: "ativa" | "inadimplente" | "cancelada" | "nenhuma";
@@ -30,6 +32,7 @@ export interface Assinatura {
   consumo?: { usado: number; limite: number | null; unidade: string } | null;
 }
 
+/** @rota /me/dispositivos */
 export interface Dispositivo {
   id: string;
   nome: string;
