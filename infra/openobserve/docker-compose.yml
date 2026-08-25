@@ -5,15 +5,23 @@
 # diferentes, e misturá-los é como a deriva do #1303 voltaria parecendo
 # resolvida.
 #
-# ⚠️ `:latest` NÃO é pin — reinício pode trocar a versão sem ninguém pedir.
-# ⚠️ `healthcheck: disable: true` — o container não reporta saúde ao Docker,
-#    então `docker ps` dizer "Up" não é evidência de que o serviço responde.
+# ✅ PINADO em **v0.91.1** no host E aqui, juntos (#1480, altair 2026-08-25).
+#    Pin NÃO foi upgrade: a tag `v0.91.1` e `:latest` resolviam para a MESMA
+#    imagem local (`e1ff0445fab3`), então o container foi recriado byte-idêntico.
+# ⚠️ `healthcheck: disable: true` FICA — por impossibilidade MEDIDA, não descuido:
+#    a imagem é distroless (sem sh, curl, wget ou nc), então não existe o que rodar
+#    dentro do container e `CMD`/`CMD-SHELL` não têm como funcionar. Consequência:
+#    `docker ps` dizer "Up" NÃO prova que o serviço responde. A saúde deste serviço
+#    só pode ser medida DE FORA.
+# ⚠️ Sonda certa: `https://telemetry.thegalaxie.cloud/healthz` (host SEM path) é
+#    ESTA app. `/remote/healthz` é OUTRO serviço (o signaling). Confundir os dois
+#    dá 200 pelo motivo errado — foi o que aconteceu com o gate do Arquiteto.
 # ⚠️ O nome do projeto (`COMPOSE_PROJECT_NAME`) entra nos nomes dos routers;
 #    no host ele vem do nome da pasta: `openobserve-pwch`.
-# Ambos viram card próprio; aqui fica o retrato fiel.
+# Aqui fica o retrato fiel do host — os dois arquivos mudam juntos, sempre.
 services:
   openobserve:
-    image: public.ecr.aws/zinclabs/openobserve:latest
+    image: public.ecr.aws/zinclabs/openobserve:v0.91.1
     restart: unless-stopped
     labels:
       - traefik.enable=true
