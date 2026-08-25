@@ -35,10 +35,28 @@ export interface Membro {
   papel: Papel;
 }
 
-// `Dominio` e `Assinatura` NÃO nascem aqui de propósito. Eu os havia escrito de
-// antemão e o ratchet do #1421 os cobrou como órfãos — com razão: os painéis
-// deles esperam o formato do #1475-BE, que não existe. Tipo inventado antes do
-// contrato é palpite com cara de contrato; nasce junto com o endpoint.
+/**
+ * Um domínio da org, como o contrato v1.3 devolve: `[{ dominio, estado }]`.
+ *
+ * Nasce agora, e não antes, porque agora existe shape. Eu tinha escrito um
+ * `Dominio` de antemão e o ratchet do #1421 o cobrou como órfão — com razão:
+ * tipo inventado antes do contrato é palpite com cara de contrato.
+ *
+ * O `estado` é fechado nos dois valores do doc. Um `string` aberto aqui deixaria
+ * a UI decidir o que fazer com um terceiro valor que ela não conhece — e o lugar
+ * de decidir isso é o contrato, não o `switch` de quem renderiza.
+ *
+ * @rota /orgs/{org}/dominios
+ */
+export interface Dominio {
+  dominio: string;
+  estado: "pendente" | "verificado";
+}
+
+// `Assinatura` e o shape de `settings` seguem SEM nascer, e agora com o motivo
+// escrito no próprio contrato: a de assinatura "nasce com o #1470 (Stripe,
+// bloqueado no PO)", e a de settings diz "mesmo shape do PATCH" — que não
+// declara corpo. Ler "espelha o PUT" não é um shape; é uma promessa de shape.
 
 /**
  * Caminhos do admin da org, **do contrato** (§4.3) — um lugar só; a tela não

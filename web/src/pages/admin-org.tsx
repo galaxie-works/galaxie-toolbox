@@ -5,7 +5,13 @@ import {
   type Idioma,
   type Dicionario,
 } from "@/i18n";
-import { buscar, minhasOrgs, CAMINHOS, type Membro } from "@/lib/org";
+import {
+  buscar,
+  minhasOrgs,
+  CAMINHOS,
+  type Membro,
+  type Dominio,
+} from "@/lib/org";
 
 // Admin da org (#1490) — UI de membros / domínios / settings / assinatura.
 //
@@ -124,6 +130,8 @@ export function AdminOrgPage({
           <Aviso titulo={t.orgIndefinida} detalhe={t.orgIndefinidaDetalhe} />
         ) : aba === "membros" ? (
           <PainelMembros idioma={idioma} org={orgAtual} />
+        ) : aba === "dominios" ? (
+          <PainelDominios idioma={idioma} org={orgAtual} />
         ) : (
           <PainelPendente
             titulo={t[ROTULO[aba]]}
@@ -136,28 +144,46 @@ export function AdminOrgPage({
   );
 }
 
+type EstadoRecurso =
+  | "carregando"
+  | "naoEhAdmin"
+  | "naoEhSuaOrg"
+  | "erro"
+  | "pronto";
+
 /**
- * Membros — o painel que já fala com a porta de rede. Os outros três esperam o
- * formato do #1475-BE; ver `PainelPendente`.
+ * A máquina de estados que TODO painel de leitura do admin compartilha.
+ *
+ * Extraída quando o segundo painel nasceu (domínios). Duplicá-la faria a
+ * distinção **403 ≠ 404** — que é decisão de desenho, não detalhe — depender de
+ * dois acertos independentes, e o terceiro painel dependeria de três. É a mesma
+ * razão da porta de rede única: um invariante deve morar num lugar só.
  */
-function PainelMembros({ idioma, org }: { idioma: Idioma; org: string }) {
-  const t = DICIONARIOS[idioma];
-  const [estado, setEstado] = useState<
-    "carregando" | "naoEhAdmin" | "naoEhSuaOrg" | "erro" | "pronto"
-  >("carregando");
-  const [membros, setMembros] = useState<Membro[]>([]);
+function useRecurso<T>(caminho: string): { estado: EstadoRecurso; dados: T | null } {
+  const [estado, setEstado] = useState<EstadoRecurso>("carregando");
+  const [dados, setDados] = useState<T | null>(null);
 
   useEffect(() => {
     let vivo = true;
-    void buscar<Membro[]>(CAMINHOS.membros(org)).then((r) => {
+    setEstado("carregando");
+    void buscar<T>(caminho).then((r) => {
       if (!vivo) return;
       setEstado(r.estado === "pronto" ? "pronto" : r.estado);
-      if (r.estado === "pronto") setMembros(r.dados);
+      if (r.estado === "pronto") setDados(r.dados);
     });
     return () => {
       vivo = false;
     };
-  }, [org]);
+  }, [caminho]);
+
+  return { estado, dados };
+}
+
+/** Membros — `GET /orgs/{org}/membros`. */
+function PainelMembros({ idioma, org }: { idioma: Idioma; org: string }) {
+  const t = DICIONARIOS[idioma];
+  const { estado, dados } = useRecurso<Membro[]>(CAMINHOS.membros(org));
+  const membros = dados ?? [];
 
   if (estado === "carregando") return <p>{t.carregando}</p>;
   // Duas negativas, duas mensagens. Ver `lib/org.ts`: quem leva 403 já é da org
@@ -195,11 +221,60 @@ function PainelMembros({ idioma, org }: { idioma: Idioma; org: string }) {
 }
 
 /**
- * Painel cujo formato depende do #1475-BE.
+ * Domínios — lê `GET /orgs/{org}/dominios`, que o contrato v1.3 declarou.
  *
- * Deixa o caminho VISÍVEL na tela de propósito: enquanto o BE não existe, o que
- * esta fatia entrega de verdade é o endereço escopado que a integração vai usar
- * — e um placeholder que finge dados seria pior que um que declara o que falta.
+ * Reusa `useRecurso` com `PainelMembros`: os dois têm a mesma máquina de estados
+ * (carregando / não-é-admin / não-é-sua-org / erro / pronto), e duplicá-la faria
+ * a distinção 403≠404 depender de dois acertos em vez de um.
+ */
+function PainelDominios({ idioma, org }: { idioma: Idioma; org: string }) {
+  const t = DICIONARIOS[idioma];
+  const { estado, dados } = useRecurso<Dominio[]>(CAMINHOS.dominios(org));
+
+  if (estado === "carregando") return <p>{t.carregando}</p>;
+  if (estado === "naoEhAdmin")
+    return <Aviso titulo={t.semPermissao} detalhe={t.semPermissaoDetalhe} />;
+  if (estado === "naoEhSuaOrg")
+    return <Aviso titulo={t.naoEhSuaOrg} detalhe={t.naoEhSuaOrgDetalhe} />;
+  if (estado === "erro") return <p>{t.erroCarregar}</p>;
+
+  const dominios = dados ?? [];
+  if (dominios.length === 0) return <p>{t.semDominios}</p>;
+
+  return (
+    <table className="w-full text-left text-sm">
+      <thead>
+        <tr className="text-neutral-500">
+          <th className="pb-2 font-medium">{t.dominios}</th>
+          <th className="pb-2 font-medium">{t.estado}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {dominios.map((d) => (
+          <tr key={d.dominio} className="border-t border-neutral-100">
+            <td className="py-2 text-neutral-900">{d.dominio}</td>
+            <td className="py-2 text-neutral-600">
+              {/* Os dois valores do contrato, nomeados. Um `estado` aberto
+                  faria a UI decidir sobre um terceiro valor que ela não conhece. */}
+              {d.estado === "verificado" ? t.verificado : t.pendente}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * Painel cujo formato o contrato ainda NÃO declara.
+ *
+ * Sobrou para `settings` (o doc diz "mesmo shape do `PATCH`", e o `PATCH` não
+ * declara corpo) e `assinatura` (o doc diz que a shape "nasce com o #1470",
+ * bloqueado no PO). Ler "espelha o `PUT`" não é um shape — é a promessa de um.
+ *
+ * Deixa o caminho VISÍVEL de propósito: o que esta fatia entrega para os dois é
+ * o endereço certo, e um placeholder que fingisse dados seria pior que um que
+ * declara o que falta.
  */
 function PainelPendente({
   titulo,
