@@ -132,6 +132,59 @@ impl ArmazemMembro for ArmazemMembroMemoria {
     }
 }
 
+/// Estado de VERIFICAÇÃO de um domínio (contrato §4.3): `pendente` até o DNS provar posse,
+/// `verificado` depois. É o que separa "reivindiquei acme.com" de "controlo acme.com" — a guarda
+/// contra o oráculo cross-tenant do #1503 é a VERIFICAÇÃO, não a reivindicação (que é livre).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EstadoDominio {
+    Pendente,
+    Verificado,
+}
+
+/// Um domínio de uma org, como o contrato §4.3 (`GET /orgs/{org}/dominios`) o projeta:
+/// `{ dominio, estado: "pendente"|"verificado" }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Dominio {
+    pub dominio: String,
+    pub estado: EstadoDominio,
+}
+
+/// Armazém de domínios por org. `listar` serve `GET /orgs/{org}/dominios`. Mesma doutrina do
+/// [`ArmazemMembro`]: domínio, `Result` desde já, `ErroArmazem` só pra falha de infra. A
+/// visibilidade da org é decidida ANTES (`autorizar_acao_admin` sobre o `Org` carregado); `listar`
+/// não reintroduz a checagem.
+pub trait ArmazemDominio {
+    /// Os domínios da org `org` (com seu estado de verificação). Lista vazia = zero domínios.
+    fn listar(&self, org: &OrgId) -> Result<Vec<Dominio>, ErroArmazem>;
+}
+
+/// Primeira impl: em memória (por org). `Result` pra a troca por Postgres não rippar consumidores.
+#[derive(Debug, Default, Clone)]
+pub struct ArmazemDominioMemoria {
+    dominios: Vec<(OrgId, Dominio)>,
+}
+
+impl ArmazemDominioMemoria {
+    pub fn novo() -> Self {
+        Self::default()
+    }
+
+    pub fn inserir(&mut self, org: OrgId, dominio: Dominio) {
+        self.dominios.push((org, dominio));
+    }
+}
+
+impl ArmazemDominio for ArmazemDominioMemoria {
+    fn listar(&self, org: &OrgId) -> Result<Vec<Dominio>, ErroArmazem> {
+        Ok(self
+            .dominios
+            .iter()
+            .filter(|(o, _)| o == org)
+            .map(|(_, d)| d.clone())
+            .collect())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +277,39 @@ mod tests {
     fn membro_assinatura_carrega_result() {
         let a = ArmazemMembroMemoria::novo();
         let r: Result<Vec<Membro>, ErroArmazem> = a.listar(&OrgId("x".into()));
+        assert!(r.is_ok());
+    }
+
+    fn dom(nome: &str, estado: EstadoDominio) -> Dominio {
+        Dominio { dominio: nome.into(), estado }
+    }
+
+    #[test]
+    fn dominios_lista_por_org_com_estado_e_isola() {
+        let mut a = ArmazemDominioMemoria::novo();
+        a.inserir(OrgId("acme".into()), dom("acme.com", EstadoDominio::Verificado));
+        a.inserir(OrgId("acme".into()), dom("acme.io", EstadoDominio::Pendente));
+        a.inserir(OrgId("globex".into()), dom("globex.com", EstadoDominio::Verificado));
+
+        let acme = a.listar(&OrgId("acme".into())).unwrap();
+        assert_eq!(acme.len(), 2);
+        assert_eq!(acme[0], dom("acme.com", EstadoDominio::Verificado));
+        assert_eq!(acme[1].estado, EstadoDominio::Pendente);
+        // ISOLAMENTO entre orgs (base do 404 de recurso alheio).
+        let globex = a.listar(&OrgId("globex".into())).unwrap();
+        assert_eq!(globex.len(), 1);
+    }
+
+    #[test]
+    fn org_sem_dominios_e_vec_vazio() {
+        let a = ArmazemDominioMemoria::novo();
+        assert_eq!(a.listar(&OrgId("x".into())).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn dominio_assinatura_carrega_result() {
+        let a = ArmazemDominioMemoria::novo();
+        let r: Result<Vec<Dominio>, ErroArmazem> = a.listar(&OrgId("x".into()));
         assert!(r.is_ok());
     }
 }
