@@ -143,6 +143,7 @@ async fn listar_membros(
     // (2) Autz: 404 (alheia) antes de 403 (própria sem papel) — o `autorizar_acao_admin` faz a ordem.
     match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarMembros, &org) {
         Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        Err(AdminErro::Suspensa) => return resposta_de_erro(CodigoErro::OrgSuspensa),
         Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
         Ok(()) => {}
     }
@@ -205,6 +206,7 @@ async fn listar_dominios(
     // (2) Autz: 404 (alheia) antes de 403 (própria sem papel).
     match autorizar_acao_admin(&sessao, &AcaoAdminOrg::ListarDominios, &org) {
         Err(AdminErro::NaoEncontrada) => return resposta_de_erro(CodigoErro::NaoEncontrado),
+        Err(AdminErro::Suspensa) => return resposta_de_erro(CodigoErro::OrgSuspensa),
         Err(AdminErro::Negado) => return resposta_de_erro(CodigoErro::Negado),
         Ok(()) => {}
     }
@@ -394,6 +396,53 @@ mod tests {
             alheio, inexistente,
             "resposta INTEIRA (status+headers+corpo) tem de ser idêntica — senão é oráculo de localização"
         );
+    }
+
+    /// Borda com o admin `u1` de `orgA` + a org no store (suspensa ou não) + `u1` como membro
+    /// admin. `orgA` ativa ⇒ o admin lista; suspensa ⇒ o acesso é cortado.
+    fn borda_admin_org(suspensa: bool) -> (EstadoBorda, String) {
+        let mut armazem = ArmazemMemoria::novo();
+        let sessao = galaxie_platform_identity::Sessao::estabelecer(
+            Principal::AdminOrg { usuario: UserId("u1".into()), org: OrgId("orgA".into()) },
+            Escopo::de_orgs([OrgId("orgA".into())]),
+        );
+        let (id, _c) = emitir_sessao(&mut armazem, sessao, AGORA);
+        let cookie = format!("{NOME_COOKIE_SESSAO}={}", id.0);
+
+        let mut orgs = ArmazemOrgMemoria::novo();
+        let mut org = Org::nova(OrgId("orgA".into()), Default::default(), None);
+        if suspensa {
+            org.suspender();
+        }
+        orgs.inserir(org);
+
+        let mut membros = ArmazemMembroMemoria::novo();
+        membros.inserir(
+            OrgId("orgA".into()),
+            Membro { uid: UserId("u1".into()), nome: "U1".into(), email: "u1@a.com".into(), papel: Papel::OrgAdmin },
+        );
+
+        let borda = Borda::nova(armazem, relogio_fixo, nulo(), Arc::new(orgs), Arc::new(membros), sem_dominios());
+        (borda, cookie)
+    }
+
+    /// **#1544 ponta a ponta: org suspensa CORTA o acesso, pela borda.** O MESMO admin, na MESMA
+    /// rota org-scoped: org ativa ⇒ `200`; org suspensa ⇒ `403 org_suspensa`. Sem a fiação em
+    /// `autorizar_acao_admin`, o suspenso também daria `200` (a suspensão decorativa que o @Altair
+    /// pegou no #1551 v1) — e um mutante que remova o `if esta_suspensa` faz este teste devolver 200.
+    #[tokio::test]
+    async fn org_suspensa_corta_acesso_pela_borda() {
+        // Ativa: o admin lista os membros ⇒ 200.
+        let (ativa, cookie) = borda_admin_org(false);
+        let r_ativa = resposta_crua(ativa, &cookie, "/api/v1/orgs/orgA/membros").await;
+        assert_eq!(r_ativa.0, StatusCode::OK, "org ativa: o admin lista os membros");
+
+        // Suspensa: MESMO admin, MESMA rota ⇒ 403 com o slug PRÓPRIO no corpo (não `negado`).
+        let (suspensa, cookie2) = borda_admin_org(true);
+        let r_susp = resposta_crua(suspensa, &cookie2, "/api/v1/orgs/orgA/membros").await;
+        assert_eq!(r_susp.0, StatusCode::FORBIDDEN, "org suspensa: acesso CORTADO");
+        let corpo = String::from_utf8_lossy(&r_susp.2);
+        assert!(corpo.contains("org_suspensa"), "slug org_suspensa no corpo, não negado: {corpo}");
     }
 
     /// Superfície VISÍVEL (`SessaoAtual`): sem cookie de sessão rejeita com **401** — aqui o que

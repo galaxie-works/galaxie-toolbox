@@ -39,6 +39,9 @@ impl CodigoDeErro for AdminErro {
         match self {
             // Org alheia/inexistente: 404 (não enumera). Recurso da própria org sem papel: 403.
             AdminErro::NaoEncontrada => CodigoErro::NaoEncontrado,
+            // Org visível, mas suspensa (#1544): 403 com slug PRÓPRIO (a UI mostra "fale com o
+            // admin", não "papel insuficiente"). Vem antes de `Negado` na autz — ver `autorizar_acao_admin`.
+            AdminErro::Suspensa => CodigoErro::OrgSuspensa,
             AdminErro::Negado => CodigoErro::Negado,
         }
     }
