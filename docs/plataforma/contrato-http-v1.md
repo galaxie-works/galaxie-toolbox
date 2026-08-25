@@ -121,7 +121,7 @@ As rotas de LOGIN são federadas — ver **§2** (`GET /auth/{provedor}` + callb
 |---|---|---|---|---|
 | `GET` | `/me` | não | `200` `{ nome, email, idioma? }` | `401` |
 | `PATCH` | `/me` | sim | `200` Perfil `{ nome, email, idioma? }` | `401`,`400` |
-| `GET` | `/me/orgs` | não | `200` `[{ org, papel }]` | `401` |
+| `GET` | `/me/orgs` | não | `200` `[{ org, papel, estado: "provisionada"\|"suspensa" }]` | `401` |
 | `GET` | `/me/assinatura` | não | `200` `{ plano, status: "ativa"\|"inadimplente"\|"cancelada"\|"nenhuma", consumo?: { usado, limite\|null, unidade } }` | `401` |
 | `GET` | `/me/dispositivos` | não | `200` `[{ id, nome, ultimoAcesso: ISO-8601, sessaoAtual: bool }]` | `401` |
 | `DELETE` | `/me/dispositivos/{id}` | sim | `204` | `401`,`404` (dispositivo de outro ⇒ `404`, inv. 1) |
