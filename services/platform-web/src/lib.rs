@@ -69,13 +69,11 @@ pub fn encerrar_sessao<A: ArmazemSessao>(armazem: &mut A, id: &SessaoId) -> Stri
     montar_cookie_expurgo()
 }
 
-/// Extrai o `SessaoId` do header `Cookie` do request (ex.: `__Host-gx_sess=abc; outro=1`).
-/// Semântica EXATAMENTE-UM (achado do @Altair): zero cookie de sessão = não-autenticado;
-/// DOIS ou mais = **recusa** (`None`), não escolhe um. Dois `gx_sess` é sinal de
-/// shadowing/injeção — resolver por "o primeiro" deixaria o atacante plantar o que a
-/// borda lê. (O prefixo `__Host-` já dificulta plantar; isto é o cinto por cima.)
-pub fn sessao_id_do_cookie(header_cookie: &str) -> Option<SessaoId> {
-    let mut achados = header_cookie.split(';').filter_map(|par| {
+/// Todos os `SessaoId` candidatos no header (não a exatamente-um). Base COMPARTILHADA da leitura
+/// (`sessao_id_do_cookie`) e da revogação (`encerrar_sessoes_do_cookie`) — uma parse só, pra as
+/// duas não divergirem no que conta como "cookie de sessão".
+fn candidatos_sessao(header_cookie: &str) -> impl Iterator<Item = SessaoId> + '_ {
+    header_cookie.split(';').filter_map(|par| {
         let (nome, valor) = par.trim().split_once('=')?;
         if nome.trim() == NOME_COOKIE_SESSAO {
             let v = valor.trim();
@@ -83,11 +81,37 @@ pub fn sessao_id_do_cookie(header_cookie: &str) -> Option<SessaoId> {
         } else {
             None
         }
-    });
+    })
+}
+
+/// Extrai o `SessaoId` do header `Cookie` do request (ex.: `__Host-gx_sess=abc; outro=1`).
+/// Semântica EXATAMENTE-UM (achado do @Altair): zero cookie de sessão = não-autenticado;
+/// DOIS ou mais = **recusa** (`None`), não escolhe um. Dois `gx_sess` é sinal de
+/// shadowing/injeção — resolver por "o primeiro" deixaria o atacante plantar o que a
+/// borda lê. (O prefixo `__Host-` já dificulta plantar; isto é o cinto por cima.)
+///
+/// Isto é a direção segura da ambiguidade **na LEITURA** (fail-closed: nega acesso). A REVOGAÇÃO
+/// tem a direção OPOSTA — ver [`encerrar_sessoes_do_cookie`].
+pub fn sessao_id_do_cookie(header_cookie: &str) -> Option<SessaoId> {
+    let mut achados = candidatos_sessao(header_cookie);
     match (achados.next(), achados.next()) {
         (Some(id), None) => Some(id), // exatamente um
         _ => None,                    // zero (não-auth) OU ≥2 (recusa por shadowing)
     }
+}
+
+/// Logout: invalida no SERVIDOR **TODAS** as sessões candidatas no header e devolve o expurgo.
+///
+/// **Fix do @Altair (#1526): a REVOGAÇÃO inverte a direção segura da regra de ambiguidade.** Na
+/// leitura, cookie duplicado ⇒ recusa (fail-closed, nega acesso). No logout, recusar seria
+/// fail-OPEN — o usuário "sai", vê 204, e a sessão continua viva no servidor (o pior modo: falha
+/// silenciosa). Aqui a ambiguidade se RESOLVE **agindo**: invalida todos os candidatos. Invalidar
+/// um id que não é seu não faz mal a ninguém — quem tem o id **é** a sessão.
+pub fn encerrar_sessoes_do_cookie<A: ArmazemSessao>(armazem: &mut A, header_cookie: &str) -> String {
+    for id in candidatos_sessao(header_cookie) {
+        armazem.invalidar(&id);
+    }
+    montar_cookie_expurgo()
 }
 
 /// Resolve a sessão viva a partir do header `Cookie`: parse do id + `validar` no armazém.
