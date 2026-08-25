@@ -19,7 +19,7 @@ use galaxie_platform_back_office::{autorizar_back_office, AcaoBackOffice};
 use galaxie_platform_web::contrato::CodigoErro;
 
 use crate::erro::resposta_de_erro;
-use crate::sessao::{EstadoBorda, SessaoAtual};
+use crate::sessao::{EstadoBorda, SessaoOculta};
 
 /// Fallback do `Router` — a peça que o @Altair **travou** para a fatia 2. Sem ele, uma rota
 /// inexistente cai no fallback PADRÃO do axum (corpo vazio, sem content-type) ≠ o meu 404 de
@@ -40,7 +40,7 @@ async fn fallback_nao_encontrado() -> Response {
 /// própria) e HOJE não há store de org — então zero orgs é a resposta correta, não um stub que
 /// mente. Quando o repositório existir, o `Ok` troca `[]` pela lista `[{org,dominios,estado}]`
 /// (contrato v1.3), e a autorização/rota já estarão provadas aqui.
-async fn listar_orgs(SessaoAtual(sessao): SessaoAtual) -> Response {
+async fn listar_orgs(SessaoOculta(sessao): SessaoOculta) -> Response {
     match autorizar_back_office(&sessao, &AcaoBackOffice::ListarOrgs) {
         Ok(()) => Response::builder()
             .status(StatusCode::OK)
@@ -135,14 +135,46 @@ mod tests {
         );
     }
 
-    /// Condição 6: sem cookie de sessão, a rota autenticada rejeita com **401** (não 404 — aqui o
-    /// que falta é autenticar; a rota `/admin/orgs` existe pra quem tem sessão). O extractor barra
-    /// ANTES do handler: nenhum principal ⇒ nenhuma autorização a fazer.
+    /// Superfície VISÍVEL (`SessaoAtual`): sem cookie de sessão rejeita com **401** — aqui o que
+    /// falta é autenticar, e dizer "autentique-se" não revela nada (a rota `/me` e afins não são
+    /// segredo). Rota de teste (o `/me` real é fatia 3) só pra exercitar o extractor visível.
     #[tokio::test]
-    async fn sem_sessao_a_rota_autenticada_da_401() {
+    async fn sem_sessao_em_rota_visivel_da_401() {
+        use crate::sessao::SessaoAtual;
+        async fn visivel(SessaoAtual(_): SessaoAtual) -> Response {
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from("ok"))
+                .unwrap()
+        }
         let (estado, _cookie) = borda_com_sessao_admin();
-        let sem = resposta_crua(estado, "", "/api/v1/admin/orgs").await;
-        assert_eq!(sem.0, StatusCode::UNAUTHORIZED);
+        let router = Router::new()
+            .route("/api/v1/visivel", get(visivel))
+            .fallback(fallback_nao_encontrado)
+            .with_state(estado);
+        let req = Request::builder()
+            .uri("/api/v1/visivel")
+            .body(Body::empty())
+            .unwrap();
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// **Achado do @Altair na fatia 2 — o oráculo no nível NÃO-AUTENTICADO:** superfície OCULTA
+    /// (`/admin/*`, `SessaoOculta`) sem sessão devolve **404 IDÊNTICO** ao de uma rota inexistente —
+    /// não 401. Um 401 aqui revelaria a existência do back-office pra um atacante sem sessão ("fechar
+    /// a porta e deixar a janela"). Prova comparando a resposta INTEIRA, igual ao caso autenticado.
+    #[tokio::test]
+    async fn sem_sessao_no_back_office_e_404_identico_a_rota_inexistente() {
+        let (estado, _cookie) = borda_com_sessao_admin();
+        // SEM cookie nos dois: back-office oculto vs rota que não existe.
+        let oculto = resposta_crua(estado.clone(), "", "/api/v1/admin/orgs").await;
+        let inexistente = resposta_crua(estado, "", "/api/v1/isto/nao/existe").await;
+        assert_eq!(oculto.0, StatusCode::NOT_FOUND, "back-office sem sessão é 404, não 401");
+        assert_eq!(
+            oculto, inexistente,
+            "não-autenticado no back-office tem de ser indistinguível de rota inexistente"
+        );
     }
 
     /// Staff passa: a MESMA rota que dá 404 pro admin-de-org devolve 200 `[]` pra staff — provando

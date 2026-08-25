@@ -17,4 +17,4 @@ pub mod router;
 pub mod sessao;
 
 pub use router::rotas;
-pub use sessao::{Borda, EstadoBorda, SessaoAtual};
+pub use sessao::{Borda, EstadoBorda, SessaoAtual, SessaoOculta};
