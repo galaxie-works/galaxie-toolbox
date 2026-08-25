@@ -101,9 +101,38 @@ impl Principal {
     }
 }
 
-/// Org como ENTIDADE (regra 1): id próprio + claims associados (domínio, tenant M365).
-/// Os claims MAPEIAM pra org, mas não SÃO a org — quem controla o domínio não controla
-/// a entidade (armadilha (b)).
+/// Ciclo de vida da org (#1544 / contrato §4.5). `Provisionada` = ativa; `Suspensa` = acesso
+/// CORTADO (o PO decidiu "derruba o acesso"). Enum FECHADO: a autz faz `match` exaustivo, então
+/// um estado novo OBRIGA a decidir sua política (não há default permissivo). O *enforcement*
+/// (#1544, próxima fatia) é que LERÁ este estado — a autz de org consulta [`Org::esta_suspensa`]
+/// antes do papel e devolve o negado de suspensão; **esta fatia entrega o tipo + o contrato, não o
+/// enforcement** (nenhuma linha de produção lê `estado` ainda). A autz nunca lê claim
+/// (`tenant_m365`/`dominios`) — ler `estado` é exatamente o que ela deve fazer, ler claim não.
+///
+/// Condição do @Altair (ratificada com o `estado`): **desconhecido no FE = neutro, nunca
+/// permissivo** — mas isso é do lado do FE (forward-compat de string); aqui, no BE, o enum é
+/// fechado e não existe "desconhecido".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EstadoOrg {
+    /// Org ativa — o caminho normal.
+    Provisionada,
+    /// Org suspensa — ação org-scoped é NEGADA (`OrgSuspensa`, 403), lida do armazém a cada
+    /// request (vale no ato, sem corrida de "matar sessões"). Sobrevivem: `/me`, `/me/orgs`,
+    /// `DELETE /session` — senão o usuário não alcança a tela que explica a suspensão.
+    Suspensa,
+}
+
+/// Org como ENTIDADE (regra 1): id próprio + claims associados (domínio, tenant M365) + o
+/// ESTADO do ciclo de vida (#1544). Os claims MAPEIAM pra org, mas não SÃO a org — quem controla
+/// o domínio não controla a entidade (armadilha (b)).
+///
+/// **`estado` é PRIVADO e só muda por TRANSIÇÃO** (condição 1 do @Altair): nasce `Provisionada`
+/// em [`Org::nova`], vira `Suspensa` por [`Org::suspender`] e VOLTA por [`Org::reativar`] — não há
+/// literal público nem setter, então ninguém forja "suspensa" (ou "não suspensa") por fora. As duas
+/// transições existem porque "suspender" lê-se como REVERSÍVEL em qualquer produto (uma org suspensa
+/// por falta de pagamento tem de poder voltar); a porta de mão única era uma lacuna (@Altair na review
+/// do #1551). O PESO da reativação (staff comum? exige mais?) é decisão do PO — mora na AUTZ, não no
+/// tipo. Leitura por [`Org::estado`]/[`Org::esta_suspensa`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Org {
     pub id: OrgId,
@@ -111,6 +140,41 @@ pub struct Org {
     pub dominios: BTreeSet<String>,
     /// `tenantId` do Microsoft 365, quando houver (claim associado, não a identidade).
     pub tenant_m365: Option<String>,
+    /// Ciclo de vida — PRIVADO (só transição). Ver [`EstadoOrg`] e o doc do struct.
+    estado: EstadoOrg,
+}
+
+impl Org {
+    /// Cria uma org ATIVA (`Provisionada`). Único construtor público — o `estado` não entra por
+    /// aqui, nasce provisionada e só muda por [`Org::suspender`] (condição "só por transição").
+    pub fn nova(id: OrgId, dominios: BTreeSet<String>, tenant_m365: Option<String>) -> Self {
+        Org { id, dominios, tenant_m365, estado: EstadoOrg::Provisionada }
+    }
+
+    /// O estado do ciclo de vida (leitura). A autz de org chama isto — nunca um campo público.
+    pub fn estado(&self) -> EstadoOrg {
+        self.estado
+    }
+
+    /// `true` se a org está suspensa — o ponto de imposição (#1544). Açúcar sobre [`Org::estado`].
+    pub fn esta_suspensa(&self) -> bool {
+        matches!(self.estado, EstadoOrg::Suspensa)
+    }
+
+    /// TRANSIÇÃO: suspende a org (staff, via back-office). Idempotente. Único caminho para
+    /// `Suspensa` — não há setter de `estado`, então "suspensa" nunca vem de um literal forjado.
+    pub fn suspender(&mut self) {
+        self.estado = EstadoOrg::Suspensa;
+    }
+
+    /// TRANSIÇÃO INVERSA: reativa a org (volta a `Provisionada`). Idempotente. Existe porque
+    /// suspensão sem volta é armadilha — o staff que suspende por falta de pagamento tem de poder
+    /// reativar ao regularizar. QUEM pode reativar e com que peso (staff comum vs algo a mais) é
+    /// decisão do PO, e mora na AUTZ que chama isto — não no tipo. O tipo só garante que o caminho
+    /// de volta EXISTE e passa por transição (nunca por literal).
+    pub fn reativar(&mut self) {
+        self.estado = EstadoOrg::Provisionada;
+    }
 }
 
 /// Escopo que a SESSÃO carrega (regra 5). Omissão = VAZIO (não "todos"): uma sessão sem
@@ -259,11 +323,7 @@ mod tests {
     use super::*;
 
     fn org(id: &str) -> Org {
-        Org {
-            id: OrgId(id.into()),
-            dominios: BTreeSet::new(),
-            tenant_m365: None,
-        }
+        Org::nova(OrgId(id.into()), BTreeSet::new(), None)
     }
 
     fn admin(user: &str, org_id: &str) -> Principal {
@@ -274,6 +334,47 @@ mod tests {
     }
     fn staff(user: &str) -> Principal {
         Principal::Staff { usuario: UserId(user.into()) }
+    }
+
+    // #1544 — o `estado` da org nasce Provisionada e SÓ muda por transição.
+    #[test]
+    fn org_nasce_provisionada() {
+        let o = org("acme");
+        assert_eq!(o.estado(), EstadoOrg::Provisionada);
+        assert!(!o.esta_suspensa(), "org nova não está suspensa");
+    }
+
+    #[test]
+    fn suspender_e_a_unica_porta_para_suspensa() {
+        let mut o = org("acme");
+        o.suspender();
+        assert_eq!(o.estado(), EstadoOrg::Suspensa);
+        assert!(o.esta_suspensa());
+        // Idempotente: suspender de novo continua suspensa (não entra em estado inválido).
+        o.suspender();
+        assert!(o.esta_suspensa());
+        // GARANTIA DE ENCAPSULAMENTO (condição 1 do @Altair): não há setter nem literal público
+        // de `estado` — o único caminho para `Suspensa` é `suspender()`. Se um campo público ou
+        // um `Org { .., estado }` externo existisse, esta linha de comentário não bastaria: a
+        // prova é o `estado` ser privado (o compilador recusa o literal fora do crate).
+    }
+
+    // #1544 (review do @Altair): suspender NÃO é porta de mão única — `reativar` volta pra
+    // Provisionada. Sem isto, uma org suspensa por falta de pagamento nunca mais reativa.
+    #[test]
+    fn reativar_desfaz_a_suspensao() {
+        let mut o = org("acme");
+        o.suspender();
+        assert!(o.esta_suspensa());
+        o.reativar();
+        assert_eq!(o.estado(), EstadoOrg::Provisionada, "reativar volta pra Provisionada");
+        assert!(!o.esta_suspensa());
+        // Round-trip completo e idempotente: dá pra suspender de novo depois de reativar.
+        o.suspender();
+        assert!(o.esta_suspensa(), "o ciclo suspender→reativar→suspender é livre");
+        o.reativar();
+        o.reativar();
+        assert!(!o.esta_suspensa(), "reativar é idempotente");
     }
 
     // AC1 — a sessão carrega o que o SERVIDOR estabeleceu (principal + escopo); não há

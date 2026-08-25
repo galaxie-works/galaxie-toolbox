@@ -119,11 +119,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     fn org(id: &str) -> Org {
-        Org {
-            id: OrgId(id.into()),
-            dominios: BTreeSet::new(),
-            tenant_m365: None,
-        }
+        Org::nova(OrgId(id.into()), BTreeSet::new(), None)
     }
     fn sessao_admin(user: &str, org_id: &str) -> Sessao {
         Sessao::estabelecer(
@@ -156,11 +152,11 @@ mod tests {
     // um mutante lendo o claim pra conceder passaria com o CI verde. Este planta o claim e o mata.
     #[test]
     fn ac3_claim_m365_nao_concede_admin() {
-        let org_com_m365 = Org {
-            id: OrgId("orgA".into()),
-            dominios: BTreeSet::new(),
-            tenant_m365: Some("tenant-graph-do-cliente".into()),
-        };
+        let org_com_m365 = Org::nova(
+            OrgId("orgA".into()),
+            BTreeSet::new(),
+            Some("tenant-graph-do-cliente".into()),
+        );
         let membro = sessao_membro("u1", "orgA");
         // TODAS as 8 ações, não só uma (medição da @Lumen no re-gate): testar uma célula
         // deixa fuga POR AÇÃO — um mutante escopado a `GerirAssinatura` (o dano máximo que o

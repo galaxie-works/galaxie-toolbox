@@ -76,7 +76,7 @@ Corpo de erro: `application/json`
 ```json
 { "erro": "<codigo>" }
 ```
-`<codigo>` ∈ `{ "nao_autenticado", "nao_encontrado", "negado", "payload_invalido", "conflito" }`.
+`<codigo>` ∈ `{ "nao_autenticado", "nao_encontrado", "negado", "org_suspensa", "payload_invalido", "conflito" }`.
 
 **Regra do 404 (invariante 1):** para `nao_encontrado`, corpo e headers são **byte-a-byte iguais**
 quer o recurso não exista, quer exista e não seja do solicitante. A razão **nunca** aparece.
@@ -86,11 +86,22 @@ quer o recurso não exista, quer exista e não seja do solicitante. A razão **n
 | `401` | `nao_autenticado` | sem sessão viva (invariante 6) |
 | `404` | `nao_encontrado` | recurso inexistente **ou** de outro tenant (invariante 1) |
 | `403` | `negado` | recurso **visível** (própria org), mas papel insuficiente (`AdminErro::Negado`) |
+| `403` | `org_suspensa` | recurso **visível** (o principal É membro), mas a org está **suspensa** (#1544). Mesmo HTTP que `negado`, slug PRÓPRIO: a UI mostra "fale com o admin", não "papel insuficiente" |
 | `400` | `payload_invalido` | corpo malformado / campo faltando |
 | `409` | `conflito` | conflito **dentro da própria org** (ex.: reivindicar 2× o mesmo domínio na MESMA org). Nunca cross-tenant — ver §4.3 |
 
 > `404` vs `403`: cross-tenant é **sempre** `404` (não enumerar). `403` só quando o recurso é
-> comprovadamente da própria org do principal e o que falta é **papel** (member tentando ação de admin).
+> comprovadamente da própria org do principal.
+
+> **Ordem das checagens de org (é contrato — #1544): visibilidade → suspensão → papel.**
+> 1. **Não enxerga a org ⇒ `404`** idêntico a org inexistente. A suspensão é **invisível para
+>    não-membro** — senão vira oráculo (dava pra descobrir que a org existe perguntando se está
+>    suspensa). Logo `org_suspensa` **só** chega a quem é membro.
+> 2. **Membro de org suspensa ⇒ `403 org_suspensa`.** Dizer a verdade a quem pertence à org não
+>    vaza nada, e é o que evita o chamado ao suporte.
+> 3. **Papel só depois.** Se a suspensão viesse depois do papel, um `Member` de org suspensa
+>    tentando ação de admin veria `negado` ("papel insuficiente") — mentira útil pra ninguém. A
+>    suspensão é a razão **governante** e aparece antes.
 
 ---
 
@@ -194,12 +205,24 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 > cai no mesmo `404`. **Custo aceito e nomeado:** um staff com sessão expirada recebe `404` e não
 > distingue "não sou staff" de "minha sessão venceu" — o preço de o back-office não se anunciar.
 
-> **`estado` da org + corpo do `GET /admin/orgs` — DEFERIDOS (separados desta v1.3 a pedido do
-> @Altair):** o campo `estado` foi ratificado com 3 condições, mas a 3ª — **o que `suspensa` FAZ**
-> (nega acesso vs. rótulo administrativo) — é decisão de PRODUTO (PO), roteada via @Mira. O `estado`
-> só entra fechado quando essa frase existir, e não vale acoplar as leituras §4.3 (aprovadas sem
-> ressalva) a uma pergunta sobre outra seção. Volta num PR próprio quando o PO decidir; até lá, o
-> corpo de `GET /admin/orgs` fica em aberto (o back-office ainda devolve `[]` honesto, sem store).
+> **`estado` da org — FECHADO em v1.4 (#1544). O PO decidiu: `suspensa` DERRUBA o acesso.** As 3
+> condições ratificadas pelo @Altair agora estão todas respondidas: (1) `estado` é **privado e só
+> muda por transição** (`Org::nova`→`Provisionada`, `Org::suspender`→`Suspensa`; sem literal público
+> nem setter — ninguém forja "suspensa"); (2) **desconhecido no FE = neutro, nunca permissivo**
+> (forward-compat da string do lado do cliente; no BE o enum é fechado); (3) a 3ª — **`suspensa`
+> nega** (ponto de imposição, ver §3). A checagem SERÁ **por request, lida do armazém** (vale no ato,
+> sem a corrida de "matar sessões") e MORARÁ **DENTRO da autz de org** (que já recebe `&Org`), não nos
+> handlers — senão um handler novo esquece e a suspensão vale em 5 rotas de 6. A autz lerá `estado`,
+> **nunca** claim (`tenant_m365`/`dominios`). ⚠️ **Esta v1.4 fecha o CONTRATO + o TIPO (`EstadoOrg`,
+> `OrgSuspensa`, ordem, corpo dos GET); o *enforcement* — a autz consultando `esta_suspensa` e negando
+> — é a fatia #1544, ainda não escrita.** O tipo já traz `Org::suspender`/`Org::reativar` (as duas
+> transições — suspender sem volta era armadilha); QUEM reativa e com que peso é decisão do PO, mora na
+> autz. **Sobreviverão à suspensão** (senão o usuário não alcança a tela que explica): `/me`,
+> `/me/orgs` (com a org listada e o `estado` marcado — é daqui que a tela tira o nome, então `/me/orgs`
+> fica FORA da checagem de suspensão) e `DELETE /session`. Tudo org-scoped: bloqueado. Corpo do `GET /admin/orgs`:
+> `[{ org, dominios: [string], estado: "provisionada" | "suspensa" }]` (sem `tenant_m365` — claim
+> sensível, staff não precisa). O *enforcement* na borda + a tela são a fatia de implementação (#1544);
+> esta v1.4 fecha o CONTRATO (tipo + vocabulário `org_suspensa`) que ela precisa para nascer.
 >
 > **Escopo dos testes de `contrato.rs` (nota do @Altair — não sobrevender):** os testes amarram
 > estruturalmente só os invariantes **3** (GET nunca muta) e **4** (staff auditado), que são
@@ -213,12 +236,21 @@ payload, e **suspender é a operação mais destrutiva do produto** — merece a
 `v1` é este documento + `platform-web/src/contrato.rs`. Mudança incompatível ⇒ `/api/v2` + nova
 tabela; o FE fixa a versão. Adição compatível (rota nova) ⇒ append, sem bump.
 
+**v1.4 (25/08):** o PO decidiu que **suspender DERRUBA o acesso** (#1544). Esta v1.4 fecha o
+**CONTRATO + o TIPO**, NÃO o enforcement: entra `CodigoErro::OrgSuspensa` (`403`, slug `org_suspensa`,
+distinto de `negado`); a ordem de checagem **visibilidade → suspensão → papel** (§3); o `estado` da org
+como tipo **privado/só por transição** (`EstadoOrg::{Provisionada,Suspensa}` em `platform-identity`,
+com `suspender` E `reativar` — porta de mão única era armadilha, review do @Altair); a survive-list
+(`/me`, `/me/orgs`, `DELETE /session`, fora da checagem) e o corpo do `GET /admin/orgs`. ⚠️ **O
+*enforcement* — a autz lendo `estado` e negando — é a fatia #1544, ainda não escrita**: nenhuma linha
+de produção consulta a suspensão nesta v1.4. Adição compatível (novo código de erro + novo estado, sem
+quebrar rota), sem bump de `/v1`.
+
 **v1.3 (25/08):** leituras que faltavam em §4.3 (`GET` de `dominios`/`settings`/`assinatura` — lacuna
 do @Pollux #1490, "não se gere o que não se vê"; um `GET` por recurso, autorizado igual à escrita) +
 a regra do NÃO-autenticado→`404` em `/admin/*` (§4.5, achado do @Altair na borda). O corpo de
-`GET /admin/orgs` com `estado` foi **separado** (decisão do @Altair) e volta num PR próprio quando o
-PO decidir o que `suspensa` FAZ — não vale prender as leituras a uma pergunta de produto sobre outra
-seção. Tudo adição compatível (append), sem bump de `/v1`.
+`GET /admin/orgs` com `estado` foi **separado** (decisão do @Altair) — fechado agora em **v1.4**.
+Tudo adição compatível (append), sem bump de `/v1`.
 
 **v1.2 (24/08):** §2 reescrita pro **modelo federado** (decisão @Altair — nem M365-only nem
 email/senha); `POST /session` removido (o login nasce do callback verificado); `GET /me/orgs`

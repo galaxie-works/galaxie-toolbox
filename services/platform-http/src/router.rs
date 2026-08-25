@@ -694,7 +694,7 @@ mod tests {
     // ---- GET /orgs/{org}/membros (1º handler de DADOS, contrato §4.3) ----
 
     fn org_teste(id: &str) -> Org {
-        Org { id: OrgId(id.into()), dominios: Default::default(), tenant_m365: None }
+        Org::nova(OrgId(id.into()), Default::default(), None)
     }
     fn membro_teste(uid: &str, papel: Papel) -> Membro {
         Membro {
