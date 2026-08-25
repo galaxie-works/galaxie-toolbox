@@ -224,10 +224,47 @@ async fn listar_dominios(
     }
 }
 
+/// Uma org do principal como sai no fio (contrato v1.3: `{ org, papel }`).
+#[derive(serde::Serialize)]
+struct OrgDoUsuarioDto<'a> {
+    org: &'a str,
+    papel: &'a str,
+}
+
+/// `GET /api/v1/me/orgs` (contrato v1.3) — as orgs do PRÓPRIO principal, com o papel em cada.
+///
+/// É a rota pela qual a UI **DESCOBRE o `{org}`** — sem ela, mesmo com sessão, o cliente não sabe
+/// qual org pedir e nenhuma das outras rotas é alcançável (lacuna do `{org}` que o @Altair fechou
+/// no v1.3; achado do @Pollux medindo a borda real). **User-scoped:** o `uid` vem da SESSÃO
+/// (invariante 6), NUNCA do caminho — não há como pedir as orgs de outro. Sem autz de org (o
+/// principal só vê o PRÓPRIO pertencimento); 401 sem sessão (extractor), 500 se o store cair.
+/// O `papel` diz o que a UI mostra, jamais o que o servidor permite.
+async fn listar_minhas_orgs(
+    State(estado): State<EstadoBorda>,
+    SessaoAtual(sessao): SessaoAtual,
+) -> Response {
+    match estado.membros.orgs_do_usuario(sessao.principal().usuario()) {
+        Err(ErroArmazem::Indisponivel) => resposta_de_falha(Visibilidade::Visivel),
+        Ok(orgs) => {
+            let dto: Vec<OrgDoUsuarioDto> = orgs
+                .iter()
+                .map(|(org, papel)| OrgDoUsuarioDto { org: &org.0, papel: papel_str(papel) })
+                .collect();
+            let corpo = serde_json::to_string(&dto).expect("Vec<OrgDoUsuarioDto> serializa sempre");
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(corpo))
+                .expect("resposta 200 é sempre construível")
+        }
+    }
+}
+
 /// Monta o `Router` da borda com o estado (armazéns + relógio + auditor) já resolvido.
 pub fn rotas(estado: EstadoBorda) -> Router {
     Router::new()
         .route("/api/v1/admin/orgs", get(listar_orgs))
+        .route("/api/v1/me/orgs", get(listar_minhas_orgs))
         .route("/api/v1/orgs/{org}/membros", get(listar_membros))
         .route("/api/v1/orgs/{org}/dominios", get(listar_dominios))
         .route("/api/v1/session", delete(encerrar))
@@ -886,5 +923,59 @@ mod tests {
         );
         let (status, ..) = resposta_crua(estado, &cookie, "/api/v1/orgs/acme/dominios").await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // ---- GET /me/orgs (achado do @Pollux: a UI descobre o {org} por aqui) ----
+
+    /// Happy: o principal (uid da sessão) recebe SUAS orgs com o papel em cada — `[{org,papel}]`.
+    /// O uid vem da SESSÃO, não do caminho: não há como pedir as orgs de outro (invariante 6).
+    #[tokio::test]
+    async fn me_orgs_200_com_as_orgs_do_principal() {
+        // admin_de("acme") tem usuario "adm"; semeio o pertencimento dele em acme (admin) e globex.
+        let (estado, cookie) = borda_membros(
+            admin_de("acme"),
+            vec![org_teste("acme"), org_teste("globex")],
+            vec![
+                (OrgId("acme".into()), {
+                    let mut m = membro_teste("x", Papel::Member);
+                    m.uid = UserId("adm".into());
+                    m.papel = Papel::OrgAdmin;
+                    m
+                }),
+                (OrgId("globex".into()), {
+                    let mut m = membro_teste("y", Papel::Member);
+                    m.uid = UserId("adm".into());
+                    m
+                }),
+                // membro de outro user — NÃO pode vazar pro /me/orgs do adm.
+                (OrgId("acme".into()), membro_teste("outro", Papel::Member)),
+            ],
+        );
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me/orgs").await;
+        assert_eq!(status, StatusCode::OK);
+        let json: serde_json::Value = serde_json::from_slice(&corpo).unwrap();
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 2, "só as 2 orgs do adm, não a do outro user");
+        assert_eq!(arr[0]["org"], "acme");
+        assert_eq!(arr[0]["papel"], "org_admin");
+        assert_eq!(arr[1]["org"], "globex");
+        assert_eq!(arr[1]["papel"], "member");
+    }
+
+    /// Principal sem pertencimento ⇒ 200 `[]` (não erro) — sessão válida, zero orgs.
+    #[tokio::test]
+    async fn me_orgs_sem_pertencimento_e_200_vazio() {
+        let (estado, cookie) = borda_membros(admin_de("acme"), vec![], vec![]);
+        let (status, _h, corpo) = resposta_crua(estado, &cookie, "/api/v1/me/orgs").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(&corpo, b"[]");
+    }
+
+    /// Sem sessão ⇒ 401 (superfície visível user-scoped: dizer "autentique-se" não revela nada).
+    #[tokio::test]
+    async fn me_orgs_sem_sessao_e_401() {
+        let (estado, _cookie) = borda_membros(admin_de("acme"), vec![], vec![]);
+        let (status, ..) = resposta_crua(estado, "", "/api/v1/me/orgs").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 }

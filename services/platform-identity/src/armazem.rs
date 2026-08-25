@@ -100,6 +100,12 @@ pub trait ArmazemMembro {
     /// Os membros da org `org`. `Result` porque o backing real pode falhar; lista vazia = zero
     /// membros (não erro).
     fn listar(&self, org: &OrgId) -> Result<Vec<Membro>, ErroArmazem>;
+
+    /// As orgs a que `uid` pertence, com o papel dele em cada uma (`GET /me/orgs`, contrato v1.3).
+    /// É a leitura pela qual o principal DESCOBRE suas orgs — sem ela, a UI não tem o `{org}` pra
+    /// alcançar as outras rotas. `uid` vem SEMPRE da sessão (invariante 6): não há como pedir as
+    /// orgs de outro usuário. Lista vazia = pertence a nenhuma org (não erro).
+    fn orgs_do_usuario(&self, uid: &UserId) -> Result<Vec<(OrgId, Papel)>, ErroArmazem>;
 }
 
 /// Primeira impl: em memória (por org). Nunca falha; carrega `Result` pra a troca por Postgres não
@@ -128,6 +134,15 @@ impl ArmazemMembro for ArmazemMembroMemoria {
             .iter()
             .filter(|(o, _)| o == org)
             .map(|(_, m)| m.clone())
+            .collect())
+    }
+
+    fn orgs_do_usuario(&self, uid: &UserId) -> Result<Vec<(OrgId, Papel)>, ErroArmazem> {
+        Ok(self
+            .membros
+            .iter()
+            .filter(|(_, m)| &m.uid == uid)
+            .map(|(org, m)| (org.clone(), m.papel))
             .collect())
     }
 }
@@ -278,6 +293,26 @@ mod tests {
         let a = ArmazemMembroMemoria::novo();
         let r: Result<Vec<Membro>, ErroArmazem> = a.listar(&OrgId("x".into()));
         assert!(r.is_ok());
+    }
+
+    #[test]
+    fn orgs_do_usuario_lista_pertencimento_com_papel() {
+        let mut a = ArmazemMembroMemoria::novo();
+        a.inserir(OrgId("acme".into()), membro("u1", Papel::OrgAdmin));
+        a.inserir(OrgId("globex".into()), membro("u1", Papel::Member)); // mesmo user, outra org
+        a.inserir(OrgId("acme".into()), membro("u2", Papel::Member)); // outro user
+
+        let orgs = a.orgs_do_usuario(&UserId("u1".into())).unwrap();
+        assert_eq!(
+            orgs,
+            vec![
+                (OrgId("acme".into()), Papel::OrgAdmin),
+                (OrgId("globex".into()), Papel::Member)
+            ],
+            "u1 pertence a acme (admin) e globex (member); não vaza a org do u2"
+        );
+        // Usuário sem pertencimento ⇒ vazio, não erro.
+        assert_eq!(a.orgs_do_usuario(&UserId("ninguem".into())).unwrap(), vec![]);
     }
 
     fn dom(nome: &str, estado: EstadoDominio) -> Dominio {
