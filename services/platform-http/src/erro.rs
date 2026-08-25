@@ -53,6 +53,11 @@ impl CodigoDeErro for ConfigErro {
             ConfigErro::NaoEncontrado => CodigoErro::NaoEncontrado,
             // Chave fora da allowlist: payload inválido (o cliente pediu o que não existe).
             ConfigErro::ChaveNaoPermitida => CodigoErro::PayloadInvalido,
+            // Valor que não cabe no tipo da chave (bool não-literal, opção fora de `opcoes`,
+            // texto além do teto) — o análogo-de-VALOR do `ChaveNaoPermitida`: cliente enviou
+            // o que não vale ⇒ mesmo `PayloadInvalido`. #1563. @Alcor (dono da borda): status
+            // escolhido por consistência com o irmão; ajuste se a tua política de borda diferir.
+            ConfigErro::ValorInvalido => CodigoErro::PayloadInvalido,
         }
     }
 }
